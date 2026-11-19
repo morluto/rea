@@ -527,7 +527,7 @@ it.each([
 it("does not treat an ordinary body example as a merge title or breaking declaration", async () => {
   const f = await fixture(
     "fix: improve diagnostics",
-    "Example subject:\n\nfix(contracts)!: example only",
+    "Example subject:\n\nfix(contracts)!: example only\n\n~~~text\nBREAKING CHANGE: example only\n~~~",
   );
   await candidate(f, "5.0.1", `### Bug Fixes\n\n${f.changedSha}`);
   await expect(verify(f, "5.0.1")).resolves.toMatchObject({ stderr: "" });
@@ -626,6 +626,95 @@ it.each([
     }
   },
 );
+
+const migrationCommand = 'mv "old config.json" "new config.json"';
+const fencedMigrationCommand = `~~~sh\n${migrationCommand}\n~~~`;
+
+it.each([
+  { form: "missing command", command: "", accepted: false },
+  {
+    form: "different command",
+    command: fencedMigrationCommand.replace("new config", "other config"),
+    accepted: false,
+  },
+  { form: "inline code", command: `\`${migrationCommand}\``, accepted: false },
+  {
+    form: "exact fenced command",
+    command: fencedMigrationCommand,
+    accepted: true,
+  },
+  {
+    form: "exact indented command",
+    command: `    ${migrationCommand}`,
+    accepted: true,
+  },
+])(
+  "requires a literal migration block: $form",
+  async ({ command, accepted }) => {
+    const f = await fixture(
+      "fix(contracts)!: rename the configuration file",
+      `BREAKING CHANGE: Rename the configuration file.\n\n${fencedMigrationCommand}\n\nReviewed-by: Fixture Reviewer`,
+    );
+    await candidate(
+      f,
+      "6.0.0",
+      `### ⚠ BREAKING CHANGES\n\nRename the configuration file.\n\n${command}`,
+    );
+    const result = verify(f);
+    if (accepted) {
+      await expect(result).resolves.toHaveProperty("stdout");
+    } else {
+      await expect(result).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining(
+          "migration notes omit unreleased breaking changes",
+        ),
+      });
+    }
+  },
+);
+
+it.each([
+  { form: "preserved", command: "Header: exact value", accepted: true },
+  { form: "changed", command: "Header: another value", accepted: false },
+])(
+  "keeps trailer-shaped text in code blocks: $form",
+  async ({ command, accepted }) => {
+    const f = await fixture(
+      "fix(contracts)!: migrate configuration",
+      "BREAKING CHANGE: Write the new configuration.\n\n~~~text\nHeader: exact value\n~~~\n\nReviewed-by: Fixture Reviewer",
+    );
+    await candidate(
+      f,
+      "6.0.0",
+      `### ⚠ BREAKING CHANGES\n\nWrite the new configuration.\n\n~~~text\n${command}\n~~~`,
+    );
+    const result = verify(f);
+    if (accepted) {
+      await expect(result).resolves.toHaveProperty("stdout");
+    } else {
+      await expect(result).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining(
+          "migration notes omit unreleased breaking changes",
+        ),
+      });
+    }
+  },
+);
+
+it("accepts a code-only migration when its fence starts on the footer line", async () => {
+  const f = await fixture(
+    "fix(contracts): rename configuration",
+    `BREAKING CHANGE: ${fencedMigrationCommand}\n\nReviewed-by: Fixture Reviewer`,
+  );
+  await candidate(
+    f,
+    "6.0.0",
+    `### ⚠ BREAKING CHANGES\n\n${fencedMigrationCommand}`,
+  );
+  await expect(verify(f)).resolves.toHaveProperty("stdout");
+});
 
 it("recognizes a BREAKING CHANGE footer without a bang in the subject", async () => {
   const f = await fixture(

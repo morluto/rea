@@ -28,17 +28,68 @@ function inlineFacts(tokens) {
             : "";
       if (link) link.text += text;
       else if (text) parts.push({ text });
-      if (token.type === "code_inline") wording.push({ code: token.content });
+      if (token.type === "code_inline")
+        wording.push({ kind: "inline-code", code: token.content });
       else if (text) wording.push(text);
     }
   }
   return { parts, wording };
 }
 
-function textBlockFacts(tokens, index) {
-  const { type } = tokens[index];
+const breakingFooter = /^BREAKING(?: CHANGE|-CHANGE):[ \t]*(.*)$/u;
+const otherTrailer = /^[A-Za-z][A-Za-z0-9-]*(?::[ \t]| #)/u;
+
+function isCodeBlock(type) {
+  return type === "fence" || type === "code_block";
+}
+
+function codeBlockLines(lines, start) {
+  const covered = new Set();
+  for (const { type, map } of parser.parse(lines.slice(start).join("\n"), {})) {
+    if (!isCodeBlock(type)) continue;
+    for (let line = map[0]; line < map[1]; line++) covered.add(start + line);
+  }
+  return covered;
+}
+
+export function releaseBreakingFooters(body) {
+  const lines = body.split(/\r\n?|\n/u);
+  if (!lines.some((line) => breakingFooter.test(line))) return [];
+
+  const footers = [];
+  let footer;
+  let codeLines = codeBlockLines(lines, 0);
+  for (const [index, line] of lines.entries()) {
+    if (!codeLines.has(index)) {
+      const match = breakingFooter.exec(line);
+      if (match !== null) {
+        footer = { start: index, end: index };
+        footers.push(footer);
+        // Read the Markdown value from its first character, including a fence
+        // that starts on the same line as the trailer label.
+        lines[index] = match[1];
+        codeLines = codeBlockLines(lines, index);
+      } else if (otherTrailer.test(line)) {
+        footer = undefined;
+      }
+    }
+    if (
+      footer !== undefined &&
+      (lines[index].trim() !== "" || codeLines.has(index))
+    )
+      footer.end = index + 1;
+  }
+  return footers
+    .map(({ start, end }) => lines.slice(start, end).join("\n"))
+    .filter((value) => value.trim() !== "");
+}
+
+function blockFacts(tokens, index) {
+  const { type, content } = tokens[index];
   if (type === "paragraph_open" || type === "heading_open")
     return inlineFacts(tokens[index + 1].children);
+  if (isCodeBlock(type))
+    return { parts: [], wording: [{ kind: "code-block", code: content }] };
 }
 
 function releaseVersion({ type, level, tag }, source) {
@@ -77,7 +128,7 @@ export function releaseSection(markdown, expectedVersion) {
     } else if (type === "list_item_close" && level === 1) {
       item = undefined;
     }
-    const facts = textBlockFacts(tokens, index);
+    const facts = blockFacts(tokens, index);
     if (facts !== undefined) {
       blocks.push({
         offset: source.offset - start,
@@ -130,23 +181,24 @@ function normalizeBlockWording(blocks) {
   return normalizeWording(blocks.flatMap(({ wording }) => [...wording, " "]));
 }
 
-/** Match footer prose and exact inline code within the breaking section. */
+/** Match footer prose and exact literal code within the breaking section. */
 export function releaseMigrationWording(blocks) {
   const observed = normalizeBlockWording(blocks);
   return (footer) => {
     const tokens = parser.parse(footer, {});
     const expected = normalizeBlockWording(
       tokens
-        .map((_token, index) => textBlockFacts(tokens, index))
+        .map((_token, index) => blockFacts(tokens, index))
         .filter((facts) => facts !== undefined),
     );
     if (expected.length === 0) return false;
-    // The first and last prose chunks can be part of a longer passage. Code is
-    // matched only as a complete code span, so examples cannot supply prose.
+    // The first and last prose chunks can be part of a longer passage. Code
+    // must match a complete span or block of the same kind.
     return observed.some((_part, start) =>
       expected.every((part, offset) => {
         const actual = observed[start + offset];
-        if (typeof part !== "string") return actual?.code === part.code;
+        if (typeof part !== "string")
+          return actual?.kind === part.kind && actual.code === part.code;
         if (typeof actual !== "string") return false;
         if (expected.length === 1) return actual.includes(part);
         if (offset === 0) return actual.endsWith(part);

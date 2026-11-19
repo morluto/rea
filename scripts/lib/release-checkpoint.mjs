@@ -1,6 +1,7 @@
 import { gt, major, valid } from "semver";
 import { z } from "zod";
 import {
+  releaseBreakingFooters,
   releaseMigrationWording,
   releaseSection,
 } from "./release-markdown.mjs";
@@ -110,21 +111,15 @@ function readCommits(text) {
     const body = z.string().parse(fields[index + 2]);
     const title = conventionalTitle(subject, body);
     const type = /^([a-z]+)(?:\([^)]*\))?!?: /u.exec(title)?.[1];
+    const breakingNotes = releaseBreakingFooters(body);
     commits.push({
       sha,
       subject,
       ...(title !== subject ? { conventionalTitle: title } : {}),
       type,
       breaking:
-        /^[a-z]+(?:\([^)]*\))?!: /u.test(title) ||
-        /^BREAKING(?: CHANGE|-CHANGE):\s*\S/mu.test(body),
-      breakingNotes: Array.from(
-        body.replace(/\r\n/gu, "\n").matchAll(
-          // Blank lines are part of a footer value until the next trailer.
-          /^BREAKING(?: CHANGE|-CHANGE):[ \t]*(\S[^\n]*(?:\n(?!(?:BREAKING(?: CHANGE|-CHANGE):|[A-Za-z][A-Za-z0-9-]*(?::[ \t]| #)))[^\n]*)*)/gmu,
-        ),
-        (match) => match[1].trim(),
-      ),
+        /^[a-z]+(?:\([^)]*\))?!: /u.test(title) || breakingNotes.length > 0,
+      breakingNotes,
     });
   }
   return commits;
