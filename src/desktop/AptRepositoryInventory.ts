@@ -373,12 +373,12 @@ export const inspectAptRepositories = async (
         ),
         ...files.incomplete.map(
           (file) =>
-            `The apt sources file ${file} contains unreadable UTF-8 entries, so those entries are not matched.`,
+            `The apt sources file ${file} contains unreadable UTF-8. Any affected source entries were withheld.`,
         ),
         ...(targets?.incomplete !== true
           ? []
           : [
-              "apt-get indextargets contained unreadable UTF-8. Those index paragraphs were withheld.",
+              "apt-get indextargets contained unreadable UTF-8. Any affected index paragraphs were withheld.",
             ]),
       ],
     };

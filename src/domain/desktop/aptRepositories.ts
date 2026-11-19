@@ -147,7 +147,10 @@ function* sourceLines(text: string | Buffer): Generator<string | undefined> {
   for (let start = 0; start <= text.length;) {
     const end = text.indexOf(0x0a, start);
     const line = text.subarray(start, end === -1 ? text.length : end);
-    yield isStrictUtf8(line) ? line.toString("utf8") : undefined;
+    // APT ignores the whole comment after its ASCII marker, even if its
+    // bytes do not decode. Keep it distinct from a blank line or an entry.
+    if (line[0] === 0x23) yield "#";
+    else yield isStrictUtf8(line) ? line.toString("utf8") : undefined;
     if (end === -1) break;
     start = end + 1;
   }

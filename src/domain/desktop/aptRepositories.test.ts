@@ -468,6 +468,26 @@ describe("APT source URI lookup", () => {
     ).toBeUndefined();
   });
 
+  it.each(["before the stanza", "inside the stanza"])(
+    "ignores an undecodable deb822 comment %s",
+    (where) => {
+      const comment = Buffer.from("# comment \xff\n", "latin1");
+      const fields = Buffer.from(
+        "URIs: https://good.invalid/archive\nSuites: stable\nComponents: main\n",
+      );
+      const types = Buffer.from("Types: deb\n");
+      const source =
+        where === "before the stanza"
+          ? Buffer.concat([comment, Buffer.from("\n"), types, fields])
+          : Buffer.concat([types, comment, fields]);
+      const stanzas = parseDeb822Sources(source, file);
+      expect(stanzas).toHaveLength(1);
+      expect(
+        entryForTarget(targetFor("https://good.invalid/archive/"), stanzas),
+      ).toMatchObject({ position: 1, uri: "https://good.invalid/archive" });
+    },
+  );
+
   it("keeps the position of a valid stanza after undecodable source bytes", () => {
     const declaration = (host: string) =>
       `Types: deb\nURIs: https://${host}/archive\nSuites: stable\nComponents: main\n`;
