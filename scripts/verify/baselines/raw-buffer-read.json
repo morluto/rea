@@ -62,7 +62,6 @@
   "src/domain/python/marshalReader.ts": 4,
   "src/domain/python/pythonBytecodeIdentity.ts": 1,
   "src/domain/riscvIsaDeclaration.ts": 1,
-  "src/domain/uimageFormat.ts": 10,
   "src/domain/unityfsFormat.ts": 5,
   "src/domain/windows/ntfsMft.ts": 19,
   "src/domain/windows/ntfsMftAttributes.ts": 38,
