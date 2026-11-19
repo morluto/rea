@@ -42,6 +42,8 @@ of its payload. Unknown items are not guessed.
 common network relative link names, with Unicode variants when the header
 declares them. ANSI strings use a byte-preserving Latin1 projection; the
 original system ANSI code page is unobserved.
+LinkInfo header sizes `0x1D` through `0x23` make coverage partial. The report
+retains the stored header size, readable ANSI fields, and following sections.
 
 `string_data` reports name, relative path, working directory, command-line
 arguments, and icon location according to `LinkFlags`, each with encoding,

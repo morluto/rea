@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createWindowsShortcutService } from "../../../src/composition/binaryDiagnostics.js";
 import { WindowsShortcutProvider } from "../../../src/native/windows/WindowsShortcutProvider.js";
 import {
+  LINK_FLAG,
   powershellHiddenIconSpoofShortcut,
   windowsShortcutBytes,
 } from "../../fixtures/binaryDiagnostics/windowsShortcut.js";
@@ -202,6 +203,55 @@ describe("Windows shortcut stable filesystem boundary", () => {
     expect(cancelled.error._tag).toBe("AnalysisCancelledError");
   });
 });
+
+it.each([
+  { headerSize: 0x1c, status: "complete" },
+  { headerSize: 0x1d, status: "partial" },
+  { headerSize: 0x1e, status: "partial" },
+  { headerSize: 0x1f, status: "partial" },
+  { headerSize: 0x20, status: "partial" },
+  { headerSize: 0x21, status: "partial" },
+  { headerSize: 0x22, status: "partial" },
+  { headerSize: 0x23, status: "partial" },
+  { headerSize: 0x24, status: "complete" },
+])(
+  "reports LinkInfo header size $headerSize with $status coverage and retains following structures",
+  async ({ headerSize, status }) => {
+    const root = await createTestTempDirectory("rea-shortcut-linkinfo-header-");
+    const path = join(root, "notes.lnk");
+    const bytes = windowsShortcutBytes({
+      flags: LINK_FLAG.HasLinkInfo | LINK_FLAG.HasName,
+      unicode: false,
+      idList: null,
+      linkInfo: {
+        unicode: headerSize !== 0x1c,
+        localBasePath: "C:\\Notes",
+        commonPathSuffix: "report.txt",
+      },
+      name: "Paper record",
+      extraData: [],
+    });
+    // Vary only the declared size so the ANSI path fields retain valid offsets.
+    bytes.writeUInt32LE(headerSize, 76 + 4);
+    await writeFile(path, bytes);
+
+    const result = await createWindowsShortcutService().inspect({ path });
+    if (!result.ok) throw result.error;
+    const malformed = status === "partial";
+    expect(result.value.normalized_result).toMatchObject({
+      link_info: {
+        header_size: headerSize,
+        local_base_path: "C:\\Notes",
+        common_path_suffix: "report.txt",
+        local_base_path_unicode: headerSize === 0x24 ? "C:\\Notes" : null,
+      },
+      string_data: { name: { value: "Paper record" } },
+      extra_data: { terminal_offset: bytes.length - 4 },
+      coverage: { status, failing_offset: malformed ? 80 : null },
+      issues: malformed ? [{ code: "malformed_structure", offset: 80 }] : [],
+    });
+  },
+);
 
 it.each([false, true])(
   "reports an out-of-spec StringData count but retains following fields (Unicode: %s)",
