@@ -1,3 +1,4 @@
+import { nodeCodecResult } from "../kernel/nodeCodecResult.js";
 import type { UefiDecodeFormat } from "./FfsSections.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 import { hostRangeErrorKind } from "../domain/parseFailure.js";
@@ -728,20 +729,17 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     signal.throwIfAborted();
     if (format === "zlib") {
       try {
-        const decoded: unknown = await inflateBounded(payload, {
-          info: true,
-          maxOutputLength: maxOutputBytes,
-        });
-        // Node's callback declarations omit the documented info:true result.
-        const { buffer: bytes, engine } = decoded as {
-          buffer: Buffer;
-          engine: { bytesWritten: number };
-        };
-        if (engine.bytesWritten !== payload.length)
+        const { buffer: bytes, consumedBytes } = nodeCodecResult(
+          await inflateBounded(payload, {
+            info: true,
+            maxOutputLength: maxOutputBytes,
+          }),
+        );
+        if (consumedBytes !== payload.length)
           return {
             ok: false,
             reason: "format",
-            message: `AMD zlib stream used ${engine.bytesWritten} of ${payload.length} declared compressed bytes.`,
+            message: `AMD zlib stream used ${consumedBytes} of ${payload.length} declared compressed bytes.`,
           };
         return {
           ok: true,

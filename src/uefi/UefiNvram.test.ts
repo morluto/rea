@@ -191,3 +191,34 @@ it("reports a truncated successor under an established nested NVAR chain", () =>
   expect(result.coverage).toBe("partial");
   expect(result.limitations.join(" ")).toContain("invalid extent");
 });
+
+it("finds the first active child after an inactive prefix without leaving its container", () => {
+  const inactive = encodeEntry("Inactive", Buffer.alloc(0), 0);
+  inactive.writeUInt8(0x03, 9);
+  const active = encodeEntry("Later", Buffer.from([1]), 0);
+  const outer = encodeEntry(
+    "StdDefaults",
+    Buffer.concat([inactive, active]),
+    0,
+  );
+  const sibling = encodeEntry("Sibling", Buffer.from([2]), 0);
+  const data = Buffer.concat([outer, sibling]);
+
+  const scan = scanAmiNvramStores(data, 16, 1);
+  expect(scan.coverage).toBe("complete");
+  expect(scan.stores).toHaveLength(1);
+  expect(
+    scan.stores[0]?.variables.map(({ name, depth, parentOffset }) => [
+      name,
+      depth,
+      parentOffset,
+    ]),
+  ).toEqual([
+    ["StdDefaults", 0, null],
+    ["Later", 1, 0],
+    ["Sibling", 0, null],
+  ]);
+  const limited = scanAmiNvramStores(data, 16, 0);
+  expect(limited.coverage).toBe("partial");
+  expect(limited.limitations.join(" ")).toContain("max_depth 0");
+});

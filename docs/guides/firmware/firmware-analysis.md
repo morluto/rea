@@ -92,8 +92,9 @@ the candidate list, and entry locations remain unverified declarations. NVAR res
 raw 24-bit record-relative links (with `0xffffff` for terminal links), and
 8-bit attributes. A named record holds either a GUID-table index or an inline
 GUID. Data-only records have neither. Links remain observations and variable
-contents are retained as byte ranges. Framed inactive NVAR records do not
-interrupt an established chain. An incomplete successor makes coverage partial.
+contents are retained as byte ranges. A nested NVAR chain can begin with a
+framed inactive record. The scan continues past framed inactive entries and
+reports partial coverage for incomplete successors.
 
 UEFI operations accept up to 128 MiB per image, with a shared limit of 100,000
 structural records. Artifact inventory applies the same ceiling to volume

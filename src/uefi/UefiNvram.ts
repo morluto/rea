@@ -106,11 +106,14 @@ const readNvarName = (
   return null;
 };
 
+type FramedNvarRecord =
+  | { kind: "inactive" | "malformed"; endOffset: number }
+  | { kind: "active"; entry: ParsedNvramEntry };
+
 type NvarRecord =
   | { kind: "end" }
   | { kind: "invalid-frame" }
-  | { kind: "inactive" | "malformed"; endOffset: number }
-  | { kind: "active"; entry: ParsedNvramEntry };
+  | FramedNvarRecord;
 
 function readNvarRecord(
   reader: BinaryReader,
@@ -190,7 +193,7 @@ function parseActiveRecord(
 /** Walk a confirmed chain without using record bodies to advance its cursor. */
 function collectChain(
   reader: BinaryReader,
-  first: ParsedNvramEntry,
+  first: { offset: number; record: FramedNvarRecord },
   endOffset: number,
   depth: number,
   parentOffset: number | null,
@@ -200,7 +203,7 @@ function collectChain(
   noteOmission: (detail: string) => void,
 ): number {
   let cursor = first.offset;
-  let record: NvarRecord = { kind: "active", entry: first };
+  let record: NvarRecord = first.record;
   while (record.kind !== "end") {
     if (!reserve()) break;
     if (record.kind === "invalid-frame") {
@@ -223,11 +226,12 @@ function collectChain(
     out.push({ ...entry, depth, parentOffset });
     const dataEnd = entry.dataOffset + entry.dataLength;
     const nested = readNvarRecord(reader, entry.dataOffset, dataEnd);
-    if (nested.kind === "active") {
+    // Framing can establish a nested chain even if its first body is unusable.
+    if (nested.kind !== "end" && nested.kind !== "invalid-frame") {
       if (depth < maxDepth) {
         collectChain(
           reader,
-          nested.entry,
+          { offset: entry.dataOffset, record: nested },
           dataEnd,
           depth + 1,
           entry.offset,
@@ -293,7 +297,7 @@ export const scanAmiNvramStores = (
     const variables: AmiNvramVariable[] = [];
     const lastEnd = collectChain(
       reader,
-      first.entry,
+      { offset: firstOffset, record: first },
       image.length,
       0,
       null,

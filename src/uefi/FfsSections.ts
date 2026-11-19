@@ -14,7 +14,7 @@ import {
 
 const GUIDED_PROCESSING_REQUIRED = 0x01;
 const GUIDED_AUTH_STATUS_VALID = 0x02;
-const SIGNED_SECTION_GUID = "f9d89e8-9259-4f76-a5af-0c89e34023df";
+const SIGNED_SECTION_GUID = "0f9d89e8-9259-4f76-a5af-0c89e34023df";
 
 export type UefiDecodeFormat = "lzma" | "lzmaf86" | "zlib";
 

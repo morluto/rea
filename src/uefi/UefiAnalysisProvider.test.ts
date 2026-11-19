@@ -1564,3 +1564,47 @@ it.each([
     }
   },
 );
+
+it("retains a signed guided section as opaque when its processing flag is clear", async () => {
+  const child = buildSection(0x19, Buffer.from("stored data"));
+  const section = buildGuidedSection({
+    definitionGuid: "0f9d89e8-9259-4f76-a5af-0c89e34023df",
+    body: child,
+    attributes: 0,
+  });
+  const file = buildFfsFile({
+    guid: GUID_DRIVER,
+    typeCode: 7,
+    payload: section,
+  });
+  const directory = await createTestTempDirectory("rea-uefi-signed-opaque-");
+  const path = join(directory, "image.fd");
+  await writeFile(path, buildFv({ files: [file] }).buffer);
+  const provider = new UefiAnalysisProvider();
+  try {
+    const inspected = expectOk(await provider.execute(inspectRequest(path)))
+      .value.result as UefiInspectResult;
+    expect(inspected.coverage).toBe("partial");
+    expect(
+      inspected.firmware_volumes[0]?.ffs_files[0]?.sections.map(
+        ({ type_name }) => type_name,
+      ),
+    ).toEqual(["guid-defined"]);
+    const extracted = expectOk(
+      await provider.execute(
+        extractRequest(path, join(directory, "out"), {
+          include_compressed: false,
+        }),
+      ),
+    ).value.result as UefiExtractResult;
+    expect(extracted.files).toEqual([]);
+    expect(extracted.extraction_gaps).toMatchObject([
+      {
+        kind: "unknown-guid-handler",
+        range: { offset: 120, length: child.length },
+      },
+    ]);
+  } finally {
+    await provider.close();
+  }
+});
