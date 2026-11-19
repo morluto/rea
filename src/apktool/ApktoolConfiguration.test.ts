@@ -62,6 +62,12 @@ describe("resolveApktoolCommand", () => {
     await expect(
       resolveApktoolCommand({ [APKTOOL_COMMAND_ENV]: "bin/apktool" }, "linux"),
     ).rejects.toThrow(/must be an absolute path/u);
+    await expect(
+      resolveApktoolCommand(
+        { [APKTOOL_COMMAND_ENV]: "\\tools\\apktool.bat" },
+        "win32",
+      ),
+    ).rejects.toThrow(/must be an absolute path/u);
   });
 });
 

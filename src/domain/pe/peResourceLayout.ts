@@ -1,60 +1,26 @@
 import {
+  PE_RESOURCE_DATA_ENTRY_BYTES,
   PE_RESOURCE_DIRECTORY_BYTES,
   PE_RESOURCE_ENTRY_BYTES,
   PE_RESOURCE_NAME_PREFIX_BYTES,
+  readPeResourceDataEntryFacts,
   readPeResourceDirectoryFacts,
   readPeResourceEntryFacts,
   readPeResourceNameFacts,
 } from "./peResourceTreeFacts.js";
-import { parseMzHeaderEvidence } from "../dosMz.js";
 import { BinaryFormatFailure } from "../binaryContainer.js";
-import { malformedInput, ParseFailureError } from "../parseFailure.js";
-import { readPeCoffHeader } from "../peCoffHeader.js";
-import { readPeSectionHeader } from "../peSectionHeader.js";
+import { ParseFailureError } from "../parseFailure.js";
 import {
-  readPeOptionalHeaderStructure,
-  type PeOptionalHeaderFailure,
-} from "../peOptionalHeader.js";
-
-const PE_RESOURCE_DATA_ENTRY_BYTES = 16;
-
-const OPTIONAL_HEADER_FAILURES: Readonly<
-  Record<PeOptionalHeaderFailure["reason"], string>
-> = {
-  "truncated-magic": "Truncated PE optional header.",
-  "unsupported-magic": "Unsupported PE optional header magic.",
-  "truncated-fixed-fields": "Truncated PE data directory count.",
-  "truncated-directory-table":
-    "PE directory count exceeds its optional header.",
-};
-
-/** The bytes violate the PE structure this parser admits. */
-export const peFailure = (message: string): never => {
-  throw malformedInput("pe", message);
-};
-
-export const requirePeRange = (
-  bytes: Buffer,
-  offset: number,
-  length: number,
-): void => requirePeExtent(bytes.length, offset, length);
-
-const requirePeExtent = (
-  fileSize: number,
-  offset: number,
-  length: number,
-): void => {
-  if (
-    !Number.isSafeInteger(offset) ||
-    !Number.isSafeInteger(length) ||
-    offset < 0 ||
-    length < 0 ||
-    offset > fileSize - length
-  )
-    peFailure(
-      `PE range ${String(offset)} + ${String(length)} leaves the artifact.`,
-    );
-};
+  PE_SECTION_HEADER_BYTES,
+  readPeSectionHeader,
+} from "../peSectionHeader.js";
+import {
+  peFailure,
+  readPeImageHeaders,
+  readPeImageHeadersAt,
+  type PeRangeReader,
+  requirePeExtent,
+} from "./peImageHeaders.js";
 
 interface Section {
   readonly rva: number;
@@ -86,76 +52,13 @@ const intersectsResource = (
   );
 };
 
-/**
- * Shared PE header admission: signature, optional header, data directories,
- * and a section table that fits inside SizeOfHeaders. `bytes` may be a file
- * prefix that holds the header structures; file-space ranges are checked
- * against `fileSize`.
- */
-export const readPeHeaders = (bytes: Buffer, fileSize = bytes.length) => {
-  requirePeRange(bytes, 0, 64);
-  if (bytes.readUInt16LE(0) !== 0x5a4d) peFailure("Expected an MZ PE image.");
-  const evidence = parseMzHeaderEvidence(bytes, fileSize);
-  const observed = evidence.windowsHeader;
-  if (observed.state === "absent" && evidence.dos.ok)
-    throw new BinaryFormatFailure(
-      "unsupported",
-      "DOS MZ images do not contain PE resource or certificate tables",
-    );
-  if (observed.state === "declared" && observed.signature !== "PE")
-    throw new BinaryFormatFailure(
-      "unsupported",
-      `${observed.signature} images do not contain PE resource or certificate tables`,
-    );
-  if (observed.state === "candidate" || observed.state === "signature-needed")
-    requirePeRange(bytes, observed.offset, 24);
-  if (observed.state !== "declared" || observed.signature !== "PE")
-    return peFailure(
-      "MZ header does not declare a PE image in the inspected bytes.",
-    );
-  const pe = observed.offset;
-  requirePeRange(bytes, pe, 24);
-  const coff = readPeCoffHeader(bytes.subarray(pe + 4, pe + 24));
-  if (!coff.ok) return peFailure(coff.error.message);
-  const {
-    sectionCount,
-    optionalHeaderSize: optionalSize,
-    machine,
-  } = coff.value;
-  const optionalHeaderOffset = pe + 24;
-  requirePeRange(bytes, optionalHeaderOffset, optionalSize);
-  if (optionalSize < 64) peFailure("Truncated PE optional header.");
-  const parsed = readPeOptionalHeaderStructure(
-    bytes.subarray(optionalHeaderOffset, optionalHeaderOffset + optionalSize),
-  );
-  if (!parsed.ok)
-    return peFailure(OPTIONAL_HEADER_FAILURES[parsed.error.reason]);
-  const {
-    sizeOfHeaders: headerSize,
-    format,
-    directoryOffset,
-    dataDirectories,
-  } = parsed.value;
-  const table = optionalHeaderOffset + optionalSize;
-  requirePeRange(bytes, table, sectionCount * 40);
-  if (headerSize < table + sectionCount * 40 || headerSize > fileSize)
-    peFailure("Invalid PE SizeOfHeaders.");
-  return {
-    machine,
-    format,
-    sectionCount,
-    optionalHeaderOffset,
-    directoryOffset,
-    dataDirectories,
-    headerSize,
-    table,
-  };
-};
-
 /** Header admission and unambiguous file-backed RVA mapping, independent of section names. */
-export const readPeResourceLayout = (
-  bytes: Buffer,
-  fileSize = bytes.length,
+export const readPeResourceLayout = (bytes: Buffer) =>
+  mapPeResourceLayout(readPeImageHeaders(bytes), bytes.length);
+
+const mapPeResourceLayout = (
+  headers: ReturnType<typeof readPeImageHeaders>,
+  fileSize: number,
 ) => {
   const {
     machine,
@@ -165,12 +68,14 @@ export const readPeResourceLayout = (
     directoryOffset,
     dataDirectories,
     headerSize,
-    table,
-  } = readPeHeaders(bytes, fileSize);
+    sectionTable,
+  } = headers;
   const sections: Section[] = [];
   for (let index = 0; index < sectionCount; index++) {
-    const at = table + index * 40;
-    const parsed = readPeSectionHeader(bytes.subarray(at, at + 40));
+    const at = index * PE_SECTION_HEADER_BYTES;
+    const parsed = readPeSectionHeader(
+      sectionTable.subarray(at, at + PE_SECTION_HEADER_BYTES),
+    );
     if (!parsed.ok) return peFailure(parsed.error.message);
     const row = parsed.value;
     const section = {
@@ -271,11 +176,6 @@ export interface PeResourcePayloadRange {
   readonly bytes: number;
 }
 
-type PeResourceRead = (
-  offset: number,
-  length: number,
-) => Promise<Buffer | undefined>;
-
 /** Budgeted reads relative to one admitted resource root. */
 class PeResourceTree {
   #examined = 0;
@@ -283,7 +183,7 @@ class PeResourceTree {
   constructor(
     readonly layout: ReturnType<typeof readPeResourceLayout>,
     private readonly root: number,
-    private readonly read: PeResourceRead,
+    private readonly read: PeRangeReader,
     private readonly maxEntries: number,
   ) {}
 
@@ -306,14 +206,15 @@ class PeResourceTree {
   }
 }
 
-const openPeResourceTree = (
-  headers: Buffer,
+const openPeResourceTree = async (
+  prefix: Buffer,
   fileSize: number,
-  read: PeResourceRead,
+  read: PeRangeReader,
   maxEntries: number,
-): PeResourceTree | undefined => {
+): Promise<PeResourceTree | undefined> => {
   try {
-    const layout = readPeResourceLayout(headers, fileSize);
+    const headers = await readPeImageHeadersAt(prefix, fileSize, read);
+    const layout = mapPeResourceLayout(headers, fileSize);
     if (layout.size < PE_RESOURCE_DIRECTORY_BYTES) return undefined;
     return new PeResourceTree(
       layout,
@@ -392,19 +293,19 @@ async function* namedResourceTargets(
 
 /**
  * Bounded admission probe: whether the root type directory holds a `typeId`
- * subdirectory naming `name`. Reads only the header prefix and the
+ * subdirectory naming `name`. Reads only the header records and the
  * directories on that path; an unadmitted layout or malformed tree reports
  * false so callers can leave full resource parsing to confirmed carriers.
  */
 export const hasPeResourceName = async (
-  headers: Buffer,
+  prefix: Buffer,
   fileSize: number,
-  read: PeResourceRead,
+  read: PeRangeReader,
   typeId: number,
   name: string,
   maxEntries: number,
 ): Promise<boolean> => {
-  const tree = openPeResourceTree(headers, fileSize, read, maxEntries);
+  const tree = await openPeResourceTree(prefix, fileSize, read, maxEntries);
   if (tree === undefined) return false;
   const first = await namedResourceTargets(tree, typeId, name, {
     unresolved: false,
@@ -420,14 +321,14 @@ export const hasPeResourceName = async (
  * failure, as is any `typeId` branch the walk could not examine.
  */
 export const locatePeResourcePayloads = async (
-  headers: Buffer,
+  prefix: Buffer,
   fileSize: number,
-  read: PeResourceRead,
+  read: PeRangeReader,
   typeId: number,
   name: string,
   maxEntries: number,
 ): Promise<readonly PeResourcePayloadRange[]> => {
-  const tree = openPeResourceTree(headers, fileSize, read, maxEntries);
+  const tree = await openPeResourceTree(prefix, fileSize, read, maxEntries);
   if (tree === undefined) return [];
   const found: PeResourcePayloadRange[] = [];
   const walk: NamedResourceWalk = { unresolved: false };
@@ -451,11 +352,8 @@ export const locatePeResourcePayloads = async (
       );
       if (data === undefined)
         return peFailure(`PE ${name} resource data entry is truncated.`);
-      const bytes = data.readUInt32LE(4);
-      found.push({
-        offset: tree.layout.map(data.readUInt32LE(0), bytes),
-        bytes,
-      });
+      const { rva, size } = readPeResourceDataEntryFacts(data);
+      found.push({ offset: tree.layout.map(rva, size), bytes: size });
     }
     if (found.length === before)
       return peFailure(`PE ${name} resource has no data entry.`);

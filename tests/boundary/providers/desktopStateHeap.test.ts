@@ -9,11 +9,11 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const ROOT = join(import.meta.dirname, "../../..");
 
-/** What a script using one export of a desktop state module prints, run in a 32 MiB V8 old space. */
+/** What a script using one export of a domain module prints, run in a 32 MiB V8 old space. */
 const inSmallHeap = async (module: string, name: string, body: string) => {
   const folder = await createTestTempDirectory("desktop-state-heap-");
   const script = join(folder, "run.mjs");
-  const url = pathToFileURL(join(ROOT, "src/domain/desktop", module)).href;
+  const url = pathToFileURL(join(ROOT, "src/domain", module)).href;
   await writeFile(
     script,
     `import { ${name} } from ${JSON.stringify(url)};\n${body}`,
@@ -38,12 +38,16 @@ it(
   async () => {
     // Queuing a pair per member needed more than 64 MiB here; one iterator per level runs in 18 MiB.
     const depths = await inSmallHeap(
-      "stateFormats.ts",
-      "deeperThan",
+      "jsonValue.ts",
+      "jsonValueExceedsDepth",
       `const wide = new Array(800_000).fill(null);
 let nested = [];
 for (let level = 0; level < 501; level += 1) nested = [nested];
-console.log(JSON.stringify({ wide: deeperThan(wide, 500), edge: deeperThan(nested, 501), over: deeperThan(nested, 500) }));
+console.log(JSON.stringify({
+  wide: jsonValueExceedsDepth(wide, 500),
+  edge: jsonValueExceedsDepth(nested, 501),
+  over: jsonValueExceedsDepth(nested, 500),
+}));
 `,
     );
 
@@ -57,7 +61,7 @@ it(
   async () => {
     // Spelling the tag into a selector per attribute needed more than 140 MiB here.
     const pairing = await inSmallHeap(
-      "memberPairing.ts",
+      "desktop/memberPairing.ts",
       "pairMembers",
       `const tag = "t".repeat(40_000);
 const element = (id) => {
@@ -85,7 +89,7 @@ it(
   async () => {
     // Parsing the entry to detect its format needed more than 80 MiB here.
     const entries = await inSmallHeap(
-      "zipView.ts",
+      "desktop/zipView.ts",
       "zipEntry",
       `const read = (name, text) => {
   const bytes = new TextEncoder().encode(text);
@@ -112,7 +116,7 @@ it(
   async () => {
     // Building the XML document to choose the scrubber needed more than 768 MiB here, and parsing the JSON more than 64 MiB; the syntax checks and copying only changes run in 24 MiB.
     const outcomes = await inSmallHeap(
-      "seedScrub.ts",
+      "desktop/seedScrub.ts",
       "scrubSeed",
       `const scrub = (home, text, tail, clean) => {
   const seed = Buffer.from("\\uFEFF" + text + tail, "utf16le");
@@ -140,7 +144,7 @@ it(
   async () => {
     // An index per field set or spelling needed more than 48 MiB for either comparison here.
     const removed = await inSmallHeap(
-      "stateChanges.ts",
+      "desktop/stateChanges.ts",
       "diffStateViews",
       `const fields = ["f0", "f1", "f2", "f3", "f4", "f5", "f6"];
 const members = Array.from({ length: 5000 }, (_, i) => Object.fromEntries(fields.map((f) => [f, f + "-" + i])));

@@ -123,6 +123,9 @@ export const PROVIDER_CAPABILITY_CONFORMANCE: Readonly<
   managedWorkflow: {
     cases: ["tests/boundary/mcp/managedWorkflowUnknownIdentityMcp.test.ts"],
   },
+  mavenGradleMetadata: {
+    cases: ["tests/acceptance/mavenGradleMetadataCli.test.ts"],
+  },
   modelArtifact: { cases: ["tests/acceptance/modelArtifactCli.test.ts"] },
   nativeExports: {
     cases: [
@@ -141,6 +144,7 @@ export const PROVIDER_CAPABILITY_CONFORMANCE: Readonly<
   peImports: { cases: ["tests/acceptance/peImportsCli.test.ts"] },
   peLoadConfig: { cases: ["tests/acceptance/peLoadConfigCli.test.ts"] },
   peResources: { cases: ["tests/acceptance/applications/peResources.test.ts"] },
+  nugetNupkg: { cases: ["tests/acceptance/nugetNupkgCli.test.ts"] },
   pythonPyc: { cases: ["tests/acceptance/pythonPycCli.test.ts"] },
   recordedCrash: { cases: ["tests/boundary/mcp/recordedCrashMcp.test.ts"] },
   releaseExposure: { cases: ["tests/acceptance/releaseExposureCli.test.ts"] },

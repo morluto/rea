@@ -60,7 +60,7 @@ import {
 import { waitFor } from "../../../support/testWait.js";
 
 const PROFILE_DIGEST = "a".repeat(64);
-const PROVIDER_VERSION = "12.1.4";
+const PROVIDER_VERSION = "12.2";
 const TARGET_SHA256 = createHash("sha256")
   .update(readFileSync(fixturePath))
   .digest("hex");
@@ -262,7 +262,7 @@ it.each(["descriptor-close", "result-consumption"] as const)(
     const caller = new AbortController();
     const reason = { caller: phase };
     const config = parseConfig({
-      GHIDRA_INSTALL_DIR: "/controlled/ghidra_12.1.4_PUBLIC",
+      GHIDRA_INSTALL_DIR: "/controlled/ghidra_12.2_PUBLIC",
     });
     if (!config.ok) throw config.error;
     const provider = new GhidraProvider(
@@ -272,15 +272,15 @@ it.each(["descriptor-close", "result-consumption"] as const)(
       {
         platform: "linux",
         architecture: "x64",
-        readText: () => "application.version=12.1.4\napplication.java.min=21\n",
+        readText: () => "application.version=12.2\napplication.java.min=25\n",
         executable: () => true,
         probeJava: () =>
           ok({
             osArch: "amd64",
             osName: "Linux",
-            version: "21.0.11",
-            major: 21,
-            home: "/controlled/jdk21",
+            version: "25.0.1",
+            major: 25,
+            home: "/controlled/jdk-25",
             bits: 64,
             runtime: "jdk",
           }),

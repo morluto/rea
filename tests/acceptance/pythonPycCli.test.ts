@@ -11,10 +11,37 @@ import {
 } from "../../src/python/PythonPyc.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { pythonPycEqualityGolden } from "../fixtures/python-pyc-equality/golden.js";
 
 const completePycEvidenceSchema = toolContract(
   "inspect_python_pyc",
 ).outputSchema.safeExtend({ normalized_result: pythonPycSchema });
+
+cliTest(
+  "preserves CPython code-member identity in public Evidence",
+  async ({ cli }) => {
+    const golden = pythonPycEqualityGolden;
+    const directory = await createTestTempDirectory("rea-pyc-code-equality-");
+    const path = join(directory, "equality.pyc");
+    await writeFile(path, Buffer.from(golden.pyc_base64, "base64"));
+    const result = await cli.run({
+      arguments: ["inspect-python-pyc", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const report = completePycEvidenceSchema.parse(
+      result.json,
+    ).normalized_result;
+    expect(report.artifact).toMatchObject({ path, sha256: golden.sha256 });
+    expect(report.code_objects[0]?.consts).toEqual(
+      golden.cases.map((sample) => ({
+        kind: "frozenset",
+        length: sample.members,
+      })),
+    );
+    expect(report.code_objects).toHaveLength(golden.code_objects);
+    expect(report.coverage.status).toBe("complete");
+  },
+);
 
 const marshalUtf8 = (bytes: Buffer): Buffer => {
   const length = Buffer.alloc(4);
@@ -981,5 +1008,59 @@ cliTest(
     expect(
       completePycEvidenceSchema.parse(mcp.structuredContent).normalized_result,
     ).toEqual(report);
+  },
+);
+
+cliTest(
+  "reports the pyc parser allowance that stopped inspection",
+  async ({ cli }) => {
+    const directory = await createTestTempDirectory("rea-pyc-parser-budget-");
+    const path = join(directory, "limits.pyc");
+    const name = Buffer.alloc(1000, 0x61);
+    const size = Buffer.alloc(4);
+    size.writeUInt32LE(name.length);
+    const namesObject = Buffer.concat([
+      Buffer.from([0x29, 101, 0x61 | 0x80]),
+      size,
+      name,
+      ...Array.from({ length: 100 }, () => Buffer.from([0x72, 0, 0, 0, 0])),
+    ]);
+    const bytes = Buffer.concat([
+      pythonPycHeader(3531),
+      marshalCode("py311", { namesObject }),
+    ]);
+    await writeFile(path, bytes);
+
+    for (const [flag, field, boundary, maximum, resource] of [
+      ["--max-depth", "max_depth", "max_depth", 1, "capacity"],
+      [
+        "--max-file-bytes",
+        "max_file_bytes",
+        "reported_string_bytes",
+        bytes.length,
+        "memory",
+      ],
+    ] as const) {
+      const result = await cli.run({
+        arguments: [
+          "inspect-python-pyc",
+          path,
+          flag,
+          String(maximum),
+          "--json",
+        ],
+      });
+      expect(result.exitCode).toBe(1);
+      expect.soft(result.json, flag).toMatchObject({
+        code: "resource_constraint",
+        retryable: false,
+        details: { resource, reported_limits: { boundary, maximum } },
+        remediation: {
+          action: expect.stringContaining(
+            `Raise ${field} (${flag}) above ${maximum}`,
+          ),
+        },
+      });
+    }
   },
 );
