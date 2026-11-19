@@ -145,6 +145,7 @@ import {
   type ParsedPlist,
 } from "./parsers/plist.js";
 import { XmlPlistTextDecodeError } from "../domain/propertyListXmlText.js";
+import { ParseFailureError } from "../domain/parseFailure.js";
 import {
   architectureLocations,
   inspectNativeMacho,
@@ -1289,6 +1290,14 @@ class NativeMacOSClient implements AnalysisClient {
         parsed.error.reason === "unsupported-encoding"
       )
         return undefined;
+      const refusal = parsed.ok ? undefined : xmlSyntaxRefusal(parsed.error);
+      if (refusal !== undefined)
+        return await this.#inspectConvertedPlist(
+          fileInput,
+          classified,
+          format,
+          refusal,
+        );
     } else {
       const json = readPlistJsonSource(source.value);
       if (
@@ -1325,6 +1334,7 @@ class NativeMacOSClient implements AnalysisClient {
     fileInput: NativePlistReadContext,
     classified: NativeCommandCapture,
     format: z.infer<typeof inspectPlistSchema>["format"],
+    sourceRefusal?: string,
   ): Promise<Result<NativeObservation, AnalysisError>> {
     const { path } = fileInput.selection;
     const { signal, timeoutMs } = fileInput;
@@ -1374,7 +1384,16 @@ class NativeMacOSClient implements AnalysisClient {
     ].map((item) => invocation(item, path, "$PLIST"));
     return ok(
       nativePlistObservation({
-        parsed: parsed.value,
+        parsed:
+          sourceRefusal === undefined
+            ? parsed.value
+            : {
+                ...parsed.value,
+                limitations: [
+                  `REA's XML reader refused the source (${sourceRefusal}), but plutil read it, so the value comes from plutil's conversion rather than the original text.`,
+                  ...parsed.value.limitations,
+                ],
+              },
         format,
         path,
         resourceRoot: this.bundleResourceRoot,
@@ -2242,6 +2261,20 @@ const nativePlistDecodeFailure = (
       },
     },
   );
+};
+
+/**
+ * The reason REA's XML reader refused a plist's syntax. CoreFoundation accepts
+ * some documents that strict XML rejects (#12234), so plutil decides those.
+ * Plist structure errors and refused document types are not syntax refusals.
+ */
+const xmlSyntaxRefusal = (error: unknown): string | undefined => {
+  const cause = error instanceof AnalysisOutputError ? error.cause : undefined;
+  return cause instanceof ParseFailureError &&
+    cause.failure.format === "xml" &&
+    cause.kind === "malformed"
+    ? cause.message
+    : undefined;
 };
 
 const plutilDiagnostic = (
