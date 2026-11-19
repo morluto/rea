@@ -70,7 +70,6 @@ export const semanticArrayPatternCloseSelection = (
   state: JavaScriptSemanticAnalysisState,
 ): JavaScriptSemanticPropertySelection | undefined => {
   if (
-    t.isRestElement(pattern.elements.at(-1)) ||
     !arrayIteratorReturnPaths.some((path) =>
       ambientPathMayObserveAt(state, pattern, path, "contents"),
     )
@@ -78,21 +77,38 @@ export const semanticArrayPatternCloseSelection = (
     return undefined;
   const declaration =
     owner === undefined ? undefined : state.parentsByNode.get(owner);
+  const last = pattern.elements.at(-1);
+  const hasRest = t.isRestElement(last);
   let consumed = 0;
   if (
     t.isVariableDeclarator(owner) &&
     t.isVariableDeclaration(declaration) &&
     (declaration.kind === "const" || declaration.kind === "let")
   ) {
-    for (const element of pattern.elements) {
-      const slot = array.items[consumed];
+    for (const [index, element] of pattern.elements.entries()) {
+      // A lexical rest drains the iterator only after earlier pattern work
+      // reaches it. A preceding default or nested binding can throw first.
+      if (hasRest && element === last) return undefined;
+      const slot = array.items[index];
+      const ownSlot =
+        consumed === index &&
+        slot?.name === String(index) &&
+        slot.presence === "present";
       if (
-        (element !== null && !t.isIdentifier(element)) ||
-        slot?.name !== String(consumed) ||
-        slot.presence !== "present"
+        element !== null &&
+        !t.isIdentifier(element) &&
+        !(
+          hasRest &&
+          owner.id === pattern &&
+          ownSlot &&
+          t.isAssignmentPattern(element) &&
+          t.isIdentifier(element.left) &&
+          semanticValueDefinitelyDefined(slot.value)
+        )
       )
         break;
-      consumed += 1;
+      if (ownSlot) consumed += 1;
+      else if (!hasRest) break;
     }
   }
   // The literal suffix can be empty while the iterator still has references

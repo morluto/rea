@@ -1419,3 +1419,68 @@ it("keeps consumed objects uncertain when an earlier default also stores them in
     ),
   ).toMatchObject({ resolution: "candidate" });
 });
+
+it.each([
+  [
+    "throwing default",
+    "undefined,",
+    "const [first = null.value, ...rest] = items;",
+    "1",
+    "candidate",
+  ],
+  [
+    "plain lexical prefix",
+    "undefined,",
+    "const [first, ...rest] = items;",
+    "1",
+    "resolved",
+  ],
+  [
+    "known unused default",
+    "0,",
+    "const [first = null.value, ...rest] = items;",
+    "1",
+    "resolved",
+  ],
+  [
+    "nested target that throws",
+    "null,",
+    "const [{first}, ...rest] = items;",
+    "1",
+    "candidate",
+  ],
+  [
+    "immutable assignment target",
+    "0,",
+    "const first = 0; let rest; [first, ...rest] = items;",
+    "1",
+    "candidate",
+  ],
+  [
+    "computed rest target that throws before draining",
+    "",
+    "const target = {}; [...target[null.value]] = items;",
+    "0",
+    "candidate",
+  ],
+] as const)(
+  "models a native close before rest for %s",
+  (_name, prefix, pattern, key, resolution) => {
+    const graph = graphForJavaScript(`
+    const items=[${prefix}{mode:"before"}];
+    Object.getPrototypeOf([].values()).return = ${closeHandler};
+    try { ${pattern} } catch {}
+    const {${key}:{mode:selected}}=items;
+  `);
+    const selected = graph.nodes.find(
+      (n) => n.kind === "binding" && n.label === "selected",
+    );
+    expect(
+      graph.relations.find(
+        (r) =>
+          r.relation === "destructures" &&
+          r.target_node_id === selected?.node_id,
+      ),
+    ).toMatchObject({ resolution });
+  },
+);
