@@ -462,3 +462,31 @@ it("runs only a shard the plan defines", async () => {
     stderr: expect.stringContaining("already sharded"),
   });
 });
+
+it.each([
+  ["-t", "one case"],
+  ["--testNamePattern=one case"],
+  ["--test-name-pattern", "one case"],
+])("rejects a test-name filter in a selected shard: %j", async (...filter) => {
+  const group = fileURLToPath(
+    new URL("../../scripts/ci/test-group.mjs", import.meta.url),
+  );
+  await expect(
+    execute(process.execPath, [group, "selected", "1/1", ...filter], {
+      env: {
+        ...process.env,
+        CI_TEST_SELECTION: JSON.stringify({
+          version: 3,
+          mode: "selected",
+          reason: "Affected tests: 1 changed",
+          files: ["src/a.test.ts"],
+          shards: 1,
+        }),
+      },
+    }),
+  ).rejects.toMatchObject({
+    stderr: expect.stringContaining(
+      "Selected test groups cannot filter cases by name",
+    ),
+  });
+});
