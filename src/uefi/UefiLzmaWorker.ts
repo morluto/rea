@@ -109,7 +109,20 @@ const main = async (): Promise<void> => {
       );
     }
     const output = new BoundedLzmaOutput(request.max_output_bytes);
-    lzma.decompressFile(payload, output);
+    let position = 0;
+    lzma.decompressFile(
+      {
+        readByte() {
+          if (position === payload.length)
+            throw truncatedInput(
+              "LZMA-Alone",
+              "Compressed stream ends before the decoder can finish.",
+            );
+          return reader.u8(position++);
+        },
+      },
+      output,
+    );
     const decoded = output.getBuffer();
     if (declaredOutput !== null && BigInt(decoded.length) !== declaredOutput) {
       throw malformedInput(

@@ -23,6 +23,7 @@ import {
   buildImage,
   buildLzmaGuidedSection,
   buildSection,
+  guidBytes,
 } from "../../tests/fixtures/uefiImage.js";
 import { UefiAnalysisProvider } from "./UefiAnalysisProvider.js";
 import {
@@ -149,7 +150,8 @@ it("maps a flash image into an inspect execution with volume and section coverag
   expect(result.firmware_volumes).toHaveLength(1);
   const volume0 = result.firmware_volumes[0];
   expect(volume0?.ffs_files.map((file) => file.type_name)).toContain("driver");
-  expect(result.coverage).toBe("complete");
+  expect(result.coverage).toBe("partial");
+  expect(result.limitations.join(" ")).toContain("unknown-guid");
   expect(executed.value.subject?.sha256).toBe(sha256(image));
   await provider.close();
 });
@@ -363,8 +365,8 @@ it.skipIf(!lzmaWorkerAvailable)(
   45_000,
 );
 
-const amdZlibSection = (content: Buffer): Buffer => {
-  const stream = deflateSync(content);
+const amdZlibSection = (content: Buffer, suffix = Buffer.alloc(0)): Buffer => {
+  const stream = Buffer.concat([deflateSync(content), suffix]);
   const amdHeader = Buffer.alloc(AMD_ZLIB_HEADER_LENGTH);
   amdHeader.writeUInt32LE(stream.length, 0x14);
   return buildGuidedSection({
@@ -1307,5 +1309,258 @@ it.skipIf(!lzmaWorkerAvailable)(
       buildLzmaGuidedSection(header),
       distUefiLzmaWorker,
     );
+  },
+);
+
+it("extracts directly readable guided children regardless of a compression passthrough choice", async () => {
+  const child = buildSection(0x19, MODULE_A);
+  const crc = buildGuidedSection({
+    definitionGuid: "fc1bcdb0-7d31-49aa-936a-a4600d9dd083",
+    body: child,
+    dataOffset: 28,
+    attributes: 2,
+  });
+  const ordinary = buildGuidedSection({
+    definitionGuid: GUID_GUIDED,
+    body: child,
+  });
+  const file = buildFfsFile({
+    guid: GUID_DRIVER,
+    typeCode: 7,
+    payload: Buffer.concat([crc, ordinary]),
+  });
+  const directory = await createTestTempDirectory("rea-uefi-guided-stored-");
+  const path = join(directory, "image.fd");
+  await writeFile(path, buildFv({ files: [file] }).buffer);
+  const provider = new UefiAnalysisProvider();
+  try {
+    const inspected = expectOk(await provider.execute(inspectRequest(path)))
+      .value.result as UefiInspectResult;
+    expect(inspected.coverage).toBe("complete");
+    expect(
+      inspected.firmware_volumes[0]?.ffs_files[0]?.sections.map(
+        ({ type_name, compression }) => [type_name, compression.kind],
+      ),
+    ).toEqual([
+      ["guid-defined", "crc32-guided"],
+      ["raw", "none"],
+      ["guid-defined", "unknown-guid"],
+      ["raw", "none"],
+    ]);
+    const result = expectOk(
+      await provider.execute(
+        extractRequest(path, join(directory, "out"), {
+          include_compressed: false,
+        }),
+      ),
+    ).value.result as UefiExtractResult;
+    expect(result.extraction_gaps).toEqual([]);
+    expect(result.files).toMatchObject([
+      { source: "raw-section", sha256: sha256(MODULE_A) },
+      { source: "raw-section", sha256: sha256(MODULE_A) },
+    ]);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("publishes typed leaf payloads without their headers and scopes nonzero alignment bytes", async () => {
+  const guid = guidBytes(GUID_GUIDED);
+  const freeformPayload = Buffer.from([0x61]);
+  const versionPayload = Buffer.from("v\0", "utf16le");
+  const freeform = buildSection(0x18, Buffer.concat([guid, freeformPayload]));
+  freeform.fill(0x77, 21);
+  const version = buildSection(
+    0x14,
+    Buffer.concat([Buffer.from([0x34, 0x12]), versionPayload]),
+  );
+  const file = buildFfsFile({
+    guid: GUID_DRIVER,
+    typeCode: 7,
+    payload: Buffer.concat([freeform, version]),
+  });
+  const fv = buildFv({ files: [file] });
+  const directory = await createTestTempDirectory("rea-uefi-leaf-header-");
+  const path = join(directory, "image.fd");
+  await writeFile(path, fv.buffer);
+  const provider = new UefiAnalysisProvider();
+  try {
+    const inspected = expectOk(await provider.execute(inspectRequest(path)))
+      .value.result as UefiInspectResult;
+    expect(inspected.firmware_volumes[0]?.ffs_files[0]?.sections).toMatchObject(
+      [
+        { type_name: "freeform-subtype-guid", header_length: 20 },
+        { type_name: "version", header_length: 6 },
+      ],
+    );
+    const result = expectOk(
+      await provider.execute(extractRequest(path, join(directory, "out"))),
+    ).value.result as UefiExtractResult;
+    expect(result.files).toMatchObject([
+      {
+        source_range: { offset: 116, length: 1 },
+        sha256: sha256(freeformPayload),
+      },
+      {
+        source_range: { offset: 126, length: 4 },
+        sha256: sha256(versionPayload),
+      },
+    ]);
+    expect(result.extraction_gaps).toMatchObject([
+      { kind: "unparsed-region", range: { offset: 117, length: 3 } },
+    ]);
+  } finally {
+    await provider.close();
+  }
+});
+
+it.each([
+  {
+    name: "empty carrier",
+    section: buildGuidedSection({
+      definitionGuid: GUID_AMD_ZLIB,
+      body: Buffer.alloc(0),
+    }),
+    message: "Empty zlib carrier",
+  },
+  {
+    name: "unconsumed suffix",
+    section: amdZlibSection(
+      buildSection(0x19, MODULE_A),
+      Buffer.from("ordinary trailing bytes"),
+    ),
+    message: "declared compressed bytes",
+  },
+])(
+  "reports partial inspection and extraction for a supported codec with $name",
+  async ({ section, message }) => {
+    const file = buildFfsFile({
+      guid: GUID_DRIVER,
+      typeCode: 7,
+      payload: section,
+    });
+    const directory = await createTestTempDirectory("rea-uefi-codec-input-");
+    const path = join(directory, "image.fd");
+    await writeFile(path, buildFv({ files: [file] }).buffer);
+    const provider = new UefiAnalysisProvider();
+    try {
+      const inspected = expectOk(await provider.execute(inspectRequest(path)))
+        .value.result as UefiInspectResult;
+      expect(inspected.coverage).toBe("partial");
+      expect(inspected.limitations.join(" ")).toContain(message);
+      const result = expectOk(
+        await provider.execute(
+          extractRequest(path, join(directory, "out"), {
+            include_compressed: false,
+          }),
+        ),
+      ).value.result as UefiExtractResult;
+      expect(result.derivations).toEqual([]);
+      expect(result.files).toEqual([]);
+      expect(result.extraction_gaps).toMatchObject([
+        { kind: "unparsed-region", detail: expect.stringContaining(message) },
+      ]);
+    } finally {
+      await provider.close();
+    }
+  },
+);
+
+it.each(["standalone", "pad-file"] as const)(
+  "walks FFS after a %s FV extension and preserves a sibling after an invalid header",
+  async (extendedHeader) => {
+    const invalid = buildFfsFile({
+      guid: GUID_DRIVER,
+      typeCode: 1,
+      payload: Buffer.alloc(104),
+    }).subarray(0, 24);
+    invalid[23] = 0x1f; // Effective HEADER_INVALID with erase polarity one.
+    const sibling = buildFfsFile({
+      guid: GUID_RAW,
+      typeCode: 1,
+      payload: RAW_BODY,
+    });
+    const fv = buildFv({ files: [invalid, sibling], extendedHeader });
+    const invalidOffset = extendedHeader === "standalone" ? 104 : 128;
+    const directory = await createTestTempDirectory(
+      "rea-uefi-ffs-after-metadata-",
+    );
+    const path = join(directory, "image.fd");
+    await writeFile(path, fv.buffer);
+    const provider = new UefiAnalysisProvider();
+    try {
+      const inspected = expectOk(await provider.execute(inspectRequest(path)))
+        .value.result as UefiInspectResult;
+      const files = inspected.firmware_volumes[0]?.ffs_files;
+      expect(
+        files?.map(({ type_name, offset, length }) => [
+          type_name,
+          offset,
+          length,
+        ]),
+      ).toEqual([
+        ...(extendedHeader === "pad-file" ? [["pad", 72, 52]] : []),
+        ["raw", invalidOffset, 24],
+        ["raw", invalidOffset + 24, sibling.length],
+      ]);
+      const result = expectOk(
+        await provider.execute(extractRequest(path, join(directory, "out"))),
+      ).value.result as UefiExtractResult;
+      expect(result.files).toMatchObject([
+        {
+          sha256: sha256(RAW_BODY),
+          source_range: { offset: invalidOffset + 48, length: RAW_BODY.length },
+        },
+      ]);
+      expect(
+        result.extraction_gaps.filter(({ kind }) => kind !== "pad-file"),
+      ).toMatchObject([
+        {
+          kind: "unparsed-region",
+          range: { offset: invalidOffset, length: 24 },
+        },
+      ]);
+    } finally {
+      await provider.close();
+    }
+  },
+);
+
+it.each([
+  { checksum: 0, entryBasis: "scanned" },
+  { checksum: 0x000c0001, entryBasis: "amd-psp-first" },
+])(
+  "uses a PSP directory for image provenance only after verifying its checksum ($entryBasis)",
+  async ({ checksum, entryBasis }) => {
+    const prefix = Buffer.alloc(0x1000, 0);
+    prefix.write("$PL2", 0, "ascii");
+    prefix.writeUInt32LE(checksum, 4);
+    prefix.writeUInt32LE(1, 8);
+    const directory = await createTestTempDirectory("rea-uefi-psp-basis-");
+    const path = join(directory, "image.fd");
+    await writeFile(
+      path,
+      Buffer.concat([prefix, buildFv({ files: [] }).buffer]),
+    );
+    const provider = new UefiAnalysisProvider();
+    try {
+      const result = expectOk(await provider.execute(inspectRequest(path)))
+        .value.result as UefiInspectResult;
+      expect(result.flash_image.entry_basis).toBe(entryBasis);
+      expect(result.firmware_volumes[0]?.offset).toBe(prefix.length);
+      if (checksum === 0)
+        expect(result.psp_candidates).toMatchObject([
+          { reason: "checksum-mismatch" },
+        ]);
+      else
+        expect(result.psp_tables).toMatchObject([
+          {
+            table_magic: "$PL2",
+            entries: [{ location_basis: "declared-unverified" }],
+          },
+        ]);
+    } finally {
+      await provider.close();
+    }
   },
 );

@@ -1,4 +1,6 @@
 import type { FileHandle } from "node:fs/promises";
+import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
+import { claimsExecutableHeader } from "../domain/binaryTarget.js";
 import { cancelledBy } from "../domain/analysisErrorCore.js";
 import { imageRegion, type ScanRegion } from "./UefiBytes.js";
 import { scanFirmwareVolumes } from "./FirmwareVolume.js";
@@ -11,14 +13,19 @@ const PROBE_CANDIDATE_BUDGET = 64;
 const VOLUME_ALIGNMENT_BYTES = 16;
 
 /**
- * Admit one volume whose header passes the full WP-B plausibility rules
+ * Admit one volume whose header passes the full header plausibility checks
  * (checksum, block-map terminator, mapped extent) and declares the FFS2
  * or FFS3 file system. Rejected signature hits stay inconclusive so plain
  * bytes containing `_FVH` cannot claim the format.
  */
-export function admitUefiFlashImage(buffer: Buffer): boolean {
+export function admitUefiFlashImage(
+  buffer: Buffer,
+  signatureEnd = buffer.length,
+): boolean {
   const region: ScanRegion = imageRegion(buffer, 0, buffer.length);
-  const scan = scanFirmwareVolumes(region, PROBE_CANDIDATE_BUDGET);
+  const scan = scanFirmwareVolumes(region, PROBE_CANDIDATE_BUDGET, {
+    signatureEnd,
+  });
   return scan.volumes.some(
     ({ header }) =>
       header.checksumValid &&
@@ -42,31 +49,23 @@ export async function probeUefiFlashImage(
     if (signal?.aborted === true)
       throw cancelledBy("resolve_binary_target", signal);
   };
+  throwIfCancelled();
   const { size } = await handle.stat();
-  const window = Buffer.allocUnsafe(
+  const prefix = await readFileHandleRange(
+    handle,
+    0,
     Math.min(UEFI_FIRMWARE_LIMITS.scanProbeBytes, size),
+    throwIfCancelled,
   );
-  const observed = await handle.read(window, 0, window.length, 0);
-  if (
-    !window
-      .subarray(0, observed.bytesRead)
-      .includes(Buffer.from("_FVH", "ascii"))
-  )
+  throwIfCancelled();
+  if (claimsExecutableHeader(prefix, size) || !prefix.includes("_FVH", "ascii"))
     return false;
-  const admitted = Buffer.allocUnsafe(
-    Math.min(UEFI_FIRMWARE_LIMITS.inputBytes, size),
-  );
-  let bytesRead = 0;
-  while (bytesRead < admitted.length) {
-    throwIfCancelled();
-    const read = await handle.read(
-      admitted,
-      bytesRead,
-      admitted.length - bytesRead,
-      bytesRead,
-    );
-    if (read.bytesRead === 0) break;
-    bytesRead += read.bytesRead;
-  }
-  return admitUefiFlashImage(admitted.subarray(0, bytesRead));
+
+  const readLimit = Math.min(UEFI_FIRMWARE_LIMITS.inputBytes, size);
+  const observed =
+    readLimit <= prefix.length
+      ? prefix
+      : await readFileHandleRange(handle, 0, readLimit, throwIfCancelled);
+  throwIfCancelled();
+  return admitUefiFlashImage(observed, prefix.length);
 }

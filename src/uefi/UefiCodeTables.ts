@@ -64,7 +64,7 @@ export const COMPRESSION_GUID_BY_DISPLAY: Readonly<
   "d42ae6bd-1352-4bfb-909a-ca72a6eae889": "lzmaf86",
   "ce3233f5-2cd6-4d87-9152-4a238bb6d1c4": "ami-zlib",
   "a31280ad-481e-41b6-95e8-127f4c984779": "tiano",
-  "fc1bcdb0-7d31-49c8-926a-4795711f9b3c": "crc32-guided",
+  "fc1bcdb0-7d31-49aa-936a-a4600d9dd083": "crc32-guided",
 };
 
 /** FFS attributes (PI Specification 3.3.1): raw flags, data alignment and checksum bit. */

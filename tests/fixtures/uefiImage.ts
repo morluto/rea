@@ -82,6 +82,7 @@ export interface FvSpec {
   blockMapEntries?: number;
   erase?: 0xff | 0x00;
   fileSystemGuid?: string;
+  extendedHeader?: "standalone" | "pad-file";
 }
 
 export interface BuiltFv {
@@ -109,8 +110,29 @@ export function buildFv(spec: FvSpec, absoluteBase = 0): BuiltFv {
   const headerLength = FV_HEADER_TEST_LENGTH + 8 * (blockMapEntries - 1);
   const fileSystemGuid =
     spec.fileSystemGuid ?? "8c8ce578-8a3d-4f1c-9935-896185c32dd3";
+  const extension = spec.extendedHeader === undefined ? null : Buffer.alloc(28);
+  if (extension !== null) {
+    guidBytes("12345678-1234-4321-aaaa-bbbbbbbbbbbb").copy(extension);
+    extension.writeUInt32LE(extension.length, 16);
+    extension.writeUInt16LE(8, 20);
+    extension.writeUInt16LE(3, 22); // EFI_FV_EXT_TYPE_USED_SIZE
+    extension.writeUInt32LE(blockSize, 24);
+  }
+  const extendedPrefix =
+    extension === null
+      ? []
+      : [
+          spec.extendedHeader === "pad-file"
+            ? buildFfsFile({
+                guid: "ffffffff-ffff-ffff-ffff-ffffffffffff",
+                typeCode: 0xf0,
+                payload: extension,
+                erasePolarity: erase === 0xff,
+              })
+            : extension,
+        ];
   const fileArea = Buffer.concat(
-    spec.files.map((file) => {
+    [...extendedPrefix, ...spec.files].map((file) => {
       const padTo = aligned(file.length, 8);
       return Buffer.concat([file, Buffer.alloc(padTo - file.length, erase)]);
     }),
@@ -125,6 +147,11 @@ export function buildFv(spec: FvSpec, absoluteBase = 0): BuiltFv {
   header.write("_FVH", 40, "ascii");
   header.writeUInt32LE(erase === 0xff ? 0x800 : 0, 44);
   header.writeUInt16LE(headerLength, 48);
+  if (extension !== null)
+    header.writeUInt16LE(
+      headerLength + (spec.extendedHeader === "pad-file" ? 24 : 0),
+      52,
+    );
   header[54] = 0;
   header[55] = 2; // EFI_FIRMWARE_VOLUME_HEADER.Revision
   const mappedBlocks = Math.max(1, Math.ceil(declaredLength / blockSize));

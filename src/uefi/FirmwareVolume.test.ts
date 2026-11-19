@@ -104,3 +104,28 @@ it("admits a supported aligned volume after an earlier foreign and unaligned vol
     ),
   ).toBe(true);
 });
+
+it.each([
+  { size: 64, blockLength: 64, reason: "header-exceeds-volume" },
+  { size: 4096, blockLength: 2048, reason: "block-map-shorter-than-volume" },
+  { size: 4096, blockLength: 0, reason: "block-map-empty-run" },
+])(
+  "rejects contradictory FV geometry ($reason)",
+  ({ size, blockLength, reason }) => {
+    const { buffer } = buildFv({ files: [] });
+    buffer.writeBigUInt64LE(BigInt(size), 32);
+    buffer.writeUInt32LE(blockLength, 60);
+    const scan = scanFirmwareVolumes(imageRegion(buffer, 0, buffer.length), 4);
+    expect(scan.volumes).toEqual([]);
+    expect(scan.rejected).toMatchObject([{ reason }]);
+  },
+);
+
+it("does not use an FV beyond the signature search boundary to admit the image", async () => {
+  const { admitUefiFlashImage } = await import("./UefiFormatProbe.js");
+  const prefix = Buffer.alloc(0x1000);
+  prefix.write("_FVH", 0, "ascii");
+  const image = Buffer.concat([prefix, buildFv({ files: [] }).buffer]);
+  expect(admitUefiFlashImage(image, prefix.length)).toBe(false);
+  expect(admitUefiFlashImage(image)).toBe(true);
+});

@@ -6,7 +6,7 @@ import { imageRegion } from "./UefiBytes.js";
 import {
   readFfsHeader,
   parseFfsFileHeader,
-  verifyFfsFileChecksum,
+  checkFfsFileData,
 } from "./FfsFile.js";
 
 it("parses a valid FFS2 driver file header", () => {
@@ -25,7 +25,6 @@ it("parses a valid FFS2 driver file header", () => {
   expect(header?.headerChecksumValid).toBe(true);
   expect(header?.fileChecksumRequired).toBe(false);
   expect(header?.rawState).toBe(0x38);
-  expect(header?.normalizedState).toBe(0x07);
   expect(header?.stateFlags).toEqual([
     "header-construction",
     "header-valid",
@@ -54,7 +53,7 @@ it("normalizes state bits under both erase polarities", () => {
   const region = imageRegion(file, 0, file.length);
   const header = parseFfsFileHeader(region, 0, false);
   expect(header?.rawState).toBe(0x07);
-  expect(header?.normalizedState).toBe(0x07);
+  expect(header?.stateFlags).toContain("data-valid");
 });
 
 it("verifies the optional file-data checksum", () => {
@@ -75,13 +74,10 @@ it("verifies the optional file-data checksum", () => {
     const region = imageRegion(image, 0, image.length);
     const header = parseFfsFileHeader(region, 0, true);
     expect(header?.fileChecksumRequired).toBe(true);
-    const valid = verifyFfsFileChecksum(
-      region.buffer,
-      (header?.localBase ?? 0) + (header?.headerLength ?? 0),
-      payload.length,
-      header?.fileChecksumField ?? -1,
+    if (header === null) throw new Error("Missing FFS header");
+    expect(checkFfsFileData(region, header).verdict).toBe(
+      image === correct ? "valid" : "invalid",
     );
-    expect(valid).toBe(image === correct);
   }
 });
 

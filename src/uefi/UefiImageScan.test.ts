@@ -17,30 +17,12 @@ const noDecoder: UefiLzmaDecoder = async () => ({
   message: "test decoder unavailable",
 });
 
-const decodeNestedFv = (
-  nestedFv: Buffer,
-): {
-  readonly decoder: UefiLzmaDecoder;
-  readonly requests: Array<{ format: string; offset: number; length: number }>;
-} => {
-  const marker = Buffer.from([0xde, 0xad, 0xbe, 0xef]);
-  const requests: Array<{ format: string; offset: number; length: number }> =
-    [];
-  const decoder: UefiLzmaDecoder = async (request) => {
-    requests.push({
-      format: request.format,
-      offset: request.physicalRange?.offset ?? -1,
-      length: request.physicalRange?.length ?? -1,
-    });
-    return request.payload.equals(marker)
-      ? {
-          ok: true,
-          outcome: { bytes: nestedFv, decoderVersion: "stub-1.0" },
-        }
-      : { ok: false, reason: "decoder", message: "unexpected carrier bytes" };
-  };
-  return { decoder, requests };
-};
+const decodeNestedFv =
+  (nestedFv: Buffer): UefiLzmaDecoder =>
+  async ({ payload }) =>
+    payload.equals(Buffer.from([0xde, 0xad, 0xbe, 0xef]))
+      ? { ok: true, outcome: { bytes: nestedFv, decoderVersion: "test" } }
+      : { ok: false, reason: "decoder", message: "Unexpected carrier bytes" };
 
 const driverFile = (guid: string, payload: Buffer): Buffer =>
   buildFfsFile({ guid, typeCode: 0x07, payload });
@@ -185,7 +167,7 @@ it("decodes LZMA-guided sections through the injected decoder lane", async () =>
   });
   const nestedFv = buildFv({ files: [nestedInner] });
   const ui = buildSection(0x15, Buffer.from("CompressedMain\0", "utf16le"));
-  const { decoder, requests: decodeRequests } = decodeNestedFv(nestedFv.buffer);
+  const decoder = decodeNestedFv(nestedFv.buffer);
   const compressedCarrier = Buffer.from([0xde, 0xad, 0xbe, 0xef]);
   const wrapper = driverFile(
     "25111111-2222-3333-4444-555555555555",
@@ -209,9 +191,13 @@ it("decodes LZMA-guided sections through the injected decoder lane", async () =>
     data_offset: 24,
   });
   expect(lzmaSection?.sub_volumes).toEqual([summary.volumes[1]?.logical_path]);
-  const request = decodeRequests[0];
-  expect(request?.offset).toBeGreaterThan(0);
-  expect(request?.length).toBe(compressedCarrier.length);
+  const carrier =
+    lzmaSection &&
+    summary.decodedStreams.get(lzmaSection.logical_path)?.carrier;
+  expect(carrier?.range).toEqual({
+    offset: top.headerLength + 24 + ui.length + 24,
+    length: compressedCarrier.length,
+  });
   expect(summary.limitations).toHaveLength(0);
 });
 
@@ -225,7 +211,7 @@ it("decodes AMI-zlib guided sections after peeling the AMD header", async () => 
   const stream = Buffer.from([0xde, 0xad, 0xbe, 0xef]);
   const amdHeader = Buffer.alloc(AMD_ZLIB_HEADER_LENGTH, 0);
   amdHeader.writeUInt32LE(stream.length, 0x14);
-  const { decoder, requests: decodeRequests } = decodeNestedFv(nestedFv.buffer);
+  const decoder = decodeNestedFv(nestedFv.buffer);
   const wrapper = driverFile(
     "2c111111-2222-3333-4444-555555555555",
     buildGuidedSection({
@@ -251,9 +237,13 @@ it("decodes AMI-zlib guided sections after peeling the AMD header", async () => 
     data_offset: 24,
   });
   expect(zlibSection?.sub_volumes).toEqual([summary.volumes[1]?.logical_path]);
-  // The lane receives only the peeled zlib stream, not the 0x100 AMD header.
-  expect(decodeRequests[0]?.format).toBe("zlib");
-  expect(decodeRequests[0]?.length).toBe(stream.length);
+  const carrier =
+    zlibSection &&
+    summary.decodedStreams.get(zlibSection.logical_path)?.carrier;
+  expect(carrier?.range).toEqual({
+    offset: top.headerLength + 24 + 24 + AMD_ZLIB_HEADER_LENGTH,
+    length: stream.length,
+  });
   expect(summary.limitations).toHaveLength(0);
 });
 
@@ -287,6 +277,7 @@ it("reports a too-small declared length and an overflowing file as integrity rec
     guid: "29111111-2222-3333-4444-555555555555",
     typeCode: 0x07,
     payload: Buffer.from("more data"),
+    fileChecksum: "correct",
   });
   oversized[20] = 0xff;
   oversized[21] = 0xff;
@@ -299,7 +290,13 @@ it("reports a too-small declared length and an overflowing file as integrity rec
   );
   const kinds = summary.integrity.map((record) => record.kind);
   expect(kinds.filter((kind) => kind === "size-truncation")).toHaveLength(2);
-  expect(summary.volumes[0]?.ffs_files).toHaveLength(2); // the oversized file stays observed
+  const files = summary.volumes[0]?.ffs_files;
+  expect(files).toHaveLength(2);
+  expect(files?.[1]?.checksum).toBe("unchecked");
+  expect(
+    summary.integrity.filter(({ kind }) => kind === "size-truncation")[1]
+      ?.range,
+  ).toEqual({ offset: 96, length: fv.buffer.length - 96 });
 });
 
 it("records a volume checksum mismatch without dropping the volume", async () => {
@@ -324,15 +321,23 @@ it("records a volume checksum mismatch without dropping the volume", async () =>
 it("maps a plausible PSP directory and candidates an implausible one", async () => {
   const plausible = Buffer.alloc(0x20 + 2 * 16, 0);
   plausible.write("$PSP", 0, "ascii");
-  plausible.writeUInt32LE(0x1f2e3d4c, 4); // checksum
   plausible.writeUInt32LE(2, 8);
   plausible.writeUInt32LE(0x2000, 0x10 + 4);
   plausible.writeBigUInt64LE(0x4000000000001000n, 0x10 + 8);
   plausible.writeBigUInt64LE(0xb123000000000aabn, 0x20 + 8);
+  // Fletcher-32 over the 20 little-endian words beginning at the count.
+  plausible.writeUInt32LE(0x9bfc2bd1, 4);
+  const badChecksum = Buffer.from(plausible);
+  badChecksum.writeUInt32LE(0, 4);
   const bogus = Buffer.alloc(32, 0);
   bogus.write("$PL2", 0, "ascii");
   bogus.writeUInt32LE(0x1ff, 8);
-  const image = Buffer.concat([plausible, bogus, Buffer.alloc(0x800, 0xff)]);
+  const image = Buffer.concat([
+    plausible,
+    badChecksum,
+    bogus,
+    Buffer.alloc(0x800, 0xff),
+  ]);
   const summary = await scanUefiImage(
     image,
     { maxDepth: 3, maxVolumes: 64, maxFiles: 64 },
@@ -355,11 +360,13 @@ it("maps a plausible PSP directory and candidates an implausible one", async () 
     declaredLocationRaw: "0xb123000000000aab",
     addressMode: 2,
   });
-  expect(
-    summary.pspCandidates.some(
-      (candidate) => candidate.reason === "implausible-entry-count",
-    ),
-  ).toBe(true);
+  expect(summary.pspCandidates).toMatchObject([
+    { offset: plausible.length, reason: "checksum-mismatch" },
+    {
+      offset: plausible.length + badChecksum.length,
+      reason: "implausible-entry-count",
+    },
+  ]);
 });
 
 it("marks the scan partial when the FFS file budget is hit", async () => {
@@ -435,4 +442,48 @@ it("marks partial when the structural budget ends inside a section chain", async
       }),
     ]),
   );
+});
+
+it("reports a checksum mismatch over the actual file body", async () => {
+  const data = Buffer.from("checksummed");
+  const file = buildFfsFile({
+    guid: "29111111-2222-3333-4444-555555555555",
+    typeCode: 1,
+    payload: data,
+    fileChecksum: "wrong",
+  });
+  const fv = buildFv({ files: [file] });
+  const scan = await scanUefiImage(
+    fv.buffer,
+    { maxDepth: 3, maxVolumes: 2, maxFiles: 2 },
+    noDecoder,
+  );
+  expect(scan.integrity).toMatchObject([
+    {
+      kind: "ffs-file-checksum-mismatch",
+      range: { offset: 96, length: data.length },
+    },
+  ]);
+});
+
+it("reports one gap when a confirmed decoded FV exceeds the volume budget", async () => {
+  const nested = buildFv({ files: [] });
+  const decoder = decodeNestedFv(nested.buffer);
+  const file = driverFile(
+    "29111111-2222-3333-4444-555555555555",
+    buildLzmaGuidedSection(Buffer.from([0xde, 0xad, 0xbe, 0xef])),
+  );
+  const fv = buildFv({ files: [file] });
+  const scan = await scanUefiImage(
+    fv.buffer,
+    { maxDepth: 3, maxVolumes: 1, maxFiles: 2 },
+    decoder,
+  );
+  expect(scan.omissions).toMatchObject([
+    {
+      kind: "size-truncated",
+      range: { offset: 0, length: nested.buffer.length },
+    },
+  ]);
+  expect(scan.coverage).toBe("partial");
 });

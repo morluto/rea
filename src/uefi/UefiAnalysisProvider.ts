@@ -1,3 +1,4 @@
+import type { UefiDecodeFormat } from "./FfsSections.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 import { hostRangeErrorKind } from "../domain/parseFailure.js";
 import { errorMessage } from "../kernel/errorMessage.js";
@@ -50,7 +51,6 @@ import {
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import type {
   UefiImageScanSummary,
-  UefiDecodeFormat,
   UefiDecodeResult,
   UefiPayload,
 } from "./UefiImageScan.js";
@@ -67,7 +67,6 @@ import { lzmaReplySchema } from "./UefiLzmaProtocol.js";
 import { UEFI_PROVIDER_IDENTITY } from "./UefiProviderIdentity.js";
 
 const inflateBounded = promisify(inflate);
-const FFS_FILE_TYPE_PAD = 0xf0;
 
 const hex = (value: number): string => `0x${value.toString(16)}`;
 
@@ -613,43 +612,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         checkpoint();
         if (includes(file.logical_path)) {
           recordDerivation(file.source_stream);
-          const range = { offset: file.offset, length: file.length };
-          if (
-            file.type_code === FFS_FILE_TYPE_PAD &&
-            file.declared_length >= file.header_length &&
-            file.declared_length <= file.length
-          ) {
-            gap(
-              "pad-file",
-              file.logical_path,
-              file.source_stream,
-              range,
-              "Pad file extent retained.",
-            );
-            continue;
-          }
-          if (
-            file.declared_length < file.header_length ||
-            file.declared_length > file.length
-          ) {
-            gap(
-              "size-truncated",
-              file.logical_path,
-              file.source_stream,
-              range,
-              `FFS declares ${file.declared_length} bytes; observed ${file.length} bytes with a ${file.header_length}-byte header.`,
-            );
-          } else {
-            const raw = scan.payloads.get(file.logical_path);
-            if (raw !== undefined) {
-              stage(
-                file.logical_path,
-                "body",
-                raw,
-                "uncompressed-payload",
-                null,
-              );
-            }
+          const raw = scan.payloads.get(file.logical_path);
+          if (raw !== undefined) {
+            stage(file.logical_path, "body", raw, "uncompressed-payload", null);
           }
         }
         for (const section of file.sections) {
@@ -659,30 +624,17 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           const path = section.logical_path;
           recordDerivation(section.source_stream);
           const payload = scan.payloads.get(path);
+          const carrier = scan.compressedCarriers.get(path);
           if (scan.decodedStreams.has(path)) {
             recordDerivation(path);
-          } else if (section.compression.kind !== "none") {
-            const failure = scan.decodeGaps.get(path);
-            gap(
-              failure?.kind ??
-                (section.compression.kind === "unknown-guid"
-                  ? "unknown-guid-handler"
-                  : "unsupported-compression"),
+          } else if (carrier !== undefined && input.include_compressed) {
+            stage(
               path,
-              section.source_stream,
-              payload?.range ?? null,
-              failure?.detail ??
-                `No decoded payload for ${section.compression.kind}.`,
+              "compressed",
+              carrier,
+              "compressed-passthrough",
+              section.parent_logical_path,
             );
-            if (input.include_compressed && payload !== undefined) {
-              stage(
-                path,
-                "compressed",
-                payload,
-                "compressed-passthrough",
-                section.parent_logical_path,
-              );
-            }
           } else if (
             payload !== undefined &&
             section.sub_volumes.length === 0
@@ -776,9 +728,21 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     signal.throwIfAborted();
     if (format === "zlib") {
       try {
-        const bytes = await inflateBounded(payload, {
+        const decoded: unknown = await inflateBounded(payload, {
+          info: true,
           maxOutputLength: maxOutputBytes,
         });
+        // Node's callback declarations omit the documented info:true result.
+        const { buffer: bytes, engine } = decoded as {
+          buffer: Buffer;
+          engine: { bytesWritten: number };
+        };
+        if (engine.bytesWritten !== payload.length)
+          return {
+            ok: false,
+            reason: "format",
+            message: `AMD zlib stream used ${engine.bytesWritten} of ${payload.length} declared compressed bytes.`,
+          };
         return {
           ok: true,
           outcome: {

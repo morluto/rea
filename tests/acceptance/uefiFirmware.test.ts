@@ -6,6 +6,9 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { expect, it } from "vitest";
 
+import { parseBinaryTarget } from "../../src/application/BinaryTargetResolver.js";
+import { pe } from "../../src/domain/binaryTarget.fixture.js";
+import { minimalElfImage } from "../fixtures/nativeHeaders.js";
 import { artifactInventoryResultSchema } from "../../src/domain/artifactGraph.js";
 import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
 import { uefiResultSchemas } from "../../src/domain/uefi/uefiFirmwareAnalysis.js";
@@ -269,6 +272,40 @@ it("never admits prose carrying a `_FVH` string as the flash image format", asyn
   }
   expect(output, output).not.toContain('"uefi"');
 });
+
+it.each([
+  { format: "elf", native: minimalElfImage() },
+  { format: "pe", native: pe(0x8664) },
+])(
+  "preserves leading $format admission with an appended firmware volume",
+  async ({ format, native }) => {
+    const root = await createTestTempDirectory("rea-uefi-native-admission-");
+    const path = join(root, "native.bin");
+    const aligned = Buffer.alloc(0x1000);
+    native.copy(aligned);
+    await writeFile(
+      path,
+      Buffer.concat([aligned, buildFv({ files: [] }).buffer]),
+    );
+    expect(await parseBinaryTarget(path)).toMatchObject({
+      ok: true,
+      value: { format, kind: "executable" },
+    });
+    const command = await execute(process.execPath, [
+      cli,
+      "inspect-artifact",
+      path,
+      "--json",
+    ]);
+    const result = artifactInspectionResultSchema.parse(
+      parseEvidence(JSON.parse(command.stdout)).normalized_result,
+    );
+    const inventory = artifactInventoryResultSchema.parse(
+      result.substeps[0]?.evidence?.normalized_result,
+    );
+    expect(inventory.manifest.root_format).toBe(format);
+  },
+);
 
 it("keeps deep-provider analysis unavailable for the admitted uefi target", async () => {
   const root = await createTestTempDirectory("rea-uefi-deep-rejection-");

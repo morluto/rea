@@ -33,7 +33,10 @@ flash images. They also report plausible AMD PSP directory tables and scan for
 AMI NVAR chains such as `StdDefaults`. They run independently of Binwalk and
 Unblob. FFS file and section discovery applies to FFS2 and FFS3 volumes.
 Volumes with other file-system GUIDs retain their header and extent, with the
-body reported as unparsed.
+body reported as unparsed. REA checks the volume header and block map against
+the declared volume extent. FFS traversal accounts for volume extensions and
+retains valid files after an unusable file header. A truncated file body
+does not receive a verified checksum verdict.
 
 ```sh
 rea inspect-uefi-firmware /path/to/flash.bin --json
@@ -77,15 +80,20 @@ A decoder limit makes inspection partial and appears as a size gap in
 extraction. When decoded bytes lack confirmed framing, extraction retains the
 decoded stream and reports its unparsed range. When the common section header
 bounds a malformed section, extraction reports that section's range and keeps
-later valid sections selectable.
-EFI standard compression and other unsupported guided handlers produce
-extraction gaps. Set MCP `include_compressed` to false or pass
-`--no-include-compressed` to omit undecoded carriers. PSP locations remain
-unverified declarations. NVAR results report names, data ranges and hashes,
+later valid sections selectable. Leaf payload ranges exclude type-specific
+header fields. Nonzero bytes between aligned sections appear as a gap and
+later sections remain selectable.
+Readable guided section streams are mapped directly when the section does
+not require processing. Guided integrity and authentication remain unverified.
+EFI standard compression and unsupported guided handlers make inspection
+partial and produce extraction gaps. Set MCP `include_compressed` to false or pass
+`--no-include-compressed` to omit undecoded carriers. PSP tables require a matching directory checksum. Failed checks stay in
+the candidate list, and entry locations remain unverified declarations. NVAR results report names, data ranges and hashes,
 raw 24-bit record-relative links (with `0xffffff` for terminal links), and
 8-bit attributes. A named record holds either a GUID-table index or an inline
 GUID. Data-only records have neither. Links remain observations and variable
-contents are retained as byte ranges.
+contents are retained as byte ranges. Framed inactive NVAR records do not
+interrupt an established chain. An incomplete successor makes coverage partial.
 
 UEFI operations accept up to 128 MiB per image, with a shared limit of 100,000
 structural records. Artifact inventory applies the same ceiling to volume

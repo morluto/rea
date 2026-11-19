@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 import { expect, it } from "vitest";
-import { probeNvramEntry, scanAmiNvramStores } from "./UefiNvram.js";
+import { scanAmiNvramStores } from "./UefiNvram.js";
 
 const NVAR_MAGIC = Buffer.from("NVAR", "ascii");
 
@@ -20,7 +20,7 @@ const encodeEntry = (name: string, data: Buffer, guidIndex: number): Buffer => {
 
 it("parses one AMI NVRAM entry with name, attributes, GUID index and data range", () => {
   const entry = encodeEntry("Setup", Buffer.from([0xde, 0xad]), 3);
-  const parsed = probeNvramEntry(entry, 0);
+  const parsed = scanAmiNvramStores(entry, 1, 1).stores[0]?.variables[0];
   expect(parsed).not.toBeNull();
   expect(parsed?.name).toBe("Setup");
   expect(parsed?.attributes).toBe(0x83);
@@ -72,7 +72,6 @@ it("walks a flat sibling chain without treating it as a container", () => {
 
 it("rejects NVAR byte runs that do not match the record framing", () => {
   const image = Buffer.concat([NVAR_MAGIC, Buffer.alloc(20, 0x00)]);
-  expect(probeNvramEntry(image, 0)).toBeNull();
   const scan = scanAmiNvramStores(image, 16, 2);
   expect(scan.stores).toHaveLength(0);
   expect(scan.limitations.join(" ")).toContain("No AMI NVRAM");
@@ -149,7 +148,7 @@ it("separates an inline GUID and UCS-2 name from data and the extended footer", 
     Buffer.from([0x42, 0, 3, 0]),
   ]);
   entry.writeUInt16LE(entry.length, 4);
-  const parsed = probeNvramEntry(entry, 0);
+  const parsed = scanAmiNvramStores(entry, 1, 1).stores[0]?.variables[0];
   expect(parsed).toMatchObject({
     name: "Δ",
     guid: "12345678-9abc-def0-1122-334455667788",
@@ -157,4 +156,38 @@ it("separates an inline GUID and UCS-2 name from data and the extended footer", 
     dataOffset: 30,
     dataLength: 1,
   });
+});
+
+it.each([false, true])(
+  "preserves active NVAR siblings across inactive records (nested: %s)",
+  (nested) => {
+    const first = encodeEntry("First", Buffer.from([1]), 0);
+    const inactive = encodeEntry("Inactive", Buffer.from([2]), 0);
+    inactive.writeUInt8(0x03, 9);
+    const later = encodeEntry("Later", Buffer.from([3]), 0);
+    const chain = Buffer.concat([first, inactive, later]);
+    const result = scanAmiNvramStores(
+      nested ? encodeEntry("Outer", chain, 0) : chain,
+      16,
+      2,
+    );
+    expect(result.coverage).toBe("complete");
+    expect(result.stores).toHaveLength(1);
+    expect(result.stores[0]?.variables.map(({ name }) => name)).toEqual(
+      nested ? ["Outer", "First", "Later"] : ["First", "Later"],
+    );
+  },
+);
+
+it("reports a truncated successor under an established nested NVAR chain", () => {
+  const first = encodeEntry("First", Buffer.from([1]), 0);
+  const later = encodeEntry("Later", Buffer.from([2]), 0);
+  const chain = Buffer.concat([first, later.subarray(0, 7)]);
+  const result = scanAmiNvramStores(encodeEntry("Outer", chain, 0), 16, 2);
+  expect(result.stores[0]?.variables.map(({ name }) => name)).toEqual([
+    "Outer",
+    "First",
+  ]);
+  expect(result.coverage).toBe("partial");
+  expect(result.limitations.join(" ")).toContain("invalid extent");
 });

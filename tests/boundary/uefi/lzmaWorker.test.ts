@@ -122,3 +122,15 @@ it("checks the declared dictionary before the decoder allocates its window", asy
     message: expect.stringContaining("dictionary"),
   });
 });
+
+it("rejects an incomplete coded body even when its declared output size is plausible", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-lzma-eof-");
+  const input = Buffer.from(
+    lzmaPurescript.compressFile(
+      Buffer.from("Ordinary test data for the LZMA worker's read boundary."),
+    ),
+  );
+  const reply = await runLzmaWorker(directory, input.subarray(0, -1), 1024);
+  expect(reply).toMatchObject({ ok: false, reason: "format" });
+  await expect(readFile(join(directory, "output.bin"))).rejects.toThrow();
+});

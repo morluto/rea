@@ -2,20 +2,19 @@ import { Budget } from "../domain/budget.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
 import { BinaryReader } from "../domain/binaryContainer.js";
 import { Buffer } from "node:buffer";
-import {
-  absoluteOffset,
-  isWindowUniform,
-  type ScanRegion,
-} from "./UefiBytes.js";
+import { absoluteOffset, alignUp, type ScanRegion } from "./UefiBytes.js";
 import {
   FFS2_FILE_SYSTEM_GUID,
   FFS3_FILE_SYSTEM_GUID,
   formatGuidLittleEndian,
+  GUID_LENGTH,
 } from "./UefiGuid.js";
 import {
   FV_ATTRIBUTE_ERASE_POLARITY,
   FV_HEADER_LAYOUT,
 } from "./UefiCodeTables.js";
+
+import { parseFfsFileHeader } from "./FfsFile.js";
 
 const FVH_SIGNATURE = 0x4856465f; // "_FVH" read as a little-endian word
 
@@ -30,6 +29,7 @@ export interface FirmwareVolumeHeader {
   readonly absoluteBase: number;
   readonly declaredLength: number;
   readonly headerLength: number;
+  readonly firstFileLocal: number;
   readonly attributes: number;
   readonly erasePolarity: boolean;
   readonly extHeaderOffset: number | null;
@@ -114,6 +114,9 @@ export function parseFirmwareVolumeHeader(
     implausibilities.push("header-length-truncates-region");
   }
 
+  if (headerLength > declaredLength)
+    implausibilities.push("header-exceeds-volume");
+  const volumeEnd = localHeaderBase + Math.min(declaredLength, available);
   const blockMap: FirmwareVolumeBlockMapEntry[] = [];
   const blockMapCapacity = Math.floor(
     (headerLength - FV_HEADER_LAYOUT.blockMapOffset) /
@@ -125,7 +128,7 @@ export function parseFirmwareVolumeHeader(
       localHeaderBase +
       FV_HEADER_LAYOUT.blockMapOffset +
       index * FV_HEADER_LAYOUT.blockMapEntryLength;
-    if (entryLocal + FV_HEADER_LAYOUT.blockMapEntryLength > region.end) {
+    if (entryLocal + FV_HEADER_LAYOUT.blockMapEntryLength > volumeEnd) {
       implausibilities.push("block-map-truncation");
       break;
     }
@@ -135,22 +138,73 @@ export function parseFirmwareVolumeHeader(
       blockMapTerminated = true;
       break;
     }
+    if (numBlocks === 0 || blockLength === 0) {
+      implausibilities.push("block-map-empty-run");
+      break;
+    }
     if (!reserve()) return null;
     blockMap.push({ numBlocks, blockLength });
   }
   if (!blockMapTerminated) {
     implausibilities.push("block-map-terminator-missing");
   }
-  const mapped = blockMap.reduce(
-    (total, entry) => total + entry.numBlocks * entry.blockLength,
-    0,
-  );
-  if (mapped > declaredLength) {
-    implausibilities.push("block-map-exceeds-volume");
+  if (blockMapTerminated) {
+    const mapped = blockMap.reduce(
+      (total, entry) =>
+        total + BigInt(entry.numBlocks) * BigInt(entry.blockLength),
+      0n,
+    );
+    if (mapped !== declaredLengthValue)
+      implausibilities.push(
+        mapped > declaredLengthValue
+          ? "block-map-exceeds-volume"
+          : "block-map-shorter-than-volume",
+      );
   }
 
+  const erasePolarity = (attributes & FV_ATTRIBUTE_ERASE_POLARITY) !== 0;
+  let firstFileLocal = localHeaderBase + alignUp(headerLength, 8);
+  if (extHeaderRaw !== 0 && blockMapTerminated) {
+    const blockMapEnd =
+      FV_HEADER_LAYOUT.blockMapOffset +
+      (blockMap.length + 1) * FV_HEADER_LAYOUT.blockMapEntryLength;
+    const extStart = localHeaderBase + extHeaderRaw;
+    const extMinimumLength = GUID_LENGTH + 4;
+    if (
+      extHeaderRaw < blockMapEnd ||
+      extHeaderRaw % 4 !== 0 ||
+      extStart + extMinimumLength > volumeEnd
+    ) {
+      implausibilities.push("extended-header-offset-implausible");
+    } else {
+      const extLength = reader.u32(extStart + GUID_LENGTH);
+      const extEnd = extStart + extLength;
+      if (extLength < extMinimumLength || extEnd > volumeEnd) {
+        implausibilities.push("extended-header-length-implausible");
+      } else if (extEnd > firstFileLocal) {
+        const pad = parseFfsFileHeader(
+          { ...region, end: volumeEnd },
+          firstFileLocal,
+          erasePolarity,
+        );
+        // GenFv places the extension in a pad file. Preserve that file when
+        // its validated body owns the entire extension.
+        if (
+          pad?.typeCode !== 0xf0 ||
+          !pad.headerChecksumValid ||
+          pad.extentIssue !== null ||
+          pad.body === null ||
+          pad.body.start > extStart ||
+          pad.body.end < extEnd
+        ) {
+          firstFileLocal =
+            localHeaderBase + alignUp(extEnd - localHeaderBase, 8);
+        }
+      }
+    }
+  }
   const checksumValid =
-    localHeaderBase + headerLength <= region.end &&
+    localHeaderBase + headerLength <= volumeEnd &&
     verifyFirmwareVolumeChecksum(region.buffer, localHeaderBase, headerLength);
   const fileSystemGuid = formatGuidLittleEndian(
     region.buffer,
@@ -161,8 +215,9 @@ export function parseFirmwareVolumeHeader(
     absoluteBase,
     declaredLength,
     headerLength,
+    firstFileLocal,
     attributes,
-    erasePolarity: (attributes & FV_ATTRIBUTE_ERASE_POLARITY) !== 0,
+    erasePolarity,
     extHeaderOffset: extHeaderRaw === 0 ? null : extHeaderRaw,
     revision,
     fileSystemGuid,
@@ -231,13 +286,15 @@ export function scanFirmwareVolumes(
     readonly reserve?: () => boolean;
     readonly checkpoint?: () => void;
     readonly skipNested?: boolean;
+    readonly signatureEnd?: number;
   } = {},
 ): FirmwareVolumeScanResult {
   const volumes: FirmwareVolumeHit[] = [];
   const rejected: RejectedFirmwareVolumeHit[] = [];
   const signatureText = Buffer.from("_FVH", "ascii");
   let searchFrom = region.start;
-  const searchable = region.buffer.subarray(0, region.end);
+  const signatureEnd = Math.min(region.end, options.signatureEnd ?? region.end);
+  const searchable = region.buffer.subarray(0, signatureEnd);
   const budget = new Budget(UEFI_FIRMWARE_LIMITS.scanRecords);
   let limit: FirmwareVolumeScanResult["limit"] = null;
   const reserve = (): boolean => {
@@ -246,9 +303,9 @@ export function scanFirmwareVolumes(
     limit = "structural-records";
     return false;
   };
-  while (searchFrom < region.end) {
+  while (searchFrom < signatureEnd) {
     const hitLocal = searchable.indexOf(signatureText, searchFrom);
-    if (hitLocal < 0 || hitLocal + 4 > region.end) {
+    if (hitLocal < 0 || hitLocal + 4 > signatureEnd) {
       break;
     }
     if (volumes.length + rejected.length >= maxCandidates) {
@@ -310,43 +367,4 @@ export function scanFirmwareVolumes(
     }
   }
   return { volumes, rejected, limit };
-}
-
-/** Read the FFS extended header FvName GUID when an ext header pad file exists. */
-export function readExtendedHeaderFvName(
-  region: ScanRegion,
-  header: FirmwareVolumeHeader,
-): string | null {
-  if (header.extHeaderOffset == null) {
-    return null;
-  }
-  const extHeaderLocal = header.localBase + header.extHeaderOffset;
-  const guidLocal = extHeaderLocal;
-  if (guidLocal + 16 > region.end) {
-    return null;
-  }
-  return formatGuidLittleEndian(
-    region.buffer.subarray(guidLocal, guidLocal + 16),
-    0,
-  );
-}
-
-/** Erase byte implied by the volume's erase polarity. */
-export function createFvEraseByte(header: FirmwareVolumeHeader): number {
-  return header.erasePolarity ? 0xff : 0x00;
-}
-
-/** Erase polarity 1: erased media bits are one (0xFF); otherwise zero (0x00). */
-export function createEraseByte(erasePolarity: boolean): number {
-  return erasePolarity ? 0xff : 0x00;
-}
-
-/** True when the window is fully erased for the given polarity. */
-export function isErasedWindow(
-  buffer: Buffer,
-  start: number,
-  end: number,
-  erasePolarity: boolean,
-): boolean {
-  return isWindowUniform(buffer, start, end, createEraseByte(erasePolarity));
 }

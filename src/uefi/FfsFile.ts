@@ -27,7 +27,9 @@ export interface FfsFileHeader {
   readonly headerLength: number;
   readonly declaredLength: number;
   readonly observedLength: number;
+  readonly body: { readonly start: number; readonly end: number } | null;
   readonly extentIssue:
+    | "unusable-header-state"
     | "declared-length-below-header"
     | "declared-length-truncates-region"
     | null;
@@ -36,7 +38,6 @@ export interface FfsFileHeader {
   readonly attributes: number;
   readonly dataAlignment: number;
   readonly rawState: number;
-  readonly normalizedState: number;
   readonly stateFlags: readonly string[];
   readonly headerChecksumField: number;
   readonly fileChecksumField: number;
@@ -89,24 +90,28 @@ export function parseFfsFileHeader(
     if (declaredCompact !== 0)
       implausibilities.push("large-file-compact-size-is-nonzero");
   }
-  const extentIssue =
-    declaredLength < headerLength
-      ? "declared-length-below-header"
-      : declaredLength > available
-        ? "declared-length-truncates-region"
-        : null;
-  if (extentIssue !== null) implausibilities.push(extentIssue);
-  const observedLength = Math.min(
-    Math.max(declaredLength, headerLength),
-    available,
-  );
-
   const rawState =
     region.buffer[localBase + FFS_HEADER_LAYOUT.stateOffset] ?? 0;
   const normalizedState = erasePolarity ? ~rawState & 0x3f : rawState & 0x3f;
   const stateFlags = STATE_BIT_NAMES.filter(
     ([bit]) => (normalizedState & bit) !== 0,
   ).map(([, name]) => name);
+  // PI state is the highest set bit. An incomplete or invalid header supplies
+  // only its fixed extent; the stored size cannot consume the next file.
+  const state = stateFlags.at(-1);
+  const unusableState =
+    state === "header-construction" || state === "header-invalid";
+  const extentIssue = unusableState
+    ? "unusable-header-state"
+    : declaredLength < headerLength
+      ? "declared-length-below-header"
+      : declaredLength > available
+        ? "declared-length-truncates-region"
+        : null;
+  if (extentIssue !== null) implausibilities.push(extentIssue);
+  const observedLength = unusableState
+    ? headerLength
+    : Math.min(Math.max(declaredLength, headerLength), available);
 
   const headerChecksumField =
     region.buffer[localBase + FFS_HEADER_LAYOUT.integrityCheckOffset] ?? 0;
@@ -126,6 +131,10 @@ export function parseFfsFileHeader(
     headerLength,
     declaredLength,
     observedLength,
+    body:
+      extentIssue === null || extentIssue === "declared-length-truncates-region"
+        ? { start: localBase + headerLength, end: localBase + observedLength }
+        : null,
     extentIssue,
     nameGuid: formatGuidLittleEndian(
       region.buffer.subarray(localBase, localBase + 16),
@@ -141,7 +150,6 @@ export function parseFfsFileHeader(
             (attributes & FFS_ATTRIBUTE_MASKS.dataAlignment) >> 3
           ] ?? 0)),
     rawState,
-    normalizedState,
     stateFlags,
     headerChecksumField,
     fileChecksumField,
@@ -174,37 +182,41 @@ function verifyFfsHeaderChecksum(
   return total === 0;
 }
 
-/** File-data checksum: the stored byte is the payload sum's two's complement. */
-export function verifyFfsFileChecksum(
-  buffer: Buffer,
-  localPayloadStart: number,
-  payloadLength: number,
-  expected: number,
-): boolean {
-  let total = 0;
-  for (let offset = 0; offset < payloadLength; offset += 1) {
-    total = (total + (buffer[localPayloadStart + offset] ?? 0)) & 0xff;
+/** Check the declared checksum only when the full file body is available. */
+export function checkFfsFileData(region: ScanRegion, header: FfsFileHeader) {
+  if (header.typeCode === 0xf0)
+    return { verdict: "pad-file-unchecked" } as const;
+  if (
+    header.extentIssue !== null ||
+    !header.fileChecksumRequired ||
+    header.body === null
+  )
+    return { verdict: "unchecked" } as const;
+  const { start, end } = header.body;
+  const length = end - start;
+  if (length === 0) return { verdict: "unchecked" } as const;
+  let total = header.fileChecksumField;
+  for (const byte of region.buffer.subarray(start, end)) {
+    total = (total + byte) & 0xff;
   }
-  // The file checksum makes payload-sum + stored-checksum zero (mod 256).
-  return ((total + expected) & 0xff) === 0;
+  return total === 0
+    ? ({ verdict: "valid" } as const)
+    : ({
+        verdict: "invalid",
+        offset: absoluteOffset(region, start),
+        length,
+      } as const);
 }
 
-/** First aligned FFS file position after the volume header (volume-relative). */
-export function firstFfsFileLocal(volume: {
-  readonly localBase: number;
-  readonly headerLength: number;
-}): number {
-  return volume.localBase + alignUp(volume.headerLength, 8);
-}
-
-/** Advance to the next 8-aligned FFS position after one file. */
+/** Advance to the next 8-aligned FFS position after the observed extent. */
 export function nextFfsFileLocal(
   header: FfsFileHeader,
   volumeBase: number,
 ): number {
-  const end =
-    header.localBase + Math.max(header.declaredLength, header.headerLength);
-  return volumeBase + alignUp(end - volumeBase, 8);
+  return (
+    volumeBase +
+    alignUp(header.localBase + header.observedLength - volumeBase, 8)
+  );
 }
 
 type FfsHeaderRead =

@@ -106,21 +106,45 @@ const readNvarName = (
   return null;
 };
 
-/** Parse one active record without following its declared link or resolving its GUID table. */
-export const probeNvramEntry = (
-  image: Buffer,
+type NvarRecord =
+  | { kind: "end" }
+  | { kind: "invalid-frame" }
+  | { kind: "inactive" | "malformed"; endOffset: number }
+  | { kind: "active"; entry: ParsedNvramEntry };
+
+function readNvarRecord(
+  reader: BinaryReader,
   offset: number,
-  endOffset = image.length,
-): ParsedNvramEntry | null => {
-  if (offset < 0 || offset + NVAR_MIN_ENTRY_BYTES > endOffset) return null;
-  const reader = new BinaryReader(image, true, "AMI NVAR");
-  if (reader.u32(offset) !== NVAR_MAGIC) return null;
+  endOffset: number,
+): NvarRecord {
+  if (
+    offset < 0 ||
+    offset + NVAR_BYTES.length > endOffset ||
+    reader.u32(offset) !== NVAR_MAGIC
+  )
+    return { kind: "end" };
+  if (offset + NVAR_HEADER_BYTES > endOffset) return { kind: "invalid-frame" };
   const totalSize = reader.u16(offset + 4);
   const entryEnd = offset + totalSize;
-  if (totalSize < NVAR_MIN_ENTRY_BYTES || entryEnd > endOffset) return null;
+  if (totalSize < NVAR_HEADER_BYTES || entryEnd > endOffset)
+    return { kind: "invalid-frame" };
 
   const attributes = reader.u8(offset + 9);
-  if ((attributes & NVAR_ATTRIBUTES.valid) === 0) return null;
+  if ((attributes & NVAR_ATTRIBUTES.valid) === 0)
+    return { kind: "inactive", endOffset: entryEnd };
+  const entry = parseActiveRecord(reader, offset, entryEnd, attributes);
+  return entry === null
+    ? { kind: "malformed", endOffset: entryEnd }
+    : { kind: "active", entry };
+}
+
+function parseActiveRecord(
+  reader: BinaryReader,
+  offset: number,
+  entryEnd: number,
+  attributes: number,
+): ParsedNvramEntry | null {
+  if (entryEnd - offset < NVAR_MIN_ENTRY_BYTES) return null;
   const next = reader.u16(offset + 6) | (reader.u8(offset + 8) << 16);
   const bodyStart = offset + NVAR_HEADER_BYTES;
   let dataEnd = entryEnd;
@@ -146,7 +170,7 @@ export const probeNvramEntry = (
     );
     if (parsedName === null) return null;
     ({ name, dataOffset } = parsedName);
-    if (inlineGuid) guid = formatGuidLittleEndian(image, bodyStart);
+    if (inlineGuid) guid = formatGuidLittleEndian(reader.bytes, bodyStart);
     else guidIndex = reader.u8(bodyStart);
   }
 
@@ -161,62 +185,68 @@ export const probeNvramEntry = (
     dataLength: dataEnd - dataOffset,
     endOffset: entryEnd,
   };
-};
+}
 
-/**
- * Walk one sibling chain at `depth`, bounded by `endOffset` (the enclosing
- * container's data end), appending each entry and recursing into entries whose
- * data begins with another valid NVAR entry. Returns the end of the last
- * sibling and whether a valid nested chain was cut by the depth budget.
- */
-const collectChain = (
-  image: Buffer,
-  startOffset: number,
+/** Walk a confirmed chain without using record bodies to advance its cursor. */
+function collectChain(
+  reader: BinaryReader,
+  first: ParsedNvramEntry,
   endOffset: number,
   depth: number,
   parentOffset: number | null,
   maxDepth: number,
   out: AmiNvramVariable[],
   reserve: () => boolean,
-): { lastEnd: number; depthLimitedAt: number | null } => {
-  let cursor = startOffset;
-  let lastEnd = startOffset;
-  let depthLimitedAt: number | null = null;
-  while (cursor + NVAR_MIN_ENTRY_BYTES <= endOffset) {
-    const entry = probeNvramEntry(image, cursor, endOffset);
-    if (entry === null) break;
+  noteOmission: (detail: string) => void,
+): number {
+  let cursor = first.offset;
+  let record: NvarRecord = { kind: "active", entry: first };
+  while (record.kind !== "end") {
     if (!reserve()) break;
+    if (record.kind === "invalid-frame") {
+      noteOmission(
+        `NVAR record at 0x${cursor.toString(16)} has an incomplete or invalid extent.`,
+      );
+      break;
+    }
+    if (record.kind !== "active") {
+      if (record.kind === "malformed")
+        noteOmission(
+          `NVAR record at 0x${cursor.toString(16)} has malformed variable data.`,
+        );
+      cursor = record.endOffset;
+      record = readNvarRecord(reader, cursor, endOffset);
+      continue;
+    }
+
+    const { entry } = record;
     out.push({ ...entry, depth, parentOffset });
-    lastEnd = entry.endOffset;
-    if (
-      entry.dataLength >= NVAR_MIN_ENTRY_BYTES &&
-      probeNvramEntry(
-        image,
-        entry.dataOffset,
-        entry.dataOffset + entry.dataLength,
-      ) !== null
-    ) {
+    const dataEnd = entry.dataOffset + entry.dataLength;
+    const nested = readNvarRecord(reader, entry.dataOffset, dataEnd);
+    if (nested.kind === "active") {
       if (depth < maxDepth) {
-        const nested = collectChain(
-          image,
-          entry.dataOffset,
-          entry.dataOffset + entry.dataLength,
+        collectChain(
+          reader,
+          nested.entry,
+          dataEnd,
           depth + 1,
           entry.offset,
           maxDepth,
           out,
           reserve,
+          noteOmission,
         );
-        depthLimitedAt ??= nested.depthLimitedAt;
       } else {
-        // A valid nested chain exists below the depth budget.
-        depthLimitedAt ??= entry.offset;
+        noteOmission(
+          `Nested NVAR chain below max_depth ${maxDepth} under variable at 0x${entry.offset.toString(16)}.`,
+        );
       }
     }
     cursor = entry.endOffset;
+    record = readNvarRecord(reader, cursor, endOffset);
   }
-  return { lastEnd, depthLimitedAt };
-};
+  return cursor;
+}
 
 /** Scan a raw image for chained AMI NVRAM variable stores. */
 export const scanAmiNvramStores = (
@@ -227,7 +257,12 @@ export const scanAmiNvramStores = (
 ): AmiNvramScan => {
   const stores: AmiNvramStore[] = [];
   const limitations: string[] = [];
-  let depthLimitedAt: number | null = null;
+  const reader = new BinaryReader(image, true, "AMI NVAR");
+  let partial = false;
+  const noteOmission = (detail: string): void => {
+    partial = true;
+    if (limitations.length < 512) limitations.push(detail);
+  };
   let remaining: number = UEFI_FIRMWARE_LIMITS.scanRecords;
   let recordLimited = false;
   const reserve = (): boolean => {
@@ -244,8 +279,8 @@ export const scanAmiNvramStores = (
     checkpoint();
     const firstOffset = image.indexOf(NVAR_BYTES, searchFrom);
     if (firstOffset < 0) break;
-    const first = probeNvramEntry(image, firstOffset);
-    if (first === null) {
+    const first = readNvarRecord(reader, firstOffset, image.length);
+    if (first.kind !== "active") {
       searchFrom = firstOffset + 1;
       continue;
     }
@@ -256,18 +291,17 @@ export const scanAmiNvramStores = (
       return { stores, coverage: "partial", limitations };
     }
     const variables: AmiNvramVariable[] = [];
-    const walk = collectChain(
-      image,
-      firstOffset,
+    const lastEnd = collectChain(
+      reader,
+      first.entry,
       image.length,
       0,
       null,
       maxDepth,
       variables,
       reserve,
+      noteOmission,
     );
-    depthLimitedAt ??= walk.depthLimitedAt;
-    const lastEnd = walk.lastEnd;
     let padding = 0;
     while (
       lastEnd + padding < image.length &&
@@ -279,11 +313,11 @@ export const scanAmiNvramStores = (
     if (variables.length > 0)
       stores.push({
         offset: firstOffset,
-        name: first.name,
+        name: first.entry.name,
         variables,
         trailingPadding: padding > 0 ? padding : null,
       });
-    searchFrom = lastEnd;
+    searchFrom = Math.max(firstOffset + 1, lastEnd);
     if (recordLimited) {
       limitations.push(
         `Structural record limit ${UEFI_FIRMWARE_LIMITS.scanRecords} reached in the NVAR chain at 0x${firstOffset.toString(16)}.`,
@@ -295,13 +329,9 @@ export const scanAmiNvramStores = (
     limitations.push(
       "No AMI NVRAM variable stores (NVAR chains) were found in the image.",
     );
-  if (depthLimitedAt !== null)
-    limitations.push(
-      `Nested NVAR chains exist below max_depth ${maxDepth} (first omitted under variable at 0x${depthLimitedAt.toString(16)}); coverage is partial.`,
-    );
   return {
     stores,
-    coverage: depthLimitedAt === null ? "complete" : "partial",
+    coverage: partial ? "partial" : "complete",
     limitations,
   };
 };

@@ -11,11 +11,7 @@ import {
   type StableRegularFileDescriptor,
 } from "../filesystem/RegularFile.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
-import {
-  firstFfsFileLocal,
-  nextFfsFileLocal,
-  readFfsHeader,
-} from "./FfsFile.js";
+import { nextFfsFileLocal, readFfsHeader } from "./FfsFile.js";
 import {
   scanFirmwareVolumes,
   unsupportedVolumeBodyReason,
@@ -183,7 +179,7 @@ export class UefiArtifactReader implements ArtifactReader {
       header.absoluteBase,
       Math.min(header.absoluteBase + header.declaredLength, image.length),
     );
-    let local = firstFfsFileLocal(header);
+    let local = header.firstFileLocal;
     while (local < region.end) {
       assertArtifactReadActive(signal);
       const read = readFfsHeader(region, local, header.erasePolarity);
