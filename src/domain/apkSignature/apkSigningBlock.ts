@@ -1,5 +1,6 @@
 import {
   zipEndOfCentralDirectoryCandidates,
+  zipEndUsesSingleVolume,
   ZIP_EOCD_BYTES,
   type ZipEndOfCentralDirectory,
 } from "../zipEndOfCentralDirectory.js";
@@ -123,7 +124,7 @@ interface CentralDirectory {
 const classicDirectory = (
   eocd: ZipEndOfCentralDirectory,
 ): Result<CentralDirectory, ApkSigningBlockError> => {
-  if (eocd.disk !== 0 || eocd.directoryDisk !== 0)
+  if (!zipEndUsesSingleVolume(eocd))
     return err({
       kind: "multi-disk-unsupported",
       detail: `classic EOCD names disk ${String(eocd.disk)} and central-directory disk ${String(eocd.directoryDisk)}`,

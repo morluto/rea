@@ -3,7 +3,9 @@ import { crc32 } from "node:zlib";
 import {
   ZIP_EOCD_BYTES,
   ZIP_MAX_COMMENT_BYTES,
+  ZIP_SINGLE_VOLUME,
   zipEndOfCentralDirectoryCandidates,
+  zipEndUsesSingleVolume,
 } from "../zipEndOfCentralDirectory.js";
 import { strictUtf8Decoder } from "../strictUtf8.js";
 
@@ -46,23 +48,35 @@ const directoryEnd = (view: DataView) => {
     ),
   ).next();
   if (found.done === true) return undefined;
-  const end = window + found.value.offset;
-  const { totalEntries, directorySize, directoryOffset } = found.value;
-  const classic = { end, size: directorySize, declaredOffset: directoryOffset };
-  const record = end - ZIP64_LOCATOR_BYTES - ZIP64_END_BYTES;
+  const eocd = found.value;
+  const end = window + eocd.offset;
+  const { totalEntries, directorySize, directoryOffset } = eocd;
+  const classic = zipEndUsesSingleVolume(eocd)
+    ? { end, size: directorySize, declaredOffset: directoryOffset }
+    : undefined;
+  const locator = end - ZIP64_LOCATOR_BYTES;
+  const record = locator - ZIP64_END_BYTES;
   // Like Python's zipfile, a Zip64 locator is followed whether or not the classic record defers to it.
-  if (
-    record < 0 ||
-    view.getUint32(end - ZIP64_LOCATOR_BYTES, true) !== ZIP64_LOCATOR
-  )
+  if (record < 0 || view.getUint32(locator, true) !== ZIP64_LOCATOR)
     return classic;
   // Read just before its locator, where zipfile and zip.js look when the locator's own offset holds no Zip64 record.
-  if (view.getUint32(record, true) === ZIP64_END)
+  if (view.getUint32(record, true) === ZIP64_END) {
+    if (
+      !zipEndUsesSingleVolume(eocd, "zip64Classic") ||
+      !ZIP_SINGLE_VOLUME.zip64Locator.every(
+        ([field, value]) => view.getUint32(locator + field, true) === value,
+      ) ||
+      !ZIP_SINGLE_VOLUME.zip64End.every(
+        ([field, value]) => view.getUint32(record + field, true) === value,
+      )
+    )
+      return undefined;
     return {
       end: record,
       size: Number(view.getBigUint64(record + 40, true)),
       declaredOffset: Number(view.getBigUint64(record + 48, true)),
     };
+  }
   // Without one the classic values stand, as zip.js reads them, unless they are sentinels deferring to it.
   const deferred =
     totalEntries === 0xffff ||

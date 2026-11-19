@@ -1,6 +1,7 @@
 import { BinaryReader } from "./binaryContainer.js";
 import {
   zipEndOfCentralDirectoryCandidates,
+  zipEndUsesSingleVolume,
   ZIP_EOCD_BYTES,
   ZIP_MAX_COMMENT_BYTES,
 } from "./zipEndOfCentralDirectory.js";
@@ -68,8 +69,7 @@ export const locateTrailingZipArchive = async (
       directoryOffset: declaredDirectory,
     } = candidate;
     if (
-      candidate.disk !== 0 ||
-      candidate.directoryDisk !== 0 ||
+      !zipEndUsesSingleVolume(candidate) ||
       entriesOnDisk === 0 ||
       entriesOnDisk === 0xffff ||
       entriesOnDisk !== candidate.totalEntries ||

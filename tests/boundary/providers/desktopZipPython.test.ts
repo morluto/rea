@@ -401,6 +401,49 @@ describe("zip directories in the exported module", () => {
       });
   });
 
+  it("refuses archives whose selected directory or Zip64 locator names another volume", async () => {
+    const classic = zipArchive([{ name: "settings.json", data: '{"zoom":2}' }]);
+    const zip64 = withZip64End(classic);
+    const variants = [
+      ["classic disk", classic, 22, 4, 1],
+      ["classic directory disk", classic, 22, 6, 1],
+      ["classic disk in Zip64", zip64, 22, 4, 1],
+      ["Zip64 record disk", zip64, 98, 16, 1],
+      ["Zip64 directory disk", zip64, 98, 20, 1],
+      ["Zip64 locator disk", zip64, 42, 4, 1],
+      ["Zip64 locator disk count", zip64, 42, 16, 2],
+    ] as const;
+    const archives = variants.map(([, bytes, end, field, value]) => {
+      const copy = Buffer.from(bytes);
+      copy.writeUInt16LE(value, copy.length - end + field);
+      return copy;
+    });
+    const python = await pythonFileViews(saved(archives));
+    for (const [index, [description]] of variants.entries()) {
+      expect(await readZipView(archives[index]!), description).toEqual({
+        ok: false,
+        error: "not a readable zip archive",
+      });
+      expect(python[index], description).toEqual({
+        format: "zip",
+        view: null,
+        error: "not a readable zip archive",
+      });
+    }
+  });
+
+  it("uses the Zip64 record when the classic disk numbers defer to it", async () => {
+    const archive = withZip64End(
+      zipArchive([{ name: "settings.json", data: '{"zoom":2}' }]),
+    );
+    archive.writeUInt16LE(0xffff, archive.length - 18);
+    archive.writeUInt16LE(0xffff, archive.length - 16);
+    expect(await sameView(archive)).toMatchObject({
+      entries: [{ name: "settings.json", view: { zoom: 2 } }],
+      entry_count: 1,
+    });
+  });
+
   it("keeps the classic values when bytes before the end record only look like a Zip64 locator", async () => {
     // The last name ends in a locator signature and 16 more bytes, which sit just before the end record.
     const name = `c-PK\u0006\u0007${"0".repeat(16)}`;

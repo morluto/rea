@@ -1,3 +1,8 @@
+import {
+  ZIP_CLASSIC_DISK_OFFSETS,
+  ZIP_SINGLE_VOLUME,
+} from "../zipEndOfCentralDirectory.js";
+
 /**
  * The exported module's zip and gzip readers: the central directory read a
  * record at a time, entries read in bounded chunks, a gzip file's document
@@ -12,6 +17,8 @@ ZIP_END = b"PK\x05\x06"
 ZIP_CENTRAL = b"PK\x01\x02"
 ZIP64_LOCATOR = b"PK\x06\x07"
 ZIP64_END = b"PK\x06\x06"
+ZIP_CLASSIC_DISK_OFFSETS = ${JSON.stringify(Object.values(ZIP_CLASSIC_DISK_OFFSETS))}
+ZIP_SINGLE_VOLUME = ${JSON.stringify(ZIP_SINGLE_VOLUME)}
 #: Formats an archive entry may have whose reader needs a tool, a worker or another archive opened.
 NOT_READ_INSIDE = ((SQLITE_HEADER, "sqlite", "a SQLite database"), (GVDB_HEADER, "dconf", "a dconf database"),
                    (ZIP_HEADER, "zip", "an archive"))
@@ -78,7 +85,7 @@ def _zip_end(file, size: int):
     """Where an archive's central directory ends, how long it is and the offset it declares, from the last end
     record whose comment reaches the end of the file and, when a Zip64 locator precedes it whatever that record
     holds, the Zip64 one just before the locator; None without an end record, or when sentinels defer to a
-    Zip64 record that is missing."""
+    Zip64 record that is missing, or when the selected end records describe more than the supplied volume."""
     window = min(size, 22 + 0xFFFF)
     file.seek(size - window)
     tail = file.read(window)
@@ -88,21 +95,30 @@ def _zip_end(file, size: int):
     if at < 0:
         return None
     total, length, offset = struct.unpack_from("<HII", tail, at + 10)
+    classic_disks = [struct.unpack_from("<H", tail, at + field)[0] for field in ZIP_CLASSIC_DISK_OFFSETS]
     end = size - window + at
+    classic = (end, length, offset) if all(disk in ZIP_SINGLE_VOLUME["classic"] for disk in classic_disks) else None
     record = end - 20 - 56
     if record < 0:
-        return end, length, offset
+        return classic
     file.seek(end - 20)
-    if file.read(4) != ZIP64_LOCATOR:
-        return end, length, offset
+    locator = file.read(20)
+    if len(locator) != 20 or locator[:4] != ZIP64_LOCATOR:
+        return classic
     file.seek(record)
     zip64 = file.read(56)
     if len(zip64) == 56 and zip64[:4] == ZIP64_END:
+        if (any(disk not in ZIP_SINGLE_VOLUME["zip64Classic"] for disk in classic_disks)
+                or any(struct.unpack_from("<I", locator, field)[0] != value
+                       for field, value in ZIP_SINGLE_VOLUME["zip64Locator"])
+                or any(struct.unpack_from("<I", zip64, field)[0] != value
+                       for field, value in ZIP_SINGLE_VOLUME["zip64End"])):
+            return None
         length, offset = struct.unpack_from("<QQ", zip64, 40)
         return record, length, offset
     if total == 0xFFFF or 0xFFFFFFFF in (length, offset):
         return None
-    return end, length, offset
+    return classic
 
 
 def _zip_unicode_path(raw: bytes, flags: int, extra: bytes):
