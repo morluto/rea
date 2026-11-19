@@ -50,22 +50,19 @@ it.each(["object", "array", "mixed"])(
     expect(textualView("json", Buffer.from(JSON.stringify(final))).ok).toBe(
       true,
     );
-    const task = parseDesktopTask(
-      {
-        name: "nested-value",
-        prompt: "Change the nested value.",
-        checks: [
-          {
-            id: "nested",
-            kind: "value_equals",
-            file: "state.json",
-            pointer: "/payload",
-            value,
-          },
-        ],
-      },
-      () => true,
-    );
+    const task = parseDesktopTask({
+      name: "nested-value",
+      prompt: "Change the nested value.",
+      checks: [
+        {
+          id: "nested",
+          kind: "value_equals",
+          file: "state.json",
+          pointer: "/payload",
+          value,
+        },
+      ],
+    });
     expect(task.ok).toBe(true);
     if (!task.ok) throw new Error(task.error);
     const root = await createTestTempDirectory("task-json-depth-");
