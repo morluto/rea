@@ -278,6 +278,10 @@ export interface AndroidOtaPayload {
   readonly metadataSignatureBlobSize: number;
   readonly metadataSignatureCount: number | null;
   readonly payloadSignatureBlobSize: number | null;
+  readonly payloadSignatureRange: {
+    readonly offset: number;
+    readonly bytes: number;
+  } | null;
   readonly payloadSignatureCount: number | null;
   readonly partitions: readonly AndroidOtaPartition[];
   readonly dynamicPartitionGroups: readonly AndroidOtaDynamicGroup[];
@@ -991,11 +995,16 @@ export const parseAndroidOtaPayload = (
   // The manifest declares a payload signature only when both coordinates
   // are present. Keep each raw field available for inventory.
   const { signaturesOffset, signaturesSize } = manifest.value;
+  const signatureDeclaration =
+    signaturesOffset === null || signaturesSize === null
+      ? null
+      : { blobOffset: signaturesOffset, size: signaturesSize };
   let payloadSignatureCount: number | null = null;
-  let payloadSignatureBlobSize: number | null = null;
-  let signatureEnd: number | null = null;
-  if (signaturesOffset !== null && signaturesSize !== null) {
-    if (signaturesSize > ANDROID_OTA_MAX_SIGNATURE_BYTES)
+  let payloadSignatureRange: AndroidOtaPayload["payloadSignatureRange"] = null;
+  let blobTruncated = fileSize < header.value.blobOffset;
+  if (signatureDeclaration !== null) {
+    const { blobOffset, size } = signatureDeclaration;
+    if (size > ANDROID_OTA_MAX_SIGNATURE_BYTES)
       return err(
         capacity(
           "payload signature size",
@@ -1003,18 +1012,17 @@ export const parseAndroidOtaPayload = (
           "byte",
         ),
       );
-    payloadSignatureBlobSize = signaturesSize;
-    const start = header.value.blobOffset + signaturesOffset;
-    signatureEnd = start + signaturesSize;
+    const offset = header.value.blobOffset + blobOffset;
+    const end = offset + size;
+    if (!Number.isSafeInteger(end) || end > fileSize) blobTruncated = true;
+    else if (size > 0) payloadSignatureRange = { offset, bytes: size };
     const signature =
       payloadSignatureBytes ??
-      (signaturesSize > 0 &&
-      Number.isSafeInteger(signatureEnd) &&
-      signatureEnd <= bytes.length
-        ? bytes.subarray(start, signatureEnd)
+      (payloadSignatureRange !== null && end <= bytes.length
+        ? bytes.subarray(offset, end)
         : undefined);
     if (signature !== undefined) {
-      if (signature.length !== signaturesSize)
+      if (signature.length !== size)
         return err(
           malformed(
             "payload signature blob length does not match signatures_size",
@@ -1027,7 +1035,6 @@ export const parseAndroidOtaPayload = (
   }
 
   const blobAvailable = Math.max(0, fileSize - header.value.blobOffset);
-  let blobTruncated = fileSize < header.value.blobOffset;
   for (const partition of manifest.value.partitions) {
     for (const operation of partition.operations) {
       if (operation.dataLength === 0) continue;
@@ -1035,19 +1042,17 @@ export const parseAndroidOtaPayload = (
       if (!Number.isSafeInteger(end) || end < operation.dataOffset)
         return err(malformed("operation data extent overflows"));
       if (
-        signaturesOffset !== null &&
-        signaturesSize !== null &&
-        end > signaturesOffset
+        signatureDeclaration !== null &&
+        end > signatureDeclaration.blobOffset
       )
         return err(
           malformed(
-            `operation data extent ${String(operation.dataOffset)}+${String(operation.dataLength)} overruns the ${String(signaturesOffset)}-byte payload blob`,
+            `operation data extent ${String(operation.dataOffset)}+${String(operation.dataLength)} overruns the ${String(signatureDeclaration.blobOffset)}-byte payload blob`,
           ),
         );
       if (end > blobAvailable) blobTruncated = true;
     }
   }
-  if (signatureEnd !== null && fileSize < signatureEnd) blobTruncated = true;
 
   const nameState: PartitionNameState = {
     used: new Set<string>(),
@@ -1155,7 +1160,8 @@ export const parseAndroidOtaPayload = (
     signaturesSize: manifest.value.signaturesSize,
     metadataSignatureBlobSize: header.value.metadataSignatureSize,
     metadataSignatureCount,
-    payloadSignatureBlobSize,
+    payloadSignatureBlobSize: signatureDeclaration?.size ?? null,
+    payloadSignatureRange,
     payloadSignatureCount,
     partitions,
     dynamicPartitionGroups: manifest.value.groups.map((group) => ({
