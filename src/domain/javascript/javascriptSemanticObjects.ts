@@ -19,6 +19,7 @@ import {
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import { createSemanticReadPresenceQuery } from "./javascriptSemanticReadPresence.js";
+import { semanticArrayPatternCanResumeAfterClose } from "./javascriptSemanticReferenceSources.js";
 
 /** Recover bounded static property reads, writes, spreads, and destructuring. */
 export const collectJavaScriptSemanticObjects = (
@@ -157,17 +158,25 @@ const collectDestructuring = (
   let ownSlot = sourcePresence?.read;
   // An unsupported property still occupies its place in the pattern's
   // evaluation order, even when it cannot produce a graph operation.
-  const pending: ({
-    readonly pattern: t.Node | undefined;
-    readonly path: readonly string[];
-    readonly plainObjectPath?: boolean;
-    readonly lookup?: "own" | "unproven";
-  } | null)[] = [{ pattern: root, path: [], plainObjectPath: !rootArray }];
+  const pending: (
+    | {
+        readonly pattern: t.Node | undefined;
+        readonly path: readonly string[];
+        readonly plainObjectPath?: boolean;
+        readonly lookup?: "own" | "unproven";
+      }
+    | { readonly resume: NonNullable<typeof ownSlot> }
+    | null
+  )[] = [{ pattern: root, path: [], plainObjectPath: !rootArray }];
   while (pending.length > 0) {
     const next = pending.pop();
     if (next === undefined) break;
     if (next === null) {
       ownSlot = undefined;
+      continue;
+    }
+    if ("resume" in next) {
+      if (ownSlot !== undefined) ownSlot = next.resume;
       continue;
     }
     const { path } = next;
@@ -220,9 +229,10 @@ const collectDestructuring = (
     }
     if (t.isArrayPattern(pattern)) {
       if (pattern !== root) {
+        const parentRead = ownSlot;
         ownSlot =
-          ownSlot !== undefined &&
-          ownSlot === sourcePresence?.read &&
+          parentRead !== undefined &&
+          parentRead === sourcePresence?.read &&
           (!rootArray || path.length === 1) &&
           t.isArrayExpression(selected) &&
           propertyPath !== null
@@ -233,9 +243,20 @@ const collectDestructuring = (
                 pattern,
               )
             : undefined;
-        // IteratorClose can run after these elements and before the next
-        // sibling. Reaching this boundary ends the current presence proof.
-        if (ownSlot !== undefined) pending.push(null);
+        // Resume only after all inner bindings retained their proof and the
+        // native close cannot run a hook. Assignment targets can still throw.
+        if (ownSlot !== undefined)
+          pending.push(
+            parentRead !== undefined &&
+              rootArray &&
+              semanticArrayPatternCanResumeAfterClose(
+                pattern,
+                state.parentsByNode.get(root),
+                state,
+              )
+              ? { resume: parentRead }
+              : null,
+          );
       }
       for (let index = pattern.elements.length - 1; index >= 0; index -= 1) {
         const element = pattern.elements[index];
