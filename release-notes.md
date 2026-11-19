@@ -743,6 +743,7 @@
 * **skill:** keep recovery client IDs aligned with the setup registry ([0b21b6c](https://github.com/morluto/rea/commit/0b21b6ce03199e260f88739bf7ee3bcd1ec9854b)), closes [#7640](https://github.com/morluto/rea/issues/7640)
 * **snapshot:** locate entry diagnostics by collection and index ([4ad1eb5](https://github.com/morluto/rea/commit/4ad1eb5beb1520274deb8ca1fe894359c7d4cb11))
 * **snapshot:** retain schema diagnostics in file failures ([213fcc8](https://github.com/morluto/rea/commit/213fcc8ce110c4c8a7d15550bcb80bfff4720e7a)), closes [#7442](https://github.com/morluto/rea/issues/7442) [#7875](https://github.com/morluto/rea/issues/7875)
+* **source-maps:** preserve launch admission failures during cancellation ([#12565](https://github.com/morluto/rea/issues/12565)) ([4c02ceb](https://github.com/morluto/rea/commit/4c02ceb282b79b2182c94ba92b44497986fb0799))
 * **source-maps:** reject empty comma-delimited mappings ([#11970](https://github.com/morluto/rea/issues/11970)) ([224856b](https://github.com/morluto/rea/commit/224856bf62c3f232a015e9823943303fc065c0b6))
 * **source-maps:** retain all candidates at shared section boundaries ([#12026](https://github.com/morluto/rea/issues/12026)) ([919531c](https://github.com/morluto/rea/commit/919531c7c173e9b1bb056c768ff1f96069972232))
 * **sqlite:** page via declared rowid aliases ([#11963](https://github.com/morluto/rea/issues/11963)) ([090d566](https://github.com/morluto/rea/commit/090d5668c85954ccaece0884ef05992c33f95cba))
