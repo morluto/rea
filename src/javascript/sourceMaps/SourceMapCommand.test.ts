@@ -6,6 +6,7 @@ import * as processOutput from "../../process/ExecFileOutput.js";
 import {
   AnalysisCancelledError,
   AnalysisResourceConstraintError,
+  AnalysisTimeoutError,
 } from "../../domain/analysisErrorCore.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import {
@@ -17,6 +18,7 @@ import {
   spawnOwnedProviderProcess,
 } from "../../process/ProviderProcess.js";
 import { WEB_SOURCE_MAP_LIMITS } from "../../domain/sourceMapLimits.js";
+import { WindowsNativeControlUnavailableError } from "../../windows/WindowsOwnedProcess.js";
 import type { WebSourceMapReport } from "../../domain/webSourceLocation.js";
 import { traceSourceMap } from "./TraceSourceMap.js";
 import {
@@ -413,3 +415,71 @@ it.each([
     }
   },
 );
+
+it.each([
+  [
+    "physical OS spawn error",
+    Object.assign(new Error("spawn resource unavailable"), { code: "EAGAIN" }),
+    "ProviderAdapterError",
+  ],
+  [
+    "Windows memory capability refusal",
+    new WindowsNativeControlUnavailableError("job-memory-limit"),
+    "AnalysisCapabilityUnavailableError",
+  ],
+] as const)(
+  "keeps a %s alongside caller cancellation",
+  async (_name, physical, errorTag) => {
+    const controller = new AbortController();
+    const reason = { caller: "during process spawn" };
+    const result = await runSourceMapCommand(
+      "{}",
+      "/probe/source.map",
+      { signal: controller.signal },
+      {
+        prepareOwnership: async () => {},
+        launcher: async () => {
+          controller.abort(reason);
+          throw physical;
+        },
+      },
+      unexpectedCleanup,
+    );
+    if (result.ok) throw new Error("expected launch rejection");
+    expect(result.error._tag).toBe(errorTag);
+    expect(result.error.cause).toBe(physical);
+    expect(result.error.secondaryFailures).toHaveLength(1);
+    expect(result.error.secondaryFailures[0]).toBeInstanceOf(
+      AnalysisCancelledError,
+    );
+    expect(result.error.secondaryFailures[0]?.cause).toBe(reason);
+  },
+);
+
+it("keeps an observed launcher interruption at the codec deadline a timeout", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+  try {
+    const result = await runSourceMapCommand(
+      "{}",
+      "/probe/source.map",
+      undefined,
+      {
+        prepareOwnership: async () => {},
+        launcher: async ({ signal }) => {
+          await vi.advanceTimersByTimeAsync(1000);
+          assertProcessOwnershipInspectionActive(signal);
+          throw new Error(
+            "expected the codec deadline to interrupt the launcher",
+          );
+        },
+      },
+      unexpectedCleanup,
+      1000,
+    );
+    if (result.ok) throw new Error("expected launch timeout");
+    expect(result.error).toBeInstanceOf(AnalysisTimeoutError);
+    expect(result.error.secondaryFailures).toHaveLength(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});
