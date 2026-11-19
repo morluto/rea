@@ -142,8 +142,9 @@ export const readCliOutputArguments = (
 ): ParsedCliOutputArguments => {
   const tokens = global.arguments;
   const values = new Set(global.outputValues.map(({ index }) => index));
+  const timing = new Set(global.timingIndices);
+  const rootVersion = global.flags.has("--version");
   let format: CliOutputFormat = "toon";
-  let rootVersion = false;
   let versionEligible = true;
   let formatExplicit = false;
   let filterOutput: string | undefined;
@@ -156,17 +157,13 @@ export const readCliOutputArguments = (
   let tokenOffset: number | undefined;
   for (let index = 0; index < tokens.length; index += 1) {
     const argument = tokens[index]!;
-    // A value is read with the flag that consumed it.
-    if (values.has(index)) continue;
+    // The global split has already consumed output values and timing flags.
+    if (values.has(index) || timing.has(index)) continue;
     // Only these flags can accompany a formatted root version request.
-    if (argument === "--version") {
-      const next = tokens[index + 1];
-      if (next === undefined || next.startsWith("-")) rootVersion = true;
-      else versionEligible = false;
-    } else if (
+    if (
+      argument !== "--version" &&
       argument !== "--json" &&
-      argument !== "--format" &&
-      argument !== "--timings"
+      argument !== "--format"
     )
       versionEligible = false;
     if (argument === "--json") {

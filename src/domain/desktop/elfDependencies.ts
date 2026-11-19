@@ -13,12 +13,10 @@ import {
   readElfProgramHeader,
   type ElfProgramHeader,
 } from "../elfProgramHeader.js";
-import {
-  elfStringTableText,
-  observeElfStringTableEntry,
-} from "../elfStringTable.js";
+import { observeElfStringTableEntry } from "../elfStringTable.js";
 import { allKeyed, keyedBy, uniqueKeyed } from "../keyedCollection.js";
 import { err, ok, type Result } from "../result.js";
+import { decodeStrictUtf8 } from "../strictUtf8.js";
 import { resolveMappedFileOffset } from "../virtualFileMapping.js";
 
 /** Read up to `length` bytes at `offset`; fewer at the end of the file. */
@@ -225,10 +223,8 @@ const dynamicStrings = async (
         : file.bytes - offset;
     const window = await readExactly(read, file.at + offset, length, file.size);
     if (window === undefined) return err("ELF dynamic string is truncated");
-    const value = elfStringTableText(
-      observeElfStringTableEntry(window, 0, policy.string_bytes),
-    );
-    if (value === null)
+    const observed = observeElfStringTableEntry(window, 0, policy.string_bytes);
+    if (observed.state !== "terminated")
       return err(
         length < file.bytes - offset
           ? desktopLibraryLimit(
@@ -238,7 +234,16 @@ const dynamicStrings = async (
             )
           : "ELF dynamic string is truncated",
       );
-    values.push(value);
+    // These strings become Node filesystem paths, not byte-preserving display
+    // labels. Only admit bytes that UTF-8 string paths can address exactly.
+    try {
+      values.push(decodeStrictUtf8(observed.bytes, "preserve"));
+    } catch (error) {
+      if (!(error instanceof TypeError)) throw error;
+      return err(
+        "ELF dynamic lookup string is not valid UTF-8; its filesystem identity is unresolved",
+      );
+    }
   }
   return ok(values);
 };

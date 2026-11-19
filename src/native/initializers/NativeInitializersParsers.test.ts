@@ -1,5 +1,6 @@
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { deflateSync } from "node:zlib";
+import { riscvInitializers } from "./RiscvInitializers.fixture.js";
 import { readNativeInitializers } from "./NativeInitializersProvider.js";
 
 /** Pass-through spies on the shared mapping module, so tests can count lookups made from other modules. */
@@ -560,7 +561,7 @@ describe("ELF section content admission", () => {
 describe("ELF incomplete inputs", () => {
   it("reports an unsupported relocation machine as incomplete, not as raw zeros", async () => {
     const bytes = elf64PieInitializers();
-    bytes.writeUInt16LE(243, 18);
+    bytes.writeUInt16LE(21, 18); // EM_PPC64 remains unsupported by the pointer decoder.
     const report = await read(bytes);
     expect(report.status).toBe("incomplete");
     expect(report.coverage.total_entries).toBeNull();
@@ -1822,6 +1823,29 @@ it("reports an object-file import name over the name budget as partial coverage"
 });
 
 describe("Initializer target semantics", () => {
+  it.each([32, 64] as const)(
+    "does not interpret a defined RV%s TLS offset as an initializer address or name",
+    async (bits) => {
+      const report = await read(
+        riscvInitializers(bits, { definedSymbolIsTls: true }),
+      );
+      const slots = report.entries.filter(
+        (entry) => entry.kind === "init_array",
+      );
+      expect(slots).toHaveLength(3);
+      expect(slots[0]).toMatchObject({
+        resolution: "relative_addend",
+        value_va: "0x100",
+        symbol: null,
+      });
+      expect(slots[1]).toMatchObject({
+        resolution: "unresolved",
+        value_va: null,
+        symbol: null,
+      });
+    },
+  );
+
   it("keeps an absolute relocation against an IFUNC symbol unresolved", async () => {
     const bytes = elfRelocatableCtors();
     // `ctor` becomes a global STT_GNU_IFUNC, whose value is its resolver.

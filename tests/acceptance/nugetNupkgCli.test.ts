@@ -43,14 +43,20 @@ cliTest(
       );
       expect(evidence.normalized_result).toEqual(cliEvidence.normalized_result);
       expect(evidence.normalized_result.contents).toContainEqual(
-        expect.objectContaining({ name: input.name, path: input.name }),
+        expect.objectContaining({
+          name: input.name,
+          path: input.name,
+          role: "lib",
+        }),
       );
       const warnings = evidence.normalized_result.limitations.filter((value) =>
         value.includes("CP437"),
       );
       if (input.uncertain) {
         expect(warnings).toEqual([
-          expect.stringContaining(input.rawName.toString("hex")),
+          expect.stringContaining(
+            `CP437 fallback; source encoding unverified; raw hex: ${input.rawName.toString("hex")}`,
+          ),
         ]);
         expect(warnings[0]).toContain(JSON.stringify(input.name));
         expect(evidence.limitations).toContain(warnings[0]);
