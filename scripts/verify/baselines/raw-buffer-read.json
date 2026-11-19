@@ -31,7 +31,6 @@
   "src/ghidra/GhidraLoadImageValues.ts": 1,
   "src/ghidra/extensions/GhidraExtensions.ts": 1,
   "src/go/GoStringLiterals.ts": 4,
-  "src/hopper/HopperAnalysisProfile.ts": 1,
   "src/il2cpp/Il2cppBinaryImage.ts": 2,
   "src/il2cpp/Il2cppBinaryRegistration.ts": 8,
   "src/il2cpp/Il2cppMetadataFile.ts": 21,
