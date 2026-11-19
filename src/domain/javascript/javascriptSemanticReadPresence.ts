@@ -14,6 +14,7 @@ import { semanticArrayIndex } from "./javascriptSemanticPropertyPaths.js";
 import { semanticKnownArrayIteration } from "./javascriptSemanticReferenceSources.js";
 import { semanticSlotAtPath } from "./javascriptSemanticSlots.js";
 import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
+import type { JavaScriptSemanticValue } from "./javascriptSemanticValueTypes.js";
 import {
   resolveSemanticBindingState,
   semanticStableInitializer,
@@ -34,6 +35,7 @@ type ReadOwnData = (
 interface ReadPresence {
   readonly read: ReadOwnData;
   readonly readNestedArray?: (
+    literal: t.ArrayExpression,
     path: readonly string[],
     fromRhs: readonly string[],
     acquisition: t.ArrayPattern,
@@ -150,15 +152,20 @@ export const createSemanticReadPresenceQuery = (
     )
       return undefined;
     const { value } = origin;
+    let rhsSnapshot: JavaScriptSemanticValue | undefined;
     const arraySlots = (
+      literal: t.ArrayExpression,
       arrayPath: readonly string[],
       fromRhs: readonly string[],
       acquisition: t.Node | undefined,
     ): ReadOwnData | undefined => {
-      const literal = ownDataAtPath(value, arrayPath);
-      if (!t.isArrayExpression(literal)) return undefined;
-      const base = evaluateSemanticExpression(capture, state, capture, "query");
-      const selectedArray = semanticSlotAtPath(base, fromRhs);
+      rhsSnapshot ??= evaluateSemanticExpression(
+        capture,
+        state,
+        capture,
+        "query",
+      );
+      const selectedArray = semanticSlotAtPath(rhsSnapshot, fromRhs);
       const array = selectedArray.value;
       if (
         selectedArray.presence !== "present" ||
@@ -211,12 +218,22 @@ export const createSemanticReadPresenceQuery = (
         ? []
         : undefined);
     if (arrayPath !== undefined) {
+      const literal = ownDataAtPath(value, arrayPath);
+      if (!t.isArrayExpression(literal)) return undefined;
       const read = arraySlots(
+        literal,
         arrayPath,
         [],
         iterationPath === undefined ? undefined : capture,
       );
-      return read === undefined ? undefined : { read };
+      return read === undefined
+        ? undefined
+        : {
+            read,
+            ...(iterationPath === undefined
+              ? {}
+              : { readNestedArray: arraySlots }),
+          };
     }
     if (!t.isObjectExpression(value)) return undefined;
     const read: ReadOwnData = (path, beforeIterator) => {

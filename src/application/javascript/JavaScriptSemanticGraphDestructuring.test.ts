@@ -1778,3 +1778,131 @@ it.each([
     ).toEqual(path);
   },
 );
+
+it.each([
+  [
+    "inline array",
+    'const pairs=[["first"]];const [[selected]]=pairs;pairs[0][0]="later";',
+    ["0", "0"],
+    "resolved",
+  ],
+  [
+    "const alias",
+    'const pairs=[["first"]];const alias=pairs;const [[selected]]=alias;pairs[0][0]="later";',
+    ["0", "0"],
+    "resolved",
+  ],
+  [
+    "assignment",
+    'const pairs=[["first"]];let selected;[[selected]]=pairs;pairs[0][0]="later";',
+    ["0", "0"],
+    "resolved",
+  ],
+  [
+    "projected array RHS",
+    'const values={pairs:[["first"]]};const [[selected]]=values.pairs;values.pairs[0][0]="later";',
+    ["pairs", "0", "0"],
+    "resolved",
+  ],
+  [
+    "outer elision",
+    'const pairs=[0,["first"]];const [,[selected]]=pairs;pairs[1][0]="later";',
+    ["1", "0"],
+    "resolved",
+  ],
+  [
+    "outer hole before the selected inner array",
+    'const pairs=[,["first"]];const [,[selected]]=pairs;pairs[1][0]="later";',
+    ["1", "0"],
+    "candidate",
+  ],
+  [
+    "prior write through alias",
+    'const pairs=[["first"]];const alias=pairs;alias[0][0]="earlier";const [[selected]]=pairs;',
+    ["0", "0"],
+    "candidate",
+  ],
+  [
+    "prior ordinary default",
+    'const pairs=[undefined,["first"]];const [unused=(pairs[1][0]="earlier"),[selected]]=pairs;',
+    ["1", "0"],
+    "candidate",
+  ],
+  [
+    "inner custom iterator",
+    'const pairs=[["first"]];pairs[0][Symbol.iterator]=function*(){yield "other";};const [[selected]]=pairs;',
+    ["0", "0"],
+    "candidate",
+  ],
+  [
+    "Object.getPrototypeOf aliases the shared array prototype",
+    'const proto=Object.getPrototypeOf([]);proto[Symbol.iterator]=function*(){};const pairs=[["first"]];const [[selected]]=pairs;pairs[0][0]="later";',
+    ["0", "0"],
+    "candidate",
+  ],
+  [
+    "an earlier call writes through Reflect.getPrototypeOf",
+    'change();function change(){const proto=Reflect.getPrototypeOf([]);proto[Symbol.iterator]=function*(){};}const pairs=[["first"]];const [[selected]]=pairs;pairs[0][0]="later";',
+    ["0", "0"],
+    "candidate",
+  ],
+  [
+    "an unrelated property on the shared array prototype",
+    'const proto=Reflect.getPrototypeOf([]);proto.note=1;const pairs=[["first"]];const [[selected]]=pairs;pairs[0][0]="later";',
+    ["0", "0"],
+    "resolved",
+  ],
+  [
+    "a lexical Object replacement returns a fresh receiver",
+    'const Object={getPrototypeOf:()=>({})};const proto=Object.getPrototypeOf([]);proto[Symbol.iterator]=function*(){};const pairs=[["first"]];const [[selected]]=pairs;pairs[0][0]="later";',
+    ["0", "0"],
+    "resolved",
+  ],
+  [
+    "shared next changed before acquisition",
+    'const pairs=[["first"]];Object.getPrototypeOf([].values()).next=()=>({value:"other",done:false});const [[selected]]=pairs;pairs[0][0]="later";',
+    ["0", "0"],
+    "candidate",
+  ],
+  [
+    "shared next changed after acquisition",
+    'const pairs=[["first"]];const [[selected]]=pairs;Object.getPrototypeOf([].values()).next=()=>({value:"other",done:false});pairs[0][0]="later";',
+    ["0", "0"],
+    "resolved",
+  ],
+  [
+    "prior inner close can change this array",
+    'const pairs=[[0],["second"]];pairs[0][1]=pairs[1];Object.getPrototypeOf([].values()).return=function(){const value=this.next().value;if(value)delete value[0];return {};};const [[used],[selected]]=pairs;',
+    ["1", "0"],
+    "candidate",
+  ],
+  [
+    "proof stops at the inner close",
+    'const pairs=[[0],"next"];const [[used],selected]=pairs;pairs[1]="later";',
+    ["1"],
+    "candidate",
+  ],
+  [
+    "third iterator",
+    'const pairs=[[["first"]]];const [[[selected]]]=pairs;pairs[0][0][0]="later";',
+    ["0", "0", "0"],
+    "candidate",
+  ],
+] as const)(
+  "composes one native array inside another for %s",
+  (_name, code, path, resolution) => {
+    const graph = graphForJavaScript(code);
+    const selected = graph.nodes.find(
+      (n) => n.kind === "binding" && n.label === "selected",
+    );
+    const relation = graph.relations.find(
+      (r) =>
+        r.relation === "destructures" && r.target_node_id === selected?.node_id,
+    );
+    expect(relation).toMatchObject({ resolution });
+    expect(
+      graph.nodes.find((n) => n.node_id === relation?.source_node_id)
+        ?.properties.property_path,
+    ).toEqual(path);
+  },
+);

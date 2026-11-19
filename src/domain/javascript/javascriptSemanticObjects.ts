@@ -195,8 +195,8 @@ const collectDestructuring = (
     if (t.isObjectPattern(pattern)) {
       // A nested pattern needs a proved object even if it has no children.
       if (
-        (rootArray && !t.isObjectExpression(selected)) ||
-        (!rootArray && ownSlot !== sourcePresence?.read)
+        ownSlot !== sourcePresence?.read ||
+        (rootArray && !t.isObjectExpression(selected))
       )
         ownSlot = undefined;
       for (const property of pattern.properties.toReversed()) {
@@ -221,12 +221,17 @@ const collectDestructuring = (
     if (t.isArrayPattern(pattern)) {
       if (pattern !== root) {
         ownSlot =
-          !rootArray &&
           ownSlot !== undefined &&
           ownSlot === sourcePresence?.read &&
+          (!rootArray || path.length === 1) &&
           t.isArrayExpression(selected) &&
           propertyPath !== null
-            ? sourcePresence?.readNestedArray?.(propertyPath, path, pattern)
+            ? sourcePresence?.readNestedArray?.(
+                selected,
+                propertyPath,
+                path,
+                pattern,
+              )
             : undefined;
         // IteratorClose can run after these elements and before the next
         // sibling. Reaching this boundary ends the current presence proof.
