@@ -1,3 +1,5 @@
+import { ZIP_EOCD_BYTES } from "../zipEndOfCentralDirectory.js";
+import { ZIP_SIGNATURES } from "../zipPackageFormat.js";
 import { XML_ELEMENT_OPENING } from "../xmlDocument.js";
 import {
   DESKTOP_VIEW_DEFAULTS,
@@ -81,7 +83,9 @@ GROUP_HEADER = re.compile(r"^\[([^\]]+)\]$")
 LINE_BREAK = re.compile(r"\r?\n")
 SQLITE_HEADER = b"SQLite format 3\x00"
 GVDB_HEADER = b"GVariant"
-ZIP_HEADER = b"PK\x03\x04"
+ZIP_SIGNATURES = (${ZIP_SIGNATURES.map((signature) => `bytes(${JSON.stringify(signature)})`).join(", ")})
+ZIP_HEADER = ZIP_SIGNATURES[0]
+ZIP_EOCD_BYTES = ${String(ZIP_EOCD_BYTES)}
 GZIP_HEADER = b"\x1f\x8b\x08"
 XML_SPACE = "xml:space"
 MAX_SAFE_INTEGER = 2**53 - 1
@@ -416,6 +420,11 @@ def _bytes_view(name: str, data: bytes) -> dict:
     return _text_view(name, text, len(data))
 
 
+def _is_zip(data: bytes) -> bool:
+    """Recognize storage signatures before the directory reader checks validity."""
+    return data.startswith(ZIP_HEADER) or (len(data) >= ZIP_EOCD_BYTES and data.startswith(ZIP_SIGNATURES))
+
+
 def _view(path: Path) -> dict:
     """A typed JSON view of one file in the shapes of REA's state view; truncated says the view is partial."""
     too_large = {"format": None, "view": None, "error": VIEW_TOO_LARGE}
@@ -434,7 +443,7 @@ def _view(path: Path) -> dict:
         return too_large
     if data.startswith(SQLITE_HEADER):
         return _sqlite(path)
-    if data.startswith(ZIP_HEADER):
+    if _is_zip(data):
         with path.open("rb") as file:
             return _zip(file, os.fstat(file.fileno()).st_size)
     if data.startswith(GZIP_HEADER):

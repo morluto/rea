@@ -28,8 +28,7 @@ ZIP_CLASSIC_DISK_OFFSETS = ${JSON.stringify(Object.values(ZIP_CLASSIC_DISK_OFFSE
 ZIP_SINGLE_VOLUME = ${JSON.stringify(ZIP_SINGLE_VOLUME)}
 ZIP_EXTRA_FIELD = ${JSON.stringify(ZIP_EXTRA_FIELD)}
 #: Formats an archive entry may have whose reader needs a tool, a worker or another archive opened.
-NOT_READ_INSIDE = ((SQLITE_HEADER, "sqlite", "a SQLite database"), (GVDB_HEADER, "dconf", "a dconf database"),
-                   (ZIP_HEADER, "zip", "an archive"))
+NOT_READ_INSIDE = ((SQLITE_HEADER, "sqlite", "a SQLite database"), (GVDB_HEADER, "dconf", "a dconf database"))
 
 
 def _entry_view(name: str, data: bytes) -> dict:
@@ -38,6 +37,8 @@ def _entry_view(name: str, data: bytes) -> dict:
     for header, form, inside in NOT_READ_INSIDE:
         if data.startswith(header):
             return {"format": form, "view": None, "error": f"{inside} inside an archive is not read"}
+    if _is_zip(data):
+        return {"format": "zip", "view": None, "error": "an archive inside an archive is not read"}
     return _bytes_view(name, data)
 
 
@@ -337,8 +338,8 @@ def _gzip(name: str, data: bytes) -> dict:
                 if MAX_ZIP_RATIO * len(data) < MAX_ZIP_ENTRY_BYTES
                 else f"larger than the {_view_byte_limit(MAX_ZIP_ENTRY_BYTES)} a compressed document's view reads"}
     for header, form, inside in NOT_READ_INSIDE:
-        if form != "zip" and document.startswith(header):
+        if document.startswith(header):
             return {**compressed, "format": form, "error": f"{inside} inside a gzip file is not read"}
-    view = _zip(io.BytesIO(document), len(document)) if document.startswith(ZIP_HEADER) else _bytes_view(name, document)
+    view = _zip(io.BytesIO(document), len(document)) if _is_zip(document) else _bytes_view(name, document)
     return {**view, "compression": "gzip"}
 `;

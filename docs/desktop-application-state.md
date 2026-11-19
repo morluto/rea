@@ -141,16 +141,16 @@ Views hold the captured bytes as they are, the capture host's name and user
 included; the export removes those from the bundle. A version records
 whether the file was present, the SHA-256 of its retained bytes, and a view:
 
-| Format    | Detected by                                                            | View                                                                                   |
-| --------- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `sqlite`  | The `SQLite format 3` header                                           | Every ordinary table's columns, primary key and up to 500 rows                         |
-| `dconf`   | The `GVariant` header                                                  | Groups whose path names the application, plus the names of the other groups            |
-| `zip`     | A zip local file header, `PK\x03\x04`, whatever the name               | Its file entries in archive order, each with its own format and view                   |
-| `json`    | A `.json` name or a leading `{` or `[` that parses                     | The parsed value, from files up to 4 MiB nested up to 500 levels                       |
-| `xml`     | An XML name, a declaration or a leading element that parses            | An element tree (`name`, `attributes`, `children`); text kept exactly, DTDs never read |
-| `keyfile` | Only `[group]`, `key=value` and comment lines, with at least one group | Groups of `key` → string value, from files up to 4 MiB                                 |
-| `text`    | Other decoded text                                                     | Lines, up to 5,000                                                                     |
-| `binary`  | Content that cannot be read as text                                    | None                                                                                   |
+| Format    | Detected by                                                              | View                                                                                   |
+| --------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
+| `sqlite`  | The `SQLite format 3` header                                             | Every ordinary table's columns, primary key and up to 500 rows                         |
+| `dconf`   | The `GVariant` header                                                    | Groups whose path names the application, plus the names of the other groups            |
+| `zip`     | A ZIP local file header or an empty archive signature, whatever the name | Its file entries in archive order, each with its own format and view                   |
+| `json`    | A `.json` name or a leading `{` or `[` that parses                       | The parsed value, from files up to 4 MiB nested up to 500 levels                       |
+| `xml`     | An XML name, a declaration or a leading element that parses              | An element tree (`name`, `attributes`, `children`); text kept exactly, DTDs never read |
+| `keyfile` | Only `[group]`, `key=value` and comment lines, with at least one group   | Groups of `key` → string value, from files up to 4 MiB                                 |
+| `text`    | Other decoded text                                                       | Lines, up to 5,000                                                                     |
+| `binary`  | Content that cannot be read as text                                      | None                                                                                   |
 
 Text views decode UTF-8 or strictly valid UTF-16 with a leading byte-order
 mark. UTF-16 containing a NUL character stays binary. These rules also apply
