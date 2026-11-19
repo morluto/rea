@@ -1268,6 +1268,7 @@
 * guard first-catalog, child CDP and queue regressions at the test deadline ([#11675](https://github.com/morluto/rea/issues/11675)) ([d4c2be5](https://github.com/morluto/rea/commit/d4c2be509ec6ae879a12a82ae43e48077b0fdc1c)), closes [#10513](https://github.com/morluto/rea/issues/10513)
 * **hopper:** assert retained cleanup without optional diagnostics ([#10636](https://github.com/morluto/rea/issues/10636)) ([01192ab](https://github.com/morluto/rea/commit/01192ab73712478f90c7407db5d459198bebba44))
 * **hopper:** audit producer-bound snapshots through MCP ([ab16163](https://github.com/morluto/rea/commit/ab16163061094a6c28e9133c9c618e0850c9cb2f))
+* **hopper:** synchronize silent reconnect expiry assertions ([#12374](https://github.com/morluto/rea/issues/12374)) ([3fdda4e](https://github.com/morluto/rea/commit/3fdda4e1a125126ce650fb20fd46a545e04af3f7))
 * **ines:** make same-size prefix changes visible on coarse timestamps ([fc4c319](https://github.com/morluto/rea/commit/fc4c319cb4fb8017228892b27a93a33b4b2dd617)), closes [#8685](https://github.com/morluto/rea/issues/8685) [#8689](https://github.com/morluto/rea/issues/8689)
 * **inspector:** consolidate runtime observation coverage ([1592b7f](https://github.com/morluto/rea/commit/1592b7f2c0c6588471350c06ba40731498240c78))
 * **inspector:** keep the cancellation fixture out of underscored temp roots ([f35b6a7](https://github.com/morluto/rea/commit/f35b6a75b31fa36acde9ee6b86db4961a2b52211)), closes [#9996](https://github.com/morluto/rea/issues/9996) [#10118](https://github.com/morluto/rea/issues/10118)
