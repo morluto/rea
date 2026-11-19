@@ -258,7 +258,10 @@ def _zip(file, size: int) -> dict:
                 + struct.pack("<4sIQI", ZIP64_LOCATOR, 0, offset + len(kept), 1)
                 + struct.pack("<4s4H2IH", ZIP_END, 0, 0, len(records), len(records), len(kept), offset, 0))
         with zipfile.ZipFile(_BoundedArchive(file, start, tail)) as archive:
-            for info, name in zip(archive.infolist(), names, strict=True):
+            infos = archive.infolist()
+            if len(infos) != len(names):
+                raise zipfile.BadZipFile("retained member count differs from decoded member count")
+            for info, name in zip(infos, names):
                 refusal = _zip_refusal(info, spent)
                 spent += info.file_size if refusal is None else 0
                 entries.append(_zip_entry(archive, info, refusal, name))
