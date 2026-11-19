@@ -1,3 +1,4 @@
+import { BinaryReader } from "./binaryContainer.js";
 import { readElfAttributeUleb } from "./elfAttributeUleb.js";
 import type { RiscvIsaDeclaration } from "./binaryTargetTypes.js";
 import {
@@ -64,20 +65,17 @@ export const parseRiscvAttributes = (
 ): Result<string | null, string> => {
   if (bytes.length === 0 || bytes[0] !== FORMAT_VERSION)
     return err("unsupported RISC-V attribute section format version");
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const readU32 = (offset: number): number =>
-    view.getUint32(offset, littleEndian);
+  const section = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const reader = new BinaryReader(section, littleEndian, "RISC-V attributes");
   const readString = (
     offset: number,
     end: number,
   ): { readonly value: string; readonly next: number } | undefined => {
-    const stop = bytes.indexOf(0, offset);
-    return stop < 0 || stop >= end
+    const field = section.subarray(offset, end);
+    const stop = field.indexOf(0);
+    return stop < 0
       ? undefined
-      : {
-          value: Buffer.from(bytes.subarray(offset, stop)).toString("latin1"),
-          next: stop + 1,
-        };
+      : { value: field.toString("latin1", 0, stop), next: offset + stop + 1 };
   };
 
   let arch: string | null = null;
@@ -86,7 +84,7 @@ export const parseRiscvAttributes = (
   while (position < bytes.length) {
     if (bytes.length - position < 4)
       return err("truncated RISC-V attribute subsection length");
-    const length = readU32(position);
+    const length = reader.u32(position);
     if (length < 4 || length > bytes.length - position)
       return err("RISC-V attribute subsection length does not fit the section");
     const end = position + length;
@@ -114,7 +112,7 @@ export const parseRiscvAttributes = (
         );
       if (end - scope.next < 4)
         return err("truncated RISC-V attribute scope length");
-      const scopeLength = readU32(scope.next);
+      const scopeLength = reader.u32(scope.next);
       if (
         scopeLength < scope.next + 4 - scopeStart ||
         scopeLength > end - scopeStart
