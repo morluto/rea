@@ -110,6 +110,7 @@ export interface UefiImageScanSummary {
   readonly pspCandidates: readonly PspCandidateRecord[];
   readonly limitations: readonly string[];
   readonly budgetExhausted: boolean;
+  readonly truncationObserved: boolean;
 }
 
 type VolumeBuilder = {
@@ -160,6 +161,7 @@ export const scanUefiImage = async (
   const pspTables: PspTableRecord[] = [];
   const pspCandidates: PspCandidateRecord[] = [];
   let budgetExhausted = false;
+  let truncationObserved = false;
   let filesDiscovered = 0;
   let volumesDiscovered = 0;
 
@@ -619,6 +621,15 @@ export const scanUefiImage = async (
     for (const [index, draft] of walked.sections.entries()) {
       const sectionLogicalPath = `${fileLogicalPath}/section[${index}]`;
       const record = draftToRecord(draft, region);
+      if (draft.truncated && draft.typeName !== "unknown") {
+        // Preserve the omission for a real (recognizable) section that declares
+        // more bytes than the file/volume holds; junk frames from raw bodies
+        // have an unknown type and must not masquerade as truncation.
+        truncationObserved = true;
+        noteLimitations([
+          `Section ${sectionLogicalPath} declares ${draft.declaredLength} bytes but only ${draft.observedLength} are present; payload is truncated.`,
+        ]);
+      }
       if (draft.typeCode === 0x15 && uiString == null) {
         uiString = decodeUiString(sectionPayloadBuffer(region, draft));
       }
@@ -790,6 +801,7 @@ export const scanUefiImage = async (
     pspCandidates,
     limitations,
     budgetExhausted,
+    truncationObserved,
   };
 };
 

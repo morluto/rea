@@ -245,6 +245,7 @@ const selectTargets = (
  */
 export class UefiAnalysisProvider implements UefiAnalysisPort {
   #closing = false;
+  #tail: Promise<void> = Promise.resolve();
   readonly #resources = new ArtifactResourceScope();
   readonly #workerModulePath: string;
 
@@ -270,6 +271,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
 
   async close(): Promise<void> {
     this.#closing = true;
+    await this.#tail.catch(() => undefined);
+    await this.#resources.close();
   }
 
   async execute(
@@ -288,12 +291,59 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         ]),
       };
     }
+    // Admit one operation at a time so the advertised single decode-worker lane
+    // cannot become one worker per overlapping call.
+    return this.#serialize(() => this.#executeWithDeadline(request, options));
+  }
+
+  #serialize<T>(task: () => Promise<T>): Promise<T> {
+    const run = this.#tail.then(task, task);
+    this.#tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  /** Bound the whole request with one deadline, including every decode stage. */
+  async #executeWithDeadline(
+    request: UefiRequest,
+    options?: ExecutionOptions,
+  ): Promise<Result<AnalysisExecution, AnalysisError>> {
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () =>
+        controller.abort(
+          new Error(
+            `UEFI operation exceeded the ${UEFI_FIRMWARE_LIMITS.timeoutMs} ms deadline.`,
+          ),
+        ),
+      UEFI_FIRMWARE_LIMITS.timeoutMs,
+    );
+    const parent = options?.signal;
+    const onParentAbort = () => controller.abort(parent?.reason);
+    if (parent !== undefined) {
+      if (parent.aborted) controller.abort(parent.reason);
+      else parent.addEventListener("abort", onParentAbort, { once: true });
+    }
+    try {
+      return await this.#executeWithSignal(request, controller.signal);
+    } finally {
+      clearTimeout(timer);
+      parent?.removeEventListener("abort", onParentAbort);
+    }
+  }
+
+  async #executeWithSignal(
+    request: UefiRequest,
+    signal: AbortSignal,
+  ): Promise<Result<AnalysisExecution, AnalysisError>> {
     return this.#resources.run(async () => {
       try {
         const snapshot = await readStableArtifact(
           request.input.path,
           UEFI_FIRMWARE_LIMITS.inputBytes,
-          options?.signal,
+          signal,
           undefined,
           this.#resources,
         );
@@ -320,7 +370,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             this.#decodeStream(
               laneRequest.payload,
               laneRequest.format,
-              options?.signal,
+              signal,
             ).then((decoded) => (decoded.ok ? decoded.outcome : null)),
         );
         return {
@@ -333,7 +383,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   snapshot.bytes,
                   snapshot.sha256,
                   scan,
-                  options?.signal,
+                  signal,
                 ),
         };
       } catch (cause: unknown) {
@@ -387,7 +437,10 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         psp_candidates: scan.pspCandidates,
         unknown_regions: scan.unknownRegions,
         integrity: scan.integrity,
-        coverage: scan.budgetExhausted ? "partial" : "complete",
+        coverage:
+          scan.budgetExhausted || scan.truncationObserved
+            ? "partial"
+            : "complete",
         limitations: [...scan.limitations],
       });
     return createAnalysisExecution(result, UEFI_PROVIDER_IDENTITY, {
@@ -815,7 +868,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         },
         output_directory: publication.outputRoot,
         coverage:
-          gaps.some((gap) => gap.kind !== "pad-file") || scan.budgetExhausted
+          gaps.some((gap) => gap.kind !== "pad-file") ||
+          scan.budgetExhausted ||
+          scan.truncationObserved
             ? "partial"
             : "complete",
         files: plan.map((planned, index) => {

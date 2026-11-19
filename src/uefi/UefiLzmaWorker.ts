@@ -18,6 +18,40 @@ const requestSchema = z.strictObject({
 
 class UefiLzmaOutputLimit extends Error {}
 
+/**
+ * Output sink that enforces the byte budget while the decoder writes, instead
+ * of after the whole stream has expanded in memory. It grows on demand up to
+ * the limit and throws as soon as the stream would cross it.
+ */
+class BoundedLzmaOutput {
+  #buffer: Buffer;
+  #pos = 0;
+
+  constructor(readonly limit: number) {
+    this.#buffer = Buffer.allocUnsafe(Math.min(limit, 0x10000));
+  }
+
+  writeByte(byte: number): void {
+    if (this.#pos >= this.limit) {
+      throw new UefiLzmaOutputLimit(
+        `Decompressed output exceeds the ${this.limit} byte budget.`,
+      );
+    }
+    if (this.#pos >= this.#buffer.length) {
+      const next = Buffer.allocUnsafe(
+        Math.min(this.limit, this.#buffer.length * 2),
+      );
+      this.#buffer.copy(next, 0, 0, this.#pos);
+      this.#buffer = next;
+    }
+    this.#buffer[this.#pos++] = byte;
+  }
+
+  getBuffer(): Buffer {
+    return this.#buffer.subarray(0, this.#pos);
+  }
+}
+
 const main = async (): Promise<void> => {
   const requestPath = process.argv[2];
   if (requestPath === undefined) {
@@ -39,12 +73,9 @@ const main = async (): Promise<void> => {
       .parse(upstreamMetadata).version;
 
     const payload = await readFile(request.payload_path);
-    const decoded = Buffer.from(lzma.decompressFile(payload) as Uint8Array);
-    if (decoded.length > request.max_output_bytes) {
-      throw new UefiLzmaOutputLimit(
-        `Decompressed output ${decoded.length} exceeds the ${request.max_output_bytes} byte budget.`,
-      );
-    }
+    const output = new BoundedLzmaOutput(request.max_output_bytes);
+    lzma.decompressFile(payload, output);
+    const decoded = output.getBuffer();
     await writeFile(request.output_path, decoded, { flag: "wx", mode: 0o600 });
     reply = {
       ok: true,
