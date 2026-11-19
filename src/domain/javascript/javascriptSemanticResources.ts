@@ -82,11 +82,14 @@ export const collectJavaScriptSemanticResources = (
   ];
 };
 
-/** These expressions have typeof "function", including a class constructor. */
-const isFunctionValuedSyntax = (value: t.Node): boolean =>
+/** A fresh function value with no user-defined own properties. */
+const isFunctionExpressionOrMethod = (value: t.Node): boolean =>
   t.isFunctionExpression(value) ||
   t.isArrowFunctionExpression(value) ||
-  t.isClassExpression(value);
+  t.isObjectMethod(value, { kind: "method" });
+
+const isFunctionValuedSyntax = (value: t.Node): boolean =>
+  isFunctionExpressionOrMethod(value) || t.isClassExpression(value);
 
 /** Literal kinds Node rejects for both open flags and modes. */
 const rejectsFlagOrModeLiteral = (value: t.Node): boolean => {
@@ -752,22 +755,12 @@ const rejectsSocketArguments = (
   const { state } = context;
   const effective = socketOptionReader(node, specifier, state);
   if (effective === undefined) return false;
-  if (specifier === "tls" && rejectsTlsProtocolVersionLiteral(effective, state))
-    return true;
 
   const inheritable = prototypeMutationMayPrecede(state, "Object", node);
-  const truthiness = (value: SocketOptionValue): boolean | undefined => {
-    if (value === "unknown") return undefined;
-    if (value === undefined) return inheritable ? undefined : false;
-    if (isNullishPlaceholder(value, state)) return false;
-    const syntax = unwrapJavaScriptExpression(value).node;
-    const literal = readExactJavaScriptLiteral(syntax);
-    if (literal.found) return Boolean(literal.value);
-    const number = nonFiniteGlobalNumber(syntax, state);
-    if (number !== undefined) return Boolean(number);
-    if (t.isNewExpression(syntax) || t.isObjectMethod(syntax)) return true;
-    return staticJavaScriptTruthiness(syntax);
-  };
+  const truthiness = (value: SocketOptionValue): boolean | undefined =>
+    value === undefined && inheritable
+      ? undefined
+      : socketOptionTruthiness(value, state);
   const rejectsStringOption = (value: SocketOptionValue): boolean => {
     if (value === undefined || value === "unknown") return false;
     const kind = socketArgumentKind(
@@ -776,9 +769,19 @@ const rejectsSocketArguments = (
     );
     return kind === "object" || kind === "non-object";
   };
-  // A supplied TLS socket bypasses transport connection. Otherwise a truthy
-  // path selects a pipe and Node requires a string before it reads TCP options.
   if (specifier === "tls") {
+    const lacksFunctionMembers = (value: SocketOptionValue): boolean =>
+      value !== undefined &&
+      value !== "unknown" &&
+      isFunctionExpressionOrMethod(unwrapJavaScriptExpression(value).node) &&
+      !inheritable &&
+      !prototypeMutationMayPrecede(state, "Function", node);
+    // A fresh function has no native `context` member, and TLS checks it
+    // when a supplied secure context bypasses version parsing.
+    if (lacksFunctionMembers(effective("secureContext"))) return true;
+    if (rejectsTlsProtocolVersionLiteral(effective, state)) return true;
+
+    // A supplied socket bypasses transport connection only once it can be wrapped.
     const socket = effective("socket");
     const supplied = truthiness(socket);
     if (supplied !== false)
@@ -786,9 +789,11 @@ const rejectsSocketArguments = (
         supplied === true &&
         socket !== undefined &&
         socket !== "unknown" &&
-        rejectsSuppliedTlsSocket(socket, node, state, inheritable)
+        (lacksFunctionMembers(socket) ||
+          rejectsSuppliedTlsSocket(socket, node, state, inheritable))
       );
   }
+  // A truthy path selects a pipe and Node validates its type before TCP options.
   const path = effective("path");
   const hasPath = truthiness(path);
   if (hasPath === undefined) return false;
@@ -807,6 +812,21 @@ const rejectsSocketArguments = (
   const host = effective("host");
   // Node falls back to localhost for falsy hosts. An unknown host cannot prove a refusal.
   return truthiness(host) === true && rejectsStringOption(host);
+};
+
+const socketOptionTruthiness = (
+  value: SocketOptionValue,
+  state: JavaScriptSemanticAnalysisState,
+): boolean | undefined => {
+  if (value === "unknown") return undefined;
+  if (value === undefined || isNullishPlaceholder(value, state)) return false;
+  const syntax = unwrapJavaScriptExpression(value).node;
+  const literal = readExactJavaScriptLiteral(syntax);
+  if (literal.found) return Boolean(literal.value);
+  const number = nonFiniteGlobalNumber(syntax, state);
+  if (number !== undefined) return Boolean(number);
+  if (t.isNewExpression(syntax) || isFunctionValuedSyntax(syntax)) return true;
+  return staticJavaScriptTruthiness(syntax);
 };
 
 /** Node calls `pause()` when wrapping a supplied stream without a native socket handle. */
@@ -875,9 +895,7 @@ const rejectsSocketPortValue = (
     t.isObjectExpression(unwrapped) ||
     t.isArrayExpression(unwrapped) ||
     t.isRegExpLiteral(unwrapped) ||
-    t.isFunctionExpression(unwrapped) ||
-    t.isArrowFunctionExpression(unwrapped) ||
-    t.isClassExpression(unwrapped) ||
+    isFunctionValuedSyntax(unwrapped) ||
     t.isNewExpression(unwrapped)
   )
     return true;
@@ -938,7 +956,6 @@ const socketArgumentKind = (
     return "object";
   if (
     isFunctionValuedSyntax(value) ||
-    t.isObjectMethod(value) ||
     nonFiniteGlobalNumber(value, state) !== undefined
   )
     return "non-object";
@@ -1090,13 +1107,7 @@ const rejectsTlsProtocolVersionLiteral = (
   // already treats `-0` as falsy. Measured on Node 24.22.1,
   // `{secureContext: -0, minVersion: "nope"}` throws while a real context connects.
   const context = effective("secureContext");
-  if (context === "unknown") return false;
-  if (
-    context !== undefined &&
-    !isNullishPlaceholder(context, state) &&
-    staticJavaScriptTruthiness(context) !== false
-  )
-    return false;
+  if (socketOptionTruthiness(context, state) !== false) return false;
   const rejectsValue = (value: t.Node): boolean => {
     const read = unwrapJavaScriptExpression(value).node;
     // `null` and `undefined` mean "not given", which Node accepts.
@@ -1121,16 +1132,13 @@ const rejectsTlsProtocolVersionLiteral = (
     if (readExactJavaScriptLiteral(read).found) return true;
     // Every other statically known shape is truthy and not a string, so the call throws.
     if (
-      t.isObjectMethod(read) ||
+      isFunctionValuedSyntax(read) ||
       t.isNumericLiteral(read) ||
       t.isBooleanLiteral(read) ||
       t.isBigIntLiteral(read) ||
       t.isObjectExpression(read) ||
       t.isArrayExpression(read) ||
       t.isRegExpLiteral(read) ||
-      t.isArrowFunctionExpression(read) ||
-      t.isFunctionExpression(read) ||
-      t.isClassExpression(read) ||
       t.isNewExpression(read)
     )
       return true;
@@ -1187,12 +1195,7 @@ const rejectsSecureProtocolLiteral = (
     !TLS_SECURE_PROTOCOLS.has(literal.value)
   )
     return true;
-  // A literal read exactly, including a no-substitution template, decides its own
-  // truthiness; the shared truthiness reader does not price templates.
-  const truthy = literal.found
-    ? Boolean(literal.value)
-    : staticJavaScriptTruthiness(read);
-  if (truthy !== true) return false;
+  if (socketOptionTruthiness(read, state) !== true) return false;
   return (["minVersion", "maxVersion"] as const).some((member) => {
     const version = effective(member);
     if (version === undefined || version === "unknown") return false;

@@ -66,6 +66,11 @@ it.each([
     `tls.connect(+443, { host: 1 })`,
   ],
   ["an out-of-range numeric net string", `net.connect("65536")`],
+  ["a TLS port replaced by a method", `tls.connect(-1, { port() {} })`],
+  ["a method-valued net port", `net.connect({ port() {} })`],
+  ["a copied net port method", `net.createConnection({ ...{ port() {} } })`],
+  ["a method-valued TLS socket", `tls.connect(443, { socket() {} })`],
+  ["a method-valued TLS context", `tls.connect(443, { secureContext() {} })`],
   ["a numeric TLS path", `tls.connect(-1, { path: 1 })`],
   ["a true TLS socket", `tls.connect(-1, { socket: true })`],
   ["a numeric TLS socket", `tls.connect(443, { socket: +1 })`],
@@ -137,6 +142,19 @@ it.each([
   ["an unreadable template overload", "tls.connect(`${p}`, { port: -1 })"],
   ["an unreadable TLS path", `tls.connect(-1, { path: p })`],
   ["an unreadable TLS socket member", `tls.connect(-1, { socket: p })`],
+  [
+    "a TLS port method replaced by a number",
+    `tls.connect({ port() {} }, { port: 443 })`,
+  ],
+  ["a TLS port accessor", `tls.connect(-1, { get port() { return p; } })`],
+  [
+    "a pipe overriding a TLS port method",
+    `tls.connect("/tmp/x.sock", { port() {} })`,
+  ],
+  [
+    "a TLS socket class with unknown static members",
+    `tls.connect(-1, { socket: class extends p {} })`,
+  ],
   [
     "an unreadable literal stream method",
     `tls.connect(-1, { socket: { pause: p } })`,
@@ -215,6 +233,22 @@ it.each([
 ] as const)("keeps the socket acquisition for %s", (_name, call, method) => {
   expect(socketOperationsFor(call)).toEqual([{ kind: "acquire", method }]);
 });
+
+it.each(["socket", "secureContext"] as const)(
+  "preserves a method-valued %s with possible prototype members",
+  (member) => {
+    expect(
+      socketOperationsFor(`
+      Function.prototype.${member === "socket" ? "pause" : "context"} = p;
+      const handle = tls.connect(443, { ${member}() {} });
+      handle.destroy();
+    `),
+    ).toEqual([
+      { kind: "acquire", method: "connect" },
+      { kind: "release", method: "destroy" },
+    ]);
+  },
+);
 
 it.each([
   [

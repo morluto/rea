@@ -83,6 +83,10 @@ it.each([
     `tls.connect({ port: 80, secureProtocol: 5, minVersion: "TLSv1.2" })`,
   ],
   [
+    "an options method beside a version",
+    `tls.connect({ port: 80, secureProtocol() {}, minVersion: "TLSv1.2" })`,
+  ],
+  [
     "a null secure context beside an unknown method",
     `tls.connect({ port: 80, secureContext: null, secureProtocol: "bogus" })`,
   ],
@@ -105,6 +109,10 @@ it.each([
   ],
   ["a numeric method", `tls.connect({ port: 80, secureProtocol: 5 })`],
   ["an object method", `tls.connect({ port: 80, secureProtocol: {} })`],
+  [
+    "an options method without a version",
+    `tls.connect({ port: 80, secureProtocol() {} })`,
+  ],
   ["a null method", `tls.connect({ port: 80, secureProtocol: null })`],
   ["a computed method", `tls.connect({ port: 80, secureProtocol: p })`],
   [
