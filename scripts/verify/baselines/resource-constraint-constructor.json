@@ -106,7 +106,6 @@
   "src/native/AppleDispatchMetadata.ts": 1,
   "src/native/LldbCallTracer.ts": 1,
   "src/native/NativeCommandAnalysisError.ts": 1,
-  "src/native/NativeMacOSProvider.ts": 1,
   "src/native/NativePlistSource.ts": 2,
   "src/native/SignatureTargetBinding.ts": 1,
   "src/native/apple/AppleIpsProvider.ts": 2,
