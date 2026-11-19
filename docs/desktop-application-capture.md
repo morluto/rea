@@ -48,7 +48,10 @@ directory recorded as `application_working_directory`. Export maps that
 directory into the seed before replay. When the line starts with
 `env NAME=value` or `env -- NAME=value`, the program is found on the `PATH` those assignments set,
 with an empty or relative entry read from the folder the application runs
-in, and their XDG folders name the state directories. Otherwise the program is
+in. Explicit XDG folders take precedence for state discovery. For a direct
+application outside a managed sandbox, an absolute `HOME` assignment selects
+the default XDG roots and app-named dotfiles. Desktop entry lookup continues
+to use the host home. Otherwise the program is
 looked up on the host's `PATH` in the order the launch searches it, and one
 found only through a relative or empty entry is refused, since the exported
 computer would not have that entry. An `--executable` runs from
