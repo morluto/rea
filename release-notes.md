@@ -497,6 +497,8 @@
 * **macho:** prove command table framing before capacity ([#12376](https://github.com/morluto/rea/issues/12376)) ([88983eb](https://github.com/morluto/rea/commit/88983ebac7fff0f70dcef00b1b3b0aaed7e732a2))
 * **macho:** share marker-bearing dylib field decoding ([#12400](https://github.com/morluto/rea/issues/12400)) ([e9af636](https://github.com/morluto/rea/commit/e9af636128c56a8f789a989f6a61929f4908f37f))
 * **macho:** validate command counts before record limits ([#12305](https://github.com/morluto/rea/issues/12305)) ([b1479de](https://github.com/morluto/rea/commit/b1479de3dd954ec35657d695c3c47d85cf88aa6d))
+* **macho:** validate hardening symbol extents before capacity ([5a62623](https://github.com/morluto/rea/commit/5a62623cd1bb7e36af03c2ab0fca4516b2b8bd94))
+* **macho:** validate symbol extents before the hardening scan limit ([#12465](https://github.com/morluto/rea/issues/12465)) ([5a62623](https://github.com/morluto/rea/commit/5a62623cd1bb7e36af03c2ab0fca4516b2b8bd94))
 * **managed:** compare verified same-artifact TypeSpec targets ([#11163](https://github.com/morluto/rea/issues/11163)) ([2d4a97b](https://github.com/morluto/rea/commit/2d4a97b405ea2b5845f0c6968551066a93406df8))
 * **managed:** keep checked row reads under the managed cursor ([#12204](https://github.com/morluto/rea/issues/12204)) ([140ccdd](https://github.com/morluto/rea/commit/140ccddc110612858913b3e678be16306e3b6b7b))
 * **managed:** keep empty definition names out of member identity ([#12448](https://github.com/morluto/rea/issues/12448)) ([4377c1a](https://github.com/morluto/rea/commit/4377c1a392749a2999b8fbc483135992e387f5dd))
