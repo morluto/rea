@@ -212,8 +212,15 @@ class BundleCursor {
     return this.size - this.#position;
   }
 
+  #requireRemaining(length: number): number {
+    const remaining = this.remainingBytes;
+    if (length > remaining) fail("Truncated .NET bundle manifest");
+    return remaining;
+  }
+
   async take(length: number): Promise<Buffer> {
     abortIfNeeded(this.signal);
+    const remaining = this.#requireRemaining(length);
     const consumed = this.#position - this.start;
     if (consumed + length > this.limits.metadata_bytes)
       throw artifactReaderLimitFailure(
@@ -222,15 +229,13 @@ class BundleCursor {
         "bytes",
         consumed + length,
       );
-    if (length > this.size - this.#position)
-      fail("Truncated .NET bundle manifest");
     const cached = this.#position - this.#cacheOffset;
     if (cached < 0 || cached + length > this.#cache.length) {
       this.#cacheOffset = this.#position;
       this.#cache = Buffer.alloc(
         Math.min(
           Math.max(length, 64 * 1024),
-          this.size - this.#position,
+          remaining,
           this.limits.metadata_bytes - consumed,
         ),
       );
@@ -288,8 +293,7 @@ class BundleCursor {
       if (shift === 28 && byte > 7) fail("Invalid .NET bundle string length");
       length += (byte & 127) * 2 ** shift;
       if ((byte & 128) !== 0) continue;
-      if (length > this.size - this.#position)
-        fail("Truncated .NET bundle manifest");
+      this.#requireRemaining(length);
       if (length > this.limits.string_bytes)
         throw artifactReaderLimitFailure(
           "artifact_limits.dotnet_bundle.string_bytes",

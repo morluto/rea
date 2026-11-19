@@ -55,6 +55,34 @@ it.each([
   },
 );
 
+it("reports a missing fixed-width manifest field before the metadata budget", async () => {
+  const root = await createTestTempDirectory("rea-dotnet-truncated-field-");
+  const path = join(root, "host.exe");
+  const fixture = dotnetBundleFixture(
+    [{ path: "member", bytes: Buffer.from("x") }],
+    1,
+    "owner-layout-id",
+  );
+  const rowStart = fixture.fields.entries[0]!.offset;
+  // The valid bundle ID leaves only three bytes of the first eight-byte field.
+  const bytes = fixture.bytes.subarray(0, rowStart + 3);
+  await writeFile(path, bytes);
+  const handle = await open(path, "r");
+  try {
+    await expect(
+      readDotnetBundle(handle, bytes.length, fixture.headerOffset, undefined, {
+        ...DEFAULT_DOTNET_BUNDLE_READER_LIMITS,
+        metadata_bytes: rowStart - fixture.headerOffset,
+      }),
+    ).rejects.toMatchObject({
+      reason: "format",
+      message: "Truncated .NET bundle manifest",
+    });
+  } finally {
+    await handle.close();
+  }
+});
+
 it.each(["close", "cancel"] as const)(
   "does not complete a .NET bundle inventory after %s at the last entry",
   async (interruption) => {
