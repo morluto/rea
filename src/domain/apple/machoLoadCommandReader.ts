@@ -794,14 +794,17 @@ const decodeLazyLoadDylibInfoCommand = (
   body: Uint8Array,
   index: number,
 ): LazyLoadDylibInfoCommand => {
-  if (body.byteLength < 16)
+  const data = readMachoLinkeditDataCommand(
+    LC.LAZY_LOAD_DYLIB_INFO,
+    body,
+    true,
+  );
+  if (data === null)
     throw machoIssue(
       "malformed",
       `load command ${index} is too short for LC_LAZY_LOAD_DYLIB_INFO`,
     );
-  const reader = machoWordReader(body, true);
-  const dataOffset = reader.u32(8);
-  const dataSize = reader.u32(12);
+  const { dataOffset, dataSize } = data;
   if (dataSize < LAZY_INFO_HEADER_BYTES)
     throw machoIssue(
       "malformed",
