@@ -23,13 +23,14 @@ import {
   zipEntryPath,
   zipListingCoverage,
 } from "../resources/index.js";
-import { parseXmlDocument } from "../domain/xmlDocument.js";
+import { countXmlNodes, parseXmlDocument } from "../domain/xmlDocument.js";
 import { decodeXmlPlistText } from "../domain/propertyListXmlText.js";
 import { hasZipSignature } from "../domain/zipPackageFormat.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 import { Budget } from "../domain/budget.js";
 import { boundedList } from "../domain/boundedList.js";
 import {
+  MAX_INSPECT_VSIX_PACKAGE_MANIFEST_XML_NODES,
   VSIX_COMMANDS_CAP,
   VSIX_PACKAGE_FORMAT,
   isVsixInterestingMemberKind,
@@ -739,15 +740,35 @@ export const parseVsixPackage = async (
       );
       vsixBytes = decoded.length;
       examined += decoded.length;
+      let vsixText: string | undefined;
       try {
-        vsixParsed = parseVsixManifestDocument(
-          decodeXmlPlistText(decoded),
-          limitations,
-          presentPaths,
-        );
+        vsixText = decodeXmlPlistText(decoded);
       } catch {
         limitations.push(
           "The selected extension.vsixmanifest is not valid UTF-8 or BOM-marked UTF-16 XML text.",
+        );
+      }
+      if (vsixText !== undefined) {
+        // Count nodes as a stream first, so a compressed manifest of many tiny
+        // elements is refused before its document tree is allocated.
+        const nodes = countXmlNodes(
+          vsixText,
+          MAX_INSPECT_VSIX_PACKAGE_MANIFEST_XML_NODES,
+        );
+        if (nodes > MAX_INSPECT_VSIX_PACKAGE_MANIFEST_XML_NODES)
+          throw decodeLimit(
+            VSIX_PACKAGE_FORMAT,
+            `Selected extension.vsixmanifest holds more than ${String(MAX_INSPECT_VSIX_PACKAGE_MANIFEST_XML_NODES)} XML nodes, above the node allowance for its document tree.`,
+            {
+              name: "xml_nodes",
+              maximum: MAX_INSPECT_VSIX_PACKAGE_MANIFEST_XML_NODES,
+              required: nodes,
+            },
+          );
+        vsixParsed = parseVsixManifestDocument(
+          vsixText,
+          limitations,
+          presentPaths,
         );
       }
     }

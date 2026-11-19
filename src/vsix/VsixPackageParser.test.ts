@@ -5,6 +5,8 @@ import { ZipReader } from "@zip.js/zip.js";
 
 import {
   inspectVsixPackageInputSchema,
+  MAX_INSPECT_VSIX_PACKAGE_MANIFEST_BYTES,
+  MAX_INSPECT_VSIX_PACKAGE_MANIFEST_XML_NODES,
   VSIX_COMMANDS_CAP,
   vsixPackageSchema,
 } from "../domain/vsix/vsixPackage.js";
@@ -387,6 +389,28 @@ it("refuses a vsixmanifest larger than the metadata budget before reading it", a
     failure: {
       kind: "limit",
       limit: { name: "max_manifest_bytes", maximum: 64 },
+    },
+  });
+});
+
+it("refuses a vsixmanifest with more XML nodes than its tree allowance", async () => {
+  const bytes = await vsixPackageFixture({
+    vsixmanifest: `<PackageManifest>${"<x/>".repeat(MAX_INSPECT_VSIX_PACKAGE_MANIFEST_XML_NODES)}</PackageManifest>`,
+  });
+  await expect(
+    parseVsixPackage(bytes, artifactOf(bytes), {
+      ...defaults,
+      max_manifest_bytes: MAX_INSPECT_VSIX_PACKAGE_MANIFEST_BYTES,
+    }),
+  ).rejects.toMatchObject({
+    constructor: ParseFailureError,
+    failure: {
+      kind: "limit",
+      limit: {
+        name: "xml_nodes",
+        maximum: MAX_INSPECT_VSIX_PACKAGE_MANIFEST_XML_NODES,
+        required: MAX_INSPECT_VSIX_PACKAGE_MANIFEST_XML_NODES + 1,
+      },
     },
   });
 });

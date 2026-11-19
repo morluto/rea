@@ -16,6 +16,8 @@ export const MAX_INSPECT_VSIX_PACKAGE_FILE_BYTES = 536870912;
 export const MAX_INSPECT_VSIX_PACKAGE_ENTRIES = 65536;
 /** Hard ceiling on decoded vsixmanifest / package.json bytes. */
 export const MAX_INSPECT_VSIX_PACKAGE_MANIFEST_BYTES = 16 * 1024 * 1024;
+/** Fixed ceiling on XML nodes a selected extension.vsixmanifest may expand into. */
+export const MAX_INSPECT_VSIX_PACKAGE_MANIFEST_XML_NODES = 1_048_576;
 /** Hard ceiling on decoded bytes hashed for one interesting member. */
 export const MAX_INSPECT_VSIX_PACKAGE_MEMBER_BYTES = 16 * 1024 * 1024;
 /** Commands listed in the contributes summary; remaining stay in the total. */
