@@ -7,7 +7,7 @@ import {
   rejectGpu,
   type GpuSource,
 } from "./GpuSource.js";
-import { gpuObject } from "./GpuObject.js";
+import { gpuObject, recordDeclaredGpuDecodedSize } from "./GpuObject.js";
 const CUDA_FATBINARY = "cuda-fatbinary";
 export async function* readCudaFatbinary(
   source: GpuSource,
@@ -84,13 +84,8 @@ export async function* readCudaFatbinary(
         row.limitations.push(
           `CUDA entry version 0x${version.toString(16)} is not decoded`,
         );
-      } else if (declaredDecodedSize > Number.MAX_SAFE_INTEGER) {
-        row.decoded_size = null;
-        row.limitations.push(
-          `CUDA declares ${String(declaredDecodedSize)} decoded bytes, outside the exact integer range of decoded_size`,
-        );
       } else {
-        row.decoded_size = Number(declaredDecodedSize);
+        recordDeclaredGpuDecodedSize(row, declaredDecodedSize);
       }
       if (row.compression === "unsupported")
         row.limitations.push(

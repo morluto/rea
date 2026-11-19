@@ -1378,7 +1378,7 @@ it.each([
     ]);
     if (projected === null)
       expect(wrappers[0]?.limitations).toContain(
-        `CCOB declares ${String(decoded)} decoded bytes, outside the exact integer range of decoded_size`,
+        `Declared decoded size is ${String(decoded)} bytes, outside the exact integer range of decoded_size`,
       );
     expect(result.value.coverage.discovery).toBe("partial");
     expect(result.value.kernels.map(({ name }) => name)).toEqual(["add_one"]);

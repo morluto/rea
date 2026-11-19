@@ -13,7 +13,12 @@ import {
   readClangBundleDirectory,
   readCcobHeader,
 } from "./ClangOffloadBundle.js";
-import { gpuObject, gpuLocation, type GpuPayloadTarget } from "./GpuObject.js";
+import {
+  gpuObject,
+  gpuLocation,
+  recordDeclaredGpuDecodedSize,
+  type GpuPayloadTarget,
+} from "./GpuObject.js";
 import { readCudaTarget } from "./CudaTarget.js";
 import { readCudaFatbinary } from "./CudaFatbinary.js";
 import { decodeGpuPayload, decodeGpuPayloadStream } from "./GpuPayloadCodec.js";
@@ -611,15 +616,8 @@ export class GpuInventory {
       row.compression =
         method === 0 ? "zlib" : method === 1 ? "zstd" : "unsupported";
       row.compression_id = `ccob:${version}:${method}`;
-      row.decoded_size =
-        declaredDecodedSize <= BigInt(Number.MAX_SAFE_INTEGER)
-          ? Number(declaredDecodedSize)
-          : null;
+      recordDeclaredGpuDecodedSize(row, declaredDecodedSize);
       if (extentKnown) this.#add(row);
-      if (row.decoded_size === null)
-        this.#objectLimitations(row, [
-          `CCOB declares ${String(declaredDecodedSize)} decoded bytes, outside the exact integer range of decoded_size`,
-        ]);
       if (row.compression === "unsupported") {
         row.inspection = "unsupported";
         this.#objectLimitations(row, ["Unsupported CCOB compression method"]);
