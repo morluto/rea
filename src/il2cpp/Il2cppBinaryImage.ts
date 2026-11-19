@@ -14,7 +14,11 @@ import {
   type BinaryContainer,
   type FileMappingIndex,
 } from "../domain/binaryContainer.js";
-import { readBinaryContainer } from "../domain/native/readBinaryContainer.js";
+import type { ZstandardFramePause } from "../domain/compression/zstandardExactFrame.js";
+import {
+  readBinaryContainer,
+  readBinaryContainerCooperative,
+} from "../domain/native/readBinaryContainer.js";
 import {
   requireSelectedNativeImage,
   type SelectedNativeImage,
@@ -82,27 +86,19 @@ export interface NativeImage {
 }
 
 /** Open one thin image; a universal Mach-O slice is selected before this. */
-export function* openImageSteps(image: Buffer): Generator<void, NativeImage> {
-  let container: BinaryContainer;
-  try {
-    container = readBinaryContainer(image, "inspect_il2cpp_metadata");
-  } catch (cause) {
-    if (cause instanceof BinaryResourceFailure)
-      throw new Il2cppBinaryFormatFailure(
-        "native-index-capacity",
-        cause.message,
-        cause.failure.limit.maximum,
-        "bytes",
-      );
-    if (cause instanceof BinaryFormatFailure)
-      throw new Il2cppBinaryFormatFailure(
-        cause.kind === "unsupported"
-          ? "unsupported-container"
-          : "malformed-container",
-        cause.message,
-      );
-    throw cause;
-  }
+export function* openImageSteps(
+  image: Buffer,
+  prepared?: BinaryContainer,
+): Generator<void, NativeImage> {
+  const container =
+    prepared ??
+    (() => {
+      try {
+        return readBinaryContainer(image, "inspect_il2cpp_metadata");
+      } catch (cause) {
+        return refuseIl2cppContainer(cause);
+      }
+    })();
   if (container.bits !== 64 || container.byte_order !== "little")
     throw new Il2cppBinaryFormatFailure(
       "unsupported-container",
@@ -211,6 +207,45 @@ export function* openImageSteps(image: Buffer): Generator<void, NativeImage> {
     ...(machoPointerFixups === undefined ? {} : { machoPointerFixups }),
   };
 }
+
+const refuseIl2cppContainer = (cause: unknown): never => {
+  if (cause instanceof BinaryResourceFailure)
+    throw new Il2cppBinaryFormatFailure(
+      "native-index-capacity",
+      cause.message,
+      cause.failure.limit.maximum,
+      "bytes",
+    );
+  if (cause instanceof BinaryFormatFailure)
+    throw new Il2cppBinaryFormatFailure(
+      cause.kind === "unsupported"
+        ? "unsupported-container"
+        : "malformed-container",
+      cause.message,
+    );
+  throw cause;
+};
+
+/** Same image as {@link openImageSteps}. ELF section names yield through `pause`. */
+export const openIl2cppImageCooperative = async (
+  image: Buffer,
+  pause: ZstandardFramePause,
+): Promise<NativeImage> => {
+  let container: BinaryContainer;
+  try {
+    container = await readBinaryContainerCooperative(
+      image,
+      "inspect_il2cpp_metadata",
+      pause,
+    );
+  } catch (cause) {
+    return refuseIl2cppContainer(cause);
+  }
+  const steps = openImageSteps(image, container);
+  let step = steps.next();
+  while (!step.done) step = steps.next();
+  return step.value;
+};
 
 /** Stored bytes only; loader interpretation belongs to readSlot. */
 const readStoredWord = (image: NativeImage, address: bigint): bigint | null => {

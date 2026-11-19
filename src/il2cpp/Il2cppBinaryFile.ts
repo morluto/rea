@@ -1,6 +1,11 @@
 import type { Il2cppMethodAddress } from "../domain/il2cpp/il2cppMetadata.js";
 import { Il2cppBinaryFormatFailure } from "./Il2cppBinaryFormat.js";
-import { openImageSteps, readSlot, isExecutable } from "./Il2cppBinaryImage.js";
+import {
+  openImageSteps,
+  readSlot,
+  isExecutable,
+  type NativeImage,
+} from "./Il2cppBinaryImage.js";
 import {
   findModules,
   findCodeRegistration,
@@ -83,12 +88,13 @@ export function* linkIl2cppBinarySteps(
   metadata: Il2cppMetadataDecoded,
   facts: Il2cppMetadataLinkFacts,
   options: Il2cppBinaryReadOptions = {},
+  opened?: NativeImage,
 ): Generator<void, Il2cppBinaryLink> {
   const version = metadata.metadata_version;
   // Refuse an undecoded version before any table is read.
   if (options.genericInstances === true) genericMethodLayouts(version);
   yield;
-  const image = yield* openImageSteps(bytes);
+  const image = opened ?? (yield* openImageSteps(bytes));
   const modules = yield* findModules(image, metadata);
   const registration_ = yield* findCodeRegistration(image, modules);
   const methodImage = new Int32Array(metadata.methods.length).fill(-1);

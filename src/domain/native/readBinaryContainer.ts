@@ -8,7 +8,8 @@ import {
   readFatHeaderPrefix,
   readMachoHeaderPrefixFacts,
 } from "../apple/machoContainer.js";
-import { readElfImage } from "./elfImage.js";
+import type { ZstandardFramePause } from "../compression/zstandardExactFrame.js";
+import { readElfImage, readElfImageCooperative } from "./elfImage.js";
 import { readPeImage } from "./peImage.js";
 import { readMachoImage } from "../apple/machoImage.js";
 
@@ -50,4 +51,21 @@ export const readBinaryContainer = (
     "unsupported",
     "Only ELF, PE, and thin Mach-O native images are supported",
   );
+};
+
+/** Same container as {@link readBinaryContainer}. ELF section names yield through `pause`. */
+export const readBinaryContainerCooperative = async (
+  bytes: Buffer,
+  operation: string,
+  pause: ZstandardFramePause,
+  maximumSourceAndDecodedNamesBytes?: number,
+): Promise<BinaryContainer> => {
+  if (bytes.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])))
+    return readElfImageCooperative(
+      bytes,
+      operation,
+      pause,
+      maximumSourceAndDecodedNamesBytes,
+    );
+  return readBinaryContainer(bytes, operation);
 };
