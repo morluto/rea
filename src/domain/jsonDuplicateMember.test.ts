@@ -68,3 +68,42 @@ it.each([
     });
   },
 );
+
+it("observes decimal member source in its decoded object, including escaped keys", () => {
+  const observed: string[] = [];
+  const parsed = parseJsonWithDuplicatePolicy(
+    String.raw`{"files":{"__proto__":{"si\u007ae":1.0000000000000000001},"integer":{"size":1}},"nonFiles":[{"size":1e-1000}]}`,
+    "reject",
+    {
+      name: "size",
+      read: (owner, _value, source) => {
+        observed.push(source);
+        owner.size = source;
+      },
+    },
+  );
+  expect(observed).toEqual(["1.0000000000000000001"]);
+  expect(parsed).toMatchObject({
+    ok: true,
+    firstObjectMember: "files",
+    value: {
+      files: Object.fromEntries([
+        ["__proto__", { size: "1.0000000000000000001" }],
+        ["integer", { size: 1 }],
+      ]),
+      nonFiles: [{ size: 0 }],
+    },
+  });
+});
+
+it("observes a decimal member deeper than the native reviver can recurse", () => {
+  const depth = 5000;
+  const source = `${'{"child":'.repeat(depth)}{"size":1e-1000}${"}".repeat(depth)}`;
+  const observed: string[] = [];
+  const parsed = parseJsonWithDuplicatePolicy(source, "reject", {
+    name: "size",
+    read: (_owner, _value, raw) => observed.push(raw),
+  });
+  expect(parsed.ok).toBe(true);
+  expect(observed).toEqual(["1e-1000"]);
+});

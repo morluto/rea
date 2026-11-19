@@ -5,17 +5,16 @@ import {
   isBinaryFormatOrStringLimitFailure,
   type BinaryStringReadLimit,
   mappedFileOffset,
-  imageFileMappings,
   readMappedCString,
 } from "../binaryContainer.js";
 import { architectureForElfMachine } from "./elfImage.js";
 import { readElfStringBytes } from "./elfStringBytes.js";
-import { readElfSymbol } from "../elfSymbol.js";
+import { elfSymbolSize, readElfSymbol } from "../elfSymbol.js";
 import {
   readElfDirectoryFromBuffer,
   type NativeSection,
 } from "./nativeSectionDirectory.js";
-import { readPeImage } from "./peImage.js";
+import { peDeclaredFileMappings, readPeImage } from "./peImage.js";
 import {
   allKeyed,
   keyedBy,
@@ -186,7 +185,7 @@ const parsePeExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
       ],
     };
   const reader = new BinaryReader(bytes, true, "pe");
-  const mappings = imageFileMappings(image);
+  const mappings = peDeclaredFileMappings(image);
   const map = (rva: number, size: number): number =>
     mappedFileOffset(mappings, base + BigInt(rva), size, image.zero_fills);
   const cStringBytes = (
@@ -195,9 +194,10 @@ const parsePeExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
   ): Buffer => {
     const value = readMappedCString(
       bytes,
-      image,
+      mappings,
       base + BigInt(rva),
       maximumBytes,
+      image.zero_fills,
     );
     if (value.length === 0)
       throw new BinaryFormatFailure(
@@ -721,7 +721,7 @@ function* parseElfExports(
         ...ELF_LIMITATIONS,
       ],
     };
-  const width = directory.bits === 64 ? 24 : 16;
+  const width = elfSymbolSize(directory.bits);
   const strings = sections[dynsym.link];
   const compressed = dynsym.compressed
     ? dynsym
@@ -760,14 +760,14 @@ function* parseElfExports(
       "malformed",
       "ELF dynamic symbol table entry size, length, null entry or string-table link is invalid",
     );
-  const count = Number(dynsym.size / BigInt(width));
-  rowBudget(count, "ELF dynamic symbol table");
-  const table = reader.table(
+  const { offset: table, size } = reader.fileRange(
     dynsym.offset,
-    count,
-    width,
+    dynsym.size,
     "ELF dynamic symbols",
   );
+  const count = size / width;
+  // With a fixed 16- or 24-byte row, the inventory ceiling also bounds table bytes.
+  rowBudget(count, "ELF dynamic symbol table");
   // Entry zero is skipped only after it is observed to be the undefined
   // symbol. A stray st_name is recorded; any other nonzero field is refused.
   const nullSymbolNote = reservedElfDynamicSymbolNote(

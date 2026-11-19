@@ -19,12 +19,12 @@ import {
   DT_STRSZ,
   DT_SYMENT,
   DT_SYMTAB,
-  elfDynamicEntryWidth,
+  elfDynamicTableGeometry,
   walkElfDynamicTable,
 } from "../../domain/elfDynamicEntry.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
 import { admitElfLoadSegment } from "../../domain/elfProgramHeader.js";
-import { readElfSymbol } from "../../domain/elfSymbol.js";
+import { elfSymbolSize, readElfSymbol } from "../../domain/elfSymbol.js";
 import {
   readElfGnuHashSymbolCount,
   readElfHashSymbolCount,
@@ -402,6 +402,7 @@ type DynamicTable = {
   readonly stringFileOffset: number | null;
 };
 
+/** Read a PT_DYNAMIC span already admitted by the shared declared-range pass. */
 const readDynamic = (
   bytes: Buffer,
   program: Extract<ElfProgramDeclaration, { type: 2 }>,
@@ -409,15 +410,13 @@ const readDynamic = (
   little: boolean,
   mapVa: MapVa,
 ): DynamicTable => {
-  const width = elfDynamicEntryWidth(bits);
   const offset = exact(program.offset, "PT_DYNAMIC offset");
   const size = exact(program.size, "PT_DYNAMIC size");
-  if (size % width !== 0)
+  const { width, trailingBytes } = elfDynamicTableGeometry(size, bits);
+  if (trailingBytes !== 0)
     malformed("ELF PT_DYNAMIC size is not a whole number of entries");
   const count = size / width;
   budget(count, "ELF dynamic table");
-  if (size > bytes.length - offset)
-    malformed("ELF PT_DYNAMIC extends outside the file");
   const entries = new Map<bigint, DynamicEntry>();
   const walked = walkElfDynamicTable<never>(
     bytes.subarray(offset, offset + size),
@@ -505,7 +504,7 @@ const readSymbols = (
             "An SHT_DYNSYM section exists, but no DT_SYMTAB declares it, so its names are not established as imports.",
           names: [],
         };
-  const width = bits === 64 ? 24 : 16;
+  const width = elfSymbolSize(bits);
   const syment = dynamic.entries.get(DT_SYMENT);
   if (syment !== undefined && syment.value !== BigInt(width))
     malformed("ELF DT_SYMENT does not match the ELF class symbol width");
@@ -584,7 +583,7 @@ const readSymbolNames = (
   strings: Buffer,
   stringFileOffset: number,
 ): SymbolScan => {
-  const width = bits === 64 ? 24 : 16;
+  const width = elfSymbolSize(bits);
   const names: SymbolName[] = [];
   let scanned = 0;
   let unterminated = false;

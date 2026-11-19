@@ -29,6 +29,7 @@ import {
   parseAndroidOtaHeader,
   parseAndroidOtaPayload,
   reconstructAndroidOtaPartition,
+  withAndroidOtaPayloadSignature,
   type AndroidOtaPartition,
   type AndroidOtaPayload,
   type AndroidOtaPayloadParseError,
@@ -205,41 +206,37 @@ export class AndroidOtaPayloadArtifactReader implements ArtifactReader {
     );
     const header = parseAndroidOtaHeader(headerBytes, initial.size);
     if (!header.ok) throw parseFailure(header.error);
-    const prefixEnd = Math.min(initial.size, header.value.blobOffset);
-    const prefix = await readArtifactFileBytes(
+    const { manifestOffset, metadataPrefixEnd } = header.value;
+    const metadata = await readArtifactFileBytes(
       handle,
-      0,
-      prefixEnd,
+      manifestOffset,
+      metadataPrefixEnd - manifestOffset,
       initial.size,
       signal,
     );
-    const first = parseAndroidOtaPayload(prefix, initial.size);
-    if (!first.ok) throw parseFailure(first.error);
-    let payloadSignature: Uint8Array | undefined;
-    if (
-      first.value.signaturesOffset !== null &&
-      first.value.signaturesSize !== null &&
-      first.value.signaturesSize > 0
-    ) {
-      const start = header.value.blobOffset + first.value.signaturesOffset;
-      const end = start + first.value.signaturesSize;
-      if (Number.isSafeInteger(end) && end <= initial.size) {
-        payloadSignature = await readArtifactFileBytes(
-          handle,
-          start,
-          first.value.signaturesSize,
-          initial.size,
-          signal,
-        );
-      }
-    }
+    const payload = parseAndroidOtaPayload(
+      header.value,
+      metadata,
+      initial.size,
+    );
+    if (!payload.ok) throw parseFailure(payload.error);
+    const signatureRange = payload.value.payloadSignatureRange;
+    const payloadSignature =
+      signatureRange === null
+        ? undefined
+        : await readArtifactFileBytes(
+            handle,
+            signatureRange.offset,
+            signatureRange.bytes,
+            initial.size,
+            signal,
+          );
     await this.#source.read(signal);
     this.#assertOpen(signal);
-    const parsed = parseAndroidOtaPayload(
-      prefix,
-      initial.size,
-      payloadSignature,
-    );
+    const parsed =
+      payloadSignature === undefined
+        ? payload
+        : withAndroidOtaPayloadSignature(payload.value, payloadSignature);
     if (!parsed.ok) throw parseFailure(parsed.error);
     this.#payload = parsed.value;
     this.#entries.clear();

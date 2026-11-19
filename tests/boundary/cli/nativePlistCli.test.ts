@@ -229,6 +229,8 @@ describe.skipIf(process.platform !== "darwin")(
             "<key>CFBundleIdentifier</key><string>com.example.types</string>",
             "<key>Blob</key><data>AAEC</data>",
             "<key>Separators</key><string>a\u0085b\u2028c\u2029d</string>",
+            // CoreFoundation keeps a literal CR, so plutil's binary conversion holds it too.
+            "<key>Returns</key><string>a\rb\r\nc\nd</string>",
             "<key>Built</key><date>2020-01-01T00:00:00Z</date>",
             // Parse the unsigned extended year as a UTC field, without JS string-date inference.
             "<key>Far</key><date>11507-08-17T05:20:00Z</date>",
@@ -263,6 +265,7 @@ describe.skipIf(process.platform !== "darwin")(
               CFBundleIdentifier: "com.example.types",
               Blob: { $plist_type: "data", base64: "AAEC" },
               Separators: "a\u0085b\u2028c\u2029d",
+              Returns: "a\rb\r\nc\nd",
               Built: {
                 $plist_type: "date",
                 iso8601: "2020-01-01T00:00:00.000Z",

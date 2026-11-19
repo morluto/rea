@@ -379,6 +379,7 @@ describe("stripped ELF symbol-table ownership", () => {
       reason: expect.stringMatching(
         /_kDartIsolateSnapshotData.*not in the dynamic symbol table/i,
       ),
+      missingSymbol: "_kDartIsolateSnapshotData",
     });
     image.writeBigUInt64LE(0x60000001n, dynamic + 4 * 16); // No recognized count table.
     expect(
@@ -568,7 +569,10 @@ it.each([256, 257])(
         : {
             symbols: [],
             failures: [
-              { reason: `symbol ${name} is not in the dynamic symbol table` },
+              {
+                reason: `symbol ${name} is not in the dynamic symbol table`,
+                missingSymbol: name,
+              },
             ],
           },
     );
@@ -596,7 +600,10 @@ it("checks raw symbol precision only after definition and requested-name selecti
   expect(await readElfSymbols(bytes, ["unselected"])).toEqual({
     symbols: [],
     failures: [
-      { reason: "symbol unselected is not in the dynamic symbol table" },
+      {
+        reason: "symbol unselected is not in the dynamic symbol table",
+        missingSymbol: "unselected",
+      },
     ],
   });
 });

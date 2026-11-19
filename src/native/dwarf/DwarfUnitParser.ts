@@ -11,6 +11,7 @@ import {
 } from "../../domain/native/dwarfUnits.js";
 import { DwarfAbbrevCache, type DwarfAbbrevAttribute } from "./DwarfAbbrev.js";
 import { DwarfCursor, readInitialLength } from "./DwarfReader.js";
+import { isStrictUtf8 } from "../../domain/strictUtf8.js";
 
 const DW_AT_NAME = 0x03;
 const DW_AT_STMT_LIST = 0x10;
@@ -620,9 +621,8 @@ const presentString = (
   issue: (code: DwarfUnitIssueCode, detail: string) => void,
 ): DwarfStringFact => {
   if (raw === null) return unresolvedString();
-  const utf8 = raw.toString("utf8");
-  if (Buffer.from(utf8, "utf8").equals(raw))
-    return { state: "present", value: utf8 };
+  if (isStrictUtf8(raw))
+    return { state: "present", value: raw.toString("utf8") };
   issue(
     "string_not_utf8",
     "String is not valid UTF-8; the value is the raw bytes as Latin-1",

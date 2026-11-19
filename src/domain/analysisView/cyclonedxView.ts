@@ -131,6 +131,8 @@ type GoModuleIdentity = {
   readonly version: string;
   readonly sum: string | null;
 };
+type GoPackagePath = "qualified" | "no-namespace" | "path-only";
+
 /**
  * Component identity is the replacement when one is recorded, otherwise the
  * module. `original` is that module. Both keep the parsed path, version and
@@ -138,7 +140,9 @@ type GoModuleIdentity = {
  */
 type PublishedGoModule = {
   readonly component: GoModuleIdentity;
+  readonly componentPath: GoPackagePath;
   readonly original: GoModuleIdentity | null;
+  readonly originalPath: GoPackagePath | null;
 };
 
 const CRATES_IO_SOURCE = "crates.io";
@@ -188,45 +192,61 @@ const UNUSABLE_GO_SEGMENT = /(?:^|\/)\.{0,2}(?:\/|$)/u;
 /** Windows drive-relative and absolute directory syntax. */
 const WINDOWS_DRIVE_PREFIX = /^[A-Za-z]:/u;
 
-/** A path that can name a Package URL. Go module paths use slash separators. */
-const isGoModulePath = (path: string): boolean =>
-  !path.includes("\\") &&
-  !UNUSABLE_GO_SEGMENT.test(path) &&
-  !WINDOWS_DRIVE_PREFIX.test(path);
+/** The Go PURL type requires both a slash-separated namespace and name. */
+const classifyGoPackagePath = (path: string): GoPackagePath => {
+  if (
+    path.includes("\\") ||
+    UNUSABLE_GO_SEGMENT.test(path) ||
+    WINDOWS_DRIVE_PREFIX.test(path)
+  )
+    return "path-only";
+  return path.includes("/") ? "qualified" : "no-namespace";
+};
 
 /**
- * The parsed replacement is the component, including a directory or other
- * path that cannot name a Package URL. The recorded module stays the original.
- * Absence of a replacement leaves the module as the component.
+ * The parsed replacement is the component when present. Classify each recorded
+ * path once so budgeting, references, and diagnostics use the same decision.
  */
 const publishedGoModule = (module: GoModule): PublishedGoModule => {
-  const replacement = module.replacement;
-  if (replacement === null) return { component: module, original: null };
-  return { component: replacement, original: module };
+  const component = module.replacement ?? module;
+  const original = module.replacement === null ? null : module;
+  return {
+    component,
+    componentPath: classifyGoPackagePath(component.path),
+    original,
+    originalPath:
+      original === null ? null : classifyGoPackagePath(original.path),
+  };
 };
 
 /** Show an empty recorded path instead of dropping it from the unknown. */
 const displayPath = (path: string): string => (path.length === 0 ? '""' : path);
 
 const goIdentityUnknowns = (
-  modules: readonly GoModule[],
   published: readonly PublishedGoModule[],
 ): string[] =>
-  modules.flatMap((module, index) => {
-    const item = published[index];
-    if (item === undefined) return [];
+  published.flatMap(({ component, componentPath, original, originalPath }) => {
     const messages: string[] = [];
-    const componentIsModule = isGoModulePath(item.component.path);
-    if (item.original !== null && !componentIsModule)
+    if (original !== null) {
+      if (componentPath === "path-only")
+        messages.push(
+          `Go replacement path ${displayPath(component.path)} has no module identity.`,
+        );
+      else if (componentPath === "no-namespace")
+        messages.push(
+          `Go replacement path ${component.path} has no Package URL namespace.`,
+        );
+    }
+    const path = (original ?? component).path;
+    const kind = originalPath ?? componentPath;
+    if (kind === "path-only")
       messages.push(
-        `Go replacement path ${displayPath(item.component.path)} has no module identity.`,
+        original !== null && componentPath !== "path-only"
+          ? `Go module path ${displayPath(path)} has no module identity; the replacement module is kept.`
+          : `Go module path ${displayPath(path)} has no module identity.`,
       );
-    if (!isGoModulePath(module.path))
-      messages.push(
-        item.original !== null && componentIsModule
-          ? `Go module path ${displayPath(module.path)} has no module identity; the replacement module is kept.`
-          : `Go module path ${displayPath(module.path)} has no module identity.`,
-      );
+    else if (kind === "no-namespace")
+      messages.push(`Go module path ${path} has no Package URL namespace.`);
     return messages;
   });
 
@@ -239,7 +259,7 @@ const goComponentProperties = (
   if (sum !== undefined) properties.push({ name: "rea:go:sum", value: sum });
   const original = published.original;
   if (original === null) return properties;
-  if (isGoModulePath(original.path))
+  if (published.originalPath === "qualified")
     properties.push({
       name: "rea:go:original",
       value: golangPackageUrl(original.path, original.version),
@@ -254,7 +274,7 @@ const goComponentProperties = (
     properties.push({ name: "rea:go:original-sum", value: originalSum });
   // The component name is the replacement path, except an empty path, which
   // cannot be a CycloneDX name. Keep the recorded path either way.
-  if (!isGoModulePath(component.path))
+  if (published.componentPath === "path-only")
     properties.push({
       name: "rea:go:local-replacement",
       value: component.path,
@@ -503,14 +523,19 @@ const goIdentityBytes = (identity: GoModuleIdentity): number =>
   jsonTextBytes(identity.version) +
   jsonTextBytes(identity.sum ?? "");
 
-const goComponentBytes = ({ component, original }: PublishedGoModule): number =>
+const goComponentBytes = ({
+  component,
+  componentPath,
+  original,
+  originalPath,
+}: PublishedGoModule): number =>
   EMPTY_COMPONENT_BYTES +
   goIdentityBytes(component) +
   (original === null ? 0 : goIdentityBytes(original)) +
-  (original !== null && isGoModulePath(original.path)
+  (original !== null && originalPath === "qualified"
     ? packageUrlBytes("golang", original.path, original.version)
     : 0) +
-  (isGoModulePath(component.path)
+  (componentPath === "qualified"
     ? PACKAGE_URL_OCCURRENCES *
       packageUrlBytes("golang", component.path, component.version)
     : 0);
@@ -546,22 +571,19 @@ const projectGoCycloneDx = (
   if (minimumBytes > CYCLONEDX_DOCUMENT_BYTE_LIMIT)
     return documentAllowanceExceeded(minimumBytes, "lower_bound");
   const refKeys = published.map((item, index) =>
-    isGoModulePath(item.component.path)
+    item.componentPath === "qualified"
       ? golangPackageUrl(item.component.path, item.component.version)
       : `go-module:${String(index)}`,
   );
   const refs = bomRefsFor(refKeys);
-  const components = modules.map((module, index) => {
-    const item = published[index];
+  const components = published.map((item, index) => {
     const ref = refs[index] ?? refKeys[index] ?? `go-module:${String(index)}`;
-    if (item === undefined)
-      return libraryComponent(ref, module.path, module.version, undefined, []);
     const component = item.component;
     return libraryComponent(
       ref,
       component.path,
       component.version,
-      isGoModulePath(component.path) ? refKeys[index] : undefined,
+      item.componentPath === "qualified" ? refKeys[index] : undefined,
       goComponentProperties(item),
     );
   });
@@ -595,7 +617,7 @@ const projectGoCycloneDx = (
     report,
     "inspect_go_binary",
     sourceCoverage,
-    [...reportedUnknowns.values, ...goIdentityUnknowns(modules, published)],
+    [...reportedUnknowns.values, ...goIdentityUnknowns(published)],
     reportedUnknowns.required,
     [COMPOSITION_LIMITATION, GO_GRAPH_LIMITATION],
     components,

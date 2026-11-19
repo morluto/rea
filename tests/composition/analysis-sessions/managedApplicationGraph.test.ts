@@ -141,16 +141,17 @@ describe("managed application graph MethodDef scope", () => {
     }
   });
 
-  it("keeps an unexamined MethodDef scope unknown", () => {
+  it("keeps an unrecorded MethodDef scope unknown in historical member Evidence", () => {
     const bytes = buildManagedPeFixture({ ilBody: tinyIl([0x2a]) });
     const binary = managedPeFixtureTarget(bytes);
-    const members = inspectManagedMembersBytes(bytes, binary);
+    const { unresolved_definitions: _projection, ...historical } =
+      inspectManagedMembersBytes(bytes, binary);
     const evidence = createEvidence(binary, MANAGED_STATIC_PROVIDER, {
       operation: "inspect_managed_members",
       parameters: {},
-      result: { ...members, method_rows: null },
+      result: { ...historical, method_rows: null },
       rawResult: null,
-      limitations: members.limitations,
+      limitations: historical.limitations,
     });
     const projection = projectManagedApplicationGraphEvidence({
       managed_members: evidence,

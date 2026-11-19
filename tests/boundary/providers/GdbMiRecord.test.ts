@@ -84,11 +84,11 @@ it("bounds value nesting", () => {
 
 it("decodes C-string escapes to bytes and text only when UTF-8", () => {
   const parsed = parseGdbMiResultRecord(
-    '1^done,a="\\x41\\101\\n\\\\\\"",b="\\xff",c="\\x1ff"',
+    '1^done,a="\\x41\\101\\n\\e\\\\\\"",b="\\xff",c="\\x1ff"',
   );
   if (!parsed.ok) throw new Error(parsed.error.reason);
   const [a, b, c] = parsed.value.results;
-  expect(gdbMiConstText(a!.value)).toBe('AA\n\\"');
+  expect(gdbMiConstText(a!.value)).toBe('AA\n\x1b\\"');
   expect(gdbMiConstText(b!.value)).toBeUndefined();
   expect(c!.value).toEqual({ kind: "const", bytes: Uint8Array.of(0xff) });
 });

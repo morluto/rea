@@ -239,7 +239,7 @@ const parserOptionsForLoader = (
             allowNewTargetOutsideFunction: true,
           }
         : detectsJavaScriptLoader(sourcePath, packageContext) ||
-            /\.(?:ts|tsx|mts|cts)$/iu.test(sourcePath ?? "")
+            isTypeScriptSourcePath(sourcePath)
           ? {
               allowReturnOutsideFunction: false,
               allowNewTargetOutsideFunction: false,
@@ -337,7 +337,8 @@ const parseWithRuntimeContext = (
   // ESM and TypeScript file loading remove the UTF-8 signature before a
   // hashbang; JavaScript CommonJS loading does not. Preserve original indexes
   // through Babel's origin options rather than repairing downstream ranges.
-  const compilerSource = /\.(?:jsx|ts|tsx|mts|cts)$/iu.test(sourcePath ?? "");
+  const compilerSource =
+    /\.jsx$/iu.test(sourcePath ?? "") || isTypeScriptSourcePath(sourcePath);
   const signedHashbang = source.startsWith("\uFEFF#!");
   const conditionalCommonJs =
     signedHashbang &&
@@ -434,6 +435,12 @@ const sourceSyntaxPlugins: ParserPlugin[] = [
   "sourcePhaseImports",
 ];
 const javaScriptPlugins = (): ParserPlugin[] => [...sourceSyntaxPlugins, "jsx"];
+const typeScriptSourceSuffix =
+  /\.(?:(?<declaration>d)\.)?(?:(?<module>[cm])ts|ts(?<jsx>x)?)$/iu;
+
+/** Whether the filename supplies TypeScript grammar, independent of loader mode. */
+export const isTypeScriptSourcePath = (sourcePath?: string): boolean =>
+  typeScriptSourceSuffix.test(sourcePath ?? "");
 
 /**
  * Babel plugins for one source path. Single owner for TypeScript/JSX
@@ -457,18 +464,19 @@ const javaScriptPlugins = (): ParserPlugin[] => [...sourceSyntaxPlugins, "jsx"];
 const parserPluginsForPath = (sourcePath?: string): ParserPlugin[] => {
   const path = sourcePath ?? "";
   if (/\.(?:js|jsx|mjs|cjs)$/iu.test(path)) return javaScriptPlugins();
-  const dts = /\.d\.(?:ts|mts|cts)$/iu.test(path);
-  const isTsLike = /\.(?:ts|cts|mts)$/iu.test(path);
-  const isTsx = /\.tsx$/iu.test(path);
-  const explicitModuleSuffix = /\.[cm]ts$/iu.test(path);
+  const suffix = typeScriptSourceSuffix.exec(path)?.groups;
+  const jsx = suffix?.jsx !== undefined;
+  const dts = suffix?.declaration !== undefined && !jsx;
   const typescript: ParserPlugin = [
     "typescript",
     {
       dts,
-      ...(explicitModuleSuffix ? { disallowAmbiguousJSXLike: true } : {}),
+      ...(suffix?.module === undefined
+        ? {}
+        : { disallowAmbiguousJSXLike: true }),
     },
   ];
-  const jsxCapable = !dts && (isTsx || !isTsLike);
+  const jsxCapable = suffix === undefined || jsx;
   return jsxCapable
     ? [...sourceSyntaxPlugins, "jsx", typescript]
     : [...sourceSyntaxPlugins, typescript];

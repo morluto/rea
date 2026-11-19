@@ -1,6 +1,10 @@
 import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
 import { Budget } from "../../domain/budget.js";
-import { declaredFileRange } from "../../domain/binaryContainer.js";
+import {
+  BinaryReader,
+  declaredFileRange,
+} from "../../domain/binaryContainer.js";
+import { err, ok, type Result } from "../../domain/result.js";
 import { parseMzHeaderEvidence } from "../../domain/dosMz.js";
 import {
   observePeCoffFrame,
@@ -13,11 +17,16 @@ import {
 } from "../../domain/peSectionHeader.js";
 import { readElfHeaderFacts } from "../../domain/elfFixedHeader.js";
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
-import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
+import {
+  elfSectionHeaderWidth,
+  readElfSectionHeader,
+} from "../../domain/elfSectionHeader.js";
 import { observeElfStringTableEntry } from "../../domain/elfStringTable.js";
 import {
   readFatContainerHeader,
   readMachoHeaderPrefixFacts,
+  validateFatSliceIdentity,
+  type FatSliceDeclaration,
 } from "../../domain/apple/machoContainer.js";
 import {
   readMachoLoadCommandTableHeader,
@@ -25,10 +34,12 @@ import {
 } from "../../domain/apple/machoLoadCommands.js";
 import {
   machoSectionBacking,
+  machoSectionHeaderSize,
   readMachoSectionHeader,
 } from "../../domain/apple/machoSectionHeader.js";
 import {
   admitMachoSegmentCommand,
+  machoSegmentSectionTableFits,
   readMachoSegmentHeader,
 } from "../../domain/apple/machoSegmentHeader.js";
 import type { FileHandle } from "node:fs/promises";
@@ -56,8 +67,6 @@ export const BUN_RECORD_BYTES_1_3_3 = 36;
 export const BUN_RECORD_BYTES_1_3_9 = 52;
 
 const MAX_PE_SECTIONS = 96;
-const SECTION_64_BYTES = 80;
-const SECTION_32_BYTES = 68;
 
 export const BUN_LAYOUT_REVISIONS = ["bun-1.3.3", "bun-1.3.9"] as const;
 export type BunLayoutRevision = (typeof BUN_LAYOUT_REVISIONS)[number];
@@ -146,6 +155,15 @@ interface SectionWindow {
 
 type SectionClaim = SectionWindow | { readonly failure: ArtifactReaderFailure };
 
+/** A rejected slice has no authority over any embedded graph at its offsets. */
+interface RejectedFatSlice {
+  readonly rejectedSlice: FatSliceDeclaration;
+  /** Only set when the bounded command metadata actually names a Bun slot. */
+  readonly namedFailure?: ArtifactReaderFailure;
+}
+
+type SectionObservation = SectionClaim | RejectedFatSlice;
+
 /**
  * Locate at most one graph claim with bounded reads of headers, length
  * prefixes, and suffixes. Payload data is not read. Multiple real claims are
@@ -159,7 +177,7 @@ export const probeBunStandaloneGraph = async (
 ): Promise<BunStandaloneProbe> => {
   abortIfNeeded(signal);
   const source = { handle, fileSize, signal, limits };
-  let claims: readonly SectionClaim[];
+  let claims: readonly SectionObservation[];
   try {
     claims = [
       ...(await machOClaims(source, 0, fileSize)),
@@ -172,8 +190,15 @@ export const probeBunStandaloneGraph = async (
     return { status: "limited", failure: cause };
   }
   const real: BunStandaloneProbe[] = [];
+  const rejectedSlices: FatSliceDeclaration[] = [];
+  let fatIdentityFailure: ArtifactReaderFailure | undefined;
   for (const claim of claims) {
     abortIfNeeded(signal);
+    if ("rejectedSlice" in claim) {
+      rejectedSlices.push(claim.rejectedSlice);
+      fatIdentityFailure ??= claim.namedFailure;
+      continue;
+    }
     const evaluated =
       "failure" in claim
         ? presentFailure(claim.failure)
@@ -191,7 +216,10 @@ export const probeBunStandaloneGraph = async (
   }
   const only = real[0];
   if (only !== undefined) return only;
-  return evaluateAppendedTrailer(source);
+  const appended = await evaluateAppendedTrailer(source, rejectedSlices);
+  return appended.status === "absent" && fatIdentityFailure !== undefined
+    ? presentFailure(fatIdentityFailure)
+    : appended;
 };
 
 /** Read a probed payload once and validate its suffix against the claim. */
@@ -212,9 +240,9 @@ export const loadBunStandaloneGraph = async (
     BUN_GRAPH_SUFFIX_BYTES,
     signal,
   );
-  const failure = suffixFailure(suffix, claim.payloadLength, limits);
-  if (failure !== undefined) return { status: "present", failure };
-  const offsets = suffix.subarray(0, BUN_OFFSETS_BYTES);
+  const parsed = readBunSuffix(suffix, claim.payloadLength);
+  if (!parsed.ok) return { status: "present", failure: parsed.error };
+  const offsets = parsed.value;
   return {
     status: "present",
     graph: {
@@ -227,9 +255,9 @@ export const loadBunStandaloneGraph = async (
         limits.metadata_read_bytes,
       ),
       modules: readPointer(offsets, 8),
-      entryPointId: offsets.readUInt32LE(16),
+      entryPointId: offsets.u32(16),
       compileExecArgv: readPointer(offsets, 20),
-      flags: offsets.readUInt32LE(28),
+      flags: offsets.u32(28),
     },
   };
 };
@@ -358,18 +386,17 @@ const evaluateSection = async (
     );
   if (claim.available < BUN_LENGTH_PREFIX_BYTES)
     return presentFailure(bunFormatFailure("trailer is truncated"));
-  const prefix = await readExact(
-    handle,
-    claim.fileOffset,
-    BUN_LENGTH_PREFIX_BYTES,
-    signal,
+  const prefix = new BinaryReader(
+    await readExact(handle, claim.fileOffset, BUN_LENGTH_PREFIX_BYTES, signal),
+    true,
+    "bun-standalone",
   );
   let prefixBytes = BUN_LENGTH_PREFIX_BYTES;
-  let payloadLength = prefix.readBigUInt64LE(0);
+  let payloadLength = prefix.word(0, 64);
   // Legacy Mach-O writers used a u32 length. Validate its suffix before
   // interpreting payload bytes as the upper half of a current u64 prefix.
   if (claim.carrier === "mach-o-section") {
-    const legacyLength = prefix.readUInt32LE(0);
+    const legacyLength = prefix.u32(0);
     if (
       legacyLength >= BUN_GRAPH_SUFFIX_BYTES &&
       legacyLength + 4 <= claim.available
@@ -380,37 +407,37 @@ const evaluateSection = async (
         BUN_GRAPH_SUFFIX_BYTES,
         signal,
       );
-      if (
-        suffix.subarray(BUN_OFFSETS_BYTES).equals(BUN_TRAILER) &&
-        suffix.readBigUInt64LE(0) + BigInt(BUN_GRAPH_SUFFIX_BYTES) ===
-          BigInt(legacyLength)
-      ) {
+      if (readBunSuffix(suffix, legacyLength).ok) {
         prefixBytes = 4;
         payloadLength = BigInt(legacyLength);
       }
     }
   }
   if (payloadLength === 0n) return { status: "placeholder" };
-  if (payloadLength > BigInt(limits.payload_bytes))
-    return presentFailure(bunPayloadBytesLimit(payloadLength, limits));
-  if (payloadLength < BigInt(BUN_GRAPH_SUFFIX_BYTES))
+  if (
+    payloadLength < BigInt(BUN_GRAPH_SUFFIX_BYTES) ||
+    payloadLength > BigInt(claim.available - prefixBytes)
+  )
     return presentFailure(bunFormatFailure("trailer is truncated"));
   const length = Number(payloadLength);
-  if (claim.available < prefixBytes + length)
-    return presentFailure(bunFormatFailure("trailer is truncated"));
   const payloadOffset = claim.fileOffset + prefixBytes;
-  const suffix = await readExact(
-    handle,
-    payloadOffset + length - BUN_GRAPH_SUFFIX_BYTES,
-    BUN_GRAPH_SUFFIX_BYTES,
-    signal,
-  );
-  const failure = suffixFailure(suffix, length, limits);
-  if (failure !== undefined) return presentFailure(failure);
+  // The legacy width is selected only after its suffix has been validated.
+  if (prefixBytes === BUN_LENGTH_PREFIX_BYTES) {
+    const suffix = await readExact(
+      handle,
+      payloadOffset + length - BUN_GRAPH_SUFFIX_BYTES,
+      BUN_GRAPH_SUFFIX_BYTES,
+      signal,
+    );
+    const parsed = readBunSuffix(suffix, length);
+    if (!parsed.ok) return presentFailure(parsed.error);
+  }
   if (claim.loadCommandsFailure !== undefined)
     return presentFailure(
       bunFormatFailure(`Mach-O load commands: ${claim.loadCommandsFailure}`),
     );
+  if (payloadLength > BigInt(limits.payload_bytes))
+    return presentFailure(bunPayloadBytesLimit(payloadLength, limits));
   return {
     status: "present",
     claim: { carrier: claim.carrier, payloadOffset, payloadLength: length },
@@ -423,28 +450,30 @@ const evaluateSection = async (
  */
 const evaluateAppendedTrailer = async (
   source: BunProbeSource,
+  rejectedSlices: readonly FatSliceDeclaration[],
 ): Promise<BunStandaloneProbe> => {
   const { handle, fileSize, signal, limits } = source;
+  const outsideRejectedSlices = (start: number, end: number): boolean =>
+    !rejectedSlices.some(
+      (slice) => start < slice.offset + slice.size && slice.offset < end,
+    );
+  const readTrailer = async (end: number): Promise<Buffer | null> =>
+    outsideRejectedSlices(end - BUN_GRAPH_SUFFIX_BYTES, fileSize)
+      ? readExact(handle, end - BUN_TRAILER_BYTES, BUN_TRAILER_BYTES, signal)
+      : null;
   if (fileSize < BUN_GRAPH_SUFFIX_BYTES) return { status: "absent" };
   let graphEnd = fileSize;
-  let trailer = await readExact(
-    handle,
-    graphEnd - BUN_TRAILER_BYTES,
-    BUN_TRAILER_BYTES,
-    signal,
-  );
-  if (!trailer.equals(BUN_TRAILER)) {
+  let trailer = await readTrailer(graphEnd);
+  if (!trailer?.equals(BUN_TRAILER)) {
     if (fileSize < BUN_GRAPH_SUFFIX_BYTES + 8) return { status: "absent" };
     graphEnd -= 8;
-    trailer = await readExact(
-      handle,
-      graphEnd - BUN_TRAILER_BYTES,
-      BUN_TRAILER_BYTES,
-      signal,
-    );
-    if (!trailer.equals(BUN_TRAILER)) return { status: "absent" };
+    trailer = await readTrailer(graphEnd);
+    if (!trailer?.equals(BUN_TRAILER)) return { status: "absent" };
     const length = await readExact(handle, graphEnd, 8, signal);
-    if (length.readBigUInt64LE() !== BigInt(fileSize))
+    if (
+      new BinaryReader(length, true, "bun-standalone").word(0, 64) !==
+      BigInt(fileSize)
+    )
       return presentFailure(
         bunFormatFailure("appended carrier length does not match file size"),
       );
@@ -455,56 +484,69 @@ const evaluateAppendedTrailer = async (
     BUN_OFFSETS_BYTES,
     signal,
   );
-  const byteCount = offsets.readBigUInt64LE(0);
-  if (byteCount + BigInt(BUN_GRAPH_SUFFIX_BYTES) > BigInt(limits.payload_bytes))
-    return presentFailure(
-      bunPayloadBytesLimit(byteCount + BigInt(BUN_GRAPH_SUFFIX_BYTES), limits),
-    );
-  const payloadLength = byteCount + BigInt(BUN_GRAPH_SUFFIX_BYTES);
-  if (payloadLength > BigInt(graphEnd))
+  const payloadLength = graphPayloadLength(
+    new BinaryReader(offsets, true, "bun-standalone"),
+  );
+  const payloadStart = BigInt(graphEnd) - payloadLength;
+  if (
+    !outsideRejectedSlices(
+      payloadStart < 0n ? 0 : Number(payloadStart),
+      graphEnd,
+    )
+  )
+    return { status: "absent" };
+  if (payloadStart < 0n)
     return presentFailure(bunFormatFailure("trailer is truncated"));
-  const length = Number(payloadLength);
+  if (payloadLength > BigInt(limits.payload_bytes))
+    return presentFailure(bunPayloadBytesLimit(payloadLength, limits));
   return {
     status: "present",
     claim: {
       carrier: "appended-trailer",
-      payloadOffset: graphEnd - length,
-      payloadLength: length,
+      payloadOffset: Number(payloadStart),
+      payloadLength: Number(payloadLength),
     },
   };
 };
 
-/** Validate the Offsets and trailer that end a payload of `payloadLength` bytes. */
-const suffixFailure = (
+const graphPayloadLength = (offsets: BinaryReader): bigint =>
+  offsets.word(0, 64) + BigInt(BUN_GRAPH_SUFFIX_BYTES);
+
+/** Validate framing before exposing the Offsets record at the end of a graph. */
+const readBunSuffix = (
   suffix: Buffer,
   payloadLength: number,
-  limits: BunReaderLimits,
-): ArtifactReaderFailure | undefined => {
+): Result<BinaryReader, ArtifactReaderFailure> => {
   if (suffix.length < BUN_GRAPH_SUFFIX_BYTES)
-    return bunFormatFailure("trailer is truncated");
+    return err(bunFormatFailure("trailer is truncated"));
   if (!suffix.subarray(BUN_OFFSETS_BYTES).equals(BUN_TRAILER))
-    return bunFormatFailure("trailer does not match the Bun sentinel");
-  const byteCount = suffix.readBigUInt64LE(0);
-  if (byteCount > BigInt(limits.payload_bytes))
-    return bunPayloadBytesLimit(byteCount, limits);
-  if (byteCount + BigInt(BUN_GRAPH_SUFFIX_BYTES) !== BigInt(payloadLength))
-    return bunFormatFailure("byte_count does not match the located payload");
-  return undefined;
+    return err(bunFormatFailure("trailer does not match the Bun sentinel"));
+  const offsets = new BinaryReader(
+    suffix.subarray(0, BUN_OFFSETS_BYTES),
+    true,
+    "bun-standalone",
+  );
+  if (graphPayloadLength(offsets) !== BigInt(payloadLength))
+    return err(
+      bunFormatFailure("byte_count does not match the located payload"),
+    );
+  return ok(offsets);
 };
 
 export const readPointer = (
-  bytes: Buffer,
+  reader: BinaryReader,
   offset: number,
 ): BunStringPointer => ({
-  offset: bytes.readUInt32LE(offset),
-  length: bytes.readUInt32LE(offset + 4),
+  offset: reader.u32(offset),
+  length: reader.u32(offset + 4),
 });
 
 const machOClaims = async (
   source: BunProbeSource,
   imageOffset: number,
   imageLimit: number,
-): Promise<readonly SectionClaim[]> => {
+  fat?: FatSliceDeclaration,
+): Promise<readonly SectionObservation[]> => {
   const { handle, fileSize, signal, limits } = source;
   if (imageOffset < 0 || imageOffset >= fileSize) return [];
   const imageSize = Math.min(fileSize - imageOffset, imageLimit);
@@ -514,6 +556,10 @@ const machOClaims = async (
   const facts = readMachoHeaderPrefixFacts(header);
   if (facts.identity === null)
     return imageOffset === 0 ? fatClaims(source, header) : [];
+  const identityIssue =
+    fat === undefined ? null : validateFatSliceIdentity(fat, facts.identity);
+  const rejected: readonly RejectedFatSlice[] =
+    fat !== undefined && identityIssue !== null ? [{ rejectedSlice: fat }] : [];
   const full = await tryRead(
     handle,
     imageOffset,
@@ -521,22 +567,24 @@ const machOClaims = async (
     imageEnd,
     signal,
   );
-  if (full === null) return [];
+  if (full === null) return rejected;
   const parsed = readMachoLoadCommandTableHeader(full, imageSize);
-  if (!parsed.ok || parsed.value === null) return [];
+  if (!parsed.ok || parsed.value === null) return rejected;
   const table = parsed.value;
   const {
     littleEndian,
     headerSize: headerBytes,
     commandBytes: sizeofcmds,
   } = table;
-  if (sizeofcmds > limits.recognition_load_command_bytes)
+  if (sizeofcmds > limits.recognition_load_command_bytes) {
+    if (identityIssue !== null) return rejected;
     throw artifactReaderLimitFailure(
       "artifact_limits.bun.recognition_load_command_bytes",
       limits.recognition_load_command_bytes,
       "bytes",
       sizeofcmds,
     );
+  }
   const commands = await tryRead(
     handle,
     imageOffset + headerBytes,
@@ -544,7 +592,7 @@ const machOClaims = async (
     imageEnd,
     signal,
   );
-  if (commands === null || commands.length !== sizeofcmds) return [];
+  if (commands === null || commands.length !== sizeofcmds) return rejected;
   const claims: SectionClaim[] = [];
   const cursor = new MachoLoadCommandCursor(table);
   let framingFailure: string | undefined;
@@ -563,9 +611,20 @@ const machOClaims = async (
         cmd === LC.SEGMENT_64,
         imageOffset,
         imageSize,
-      ))
+      )) {
+        // A mismatched slice can identify a named declaration from bounded
+        // metadata, but cannot contribute graph bytes or veto another slice.
+        if (fat !== undefined && identityIssue !== null)
+          return [
+            {
+              rejectedSlice: fat,
+              namedFailure: bunFormatFailure(identityIssue),
+            },
+          ];
         claims.push(claim);
+      }
   }
+  if (rejected.length !== 0) return rejected;
   const complete = cursor.finish();
   if (!complete.ok) framingFailure ??= complete.error;
   return framingFailure === undefined
@@ -588,8 +647,8 @@ const segmentClaims = (
   if (!parsedSegment.ok) return [];
   const segment = parsedSegment.value;
   const { headerSize, sectionCount } = segment;
-  const sectionBytes = wide ? SECTION_64_BYTES : SECTION_32_BYTES;
-  if (headerSize + sectionCount * sectionBytes > command.length) return [];
+  const sectionBytes = machoSectionHeaderSize(wide);
+  if (!machoSegmentSectionTableFits(segment, command.length, wide)) return [];
   const admission = admitMachoSegmentCommand(
     segment,
     command.length,
@@ -636,7 +695,7 @@ const segmentClaims = (
 const fatClaims = async (
   source: BunProbeSource,
   prefix: Buffer,
-): Promise<readonly SectionClaim[]> => {
+): Promise<readonly SectionObservation[]> => {
   const { handle, fileSize, signal } = source;
   let parsed = readFatContainerHeader(prefix, fileSize);
   if (parsed.state === "needs-data") {
@@ -651,11 +710,16 @@ const fatClaims = async (
     parsed = readFatContainerHeader(table, fileSize);
   }
   if (parsed.state !== "parsed") return [];
-  const claims: SectionClaim[] = [];
+  const claims: SectionObservation[] = [];
   for (const slice of parsed.slices) {
     abortIfNeeded(signal);
     if (parsed.rangeIssues[slice.index] !== null) continue;
-    for (const claim of await machOClaims(source, slice.offset, slice.size))
+    for (const claim of await machOClaims(
+      source,
+      slice.offset,
+      slice.size,
+      slice,
+    ))
       claims.push(claim);
   }
   return claims;
@@ -747,7 +811,7 @@ const elfClaims = async (
   const declarations = readElfRawTableDeclarations(header, format.value);
   if (!declarations.ok) return [];
   const { offset, width, count, namesIndex } = declarations.value.sections;
-  const sectionWidth = elfClass === 64 ? 64 : 40;
+  const sectionWidth = elfSectionHeaderWidth(elfClass);
   // Unsupported extended numbering does not establish a Bun graph.
   if (
     (width !== 0 && width !== sectionWidth) ||

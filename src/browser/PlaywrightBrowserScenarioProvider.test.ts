@@ -13,6 +13,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { BrowserScenarioSessionPort } from "./BrowserScenarioSessionPort.js";
 import { PlaywrightBrowserScenarioProvider } from "./PlaywrightBrowserScenarioProvider.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { PlaywrightScenarioSession } from "./PlaywrightScenarioSession.js";
 import { PlaywrightScenarioEvents } from "./PlaywrightScenarioEvents.js";
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
@@ -1278,6 +1279,56 @@ it("retries every retained opening cleanup and preserves the original failure th
     expect(healthyCloses).toBe(1);
   } finally {
     denied = false;
+    await provider.close();
+  }
+});
+
+it("composes several failed cleanup retries and completes only after each releases", async () => {
+  const denied = { first: true, second: true };
+  const provider = new PlaywrightBrowserScenarioProvider(
+    async (_scenario, options) => {
+      options.retainCleanup?.(
+        new AnalysisCleanupLease(async () => {
+          if (denied.first) throw new Error("first cleanup denied");
+        }, ["first cleanup"]),
+      );
+      options.retainCleanup?.(
+        new AnalysisCleanupLease(async () => {
+          if (denied.second) throw new Error("second cleanup denied");
+        }, ["second cleanup"]),
+      );
+      throw new AnalysisOutputError(
+        "capture_browser_scenario",
+        "authored open failure",
+      );
+    },
+  );
+  try {
+    const result = await provider.captureScenario(scenario());
+    if (result.ok) throw new Error("Expected opening failure");
+    const composite: unknown = await provider
+      .close()
+      .catch((cause: unknown) => cause);
+
+    if (!(composite instanceof ProviderCleanupError))
+      throw new Error("Expected a provider cleanup failure");
+    expect(composite).toMatchObject({
+      operation: "capture_browser_scenario",
+      cleanupIncomplete: true,
+      cleanupResources: ["first cleanup", "second cleanup"],
+    });
+    expect(composite.cause).toBeInstanceOf(AggregateError);
+    expect((composite.cause as AggregateError).errors).toHaveLength(2);
+
+    denied.first = false;
+    await provider.close().catch(() => undefined);
+    expect(composite.cleanupIncomplete).toBe(true);
+    denied.second = false;
+    await provider.close();
+    expect(composite.cleanupIncomplete).toBe(false);
+  } finally {
+    denied.first = false;
+    denied.second = false;
     await provider.close();
   }
 });

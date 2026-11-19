@@ -12,7 +12,6 @@ import {
   createFileMappingIndex,
   mappedFileOffset,
   readMappedCString,
-  type BinaryContainer,
 } from "../../domain/binaryContainer.js";
 
 it("preserves representable offsets for invalid file ranges", () => {
@@ -34,6 +33,28 @@ it("preserves representable offsets for invalid file ranges", () => {
   expect(() => reader.fileRange(2n ** 60n, 1n, "segment")).toThrow(
     BinaryFormatFailure,
   );
+});
+
+it("decodes signed and floating fields in both byte orders", () => {
+  const bytes = Buffer.alloc(18);
+  bytes.writeInt16LE(-2, 0);
+  bytes.writeInt32LE(-3, 2);
+  bytes.writeFloatLE(1.5, 6);
+  bytes.writeBigInt64LE(-4n, 10);
+  const little = new BinaryReader(bytes, true, "zip");
+  expect([little.u8(0), little.i8(0), little.i16(0), little.i32(2)]).toEqual([
+    0xfe, -2, -2, -3,
+  ]);
+  expect([little.f32(6), little.i64(10)]).toEqual([1.5, -4n]);
+  bytes.writeDoubleBE(-0.25, 0);
+  const big = new BinaryReader(bytes, false, "zip");
+  expect([big.f64(0), big.i16(0), big.i32(0)]).toEqual([
+    -0.25,
+    bytes.readInt16BE(0),
+    bytes.readInt32BE(0),
+  ]);
+  expect(() => little.i64(11)).toThrow(BinaryFormatFailure);
+  expect(() => big.f32(15)).toThrow(BinaryFormatFailure);
 });
 
 it("decodes numeric fields at nonzero buffer offsets and preserves malformed and truncated range failures", () => {
@@ -254,28 +275,15 @@ it("refuses a zero-fill alias inside a span spanning multiple mappings", () => {
 it.each(["scan", "index"] as const)(
   "reads strings across discontiguous source ranges without examining bytes after NUL (%s)",
   (mode) => {
-    const image: BinaryContainer = {
-      format: "pe",
-      architecture: "amd64",
-      bits: 64,
-      byte_order: "little",
-      pe_header_mapping: mappings[0]!,
-      mappings: [{ address: 104n, offset: 8, size: 4 }],
-      zero_fills: [{ address: 106n, size: 2n }],
-      sections: [],
-    };
+    const ranges = [mappings[0]!, { address: 104n, offset: 8, size: 4 }];
+    const zeroFills = [{ address: 106n, size: 2n }];
     const bytes = Buffer.from("ABCDxxxxE\0xx");
     const result =
       mode === "scan"
-        ? readMappedCString(bytes, image, 102n, 8)
-        : createFileMappingIndex(
-            [mappings[0]!, ...image.mappings],
-            image.zero_fills,
-          ).readCString(bytes, 102n, 8);
+        ? readMappedCString(bytes, ranges, 102n, 8, zeroFills)
+        : createFileMappingIndex(ranges, zeroFills).readCString(bytes, 102n, 8);
     expect(result.toString()).toBe("CDE");
-    expect(() =>
-      mappedFileOffset([...mappings.slice(0, 1), ...image.mappings], 102n, 4),
-    ).toThrow(/ambiguous/);
+    expect(() => mappedFileOffset(ranges, 102n, 4)).toThrow(/ambiguous/);
   },
 );
 

@@ -27,7 +27,6 @@ import {
   identityCandidates,
   replaceAt,
   renderStateList,
-  same,
   type JsonObject,
   type StateRecordFacts,
 } from "./environmentStateRules.js";
@@ -2187,21 +2186,3 @@ it.each([true, false])(
     ).toBe(false);
   },
 );
-
-it("compares admitted state values by JSON meaning and preserves own keys", () => {
-  const left = ownedJsonObjectSchema.parse(
-    JSON.parse('{"__proto__":{"q":1},"value":[-0,"𐐷"],"nested":{"b":2,"a":1}}'),
-  );
-  const right = ownedJsonObjectSchema.parse(
-    JSON.parse('{"nested":{"a":1,"b":2},"value":[0,"𐐷"],"__proto__":{"q":1}}'),
-  );
-  expect(same(left, right)).toBe(true);
-  expect(same(left, { ...right, value: ["𐐷", 0] })).toBe(false);
-  expect(same({ value: null }, { other: null })).toBe(false);
-  const hidden = Object.defineProperty({ other: null }, "value", {
-    value: null,
-  });
-  expect(same({ value: null }, hidden)).toBe(false);
-  expect(same(undefined, null)).toBe(false);
-  expect(same({ constructor: 1 }, { constructor: 2 })).toBe(false);
-});

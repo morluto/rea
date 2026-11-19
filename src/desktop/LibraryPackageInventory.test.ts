@@ -5,10 +5,46 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { mixedDpkgOwnershipStdout } from "./DpkgOwnershipQuery.fixture.js";
 import { runHostQuery } from "./HostQuery.js";
 import { inspectLibraryPackages } from "./LibraryPackageInventory.js";
 import { elfImage } from "../domain/desktop/elfImage.fixture.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+
+it("reports truncated ELF dependency tables without suggesting more capture headroom", async () => {
+  const root = await createTestTempDirectory("rea-library-table-framing-");
+  const executable = join(root, "app");
+  const needed = Array.from(
+    { length: 8 },
+    (_, index) => `lib${String(index)}.so`,
+  );
+  const image = elfImage({ needed });
+  const policy = desktopLibraryPolicy({ table_bytes: 112 });
+  const inspect = () =>
+    inspectLibraryPackages(
+      executable,
+      "app",
+      async () => {
+        throw new Error(
+          "An unreadable dependency table must stop host queries",
+        );
+      },
+      undefined,
+      policy,
+    );
+  await writeFile(executable, image);
+  expect((await inspect()).library_packages_reason).toContain(
+    "ELF dynamic table reached library-policy.table_bytes=112 bytes",
+  );
+  image.writeBigUInt64LE(BigInt(image.length), 64 + 56 + 8);
+  await writeFile(executable, image);
+  expect(await inspect()).toEqual({
+    library_packages: [],
+    missing_libraries: [],
+    unpackaged_libraries: [],
+    library_packages_reason: `the libraries of ${executable} were not read: ELF dynamic table is truncated`,
+  });
+});
 
 it.skipIf(process.platform === "win32").each(["/", "/.", "/.."])(
   "preserves a dependency's trailing directory requirement: %s",
@@ -312,6 +348,53 @@ it.skipIf(process.platform === "win32")(
     expect(result.unpackaged_libraries).toContain(paths[1]);
     expect(result.unpackaged_libraries).not.toContain(paths[200]);
     expect(result.library_packages_reason).toContain("dpkg-query");
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "retains valid owner rows from a partial query without treating damaged paths as unowned",
+  async () => {
+    const root = await createTestTempDirectory("rea-library-owner-bytes-");
+    const bin = join(root, "bin");
+    const lib = join(root, "lib");
+    await Promise.all([mkdir(bin), mkdir(lib)]);
+    const known = join(lib, "known.so");
+    const unknown = join(lib, "damaged-�.so");
+    const executable = join(bin, "app");
+    await Promise.all([
+      writeFile(known, elfImage({})),
+      writeFile(unknown, elfImage({})),
+      writeFile(executable, elfImage({ needed: [known, unknown] })),
+    ]);
+    const raw = mixedDpkgOwnershipStdout(known, unknown);
+    const result = await inspectLibraryPackages(
+      executable,
+      "app",
+      async (command, args, _signal, options) => {
+        if (command === "ldconfig") return { stdout: "", exitCode: 0 };
+        expect([command, ...args]).toEqual([
+          "dpkg-query",
+          "-S",
+          known,
+          unknown,
+        ]);
+        expect(options?.locale).toBe("C.UTF-8");
+        return {
+          stdout: raw.toString("utf8"),
+          ...(options?.preserveStdoutBytes ? { stdoutBuffer: raw } : {}),
+          exitCode: 1,
+        };
+      },
+      undefined,
+    );
+    expect(result).toEqual({
+      library_packages: ["actual-owner"],
+      missing_libraries: [],
+      unpackaged_libraries: [],
+      library_packages_reason: expect.stringContaining(
+        "unreadable ownership records",
+      ),
+    });
   },
 );
 

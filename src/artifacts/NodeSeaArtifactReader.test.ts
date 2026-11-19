@@ -44,6 +44,11 @@ import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import {
+  CPU_ARM64,
+  CPU_X86_64,
+  universalMacho,
+} from "../../tests/fixtures/universalMacho.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
 import { classifyAndHashRootForInventory } from "./inventory/classify.js";
 import { DEFAULT_NODE_SEA_READER_LIMITS } from "../domain/artifactReaderLimits.js";
@@ -290,6 +295,131 @@ it("accepts the __NODE_SEA segment spelling and a universal Mach-O slice", async
     universal.occurrences.find((row) => row.logical_path === ".")
       ?.format_metadata,
   ).toMatchObject({ carrier: "mach-o", fuse_state: "set" });
+});
+
+it.each(["cpu-type", "cpu-subtype"] as const)(
+  "requires a matching FAT %s for a Node SEA section claim",
+  async (field) => {
+    const candidate = {
+      bytes: nodeSeaMachO(populated),
+      cpuType: CPU_ARM64,
+      cpuSubtype: 0,
+    };
+    const conflicting = {
+      ...candidate,
+      ...(field === "cpu-type"
+        ? { tableCpuType: CPU_X86_64 }
+        : { tableCpuSubtype: 1 }),
+    };
+    const locate = async (
+      bytes: Buffer,
+      limits = DEFAULT_NODE_SEA_READER_LIMITS,
+    ) => {
+      const handle = await open(
+        await writeCarrier("fat-sea-identity", bytes),
+        "r",
+      );
+      try {
+        return await locateNodeSea(handle, bytes.length, undefined, limits);
+      } finally {
+        await handle.close();
+      }
+    };
+    const matching = universalMacho([candidate]);
+    expect(await locate(matching.bytes)).toMatchObject({
+      carrier: "mach-o",
+      blobOffset:
+        matching.slices[0]!.offset + candidate.bytes.readUInt32LE(32 + 72 + 48),
+    });
+    const wrong = universalMacho([conflicting]);
+    await expect(locate(wrong.bytes)).rejects.toMatchObject({
+      reason: "format",
+      message: expect.stringContaining("CPU type/subtype disagrees"),
+    });
+    const unrelated = {
+      ...conflicting,
+      bytes: nodeSeaMachO({ segmentName: "__DATA", sectionName: "__notes" }),
+    };
+    expect(await locate(universalMacho([unrelated]).bytes)).toBeUndefined();
+    const sibling = {
+      ...candidate,
+      bytes: nodeSeaMachO({
+        ...populated,
+        main: "console.log('independent');",
+      }),
+    };
+    const mixed = universalMacho([conflicting, sibling]);
+    expect(await locate(mixed.bytes)).toMatchObject({
+      carrier: "mach-o",
+      blobOffset:
+        mixed.slices[1]!.offset + sibling.bytes.readUInt32LE(32 + 72 + 48),
+    });
+    const oversizedCommands = nodeSeaMachO({
+      ...populated,
+      extraBlobs: [buildNodeSeaBlob({ main: "console.log(2);" })],
+    });
+    const limited = universalMacho([
+      { ...conflicting, bytes: oversizedCommands },
+      sibling,
+    ]);
+    expect(
+      await locate(limited.bytes, {
+        ...DEFAULT_NODE_SEA_READER_LIMITS,
+        recognition_load_command_bytes: sibling.bytes.readUInt32LE(20),
+      }),
+    ).toMatchObject({
+      carrier: "mach-o",
+      blobOffset:
+        limited.slices[1]!.offset + sibling.bytes.readUInt32LE(32 + 72 + 48),
+    });
+  },
+);
+
+it("reads a 28-byte FAT header without borrowing the following padding", async () => {
+  const thin = Buffer.alloc(28);
+  thin.writeUInt32LE(0xfeedface, 0);
+  thin.writeUInt32LE(2, 12);
+  const good = nodeSeaMachO(populated);
+  const fixture = universalMacho([
+    { bytes: thin, cpuType: 7, cpuSubtype: 3 },
+    { bytes: good, cpuType: CPU_ARM64, cpuSubtype: 0 },
+  ]);
+  const short = fixture.slices[0]!;
+  const sibling = fixture.slices[1]!;
+  fixture.bytes.fill(0xa5, short.offset + short.size, sibling.offset);
+
+  const handle = await open(
+    await writeCarrier("short-fat-header", fixture.bytes),
+    "r",
+  );
+  const read = vi.spyOn(handle, "read");
+  try {
+    expect(await locateNodeSea(handle, fixture.bytes.length)).toMatchObject({
+      carrier: "mach-o",
+      blobOffset: sibling.offset + good.readUInt32LE(32 + 72 + 48),
+    });
+    const beforeSibling = read.mock.calls.flatMap((args) => {
+      const [, , length, offset]: readonly unknown[] = args;
+      return typeof offset === "number" &&
+        typeof length === "number" &&
+        offset >= short.offset &&
+        offset < sibling.offset
+        ? [{ offset, length }]
+        : [];
+    });
+    expect(beforeSibling).toContainEqual({
+      offset: short.offset,
+      length: thin.length,
+    });
+    expect(
+      beforeSibling.every(
+        ({ offset, length }) => offset + length <= short.offset + short.size,
+      ),
+    ).toBe(true);
+  } finally {
+    read.mockRestore();
+    await handle.close();
+  }
 });
 
 it("reads a 32-bit and a big-endian Mach-O section", async () => {
@@ -899,12 +1029,13 @@ it("rejects duplicate raw asset keys", async () => {
   await expect(scanCanonicalArtifactInventory(path)).rejects.toThrow();
 });
 
-it("maps an unsafe main path and opaque asset keys without losing their sources", async () => {
+it("maps an unsafe module path and opaque asset keys without losing their sources", async () => {
   const path = await writeCarrier(
     "opaque-names",
     nodeSeaElf({
       codePath: "/absolute/main.js",
-      main: script,
+      mainCodeFormat: 1,
+      main: "export const answer = 42;\n",
       assets: [
         { name: "", body: "empty" },
         { name: "__node_sea__/snapshot", body: "reserved" },
@@ -917,6 +1048,11 @@ it("maps an unsafe main path and opaque asset keys without losing their sources"
     }),
   );
   const graph = await scanCanonicalArtifactInventory(path);
+  expect(
+    graph.occurrences.find((row) => row.logical_path === "."),
+  ).toMatchObject({
+    format_metadata: { kind: "node-sea", main_code_format: "module" },
+  });
   const rows = graph.occurrences.filter(
     (row) => row.format_metadata?.kind === "node-sea-entry",
   );
@@ -931,7 +1067,7 @@ it("maps an unsafe main path and opaque asset keys without losing their sources"
       .sort(),
   ).toEqual(
     [
-      ["__node_sea__/main.cjs", "/absolute/main.js"],
+      ["__node_sea__/main.mjs", "/absolute/main.js"],
       ["__node_sea__/assets/0", ""],
       ["__node_sea__/assets/1", "__node_sea__/snapshot"],
       ["a/café.txt", "a/café.txt"],

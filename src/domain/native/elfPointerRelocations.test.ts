@@ -13,6 +13,47 @@ import {
 
 const EM_X86_64 = 62;
 
+it("applies PT_DYNAMIC capacity only to backed whole entries", () => {
+  const maximum = 16 * 1024 * 1024;
+  const bytes = Buffer.alloc(maximum + 16);
+  const read = (file: Buffer, size: bigint) => {
+    const steps = readElfRelocationWritesSteps(file, {
+      bits: 64,
+      little: true,
+      machine: EM_X86_64,
+      dynamicSegments: [{ offset: 0n, size }],
+      mappings: [],
+      zeroFills: [],
+    });
+    let next = steps.next();
+    while (!next.done) next = steps.next();
+    return next.value;
+  };
+
+  const malformed = expect.objectContaining({
+    reason: "malformed-container",
+    message: "PT_DYNAMIC is truncated or outside the file",
+  });
+  expect(() => read(bytes.subarray(0, 16), BigInt(bytes.length))).toThrow(
+    malformed,
+  );
+  expect(() => read(bytes, BigInt(maximum + 1))).toThrow(malformed);
+  expect(() => read(bytes, BigInt(bytes.length))).toThrow(
+    expect.objectContaining({
+      reason: "native-index-capacity",
+      failure: expect.objectContaining({
+        kind: "limit",
+        limit: { name: "native-index-capacity", maximum },
+      }),
+      unit: "bytes",
+    }),
+  );
+  expect(read(bytes, BigInt(maximum))).toMatchObject({
+    dynamic_present: true,
+    pointer_coverage_known: true,
+  });
+});
+
 const image = (): Buffer => {
   const bytes = Buffer.alloc(0x400);
   const dynamic: [bigint, bigint][] = [
@@ -641,6 +682,32 @@ it("reports a TLS descriptor as a two-word write", () => {
   expect(elfRelocationWidth(183, 1031, 64)).toBe(16);
   expect(elfRelocationWidth(40, 13, 32)).toBe(8);
   expect(elfRelocationWidth(3, 41, 32)).toBe(8);
+});
+
+it("reports a sized link-time kind in a dynamic table as a write of unknown value", () => {
+  // R_X86_64_PLT32, as a text relocation would carry it.
+  const { writes, result } = walk(symbolicImage(4n, 0n));
+  expect(writes).toMatchObject([{ address: 0x300n, width: 4, value: null }]);
+  expect(result.pointer_coverage_known).toBe(true);
+});
+
+it("sizes the link-time kinds compilers emit into x86-64 and AArch64 objects", () => {
+  // Kind numbers and names were paired from clang output with llvm-objdump.
+  for (const kind of [4, 9, 19, 20, 21, 22, 23, 34, 41, 42])
+    expect(elfRelocationWidth(62, kind, 64)).toBe(4);
+  for (const kind of [25, 27, 29])
+    expect(elfRelocationWidth(62, kind, 64)).toBe(8);
+  // Each of these patches one 32-bit A64 instruction.
+  for (const kind of [
+    273, 274, 275, 277, 278, 282, 283, 284, 285, 286, 299, 309, 311, 312, 541,
+    542, 543, 549, 551, 562, 563, 564,
+  ])
+    expect(elfRelocationWidth(183, kind, 64)).toBe(4);
+  // TLSDESC_CALL marks an instruction and has no field of its own.
+  expect(elfRelocationWidth(62, 35, 64)).toBeUndefined();
+  expect(elfRelocationWidth(183, 569, 64)).toBeUndefined();
+  // A kind outside the table keeps no width.
+  expect(elfRelocationWidth(62, 99, 64)).toBeUndefined();
 });
 
 /** Three fully decoded relative values; empty REL declarations add no state. */

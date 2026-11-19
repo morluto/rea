@@ -28,11 +28,8 @@ import {
 } from "../../domain/native/elfNotes.js";
 import { err, ok } from "../../domain/result.js";
 import { ELF_NOTES_PROVIDER } from "../../domain/investigationProviders.js";
-import {
-  ELF_NOTE_TEXT_ALLOWANCE,
-  elfNoteSectionNameBudget,
-  parseElfNotes,
-} from "./ElfNoteParser.js";
+import { ELF_NOTE_TEXT_ALLOWANCE, parseElfNotes } from "./ElfNoteParser.js";
+import { elfSectionNameBudget } from "../../domain/native/elfSectionNameTable.js";
 
 const OPERATION = "inspect_elf_notes";
 
@@ -104,7 +101,7 @@ const elfNotesFailurePrimary = (
   input: InspectElfNotesInput,
 ) => {
   const { cause, origin } = facts;
-  const sectionNameBudget = elfNoteSectionNameBudget(cause);
+  const sectionNameBudget = elfSectionNameBudget(cause);
   if (isParseLimit(cause, "elf") && sectionNameBudget !== undefined)
     return parseLimitConstraint(OPERATION, "memory", cause, {
       retryable: false,
