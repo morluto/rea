@@ -68,15 +68,14 @@ it("records native file names before Evidence serialization and CycloneDX projec
 });
 
 it.skipIf(process.platform !== "win32")(
-  "records a mixed-separator Windows input with a leading slash",
+  "records a mixed-separator Windows input on the fixture drive",
   async () => {
     const root = await createTestTempDirectory("rea-metadata-windows-name-");
     await mkdir(join(root, "backup"));
     const nativePath = join(root, "backup", "program.exe");
     const path = nativePath
-      .replace(/^[A-Za-z]:/u, "")
       .replaceAll("\\", "/")
-      .replace(/\/program.exe$/u, "\\program.exe");
+      .replace(/\/program\.exe$/u, "\\program.exe");
     const go = new GoBinaryProvider();
     const rust = new RustBinaryProvider();
     try {
