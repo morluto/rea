@@ -685,12 +685,13 @@ Native target admission checks Mach-O slice headers before assigning FAT
 identity. A shared `CAFEBABE` prefix whose declarations do not identify Mach-O
 images receives the generic unsupported-format refusal, including JVM class
 files larger than the bounded admission probe. This does not identify a partial
-prefix as a validated JVM class. For files sharing `CAFEBABE`, target admission
-checks complete JVM framing within the same 16 MiB class identity bound as the
-Mach-O image reader. A complete class remains unsupported even if its constant
-pool resembles a known FAT CPU declaration. Above that bound, an ambiguous
-malformed FAT interpretation remains unresolved. Malformed recognized FAT
-declarations retain their format-specific reasons.
+prefix as a validated JVM class. When the shared header fields form a plausible
+JVM version, target admission and the Mach-O image reader check complete JVM
+framing up to 16 MiB. A complete class remains
+unsupported even if its constant pool resembles a known FAT CPU declaration.
+Above that bound, a malformed FAT interpretation remains unresolved if the
+prefix could still belong to a JVM class. A header that rules out a JVM class
+allows the reader to report a recognized FAT range error directly.
 
 `inspect_artifact` and `extract_artifact` retain universal Mach-O slices under
 their exact `lipo` names, including 32-bit ARM implementations such as `armv7`,
@@ -827,11 +828,11 @@ command timeout does not raise these budgets.
 
 `inspect_macho.encryption` reports the `LC_ENCRYPTION_INFO(_64)` state of every
 slice, not only the selected one. It decodes only the FAT table, slice headers
-and load commands. Like every Mach-O container read, a `0xcafebabe` input of at
-most 16 MiB is first read whole to rule out a JVM class file, so that read
-includes code bytes; larger inputs and thin images read only the structures
-above. A slice is `encrypted` when its single encryption command has a nonzero
-`cryptid`, `not-encrypted` when `cryptid` is zero, and `absent` only when every
+and load commands. A `0xcafebabe` input of at most 16 MiB with a plausible JVM
+version is first read whole to resolve its identity. That read can include code
+bytes. Other inputs read only the structures above. A slice is `encrypted`
+when its single encryption command has a nonzero `cryptid`, `not-encrypted`
+when `cryptid` is zero, and `absent` only when every
 load command was read and none was an encryption command. A command whose width
 or `cmdsize` contradicts the image, more than one such command, or a range past
 the slice is `malformed`; a slice whose commands could not be fully read is

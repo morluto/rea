@@ -120,6 +120,7 @@ import {
   type MachoHeaderPrefixFacts,
 } from "../domain/apple/machoContainer.js";
 import {
+  hasJvmClassHeader,
   isJvmClassFile,
   MAX_JVM_CLASS_IDENTITY_BYTES,
   JVM_CLASS_IDENTITY_LIMIT_REASON,
@@ -1017,9 +1018,9 @@ const readExecutableMetadata = async (
     signal,
   });
   if (thin !== null) return thin;
-  const hasJvmMagic = bytes.length >= 4 && bytes.readUInt32BE(0) === 0xcafebabe;
+  const mayBeJvmClass = hasJvmClassHeader(bytes);
   if (
-    hasJvmMagic &&
+    mayBeJvmClass &&
     fileSize > bytes.length &&
     fileSize <= MAX_JVM_CLASS_IDENTITY_BYTES
   ) {
@@ -1034,7 +1035,7 @@ const readExecutableMetadata = async (
     signal,
   );
   if (
-    hasJvmMagic &&
+    mayBeJvmClass &&
     fileSize > MAX_JVM_CLASS_IDENTITY_BYTES &&
     fatEvidence !== undefined &&
     classifyFatContainerIdentity(
