@@ -1289,6 +1289,30 @@ class NativeMacOSClient implements AnalysisClient {
         parsed.error.reason === "unsupported-encoding"
       )
         return undefined;
+      // CoreFoundation reads XML plists that strict XML 1.0 rejects: a declaration after
+      // leading whitespace, a DOCTYPE carrying an external identifier, a comment containing
+      // `--`. When the platform reader accepts the file, decoding plutil's own conversion
+      // keeps content the strict rule would have refused, and the result no longer depends on
+      // how `file` classified the bytes.
+      // Only markup-shaped bytes can be a plist the platform reads and strict XML rejects.
+      // Arbitrary bytes stay refused, so a conversion the platform would refuse cannot be
+      // used to invent facts from them.
+      const markupShaped = /^\s*</u.test(
+        new TextDecoder("utf-8").decode(source.value.subarray(0, 4096)),
+      );
+      if (!parsed.ok && markupShaped) {
+        const accepted = await this.#run(
+          "inspect_plist",
+          "plutil",
+          ["-lint", "--", fileInput.selection.path],
+          {
+            signal: fileInput.signal,
+            acceptNonZero: true,
+            timeoutMs: fileInput.timeoutMs,
+          },
+        );
+        if (accepted.ok && accepted.value.exitCode === 0) return undefined;
+      }
     } else {
       const json = readPlistJsonSource(source.value);
       if (
