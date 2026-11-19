@@ -10,9 +10,8 @@ import {
   ZIP_MAX_COMMENT_BYTES,
 } from "./zipEndOfCentralDirectory.js";
 
-/** ZIP-backed application package families that share the hardened archive reader. */
-export const ZIP_PACKAGE_FORMATS = [
-  "zip",
+/** Application package identities carried by ZIP containers. */
+export const ZIP_APPLICATION_PACKAGE_FORMATS = [
   "ipa",
   "apk",
   "msix",
@@ -20,6 +19,12 @@ export const ZIP_PACKAGE_FORMATS = [
   "hap",
   "hsp",
   "app-pack",
+] as const;
+
+/** The generic ZIP container and its application packages share an archive reader. */
+export const ZIP_PACKAGE_FORMATS = [
+  "zip",
+  ...ZIP_APPLICATION_PACKAGE_FORMATS,
 ] as const;
 export type ZipPackageFormat = (typeof ZIP_PACKAGE_FORMATS)[number];
 
