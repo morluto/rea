@@ -46,10 +46,8 @@ import {
   unreadableElfDebugCandidate,
   verifyElfDebugCandidate,
 } from "./ElfDebugLink.js";
-import {
-  ELF_NOTE_TEXT_ALLOWANCE,
-  elfNoteSectionNameBudget,
-} from "./ElfNoteParser.js";
+import { ELF_NOTE_TEXT_ALLOWANCE } from "./ElfNoteParser.js";
+import { elfSectionNameBudget } from "../../domain/native/elfSectionNameTable.js";
 
 const OPERATION = "inspect_elf_debug_link";
 
@@ -260,7 +258,7 @@ const elfDebugLinkFailurePrimary = (
   if (origin === "owned-or-classified" && cause instanceof AnalysisError)
     return cause;
   const path = selectedPath(input, field);
-  const sectionNameBudget = elfNoteSectionNameBudget(cause);
+  const sectionNameBudget = elfSectionNameBudget(cause);
   if (isParseLimit(cause, "elf") && sectionNameBudget !== undefined)
     return parseLimitConstraint(OPERATION, "memory", cause, {
       retryable: false,

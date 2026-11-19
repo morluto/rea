@@ -29,7 +29,8 @@ import {
 } from "../binaryContainer.js";
 import {
   decodeElfSectionNameRequest,
-  decodeElfSectionNameTableCooperative,
+  decodeElfSectionNameRequestCooperative,
+  elfSectionNameBudgetFailure,
   type ElfSectionNameDecodeRequest,
 } from "./elfSectionNameTable.js";
 import type { ElfCompressedSectionResult } from "./elfCompressedSection.js";
@@ -162,6 +163,7 @@ const request = (
 /** One ELF interpretation for in-memory images and bounded descriptor-backed inspections. */
 export function* readElfSectionDirectory(
   fileSize: number,
+  maximumSourceAndDecodedNamesBytes?: number,
 ): Generator<NativeReadRequest, ElfSectionDirectory, Buffer> {
   const prefix = yield request(fileSize, 0n, 16n);
   const headerSize = elfFixedHeaderWidth(prefix[4] === 1 ? 32 : 64);
@@ -258,13 +260,21 @@ export function* readElfSectionDirectory(
         namesSection.offset,
         namesSection.size,
       );
+      const structuralRemaining = Math.max(
+        0,
+        STRUCTURE_BYTES - rawNames.length,
+      );
+      const callerRemaining =
+        maximumSourceAndDecodedNamesBytes === undefined
+          ? structuralRemaining
+          : Math.max(0, maximumSourceAndDecodedNamesBytes - fileSize);
       let decoded: ElfCompressedSectionResult | undefined;
       const sectionNames: ElfSectionNameDecodeRequest = {
         raw: rawNames,
         flags: namesSection.flags,
         bits,
         little,
-        maximumDecodedBytes: Math.max(0, STRUCTURE_BYTES - rawNames.length),
+        maximumDecodedBytes: Math.min(structuralRemaining, callerRemaining),
       };
       yield {
         offset: 0,
@@ -282,11 +292,20 @@ export function* readElfSectionDirectory(
           { maxFrames: admitted.value, source: admitted.source },
           admitted.offset,
         );
+      if (
+        admitted.state === "limit" &&
+        maximumSourceAndDecodedNamesBytes !== undefined &&
+        admitted.requiredBytes > BigInt(callerRemaining)
+      )
+        throw elfSectionNameBudgetFailure(
+          BigInt(fileSize) + admitted.requiredBytes,
+          maximumSourceAndDecodedNamesBytes,
+        );
       if (admitted.state === "limit")
         throw new BinaryResourceFailure(
           "structure",
           STRUCTURE_BYTES,
-          `Decoded ELF section names require ${String(admitted.requiredBytes)} bytes, above the ${String(admitted.maximumBytes)}-byte remaining structural budget`,
+          `Decoded ELF section names require ${String(admitted.requiredBytes)} bytes, above the ${String(structuralRemaining)}-byte remaining structural budget`,
           "structure",
           "bytes",
         );
@@ -535,14 +554,7 @@ const driveElfDirectoryCooperative = async (
       step.fulfillSectionNames !== undefined
     ) {
       step.fulfillSectionNames(
-        await decodeElfSectionNameTableCooperative(
-          step.sectionNames.raw,
-          step.sectionNames.flags,
-          step.sectionNames.bits,
-          step.sectionNames.little,
-          step.sectionNames.maximumDecodedBytes,
-          pause,
-        ),
+        await decodeElfSectionNameRequestCooperative(step.sectionNames, pause),
       );
       next = steps.next(Buffer.alloc(0));
       continue;
@@ -569,9 +581,13 @@ const projectDirectoryFrameAllowance = (
 export const readElfDirectoryFromBuffer = (
   bytes: Buffer,
   operation: string,
+  maximumSourceAndDecodedNamesBytes?: number,
 ): ElfSectionDirectory => {
   try {
-    return driveFromBuffer(bytes, readElfSectionDirectory(bytes.length));
+    return driveFromBuffer(
+      bytes,
+      readElfSectionDirectory(bytes.length, maximumSourceAndDecodedNamesBytes),
+    );
   } catch (cause) {
     return projectDirectoryFrameAllowance(operation, cause);
   }
@@ -592,10 +608,6 @@ export const readElfDirectoryFromBufferCooperative = async (
     return projectDirectoryFrameAllowance(operation, cause);
   }
 };
-
-/** Resolve ELF table declarations, including extended counts in section zero, from these bytes. */
-export const readElfTableDeclarationsFromBuffer = (bytes: Buffer) =>
-  driveFromBuffer(bytes, readElfTableDeclarations(bytes, bytes.length));
 
 /** Reject a program or section payload the declared tables place outside these bytes. */
 export const assertElfDeclaredRangesFromBuffer = (bytes: Buffer): void => {

@@ -46,7 +46,8 @@ that invoke PowerShell themselves remain subject to their own policy checks.
 | `npm run check:changed`           | Cached typecheck/lint and branch-related source feedback                                                                |
 | `npm run check:pr`                | Opt-in complete local deterministic gate and generated-file checks                                                      |
 | `npm run docs:check`              | Generated-document validation and fresh onboarding example consistency checks                                           |
-| `npm run docs:build`              | Render VitePress documentation and apply its page-link checks; no live external-link or GitHub fragment verification    |
+| `npm run docs:build`              | Generate and build the VitePress site for local preview                                                                 |
+| `npm run verify:docs:routes`      | Build the VitePress site and verify rendered local routes, anchors, images, and physical edit targets                   |
 
 `typecheck` also checks the JavaScript verification scripts listed in
 `tsconfig.scripts.json` (`checkJs`, with the main compiler options). Those
@@ -70,11 +71,11 @@ semantics. Compare failures against the base revision, or run the suite on
 Linux or WSL, before attributing them to a change. See `CONTRIBUTING.md` →
 Windows source checkouts.
 
-The CI documentation lane runs both `docs:check` and `docs:build` when the
-existing change classifier selects documentation or its producing inputs.
-Generated facts and rendered page links have separate checks. VitePress does not
-establish that every external URL or GitHub-rendered localized heading exists;
-verify those destinations when editing them.
+The CI documentation lane runs `docs:check` and `verify:docs:routes` when the
+change classifier selects documentation or its producing inputs. Follow the
+[documentation authoring checks](documentation.md#generated-ownership-and-checks)
+and verify external URLs and GitHub-rendered headings separately when editing
+them.
 
 For example:
 
@@ -566,14 +567,14 @@ integration, then a producer golden; use the table to select quick feedback and
 claim-specific additional evidence. Provider-behavior claims require the
 matching real-provider lane.
 
-| Change or claim                           | Fast feedback                                                 | Claim-specific coverage                                     |
-| ----------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------- |
-| Source semantics                          | `npm run test:local -- PATH...`                               | Relevant boundary cases when the behavior crosses a port    |
-| CLI/MCP workflow                          | `npm run test:focused -- PATH...`                             | Actual public calls; an injected provider has limited scope |
-| Documentation or generated metadata       | `npm run docs:check`                                          | `npm run docs:build` for rendered pages and links           |
-| Engine adapter                            | Its real-provider lane below                                  | Host, version, target identity, and owned cleanup           |
-| Client configuration or schema conversion | [Native client lane](client-verification.md)                  | Distinguish loopback models from live services              |
-| Agent investigation quality               | [Agent evaluation](#agent-evaluation-and-conformance-records) | Review transcript and scenario-specific evidence            |
+| Change or claim                           | Fast feedback                                                 | Claim-specific coverage                                      |
+| ----------------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------ |
+| Source semantics                          | `npm run test:local -- PATH...`                               | Relevant boundary cases when the behavior crosses a port     |
+| CLI/MCP workflow                          | `npm run test:focused -- PATH...`                             | Actual public calls; an injected provider has limited scope  |
+| Documentation or generated metadata       | `npm run docs:check`                                          | `npm run verify:docs:routes` for rendered routes and anchors |
+| Engine adapter                            | Its real-provider lane below                                  | Host, version, target identity, and owned cleanup            |
+| Client configuration or schema conversion | [Native client lane](client-verification.md)                  | Distinguish loopback models from live services               |
+| Agent investigation quality               | [Agent evaluation](#agent-evaluation-and-conformance-records) | Review transcript and scenario-specific evidence             |
 
 ### Provider-backed workflow verification
 

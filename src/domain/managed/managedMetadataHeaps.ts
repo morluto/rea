@@ -193,6 +193,28 @@ export const readMetadataString = (
   }
 };
 
+/** Read a required row name; nil and a nonzero index of an empty string are invalid. */
+export const readRequiredMetadataName = (
+  bytes: Buffer,
+  layout: ManagedMetadataLayout,
+  table: "TypeDef" | "MethodDef",
+  token: string,
+  {
+    nameIndex,
+    nameOffset,
+  }: { readonly nameIndex: number; readonly nameOffset: number },
+): string => {
+  const name = readMetadataString(bytes, layout, nameIndex);
+  if (name.length === 0)
+    throw managedFailure(
+      "invalid-row",
+      `metadata.${table}:${token}`,
+      `${table} Name index ${String(nameIndex)} must reference a nonempty string`,
+      nameOffset,
+    );
+  return name;
+};
+
 /** File coordinate used when reporting a budget for decoded blob facts. */
 export const metadataBlobOffset = (layout: ManagedMetadataLayout): number =>
   layout.blob?.kind === "available"

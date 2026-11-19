@@ -62,7 +62,7 @@ export type ElfCompressedSectionResult =
     };
 
 /** Compression framing, read without inflating or allocating the declared output. */
-export type ElfCompressedSectionHeader =
+type ElfCompressedSectionHeader =
   | { readonly state: "uncompressed" }
   | {
       readonly state: "compressed";
@@ -75,8 +75,7 @@ export type ElfCompressedSectionHeader =
   | { readonly state: "unsupported"; readonly compressionType: number }
   | { readonly state: "malformed"; readonly message: string };
 
-/** The decoder and preflight admission use the same accepted framing. */
-export const readElfCompressedSectionHeader = (
+const readElfCompressedSectionHeader = (
   bytes: Buffer,
   flags: bigint,
   bits: 32 | 64,

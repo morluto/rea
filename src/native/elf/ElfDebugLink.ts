@@ -32,7 +32,7 @@ import {
   BinaryResourceFailure,
 } from "../../domain/binaryContainer.js";
 import { readElfImage } from "../../domain/native/elfImage.js";
-import { assertElfSectionNameBudget, parseElfNotes } from "./ElfNoteParser.js";
+import { parseElfNotes } from "./ElfNoteParser.js";
 
 type ElfSection = Extract<ImageSection, { format: "elf" }>;
 type Report = ElfDebugLink;
@@ -484,10 +484,11 @@ export const parseElfDebugLink = (
   artifact: Report["artifact"],
   input: InspectElfDebugLinkInput,
 ): Report => {
-  // The image directory decodes names under its own structural allowance, so
-  // the caller-selected budget is enforced before either decoder inflates them.
-  assertElfSectionNameBudget(bytes, input.max_file_bytes);
-  const image = readElfImage(bytes, "inspect_elf_debug_link");
+  const image = readElfImage(
+    bytes,
+    "inspect_elf_debug_link",
+    input.max_file_bytes,
+  );
   const sections = image.sections.filter(
     (section): section is ElfSection => section.format === "elf",
   );
@@ -676,8 +677,11 @@ const readCandidateIdentity = (
   let imageBudgetExceeded = false;
   let frameAllowance: ZstandardFrameAllowanceError | undefined;
   try {
-    assertElfSectionNameBudget(content, input.max_file_bytes);
-    image = readElfImage(content, "inspect_elf_debug_link");
+    image = readElfImage(
+      content,
+      "inspect_elf_debug_link",
+      input.max_file_bytes,
+    );
   } catch (cause) {
     frameAllowance = zstandardFrameAllowanceCause(cause);
     if (frameAllowance === undefined) {

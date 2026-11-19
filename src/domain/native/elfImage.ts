@@ -16,8 +16,13 @@ import { readElfDirectoryFromBuffer } from "./nativeSectionDirectory.js";
 export const readElfImage = (
   bytes: Buffer,
   operation: string,
+  maximumSourceAndDecodedNamesBytes?: number,
 ): Extract<BinaryContainer, { format: "elf" }> => {
-  const directory = readElfDirectoryFromBuffer(bytes, operation);
+  const directory = readElfDirectoryFromBuffer(
+    bytes,
+    operation,
+    maximumSourceAndDecodedNamesBytes,
+  );
   const { bits } = directory;
   const reader = new BinaryReader(bytes, directory.little, "elf");
   const mappings: FileMapping[] = [];

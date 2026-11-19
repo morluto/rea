@@ -22,7 +22,8 @@ import {
   gnuBuildIdNote,
   gnuPropertyNote,
 } from "./ElfNotes.fixture.js";
-import { elfNoteSectionNameBudget, parseElfNotes } from "./ElfNoteParser.js";
+import { parseElfNotes } from "./ElfNoteParser.js";
+import { elfSectionNameBudget } from "../../domain/native/elfSectionNameTable.js";
 
 const defaults = inspectElfNotesInputSchema.parse({
   path: "/artifacts/app",
@@ -303,7 +304,7 @@ it.each([1, 2])(
     } catch (cause) {
       failure = cause;
     }
-    expect(elfNoteSectionNameBudget(failure)).toMatchObject({
+    expect(elfSectionNameBudget(failure)).toMatchObject({
       required: BigInt(minimumMaxFileBytes),
       selected: bytes.length + 1,
     });

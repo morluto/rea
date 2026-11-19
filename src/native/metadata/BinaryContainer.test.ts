@@ -12,7 +12,6 @@ import {
   createFileMappingIndex,
   mappedFileOffset,
   readMappedCString,
-  type BinaryContainer,
 } from "../../domain/binaryContainer.js";
 
 it("preserves representable offsets for invalid file ranges", () => {
@@ -276,28 +275,15 @@ it("refuses a zero-fill alias inside a span spanning multiple mappings", () => {
 it.each(["scan", "index"] as const)(
   "reads strings across discontiguous source ranges without examining bytes after NUL (%s)",
   (mode) => {
-    const image: BinaryContainer = {
-      format: "pe",
-      architecture: "amd64",
-      bits: 64,
-      byte_order: "little",
-      pe_header_mapping: mappings[0]!,
-      mappings: [{ address: 104n, offset: 8, size: 4 }],
-      zero_fills: [{ address: 106n, size: 2n }],
-      sections: [],
-    };
+    const ranges = [mappings[0]!, { address: 104n, offset: 8, size: 4 }];
+    const zeroFills = [{ address: 106n, size: 2n }];
     const bytes = Buffer.from("ABCDxxxxE\0xx");
     const result =
       mode === "scan"
-        ? readMappedCString(bytes, image, 102n, 8)
-        : createFileMappingIndex(
-            [mappings[0]!, ...image.mappings],
-            image.zero_fills,
-          ).readCString(bytes, 102n, 8);
+        ? readMappedCString(bytes, ranges, 102n, 8, zeroFills)
+        : createFileMappingIndex(ranges, zeroFills).readCString(bytes, 102n, 8);
     expect(result.toString()).toBe("CDE");
-    expect(() =>
-      mappedFileOffset([...mappings.slice(0, 1), ...image.mappings], 102n, 4),
-    ).toThrow(/ambiguous/);
+    expect(() => mappedFileOffset(ranges, 102n, 4)).toThrow(/ambiguous/);
   },
 );
 
