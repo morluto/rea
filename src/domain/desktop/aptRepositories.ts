@@ -364,10 +364,10 @@ const QUOTED = new Set('\\|{}[]<>"^~_=!@#$%^&*');
 /** apt's file name for a URI in its lists directory: no scheme or credentials, special characters quoted, `/` as `_`. */
 export const aptListFileName = (uri: string): string => {
   const path = uri
-    .replace(/^[a-z][a-z0-9+.-]*:\/\//iu, "")
+    .replace(/^[a-z][a-z0-9+.-]*:(?:\/\/)?/iu, "")
     .replace(/^[^/@]*@/u, "")
     // APT removes authority brackets before encoding the path for the cache.
-    .replace(/^\[([0-9a-f.:]+)\](?=[:/]|$)/iu, "$1");
+    .replace(/^\[([^\]]+)\](?=[:/]|$)/u, "$1");
   let quoted = "";
   for (const character of path) {
     const code = character.codePointAt(0) ?? 0;

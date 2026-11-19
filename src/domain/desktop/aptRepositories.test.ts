@@ -351,8 +351,21 @@ describe("apt index targets", () => {
   });
 
   it.each([
+    ["file:/srv/apt/dists/stable/", "_srv_apt_dists_stable_InRelease"],
+    [
+      "copy:/tmp/snapshot/dists/stable/",
+      "_tmp_snapshot_dists_stable_InRelease",
+    ],
+    [
+      "file://machine/srv/apt/dists/stable/",
+      "machine_srv_apt_dists_stable_InRelease",
+    ],
     ["https://[2001:db8::1]:8443/apt/", "2001:db8::1:8443_apt_InRelease"],
     ["https://[2001:db8::1]/apt/", "2001:db8::1_apt_InRelease"],
+    [
+      "https://[fe80::1%eth0]/apt/dists/stable/",
+      "fe80::1%25eth0_apt_dists_stable_InRelease",
+    ],
     ["https://example.invalid/apt[1]/", "example.invalid_apt%5b1%5d_InRelease"],
   ])("uses apt's release filename spelling for %s", (uri, filename) => {
     expect(`${aptListFileName(uri)}InRelease`).toBe(filename);
