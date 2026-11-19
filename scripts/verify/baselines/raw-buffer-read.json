@@ -12,7 +12,6 @@
   "src/domain/native/elfPointerRelocations.ts": 6,
   "src/domain/native/nativeAotPe.ts": 26,
   "src/domain/native/readBinaryContainer.ts": 1,
-  "src/domain/pe/peResourceInventory.ts": 7,
   "src/domain/pngVisualDiff.ts": 2,
   "src/dotnet/ManagedMethodBodyReader.ts": 5,
   "src/ghidra/GhidraLoadImageValues.ts": 1,
