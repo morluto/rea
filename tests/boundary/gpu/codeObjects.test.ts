@@ -847,7 +847,43 @@ it.each([".align 8 .b8", ".b8 .align 8"])(
     });
   },
 );
-it.each([".b8 .align 3", ".align 8 .b8 .align 8"])(
+it.each(["9007199254740991", "0x1fffffffffffff"])(
+  "retains PTX parameter facts when aligning an extent of %s exceeds the exact range",
+  async (extent) => {
+    const result = await inspect(
+      Buffer.from(
+        `.version 8.0
+.target sm_80
+.entry wide(.param .b8 payload[${extent}], .param .u32 count, .param .u8 tail) { ret; }
+.entry later(.param .u32 value) { ret; }`,
+      ),
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value.coverage.payloads).toBe("partial");
+    expect(result.value.kernels).toMatchObject([
+      {
+        name: "wide",
+        parameter_bytes: null,
+        parameters: [
+          { name: "payload", offset: 0, size: 9007199254740991 },
+          { name: "count", offset: null, size: 4 },
+          { name: "tail", offset: null, size: 1 },
+        ],
+      },
+      {
+        name: "later",
+        parameter_bytes: 4,
+        parameters: [{ name: "value", offset: 0, size: 4 }],
+      },
+    ]);
+  },
+);
+
+it.each([
+  ".b8 .align 3",
+  ".b8 .align 4503599627370495",
+  ".align 8 .b8 .align 8",
+])(
   "retains PTX names and partial layout for unsupported alignment %s",
   async (type) => {
     const bytes = Buffer.from(
