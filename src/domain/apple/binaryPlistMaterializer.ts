@@ -216,9 +216,14 @@ const storedWideText = (
 const storedDataText = (payload: Buffer): BinaryPlistText | null => {
   const encoding = byteOrderMarkEncoding(payload);
   if (encoding === "utf-32") return null;
-  return encoding === null
-    ? { text: payload.toString("utf8"), complete: true }
-    : storedWideText(payload, encoding, false);
+  if (encoding !== null) return storedWideText(payload, encoding, false);
+  const text = payload.toString("utf8");
+  // This decode preserves a UTF-8 BOM. It declares text just as a wide
+  // mark does; unmarked data remains eligible for best-effort raw scanning.
+  return {
+    text,
+    complete: !text.startsWith("\ufeff") || isStrictUtf8(payload),
+  };
 };
 
 /** Decode a stored payload after its byte budget is admitted. */

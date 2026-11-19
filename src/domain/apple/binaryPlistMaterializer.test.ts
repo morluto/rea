@@ -267,6 +267,27 @@ it.each([
   });
 });
 
+it.each([
+  ["valid marked UTF-8", [0xef, 0xbb, 0xbf, 0xc3, 0xa9], "\ufeffé", true],
+  [
+    "lossy marked UTF-8",
+    [0xef, 0xbb, 0xbf, 0x61, 0xff],
+    "\ufeffa\ufffd",
+    false,
+  ],
+  ["unmarked raw data", [0x61, 0xff], "a\ufffd", true],
+] as const)(
+  "tracks stored data text coverage for %s",
+  (_name, payload, value, complete) => {
+    const data = Buffer.from([0x40 | payload.length, ...payload]);
+    const bytes = source([dictionary(1, 2), text("key"), data]);
+    expect(decodeBinaryPlistText(bytes, budget)).toEqual({
+      text: `key\n${value}`,
+      complete,
+    });
+  },
+);
+
 it("keeps readable text beside an unreferenced string it cannot read", () => {
   const bytes = source([
     dictionary(1, 2),
