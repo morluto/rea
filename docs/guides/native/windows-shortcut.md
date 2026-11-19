@@ -84,6 +84,10 @@ extension. Raw fields and artifact identity are preserved. The code page in a
 ConsoleFE block describes the console and does not establish the original
 system ANSI encoding for these paths.
 
+An unreadable declared `LinkInfo` target path leaves the target extension
+unknown and prevents a mismatch claim, unless another complete target matches
+the icon.
+
 A missing optional section is observed absence of that structure. It is not
 proof the shortcut never carried that data in another container.
 
@@ -96,8 +100,9 @@ LinkInfo, and ExtraData are limited to 64 KiB by default (1 MiB maximum).
 Malformed `HeaderSize` or `LinkCLSID`, and exhausted budgets, fail without
 partial success. Truncation after a valid header, ExtraData size overruns, and
 odd Unicode lengths return partial coverage with `coverage.failing_offset`.
-A LinkInfo offset that points outside its structure is reported at the
-offset field itself, so every issue offset lies inside the file.
+A LinkInfo, VolumeID, or network-name string offset that points inside its
+structure header or outside its structure is reported at the offset field itself,
+so every issue offset lies inside the file.
 Coverage is never `complete` when issues are present.
 
 The selected path must be a regular file. Symbolic links are rejected.
