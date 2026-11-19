@@ -507,6 +507,11 @@ it("uses static artifacts only when listing is complete, unique, and tied to thi
       2,
     ),
   ).toBeNull();
+  const retry = { ...artifact, id: 14, name: "static-check-reports-attempt-2" };
+  const history = { total_count: 2, artifacts: [artifact, retry] };
+  expect(selectStaticCheckArtifact(history, runRecord, 1)).toBe(artifact);
+  expect(selectStaticCheckArtifact(history, runRecord, 2)).toBe(retry);
+  expect(selectStaticCheckArtifact(history, runRecord, 3)).toBeNull();
   const deep = { ...artifact, id: 13, name: "static-deep-check-reports" };
   expect(
     selectStaticCheckArtifact(
