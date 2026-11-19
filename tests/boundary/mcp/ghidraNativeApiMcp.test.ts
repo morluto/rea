@@ -285,7 +285,7 @@ describe("Ghidra prototype conflict diagnostics", () => {
     } finally {
       await harness.close();
     }
-  }, 30_000);
+  });
 
   it("retains prototype conflicts through inspection and selected views", async () => {
     const { harness, conflicts } = await connectPrototypeConflictHarness(
@@ -329,7 +329,7 @@ describe("Ghidra prototype conflict diagnostics", () => {
     } finally {
       await harness.close();
     }
-  }, 30_000);
+  });
 });
 
 describe("Ghidra MCP native API evidence", () => {
