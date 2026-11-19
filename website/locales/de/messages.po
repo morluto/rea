@@ -3727,6 +3727,10 @@ msgid ""
 "applications and DLLs on fixed local NTFS/ReFS drives. Use an existing "
 "Ghidra 12.2 installation and a 64-bit JDK 25 or newer:"
 msgstr ""
+"Windows x64 bietet experimentelle schreibgeschützte Unterstützung für native"
+" x86- und x64-PE-Anwendungen und DLLs auf festen lokalen NTFS/ReFS-"
+"Laufwerken. Verwenden Sie eine vorhandene Installation von Ghidra 12.2 und "
+"ein 64-Bit-JDK 25 oder neuer:"
 
 #: website/public/get-started/index.html:1182
 msgctxt "page:get-started/index.html"
@@ -5304,6 +5308,9 @@ msgid ""
 "{ph0}Ghidra{ph1} (macOS or Linux; experimental on Windows): free, but needs "
 "an existing Ghidra 12.2 installation and a 64-bit JDK 25 or newer."
 msgstr ""
+"{ph0}Ghidra{ph1} (macOS oder Linux; experimentell unter Windows): kostenlos,"
+" erfordert aber eine vorhandene Installation von Ghidra 12.2 und ein 64-Bit-"
+"JDK 25 oder neuer."
 
 #. {ph0}: <a href="../../get-started/#native">
 #. {ph1}: </a>
@@ -14039,6 +14046,8 @@ msgid ""
 "Install a 64-bit JDK 25 or newer, including the Java compiler. Choose the "
 "package matching your computer's architecture."
 msgstr ""
+"Installieren Sie ein 64-Bit-JDK 25 oder neuer, einschließlich des Java-"
+"Compilers. Wählen Sie das Paket passend zur Architektur Ihres Computers."
 
 #. {ph0}: <code>ghidra_…_PUBLIC_….zip</code>
 #: website/public/get-started/index.html:1116
@@ -14048,6 +14057,9 @@ msgid ""
 "Download Ghidra 12.2 from the release's Assets list and extract the {ph0} "
 "archive. Choose the release archive, not “Source code”."
 msgstr ""
+"Laden Sie Ghidra 12.2 aus der Assets-Liste der Veröffentlichung herunter und"
+" entpacken Sie das Archiv {ph0}. Wählen Sie das Release-Archiv, nicht "
+"„Source code“."
 
 #. {ph0}: <code>ghidraRun</code>
 #. {ph1}: <code>ghidraRun.bat</code>
@@ -14072,7 +14084,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Download a JDK{ph1} · {ph2}Download Ghidra 12.2{ph3}"
-msgstr ""
+msgstr "{ph0}Ein JDK herunterladen{ph1} · {ph2}Ghidra 12.2 herunterladen{ph3}"
 
 #. {ph0}: <code>java.home</code>
 #. {ph1}: <code>JAVA_HOME</code>
