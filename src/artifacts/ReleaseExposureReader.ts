@@ -1656,7 +1656,7 @@ const examineLoadedText = (
     const text = decodeMemberText(loaded.bytes);
     scanText(state, member, loaded.bytes.length, text);
     if (holdsScripts(member)) {
-      if (text === null) state.skippedMaps += 1;
+      if (text?.complete !== true) state.skippedMaps += 1;
       else if (scriptHoldsMap(state, member, text.text))
         readScriptAsMap(state, member, loaded.bytes, text.text);
       else {
@@ -2334,11 +2334,22 @@ const declaresTextEncoding = (bytes: Buffer): boolean =>
 const decodeMemberText = (bytes: Buffer): MemberText | null => {
   const encoding = byteOrderMarkEncoding(bytes);
   if (encoding === "utf-32") return null;
-  if (encoding !== null)
-    return { text: new TextDecoder(encoding).decode(bytes), complete: true };
+  if (encoding !== null) {
+    try {
+      return {
+        text: new TextDecoder(encoding, { fatal: true }).decode(bytes),
+        complete: true,
+      };
+    } catch (cause: unknown) {
+      if (!(cause instanceof TypeError)) throw cause;
+      return { text: new TextDecoder(encoding).decode(bytes), complete: false };
+    }
+  }
   if (hasBinaryPlistSignature(bytes)) return decodeBinaryPlistMember(bytes);
   if (hasNonUtf8Nul(bytes)) return null;
-  return { text: bytes.toString("utf8"), complete: true };
+  // Keep readable text available for marker scans, but report lossy decoding
+  // as incomplete and do not interpret source-map declarations from it.
+  return { text: bytes.toString("utf8"), complete: isUtf8(bytes) };
 };
 
 const scanText = (

@@ -2510,6 +2510,30 @@ describe("ReleaseExposureReader text encodings", () => {
   });
 });
 
+it.each([
+  ["UTF-8", Buffer.from("const value = 1;"), Buffer.from([0xff])],
+  [
+    "UTF-16LE",
+    Buffer.from("\ufeffconst value = 1;", "utf16le"),
+    Buffer.from([0x61]),
+  ],
+] as const)(
+  "counts malformed %s script text as incomplete",
+  async (_encoding, prefix, invalid) => {
+    const root = await createTestTempDirectory(
+      "rea-release-exposure-malformed-text-",
+    );
+    await writeFile(join(root, "app.js"), Buffer.concat([prefix, invalid]));
+
+    const report = await inspect(root);
+    expect(report.text_members).toEqual({ scanned: 0, skipped: 1 });
+    expect(report.source_maps.skipped).toBe(1);
+    expect(report.textLocations).toHaveLength(1);
+    expect(sourceMapSourcesStatus(report)).toBe("unknown");
+    expect(credentialMarkersStatus(report)).toBe("unknown");
+  },
+);
+
 describe("ReleaseExposureReader text recognition", () => {
   const marker = "-----BEGIN PRIVATE KEY-----\n";
 
