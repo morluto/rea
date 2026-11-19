@@ -38,7 +38,6 @@
   "src/il2cpp/Il2cppMetadataFormat.ts": 3,
   "src/il2cpp/Il2cppMetadataMembers.ts": 5,
   "src/native/AppleDispatchMetadata.ts": 4,
-  "src/native/AppleObjcClassImportBindings.ts": 1,
   "src/native/AppleObjcDispatchFacets.ts": 1,
   "src/native/AppleSwiftDispatchFacets.ts": 1,
   "src/native/elf/ElfNoteParser.ts": 27,
