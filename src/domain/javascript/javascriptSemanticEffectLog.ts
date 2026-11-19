@@ -484,6 +484,14 @@ export const semanticBindingEffectGeneration = (
   binding: JavaScriptSemanticBindingState,
 ): number => binding.memberWrites.length + binding.escapedPaths.length;
 
+/** A read may need to distinguish a captured reference from its merged value. */
+export const hasRecordedReferenceEffects = (
+  binding: JavaScriptSemanticBindingState,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  semanticBindingEffectGeneration(binding) > 0 ||
+  state.opaqueEffects.byScope.size > 0;
+
 /**
  * Recorded ambient writes to `global` paths, as intrinsic paths with
  * non-literal keys as null. A write recorded without a site is placed at the

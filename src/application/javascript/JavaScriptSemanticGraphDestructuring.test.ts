@@ -2,6 +2,47 @@ import { expect, it } from "vitest";
 import { graphForJavaScript } from "../../../tests/fixtures/javascriptSemanticGraph.js";
 
 it.each([
+  "const { mode: selected, fallback = 0 } = config;",
+  'const { mode: selected, ["fallback"]: later } = config;',
+  "const { mode: selected, nested: { fallback = 0 } } = config;",
+  "const { mode: selected, ...later } = config;",
+  "const { mode: selected, accessor: later } = config;",
+  "let selected; const target = {}; ({ mode: selected, fallback: target.value } = config);",
+])(
+  "retains a proved read before a later unproven pattern operation",
+  (read) => {
+    const graph = graphForJavaScript(`
+    const config = { mode: "strict", fallback: 0, nested: { fallback: 0 }, get accessor() { return 0; } };
+    ${read}
+    config.mode = "loose";
+  `);
+    const selected = graph.nodes.find(
+      ({ kind, label }) => kind === "binding" && label === "selected",
+    );
+    expect(
+      graph.relations.find(
+        (edge) =>
+          edge.relation === "destructures" &&
+          edge.target_node_id === selected?.node_id,
+      ),
+    ).toMatchObject({ resolution: "resolved" });
+  },
+);
+
+it("leaves the next read uncertain after a source-mutating assignment target", () => {
+  const graph = graphForJavaScript(`
+    const config = { first: 1, mode: "strict" };
+    let selected;
+    const target = { set value(_) { delete config.mode; } };
+    ({ first: target.value, mode: selected } = config);
+    config.mode = "loose";
+  `);
+  expect(
+    graph.relations.find(({ relation }) => relation === "destructures"),
+  ).toMatchObject({ resolution: "candidate" });
+});
+
+it.each([
   { read: "const { mode: selected } = config;", relation: "destructures" },
   {
     read: "let selected; ({ mode: selected } = config);",

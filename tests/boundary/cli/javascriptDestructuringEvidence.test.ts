@@ -17,7 +17,7 @@ cliTest(
       join(root, "main.js"),
       `
     const src = { a: 1 };
-    const { a: declared } = src;
+    const { a: declared, laterDefault = 0 } = src;
     let a;
     ({ a } = src);
     const direct = src.a;

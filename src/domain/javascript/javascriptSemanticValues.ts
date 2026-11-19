@@ -2,6 +2,7 @@ import type { JavaScriptSemanticPrecision } from "./javascriptSemanticPrecision.
 import {
   applySemanticBindingReferenceEffects,
   capturedBindingPathMayHaveChanged,
+  hasRecordedReferenceEffects,
   opaqueCodeMayRebindBinding,
 } from "./javascriptSemanticEffectLog.js";
 import * as t from "@babel/types";
@@ -281,9 +282,7 @@ export const createSemanticReadPresenceQuery = (
       initializer === undefined ||
       initializer.projection.length !== 0 ||
       binding.referenceInitializers.length !== 0 ||
-      (binding.memberWrites.length === 0 &&
-        binding.escapedPaths.length === 0 &&
-        state.opaqueEffects.byScope.size === 0) ||
+      !hasRecordedReferenceEffects(binding, state) ||
       state.conditionallySkippedExpressions.has(initializer.node) ||
       !semanticBindingPrecedesCapture(binding, capture, state.parentsByNode) ||
       opaqueCodeMayRebindBinding(binding, state, capture)

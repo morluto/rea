@@ -149,15 +149,31 @@ const collectDestructuring = (
     initializer == null || source.path === null
       ? undefined
       : readPresence(source.bindingId, initializer);
-  const staged: AddObjectOperationInput[] = [];
-  const pending: {
+  // An unsupported property still occupies its place in the pattern's
+  // evaluation order, even when it cannot produce a graph operation.
+  const pending: ({
     readonly pattern: t.Node;
     readonly path: readonly string[];
-  }[] = [{ pattern: root, path: [] }];
+    readonly lookup?: "own" | "unproven";
+  } | null)[] = [{ pattern: root, path: [] }];
   while (pending.length > 0) {
     const next = pending.pop();
     if (next === undefined) break;
+    if (next === null) {
+      ownSlot = undefined;
+      continue;
+    }
     const { path } = next;
+    const propertyPath =
+      source.path === null ? null : [...source.path, ...path];
+    if (
+      next.lookup === "unproven" ||
+      (next.lookup === "own" &&
+        ownSlot !== undefined &&
+        propertyPath !== null &&
+        !ownSlot(propertyPath))
+    )
+      ownSlot = undefined;
     const occurrence = unwrapJavaScriptExpression(next.pattern).node;
     if (t.isAssignmentPattern(occurrence)) ownSlot = undefined;
     const pattern = t.isAssignmentPattern(occurrence)
@@ -166,23 +182,19 @@ const collectDestructuring = (
     if (t.isObjectPattern(pattern)) {
       for (const property of pattern.properties.toReversed()) {
         if (!t.isObjectProperty(property)) {
-          ownSlot = undefined;
+          pending.push(null);
           continue;
         }
-        if (property.computed) ownSlot = undefined;
         const name = semanticStaticPropertyKey(property.key, property.computed);
         if (name === null) {
-          ownSlot = undefined;
+          pending.push(null);
           continue;
         }
-        const pathToProperty = [...path, name];
-        if (
-          ownSlot !== undefined &&
-          source.path !== null &&
-          !ownSlot([...source.path, ...pathToProperty])
-        )
-          ownSlot = undefined;
-        pending.push({ pattern: property.value, path: pathToProperty });
+        pending.push({
+          pattern: property.value,
+          path: [...path, name],
+          lookup: property.computed ? "unproven" : "own",
+        });
       }
       continue;
     }
@@ -203,26 +215,26 @@ const collectDestructuring = (
       ownSlot = undefined;
       continue;
     }
-    staged.push({
-      node: occurrence,
-      kind: "destructure",
-      ownerCallableId,
-      objectBindingId: source.bindingId,
-      targetBindingId:
-        resolveSemanticBindingState(state, pattern, pattern.name)?.bindingId ??
-        null,
-      propertyPath: source.path === null ? null : [...source.path, ...path],
-    });
-  }
-  // Earlier lookups of the pattern must also be ordinary data reads before
-  // the RHS snapshot can prove a later leaf's presence.
-  const provenOwnSlot = ownSlot !== undefined;
-  for (const input of staged)
+    const targetBinding = resolveSemanticBindingState(
+      state,
+      pattern,
+      pattern.name,
+    );
+    if (targetBinding === undefined) ownSlot = undefined;
     addObjectOperation(
-      provenOwnSlot ? { ...input, provenOwnSlot } : input,
+      {
+        node: occurrence,
+        kind: "destructure",
+        ownerCallableId,
+        objectBindingId: source.bindingId,
+        targetBindingId: targetBinding?.bindingId ?? null,
+        propertyPath,
+        provenOwnSlot: ownSlot !== undefined,
+      },
       state,
       output,
     );
+  }
 };
 
 interface AddObjectOperationInput {
