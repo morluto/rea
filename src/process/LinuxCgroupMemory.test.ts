@@ -3,7 +3,10 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { readLinuxCgroupMemoryState } from "./LinuxCgroupMemory.js";
+import {
+  readLinuxCgroupAdmissionFacts,
+  readLinuxCgroupMemoryState,
+} from "./LinuxCgroupMemory.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 
@@ -286,4 +289,75 @@ it("uses valid cgroup mounts alongside unrelated non-UTF-8 mount records", async
   });
   await writeFile(procMountInfoPath, invalidRow(valid));
   await expect(readLinuxCgroupMemoryState(options)).resolves.toBeUndefined();
+});
+
+it("returns undefined for admission facts when platform is not linux or membership is unreadable", async () => {
+  await expect(
+    readLinuxCgroupAdmissionFacts({ platform: "darwin" }),
+  ).resolves.toBeUndefined();
+  await expect(
+    readLinuxCgroupAdmissionFacts({
+      platform: "linux",
+      procCgroupPath: "/nonexistent-cgroup-path",
+    }),
+  ).resolves.toBeUndefined();
+});
+
+it("reads admission facts and tightens effective limit across ancestor hierarchy", async () => {
+  const root = await createTestTempDirectory("rea-cgroup-ancestors-");
+  const mountPoint = join(root, "cgroup");
+  const parentGroup = join(mountPoint, "parent.slice");
+  const childGroup = join(parentGroup, "child.slice");
+  await mkdir(childGroup, { recursive: true });
+
+  // Grandparent (mountPoint root): 4 GiB
+  await writeFile(join(mountPoint, "memory.max"), "4294967296\n");
+  // Parent: 1 GiB (tightest ancestor)
+  await writeFile(join(parentGroup, "memory.max"), "1073741824\n");
+  // Child: max
+  await writeFile(join(childGroup, "memory.max"), "max\n");
+  await writeFile(join(childGroup, "memory.current"), "524288000\n");
+
+  const procCgroupPath = join(root, "proc-self-cgroup");
+  await writeFile(procCgroupPath, "0::/parent.slice/child.slice\n");
+  const procMountInfoPath = join(root, "proc-self-mountinfo");
+  await writeFile(procMountInfoPath, `${mountInfoRow("/", mountPoint)}\n`);
+
+  const facts = await readLinuxCgroupAdmissionFacts({
+    platform: "linux",
+    procCgroupPath,
+    procMountInfoPath,
+  });
+
+  expect(facts).toEqual({
+    effectiveMemoryMax: 1073741824,
+    usageBytes: 524288000,
+  });
+});
+
+it("returns 'max' when no ancestor sets a finite limit and parses invalid current as null", async () => {
+  const root = await createTestTempDirectory("rea-cgroup-unlimited-");
+  const mountPoint = join(root, "cgroup");
+  const group = join(mountPoint, "unlimited.slice");
+  await mkdir(group, { recursive: true });
+
+  await writeFile(join(mountPoint, "memory.max"), "max\n");
+  await writeFile(join(group, "memory.max"), "max\n");
+  await writeFile(join(group, "memory.current"), "not-a-number\n");
+
+  const procCgroupPath = join(root, "proc-self-cgroup");
+  await writeFile(procCgroupPath, "0::/unlimited.slice\n");
+  const procMountInfoPath = join(root, "proc-self-mountinfo");
+  await writeFile(procMountInfoPath, `${mountInfoRow("/", mountPoint)}\n`);
+
+  const facts = await readLinuxCgroupAdmissionFacts({
+    platform: "linux",
+    procCgroupPath,
+    procMountInfoPath,
+  });
+
+  expect(facts).toEqual({
+    effectiveMemoryMax: "max",
+    usageBytes: null,
+  });
 });
