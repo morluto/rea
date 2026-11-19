@@ -15,13 +15,15 @@ import {
   type ZstandardFrameSource,
   zstandardWorkLimitFacts,
 } from "./zstandardFrameAllowance.js";
+import {
+  ZSTANDARD_MAGIC_BYTES,
+  zstandardFrameKind,
+  zstandardFrameReads,
+  type ZstandardFrameKind,
+} from "./zstandardFrameWire.js";
 
 /** Zstandard's default maximum decoder window, 2^27 bytes (128 MiB). */
 export const ZSTANDARD_WINDOW_LOG_MAX = 27;
-
-const ZSTD_MAGIC = 0xfd2fb528;
-const SKIPPABLE_MAGIC_MIN = 0x184d2a50;
-const SKIPPABLE_MAGIC_MAX = 0x184d2a5f;
 
 /**
  * Structural framing failures. `work_limit` is a decoder-work refusal, not
@@ -90,7 +92,7 @@ export type ZstandardFrameResult =
 interface FrameSpan {
   readonly offset: number;
   readonly length: number;
-  readonly kind: "zstd" | "skippable";
+  readonly kind: ZstandardFrameKind;
 }
 
 interface WalkSuccess {
@@ -100,12 +102,12 @@ interface WalkSuccess {
 }
 
 // Bound structural work between cooperative pauses, including across frames.
-const HEADERS_PER_PAUSE = 64;
+const READS_PER_PAUSE = 64;
 interface FrameWalkProgress {
-  headers: number;
+  reads: number;
 }
 const needsFrameWalkPause = (progress: FrameWalkProgress): boolean =>
-  ++progress.headers % HEADERS_PER_PAUSE === 0;
+  ++progress.reads % READS_PER_PAUSE === 0;
 
 const failure = (
   reason: ZstandardFrameReason,
@@ -129,118 +131,28 @@ const workLimit = (
   ...zstandardWorkLimitFacts(allowance),
 });
 
-const u24 = (bytes: Uint8Array, offset: number): number =>
-  (bytes[offset] ?? 0) |
-  ((bytes[offset + 1] ?? 0) << 8) |
-  ((bytes[offset + 2] ?? 0) << 16);
-
-const u32 = (bytes: Uint8Array, offset: number): number =>
-  (u24(bytes, offset) | ((bytes[offset + 3] ?? 0) << 24)) >>> 0;
-
-const isSkippableMagic = (magic: number): boolean =>
-  magic >= SKIPPABLE_MAGIC_MIN && magic <= SKIPPABLE_MAGIC_MAX;
-
-const hasMagic = (bytes: Uint8Array, offset: number): boolean => {
-  if (offset + 4 > bytes.length) return false;
-  const magic = u32(bytes, offset);
-  return magic === ZSTD_MAGIC || isSkippableMagic(magic);
-};
-
-/**
- * One Zstandard frame after its magic, per RFC 8878 §3.1.1. The walk uses
- * header and block sizes only; it does not interpret compressed blocks.
- */
-function* zstdFrameLength(
-  bytes: Uint8Array,
-  offset: number,
-  progress: FrameWalkProgress,
-): Generator<void, { readonly length: number } | ZstandardFrameFailure> {
-  if (offset + 5 > bytes.length)
-    return failure("truncated_frame_header", offset);
-  const descriptor = bytes[offset + 4] ?? 0;
-  const dictionaryFlag = descriptor & 0x3;
-  const checksum = (descriptor >>> 2) & 0x1;
-  const reserved = (descriptor >>> 3) & 0x1;
-  const singleSegment = (descriptor >>> 5) & 0x1;
-  const contentSizeFlag = (descriptor >>> 6) & 0x3;
-  // RFC 8878 requires the reserved bit to be zero. The unused bit is not
-  // interpreted by a decoder of this specification version.
-  if (reserved !== 0)
-    return failure("malformed", offset, "reserved_frame_descriptor");
-  const dictionaryBytes =
-    dictionaryFlag === 0 ? 0 : dictionaryFlag === 3 ? 4 : dictionaryFlag;
-  const contentSizeBytes =
-    contentSizeFlag === 0
-      ? singleSegment === 1
-        ? 1
-        : 0
-      : contentSizeFlag === 1
-        ? 2
-        : contentSizeFlag === 2
-          ? 4
-          : 8;
-  const headerBytes =
-    5 + (singleSegment === 1 ? 0 : 1) + dictionaryBytes + contentSizeBytes;
-  if (offset + headerBytes > bytes.length)
-    return failure("truncated_frame_header", offset);
-  let cursor = offset + headerBytes;
-  for (;;) {
-    if (needsFrameWalkPause(progress)) yield;
-    if (cursor + 3 > bytes.length) return failure("truncated_block", cursor);
-    const header = u24(bytes, cursor);
-    const last = header & 0x1;
-    const type = (header >>> 1) & 0x3;
-    const size = header >>> 3;
-    cursor += 3;
-    if (type === 3) return failure("malformed", cursor - 3, "reserved_block");
-    // An RLE block stores one byte and repeats it `size` times.
-    const contentBytes = type === 1 ? 1 : size;
-    if (cursor + contentBytes > bytes.length)
-      return failure("truncated_block", cursor);
-    cursor += contentBytes;
-    if (last === 1) break;
-  }
-  if (checksum === 1) {
-    if (cursor + 4 > bytes.length) return failure("truncated_checksum", cursor);
-    cursor += 4;
-  }
-  return { length: cursor - offset };
-}
-
-const skippableFrameLength = (
-  bytes: Uint8Array,
-  offset: number,
-): { readonly length: number } | ZstandardFrameFailure => {
-  if (offset + 8 > bytes.length)
-    return failure("truncated_frame_header", offset);
-  const userBytes = u32(bytes, offset + 4);
-  if (offset + 8 + userBytes > bytes.length)
-    return failure("truncated_block", offset + 8);
-  return { length: 8 + userBytes };
-};
+const unreadBytes = new Uint8Array(0);
 
 function* frameAt(
   bytes: Uint8Array,
   offset: number,
+  kind: ZstandardFrameKind,
   progress: FrameWalkProgress,
-): Generator<
-  void,
-  { readonly span: FrameSpan } | { readonly stop: true } | ZstandardFrameFailure
-> {
-  if (!hasMagic(bytes, offset)) return { stop: true };
-  const magic = u32(bytes, offset);
-  const parsed =
-    magic === ZSTD_MAGIC
-      ? yield* zstdFrameLength(bytes, offset, progress)
-      : skippableFrameLength(bytes, offset);
-  if ("ok" in parsed) return parsed;
-  return {
-    span: {
-      offset,
-      length: parsed.length,
-      kind: magic === ZSTD_MAGIC ? "zstd" : "skippable",
-    },
-  };
+): Generator<void, FrameSpan | ZstandardFrameFailure> {
+  let cursor = offset + ZSTANDARD_MAGIC_BYTES;
+  const reads = zstandardFrameReads(kind, offset);
+  let step = reads.next();
+  while (!step.done) {
+    if (needsFrameWalkPause(progress)) yield;
+    const read = step.value;
+    const end = cursor + read.length;
+    if (end > bytes.length) return failure(read.eof, read.failureOffset);
+    step = reads.next(read.inspect ? bytes.subarray(cursor, end) : unreadBytes);
+    cursor = end;
+  }
+  if (step.value !== undefined)
+    return failure("malformed", step.value.offset, step.value.code);
+  return { offset, length: cursor - offset, kind };
 }
 
 /**
@@ -253,29 +165,29 @@ function* walkFrames(
   mode: ZstandardFrameMode,
 ): Generator<void, WalkSuccess | ZstandardFrameFailure> {
   const frames: FrameSpan[] = [];
-  const progress = { headers: 0 };
+  const progress = { reads: 0 };
   let offset = 0;
   while (offset < bytes.length) {
+    const kind = zstandardFrameKind(bytes, offset);
     if (frames.length === allowance.maxFrames) {
-      if (hasMagic(bytes, offset)) return workLimit(allowance, offset);
+      if (kind !== undefined) return workLimit(allowance, offset);
       if (mode === "exact") return failure("trailing_bytes", offset);
       break;
     }
-    if (offset + 4 > bytes.length) {
+    if (offset + ZSTANDARD_MAGIC_BYTES > bytes.length) {
       if (frames.length === 0) return failure("truncated_frame_header", offset);
       if (mode === "exact") return failure("trailing_bytes", offset);
       break;
     }
-    if (needsFrameWalkPause(progress)) yield;
-    const next = yield* frameAt(bytes, offset, progress);
-    if ("stop" in next) {
+    if (kind === undefined) {
       if (frames.length === 0) return failure("malformed", offset, "magic");
       if (mode === "exact") return failure("trailing_bytes", offset);
       break;
     }
+    const next = yield* frameAt(bytes, offset, kind, progress);
     if ("ok" in next) return next;
-    frames.push(next.span);
-    offset += next.span.length;
+    frames.push(next);
+    offset += next.length;
   }
   if (frames.length === 0) return failure("truncated_frame_header", 0);
   return { ok: true, frames, consumed: offset };
