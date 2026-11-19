@@ -45,10 +45,15 @@ import {
   MODEL_REPORT_BYTES,
   modelCapacityRemediation,
   modelCapacityReportedLimits,
+  MODEL_FORMAT,
 } from "./ModelFormat.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { ParseFailureError } from "../domain/parseFailure.js";
-import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
+import {
+  isParseLimit,
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../domain/parseFailureAnalysisError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   isSelectedRegularFileError,
@@ -122,20 +127,23 @@ export class ModelArtifactProvider implements ModelArtifactPort {
       let error: AnalysisError;
       if (origin === "owned-or-classified" && primary instanceof AnalysisError)
         error = primary;
-      else if (primary instanceof ParseFailureError && capacity !== undefined)
-        // A model allowance names its own recovery.
-        error = new AnalysisResourceConstraintError(
-          OPERATION,
-          "memory",
-          primary.message,
+      else if (
+        primary instanceof ParseFailureError &&
+        capacity !== undefined &&
+        isParseLimit(primary, MODEL_FORMAT)
+      ) {
+        // A model allowance names its own recovery; the refusal's reason and
+        // limit come from the parser, and the reported key stays the one the
+        // model contract has always used.
+        const [legacyMaximumKey] = Object.keys(
           modelCapacityReportedLimits(capacity),
-          {
-            cause,
-            retryable: false,
-            remediationAction: modelCapacityRemediation(capacity),
-          },
-        );
-      else if (formatError !== undefined) error = formatError;
+        ) as [string];
+        error = parseLimitConstraint(OPERATION, "memory", primary, {
+          retryable: false,
+          legacyMaximumKey,
+          remediationAction: modelCapacityRemediation(capacity),
+        });
+      } else if (formatError !== undefined) error = formatError;
       else if (
         origin === "owned-or-classified" &&
         primary instanceof ArtifactReaderFailure &&
