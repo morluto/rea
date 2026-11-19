@@ -36,12 +36,15 @@ const scopeFlags = async () =>
       ),
     ).CI_FLAGS;
 
+const recordedCrashRefresh = "refresh --kill-after=5s 90s";
+const recordedCrashDownload = "download --kill-after=5s 180s";
+
 it.skipIf(process.platform === "win32").each([
-  ["ok", 0, ["refresh", "download", "install"]],
-  ["refresh", 100, ["refresh"]],
-  ["download", 124, ["refresh", "download"]],
+  ["ok", 0, [recordedCrashRefresh, recordedCrashDownload, "install untimed"]],
+  ["refresh", 100, [recordedCrashRefresh]],
+  ["download", 124, [recordedCrashRefresh, recordedCrashDownload]],
 ] as const)(
-  "recorded-crash APT runs the expected stages for the %s outcome",
+  "recorded-crash APT runs the expected stages and deadlines for the %s outcome",
   async (mode, code, expected) => {
     const steps = z
       .array(z.object({ run: z.string().optional() }))
@@ -55,21 +58,26 @@ it.skipIf(process.platform === "win32").each([
     if (!provision) throw new Error("Missing recorded-crash APT step");
     const mock = `
       mode=$1
-      timeout() { shift 2; "$@"; }
+      timeout() {
+        local args="$1 $2"
+        shift 2
+        apt_timeout="$args" "$@"
+      }
+      record_stage() { printf '%s %s\\n' "$1" "\${apt_timeout:-untimed}"; }
       apt-get() {
         case " $* " in
           *" update "*)
-            echo refresh
+            record_stage refresh
             if [[ $mode == refresh && " $* " == *" --error-on=any "* ]]; then
               return 100
             fi
             ;;
           *" --download-only "*)
-            echo download
+            record_stage download
             if [[ $mode == download ]]; then return 124; fi
             ;;
-          *" --no-download "*) echo install ;;
-          *) echo unexpected-install ;;
+          *" --no-download "*) record_stage install ;;
+          *) record_stage unexpected-install ;;
         esac
       }
     `;
