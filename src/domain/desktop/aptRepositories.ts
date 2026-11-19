@@ -52,6 +52,19 @@ const fieldValues = (value: string | undefined): readonly string[] =>
 const optionValues = (value: string | undefined): readonly string[] =>
   (value ?? "").split(/[\s,]+/u).filter((part) => part.length > 0);
 
+/** Resolve an explicit list. Modifier-only entries depend on APT's host defaults. */
+const sourceArchitectures = (
+  options: ReadonlyMap<string, string>,
+): string[] => {
+  const base = optionValues(options.get("arch"));
+  if (base.length === 0) return [];
+  const selected = new Set([...base, ...optionValues(options.get("arch+"))]);
+  for (const removed of optionValues(options.get("arch-")))
+    selected.delete(removed);
+  // APT still selects architecture-independent packages when all named targets were removed.
+  return selected.size === 0 ? ["all"] : [...selected];
+};
+
 /** Keep redundant path separators that APT preserves in Repo-URI. */
 const withoutOptionalTrailingSlash = (uri: string): string =>
   uri.replace(/(?<!\/)\/$/u, "");
@@ -132,7 +145,7 @@ const stanza = (
     }),
     suites: fields.suites,
     components: fields.components,
-    architectures: optionValues(fields.options.get("arch")),
+    architectures: sourceArchitectures(fields.options),
     signedBy: inlineKey === null ? optionValues(signedBy) : [],
     inlineKey,
   };
@@ -264,6 +277,8 @@ export const parseDeb822Sources = (
           options: new Map([
             ["signed-by", fields.get("signed-by") ?? ""],
             ["arch", fields.get("architectures") ?? ""],
+            ["arch+", fields.get("architectures-add") ?? ""],
+            ["arch-", fields.get("architectures-remove") ?? ""],
           ]),
         },
       ),
