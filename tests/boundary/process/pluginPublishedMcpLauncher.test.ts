@@ -1325,6 +1325,14 @@ it("verifies Windows cache privacy by SID rather than account display names", as
   expect(inspect).toMatch(/GetAccessRules\(\$true, \$true, \$sid\)/u);
   expect(inspect).toMatch(/WINDOWS_SYSTEM_SID/u);
   expect(inspect).toMatch(/WindowsIdentity\]::GetCurrent\(\)\.User/u);
+  // verifyPrivate requires SE_DACL_PROTECTED only for the private root, not
+  // for files that inherit safe ACEs from that root.
+  expect(inspect).toMatch(
+    /REA_PLUGIN_CACHE_ACL_FILE -ne '1' -and -not \$security\.AreAccessRulesProtected/u,
+  );
+  expect(inspect).not.toMatch(
+    /if \(-not \$security\.AreAccessRulesProtected\) \{ throw 'private DACL must be protected' \}/u,
+  );
   expect(inspect).not.toMatch(/Get-Acl|\.Access\b|NTAccount|\.Translate\b/u);
   // Display-name Everyone/Users matching and USERNAME substring checks do not
   // prove ownership or exclude a foreign named writer.
@@ -1332,6 +1340,71 @@ it("verifies Windows cache privacy by SID rather than account display names", as
   expect(inspect).not.toMatch(/icacls/u);
   expect(inspect).not.toMatch(/windowsCacheUser|USERNAME/u);
 });
+
+it.skipIf(process.platform !== "win32")(
+  "accepts a Windows cold install whose files inherit the private directory DACL",
+  async () => {
+    const version = "6.8.0-published-inherited-file-acl";
+    const temp = await createLauncherTemp();
+    const prefix = installPrefix(version, temp.temporaryRoot);
+    await rm(prefix, { recursive: true, force: true });
+    const bin = await createTestTempDirectory(
+      "rea-published-inherited-file-acl-npm-",
+    );
+    const npmEntry = join(bin, "npm-cli.cjs");
+    const entry = join(
+      prefix,
+      "node_modules",
+      "rea-agents",
+      "scripts",
+      "rea.mjs",
+    );
+    // npm/writeFileSync create the entry without icacls; the ready marker is
+    // also written without an explicit protected DACL. Publication must accept
+    // those inherited file ACLs once the staging directory is private.
+    await writeFile(
+      npmEntry,
+      `#!/usr/bin/env node
+const { mkdirSync, writeFileSync } = require("node:fs");
+const { dirname, join } = require("node:path");
+const prefix = process.argv[process.argv.indexOf("--prefix") + 1];
+const entry = join(prefix, "node_modules", "rea-agents", "scripts", "rea.mjs");
+mkdirSync(dirname(entry), { recursive: true, mode: 0o700 });
+writeFileSync(entry, "process.stdout.write('inherited-ok'); process.exit(0);", { mode: 0o600 });
+`,
+    );
+    const { closed } = start([version], {
+      ...process.env,
+      ...temp.env,
+      PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+      npm_execpath: npmEntry,
+    });
+    const result = await closed;
+    expect(result.code, result.stderr).toBe(0);
+    expect(result.stdout).toBe("inherited-ok");
+    await access(entry);
+    await access(join(prefix, READY_MARKER));
+    // Confirm the published files were never given an explicit protected DACL
+    // (inheritance remains enabled), matching a real npm cold install.
+    for (const target of [entry, join(prefix, READY_MARKER)]) {
+      const observed = spawnSync(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          `$s = [Security.AccessControl.FileSecurity]::new($env:REA_PLUGIN_CACHE_ACL_PATH, 'Access, Owner'); if ($s.AreAccessRulesProtected) { exit 2 }; exit 0`,
+        ],
+        {
+          encoding: "utf8",
+          windowsHide: true,
+          env: { ...process.env, REA_PLUGIN_CACHE_ACL_PATH: target },
+        },
+      );
+      expect(observed.status, observed.stderr || observed.stdout).toBe(0);
+    }
+  },
+);
 
 it.skipIf(process.platform !== "win32")(
   "refuses a Windows warm cache whose entry grants a foreign SID write access",

@@ -174,6 +174,9 @@ const applyWindowsPrivateAcl = (path, kind) => {
 
 /**
  * Confirm owner and every access ACE by SID, matching native verifyPrivate.
+ * Root directories require a protected DACL; files may inherit safe ACEs from
+ * that private parent — AreAccessRulesProtected is not itself inherited, so
+ * npm/writeFileSync entries inside a private staging tree stay unprotected.
  * Display-name icacls text cannot prove ownership or exclude foreign writers;
  * unresolved identity stays unknown and refuses the warm cache (fail closed).
  * Reads only SecurityIdentifier forms — never Get-Acl / NTAccount translation.
@@ -198,7 +201,11 @@ if ($user -eq $null -or $user -isnot $sid) { throw 'current user SID is unresolv
 $owner = $security.GetOwner($sid)
 if ($owner -isnot $sid) { throw 'ACL owner observation must stay in SID form' }
 if ($owner.Value -ne $user.Value) { throw 'owner is not the current user' }
-if (-not $security.AreAccessRulesProtected) { throw 'private DACL must be protected' }
+# Match verifyPrivate(root): only the private root directory requires
+# SE_DACL_PROTECTED. Files keep SID owner/ACE checks with inherited ACLs.
+if ($env:REA_PLUGIN_CACHE_ACL_FILE -ne '1' -and -not $security.AreAccessRulesProtected) {
+  throw 'private DACL must be protected'
+}
 $rules = $security.GetAccessRules($true, $true, $sid)
 if ($rules.Count -ne 2) { throw 'private DACL contains unexpected trustees' }
 $sawUser = $false
