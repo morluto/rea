@@ -127,6 +127,17 @@ export class GodotPckArtifactReader extends PositionalArtifactReader {
         throw metadataLimit(this.limits, retainedBytes);
       entries.push(metadata);
     }
+    const directoryEnd = cursor.offset;
+    for (const entry of entries) {
+      if (
+        entry.declaredSize > 0 &&
+        entry.byteOffset < directoryEnd &&
+        entry.byteOffset + entry.declaredSize > header.directory_start
+      )
+        throw formatFailure(
+          `member overlaps the directory: ${entry.sourcePath}`,
+        );
+    }
     await this.verifyCarrier(signal);
     return { entries, coverage: { status: "complete", limitations: [] } };
   }
@@ -166,6 +177,8 @@ export class GodotPckArtifactReader extends PositionalArtifactReader {
       header.pack_end,
       sourcePath,
     );
+    if (start < header.pack_start)
+      throw formatFailure(`member starts before the pack: ${sourcePath}`);
     if (size > BigInt(header.pack_end - start))
       throw formatFailure(`member exceeds the pack: ${sourcePath}`);
     return {
@@ -306,6 +319,9 @@ class PckCursor {
       readonly limits: GodotReaderLimits;
     },
   ) {}
+  get offset(): number {
+    return this.position;
+  }
   requireBytes(length: number): void {
     if (length > this.end - this.position)
       throw formatFailure("directory entry exceeds the pack");
