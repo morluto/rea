@@ -136,12 +136,16 @@ interface SectionWindow {
   readonly loadCommandsFailure?: string;
 }
 
-type SectionClaim =
-  | SectionWindow
-  | {
-      readonly failure: ArtifactReaderFailure;
-      readonly fatIdentityMismatch?: true;
-    };
+type SectionClaim = SectionWindow | { readonly failure: ArtifactReaderFailure };
+
+/** A rejected slice has no authority over any embedded graph at its offsets. */
+interface RejectedFatSlice {
+  readonly rejectedSlice: FatSliceDeclaration;
+  /** Only set when the bounded command metadata actually names a Bun slot. */
+  readonly namedFailure?: ArtifactReaderFailure;
+}
+
+type SectionObservation = SectionClaim | RejectedFatSlice;
 
 /**
  * Locate at most one graph claim with bounded reads of headers, length
@@ -156,7 +160,7 @@ export const probeBunStandaloneGraph = async (
 ): Promise<BunStandaloneProbe> => {
   abortIfNeeded(signal);
   const source = { handle, fileSize, signal, limits };
-  let claims: readonly SectionClaim[];
+  let claims: readonly SectionObservation[];
   try {
     claims = [
       ...(await machOClaims(source, 0, fileSize)),
@@ -169,11 +173,13 @@ export const probeBunStandaloneGraph = async (
     return { status: "limited", failure: cause };
   }
   const real: BunStandaloneProbe[] = [];
+  const rejectedSlices: FatSliceDeclaration[] = [];
   let fatIdentityFailure: ArtifactReaderFailure | undefined;
   for (const claim of claims) {
     abortIfNeeded(signal);
-    if ("failure" in claim && claim.fatIdentityMismatch) {
-      fatIdentityFailure ??= claim.failure;
+    if ("rejectedSlice" in claim) {
+      rejectedSlices.push(claim.rejectedSlice);
+      fatIdentityFailure ??= claim.namedFailure;
       continue;
     }
     const evaluated =
@@ -193,9 +199,10 @@ export const probeBunStandaloneGraph = async (
   }
   const only = real[0];
   if (only !== undefined) return only;
-  if (fatIdentityFailure !== undefined)
-    return presentFailure(fatIdentityFailure);
-  return evaluateAppendedTrailer(source);
+  const appended = await evaluateAppendedTrailer(source, rejectedSlices);
+  return appended.status === "absent" && fatIdentityFailure !== undefined
+    ? presentFailure(fatIdentityFailure)
+    : appended;
 };
 
 /** Read a probed payload once and validate its suffix against the claim. */
@@ -427,26 +434,25 @@ const evaluateSection = async (
  */
 const evaluateAppendedTrailer = async (
   source: BunProbeSource,
+  rejectedSlices: readonly FatSliceDeclaration[],
 ): Promise<BunStandaloneProbe> => {
   const { handle, fileSize, signal, limits } = source;
+  const outsideRejectedSlices = (start: number, end: number): boolean =>
+    !rejectedSlices.some(
+      (slice) => start < slice.offset + slice.size && slice.offset < end,
+    );
+  const readTrailer = async (end: number): Promise<Buffer | null> =>
+    outsideRejectedSlices(end - BUN_GRAPH_SUFFIX_BYTES, fileSize)
+      ? readExact(handle, end - BUN_TRAILER_BYTES, BUN_TRAILER_BYTES, signal)
+      : null;
   if (fileSize < BUN_GRAPH_SUFFIX_BYTES) return { status: "absent" };
   let graphEnd = fileSize;
-  let trailer = await readExact(
-    handle,
-    graphEnd - BUN_TRAILER_BYTES,
-    BUN_TRAILER_BYTES,
-    signal,
-  );
-  if (!trailer.equals(BUN_TRAILER)) {
+  let trailer = await readTrailer(graphEnd);
+  if (!trailer?.equals(BUN_TRAILER)) {
     if (fileSize < BUN_GRAPH_SUFFIX_BYTES + 8) return { status: "absent" };
     graphEnd -= 8;
-    trailer = await readExact(
-      handle,
-      graphEnd - BUN_TRAILER_BYTES,
-      BUN_TRAILER_BYTES,
-      signal,
-    );
-    if (!trailer.equals(BUN_TRAILER)) return { status: "absent" };
+    trailer = await readTrailer(graphEnd);
+    if (!trailer?.equals(BUN_TRAILER)) return { status: "absent" };
     const length = await readExact(handle, graphEnd, 8, signal);
     if (length.readBigUInt64LE() !== BigInt(fileSize))
       return presentFailure(
@@ -459,21 +465,26 @@ const evaluateAppendedTrailer = async (
     BUN_OFFSETS_BYTES,
     signal,
   );
-  const byteCount = offsets.readBigUInt64LE(0);
-  if (byteCount + BigInt(BUN_GRAPH_SUFFIX_BYTES) > BigInt(limits.payload_bytes))
-    return presentFailure(
-      bunPayloadBytesLimit(byteCount + BigInt(BUN_GRAPH_SUFFIX_BYTES), limits),
-    );
-  const payloadLength = byteCount + BigInt(BUN_GRAPH_SUFFIX_BYTES);
-  if (payloadLength > BigInt(graphEnd))
+  const payloadLength =
+    offsets.readBigUInt64LE(0) + BigInt(BUN_GRAPH_SUFFIX_BYTES);
+  const payloadStart = BigInt(graphEnd) - payloadLength;
+  if (
+    !outsideRejectedSlices(
+      payloadStart < 0n ? 0 : Number(payloadStart),
+      graphEnd,
+    )
+  )
+    return { status: "absent" };
+  if (payloadLength > BigInt(limits.payload_bytes))
+    return presentFailure(bunPayloadBytesLimit(payloadLength, limits));
+  if (payloadStart < 0n)
     return presentFailure(bunFormatFailure("trailer is truncated"));
-  const length = Number(payloadLength);
   return {
     status: "present",
     claim: {
       carrier: "appended-trailer",
-      payloadOffset: graphEnd - length,
-      payloadLength: length,
+      payloadOffset: Number(payloadStart),
+      payloadLength: Number(payloadLength),
     },
   };
 };
@@ -509,7 +520,7 @@ const machOClaims = async (
   imageOffset: number,
   imageLimit: number,
   fat?: FatSliceDeclaration,
-): Promise<readonly SectionClaim[]> => {
+): Promise<readonly SectionObservation[]> => {
   const { handle, fileSize, signal, limits } = source;
   if (imageOffset < 0 || imageOffset >= fileSize) return [];
   const imageSize = Math.min(fileSize - imageOffset, imageLimit);
@@ -519,6 +530,10 @@ const machOClaims = async (
   const facts = readMachoHeaderPrefixFacts(header);
   if (facts.identity === null)
     return imageOffset === 0 ? fatClaims(source, header) : [];
+  const identityIssue =
+    fat === undefined ? null : validateFatSliceIdentity(fat, facts.identity);
+  const rejected: readonly RejectedFatSlice[] =
+    fat !== undefined && identityIssue !== null ? [{ rejectedSlice: fat }] : [];
   const full = await tryRead(
     handle,
     imageOffset,
@@ -526,19 +541,17 @@ const machOClaims = async (
     imageEnd,
     signal,
   );
-  if (full === null) return [];
+  if (full === null) return rejected;
   const parsed = readMachoLoadCommandTableHeader(full, imageSize);
-  if (!parsed.ok || parsed.value === null) return [];
+  if (!parsed.ok || parsed.value === null) return rejected;
   const table = parsed.value;
-  const identityIssue =
-    fat === undefined ? null : validateFatSliceIdentity(fat, table.identity);
   const {
     littleEndian,
     headerSize: headerBytes,
     commandBytes: sizeofcmds,
   } = table;
   if (sizeofcmds > limits.recognition_load_command_bytes) {
-    if (identityIssue !== null) return [];
+    if (identityIssue !== null) return rejected;
     throw artifactReaderLimitFailure(
       "artifact_limits.bun.recognition_load_command_bytes",
       limits.recognition_load_command_bytes,
@@ -553,7 +566,7 @@ const machOClaims = async (
     imageEnd,
     signal,
   );
-  if (commands === null || commands.length !== sizeofcmds) return [];
+  if (commands === null || commands.length !== sizeofcmds) return rejected;
   const claims: SectionClaim[] = [];
   const cursor = new MachoLoadCommandCursor(table);
   let framingFailure: string | undefined;
@@ -575,16 +588,17 @@ const machOClaims = async (
       )) {
         // A mismatched slice can identify a named declaration from bounded
         // metadata, but cannot contribute graph bytes or veto another slice.
-        if (identityIssue !== null)
+        if (fat !== undefined && identityIssue !== null)
           return [
             {
-              failure: bunFormatFailure(identityIssue),
-              fatIdentityMismatch: true,
+              rejectedSlice: fat,
+              namedFailure: bunFormatFailure(identityIssue),
             },
           ];
         claims.push(claim);
       }
   }
+  if (rejected.length !== 0) return rejected;
   const complete = cursor.finish();
   if (!complete.ok) framingFailure ??= complete.error;
   return framingFailure === undefined
@@ -655,7 +669,7 @@ const segmentClaims = (
 const fatClaims = async (
   source: BunProbeSource,
   prefix: Buffer,
-): Promise<readonly SectionClaim[]> => {
+): Promise<readonly SectionObservation[]> => {
   const { handle, fileSize, signal } = source;
   let parsed = readFatContainerHeader(prefix, fileSize);
   if (parsed.state === "needs-data") {
@@ -670,7 +684,7 @@ const fatClaims = async (
     parsed = readFatContainerHeader(table, fileSize);
   }
   if (parsed.state !== "parsed") return [];
-  const claims: SectionClaim[] = [];
+  const claims: SectionObservation[] = [];
   for (const slice of parsed.slices) {
     abortIfNeeded(signal);
     if (parsed.rangeIssues[slice.index] !== null) continue;
