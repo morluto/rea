@@ -2,6 +2,7 @@ import { isParseLimit } from "../../domain/parseFailureAnalysisError.js";
 import {
   assertArtifactReadActive,
   ArtifactReaderFailure,
+  yieldArtifactRead,
 } from "../../resources/index.js";
 import {
   firstKeyed,
@@ -68,12 +69,14 @@ import {
   ELF_PT_NOTE,
   assertElfDeclaredRangesFromBuffer,
   readElfDirectoryFromBuffer,
+  readElfDirectoryFromBufferCooperative,
   type ElfProgramDeclaration,
   type NativeSection,
 } from "../../domain/native/nativeSectionDirectory.js";
 
 const ET_EXEC = 2;
 const ET_DYN = 3;
+const OPERATION = "inspect_binary_hardening";
 const SHT_SYMTAB = 2;
 const SHT_STRTAB = 3;
 const SHT_DYNSYM = 11;
@@ -184,10 +187,34 @@ export const readElfHardening = (
   signal?: AbortSignal,
 ): BinaryHardeningImage => {
   assertArtifactReadActive(signal);
-  const directory = readElfDirectoryFromBuffer(
+  return hardeningFromDirectory(
     bytes,
-    "inspect_binary_hardening",
+    readElfDirectoryFromBuffer(bytes, OPERATION),
+    signal,
   );
+};
+
+/** A signal-owning inspection can pause while decoding ELF section names. */
+export const readElfHardeningCooperative = async (
+  bytes: Buffer,
+  signal?: AbortSignal,
+): Promise<BinaryHardeningImage> => {
+  if (signal === undefined) return readElfHardening(bytes);
+  assertArtifactReadActive(signal);
+  const directory = await readElfDirectoryFromBufferCooperative(
+    bytes,
+    () => yieldArtifactRead(signal),
+    OPERATION,
+  );
+  assertArtifactReadActive(signal);
+  return hardeningFromDirectory(bytes, directory, signal);
+};
+
+const hardeningFromDirectory = (
+  bytes: Buffer,
+  directory: ReturnType<typeof readElfDirectoryFromBuffer>,
+  signal?: AbortSignal,
+): BinaryHardeningImage => {
   // A report needs every declared payload, not only the tables that name them.
   assertElfDeclaredRangesFromBuffer(bytes);
   const { bits, little, machine, programs, sections } = directory;
