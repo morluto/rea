@@ -119,7 +119,11 @@ describe("managed metadata heaps", () => {
       // #US ends at the end of the artifact, inside a multi-byte length prefix.
       const bytes = Buffer.from([0x00, ...prefix]);
       const layout = {
-        userStrings: { name: "#US", offset: 0, size: bytes.length },
+        userStrings: {
+          kind: "available",
+          stream: { name: "#US", offset: 0, size: bytes.length },
+          issue: null,
+        },
       } as unknown as ManagedMetadataLayout;
 
       expect(() =>
