@@ -1,3 +1,4 @@
+import { BinaryReader } from "../binaryContainer.js";
 import { err, ok, type Result } from "../result.js";
 
 export interface MachoSectionHeader {
@@ -12,6 +13,10 @@ export interface MachoSectionHeader {
   readonly flags: number;
 }
 
+/** Fixed byte widths of Apple's section and section_64 records. */
+export const machoSectionHeaderSize = (wide: boolean): 68 | 80 =>
+  wide ? 80 : 68;
+
 /** Fixed section/section_64 facts; callers own mapping and display policies. */
 export const readMachoSectionHeader = (
   bytes: Uint8Array,
@@ -21,25 +26,28 @@ export const readMachoSectionHeader = (
   MachoSectionHeader,
   { readonly kind: "malformed"; readonly message: string }
 > => {
-  if (bytes.byteLength < (wide ? 80 : 68))
+  if (bytes.byteLength < machoSectionHeaderSize(wide))
     return err({
       kind: "malformed",
       message: "Mach-O section header is truncated",
     });
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const reader = new BinaryReader(
+    Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    littleEndian,
+    "macho",
+  );
+  const bits = wide ? 64 : 32;
   return ok({
-    nameBytes: Buffer.from(bytes.subarray(0, 16)),
-    segmentNameBytes: Buffer.from(bytes.subarray(16, 32)),
-    address: wide
-      ? view.getBigUint64(32, littleEndian)
-      : BigInt(view.getUint32(32, littleEndian)),
-    size: wide
-      ? view.getBigUint64(40, littleEndian)
-      : BigInt(view.getUint32(36, littleEndian)),
-    offset: view.getUint32(wide ? 48 : 40, littleEndian),
-    relocationOffset: view.getUint32(wide ? 56 : 48, littleEndian),
-    relocationCount: view.getUint32(wide ? 60 : 52, littleEndian),
-    flags: view.getUint32(wide ? 64 : 56, littleEndian),
+    nameBytes: Buffer.from(reader.range(0, 16, "Mach-O section name")),
+    segmentNameBytes: Buffer.from(
+      reader.range(16, 16, "Mach-O section segment name"),
+    ),
+    address: reader.word(32, bits),
+    size: reader.word(wide ? 40 : 36, bits),
+    offset: reader.u32(wide ? 48 : 40),
+    relocationOffset: reader.u32(wide ? 56 : 48),
+    relocationCount: reader.u32(wide ? 60 : 52),
+    flags: reader.u32(wide ? 64 : 56),
   });
 };
 

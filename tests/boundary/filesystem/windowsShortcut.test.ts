@@ -203,6 +203,57 @@ describe("Windows shortcut stable filesystem boundary", () => {
   });
 });
 
+it.each([false, true])(
+  "reports an out-of-spec StringData count but retains following fields (Unicode: %s)",
+  async (unicode) => {
+    const root = await createTestTempDirectory("rea-shortcut-string-data-");
+    const arguments_ = "a".repeat(400);
+    const service = createWindowsShortcutService();
+    for (const count of [260, 261]) {
+      const path = join(root, `${count}.lnk`);
+      const name = "n".repeat(count);
+      const bytes = windowsShortcutBytes({
+        unicode,
+        idList: null,
+        linkInfo: null,
+        extraData: [],
+        name,
+        arguments: arguments_,
+        iconLocation: "fixture.ico",
+      });
+      await writeFile(path, bytes);
+      const result = await service.inspect({ path });
+      if (!result.ok) throw result.error;
+      expect(result.value.normalized_result).toMatchObject({
+        coverage: {
+          status: count === 260 ? "complete" : "partial",
+          failing_offset: count === 260 ? null : 76,
+        },
+        issues:
+          count === 260
+            ? []
+            : [
+                {
+                  code: "malformed_structure",
+                  offset: 76,
+                  message: expect.stringContaining("NAME_STRING"),
+                },
+              ],
+        string_data: {
+          name: {
+            value: name,
+            count_characters: count,
+            byte_length: count * (unicode ? 2 : 1),
+          },
+          arguments: { value: arguments_, count_characters: 400 },
+          icon_location: { value: "fixture.ico" },
+        },
+        extra_data: { terminal_offset: bytes.length - 4 },
+      });
+    }
+  },
+);
+
 describe("Windows shortcut parent directory links", () => {
   it.skipIf(process.platform === "win32")(
     "rejects a parent directory link before reading through it",

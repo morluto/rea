@@ -394,6 +394,46 @@ it("names the extraction ceiling, not unsupported operations, for a large REPLAC
   });
 });
 
+it.each([
+  { signaturesOffset: 0, signaturesSize: null },
+  {
+    signaturesOffset: null,
+    signaturesSize: ANDROID_OTA_MAX_SIGNATURE_BYTES + 1,
+  },
+])(
+  "reconstructs a partition when one payload signature coordinate is absent ($signaturesOffset, $signaturesSize)",
+  ({ signaturesOffset, signaturesSize }) => {
+    const data = Buffer.from("BOOT");
+    const bytes = buildAndroidOtaPayload({
+      signaturesOffset,
+      signaturesSize,
+      payloadSignature: new Uint8Array(),
+      partitions: [{ name: "boot", operations: [{ type: 0, data }] }],
+    });
+    const parsed = parse(bytes);
+    expect(parsed).toMatchObject({
+      ok: true,
+      value: {
+        signaturesOffset,
+        signaturesSize,
+        payloadSignatureBlobSize: null,
+        payloadSignatureCount: null,
+        blobTruncated: false,
+      },
+    });
+    if (!parsed.ok) throw parsed.error;
+    const { blobOffset } = parsed.value.header;
+    expect(
+      reconstructAndroidOtaPartition(
+        parsed.value.partitions[0]!,
+        parsed.value.blockSize,
+        (offset, length) =>
+          bytes.subarray(blobOffset + offset, blobOffset + offset + length),
+      ),
+    ).toEqual({ ok: true, value: data });
+  },
+);
+
 it("refuses operation data that overruns the payload blob", () => {
   const bytes = buildAndroidOtaPayload({
     partitions: [

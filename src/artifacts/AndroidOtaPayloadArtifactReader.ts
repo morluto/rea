@@ -215,31 +215,23 @@ export class AndroidOtaPayloadArtifactReader implements ArtifactReader {
     );
     const first = parseAndroidOtaPayload(prefix, initial.size);
     if (!first.ok) throw parseFailure(first.error);
-    let payloadSignature: Uint8Array | undefined;
-    if (
-      first.value.signaturesOffset !== null &&
-      first.value.signaturesSize !== null &&
-      first.value.signaturesSize > 0
-    ) {
-      const start = header.value.blobOffset + first.value.signaturesOffset;
-      const end = start + first.value.signaturesSize;
-      if (Number.isSafeInteger(end) && end <= initial.size) {
-        payloadSignature = await readArtifactFileBytes(
-          handle,
-          start,
-          first.value.signaturesSize,
-          initial.size,
-          signal,
-        );
-      }
-    }
+    const signatureRange = first.value.payloadSignatureRange;
+    const payloadSignature =
+      signatureRange === null
+        ? undefined
+        : await readArtifactFileBytes(
+            handle,
+            signatureRange.offset,
+            signatureRange.bytes,
+            initial.size,
+            signal,
+          );
     await this.#source.read(signal);
     this.#assertOpen(signal);
-    const parsed = parseAndroidOtaPayload(
-      prefix,
-      initial.size,
-      payloadSignature,
-    );
+    const parsed =
+      payloadSignature === undefined
+        ? first
+        : parseAndroidOtaPayload(prefix, initial.size, payloadSignature);
     if (!parsed.ok) throw parseFailure(parsed.error);
     this.#payload = parsed.value;
     this.#entries.clear();

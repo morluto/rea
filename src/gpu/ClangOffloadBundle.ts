@@ -136,26 +136,27 @@ export const readCcobHeader = (bytes: Buffer, remaining: number) => {
   if (bytes.length < 20) rejectGpu("CCOB header is truncated");
   if (!bytes.subarray(0, CCOB_MAGIC.length).equals(CCOB_MAGIC))
     rejectGpu("Invalid CCOB magic");
-  const version = bytes.readUInt16LE(4),
-    method = bytes.readUInt16LE(6);
-  let width: number, total: number, decoded: number, hash: bigint;
+  const reader = new BinaryReader(bytes, true, "ccob");
+  const version = reader.u16(4),
+    method = reader.u16(6);
+  let width: number, total: number, decoded: bigint, hash: bigint;
   if (version === 1) {
     width = 20;
     total = remaining;
-    decoded = bytes.readUInt32LE(8);
-    hash = bytes.readBigUInt64LE(12);
+    decoded = reader.word(8, 32);
+    hash = reader.word(12, 64);
   } else if (version === 2) {
     width = 24;
     if (bytes.length < width) rejectGpu("CCOB v2 header is truncated");
-    total = bytes.readUInt32LE(8);
-    decoded = bytes.readUInt32LE(12);
-    hash = bytes.readBigUInt64LE(16);
+    total = reader.u32(8);
+    decoded = reader.word(12, 32);
+    hash = reader.word(16, 64);
   } else if (version === 3) {
     width = 32;
     if (bytes.length < width) rejectGpu("CCOB v3 header is truncated");
-    total = gpuCount(bytes.readBigUInt64LE(8));
-    decoded = gpuCount(bytes.readBigUInt64LE(16));
-    hash = bytes.readBigUInt64LE(24);
+    total = gpuCount(reader.word(8, 64));
+    decoded = reader.word(16, 64);
+    hash = reader.word(24, 64);
   } else
     throw new BinaryFormatFailure(
       "unsupported",

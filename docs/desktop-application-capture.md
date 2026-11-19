@@ -511,9 +511,11 @@ DT_RUNPATH and DT_RPATH offsets per kind; `string_bytes: 4096` includes the NUL
 terminator of each decoded string; `table_bytes: 1048576` bounds each program
 header or dynamic table. Values must be positive safe integers. A budget refusal
 names the field that needs headroom; partial package facts and unresolved
-coverage remain visible. The policy applies during this capture's admission,
-without restarting REA, and explicit selections are retained in Evidence. Raising
-content retention or a worker heap does not raise these inventory budgets.
+coverage remain visible. A table whose declared range extends past the file
+is reported as truncated before the table budget is applied. The policy applies
+during this capture's admission, without restarting REA, and explicit selections
+are retained in Evidence. Raising content retention or a worker heap does not
+raise these inventory budgets.
 Choosing a new capture still launches the selected application; changing these
 read budgets does not add execution authority or recover an earlier capture's
 omitted inventory.

@@ -1,7 +1,14 @@
 import { createHash } from "node:crypto";
-import { stat, unlink, utimes, writeFile } from "node:fs/promises";
+import {
+  open,
+  stat,
+  unlink,
+  utimes,
+  writeFile,
+  type FileHandle,
+} from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it, onTestFinished } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 import { readAndroidMapping } from "../../../src/android/AndroidMappingFile.js";
 import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import {
@@ -9,10 +16,16 @@ import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../../../src/domain/analysisErrorCore.js";
+import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { ANDROID_MAPPING_LIMITS } from "../../../src/domain/android/androidMapping.js";
 import { resolveProguardClass } from "../../../src/domain/android/proguardMapping.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, open: vi.fn(actual.open) };
+});
 
 const SOURCE = "# compiler: R8\nexample.Old -> a:\n    int value -> b\n";
 const OPERATION = "inspect_android_class";
@@ -171,6 +184,64 @@ it("preserves the caller cancellation cause instead of returning a cached mappin
   expect(retried.value.mapping).toBe(first.value.mapping);
   expect(resources.hasPending).toBe(false);
 });
+
+it.each([false, true])(
+  "preserves physical mapping read failure and late cancellation (close fails: %s)",
+  async (closeFails) => {
+    const { path, resources } = await fixture();
+    const controller = new AbortController();
+    const reason = { caller: "saved late cancellation" };
+    const physical = Object.assign(new Error("mapping read failed"), {
+      code: "EIO",
+    });
+    const closeFailure = new Error("mapping descriptor close failed");
+    let allowClose = !closeFails;
+    let file: FileHandle | undefined;
+    const actual =
+      await vi.importActual<typeof import("node:fs/promises")>(
+        "node:fs/promises",
+      );
+    vi.mocked(open).mockImplementationOnce(async (...args) => {
+      const handle = await actual.open(...args);
+      file = handle;
+      vi.spyOn(handle, "read").mockRejectedValue(physical);
+      const close = handle.close.bind(handle);
+      vi.spyOn(handle, "close").mockImplementation(async () => {
+        controller.abort(reason);
+        if (!allowClose) throw closeFailure;
+        await close();
+      });
+      return handle;
+    });
+    try {
+      const result = await readAndroidMapping(
+        path,
+        OPERATION,
+        resources,
+        controller.signal,
+      );
+      if (result.ok) throw new Error("Expected the physical mapping failure");
+      const primary = result.error.cleanupPrimary ?? result.error;
+      expect(primary).toBeInstanceOf(ProviderAdapterError);
+      expect(primary.cause).toBe(physical);
+      expect(primary.secondaryFailures).toHaveLength(1);
+      expect(primary.secondaryFailures[0]).toBeInstanceOf(
+        AnalysisCancelledError,
+      );
+      expect(primary.secondaryFailures[0]?.cause).toBe(reason);
+      expect(result.error.cleanupIncomplete).toBe(closeFails);
+      expect(resources.cleanupResources).toEqual(closeFails ? [path] : []);
+      if (closeFails) expect(file?.fd).toBeGreaterThanOrEqual(0);
+      allowClose = true;
+      await resources.retryCleanup();
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(file?.fd).toBe(-1);
+    } finally {
+      allowClose = true;
+      await resources.close();
+    }
+  },
+);
 
 it("refuses expanded shared-name claims from a small mapping with auditable nonretryable capacity facts", async () => {
   // One source name expands into every mapped field claim. Eight fields are

@@ -29,8 +29,7 @@ type OccupiedRange = Range & {
   kind: "directory" | "name" | "data-entry" | "payload";
 };
 /** Complete PE resource result retained before a refusal. */
-export const PE_RESOURCE_METADATA_BYTES = 8 * 1024 * 1024;
-const METADATA_BYTES = PE_RESOURCE_METADATA_BYTES;
+const METADATA_BYTES = 8 * 1024 * 1024;
 /** The fixed allowance for retained resource metadata. */
 const METADATA_LIMIT = "pe_resource_metadata_bytes";
 /** The caller-selected resource directory entry budget. */
@@ -135,8 +134,8 @@ export const parsePeResources = async (
     const { utf16Units, payloadBytes: length } = readPeResourceNameFacts(
       bytes.subarray(start, start + PE_RESOURCE_NAME_PREFIX_BYTES),
     );
-    reserveDecodedName(utf16Units);
     relative(at, PE_RESOURCE_NAME_PREFIX_BYTES + length);
+    reserveDecodedName(utf16Units);
     const raw = bytes.subarray(
       start + PE_RESOURCE_NAME_PREFIX_BYTES,
       start + PE_RESOURCE_NAME_PREFIX_BYTES + length,

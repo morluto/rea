@@ -1,6 +1,13 @@
 import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 import { IL2CPP_METADATA_SECTION_NAMES } from "../domain/il2cpp/il2cppMetadata.js";
-import { observeIl2cppMetadataHeaderPrefix } from "../domain/il2cpp/il2cppMetadataHeaderPrefix.js";
+import {
+  IL2CPP_METADATA_PREFIX_BYTES,
+  observeIl2cppMetadataHeaderPrefix,
+} from "../domain/il2cpp/il2cppMetadataHeaderPrefix.js";
+import {
+  firstIl2cppSectionIssue,
+  readIl2cppSectionTable,
+} from "./Il2cppMetadataSectionTable.js";
 import { Il2cppMetadataFormatFailure } from "./Il2cppMetadataFormat.js";
 
 // Header order follows LibCpp2IL's Il2CppGlobalMetadataHeader (v108):
@@ -20,7 +27,7 @@ const SECTION_NAMES = [
   "rgctxValues",
   "staticConstructorTypeIndices",
 ] as const;
-const HEADER_BYTES = 8 + SECTION_NAMES.length * 12;
+const HEADER_BYTES = IL2CPP_METADATA_PREFIX_BYTES + SECTION_NAMES.length * 12;
 const SAMPLE_STRINGS = 16;
 const SAMPLE_BYTES = 128;
 const SCAN_BATCH_BYTES = 64 * 1024;
@@ -38,39 +45,17 @@ export const inspectIl2cppMetadataV108 = async (
       "unsupported-version",
       `version 108 layout is unverified; the file has ${bytes.length} bytes, fewer than the assumed ${HEADER_BYTES}-byte header`,
     );
-  const sections = SECTION_NAMES.map((name, index) => {
-    const at = 8 + index * 12;
-    return {
-      name,
-      offset: bytes.readInt32LE(at),
-      size: bytes.readInt32LE(at + 4),
-      count: bytes.readInt32LE(at + 8),
-    };
-  });
-  for (const section of sections) {
-    if (
-      section.offset < 0 ||
-      section.size < 0 ||
-      section.count < 0 ||
-      section.offset + section.size > bytes.length ||
-      (section.size > 0 && section.offset < HEADER_BYTES)
-    )
-      throw new Il2cppMetadataFormatFailure(
-        "unsupported-version",
-        `version 108 layout is unverified; assumed section ${section.name} (offset ${section.offset}, size ${section.size}, count ${section.count}) is invalid for the ${bytes.length}-byte file`,
-      );
-  }
-  const occupied = sections
-    .filter((section) => section.size > 0)
-    .sort((a, b) => a.offset - b.offset);
-  for (let index = 1; index < occupied.length; index++) {
-    const previous = occupied[index - 1]!;
-    const current = occupied[index]!;
-    if (previous.offset + previous.size > current.offset)
-      throw new Il2cppMetadataFormatFailure(
-        "unsupported-version",
-        `version 108 layout is unverified; assumed sections ${previous.name} and ${current.name} overlap at ${current.offset}`,
-      );
+  const sections = readIl2cppSectionTable(bytes, SECTION_NAMES, 12);
+  const issue = firstIl2cppSectionIssue(sections, HEADER_BYTES, bytes.length);
+  if (issue !== undefined) {
+    const detail =
+      issue.kind === "overlap"
+        ? `assumed sections ${issue.previous.name} and ${issue.current.name} overlap at ${issue.current.offset}`
+        : `assumed section ${issue.section.name} (offset ${issue.section.offset}, size ${issue.section.size}, count ${String(issue.section.count)}) is invalid for the ${bytes.length}-byte file`;
+    throw new Il2cppMetadataFormatFailure(
+      "unsupported-version",
+      `version 108 layout is unverified; ${detail}`,
+    );
   }
   const strings = sections[2]!;
   const end = strings.offset + strings.size;

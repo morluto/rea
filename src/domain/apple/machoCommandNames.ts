@@ -9,8 +9,15 @@ import {
   MACHO_VERSION_MIN_PLATFORMS,
   type MachoVersionMinPlatform,
 } from "./machoPlatform.js";
-import { readMachoSegmentHeader } from "./machoSegmentHeader.js";
-import { readMachoSectionHeader } from "./machoSectionHeader.js";
+import {
+  machoSegmentHeaderSize,
+  machoSegmentSectionTableFits,
+  readMachoSegmentHeader,
+} from "./machoSegmentHeader.js";
+import {
+  machoSectionHeaderSize,
+  readMachoSectionHeader,
+} from "./machoSectionHeader.js";
 import { createHash } from "node:crypto";
 import {
   decodeLimit,
@@ -304,7 +311,7 @@ export const readMachoCommandNames = async (
       | NonNullable<MachoCommandNames["commands"][number]["sections"]>[number][]
       | undefined;
     if (segmentWide !== null) {
-      const segmentHeaderSize = segmentWide ? 72 : 56;
+      const segmentHeaderSize = machoSegmentHeaderSize(segmentWide);
       if (frame.size < segmentHeaderSize)
         throw malformedInput("macho", "Mach-O segment is truncated");
       const segmentBytes = await exact(at, segmentHeaderSize);
@@ -314,11 +321,8 @@ export const readMachoCommandNames = async (
         table.littleEndian,
       );
       if (!segment.ok) throw malformedInput("macho", segment.error.message);
-      const width = segmentWide ? 80 : 68;
-      if (
-        segment.value.sectionCount >
-        Math.floor((frame.size - segmentHeaderSize) / width)
-      )
+      const width = machoSectionHeaderSize(segmentWide);
+      if (!machoSegmentSectionTableFits(segment.value, frame.size, segmentWide))
         throw malformedInput("macho", "Mach-O section table is truncated");
       if (segment.value.sectionCount > maximumRecords - records)
         throw loadCommandLimit(maximumRecords, "records");
@@ -366,14 +370,8 @@ export const readMachoCommandNames = async (
             segmentWide ? 52 : 44,
             table.littleEndian,
           ),
-          relocationOffset: sectionView.getUint32(
-            segmentWide ? 56 : 48,
-            table.littleEndian,
-          ),
-          relocationCount: sectionView.getUint32(
-            segmentWide ? 60 : 52,
-            table.littleEndian,
-          ),
+          relocationOffset: section.value.relocationOffset,
+          relocationCount: section.value.relocationCount,
           reserved1: sectionView.getUint32(
             segmentWide ? 68 : 60,
             table.littleEndian,

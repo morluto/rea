@@ -248,19 +248,83 @@ it("locates the legacy trailer before its final carrier length", async () => {
   expect((await decodeBunModuleGraph(result.graph)).modules).toHaveLength(1);
 });
 
-it("does not admit oversized payloads or truncated length prefixes", async () => {
-  const prefix = Buffer.alloc(8);
-  prefix.writeBigUInt64LE(300n * 1024n * 1024n);
-  expect(await locate(machoBunSection(prefix))).toMatchObject({
-    status: "present",
-    failure: { reason: "limit" },
-  });
+it("rejects truncated length prefixes and ignores empty placeholders", async () => {
   expect(await locate(machoBunSection(Buffer.from([1])))).toMatchObject({
     status: "present",
     failure: { reason: "format" },
   });
   expect(await locate(machoBunSection(Buffer.alloc(8)))).toEqual({
     status: "absent",
+  });
+});
+
+it.each([
+  {
+    name: "Mach-O section",
+    carrier: (payload: Buffer) => machoBunSection(bunPrefixedPayload(payload)),
+    breakExtent: (bytes: Buffer, payload: Buffer) =>
+      bytes.writeBigUInt64LE(
+        BigInt(payload.length + 1),
+        bytes.length - payload.length - 8,
+      ),
+  },
+  {
+    name: "appended ELF trailer",
+    carrier: elfAppendedBunPayload,
+    breakExtent: (bytes: Buffer) =>
+      bytes.writeBigUInt64LE(
+        BigInt(bytes.length),
+        bytes.length - BUN_FIXTURE_GRAPH_SUFFIX_BYTES,
+      ),
+  },
+])(
+  "checks the $name payload extent before its configured limit",
+  async ({ carrier, breakExtent }) => {
+    const payload = bunModuleGraphPayload({ modules: [{ name: "main.js" }] });
+    const bytes = carrier(payload);
+    const limits = {
+      ...DEFAULT_BUN_READER_LIMITS,
+      payload_bytes: payload.length - 1,
+    };
+    expect((await probe(bytes, limits)).result).toMatchObject({
+      status: "present",
+      failure: {
+        reason: "limit",
+        readerLimit: { parameter: "artifact_limits.bun.payload_bytes" },
+      },
+    });
+    breakExtent(bytes, payload);
+    expect((await probe(bytes, limits)).result).toMatchObject({
+      status: "present",
+      failure: {
+        reason: "format",
+        message: expect.stringContaining("truncated"),
+      },
+    });
+  },
+);
+
+it("reports an impossible Bun suffix byte count as a format error", async () => {
+  const payload = bunModuleGraphPayload({ modules: [{ name: "main.js" }] });
+  const limits = {
+    ...DEFAULT_BUN_READER_LIMITS,
+    payload_bytes: payload.length,
+  };
+  const section = () => peBunSection(bunPrefixedPayload(payload));
+  expect((await probe(section(), limits)).result).toMatchObject({
+    status: "present",
+    claim: { payloadLength: payload.length },
+  });
+  payload.writeBigUInt64LE(
+    BigInt(payload.length + 1),
+    payload.length - BUN_FIXTURE_GRAPH_SUFFIX_BYTES,
+  );
+  expect((await probe(section(), limits)).result).toMatchObject({
+    status: "present",
+    failure: {
+      reason: "format",
+      message: expect.stringContaining("byte_count"),
+    },
   });
 });
 

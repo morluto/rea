@@ -15,6 +15,7 @@ import {
   fatSliceRange,
   machoImage,
   machoImageWithUnknownCommand,
+  segmentCommand,
 } from "../artifacts/apple/MachoImage.fixture.js";
 import { readMachoImage } from "../domain/apple/machoLoadCommandReader.js";
 import { readMachoImage as readMachoMetadataImage } from "../domain/apple/machoImage.js";
@@ -70,6 +71,47 @@ it.each([
     );
   },
 );
+
+it("keeps the selected slice's file offset bound for an empty segment", () => {
+  const segment = Buffer.from(
+    segmentCommand({ name: "__EMPTY", vmaddr: 0n, vmsize: 0n }),
+  );
+  const imageWithSegment = () =>
+    Buffer.from(machoImage({ cpu: CPU.arm64, commands: [segment] }));
+  const fileBytes = imageWithSegment().length;
+  segment.writeBigUInt64LE(BigInt(fileBytes), 40);
+  expect(layoutFor(imageWithSegment(), "arm64").segments).toEqual([
+    { address: 0n, size: 0n, offset: fileBytes, executable: false },
+  ]);
+  segment.writeBigUInt64LE(BigInt(fileBytes + 1), 40);
+  const outside = imageWithSegment();
+  expect(() => readMachoMetadataImage(outside)).not.toThrow();
+  expect(() => layoutFor(outside, "arm64")).toThrow(
+    malformedInput("macho", "Segment file range exceeds target bytes"),
+  );
+});
+
+it("preserves the selected layout's truncation diagnosis when a segment lacks its declared section", () => {
+  const segment = Buffer.from(
+    segmentCommand({ name: "__EMPTY", vmaddr: 0n, vmsize: 0n }),
+  );
+  segment.writeUInt32LE(1, 64);
+  const image = Buffer.from(
+    machoImage({ cpu: CPU.arm64, commands: [segment] }),
+  );
+  expect(() => layoutFor(image, "arm64")).toThrow(
+    expect.objectContaining({
+      kind: "truncated",
+      message: "Truncated section table",
+    }),
+  );
+  expect(() => readMachoMetadataImage(image)).toThrow(
+    expect.objectContaining({
+      kind: "malformed",
+      message: "Mach-O section table exceeds its segment command",
+    }),
+  );
+});
 
 const registerThinCpuFamilyControls = (): void => {
   it.each([

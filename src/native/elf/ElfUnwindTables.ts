@@ -5,10 +5,8 @@ import {
   keyedBy,
   uniqueKeyed,
 } from "../../domain/keyedCollection.js";
-import {
-  assertArtifactReadActive,
-  ArtifactReaderFailure,
-} from "../../resources/index.js";
+import { assertArtifactReadActive } from "../../resources/index.js";
+import { decodeLimit } from "../../domain/parseFailure.js";
 import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
 import { readElfSymbol } from "../../domain/elfSymbol.js";
 import {
@@ -242,20 +240,8 @@ const placeSection = (
   return { location: declared, problem: null };
 };
 
-/**
- * Symbol names for one page exceeded their fixed text allowance. Unlike the
- * record budgets, max_ranges does not raise it; a smaller page avoids it.
- */
-export class ElfUnwindSymbolTextFailure extends Error {
-  readonly maximumBytes = MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES;
-
-  constructor() {
-    super(
-      `ELF unwind symbol names on this page exceed the ${String(MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES)}-byte symbol-name text allowance.`,
-    );
-    this.name = "ElfUnwindSymbolTextFailure";
-  }
-}
+export const ELF_UNWIND_FORMAT = "elf-unwind-ranges";
+export const ELF_UNWIND_RECORD_LIMIT = "max_ranges";
 
 /** Read .eh_frame/.eh_frame_hdr function ranges. Truncation stays incomplete. */
 export const parseElfUnwindRanges = (
@@ -791,11 +777,12 @@ export const parseElfUnwindRanges = (
   let fdeRecords = 0;
   let discarded = 0;
   let indirectFdes = 0;
-  const budget = (kind: "CIE" | "FDE"): void => {
-    throw new ArtifactReaderFailure(
-      "limit",
+  const budget = (kind: "CIE" | "FDE", offset: number): never => {
+    throw decodeLimit(
+      ELF_UNWIND_FORMAT,
       `ELF unwind ${kind} count exceeds the selected max_ranges budget of ${String(input.max_ranges)}.`,
-      { boundary: "capacity" },
+      { name: ELF_UNWIND_RECORD_LIMIT, maximum: input.max_ranges },
+      { field: kind, offset },
     );
   };
 
@@ -862,9 +849,9 @@ export const parseElfUnwindRanges = (
       }
       const isCie = id === 0;
       if (isCie) {
-        if (cieRecords + 1 > input.max_ranges) budget("CIE");
+        if (cieRecords + 1 > input.max_ranges) budget("CIE", recordStart);
         cieRecords += 1;
-      } else if (fdeRecords + 1 > input.max_ranges) budget("FDE");
+      } else if (fdeRecords + 1 > input.max_ranges) budget("FDE", recordStart);
       else fdeRecords += 1;
       examined += 1;
       let undecoded = false;
@@ -1945,7 +1932,14 @@ const symbolNameDecoder = (): ((name: SymbolName) => string) => {
     if (cached !== undefined) return cached;
     charged += name.contentBytes;
     if (charged > MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES)
-      throw new ElfUnwindSymbolTextFailure();
+      throw decodeLimit(
+        ELF_UNWIND_FORMAT,
+        `ELF unwind symbol names on this page exceed the ${String(MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES)}-byte symbol-name text allowance.`,
+        {
+          name: "symbol_name_text_bytes",
+          maximum: MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES,
+        },
+      );
     const text = elfStringTableText(name) ?? "";
     decoded.set(name, text);
     return text;
