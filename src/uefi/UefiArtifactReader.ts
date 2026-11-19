@@ -35,6 +35,7 @@ import {
 } from "../resources/index.js";
 
 const hex = (value: number): string => `0x${value.toString(16)}`;
+const volumePath = (offset: number): string => `firmware-volume-${hex(offset)}`;
 
 const IMAGE_TRUNCATION_LIMITATION =
   `The image exceeds the ${UEFI_FIRMWARE_LIMITS.inputBytes}-byte admission budget; ` +
@@ -85,25 +86,38 @@ export class UefiArtifactReader implements ArtifactReader {
       );
     this.#entries.clear();
     const image = await this.#readImage(source, signal);
+    const limitations = new Set<string>();
+    const omit = (path: string, limitation: string): void => {
+      options?.onOmission?.({ path, kind: "unsupported" });
+      limitations.add(limitation);
+    };
     const imageTruncated = source.initial.size > image.length;
-    if (imageTruncated) {
-      // Report the unread suffix through the traversal contract so inventory
-      // coverage reflects the omission even when no volume was found in the
-      // scanned prefix.
-      options?.onOmission?.({ path: "image-truncated", kind: "unsupported" });
-    }
+    if (imageTruncated) omit("image-truncated", IMAGE_TRUNCATION_LIMITATION);
     const scan = scanFirmwareVolumes(
       imageRegion(image, 0, image.length),
       UEFI_FIRMWARE_LIMITS.maxVolumes,
+      { checkpoint: () => assertArtifactReadActive(signal) },
     );
-    if (scan.exhausted)
-      options?.onOmission?.({ path: "volume-scan-limit", kind: "unsupported" });
-    let omittedVolumeBody = false;
+    if (scan.limit !== null) {
+      omit(
+        "volume-scan-limit",
+        scan.limit === "structural-records"
+          ? `UEFI volume search reached the structural record limit of ${UEFI_FIRMWARE_LIMITS.scanRecords}.`
+          : "UEFI volume search reached its candidate limit.",
+      );
+    }
+    for (const { absoluteBase, truncation } of scan.rejected) {
+      if (truncation === undefined) continue;
+      omit(
+        volumePath(absoluteBase),
+        `Firmware volume at ${hex(absoluteBase)} is truncated: declared ${truncation.declaredLength} bytes, observed ${truncation.observedLength}.`,
+      );
+    }
     let filesMapped = 0;
     let fileBudgetExhausted = false;
     for (const hit of scan.volumes) {
       const header = hit.header;
-      const name = `firmware-volume-${hex(header.absoluteBase)}`;
+      const name = volumePath(header.absoluteBase);
       const entry: ArtifactEntry = {
         path: name,
         kind: "directory",
@@ -125,8 +139,10 @@ export class UefiArtifactReader implements ArtifactReader {
       this.#entries.set(entry.adapterKey, entry);
       yield entry;
       if (header.fileSystem === "unsupported") {
-        omittedVolumeBody = true;
-        options?.onOmission?.({ path: name, kind: "unsupported" });
+        omit(
+          name,
+          "Volumes with unsupported file-system GUIDs were retained without FFS entries.",
+        );
         continue;
       }
       for await (const file of this.#volumeFiles(header, image, name, signal)) {
@@ -138,35 +154,14 @@ export class UefiArtifactReader implements ArtifactReader {
         filesMapped += 1;
         yield file;
       }
-      if (fileBudgetExhausted)
-        options?.onOmission?.({
-          path: name,
-          kind: "unsupported",
-        });
-      if (fileBudgetExhausted) break;
+      if (fileBudgetExhausted) {
+        omit(name, "UEFI inventory reached its FFS file limit.");
+        break;
+      }
     }
     options?.onCoverage?.({
-      status:
-        imageTruncated ||
-        scan.exhausted ||
-        fileBudgetExhausted ||
-        omittedVolumeBody
-          ? "unknown"
-          : "complete",
-      limitations: [
-        ...(imageTruncated ? [IMAGE_TRUNCATION_LIMITATION] : []),
-        ...(omittedVolumeBody
-          ? [
-              "Volumes with unsupported file-system GUIDs were retained without FFS entries.",
-            ]
-          : []),
-        ...(scan.exhausted
-          ? ["UEFI volume search reached its candidate limit."]
-          : []),
-        ...(fileBudgetExhausted
-          ? ["UEFI inventory reached its FFS file limit."]
-          : []),
-      ],
+      status: limitations.size === 0 ? "complete" : "unknown",
+      limitations: [...limitations],
     });
   }
 

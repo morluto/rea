@@ -1,3 +1,4 @@
+import { Budget } from "../domain/budget.js";
 import { BinaryReader } from "../domain/binaryContainer.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 import { Buffer } from "node:buffer";
@@ -180,21 +181,18 @@ export const scanUefiImage = async (
   const decodedStreams = new Map<string, UefiDecodedStream>();
   const decodeGaps = new Map<string, string>();
   let decodedBytes = 0;
-  let recordsRemaining: number = UEFI_FIRMWARE_LIMITS.scanRecords;
+  const records = new Budget(UEFI_FIRMWARE_LIMITS.scanRecords);
+  let structuralLimitReached = false;
   const reserve = (count = 1): boolean => {
     checkpoint();
-    if (count > recordsRemaining) {
-      if (recordsRemaining >= 0) {
-        limitations.push(
-          `Structural record limit ${UEFI_FIRMWARE_LIMITS.scanRecords} reached.`,
-        );
-        recordsRemaining = -1;
-      }
-      budgetExhausted = true;
-      return false;
-    }
-    recordsRemaining -= count;
-    return true;
+    if (structuralLimitReached) return false;
+    if (records.tryCharge(count)) return true;
+    structuralLimitReached = true;
+    limitations.push(
+      `Structural record limit ${UEFI_FIRMWARE_LIMITS.scanRecords} reached.`,
+    );
+    budgetExhausted = true;
+    return false;
   };
   const payloadOf = (
     region: ScanRegion,
@@ -325,10 +323,12 @@ export const scanUefiImage = async (
       noteLimitations([
         `_FVH hit under ${parentLogicalPath} at ${hex(rejected.absoluteBase)} not confirmed: ${rejected.reason}.`,
       ]);
-      if (classifyNoVolumes && rejected.reason.includes("truncates-region")) {
+      if (classifyNoVolumes && rejected.truncation !== undefined) {
         truncationObserved = true;
       }
     }
+
+    if (discovered.limit !== null) budgetExhausted = true;
 
     let mappedThrough = region.origin;
     for (const { header } of discovered.volumes) {
@@ -410,7 +410,7 @@ export const scanUefiImage = async (
       localRecords.push(volume);
     }
     if (
-      !discovered.exhausted &&
+      discovered.limit === null &&
       localRecords.length === discovered.volumes.length &&
       (classifyNoVolumes || localRecords.length > 0)
     ) {
@@ -647,7 +647,7 @@ export const scanUefiImage = async (
     );
     if (
       !walked.terminated &&
-      recordsRemaining >= 0 &&
+      !structuralLimitReached &&
       !walked.sections.some(
         ({ truncated, malformed }) => truncated || malformed,
       )

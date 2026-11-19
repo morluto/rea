@@ -1,3 +1,5 @@
+import { Budget } from "../domain/budget.js";
+import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
 import { BinaryReader } from "../domain/binaryContainer.js";
 import { Buffer } from "node:buffer";
 import {
@@ -204,24 +206,30 @@ export interface RejectedFirmwareVolumeHit {
   readonly absoluteBase: number;
   readonly signatureLocal: number;
   readonly reason: string;
+  readonly truncation?: {
+    readonly declaredLength: number;
+    readonly observedLength: number;
+  };
 }
 
 export interface FirmwareVolumeScanResult {
   readonly volumes: readonly FirmwareVolumeHit[];
   readonly rejected: readonly RejectedFirmwareVolumeHit[];
-  readonly exhausted: boolean;
+  readonly limit: "candidates" | "structural-records" | null;
 }
 
 /**
- * Scan one region for aligned `_FVH` hits and keep structurally plausible
- * headers. Signature hits that fail plausibility return as rejections with
- * their reason; they are never silently dropped.
+ * Scan for `_FVH` hits with a shared reservation for candidate and block-map
+ * records. Keep plausible headers and distinguish rejected candidates from a
+ * stopped scan. Format admission applies its own alignment check.
  */
 export function scanFirmwareVolumes(
   region: ScanRegion,
   maxCandidates: number,
   options: {
+    /** Charge a record against the caller's operation-wide budget when supplied. */
     readonly reserve?: () => boolean;
+    readonly checkpoint?: () => void;
     readonly skipNested?: boolean;
   } = {},
 ): FirmwareVolumeScanResult {
@@ -230,19 +238,24 @@ export function scanFirmwareVolumes(
   const signatureText = Buffer.from("_FVH", "ascii");
   let searchFrom = region.start;
   const searchable = region.buffer.subarray(0, region.end);
-  let exhausted = false;
+  const budget = new Budget(UEFI_FIRMWARE_LIMITS.scanRecords);
+  let limit: FirmwareVolumeScanResult["limit"] = null;
+  const reserve = (): boolean => {
+    options.checkpoint?.();
+    if (options.reserve?.() ?? budget.tryCharge(1)) return true;
+    limit = "structural-records";
+    return false;
+  };
   while (searchFrom < region.end) {
     const hitLocal = searchable.indexOf(signatureText, searchFrom);
     if (hitLocal < 0 || hitLocal + 4 > region.end) {
       break;
     }
-    if (
-      volumes.length + rejected.length >= maxCandidates ||
-      options.reserve?.() === false
-    ) {
-      exhausted = true;
+    if (volumes.length + rejected.length >= maxCandidates) {
+      limit = "candidates";
       break;
     }
+    if (!reserve()) break;
     searchFrom = hitLocal + 1;
     const headerLocal = hitLocal - FV_HEADER_LAYOUT.signatureOffset;
     if (headerLocal < region.start) {
@@ -256,12 +269,9 @@ export function scanFirmwareVolumes(
       });
       continue;
     }
-    const header = parseFirmwareVolumeHeader(
-      region,
-      headerLocal,
-      options.reserve,
-    );
-    if (header == null) {
+    const header = parseFirmwareVolumeHeader(region, headerLocal, reserve);
+    if (header === null) {
+      if (limit !== null) break;
       rejected.push({
         absoluteBase:
           absoluteOffset(region, hitLocal) - FV_HEADER_LAYOUT.signatureOffset,
@@ -270,11 +280,26 @@ export function scanFirmwareVolumes(
       });
       continue;
     }
-    if (header.implausibilities.length > 0) {
+    const reason = header.implausibilities[0];
+    if (reason !== undefined) {
+      const truncated =
+        reason === "declared-length-truncates-region" ||
+        reason === "header-length-truncates-region";
       rejected.push({
         absoluteBase: header.absoluteBase,
         signatureLocal: hitLocal,
-        reason: header.implausibilities[0] ?? "implausible-header",
+        reason,
+        ...(truncated
+          ? {
+              truncation: {
+                declaredLength: Math.max(
+                  header.declaredLength,
+                  header.headerLength,
+                ),
+                observedLength: region.end - headerLocal,
+              },
+            }
+          : {}),
       });
       continue;
     }
@@ -284,7 +309,7 @@ export function scanFirmwareVolumes(
       searchFrom = Math.max(searchFrom, headerLocal + header.declaredLength);
     }
   }
-  return { volumes, rejected, exhausted };
+  return { volumes, rejected, limit };
 }
 
 /** Read the FFS extended header FvName GUID when an ext header pad file exists. */

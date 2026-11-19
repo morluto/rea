@@ -79,6 +79,7 @@ export function buildFfsFile(spec: FfsFileSpec): Buffer {
 export interface FvSpec {
   files: readonly Buffer[];
   blockSize?: number;
+  blockMapEntries?: number;
   erase?: 0xff | 0x00;
   fileSystemGuid?: string;
 }
@@ -104,7 +105,8 @@ const FV_HEADER_TEST_LENGTH = 72;
 export function buildFv(spec: FvSpec, absoluteBase = 0): BuiltFv {
   const blockSize = spec.blockSize ?? 0x1000;
   const erase = spec.erase ?? (0xff as const);
-  const headerLength = FV_HEADER_TEST_LENGTH;
+  const blockMapEntries = spec.blockMapEntries ?? 1;
+  const headerLength = FV_HEADER_TEST_LENGTH + 8 * (blockMapEntries - 1);
   const fileSystemGuid =
     spec.fileSystemGuid ?? "8c8ce578-8a3d-4f1c-9935-896185c32dd3";
   const fileArea = Buffer.concat(
@@ -126,10 +128,20 @@ export function buildFv(spec: FvSpec, absoluteBase = 0): BuiltFv {
   header[54] = 0;
   header[55] = 2; // EFI_FIRMWARE_VOLUME_HEADER.Revision
   const mappedBlocks = Math.max(1, Math.ceil(declaredLength / blockSize));
-  header.writeUInt32LE(mappedBlocks, 56);
-  header.writeUInt32LE(blockSize, 60);
-  header.writeUInt32LE(0, 64); // block-map terminator pair starts
-  header.writeUInt32LE(0, 68);
+  if (blockMapEntries === 1) {
+    header.writeUInt32LE(mappedBlocks, 56);
+    header.writeUInt32LE(blockSize, 60);
+  } else {
+    // Distinct contiguous blocks whose total covers the declared volume.
+    for (let entry = 0; entry < blockMapEntries; entry += 1) {
+      header.writeUInt32LE(1, 56 + 8 * entry);
+      header.writeUInt32LE(
+        entry === 0 ? declaredLength - blockMapEntries + 1 : 1,
+        60 + 8 * entry,
+      );
+    }
+  }
+  // The following block-map terminator pair stays zero.
   let wordSum = 0;
   for (let offset = 0; offset < headerLength; offset += 2) {
     if (offset === 50) {

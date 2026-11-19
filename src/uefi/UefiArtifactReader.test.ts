@@ -11,7 +11,10 @@ import {
   buildImage,
 } from "../../tests/fixtures/uefiImage.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import type { ArtifactEntry } from "../resources/ArtifactReader.js";
+import type {
+  ArtifactEntry,
+  ArtifactTraversalOptions,
+} from "../resources/ArtifactReader.js";
 import { UefiArtifactReader } from "./UefiArtifactReader.js";
 
 const DRIVER_GUID = "9e21fd93-9c72-4c15-8c4b-e77f9db8d4d2";
@@ -39,15 +42,10 @@ const openReader = async (image: Buffer): Promise<UefiArtifactReader> => {
 
 const collectEntries = async (
   reader: UefiArtifactReader,
-  onOmission?: (path: string) => void,
+  options?: ArtifactTraversalOptions,
 ): Promise<ArtifactEntry[]> => {
   const entries: ArtifactEntry[] = [];
-  for await (const entry of reader.entries(
-    undefined,
-    onOmission === undefined
-      ? {}
-      : { onOmission: ({ path }: { path: string }) => onOmission(path) },
-  )) {
+  for await (const entry of reader.entries(undefined, options)) {
     entries.push(entry);
   }
   return entries;
@@ -63,9 +61,9 @@ describe("UefiArtifactReader", () => {
   it("maps an erased lead-in, one volume directory, and its FFS file entries", async () => {
     const reader = await openReader(buildReaderImage());
     const omissions: string[] = [];
-    const entries = await collectEntries(reader, (path) =>
-      omissions.push(path),
-    );
+    const entries = await collectEntries(reader, {
+      onOmission: ({ path }) => omissions.push(path),
+    });
     expect(omissions).toEqual([]);
     expect(entries.map((entry) => [entry.path, entry.kind])).toEqual([
       ["firmware-volume-0x1000", "directory"],
@@ -136,4 +134,49 @@ describe("UefiArtifactReader", () => {
     );
     await reader.close();
   });
+});
+
+it("bounds aggregate block-map retention and reports the unvisited volume", async () => {
+  const volume = buildFv({ files: [], blockMapEntries: 8_000 }).buffer;
+  const reader = await openReader(
+    Buffer.concat(Array.from({ length: 13 }, () => volume)),
+  );
+  const onOmission = vi.fn();
+  const onCoverage = vi.fn();
+  try {
+    const entries = await collectEntries(reader, { onOmission, onCoverage });
+    expect(entries).toHaveLength(12);
+    expect(onOmission).toHaveBeenCalledWith({
+      path: "volume-scan-limit",
+      kind: "unsupported",
+    });
+    expect(onCoverage).toHaveBeenCalledWith({
+      status: "unknown",
+      limitations: [expect.stringMatching(/structural record limit/i)],
+    });
+  } finally {
+    await reader.close();
+  }
+});
+
+it("retains a complete volume when a later declared volume extends past EOF", async () => {
+  const first = buildFv({ files: [] }).buffer;
+  const truncated = buildFv({ files: [] }).buffer.subarray(0, 1024);
+  const reader = await openReader(Buffer.concat([first, truncated]));
+  const onOmission = vi.fn();
+  const onCoverage = vi.fn();
+  try {
+    const entries = await collectEntries(reader, { onOmission, onCoverage });
+    expect(entries.map(({ path }) => path)).toEqual(["firmware-volume-0x0"]);
+    expect(onOmission).toHaveBeenCalledWith({
+      path: "firmware-volume-0x1000",
+      kind: "unsupported",
+    });
+    expect(onCoverage).toHaveBeenCalledWith({
+      status: "unknown",
+      limitations: [expect.stringMatching(/0x1000.*4096.*1024/u)],
+    });
+  } finally {
+    await reader.close();
+  }
 });

@@ -78,8 +78,10 @@ unverified declarations. NVAR results describe byte ranges, names, and hashes
 without interpreting the contents of variables.
 
 UEFI operations accept up to 128 MiB per image, with a shared limit of 100,000
-structural records. The nesting depth defaults to 3 for firmware and 2 for
-NVAR. Decoding is limited to 64 MiB per stream and 128 MiB across one operation.
+structural records. Artifact inventory applies the same ceiling to volume
+candidates and their block maps. Inventory reports unknown coverage when
+a volume exceeds the readable range or a scan limit is reached.
+The nesting depth defaults to 3 for firmware and 2 for NVAR. Decoding is limited to 64 MiB per stream and 128 MiB across one operation.
 An admitted operation has a 60-second deadline covering input, parsing,
 decoding, and staging. Owned cleanup can continue past the deadline. Extraction
 defaults to 10,000 files and 256 MiB of published file bytes in a fresh path
