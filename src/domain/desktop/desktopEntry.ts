@@ -157,7 +157,7 @@ export const parseDesktopEntry = (
     startup_wm_class: field("StartupWMClass"),
     categories: listValue(rawField("Categories")),
     mime_types: listValue(rawField("MimeType")),
-    terminal: field("Terminal") === "true",
+    terminal: ["true", "1"].includes(field("Terminal") ?? ""),
   });
 };
 

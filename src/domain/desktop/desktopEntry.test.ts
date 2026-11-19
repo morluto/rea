@@ -312,3 +312,12 @@ describe("unwrapDesktopCommand", () => {
     ).toMatchObject({ kind: "flatpak", application_id: null });
   });
 });
+
+it("reads GLib's numeric terminal flag", () => {
+  const read = (flag: string) =>
+    parseDesktopEntry(
+      `[Desktop Entry]\nName=Editor\nType=Application\nExec=editor\nTerminal=${flag}\n`,
+    );
+  expect(read("1")).toMatchObject({ ok: true, value: { terminal: true } });
+  expect(read("0")).toMatchObject({ ok: true, value: { terminal: false } });
+});
