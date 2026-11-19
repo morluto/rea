@@ -8,6 +8,8 @@ import { observeElfStringTableEntry } from "../../domain/elfStringTable.js";
 import {
   readFatContainerHeader,
   readMachoHeaderPrefixFacts,
+  validateFatSliceIdentity,
+  type FatSliceDeclaration,
 } from "../../domain/apple/machoContainer.js";
 import {
   readMachoLoadCommandTableHeader,
@@ -134,7 +136,12 @@ interface SectionWindow {
   readonly loadCommandsFailure?: string;
 }
 
-type SectionClaim = SectionWindow | { readonly failure: ArtifactReaderFailure };
+type SectionClaim =
+  | SectionWindow
+  | {
+      readonly failure: ArtifactReaderFailure;
+      readonly fatIdentityMismatch?: true;
+    };
 
 /**
  * Locate at most one graph claim with bounded reads of headers, length
@@ -162,8 +169,13 @@ export const probeBunStandaloneGraph = async (
     return { status: "limited", failure: cause };
   }
   const real: BunStandaloneProbe[] = [];
+  let fatIdentityFailure: ArtifactReaderFailure | undefined;
   for (const claim of claims) {
     abortIfNeeded(signal);
+    if ("failure" in claim && claim.fatIdentityMismatch) {
+      fatIdentityFailure ??= claim.failure;
+      continue;
+    }
     const evaluated =
       "failure" in claim
         ? presentFailure(claim.failure)
@@ -181,6 +193,8 @@ export const probeBunStandaloneGraph = async (
   }
   const only = real[0];
   if (only !== undefined) return only;
+  if (fatIdentityFailure !== undefined)
+    return presentFailure(fatIdentityFailure);
   return evaluateAppendedTrailer(source);
 };
 
@@ -494,6 +508,7 @@ const machOClaims = async (
   source: BunProbeSource,
   imageOffset: number,
   imageLimit: number,
+  fat?: FatSliceDeclaration,
 ): Promise<readonly SectionClaim[]> => {
   const { handle, fileSize, signal, limits } = source;
   if (imageOffset < 0 || imageOffset >= fileSize) return [];
@@ -515,18 +530,22 @@ const machOClaims = async (
   const parsed = readMachoLoadCommandTableHeader(full, imageSize);
   if (!parsed.ok || parsed.value === null) return [];
   const table = parsed.value;
+  const identityIssue =
+    fat === undefined ? null : validateFatSliceIdentity(fat, table.identity);
   const {
     littleEndian,
     headerSize: headerBytes,
     commandBytes: sizeofcmds,
   } = table;
-  if (sizeofcmds > limits.recognition_load_command_bytes)
+  if (sizeofcmds > limits.recognition_load_command_bytes) {
+    if (identityIssue !== null) return [];
     throw artifactReaderLimitFailure(
       "artifact_limits.bun.recognition_load_command_bytes",
       limits.recognition_load_command_bytes,
       "bytes",
       sizeofcmds,
     );
+  }
   const commands = await tryRead(
     handle,
     imageOffset + headerBytes,
@@ -553,8 +572,18 @@ const machOClaims = async (
         cmd === LC.SEGMENT_64,
         imageOffset,
         imageSize,
-      ))
+      )) {
+        // A mismatched slice can identify a named declaration from bounded
+        // metadata, but cannot contribute graph bytes or veto another slice.
+        if (identityIssue !== null)
+          return [
+            {
+              failure: bunFormatFailure(identityIssue),
+              fatIdentityMismatch: true,
+            },
+          ];
         claims.push(claim);
+      }
   }
   const complete = cursor.finish();
   if (!complete.ok) framingFailure ??= complete.error;
@@ -645,7 +674,12 @@ const fatClaims = async (
   for (const slice of parsed.slices) {
     abortIfNeeded(signal);
     if (parsed.rangeIssues[slice.index] !== null) continue;
-    for (const claim of await machOClaims(source, slice.offset, slice.size))
+    for (const claim of await machOClaims(
+      source,
+      slice.offset,
+      slice.size,
+      slice,
+    ))
       claims.push(claim);
   }
   return claims;
