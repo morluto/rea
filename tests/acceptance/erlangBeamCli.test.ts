@@ -366,6 +366,40 @@ cliTest(
 );
 
 cliTest(
+  "reports a selected BEAM table tail through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-beam-table-tail-");
+    const path = join(root, "table-tail.beam");
+    const bytes = oneAtomBeam(0xab);
+    // Move one byte of alignment padding into the AtU8 payload.
+    bytes.writeUInt32BE(7, 16);
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-erlang-beam", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const report = completeBeamEvidenceSchema.parse(
+      result.json,
+    ).normalized_result;
+    expect(report).toMatchObject({
+      module: "m",
+      chunks: [{ name: "AtU8", payload: { location: { bytes: 7 } } }],
+      coverage: { status: "partial", trailing_bytes: 0 },
+    });
+    expect(report.limitations).toContain(
+      "The selected AtU8 table has 1 trailing byte that was not examined.",
+    );
+    const { call } = await connectLocalToolsMcp();
+    const reply = await call("inspect_erlang_beam", { path });
+    expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
+    expect(
+      completeBeamEvidenceSchema.parse(reply.structuredContent)
+        .normalized_result,
+    ).toEqual(report);
+  },
+);
+
+cliTest(
   "inspects the declared BEAM form while retaining trailing bytes in artifact identity",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-beam-trailer-");

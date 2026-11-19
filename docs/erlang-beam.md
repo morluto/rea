@@ -31,6 +31,11 @@ The BEAM form size bounds the parsed chunks. Bytes after the form remain part
 of the artifact's byte length and SHA-256. They are unexamined by the chunk
 reader, so the report sets `coverage.status` to `partial` and gives their exact
 count in `coverage.trailing_bytes`. Older retained Evidence may omit the count.
+When a selected atom, export, import, or lambda table has bytes left after its
+declared entries, coverage is also `partial`. A limitation names the table and
+counts its unexamined bytes. The report retains the decoded entries and the
+full chunk range. `coverage.trailing_bytes` counts only bytes outside the FOR1
+form, so it can be zero when a table leaves bytes unexamined.
 
 When a selected `AtU8` or `Atom` table is decoded, `atoms` is the 1-based name table and
 `module` is atom 1. Both the pre-OTP 28 table and the OTP 28+ compact table

@@ -125,7 +125,7 @@ const parseAtoms = (
   format: "Atom" | "AtU8",
 ): {
   readonly atoms: NonNullable<ErlangBeam["atoms"]>;
-  readonly bytesRead: number;
+  readonly trailingBytes: number;
 } => {
   if (payload.length < 4) fail("BEAM atom table is truncated.");
   // Only AtU8 supports OTP 28+'s negated count and compact name lengths.
@@ -159,29 +159,30 @@ const parseAtoms = (
     });
     at += length;
   }
-  return { atoms, bytesRead: at };
+  return { atoms, trailingBytes: payload.length - at };
 };
 
-const tableCount = (payload: Buffer, width: number, label: string): number => {
+const frameRows = (payload: Buffer, width: number, label: string) => {
   if (payload.length < 4) fail(`BEAM ${label} table is truncated.`);
-  const count = new BinaryReader(payload, false, "beam").u32(0);
-  if (count > Math.floor((payload.length - 4) / (width * 4)))
-    fail(`BEAM ${label} table is truncated.`);
-  return count;
+  const reader = new BinaryReader(payload, false, "beam");
+  const count = reader.u32(0);
+  const rowBytes = width * 4;
+  const bytesRead = 4 + count * rowBytes;
+  if (bytesRead > payload.length) fail(`BEAM ${label} table is truncated.`);
+  return { reader, count, rowBytes, trailingBytes: payload.length - bytesRead };
 };
 
-const parseRows = (
-  payload: Buffer,
-  width: number,
-  count: number,
-): number[][] => {
-  const reader = new BinaryReader(payload, false, "beam");
+const parseRows = ({
+  reader,
+  count,
+  rowBytes,
+}: ReturnType<typeof frameRows>): number[][] => {
   const rows: number[][] = [];
   for (let index = 0; index < count; index += 1) {
     const row: number[] = [];
-    const start = 4 + index * width * 4;
-    for (let field = 0; field < width; field += 1)
-      row.push(reader.u32(start + field * 4));
+    const start = 4 + index * rowBytes;
+    for (let fieldOffset = 0; fieldOffset < rowBytes; fieldOffset += 4)
+      row.push(reader.u32(start + fieldOffset));
     rows.push(row);
   }
   return rows;
@@ -285,21 +286,23 @@ export const parseErlangBeam = (
   const exportChunk = payloads.get("ExpT");
   const importChunk = payloads.get("ImpT");
   const lambdaChunk = payloads.get("FunT");
-  const exportCount =
+  const exportTable =
     exportChunk === undefined
-      ? 0
-      : tableCount(exportChunk.payload, 3, "export");
-  const importCount =
+      ? null
+      : frameRows(exportChunk.payload, 3, "export");
+  const importTable =
     importChunk === undefined
-      ? 0
-      : tableCount(importChunk.payload, 3, "import");
+      ? null
+      : frameRows(importChunk.payload, 3, "import");
   // OTP skips the optional lambda parser for a zero-byte selected chunk.
-  const lambdaCount =
+  const lambdaTable =
     lambdaChunk === undefined || lambdaChunk.payload.length === 0
-      ? 0
-      : tableCount(lambdaChunk.payload, 6, "lambda");
+      ? null
+      : frameRows(lambdaChunk.payload, 6, "lambda");
   if (
-    exportCount + importCount + lambdaCount >
+    (exportTable?.count ?? 0) +
+      (importTable?.count ?? 0) +
+      (lambdaTable?.count ?? 0) >
     MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS
   )
     throw new BeamCapacityFailure(
@@ -308,18 +311,18 @@ export const parseErlangBeam = (
       `BEAM tables exceed the ${String(MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS)}-row budget.`,
     );
   const exports =
-    exportChunk === undefined
+    exportTable === null
       ? null
-      : parseRows(exportChunk.payload, 3, exportCount).map((row) => ({
+      : parseRows(exportTable).map((row) => ({
           function_index: row[0]!,
           function: atomAt(atoms, row[0]!),
           arity: row[1]!,
           label: row[2]!,
         }));
   const imports =
-    importChunk === undefined
+    importTable === null
       ? null
-      : parseRows(importChunk.payload, 3, importCount).map((row) => ({
+      : parseRows(importTable).map((row) => ({
           module_index: row[0]!,
           module: atomAt(atoms, row[0]!),
           function_index: row[1]!,
@@ -328,9 +331,9 @@ export const parseErlangBeam = (
         }));
   // A four-byte zero count remains a decoded, explicitly empty table.
   const lambdas =
-    lambdaChunk === undefined || lambdaChunk.payload.length === 0
+    lambdaTable === null
       ? null
-      : parseRows(lambdaChunk.payload, 6, lambdaCount).map((row) => ({
+      : parseRows(lambdaTable).map((row) => ({
           function_index: row[0]!,
           function: atomAt(atoms, row[0]!),
           arity: row[1]!,
@@ -347,21 +350,20 @@ export const parseErlangBeam = (
   // A conformant FOR1 form sizes itself to the file; any surplus bytes trail an
   // unexamined region. Disclose them instead of reporting complete coverage.
   const trailingBytes = bytes.length - formEnd;
-  const limitations: string[] = [...LIMITATIONS];
+  const unexamined: string[] = [];
   if (trailingBytes > 0)
-    limitations.push(
+    unexamined.push(
       `The declared FOR1 form ends at offset ${String(formEnd)}; ${String(trailingBytes)} trailing ${trailingBytes === 1 ? "byte was" : "bytes were"} not examined.`,
     );
   const tableTails = [
-    [atomFormat, atomChunk?.payload.length ?? 0, atomTable?.bytesRead ?? 0],
-    ["ExpT", exportChunk?.payload.length ?? 0, 4 + exportCount * 12],
-    ["ImpT", importChunk?.payload.length ?? 0, 4 + importCount * 12],
-    ["FunT", lambdaChunk?.payload.length ?? 0, 4 + lambdaCount * 24],
+    [atomFormat, atomTable?.trailingBytes ?? 0],
+    ["ExpT", exportTable?.trailingBytes ?? 0],
+    ["ImpT", importTable?.trailingBytes ?? 0],
+    ["FunT", lambdaTable?.trailingBytes ?? 0],
   ] as const;
-  for (const [name, available, examined] of tableTails) {
-    const extra = available - examined;
+  for (const [name, extra] of tableTails) {
     if (extra > 0)
-      limitations.push(
+      unexamined.push(
         `The selected ${name} table has ${String(extra)} trailing ${extra === 1 ? "byte that was" : "bytes that were"} not examined.`,
       );
   }
@@ -377,11 +379,11 @@ export const parseErlangBeam = (
     code,
     module: atoms?.[0]?.name ?? null,
     coverage: {
-      status: limitations.length > LIMITATIONS.length ? "partial" : "complete",
+      status: unexamined.length > 0 ? "partial" : "complete",
       examined_chunks: chunks.length,
       atoms: atoms?.length ?? 0,
       trailing_bytes: trailingBytes,
     },
-    limitations,
+    limitations: [...LIMITATIONS, ...unexamined],
   };
 };
