@@ -11,4 +11,17 @@ runs:
             sudo sed -Ei.bak 's|https?://([[:alnum:]-]+\.)*archive\.ubuntu\.com/|https://archive.ubuntu.com/|g' "$source"
           fi
         done
-        sudo apt-get update
+        # Cold hosted runners occasionally lose the archive connection while
+        # the package index is being fetched. Keep the failure bounded and
+        # retry transient archive errors before failing the dependent lane.
+        for attempt in 1 2 3; do
+          if timeout --signal=TERM --kill-after=15s 150s \
+            sudo apt-get -o Acquire::Retries=2 update; then
+            exit 0
+          fi
+          if [ "$attempt" -lt 3 ]; then
+            sleep $((attempt * 5))
+          fi
+        done
+        echo 'Ubuntu archive update failed after three bounded attempts' >&2
+        exit 1
