@@ -484,13 +484,16 @@ const decodeSelectedArchive = (
           ),
         },
       );
+    const parserLimit =
+      cause instanceof ParseFailureError && cause.failure.kind === "limit"
+        ? cause.failure.limit
+        : undefined;
     throw new ArtifactReaderFailure(
-      (cause instanceof ParseFailureError && cause.kind === "limit") ||
-        isHostLimitFailure(cause)
+      parserLimit !== undefined || isHostLimitFailure(cause)
         ? "limit"
         : "format",
       `Cannot decode selected Foundation keyed archive: ${errorMessage(cause)}`,
-      { cause },
+      { cause, ...(parserLimit === undefined ? {} : { parserLimit }) },
     );
   }
 };

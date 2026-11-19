@@ -2,7 +2,6 @@
   "src/application/MipsElfMetadata.ts": 10,
   "src/application/MipsGnuAttributes.ts": 2,
   "src/artifacts/DesktopFileInspection.ts": 4,
-  "src/artifacts/dotnet/DotnetBundle.ts": 5,
   "src/domain/apkSignature/apkSignatureSchemes.ts": 1,
   "src/domain/apkSignature/apkSigningBlock.ts": 2,
   "src/domain/apkSignature/apkV1Signature.ts": 5,
