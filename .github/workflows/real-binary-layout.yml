@@ -56,6 +56,8 @@ jobs:
         with:
           build_cache_artifact: ${{ inputs.build_cache_artifact }}
       - uses: ./.github/actions/ubuntu-archive
+        with:
+          noble-azure-fallback: "true"
       - name: Install AArch64 and ELF32 cross toolchains for source-owned fixtures
         run: |
           sudo apt-get install --yes --no-install-recommends \
