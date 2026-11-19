@@ -786,6 +786,298 @@ describe("scalar sets of mapped ids", () => {
     ]);
     expect(compared.normalised.ids).toBe(2);
   });
+
+  it("maps each id when one element genuinely changed, reporting only the real change", () => {
+    const map = new IdMap();
+    map.learn(101, 1);
+    map.learn(102, 2);
+    const compared = compareAnswers(
+      { status: 200, body: { kind: "json", value: { ids: [101, 102] } } },
+      { status: 200, body: { kind: "json", value: { ids: [1, 9] } } },
+      map,
+    );
+    // 101 -> 1 is the mapping, not a change; only 102 -> 9 differs, shown with
+    // the original live value rather than its mapped form.
+    expect(compared.differences).toEqual([
+      { category: "value", pointer: "/ids/1", live: "102", env: "9" },
+    ]);
+    expect(compared.normalised.ids).toBe(1);
+  });
+
+  it("maps the surviving ids when the list length also differs", () => {
+    const map = new IdMap();
+    map.learn(101, 1);
+    map.learn(102, 2);
+    const compared = compareAnswers(
+      { status: 200, body: { kind: "json", value: { ids: [101, 102] } } },
+      { status: 200, body: { kind: "json", value: { ids: [1] } } },
+      map,
+    );
+    expect(compared.differences).toEqual([
+      {
+        category: "length",
+        pointer: "/ids",
+        live: "2 items",
+        env: "1 items (1 paired)",
+      },
+    ]);
+    expect(compared.normalised.ids).toBe(1);
+  });
+
+  it("pairs a surviving id by its mapping when a removal shifts its position", () => {
+    const map = new IdMap();
+    map.learn(101, 1);
+    map.learn(102, 2);
+    const compared = compareAnswers(
+      { status: 200, body: { kind: "json", value: { ids: [101, 102] } } },
+      { status: 200, body: { kind: "json", value: { ids: [2] } } },
+      map,
+    );
+    // 102 -> 2 survives at a new index; only the removal is reported, with no
+    // false /ids/0 difference from pairing 101 against the survivor.
+    expect(compared.differences).toEqual([
+      {
+        category: "length",
+        pointer: "/ids",
+        live: "2 items",
+        env: "1 items (1 paired)",
+      },
+    ]);
+    expect(compared.normalised.ids).toBe(1);
+  });
+
+  it("reports a replaced id as a value change, not an order change, when one survivor shifts", () => {
+    const map = new IdMap();
+    map.learn(101, 1);
+    map.learn(102, 2);
+    const compared = compareAnswers(
+      { status: 200, body: { kind: "json", value: { ids: [101, 102] } } },
+      { status: 200, body: { kind: "json", value: { ids: [2, 9] } } },
+      map,
+    );
+    // 102 -> 2 is the only survivor; 101 -> 1 was replaced by 9. One identity
+    // cannot establish a relative-order change, so only the value differs.
+    expect(compared.differences).toEqual([
+      { category: "value", pointer: "/ids/0", live: "101", env: "9" },
+    ]);
+    expect(compared.normalised.ids).toBe(1);
+  });
+
+  it("still reports an order change when two mapped survivors are reordered", () => {
+    const map = new IdMap();
+    map.learn(101, 1);
+    map.learn(102, 2);
+    map.learn(103, 3);
+    const compared = compareAnswers(
+      { status: 200, body: { kind: "json", value: { ids: [101, 102, 103] } } },
+      { status: 200, body: { kind: "json", value: { ids: [2, 1, 99] } } },
+      map,
+    );
+    expect(compared.differences).toEqual([
+      { category: "order", pointer: "/ids" },
+      { category: "value", pointer: "/ids/2", live: "103", env: "99" },
+    ]);
+    expect(compared.normalised.ids).toBe(2);
+  });
+});
+
+describe("scalar identifier list ownership and ambiguity", () => {
+  const entity = { at: "/data", scope: "/api/authors" };
+  const answer = (value: JsonValue) => ({
+    status: 200,
+    body: { kind: "json" as const, value },
+  });
+  const collectionMap = () => {
+    const map = new IdMap();
+    map.learn(101, 1, "/api/books");
+    map.learn(102, 3, "/api/books");
+    map.learn(101, 2, "/api/authors");
+    map.learn(102, "4", "/api/authors");
+    return map;
+  };
+
+  it("uses scoped mapping and learned cross-type equality for shifted survivors", () => {
+    const result = compareAnswers(
+      answer({ data: { ids: [101, 102] }, books: { ids: [101, 102] } }),
+      answer({ data: { ids: ["4"] }, books: { ids: [3] } }),
+      collectionMap(),
+      entity,
+    );
+    expect(
+      result.differences.map(({ category, pointer }) => [category, pointer]),
+    ).toEqual([
+      ["length", "/data/ids"],
+      ["length", "/books/ids"],
+    ]);
+    expect(result.normalised.ids).toBe(2);
+  });
+
+  it("rejects a reassigned owned ID but keeps unknown references and literal fields", () => {
+    const response = answer({
+      data: { ids: [101, 900], counts: [101] },
+      books: { ids: [101] },
+    });
+    const result = compareAnswers(response, response, collectionMap(), entity);
+    expect(result.differences).toEqual([
+      { category: "value", pointer: "/data/ids/0", live: "101", env: "101" },
+    ]);
+    expect(result.normalised.ids).toBe(0);
+  });
+
+  it("preserves literal reference survivors where a mapping competes for their slots", () => {
+    const map = new IdMap();
+    map.learn(1, 2, "/api/books");
+    map.learn(2, 3, "/api/books");
+    const result = compareAnswers(
+      answer({ books: { ids: [1, 2, 4] } }),
+      answer({ books: { ids: [1, 2] } }),
+      map,
+      entity,
+    );
+    expect(result.differences).toEqual([
+      expect.objectContaining({ category: "length", pointer: "/books/ids" }),
+    ]);
+    expect(result.normalised.ids).toBe(0);
+  });
+
+  it("recovers literal survivors without rematching an independent learned chain", () => {
+    const map = new IdMap();
+    for (const id of [1, 2, 10, 11, 12]) map.learn(id, id + 1);
+    const result = compareAnswers(
+      answer({ books: { ids: [1, 1, 2, 2, 10, 11, 12, 50] } }),
+      answer({ books: { ids: [1, 1, 2, 2, 11, 12, 13] } }),
+      map,
+      entity,
+    );
+    expect(result.differences).toEqual([
+      expect.objectContaining({ category: "length", pointer: "/books/ids" }),
+    ]);
+    expect(result.normalised.ids).toBe(3);
+  });
+
+  it("recovers all typed literal and mapped survivors competing for the same ID", () => {
+    const map = new IdMap();
+    map.learn(4, 5);
+    map.learn(5, 6);
+    const result = compareAnswers(
+      answer({ books: { ids: [5, 5, "4", "4", 2] } }),
+      answer({ books: { ids: [5, 5, "5", "5"] } }),
+      map,
+      entity,
+    );
+    expect(result.differences).toEqual([
+      expect.objectContaining({ category: "length", pointer: "/books/ids" }),
+    ]);
+    expect(result.normalised.ids).toBe(2);
+  });
+
+  it("keeps unrelated numeric and string literal representations distinct", () => {
+    const result = compareAnswers(
+      answer({ data: { ids: [101], counts: [101] } }),
+      answer({ data: { ids: ["101"], counts: ["101"] } }),
+      new IdMap(),
+      entity,
+    );
+    expect(result.differences.map(({ pointer }) => pointer)).toEqual([
+      "/data/ids/0",
+      "/data/counts/0",
+    ]);
+  });
+
+  it("does not report order when a duplicate made survivor identity ambiguous", () => {
+    const result = compareAnswers(
+      answer({ books: { ids: [101, 102, 101] } }),
+      answer({ books: { ids: [3, 1, 9] } }),
+      collectionMap(),
+      entity,
+    );
+    expect(result.differences).toEqual([
+      expect.objectContaining({ category: "value", live: "101", env: "9" }),
+    ]);
+    expect(result.normalised.ids).toBe(2);
+  });
+});
+
+describe("forced identifier list order", () => {
+  const entity = { at: "/data", scope: "/api/authors" };
+  const answer = (value: JsonValue) => ({
+    status: 200,
+    body: { kind: "json" as const, value },
+  });
+
+  it.each([
+    { duplicates: [], extraLive: [], categories: ["order"] },
+    {
+      duplicates: [42, 42, 42],
+      extraLive: [99],
+      categories: ["length", "order"],
+    },
+  ])(
+    "reports forced inversions even with these additional live values $extraLive",
+    ({ duplicates, extraLive, categories }) => {
+      const map = new IdMap();
+      map.learn(1, 2);
+      map.learn(2, 3);
+      const result = compareAnswers(
+        answer({ books: { ids: [1, 2, ...duplicates, ...extraLive] } }),
+        answer({ books: { ids: [3, 2, ...duplicates] } }),
+        map,
+        entity,
+      );
+      expect(result.differences.map(({ category }) => category)).toEqual(
+        categories,
+      );
+      expect(result.normalised.ids).toBe(2);
+    },
+  );
+
+  it.each([
+    { live: [1, 2, 3], env: [3, 2], normalized: 1 },
+    { live: [1, 2], env: [3, 2, 1], normalized: 2 },
+  ])(
+    "requires forced matches even when one side has a spare ID",
+    ({ live, env, normalized }) => {
+      const map = new IdMap();
+      map.learn(1, 2);
+      map.learn(2, 3);
+      const result = compareAnswers(
+        answer({ books: { ids: live } }),
+        answer({ books: { ids: env } }),
+        map,
+        entity,
+      );
+      expect(result.differences).toEqual([
+        expect.objectContaining({ category: "length", pointer: "/books/ids" }),
+      ]);
+      expect(result.normalised.ids).toBe(normalized);
+    },
+  );
+});
+
+describe("complete duplicate identifier list order", () => {
+  it.each([
+    {
+      ids: [2, "3", "3"],
+      differences: [{ category: "order", pointer: "/ids" }],
+    },
+    { ids: ["3", "3", 2], differences: [] },
+  ])(
+    "uses positional equivalence for the complete list $ids",
+    ({ ids, differences }) => {
+      const map = new IdMap();
+      map.learn(101, 3, "/api/books");
+      map.learn(102, 2, "/api/books");
+      const answer = (ids: JsonValue[]) => ({
+        status: 200,
+        body: { kind: "json" as const, value: { ids } },
+      });
+      const result = compareAnswers(answer([101, 101, 102]), answer(ids), map, {
+        scope: "/api/books",
+      });
+      expect(result.differences).toEqual(differences);
+      expect(result.normalised.ids).toBe(3);
+    },
+  );
 });
 
 describe("ids two collections reuse", () => {
