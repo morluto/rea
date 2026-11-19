@@ -15,6 +15,7 @@ import {
   type JavaScriptIntrinsicInvocation,
 } from "./javascriptElectronMemberWrites.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
+import { javaScriptPackedArgumentOrigin } from "./javascriptIntrinsicInvocation.js";
 import {
   ambientEffectCovers,
   ambientPathMayObserveAt,
@@ -50,6 +51,11 @@ import {
   semanticReferenceSourcesInactive,
 } from "./javascriptSemanticReferenceSources.js";
 import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReferencePaths.js";
+import {
+  semanticNormalizeCapturedSelections,
+  semanticShiftCapturedSelections,
+  type SemanticCapturedSelection,
+} from "./javascriptSemanticProjectedSources.js";
 import { isIntrinsicTypedArrayConstruction } from "./javascriptSemanticTypedArrays.js";
 
 /**
@@ -215,6 +221,21 @@ const joinAmbientProjection = (
     ? undefined
     : left.map((key, index) => (key === right[index] ? key : null));
 
+type CapturedSelections = readonly SemanticCapturedSelection[] | undefined;
+
+const sameCaptures = (
+  left: CapturedSelections,
+  right: CapturedSelections,
+): boolean =>
+  left === right ||
+  (left !== undefined &&
+    right !== undefined &&
+    left.length === right.length &&
+    left.every(
+      ({ at, depth }, index) =>
+        at === right[index]?.at && depth === right[index]?.depth,
+    ));
+
 type AmbientIdentityUnknownReason =
   | "unresolved-value"
   | "widened-projection"
@@ -282,6 +303,7 @@ export const createAmbientPathResolver = (
       node: t.Node;
       suffix: AmbientProjection;
       readsAtSelf: true | undefined;
+      capturedSelections?: CapturedSelections;
     };
     // A binding read queues its selected initializers for one projection,
     // taken from the end as if queued one by one. Reads selecting the same
@@ -291,6 +313,7 @@ export const createAmbientPathResolver = (
     // read reached through an alias cycle grows quadratically per query.
     interface QueuedInitializers {
       readonly items: readonly Pending[];
+      readonly capturedSelections: CapturedSelections;
       remaining: number;
     }
     const pending: (Pending | QueuedInitializers)[] = [
@@ -321,11 +344,16 @@ export const createAmbientPathResolver = (
     // depths widen to unknown, so diamonds and cycles have finite state.
     // Null marks a fully widened root. An absent entry has not been visited.
     const expanded = new WeakMap<t.Node, AmbientPath | null>();
+    const expansionCaptures =
+      observes === "array-receiver"
+        ? new WeakMap<t.Node, CapturedSelections>()
+        : undefined;
     let continued = false;
     const queue = (
       node: t.Node,
       suffix: AmbientProjection,
       readsAtSelf?: true,
+      capturedSelections?: CapturedSelections,
     ): void => {
       if (!admitted(suffix)) return;
       continued = true;
@@ -335,7 +363,7 @@ export const createAmbientPathResolver = (
         const root = memberPaths.get(node)?.root;
         if (root !== undefined && expanded.get(root) === null) return;
       }
-      pending.push({ node, suffix, readsAtSelf });
+      pending.push({ node, suffix, readsAtSelf, capturedSelections });
     };
     const retain = (path: AmbientPath) => {
       let canonical = canonicalAmbientPath(path);
@@ -378,15 +406,33 @@ export const createAmbientPathResolver = (
           current.suffix === undefined || members.length === 0
             ? current.suffix
             : [...members, ...current.suffix];
+        let capturedSelections =
+          observes === "array-receiver" && members.length > 0
+            ? [
+                { at: current.node, depth: members.length },
+                ...(semanticShiftCapturedSelections(
+                  current.capturedSelections,
+                  members.length,
+                ) ?? []),
+              ]
+            : current.capturedSelections;
         const previous = expanded.get(root);
         if (previous !== undefined) {
+          const previousCaptures = expansionCaptures?.get(root);
+          // Multiple aliases may choose the same slot at different reads.
+          // Widen the timing once to the factory read instead of keeping paths
+          // for each alias history. Widened projections drop earlier bounds.
+          if (!sameCaptures(previousCaptures, capturedSelections))
+            capturedSelections = undefined;
+          const captureWidened =
+            previousCaptures !== undefined && capturedSelections === undefined;
           if (previous === null) {
             resolvedIdentity = true;
             continue;
           }
           if (suffix !== undefined && previous.length === suffix.length) {
             const joined = joinSemanticPropertyPaths(previous, suffix);
-            if (joined === previous) {
+            if (joined === previous && !captureWidened) {
               resolvedIdentity = true;
               continue;
             }
@@ -403,13 +449,27 @@ export const createAmbientPathResolver = (
             return unresolved;
           }
         }
+        if (suffix === undefined) capturedSelections = undefined;
         expanded.set(root, suffix ?? null);
+        expansionCaptures?.set(root, capturedSelections);
         if (suffix === undefined || suffix.includes(null))
           unknownReasons.add("widened-projection");
         // A widened projection is a possible write, never proof of an intrinsic.
         if (suffix === undefined && !possibleWrites) continue;
         const continueWith = (node: t.Node, path: AmbientProjection = suffix) =>
-          queue(node, path, current.readsAtSelf);
+          queue(
+            node,
+            path,
+            current.readsAtSelf,
+            path !== undefined &&
+              suffix !== undefined &&
+              path.length <= suffix.length
+              ? semanticShiftCapturedSelections(
+                  capturedSelections,
+                  path.length - suffix.length,
+                )
+              : undefined,
+          );
         const continueReturned = (callee: t.Node, path: AmbientProjection) => {
           const returned = returnedReferences(callee);
           // Returned references retain possible source-local values, not a
@@ -450,10 +510,15 @@ export const createAmbientPathResolver = (
             resolvedIdentity = true;
           }
           for (const [source, path] of facts?.stores.get(root) ?? []) {
+            const readAt =
+              (path === undefined
+                ? undefined
+                : capturedSelections?.find(({ depth }) => path.length <= depth)
+                    ?.at) ?? capture;
             if (
               observes === "array-receiver" &&
-              capture !== undefined &&
-              !semanticEffectMayPrecede(state, capture, source.mutation)
+              readAt !== undefined &&
+              !semanticEffectMayPrecede(state, readAt, source.mutation)
             )
               continue;
             const stored = storedValueProjection(
@@ -526,13 +591,22 @@ export const createAmbientPathResolver = (
           const argument = possibleWrites
             ? semanticDirectInvocationArgument(root, binding, state)
             : undefined;
-          if (argument !== undefined) queue(argument, suffix, true);
+          if (argument !== undefined)
+            queue(argument, suffix, true, capturedSelections);
           const bySuffix =
             queuedInitializers.get(selected) ??
             new Map<string | undefined, QueuedInitializers>();
           queuedInitializers.set(selected, bySuffix);
-          const suffixKey = JSON.stringify(suffix);
+          let suffixKey = JSON.stringify(suffix);
           let queued = bySuffix.get(suffixKey);
+          if (
+            queued?.capturedSelections !== undefined &&
+            !sameCaptures(queued.capturedSelections, capturedSelections)
+          ) {
+            suffixKey = JSON.stringify(["factory-read", suffix]);
+            capturedSelections = undefined;
+            queued = bySuffix.get(suffixKey);
+          }
           if (queued === undefined) {
             const stable = possibleWrites
               ? undefined
@@ -554,22 +628,49 @@ export const createAmbientPathResolver = (
                 escapedContents ? "escape" : "identity",
               );
               if (path === null) continue;
+              const projected =
+                suffix === undefined ||
+                semanticReferenceIterationUnknown(initializer, state)
+                  ? undefined
+                  : path.map((key) =>
+                      key === null || typeof key === "object"
+                        ? null
+                        : String(key),
+                    );
+              const captureDepth =
+                "copyProjectionOffset" in initializer &&
+                typeof initializer.copyProjectionOffset === "number"
+                  ? initializer.copyProjectionOffset + 1
+                  : initializer.projection.length;
+              const retainedCaptures =
+                projected === undefined || suffix === undefined
+                  ? undefined
+                  : semanticShiftCapturedSelections(
+                      capturedSelections,
+                      projected.length - suffix.length,
+                    );
               const item: Pending = {
                 node: initializer.node,
                 readsAtSelf: true,
-                suffix:
-                  suffix === undefined ||
-                  semanticReferenceIterationUnknown(initializer, state)
-                    ? undefined
-                    : path.map((key) =>
-                        key === null || typeof key === "object"
-                          ? null
-                          : String(key),
-                      ),
+                suffix: projected,
+                capturedSelections:
+                  observes === "array-receiver" &&
+                  projected !== undefined &&
+                  captureDepth > 0
+                    ? semanticNormalizeCapturedSelections(
+                        [
+                          { at: initializer.node, depth: captureDepth },
+                          ...(retainedCaptures?.filter(
+                            ({ depth }) => depth > captureDepth,
+                          ) ?? []),
+                        ],
+                        projected.length,
+                      )
+                    : retainedCaptures,
               };
               if (admitted(item.suffix)) items.push(item);
             }
-            queued = { items, remaining: items.length };
+            queued = { items, capturedSelections, remaining: items.length };
             bySuffix.set(suffixKey, queued);
           }
           // Taken items still count as queued for this read: requeued, they
@@ -818,9 +919,12 @@ export function* indexJavaScriptAmbientWritesSteps(
     browserReceiver: boolean;
     projection?: AmbientProjection;
   }[] = [];
-  const prototypeInspections: ((typeof escapes)[number] & {
-    readonly owner: string;
-  })[] = [];
+  const prototypeInspections: {
+    readonly node: t.CallExpression | t.OptionalCallExpression;
+    readonly argument: t.Node;
+    readonly target: t.Node;
+    readonly siblings: readonly t.Node[];
+  }[] = [];
   // Object/Reflect static calls, settled once every ambient write is known.
   const staticReceivers: {
     node: t.Node;
@@ -916,22 +1020,28 @@ export function* indexJavaScriptAmbientWritesSteps(
       const retainEscape = (target: t.Node, browserReceiver = false) => {
         escapes.push({ target, node, browserReceiver });
       };
-      const prototypeInspection = intrinsicPrototypeRead(invocation);
-      for (const [index, argument] of (t.isTaggedTemplateExpression(node)
+      const read = intrinsicPrototypeRead(invocation);
+      const arguments_ = t.isTaggedTemplateExpression(node)
         ? node.quasi.expressions
-        : node.arguments
-      ).entries())
+        : node.arguments;
+      const packed =
+        read === undefined
+          ? undefined
+          : javaScriptPackedArgumentOrigin(
+              read.target,
+              arguments_,
+              state.parentsByNode,
+            );
+      for (const [index, argument] of arguments_.entries())
         if (
           t.isNode(argument) &&
           !semanticArgumentStaysInSource(node, index, state)
         ) {
-          if (argument === prototypeInspection?.target)
-            prototypeInspections.push({
-              target: argument,
-              node,
-              browserReceiver: false,
-              owner: prototypeInspection.owner,
-            });
+          if (
+            argument === packed?.argument &&
+            (t.isCallExpression(node) || t.isOptionalCallExpression(node))
+          )
+            prototypeInspections.push({ ...packed, node });
           else
             retainEscape(
               t.isSpreadElement(argument) ? argument.argument : argument,
@@ -1118,22 +1228,36 @@ export function* indexJavaScriptAmbientWritesSteps(
     if (ambientPathMayObserveAt(state, node, ["global", ...method], "contents"))
       retainEscapeEffect({ node, target, browserReceiver: false });
     else state.retainedGlobalCallReceivers.add(target);
-  // A native prototype read does not expose the iterator to caller code.
-  // Keep the ordinary ambient alternatives and account for an opaque or
-  // source-visible replacement once the other effects have been indexed.
-  for (const effect of prototypeInspections) {
-    const { node, owner } = effect;
-    const nativeInspection =
-      !ambientPathMayObserveAt(
-        state,
+  // Validate the whole normalized dispatch, including any call/apply
+  // helpers, at the sites that captured those intrinsic functions.
+  for (const { node, argument, target, siblings } of prototypeInspections) {
+    const read = intrinsicPrototypeRead(
+      interop.intrinsicInvocation(
         node,
-        ["global", owner, "getPrototypeOf"],
-        "contents",
-      ) && !opaqueCodeMayChangeGlobalRead(node, state, owner);
-    retainEscapeEffect(
-      effect,
-      nativeInspection ? "prototype-inspection" : undefined,
+        undefined,
+        (capture, path) =>
+          ambientPathMayObserveAt(
+            state,
+            capture,
+            ["global", ...path.slice(1)],
+            "contents",
+          ) || opaqueCodeMayChangeGlobalRead(capture, state, path[1] ?? ""),
+      ),
     );
+    if (read?.target === target) {
+      for (const sibling of siblings)
+        retainEscapeEffect({ node, target: sibling, browserReceiver: false });
+      retainEscapeEffect(
+        { node, target, browserReceiver: false },
+        "prototype-inspection",
+      );
+    } else {
+      retainEscapeEffect({
+        node,
+        target: t.isSpreadElement(argument) ? argument.argument : argument,
+        browserReceiver: false,
+      });
+    }
   }
   function retainEscapeEffect(
     { node, target, browserReceiver, projection }: (typeof escapes)[number],

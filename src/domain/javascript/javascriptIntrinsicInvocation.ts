@@ -41,6 +41,35 @@ export const expandJavaScriptInvocationArguments = (
   return expanded;
 };
 
+/** Recover the physical packing around an already normalized argument. */
+export const javaScriptPackedArgumentOrigin = (
+  target: t.Node,
+  arguments_: readonly (t.Node | null | undefined)[],
+  parents: WeakMap<t.Node, t.Node>,
+) => {
+  const argumentsSet = new Set(arguments_);
+  const siblings: t.Node[] = [];
+  let argument = target;
+  while (!argumentsSet.has(argument)) {
+    const parent = parents.get(argument);
+    if (parent === undefined) return undefined;
+    if (t.isArrayExpression(parent)) {
+      for (const element of parent.elements)
+        if (element !== null && element !== argument)
+          siblings.push(
+            t.isSpreadElement(element) ? element.argument : element,
+          );
+    } else if (
+      !t.isSpreadElement(parent) &&
+      unwrapJavaScriptExpression(parent).node !==
+        unwrapJavaScriptExpression(argument).node
+    )
+      return undefined;
+    argument = parent;
+  }
+  return { argument, target, siblings };
+};
+
 const arrayArguments = (
   node: t.Node | undefined,
   nativeArrayIteration: JavaScriptArrayIterationProof,

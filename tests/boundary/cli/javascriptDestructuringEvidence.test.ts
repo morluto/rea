@@ -26,6 +26,11 @@ cliTest(
     const { a: [plain] } = nested;
     const { a: [fallback] = [] } = nested;
     const { b: scalar = 0 } = nested;
+    const previous = { items: new Map() };
+    const captured = previous.items;
+    previous.items = [];
+    Object.getPrototypeOf(captured.values()).next = () => ({ done: true });
+    Reflect.apply(Reflect.getPrototypeOf, null, [[].values()]);
     const before = ["first"];
     const [ordinary] = before;
     const box = { items: [] };
@@ -73,8 +78,15 @@ cliTest(
         )?.properties.property_path,
       ).toEqual(path);
     }
+    const directRead = graph.nodes.find(
+      ({ kind, label }) => kind === "expression" && label === "read:/a",
+    );
     expect(
-      graph.relations.find(({ relation }) => relation === "reads-property"),
+      graph.relations.find(
+        ({ relation, target_node_id }) =>
+          relation === "reads-property" &&
+          target_node_id === directRead?.node_id,
+      ),
     ).toMatchObject({ resolution: "resolved" });
     const queryPath = join(root, "query.json");
     for (const name of ["declared", "ordinary", "selected"]) {

@@ -231,24 +231,26 @@ export const createSemanticModuleInterop = (
   const intrinsicReadChanged = (
     node: t.Node,
     path: readonly string[],
+    mayObserve?: (capture: t.Node, path: readonly string[]) => boolean,
   ): boolean => {
     const capture = capturedIntrinsic(node)?.capturedAt ?? node;
     const scope = opaqueMutationPath(capture).join(".");
     const method = path.at(-1);
-    const invocationMethod =
-      method === "bind" || method === "call" || method === "apply";
-    return writes.some(
-      (write) =>
-        (write.scope === scope || write.scope === "intrinsic") &&
-        write.offset < (capture.start ?? -1) &&
-        (write.coverage.covers(path) ||
-          (invocationMethod &&
-            write.coverage.covers([
-              "intrinsic",
-              "Function",
-              "prototype",
-              method,
-            ]))),
+    const inherited =
+      (method === "bind" || method === "call" || method === "apply") &&
+      !(method === "apply" && path.length === 3 && path[1] === "Reflect")
+        ? ["intrinsic", "Function", "prototype", method]
+        : undefined;
+    return (
+      mayObserve?.(capture, path) === true ||
+      (inherited !== undefined && mayObserve?.(capture, inherited) === true) ||
+      writes.some(
+        (write) =>
+          (write.scope === scope || write.scope === "intrinsic") &&
+          write.offset < (capture.start ?? -1) &&
+          (write.coverage.covers(path) ||
+            (inherited !== undefined && write.coverage.covers(inherited))),
+      )
     );
   };
 
@@ -725,12 +727,16 @@ export const createSemanticModuleInterop = (
         | t.NewExpression
         | t.TaggedTemplateExpression,
       callablePath = intrinsicPath,
+      mayObserve?: (capture: t.Node, path: readonly string[]) => boolean,
     ) =>
       resolveJavaScriptIntrinsicInvocation(
         node,
         callablePath,
         boundIntrinsic,
-        intrinsicReadChanged,
+        mayObserve === undefined
+          ? intrinsicReadChanged
+          : (reference, path) =>
+              intrinsicReadChanged(reference, path, mayObserve),
         nativeArrayIteration,
       ),
     boundIntrinsic,

@@ -261,6 +261,81 @@ it.each([
     "resolved",
   ],
   [
+    "packed direct prototype read",
+    "Reflect.getPrototypeOf(...[[].values()]);",
+    "resolved",
+  ],
+  [
+    "method apply prototype read",
+    "Reflect.getPrototypeOf.apply(null, [[].values()]);",
+    "resolved",
+  ],
+  [
+    "Reflect.apply prototype read",
+    "Reflect.apply(Reflect.getPrototypeOf, null, [[].values()]);",
+    "resolved",
+  ],
+  [
+    "packed prototype read with another iterator argument",
+    "Reflect.apply(Reflect.getPrototypeOf, null, [[].values(), [].values()]);",
+    "candidate",
+  ],
+  [
+    "opaque replacement of Reflect.apply",
+    "Reflect.apply = opaque; Reflect.apply(Reflect.getPrototypeOf, null, [[].values()]);",
+    "candidate",
+  ],
+  [
+    "opaque replacement of Function.prototype.apply",
+    "Function.prototype.apply = opaque; Reflect.getPrototypeOf.apply(null, [[].values()]);",
+    "candidate",
+  ],
+  [
+    "native inspector captured before replacement",
+    "const inspect = Reflect.getPrototypeOf; Reflect.getPrototypeOf = opaque; inspect([].values());",
+    "resolved",
+  ],
+  [
+    "inspector captured after replacement",
+    "Reflect.getPrototypeOf = opaque; const inspect = Reflect.getPrototypeOf; inspect([].values());",
+    "candidate",
+  ],
+  [
+    "property captured before an array store",
+    "const box = { items: new Map() }; const captured = box.items; box.items = []; Object.getPrototypeOf(captured.values()).next = replacement;",
+    "resolved",
+  ],
+  [
+    "destructured property captured before an array store",
+    "const box = { items: new Map() }; const { items: captured } = box; box.items = []; Object.getPrototypeOf(captured.values()).next = replacement;",
+    "resolved",
+  ],
+  [
+    "property captured after an array store",
+    "const box = { items: new Map() }; box.items = []; const captured = box.items; Object.getPrototypeOf(captured.values()).next = replacement;",
+    "candidate",
+  ],
+  [
+    "captured parent still observes a later child store",
+    "const box = { parent: { items: new Map() } }; const captured = box.parent; box.parent.items = []; Object.getPrototypeOf(captured.items.values()).next = replacement;",
+    "candidate",
+  ],
+  [
+    "separately captured parent and child before a later store",
+    "const box = { parent: { items: new Map() } }; const parent = box.parent; const captured = parent.items; box.parent.items = []; Object.getPrototypeOf(captured.values()).next = replacement;",
+    "resolved",
+  ],
+  [
+    "Reflect.apply is distinct from Function.prototype.apply",
+    "Function.prototype.apply = opaque; Reflect.apply(Reflect.getPrototypeOf, null, [[].values()]);",
+    "resolved",
+  ],
+  [
+    "projected argument captured before an array store",
+    "const box = { items: new Map() }; ((captured) => { Object.getPrototypeOf(captured.values()).next = replacement; })(box.items); box.items = [];",
+    "resolved",
+  ],
+  [
     "prototype escape",
     "consume(Object.getPrototypeOf([].entries()));",
     "candidate",
