@@ -1,6 +1,13 @@
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { expect } from "vitest";
+import { afterAll, beforeAll, beforeEach, expect } from "vitest";
 import { Scalar, stringify } from "yaml";
 
 import {
@@ -8,8 +15,29 @@ import {
   parseClientConfiguration,
   clientRegistrationEntry,
 } from "../../../src/application/ClientConfigurationDocument.js";
-import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import {
+  createTestWorkspace,
+  removeTestWorkspace,
+} from "../../support/workspace/workspaceFixture.js";
+
+let home = "";
+
+beforeAll(async () => {
+  home = (await createTestWorkspace("rea-registration-runtime-")).root;
+});
+
+beforeEach(async () => {
+  await Promise.all(
+    (await readdir(home)).map((entry) =>
+      rm(join(home, entry), { recursive: true, force: true }),
+    ),
+  );
+});
+
+afterAll(async () => {
+  if (home !== "") await removeTestWorkspace(home);
+});
 
 // Registration configuration tests must not discover installed providers or
 // plan provider-environment edits based on the machine running the suite.
@@ -22,11 +50,13 @@ const missingHopperAndGhidraEnvironment = (home: string) => ({
 cliTest(
   "retains selected MCP settings and unavailable provider paths in a new registration",
   async ({ cli }) => {
-    const home = await createTestTempDirectory("rea-selected-registration-");
     const config = join(home, ".qwen/settings.json");
     const selected = {
       HOPPER_LAUNCHER_PATH: join(home, "missing-hopper"),
+      HOPPER_LOADER_ARGS_JSON: '["", "--loader", "Mach-O"]',
       GHIDRA_INSTALL_DIR: join(home, "offline-ghidra"),
+      GHIDRA_HEADLESS_MAXMEM: "512M",
+      GHIDRA_MAXMEM: "3G",
       JAVA_HOME: join(home, "offline-jdk"),
       REA_IDA_MCP_CONFIG: join(home, "offline-ida.json"),
       REA_JADX_MCP_JAR: join(home, "offline-jadx.jar"),
@@ -66,11 +96,17 @@ cliTest(
           }),
       REA_SWIFTC_COMPILE_TIMEOUT_MS: "180000",
       REA_LOG_LEVEL: "warn",
+      REA_ASAR_MAX_LISTING_BYTES: "134217728",
+      REA_GHIDRA_VALUE_FLOW_MAX_OPERATIONS: "6000",
+      REA_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION: "128",
+      REA_GHIDRA_VALUE_FLOW_MAX_EDGES: "24000",
+      REA_GHIDRA_DECOMPILE_MAX_PAYLOAD_MIB: "128",
       REA_REFERENCE_SECRET_PATTERNS_JSON: '["explicit-private-value"]',
       REA_ANALYSIS_PROVIDER: "ghidra",
       REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
       REA_MCP_OUTPUT_SCHEMA_PROFILE: "off",
       REA_MCP_MAX_RESPONSE_BYTES: "20971520",
+      REA_MCP_TOOL_FAMILIES: "session",
     };
     const environment = {
       HOME: home,
@@ -104,8 +140,17 @@ cliTest(
     });
     expect(configured).not.toContain("do not copy");
     // A later setup must update a selection rather than retaining the first value.
+    selected.REA_MCP_TOOL_FAMILIES = "session,application";
+    environment.REA_MCP_TOOL_FAMILIES = selected.REA_MCP_TOOL_FAMILIES;
     selected.REA_OBJDUMP_COMMAND = join(home, "replacement-objdump");
     environment.REA_OBJDUMP_COMMAND = selected.REA_OBJDUMP_COMMAND;
+    selected.HOPPER_LOADER_ARGS_JSON = "[]";
+    environment.HOPPER_LOADER_ARGS_JSON = selected.HOPPER_LOADER_ARGS_JSON;
+    // Empty headless heap explicitly selects the lower-priority caller value.
+    selected.GHIDRA_HEADLESS_MAXMEM = "";
+    selected.GHIDRA_MAXMEM = "768M";
+    environment.GHIDRA_HEADLESS_MAXMEM = selected.GHIDRA_HEADLESS_MAXMEM;
+    environment.GHIDRA_MAXMEM = selected.GHIDRA_MAXMEM;
     const updated = await run();
     expect(updated.exitCode, updated.stdout).toBe(0);
     const updatedConfiguration = await readFile(config, "utf8");
@@ -123,10 +168,76 @@ cliTest(
   },
 );
 
+cliTest(
+  "persists, updates and validates tool-family scopes without losing client configuration",
+  async ({ cli }) => {
+    const config = join(home, ".qwen/settings.json");
+    const foreign = { command: "foreign-tool", args: ["keep"] };
+    const original = JSON.stringify({ mcpServers: { foreign } });
+    await mkdir(dirname(config), { recursive: true });
+    await writeFile(config, original);
+    const environment = {
+      HOME: home,
+      USERPROFILE: home,
+      QWEN_HOME: join(home, ".qwen"),
+      ...missingHopperAndGhidraEnvironment(home),
+      REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
+      REA_MCP_OUTPUT_SCHEMA_PROFILE: "compact",
+    };
+    const run = (families: string) =>
+      cli.run({
+        arguments: [
+          "setup",
+          "--client",
+          "qwen_code",
+          "--tool-families",
+          families,
+          "--skill=false",
+          "--yes",
+          "--json",
+        ],
+        cwd: home,
+        environment,
+      });
+    const first = await run("session");
+    expect(first.exitCode, first.stdout).toBe(0);
+    expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(original);
+    const scope = "native,application,session";
+    const updated = await run(scope);
+    expect(updated.exitCode, updated.stdout).toBe(0);
+    const selected = await readFile(config, "utf8");
+    expect(JSON.parse(selected)).toMatchObject({
+      mcpServers: {
+        foreign,
+        rea: {
+          env: {
+            REA_MCP_TOOL_FAMILIES: scope,
+            REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
+            REA_MCP_OUTPUT_SCHEMA_PROFILE: "compact",
+          },
+        },
+      },
+    });
+    const backup = await readFile(`${config}.rea.backup`, "utf8");
+    const repeated = await run(scope);
+    expect(repeated.exitCode, repeated.stdout).toBe(0);
+    expect(repeated.json).toMatchObject({
+      plannedActions: [],
+      appliedActions: [],
+    });
+    const rejected = await run("session,typo");
+    expect(rejected.exitCode).not.toBe(0);
+    expect(rejected.stdout + rejected.stderr).toContain(
+      "REA_MCP_TOOL_FAMILIES",
+    );
+    expect(await readFile(config, "utf8")).toBe(selected);
+    expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(backup);
+  },
+);
+
 cliTest.skipIf(process.platform !== "win32")(
   "rejects lowercase Windows provider settings in doctor and setup without writing",
   async ({ cli }) => {
-    const home = await createTestTempDirectory("rea-registration-case-");
     const config = join(home, ".cursor/mcp.json");
     await mkdir(dirname(config), { recursive: true });
     const original = JSON.stringify({
@@ -243,7 +354,6 @@ cliTest.for([
 ] as const)(
   "refuses a NUL environment $position in $client before setup writes",
   async (scenario, { cli }) => {
-    const home = await createTestTempDirectory("rea-registration-nul-");
     const config = join(home, scenario.path);
     await mkdir(dirname(config), { recursive: true });
     const environment = {
@@ -259,6 +369,9 @@ cliTest.for([
         [process.execPath, resolve("scripts/rea.mjs"), "mcp"],
         env,
       );
+      // A current dsh registration records its tool call deadline; without
+      // it doctor reports the registration stale rather than healthy.
+      if (scenario.format === "dsh") entry.toolCallTimeoutMs = 3_600_000;
       if (scenario.position === "expression name")
         entry.env = Object.fromEntries(
           Object.entries(env).map(([key, value]) => {
@@ -362,7 +475,6 @@ for (const scenario of scenarios)
   cliTest(
     `setup and doctor reject ${scenario.client} overrides rejected by MCP startup`,
     async ({ cli }) => {
-      const home = await createTestTempDirectory("rea-registration-runtime-");
       const config = join(home, scenario.path);
       await mkdir(dirname(config), { recursive: true });
       const environment = {
@@ -374,8 +486,8 @@ for (const scenario of scenarios)
       };
       const registration = (env: Readonly<Record<string, string>>) => {
         const server = {
-          command: "stale-launcher",
-          args: ["mcp"],
+          command: "npx",
+          args: ["-y", "rea-agents@6.6.0", "mcp"],
           env: {
             CALLER_SETTING: "keep exactly",
             ["__proto__"]: "retain caller key",
@@ -484,7 +596,6 @@ for (const scenario of scenarios)
 cliTest(
   "OpenCode CLI validates dependent settings after merging JSON and JSONC",
   async ({ cli }) => {
-    const home = await createTestTempDirectory("rea-layered-runtime-cli-");
     const directory = join(home, ".config/opencode");
     await mkdir(directory, { recursive: true });
     const lower = join(directory, "opencode.json");
@@ -575,9 +686,6 @@ cliTest(
 cliTest(
   "public setup propagates selected provider deadlines and input profile to Codex and Kimi",
   async ({ cli }) => {
-    const home = await createTestTempDirectory(
-      "rea-selected-registration-env-",
-    );
     const codexHome = join(home, "codex");
     const kimiHome = join(home, "kimi");
     await Promise.all(
@@ -595,7 +703,7 @@ cliTest(
       REA_GHIDRA_STARTUP_TIMEOUT_MS: "2700001",
       REA_HOPPER_STARTUP_TIMEOUT_MS: "2800002",
       REA_JEB_MCP_TIMEOUT_MS: "2900003",
-      REA_MCP_INPUT_SCHEMA_PROFILE: "full",
+      REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
       REA_CAPTURE_DECODER_OLD_GENERATION_MIB: "256",
       REA_REGEX_MATCHING_DEADLINE_MS: "10000",
       REA_REGEX_WORKER_HEAP_REQUEST_MIB: "256",
@@ -656,7 +764,7 @@ cliTest(
         REA_GHIDRA_STARTUP_TIMEOUT_MS: "2700001",
         REA_HOPPER_STARTUP_TIMEOUT_MS: "2800002",
         REA_JEB_MCP_TIMEOUT_MS: "2900003",
-        REA_MCP_INPUT_SCHEMA_PROFILE: "full",
+        REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
         REA_CAPTURE_DECODER_OLD_GENERATION_MIB: "256",
         REA_REGEX_MATCHING_DEADLINE_MS: "10000",
         REA_REGEX_WORKER_HEAP_REQUEST_MIB: "256",
@@ -680,7 +788,6 @@ cliTest(
       },
     });
   },
-  120_000,
 );
 
 for (const [client, provider] of [
@@ -691,9 +798,6 @@ for (const [client, provider] of [
   cliTest(
     `public ${client} setup and doctor use the effective IDA registration request budget with ${provider} selection`,
     async ({ cli }) => {
-      const home = await createTestTempDirectory(
-        "rea-ida-registration-budget-",
-      );
       const clientHome = join(home, client);
       await mkdir(clientHome, { recursive: true });
       const idaConfig = join(home, "ida.json");
@@ -702,6 +806,7 @@ for (const [client, provider] of [
           idaConfig,
           JSON.stringify({
             url: "http://127.0.0.1:12345/mcp",
+            protocol: "native",
             headers: { Authorization: "Bearer fixture-credential" },
             timeoutMs,
           }),
@@ -816,7 +921,6 @@ for (const [client, provider] of [
         });
       }
     },
-    120_000,
   );
 
 for (const invalidSetting of [
@@ -827,9 +931,6 @@ for (const invalidSetting of [
   cliTest(
     `setup rejects malformed selected ${invalidSetting.setting} before writing`,
     async ({ cli }) => {
-      const home = await createTestTempDirectory(
-        "rea-invalid-selected-registration-env-",
-      );
       const kimiHome = join(home, "kimi");
       await mkdir(kimiHome, { recursive: true });
       const config = join(kimiHome, "mcp.json");
@@ -868,5 +969,65 @@ for (const invalidSetting of [
         code: "ENOENT",
       });
     },
-    120_000,
   );
+
+cliTest(
+  "public VS Code setup registers in VSCODE_APPDATA without changing the default configuration",
+  async ({ cli }) => {
+    const selectedData = join(home, "selected data");
+    const config = join(selectedData, "Code", "User", "mcp.json");
+    const defaultData =
+      process.platform === "win32"
+        ? join(home, "AppData", "Roaming")
+        : process.platform === "darwin"
+          ? join(home, "Library", "Application Support")
+          : join(home, ".config");
+    const defaultConfig = join(defaultData, "Code", "User", "mcp.json");
+    const original = JSON.stringify({
+      servers: { foreign: { command: "keep" } },
+    });
+    const defaultOriginal = JSON.stringify({
+      servers: { defaultServer: { command: "untouched" } },
+    });
+    await mkdir(dirname(config), { recursive: true });
+    await mkdir(dirname(defaultConfig), { recursive: true });
+    await writeFile(config, original);
+    await writeFile(defaultConfig, defaultOriginal);
+    const setup = await cli.run({
+      arguments: [
+        "setup",
+        "--client",
+        "vscode",
+        "--skill=false",
+        "--yes",
+        "--json",
+      ],
+      cwd: home,
+      environment: {
+        HOME: home,
+        USERPROFILE: home,
+        APPDATA: join(home, "AppData", "Roaming"),
+        XDG_CONFIG_HOME: join(home, ".config"),
+        VSCODE_APPDATA: selectedData,
+        VSCODE_PORTABLE: "",
+        ...missingHopperAndGhidraEnvironment(home),
+      },
+    });
+    expect(setup.exitCode, setup.stdout + setup.stderr).toBe(0);
+    expect(setup.json).toMatchObject({ status: "ready" });
+    expect(JSON.parse(await readFile(config, "utf8"))).toMatchObject({
+      servers: {
+        foreign: { command: "keep" },
+        rea: {
+          command: process.execPath,
+          args: [resolve("scripts/rea.mjs"), "mcp"],
+        },
+      },
+    });
+    expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(original);
+    expect(await readFile(defaultConfig, "utf8")).toBe(defaultOriginal);
+    await expect(access(`${defaultConfig}.rea.backup`)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  },
+);

@@ -1,20 +1,26 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { readFile, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { expect, it } from "vitest";
-import {
-  evmInterfaceFailure,
-  evmReplyBudgetFailure,
-} from "./EvmoleFailures.js";
+import { evmFailureDialect, evmReplyBudgetFailure } from "./EvmoleFailures.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
+
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   DEFAULT_EVM_TIMEOUT_MS,
-  MAX_EVM_TIMEOUT_MS,
+  selectedEvmProducerLimits,
 } from "../domain/evm/evmInterface.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
+
+/** Classify a raw failure the way the provider does, through EVMole's dialect. */
+const evmInterfaceFailure = (
+  cause: unknown,
+  context: Parameters<typeof evmFailureDialect>[0],
+) => classifyProviderFailure(cause, evmFailureDialect(context));
 
 const snapshot: ProviderProcessSnapshot = {
   stdout: { text: "selected output", bytes: 15, observedBytes: 15 },
@@ -42,7 +48,9 @@ it("projects a complete EVM reply allowance refusal as a deterministic resource 
       reported_limits: { maximum_reply_bytes: 16777216 },
       captured_output: capturedOutput,
     },
-    remediation: { action: expect.stringContaining("fixed report allowance") },
+    remediation: {
+      action: expect.stringContaining("producer_limits.output_bytes"),
+    },
   });
   expect(projected.remediation.action).not.toContain("doctor");
 });
@@ -67,12 +75,19 @@ it.each([
         cancellation: { reason },
       },
     );
-    const result = evmInterfaceFailure(source, "worker", "/selected.hex");
+    const result = evmInterfaceFailure(source, {
+      phase: "worker",
+      path: "/selected.hex",
+    });
     expect(result).toBeInstanceOf(AnalysisCancelledError);
     expect(result.cause).toBe(reason);
     expect(result.capturedOutput).toEqual({
       stdout: "selected output",
       stderr: "warning",
+      stdout_bytes: 15,
+      stderr_bytes: 7,
+      exit_code: 0,
+      signal: null,
       truncated: false,
     });
     expect(result.cleanupIncomplete).toBe(false);
@@ -87,15 +102,11 @@ it("names timeout_ms, the omitted default, and the caps it does not raise", () =
     null,
   );
   const projected = projectAnalysisError(
-    evmInterfaceFailure(
-      source,
-      "worker",
-      "/selected.hex",
-      undefined,
-      undefined,
-      undefined,
-      45_000,
-    ),
+    evmInterfaceFailure(source, {
+      phase: "worker",
+      path: "/selected.hex",
+      timeoutMs: 45_000,
+    }),
   );
   expect(projected).toMatchObject({
     code: "provider_timeout",
@@ -103,13 +114,21 @@ it("names timeout_ms, the omitted default, and the caps it does not raise", () =
   });
   expect(projected.message).toContain("timeout_ms");
   expect(projected.message).toContain(String(DEFAULT_EVM_TIMEOUT_MS));
-  expect(projected.remediation.action).toContain("--timeout-ms");
-  expect(projected.remediation.action).toContain(String(MAX_EVM_TIMEOUT_MS));
+  expect(projected.remediation.action).not.toContain("--");
+  expect(projected.details?.limit).toMatchObject({
+    control_kind: "parameter",
+    parameter: "timeout_ms",
+    effective_value: 45_000,
+    default_value: DEFAULT_EVM_TIMEOUT_MS,
+  });
+  expect(projected.remediation.action).toContain(
+    String(MAX_NODE_TIMER_DELAY_MS),
+  );
   expect(projected.remediation.action).toContain("does not raise");
   expect(projected.remediation.action).toContain("no server restart");
 });
 
-it("says a CPU signal has no runtime override and timeout_ms does not raise it", () => {
+it("names the selected CPU budget separately from tighter inherited limits", () => {
   const source = new OwnedCommandFailure(
     "process",
     "signaled",
@@ -121,30 +140,35 @@ it("says a CPU signal has no runtime override and timeout_ms does not raise it",
     null,
   );
   const projected = projectAnalysisError(
-    evmInterfaceFailure(source, "worker", "/selected.hex", {
-      addressSpaceBytes: 1024,
-      cpuSeconds: 30,
-      fileSizeBytes: 1024,
+    evmInterfaceFailure(source, {
+      phase: "worker",
+      path: "/selected.hex",
+      workerLimits: {
+        address_space_bytes: 1024,
+        cpu_seconds: 30,
+        file_bytes: 1024,
+      },
     }),
   );
   expect(projected).toMatchObject({
     code: "resource_constraint",
     details: { resource: "cpu" },
   });
-  expect(projected.remediation.action).toContain("no runtime override");
-  expect(projected.remediation.action).toContain(
-    "timeout_ms does not raise it",
-  );
+  expect(projected.remediation.action).toContain("producer_limits.cpu_seconds");
+  expect(projected.remediation.action).toContain("inherited");
 });
 
-it("reports the fixed carrier input allowance as a resource constraint", () => {
+it("reports the selected carrier input allowance as a resource constraint", () => {
   const source = new ArtifactReaderFailure(
     "limit",
     "Selected artifact exceeds 4194304 bytes: /selected.bin",
     { boundary: "file-size" },
   );
   const projected = projectAnalysisError(
-    evmInterfaceFailure(source, "artifact-read", "/selected.bin"),
+    evmInterfaceFailure(source, {
+      phase: "artifact-read",
+      path: "/selected.bin",
+    }),
   );
   expect(projected).toMatchObject({
     code: "resource_constraint",
@@ -156,16 +180,34 @@ it("reports the fixed carrier input allowance as a resource constraint", () => {
       reported_limits: { maximum_input_bytes: 4194304 },
     },
   });
-  expect(projected.message).toContain("4194304");
-  expect(projected.message).toContain("no runtime override");
-  expect(projected.message).toContain("timeout_ms does not raise it");
+  expect(projected.remediation.action).toContain("producer_limits.input_bytes");
   expect(projected.remediation.action).toContain("4194304");
-  expect(projected.remediation.action).toContain("no runtime override");
-  expect(projected.remediation.action).toContain("Do not truncate");
-  expect(projected.remediation.action).toContain(
-    "repeating the unchanged request fails the same way",
-  );
   expect(projected.recovery).toBeUndefined();
+});
+
+it("names a selected carrier that is a directory as invalid input", () => {
+  const source = Object.assign(new Error("EISDIR: illegal operation"), {
+    code: "EISDIR",
+  });
+  const projected = projectAnalysisError(
+    evmInterfaceFailure(source, {
+      phase: "artifact-read",
+      path: "/selected",
+    }),
+  );
+  expect(projected).toMatchObject({
+    code: "invalid_request",
+    details: {
+      issues: [
+        {
+          path: ["path"],
+          reason: "invalid_value",
+          message:
+            "Selected bytecode carrier could not be read (EISDIR): /selected.",
+        },
+      ],
+    },
+  });
 });
 
 it.each([
@@ -176,11 +218,10 @@ it.each([
   { reason: "format" as const, message: "Unsupported carrier format." },
 ])("keeps reader $reason refusals as invalid input", ({ reason, message }) => {
   const projected = projectAnalysisError(
-    evmInterfaceFailure(
-      new ArtifactReaderFailure(reason, message),
-      "artifact-read",
-      "/selected.bin",
-    ),
+    evmInterfaceFailure(new ArtifactReaderFailure(reason, message), {
+      phase: "artifact-read",
+      path: "/selected.bin",
+    }),
   );
   expect(projected).toMatchObject({
     code: "invalid_request",
@@ -210,7 +251,10 @@ it.each([
     },
     ["exact-owner"],
   );
-  const result = evmInterfaceFailure(source, "worker", "/selected.hex");
+  const result = evmInterfaceFailure(source, {
+    phase: "worker",
+    path: "/selected.hex",
+  });
   expect(result._tag).toBe(tag);
   if (cleanup !== null) {
     expect(result.cleanupIncomplete).toBe(true);
@@ -234,7 +278,10 @@ it.skipIf(process.platform === "win32")(
       } catch (cause) {
         source = cause;
       }
-      const failure = evmInterfaceFailure(source, "artifact-read", path);
+      const failure = evmInterfaceFailure(source, {
+        phase: "artifact-read",
+        path: path,
+      });
       expect(failure.cause).toBe(source);
       expect(projectAnalysisError(failure)).toMatchObject({
         code: "invalid_request",
@@ -248,9 +295,97 @@ it.skipIf(process.platform === "win32")(
           ],
         },
       });
-      expect(evmInterfaceFailure(source, "worker", path)._tag).toBe(
-        "ProviderAdapterError",
-      );
+      expect(
+        evmInterfaceFailure(source, { phase: "worker", path: path })._tag,
+      ).toBe("ProviderAdapterError");
     }
   },
 );
+
+it("names producer_limits.diagnostic_bytes when worker diagnostics exceed it", () => {
+  const projected = projectAnalysisError(
+    evmInterfaceFailure(
+      new OwnedCommandFailure("output-limit", "Output exceeded.", snapshot),
+      {
+        phase: "worker",
+        path: "/selected.hex",
+        producerLimits: {
+          ...selectedEvmProducerLimits(undefined),
+          diagnostic_bytes: 4096,
+        },
+      },
+    ),
+  );
+  expect(projected).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: {
+      reported_limits: {
+        maximum_diagnostic_bytes: 4096,
+        parameter: "producer_limits.diagnostic_bytes",
+      },
+    },
+  });
+  expect(projected.remediation.action).toContain(
+    "producer_limits.diagnostic_bytes",
+  );
+});
+
+it("reports the worker's V8 heap exhaustion against its fixed heap", () => {
+  const projected = projectAnalysisError(
+    evmInterfaceFailure(
+      new OwnedCommandFailure("process", "exited", {
+        ...snapshot,
+        exitCode: 134,
+        runtimeExhaustion: {
+          runtime: "v8",
+          area: "heap",
+          stream: "stderr",
+          line: "FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory",
+          lineComplete: true,
+          truncated: false,
+          invalidUtf8: false,
+        },
+      }),
+      { phase: "worker", path: "/selected.hex" },
+    ),
+  );
+  expect(projected).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: {
+      resource: "memory",
+      reported_limits: { worker_heap_mib: 256 },
+    },
+  });
+});
+
+it("does not report a private storage errno as a limiter launch refusal", async () => {
+  const denied = await readFile("/nonexistent-evm-root/request.json").then(
+    () => undefined,
+    (cause: unknown) => cause,
+  );
+  expect(
+    evmInterfaceFailure(denied, { phase: "worker", path: "/selected.hex" }),
+  ).toMatchObject({
+    _tag: "ProviderAdapterError",
+    diagnostics: { phase: "worker" },
+  });
+});
+
+it("keeps the recorded exit status when collecting worker output failed", () => {
+  const failure = evmInterfaceFailure(
+    new OwnedCommandFailure(
+      "process",
+      "stdout stream failed",
+      { ...snapshot, exitCode: 3 },
+      null,
+      { collectionFailure: true },
+    ),
+    { phase: "worker", path: "/selected.hex" },
+  );
+  expect(failure).toMatchObject({
+    _tag: "ProviderAdapterError",
+    diagnostics: { failure_kind: "protocol", exit_code: 3, signal: null },
+  });
+});

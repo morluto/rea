@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/index.js";
 
 import {
   hopperStartupExitCode,
@@ -8,7 +8,7 @@ import {
   type HopperStartupFailureDiagnostic,
   type HopperStartupFailureCode,
   type HopperStartupReadyDiagnostic,
-} from "../domain/hopperStartupFailure.js";
+} from "./HopperStartupFailure.js";
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import {
   ProviderProcessSupervisor,
@@ -16,6 +16,7 @@ import {
   type ProviderProcessLaunch,
 } from "../process/ProviderProcess.js";
 import { parseLinuxPrivateDisplayDiagnostic } from "./LinuxPrivateDisplayDiagnostic.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const PYTHON_PATH = "/usr/bin/python3";
 const UNSHARE_PATH = "/usr/bin/unshare";
@@ -155,24 +156,22 @@ export const runLinuxPrivateDisplayProbe: LinuxPrivateDisplayProbeRunner =
     let cleanup: LinuxPrivateDisplayProbeProcessResult["cleanup"] = {
       status: "released",
     };
-    if (outcome !== "exit") {
-      const lease = new AnalysisCleanupLease(async () => {
-        const stopped = await supervisor.stop();
-        if (stopped.status === "incomplete") throw new Error(stopped.reason);
-        if (stopped.status === "not-owned")
-          throw new Error("Private-display probe ownership remains unresolved");
-        supervisor.dispose();
-      }, [`hopper-private-display-probe:${started.ownership.runId}`]);
-      try {
-        await lease.release();
-      } catch (cause: unknown) {
-        cleanup = {
-          status: "pending",
-          lease,
-          reason: cause instanceof Error ? cause.message : String(cause),
-        };
-      }
-    } else supervisor.dispose();
+    const lease = new AnalysisCleanupLease(async () => {
+      const stopped = await supervisor.stop();
+      if (stopped.status === "incomplete") throw new Error(stopped.reason);
+      if (stopped.status === "not-owned")
+        throw new Error("Private-display probe ownership remains unresolved");
+      supervisor.dispose();
+    }, [`hopper-private-display-probe:${started.ownership.runId}`]);
+    try {
+      await lease.release();
+    } catch (cause: unknown) {
+      cleanup = {
+        status: "pending",
+        lease,
+        reason: errorMessage(cause),
+      };
+    }
     const snapshot = supervisor.snapshot();
     return {
       outcome:
@@ -346,21 +345,9 @@ const waitForProbeOutputClose = async (
   signal: AbortSignal | undefined,
 ): Promise<"exit" | "timeout" | "cancelled"> => {
   if (signal?.aborted === true) return "cancelled";
-  let releaseAbort: (() => void) | undefined;
-  const aborted = new Promise<"cancelled">((resolve) => {
-    if (signal === undefined) return;
-    const listener = (): void => resolve("cancelled");
-    signal.addEventListener("abort", listener, { once: true });
-    releaseAbort = () => signal.removeEventListener("abort", listener);
-  });
-  try {
-    return await Promise.race([
-      supervisor
-        .waitForOutputClose(Math.max(1, timeoutMs))
-        .then((closed): "exit" | "timeout" => (closed ? "exit" : "timeout")),
-      aborted,
-    ]);
-  } finally {
-    releaseAbort?.();
-  }
+  const closed = await supervisor.waitForOutputClose(
+    Math.max(1, timeoutMs),
+    signal,
+  );
+  return closed ? "exit" : isAborted(signal) ? "cancelled" : "timeout";
 };

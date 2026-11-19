@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
+import { phaseGate } from "../support/lifecycleHarness.js";
 
 const fault = vi.hoisted(() => ({
   path: "",
@@ -13,9 +14,8 @@ const fault = vi.hoisted(() => ({
   abortAtStat: undefined as
     | { controller: AbortController; reason: unknown }
     | undefined,
-  pauseAtStat: undefined as
-    | { started: () => void; resume: Promise<void> }
-    | undefined,
+  /** Holds the next stat of the faulted file. */
+  pauseAtStat: undefined as (() => Promise<void>) | undefined,
 }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -33,10 +33,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
         abort?.controller.abort(abort.reason);
         const pause = fault.pauseAtStat;
         fault.pauseAtStat = undefined;
-        if (pause !== undefined) {
-          pause.started();
-          await pause.resume;
-        }
+        await pause?.();
         return stat(...statArgs);
       }) as typeof handle.stat;
       handle.close = async () => {
@@ -55,21 +52,14 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 import { ApkSignatureProvider } from "../../src/apkSignature/ApkSignatureProvider.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { createCli } from "../../src/cli.js";
-import { CLI_COMMANDS } from "../../src/cliCommandNames.js";
+import { cliCommandFor } from "../../src/contracts/cliCommandNames.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 
 let root = "";
 let path = "";
 const exitCode = process.exitCode;
-const deferred = () => {
-  let complete = () => {};
-  const promise = new Promise<void>((resolve) => {
-    complete = resolve;
-  });
-  return { promise, resolve: () => complete() };
-};
 beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), "rea-apk-lifecycle-"));
   path = join(root, "unsigned.apk");
@@ -92,38 +82,42 @@ afterAll(async () => {
 it("serializes reads across providers, preserves queued aborts and drains admitted work on close", async () => {
   const first = new ApkSignatureProvider();
   const second = new ApkSignatureProvider();
-  const started = deferred();
-  const resume = deferred();
+  const statRead = phaseGate();
   fault.path = path;
-  fault.pauseAtStat = {
-    started: () => started.resolve(),
-    resume: resume.promise,
-  };
+  fault.pauseAtStat = () => statRead.hold();
   const reading = first.inspect({ path });
-  await started.promise;
-  const queued = second.inspect({ path });
   const controller = new AbortController();
   const reason = new Error("cancel while queued");
-  const cancelled = second.inspect({ path }, { signal: controller.signal });
+  let queued: ReturnType<typeof second.inspect> | undefined;
+  let cancelled: ReturnType<typeof second.inspect> | undefined;
+  let closing: Promise<void> | undefined;
   let closed = false;
-  const closing = second.close().then(() => {
-    closed = true;
-  });
   try {
+    await statRead.reached(reading, "APK signature read");
+    queued = second.inspect({ path });
+    cancelled = second.inspect({ path }, { signal: controller.signal });
+    closing = second.close().then(() => {
+      closed = true;
+    });
     controller.abort(reason);
     expect(await cancelled).toMatchObject({
       ok: false,
       error: { _tag: "AnalysisCancelledError", cause: reason },
     });
     expect(closed).toBe(false);
-    resume.resolve();
+    statRead.release();
     expect((await reading).ok).toBe(true);
     expect((await queued).ok).toBe(true);
     await closing;
     expect(closed).toBe(true);
   } finally {
-    resume.resolve();
-    await Promise.all([reading, queued, cancelled, closing]);
+    statRead.release();
+    await Promise.allSettled([
+      reading,
+      ...(queued ? [queued] : []),
+      ...(cancelled ? [cancelled] : []),
+      ...(closing ? [closing] : []),
+    ]);
     await first.close();
     await second.close();
   }
@@ -252,7 +246,7 @@ it("projects a provider close that still fails through the public CLI", async ()
   fault.failClose = "always";
   let stdout = "";
   await createCli({}).serve(
-    [CLI_COMMANDS.inspectApkSignature, path, "--json"],
+    [cliCommandFor("inspect_apk_signature"), path, "--json"],
     {
       env: {},
       stdout: (text) => {

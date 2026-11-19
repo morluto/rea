@@ -1,3 +1,5 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
+import { SIMULATED_LINUX_X64 } from "../../fixtures/simulatedHost.js";
 import {
   chmod,
   mkdir,
@@ -7,6 +9,7 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
+import { createArtifactAnalysisResources } from "../../../src/providers/artifactResourceFailure.js";
 import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
 
@@ -30,10 +33,11 @@ import { PacketCaptureService } from "../../../src/application/captures/PacketCa
 import { SignalRecordingService } from "../../../src/application/signals/SignalRecordingService.js";
 import { TsharkCaptureProvider } from "../../../src/captures/TsharkCaptureProvider.js";
 import { SigrokRecordingProvider } from "../../../src/signals/SigrokRecordingProvider.js";
-import { readStableArtifact } from "../../../src/artifacts/readStableArtifact.js";
+import { readStableArtifact } from "../../../src/resources/readStableArtifact.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import type { LinuxResourceLimits } from "../../../src/process/LinuxResourceLimits.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
 
 // Real children and filesystem, with simulated Linux admission/limits. These
 // scripts do not establish native TShark, sigrok or prlimit behavior.
@@ -153,103 +157,114 @@ const selectedEngineLauncher = (kind: "firmware" | "wakaru"): string => {
   return `#!/bin/sh\nIFS= read -r role < "$0.role" || exit 19\nif [ -f "$0.retarget" ]; then\n  IFS= read -r target < "$0.retarget"\n  /bin/ln -sf "$target" "$0"\nfi\nif [ "$role" = limiter ]; then\n  while [ "$1" != -- ]; do shift; done\n  shift\n  exec "$@"\nfi\nexec ${invocation} "$@"\n`;
 };
 
-// Exercise shared CLI/MCP workflows with real children and filesystem. Only
-// Linux/x64 admission and /proc limits are simulated; the launcher restores the
-// actual host before entering real process supervision.
+// Own real wrapper processes and their workspaces. Linux/x64 admission and
+// /proc limits are simulated; supervision always runs on the actual host.
+const createSelectedEngineFixture = async (
+  kind: "firmware" | "wakaru",
+  afterLaunch?: () => void,
+) => {
+  const directory = await createTestTempDirectory("rea-selected-command-");
+  const bin = join(directory, "bin"),
+    libexec = join(directory, "libexec");
+  await mkdir(bin);
+  await mkdir(libexec);
+  const command = join(bin, "engine"),
+    limiter = join(bin, "prlimit");
+  const commandSource = join(libexec, "engine"),
+    limiterSource = join(libexec, "limiter");
+  const replacement = join(libexec, "replacement");
+  const script = selectedEngineLauncher(kind);
+  for (const path of [commandSource, limiterSource, replacement])
+    await writeFile(path, script, { mode: 0o755 });
+  await symlink(commandSource, command);
+  await symlink(limiterSource, limiter);
+  await writeFile(`${command}.role`, `${kind}\n`);
+  await writeFile(`${limiter}.role`, "limiter\n");
+  const input = join(directory, kind === "firmware" ? "input.bin" : "input.js");
+  await writeFile(
+    input,
+    kind === "firmware" ? "fixture-input-data" : "module.exports = 42;",
+  );
+  const launches: {
+    cwd?: string;
+    pid?: number;
+    command: string;
+    environmentMarker: string | undefined;
+  }[] = [];
+  const environment = {
+    ...process.env,
+    REA_BINWALK_COMMAND: command,
+    REA_FIRMWARE_PRLIMIT_COMMAND: limiter,
+    REA_WAKARU_COMMAND: command,
+    REA_JAVASCRIPT_PRLIMIT_COMMAND: limiter,
+    REA_SELECTED_ENVIRONMENT: "initial",
+  };
+  const launcher: typeof spawnOwnedProviderProcess = async (options) => {
+    const child = await spawnOwnedProviderProcess(options);
+    launches.push({
+      command: options.command,
+      environmentMarker: options.hostEnvironment?.REA_SELECTED_ENVIRONMENT,
+      ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+      ...(child.process.pid === undefined ? {} : { pid: child.process.pid }),
+    });
+    afterLaunch?.();
+    return child;
+  };
+  const fileSizeCeiling = vi
+    .spyOn(FirmwareFileAccess.prototype, "fileSizeCeiling")
+    .mockResolvedValue(Number.MAX_SAFE_INTEGER);
+  onTestFinished(() => fileSizeCeiling.mockRestore());
+  const service =
+    kind === "firmware"
+      ? new FirmwareAnalysisService(
+          new FirmwareProvider(environment, launcher, SIMULATED_LINUX_X64),
+        )
+      : new JavaScriptRecoveryService(
+          new WakaruProvider(environment, launcher, SIMULATED_LINUX_X64),
+        );
+  onTestFinished(async () => {
+    await service.close();
+    for (const launch of launches) {
+      if (launch.pid !== undefined)
+        expect(await observeProcessStartIdentity(launch.pid)).toBeUndefined();
+      if (launch.cwd !== undefined)
+        await expect(readdir(launch.cwd)).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+    }
+  });
+  let sequence = 0;
+  const execute = async () =>
+    service instanceof FirmwareAnalysisService
+      ? service.execute("inspect_firmware_regions", { path: input })
+      : service.recover({
+          path: input,
+          output_directory: join(directory, `output-${sequence++}`),
+        });
+  return {
+    bin,
+    command,
+    limiter,
+    commandSource,
+    limiterSource,
+    replacement,
+    environment,
+    launches,
+    execute,
+  };
+};
+
 it.skipIf(process.platform === "win32").each(["firmware", "wakaru"] as const)(
   "executes selected %s wrappers and retains completed output when either alias changes",
   async (kind) => {
-    const directory = await createTestTempDirectory("rea-selected-command-");
-    const bin = join(directory, "bin"),
-      libexec = join(directory, "libexec");
-    await mkdir(bin);
-    await mkdir(libexec);
-    const command = join(bin, "engine"),
-      limiter = join(bin, "prlimit");
-    const commandSource = join(libexec, "engine"),
-      limiterSource = join(libexec, "limiter");
-    const replacement = join(libexec, "replacement");
-    const script = selectedEngineLauncher(kind);
-    for (const path of [commandSource, limiterSource, replacement])
-      await writeFile(path, script, { mode: 0o755 });
-    await symlink(commandSource, command);
-    await symlink(limiterSource, limiter);
-    await writeFile(`${command}.role`, `${kind}\n`);
-    await writeFile(`${limiter}.role`, "limiter\n");
-    const input = join(
-      directory,
-      kind === "firmware" ? "input.bin" : "input.js",
-    );
-    await writeFile(
-      input,
-      kind === "firmware" ? "fixture-input-data" : "module.exports = 42;",
-    );
-    const platform = Object.getOwnPropertyDescriptor(process, "platform");
-    const arch = Object.getOwnPropertyDescriptor(process, "arch");
-    if (platform === undefined || arch === undefined)
-      throw new Error("Missing host descriptors");
-    const restoreHost = () => {
-      Object.defineProperty(process, "platform", platform);
-      Object.defineProperty(process, "arch", arch);
-    };
-    const launches: { cwd?: string; pid?: number }[] = [];
-    const launcher: typeof spawnOwnedProviderProcess = async (options) => {
-      restoreHost();
-      const child = await spawnOwnedProviderProcess(options);
-      launches.push({
-        ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
-        ...(child.process.pid === undefined ? {} : { pid: child.process.pid }),
-      });
-      return child;
-    };
-    const fileSizeCeiling = vi
-      .spyOn(FirmwareFileAccess.prototype, "fileSizeCeiling")
-      .mockResolvedValue(Number.MAX_SAFE_INTEGER);
-    onTestFinished(() => fileSizeCeiling.mockRestore());
-    const service =
-      kind === "firmware"
-        ? new FirmwareAnalysisService(
-            new FirmwareProvider(
-              {
-                ...process.env,
-                REA_BINWALK_COMMAND: command,
-                REA_FIRMWARE_PRLIMIT_COMMAND: limiter,
-              },
-              launcher,
-            ),
-          )
-        : new JavaScriptRecoveryService(
-            new WakaruProvider(
-              {
-                ...process.env,
-                REA_WAKARU_COMMAND: command,
-                REA_JAVASCRIPT_PRLIMIT_COMMAND: limiter,
-              },
-              launcher,
-            ),
-          );
-    onTestFinished(async () => {
-      restoreHost();
-      await service.close();
-    });
-    let sequence = 0;
-    const execute = async () => {
-      Object.defineProperty(process, "platform", {
-        ...platform,
-        value: "linux",
-      });
-      Object.defineProperty(process, "arch", { ...arch, value: "x64" });
-      try {
-        return service instanceof FirmwareAnalysisService
-          ? await service.execute("inspect_firmware_regions", { path: input })
-          : await service.recover({
-              path: input,
-              output_directory: join(directory, `output-${sequence++}`),
-            });
-      } finally {
-        restoreHost();
-      }
-    };
+    const {
+      command,
+      limiter,
+      commandSource,
+      limiterSource,
+      replacement,
+      execute,
+    } = await createSelectedEngineFixture(kind);
     const first = await execute();
     if (!first.ok) throw first.error;
     expect(first.value.normalized_result).toMatchObject({
@@ -287,14 +302,127 @@ it.skipIf(process.platform === "win32").each(["firmware", "wakaru"] as const)(
         selectedPath,
       );
     }
-    for (const launch of launches) {
-      if (launch.pid !== undefined)
-        expect(await observeProcessStartIdentity(launch.pid)).toBeUndefined();
-      if (launch.cwd !== undefined)
-        await expect(readdir(launch.cwd)).rejects.toMatchObject({
-          code: "ENOENT",
-        });
-    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "keeps firmware configuration consistent within an operation and accepts later updates",
+  async () => {
+    const {
+      bin,
+      command,
+      limiter,
+      commandSource,
+      limiterSource,
+      environment,
+      launches,
+      execute,
+    } = await createSelectedEngineFixture("firmware");
+    const nextCommand = join(bin, "next-engine");
+    const nextLimiter = join(bin, "next-prlimit");
+    await symlink(commandSource, nextCommand);
+    await symlink(limiterSource, nextLimiter);
+    await writeFile(`${nextCommand}.role`, "firmware\n");
+    await writeFile(`${nextLimiter}.role`, "limiter\n");
+    const originalHash = FirmwareFileAccess.prototype.hash;
+    const hash = vi.spyOn(FirmwareFileAccess.prototype, "hash");
+    onTestFinished(() => hash.mockRestore());
+    hash.mockImplementationOnce(async function (
+      this: FirmwareFileAccess,
+      path,
+      signal,
+    ) {
+      const digest = await originalHash.call(this, path, signal);
+      environment.REA_BINWALK_COMMAND = nextCommand;
+      environment.REA_FIRMWARE_PRLIMIT_COMMAND = nextLimiter;
+      environment.REA_SELECTED_ENVIRONMENT = "updated";
+      return digest;
+    });
+    const first = await execute();
+    if (!first.ok) throw first.error;
+    expect(first.value.raw_result).toMatchObject({
+      version_execution: { command, resource_limiter: limiter },
+    });
+    expect(launches).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          command: limiter,
+          environmentMarker: "initial",
+        }),
+      ]),
+    );
+    expect(
+      launches.every((launch) => launch.environmentMarker === "initial"),
+    ).toBe(true);
+    const next = await execute();
+    if (!next.ok) throw next.error;
+    expect(next.value.raw_result).toMatchObject({
+      version_execution: {
+        command: nextCommand,
+        resource_limiter: nextLimiter,
+      },
+    });
+    expect(launches.at(-1)).toMatchObject({
+      command: nextLimiter,
+      environmentMarker: "updated",
+    });
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "keeps Wakaru configuration consistent across version and recovery launches",
+  async () => {
+    let mutateOnce = true;
+    const fixture = await createSelectedEngineFixture("wakaru", () => {
+      if (!mutateOnce) return;
+      mutateOnce = false;
+      fixture.environment.REA_WAKARU_COMMAND = nextCommand;
+      fixture.environment.REA_JAVASCRIPT_PRLIMIT_COMMAND = nextLimiter;
+      fixture.environment.REA_SELECTED_ENVIRONMENT = "updated";
+    });
+    const {
+      bin,
+      command,
+      limiter,
+      commandSource,
+      limiterSource,
+      launches,
+      execute,
+    } = fixture;
+    const nextCommand = join(bin, "next-engine");
+    const nextLimiter = join(bin, "next-prlimit");
+    await symlink(commandSource, nextCommand);
+    await symlink(limiterSource, nextLimiter);
+    await writeFile(`${nextCommand}.role`, "wakaru\n");
+    await writeFile(`${nextLimiter}.role`, "limiter\n");
+    const first = await execute();
+    if (!first.ok) throw first.error;
+    expect(first.value.raw_result).toMatchObject({
+      version: { command, resource_limiter: limiter },
+    });
+    expect(
+      launches.map(({ command, environmentMarker }) => ({
+        command,
+        environmentMarker,
+      })),
+    ).toEqual([
+      { command: limiter, environmentMarker: "initial" },
+      { command: limiter, environmentMarker: "initial" },
+    ]);
+    const next = await execute();
+    if (!next.ok) throw next.error;
+    expect(next.value.raw_result).toMatchObject({
+      version: { command: nextCommand, resource_limiter: nextLimiter },
+    });
+    expect(
+      launches.slice(2).map(({ command, environmentMarker }) => ({
+        command,
+        environmentMarker,
+      })),
+    ).toEqual([
+      { command: nextLimiter, environmentMarker: "updated" },
+      { command: nextLimiter, environmentMarker: "updated" },
+    ]);
   },
 );
 
@@ -313,7 +441,7 @@ it.skipIf(process.platform === "win32")(
     await writeFile(replacement, script, { mode: 0o755 });
     await symlink(physical, selected);
     await writeFile(`${selected}.role`, "limiter");
-    const resources = new ArtifactAnalysisResources(
+    const resources = createArtifactAnalysisResources(
       "pcap",
       "inspect_pcap_capture",
       readStableArtifact,
@@ -321,21 +449,21 @@ it.skipIf(process.platform === "win32")(
       { message: "busy", details: {} },
     );
     onTestFinished(() => resources.close());
-    const platform = Object.getOwnPropertyDescriptor(process, "platform");
-    if (platform === undefined) throw new Error("Missing host descriptor");
-    let prepared: Awaited<ReturnType<typeof preparePcapNativeBound>>;
-    try {
-      Object.defineProperty(process, "platform", {
-        ...platform,
-        value: "linux",
-      });
-      prepared = await preparePcapNativeBound(
-        { REA_TSHARK_PRLIMIT_COMMAND: selected },
-        resources,
-      );
-    } finally {
-      Object.defineProperty(process, "platform", platform);
-    }
+    const prepared = await preparePcapNativeBound(
+      "linux",
+      { REA_TSHARK_PRLIMIT_COMMAND: selected },
+      resources,
+      async (_selected, args) => {
+        const stdout =
+          args[0] === "--help"
+            ? " --as[=limit] --fsize[=limit] --cpu[=limit] --core[=limit]"
+            : "prlimit from util-linux 2.38.1";
+        return {
+          stdout,
+          capturedOutput: { stdout, stderr: "", truncated: false },
+        };
+      },
+    );
     let refuseCleanup = false;
     let retained: ProviderProcessSupervisor | undefined;
     onTestFinished(async () => {
@@ -345,6 +473,7 @@ it.skipIf(process.platform === "win32")(
     const execute = () =>
       runPcapCommand({
         operation: "inspect_pcap_capture",
+        platform: HOST_PLATFORM.platform,
         command: "/bin/echo",
         arguments: ["selected limiter"],
         limits: { timeoutMs: 10_000, maxOutputBytes: 1024 },
@@ -398,6 +527,6 @@ it.skipIf(process.platform === "win32")(
     await expect(retained?.stop()).resolves.toMatchObject({
       status: "verified-cleanup",
     });
-    expect(failed.resolveCleanup().cleanupIncomplete).toBe(false);
+    expect(releaseOwnedCleanup(failed).cleanupIncomplete).toBe(false);
   },
 );

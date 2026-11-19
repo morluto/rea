@@ -1,14 +1,13 @@
 import { ProviderProcessSupervisor } from "../../src/process/ProviderProcess.js";
 import { systemUpdateHost } from "../../src/application/UpdateRuntime.js";
-import {
-  UpdateCommandRunner,
-  UPDATE_COMMAND_OUTPUT_BYTES,
-} from "../../src/application/UpdateCommandRunner.js";
+import { UpdateCommandRunner } from "../../src/application/UpdateCommandRunner.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { Writable } from "node:stream";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
 
+const UPDATE_COMMAND_OUTPUT_BYTES = 4 * 1024 * 1024;
 const execution = vi.hoisted(() => ({ spawn: vi.fn() }));
 vi.mock("cross-spawn", () => ({ default: execution.spawn }));
 let child: ChildProcess | undefined;
@@ -55,7 +54,9 @@ it.each(["stdout", "stderr"])(
     );
     expect(result).toMatchObject({
       ok: false,
-      error: expect.stringContaining("complete-output retention budget"),
+      error: {
+        detail: expect.stringContaining("complete-output retention budget"),
+      },
     });
     expect(child?.exitCode).toBe(0);
   },
@@ -83,7 +84,7 @@ it("refuses malformed UTF-8 instead of interpreting replacement text", async () 
     ),
   ).toMatchObject({
     ok: false,
-    error: expect.stringContaining("invalid UTF-8"),
+    error: { detail: expect.stringContaining("invalid UTF-8") },
   });
 });
 
@@ -104,7 +105,10 @@ it("waits for physical close after an early process error", async () => {
   expect(settled).toBe(false);
   expect(await pending).toEqual({
     ok: false,
-    error: expect.stringContaining("controlled process error"),
+    error: {
+      kind: "execution",
+      detail: expect.stringContaining("controlled process error"),
+    },
   });
   expect(child?.exitCode).toBe(0);
 });
@@ -145,7 +149,7 @@ it("joins the final human progress write before reporting success", async () => 
   acknowledge(new Error("final progress refused"));
   expect(await pending).toMatchObject({
     ok: false,
-    error: expect.stringContaining("final progress refused"),
+    error: { detail: expect.stringContaining("final progress refused") },
   });
   expect(destination.writableEnded).toBe(false);
   await nextTurn();
@@ -186,11 +190,19 @@ it("stops and joins metadata discovery when the update host closes", async () =>
   const ready = nextChildReady(hangingProbe);
   const host = systemUpdateHost(process.cwd(), process.cwd(), process.env);
   const probing = host.installation();
-  await ready;
-  expect(child?.exitCode).toBeNull();
-  expect(await host.close?.()).toBeUndefined();
-  await probing;
-  expect(child?.signalCode).not.toBeNull();
+  try {
+    await awaitAcknowledgement(ready, probing, "update probe readiness");
+    expect(child?.exitCode).toBeNull();
+    expect(host.close).toBeTypeOf("function");
+    if (host.close === undefined) throw new Error("Missing update host close");
+    expect(await host.close()).toBeUndefined();
+    // Close must join the probe itself, not rely on the later probe deadline.
+    expect(child?.signalCode).not.toBeNull();
+    await probing;
+  } finally {
+    await host.close?.();
+    await probing;
+  }
 });
 
 it("bounds a stalled metadata probe and keeps the runner usable", async () => {
@@ -198,13 +210,13 @@ it("bounds a stalled metadata probe and keeps the runner usable", async () => {
   updateCommands = new UpdateCommandRunner(2000);
   const ready = nextChildReady();
   const pending = updateCommands.runProbe(command(hangingProbe), process.env);
-  await ready;
+  await awaitAcknowledgement(ready, pending, "update probe readiness");
   const result = await pending;
   expect(result).toMatchObject({
     ok: false,
-    error: expect.stringContaining("timed out"),
+    error: { detail: expect.stringContaining("timed out") },
   });
-  if (!result.ok) expect(result.error).toContain("probe-ready");
+  if (!result.ok) expect(result.error.detail).toContain("probe-ready");
   expect(child?.signalCode).not.toBeNull();
   expect(
     await updateCommands.runProbe(
@@ -227,7 +239,7 @@ it("does not launch probes after close, including a queued launch", async () => 
 it("retains incomplete probe cleanup until a later close succeeds", async () => {
   const ready = nextChildReady();
   const pending = updateCommands.runProbe(command(hangingProbe), process.env);
-  await ready;
+  await awaitAcknowledgement(ready, pending, "update probe readiness");
   const stop = vi
     .spyOn(ProviderProcessSupervisor.prototype, "stop")
     .mockResolvedValue({
@@ -240,7 +252,7 @@ it("retains incomplete probe cleanup until a later close succeeds", async () => 
     );
     expect(await pending).toMatchObject({
       ok: false,
-      error: expect.stringContaining("Cleanup incomplete"),
+      error: { detail: expect.stringContaining("Cleanup incomplete") },
     });
     expect(child?.signalCode).toBeNull();
   } finally {
@@ -261,20 +273,25 @@ it("joins an install past the metadata deadline without cancelling it", async ()
     process.env,
     "structured",
   );
-  await ready;
+  await awaitAcknowledgement(ready, pending, "update install readiness");
   await updateCommands.close();
   expect(await pending).toEqual({ ok: true, value: "" });
   expect(child?.exitCode).toBe(0);
 });
 
 it("preserves cancellation during final progress acknowledgement", async () => {
-  let acknowledge!: () => void;
+  let acknowledge: (() => void) | undefined;
+  let releasing = false;
   let writing!: () => void;
   const started = new Promise<void>((resolve) => {
     writing = resolve;
   });
   const destination = new Writable({
     write(_chunk, _encoding, callback) {
+      if (releasing) {
+        callback();
+        return;
+      }
       acknowledge = callback;
       writing();
     },
@@ -287,12 +304,23 @@ it("preserves cancellation during final progress acknowledgement", async () => {
     process.env,
     "human",
   );
-  await started;
-  const closing = updateCommands.close();
-  acknowledge();
-  expect(await pending).toMatchObject({
-    ok: false,
-    error: expect.stringContaining("cancelled"),
-  });
-  await closing;
+  try {
+    await awaitAcknowledgement(started, pending, "update progress write");
+    const closing = updateCommands.close();
+    acknowledge?.();
+    acknowledge = undefined;
+    expect(await pending).toMatchObject({
+      ok: false,
+      error: { detail: expect.stringContaining("cancelled") },
+    });
+    await closing;
+  } finally {
+    releasing = true;
+    acknowledge?.();
+    try {
+      await updateCommands.close();
+    } finally {
+      await pending;
+    }
+  }
 });

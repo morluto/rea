@@ -1,6 +1,8 @@
 import type { FileHandle } from "node:fs/promises";
 import { buffer } from "node:stream/consumers";
 import { expect, it, vi } from "vitest";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 import {
   FileReadCancelled,
   readFileHandleChunks,
@@ -9,22 +11,13 @@ import {
 it.each(["complete", "fail"])(
   "settles the pending descriptor read before cancellation: %s",
   async (outcome) => {
-    let enter!: () => void;
-    let release!: (value: { bytesRead: number; buffer: Buffer }) => void;
-    let reject!: (cause: unknown) => void;
-    const entered = new Promise<void>((resolve) => {
-      enter = resolve;
-    });
-    const pending = new Promise<{ bytesRead: number; buffer: Buffer }>(
-      (resolve, fail) => {
-        release = resolve;
-        reject = fail;
-      },
-    );
-    const read = vi.fn(async () => {
-      enter();
-      return pending;
-    }) as unknown as FileHandle["read"];
+    const descriptorRead = phaseGate<
+      void,
+      { bytesRead: number; buffer: Buffer }
+    >();
+    const read = vi.fn(() =>
+      descriptorRead.hold(),
+    ) as unknown as FileHandle["read"];
     const controller = new AbortController();
     const source = readFileHandleChunks(
       { read },
@@ -36,21 +29,29 @@ it.each(["complete", "fail"])(
       .finally(() => {
         settled = true;
       });
-    await entered;
-    controller.abort(null);
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(settled).toBe(false);
-    expect(source.destroyed).toBe(false);
-    const failure = new Error("controlled native read failure");
-    if (outcome === "fail") reject(failure);
-    else release({ bytesRead: 0, buffer: Buffer.alloc(0) });
-    const error = await result;
-    if (outcome === "fail") expect(error).toBe(failure);
-    else {
-      expect(error).toBeInstanceOf(FileReadCancelled);
-      if (error instanceof FileReadCancelled) expect(error.reason).toBeNull();
-    }
-    expect(read).toHaveBeenCalledTimes(1);
+    await withVerifierCleanup(async () => {
+      await descriptorRead.reached(result, "descriptor read");
+      controller.abort(null);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(settled).toBe(false);
+      expect(source.destroyed).toBe(false);
+      const failure = new Error("controlled native read failure");
+      if (outcome === "fail") descriptorRead.reject(failure);
+      else descriptorRead.release({ bytesRead: 0, buffer: Buffer.alloc(0) });
+      const error = await result;
+      if (outcome === "fail") expect(error).toBe(failure);
+      else {
+        expect(error).toBeInstanceOf(FileReadCancelled);
+        if (error instanceof FileReadCancelled) expect(error.reason).toBeNull();
+      }
+      expect(read).toHaveBeenCalledTimes(1);
+    }, [
+      () => controller.abort(null),
+      () => descriptorRead.release({ bytesRead: 0, buffer: Buffer.alloc(0) }),
+      async () => {
+        await result;
+      },
+    ]);
   },
 );
 

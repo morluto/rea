@@ -1,4 +1,7 @@
-import { parseGhidraJavaProperties } from "./GhidraJavaProperties.js";
+import {
+  parseGhidraJavaProperties,
+  type GhidraJavaPropertiesCode,
+} from "./GhidraJavaProperties.js";
 import { ghidraConfigurationVersion } from "./GhidraReleasePolicy.js";
 
 /** One Java major bound declared by `application.properties`. */
@@ -24,7 +27,7 @@ export interface GhidraApplicationProperties {
   readonly javaMinimum: GhidraJavaBound;
   readonly javaMaximum: GhidraJavaBound;
   /** A malformed Java properties escape invalidates the entire file. */
-  readonly parseError: string | null;
+  readonly parseError: GhidraJavaPropertiesCode | null;
 }
 
 /** Read the version and Java bounds Ghidra publishes for one installation. */

@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import { valid } from "semver";
 import { z } from "zod";
 
@@ -347,13 +348,20 @@ export function verifyReleaseNotes(raw, text, body) {
     if (!prose.includes(`### ${heading}\n`))
       errors.push(`Missing ${heading} section`);
   if (body !== undefined) {
-    const bodyNotes = selectedReleaseNotes(body, inventory.version)
-      .replace(
-        /\n---\nThis PR was generated with \[Release Please\][\s\S]*$/u,
-        "",
-      )
-      .trim();
-    if (bodyNotes !== notes)
+    // Use the publisher's parser: finding a heading alone does not establish
+    // that Release Please will extract notes from its PR envelope.
+    const { PullRequestBody } = createRequire(import.meta.url)(
+      "release-please/build/src/util/pull-request-body.js",
+    );
+    const releases = PullRequestBody.parse(body)?.releaseData ?? [];
+    if (
+      releases.length !== 1 ||
+      releases[0].version?.toString() !== inventory.version
+    )
+      errors.push(
+        `Release Please cannot extract ${inventory.version} notes from the PR body; keep Author readiness and other metadata outside the notes delimiters`,
+      );
+    else if (releases[0].notes.trim() !== notes)
       errors.push("Release PR body differs from CHANGELOG.md");
   }
   if (errors.length) throw new Error(errors.join("\n"));
@@ -367,6 +375,67 @@ export function verifyReleaseNotes(raw, text, body) {
         .map((identity) => ({ sha: item.sha, ...identity })),
     ),
   };
+}
+
+const VERSION_ONLY_PLUGIN_METADATA = new Set([
+  ".claude-plugin/plugin.json",
+  ".codex-plugin/plugin.json",
+  ".codex-plugin/mcp.json",
+  ".cursor-plugin/plugin.json",
+  "mcp.json",
+  ".claude-plugin/marketplace.json",
+  ".agents/plugins/marketplace.json",
+]);
+
+/** Serialize plugin metadata with only its release-owned version fields blanked. */
+function pluginMetadataWithoutVersions(path, text) {
+  const manifest = JSON.parse(text);
+  if (manifest === null || typeof manifest !== "object") return text;
+  if (path.endsWith("marketplace.json")) {
+    if (Array.isArray(manifest.plugins))
+      for (const plugin of manifest.plugins)
+        if (
+          plugin?.name === "rea" &&
+          plugin?.source?.source === "npm" &&
+          plugin.source.package === "rea-agents" &&
+          typeof plugin.source.version === "string"
+        )
+          plugin.source.version = "";
+    return JSON.stringify(manifest);
+  }
+  if ("version" in manifest) manifest.version = "";
+  const launch = manifest.mcpServers?.rea?.args;
+  // Only the scalar pinned version is release-owned. Blank that version and
+  // keep a package name such as rea-agents@ so a renamed package still counts
+  // as a product change. The executable and path remain product behavior.
+  if (Array.isArray(launch) && typeof launch[1] === "string")
+    launch[1] = launch[1].replace(
+      /\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?/u,
+      "",
+    );
+  return JSON.stringify(manifest);
+}
+
+/**
+ * Plugin metadata also carries behavior, so a release may change only
+ * its version, pinned server launch, and exact REA marketplace version. Any other difference, an unreadable
+ * side, or a manifest added by the release counts as a product change.
+ */
+async function changesOnlyPluginVersions(run, path, from, to) {
+  try {
+    return (
+      pluginMetadataWithoutVersions(
+        path,
+        await run("git", ["show", `${from}:${path}`]),
+      ) ===
+      pluginMetadataWithoutVersions(
+        path,
+        await run("git", ["show", `${to}:${path}`]),
+      )
+    );
+  } catch {
+    return false;
+  }
 }
 
 /** Reject stale inventories and product changes made after the editorial target. */
@@ -422,7 +491,8 @@ export async function verifyInventoryHistory(run, raw, source) {
       "package-lock.json",
       "server.json",
       "src/generatedPackageMetadata.ts",
-      "docs/installation.md",
+      "docs/installation.md", // Historical releases before documentation organization.
+      "docs/getting-started/installation.md",
       `docs/releases/${inventory.version}.contributions.json`,
     ]);
     const paths = (
@@ -437,7 +507,16 @@ export async function verifyInventoryHistory(run, raw, source) {
     )
       .split("\0")
       .filter(Boolean);
-    const product = paths.filter((path) => !allowed.has(path));
+    const product = [];
+    for (const path of paths) {
+      if (allowed.has(path)) continue;
+      if (
+        VERSION_ONLY_PLUGIN_METADATA.has(path) &&
+        (await changesOnlyPluginVersions(run, path, inventory.target, resolved))
+      )
+        continue;
+      product.push(path);
+    }
     if (product.length)
       throw new Error(
         `Product changed after notes target; regenerate inventory: ${product.join(", ")}`,

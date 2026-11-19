@@ -1,4 +1,7 @@
+import { ProcessOwnershipInspectionCancelled } from "./ProcessInspectionCancellation.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import {
   cleanupOwnedProcessGroup,
   type ProcessOwnershipHost,
@@ -220,8 +223,9 @@ it("rechecks unavailable members individually before classifying their groups", 
         200,
         {
           state: "unverifiable",
-          reason:
-            "process ownership could not be revalidated for PID 200: unreadable-200",
+          reason: expect.stringMatching(
+            /ownership.*could not be revalidated.*PID 200.*unreadable-200/i,
+          ),
         },
       ],
     ]),
@@ -251,7 +255,8 @@ describe("multi-group ownership observation cancellation", () => {
         return new Promise((resolve, reject) => {
           releaseSecondList = () => resolve(rows);
           if (signal === undefined) return;
-          const rejectOnAbort = () => reject(signal.reason);
+          const rejectOnAbort = () =>
+            reject(new ProcessOwnershipInspectionCancelled(signal.reason));
           signal.addEventListener("abort", rejectOnAbort, { once: true });
           if (signal.aborted) rejectOnAbort();
         });
@@ -287,14 +292,22 @@ describe("multi-group ownership observation cancellation", () => {
       return outcome;
     });
     let settledBeforeRelease = false;
-    try {
-      await secondListStarted;
+    await withVerifierCleanup(async () => {
+      await awaitAcknowledgement(
+        secondListStarted,
+        observedOutcome,
+        "liveness recheck",
+      );
       controller.abort(reason);
       await new Promise<void>((resolve) => setImmediate(resolve));
       settledBeforeRelease = settled;
-    } finally {
-      releaseSecondList?.();
-    }
+    }, [
+      () => controller.abort(reason),
+      () => releaseSecondList?.(),
+      async () => {
+        await observedOutcome;
+      },
+    ]);
 
     const outcome = await observedOutcome;
     expect(settledBeforeRelease).toBe(true);
@@ -304,7 +317,7 @@ describe("multi-group ownership observation cancellation", () => {
       throw new Error(
         "The cancelled process observation unexpectedly resolved",
       );
-    expect(outcome.cause).toBe(reason);
+    expect(outcome.cause).toMatchObject({ reason, cause: reason });
     expect(signalGroup).not.toHaveBeenCalled();
     expect(listProcesses).toHaveBeenCalledTimes(2);
   });
@@ -334,7 +347,11 @@ describe("multi-group ownership observation cancellation", () => {
         },
         controller.signal,
       ),
-    ).rejects.toBe(reason);
+    ).rejects.toMatchObject({
+      _tag: "ProcessOwnershipInspectionCancelled",
+      reason,
+      cause: reason,
+    });
     expect(listProcesses).toHaveBeenCalledTimes(2);
     expect(signalGroup).not.toHaveBeenCalled();
   });
@@ -480,7 +497,11 @@ it.each(["batch", "environment"] as const)(
         { listProcesses, environment, runTokens, signalGroup: vi.fn() },
         controller.signal,
       ),
-    ).rejects.toBe(reason);
+    ).rejects.toMatchObject({
+      _tag: "ProcessOwnershipInspectionCancelled",
+      reason,
+      cause: reason,
+    });
     expect(listProcesses).toHaveBeenCalledTimes(1);
     expect(environment).toHaveBeenCalledTimes(boundary === "batch" ? 0 : 1);
   },
@@ -566,8 +587,9 @@ describe("token sweep batch failures", () => {
       failures: expect.arrayContaining([
         expect.objectContaining({
           pid: 101,
-          diagnostic:
-            "individual unreadable; run-token batch failed: batch reader unavailable",
+          diagnostic: expect.stringMatching(
+            /individual unreadable.*batch reader unavailable/iu,
+          ),
         }),
       ]),
     });

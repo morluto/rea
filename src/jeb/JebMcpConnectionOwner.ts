@@ -4,7 +4,7 @@ import {
   SdkErrorCode,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/index.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
 import type { Result } from "../domain/result.js";
@@ -12,6 +12,7 @@ import {
   McpHttpUtf8Error,
   validateMcpHttpResponse,
 } from "../providers/Utf8McpResponse.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Physical SDK failure captured before any subsequent resource cleanup. */
 export class JebMcpPhysicalFailure extends Error {
@@ -24,23 +25,24 @@ export class JebMcpPhysicalFailure extends Error {
   }
 }
 
-/** Acquisition failed while its exact connection still has pending cleanup. */
-export class JebMcpAcquisitionCleanupFailure extends ProviderCleanupError {
+/** An operation failed while its exact connection still has pending cleanup. */
+export class JebMcpCleanupFailure extends ProviderCleanupError {
   constructor(
     readonly primaryFailure: unknown,
     readonly cleanupFailure: ProviderCleanupError,
+    operation: string,
   ) {
     super(
       "jeb",
       cleanupFailure.cleanupResources,
       {
-        reason: "JEB MCP acquisition and cleanup failed",
+        reason: "JEB MCP operation and cleanup failed",
       },
       {
-        operation: "jeb_mcp_catalog",
+        operation,
         cause: new AggregateError(
           [primaryFailure, cleanupFailure],
-          "JEB MCP acquisition and cleanup failed",
+          "JEB MCP operation and cleanup failed",
           { cause: primaryFailure },
         ),
       },
@@ -64,6 +66,9 @@ export class JebMcpConnectionOwner {
     | SharedStartupAttempt<Result<readonly string[], unknown>>
     | undefined;
   acquisitionFailure: { readonly cause: unknown } | undefined;
+  invalidation:
+    | { readonly failure: Promise<unknown>; settled: boolean }
+    | undefined;
   readonly #clientResource: string;
   readonly #transportResource: string;
   readonly #lease: AnalysisCleanupLease;
@@ -152,11 +157,7 @@ export class JebMcpConnectionOwner {
       "jeb",
       this.cleanupResources,
       {
-        reason: failures
-          .map((cause) =>
-            cause instanceof Error ? cause.message : String(cause),
-          )
-          .join("; "),
+        reason: failures.map((cause) => errorMessage(cause)).join("; "),
       },
       {
         operation: "close_jeb_connection",

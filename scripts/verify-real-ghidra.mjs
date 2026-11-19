@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
+import { verifyProjectCoverage } from "./verify-real-ghidra-project-coverage.mjs";
+
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -13,7 +14,7 @@ import { GhidraClient } from "../dist/ghidra/GhidraClient.js";
 import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import { SUPPORTED_GHIDRA_VERSION } from "../dist/ghidra/GhidraReleasePolicy.js";
 import { GhidraHeadlessLauncher } from "../dist/ghidra/GhidraLauncher.js";
-import { GHIDRA_PROVIDER_IDENTITY } from "../dist/ghidra/GhidraProviderCapabilities.js";
+import { GHIDRA_PROVIDER_IDENTITY } from "../dist/ghidra/GhidraProviderMetadata.js";
 
 import {
   assertCleanup,
@@ -31,11 +32,18 @@ import {
   verifyInventoryOperations,
 } from "./verify-real-ghidra-inventory.mjs";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  VerifierFixture,
+  onceConfirmed,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 import { hasTypedSwitchEvidence } from "./verify-real-ghidra-switch-assertions.mjs";
+import { verifyGhidraRelocationSymbols } from "./lib/real-ghidra-relocation-symbols.mjs";
 
 import {
   verifyDenseDefaultReturn,
   verifyJumpTableDenseSwitch,
+  verifyMaskedByteSwitch,
   verifyNativeTypeLayout,
   verifyRelativeSwitch,
   verifyRelativeSignedSwitch,
@@ -47,7 +55,7 @@ let report;
 const installDir = process.env.GHIDRA_INSTALL_DIR;
 if (installDir === undefined || !isAbsolute(installDir))
   throw new Error(
-    "Set GHIDRA_INSTALL_DIR to the absolute root of an extracted Ghidra 12.1.4 release.",
+    `Set GHIDRA_INSTALL_DIR to the absolute root of an extracted Ghidra ${SUPPORTED_GHIDRA_VERSION} release.`,
   );
 const installation = await inspectVerifierGhidraInstallation({
   environment: process.env,
@@ -72,7 +80,12 @@ const expectedNativeTarget = nativeFixtureTarget(
   process.platform,
   process.arch,
 );
-const fixtureRoot = await mkdtemp(join(tmpdir(), "rea-ghidra-fixtures-"));
+// Ghidra children read and write under the root; a plain root admits them on every host.
+const fixtures = await VerifierFixture.open({
+  prefix: "rea-ghidra-fixtures-",
+  private: false,
+});
+const fixtureRoot = fixtures.path;
 const sourcePath = fileURLToPath(
   new URL("../tests/conformance/ghidra/inventory.c", import.meta.url),
 );
@@ -120,7 +133,7 @@ for (const [command, role] of toolchain) {
     );
   }
 }
-try {
+await withVerifierFixture(fixtures, async () => {
   const common = ["-O0", "-g", "-fno-inline"];
   if (expectedNativeTarget.format === "elf") common.push("-fno-pie", "-no-pie");
   await exec(compiler, [...common, sourcePath, "-o", debugPath]);
@@ -174,32 +187,37 @@ try {
         ]);
       }
     }
-    const signedRelativeSource = fileURLToPath(
-      new URL(
-        "../tests/conformance/ghidra/relative-switch-signed.S",
-        import.meta.url,
-      ),
-    );
-    for (const selectorBias of [0, 2, 10]) {
+    // Compile the assembly fixtures through the same operator-selected Clang.
+    const switchFixtures = [
+      ...[0, 2, 10].map((selectorBias) => ({
+        source: "../tests/conformance/ghidra/relative-switch-signed.S",
+        variant: `relative-signed-${selectorBias}`,
+        flags: [`-DREA_SELECTOR_BIAS=${selectorBias}`],
+      })),
+      {
+        source: "../tests/conformance/ghidra/masked-byte-switch.S",
+        variant: "masked-byte-switch",
+        flags: [],
+      },
+    ];
+    for (const { source, variant, flags } of switchFixtures) {
+      const sourceFile = fileURLToPath(new URL(source, import.meta.url));
       for (const format of [
         "elf",
         ...(expectedNativeTarget.architecture === "arm64" ? ["mach-o"] : []),
       ]) {
-        const targetPath = join(
-          fixtureRoot,
-          `relative-signed-${selectorBias}-${format}.o`,
-        );
+        const targetPath = join(fixtureRoot, `${variant}-${format}.o`);
         await exec(clang, [
           ...(format === "elf" ? ["--target=aarch64-linux-gnu"] : []),
-          `-DREA_SELECTOR_BIAS=${selectorBias}`,
+          ...flags,
           "-c",
-          signedRelativeSource,
+          sourceFile,
           "-o",
           targetPath,
         ]);
         crossTargets.push([
           targetPath,
-          `relative-signed-${selectorBias}`,
+          variant,
           { format, architecture: "arm64" },
         ]);
       }
@@ -281,6 +299,14 @@ try {
   }
   await writeFile(malformedPath, Buffer.from("not-a-binary\n", "utf8"));
 
+  const relocationSymbols = crossFormat
+    ? await verifyGhidraRelocationSymbols({
+        clang,
+        lld,
+        env: process.env,
+      })
+    : null;
+
   const debug = await verifyTarget(debugPath, "debug", expectedNativeTarget);
   assertDebugFixture(debug);
   const layout = await verifyTarget(
@@ -302,7 +328,11 @@ try {
   const crossResults = [];
   for (const [targetPath, variant, expectedTarget] of crossTargets) {
     const result = await verifyTarget(targetPath, variant, expectedTarget);
-    if (variant !== "aarch64-jump-table" && !variant.startsWith("relative-"))
+    if (
+      variant !== "aarch64-jump-table" &&
+      variant !== "masked-byte-switch" &&
+      !variant.startsWith("relative-")
+    )
       assertCrossFixture(result);
     crossResults.push(result);
   }
@@ -311,6 +341,10 @@ try {
   const customPath = process.env.GHIDRA_TARGET_PATH;
   const custom =
     customPath === undefined ? null : await verifyTarget(customPath, "custom");
+  const projectCoverage =
+    !crossFormat && !aarch64JumpTableOnly && process.platform !== "win32"
+      ? await verifyProjectCoverage(verifierRun)
+      : null;
   report = {
     ok: true,
     provider: { id: "ghidra", version: SUPPORTED_GHIDRA_VERSION },
@@ -331,12 +365,12 @@ try {
       ? (crossResults[0]?.native_api_cli ?? null)
       : jumpTable.native_api_cli,
     native_value_e2e: debug.native_values,
+    selected_project_coverage: projectCoverage,
+    relocation_symbols: relocationSymbols,
     custom_target: custom === null ? null : summary(custom),
     cleanup: "complete",
   };
-} finally {
-  await rm(fixtureRoot, { recursive: true, force: true });
-}
+});
 process.stdout.write(
   `${JSON.stringify({ verifier_run: await completeVerifierRun(verifierRun), ...report })}\n`,
 );
@@ -492,9 +526,7 @@ async function verifyTarget(targetPath, variant, expectedTarget = null) {
       configurationDirectoryName: installation.configurationDirectoryName,
       environment: process.env,
       analyzeHeadlessPath: installation.analyzeHeadlessPath,
-      ...(process.env.JAVA_HOME === undefined
-        ? {}
-        : { javaHome: process.env.JAVA_HOME }),
+      javaHome: installation.javaHome,
       bridgeScriptPath: fileURLToPath(
         new URL("../bridge/ghidra/ReaGhidraBridge.java", import.meta.url),
       ),
@@ -506,6 +538,14 @@ async function verifyTarget(targetPath, variant, expectedTarget = null) {
     profileDigest: profile.value.profile.digest,
   });
 
+  // The fixture root is removed only after this client confirms it closed;
+  // a failed close is retried by the fixture's release.
+  const closeClient = fixtures.releaseAfter(
+    onceConfirmed(async () => {
+      const closed = await client.close();
+      if (!closed.ok) throw closed.error;
+    }),
+  );
   let runtimeCoordinates;
   let primaryFailure;
   try {
@@ -554,30 +594,33 @@ async function verifyTarget(targetPath, variant, expectedTarget = null) {
             client,
           })
         : null;
-    const probes = variant.startsWith("relative-signed-")
-      ? await verifyRelativeSignedSwitch(
-          client,
-          Number(variant.split("-").at(-1)),
-        )
-      : variant.startsWith("relative-")
-        ? await verifyRelativeSwitch(
-            client,
-            procedures,
-            Number(variant.slice(-1)),
-          )
-        : variant === "type-layout"
-          ? await verifyNativeTypeLayout(client, names)
-          : variant === "jump-table"
-            ? await verifyJumpTableDenseSwitch(client, procedures)
-            : variant === "custom" || variant === "aarch64-jump-table"
-              ? null
-              : await verifyInventoryOperations({
-                  client,
-                  variant,
-                  procedures,
-                  names,
-                  strings,
-                });
+    const probes =
+      variant === "masked-byte-switch"
+        ? await verifyMaskedByteSwitch(client)
+        : variant.startsWith("relative-signed-")
+          ? await verifyRelativeSignedSwitch(
+              client,
+              Number(variant.split("-").at(-1)),
+            )
+          : variant.startsWith("relative-")
+            ? await verifyRelativeSwitch(
+                client,
+                procedures,
+                Number(variant.slice(-1)),
+              )
+            : variant === "type-layout"
+              ? await verifyNativeTypeLayout(client, names)
+              : variant === "jump-table"
+                ? await verifyJumpTableDenseSwitch(client, procedures)
+                : variant === "custom" || variant === "aarch64-jump-table"
+                  ? null
+                  : await verifyInventoryOperations({
+                      client,
+                      variant,
+                      procedures,
+                      names,
+                      strings,
+                    });
     const nativeValues =
       variant === "debug"
         ? await verifyNativeValueTrace(client, procedures, parsedTarget.value)
@@ -600,14 +643,16 @@ async function verifyTarget(targetPath, variant, expectedTarget = null) {
     primaryFailure = cause;
     throw cause;
   } finally {
-    const closed = await client.close();
-    if (!closed.ok)
+    try {
+      await closeClient();
+    } catch (closeFailure) {
       throw primaryFailure === undefined
-        ? closed.error
+        ? closeFailure
         : new AggregateError(
-            [primaryFailure, closed.error],
+            [primaryFailure, closeFailure],
             "Ghidra verification and cleanup failed",
           );
+    }
     if (runtimeCoordinates !== undefined)
       await assertCleanup(runtimeCoordinates);
   }

@@ -1,3 +1,9 @@
+import {
+  bindArtifactFileCleanup,
+  ArtifactResourceScope,
+  AnalysisCleanupLease,
+} from "../resources/index.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { launchRegexMatchingLimitation } from "../process/RegexMatcher.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {
@@ -5,12 +11,12 @@ import {
   analysisProfilesEqual,
 } from "../domain/analysisProfile.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
-import {
-  isElfMetadataArchitecture,
-  type BinaryTarget,
+import type {
+  BinaryArchitecture,
+  BinaryTarget,
 } from "../domain/binaryTargetTypes.js";
 import { err, ok } from "../domain/result.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { cancelledBy } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type {
   AnalysisClient,
@@ -22,7 +28,8 @@ import type {
   AnalysisProviderCandidate,
   ProviderAvailability,
   ProviderTargetSupport,
-} from "../application/AnalysisProvider.js";
+  RetainedResourceScope,
+} from "../ports/AnalysisProvider.js";
 import type { AppConfig } from "../config/types.js";
 import type { ConfigurationError } from "../domain/configurationErrors.js";
 import { idaRegistrationDigest } from "./IdaRegistrationIdentity.js";
@@ -30,6 +37,8 @@ import { isDeepStrictEqual } from "node:util";
 import type { Result } from "../domain/result.js";
 import {
   readIdaConfiguration,
+  idaCompatibilityProfile,
+  IDA_COMPATIBILITY_PROFILES,
   type IdaConfiguration,
   idaConfigurationError,
 } from "./IdaConfiguration.js";
@@ -37,21 +46,35 @@ import {
   createIdaMcpConnection,
   type IdaMcpConnection,
 } from "./IdaMcpConnection.js";
-import {
-  idaCapabilities,
-  IDA_PROVIDER_IDENTITY,
-} from "./IdaProviderCapabilities.js";
+import { idaCapabilities } from "./IdaProviderCapabilities.js";
+import { IDA_PROVIDER_IDENTITY } from "./IdaProviderMetadata.js";
 import { IdaSessionClient } from "./IdaSessionClient.js";
-import { privateRuntimeRootCapability } from "../process/PrivateRuntimeRoot.js";
 import {
-  ArtifactResourceScope,
-  ArtifactResourceRetryFailure,
-} from "../artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { AnalysisCleanupLeaseGroup } from "../artifacts/AnalysisCleanupLease.js";
+  admitIdaConfiguration,
+  IDA_WORKSPACE_ROOT_REMEDIATION,
+  type IdaAdmission,
+} from "./IdaAdmission.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
-import type { ProviderInspectionScope } from "../providers/ProviderInspectionScope.js";
+import type { ProviderInspectionScope } from "../ports/ProviderInspectionScope.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+
+const IDA_ARCHITECTURES = {
+  x86: "supported",
+  x86_64: "supported",
+  arm: "supported",
+  arm64: "supported",
+  arm64_32: "unsupported",
+  mips: "ghidra",
+  "6502": "unsupported",
+  riscv: "ghidra",
+  powerpc: "ghidra",
+  m68k: "unsupported",
+  hexagon: "ghidra",
+  xtensa: "unsupported",
+} as const satisfies Record<
+  BinaryArchitecture,
+  "supported" | "unsupported" | "ghidra"
+>;
 
 /** Bring-your-own IDA MCP candidate; discovery performs no provider startup. */
 export class IdaProvider implements AnalysisProviderCandidate {
@@ -76,9 +99,12 @@ export class IdaProvider implements AnalysisProviderCandidate {
     private readonly connectionFactory: (
       config: IdaConfiguration,
       environment: Readonly<NodeJS.ProcessEnv>,
-    ) => IdaMcpConnection = createIdaMcpConnection,
+    ) => IdaMcpConnection = (config, environment) =>
+      createIdaMcpConnection(config, environment, {
+        platform: HOST_PLATFORM.platform,
+      }),
   ) {
-    this.environment = snapshotEnvironment(environment);
+    this.environment = snapshotEnvironment(environment, HOST_PLATFORM.platform);
   }
 
   identity() {
@@ -86,9 +112,16 @@ export class IdaProvider implements AnalysisProviderCandidate {
   }
   capabilities(): readonly CapabilityDescriptor[] {
     const profiles = [
-      ...idaCapabilities("attached", false, false, this.#regexLimitation()),
-      ...idaCapabilities("attached", true, true, this.#regexLimitation()),
-      ...idaCapabilities("headless", true, false, this.#regexLimitation()),
+      ...idaCapabilities(
+        IDA_COMPATIBILITY_PROFILES.native,
+        true,
+        this.#regexLimitation(),
+      ),
+      ...idaCapabilities(
+        IDA_COMPATIBILITY_PROFILES.modern,
+        true,
+        this.#regexLimitation(),
+      ),
     ];
     const byOperation = new Map<string, (typeof profiles)[number][]>();
     for (const capability of profiles) {
@@ -152,11 +185,10 @@ export class IdaProvider implements AnalysisProviderCandidate {
       const failure = new ProviderCleanupError(
         IDA_PROVIDER_IDENTITY.id,
         this.#ownedResources.cleanupResources,
-        { cause: cause instanceof Error ? cause.message : String(cause) },
+        { cause: errorMessage(cause) },
         { cause, operation: "close_owned_resources" },
       );
-      if (cause instanceof ArtifactResourceRetryFailure)
-        new AnalysisCleanupLeaseGroup(failure, cause.cleanupLeases);
+      bindArtifactFileCleanup(cause, failure);
       return err(failure);
     }
   }
@@ -171,9 +203,8 @@ export class IdaProvider implements AnalysisProviderCandidate {
     const config = await this.#configuration(options);
     const capabilities = config.ok
       ? idaCapabilities(
-          config.value.mode,
+          idaCompatibilityProfile(config.value),
           "command" in config.value,
-          config.value.protocol === "native",
           this.#regexLimitation(),
         )
       : this.capabilities();
@@ -182,46 +213,44 @@ export class IdaProvider implements AnalysisProviderCandidate {
       registration_path: this.config.idaMcpConfigPath ?? null,
       live_connection_probed: false,
     };
+    // Readiness-gated operations carry the same owner observation and repair.
+    const unavailable = (
+      availability: Extract<ProviderAvailability, { status: "unavailable" }>,
+    ): AnalysisProviderReadinessSnapshot => ({
+      availability,
+      capabilities: capabilities.map((capability) =>
+        capability.available
+          ? {
+              ...capability,
+              available: false as const,
+              reason: availability.reason,
+              availabilityCode: availability.code,
+              remediation: availability.remediation,
+            }
+          : capability,
+      ),
+    });
     if (!config.ok) {
       const failure = projectAnalysisError(config.error);
-      return {
-        availability: {
-          status: "unavailable",
-          code:
-            this.config.idaMcpConfigPath === undefined
-              ? "not_configured"
-              : "open_options_invalid",
-          reason: failure.message,
-          diagnostics: {
-            ...registrationDiagnostics,
-            configuration_details: failure.details ?? null,
-            configuration_remediation: failure.remediation.action,
-          },
+      return unavailable({
+        status: "unavailable",
+        code:
+          this.config.idaMcpConfigPath === undefined
+            ? "not_configured"
+            : "open_options_invalid",
+        reason: failure.message,
+        remediation: failure.remediation.action,
+        diagnostics: {
+          ...registrationDiagnostics,
+          configuration_details: failure.details ?? null,
         },
-        capabilities,
-      };
+      });
     }
-    if (config.value.mode === "headless") {
-      const privacy = privateRuntimeRootCapability();
-      if (!privacy.available)
-        return {
-          availability: {
-            status: "unavailable" as const,
-            code: privacy.code,
-            reason: privacy.reason,
-            diagnostics: {
-              ...registrationDiagnostics,
-              mode: "headless",
-              private_workspace_available: false,
-              windows_native_failure: {
-                stage: privacy.failureStage,
-                remediation: privacy.remediation,
-              },
-            },
-          },
-          capabilities,
-        };
-    }
+    const admission = await admitIdaConfiguration(config.value);
+    if (!admission.admitted)
+      return unavailable(
+        idaRefusalAvailability(admission, registrationDiagnostics),
+      );
     return {
       availability: {
         status: "available" as const,
@@ -249,32 +278,6 @@ export class IdaProvider implements AnalysisProviderCandidate {
           "IDA does not admit caller-selected GameCube DOL images. Open the target with Ghidra and select format gamecube-dol.",
         diagnostics,
       };
-    if (
-      target.kind === "executable" &&
-      (isElfMetadataArchitecture(target.architecture) ||
-        target.architecture === "hexagon")
-    )
-      return {
-        status: "unsupported",
-        code: "architecture_unsupported",
-        reason: `REA's IDA adapter has no verified ${
-          target.architecture === "mips"
-            ? "MIPS"
-            : target.architecture === "riscv"
-              ? "RISC-V"
-              : target.architecture === "powerpc"
-                ? "PowerPC"
-                : "Hexagon"
-        } lane. Select a supported Ghidra profile instead.`,
-        diagnostics,
-      };
-    if (target.kind === "executable" && target.architecture === "arm64_32")
-      return {
-        status: "unsupported",
-        code: "architecture_unsupported",
-        reason: "REA's IDA adapter has no verified arm64_32 lane.",
-        diagnostics,
-      };
     if (target.kind !== "executable")
       return {
         status: "unsupported",
@@ -289,6 +292,18 @@ export class IdaProvider implements AnalysisProviderCandidate {
         code: "target_format_unsupported",
         reason:
           "IDA does not admit headerless raw binaries. Open the target with Ghidra and supply architecture and entry_point.",
+        diagnostics,
+      };
+    const lane = IDA_ARCHITECTURES[target.architecture];
+    if (lane !== "supported")
+      return {
+        status: "unsupported",
+        code: "architecture_unsupported",
+        // Header-declared families that Ghidra admits keep the pointer there.
+        reason:
+          lane === "ghidra"
+            ? `REA's IDA adapter has no verified ${target.architecture} lane. Select a supported Ghidra profile instead.`
+            : `REA's IDA adapter has no verified ${target.architecture} lane.`,
         diagnostics,
       };
     return target.format === "mach-o-universal"
@@ -338,11 +353,7 @@ export class IdaProvider implements AnalysisProviderCandidate {
     options?: AnalysisProfileResolutionOptions,
   ) {
     if (options?.signal?.aborted === true)
-      return err(
-        new AnalysisCancelledError("ida:profile", {
-          cause: options.signal.reason,
-        }),
-      );
+      return err(cancelledBy("ida:profile", options.signal));
     const config = await this.#configuration(options);
     if (!config.ok) return config;
     const profile = createAnalysisProfile(IDA_PROVIDER_IDENTITY, {
@@ -350,12 +361,7 @@ export class IdaProvider implements AnalysisProviderCandidate {
       engine_version: null,
       upstream_distribution_version: null,
       mode: config.value.mode,
-      compatibility_profile:
-        config.value.protocol === "native"
-          ? "native-ida-mcp"
-          : config.value.mode === "attached"
-            ? "legacy-1.4"
-            : "database-supervisor",
+      compatibility_profile: idaCompatibilityProfile(config.value).identity,
       database_revision: null,
       cache_policy: "live",
       registration_digest: idaRegistrationDigest(config.value),
@@ -435,6 +441,46 @@ export class IdaProvider implements AnalysisProviderCandidate {
 const readIdaConfigurationNotConfigured = () =>
   err(
     idaConfigurationError(
-      "Set REA_IDA_MCP_CONFIG to an upstream IDA MCP JSON registration; see docs/ida-provider.md.",
+      "Set REA_IDA_MCP_CONFIG to an upstream IDA MCP JSON registration; see docs/providers/ida-provider.md.",
     ),
   );
+
+/** Project IDA's admission refusal into provider availability. */
+const idaRefusalAvailability = (
+  admission: Extract<IdaAdmission, { readonly admitted: false }>,
+  registrationDiagnostics: Readonly<Record<string, unknown>>,
+): Extract<ProviderAvailability, { status: "unavailable" }> => {
+  const { refusal } = admission;
+  switch (refusal.kind) {
+    case "private_workspace_unavailable":
+      return {
+        status: "unavailable",
+        code: refusal.privacy.code,
+        reason: refusal.privacy.reason,
+        remediation: refusal.privacy.remediation,
+        diagnostics: {
+          ...registrationDiagnostics,
+          mode: "headless",
+          private_workspace_available: false,
+          windows_native_failure: { stage: refusal.privacy.failureStage },
+        },
+      };
+    case "workspace_unusable":
+      return {
+        status: "unavailable",
+        code: "open_options_invalid",
+        reason: refusal.reason,
+        remediation: IDA_WORKSPACE_ROOT_REMEDIATION,
+        diagnostics: {
+          ...registrationDiagnostics,
+          mode: "headless",
+          workspace_root: admission.workspaceRoot ?? null,
+          private_workspace_available: false,
+        },
+      };
+    default: {
+      const unreachable: never = refusal;
+      return unreachable;
+    }
+  }
+};

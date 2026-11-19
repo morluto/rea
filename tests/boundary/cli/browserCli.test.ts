@@ -1,8 +1,10 @@
 import { afterEach, describe, expect } from "vitest";
+import { z } from "zod";
 
 import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 import { DEFAULT_BROWSER_SCENARIO_CAPTURE_LIMITS } from "../../../src/domain/browserScenarioCaptureLimits.js";
 import { BROWSER_STORAGE_FINGERPRINT_VERSION } from "../../../src/domain/browserScenarioCaptureValues.js";
+import { browserScenarioDiffSchema } from "../../../src/domain/browserScenarioDiffValues.js";
 import {
   startFakeCdpBrowser,
   type FakeCdpBrowser,
@@ -10,7 +12,6 @@ import {
 } from "../../fixtures/fakeCdpBrowser.js";
 
 const browsers: FakeCdpBrowser[] = [];
-const INTEGRATION_TEST_TIMEOUT_MS = 60_000;
 
 const partialScriptEvents: FakeOptions["commandEvents"] = (
   { method },
@@ -33,6 +34,90 @@ const partialScriptEvents: FakeOptions["commandEvents"] = (
 afterEach(async () => {
   await Promise.all(browsers.splice(0).map(async (browser) => browser.close()));
 });
+
+cliTest(
+  "compares source-map declaration omissions through the public CLI",
+  async ({ cli }) => {
+    const cdn = "https://cdn.example.test";
+    const browser = await startFakeCdpBrowser({
+      commandEvents: ({ method }, origin) =>
+        method === "Debugger.enable"
+          ? [
+              {
+                method: "Debugger.scriptParsed",
+                sessionId: "session-1",
+                params: {
+                  scriptId: "map-script",
+                  url: `${origin}/app.js`,
+                  hash: "a".repeat(64),
+                  length: 10,
+                  isModule: false,
+                  scriptLanguage: "JavaScript",
+                  sourceMapURL: `${cdn}/app.map`,
+                },
+              },
+            ]
+          : undefined,
+    });
+    browsers.push(browser);
+    const inspect = async (broad: boolean) => {
+      const result = await cli.run({
+        arguments: [
+          "inspect-web-page",
+          browser.endpoint,
+          "allowed-page",
+          "--observation-ms",
+          "0",
+          "--allowed-origins",
+          browser.allowedOrigin,
+          ...(broad ? ["--allowed-origins", cdn] : []),
+          "--json",
+        ],
+        environment: process.env,
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      return normalizedResult(result.json);
+    };
+    const known = await inspect(true);
+    const omitted = await inspect(false);
+    expect(known).toMatchObject({
+      scripts: {
+        items: [expect.objectContaining({ source_map_url: `${cdn}/app.map` })],
+      },
+    });
+    expect(omitted).toMatchObject({
+      scripts: { items: [expect.objectContaining({ source_map_url: null })] },
+      completeness: {
+        excluded: expect.arrayContaining([
+          expect.objectContaining({
+            section: "source_maps",
+            reason: "disallowed_origin",
+          }),
+        ]),
+      },
+    });
+    for (const [before, after] of [
+      [known, omitted],
+      [omitted, known],
+      [omitted, omitted],
+    ] as const) {
+      const result = await cli.run({
+        arguments: [
+          "compare-web-captures",
+          JSON.stringify({ inspection: before }),
+          JSON.stringify({ inspection: after }),
+          "--json",
+        ],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      expect(result.json).toMatchObject({
+        normalized_result: {
+          dimensions: { scripts: { status: "unknown", total_changes: 0 } },
+        },
+      });
+    }
+  },
+);
 
 cliTest(
   "browser CLI parity returns the same Evidence discovery and inspection contracts",
@@ -121,7 +206,6 @@ cliTest(
     });
     await assertScenarioComparisonPolicy(cli);
   },
-  INTEGRATION_TEST_TIMEOUT_MS,
 );
 
 cliTest(
@@ -208,7 +292,6 @@ cliTest(
       },
     });
   },
-  INTEGRATION_TEST_TIMEOUT_MS,
 );
 
 cliTest(
@@ -262,7 +345,6 @@ cliTest(
     });
     expect(JSON.stringify(refused)).not.toContain("not-this-browser");
   },
-  INTEGRATION_TEST_TIMEOUT_MS,
 );
 
 describe("scenario comparison CLI diagnostics", () => {
@@ -277,7 +359,7 @@ describe("scenario comparison CLI diagnostics", () => {
       name: "duplicate rule IDs",
       normalization: { rules: [rule, rule] },
       issue: {
-        path: ["normalization", "rules", 1, "rule_id"],
+        path: ["normalizationJson", "rules", 1, "rule_id"],
         reason: "invalid_value",
         message: "Normalization rule IDs must be unique",
       },
@@ -286,7 +368,7 @@ describe("scenario comparison CLI diagnostics", () => {
       name: "duplicate artifact kinds",
       normalization: { rules: [{ ...rule, artifacts: ["url", "url"] }] },
       issue: {
-        path: ["normalization", "rules", 0, "artifacts"],
+        path: ["normalizationJson", "rules", 0, "artifacts"],
         reason: "invalid_value",
         message: "Normalization rule artifact kinds must be unique",
       },
@@ -295,7 +377,7 @@ describe("scenario comparison CLI diagnostics", () => {
       name: "structurally invalid rules",
       normalization: { rules: "invalid" },
       issue: {
-        path: ["normalization", "rules"],
+        path: ["normalizationJson", "rules"],
         reason: "invalid_type",
         expected: "array",
       },
@@ -347,7 +429,7 @@ describe("scenario comparison CLI diagnostics", () => {
           operation: "compare_web_captures",
           issues: [
             {
-              path: ["before_scenario", "duration_ms"],
+              path: ["beforeJson", "duration_ms"],
               reason: "invalid_type",
               expected: "number",
             },
@@ -377,12 +459,12 @@ describe("scenario comparison CLI diagnostics", () => {
           operation: "compare_web_captures",
           issues: expect.arrayContaining([
             {
-              path: ["before_scenario", "scenario"],
+              path: ["beforeJson", "scenario"],
               reason: "missing_argument",
               expected: "object",
             },
             {
-              path: ["after_scenario", "scenario"],
+              path: ["afterJson", "scenario"],
               reason: "missing_argument",
               expected: "object",
             },
@@ -395,6 +477,46 @@ describe("scenario comparison CLI diagnostics", () => {
 });
 
 describe("scenario comparison recovery guidance", () => {
+  cliTest(
+    "reports each distinct event coverage instruction once",
+    async ({ cli }) => {
+      const before = scenarioCaptureWithConsole("same", {
+        request_body: false,
+        response_body: false,
+        header_values: false,
+      });
+      const after = {
+        ...before,
+        scenario: {
+          ...before.scenario,
+          event_families: [...before.scenario.event_families, "network"],
+          network_content: {
+            ...before.scenario.network_content,
+            response_body: true,
+          },
+        },
+      };
+      const invocation = await compareCapturesCli(cli, before, after);
+      expect(invocation.exitCode, invocation.stderr).toBe(0);
+      const result = z
+        .object({ normalized_result: browserScenarioDiffSchema })
+        .parse(invocation.json).normalized_result;
+      expect(result.overall_status).toBe("unknown");
+      const diffs = result.steps.flatMap((step) =>
+        step.artifact_diffs.filter((diff) => diff.artifact === "events"),
+      );
+      expect(diffs.length).toBeGreaterThan(0);
+      for (const diff of diffs) {
+        expect(
+          diff.reason?.match(/Event family selections differ/gu),
+        ).toHaveLength(1);
+        expect(
+          diff.reason?.match(/Network content selections differ/gu),
+        ).toHaveLength(1);
+      }
+    },
+  );
+
   cliTest(
     "reports independent network recovery alongside console differences",
     async ({ cli }) => {
@@ -594,7 +716,6 @@ describe("browser CLI capture parity", () => {
         normalized_result: { status: "identical", changed_pixels: 0 },
       });
     },
-    INTEGRATION_TEST_TIMEOUT_MS,
   );
 });
 
@@ -717,13 +838,13 @@ const assertScenarioComparisonPolicy = async (cli: TestCli): Promise<void> => {
   expect(malformedPolicyInvocation.signal).toBeNull();
   const malformedPolicy = malformedPolicyInvocation.json;
   expect(malformedPolicy).toMatchObject({
-    error: "Browser observation failed",
     code: "invalid_request",
     details: {
       operation: "compare_web_captures",
       issues: [
         {
-          path: ["normalization"],
+          // The issue names the CLI key that took the text.
+          path: ["normalizationJson"],
           reason: "invalid_format",
           expected: "JSON",
         },
@@ -876,7 +997,6 @@ cliTest(
       normalized_result: { overall_status: "changed" },
     });
   },
-  INTEGRATION_TEST_TIMEOUT_MS,
 );
 
 const scenarioCaptureWithConsole = (

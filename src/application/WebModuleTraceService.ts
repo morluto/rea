@@ -1,12 +1,16 @@
+import { WEB_MODULE_TRACE_PROVIDER } from "../domain/webTraceProviders.js";
 import { closeOwnedWebResources } from "./closeOwnedWebResources.js";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
+  primaryAnalysisError,
+  type AnalysisError,
+} from "../domain/analysisErrorBase.js";
+import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { jsonObjectSchema } from "../domain/jsonValue.js";
@@ -30,11 +34,11 @@ import {
   capturedWebManifestIdentity,
   validateSelectedWebScript,
 } from "./ValidateSelectedWebScript.js";
-import type { ExecutionOptions } from "./AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type {
   WebModuleArtifactPort,
   WebModuleResolutionPort,
-} from "./WebModulePorts.js";
+} from "../ports/WebModulePorts.js";
 
 import { completeProviderEvidence } from "./ProviderOperationExecution.js";
 import { parseAnalysisInput } from "./AnalysisInput.js";
@@ -122,10 +126,28 @@ export class WebModuleTraceService {
     const bound = validateSelectedWebScript(input, data, OPERATION);
     if (!bound.ok) return bound;
     const selected = bound.value;
+    const incomplete = (error: AnalysisError): Result<never, AnalysisError> => {
+      const resolverObservation =
+        webModuleResolutionObservationSchema.safeParse(
+          error.partialObservation,
+        );
+      error.partialObservation = {
+        ...(resolverObservation.success
+          ? { resolver_observation: resolverObservation.data }
+          : {}),
+        kind: "web-trace-observation",
+        analysis: "incomplete",
+        manifest: data.manifestFile,
+        source: data.sourceFile,
+        ...(data.importMap === null ? {} : { import_map: data.importMap.file }),
+      };
+      primaryAnalysisError(error).partialObservation = error.partialObservation;
+      return err(error);
+    };
     const importerUrl = input.importer_url ?? selected.url;
     if (input.importer_url === undefined) {
       const importerAdmission = admitContext(importerUrl);
-      if (!importerAdmission.ok) return importerAdmission;
+      if (!importerAdmission.ok) return incomplete(importerAdmission.error);
     }
     const syntax = collectWebModuleImports(data.source, data.sourceFile.path);
     const literals = syntax.imports
@@ -135,11 +157,7 @@ export class WebModuleTraceService {
     let resolutionFailure: AnalysisError | undefined;
     if (literals.length > 0) {
       if (options?.signal?.aborted)
-        return err(
-          new AnalysisCancelledError(OPERATION, {
-            cause: options.signal.reason,
-          }),
-        );
+        return incomplete(cancelledBy(OPERATION, options.signal));
       const request = {
         importerUrl,
         importMap:
@@ -157,7 +175,7 @@ export class WebModuleTraceService {
           execution.value,
         );
         if (!report.success)
-          return err(
+          return incomplete(
             new AnalysisOutputError(
               OPERATION,
               "Resolver returned malformed or incomplete native evidence.",
@@ -173,12 +191,12 @@ export class WebModuleTraceService {
           !isDeepStrictEqual(observation.data.request, request) ||
           observation.data.batch.resolutions.length !== literals.length
         )
-          return execution;
+          return incomplete(execution.error);
         resolution = observation.data.batch;
         resolutionFailure = execution.error;
       }
       if (resolution.resolutions.length !== literals.length)
-        return err(
+        return incomplete(
           new AnalysisOutputError(
             OPERATION,
             "Resolver did not return every selected literal specifier.",
@@ -196,7 +214,7 @@ export class WebModuleTraceService {
       else {
         const reported = resolution?.resolutions[literalIndex++];
         if (reported === undefined)
-          return err(
+          return incomplete(
             new AnalysisOutputError(
               OPERATION,
               "Resolver omitted a selected literal specifier.",
@@ -243,18 +261,16 @@ export class WebModuleTraceService {
       limitations: LIMITATIONS,
     });
     if (!normalized.success)
-      return err(new AnalysisOutputError(OPERATION, normalized.error.message));
+      return incomplete(
+        new AnalysisOutputError(OPERATION, normalized.error.message),
+      );
     const evidence = createEvidence(
       {
         path: data.sourceFile.path,
         sha256: data.sourceFile.sha256,
         format: "file",
       },
-      {
-        id: "rea-web-module-trace",
-        name: "REA captured module relationship trace",
-        version: "1",
-      },
+      WEB_MODULE_TRACE_PROVIDER,
       {
         operation: OPERATION,
         parameters: input,

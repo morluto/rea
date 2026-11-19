@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { chmod, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 
@@ -11,9 +12,16 @@ import {
   readClientRegistrationStatuses,
 } from "../../../src/application/ClientRegistrationStatus.js";
 import { configureClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
-import { classifyClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
+import {
+  currentClientRegistrationCommand,
+  classifyClientRegistrationCommand,
+} from "../../../src/application/ClientRegistrationIdentity.js";
 import { existingMaintenanceScope } from "../../../src/application/UpdateMaintenance.js";
+import { ConfigurationError } from "../../../src/domain/configurationErrors.js";
+import { err } from "../../../src/domain/result.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
+import { CURRENT_ENTRYPOINT_PATH } from "../../../src/process/CurrentEntrypointPath.js";
+import { supportedClientRegistrationProfile } from "../../fixtures/clientRegistrationProfile.js";
 
 beforeEach(clearClientLocationEnvironment);
 afterEach(() => {
@@ -21,7 +29,7 @@ afterEach(() => {
 });
 
 describe("client registration status", () => {
-  it("discovers Claude Code from its config file without a marker directory", async () => {
+  it("discovers a stale legacy Claude Code registration without a marker directory", async () => {
     const home = await createTestTempDirectory("rea-claude-config-only-");
     await writeFile(
       join(home, ".claude.json"),
@@ -35,14 +43,18 @@ describe("client registration status", () => {
       }),
     );
 
-    const statuses = await readClientRegistrationStatuses(home, "/current/rea");
+    const statuses = await readClientRegistrationStatuses(
+      home,
+      "/current/rea",
+      { platform: HOST_PLATFORM.platform },
+    );
 
     expect(statuses).toEqual([
       expect.objectContaining({
         client: "claude_code",
         config_path: join(home, ".claude.json"),
-        state: "aligned",
-        remediation: null,
+        state: "stale",
+        remediation: expect.stringMatching(/\S/u),
       }),
     ]);
   });
@@ -53,6 +65,10 @@ describe("client registration status", () => {
     const foreignEntry = join(home, "foreign-rea.mjs");
     await writeFile(currentEntry, "// current dispatcher\n");
     await writeFile(foreignEntry, "// different dispatcher\n");
+    const currentCommand = currentClientRegistrationCommand({
+      entrypointPath: currentEntry,
+      environment: {},
+    });
     await Promise.all([
       mkdir(join(home, ".codex")),
       mkdir(join(home, ".cursor")),
@@ -61,7 +77,7 @@ describe("client registration status", () => {
     ]);
     await writeFile(
       join(home, ".codex/config.toml"),
-      `[mcp_servers.rea]\ncommand = "npx"\nargs = ["-y", "${PRODUCT_IDENTITY.registrationPackageSpecifier}", "mcp"]\nstartup_timeout_sec = 30\ntool_timeout_sec = 450\n`,
+      `[mcp_servers.rea]\ncommand = ${JSON.stringify(currentCommand[0])}\nargs = ${JSON.stringify(currentCommand.slice(1))}\nstartup_timeout_sec = 30\ntool_timeout_sec = 450\n`,
     );
     await writeFile(
       join(home, ".cursor/mcp.json"),
@@ -73,7 +89,9 @@ describe("client registration status", () => {
     );
     await writeFile(join(home, ".gemini/settings.json"), "not-json");
 
-    const statuses = await readClientRegistrationStatuses(home, currentEntry);
+    const statuses = await readClientRegistrationStatuses(home, currentEntry, {
+      platform: HOST_PLATFORM.platform,
+    });
     expect(statuses).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -85,19 +103,19 @@ describe("client registration status", () => {
           client: "cursor",
           state: "stale",
           command: [foreignEntry, "mcp"],
-          remediation: expect.any(String),
+          remediation: expect.stringMatching(/\S/u),
         }),
         expect.objectContaining({
           client: "gemini_cli",
           state: "invalid",
           command: [],
-          remediation: expect.any(String),
+          remediation: expect.stringMatching(/\S/u),
         }),
         expect.objectContaining({
           client: "claude_code",
           state: "missing",
           command: [],
-          remediation: expect.any(String),
+          remediation: expect.stringMatching(/\S/u),
         }),
       ]),
     );
@@ -113,7 +131,11 @@ describe("client registration status", () => {
         join(home, ".cursor/mcp.json"),
         JSON.stringify({ mcpServers: servers }),
       );
-      expect(await readClientRegistrationStatuses(home)).toEqual([
+      expect(
+        await readClientRegistrationStatuses(home, undefined, {
+          platform: HOST_PLATFORM.platform,
+        }),
+      ).toEqual([
         expect.objectContaining({
           client: "cursor",
           state: "invalid",
@@ -122,6 +144,113 @@ describe("client registration status", () => {
       ]);
     },
   );
+});
+
+describe("client registration environment validation", () => {
+  it("reports invalid LM Studio runtime settings without requiring an explicit profile", async () => {
+    const home = await createTestTempDirectory("rea-lm-studio-env-");
+    await mkdir(join(home, ".lmstudio"));
+    await writeFile(
+      join(home, ".lmstudio/mcp.json"),
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: "npx",
+            args: ["-y", PRODUCT_IDENTITY.registrationPackageSpecifier, "mcp"],
+            env: { REA_MCP_INPUT_SCHEMA_PROFILE: "invalid" },
+          },
+        },
+      }),
+    );
+    const statuses = await readClientRegistrationStatuses(
+      home,
+      "/current/rea",
+      { platform: HOST_PLATFORM.platform },
+    );
+    expect(statuses).toContainEqual(
+      expect.objectContaining({
+        client: "lm_studio",
+        state: "invalid",
+        remediation: expect.stringContaining("REA_MCP_INPUT_SCHEMA_PROFILE"),
+      }),
+    );
+  });
+  it("reports an otherwise aligned registration invalid for a bad tool-family scope", async () => {
+    const home = await createTestTempDirectory("rea-registration-env-");
+    await mkdir(join(home, ".cursor"));
+    await writeFile(
+      join(home, ".cursor/mcp.json"),
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: "npx",
+            args: ["-y", PRODUCT_IDENTITY.registrationPackageSpecifier, "mcp"],
+            env: { REA_MCP_TOOL_FAMILIES: "session,typo" },
+          },
+        },
+      }),
+    );
+
+    const statuses = await readClientRegistrationStatuses(
+      home,
+      "/current/rea",
+      { platform: HOST_PLATFORM.platform },
+    );
+
+    expect(statuses).toEqual([
+      expect.objectContaining({
+        client: "cursor",
+        state: "invalid",
+        command: [],
+        remediation: expect.stringContaining("REA_MCP_TOOL_FAMILIES"),
+      }),
+    ]);
+  });
+
+  it("resolves provider budgets only for Kimi/Codex registrations", async () => {
+    const home = await createTestTempDirectory("rea-registration-budget-");
+    await mkdir(join(home, ".cursor"));
+    await mkdir(join(home, ".codex"));
+    await mkdir(join(home, ".lmstudio"));
+    await mkdir(join(home, ".kimi-code"));
+    const entry = {
+      command: "npx",
+      args: ["-y", PRODUCT_IDENTITY.registrationPackageSpecifier, "mcp"],
+    };
+    await writeFile(
+      join(home, ".cursor/mcp.json"),
+      JSON.stringify({ mcpServers: { rea: entry } }),
+    );
+    for (const path of [".lmstudio/mcp.json", ".kimi-code/mcp.json"])
+      await writeFile(
+        join(home, path),
+        JSON.stringify({ mcpServers: { rea: entry } }),
+      );
+    await writeFile(
+      join(home, ".codex/config.toml"),
+      `[mcp_servers.rea]\ncommand = "npx"\nargs = ["-y", "${PRODUCT_IDENTITY.registrationPackageSpecifier}", "mcp"]\n`,
+    );
+    const resolveProviderRequestBudget = async () =>
+      err(new ConfigurationError("budget unavailable"));
+
+    const statuses = await readClientRegistrationStatuses(
+      home,
+      "/current/rea",
+      { platform: HOST_PLATFORM.platform, resolveProviderRequestBudget },
+    );
+
+    const byClient = new Map(statuses.map((status) => [status.client, status]));
+    // The failing resolver must not invalidate non-Kimi/Codex registrations.
+    expect(byClient.has("cursor")).toBe(true);
+    expect(byClient.get("cursor")?.state).not.toBe("invalid");
+    expect(byClient.has("lm_studio")).toBe(true);
+    expect(byClient.get("lm_studio")?.state).not.toBe("invalid");
+    for (const client of ["codex", "kimi"])
+      expect(byClient.get(client)).toMatchObject({
+        state: "invalid",
+        remediation: expect.stringContaining("budget unavailable"),
+      });
+  });
 });
 
 describe("client registration launcher identity", () => {
@@ -133,7 +262,9 @@ describe("client registration launcher identity", () => {
       '[mcp_servers.rea]\ncommand = "npx"\nargs = ["-y", "rea-agents", "mcp"]\n',
     );
 
-    const statuses = await readClientRegistrationStatuses(home);
+    const statuses = await readClientRegistrationStatuses(home, undefined, {
+      platform: HOST_PLATFORM.platform,
+    });
 
     expect(statuses).toEqual([
       expect.objectContaining({
@@ -155,7 +286,9 @@ describe("client registration launcher identity", () => {
       }),
     );
 
-    const [status] = await readClientRegistrationStatuses(home);
+    const [status] = await readClientRegistrationStatuses(home, undefined, {
+      platform: HOST_PLATFORM.platform,
+    });
 
     expect(status).toMatchObject({
       client: "claude_code",
@@ -168,29 +301,34 @@ describe("client registration launcher identity", () => {
     const home = await createTestTempDirectory("rea-registration-unknown-");
     await mkdir(join(home, ".cursor"));
     const command = ["/opt/rea/bin/rea", "mcp"];
-    await writeFile(
-      join(home, ".cursor/mcp.json"),
-      JSON.stringify({
-        mcpServers: { rea: { command: command[0], args: [command[1]] } },
-      }),
-    );
+    const config = join(home, ".cursor/mcp.json");
+    const original = JSON.stringify({
+      mcpServers: { rea: { command: command[0], args: [command[1]] } },
+    });
+    await writeFile(config, original);
 
-    const [status] = await readClientRegistrationStatuses(home, "");
+    const [status] = await readClientRegistrationStatuses(home, "", {
+      platform: HOST_PLATFORM.platform,
+    });
 
     expect(status).toMatchObject({
       client: "cursor",
       command,
       state: "unknown",
-      remediation: expect.stringContaining("registration was retained"),
+      config_path: config,
+      remediation: expect.stringMatching(/\S/u),
     });
-    expect(status).not.toHaveProperty("commandIdentity");
-    expect(await readClientRegistrationInspections(home, "")).toEqual([
+    expect(
+      await readClientRegistrationInspections(home, "", {
+        platform: HOST_PLATFORM.platform,
+      }),
+    ).toEqual([
       expect.objectContaining({
         status,
         activation: "enabled",
-        commandIdentity: "unknown",
       }),
     ]);
+    expect(await readFile(config, "utf8")).toBe(original);
   });
 
   it("does not use the REA process cwd to resolve a client's relative launcher path", async () => {
@@ -211,6 +349,7 @@ describe("client registration launcher identity", () => {
     const [relativeStatus] = await readClientRegistrationStatuses(
       home,
       currentEntry,
+      { platform: HOST_PLATFORM.platform },
     );
     expect(relativeStatus).toMatchObject({
       command: [process.execPath, "./rea.mjs", "mcp"],
@@ -221,6 +360,7 @@ describe("client registration launcher identity", () => {
     const [absoluteStatus] = await readClientRegistrationStatuses(
       home,
       currentEntry,
+      { platform: HOST_PLATFORM.platform },
     );
     expect(absoluteStatus).toMatchObject({
       command: [process.execPath, currentEntry, "mcp"],
@@ -235,6 +375,7 @@ describe("client registration launcher identity", () => {
     const [relativeInterpreterStatus] = await readClientRegistrationStatuses(
       home,
       currentEntry,
+      { platform: HOST_PLATFORM.platform },
     );
     expect(relativeInterpreterStatus).toMatchObject({
       command: [relativeInterpreter, currentEntry, "mcp"],
@@ -261,7 +402,9 @@ describe("client registration package version identity", () => {
         `[mcp_servers.rea]\ncommand = "${command[0]}"\nargs = ["${command[1]}", "${command[2]}", "${command[3]}"]\n`,
       );
 
-      const [status] = await readClientRegistrationStatuses(home);
+      const [status] = await readClientRegistrationStatuses(home, undefined, {
+        platform: HOST_PLATFORM.platform,
+      });
 
       expect(classifyClientRegistrationCommand(command, undefined)).toBe(
         "owned",
@@ -303,29 +446,57 @@ describe("commandcode registration status", () => {
     );
   };
 
-  const ownedArgs = (): readonly string[] => [
-    "-y",
-    PRODUCT_IDENTITY.registrationPackageSpecifier,
-    "mcp",
-  ];
+  const entry = resolve("scripts/rea.mjs");
+  const ownedArgs = (): readonly string[] => [entry, "mcp"];
 
-  it.each([undefined, "sse"])(
-    "reports transport %j as invalid",
-    async (transport) => {
+  // Published command-code1.88.5 file loading accepts defaults and type aliases;
+  // its management/add-json parser has a different, stricter grammar.
+  it.each([
+    { fields: {}, state: "aligned" },
+    { fields: { type: "stdio" }, state: "aligned" },
+    {
+      fields: {
+        transport: "STDIO",
+        type: "sse",
+        url: "https://fixture.invalid",
+      },
+      state: "aligned",
+    },
+    {
+      fields: { transport: "sse", url: "https://fixture.invalid" },
+      state: "unknown",
+    },
+    { fields: { transport: { operator: true } }, state: "invalid" },
+  ] as const)(
+    "reports native transport fields $fields as $state",
+    async ({ fields, state }) => {
       const home = await createTestTempDirectory("rea-commandcode-transport-");
-      await writeCommandcodeRegistration(home, {
-        ...(transport === undefined ? {} : { transport }),
-        command: "npx",
+      const registration = {
+        ...fields,
+        command: process.execPath,
         args: [...ownedArgs()],
-      });
-
-      expect(await readClientRegistrationStatuses(home)).toEqual([
+      };
+      await writeCommandcodeRegistration(home, registration);
+      const original = await readFile(
+        join(home, ".commandcode/mcp.json"),
+        "utf8",
+      );
+      expect(
+        await readClientRegistrationStatuses(home, entry, {
+          platform: HOST_PLATFORM.platform,
+        }),
+      ).toEqual([
         expect.objectContaining({
           client: "commandcode",
-          state: "invalid",
-          command: [],
+          state,
+          command_identity: "owned",
+          command:
+            state === "invalid" ? [] : [process.execPath, ...ownedArgs()],
         }),
       ]);
+      expect(await readFile(join(home, ".commandcode/mcp.json"), "utf8")).toBe(
+        original,
+      );
     },
   );
 
@@ -334,11 +505,15 @@ describe("commandcode registration status", () => {
     await writeCommandcodeRegistration(home, {
       transport: "stdio",
       enabled: false,
-      command: "npx",
+      command: process.execPath,
       args: [...ownedArgs()],
     });
 
-    expect(await readClientRegistrationStatuses(home)).toEqual([
+    expect(
+      await readClientRegistrationStatuses(home, entry, {
+        platform: HOST_PLATFORM.platform,
+      }),
+    ).toEqual([
       expect.objectContaining({
         client: "commandcode",
         state: "stale",
@@ -362,7 +537,10 @@ describe("client activation keys", () => {
         `[mcp_servers.rea]\ncommand = ${JSON.stringify(process.execPath)}\nargs = [${JSON.stringify(entry)}, "mcp"]\nstartup_timeout_sec = 30\ntool_timeout_sec = 450\n${activation}\n`,
       );
       expect(
-        await readClientRegistrationStatuses(home, entry, { environment: {} }),
+        await readClientRegistrationStatuses(home, entry, {
+          platform: HOST_PLATFORM.platform,
+          environment: {},
+        }),
       ).toEqual([expect.objectContaining({ client: "codex", state })]);
     },
   );
@@ -413,6 +591,7 @@ describe("client activation keys", () => {
       );
       expect(
         await readClientRegistrationStatuses(home, entry, {
+          platform: HOST_PLATFORM.platform,
           environment: { XDG_CONFIG_HOME: join(home, ".config") },
         }),
       ).toEqual([expect.objectContaining({ client, state })]);
@@ -430,13 +609,15 @@ describe("Ghidra multi-function deadline registration advice", () => {
     async ({ provider, timeout, hasBatchScope }) => {
       const home = await createTestTempDirectory("rea-codex-decompile-scope-");
       await mkdir(join(home, ".codex"));
-      const entry = resolve("scripts/rea.mjs");
+      const entry = CURRENT_ENTRYPOINT_PATH;
+      if (entry === undefined) throw new Error("missing current entrypoint");
       const configPath = join(home, ".codex/config.toml");
       // Two 600-second Ghidra decompiles plus startup/headroom would need an
       // estimated 1650 seconds. A caller's shorter or longer choice stays theirs.
       const original = `[mcp_servers.rea]\ncommand = ${JSON.stringify(process.execPath)}\nargs = [${JSON.stringify(entry)}, "mcp"]\nstartup_timeout_sec = 30\ntool_timeout_sec = ${timeout}\n[mcp_servers.rea.env]\nREA_ANALYSIS_PROVIDER = "${provider}"\nREA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS = "600"\n`;
       await writeFile(configPath, original);
       const [status] = await readClientRegistrationStatuses(home, entry, {
+        platform: HOST_PLATFORM.platform,
         environment: {},
       });
       expect(status).toMatchObject({ client: "codex", state: "aligned" });
@@ -447,7 +628,12 @@ describe("Ghidra multi-function deadline registration advice", () => {
         expect(status?.advisory).toContain("max_functions");
       } else expect(status?.advisory).toBeUndefined();
       const configured = await configureClientConfiguration(
-        { name: "codex", format: "toml", configPath },
+        {
+          name: "codex",
+          registrationProfile: supportedClientRegistrationProfile("codex"),
+          format: "toml",
+          configPath,
+        },
         {},
         [process.execPath, entry, "mcp"],
       );
@@ -472,6 +658,7 @@ describe("Node-wrapped registration policy", () => {
         `[mcp_servers.rea]\ncommand = ${JSON.stringify(process.execPath)}\nargs = [${JSON.stringify(entry)}, "mcp"]\nstartup_timeout_sec = ${String(timeout)}\ntool_timeout_sec = 450\n`,
       );
       const statuses = await readClientRegistrationStatuses(home, entry, {
+        platform: HOST_PLATFORM.platform,
         environment: {},
       });
       expect(statuses).toEqual([
@@ -492,6 +679,7 @@ describe("Node-wrapped registration policy", () => {
       `[mcp_servers.rea]\ncommand = ${JSON.stringify(process.execPath)}\nargs = [${JSON.stringify(entry)}, "mcp"]\nstartup_timeout_sec = 5\ntool_timeout_sec = 10\n`,
     );
     const [status] = await readClientRegistrationStatuses(home, entry, {
+      platform: HOST_PLATFORM.platform,
       environment: {},
     });
     expect(status).toMatchObject({
@@ -501,8 +689,8 @@ describe("Node-wrapped registration policy", () => {
     });
   });
 
-  it.each([1, 30])(
-    "checks Grok Build startup timeout %d independently of launcher",
+  it.each([1, 30, 90])(
+    "accepts Grok Build caller-selected startup timeout %d independently of launcher",
     async (timeout) => {
       const home = await createTestTempDirectory("rea-grok-registration-");
       await mkdir(join(home, ".grok"));
@@ -512,12 +700,13 @@ describe("Node-wrapped registration policy", () => {
         `[mcp_servers.rea]\ncommand = ${JSON.stringify(process.execPath)}\nargs = [${JSON.stringify(entry)}, "mcp"]\nstartup_timeout_sec = ${String(timeout)}\n`,
       );
       const statuses = await readClientRegistrationStatuses(home, entry, {
+        platform: HOST_PLATFORM.platform,
         environment: {},
       });
       expect(statuses).toEqual([
         expect.objectContaining({
           client: "grok_build",
-          state: timeout === 30 ? "aligned" : "stale",
+          state: "aligned",
         }),
       ]);
     },
@@ -532,7 +721,10 @@ describe("Node-wrapped registration policy", () => {
       `disabled_mcp_servers = ["rea"]\n[mcp_servers.rea]\ncommand = ${JSON.stringify(process.execPath)}\nargs = [${JSON.stringify(entry)}, "mcp"]\nstartup_timeout_sec = 30\n`,
     );
     expect(
-      await readClientRegistrationStatuses(home, entry, { environment: {} }),
+      await readClientRegistrationStatuses(home, entry, {
+        platform: HOST_PLATFORM.platform,
+        environment: {},
+      }),
     ).toEqual([
       expect.objectContaining({ client: "grok_build", state: "stale" }),
     ]);
@@ -548,9 +740,7 @@ describe("Node-wrapped registration policy", () => {
     const statuses = await readClientRegistrationStatuses(
       home,
       "/current/rea",
-      {
-        environment: {},
-      },
+      { platform: HOST_PLATFORM.platform, environment: {} },
     );
     expect(statuses).toEqual([
       expect.objectContaining({ client: "codex", state: "stale" }),
@@ -577,6 +767,7 @@ describe("Node-wrapped registration policy", () => {
         }),
       );
       const statuses = await readClientRegistrationStatuses(home, entry, {
+        platform: HOST_PLATFORM.platform,
         environment: {},
       });
       expect(statuses).toEqual([
@@ -606,6 +797,7 @@ describe("explicit client selection", () => {
       home,
       "/current/rea",
       {
+        platform: HOST_PLATFORM.platform,
         environment: {},
         selectedClientIds: ["freebuff"],
       },
@@ -631,6 +823,7 @@ describe("explicit client selection", () => {
         home,
         "/current/rea",
         {
+          platform: HOST_PLATFORM.platform,
           environment: {},
           selectedClientIds: ["freebuff"],
         },
@@ -652,9 +845,7 @@ describe("explicit client selection", () => {
     const statuses = await readClientRegistrationStatuses(
       home,
       "/current/rea",
-      {
-        environment: {},
-      },
+      { platform: HOST_PLATFORM.platform, environment: {} },
     );
 
     expect(statuses.map(({ client }) => client)).not.toContain("freebuff");
@@ -683,6 +874,7 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
       const statuses = await readClientRegistrationStatuses(
         home,
         "/current/rea",
+        { platform: HOST_PLATFORM.platform },
       );
       expect(
         statuses.find((status) => status.client === "claude_code"),
@@ -690,11 +882,14 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
         config_path: path,
         state: "invalid",
         command: [],
-        remediation: expect.any(String),
+        remediation: expect.stringMatching(/\S/u),
       });
       expect(
-        (await existingMaintenanceScope(home, "/current/rea", process.env))
-          .clients,
+        (
+          await existingMaintenanceScope(home, "/current/rea", process.env, {
+            platform: HOST_PLATFORM.platform,
+          })
+        ).clients,
       ).not.toContain("claude_code");
     } finally {
       await chmod(locked, 0o700);
@@ -717,6 +912,7 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
       const statuses = await readClientRegistrationStatuses(
         home,
         "/current/rea",
+        { platform: HOST_PLATFORM.platform },
       );
       expect(
         statuses.find((status) => status.client === "claude_code"),
@@ -731,6 +927,29 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
   },
 );
 
+it("reports an unresolved client location as unknown and still inspects other clients", async () => {
+  const home = await createTestTempDirectory("rea-registration-unknown-path-");
+  await writeFile(
+    join(home, ".claude.json"),
+    JSON.stringify({ mcpServers: { rea: { command: "/old/rea", args: [] } } }),
+  );
+  const statuses = await readClientRegistrationStatuses(home, "/current/rea", {
+    platform: HOST_PLATFORM.platform,
+    environment: { MCPORTER_CONFIG: "config/mcporter.json" },
+  });
+  expect(statuses.find(({ client }) => client === "mcporter")).toEqual({
+    client: "mcporter",
+    config_path: "config/mcporter.json",
+    command: [],
+    command_identity: "unknown",
+    state: "unknown",
+    remediation: expect.stringContaining("MCPORTER_CONFIG is relative"),
+  });
+  expect(statuses.find(({ client }) => client === "claude_code")).toMatchObject(
+    { state: "stale" },
+  );
+});
+
 it("reports a dangling configuration entry as missing without losing the detected client", async () => {
   const home = await createTestTempDirectory(
     "rea-registration-dangling-config-",
@@ -738,8 +957,10 @@ it("reports a dangling configuration entry as missing without losing the detecte
   const path = join(home, ".claude.json");
   await symlink(join(home, "absent.json"), path);
   expect(
-    (await readClientRegistrationStatuses(home)).find(
-      (status) => status.client === "claude_code",
-    ),
+    (
+      await readClientRegistrationStatuses(home, undefined, {
+        platform: HOST_PLATFORM.platform,
+      })
+    ).find((status) => status.client === "claude_code"),
   ).toMatchObject({ config_path: path, state: "missing", command: [] });
 });

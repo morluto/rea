@@ -1,32 +1,49 @@
-import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
+import {
+  AnalysisCleanupLease,
+  bindArtifactFileCleanup,
+  ArtifactResourceRetryFailure,
+} from "../resources/index.js";
+import {
+  hashStableFile,
+  stableFileHashCause,
+  type StableFileHashOptions,
+} from "../filesystem/StableFileHash.js";
+import {
+  RegularFileCleanupFailure,
+  RegularFileCancelled,
+  regularFileCancellation,
+  withOwnedRegularFile,
+} from "../filesystem/OwnedRegularFile.js";
+
+import { assertRegularFileActive } from "../filesystem/RegularFile.js";
 
 import type {
   AnalysisProfileResolution,
   RetainedResourceScope,
   ProviderIdentity,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { createFunctionCoordinateContext } from "../domain/native/functionCoordinateContext.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import {
   isMachOFormat,
-  isElfMetadataArchitecture,
   type BinaryArchitecture,
   type BinaryTarget,
-  type ElfMetadataArchitecture,
-  type HeaderArchitecture,
 } from "../domain/binaryTargetTypes.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { jsonValueSchema } from "../domain/jsonValue.js";
 import {
   machoTargetSelectionSchema,
   type MachoTargetSelection,
 } from "../domain/apple/machoTargetSelection.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { readFatMagicFormat } from "../domain/apple/machoContainer.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 import {
@@ -34,6 +51,8 @@ import {
   type HopperMachOImageResolutionFileSystem,
   type HopperMachOImage,
 } from "./HopperMachOImage.js";
+import { hopperProducerIdentity } from "./HopperBridgeSources.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 interface HopperProfileOptions {
   readonly launcherPath: string;
@@ -54,13 +73,19 @@ export const resolveHopperAnalysisProfile = async (
       resolveHopperAnalysisProfileInScope(target, options),
     );
   } catch (cause: unknown) {
-    return err(
-      cause instanceof AnalysisError
-        ? cause
-        : new ProviderAdapterError("hopper", "resolve_analysis_profile", {
-            cause,
-          }),
+    if (cause instanceof AnalysisError) return err(cause);
+    const failure = new ProviderAdapterError(
+      "hopper",
+      "resolve_analysis_profile",
+      {
+        cause,
+        ...(cause instanceof ArtifactResourceRetryFailure
+          ? { cleanup: cause.cleanup }
+          : {}),
+      },
     );
+    bindArtifactFileCleanup(cause, failure);
+    return err(failure);
   }
 };
 
@@ -72,13 +97,15 @@ const resolveHopperAnalysisProfileInScope = async (
     return ok({ profile: null });
   let machoContainer: "thin" | "fat32" | "fat64" | undefined;
   if (target.kind === "executable" && isMachOFormat(target.format)) {
-    const header = await readMachoMagic(target.path, options.signal);
+    const header = await readMachoMagic(
+      target.path,
+      options.resourceScope,
+      options.signal,
+    );
     if (!header.ok) return header;
-    machoContainer = [0xcafebabf, 0xbfbafeca].includes(header.value)
-      ? "fat64"
-      : [0xcafebabe, 0xbebafeca].includes(header.value)
-        ? "fat32"
-        : "thin";
+    const fatFormat = readFatMagicFormat(header.value);
+    machoContainer =
+      fatFormat === null ? "thin" : fatFormat.wide ? "fat64" : "fat32";
   }
   let preparedImage: HopperMachOImage | undefined;
   if (
@@ -127,7 +154,11 @@ const resolveHopperAnalysisProfileInScope = async (
     options.loaderArgsOverride.length === 0
       ? derived.value
       : [...options.loaderArgsOverride];
-  const launcherDigest = await sha256File(options.launcherPath, options.signal);
+  const launcherDigest = await sha256File(
+    options.launcherPath,
+    options.resourceScope,
+    options.signal,
+  );
   if (!launcherDigest.ok) return launcherDigest;
   const provider = {
     id: options.provider.id,
@@ -148,7 +179,7 @@ const resolveHopperAnalysisProfileInScope = async (
         : {}),
       target_kind: target.kind,
       target_format: target.format,
-      function_dossier_coverage: "observed-facets-and-call-relationships-v1",
+      producer: hopperProducerIdentity(),
       architecture: target.architecture ?? null,
       available_architectures: [
         ...(target.availableArchitectures ?? []),
@@ -173,36 +204,46 @@ const resolveHopperAnalysisProfileInScope = async (
   });
 };
 
-/** Ghidra owns these lanes; Hopper names the family it declines rather than guessing. */
-const HOPPER_DECLINED_ARCHITECTURE_LABELS: Record<
-  ElfMetadataArchitecture | "hexagon",
-  string
-> = {
-  mips: "MIPS",
-  riscv: "RISC-V",
-  powerpc: "PowerPC",
-  hexagon: "Hexagon",
-};
+// Raw-only families keep the existing format refusal before loader selection.
+const HOPPER_ARCHITECTURE_FLAGS = {
+  x86: "--intel-32",
+  x86_64: "--intel-64",
+  arm: "--armv7",
+  arm64: "--aarch64",
+  arm64_32: null,
+  mips: null,
+  "6502": "raw-only",
+  riscv: null,
+  powerpc: null,
+  m68k: "raw-only",
+  hexagon: null,
+  xtensa: null,
+} as const satisfies Record<BinaryArchitecture, string | null>;
 
-/** Families with no verified Hopper lane, declined before any loader selection. */
-export type HopperDeclinedArchitecture =
-  | ElfMetadataArchitecture
-  | "hexagon"
-  | "arm64_32";
+type HopperDeclinedArchitecture = {
+  [
+    Architecture in BinaryArchitecture
+  ]: (typeof HOPPER_ARCHITECTURE_FLAGS)[Architecture] extends null
+    ? Architecture
+    : never;
+}[BinaryArchitecture];
 
 export const isHopperDeclinedArchitecture = (
   architecture: BinaryArchitecture,
 ): architecture is HopperDeclinedArchitecture =>
-  isElfMetadataArchitecture(architecture) ||
-  architecture === "hexagon" ||
-  architecture === "arm64_32";
+  HOPPER_ARCHITECTURE_FLAGS[architecture] === null;
 
+/**
+ * Hopper states only what it owns: it does not admit the family. It routes the
+ * caller to the Ghidra provider without restating or promising Ghidra's lane
+ * facts.
+ */
 export const hopperDeclinedArchitectureReason = (
   architecture: HopperDeclinedArchitecture,
 ): string =>
   architecture === "arm64_32"
     ? "REA's Hopper adapter has no verified arm64_32 lane."
-    : `REA's Hopper adapter does not admit ${HOPPER_DECLINED_ARCHITECTURE_LABELS[architecture]} targets. Select a verified Ghidra ${HOPPER_DECLINED_ARCHITECTURE_LABELS[architecture]} profile instead.`;
+    : `REA's Hopper adapter does not admit ${architecture} targets. Select the Ghidra provider instead.`;
 
 /** Derive Hopper's complete non-interactive CLI loader selection. */
 export const hopperLoaderArgsForTarget = (
@@ -226,7 +267,7 @@ export const hopperLoaderArgsForTarget = (
         hopperDeclinedArchitectureReason(architecture),
       ),
     );
-  const flag = hopperArchitectureFlag(architecture);
+  const flag = HOPPER_ARCHITECTURE_FLAGS[architecture];
   if (isMachOFormat(target.format)) {
     if (machoContainer === undefined)
       return err(
@@ -256,115 +297,142 @@ export const hopperLoaderArgsForTarget = (
   }
 };
 
-const hopperArchitectureFlag = (architecture: HeaderArchitecture): string => {
-  switch (architecture) {
-    case "x86":
-      return "--intel-32";
-    case "x86_64":
-      return "--intel-64";
-    case "arm":
-      return "--armv7";
-    case "arm64":
-      return "--aarch64";
-  }
-};
-
-const readMachoMagic = async (
+const readMachoMagic = (
   path: string,
+  resources: RetainedResourceScope,
   signal?: AbortSignal,
-): Promise<Result<number, AnalysisError>> => {
-  if (signalIsAborted(signal))
-    return err(
-      new AnalysisCancelledError("open_binary", { cause: signal?.reason }),
-    );
-  const stream = createReadStream(path, { start: 0, end: 3 });
-  const abortError = new Error("Caller cancelled Mach-O header read");
-  const onAbort = (): void => {
-    stream.destroy(abortError);
-  };
-  signal?.addEventListener("abort", onAbort, { once: true });
-  if (signal?.aborted) onAbort();
-  try {
-    const chunks: Buffer[] = [];
-    for await (const chunk of stream) chunks.push(Buffer.from(chunk));
-    if (signalIsAborted(signal))
-      return err(
-        new AnalysisCancelledError("open_binary", { cause: signal?.reason }),
-      );
-    const bytes = Buffer.concat(chunks);
-    return bytes.length === 4
-      ? ok(bytes.readUInt32BE(0))
-      : err(
-          new BinaryTargetError(
-            path,
-            "Mach-O header became truncated before Hopper loader selection",
-          ),
-        );
-  } catch (cause: unknown) {
-    return cause === abortError
-      ? err(
-          new AnalysisCancelledError("open_binary", { cause: signal?.reason }),
-        )
-      : err(
-          new BinaryTargetError(
-            path,
-            `Cannot read the Mach-O container header: ${cause instanceof Error ? cause.message : String(cause)}`,
-            { cause },
-          ),
-        );
-  } finally {
-    signal?.removeEventListener("abort", onAbort);
-  }
-};
+): Promise<Result<number, AnalysisError>> =>
+  readHopperProfileFile(
+    { path, kind: "header" },
+    resources,
+    signal,
+    (options) =>
+      withOwnedRegularFile(path, options, async ({ handle }) => {
+        const bytes = Buffer.alloc(4);
+        let length = 0;
+        while (length < bytes.length) {
+          assertRegularFileActive(signal);
+          const { bytesRead } = await handle.read(
+            bytes,
+            length,
+            bytes.length - length,
+            length,
+          );
+          if (bytesRead === 0)
+            throw new BinaryTargetError(
+              path,
+              "Mach-O header became truncated before Hopper loader selection",
+            );
+          length += bytesRead;
+        }
+        return bytes.readUInt32BE(0);
+      }),
+  );
 
-const sha256File = async (
+const sha256File = (
   path: string,
+  resources: RetainedResourceScope,
   signal: AbortSignal | undefined,
-): Promise<Result<string, AnalysisError>> => {
-  if (signalIsAborted(signal))
-    return err(
-      new AnalysisCancelledError("open_binary", { cause: signal?.reason }),
-    );
-  const stream = createReadStream(path);
-  const abortError = new Error("Caller cancelled launcher fingerprint read");
-  const onAbort = (): void => {
-    stream.destroy(abortError);
-  };
-  signal?.addEventListener("abort", onAbort, { once: true });
-  if (signal?.aborted) onAbort();
+): Promise<Result<string, AnalysisError>> =>
+  readHopperProfileFile(
+    { path, kind: "launcher" },
+    resources,
+    signal,
+    async (options) => (await hashStableFile(path, options)).sha256,
+  );
+
+/** Both profile reads retain the exact descriptor through final close and retry. */
+const readHopperProfileFile = async <Value>(
+  source: { readonly path: string; readonly kind: "header" | "launcher" },
+  resources: RetainedResourceScope,
+  signal: AbortSignal | undefined,
+  read: (options: StableFileHashOptions) => Promise<Value>,
+): Promise<Result<Value, AnalysisError>> => {
+  const { path, kind } = source;
+  let closeLease: AnalysisCleanupLease | undefined;
   try {
-    const hash = createHash("sha256");
-    for await (const chunk of stream) hash.update(chunk);
-    return signalIsAborted(signal)
-      ? err(
-          new AnalysisCancelledError("open_binary", { cause: signal?.reason }),
-        )
-      : ok(hash.digest("hex"));
-  } catch (cause: unknown) {
-    return cause === abortError
-      ? err(
-          new AnalysisCancelledError("open_binary", { cause: signal?.reason }),
-        )
-      : err(
-          new ProviderAdapterError("hopper", "resolve_analysis_profile", {
-            cause,
-            userMessage: `Cannot fingerprint the selected Hopper launcher ${path}: ${cause instanceof Error ? cause.message : String(cause)}`,
-            remediationAction:
-              "Restore read access to the selected Hopper launcher, then retry provider selection.",
-            diagnostics: {
-              launcher_path: path,
-              system_code:
-                cause instanceof Error &&
-                typeof Reflect.get(cause, "code") === "string"
-                  ? (Reflect.get(cause, "code") as string)
-                  : null,
+    return ok(
+      await read({
+        ...(signal === undefined ? {} : { signal }),
+        retainFailedClose: (owner) => {
+          closeLease = AnalysisCleanupLease.forCloseOwner(owner, path);
+          resources.retain(
+            {
+              close: () => closeLease!.release(),
+              get cleanupResources() {
+                return closeLease!.cleanupResources;
+              },
             },
-          }),
-        );
-  } finally {
-    signal?.removeEventListener("abort", onAbort);
+            path,
+          );
+        },
+      }),
+    );
+  } catch (cause: unknown) {
+    const physical = stableFileHashCause(
+      cause instanceof RegularFileCleanupFailure
+        ? cause.outcome.kind === "failed"
+          ? cause.outcome.cause
+          : cause.cleanupCause
+        : cause,
+    );
+    const cleanup =
+      cause instanceof RegularFileCleanupFailure
+        ? {
+            reason: errorMessage(cause.cleanupCause),
+            resources: [path],
+          }
+        : undefined;
+    const cancellation = regularFileCancellation(cause);
+    const completed =
+      (cause instanceof RegularFileCleanupFailure ||
+        cause instanceof RegularFileCancelled) &&
+      cause.outcome.kind === "completed"
+        ? { completed_profile_read: jsonValueSchema.parse(cause.outcome.value) }
+        : {};
+    const diagnostics = { profile_file: { kind, path }, ...completed };
+    const failure =
+      cancellation !== undefined
+        ? cancelledBy("open_binary", carriedReason(cancellation.reason), {
+            cleanup,
+            diagnostics,
+          })
+        : physical instanceof AnalysisError
+          ? physical
+          : kind === "header"
+            ? new BinaryTargetError(
+                path,
+                `Cannot read the Mach-O container header: ${errorMessage(physical)}`,
+                { cause: physical, cleanup },
+              )
+            : new ProviderAdapterError("hopper", "resolve_analysis_profile", {
+                cause: physical,
+                cleanup,
+                userMessage: `Cannot fingerprint the selected Hopper launcher ${path}: ${errorMessage(physical)}`,
+                remediationAction:
+                  "Select a readable regular Hopper launcher, then retry provider selection.",
+                diagnostics: {
+                  launcher_path: path,
+                  ...diagnostics,
+                  system_code:
+                    physical instanceof Error &&
+                    typeof Reflect.get(physical, "code") === "string"
+                      ? (Reflect.get(physical, "code") as string)
+                      : null,
+                },
+              });
+    if (cause instanceof RegularFileCleanupFailure) {
+      const cleanupFailure = new ProviderCleanupError(
+        "hopper",
+        [path],
+        diagnostics,
+        { cause, operation: "resolve_analysis_profile" },
+      );
+      closeLease?.bindCleanupError(cleanupFailure);
+      failure
+        .retainSecondaryFailure(cleanupFailure)
+        .bindCleanupDependencies([cleanupFailure]);
+    }
+    return err(failure);
   }
 };
-
-const signalIsAborted = (signal: AbortSignal | undefined): boolean =>
-  signal?.aborted === true;

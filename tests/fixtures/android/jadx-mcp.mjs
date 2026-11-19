@@ -1,11 +1,25 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
-import { JADX_BRIDGE_IDENTITY } from "../../../src/android/JadxRelease.ts";
+import { jadxBridgeIdentity } from "../../../src/android/JadxRelease.ts";
+
+const packagedBridgeVersion = () => {
+  const identity = jadxBridgeIdentity();
+  if (!identity.ok) throw new Error(identity.error);
+  return identity.value.version;
+};
 
 // An actual child MCP server exercising the production stdio/process seam.
 // It is a protocol fixture, not evidence of JADX decompiler support.
 const mode = process.env.REA_FAKE_JADX_MODE ?? "normal";
+// A worker heap too small for the bridge stops the JVM before the handshake,
+// so the retained stderr is the only heap evidence.
+if (mode === "start-heap-exhausted") {
+  process.stderr.write(
+    'Exception in thread "main" java.lang.OutOfMemoryError: Java heap space\n',
+  );
+  process.exit(1);
+}
 const server = new McpServer({
   name: mode === "empty-server-identity" ? "" : "rea-jadx-bridge",
   version:
@@ -13,7 +27,7 @@ const server = new McpServer({
       ? ""
       : mode === "version"
         ? "99.0.0"
-        : JADX_BRIDGE_IDENTITY.version,
+        : packagedBridgeVersion(),
 });
 const requestedCount = Number.parseInt(
   process.env.REA_FAKE_JADX_CLASS_COUNT ?? "",
@@ -36,6 +50,7 @@ const classes = [
 const methods = [
   {
     name: "onCreate",
+    raw_name: "onCreate",
     signature: "onCreate(Bundle): void",
     dex_descriptor: "(Landroid/os/Bundle;)V",
     is_constructor: false,
@@ -43,6 +58,7 @@ const methods = [
   },
   {
     name: "choose",
+    raw_name: "choose",
     signature: "choose(String): void",
     dex_descriptor: "(Ljava/lang/String;)V",
     is_constructor: false,
@@ -50,6 +66,7 @@ const methods = [
   },
   {
     name: "choose",
+    raw_name: "choose",
     signature: "choose(int): void",
     dex_descriptor: "(I)V",
     is_constructor: false,
@@ -97,6 +114,49 @@ register("load_apk", async ({ path }) => {
     resource_count: 1,
     threads: 1,
     resources: "full",
+  });
+});
+register("rea_native_declarations", ({ path }) => {
+  if (typeof path !== "string")
+    return { ...text("path must be a string"), isError: true };
+  const methods = [
+    {
+      source_index: 0,
+      class_name: "fixture.Target",
+      method_name: "readNative",
+      descriptor: "(I)I",
+      dex_entry: "classes.dex",
+      dex_entry_index: 0,
+      class_index: 0,
+      method_index: 1,
+    },
+  ];
+  if (mode === "duplicate-native-declaration")
+    methods.push({
+      ...methods[0],
+      source_index: 1,
+      dex_entry: "classes2.dex",
+      dex_entry_index: 1,
+    });
+  return json({
+    scope: "apk-root-dex-declarations",
+    methods,
+    coverage: {
+      status: mode === "partial-native-inventory" ? "partial" : "complete",
+      dex_entries: mode === "partial-native-inventory" ? 2 : methods.length,
+      examined_dex_entries: methods.length,
+      examined_classes: methods.length,
+      examined_methods: methods.length,
+    },
+    unknowns:
+      mode === "partial-native-inventory"
+        ? ["Controlled unreadable second DEX member"]
+        : [],
+    manifest_splits: {
+      status: "observed",
+      required_split_types: [],
+      split_required: false,
+    },
   });
 });
 register("get_app_info", () => {
@@ -166,6 +226,7 @@ register("get_class_summary", () =>
     methods: mode === "summary-error" ? [] : methods,
     fields: [],
     inner_classes: [],
+    inner_class_raw_names: [],
     ...(mode === "summary-error" ? { error: "summary timed out" } : {}),
   }),
 );
@@ -178,7 +239,7 @@ register("get_method_body", ({ method_name, overload_index }) => {
   const selected = methods.filter((method) => method.name === method_name)[
     overload_index
   ];
-  return json({
+  const identity = {
     class_name: "fixture.Target",
     method_name,
     full_name: `fixture.Target.${method_name}`,
@@ -186,7 +247,18 @@ register("get_method_body", ({ method_name, overload_index }) => {
       mode === "wrong-method" ? overload_index + 1 : overload_index,
     overload_count: method_name === "choose" ? 2 : 1,
     dex_descriptor:
-      mode === "wrong-descriptor" ? "()V" : selected.dex_descriptor,
+      mode === "wrong-descriptor" || mode === "unavailable-wrong-descriptor"
+        ? "()V"
+        : selected.dex_descriptor,
+  };
+  if (mode === "unavailable-body" || mode === "unavailable-wrong-descriptor")
+    return json({
+      ...identity,
+      mode: "unavailable",
+      body_unavailable_reason: `Disassembly could not establish one selected method: ${selected.raw_name}${selected.dex_descriptor}`,
+    });
+  return json({
+    ...identity,
     mode:
       mode === "smali" || mode === "selected-overload-smali" ? "smali" : "java",
     fell_back: mode === "smali" || mode === "selected-overload-smali",

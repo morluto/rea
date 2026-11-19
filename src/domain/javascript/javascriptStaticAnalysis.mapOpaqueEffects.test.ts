@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
 import { onlyCallable } from "./javascriptSemanticAnalysis.fixture.js";
 
@@ -28,6 +28,9 @@ it.each([
   'function invoke() { run("Map.prototype.get = fetch"); } const run = eval; invoke(); new Map().get("/accounts");',
   'function getRun() { return eval; } getRun()("Map.prototype.get = fetch"); new Map().get("/accounts");',
   'Reflect.apply(eval, null, ["Map.prototype.get = fetch"]); new Map().get("/accounts");',
+  // The lookup, not the constructor reference, bounds global-code timing.
+  'const map = new Map(); eval("Map.prototype.get = fetch"); map.get("/accounts");',
+  'const map = new Map(); Function("Map.prototype.get = fetch")(); map.get("/accounts");',
 ])(
   "keeps a Map lookup after possible opaque mutation as a candidate: %s",
   (source) => {
@@ -47,6 +50,7 @@ it.each([
   'function inspect(eval) { const run = eval; run("Map.prototype.get = fetch"); return new Map().get("/accounts"); }',
   'let run = eval; run = () => {}; run("Map.prototype.get = fetch"); new Map().get("/accounts");',
   'eval.bind(null); new Map().get("/accounts");',
+  'const map = new Map(); map.get("/accounts"); eval("Map.prototype.get = fetch");',
 ])(
   "preserves a Map proof when eval cannot precede the lookup: %s",
   (source) => {

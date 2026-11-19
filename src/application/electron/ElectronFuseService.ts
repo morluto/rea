@@ -1,5 +1,5 @@
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { ElectronFusePort } from "./ElectronFusePort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { ElectronFusePort } from "../../ports/electron/ElectronFusePort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import {
@@ -8,7 +8,7 @@ import {
 } from "../../domain/electron/electronFuses.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { createElectronFuseEvidence } from "../../domain/electron/electronFuseEvidence.js";
-import { err, ok, type Result } from "../../domain/result.js";
+import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 
@@ -20,7 +20,7 @@ export class ElectronFuseService {
 
   /** Await and retry the reader's exact retained descriptor owners. */
   async close(): Promise<void> {
-    await this.provider.close?.();
+    await this.provider.close();
   }
 
   /** Read fuse wires for one explicitly selected path without launching it. */

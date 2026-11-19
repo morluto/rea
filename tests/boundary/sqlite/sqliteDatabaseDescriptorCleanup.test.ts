@@ -1,4 +1,4 @@
-import { Cli } from "incur";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { access, readFile, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import type { FileHandle } from "node:fs/promises";
@@ -7,8 +7,8 @@ import { fileURLToPath } from "node:url";
 import { expect, it, onTestFinished, vi } from "vitest";
 
 import { SqliteDatabaseService } from "../../../src/application/sqlite/SqliteDatabaseService.js";
-import { ArtifactFileCleanupFailure } from "../../../src/artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactFileCleanupFailure } from "../../../src/resources/ArtifactFileOperation.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { registerSqliteCommands } from "../../../src/cli/sqliteCommands.js";
 import { createSqliteDatabaseService } from "../../../src/composition/sqlite.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
@@ -19,11 +19,16 @@ import { silentLogger } from "../../../src/logger.js";
 import { SqliteDatabaseProvider } from "../../../src/sqlite/SqliteDatabaseProvider.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
-import { createSqliteDatabaseFixture } from "../../fixtures/sqlite/database.js";
+import {
+  createSqliteDatabaseFixture,
+  SQLITE_NATIVE_LIMITS_AVAILABLE,
+} from "../../fixtures/sqlite/database.js";
 import {
   createTestWorkspace,
   removeTestWorkspace,
 } from "../../support/workspace/workspaceFixture.js";
+
+const nativeInspectionTest = it.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE);
 
 const descriptorCleanup = vi.hoisted(() => ({
   path: "",
@@ -165,7 +170,7 @@ const serveInspection = async (
   vi.mocked(createSqliteDatabaseService).mockReturnValue(
     new SqliteDatabaseService(provider),
   );
-  const cli = Cli.create("rea-sqlite-cleanup-test", { sync: false });
+  const cli = createCommandCli();
   registerSqliteCommands(cli, silentLogger, {});
   let stdout = "";
   await cli.serve(["inspect-sqlite-database", path, "--json"], {
@@ -178,6 +183,16 @@ const serveInspection = async (
   return { output: JSON.parse(stdout) as unknown, exitCode: process.exitCode };
 };
 
+const expectedMember = async (role: string, path: string) => {
+  const bytes = await readFile(path);
+  return {
+    role,
+    path,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    bytes: bytes.length,
+  };
+};
+
 it.each(["database", "WAL", "journal"] as const)(
   "retains a failed %s descriptor and retries it at shutdown",
   async (member) => {
@@ -185,6 +200,7 @@ it.each(["database", "WAL", "journal"] as const)(
     const first = await selected.provider.inspect({
       path: selected.database.path,
     });
+    if (first.ok) throw new Error("Expected incomplete source cleanup");
     expect(first).toMatchObject({
       ok: false,
       error: {
@@ -192,6 +208,29 @@ it.each(["database", "WAL", "journal"] as const)(
         cleanupResources: [expect.stringContaining(selected.path)],
       },
     });
+    const sources =
+      member === "journal"
+        ? []
+        : [
+            { role: "database", path: selected.database.path },
+            ...(member === "WAL"
+              ? [{ role: "wal", path: selected.database.walPath }]
+              : []),
+          ];
+    const members = await Promise.all(
+      sources.map((source) => expectedMember(source.role, source.path)),
+    );
+    if (members.length > 0)
+      expect(
+        projectAnalysisError(first.error).details?.diagnostics,
+      ).toMatchObject({
+        snapshot_acquisition: { consistency: "unverified", members },
+      });
+    else
+      expect(
+        projectAnalysisError(first.error).details?.diagnostics,
+      ).not.toHaveProperty("snapshot_acquisition");
+    expect(first.error.partialObservation).toBeUndefined();
     const handle = descriptorCleanup.handles[0];
     if (handle === undefined)
       throw new Error("Expected owned source descriptor");
@@ -212,10 +251,45 @@ it.each(["database", "WAL", "journal"] as const)(
     await selected.provider.close();
     expect(descriptorCleanup.attempts).toBe(4);
     expect(handle.fd).toBe(-1);
+    if (members.length > 0)
+      expect(
+        projectAnalysisError(first.error).details?.diagnostics,
+      ).toMatchObject({
+        snapshot_acquisition: { consistency: "unverified", members },
+      });
     for (const root of selected.roots)
       await expect(access(root.path)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );
+
+it("delivers individually completed database and WAL facts through CLI cleanup failure", async () => {
+  const selected = await fixture("WAL");
+  const members = await Promise.all([
+    expectedMember("database", selected.database.path),
+    expectedMember("wal", selected.database.walPath),
+  ]);
+  const result = await serveInspection(
+    selected.provider,
+    selected.database.path,
+  );
+  expect(result).toMatchObject({
+    exitCode: 1,
+    output: {
+      code: "cleanup_incomplete",
+      details: {
+        diagnostics: {
+          primary_error: {
+            details: {
+              diagnostics: {
+                snapshot_acquisition: { consistency: "unverified", members },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+});
 
 it.each(["EACCES", "EPERM"])(
   "retains the original %s inspection diagnostics through CLI shutdown",
@@ -351,7 +425,7 @@ it("retains reply-read cancellation and retries the failed reply descriptor clos
     await expect(access(root.path)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
-it.each([
+nativeInspectionTest.each([
   { cancel: false, denied: false },
   { cancel: true, denied: false },
   { cancel: false, denied: true },
@@ -390,8 +464,7 @@ it.each([
       parameters: input,
       subject: {
         local_path: input.path,
-        format: "file",
-        digest: { sha256: databaseDigest },
+        identity: { format: "file", sha256: databaseDigest },
       },
       normalized_result: {
         artifact: {
@@ -480,64 +553,70 @@ it.each([
   },
 );
 
-it("keeps a completed reply close failure primary when abort follows lease retention", async () => {
-  const selected = await fixture("reply");
-  const controller = new AbortController();
-  const reason = { requested: "abort after reply close failure capture" };
-  let retainedReplyLease: string | undefined;
-  const retain = ArtifactResourceScope.prototype.retain;
-  const retainSpy = vi
-    .spyOn(ArtifactResourceScope.prototype, "retain")
-    .mockImplementation(function (this: ArtifactResourceScope, owner) {
-      retain.call(this, owner);
-      if (owner.kind === "lease" && owner.resource === descriptorCleanup.path) {
-        retainedReplyLease = owner.resource;
-        controller.abort(reason);
-      }
-    });
+nativeInspectionTest(
+  "keeps a completed reply close failure primary when abort follows lease retention",
+  async () => {
+    const selected = await fixture("reply");
+    const controller = new AbortController();
+    const reason = { requested: "abort after reply close failure capture" };
+    let retainedReplyLease: string | undefined;
+    const retain = ArtifactResourceScope.prototype.retain;
+    const retainSpy = vi
+      .spyOn(ArtifactResourceScope.prototype, "retain")
+      .mockImplementation(function (this: ArtifactResourceScope, owner) {
+        retain.call(this, owner);
+        if (
+          owner.kind === "lease" &&
+          owner.resource === descriptorCleanup.path
+        ) {
+          retainedReplyLease = owner.resource;
+          controller.abort(reason);
+        }
+      });
 
-  try {
-    const result = await selected.provider.inspect(
-      { path: selected.database.path },
-      { signal: controller.signal },
-    );
-    expect(controller.signal.aborted).toBe(true);
-    expect(controller.signal.reason).toBe(reason);
-    expect(retainedReplyLease).toBe(descriptorCleanup.path);
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
+    try {
+      const result = await selected.provider.inspect(
+        { path: selected.database.path },
+        { signal: controller.signal },
+      );
+      expect(controller.signal.aborted).toBe(true);
+      expect(controller.signal.reason).toBe(reason);
+      expect(retainedReplyLease).toBe(descriptorCleanup.path);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
 
-    const primary = primaryAnalysisError(result.error);
-    expect(primary).toBeInstanceOf(ProviderCleanupError);
-    if (!(primary instanceof ProviderCleanupError)) return;
-    expect(primary).not.toMatchObject({ _tag: "AnalysisCancelledError" });
-    expect(primary.cause).toBeInstanceOf(ArtifactFileCleanupFailure);
-    expect(primary.cause).toMatchObject({
-      fileCleanupFailure: {
-        path: descriptorCleanup.path,
-        outcome: { kind: "completed" },
-        completionCancellation: undefined,
-      },
-    });
-    expect(primary.cleanupIncomplete).toBe(true);
-    expect(primary.cleanupResources).toContain(descriptorCleanup.path);
+      const primary = primaryAnalysisError(result.error);
+      expect(primary).toBeInstanceOf(ProviderCleanupError);
+      if (!(primary instanceof ProviderCleanupError)) return;
+      expect(primary).not.toMatchObject({ _tag: "AnalysisCancelledError" });
+      expect(primary.cause).toBeInstanceOf(ArtifactFileCleanupFailure);
+      expect(primary.cause).toMatchObject({
+        fileCleanupFailure: {
+          path: descriptorCleanup.path,
+          outcome: { kind: "completed" },
+          completionCancellation: undefined,
+        },
+      });
+      expect(primary.cleanupIncomplete).toBe(true);
+      expect(primary.cleanupResources).toContain(descriptorCleanup.path);
 
-    const handle = descriptorCleanup.handles[0];
-    if (handle === undefined)
-      throw new Error("Expected owned reply descriptor");
-    expect(handle.fd).toBeGreaterThanOrEqual(0);
-    expect(descriptorCleanup.attempts).toBe(1);
+      const handle = descriptorCleanup.handles[0];
+      if (handle === undefined)
+        throw new Error("Expected owned reply descriptor");
+      expect(handle.fd).toBeGreaterThanOrEqual(0);
+      expect(descriptorCleanup.attempts).toBe(1);
 
-    descriptorCleanup.denied = false;
-    await selected.provider.close();
-    expect(descriptorCleanup.attempts).toBe(2);
-    expect(handle.fd).toBe(-1);
-    expect(primary.cleanupIncomplete).toBe(false);
-    expect(primary).toBeInstanceOf(ProviderCleanupError);
-  } finally {
-    retainSpy.mockRestore();
-  }
-});
+      descriptorCleanup.denied = false;
+      await selected.provider.close();
+      expect(descriptorCleanup.attempts).toBe(2);
+      expect(handle.fd).toBe(-1);
+      expect(primary.cleanupIncomplete).toBe(false);
+      expect(primary).toBeInstanceOf(ProviderCleanupError);
+    } finally {
+      retainSpy.mockRestore();
+    }
+  },
+);
 
 it("retries source cleanup before admitting another snapshot", async () => {
   const selected = await fixture("database");
@@ -593,6 +672,10 @@ it.each(["EACCES", "EPERM"])(
         diagnostics: { previous_error: { code: "access_denied" } },
       },
     });
+    if (result.ok) throw new Error("Expected physical source denial");
+    expect(
+      projectAnalysisError(result.error).details?.diagnostics,
+    ).not.toHaveProperty("snapshot_acquisition");
   },
 );
 
@@ -625,6 +708,15 @@ it.each(["database", "WAL", "journal"] as const)(
       _tag: "AnalysisCancelledError",
     });
     expect(result.error.cleanupPrimary?.cause).toBe(reason);
+    if (member === "WAL")
+      expect(
+        projectAnalysisError(result.error).details?.diagnostics,
+      ).toMatchObject({
+        snapshot_acquisition: {
+          consistency: "unverified",
+          members: [await expectedMember("database", selected.database.path)],
+        },
+      });
     for (const root of selected.roots)
       await expect(access(root.path)).rejects.toMatchObject({ code: "ENOENT" });
   },

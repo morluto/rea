@@ -1,5 +1,9 @@
 # Environment state view from captures
 
+This specification records an implementation increment and its original problem
+statement. For current behavior and limitations, see the
+[current guide](../../../agent-environments.md).
+
 Issue: https://github.com/morluto/rea/issues/4933
 
 ## Outcome
@@ -13,6 +17,9 @@ initial recordings from the state, or a recorded view with the reason it
 cannot. This increment adds the view kind only; serving from the state, loading
 another state through the AgentEnv data plane and modelling write effects are
 later increments.
+
+Safe `HEAD`, `OPTIONS` and `TRACE` tools have recorded views with reason
+`method-replay`; state rendering currently applies only to `GET` reads.
 
 ## Requirements
 
@@ -133,8 +140,8 @@ later increments.
 - Keep an item or list plan only when it reproduces each request line's latest
   initial recording from the state, comparing JSON values without regard to
   member order; otherwise record the tool with a reason. Parse bodies only when
-  JSON-like, UTF-8, at most 256 KiB, exactly representable and free of
-  `__proto__` members.
+  JSON-like, UTF-8, at most 256 KiB and exactly representable. Preserve all own
+  JSON members, including `__proto__`, through extraction and normalization.
 - Mark the Evidence inferred; state unknowns for authorization, response
   semantics and write effects.
 - Charge the manifest's admission and grouping, every record line, every body

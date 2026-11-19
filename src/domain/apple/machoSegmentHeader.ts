@@ -29,3 +29,58 @@ export const readMachoSegmentHeader = (
     sectionCount: view.getUint32(wide ? 64 : 48, littleEndian),
   });
 };
+
+/** Admit VM sizes once for consumers that construct segment mappings. */
+export const admitMachoSegmentMapping = (
+  segment: {
+    readonly address: bigint;
+    readonly memorySize: bigint;
+    readonly fileSize: bigint;
+    readonly protection: number;
+  },
+  bits: 32 | 64,
+) => {
+  const unmapped = segment.memorySize === 0n && segment.protection === 0;
+  return (!unmapped && segment.fileSize > segment.memorySize) ||
+    segment.address + segment.memorySize > 1n << BigInt(bits)
+    ? err({
+        kind: "malformed" as const,
+        message: "Mach-O segment addresses or sizes are invalid",
+      })
+    : ok({ unmapped });
+};
+
+/** Admit one segment command against its cmdsize and the image that holds it. */
+export const admitMachoSegmentCommand = (
+  segment: Parameters<typeof admitMachoSegmentMapping>[0] & {
+    readonly headerSize: number;
+    readonly sectionCount: number;
+    readonly fileOffset: bigint;
+  },
+  commandBytes: number,
+  bits: 32 | 64,
+  imageBytes: number,
+) => {
+  const mapping = admitMachoSegmentMapping(segment, bits);
+  if (!mapping.ok) return mapping;
+  const sectionBytes = bits === 64 ? 80 : 68;
+  if (
+    segment.sectionCount >
+    Math.floor((commandBytes - segment.headerSize) / sectionBytes)
+  )
+    return err({
+      kind: "malformed" as const,
+      message: "Mach-O section table exceeds its segment command",
+    });
+  const image = BigInt(imageBytes);
+  if (
+    segment.fileSize !== 0n &&
+    (segment.fileOffset > image ||
+      segment.fileSize > image - segment.fileOffset)
+  )
+    return err({
+      kind: "malformed" as const,
+      message: "Mach-O segment range is outside the file",
+    });
+  return mapping;
+};

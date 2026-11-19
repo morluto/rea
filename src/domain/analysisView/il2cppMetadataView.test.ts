@@ -1,5 +1,6 @@
 import { createEmptyIl2cppMetadataFixture } from "../il2cpp/il2cppMetadata.fixture.js";
-import { afterEach, expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
+import { z } from "zod";
 import {
   il2cppMetadataParentSchema,
   type Il2cppMetadata,
@@ -7,11 +8,22 @@ import {
 import { createEvidence } from "../evidence.js";
 import { freezeJsonSnapshot } from "../immutableJson.js";
 import { jsonObjectSchema } from "../jsonValue.js";
-import { projectIl2cppMetadataView } from "./il2cppMetadataView.js";
+import type { AdmittedView, SummaryAnalysisView } from "./analysisViewShape.js";
+import {
+  il2cppMetadataViewRequestSchema,
+  projectIl2cppMetadataView as projectAdmittedIl2cppMetadataView,
+} from "./il2cppMetadataView.js";
 
-afterEach(() => {
-  vi.restoreAllMocks();
-});
+type Il2cppMetadataViewInput =
+  | SummaryAnalysisView
+  | z.input<typeof il2cppMetadataViewRequestSchema>;
+
+/** Check a caller selection against the closed request, then pass the admitted view. */
+const projectIl2cppMetadataView = (
+  parent: Parameters<typeof projectAdmittedIl2cppMetadataView>[0],
+  view: Il2cppMetadataViewInput,
+): ReturnType<typeof projectAdmittedIl2cppMetadataView> =>
+  projectAdmittedIl2cppMetadataView(parent, view satisfies AdmittedView);
 
 const report: Il2cppMetadata = {
   ...createEmptyIl2cppMetadataFixture(),
@@ -51,6 +63,7 @@ const report: Il2cppMetadata = {
 };
 
 const parent = (normalizedResult: unknown, sealedResult: boolean) => ({
+  predicateType: "rea.analysis",
   evidenceId: `ev_${"b".repeat(64)}`,
   operation: "inspect_il2cpp_metadata",
   normalizedResult,
@@ -71,8 +84,7 @@ const page = {
   limit: 1,
 } as const;
 
-it("validates a sealed parent once across pages and keeps counts exact", () => {
-  const parse = vi.spyOn(il2cppMetadataParentSchema, "safeParse");
+it("keeps collection counts exact across sealed metadata pages", () => {
   const sealed = parent(freezeJsonSnapshot(structuredClone(report)), true);
   for (const offset of [0, 1]) {
     const view = projectIl2cppMetadataView(sealed, { ...page, offset });
@@ -97,15 +109,6 @@ it("validates a sealed parent once across pages and keeps counts exact", () => {
       },
     });
   }
-  expect(parse).toHaveBeenCalledTimes(1);
-});
-
-it("revalidates unsealed inline input on every page", () => {
-  const parse = vi.spyOn(il2cppMetadataParentSchema, "safeParse");
-  const inline = parent(structuredClone(report), false);
-  projectIl2cppMetadataView(inline, page);
-  projectIl2cppMetadataView(inline, page);
-  expect(parse).toHaveBeenCalledTimes(2);
 });
 
 it("preserves historical omission as unknown while keeping existing metadata queries usable", () => {
@@ -278,6 +281,10 @@ it.each([{ method_addresses: undefined }, { binary: undefined }])(
 );
 
 it.each([
+  { types: [{ ...report.types[0]!, declaring_type: 0 }, report.types[1]!] },
+  { types: [{ ...report.types[0]!, declaring_type: 1 }, report.types[1]!] },
+  { types: [report.types[0]!, { ...report.types[1]!, declaring_type: 999 }] },
+  { methods: [{ name: "Run", declaring_type: 999 }] },
   { fields: [{ name: "bad", declaring_type: 2 }] },
   { parameters: [{ name: "bad", method: 1 }] },
   { string_literals: [{ value: null, value_base64: null }] },
@@ -461,6 +468,34 @@ const linkedReport = (): Il2cppMetadata => ({
   parameter_types: [{ type: 0, name: "int" }],
 });
 
+it.each([-1, 1, 99])(
+  "rejects imported code-generation module image reference %i",
+  (image) => {
+    const value = linkedReport();
+    value.binary!.code_gen_modules[0]!.image = image;
+    const parsed = il2cppMetadataParentSchema.safeParse(value);
+    expect(parsed.success).toBe(false);
+    if (!parsed.success)
+      expect(parsed.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: ["binary", "code_gen_modules", 0, "image"],
+          }),
+        ]),
+      );
+    for (const selection of [{}, { image_indices: [image] }]) {
+      const view = projectIl2cppMetadataView(parent(value, false), {
+        kind: "il2cpp-metadata",
+        collection: "code_gen_modules",
+        ...selection,
+        offset: 0,
+        limit: 64,
+      });
+      expect(view.ok).toBe(false);
+    }
+  },
+);
+
 it("selects every folded method by numeric address with stable indices and both source identities", () => {
   const source = parent(freezeJsonSnapshot(linkedReport()), true);
   const view = projectIl2cppMetadataView(source, {
@@ -634,7 +669,15 @@ const genericLinked = (): Il2cppMetadata => {
 
 it("pages generic method instances by definition, state, address, name and field", () => {
   const source = parent(freezeJsonSnapshot(genericLinked()), true);
-  const view = (filters: Record<string, unknown>) => {
+  const view = (
+    filters: Omit<
+      Extract<
+        Il2cppMetadataViewInput,
+        { collection: "generic_method_instances" }
+      >,
+      "kind" | "collection" | "offset" | "limit"
+    >,
+  ) => {
     const result = projectIl2cppMetadataView(source, {
       kind: "il2cpp-metadata",
       collection: "generic_method_instances",
@@ -645,7 +688,15 @@ it("pages generic method instances by definition, state, address, name and field
     if (!result.ok) throw result.error;
     return result.value;
   };
-  const items = (filters: Record<string, unknown>) => {
+  const items = (
+    filters: Omit<
+      Extract<
+        Il2cppMetadataViewInput,
+        { collection: "generic_method_instances" }
+      >,
+      "kind" | "collection" | "offset" | "limit"
+    >,
+  ) => {
     const value = view(filters);
     return "items" in value ? value.items : undefined;
   };

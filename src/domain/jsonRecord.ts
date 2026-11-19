@@ -4,15 +4,27 @@ import { jsonObjectSchema, type JsonValue } from "./jsonValue.js";
 /** Own every JSON map key, then validate and retain each value's normalized facts. */
 export const jsonRecordSchema = <Value extends JsonValue>(
   valueSchema: z.ZodType<Value>,
+  keySchema: z.ZodString = z.string(),
 ) => {
-  const projection = z.record(z.string(), valueSchema);
+  const projection = z.record(keySchema, valueSchema);
   const schema = jsonObjectSchema.transform(
     (value, context): Record<string, Value> => {
       const entries: [string, Value][] = [];
       let invalid = false;
       for (const [key, entry] of Object.entries(value)) {
+        const parsedKey = keySchema.safeParse(key);
+        if (!parsedKey.success) {
+          invalid = true;
+          context.addIssue({
+            code: "invalid_key",
+            origin: "record",
+            issues: parsedKey.error.issues,
+            path: [key],
+          });
+          continue;
+        }
         const parsed = valueSchema.safeParse(entry);
-        if (parsed.success) entries.push([key, parsed.data]);
+        if (parsed.success) entries.push([parsedKey.data, parsed.data]);
         else {
           invalid = true;
           for (const issue of parsed.error.issues)
@@ -22,9 +34,15 @@ export const jsonRecordSchema = <Value extends JsonValue>(
       return invalid ? z.NEVER : Object.fromEntries(entries);
     },
   );
-  // Delegate to Zod's own record projection with the caller's dialect, IO and
-  // reference context; a context-free JSON override would lose those choices.
-  schema._zod.processJSONSchema = (context, json, params) =>
-    projection._zod.processJSONSchema!(context, json, params);
-  return schema;
+  // Zod clones reconstruct from the definition. Install projection in the
+  // constructor so descriptions, metadata and checks retain the same owner.
+  const JsonRecord = z.core.$constructor<typeof schema>(
+    "JsonRecord",
+    (instance, definition) => {
+      z.ZodPipe.init(instance, definition);
+      instance._zod.processJSONSchema = (context, json, params) =>
+        projection._zod.processJSONSchema!(context, json, params);
+    },
+  );
+  return new JsonRecord(schema._zod.def);
 };

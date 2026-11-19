@@ -1,18 +1,22 @@
 import { requireMcpToolError } from "./lib/mcp-verifier-results.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import {
   artifactCli,
+  artifactCliFailure,
   artifactMcpResult,
   artifactMcpCall,
   withArtifactMcp,
 } from "./lib/artifact-e2e.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 const exec = promisify(execFile);
 
@@ -61,6 +65,10 @@ const stable = (result) =>
     file_address: event.file_address,
     selector: event.selector,
     receiver_class: event.receiver_class,
+    source_location: event.source_location,
+    caller_source_locations: event.backtrace.map(
+      (frame) => frame.source_location,
+    ),
     counter:
       event.symbol === GREET
         ? event.registers[3].value
@@ -96,6 +104,18 @@ const checkScenario = async (binary) => {
   });
   const greet = result.events.filter(({ symbol }) => symbol === GREET);
   const add = result.events.filter(({ symbol }) => symbol === "rea_call_add");
+  for (const location of [
+    ...result.events,
+    ...result.events.flatMap((event) => event.backtrace),
+    ...result.breakpoints.flatMap((breakpoint) => breakpoint.locations),
+  ]) {
+    assert.equal(location.source_location?.file_path, SOURCE);
+    assert.ok(location.source_location.line > 0);
+    assert.ok(
+      location.source_location.column === null ||
+        location.source_location.column > 0,
+    );
+  }
   assert.equal(greet.length, 3, JSON.stringify(result));
   assert.equal(add.length, 3, JSON.stringify(result));
   for (const [index, event] of greet.entries()) {
@@ -185,29 +205,10 @@ const checkBounds = async (binary) => {
   assert.equal(alive(elapsed.process.pid), false);
 };
 
-const cliFailure = async (binary) => {
-  let output;
-  try {
-    const completed = await exec(
-      process.execPath,
-      [
-        fileURLToPath(new URL("rea.mjs", import.meta.url)),
-        "observe-native-calls",
-        binary,
-        JSON.stringify(INPUT),
-        "--json",
-      ],
-      {
-        env: { ...process.env, REA_LOG_LEVEL: "silent" },
-        timeout: CLI_TIMEOUT_MS,
-      },
-    );
-    output = completed.stdout;
-  } catch (cause) {
-    return JSON.parse(cause.stdout);
-  }
-  throw new Error(`observe-native-calls unexpectedly succeeded: ${output}`);
-};
+const cliFailure = (binary) =>
+  artifactCliFailure("observe-native-calls", binary, [JSON.stringify(INPUT)], {
+    timeoutMs: CLI_TIMEOUT_MS,
+  });
 
 /** Hardened runtime blocks the debugger unless get-task-allow is granted. */
 const checkHardenedRuntime = async (directory, binary) => {
@@ -249,6 +250,8 @@ const checkHardenedRuntime = async (directory, binary) => {
     '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>com.apple.security.get-task-allow</key><true/></dict></plist>',
   );
   await exec("/bin/cp", [binary, allowed]);
+  // The copy keeps its UUID, but LLDB finds its DWARF only in an adjacent dSYM.
+  await exec("/bin/cp", ["-R", `${binary}.dSYM`, `${allowed}.dSYM`]);
   await exec("/usr/bin/xcrun", [
     "codesign",
     "-f",
@@ -264,11 +267,17 @@ const checkHardenedRuntime = async (directory, binary) => {
   assert.equal(traced.process.exit_status, 0);
 };
 
-const directory = await mkdtemp(join(tmpdir(), "rea-native-calls-"));
-try {
+const directoryFixture = await VerifierFixture.open({
+  prefix: "rea-native-calls-",
+  private: false,
+});
+const directory = directoryFixture.path;
+await withVerifierFixture(directoryFixture, async () => {
   const binary = join(directory, "ReaCalls");
   await exec("/usr/bin/xcrun", [
     "clang",
+    "-g",
+    "-O0",
     "-fobjc-arc",
     "-framework",
     "Foundation",
@@ -344,6 +353,4 @@ try {
       },
     }),
   );
-} finally {
-  await rm(directory, { recursive: true, force: true });
-}
+});

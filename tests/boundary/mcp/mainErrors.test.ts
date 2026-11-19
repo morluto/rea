@@ -6,18 +6,32 @@ import { describe, expect, it } from "vitest";
 import { run, runEntrypoint } from "../../../src/main.js";
 import {
   MCP_CONNECTION_LOST,
+  MCP_TRANSPORT_ERROR,
   MCP_CONNECTION_START_FAILED,
-  MCP_HTTP_LISTEN_FAILED,
+  mcpHttpListenFailed,
   MCP_SHUTDOWN_FAILED,
   SERVER_START_FAILED,
 } from "../../../src/main/messages.js";
 import type { McpServeOptions } from "../../../src/main/types.js";
-import { StreamableHttpListenError } from "../../../src/server/http/streamableHttpListenError.js";
+import {
+  StreamableHttpHostAllowlistError,
+  StreamableHttpListenError,
+} from "../../../src/server/http/streamableHttpListenError.js";
 
 type RuntimeDependencies = NonNullable<Parameters<typeof run>[0]>;
 
 const nextTurn = (): Promise<void> =>
   new Promise((resolve) => setImmediate(resolve));
+
+const wrappedListenerDisconnect = (code: "EPIPE" | "ECONNRESET") => {
+  const error = new StreamableHttpListenError(
+    Object.assign(new Error("SECRET listener stack"), { code }),
+    "serving",
+  );
+  // Consumers must use the owner's parsed facts, not re-read its native cause.
+  Object.defineProperty(error, "cause", { value: new Error("opaque cause") });
+  return error;
+};
 
 const dependencies = ({
   serve,
@@ -65,7 +79,35 @@ describe("MCP runtime errors", () => {
     expect(child.stderr).toBe("");
   });
 
-  it("reports connection loss without the transport cause", async () => {
+  it.each([
+    {
+      name: "a broken pipe",
+      cause: Object.assign(new Error("SECRET broken pipe"), { code: "EPIPE" }),
+      message: MCP_CONNECTION_LOST,
+    },
+    {
+      name: "a disconnected stdio socket",
+      cause: Object.assign(new Error("SECRET not connected"), {
+        code: "ENOTCONN",
+      }),
+      message: MCP_CONNECTION_LOST,
+    },
+    {
+      name: "a wrapped HTTP broken pipe",
+      cause: wrappedListenerDisconnect("EPIPE"),
+      message: MCP_CONNECTION_LOST,
+    },
+    {
+      name: "a wrapped HTTP reset",
+      cause: wrappedListenerDisconnect("ECONNRESET"),
+      message: MCP_CONNECTION_LOST,
+    },
+    {
+      name: "an unknown connection state",
+      cause: new Error("SECRET transport stack"),
+      message: MCP_TRANSPORT_ERROR,
+    },
+  ])("reports $name without exposing its cause", async ({ cause, message }) => {
     const output: string[] = [];
     const shutdown: Array<() => void> = [];
     const shutdownUnregistrations: string[] = [];
@@ -90,8 +132,8 @@ describe("MCP runtime errors", () => {
         }),
       ),
     ).toBe(0);
-    options?.onerror?.(new Error("SECRET transport stack"));
-    expect(output).toEqual([`${MCP_CONNECTION_LOST}\n`]);
+    options?.onerror?.(cause);
+    expect(output).toEqual([`${message}\n`]);
     shutdown[0]?.();
     await nextTurn();
     expect(closeCalls).toBe(1);
@@ -201,6 +243,28 @@ describe("MCP runtime HTTP transport errors", () => {
     expect(closeCalls).toBe(1);
   });
 
+  it("reports host allowlist recovery instead of port advice", async () => {
+    const output: string[] = [];
+    const refused = new StreamableHttpListenError(
+      new StreamableHttpHostAllowlistError("0.0.0.0"),
+    );
+    expect(
+      await run(
+        dependencies({
+          serve: () => Promise.reject(refused),
+          output,
+          shutdown: [],
+          exitCodes: [],
+        }),
+      ),
+    ).toBe(1);
+    expect(output).toEqual([
+      `${mcpHttpListenFailed(refused.remediationAction)}\n`,
+    ]);
+    expect(output[0]).toContain("Set MCP_ALLOWED_HOSTS");
+    expect(output[0]).not.toContain("Choose another --port");
+  });
+
   it("reports an HTTP listener that cannot bind without its cause", async () => {
     const output: string[] = [];
     expect(
@@ -218,6 +282,38 @@ describe("MCP runtime HTTP transport errors", () => {
         }),
       ),
     ).toBe(1);
-    expect(output).toEqual([`${MCP_HTTP_LISTEN_FAILED}\n`]);
+    expect(output).toHaveLength(1);
+    expect(output[0]).toMatch(
+      /^REA could not listen for MCP HTTP connections\./u,
+    );
+    expect(output[0]).not.toContain("SECRET");
   });
+
+  it.each([
+    ["ENOTFOUND", /host name resolution/u],
+    ["EADDRNOTAVAIL", /address assigned to this machine/u],
+    ["EACCES", /permitted to bind/u],
+    ["EADDRINUSE", /another --port or MCP_PORT/u],
+  ])(
+    "reports %s listener recovery from its parsed failure",
+    async (code, recovery) => {
+      const output: string[] = [];
+      const cause = Object.assign(new Error(`SECRET ${code}`), { code });
+      expect(
+        await run(
+          dependencies({
+            serve: () => Promise.reject(new StreamableHttpListenError(cause)),
+            output,
+            shutdown: [],
+            exitCodes: [],
+          }),
+        ),
+      ).toBe(1);
+      expect(output).toHaveLength(1);
+      expect(output[0]).toMatch(recovery);
+      expect(output[0]).not.toContain("SECRET");
+      if (code !== "EADDRINUSE")
+        expect(output[0]).not.toContain("Choose another --port");
+    },
+  );
 });

@@ -1,0 +1,1152 @@
+import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+
+import type { CallToolResult } from "@modelcontextprotocol/server";
+import { expect, it } from "vitest";
+
+import type {
+  BuildSettle,
+  SettleClock,
+} from "../../../src/application/desktop/DesktopBuildSettle.js";
+import { toolContract } from "../../../src/contracts/toolContracts.js";
+import type { SettleTiming } from "../../../src/domain/desktop/appSettle.js";
+import { parseDesktopTask } from "../../../src/domain/desktop/appTask.js";
+import {
+  renderTaskSteps,
+  renderTaskVerifier,
+  taskVerifierArtifact,
+} from "../../../src/domain/desktop/appTaskPython.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
+import {
+  buildComputerFakes,
+  bundleFolder,
+  callOk,
+  connectBuildServer,
+  expectNoToken,
+  startBuildComputer,
+} from "../../fixtures/buildComputerMcp.js";
+import {
+  FAKE_SEGMENTS,
+  type FakeApp,
+  type FakeComputerOptions,
+} from "../../fixtures/fakeAgentEnvComputer.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { cancelDuringCommit } from "../../fixtures/outputTreeCommit.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { waitFor } from "../../support/testWait.js";
+
+const TASK = {
+  name: "add-eggs",
+  prompt: "Add eggs to today's list and save it.",
+  checks: [
+    { kind: "lines_present", file: "Documents/today.txt", lines: ["eggs"] },
+  ],
+};
+const WITNESS_ORDER = ["seed", "after_edit", "near_miss", "after_reset"];
+/** The build's screenshots a screen-judged bundle ships as its judge's examples, large enough that its verifier passes 1 MiB. */
+const JUDGE_EXAMPLES = {
+  fail: Buffer.alloc(600 * 1024, 1).toString("base64"),
+  pass: Buffer.alloc(600 * 1024, 2).toString("base64"),
+};
+const lines = (...text: string[]) => ({
+  "Documents/today.txt": {
+    format: "text",
+    view: { lines: text, line_count: text.length, truncated: false },
+    truncated: false,
+  },
+});
+
+/** A bundle folder holding `task` as the export writes it for the app. */
+const taskBundle = async (task: unknown, app: string) => {
+  const parsed = parseDesktopTask(task);
+  if (!parsed.ok) throw new Error(parsed.error);
+  const bundle = await bundleFolder();
+  const verifier = join(
+    bundle,
+    "artifacts",
+    taskVerifierArtifact(parsed.value),
+    "verify.py",
+  );
+  await mkdir(join(verifier, ".."), { recursive: true });
+  await writeFile(
+    verifier,
+    renderTaskVerifier(parsed.value, app, JUDGE_EXAMPLES),
+  );
+  await writeFile(
+    join(bundle, "tasks", `${parsed.value.name}.json`),
+    renderTaskSteps(parsed.value, app),
+  );
+  return bundle;
+};
+
+const witnessed = async (
+  slowReset = 0,
+  options: FakeComputerOptions = {},
+  task: unknown = TASK,
+  server: {
+    readonly settle?: BuildSettle;
+    /** Find agent-env on PATH instead of REA_AGENT_ENV_COMMAND naming it. */
+    readonly onPath?: boolean;
+  } = {},
+) => {
+  const { settle, onPath = false } = server;
+  const app: FakeApp = {
+    name: "notes",
+    state: lines("milk"),
+    seed: lines("milk"),
+    methods: [],
+    unreadyAfterReset: slowReset,
+  };
+  const { computer, runner } = await buildComputerFakes({ ...options, app });
+  const { REA_AGENT_ENV_COMMAND: _named, ...unnamed } = runner.environment;
+  const client = onPath
+    ? await connectBuildServer(unnamed, settle, {
+        searchPath: runner.state,
+        archiveDirectory: runner.state,
+      })
+    : await connectBuildServer(runner.environment, settle);
+  const bundle = await taskBundle(task, app.name);
+  const id = await startBuildComputer(client, { kind: "bundle", path: bundle });
+  const directory = join(await createTestTempDirectory("witness-"), "add-eggs");
+  const check = (fields: Record<string, unknown>) =>
+    client.callTool({
+      name: "check_build_task",
+      arguments: { computer_id: id, task, ...fields },
+    });
+  const act = (action: string, fields: Record<string, unknown> = {}) =>
+    callOk(client, "act_on_build_computer", {
+      computer_id: id,
+      action,
+      ...fields,
+    });
+  return { app, bundle, computer, runner, client, id, directory, check, act };
+};
+
+/** Act on the app and set its state as that act would leave it. */
+const edit = async (
+  witness: Awaited<ReturnType<typeof witnessed>>,
+  state: Record<string, unknown>,
+) => {
+  await witness.act("type", { text: "x" });
+  witness.app.state = state;
+};
+
+/** Check the seed, the edit and the near miss, each after the act it needs. */
+const throughNearMiss = async (
+  witness: Awaited<ReturnType<typeof witnessed>>,
+) => {
+  await witness.check({ stage: "seed", directory: witness.directory });
+  await edit(witness, lines("milk", "eggs"));
+  await witness.check({ stage: "after_edit" });
+  await edit(witness, lines("milk", "egg"));
+  await witness.check({ stage: "near_miss" });
+};
+
+const parsed = (result: unknown) =>
+  toolContract("check_build_task").outputSchema.parse(
+    (result as { structuredContent: unknown }).structuredContent,
+  );
+
+/** A stage its checks leave undecided: refused as a request naming the stage and what left each check undecided, in any wording. */
+const expectUndecided = (
+  result: CallToolResult,
+  stage: string,
+  facts: readonly string[],
+) => {
+  const { error } = parseMcpToolError(result);
+  expect(error.code).toBe("invalid_request");
+  for (const fact of [stage, ...facts]) expect(error.message).toContain(fact);
+};
+
+it.each([
+  { kind: "file_present", passed: true },
+  { kind: "file_absent", passed: false },
+] as const)(
+  "grades $kind against an own __proto__ state file over MCP",
+  async ({ kind, passed }) => {
+    const witness = await witnessed(
+      0,
+      {},
+      {
+        name: "selected-file",
+        prompt: "Check the selected file.",
+        checks: [{ kind, file: "__proto__" }],
+      },
+    );
+    witness.app.state = JSON.parse(
+      '{"__proto__":{"format":"json","view":{"count":7}}}',
+    );
+    const report = parsed(await witness.check({}));
+    expect(report).toMatchObject({
+      passed: passed ? 1 : 0,
+      failed: passed ? 0 : 1,
+      results: [{ id: "check-1", passed }],
+    });
+  },
+);
+
+it.each([false, true])(
+  "keeps own row conditions through MCP (only special column: %s)",
+  async (onlySpecial) => {
+    const where = onlySpecial
+      ? JSON.parse('{"__proto__":"other"}')
+      : JSON.parse('{"id":1,"__proto__":"wanted"}');
+    const common = { file: "db.sqlite", table: "rows", where };
+    const witness = await witnessed(
+      0,
+      {},
+      {
+        name: "find-row",
+        prompt: "Check every selected column of the row.",
+        checks: [
+          { kind: "row_present", ...common },
+          { kind: "row_absent", ...common },
+          { kind: "row_count", ...common, equals: onlySpecial ? 1 : 0 },
+        ],
+      },
+    );
+    witness.app.state = {
+      "db.sqlite": {
+        format: "sqlite",
+        view: {
+          tables: {
+            rows: {
+              columns: ["id", "__proto__"],
+              primary_key: ["id"],
+              rows: [[1, "other"]],
+              truncated: false,
+            },
+          },
+          tables_truncated: false,
+        },
+        truncated: false,
+      },
+    };
+    const report = parsed(await witness.check({}));
+    expect(report).toMatchObject({ passed: 2, failed: 1 });
+    expect(report.results.map(({ passed }) => passed)).toEqual(
+      onlySpecial ? [true, false, true] : [false, true, true],
+    );
+  },
+);
+
+it("witnesses a task: the seed fails, the edit passes, a near miss fails and so does the reset seed", async () => {
+  const { app, computer, directory, check, act } = await witnessed();
+
+  // A plain check grades the live state, one result per check, and files nothing.
+  const plain = parsed(await check({}));
+  expect(plain).toMatchObject({
+    task: "add-eggs",
+    passed: 0,
+    failed: 1,
+    witness: null,
+  });
+  expect(
+    plain.results.map(({ id, passed, undecided }) => ({
+      id,
+      passed,
+      undecided,
+    })),
+  ).toEqual([{ id: "check-1", passed: false }]);
+  for (const fact of ["Documents/today.txt", '"eggs"'])
+    expect(plain.results[0]?.description).toContain(fact);
+
+  const seed = parsed(await check({ stage: "seed", directory }));
+  expect(seed.witness).toMatchObject({
+    stage: "seed",
+    expectation: "some_fail",
+    held: true,
+    status: "open",
+    next_stage: "after_edit",
+  });
+  expect(
+    parseMcpToolError(await check({ stage: "after_edit" })).error.message,
+  ).toContain("act on the app");
+
+  await act("screenshot");
+  await act("type", { text: "eggs\n" });
+  app.state = lines("milk", "eggs");
+  expect(parsed(await check({ stage: "after_edit" })).witness).toMatchObject({
+    held: true,
+    next_stage: "near_miss",
+  });
+
+  await act("key", { keys: ["BackSpace"] });
+  app.state = lines("milk", "egg");
+  expect(parsed(await check({ stage: "near_miss" })).witness).toMatchObject({
+    held: true,
+    next_stage: "after_reset",
+  });
+  expect(
+    parseMcpToolError(await check({ stage: "after_reset" })).error.message,
+  ).toContain("reset");
+
+  const reset = await act("reset", { screenshot: true });
+  expect(reset.content.some((block) => block.type === "image")).toBe(true);
+  expect(app.state).toEqual(app.seed);
+  const last = await check({ stage: "after_reset" });
+  expectNoToken(computer, last);
+  const { witness } = parsed(last);
+  expect(witness).toMatchObject({
+    stage: "after_reset",
+    held: true,
+    status: "held",
+    next_stage: null,
+  });
+  const record = witness?.record;
+  expect(record).toMatchObject({
+    path: join(directory, "witness.json"),
+    verdict: "held",
+    failed_stage: null,
+    task: { name: "add-eggs" },
+    recording: {
+      recording_id: "rec-000000000001",
+      segments: FAKE_SEGMENTS.map((bytes, index) => ({
+        path: `recording/000${String(index)}.mp4`,
+        bytes: bytes.length,
+      })),
+    },
+  });
+  expect(record?.stages.map((stage) => [stage.stage, stage.held])).toEqual([
+    ["seed", true],
+    ["after_edit", true],
+    ["near_miss", true],
+    ["after_reset", true],
+  ]);
+  expect(record?.stages.map((stage) => stage.results[0]?.passed)).toEqual([
+    false,
+    true,
+    false,
+    false,
+  ]);
+  expect(
+    record?.actions.map(({ action, tool, outcome }) => [action, tool, outcome]),
+  ).toEqual([
+    ["screenshot", "computer_screenshot", "applied"],
+    ["type", "computer_type", "applied"],
+    ["key", "computer_key", "applied"],
+    ["reset", "data/reset", "applied"],
+  ]);
+  expect(app.methods).toEqual([
+    "data/get",
+    "data/get",
+    "data/get",
+    "data/get",
+    "data/reset",
+    "data/get",
+  ]);
+  for (const [index, bytes] of FAKE_SEGMENTS.entries())
+    expect(
+      (
+        await readFile(join(directory, "recording", `000${String(index)}.mp4`))
+      ).equals(bytes),
+    ).toBe(true);
+  const evidence = parseEvidence(
+    JSON.parse(await readFile(join(directory, "witness.json"), "utf8")),
+  );
+  expect(evidence).toMatchObject({
+    evidence_id: record?.evidence_id,
+    predicate_type: "rea.desktop-build-witness",
+  });
+  expect(evidence.normalized_result).toMatchObject({ verdict: "held" });
+  expect(
+    parseMcpToolError(await check({ stage: "seed", directory })).error.message,
+  ).toContain("already witnessed");
+});
+
+it("witnesses a task whose check reads a binary file through a reader run in the computer", async () => {
+  const poster = "Documents/poster.xcf";
+  const task = {
+    name: "rename-layer",
+    prompt:
+      "In Pictures, rename the Headline layer to Summer Sale and save it.",
+    checks: [
+      {
+        id: "renamed",
+        kind: "lines_present",
+        file: poster,
+        reader: "layers",
+        lines: ["layer Summer Sale"],
+      },
+    ],
+    readers: [
+      {
+        id: "layers",
+        file: poster,
+        argv: [
+          "python3",
+          "-c",
+          "import sys; print('banner'); print('REA layer ' + open(sys.argv[1], 'rb').read().split(b'\\0')[-1].decode())",
+          "{file}",
+        ],
+        output: "lines",
+      },
+    ],
+  };
+  const home = await createTestTempDirectory("witness-home-");
+  await mkdir(join(home, "Documents"));
+  const save = (layer: string) =>
+    writeFile(join(home, poster), `gimp xcf\0${layer}`);
+  await save("Headline");
+  const { act, check, computer, directory } = await witnessed(
+    0,
+    { exec: { home, bin: home } },
+    task,
+  );
+
+  await check({ task, stage: "seed", directory });
+  await act("type", { text: "Summer Sale\n" });
+  await save("Summer Sale");
+  await check({ task, stage: "after_edit" });
+  await act("type", { text: "Summer Sail\n" });
+  await save("Summer Sail");
+  const near = parsed(await check({ task, stage: "near_miss" }));
+  expect(near.results[0]?.description).toContain(
+    'has no line "layer Summer Sale"',
+  );
+  await act("reset");
+  await save("Headline");
+  const last = await check({ task, stage: "after_reset" });
+  expectNoToken(computer, last);
+  const record = parsed(last).witness?.record;
+  expect(record?.verdict).toBe("held");
+  expect(record?.stages.map((stage) => stage.results[0]?.passed)).toEqual([
+    false,
+    true,
+    false,
+    false,
+  ]);
+  expect(await readFile(join(home, poster), "utf8")).toBe("gimp xcf\0Headline");
+  const evidence = parseEvidence(
+    JSON.parse(await readFile(join(directory, "witness.json"), "utf8")),
+  );
+  expect(evidence.limitations.join(" ")).toContain("computer-exec/v1");
+});
+
+/** Stand-ins for the runner's model client, agentenv config and MCP client, whose judge answers what `judge-verdict` holds. */
+const JUDGE_STUBS: Readonly<Record<string, string>> = {
+  "litellm/__init__.py": String.raw`
+import json, os, types
+async def acompletion(model, messages, **_):
+    state = os.environ["FAKE_STATE"]
+    with open(os.path.join(state, "judge-calls"), "a") as log:
+        log.write(json.dumps({"model": model, "images": sum(1 for part in messages[0]["content"] if part["type"] == "image_url")}) + "\n")
+    verdict = open(os.path.join(state, "judge-verdict")).read().strip() == "yes"
+    answer = {"verdict": verdict, "reason": "the window shows the result" if verdict else "the window shows no result"}
+    return types.SimpleNamespace(choices=[types.SimpleNamespace(message=types.SimpleNamespace(content=json.dumps(answer)))])
+`,
+  "agent_env/config.py": String.raw`
+import types
+def get_config():
+    call = types.SimpleNamespace(client_kwargs=lambda: {"api_key": "sk-test"})
+    return types.SimpleNamespace(get_model_for_role=lambda role: None, get_litellm_base_url=lambda: "https://models.example",
+                                 resolve_model_call=lambda model: call)
+`,
+  "agentenv_protocol/__init__.py": "",
+  "agentenv_protocol/tool_client.py": "class ToolSession:\n    pass\n",
+};
+
+it.each([
+  ["REA_AGENT_ENV_COMMAND names the runner", false],
+  ["the runner is found on PATH", true],
+])(
+  "witnesses a screen-judged task with the bundle's own judge on a fresh screenshot at each stage when %s",
+  async (_, onPath) => {
+    const task = {
+      name: "result-shown",
+      prompt: "In Notes, show the total and leave it showing.",
+      checks: [
+        {
+          id: "shown",
+          kind: "screen_judge",
+          question: "Does the window show the total?",
+        },
+      ],
+    };
+    const { act, check, computer, directory, runner } = await witnessed(
+      0,
+      {},
+      task,
+      { onPath },
+    );
+    for (const [path, source] of Object.entries(JUDGE_STUBS)) {
+      await mkdir(join(runner.state, "site", path, ".."), { recursive: true });
+      await writeFile(join(runner.state, "site", path), source);
+    }
+    const shows = (verdict: boolean) =>
+      writeFile(join(runner.state, "judge-verdict"), verdict ? "yes" : "no");
+
+    await shows(false);
+    const seed = parsed(await check({ task, stage: "seed", directory }));
+    expect(seed.results[0]).toMatchObject({ id: "shown", passed: false });
+    expect(seed.results[0]?.description).toContain("3 of 3 votes");
+    await act("type", { text: "=" });
+    await shows(true);
+    await check({ task, stage: "after_edit" });
+    await act("type", { text: "x" });
+    await shows(false);
+    await check({ task, stage: "near_miss" });
+    await act("reset");
+    const last = await check({ task, stage: "after_reset" });
+    expectNoToken(computer, last);
+    const record = parsed(last).witness?.record;
+    expect(record?.verdict).toBe("held");
+    expect(record?.stages.map((stage) => stage.results[0]?.passed)).toEqual([
+      false,
+      true,
+      false,
+      false,
+    ]);
+    // Three votes a stage, each shown the two examples and the stage's own screenshot.
+    const calls = (await readFile(join(runner.state, "judge-calls"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { images: number });
+    expect(calls).toHaveLength(12);
+    expect(calls.every(({ images }) => images === 3)).toBe(true);
+    // The record says how its results were reached: the bundle's judge, not data/get.
+    const evidence = parseEvidence(
+      JSON.parse(await readFile(join(directory, "witness.json"), "utf8")),
+    );
+    expect(evidence.limitations.join(" ")).toContain("judge");
+    expect(evidence.limitations.join(" ")).not.toContain("data/get");
+  },
+);
+
+it("fails the witness at after_reset when the reset leaves the near miss instead of the seed", async () => {
+  const task = {
+    ...TASK,
+    checks: [
+      { id: "eggs", ...TASK.checks[0] },
+      {
+        id: "no-egg",
+        kind: "lines_absent",
+        file: "Documents/today.txt",
+        lines: ["egg"],
+      },
+    ],
+  };
+  const { app, check, act, directory } = await witnessed(0, {}, task);
+  // The app's reset brings back the near miss rather than the seed.
+  Object.assign(app.seed, lines("milk", "egg"));
+  await check({ task, stage: "seed", directory });
+  await act("type", { text: "x" });
+  app.state = lines("milk", "eggs");
+  await check({ task, stage: "after_edit" });
+  await act("type", { text: "x" });
+  app.state = lines("milk", "egg");
+  await check({ task, stage: "near_miss" });
+  await act("reset");
+  const { witness } = parsed(await check({ task, stage: "after_reset" }));
+  expect(witness).toMatchObject({
+    held: false,
+    status: "failed",
+    record: { verdict: "failed", failed_stage: "after_reset" },
+  });
+  expect(witness?.record?.stages.at(-1)?.remediation).toContain("no-egg");
+});
+
+it("takes the after_reset stage after a reset whose screenshot the computer refused", async () => {
+  const witness = await witnessed();
+  const { app, check, client, computer, id } = witness;
+  await throughNearMiss(witness);
+  computer.refuseNext("computer_screenshot", "no display to capture");
+  await client.callTool({
+    name: "act_on_build_computer",
+    arguments: { computer_id: id, action: "reset", screenshot: true },
+  });
+  expect(app.state).toEqual(app.seed);
+  const checked = await check({ stage: "after_reset" });
+  expect(checked.isError, JSON.stringify(checked)).not.toBe(true);
+  const { witness: last } = parsed(checked);
+  expect(last).toMatchObject({
+    stage: "after_reset",
+    held: true,
+    status: "held",
+  });
+  expect(
+    last?.record?.actions.map(({ action, outcome }) => [action, outcome]),
+  ).toContainEqual(["reset", "applied"]);
+});
+
+it("ends the witness when the seed already passes, and refuses its later stages", async () => {
+  const passing = {
+    ...TASK,
+    checks: [
+      { kind: "lines_present", file: "Documents/today.txt", lines: ["milk"] },
+    ],
+  };
+  const { check, act, directory } = await witnessed(0, {}, passing);
+  const seed = parsed(await check({ task: passing, stage: "seed", directory }));
+  expect(seed.witness).toMatchObject({
+    held: false,
+    status: "failed",
+    record: { verdict: "failed", failed_stage: "seed" },
+  });
+  // The same seed check returns the record from its own folder, and refuses another.
+  expect(
+    parsed(await check({ task: passing, stage: "seed", directory })).witness,
+  ).toEqual(seed.witness);
+  const elsewhere = `${directory}-elsewhere`;
+  const refusal = parseMcpToolError(
+    await check({ task: passing, stage: "seed", directory: elsewhere }),
+  ).error;
+  expect(refusal).toMatchObject({
+    code: "invalid_request",
+    message: expect.stringContaining(
+      `record belongs to ${directory}, not ${elsewhere}`,
+    ),
+  });
+  await act("type", { text: "eggs\n" });
+  expect(
+    parseMcpToolError(await check({ task: passing, stage: "after_edit" })).error
+      .message,
+  ).toContain("ended");
+});
+
+it("witnesses only the task the bundle holds, by its steps and its checks", async () => {
+  const passing = {
+    ...TASK,
+    checks: [
+      { kind: "lines_present", file: "Documents/today.txt", lines: ["milk"] },
+    ],
+  };
+  const { check, computer, directory } = await witnessed(0, {}, passing);
+  for (const task of [TASK, { ...passing, prompt: "Keep milk listed." }])
+    expect(
+      parseMcpToolError(await check({ task, stage: "seed", directory })).error
+        .code,
+    ).toBe("invalid_request");
+  expect(computer.recordingRequests).toEqual([]);
+  expect(
+    parsed(await check({ stage: "seed", directory })).witness,
+  ).toMatchObject({ stage: "seed", held: false, status: "failed" });
+});
+
+it("refuses a witness without a folder for its record, or one already holding files", async () => {
+  const { check } = await witnessed();
+  expect(
+    parseMcpToolError(await check({ stage: "seed" })).error.message,
+  ).toContain("directory");
+  const used = await createTestTempDirectory("witness-used-");
+  await writeFile(join(used, "keep"), "");
+  expect(
+    parseMcpToolError(await check({ stage: "seed", directory: used })).error
+      .message,
+  ).toContain("not empty");
+});
+
+it("refuses an unusable witness folder before recording", async () => {
+  const { check, computer, directory } = await witnessed();
+  const root = await createTestTempDirectory("witness-unusable-");
+  const regularFile = join(root, "file");
+  await writeFile(regularFile, "occupied");
+  const candidates = [regularFile, join(regularFile, "out")];
+  if (process.platform !== "win32") {
+    const emptyFolder = join(root, "empty");
+    await mkdir(emptyFolder);
+    const emptyLink = join(root, "empty-link");
+    await symlink(emptyFolder, emptyLink);
+    const danglingLink = join(root, "dangling-link");
+    await symlink(join(root, "absent"), danglingLink);
+    candidates.push(emptyLink, danglingLink);
+  }
+  for (const candidate of candidates) {
+    const response = await check({ stage: "seed", directory: candidate });
+    const { error } = parseMcpToolError(response);
+    expect(error.code).toBe("invalid_request");
+    expect(error.message).not.toContain("not empty");
+    expect(error.details?.issues).toMatchObject([
+      { path: ["directory"], reason: "invalid_value" },
+    ]);
+  }
+  expect(computer.recordingRequests).toEqual([]);
+  const seed = parsed(await check({ stage: "seed", directory }));
+  expect(seed.witness).toMatchObject({
+    stage: "seed",
+    held: true,
+    next_stage: "after_edit",
+  });
+});
+
+it("retries a seed whose state read failed, with the recording it began", async () => {
+  const witness = await witnessed();
+  witness.app.failGets = 1;
+  const failed = await witness.check({
+    stage: "seed",
+    directory: witness.directory,
+  });
+  expect(parseMcpToolError(failed).error.message).toContain("busy");
+  const seed = parsed(
+    await witness.check({ stage: "seed", directory: witness.directory }),
+  );
+  expect(seed.witness).toMatchObject({ held: true, next_stage: "after_edit" });
+  expect(
+    witness.computer.recordingRequests.filter(({ path }) =>
+      path.endsWith("/start"),
+    ),
+  ).toHaveLength(1);
+});
+
+it("asks for the recording a lost start reply began again under its request id when the seed is retried", async () => {
+  const witness = await witnessed(0, { lostRecordingStarts: 1 });
+  const { check, directory, computer } = witness;
+  const lost = await check({ stage: "seed", directory });
+  expect(parseMcpToolError(lost).error.message).toContain("recording");
+  const seed = parsed(await check({ stage: "seed", directory }));
+  expect(seed.witness).toMatchObject({ held: true, next_stage: "after_edit" });
+  const starts = computer.recordingRequests.filter(({ path }) =>
+    path.endsWith("/start"),
+  );
+  expect(starts).toHaveLength(2);
+  expect(starts[1]?.body).toEqual(starts[0]?.body);
+});
+
+it("files no seed or near miss whose only failing check could not read its file, and takes it once the file reads", async () => {
+  const witness = await witnessed();
+  const { app, check, directory, computer } = witness;
+  const locked = {
+    "Documents/today.txt": {
+      format: null,
+      view: null,
+      error: "database is locked",
+    },
+  };
+  app.state = locked;
+  const unread = ["Documents/today.txt", "database is locked"];
+  expectUndecided(await check({ stage: "seed", directory }), "seed", unread);
+  app.state = lines("milk");
+  expect(
+    parsed(await check({ stage: "seed", directory })).witness,
+  ).toMatchObject({ stage: "seed", held: true });
+  await edit(witness, lines("milk", "eggs"));
+  await check({ stage: "after_edit" });
+  await edit(witness, locked);
+  expectUndecided(await check({ stage: "near_miss" }), "near_miss", unread);
+  app.state = lines("milk", "egg");
+  const nearMiss = parsed(await check({ stage: "near_miss" }));
+  expect(nearMiss.witness).toMatchObject({
+    stage: "near_miss",
+    held: true,
+    next_stage: "after_reset",
+  });
+  await witness.act("reset");
+  const record = parsed(await check({ stage: "after_reset" })).witness?.record;
+  expect(record?.stages.map(({ stage }) => stage)).toEqual(WITNESS_ORDER);
+  expect(
+    computer.recordingRequests.filter(({ path }) => path.endsWith("/start")),
+  ).toHaveLength(1);
+});
+
+it("files no seed or near miss whose only failing check misses a line its cut view may have left out", async () => {
+  const witness = await witnessed();
+  const { app, check, directory } = witness;
+  const cut = {
+    "Documents/today.txt": {
+      format: "text",
+      view: {
+        lines: Array.from(
+          { length: 5000 },
+          (_, index) => `note ${String(index + 1)}`,
+        ),
+        line_count: 5001,
+        truncated: true,
+      },
+      truncated: true,
+    },
+  };
+  app.state = cut;
+  const missing = ["Documents/today.txt", '"eggs"'];
+  expectUndecided(await check({ stage: "seed", directory }), "seed", missing);
+  app.state = lines("milk");
+  expect(
+    parsed(await check({ stage: "seed", directory })).witness,
+  ).toMatchObject({ stage: "seed", held: true });
+  await edit(witness, lines("milk", "eggs"));
+  await check({ stage: "after_edit" });
+  await edit(witness, cut);
+  expectUndecided(await check({ stage: "near_miss" }), "near_miss", missing);
+  app.state = lines("milk", "egg");
+  expect(parsed(await check({ stage: "near_miss" })).witness).toMatchObject({
+    stage: "near_miss",
+    held: true,
+    next_stage: "after_reset",
+  });
+});
+
+it("records a long witness from the bounded action log, naming what it dropped and what it cut", async () => {
+  const witness = await witnessed();
+  const { app, check, directory } = witness;
+  await check({ stage: "seed", directory });
+  for (let index = 0; index < 260; index += 1)
+    await witness.act("key", { keys: ["Right"] });
+  await witness.act("type", { text: "e".repeat(2048) });
+  app.state = lines("milk", "eggs");
+  expect(parsed(await check({ stage: "after_edit" })).witness).toMatchObject({
+    held: true,
+  });
+  await edit(witness, lines("milk", "egg"));
+  await check({ stage: "near_miss" });
+  await witness.act("reset");
+  const record = parsed(await check({ stage: "after_reset" })).witness?.record;
+  expect(record).toMatchObject({ verdict: "held", actions_dropped: 7 });
+  expect(record?.actions).toHaveLength(256);
+  expect(record?.actions[0]?.index).toBe(7);
+  expect(
+    record?.actions.find(({ action }) => action === "type")
+      ?.truncated_arguments,
+  ).toEqual(["text"]);
+  const { limitations } = parseEvidence(
+    JSON.parse(await readFile(join(directory, "witness.json"), "utf8")),
+  );
+  expect(limitations.join("\n")).toContain(
+    "the 7 earliest are not in the record",
+  );
+  expect(limitations.join("\n")).toContain("truncated_arguments");
+});
+
+it("saves a witness record again after a failed save, without checking again", async () => {
+  const witness = await witnessed();
+  const { check, directory, app } = witness;
+  await throughNearMiss(witness);
+  await witness.act("reset");
+  // Something else writes into the record's folder, so the save is refused.
+  await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, "intruder"), "");
+  const refused = await check({ stage: "after_reset" });
+  expect(parseMcpToolError(refused).error.message).toContain("not empty");
+  await rm(join(directory, "intruder"));
+  const gets = app.methods.length;
+  const saved = parsed(await check({ stage: "after_reset" }));
+  expect(saved.witness).toMatchObject({
+    stage: "after_reset",
+    status: "held",
+    record: { verdict: "held" },
+  });
+  expect(saved.witness?.record?.stages).toHaveLength(4);
+  expect(app.methods.length).toBe(gets);
+  // Saved, the same check returns the record again without checking or writing; any other is refused.
+  expect(parsed(await check({ stage: "after_reset" })).witness).toEqual(
+    saved.witness,
+  );
+  expect(app.methods.length).toBe(gets);
+  expect(
+    parseMcpToolError(await check({ stage: "near_miss" })).error.message,
+  ).toContain("ended");
+});
+
+it("reports cancellation and the saved witness when the computer closes during commit", async () => {
+  const witness = await witnessed();
+  const { client, id, check, directory } = witness;
+  await throughNearMiss(witness);
+  await witness.act("reset");
+  let closed: Promise<unknown> = Promise.resolve();
+  cancelDuringCommit(() => {
+    closed = client.callTool({
+      name: "close_build_computer",
+      arguments: { computer_id: id },
+    });
+  });
+  const failure = parseMcpToolError(
+    await check({ stage: "after_reset" }),
+  ).error;
+  expect(failure).toMatchObject({
+    code: "cancelled",
+    details: { partial_observation: expect.any(Object) },
+  });
+  const saved = JSON.parse(
+    await readFile(join(directory, "witness.json"), "utf8"),
+  );
+  expect(saved.normalized_result).toMatchObject({ verdict: "held" });
+  await closed;
+});
+
+it("returns a record saved as its check was cancelled when that check is asked again", async () => {
+  const witness = await witnessed();
+  const { client, id, directory } = witness;
+  await throughNearMiss(witness);
+  await witness.act("reset");
+  const caller = new AbortController();
+  cancelDuringCommit(() => {
+    caller.abort();
+  });
+  await expect(
+    client.callTool(
+      {
+        name: "check_build_task",
+        arguments: { computer_id: id, task: TASK, stage: "after_reset" },
+      },
+      { signal: caller.signal },
+    ),
+  ).rejects.toThrow();
+  const again = parsed(await witness.check({ stage: "after_reset" }));
+  expect(again.witness?.record).toMatchObject({
+    path: join(directory, "witness.json"),
+    verdict: "held",
+  });
+});
+
+it("files one after_edit when two checks of it arrive together, so the record cannot hold without a near miss", async () => {
+  const witness = await witnessed();
+  const { check, directory } = witness;
+  await check({ stage: "seed", directory });
+  await edit(witness, lines("milk", "eggs"));
+  const both = await Promise.all([
+    check({ stage: "after_edit" }),
+    check({ stage: "after_edit" }),
+  ]);
+  const filed = both.filter((result) => result.isError !== true);
+  expect(filed).toHaveLength(1);
+  expect(parsed(filed[0])).toMatchObject({
+    passed: 1,
+    witness: { stage: "after_edit", held: true, next_stage: "near_miss" },
+  });
+  const second = both.find((result) => result.isError === true);
+  expect(parseMcpToolError(second as CallToolResult).error.message).toContain(
+    "the next stage is near_miss",
+  );
+  await witness.act("reset");
+  expect(
+    parseMcpToolError(await check({ stage: "after_reset" })).error.message,
+  ).toContain("the next stage is near_miss");
+});
+
+it("keeps a completed reset when the screenshot after it is cancelled", async () => {
+  const witness = await witnessed(0, { screenshotDelaysMs: [0, 60_000] });
+  await witness.check({ stage: "seed", directory: witness.directory });
+  await edit(witness, lines("milk", "eggs"));
+  await witness.check({ stage: "after_edit" });
+  await witness.act("type", { text: "near" });
+  const controller = new AbortController();
+  const resetting = witness.client.callTool(
+    {
+      name: "act_on_build_computer",
+      arguments: {
+        computer_id: witness.id,
+        action: "reset",
+        screenshot: true,
+      },
+    },
+    { signal: controller.signal },
+  );
+  await waitFor(() => expect(witness.app.methods).toContain("data/reset"));
+  controller.abort();
+  await expect(resetting).rejects.toThrow();
+  const near = parseMcpToolError(await witness.check({ stage: "near_miss" }));
+  expect(near.error.message).toContain("put the seed back");
+  expect(witness.app.state).toEqual(lines("milk"));
+});
+
+it("checks after_reset once the reset sent before it has relaunched the app", async () => {
+  const witness = await witnessed(4);
+  const { app, check } = witness;
+  await throughNearMiss(witness);
+  const order: string[] = [];
+  const reset = witness.act("reset").then(() => order.push("reset"));
+  await waitFor(() => expect(app.methods.at(-1)).toBe("data/reset"));
+  const last = await check({ stage: "after_reset" });
+  order.push("check");
+  await reset;
+  expect(order).toEqual(["reset", "check"]);
+  const record = parsed(last).witness?.record;
+  expect(record).toMatchObject({ verdict: "held", failed_stage: null });
+  expect(record?.stages.at(-1)).toMatchObject({
+    stage: "after_reset",
+    actions_before: 3,
+  });
+  expect(record?.actions.at(-1)).toMatchObject({
+    action: "reset",
+    outcome: "applied",
+  });
+  expect(app.methods.slice(-2)).toEqual(["data/reset", "data/get"]);
+});
+
+it("sends progress while a reset waits for the relaunched app", async () => {
+  const witness = await witnessed(14);
+  const progress: unknown[] = [];
+  const reset = await witness.client.callTool(
+    {
+      name: "act_on_build_computer",
+      arguments: { computer_id: witness.id, action: "reset" },
+    },
+    { onprogress: (update) => progress.push(update) },
+  );
+  expect(reset.isError, JSON.stringify(reset)).not.toBe(true);
+  expect(progress.length).toBeGreaterThan(0);
+});
+
+/** The shipped timing scaled down a tenfold: a read every 50 ms, a 300 ms window, a 1.5 s bound. */
+const SETTLE: SettleTiming = { intervalMs: 50, windowMs: 300, boundMs: 1500 };
+
+/**
+ * SETTLE on a clock that only the settle's waits and the app's `pass` move,
+ * so where each read falls against the bound is exact however loaded the
+ * host: a read takes no time unless the app passes some, and a timeout aborts
+ * when the clock passes its end, which `fired` notes.
+ */
+const clocked = () => {
+  let now = 0;
+  const fired: number[] = [];
+  const timeouts = new Set<{ end: number; controller: AbortController }>();
+  const pass = (ms: number) => {
+    const until = now + ms;
+    const due = [...timeouts]
+      .filter(({ end }) => end <= until)
+      .sort((left, right) => left.end - right.end);
+    for (const timeout of due) {
+      timeouts.delete(timeout);
+      now = Math.max(now, timeout.end);
+      fired.push(now);
+      timeout.controller.abort(new DOMException("timed out", "TimeoutError"));
+    }
+    now = until;
+  };
+  const clock: SettleClock = {
+    now: () => now,
+    delay: async (ms, signal) => {
+      signal.throwIfAborted();
+      pass(ms);
+    },
+    timeout: (ms) => {
+      const controller = new AbortController();
+      timeouts.add({ end: now + ms, controller });
+      return controller.signal;
+    },
+  };
+  return { settle: { ...SETTLE, clock }, now: () => now, pass, fired };
+};
+
+it("grades a stage on what the app saves after the check starts, with progress while it waits", async () => {
+  const witness = await witnessed(0, {}, TASK, { settle: clocked().settle });
+  const { app, check, directory } = witness;
+  expect(
+    parsed(await check({ stage: "seed", directory })).witness,
+  ).toMatchObject({ held: true });
+  await witness.act("type", { text: "eggs\n" });
+  // The app saves on its own timer, a few reads into the check, as Gnote saves after the last key.
+  let gets = 0;
+  app.onGet = () => {
+    gets += 1;
+    if (gets === 3) app.state = lines("milk", "eggs");
+  };
+  const progress: unknown[] = [];
+  const edited = parsed(
+    await witness.client.callTool(
+      {
+        name: "check_build_task",
+        arguments: { computer_id: witness.id, task: TASK, stage: "after_edit" },
+      },
+      { onprogress: (update) => progress.push(update) },
+    ),
+  );
+  expect(edited).toMatchObject({
+    passed: 1,
+    settled: true,
+    witness: { stage: "after_edit", held: true, next_stage: "near_miss" },
+  });
+  expect(gets).toBeGreaterThan(3);
+  expect(progress.length).toBeGreaterThan(0);
+});
+
+it("grades files still changing at the bound on the last read, and records that they did not settle", async () => {
+  // A seed that passes every check ends the witness, so the bundle holds that task.
+  const passing = {
+    ...TASK,
+    checks: [
+      { kind: "lines_present", file: "Documents/today.txt", lines: ["milk"] },
+    ],
+  };
+  const { settle, now } = clocked();
+  const { app, check, directory } = await witnessed(0, {}, passing, {
+    settle: settle,
+  });
+  const reads: number[] = [];
+  // Every read finds the file changed, with eggs on even reads only.
+  app.onGet = () => {
+    reads.push(now());
+    app.state = lines(
+      "milk",
+      ...(reads.length % 2 === 0 ? ["eggs"] : []),
+      String(reads.length),
+    );
+  };
+  const plain = parsed(await check({ task: TASK }));
+  // A read every interval, the last an interval before the bound, which is where the next would start.
+  expect(reads).toEqual(
+    Array.from(
+      { length: SETTLE.boundMs / SETTLE.intervalMs },
+      (_, index) => index * SETTLE.intervalMs,
+    ),
+  );
+  expect(plain).toMatchObject({
+    settled: false,
+    read_cut: false,
+    passed: reads.length % 2 === 0 ? 1 : 0,
+  });
+
+  // The seed's record shows the stage unsettled.
+  const seed = parsed(await check({ stage: "seed", directory }));
+  expect(seed.settled).toBe(false);
+  expect(
+    seed.witness?.record?.stages.map(({ stage, settled }) => [stage, settled]),
+  ).toEqual([["seed", false]]);
+});
+
+it("grades an app that saved before the check within the window plus one interval", async () => {
+  const { app, check } = await witnessed(0, {}, TASK, {
+    settle: clocked().settle,
+  });
+  app.state = lines("milk", "eggs");
+  const plain = parsed(await check({}));
+  expect(plain).toMatchObject({ passed: 1, settled: true });
+  const gets = app.methods.filter((method) => method === "data/get").length;
+  expect(gets).toBeLessThanOrEqual(SETTLE.windowMs / SETTLE.intervalMs + 2);
+});
+
+it("counts a slow read's changed files as quiet only from when it returned them", async () => {
+  const { settle, pass } = clocked();
+  const { app, check } = await witnessed(0, {}, TASK, { settle: settle });
+  let gets = 0;
+  app.onGet = () => {
+    gets += 1;
+    // The second read starts early and returns a save late; another save lands four reads after it.
+    if (gets === 2) {
+      pass(240);
+      app.state = lines("milk", "eggs");
+    }
+    if (gets === 6) app.state = lines("milk", "eggs", "flour");
+  };
+  const both = {
+    ...TASK,
+    checks: [
+      {
+        kind: "lines_present",
+        file: "Documents/today.txt",
+        lines: ["eggs", "flour"],
+      },
+    ],
+  };
+  expect(parsed(await check({ task: both }))).toMatchObject({
+    passed: 1,
+    settled: true,
+    read_cut: false,
+  });
+});
+
+it("ends reads slower than the bound at the bound, grading the last completed read", async () => {
+  const { settle, now, pass, fired } = clocked();
+  const { app, check } = await witnessed(0, {}, TASK, { settle: settle });
+  const slow = (SETTLE.boundMs * 2) / 3;
+  const reads: number[] = [];
+  // Each read takes two thirds of the bound; only the first returns eggs.
+  app.onGet = () => {
+    reads.push(now());
+    pass(slow);
+    app.state = reads.length === 1 ? lines("milk", "eggs") : lines("milk");
+  };
+  const plain = parsed(await check({}));
+  // The second read starts as the first returns, and the bound cuts it before it returns.
+  expect(reads).toEqual([0, slow]);
+  expect(fired).toEqual([SETTLE.boundMs]);
+  expect(plain).toMatchObject({ passed: 1, settled: false, read_cut: true });
+});

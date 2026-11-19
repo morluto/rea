@@ -1,15 +1,18 @@
 import { spawn } from "node:child_process";
-import { stat } from "node:fs/promises";
-import { resolve } from "node:path";
+import { realpath, stat } from "node:fs/promises";
+import { relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   developmentTestPlan,
   parseDevelopmentTestRequest,
 } from "./lib/development-tests.mjs";
+import { projectForTest } from "./lib/test-projects.mjs";
 
 let child;
 let forceTimer;
 let shutdownSignal;
+let childOwnsTree = false;
 const signalExitCodes = { SIGINT: 130, SIGTERM: 143 };
 for (const signal of Object.keys(signalExitCodes))
   process.on(signal, () => {
@@ -17,17 +20,32 @@ for (const signal of Object.keys(signalExitCodes))
     shutdownSignal = signal;
     if (child !== undefined && child.exitCode === null) {
       child.kill(signal);
-      forceTimer = setTimeout(() => child?.kill("SIGKILL"), 1_000);
-      forceTimer.unref?.();
+      if (!childOwnsTree) {
+        forceTimer = setTimeout(() => child?.kill("SIGKILL"), 1_000);
+        forceTimer.unref?.();
+      }
     }
   });
 
 try {
   const [mode, ...arguments_] = process.argv.slice(2);
   const request = parseDevelopmentTestRequest(mode, arguments_);
+  const resolvedPaths = [];
+  const repository = await realpath(".");
   for (const path of request.paths) {
     if (!(await stat(path)).isFile())
       throw new Error(`Test path is not a file: ${path}`);
+    // Ownership follows the filesystem's canonical spelling. Execution keeps
+    // the caller path so exact discovery still rejects excluded symlink aliases.
+    const resolvedPath = relative(repository, await realpath(path))
+      .split(sep)
+      .join("/");
+    if (
+      request.mode !== "focused" &&
+      projectForTest(resolvedPath).group !== "source"
+    )
+      throw new Error(`Use test:focused for built test projects: ${path}`);
+    resolvedPaths.push(resolvedPath);
   }
   let baseCommit;
   if (request.mode === "changed") {
@@ -38,7 +56,7 @@ try {
       );
     baseCommit = base.output.trim();
   }
-  const plan = developmentTestPlan(request, baseCommit);
+  const plan = developmentTestPlan(request, baseCommit, resolvedPaths);
   if (request.dryRun) {
     console.log(JSON.stringify({ ...request, baseCommit, ...plan }, null, 2));
   } else {
@@ -55,26 +73,38 @@ try {
         throw new Error(
           "Test prerequisites require the locked dependency installation",
         );
-      const prepared = await run(process.execPath, [
-        "scripts/run-exclusive.mjs",
-        "artifacts",
+      const prepared = await run(
         process.execPath,
-        resolve("scripts/run-turbo.mjs"),
-        "run",
-        ...(plan.needsBuild ? ["artifacts:skills"] : []),
-        ...plan.artifactTasks,
-      ]);
+        [
+          "scripts/run-exclusive.mjs",
+          "artifacts",
+          process.execPath,
+          resolve("scripts/run-turbo.mjs"),
+          "run",
+          ...new Set([
+            ...(plan.needsBuild ? ["artifacts:skills"] : []),
+            ...plan.artifactTasks,
+          ]),
+        ],
+        false,
+        "existing",
+      );
       if (prepared.code !== 0) process.exitCode = prepared.code;
     }
     if (!process.exitCode && !shutdownSignal) {
-      const tested = await run(process.execPath, [
-        resolve(
-          request.paths.length > 0
-            ? "scripts/run-exact-tests.mjs"
-            : "node_modules/vitest/vitest.mjs",
-        ),
-        ...plan.vitestArguments,
-      ]);
+      const tested = await run(
+        process.execPath,
+        [
+          resolve(
+            request.paths.length > 0
+              ? "scripts/run-exact-tests.mjs"
+              : "node_modules/vitest/vitest.mjs",
+          ),
+          ...plan.vitestArguments,
+        ],
+        false,
+        "test",
+      );
       process.exitCode = tested.code;
     }
   }
@@ -84,15 +114,27 @@ try {
 }
 if (shutdownSignal) process.exitCode = signalExitCodes[shutdownSignal];
 
-function run(executable, arguments_, capture = false) {
+function run(executable, arguments_, capture = false, supervision) {
   if (shutdownSignal)
     return Promise.resolve({
       code: signalExitCodes[shutdownSignal],
       output: "",
     });
-  child = spawn(executable, arguments_, {
-    stdio: capture ? ["ignore", "pipe", "pipe"] : "inherit",
-  });
+  // Source-only tests do not require the built Windows Job Object artifact.
+  const wrap = supervision === "test" && process.platform !== "win32";
+  childOwnsTree = supervision === "existing" || wrap;
+  child = spawn(
+    wrap ? process.execPath : executable,
+    wrap
+      ? [
+          fileURLToPath(new URL("./run-exclusive.mjs", import.meta.url)),
+          "--unlocked",
+          executable,
+          ...arguments_,
+        ]
+      : arguments_,
+    { stdio: capture ? ["ignore", "pipe", "pipe"] : "inherit" },
+  );
   let output = "";
   if (capture) {
     child.stdout.on("data", (data) => (output += data.toString()));

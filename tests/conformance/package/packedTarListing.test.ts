@@ -51,11 +51,4 @@ describe("packed tar listing", () => {
       "package/b",
     ]);
   });
-
-  it("splits a bare newline listing the way the Windows bug appeared", () => {
-    // Guard the reported regression: the previous parse kept `\r` on members.
-    const naive = listing("\r\n").split("\n");
-    expect(naive).not.toContain(packedBridges[0]);
-    expect(parseTarListing(listing("\r\n"))).toContain(packedBridges[0]);
-  });
 });

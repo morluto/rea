@@ -1,14 +1,21 @@
 import { throwIfJadxInterrupted } from "./JadxInterruption.js";
-import { Client } from "@modelcontextprotocol/client";
-import { createAnalysisExecution } from "../application/AnalysisProvider.js";
-import type { AndroidAnalysisExecution } from "../application/android/AndroidAnalysisPort.js";
+import { OwnedMcpClient } from "../process/OwnedMcpClient.js";
+import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
+import type { AndroidAnalysisExecution } from "../ports/android/AndroidAnalysisPort.js";
 import type { AndroidRequest } from "../domain/android/androidAnalysis.js";
+import {
+  type AndroidMappingSource,
+  androidMappingLimitations,
+} from "../domain/android/androidMapping.js";
 import type { AndroidPartialObservation } from "../domain/android/androidPartialObservation.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
+  AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
@@ -17,8 +24,17 @@ import {
   type JsonValue,
 } from "../domain/jsonValue.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import type { OwnedProviderProcessSpawnOptions } from "../process/ProviderProcess.js";
 import { analyzeJadxRequest, type JadxToolPort } from "./JadxAnalysis.js";
+import { readAndroidNativeInventory } from "./AndroidNativeInventory.js";
+import type { AndroidNativeDeclarations } from "../domain/android/androidNativeDeclarations.js";
+import {
+  readAndroidJniLibraries,
+  type AndroidJniLibraries,
+} from "./AndroidJniLibraries.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
+import { jadxOperationTimeoutGuidance } from "./JadxOperationTimeout.js";
 import { JadxMcpTransport, type JadxLauncher } from "./JadxMcpTransport.js";
 import {
   parseJadxClassPage,
@@ -29,11 +45,15 @@ import {
   parseJadxJson,
 } from "./JadxProtocol.js";
 import {
-  JADX_BRIDGE_IDENTITY,
+  type JadxBridgeIdentity,
   JADX_RELEASE,
   JADX_PROVIDER_IDENTITY,
   JADX_LIMITATIONS,
+  JADX_HEAP_REMEDIATION,
 } from "./JadxRelease.js";
+
+const JADX_REPORTED_FAILURE_REMEDIATION =
+  "jadx is running and reported this failure for the selected input, so provider readiness checks cannot repair it. Review details.diagnostics.reason and adjust the input or request if applicable. Repeating the unchanged request is not expected to succeed.";
 
 type JadxCall = {
   readonly operation: string;
@@ -48,7 +68,10 @@ type JadxCallObservation = {
 /** One owned engine connection; its wire protocol stays inside the Android adapter. */
 export class JadxSession {
   readonly transport: JadxMcpTransport;
-  readonly #client = new Client({ name: "rea-android-adapter", version: "1" });
+  readonly #client = new OwnedMcpClient({
+    name: "rea-android-adapter",
+    version: "1",
+  });
   #loaded: ReturnType<typeof jadxLoadSchema.parse> | undefined;
   #connected = false;
   #partialContext:
@@ -58,12 +81,18 @@ export class JadxSession {
         readonly target: BinaryTarget;
         readonly jarHash: string;
         readonly bridgeHash: string;
+        readonly bridgeIdentity: JadxBridgeIdentity;
       }
     | undefined;
   #observedCalls: JadxCallObservation[] = [];
   #serverName: string | null = null;
   #serverVersion: string | null = null;
   #engineVersion: string | null = null;
+  #nativeInventory: AndroidNativeDeclarations | undefined;
+  #nativeLibraries:
+    | { readonly key: string; readonly value: AndroidJniLibraries }
+    | undefined;
+  #jniObservation: NonNullable<AndroidPartialObservation["jni"]> | undefined;
 
   constructor(
     options: Omit<OwnedProviderProcessSpawnOptions, "runId" | "stdin">,
@@ -79,19 +108,50 @@ export class JadxSession {
     readonly snapshot: string;
     readonly jarHash: string;
     readonly bridgeHash: string;
+    /** Identity read from the packaged bridge before the child was launched. */
+    readonly bridgeIdentity: JadxBridgeIdentity;
     readonly signal: AbortSignal;
     /** Selected whole-operation deadline; also bounds each upstream call. */
     readonly timeoutMs: number;
+    /** Caller-selected mapping, read before this request reached the queue. */
+    readonly mapping?: AndroidMappingSource | undefined;
+    readonly resources: ArtifactResourceScope;
+    readonly deadline: AbortSignal;
   }): Promise<AndroidAnalysisExecution> {
-    const { request, target, snapshot, jarHash, signal, timeoutMs } = context;
+    const { request, target, snapshot, jarHash, signal, timeoutMs, mapping } =
+      context;
     this.#partialContext = {
       operation: request.operation,
       selectedPath: request.input.path,
       target,
       jarHash,
       bridgeHash: context.bridgeHash,
+      bridgeIdentity: context.bridgeIdentity,
     };
     this.#observedCalls = [];
+    this.#jniObservation = undefined;
+    if (request.operation === "inspect_android_jni_bindings") {
+      const selected = request.input;
+      this.#jniObservation = {
+        selection: {
+          ...(selected.class_name === undefined
+            ? {}
+            : { class_name: selected.class_name }),
+          ...(selected.method_names === undefined
+            ? {}
+            : { method_names: selected.method_names }),
+          ...(selected.descriptors === undefined
+            ? {}
+            : { descriptors: selected.descriptors }),
+          ...(selected.abis === undefined ? {} : { abis: selected.abis }),
+          ...(selected.library_paths === undefined
+            ? {}
+            : { library_paths: selected.library_paths }),
+        },
+        native_inventory: null,
+        libraries: null,
+      };
+    }
     this.#serverName = null;
     this.#serverVersion = null;
     this.#engineVersion = null;
@@ -110,14 +170,12 @@ export class JadxSession {
       const server = this.#client.getServerVersion();
       this.#serverName = server?.name ?? null;
       this.#serverVersion = server?.version ?? null;
-      if (
-        server?.name !== JADX_BRIDGE_IDENTITY.name ||
-        server.version !== JADX_BRIDGE_IDENTITY.version
-      )
+      const expected = context.bridgeIdentity;
+      if (server?.name !== expected.name || server.version !== expected.version)
         throw new AnalysisCapabilityUnavailableError(
           "jadx",
           request.operation,
-          `Expected ${JADX_BRIDGE_IDENTITY.name} ${JADX_BRIDGE_IDENTITY.version}; server reported ${server?.name ?? "unknown"} ${server?.version ?? "unknown"}.`,
+          `Expected ${expected.name} ${expected.version}; server reported ${server?.name ?? "unknown"} ${server?.version ?? "unknown"}.`,
         );
       const tools = this.#tools(request, target, signal, timeoutMs);
       const runtime = jadxRuntimeSchema.parse(
@@ -131,20 +189,22 @@ export class JadxSession {
           `Expected engine ${JADX_RELEASE.version}; JAR reported ${runtime.engine_reported_version}.`,
         );
       const loaded =
-        this.#loaded ??
-        jadxLoadSchema.parse(
-          await tools.json("load_apk", {
-            path: snapshot,
-            threads: 1,
-            resources: "full",
-          }),
-        );
-      if (loaded.apk_path !== snapshot)
+        request.operation === "inspect_android_jni_bindings"
+          ? undefined
+          : (this.#loaded ??
+            jadxLoadSchema.parse(
+              await tools.json("load_apk", {
+                path: snapshot,
+                threads: 1,
+                resources: "full",
+              }),
+            ));
+      if (loaded !== undefined && loaded.apk_path !== snapshot)
         throw new AnalysisOutputError(
           request.operation,
           "JADX loaded a different APK path than the admitted snapshot",
         );
-      this.#loaded = loaded;
+      if (loaded !== undefined) this.#loaded = loaded;
       const engine = {
         name: "jadx-headless-mcp",
         version: runtime.engine_reported_version,
@@ -155,12 +215,77 @@ export class JadxSession {
         heap_limit_mib:
           Math.floor(runtime.max_heap_bytes / (1024 * 1024)) || null,
       } as const;
-      const result = await analyzeJadxRequest(tools, request, loaded, engine);
+      const result = await analyzeJadxRequest(tools, request, {
+        loaded,
+        engine,
+        mapping,
+        ...(request.operation !== "inspect_android_jni_bindings"
+          ? {}
+          : {
+              jni: {
+                apkSha256: target.sha256,
+                inventory: async () => {
+                  const inventory =
+                    this.#nativeInventory ??
+                    (await readAndroidNativeInventory(tools, snapshot));
+                  if (this.#jniObservation !== undefined)
+                    this.#jniObservation.native_inventory = inventory;
+                  if (inventory.coverage.status === "complete")
+                    this.#nativeInventory = inventory;
+                  return inventory;
+                },
+                libraries: async () => {
+                  const key = JSON.stringify({
+                    abis: request.input.abis,
+                    library_paths: request.input.library_paths,
+                  });
+                  if (this.#nativeLibraries?.key === key) {
+                    if (this.#jniObservation !== undefined)
+                      this.#jniObservation.libraries = {
+                        scan_state: "completed",
+                        libraries: [...this.#nativeLibraries.value.libraries],
+                        inventory: this.#nativeLibraries.value.inventory,
+                      };
+                    return this.#nativeLibraries.value;
+                  }
+                  const value = await readAndroidJniLibraries({
+                    snapshot,
+                    apkSha256: target.sha256,
+                    selection: request.input,
+                    resources: context.resources,
+                    signal,
+                    onObservation: (checkpoint) => {
+                      if (this.#jniObservation !== undefined)
+                        this.#jniObservation.libraries = checkpoint;
+                    },
+                    interruption: (reason) =>
+                      context.deadline.aborted &&
+                      reason === context.deadline.reason
+                        ? new AnalysisTimeoutError(
+                            request.operation,
+                            timeoutMs,
+                            {
+                              cause: reason,
+                              ...jadxOperationTimeoutGuidance(timeoutMs),
+                            },
+                          )
+                        : cancelledBy(request.operation, carriedReason(reason)),
+                  });
+                  if (
+                    value.inventory.status === "complete" &&
+                    value.libraries.every((library) => library.failure === null)
+                  )
+                    this.#nativeLibraries = { key, value };
+                  return value;
+                },
+              },
+            }),
+      });
       const raw = jsonObjectSchema.parse({
         server,
         bridge_sha256: context.bridgeHash,
         jar_sha256: jarHash,
-        loaded,
+        ...(loaded === undefined ? {} : { loaded }),
       });
       const execution = createAnalysisExecution(
         result,
@@ -171,7 +296,10 @@ export class JadxSession {
             calls: this.#observedCalls.map(({ complete }) => complete),
           },
           subject: target,
-          limitations: JADX_LIMITATIONS,
+          limitations:
+            request.operation === "inspect_android_jni_bindings"
+              ? []
+              : [...JADX_LIMITATIONS, ...androidMappingLimitations(mapping)],
           locations:
             request.operation === "inspect_android_package"
               ? [{ kind: "artifact-path", path: "AndroidManifest.xml" }]
@@ -210,13 +338,16 @@ export class JadxSession {
       provider_facts: {
         jar_sha256: context.jarHash,
         bridge_sha256: context.bridgeHash,
-        bridge_name: JADX_BRIDGE_IDENTITY.name,
-        bridge_version: JADX_BRIDGE_IDENTITY.version,
+        bridge_name: context.bridgeIdentity.name,
+        bridge_version: context.bridgeIdentity.version,
         server_name: this.#serverName,
         server_version: this.#serverVersion,
         engine_version: this.#engineVersion,
       },
       calls: this.#observedCalls.map(({ complete }) => complete),
+      ...(this.#jniObservation === undefined
+        ? {}
+        : { jni: this.#jniObservation }),
     };
   }
 
@@ -259,6 +390,18 @@ export class JadxSession {
       if (envelope.isError === true) {
         const failure = parseJadxFailure(text);
         if (failure !== undefined) {
+          if (failure.kind === "reference-output-limit")
+            throw new AnalysisResourceConstraintError(
+              request.operation,
+              "memory",
+              "External DEX reference metadata exceeds the bounded transport representation allowance.",
+              { stage: failure.stage, limit_bytes: failure.limit_bytes },
+              fixedAllowanceOptions(
+                `The external DEX ${failure.stage} representation allowance`,
+                "report",
+                { limit: failure.limit_bytes, unit: "bytes" },
+              ),
+            );
           if (name === "load_apk" && failure.kind === "jvm-memory-failure")
             throw new AnalysisResourceConstraintError(
               request.operation,
@@ -272,7 +415,7 @@ export class JadxSession {
                 retryable: false,
                 remediationAction:
                   failure.memory_area === "heap"
-                    ? "Increase REA_JADX_HEAP_MIB (MiB) in the environment that starts REA, within the host or container memory budget. Review JAVA_TOOL_OPTIONS and other JVM heap overrides. The observed heap is this run's limit, not the heap the APK requires."
+                    ? JADX_HEAP_REMEDIATION
                     : "Review the JVM allocation failure and the host or container memory limits. The observed maximum heap does not establish which memory region was exhausted; increasing heap alone may not help.",
                 diagnostics: {
                   upstream_operation: name,
@@ -292,7 +435,11 @@ export class JadxSession {
               },
             ]);
         }
+        // jadx answered, so its own reply, not provider readiness, explains
+        // the failure; doctor cannot repair a reported per-request error.
         throw new ProviderAdapterError("jadx", request.operation, {
+          userMessage: `jadx reported an error for ${name} that REA did not classify; its reason is in details.diagnostics.reason.`,
+          remediationAction: JADX_REPORTED_FAILURE_REMEDIATION,
           diagnostics: {
             upstream_operation: name,
             reason: text,

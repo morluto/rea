@@ -1,3 +1,4 @@
+import { unknownTarget } from "../targetIdentity.js";
 import { createEvidence } from "../evidence.js";
 import type { JsonValue } from "../jsonValue.js";
 import type { PcapRequest } from "./pcapAnalysis.js";
@@ -19,16 +20,20 @@ export const createPcapEvidence = (
   request: PcapRequest,
   observation: PcapObservation,
 ) =>
-  createEvidence(observation.subject ?? undefined, observation.provider, {
-    operation: request.operation,
-    parameters: request.input,
-    result: observation.result,
-    rawResult: observation.rawResult,
-    limitations: observation.limitations,
-    locations: observation.locations,
-    confidence:
-      request.operation === "inspect_pcap_capture" ? "derived" : "observed",
-    ...(request.operation === "inspect_pcap_capture"
-      ? { authority: "historical-reference" as const }
-      : {}),
-  });
+  createEvidence(
+    observation.subject ?? unknownTarget("not-observed"),
+    observation.provider,
+    {
+      operation: request.operation,
+      parameters: request.input,
+      result: observation.result,
+      rawResult: observation.rawResult,
+      limitations: observation.limitations,
+      locations: observation.locations,
+      confidence:
+        request.operation === "inspect_pcap_capture" ? "derived" : "observed",
+      ...(request.operation === "inspect_pcap_capture"
+        ? { authority: "historical-reference" as const }
+        : {}),
+    },
+  );

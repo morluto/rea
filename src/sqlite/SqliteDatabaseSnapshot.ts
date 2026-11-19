@@ -1,28 +1,57 @@
-import { lstat, open, writeFile } from "node:fs/promises";
+import { lstat, open, realpath, writeFile } from "node:fs/promises";
 import { constants, type BigIntStats } from "node:fs";
 import { join } from "node:path";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+  withArtifactFileHandle,
+  assertArtifactReadActive,
+  completedStableArtifact,
+  readStableArtifact,
+  type StableArtifactSnapshot,
+  type StableArtifactFileSystem,
+} from "../resources/index.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
-import { SQLITE_PROVIDER_IDENTITY } from "../domain/sqlite/sqliteDatabase.js";
-import {
-  withArtifactFileHandle,
-  assertArtifactReadActive,
-} from "../artifacts/ArtifactFileOperation.js";
-import {
-  readStableArtifact,
-  type StableArtifactFileSystem,
-} from "../artifacts/readStableArtifact.js";
+import { SQLITE_PROVIDER_IDENTITY } from "../domain/sqlite/SqliteProviderIdentity.js";
 import { SQLITE_DATABASE_LIMITS } from "./SqliteDatabaseLimits.js";
 
 const fileSystem: StableArtifactFileSystem = {
   lstat: (path) => lstat(path, { bigint: true }),
   open,
+  realpath,
 };
+
+type SnapshotMemberRole = "database" | "wal";
+type CompletedSnapshotMember = {
+  readonly role: SnapshotMemberRole;
+  readonly path: string;
+  readonly sha256: string;
+  readonly bytes: number;
+};
+
+/** Individual source reads do not establish that the whole file set is consistent. */
+export class SqliteSnapshotAcquisitionFailure extends Error {
+  readonly _tag = "SqliteSnapshotAcquisitionFailure";
+  readonly completedMembers: readonly CompletedSnapshotMember[];
+
+  constructor(
+    readonly operationCause: unknown,
+    members: readonly CompletedSnapshotMember[],
+  ) {
+    super(
+      operationCause instanceof Error
+        ? operationCause.message
+        : "SQLite source acquisition failed after completed member reads",
+      { cause: operationCause },
+    );
+    this.name = this._tag;
+    this.completedMembers = members.map((member) => ({ ...member }));
+  }
+}
 
 /** Probe a generated sibling only after the caller-selected database is observed. */
 const optionalSidecarStat = async (
@@ -48,7 +77,7 @@ const optionalSidecarStat = async (
         throw new ArtifactReaderFailure(
           "integrity",
           `SQLite snapshot file set changed before sidecar inspection: ${databasePath}`,
-          { cause },
+          { cause, integrityCheck: "container-identity" },
         );
       const remedy =
         "Use the application's supported consistent offline export or copy workflow to move the complete known database file set to a shorter path. Do not rename a live database or omit its WAL or journal.";
@@ -108,13 +137,14 @@ const duringAcquisition = async <T>(
       throw new ArtifactReaderFailure(
         "integrity",
         `SQLite snapshot file set changed during acquisition: ${path}`,
-        { cause },
+        { cause, integrityCheck: "container-identity" },
       );
     if (cause instanceof ArtifactReaderFailure && cause.reason === "limit") {
       const changed = new ArtifactReaderFailure(
         "integrity",
         `SQLite snapshot file set exceeded its observed size during acquisition: ${path}`,
         {
+          integrityCheck: "container-identity",
           cause,
           ...(cause.partialObservation === undefined
             ? {}
@@ -135,14 +165,17 @@ const duringAcquisition = async <T>(
 };
 
 const readObservedArtifact = (
+  role: SnapshotMemberRole,
   path: string,
   observed: BigIntStats,
   maximumBytes: number,
   selectedFileSystem: StableArtifactFileSystem,
   resourceScope: ArtifactResourceScope,
   signal?: AbortSignal,
-) =>
-  duringAcquisition(path, () =>
+) => {
+  const resolveSelectedPath =
+    role === "database" ? selectedFileSystem.realpath : undefined;
+  return duringAcquisition(path, () =>
     readStableArtifact(
       path,
       maximumBytes,
@@ -150,12 +183,19 @@ const readObservedArtifact = (
       {
         open: (selectedPath, flags) =>
           selectedFileSystem.open(selectedPath, flags),
+        ...(resolveSelectedPath === undefined
+          ? {}
+          : {
+              realpath: (selectedPath: string) =>
+                resolveSelectedPath.call(selectedFileSystem, selectedPath),
+            }),
         lstat: async (selectedPath) => {
           const current = await selectedFileSystem.lstat(selectedPath);
-          if (!sameState(observed, current))
+          if (selectedPath === path && !sameState(observed, current))
             throw new ArtifactReaderFailure(
               "integrity",
               `SQLite snapshot file set changed during acquisition: ${selectedPath}`,
+              { integrityCheck: "container-identity" },
             );
           return current;
         },
@@ -163,6 +203,7 @@ const readObservedArtifact = (
       resourceScope,
     ),
   );
+};
 
 const verifyInactiveJournal = async (
   path: string,
@@ -193,6 +234,7 @@ const verifyInactiveJournal = async (
         throw new ArtifactReaderFailure(
           "integrity",
           `SQLite journal changed before open: ${path}`,
+          { integrityCheck: "container-identity" },
         );
       // TRUNCATE commits leave an empty file; PERSIST commits zero the complete
       // 28-byte fixed header. A new active journal may zero only its magic bytes.
@@ -215,6 +257,7 @@ const verifyInactiveJournal = async (
         throw new ArtifactReaderFailure(
           "integrity",
           `SQLite journal changed during inspection: ${path}`,
+          { integrityCheck: "container-identity" },
         );
       if (
         before.size !== 0n &&
@@ -225,6 +268,10 @@ const verifyInactiveJournal = async (
           phase === "initial"
             ? `Rollback journal may require recovery: ${path}. Supply a clean offline snapshot; only empty journals or a fully zeroed header are supported.`
             : `Rollback journal became active or malformed during database acquisition: ${path}`,
+          {
+            integrityCheck:
+              phase === "initial" ? undefined : "container-identity",
+          },
         );
     },
   );
@@ -248,112 +295,149 @@ export const captureSqliteDatabaseSnapshot = async (
   signal?: AbortSignal,
   selectedFileSystem: StableArtifactFileSystem = fileSystem,
 ) => {
-  assertArtifactReadActive(signal);
   const walPath = `${path}-wal`;
-  const journalPath = `${path}-journal`;
-  const paths = [path, walPath, journalPath] as const;
-  const database = await optionalStat(path, selectedFileSystem);
-  if (database === null) throw missingDatabase(path);
-  const wal = await optionalSidecarStat(
-    walPath,
-    path,
-    database,
-    "WAL",
-    selectedFileSystem,
-  );
-  const journal = await optionalSidecarStat(
-    journalPath,
-    path,
-    database,
-    "rollback journal",
-    selectedFileSystem,
-  );
-  const before = [database, wal, journal] as const;
-  const selectedSize = database.size + (wal?.size ?? 0n);
-  if (selectedSize > BigInt(SQLITE_DATABASE_LIMITS.inputBytes))
-    throw new AnalysisResourceConstraintError(
-      "inspect_sqlite_database",
-      "file-size",
-      `Selected SQLite database and WAL total ${selectedSize.toString()} bytes, exceeding the combined ${String(SQLITE_DATABASE_LIMITS.inputBytes)}-byte offline snapshot budget: ${path}`,
-      {
-        sqlite_snapshot_input_bytes: SQLITE_DATABASE_LIMITS.inputBytes,
-        observed_sqlite_snapshot_input_bytes: selectedSize.toString(),
-      },
-      {
-        remediationAction: `Use the application's supported export workflow to create a consistent, smaller offline SQLite snapshot containing only the relevant data, then inspect that snapshot. REA will not truncate or modify the selected source. The combined input allowance is ${String(SQLITE_DATABASE_LIMITS.inputBytes)} bytes. This release has no runtime override. worker_timeout_ms does not raise it.`,
-      },
-    );
-  if (journal !== null)
-    await verifyInactiveJournal(
-      `${path}-journal`,
-      journal,
-      selectedFileSystem,
-      resourceScope,
-      "initial",
-      signal,
-    );
-  const snapshotPath = join(root, "database.snapshot");
-  const captured = await readObservedArtifact(
-    path,
-    database,
-    SQLITE_DATABASE_LIMITS.inputBytes,
-    selectedFileSystem,
-    resourceScope,
-    signal,
-  );
-  await writeFile(snapshotPath, captured.bytes, {
-    flag: "wx",
-    mode: 0o600,
-    ...(signal === undefined ? {} : { signal }),
-  });
-  const artifact = {
-    path,
-    sha256: captured.sha256,
-    bytes: captured.bytes.length,
+  const completedMembers: CompletedSnapshotMember[] = [];
+  const recordMember = (
+    role: SnapshotMemberRole,
+    snapshot: StableArtifactSnapshot,
+  ) => {
+    completedMembers.push({
+      role,
+      path: role === "database" ? path : walPath,
+      sha256: snapshot.sha256,
+      bytes: snapshot.bytes.length,
+    });
+    return snapshot;
   };
-  let walArtifact: typeof artifact | null = null;
-  if (wal !== null) {
-    const capturedWal = await readObservedArtifact(
-      `${path}-wal`,
-      wal,
-      SQLITE_DATABASE_LIMITS.inputBytes - artifact.bytes,
+  const readMember = async (
+    role: SnapshotMemberRole,
+    observed: BigIntStats,
+    maximumBytes: number,
+  ) => {
+    try {
+      return recordMember(
+        role,
+        await readObservedArtifact(
+          role,
+          role === "database" ? path : walPath,
+          observed,
+          maximumBytes,
+          selectedFileSystem,
+          resourceScope,
+          signal,
+        ),
+      );
+    } catch (cause: unknown) {
+      const completed = completedStableArtifact(cause);
+      if (completed !== undefined) recordMember(role, completed);
+      throw cause;
+    }
+  };
+  try {
+    assertArtifactReadActive(signal);
+    const journalPath = `${path}-journal`;
+    const paths = [path, walPath, journalPath] as const;
+    const database = await optionalStat(path, selectedFileSystem);
+    if (database === null) throw missingDatabase(path);
+    const wal = await optionalSidecarStat(
+      walPath,
+      path,
+      database,
+      "WAL",
       selectedFileSystem,
-      resourceScope,
-      signal,
     );
-    await writeFile(`${snapshotPath}-wal`, capturedWal.bytes, {
+    const journal = await optionalSidecarStat(
+      journalPath,
+      path,
+      database,
+      "rollback journal",
+      selectedFileSystem,
+    );
+    const before = [database, wal, journal] as const;
+    const selectedSize = database.size + (wal?.size ?? 0n);
+    if (selectedSize > BigInt(SQLITE_DATABASE_LIMITS.inputBytes))
+      throw new AnalysisResourceConstraintError(
+        "inspect_sqlite_database",
+        "file-size",
+        `Selected SQLite database and WAL total ${selectedSize.toString()} bytes, exceeding the combined ${String(SQLITE_DATABASE_LIMITS.inputBytes)}-byte offline snapshot budget: ${path}`,
+        {
+          sqlite_snapshot_input_bytes: SQLITE_DATABASE_LIMITS.inputBytes,
+          observed_sqlite_snapshot_input_bytes: selectedSize.toString(),
+        },
+        {
+          remediationAction: `Use the application's supported export workflow to create a consistent, smaller offline SQLite snapshot containing only the relevant data, then inspect that snapshot. REA will not truncate or modify the selected source. The combined input allowance is ${String(SQLITE_DATABASE_LIMITS.inputBytes)} bytes. This release has no runtime override. worker_timeout_ms does not raise it.`,
+        },
+      );
+    if (journal !== null)
+      await verifyInactiveJournal(
+        `${path}-journal`,
+        journal,
+        selectedFileSystem,
+        resourceScope,
+        "initial",
+        signal,
+      );
+    const snapshotPath = join(root, "database.snapshot");
+    const captured = await readMember(
+      "database",
+      database,
+      SQLITE_DATABASE_LIMITS.inputBytes,
+    );
+    await writeFile(snapshotPath, captured.bytes, {
       flag: "wx",
       mode: 0o600,
       ...(signal === undefined ? {} : { signal }),
     });
-    walArtifact = {
-      path: `${path}-wal`,
-      sha256: capturedWal.sha256,
-      bytes: capturedWal.bytes.length,
+    const artifact = {
+      path,
+      sha256: captured.sha256,
+      bytes: captured.bytes.length,
     };
-  }
-  // Identity alone does not establish an inactive journal when timestamps are
-  // coarse. Re-read the header after copying, using the same validity owner.
-  if (journal !== null)
-    await verifyInactiveJournal(
-      `${path}-journal`,
-      journal,
-      selectedFileSystem,
-      resourceScope,
-      "after-copy",
-      signal,
-    );
-  const after = await Promise.all(
-    paths.map((path) =>
-      duringAcquisition(path, () => optionalStat(path, selectedFileSystem)),
-    ),
-  );
-  for (const [index, expected] of before.entries())
-    if (!sameState(expected, after[index] ?? null))
-      throw new ArtifactReaderFailure(
-        "integrity",
-        `SQLite snapshot file set changed during acquisition: ${paths[index] ?? path}`,
+    let walArtifact: typeof artifact | null = null;
+    if (wal !== null) {
+      const capturedWal = await readMember(
+        "wal",
+        wal,
+        SQLITE_DATABASE_LIMITS.inputBytes - artifact.bytes,
       );
-  assertArtifactReadActive(signal);
-  return { snapshotPath, artifact, wal: walArtifact };
+      await writeFile(`${snapshotPath}-wal`, capturedWal.bytes, {
+        flag: "wx",
+        mode: 0o600,
+        ...(signal === undefined ? {} : { signal }),
+      });
+      walArtifact = {
+        path: `${path}-wal`,
+        sha256: capturedWal.sha256,
+        bytes: capturedWal.bytes.length,
+      };
+    }
+    // Identity alone does not establish an inactive journal when timestamps are
+    // coarse. Re-read the header after copying, using the same validity owner.
+    if (journal !== null)
+      await verifyInactiveJournal(
+        `${path}-journal`,
+        journal,
+        selectedFileSystem,
+        resourceScope,
+        "after-copy",
+        signal,
+      );
+    const after = await Promise.all(
+      paths.map((path) =>
+        duringAcquisition(path, () => optionalStat(path, selectedFileSystem)),
+      ),
+    );
+    for (const [index, expected] of before.entries())
+      if (!sameState(expected, after[index] ?? null))
+        throw new ArtifactReaderFailure(
+          "integrity",
+          `SQLite snapshot file set changed during acquisition: ${paths[index] ?? path}`,
+          { integrityCheck: "container-identity" },
+        );
+    assertArtifactReadActive(signal);
+    return { snapshotPath, artifact, wal: walArtifact };
+  } catch (cause: unknown) {
+    if (completedMembers.length === 0) throw cause;
+    throw new SqliteSnapshotAcquisitionFailure(cause, completedMembers);
+  }
 };

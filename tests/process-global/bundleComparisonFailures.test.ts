@@ -1,4 +1,5 @@
-import { readdir, writeFile } from "node:fs/promises";
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
+import { readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -12,7 +13,12 @@ import {
   readImmutableEvidenceBundle,
   writeEvidenceBundle,
 } from "../../src/application/EvidenceBundleFiles.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
+import { OwnedStagedOutput } from "../../src/filesystem/OwnedStagedOutput.js";
+import { OwnedFileHandle } from "../../src/filesystem/OwnedFileHandle.js";
+import { RetainedRegularFileCleanupFailure } from "../../src/process/RegularFileRead.js";
+import * as bundleComparison from "../../src/domain/bundleComparison.js";
+import * as bundleSummary from "../../src/domain/evidenceRecordSummary.js";
 import { bundleComparisonResultSchema } from "../../src/domain/bundleComparison.js";
 import { processEvidence } from "../../src/application/ReconstructionObligationLedger.fixture.js";
 import { processCaptureSchema } from "../../src/domain/process/processCapture.js";
@@ -21,6 +27,7 @@ import * as evidenceDomain from "../../src/domain/evidence.js";
 import { createServer } from "../../src/server/createServer.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 const unexpectedBundleFailures = [
   new TypeError("bundle authentication TypeError"),
@@ -42,6 +49,61 @@ const validBundleFile = async (directory: string, name = "bundle.json") => {
   await writeFile(path, evidenceBundleDomain.serializeEvidenceBundle(bundle));
   return { bundle, path };
 };
+
+it.each(["missing", "invalid", "cleanup"])(
+  "retains the right bundle close owner when the left bundle has a %s failure",
+  async (leftFailure) => {
+    const directory = await createTestTempDirectory(
+      "rea-bundle-mixed-cleanup-",
+    );
+    const { path: rightPath } = await validBundleFile(directory, "right.json");
+    const leftPath = join(directory, "left.json");
+    if (leftFailure === "invalid") await writeFile(leftPath, "{}");
+    if (leftFailure === "cleanup")
+      await validBundleFile(directory, "left.json");
+    const rightIdentity = await stat(rightPath);
+    const original = OwnedFileHandle.prototype.close;
+    const owners = new Set<OwnedFileHandle>();
+    const close = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(async function (this: OwnedFileHandle) {
+        const identity = await this.handle.stat();
+        if (identity.ino === rightIdentity.ino || leftFailure === "cleanup") {
+          owners.add(this);
+          throw new Error("injected bundle descriptor close failure");
+        }
+        await original.call(this);
+      });
+    onTestFinished(async () => {
+      close.mockRestore();
+      for (const owner of owners) await owner.close();
+    });
+
+    const result = await compareEvidenceBundlesCommand({ leftPath, rightPath });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.cleanupResources).toContain(rightPath);
+    if (leftFailure === "cleanup")
+      expect(result.error.cleanupResources).toContain(leftPath);
+    expect(owners.size).toBe(leftFailure === "cleanup" ? 2 : 1);
+    expect([...owners].every((owner) => owner.handle.fd >= 0)).toBe(true);
+
+    // Retry the exact leases carried through the combined failure, rather than
+    // closing an independently reconstructed descriptor owner.
+    close.mockRestore();
+    const retry = async (cause: unknown): Promise<void> => {
+      if (cause instanceof RetainedRegularFileCleanupFailure) {
+        await cause.cleanupLease.release();
+      } else if (cause instanceof AggregateError) {
+        for (const nested of cause.errors) await retry(nested);
+      } else if (cause instanceof Error) await retry(cause.cause);
+    };
+    await retry(result.error);
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect([...owners].every((owner) => owner.handle.fd < 0)).toBe(true);
+  },
+);
 
 it.each([
   new TypeError("capture validation implementation failed"),
@@ -126,7 +188,10 @@ it.each(unexpectedBundleFailures)(
       throw new Error("Evidence import must not launch a provider");
     });
     const server = createServer({ kind: "session", session });
-    const client = new Client({ name: "bundle-import-failure", version: "1" });
+    const client = new Client(
+      { name: "bundle-import-failure", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     spyOnBundleParse(failure);
@@ -162,7 +227,7 @@ it.each(unexpectedBundleFailures)(
     );
     const { bundle } = await validBundleFile(directory);
     const existing = evidenceDomain.createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "observe",
@@ -259,3 +324,268 @@ it.each([
     ).rejects.toBe(failure);
   },
 );
+
+const standaloneBundleArguments = (
+  command: string,
+  path: string,
+  output: string,
+) =>
+  command === "inspect-evidence-bundle"
+    ? [command, JSON.stringify({ path })]
+    : command === "compare"
+      ? [command, path, path]
+      : command === "evidence-export"
+        ? [command, path, output]
+        : [command, path];
+
+it.each([
+  "evidence-import",
+  "evidence-export",
+  "compare",
+  "inspect-evidence-bundle",
+])(
+  "retries retained read cleanup through the standalone %s owner",
+  async (command) => {
+    const directory = await createTestTempDirectory(
+      "rea-standalone-bundle-cleanup-",
+    );
+    const { path } = await validBundleFile(directory);
+    const output = join(directory, "output.json");
+    const original = OwnedFileHandle.prototype.close;
+    const attempts = new Map<OwnedFileHandle, number>();
+    const close = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(async function (this: OwnedFileHandle) {
+        const attempt = (attempts.get(this) ?? 0) + 1;
+        attempts.set(this, attempt);
+        if (attempt < 3) throw new Error("retryable descriptor close failure");
+        return original.call(this);
+      });
+    onTestFinished(async () => {
+      close.mockRestore();
+      for (const owner of attempts.keys()) await owner.close();
+    });
+    let stdout = "";
+    const previousExitCode = process.exitCode;
+    try {
+      await createCli({}).serve(
+        [...standaloneBundleArguments(command, path, output), "--json"],
+        {
+          stdout: (part) => {
+            stdout += part;
+          },
+          exit: () => {},
+        },
+      );
+      expect(attempts.size).toBe(command === "compare" ? 2 : 1);
+      expect([...attempts.values()]).toEqual(
+        command === "compare" ? [3, 3] : [3],
+      );
+      expect([...attempts.keys()].every((owner) => owner.handle.fd < 0)).toBe(
+        true,
+      );
+      const result = JSON.parse(stdout);
+      // A read which failed to complete its own cleanup remains a failed read;
+      // final cleanup resolves resource ownership rather than inventing data.
+      expect(result).toMatchObject({ code: "execution_failure" });
+      expect(result.details?.cleanup_incomplete).not.toBe(true);
+      expect(await readdir(directory)).toEqual(["bundle.json"]);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  },
+);
+
+it.each([
+  "evidence-import",
+  "evidence-export",
+  "compare",
+  "inspect-evidence-bundle",
+])("handles SIGINT during the standalone %s input close", async (command) => {
+  const directory = await createTestTempDirectory(
+    "rea-standalone-bundle-cancel-",
+  );
+  const { path } = await validBundleFile(directory);
+  const output = join(directory, "output.json");
+  const original = OwnedFileHandle.prototype.close;
+  const owners = new Set<OwnedFileHandle>();
+  const close = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockImplementation(async function (this: OwnedFileHandle) {
+      owners.add(this);
+      await original.call(this);
+      process.emit("SIGINT");
+    });
+  onTestFinished(() => close.mockRestore());
+  const before = process.listenerCount("SIGINT");
+  const previousExitCode = process.exitCode;
+  let stdout = "";
+  try {
+    process.exitCode = undefined;
+    await createCli({}).serve(
+      [...standaloneBundleArguments(command, path, output), "--json"],
+      {
+        stdout: (part) => {
+          stdout += part;
+        },
+        exit: () => {},
+      },
+    );
+    expect(JSON.parse(stdout)).toMatchObject({ code: "cancelled" });
+    expect(process.exitCode).toBe(130);
+    expect(process.listenerCount("SIGINT")).toBe(before);
+    expect(owners.size).toBeGreaterThan(0);
+    expect([...owners].every((owner) => owner.handle.fd < 0)).toBe(true);
+    expect(await readdir(directory)).toEqual(["bundle.json"]);
+  } finally {
+    process.exitCode = previousExitCode;
+  }
+});
+
+it.each(["compare", "inspect-evidence-bundle"])(
+  "retains completed %s output when SIGINT is queued during projection",
+  async (command) => {
+    const directory = await createTestTempDirectory(
+      "rea-standalone-bundle-projection-",
+    );
+    const { path, bundle } = await validBundleFile(directory);
+    const queueInterrupt = () => {
+      setImmediate(() => process.emit("SIGINT"));
+    };
+    const compare = bundleComparison.compareBundles;
+    const summarize = bundleSummary.summarizeEvidenceBundle;
+    const hook =
+      command === "compare"
+        ? vi
+            .spyOn(bundleComparison, "compareBundles")
+            .mockImplementation((...args) => {
+              const result = compare(...args);
+              queueInterrupt();
+              return result;
+            })
+        : vi
+            .spyOn(bundleSummary, "summarizeEvidenceBundle")
+            .mockImplementation((...args) => {
+              const result = summarize(...args);
+              queueInterrupt();
+              return result;
+            });
+    onTestFinished(() => hook.mockRestore());
+    const previousExitCode = process.exitCode;
+    const listeners = process.listenerCount("SIGINT");
+    let stdout = "";
+    try {
+      process.exitCode = undefined;
+      await createCli({}).serve(
+        [
+          ...(command === "compare"
+            ? [command, path, path]
+            : [command, JSON.stringify({ path, detail: "summary" })]),
+          "--json",
+        ],
+        {
+          stdout: (part) => {
+            stdout += part;
+          },
+          exit: () => {},
+        },
+      );
+      const expected =
+        command === "compare" ? compare(bundle, bundle) : summarize(bundle);
+      expect(JSON.parse(stdout)).toMatchObject({
+        code: "cancelled",
+        details: { diagnostics: { completed_result: expected } },
+      });
+      expect(hook).toHaveBeenCalledOnce();
+      expect(process.exitCode).toBe(130);
+      expect(process.listenerCount("SIGINT")).toBe(listeners);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  },
+);
+
+it.each(["before-commit", "after-commit", "cleanup-retry"])(
+  "preserves standalone export publication facts on SIGINT at %s",
+  async (phase) => {
+    const directory = await createTestTempDirectory(
+      "rea-standalone-export-publication-",
+    );
+    const { path, bundle } = await validBundleFile(directory);
+    const output = join(directory, "output.json");
+    const method =
+      phase === "before-commit" ? "assertReadyForPublication" : "close";
+    const original = OwnedStagedOutput.prototype[method];
+    let attempts = 0;
+    const hook = vi
+      .spyOn(OwnedStagedOutput.prototype, method)
+      .mockImplementation(async function (
+        this: OwnedStagedOutput,
+        ...args: Parameters<OwnedStagedOutput[typeof method]>
+      ) {
+        attempts += 1;
+        if (phase === "cleanup-retry" && attempts === 1)
+          throw new Error("retry staged cleanup");
+        await Reflect.apply(original, this, args);
+        if (phase === "before-commit") process.emit("SIGINT");
+        else setImmediate(() => process.emit("SIGINT"));
+      });
+    onTestFinished(() => hook.mockRestore());
+    const previousExitCode = process.exitCode;
+    const listeners = process.listenerCount("SIGINT");
+    let stdout = "";
+    try {
+      process.exitCode = undefined;
+      await createCli({}).serve(["evidence-export", path, output, "--json"], {
+        stdout: (part) => {
+          stdout += part;
+        },
+        exit: () => {},
+      });
+      const result = JSON.parse(stdout);
+      expect(result).toMatchObject({ code: "cancelled" });
+      expect(process.exitCode).toBe(130);
+      expect(process.listenerCount("SIGINT")).toBe(listeners);
+      if (phase === "before-commit") {
+        expect(await readdir(directory)).toEqual(["bundle.json"]);
+        expect(result).not.toHaveProperty(
+          "details.diagnostics.evidence_bundle",
+        );
+      } else {
+        const bytes = await stat(output);
+        expect(result.details.diagnostics.evidence_bundle).toEqual({
+          path: output,
+          bytes: bytes.size,
+        });
+        const loaded = await readEvidenceBundle(output);
+        expect(loaded).toEqual({ ok: true, value: bundle });
+        expect((await readdir(directory)).sort()).toEqual([
+          "bundle.json",
+          "output.json",
+        ]);
+      }
+      expect(attempts).toBe(phase === "cleanup-retry" ? 2 : 1);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  },
+);
+
+it("reports an unconfirmed read cleanup after a completed comparison as cleanup_incomplete", async () => {
+  const directory = await createTestTempDirectory("rea-bundle-close-failure-");
+  const { path, bundle } = await validBundleFile(directory);
+  const close = vi
+    .spyOn(ArtifactResourceScope.prototype, "close")
+    .mockRejectedValueOnce(new Error("injected scope close failure"));
+  onTestFinished(() => close.mockRestore());
+  const result = await compareEvidenceBundlesCommand({
+    leftPath: path,
+    rightPath: path,
+  });
+  if (result.ok) throw new Error("Expected an unconfirmed cleanup");
+  expect(result.error.cleanupIncomplete).toBe(true);
+  // The completed comparison stays with the cleanup failure.
+  expect(result.error.diagnostics).toMatchObject({
+    completed_result: bundleComparison.compareBundles(bundle, bundle),
+  });
+});

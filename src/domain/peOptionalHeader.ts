@@ -1,5 +1,7 @@
 import { err, ok, type Result } from "./result.js";
 
+export const PE_SIZE_OF_HEADERS_OFFSET = 60;
+
 /** Raw data-directory words; entry 4 names file bytes, while resource entry 2 names an RVA. */
 export interface PeDataDirectory {
   readonly address: number;
@@ -8,21 +10,33 @@ export interface PeDataDirectory {
   readonly offset: number;
 }
 
-/** Structural facts copied from one declared PE optional header. */
-export interface PeOptionalHeaderFixedFields {
+export interface PeOptionalHeaderIdentity {
   readonly magic: 0x10b | 0x20b;
   readonly bits: 32 | 64;
   readonly format: "pe32" | "pe32-plus";
+}
+
+/** Structural facts copied from one declared PE optional header. */
+export interface PeOptionalHeaderFixedFields extends PeOptionalHeaderIdentity {
   readonly imageBase: bigint;
   readonly sectionAlignment: number;
   readonly fileAlignment: number;
   readonly sizeOfImage: number;
   readonly sizeOfHeaders: number;
+  /**
+   * Null when the declared header ends before the DllCharacteristics word.
+   * Mapping fields through SizeOfHeaders do not require it.
+   */
+  readonly dllCharacteristics: number | null;
   readonly directoryOffset: number;
   readonly directoryCountOffset: number;
 }
 
-export interface PeOptionalHeaderStructure extends PeOptionalHeaderFixedFields {
+export interface PeOptionalHeaderStructure extends Omit<
+  PeOptionalHeaderFixedFields,
+  "dllCharacteristics"
+> {
+  readonly dllCharacteristics: number;
   readonly directoryCount: number;
   readonly dataDirectories: readonly PeDataDirectory[];
 }
@@ -37,10 +51,10 @@ export interface PeOptionalHeaderFailure {
   readonly message: string;
 }
 
-/** Decode mapping fields without requiring a directory count or table. */
-export const readPeOptionalHeaderFixedFields = (
+/** Decode format identity without requiring mapping fields or directories. */
+export const readPeOptionalHeaderIdentity = (
   bytes: Uint8Array,
-): Result<PeOptionalHeaderFixedFields, PeOptionalHeaderFailure> => {
+): Result<PeOptionalHeaderIdentity, PeOptionalHeaderFailure> => {
   if (bytes.byteLength < 2)
     return err({
       kind: "malformed",
@@ -56,17 +70,29 @@ export const readPeOptionalHeaderFixedFields = (
       message: "Only PE32 and PE32+ image optional headers are supported",
     });
   const bits = magic === 0x20b ? 64 : 32;
+  return ok({ magic, bits, format: bits === 64 ? "pe32-plus" : "pe32" });
+};
+
+/** Decode mapping fields without requiring a directory count or table. */
+export const readPeOptionalHeaderFixedFields = (
+  bytes: Uint8Array,
+): Result<PeOptionalHeaderFixedFields, PeOptionalHeaderFailure> => {
+  const identity = readPeOptionalHeaderIdentity(bytes);
+  if (!identity.ok) return identity;
+  const { bits } = identity.value;
   const directoryOffset = bits === 64 ? 112 : 96;
-  if (bytes.byteLength < 64)
+  // SizeOfHeaders ends at byte 64. DllCharacteristics, at offset 70, is only
+  // present when the declared header covers that word. NativeAOT and other
+  // mapping-field consumers admit a 64-byte header.
+  if (bytes.byteLength < PE_SIZE_OF_HEADERS_OFFSET + 4)
     return err({
       kind: "malformed",
       reason: "truncated-fixed-fields",
       message: "truncated PE optional header",
     });
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   return ok({
-    magic,
-    bits,
-    format: bits === 64 ? "pe32-plus" : "pe32",
+    ...identity.value,
     imageBase:
       bits === 64
         ? view.getBigUint64(24, true)
@@ -74,7 +100,9 @@ export const readPeOptionalHeaderFixedFields = (
     sectionAlignment: view.getUint32(32, true),
     fileAlignment: view.getUint32(36, true),
     sizeOfImage: view.getUint32(56, true),
-    sizeOfHeaders: view.getUint32(60, true),
+    sizeOfHeaders: view.getUint32(PE_SIZE_OF_HEADERS_OFFSET, true),
+    dllCharacteristics:
+      bytes.byteLength >= 72 ? view.getUint16(70, true) : null,
     directoryOffset,
     directoryCountOffset: directoryOffset - 4,
   });
@@ -142,5 +170,13 @@ export const readPeOptionalHeaderStructure = (
   const dataDirectories = Array.from({ length: directoryCount }, (_, index) =>
     readDirectory(view, fixed.directoryOffset + index * 8),
   );
-  return ok({ ...fixed, directoryCount, dataDirectories });
+  // A directory table starts at byte 96 or 112, so the word at offset 70 is covered.
+  const dllCharacteristics = fixed.dllCharacteristics;
+  if (dllCharacteristics === null)
+    return err({
+      kind: "malformed",
+      reason: "truncated-fixed-fields",
+      message: "truncated PE optional header",
+    });
+  return ok({ ...fixed, dllCharacteristics, directoryCount, dataDirectories });
 };

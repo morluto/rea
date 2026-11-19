@@ -80,3 +80,46 @@ it("binds PN_XNUM through raw section-zero info without full ELF numbering admis
     validateRecordedCrashStructure(report, bytes, report.decoder_diagnostics),
   ).toThrow(/original ELF\/note headers/);
 });
+
+it.each([
+  ["magic", 0, 0],
+  ["class", 4, 1],
+  ["byte order", 5, 2],
+  ["identification version", 6, 0],
+  ["OS ABI", 7, 0xff],
+  ["ABI version", 8, 1],
+  ["object type", 16, 2],
+  ["machine", 18, 0],
+  ["header version", 20, 0],
+] as const)(
+  "rejects mismatched core %s while retaining decoder diagnostics",
+  (_name, offset, value) => {
+    const report = recordedCrashSchema.parse(recordedCrashFixture());
+    const bytes = recordedCrashFixtureBytes(report);
+    bytes[offset] = value;
+    let failure: unknown;
+    try {
+      validateRecordedCrashStructure(report, bytes, report.decoder_diagnostics);
+    } catch (cause: unknown) {
+      failure = cause;
+    }
+    expect(failure).toMatchObject({
+      _tag: "AnalysisOutputError",
+      operation: "inspect_recorded_crash",
+      capturedOutput: report.decoder_diagnostics,
+    });
+  },
+);
+
+it.each([0, 3])(
+  "retains supported core OS ABI %i independently of declared header size",
+  (osAbi) => {
+    const report = recordedCrashSchema.parse(recordedCrashFixture());
+    const bytes = recordedCrashFixtureBytes(report);
+    bytes[7] = osAbi;
+    bytes.writeUInt16LE(0xffff, 52);
+    expect(() =>
+      validateRecordedCrashStructure(report, bytes, report.decoder_diagnostics),
+    ).not.toThrow();
+  },
+);

@@ -2,9 +2,8 @@
 
 `inspect_elf_notes` / `inspect-elf-notes` answers whether one selected local
 ELF32/ELF64 image declares `PT_NOTE` program headers or `SHT_NOTE` sections,
-which note owners and types those tables store, which GNU build-id or ABI-tag
-fields those notes carry, and which package or dlopen dependencies FDO notes
-declare. It reads the file without executing it and
+which note owners and types those tables store, and which supported fields
+those notes carry. It reads the file without executing it and
 does not require a disassembler, debug package, or package catalog.
 
 ```bash
@@ -39,36 +38,46 @@ were examined; an unavailable section name does not erase those note facts.
 For GNU notes, `gnu.build_id_hex`, `gnu.abi_tag`, or `gnu.gold_version` are
 filled when the descriptor matches that type. Other owners keep `gnu` null.
 
-For `FDO` notes, `fdo.metadata` holds the JSON from
+For Linux `CORE` notes, `core.prpsinfo`, `core.file`, `core.siginfo`, or
+`core.auxv` are decoded for process arguments and status (`NT_PRPSINFO`), mapped
+file memory regions and paths (`NT_FILE`), fault signal and code (`NT_SIGINFO`), and
+auxiliary vectors (`NT_AUXV`) across 32-bit and 64-bit images. Other owners or unparsed
+notes keep `core` null.
+
+An `NT_FILE` descriptor with nonzero bytes after its declared filenames
+retains its raw note evidence and leaves `core` null.
+
+Linux `CORE` decoding requires System V/unspecified (0) or GNU/Linux (3)
+OSABI with ABI version zero. An unspecified OSABI alone does not establish
+Linux origin. An explicitly different OSABI or ABI version leaves `core` null
+and its Linux-specific `type_name` unknown, with a limitation explaining the
+profile. Owner/type numbers, descriptor ranges and hashes, GNU-owned notes,
+and complete table-examination coverage remain available.
+
+For Android `NT_ANDROID_TYPE_IDENT` (`.note.android.ident`, owner `Android`,
+type `1`) notes, `android.android_api` is decoded from both legacy 4-byte
+descriptors (where `ndk_version` and `ndk_build_number` remain null) and modern
+132-byte or extended NDK descriptors, which also populate `android.ndk_version`
+and `ndk_build_number` when their 64-byte slots hold NUL-padded
+printable ASCII. Truncated or non-ASCII Android descriptors degrade `android`
+to null while preserving the raw descriptor digest and preview, and other
+owners keep `android` null.
+
+Freedesktop `FDO` notes can declare
 [package metadata](https://uapi-group.org/specifications/specs/package_metadata_for_executable_files/)
-(`fdo_packaging_metadata`, type `0xcafe1a7e`, usually `.note.package`) or
+(`.note.package`, type `0xcafe1a7e`) and
 [dlopen metadata](https://uapi-group.org/specifications/specs/elf_dlopen_metadata/)
-(`fdo_dlopen_metadata`, type `0x407c0c0a`, usually `.note.dlopen`) notes:
+(`.note.dlopen`, type `0x407c0c0a`). Package metadata is a JSON object and
+dlopen metadata is an array of JSON objects. `fdo.metadata` holds the producer’s
+declaration with unknown fields preserved. The tool does not verify installed
+packages, libraries, or loader behavior.
 
-```json
-{
-  "type_name": "fdo_packaging_metadata",
-  "fdo": {
-    "metadata": {
-      "type": "rpm",
-      "name": "coreutils",
-      "version": "9.10-5.fc44",
-      "architecture": "x86_64",
-      "osCpe": "cpe:/o:fedoraproject:fedora:44"
-    },
-    "issue": null
-  }
-}
-```
-
-Packaging metadata must be a JSON object and dlopen metadata a JSON array,
-stored as NUL-terminated UTF-8 followed only by NUL padding. A descriptor that
-breaks those rules keeps its entry, hash, and location, with `metadata` null
-and `issue` naming the rule. Descriptors beyond the report's 64 KiB FDO decode
-allowance are not decoded and report the allowance the same way. Keys are not checked against the specifications.
-This metadata is what the producer declared; it is not verified against a
-package database or the libraries a loader would open. Other FDO note types and
-other owners keep `fdo` null.
+The decoder requires a NUL-terminated UTF-8 payload with only NUL padding,
+unique object keys, and JSON numbers it can represent exactly. An invalid
+or over-budget descriptor keeps its raw range and digest, leaves
+`fdo.metadata` null, and reports the reason in `fdo.issue`. Other note types
+keep `fdo` null. Table coverage describes the notes examined and includes
+entries whose FDO metadata could not be decoded.
 
 `PT_NOTE` and `SHT_NOTE` are examined independently. The same file range may
 appear twice when both tables declare it.
@@ -79,26 +88,29 @@ the image never carried notes in another container or overlay.
 ## Limits and failures
 
 The selected file is limited to 64 MiB by default (512 MiB maximum). At most
-32 note entries are examined by default across every table. Retained note
-names, section names, and GNU descriptor text share a scan budget based on
+128 note entries are examined by default across every table (256 maximum), which
+admits distribution glibc builds and their SystemTap probe notes. Retained note
+names, section names, GNU descriptor text, core dump string representations, and Android ident strings share a scan budget based on
 the source bytes plus any decoded section-name table, capped at
 `max_file_bytes`. The raw source and decoded table must also fit together
 within that ceiling. If admission fails, the error reports the required
 `max_file_bytes`; raising it can admit the decoded table up to the operation's
 512 MiB maximum. Once admitted, raising that setting does not increase the
 scan budget for the same source and decoded names. Repeated table ranges count again. Each descriptor range is hashed once,
-each GNU version's trailing NUL run is scanned once, and each FDO descriptor is
-decoded once; none of those walks may exceed that byte ceiling. Retained FDO
-JSON text counts against the shared budget for every entry that repeats it.
-FDO decoding shares a 64 KiB allowance across the report, because a decoded
-JSON tree can take about 50 times its source bytes in memory. Each distinct
-descriptor's full size counts once, in table order; a range repeated by
-another table reuses its decode. Malformed ELF headers, truncated header
+and each GNU version's trailing NUL run is scanned once; neither walk may
+exceed that byte ceiling. Malformed ELF headers, truncated header
 tables, declared note tables that extend past the file, and truncated
 note entries fail without partial success. ELF extended
 numbering (`PN_XNUM`, including a section count stored when `e_shnum` is 0) is
 unsupported and returns an unsupported-target outcome rather than invalid-input
-recovery.
+recovery. A direct section count of `0xff00` or greater in `e_shnum` is
+malformed. Compressed section-name tables require zero or a power of two for
+the decoded alignment. A zlib stream must consume its full declared payload.
+
+FDO decoding separately admits up to 64 KiB of distinct recognized descriptor
+bytes and up to 64 KiB of projected metadata JSON per report. A repeated
+descriptor consumes projected bytes for each entry that includes it. Metadata
+that would exceed the Evidence JSON nesting allowance is also left undecoded.
 
 Zstandard section-name tables also use a 128 MiB decoder window limit.
 

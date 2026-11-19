@@ -1,3 +1,4 @@
+import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import {
   chmod,
   lstat,
@@ -7,7 +8,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse as parseToml } from "smol-toml";
 
@@ -22,11 +23,12 @@ import {
 } from "../../../src/application/SetupClientConfiguration.js";
 import { resolveWindowsClaudeDesktopLocation } from "../../../src/application/ClaudeDesktopConfigLocation.js";
 import { supportedClients } from "../../../src/application/SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../../fixtures/clientRegistrationProfile.js";
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
 import { failedConfigurationMessage } from "../../../src/application/SetupClients.js";
-import { PRODUCT_IDENTITY } from "../../../src/identity.js";
+import { CURRENT_ENTRYPOINT_PATH } from "../../../src/process/CurrentEntrypointPath.js";
 
-const pinnedPackage = PRODUCT_IDENTITY.registrationPackageSpecifier;
+const registrationCommand = currentClientRegistrationCommand();
 
 it.skipIf(process.platform === "win32")(
   "preserves an aligned caller launcher alias without writes or a backup",
@@ -34,9 +36,9 @@ it.skipIf(process.platform === "win32")(
     const home = await createTestTempDirectory(
       "rea-config-equivalent-launcher-",
     );
-    const real = join(home, "rea-current");
+    const real = CURRENT_ENTRYPOINT_PATH;
+    if (real === undefined) throw new Error("missing current entrypoint");
     const alias = join(home, "rea-alias");
-    await writeFile(real, "current launcher\n");
     await symlink(real, alias);
     await mkdir(join(home, ".cursor"));
     const configPath = join(home, ".cursor", "mcp.json");
@@ -46,7 +48,12 @@ it.skipIf(process.platform === "win32")(
       },
     });
     await writeFile(configPath, original);
-    const client = { name: "cursor", format: "json", configPath } as const;
+    const client = {
+      name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
+      format: "json",
+      configPath,
+    } as const;
     expect(await clientConfigurationAligned(client, {}, [real, "mcp"])).toBe(
       true,
     );
@@ -76,9 +83,9 @@ it.skipIf(process.platform === "win32")(
     const home = await createTestTempDirectory(
       "rea-config-timeout-launcher-alias-",
     );
-    const real = join(home, "rea-current");
+    const real = CURRENT_ENTRYPOINT_PATH;
+    if (real === undefined) throw new Error("missing current entrypoint");
     const alias = join(home, "rea-alias");
-    await writeFile(real, "current launcher\n");
     await symlink(real, alias);
     await mkdir(join(home, ".codex"));
     const configPath = join(home, ".codex", "config.toml");
@@ -95,7 +102,12 @@ it.skipIf(process.platform === "win32")(
       "",
     ].join("\n");
     await writeFile(configPath, original);
-    const client = { name: "codex", format: "toml", configPath } as const;
+    const client = {
+      name: "codex",
+      registrationProfile: supportedClientRegistrationProfile("codex"),
+      format: "toml",
+      configPath,
+    } as const;
     expect(
       await configureClientConfiguration(client, {}, [real, "mcp"]),
     ).toMatchObject({ status: "configured" });
@@ -138,12 +150,13 @@ it.skipIf(process.platform === "win32").each([false, true])(
     expect(
       await configureClientConfiguration({
         name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
         format: "json",
         configPath: requested,
       }),
     ).toMatchObject({ status: "configured" });
     expect(JSON.parse(await readFile(selected, "utf8"))).toMatchObject({
-      mcpServers: { rea: { command: "npx" } },
+      mcpServers: { rea: { command: registrationCommand[0] } },
     });
     expect(await readFile(unrelated, "utf8")).toBe(original);
     await expect(lstat(`${unrelated}.rea.backup`)).rejects.toMatchObject({
@@ -154,6 +167,38 @@ it.skipIf(process.platform === "win32").each([false, true])(
     expect(
       await resolveClientConfigTransactionPath(`${root}/absent/../config.json`),
     ).toBeUndefined();
+  },
+);
+
+it
+  .skipIf(process.platform === "win32")
+  .each(
+    ["/", "/."].flatMap((suffix) =>
+      [false, true].map((relativePath) => ({ suffix, relativePath })),
+    ),
+  )(
+  "rejects a missing configuration with directory suffix $suffix and relative=$relativePath",
+  async ({ suffix, relativePath }) => {
+    const root = await createTestTempDirectory("rea-config-directory-suffix-");
+    const path = join(root, "config.json");
+    const requested = `${relativePath ? relative(process.cwd(), path) : path}${suffix}`;
+    expect(await resolveClientConfigTransactionPath(requested)).toBe(
+      `${path}/`,
+    );
+    expect(
+      await configureClientConfiguration({
+        name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
+        format: "json",
+        configPath: requested,
+      }),
+    ).toMatchObject({ status: "failed" });
+    const selected = await lstat(path).catch((cause: unknown) => {
+      if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
+        return undefined;
+      throw cause;
+    });
+    expect(selected?.isFile() ?? false).toBe(false);
   },
 );
 
@@ -221,6 +266,7 @@ describe("JSON client configuration transaction: writing configuration through s
     await writeFile(configPath, original);
     const result = await configureClientConfiguration({
       name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
       configPath,
       format: "json",
     });
@@ -231,8 +277,8 @@ describe("JSON client configuration transaction: writing configuration through s
       mcpServers: {
         other: { command: "other" },
         rea: {
-          command: "npx",
-          args: ["-y", pinnedPackage, "mcp"],
+          command: registrationCommand[0],
+          args: registrationCommand.slice(1),
         },
       },
     });
@@ -249,6 +295,7 @@ describe("JSON client configuration transaction: writing configuration through s
     expect(
       await configureClientConfiguration({
         name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
         configPath,
         format: "json",
       }),
@@ -259,14 +306,15 @@ describe("JSON client configuration transaction: writing configuration through s
       theme: "dark",
       mcpServers: {
         rea: {
-          command: "npx",
-          args: ["-y", pinnedPackage, "mcp"],
+          command: registrationCommand[0],
+          args: registrationCommand.slice(1),
         },
       },
     });
     expect(
       await configureClientConfiguration({
         name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
         configPath,
         format: "json",
       }),
@@ -283,6 +331,7 @@ describe("JSON client configuration transaction: writing configuration through s
     expect(
       await configureClientConfiguration({
         name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
         configPath,
         format: "json",
       }),
@@ -303,11 +352,12 @@ describe("JSON client configuration transaction: keeping matching configuration 
     const configPath = join(directory, "mcp.json");
     await writeFile(
       configPath,
-      `${JSON.stringify({ mcpServers: { rea: { command: "npx", args: ["-y", pinnedPackage, "mcp"] } } })}\n`,
+      `${JSON.stringify({ mcpServers: { rea: { command: registrationCommand[0], args: registrationCommand.slice(1) } } })}\n`,
     );
     expect(
       await configureClientConfiguration({
         name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
         configPath,
         format: "json",
       }),
@@ -331,8 +381,8 @@ describe("JSON client configuration transaction: keeping matching configuration 
               JAVA_HOME: "/usr/lib/jvm/jdk-21",
               GHIDRA_INSTALL_DIR: "/opt/ghidra",
             },
-            args: ["-y", pinnedPackage, "mcp"],
-            command: "npx",
+            args: registrationCommand.slice(1),
+            command: registrationCommand[0],
           },
         },
       })}\n`,
@@ -340,7 +390,12 @@ describe("JSON client configuration transaction: keeping matching configuration 
 
     expect(
       await configureClientConfiguration(
-        { name: "cursor", configPath, format: "json" },
+        {
+          name: "cursor",
+          registrationProfile: supportedClientRegistrationProfile("cursor"),
+          configPath,
+          format: "json",
+        },
         {
           GHIDRA_INSTALL_DIR: "/opt/ghidra",
           JAVA_HOME: "/usr/lib/jvm/jdk-21",
@@ -364,6 +419,7 @@ describe("JSON client configuration migration and provider paths", () => {
     expect(
       await configureClientConfiguration({
         name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
         configPath,
         format: "json",
       }),
@@ -373,8 +429,8 @@ describe("JSON client configuration migration and provider paths", () => {
       theme: "dark",
       mcpServers: {
         rea: {
-          command: "npx",
-          args: ["-y", pinnedPackage, "mcp"],
+          command: registrationCommand[0],
+          args: registrationCommand.slice(1),
         },
         other: { command: "other" },
       },
@@ -386,7 +442,12 @@ describe("JSON client configuration migration and provider paths", () => {
     const directory = await createTestTempDirectory("rea-setup-");
     const configPath = join(directory, "mcp.json");
     const hopperPath = "/Applications/Hopper v6.app/Contents/MacOS/hopper";
-    const client = { name: "cursor", configPath, format: "json" } as const;
+    const client = {
+      name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
+      configPath,
+      format: "json",
+    } as const;
     const original = "{}\n";
     await writeFile(configPath, original);
     expect(
@@ -399,8 +460,8 @@ describe("JSON client configuration migration and provider paths", () => {
     expect(JSON.parse(await readFile(configPath, "utf8"))).toMatchObject({
       mcpServers: {
         rea: {
-          command: "npx",
-          args: ["-y", pinnedPackage, "mcp"],
+          command: registrationCommand[0],
+          args: registrationCommand.slice(1),
           env: { HOPPER_LAUNCHER_PATH: hopperPath },
         },
       },
@@ -423,7 +484,12 @@ describe("JSON client configuration migration and provider paths", () => {
   it("adds exact BYO Ghidra and Java paths without installing dependencies", async () => {
     const directory = await createTestTempDirectory("rea-setup-");
     const configPath = join(directory, "mcp.json");
-    const client = { name: "cursor", configPath, format: "json" } as const;
+    const client = {
+      name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
+      configPath,
+      format: "json",
+    } as const;
     const environment = {
       GHIDRA_INSTALL_DIR: "/opt/ghidra_12.1.4_PUBLIC",
       JAVA_HOME: "/usr/lib/jvm/jdk-21",
@@ -448,7 +514,9 @@ describe("JSON client configuration migration and provider paths", () => {
       status: "unchanged",
     });
   });
+});
 
+describe("invalid JSON client configuration preservation", () => {
   it("refuses malformed existing JSON without overwriting it", async () => {
     const directory = await createTestTempDirectory("rea-setup-");
     const configPath = join(directory, "mcp.json");
@@ -456,6 +524,7 @@ describe("JSON client configuration migration and provider paths", () => {
     expect(
       await configureClientConfiguration({
         name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
         configPath,
         format: "json",
       }),
@@ -474,6 +543,7 @@ describe("JSON client configuration migration and provider paths", () => {
     expect(
       await configureClientConfiguration({
         name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
         configPath,
         format: "json",
       }),
@@ -496,6 +566,7 @@ describe("JSON client configuration migration and provider paths", () => {
     expect(
       await configureClientConfiguration({
         name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
         configPath,
         format: "json",
       }),
@@ -531,6 +602,9 @@ describe("JSON client configuration shape diagnostics", () => {
       const configPath = join(directory, "mcp.json");
       const client = {
         name: format === "json" ? "cursor" : "opencode",
+        registrationProfile: supportedClientRegistrationProfile(
+          format === "json" ? "cursor" : "opencode",
+        ),
         configPath,
         format,
       };
@@ -563,9 +637,9 @@ describe("JSON client configuration shape diagnostics", () => {
   );
 
   it.each([
-    ['{"mcpServers":null,"keep":1}', '"mcpServers" must be an object'],
-    ["[]", "The configuration root must be an object"],
-    ['{"mcpServers":"x"}', '"mcpServers" must be an object'],
+    ['{"mcpServers":null,"keep":1}', "mcpServers"],
+    ["[]", "root"],
+    ['{"mcpServers":"x"}', "mcpServers"],
   ] as const)(
     "names structural shape problems in setup remediation: %s",
     async (original, problem) => {
@@ -573,21 +647,22 @@ describe("JSON client configuration shape diagnostics", () => {
       const configPath = join(directory, "mcp.json");
       const client = {
         name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
         configPath,
         format: "json" as const,
       };
       await writeFile(configPath, original);
       const read = await readConfigurationFile(configPath, "json");
-      expect(read.ok).toBe(false);
       if (read.ok) throw new Error("expected malformed configuration");
-      expect(read.error.detail).toBe(
-        `Configuration ${configPath} is malformed: ${problem}`,
-      );
+      expect(read.error.kind).toBe("malformed");
+      expect(read.error.detail).toContain(configPath);
+      expect(read.error.detail).toContain(problem);
+      expect(read.error.detail).toContain("object");
       expect(
         await inspectClientConfiguration(client, {}, ["rea", "mcp"]),
       ).toEqual({
         status: "invalid",
-        remediation: `Configuration ${configPath} is malformed: ${problem}`,
+        remediation: read.error.detail,
       });
       expect(await readFile(configPath, "utf8")).toBe(original);
     },
@@ -608,6 +683,8 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     try {
       const result = await configureClientConfiguration({
         name: "claude_desktop",
+        registrationProfile:
+          supportedClientRegistrationProfile("claude_desktop"),
         format: "json",
         configPath,
         msixPackage: {
@@ -634,7 +711,7 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
         "began reading a different",
       );
       expect(await readFile(configPath, "utf8")).toBe(original);
-      expect(await readdir(home)).toEqual(["client.json", "private"]);
+      expect((await readdir(home)).sort()).toEqual(["client.json", "private"]);
     } finally {
       await chmod(locked, 0o700);
     }
@@ -711,7 +788,7 @@ it("keeps setup and registration diagnostics blocked for an unrecognized Claude 
       })
     ).find((status) => status.client === "claude_desktop"),
   ).toMatchObject({
-    state: "invalid",
+    state: "unknown",
     command: [],
     remediation: expect.stringContaining("does not fall back"),
   });

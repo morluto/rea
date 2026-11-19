@@ -3,25 +3,31 @@ import { readPeCoffHeader } from "../domain/peCoffHeader.js";
 import {
   hasGodotPckHeader,
   readGodotPckHeaderFacts,
-  readGodotPckTrailerFacts,
 } from "../domain/godotPckFormat.js";
+import { observeEmbeddedGodotPck } from "./GodotPckLocation.js";
 import type { FileHandle } from "node:fs/promises";
-import { createHash } from "node:crypto";
 import { setImmediate } from "node:timers/promises";
 import type { DesktopFile, DesktopFact } from "../domain/desktopApplication.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
+import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
+import { DESKTOP_PROBES_PER_FACT } from "../domain/desktopApplicationProjection.js";
 import { observeIl2cppMetadataHeaderPrefix } from "../domain/il2cpp/il2cppMetadataHeaderPrefix.js";
 import {
   parsePeRecordFacts,
   peRvaToFileOffset,
 } from "../domain/binaryTarget.js";
-import { readManagedMetadataLayout } from "../dotnet/ManagedMetadataLayout.js";
+import { readManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
 import { readManagedCliHeaderPrefix } from "../domain/managed/managedCliHeaderPrefix.js";
-import { readAssemblyReferenceName } from "../dotnet/ManagedMetadataInventoryRows.js";
-import { ManagedReaderFailure } from "../dotnet/ManagedReaderFailure.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
-import { abortIfNeeded } from "./ArtifactHash.js";
-import { hasMachoMagic } from "./apple/MachoLoadCommandReader.js";
+import { readAssemblyReferenceName } from "../domain/managed/managedMetadataInventoryRows.js";
+import { ManagedReaderFailure } from "../domain/managed/managedReaderFailure.js";
+import { ArtifactReaderFailure, abortIfNeeded } from "../resources/index.js";
+import { hasMachoMagic } from "../domain/apple/machoContainer.js";
+import {
+  hasUnityFsHeader,
+  readUnityFsHeaderFacts,
+  UNITYFS_HEADER_PREFIX_BYTES,
+} from "../domain/unityfsFormat.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 export interface DesktopReadBudget {
   bytes: number;
@@ -29,6 +35,31 @@ export interface DesktopReadBudget {
   retainedBytes: number;
   readonly maximumRetainedBytes: number;
 }
+
+/**
+ * A retained string's larger representation: two-byte heap code units, or its
+ * escaped UTF-8 JSON (up to six bytes for a control character).
+ */
+export const retainedTextBytes = (text: string): number =>
+  Math.max(2 * text.length, jsonStringByteLength(text));
+
+/** One retained fact besides its value and probes: kind, offset and keys. */
+export const RETAINED_FACT_BYTES = 512;
+/** One retained read range: offset, length and SHA-256. */
+const RETAINED_RANGE_BYTES = 256;
+/** One next probe besides its local_path: IDs, operation and rationale. */
+const RETAINED_PROBE_BYTES = 512;
+/** Charge the next probes that one fact can make repeat a row's local_path. */
+export const retainedFactReferenceBytes = (localPath: string): number =>
+  DESKTOP_PROBES_PER_FACT *
+  (RETAINED_PROBE_BYTES + retainedTextBytes(localPath));
+
+const retainedFactsLimit = () =>
+  new ArtifactReaderFailure(
+    "limit",
+    "Directory facts reached the retained metadata budget",
+    { boundary: "memory" },
+  );
 
 /** A resource refusal is separate from malformed format declarations. */
 class DesktopProbeLimit extends ArtifactReaderFailure {
@@ -39,7 +70,7 @@ class DesktopProbeLimit extends ArtifactReaderFailure {
   }
 }
 
-/** Inspect selected ranges on an already admitted descriptor; never hash payloads. */
+/** Inspect and hash selected ranges on an already admitted descriptor. */
 export const inspectDesktopFile = async (
   file: FileHandle,
   row: DesktopFile,
@@ -69,6 +100,13 @@ export const inspectDesktopFile = async (
         "Declared byte range lies outside the file",
       );
     if (bytes > budget.maximum - budget.bytes) throw new DesktopProbeLimit();
+    // Reserve the retained range before reading its bytes.
+    if (
+      RETAINED_RANGE_BYTES >
+      budget.maximumRetainedBytes - budget.retainedBytes
+    )
+      throw retainedFactsLimit();
+    budget.retainedBytes += RETAINED_RANGE_BYTES;
     const result = Buffer.alloc(bytes);
     let consumed = 0;
     while (consumed < bytes) {
@@ -84,6 +122,7 @@ export const inspectDesktopFile = async (
         throw new ArtifactReaderFailure(
           "integrity",
           "File ended before its observed extent",
+          { integrityCheck: "read-coverage" },
         );
       consumed += part.bytesRead;
     }
@@ -91,20 +130,18 @@ export const inspectDesktopFile = async (
     row.ranges.push({
       offset,
       bytes,
-      sha256: createHash("sha256").update(result).digest("hex"),
+      sha256: sha256Hex(result),
     });
     return result;
   };
   const fact = (observation: DesktopFact) => {
     const remaining = budget.maximumRetainedBytes - budget.retainedBytes;
+    const fixed =
+      RETAINED_FACT_BYTES + retainedFactReferenceBytes(row.local_path);
     const reservation =
-      512 + jsonValueByteLength(observation.value, (remaining - 512) / 12) * 12;
-    if (reservation > budget.maximumRetainedBytes - budget.retainedBytes)
-      throw new ArtifactReaderFailure(
-        "limit",
-        "Directory facts reached the retained metadata budget",
-        { boundary: "memory" },
-      );
+      fixed +
+      jsonValueByteLength(observation.value, (remaining - fixed) / 12) * 12;
+    if (reservation > remaining) throw retainedFactsLimit();
     budget.retainedBytes += reservation;
     row.facts.push(observation);
   };
@@ -134,6 +171,33 @@ export const inspectDesktopFile = async (
         placement: "standalone",
       },
     });
+  }
+  if (hasUnityFsHeader(prefix)) {
+    let unityfsHeader = readUnityFsHeaderFacts(prefix);
+    const headerPrefixBytes = Math.min(size, UNITYFS_HEADER_PREFIX_BYTES);
+    // The generic probe can end inside a version string or the fixed tail.
+    // Continue only for UnityFS and charge the additional range to the same budget.
+    if (unityfsHeader === undefined && prefix.length < headerPrefixBytes)
+      unityfsHeader = readUnityFsHeaderFacts(
+        Buffer.concat([
+          prefix,
+          await read(prefix.length, headerPrefixBytes - prefix.length),
+        ]),
+      );
+    if (unityfsHeader !== undefined)
+      fact({
+        kind: "unityfs-header",
+        offset: 0,
+        value: {
+          format_version: unityfsHeader.formatVersion,
+          engine_version: unityfsHeader.engineVersion,
+          flags: unityfsHeader.flags,
+          declared_size:
+            unityfsHeader.declaredSize <= BigInt(Number.MAX_SAFE_INTEGER)
+              ? Number(unityfsHeader.declaredSize)
+              : null,
+        },
+      });
   }
   if (
     prefix.length >= 16 &&
@@ -229,7 +293,9 @@ const inspectPeFile = async (
   if (observed.state !== "signature-needed" && observed.state !== "declared")
     return;
   const peOffset = observed.offset;
-  const coff = await read(peOffset, 24);
+  // The MZ pointer requests signature evidence, not a PE/COFF extent. Preserve
+  // short NE/LE/LX signatures and let the COFF owner diagnose truncated PE.
+  const coff = await read(peOffset, Math.min(24, size - peOffset));
   const confirmed = observeMzWindowsHeader(prefix, size, {
     offset: peOffset,
     bytes: coff,
@@ -351,22 +417,20 @@ const inspectPckTrailer = async (
   read: DesktopByteRead,
   fact: RecordDesktopFact,
 ): Promise<void> => {
-  const trailer = await read(size - 12, 12);
-  const declaration = readGodotPckTrailerFacts(trailer, size);
-  if (declaration.state === "declared") {
-    const { start: offset, packBytes } = declaration;
-    if (offset === null || packBytes < 20n)
-      throw new ArtifactReaderFailure(
-        "format",
-        "Embedded PCK trailer declares an invalid pack extent",
-      );
-    const bytes = await read(offset, 20);
-    if (!hasGodotPckHeader(bytes))
-      throw new ArtifactReaderFailure(
-        "format",
-        "Embedded PCK trailer does not locate a pack header",
-      );
-    const header = readGodotPckHeaderFacts(bytes);
+  const observation = await observeEmbeddedGodotPck(size, 20, read);
+  if (observation.state === "invalid-extent")
+    throw new ArtifactReaderFailure(
+      "format",
+      "Embedded PCK trailer declares an invalid pack extent",
+    );
+  if (observation.state === "header-mismatch")
+    throw new ArtifactReaderFailure(
+      "format",
+      "Embedded PCK trailer does not locate a pack header",
+    );
+  if (observation.state === "located") {
+    const offset = observation.start;
+    const header = readGodotPckHeaderFacts(observation.header);
     fact({
       kind: "godot-pck-header",
       offset,

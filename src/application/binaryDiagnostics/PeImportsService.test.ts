@@ -1,8 +1,15 @@
+import { createHash } from "node:crypto";
+import { peWithoutImportTableFixture } from "../../../tests/fixtures/binaryDiagnostics/peImports.js";
+import { parsePeImports } from "../../native/pe/PeImportParser.js";
+import {
+  inspectPeImportsInputSchema,
+  peImportsSchema,
+  type PeImports,
+} from "../../domain/native/peImports.js";
+import { parseEvidence } from "../../domain/evidence.js";
 import { expect, it } from "vitest";
 import { PeImportsService } from "./PeImportsService.js";
 import { PE_IMPORTS_PROVIDER } from "../../domain/investigationProviders.js";
-import type { PeImports } from "../../domain/native/peImports.js";
-import { peImportsSchema } from "../../domain/native/peImports.js";
 import { ok } from "../../domain/result.js";
 import {
   AnalysisCancelledError,
@@ -11,35 +18,17 @@ import {
 } from "../../domain/analysisErrorCore.js";
 
 const identity = PE_IMPORTS_PROVIDER;
-const report: PeImports = {
-  artifact: {
-    path: "/artifacts/app.exe",
-    sha256: "a".repeat(64),
-    bytes: 512,
+const path = "/artifacts/app.exe";
+const bytes = peWithoutImportTableFixture();
+const report = await parsePeImports(
+  bytes,
+  {
+    path,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    bytes: bytes.length,
   },
-  format: "pe32-plus",
-  machine: 0x8664,
-  bits: 64,
-  architecture: "amd64",
-  import_directory: null,
-  delay_import_directory: null,
-  imports: [],
-  delay_imports: [],
-  imphash: {
-    algorithm: "pefile",
-    md5: null,
-    reason: "IMAGE_DIRECTORY_ENTRY_IMPORT is absent.",
-  },
-  coverage: {
-    status: "complete",
-    reason: null,
-    examined_dlls: 0,
-    imports: 0,
-    delay_imports: 0,
-  },
-  issues: [],
-  limitations: ["IMAGE_DIRECTORY_ENTRY_IMPORT is absent."],
-};
+  inspectPeImportsInputSchema.parse({ path }),
+);
 
 it("rejects a relative path and extra arguments before reading", async () => {
   let calls = 0;
@@ -60,20 +49,6 @@ it("rejects a relative path and extra arguments before reading", async () => {
   if (!relative.ok) expect(relative.error).toBeInstanceOf(AnalysisInputError);
   if (!extra.ok) expect(extra.error).toBeInstanceOf(AnalysisInputError);
   expect(calls).toBe(0);
-});
-
-it("records the selected PE and an absent import table", async () => {
-  const result = await new PeImportsService({
-    identity,
-    inspect: () => Promise.resolve(ok(report)),
-  }).inspect({ path: report.artifact.path });
-  expect(result.ok).toBe(true);
-  if (!result.ok) throw result.error;
-  expect(result.value).toMatchObject({
-    confidence: "observed",
-    subject: { format: "pe", architecture: "x86_64" },
-    normalized_result: report,
-  });
 });
 
 it.each(["imports", "delay_imports", "examined_dlls"] as const)(
@@ -130,12 +105,13 @@ it.each(["import_directory", "delay_import_directory"] as const)(
   },
 );
 
-it("discards an observation if the caller cancels while the provider completes", async () => {
+it("retains a completed observation when the caller cancels as the provider completes", async () => {
   const controller = new AbortController();
+  const reason = { request: "late PeImports cancellation" };
   const service = new PeImportsService({
     identity,
     inspect: () => {
-      controller.abort();
+      controller.abort(reason);
       return Promise.resolve(ok(report));
     },
   });
@@ -143,8 +119,13 @@ it("discards an observation if the caller cancels while the provider completes",
     { path: report.artifact.path },
     { signal: controller.signal },
   );
-  expect(result.ok).toBe(false);
-  if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  if (result.ok) throw new Error("Expected late cancellation");
+  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  expect(result.error.cause).toBe(reason);
+  expect(parseEvidence(result.error.partialObservation)).toMatchObject({
+    operation: "inspect_pe_imports",
+    normalized_result: report,
+  });
 });
 
 it("publishes every consumed directory span as its own Evidence location", async () => {
@@ -196,7 +177,7 @@ it("publishes every consumed directory span as its own Evidence location", async
             size: 40,
             locations: [
               { offset: 0x100, bytes: 20 },
-              { offset: 0x1f8, bytes: 20 },
+              { offset: report.artifact.bytes - 8, bytes: 20 },
             ],
           },
         }),

@@ -1,3 +1,4 @@
+import { readElfHeaderFacts } from "../../domain/elfFixedHeader.js";
 import { readElfNoteHeader } from "../../domain/native/elfNoteLayout.js";
 import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
 import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
@@ -96,16 +97,17 @@ export function validateRecordedCrashStructure(
   const header = bytesAt(0n, 64);
   const expectedMachine =
     RECORDED_LINUX_CORE_PROFILES[report.architecture].machine;
+  const parsedHeader = readElfHeaderFacts(header);
+  if (!parsedHeader.ok) return fail();
+  const facts = parsedHeader.value;
   if (
-    !header
-      .subarray(0, 6)
-      .equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1])) ||
-    header[6] !== 1 ||
-    header.readUInt32LE(20) !== 1 ||
-    ![0, 3].includes(header[7] ?? -1) ||
-    header[8] !== 0 ||
-    header.readUInt16LE(16) !== 4 ||
-    header.readUInt16LE(18) !== expectedMachine
+    facts.elfClass !== 64 ||
+    facts.byteOrder !== "little" ||
+    facts.version !== 1 ||
+    ![0, 3].includes(facts.osAbi) ||
+    facts.abiVersion !== 0 ||
+    facts.type !== 4 ||
+    facts.machine !== expectedMachine
   )
     fail();
   const rawTables = readElfRawTableDeclarations(header, {

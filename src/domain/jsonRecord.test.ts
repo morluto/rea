@@ -35,6 +35,34 @@ it("prefixes value failures with every original key and nested value path", () =
   ]);
 });
 
+it("validates every original key before projecting a constrained record", () => {
+  const key = z.string().regex(/^0x[0-9a-f]+$/u);
+  const schema = jsonRecordSchema(z.string(), key);
+  const parsed = schema.safeParse(
+    JSON.parse('{"0x1000":"entry","__proto__":"other"}'),
+  );
+  expect(parsed.success).toBe(false);
+  if (parsed.success) throw new Error("Expected an invalid address key");
+  expect(parsed.error.issues).toMatchObject([
+    { code: "invalid_key", path: ["__proto__"] },
+  ]);
+  expect(z.toJSONSchema(schema)).toEqual(
+    z.toJSONSchema(z.record(key, z.string())),
+  );
+});
+
+it("retains normalized keys as own properties without mutating their source", () => {
+  const source = { " __proto__ ": "observed", " ordinary ": "value" };
+  const schema = jsonRecordSchema(z.string(), z.string().trim().min(1));
+  const parsed = schema.parse(source);
+  expect(JSON.stringify(parsed)).toBe(
+    '{"__proto__":"observed","ordinary":"value"}',
+  );
+  expect(Object.hasOwn(parsed, "__proto__")).toBe(true);
+  expect(Object.getPrototypeOf(parsed)).toBe(Object.prototype);
+  expect(Object.keys(source)).toEqual([" __proto__ ", " ordinary "]);
+});
+
 it("retains defaults produced within JSON entries without mutating their source", () => {
   const source: unknown = JSON.parse(
     '{"__proto__":{},"ordinary":{"name":"given"}}',
@@ -88,6 +116,29 @@ it("preserves input schema projection for a normalizing transform", () => {
   expect(() =>
     z.toJSONSchema(jsonRecordSchema(value), { io: "output" }),
   ).toThrow();
+});
+
+it("preserves record projection and runtime ownership through schema clones", () => {
+  const schema = jsonRecordSchema(z.string(), z.string().min(1));
+  const ordinary = z.record(z.string().min(1), z.string());
+  const variants = [
+    [schema.clone(), ordinary.clone()],
+    [schema.describe("caller fields"), ordinary.describe("caller fields")],
+    [schema.meta({ title: "Fields" }), ordinary.meta({ title: "Fields" })],
+    [
+      schema.describe("caller fields").meta({ title: "Fields" }).clone(),
+      ordinary.describe("caller fields").meta({ title: "Fields" }).clone(),
+    ],
+  ] as const;
+  for (const [actual, expected] of variants) {
+    for (const io of ["input", "output"] as const)
+      expect(z.toJSONSchema(actual, { io })).toEqual(
+        z.toJSONSchema(expected, { io }),
+      );
+    expect(
+      JSON.stringify(actual.parse(JSON.parse('{"__proto__":"observed"}'))),
+    ).toBe('{"__proto__":"observed"}');
+  }
 });
 
 it.each(["draft-04", "draft-07", "draft-2020-12", "openapi-3.0"] as const)(

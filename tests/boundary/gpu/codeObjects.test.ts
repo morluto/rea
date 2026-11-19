@@ -35,7 +35,7 @@ const inspect = async (
   onTestFinished(() => provider.close());
   return provider.inspect({ path, analysis: "kernels", ...options });
 };
-it.each(["none", "zstd"] as const)(
+it.each(["none", "zstd", "lz4"] as const)(
   "reads selected CUDA metadata and PTX with %s compression",
   async (compression) => {
     const result = await inspect(cudaFixture(compression));
@@ -69,6 +69,49 @@ it.each(["none", "zstd"] as const)(
     ]);
   },
 );
+it("decodes a CUDA 0x2000 LZ4 entry to the exact declared payload", async () => {
+  const ptx = Buffer.from(ptxFixture),
+    bytes = cudaFixture("lz4", [{ kind: 1, target: 80, bytes: ptx }]),
+    // The first fatbinary header is 16 bytes, so the first entry starts there.
+    entry = 16;
+  // The fixture must really encode: a stored-profile fallback would leave the
+  // LZ4 selection path unexercised while this control still passed.
+  expect(bytes.readBigUInt64LE(entry + 40)).toBe(0x2011n);
+  const result = await inspect(bytes);
+  if (!result.ok) throw result.error;
+  expect(result.value.objects[0]).toMatchObject({
+    kind: "ptx",
+    compression: "lz4",
+    compression_id: "cuda-flags:0x2011",
+    decoded_size: ptx.length,
+    inspection: "complete",
+    sha256: createHash("sha256").update(ptx).digest("hex"),
+  });
+  expect(result.value.coverage.payloads).toBe("complete");
+  expect(result.value.ptx_artifacts.map((row) => row.text)).toEqual([
+    ptxFixture,
+  ]);
+});
+it("rejects a CUDA LZ4 entry whose declared decoded length disagrees", async () => {
+  const bytes = cudaFixture("lz4", [
+      { kind: 1, target: 80, bytes: Buffer.from(ptxFixture) },
+    ]),
+    entry = 16;
+  // Grow only the declared output length; the encoded literals cannot reach it.
+  bytes.writeBigUInt64LE(
+    BigInt(Buffer.byteLength(ptxFixture) + 16),
+    entry + 56,
+  );
+  const result = await inspect(bytes);
+  if (!result.ok) throw result.error;
+  expect(result.value.objects[0]).toMatchObject({
+    compression: "lz4",
+    inspection: "malformed",
+    sha256: null,
+  });
+  expect(result.value.coverage.payloads).toBe("partial");
+  expect(result.value.ptx_artifacts).toEqual([]);
+});
 it("retains the unsupported legacy CUDA compression declaration and extents", async () => {
   const result = await inspect(
     cudaFixture("legacy", [
@@ -410,8 +453,10 @@ it("retains kernels from conflicting AMDGPU notes without choosing either note o
       inspection: "partial",
     },
   ]);
-  expect(result.value.objects[0]?.limitations).toContain(
-    "AMDGPU notes declare conflicting processor targets; processor identity is unknown",
+  expect(result.value.objects[0]?.limitations).toContainEqual(
+    expect.stringMatching(
+      /conflicting processor targets.*identity is unknown/iu,
+    ),
   );
   expect(result.value.coverage).toMatchObject({
     discovery: "partial",
@@ -499,14 +544,17 @@ it.each([
   const inventory = await inspect(bytes, { analysis: "inventory" });
   if (!inventory.ok) throw inventory.error;
   const row = inventory.value.objects.find((value) => value.kind === "amdgpu")!;
-  expect(row.target).not.toBeNull();
-  const selected = await inspect(bytes, { targets: [row.target!] });
+  const expectedTarget = targetId.endsWith("opaque")
+    ? "amdgcn-amd-amdhsa--gfx900"
+    : "gfx900";
+  expect(row.target).toBe(expectedTarget);
+  const selected = await inspect(bytes, { targets: [expectedTarget] });
   if (!selected.ok) throw selected.error;
   expect(selected.value.kernels).toHaveLength(1);
   expect(
     selected.value.objects.find((value) => value.kind === "amdgpu"),
   ).toMatchObject({
-    target: row.target,
+    target: expectedTarget,
     payload_target: "amdgcn-amd-amdhsa--gfx900",
     target_consistency: targetId.endsWith("opaque")
       ? "single-source"
@@ -563,8 +611,8 @@ it("bounds standalone AMD note discovery before retaining metadata", async () =>
     target: "gfx900",
     inspection: "capacity",
   });
-  expect(result.value.objects[0]!.limitations).toContain(
-    "AMDGPU ELF note discovery exceeds the 8 MiB retained metadata budget",
+  expect(result.value.objects[0]!.limitations).toContainEqual(
+    expect.stringMatching(/note discovery.*8 MiB.*metadata budget/iu),
   );
   expect(result.value.kernels).toEqual([]);
 });
@@ -958,6 +1006,16 @@ it.each(["section-names", "symbols"] as const)(
     );
   },
 );
+it("preserves non-UTF-8 CUBIN symbol bytes in the kernel name", async () => {
+  const bytes = cubinFixture();
+  const symbolName = bytes.indexOf(Buffer.from("\0add_one\0"));
+  expect(symbolName).toBeGreaterThanOrEqual(0);
+  bytes[symbolName + 1] = 0xff;
+  const result = await inspect(bytes);
+  if (!result.ok) throw result.error;
+  expect(result.value.kernels[0]?.name).toBe("ÿdd_one");
+});
+
 it.each([9, 10])(
   "preserves parameters and register coverage for text count %d",
   async (textRegisters) => {
@@ -1013,7 +1071,10 @@ it("rejects out-of-range bundle entries without guessing a payload", async () =>
   const result = await inspect(bytes);
   expect(result).toMatchObject({
     ok: false,
-    error: { _tag: "BinaryTargetError" },
+    error: {
+      _tag: "AnalysisInputError",
+      issues: [{ path: ["path"], reason: "invalid_format" }],
+    },
   });
 });
 
@@ -1218,4 +1279,35 @@ it("refuses escaped PTX report expansion while preserving bounded interrupted fa
   expect(partial.ptx_artifacts).toEqual([]);
   expect(partial.objects).toHaveLength(1);
   expect(partial.artifact.sha256).toBeNull();
+});
+
+it("distinguishes impossible Clang bundle counts from a framed over-capacity directory", async () => {
+  const empty = Buffer.alloc(32);
+  Buffer.from("__CLANG_OFFLOAD_BUNDLE__").copy(empty);
+  const emptyResult = await inspect(empty, { analysis: "inventory" });
+  if (!emptyResult.ok) throw emptyResult.error;
+  expect(emptyResult.value.objects).toEqual([]);
+  const truncated = hipFixture().subarray(0, 32);
+  for (const count of [65537n, 0xffffffffffffffffn]) {
+    const bytes = Buffer.from(truncated);
+    bytes.writeBigUInt64LE(count, 24);
+    const result = await inspect(bytes, { analysis: "inventory" });
+    if (result.ok) throw new Error("Expected malformed directory");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [{ path: ["path"], reason: "invalid_format" }],
+    });
+  }
+  const framed = Buffer.alloc(32 + 65537 * 25);
+  Buffer.from("__CLANG_OFFLOAD_BUNDLE__").copy(framed);
+  framed.writeBigUInt64LE(65537n, 24);
+  for (let index = 0; index < 65537; index++) {
+    const row = 32 + index * 25;
+    framed.writeBigUInt64LE(BigInt(framed.length), row);
+    framed.writeBigUInt64LE(1n, row + 16);
+    framed[row + 24] = 0x78;
+  }
+  const result = await inspect(framed, { analysis: "inventory" });
+  if (result.ok) throw new Error("Expected directory capacity failure");
+  expect(result.error._tag).toBe("AnalysisResourceConstraintError");
 });

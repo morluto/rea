@@ -1,13 +1,14 @@
-import { execFile } from "node:child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
-import { promisify } from "node:util";
+import { pathToFileURL } from "node:url";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
@@ -16,10 +17,19 @@ import { javaScriptExportShapeComparisonResultSchema } from "../../../src/domain
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   createCliCommandSession,
+  stopOwnedChildProcess,
   type CliCommandSession,
 } from "../../support/cli/cliCommandSession.js";
+import {
+  createCliSessionFrameReader,
+  encodeCliSessionFrame,
+} from "../../support/cli/cliCommandSessionFrames.mjs";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import {
+  createTestWorkspace,
+  removeTestWorkspace,
+} from "../../support/workspace/workspaceFixture.js";
 
-const execute = promisify(execFile);
 const requireFixture = createRequire(import.meta.url);
 const comparisonEnvelope = z.object({
   normalized_result: javaScriptExportShapeComparisonResultSchema,
@@ -28,6 +38,33 @@ const applicationEnvelope = z.object({
   normalized_result: javascriptApplicationAnalysisResultSchema,
 });
 let cliSession: CliCommandSession | undefined;
+let compileCacheRoot = "";
+let compileCacheWorkspace = "";
+interface RuntimeExportWorker {
+  readonly child: ChildProcessWithoutNullStreams;
+  readonly invoke: (
+    entries: readonly (readonly [path: string, exportName: string])[],
+  ) => Promise<unknown[]>;
+}
+let activeRuntimeWorker: RuntimeExportWorker | undefined;
+const ownedRuntimeWorkers = new Set<ChildProcessWithoutNullStreams>();
+let runtimeQueue: Promise<unknown> = Promise.resolve();
+
+const closeOwnedRuntimeWorkers = async (): Promise<void> => {
+  activeRuntimeWorker = undefined;
+  const results = await Promise.allSettled(
+    [...ownedRuntimeWorkers].map(async (child) => {
+      await stopOwnedChildProcess(child, 1_000, "runtime export worker");
+      ownedRuntimeWorkers.delete(child);
+    }),
+  );
+  const failures = results.flatMap((result) =>
+    result.status === "rejected" ? [result.reason] : [],
+  );
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1)
+    throw new AggregateError(failures, "Runtime export worker cleanup failed");
+};
 
 // Source semantics use one real stdio MCP session. CLI parity uses the shared
 // file-scoped session, including its worker rotation and cleanup policy.
@@ -38,6 +75,13 @@ let mcpConnection:
       readonly ready: Promise<void>;
     }
   | undefined;
+
+beforeAll(async () => {
+  const workspace = await createTestWorkspace("rea-exported-bindings-cache-");
+  compileCacheWorkspace = workspace.root;
+  compileCacheRoot = workspace.path("compile-cache");
+  await mkdir(compileCacheRoot, { recursive: true });
+});
 
 afterAll(async () => {
   if (mcpConnection !== undefined) {
@@ -56,6 +100,11 @@ afterAll(async () => {
     },
     async () => {
       await cliSession?.close();
+    },
+    closeOwnedRuntimeWorkers,
+    async () => {
+      if (compileCacheWorkspace !== "")
+        await removeTestWorkspace(compileCacheWorkspace);
     },
   ]);
 });
@@ -540,8 +589,15 @@ describe("CommonJS export identity and scope regressions", () => {
     expect(comparison).toMatchObject({
       left: { status: "selected" },
       right: { status: "selected" },
-      summary: { added: 0, removed: 0, changed: 0 },
-      changes: [],
+      summary: { added: 0, removed: 0, changed: 0, unknown: 1 },
+      changes: [
+        {
+          status: "unknown",
+          path: "/count",
+          left: { availability: "unknown" },
+          right: { availability: "unknown" },
+        },
+      ],
     });
   });
 });
@@ -1114,11 +1170,15 @@ const expectRuntimeExports = async (
   expected: (count: number) => unknown,
 ): Promise<void> => {
   // Execute only source-owned fixtures as an independent runtime oracle.
-  for (const [path, exportName, count] of [
+  const entries = [
     [fixture.leftPath, fixture.input.left_export_name, 1],
     [fixture.rightPath, fixture.input.right_export_name, 2],
-  ] as const)
-    expect(await runtimeExport(path, exportName)).toEqual(expected(count));
+  ] as const;
+  const values = await runtimeExports(
+    entries.map(([path, exportName]) => [path, exportName]),
+  );
+  for (const [index, [, , count]] of entries.entries())
+    expect(values[index]).toEqual(expected(count));
 };
 
 const expectExportedCallableBinding = (
@@ -1211,9 +1271,13 @@ const runCli = async (args: readonly string[]): Promise<unknown> => {
     requestTimeoutMs: 20_000,
   });
   const environment = Object.fromEntries(
-    Object.entries({ ...process.env, REA_LOG_LEVEL: "silent" }).filter(
-      (entry): entry is [string, string] => entry[1] !== undefined,
-    ),
+    Object.entries({
+      ...process.env,
+      REA_LOG_LEVEL: "silent",
+      ...(compileCacheRoot === "" || process.env.NODE_V8_COVERAGE !== undefined
+        ? {}
+        : { NODE_COMPILE_CACHE: compileCacheRoot }),
+    }).filter((entry): entry is [string, string] => entry[1] !== undefined),
   );
   const result = await cliSession.run({
     arguments: args,
@@ -1239,10 +1303,10 @@ const analyzeVersions = async (
     writeFile(leftPath, source(1)),
     writeFile(rightPath, source(2)),
   ]);
-  const [left, right] = await Promise.all([
-    analyzeThroughMcp(leftRoot),
-    analyzeThroughMcp(rightRoot),
-  ]);
+  // Reuse the MCP session's single parked JavaScript worker instead of racing
+  // two concurrent analyses that force a cold ephemeral worker per fixture.
+  const left = await analyzeThroughMcp(leftRoot);
+  const right = await analyzeThroughMcp(rightRoot);
   return {
     root,
     leftPath,
@@ -1310,14 +1374,25 @@ const getMcpClient = async (): Promise<Client> => {
       command: process.execPath,
       args: [resolve("scripts/rea.mjs"), "mcp"],
       cwd: process.cwd(),
-      env: { PATH: process.env.PATH ?? "", REA_LOG_LEVEL: "silent" },
+      env: {
+        PATH: process.env.PATH ?? "",
+        REA_LOG_LEVEL: "silent",
+        ...INLINE_EVIDENCE_MCP_ENVIRONMENT,
+        ...(compileCacheRoot === "" ||
+        process.env.NODE_V8_COVERAGE !== undefined
+          ? {}
+          : { NODE_COMPILE_CACHE: compileCacheRoot }),
+      },
       stderr: "pipe",
     });
     transport.stderr?.on("data", () => undefined);
-    const client = new Client({
-      name: "exported-function-bindings",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "exported-function-bindings",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     mcpConnection = {
       client,
       transport,
@@ -1328,20 +1403,141 @@ const getMcpClient = async (): Promise<Client> => {
   return mcpConnection.client;
 };
 
+const runtimeReplySchema = z.object({
+  id: z.number(),
+  ok: z.boolean(),
+  results: z.array(z.object({ value: z.unknown().optional() })).optional(),
+  error: z.string().optional(),
+});
+
+const startRuntimeWorker = (): RuntimeExportWorker => {
+  const framesUrl = pathToFileURL(
+    resolve("tests/support/cli/cliCommandSessionFrames.mjs"),
+  ).href;
+  const child = spawn(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `import { pathToFileURL } from 'node:url';
+       import { createCliSessionFrameReader, encodeCliSessionFrame } from ${JSON.stringify(framesUrl)};
+       const writeFrameStdout = process.stdout.write.bind(process.stdout);
+       process.stdout.write = () => true;
+       const send = (payload) => new Promise((resolveSend, rejectSend) => {
+         writeFrameStdout(encodeCliSessionFrame(payload), (err) => err ? rejectSend(err) : resolveSend());
+       });
+       let chain = Promise.resolve();
+       const reader = createCliSessionFrameReader((request) => {
+         chain = chain.then(async () => {
+           const { id, entries } = request;
+           try {
+             const results = [];
+             for (const [path, exportName] of entries) {
+               const module = await import(pathToFileURL(path).href);
+               const value = module[exportName];
+               results.push({ value: typeof value === 'function' ? value() : value });
+             }
+             await send({ id, ok: true, results });
+           } catch (error) {
+             await send({ id, ok: false, error: error instanceof Error ? error.stack ?? error.message : String(error) });
+           }
+         });
+       });
+       process.stdin.on('data', (chunk) => reader(chunk));`,
+    ],
+    {
+      cwd: process.cwd(),
+      stdio: ["pipe", "pipe", "pipe"],
+    },
+  );
+  ownedRuntimeWorkers.add(child);
+  let nextId = 1;
+  let brokenCause: unknown;
+  const pending = new Map<
+    number,
+    { resolve: (value: unknown[]) => void; reject: (error: unknown) => void }
+  >();
+  let workerInstance: RuntimeExportWorker | undefined;
+  const retireWorker = (cause: unknown) => {
+    brokenCause ??= cause;
+    if (activeRuntimeWorker === workerInstance) activeRuntimeWorker = undefined;
+    for (const handler of pending.values()) handler.reject(brokenCause);
+    pending.clear();
+  };
+  const reader = createCliSessionFrameReader((raw: unknown) => {
+    const parsed = runtimeReplySchema.parse(raw);
+    const handler = pending.get(parsed.id);
+    if (handler === undefined) {
+      throw new Error(
+        `Unexpected runtime export reply id ${String(parsed.id)}`,
+      );
+    }
+    pending.delete(parsed.id);
+    if (!parsed.ok) {
+      handler.reject(new Error(parsed.error ?? "runtime worker failed"));
+      return;
+    }
+    handler.resolve((parsed.results ?? []).map(({ value }) => value));
+  });
+  child.stdout.on("data", (chunk: Buffer) => {
+    try {
+      reader(chunk);
+    } catch (cause) {
+      retireWorker(cause);
+    }
+  });
+  child.stderr.on("data", () => undefined);
+  child.on("error", retireWorker);
+  child.on("exit", (code, signal) => {
+    retireWorker(
+      new Error(
+        `runtime worker exited (${String(code ?? signal ?? "unknown")})`,
+      ),
+    );
+  });
+  workerInstance = {
+    child,
+    invoke: (entries) =>
+      new Promise<unknown[]>((resolveRun, rejectRun) => {
+        if (brokenCause !== undefined) {
+          rejectRun(brokenCause);
+          return;
+        }
+        const id = nextId++;
+        pending.set(id, { resolve: resolveRun, reject: rejectRun });
+        child.stdin.write(encodeCliSessionFrame({ id, entries }), (error) => {
+          if (error) {
+            pending.delete(id);
+            retireWorker(error);
+            rejectRun(error);
+          }
+        });
+      }),
+  };
+  return workerInstance;
+};
+
+const runtimeExports = (
+  entries: readonly (readonly [path: string, exportName: string])[],
+): Promise<unknown[]> => {
+  const run = async (): Promise<unknown[]> => {
+    if (activeRuntimeWorker === undefined && ownedRuntimeWorkers.size > 0) {
+      await closeOwnedRuntimeWorkers();
+    }
+    const worker = (activeRuntimeWorker ??= startRuntimeWorker());
+    const values = await worker.invoke(entries);
+    expect(values).toHaveLength(entries.length);
+    return values;
+  };
+  const scheduled = runtimeQueue.then(run);
+  runtimeQueue = scheduled.then(
+    () => undefined,
+    () => undefined,
+  );
+  return scheduled;
+};
+
 const runtimeExport = async (
   path: string,
   exportName: string,
-): Promise<unknown> => {
-  const { stdout } = await execute(process.execPath, [
-    "--input-type=module",
-    "-e",
-    `import { pathToFileURL } from 'node:url';
-     const module = await import(pathToFileURL(process.argv[1]).href);
-     const value = module[process.argv[2]];
-     console.log(JSON.stringify({ value: typeof value === 'function' ? value() : value }));`,
-    path,
-    exportName,
-  ]);
-  return z.object({ value: z.unknown().optional() }).parse(JSON.parse(stdout))
-    .value;
-};
+): Promise<unknown> => (await runtimeExports([[path, exportName]]))[0];

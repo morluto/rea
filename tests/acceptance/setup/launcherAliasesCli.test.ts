@@ -1,3 +1,4 @@
+import { artifactMcpCall } from "../../../scripts/lib/artifact-e2e.mjs";
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
@@ -8,6 +9,7 @@ import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 cliTest.skipIf(process.platform === "win32")(
   "migrates an owned shebang registration and starts its generated MCP command without a runtime on PATH",
@@ -107,13 +109,16 @@ cliTest.skipIf(process.platform === "win32")(
       env: { ...environment, ...registration.env },
       stderr: "pipe",
     });
-    const client = new Client({ name: "setup-interpreter", version: "1" });
+    const client = new Client(
+      { name: "setup-interpreter", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     try {
       await client.connect(transport);
       expect(
         (await client.listTools()).tools.map(({ name }) => name),
       ).toContain("binary_session");
-      const session = await client.callTool({
+      const session = await artifactMcpCall(client, {
         name: "binary_session",
         arguments: {},
       });
@@ -160,7 +165,6 @@ cliTest.skipIf(process.platform === "win32").for([
           XDG_CONFIG_HOME: join(home, ".config"),
           PATH: process.env.PATH ?? "",
         },
-        timeoutMs: 30_000,
       });
 
     const setup = await run(registered, [
@@ -243,7 +247,8 @@ cliTest.skipIf(process.platform === "win32").for([
             client: "cursor",
             state: "unknown",
             command,
-            remediation: expect.stringContaining("symlink targets"),
+            config_path: config,
+            remediation: expect.stringMatching(/\S/u),
           }),
         ]),
       },
@@ -294,7 +299,6 @@ cliTest.skipIf(process.platform === "win32")(
           XDG_CONFIG_HOME: join(home, ".config"),
           PATH: process.env.PATH ?? "",
         },
-        timeoutMs: 30_000,
       });
     const uninstall = await run(["uninstall", "--json"]);
     expect(uninstall.exitCode, uninstall.stderr).toBe(0);

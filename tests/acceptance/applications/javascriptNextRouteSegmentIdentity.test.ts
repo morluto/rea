@@ -20,6 +20,7 @@ cliTest(
       "app/team%2Fadmin/page.js": page("EncodedSlash"),
       "app/%5Fpublic/page.js": page("EscapedUnderscore"),
       "app/blog/%5fdraft/page.js": page("LowercaseEscape"),
+      "app/hello world/page.js": page("Space"),
     });
     const response = await cli.run({
       arguments: ["analyze-javascript-application", root, "--format", "json"],
@@ -40,6 +41,7 @@ cliTest(
       { path: "/_public", source_count: 1 },
       { path: "/a", source_count: 1 },
       { path: "/blog/%5fdraft", source_count: 1 },
+      { path: "/hello world", source_count: 1 },
       { path: "/team%2Fadmin", source_count: 1 },
     ]);
     expect(analysis.route_inventory?.coverage).toMatchObject({

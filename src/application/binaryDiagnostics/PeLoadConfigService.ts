@@ -1,11 +1,8 @@
-import { isAbsolute } from "node:path";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { PeLoadConfigPort } from "./PeLoadConfigPort.js";
+import { insideArtifact } from "./artifactRange.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { PeLoadConfigPort } from "../../ports/binaryDiagnostics/PeLoadConfigPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisInputError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   inspectPeLoadConfigInputSchema,
@@ -38,16 +35,6 @@ export class PeLoadConfigService {
       options?.signal,
     );
     if (!input.ok) return input;
-    if (!isAbsolute(input.value.path))
-      return err(
-        new AnalysisInputError(OPERATION, undefined, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: "Expected an absolute filesystem path on this host.",
-          },
-        ]),
-      );
     const result = await this.provider.inspect(input.value, options);
     if (!result.ok) return result;
     const report = peLoadConfigSchema.safeParse(result.value);
@@ -146,17 +133,16 @@ const validReport = (
     ...fileRange(report.load_config?.directory ?? null),
   ];
   const structure = report.load_config?.structure_location;
+  const inside = insideArtifact(report.artifact.bytes);
   return (
     (structure === undefined ||
       (structure.offset === report.load_config?.directory.file_offset &&
         structure.bytes === report.load_config.size &&
-        structure.offset <= report.artifact.bytes - structure.bytes)) &&
+        inside(structure))) &&
     ranges.every(
       ({ start, end }) => start <= end && end <= report.artifact.bytes,
     ) &&
-    (report.tls?.callback_array_locations ?? []).every(
-      ({ offset, bytes }) => offset <= report.artifact.bytes - bytes,
-    ) &&
+    (report.tls?.callback_array_locations ?? []).every(inside) &&
     (report.tls?.callbacks ?? []).every(
       ({ file_offset }) =>
         file_offset === null || file_offset < report.artifact.bytes,

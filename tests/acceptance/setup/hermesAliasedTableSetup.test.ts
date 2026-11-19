@@ -1,10 +1,40 @@
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import {
+  access,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { parse, stringify } from "yaml";
-import { expect } from "vitest";
+import { afterAll, beforeAll, beforeEach, expect } from "vitest";
 
-import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import {
+  createTestWorkspace,
+  removeTestWorkspace,
+} from "../../support/workspace/workspaceFixture.js";
+
+let sharedHermesHome = "";
+
+beforeAll(async () => {
+  sharedHermesHome = (await createTestWorkspace("rea-hermes-alias-shared-"))
+    .root;
+});
+
+beforeEach(async () => {
+  for (const entry of await readdir(sharedHermesHome)) {
+    await rm(join(sharedHermesHome, entry), { recursive: true, force: true });
+  }
+});
+
+afterAll(async () => {
+  if (sharedHermesHome !== "") {
+    await removeTestWorkspace(sharedHermesHome);
+  }
+});
 
 const configuration = (
   version: "1.1" | "1.2",
@@ -16,7 +46,7 @@ const configuration = (
     "# Personal settings\nmodel: custom\nmask: 0x1F\n" +
     "server_defaults: &servers\n" +
     (existing
-      ? "  rea: &server\n    command: rea-old\n    args: [ 'mcp' ]\n    env:\n      FLAG: 'on'\n  other: *server\n"
+      ? "  rea: &server\n    command: npx\n    args: [ '-y', 'rea-agents@6.1.0', 'mcp' ]\n    env:\n      FLAG: 'on'\n  other: *server\n"
       : "  other: &server\n    command: other-server\n    args: [ 'on', '0600' ]\n");
   return {
     defaults,
@@ -30,42 +60,13 @@ const configuration = (
 };
 
 for (const version of ["1.1", "1.2"] as const) {
-  cliTest(
-    `Hermes YAML ${version} uninstall preserves an aliased table without REA`,
-    async ({ cli }) => {
-      const home = await createTestTempDirectory(
-        "rea-hermes-absent-uninstall-",
-      );
-      const profile = join(home, "profile");
-      const config = join(profile, "config.yaml");
-      const original = configuration(version, false).text;
-      await mkdir(profile);
-      await writeFile(config, original);
-      for (let attempt = 0; attempt < 2; attempt++) {
-        const removed = await cli.run({
-          arguments: ["uninstall", "--json"],
-          cwd: home,
-          environment: {
-            USERPROFILE: home,
-            HERMES_HOME: profile,
-            HOPPER_LAUNCHER_PATH: process.execPath,
-          },
-          timeoutMs: 20_000,
-        });
-        expect(removed.exitCode).toBe(0);
-        expect(await readFile(config, "utf8")).toBe(original);
-        await expect(access(`${config}.rea.backup`)).rejects.toMatchObject({
-          code: "ENOENT",
-        });
-      }
-    },
-  );
-
   for (const existing of [false, true]) {
     cliTest(
       `Hermes YAML ${version} ${existing ? "refreshes" : "adds"} REA in an aliased table without changing its source`,
       async ({ cli }) => {
-        const home = await createTestTempDirectory("rea-hermes-table-alias-");
+        const home = sharedHermesHome;
+        const ghidra = join(home, "missing-ghidra");
+        const java = join(home, "missing-java");
         const profile = join(home, "profile");
         const config = join(profile, "config.yaml");
         const original = configuration(version, existing);
@@ -80,8 +81,9 @@ for (const version of ["1.1", "1.2"] as const) {
               USERPROFILE: home,
               HERMES_HOME: profile,
               HOPPER_LAUNCHER_PATH: process.execPath,
+              GHIDRA_INSTALL_DIR: ghidra,
+              JAVA_HOME: java,
             },
-            timeoutMs: 20_000,
           });
         const setup = [
           "setup",
@@ -104,6 +106,8 @@ for (const version of ["1.1", "1.2"] as const) {
           expect(parsed.mcp_servers.rea.env).toEqual({
             FLAG: "on",
             HOPPER_LAUNCHER_PATH: process.execPath,
+            GHIDRA_INSTALL_DIR: ghidra,
+            JAVA_HOME: java,
           });
         expect(configured.startsWith(original.defaults)).toBe(true);
         expect(configured).toContain("# Selected table");
@@ -139,8 +143,36 @@ for (const version of ["1.1", "1.2"] as const) {
   }
 }
 
+for (const version of ["1.1", "1.2"] as const) {
+  cliTest(
+    `Hermes YAML ${version} uninstall preserves an aliased table without REA`,
+    async ({ cli }) => {
+      const home = sharedHermesHome;
+      const profile = join(home, "profile");
+      const config = join(profile, "config.yaml");
+      const original = configuration(version, false).text;
+      await mkdir(profile);
+      await writeFile(config, original);
+      const removed = await cli.run({
+        arguments: ["uninstall", "--json"],
+        cwd: home,
+        environment: {
+          USERPROFILE: home,
+          HERMES_HOME: profile,
+          HOPPER_LAUNCHER_PATH: process.execPath,
+        },
+      });
+      expect(removed.exitCode).toBe(0);
+      expect(await readFile(config, "utf8")).toBe(original);
+      await expect(access(`${config}.rea.backup`)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    },
+  );
+}
+
 cliTest("Hermes still registers into an explicit table", async ({ cli }) => {
-  const home = await createTestTempDirectory("rea-hermes-explicit-table-");
+  const home = sharedHermesHome;
   const profile = join(home, "profile");
   const config = join(profile, "config.yaml");
   const original = configuration("1.1", false, false);
@@ -161,7 +193,6 @@ cliTest("Hermes still registers into an explicit table", async ({ cli }) => {
       HERMES_HOME: profile,
       HOPPER_LAUNCHER_PATH: process.execPath,
     },
-    timeoutMs: 20_000,
   });
   expect(applied.exitCode).toBe(0);
   expect(applied.json).toMatchObject({ status: "ready" });
@@ -177,7 +208,7 @@ for (const version of ["1.1", "1.2"] as const) {
   cliTest(
     `Hermes YAML ${version} preserves shadowed alias bindings`,
     async ({ cli }) => {
-      const home = await createTestTempDirectory("rea-hermes-shadowed-anchor-");
+      const home = sharedHermesHome;
       const profile = join(home, "profile");
       const config = join(profile, "config.yaml");
       const original =
@@ -204,7 +235,6 @@ for (const version of ["1.1", "1.2"] as const) {
           HERMES_HOME: profile,
           HOPPER_LAUNCHER_PATH: process.execPath,
         },
-        timeoutMs: 20_000,
       });
       expect(applied.exitCode).toBe(0);
       const configured = parse(await readFile(config, "utf8"), { version });
@@ -219,7 +249,7 @@ for (const version of ["1.1", "1.2"] as const) {
 cliTest(
   "Hermes uninstall detaches an aliased table before deleting REA",
   async ({ cli }) => {
-    const home = await createTestTempDirectory("rea-hermes-aliased-uninstall-");
+    const home = sharedHermesHome;
     const profile = join(home, "profile");
     const config = join(profile, "config.yaml");
     await mkdir(profile);
@@ -232,18 +262,16 @@ cliTest(
           HERMES_HOME: profile,
           HOPPER_LAUNCHER_PATH: process.execPath,
         },
-        timeoutMs: 20_000,
       });
-    const setup = await run([
-      "setup",
-      "--client",
-      "hermes",
-      "--skill=false",
-      "--yes",
-      "--json",
-    ]);
-    expect(setup.exitCode).toBe(0);
-    const entry = parse(await readFile(config, "utf8")).mcp_servers.rea;
+    const [command, ...args] = currentClientRegistrationCommand({
+      entrypointPath: resolve("scripts/rea.mjs"),
+    });
+    const entry = {
+      command,
+      args,
+      env: { HOPPER_LAUNCHER_PATH: process.execPath },
+      enabled: true,
+    };
     const defaults = { rea: entry, other: { command: "other-server" } };
     const original =
       "server_defaults: &servers\n" +
@@ -254,9 +282,23 @@ cliTest(
         .join("") +
       "mcp_servers: *servers\nobserver: *servers\n";
     await writeFile(config, original);
-    expect(
-      (await run(["doctor", "--client", "hermes", "--json"])).exitCode,
-    ).toBe(0);
+    await expect(access(`${config}.rea.backup`)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    const doctor = await run(["doctor", "--client", "hermes", "--json"]);
+    expect(doctor.exitCode, doctor.stdout).toBe(0);
+    expect(doctor.json).toMatchObject({
+      healthy: true,
+      identity: {
+        registrations: expect.arrayContaining([
+          expect.objectContaining({
+            client: "hermes",
+            config_path: config,
+            state: "aligned",
+          }),
+        ]),
+      },
+    });
     const removed = await run(["uninstall", "--json"]);
     expect(removed.exitCode).toBe(0);
     const remaining = parse(await readFile(config, "utf8"));
@@ -278,7 +320,7 @@ for (const original of [
   cliTest(
     `Hermes refuses an invalid aliased table: ${original.trim()}`,
     async ({ cli }) => {
-      const home = await createTestTempDirectory("rea-hermes-invalid-alias-");
+      const home = sharedHermesHome;
       const profile = join(home, "profile");
       const config = join(profile, "config.yaml");
       await mkdir(profile);
@@ -298,7 +340,6 @@ for (const original of [
           HERMES_HOME: profile,
           HOPPER_LAUNCHER_PATH: process.execPath,
         },
-        timeoutMs: 20_000,
       });
       expect(rejected.exitCode).not.toBe(0);
       expect(rejected.json).toMatchObject({
