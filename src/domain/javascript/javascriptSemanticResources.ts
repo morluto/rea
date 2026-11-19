@@ -28,12 +28,15 @@ import {
   opaqueCodeMayRebindBinding,
   prototypeMutationMayPrecede,
 } from "./javascriptSemanticEffectLog.js";
-import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import {
+  semanticAwaitedInitializer,
+  semanticBindingAtRead,
+  semanticMemberEffectMayTargetInitializer,
+} from "./javascriptSemanticMutationInitializers.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
-  type JavaScriptSemanticMemberEffect,
 } from "./javascriptSemanticState.js";
 import {
   builtinDataEffectIdentity,
@@ -494,7 +497,7 @@ const collectReleases = (
       selectedSources.every(
         ({ node, projection }) =>
           projection.length === 0 &&
-          knownAcquisitions.has(resourceInitializer(node).value),
+          knownAcquisitions.has(semanticAwaitedInitializer(node).value),
       );
     const releasesFor = (acquisition: ResourceCandidate) =>
       builtinResourceReleases(acquisition.specifier, acquisition.method);
@@ -613,43 +616,16 @@ const releaseMethodMayHaveChanged = (
     isolatedNativeCloses?: boolean;
   },
 ): boolean => {
-  const targetsAcquisition = (
-    effect: JavaScriptSemanticMemberEffect,
-  ): boolean => {
-    const capture = effect.receiverAt ?? effect.node;
-    if (capture === undefined) return true;
-    const selected = semanticBindingAtRead(binding, capture, state);
-    if (selected.status !== "ordered") return true;
-    // Empty incoming values cannot be the fresh acquisition selected later.
-    // Keep ambiguous aliases and projections unless the owner excludes them.
-    return [
-      ...selected.binding.initializers,
-      ...selected.binding.referenceInitializers,
-    ].some(
-      ({ node, projection }) =>
-        projection.length > 0 ||
-        !binding.initializers.some((source) => source.node === node) ||
-        acquisitions.has(resourceInitializer(node).value),
-    );
-  };
   return bindingMethodMayHaveChanged(binding, method, read, state, {
     fresh,
     inherited: release?.owner !== "instance",
     definingPrototypeDepth: fresh ? release?.definingPrototypeDepth : undefined,
     isolatedNativeCloses,
-    targets: targetsAcquisition,
+    targets: (effect) =>
+      semanticMemberEffectMayTargetInitializer(binding, effect, state, (node) =>
+        acquisitions.has(semanticAwaitedInitializer(node).value),
+      ),
   });
-};
-
-/** Unwrap only direct awaits; a standalone await does not write its operand. */
-const resourceInitializer = (node: t.Node) => {
-  let value = unwrapJavaScriptExpression(node).node;
-  let awaited = false;
-  while (t.isAwaitExpression(value)) {
-    awaited = true;
-    value = unwrapJavaScriptExpression(value.argument).node;
-  }
-  return { value, awaited };
 };
 
 /** Unknown receiver writes retain a candidate; known other acquisitions do not alias it. */
@@ -662,7 +638,7 @@ const mayReceiveFulfilledHandle = (
   [...binding.initializers, ...binding.referenceInitializers].some(
     ({ node, projection }) => {
       if (projection.length > 0) return true;
-      const { value, awaited } = resourceInitializer(node);
+      const { value, awaited } = semanticAwaitedInitializer(node);
       if (value === acquisition.node) return awaited;
       if (isNullishPlaceholder(value, state)) return false;
       return !knownAcquisitions.has(value);
@@ -684,7 +660,7 @@ const holdsOnlyAcquisitions = (
   [...binding.initializers, ...binding.referenceInitializers].every(
     ({ node, projection }) => {
       if (projection.length > 0) return false;
-      const { value } = resourceInitializer(node);
+      const { value } = semanticAwaitedInitializer(node);
       return (
         isNullishPlaceholder(value, state) ||
         linked.some((acquisition) => acquisition.node === value)

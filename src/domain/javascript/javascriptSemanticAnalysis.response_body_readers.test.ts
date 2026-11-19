@@ -164,6 +164,80 @@ it("keeps a response consumer before a later global eval", () => {
   ]);
 });
 
+it("does not attribute an old receiver's method write to a later fetch", () => {
+  expect(
+    consumersFor(`async function f(res) {
+    res.json = () => 0;
+    res = await fetch("https://api.test/new");
+    return res.json();
+  }`),
+  ).toEqual([
+    {
+      method: "json",
+      endpoint: "https://api.test/new",
+      resolution: "complete",
+    },
+  ]);
+});
+
+it("does not attribute a captured old receiver's later write to a new fetch", () => {
+  expect(
+    consumersFor(`async function f(res) {
+    const old = res;
+    res = await fetch("https://api.test/new");
+    old.json = () => 0;
+    return res.json();
+  }`),
+  ).toEqual([
+    {
+      method: "json",
+      endpoint: "https://api.test/new",
+      resolution: "complete",
+    },
+  ]);
+});
+
+it.each([
+  [
+    "new receiver write",
+    'res = await fetch("https://api.test/new"); res.json = () => 0;',
+  ],
+  [
+    "old receiver prototype write",
+    'res.__proto__.json = () => 0; res = await fetch("https://api.test/new");',
+  ],
+] as const)("retains uncertainty after %s", (_name, effect) => {
+  expect(
+    consumersFor(`async function f(res, flag) {
+    ${effect}
+    return res.json();
+  }`),
+  ).toEqual([{ method: "json", endpoint: null, resolution: "partial" }]);
+});
+
+it("does not retain an endpoint when the fetch assignment is conditional", () => {
+  const [consumer] = consumersFor(`async function f(res, flag) {
+    if (flag) res = await fetch("https://api.test/new");
+    return res.json();
+  }`);
+  expect(consumer?.endpoint).toBeNull();
+});
+
+it("retains uncertainty across repeated response readers in a function", () => {
+  const consumers = consumersFor(`async function f() {
+    const res = await fetch("https://api.test/new");
+    await res.text();
+    await res.json();
+  }`);
+  // A later reader can reach mutable stream hooks and a shared prototype in
+  // another activation; the call is not proof of a side-effect-free method.
+  expect(consumers[0]).toEqual({
+    method: "text",
+    endpoint: null,
+    resolution: "partial",
+  });
+});
+
 it("keeps the fetch candidate when the binding also holds another request", () => {
   // The mixed binding keeps its fetch link, so the consumer stays a candidate
   // rather than losing the endpoint entirely.
