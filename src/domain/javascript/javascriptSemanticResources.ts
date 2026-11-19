@@ -420,16 +420,13 @@ const rejectsStreamOptionsLiteral = (
     if (read.status !== "explicit") return undefined;
     const memberValue = unwrapJavaScriptExpression(read.value as t.Node).node;
     if (name === "fd" && t.isNewExpression(memberValue)) return undefined;
-    // `import.meta` is an object, so a `FileHandle` prototype makes it a usable descriptor:
-    // measured on Node 24.22.1 with a real `FileHandle` as its prototype,
-    // `createReadStream(p, {fd: import.meta, autoClose: false})` constructs and reads. Without
-    // that mutation it is refused like any other object.
-    if (
-      name === "fd" &&
-      t.isMetaProperty(memberValue) &&
-      prototypeMutationMayPrecede(context.state, "Object", node)
-    )
-      return undefined;
+    // `import.meta` is the one object `fd` accepts: measured on Node 24.22.1, after
+    // `Object.setPrototypeOf(import.meta, handle)` with a real `FileHandle`,
+    // `createReadStream(p, {fd: import.meta, autoClose: false})` constructs and reads. That
+    // mutation names `import.meta` itself rather than `Object.prototype`, so the recorded
+    // object-prototype question cannot see it; the member stays undecided instead of being
+    // priced as refused.
+    if (name === "fd" && t.isMetaProperty(memberValue)) return undefined;
     // A FileHandle can be the prototype of an object literal, so the literal's
     // shape alone does not prove that Node rejects it as a descriptor.
     if (

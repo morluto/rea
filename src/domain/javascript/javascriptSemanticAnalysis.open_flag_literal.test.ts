@@ -1567,3 +1567,20 @@ it("keeps a bitwise-not minus-one encoding, which evaluates to zero", () => {
     ),
   ).toBe(true);
 });
+
+/**
+ * `fd` is the member where an object is legal, and `import.meta` is directly
+ * re-prototypable:
+ *
+ *   Object.setPrototypeOf(import.meta, handle);
+ *   fs.createReadStream(p, { fd: import.meta, autoClose: false })  -> constructs and reads
+ *
+ * That mutation names `import.meta`, not `Object.prototype`, so the member stays undecided.
+ */
+it("keeps an fd supplied through import.meta", () => {
+  expect(
+    streamRelationsFor(`{ fd: import.meta, autoClose: false }`).some(
+      (relation) => relation.startsWith("acquires/"),
+    ),
+  ).toBe(true);
+});
