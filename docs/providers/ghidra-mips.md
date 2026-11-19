@@ -62,11 +62,12 @@ Program and section declarations must agree; duplicate, conflicting, truncated
 or out-of-file records are rejected. Stripped section tables and section-only
 records are supported. Extended table numbering is explicitly unsupported.
 GNU `SHT_GNU_ATTRIBUTES` sections are located by numeric section type; section
-names never control detection. REA reads at most 4096 payload bytes and parses
-format version `A`, the `gnu` vendor's file-scope `Tag_GNU_MIPS_ABI_FP` (4) and
-`Tag_GNU_MIPS_ABI_MSA` (8) only. Unknown vendors, scopes or tags, repeated
-declarations, malformed lengths, and out-of-file or oversized payloads remain
-refusals. A nonzero FP tag must match the separate ABI flags `fp_abi` record;
+names never control detection. REA validates the full declared file extent before
+applying its 4096-byte payload limit. It parses format version `A`, the `gnu`
+vendor's file-scope `Tag_GNU_MIPS_ABI_FP` (4) and `Tag_GNU_MIPS_ABI_MSA` (8)
+only. Unknown vendors, scopes or tags, repeated declarations, malformed lengths,
+and out-of-file or oversized payloads remain refusals. A nonzero FP tag must
+match the separate ABI flags `fp_abi` record;
 value 0 (`ANY`) declares no requirement. The [GNU Object Attributes v1
 format](https://sourceware.org/binutils/docs/as/Object-Attributes-v1.html) and
 [GNU MIPS tag definitions](https://sourceware.org/binutils/docs/as/GNU-Object-Attributes.html)
