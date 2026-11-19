@@ -67,7 +67,7 @@
   "src/ghidra/extensions/GhidraExtensions.ts": 1,
   "src/go/GoStringLiterals.ts": 4,
   "src/gpu/AmdGpuMetadata.ts": 4,
-  "src/gpu/ClangOffloadBundle.ts": 14,
+  "src/gpu/ClangOffloadBundle.ts": 10,
   "src/gpu/CudaFatbinary.ts": 13,
   "src/gpu/GpuInventory.ts": 3,
   "src/hopper/HopperAnalysisProfile.ts": 1,
