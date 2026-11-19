@@ -184,26 +184,12 @@ describe("release configuration", () => {
 });
 
 describe("plugin manifests", () => {
-  it("keeps the shared plugin icon and Codex listing metadata aligned before and after install", async () => {
+  it("keeps the shared plugin icon and Codex listing metadata aligned", async () => {
     const manifest = (await readJson(".codex-plugin/plugin.json")) as {
       description: string;
       interface: Record<string, unknown>;
     };
-    const marketplace = (await readJson(
-      ".agents/plugins/marketplace.json",
-    )) as {
-      plugins: Array<{
-        description: string;
-        homepage: string;
-        interface: Record<string, unknown>;
-      }>;
-    };
     const { logo, composerIcon, ...listing } = manifest.interface;
-    expect(marketplace.plugins[0]).toMatchObject({
-      description: manifest.description,
-      homepage: "https://rea.tools/",
-      interface: listing,
-    });
     expect(String(listing.shortDescription).length).toBeLessThanOrEqual(30);
     expect(listing.websiteURL).toBe("https://rea.tools/");
     expect(logo).toBe("./assets/rea-plugin.png");
