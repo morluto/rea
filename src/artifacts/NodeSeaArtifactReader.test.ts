@@ -441,6 +441,31 @@ it("leaves a Mach-O, ELF, or PE without a SEA slot in its native format", async 
   expect(pe.manifest.root_format).toBe("pe");
 });
 
+it("locates a SEA resource past a distant DOS stub", async () => {
+  const { bytes: image } = peResourceFixture(
+    true,
+    [
+      {
+        type: 10,
+        name: "NODE_SEA_BLOB",
+        language: 0,
+        payload: buildNodeSeaBlob(populated),
+      },
+    ],
+    65536,
+    4,
+    0x20080,
+  );
+  const path = await writeCarrier("distant-pe", image);
+  const reader = new NodeSeaArtifactReader(path);
+  try {
+    const entries = await seaEntries(reader);
+    expect(entries.map(({ path: member }) => member)).toContain("app/main.js");
+  } finally {
+    await reader.close();
+  }
+});
+
 it.each([false, true])(
   "scopes the large PE admission limit to SEA resources (PE32+: %s)",
   async (plus) => {

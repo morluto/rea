@@ -17,6 +17,8 @@ import {
 import {
   peFailure,
   readPeImageHeaders,
+  readPeImageHeadersAt,
+  type PeRangeReader,
   requirePeExtent,
 } from "./peImageHeaders.js";
 
@@ -51,9 +53,12 @@ const intersectsResource = (
 };
 
 /** Header admission and unambiguous file-backed RVA mapping, independent of section names. */
-export const readPeResourceLayout = (
-  bytes: Buffer,
-  fileSize = bytes.length,
+export const readPeResourceLayout = (bytes: Buffer) =>
+  mapPeResourceLayout(readPeImageHeaders(bytes), bytes.length);
+
+const mapPeResourceLayout = (
+  headers: ReturnType<typeof readPeImageHeaders>,
+  fileSize: number,
 ) => {
   const {
     machine,
@@ -63,13 +68,13 @@ export const readPeResourceLayout = (
     directoryOffset,
     dataDirectories,
     headerSize,
-    table,
-  } = readPeImageHeaders(bytes, fileSize);
+    sectionTable,
+  } = headers;
   const sections: Section[] = [];
   for (let index = 0; index < sectionCount; index++) {
-    const at = table + index * PE_SECTION_HEADER_BYTES;
+    const at = index * PE_SECTION_HEADER_BYTES;
     const parsed = readPeSectionHeader(
-      bytes.subarray(at, at + PE_SECTION_HEADER_BYTES),
+      sectionTable.subarray(at, at + PE_SECTION_HEADER_BYTES),
     );
     if (!parsed.ok) return peFailure(parsed.error.message);
     const row = parsed.value;
@@ -171,11 +176,6 @@ export interface PeResourcePayloadRange {
   readonly bytes: number;
 }
 
-type PeResourceRead = (
-  offset: number,
-  length: number,
-) => Promise<Buffer | undefined>;
-
 /** Budgeted reads relative to one admitted resource root. */
 class PeResourceTree {
   #examined = 0;
@@ -183,7 +183,7 @@ class PeResourceTree {
   constructor(
     readonly layout: ReturnType<typeof readPeResourceLayout>,
     private readonly root: number,
-    private readonly read: PeResourceRead,
+    private readonly read: PeRangeReader,
     private readonly maxEntries: number,
   ) {}
 
@@ -206,14 +206,15 @@ class PeResourceTree {
   }
 }
 
-const openPeResourceTree = (
-  headers: Buffer,
+const openPeResourceTree = async (
+  prefix: Buffer,
   fileSize: number,
-  read: PeResourceRead,
+  read: PeRangeReader,
   maxEntries: number,
-): PeResourceTree | undefined => {
+): Promise<PeResourceTree | undefined> => {
   try {
-    const layout = readPeResourceLayout(headers, fileSize);
+    const headers = await readPeImageHeadersAt(prefix, fileSize, read);
+    const layout = mapPeResourceLayout(headers, fileSize);
     if (layout.size < PE_RESOURCE_DIRECTORY_BYTES) return undefined;
     return new PeResourceTree(
       layout,
@@ -292,19 +293,19 @@ async function* namedResourceTargets(
 
 /**
  * Bounded admission probe: whether the root type directory holds a `typeId`
- * subdirectory naming `name`. Reads only the header prefix and the
+ * subdirectory naming `name`. Reads only the header records and the
  * directories on that path; an unadmitted layout or malformed tree reports
  * false so callers can leave full resource parsing to confirmed carriers.
  */
 export const hasPeResourceName = async (
-  headers: Buffer,
+  prefix: Buffer,
   fileSize: number,
-  read: PeResourceRead,
+  read: PeRangeReader,
   typeId: number,
   name: string,
   maxEntries: number,
 ): Promise<boolean> => {
-  const tree = openPeResourceTree(headers, fileSize, read, maxEntries);
+  const tree = await openPeResourceTree(prefix, fileSize, read, maxEntries);
   if (tree === undefined) return false;
   const first = await namedResourceTargets(tree, typeId, name, {
     unresolved: false,
@@ -320,14 +321,14 @@ export const hasPeResourceName = async (
  * failure, as is any `typeId` branch the walk could not examine.
  */
 export const locatePeResourcePayloads = async (
-  headers: Buffer,
+  prefix: Buffer,
   fileSize: number,
-  read: PeResourceRead,
+  read: PeRangeReader,
   typeId: number,
   name: string,
   maxEntries: number,
 ): Promise<readonly PeResourcePayloadRange[]> => {
-  const tree = openPeResourceTree(headers, fileSize, read, maxEntries);
+  const tree = await openPeResourceTree(prefix, fileSize, read, maxEntries);
   if (tree === undefined) return [];
   const found: PeResourcePayloadRange[] = [];
   const walk: NamedResourceWalk = { unresolved: false };

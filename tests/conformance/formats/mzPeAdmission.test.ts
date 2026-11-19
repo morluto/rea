@@ -13,7 +13,10 @@ import { inspectDesktopFile } from "../../../src/artifacts/DesktopFileInspection
 import type { DesktopFile } from "../../../src/domain/desktopApplication.js";
 import { readManagedPeLayout } from "../../../src/domain/managed/managedPeReader.js";
 import { buildManagedPeFixture } from "../../../src/dotnet/ManagedPe.fixture.js";
-import { readPeImageHeaders } from "../../../src/domain/pe/peImageHeaders.js";
+import {
+  readPeImageHeaders,
+  readPeImageHeadersAt,
+} from "../../../src/domain/pe/peImageHeaders.js";
 import { peResourceFixture } from "../../../src/domain/pe/peResources.fixture.js";
 import { ElectronFuseService } from "../../../src/application/electron/ElectronFuseService.js";
 import { ElectronFuseProvider } from "../../../src/electron/ElectronFuseProvider.js";
@@ -206,17 +209,25 @@ it("preserves desktop PE observations after a short DOS header", async () => {
   );
 });
 
-it("keeps a PE signature outside an inspected prefix unresolved until its required range is read", () => {
+it("keeps a PE signature outside an inspected prefix unresolved until its required range is read", async () => {
   const bytes = peResourceFixture().bytes;
   const prefix = bytes.subarray(0, 64);
   expect(observeMzWindowsHeader(prefix, bytes.length)).toMatchObject({
     state: "signature-needed",
     offset: 128,
   });
-  expect(() => readPeImageHeaders(bytes)).not.toThrow();
-  expect(() => readPeImageHeaders(prefix, bytes.length)).toThrow(
-    "PE range 128 + 24 leaves the artifact.",
-  );
+  await expect(
+    readPeImageHeadersAt(prefix, bytes.length, async (offset, length) =>
+      offset + length <= prefix.length
+        ? prefix.subarray(offset, offset + length)
+        : undefined,
+    ),
+  ).rejects.toThrow("Truncated PE header range at 128.");
+  await expect(
+    readPeImageHeadersAt(prefix, bytes.length, async (offset, length) =>
+      bytes.subarray(offset, offset + length),
+    ),
+  ).resolves.toEqual(readPeImageHeaders(bytes));
 });
 
 it("does not inventory PE GPU sections from relocation-owned DOS bytes", async () => {

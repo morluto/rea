@@ -131,9 +131,9 @@ and host memory remain independent of larger selected budgets.
 
 PE carriers additionally use the shared 512 MiB input, 65,536 directory-entry
 and 8 MiB resource-metadata ceilings; the Node SEA selections do not raise those
-shared PE-parser boundaries. The PE name probe reads headers from the first
-64 KiB of the carrier; a PE whose
-headers extend beyond that is left to native classification. The ELF scan
+shared PE-parser boundaries. The PE name probe follows the DOS header's PE
+offset and reads the declared header records and resource directories by file
+position. The ELF scan
 allows one framing read per 12 carrier bytes. Both a note header and a short
 table tail consume a read from that allowance, so repeated declarations
 cannot drive unbounded rescans. Past that count the remaining tables are

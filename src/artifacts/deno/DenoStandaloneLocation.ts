@@ -66,7 +66,6 @@ const SEGMENT_NAME = "__SUI";
 const LINKEDIT_SEGMENT_NAME = "__LINKEDIT";
 const ELF_NOTE_OWNER = Buffer.from("SUI\0", "latin1");
 const ELF_NOTE_TYPE = 0x53554901;
-const PE_HEADER_PROBE_BYTES = 64 * 1024;
 const INTEL_CHUNK_BYTES = 1024 * 1024;
 /** Trailer candidates examined before the search stops. */
 const MAX_DENO_INTEL_TRAILER_SENTINELS = 64;
@@ -181,7 +180,11 @@ const findDenoSection = async (
   if (prefix.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])))
     return collapseRanges(carrier, "elf", await locateElfNotes(carrier));
   if (prefix[0] === 0x4d && prefix[1] === 0x5a)
-    return collapseRanges(carrier, "pe", await locatePeResources(carrier));
+    return collapseRanges(
+      carrier,
+      "pe",
+      await locatePeResources(carrier, prefix),
+    );
   return undefined;
 };
 
@@ -838,17 +841,14 @@ const readSuiRange = async (
   return { offset, length, embedding: "elf-note" };
 };
 
-const locatePeResources = async (carrier: Carrier): Promise<SectionRange[]> => {
-  const headers = await readExact(
-    carrier,
-    0,
-    Math.min(carrier.fileSize, PE_HEADER_PROBE_BYTES),
-  );
-  if (headers === undefined) return [];
+const locatePeResources = async (
+  carrier: Carrier,
+  prefix: Buffer,
+): Promise<SectionRange[]> => {
   let payloads: Awaited<ReturnType<typeof locatePeResourcePayloads>>;
   try {
     payloads = await locatePeResourcePayloads(
-      headers,
+      prefix,
       carrier.fileSize,
       (offset, length) => readExact(carrier, offset, length),
       RT_RCDATA,

@@ -75,7 +75,6 @@ const RESOURCE_NAME = "NODE_SEA_BLOB";
 const SEA_SECTION = "__NODE_SEA_BLOB";
 const FUSE_LENGTH = "NODE_SEA_FUSE_".length + 32 + 2;
 // PE header structures must fit this prefix for the bounded name probe.
-const PE_HEADER_PROBE_BYTES = 64 * 1024;
 
 /** One injected blob inside a native carrier. Offsets are carrier file offsets. */
 export interface NodeSeaLocation {
@@ -152,7 +151,11 @@ export const locateNodeSea = async (
       await locateElfNotes(carrier, prefix),
     );
   if (prefix[0] === 0x4d && prefix[1] === 0x5a)
-    return collapseRanges(carrier, "pe", await locatePeResources(carrier));
+    return collapseRanges(
+      carrier,
+      "pe",
+      await locatePeResources(carrier, prefix),
+    );
   return undefined;
 };
 
@@ -661,18 +664,15 @@ const failNoteTable = (
   return undefined;
 };
 
-const locatePeResources = async (carrier: Carrier): Promise<BlobRange[]> => {
+const locatePeResources = async (
+  carrier: Carrier,
+  prefix: Buffer,
+): Promise<BlobRange[]> => {
   // Probe for the NODE_SEA_BLOB name first so a malformed resource tree in an
   // ordinary PE stays a native-classification concern, not a SEA failure.
-  const headers = await readExact(
-    carrier,
-    0,
-    Math.min(carrier.fileSize, PE_HEADER_PROBE_BYTES),
-  );
   if (
-    headers === undefined ||
     !(await hasPeResourceName(
-      headers,
+      prefix,
       carrier.fileSize,
       (offset, length) => readExact(carrier, offset, length),
       RT_RCDATA,

@@ -1,10 +1,14 @@
-import { parseMzHeaderEvidence } from "../dosMz.js";
+import {
+  parseMzHeaderEvidence,
+  withMzWindowsHeaderSignature,
+} from "../dosMz.js";
 import { BinaryFormatFailure } from "../binaryContainer.js";
 import { malformedInput } from "../parseFailure.js";
 import { readPeCoffHeader } from "../peCoffHeader.js";
 import { observePeHeaderExtent } from "../peSectionHeader.js";
 import {
   readPeOptionalHeaderStructure,
+  type PeDataDirectory,
   type PeOptionalHeaderFailure,
 } from "../peOptionalHeader.js";
 
@@ -46,18 +50,57 @@ export const requirePeExtent = (
     );
 };
 
-/**
- * Shared PE header admission: signature, optional header, data directories,
- * and a section table that fits inside SizeOfHeaders. `bytes` may be a file
- * prefix that holds the header structures; file-space ranges are checked
- * against `fileSize`.
- */
-export const readPeImageHeaders = (bytes: Buffer, fileSize = bytes.length) => {
-  requirePeRange(bytes, 0, 64);
-  if (bytes[0] !== 0x4d || bytes[1] !== 0x5a)
+interface HeaderRead {
+  readonly offset: number;
+  readonly bytes: number;
+}
+
+interface PeImageHeaders {
+  readonly machine: number;
+  readonly format: "pe32" | "pe32-plus";
+  readonly sectionCount: number;
+  readonly optionalHeaderOffset: number;
+  readonly directoryOffset: number;
+  readonly dataDirectories: readonly PeDataDirectory[];
+  readonly headerSize: number;
+  readonly sectionTable: Buffer;
+}
+
+export type PeRangeReader = (
+  offset: number,
+  bytes: number,
+) => Promise<Buffer | undefined>;
+
+const headerRead = (
+  fileSize: number,
+  offset: number,
+  bytes: number,
+): HeaderRead => {
+  requirePeExtent(fileSize, offset, bytes);
+  return { offset, bytes };
+};
+
+/** Admit the PE header directory using its declared spans in either source. */
+function* peImageHeaderReads(
+  prefix: Buffer,
+  fileSize: number,
+): Generator<HeaderRead, PeImageHeaders, Buffer> {
+  requirePeRange(prefix, 0, 64);
+  if (prefix[0] !== 0x4d || prefix[1] !== 0x5a)
     peFailure("Expected an MZ PE image.");
-  const evidence = parseMzHeaderEvidence(bytes, fileSize);
-  const observed = evidence.windowsHeader;
+  const evidence = parseMzHeaderEvidence(prefix, fileSize);
+  let observed = evidence.windowsHeader;
+  if (observed.state === "signature-needed") {
+    const signature = yield headerRead(
+      fileSize,
+      observed.offset,
+      Math.min(fileSize - observed.offset, 4),
+    );
+    observed = withMzWindowsHeaderSignature(prefix, fileSize, evidence, {
+      offset: observed.offset,
+      bytes: signature,
+    }).windowsHeader;
+  }
   if (observed.state === "absent" && evidence.dos.ok)
     throw new BinaryFormatFailure(
       "unsupported",
@@ -68,27 +111,24 @@ export const readPeImageHeaders = (bytes: Buffer, fileSize = bytes.length) => {
       "unsupported",
       `${observed.signature} images do not contain PE resource or certificate tables`,
     );
-  if (observed.state === "candidate" || observed.state === "signature-needed")
-    requirePeRange(bytes, observed.offset, 24);
   if (observed.state !== "declared" || observed.signature !== "PE")
     return peFailure(
       "MZ header does not declare a PE image in the inspected bytes.",
     );
   const pe = observed.offset;
-  requirePeRange(bytes, pe, 24);
-  const coff = readPeCoffHeader(bytes.subarray(pe + 4, pe + 24));
+  requirePeExtent(fileSize, pe, 24);
+  const coffBytes = yield headerRead(fileSize, pe + 4, 20);
+  const coff = readPeCoffHeader(coffBytes);
   if (!coff.ok) return peFailure(coff.error.message);
-  const {
-    sectionCount,
-    optionalHeaderSize: optionalSize,
-    machine,
-  } = coff.value;
+  const { sectionCount, optionalHeaderSize, machine } = coff.value;
   const optionalHeaderOffset = pe + 24;
-  requirePeRange(bytes, optionalHeaderOffset, optionalSize);
-  if (optionalSize < 64) peFailure("Truncated PE optional header.");
-  const parsed = readPeOptionalHeaderStructure(
-    bytes.subarray(optionalHeaderOffset, optionalHeaderOffset + optionalSize),
+  const optional = yield headerRead(
+    fileSize,
+    optionalHeaderOffset,
+    optionalHeaderSize,
   );
+  if (optionalHeaderSize < 64) peFailure("Truncated PE optional header.");
+  const parsed = readPeOptionalHeaderStructure(optional);
   if (!parsed.ok)
     return peFailure(OPTIONAL_HEADER_FAILURES[parsed.error.reason]);
   const {
@@ -97,19 +137,21 @@ export const readPeImageHeaders = (bytes: Buffer, fileSize = bytes.length) => {
     directoryOffset,
     dataDirectories,
   } = parsed.value;
-  const {
-    sectionTableOffset: table,
-    sectionTableBytes,
-    sizeOfHeadersState,
-  } = observePeHeaderExtent({
-    optionalHeaderOffset,
-    optionalHeaderSize: optionalSize,
-    sectionCount,
-    sizeOfHeaders: headerSize,
+  const { sectionTableOffset, sectionTableBytes, sizeOfHeadersState } =
+    observePeHeaderExtent({
+      optionalHeaderOffset,
+      optionalHeaderSize,
+      sectionCount,
+      sizeOfHeaders: headerSize,
+      fileSize,
+    });
+  const sectionRead = headerRead(
     fileSize,
-  });
-  requirePeRange(bytes, table, sectionTableBytes);
+    sectionTableOffset,
+    sectionTableBytes,
+  );
   if (sizeOfHeadersState !== "valid") peFailure("Invalid PE SizeOfHeaders.");
+  const sectionTable = yield sectionRead;
   return {
     machine,
     format,
@@ -118,6 +160,39 @@ export const readPeImageHeaders = (bytes: Buffer, fileSize = bytes.length) => {
     directoryOffset,
     dataDirectories,
     headerSize,
-    table,
+    sectionTable,
   };
+}
+
+/** Admit headers over one complete image without copying or inspecting section payloads. */
+export const readPeImageHeaders = (bytes: Buffer) => {
+  const steps = peImageHeaderReads(bytes, bytes.length);
+  let next = steps.next();
+  while (!next.done) {
+    const { offset, bytes: size } = next.value;
+    next = steps.next(bytes.subarray(offset, offset + size));
+  }
+  return next.value;
+};
+
+/** Admit the same headers from bounded file reads, skipping the DOS stub and padding. */
+export const readPeImageHeadersAt = async (
+  prefix: Buffer,
+  fileSize: number,
+  read: PeRangeReader,
+) => {
+  const steps = peImageHeaderReads(prefix, fileSize);
+  let next = steps.next();
+  while (!next.done) {
+    const { offset, bytes } = next.value;
+    // A PE can declare no sections. The caller need not support empty I/O.
+    const record =
+      bytes === 0 || offset + bytes <= prefix.length
+        ? prefix.subarray(offset, offset + bytes)
+        : await read(offset, bytes);
+    if (record === undefined || record.length !== bytes)
+      return peFailure(`Truncated PE header range at ${String(offset)}.`);
+    next = steps.next(record);
+  }
+  return next.value;
 };

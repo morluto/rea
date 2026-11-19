@@ -607,7 +607,7 @@ describe("PE resource ownership boundaries", () => {
 
 const probeSeaName = (bytes: Buffer) =>
   hasPeResourceName(
-    bytes,
+    bytes.subarray(0, 64),
     bytes.length,
     async (offset, length) =>
       offset < 0 || length > bytes.length - offset
@@ -620,7 +620,7 @@ const probeSeaName = (bytes: Buffer) =>
 
 const payloadsOf = (bytes: Buffer, name = "NODE_SEA_BLOB") =>
   locatePeResourcePayloads(
-    bytes,
+    bytes.subarray(0, 64),
     bytes.length,
     async (offset, length) =>
       offset < 0 || length > bytes.length - offset
