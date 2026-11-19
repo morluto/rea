@@ -1000,6 +1000,9 @@ The JSON workflow commands supporting this option are:
 For `inspect-analysis-view`, the request's source reference selects a parent
 from the bundle for every supported view kind. Bundles exported from MCP work
 for these commands. Its inline source form cannot also select a bundle.
+An `evidence-file` source accepts a standalone Evidence record or a bundle.
+When either file input resembles an analysis snapshot, the error identifies
+the snapshot and directs you to export session Evidence.
 A missing ID is refused with `details.reason: "missing"`;
 supplying a bundle does not make incompatible Evidence valid for a workflow.
 `compare-managed-members` keeps its two assembly paths and the
