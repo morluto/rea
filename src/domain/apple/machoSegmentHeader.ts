@@ -34,6 +34,7 @@ export const readMachoSegmentHeader = (
     maxProtection: reader.u32(wide ? 56 : 40),
     protection: reader.u32(wide ? 60 : 44),
     sectionCount: reader.u32(wide ? 64 : 48),
+    flags: reader.u32(wide ? 68 : 52),
   });
 };
 

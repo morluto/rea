@@ -328,11 +328,6 @@ export const readMachoCommandNames = async (
       chargeProjection(segment.value.sectionCount, PROJECTED_SECTION_BYTES);
       records += segment.value.sectionCount;
       segmentName = retain(segment.value.nameBytes);
-      const segmentView = new DataView(
-        segmentBytes.buffer,
-        segmentBytes.byteOffset,
-        segmentBytes.byteLength,
-      );
       segmentFacts = {
         address: segment.value.address,
         memorySize: segment.value.memorySize,
@@ -340,7 +335,7 @@ export const readMachoCommandNames = async (
         fileSize: segment.value.fileSize,
         maxProtection: segment.value.maxProtection,
         protection: segment.value.protection,
-        flags: segmentView.getUint32(segmentWide ? 68 : 52, table.littleEndian),
+        flags: segment.value.flags,
       };
       sections = [];
       for (let i = 0; i < segment.value.sectionCount; i++) {
@@ -354,34 +349,20 @@ export const readMachoCommandNames = async (
           table.littleEndian,
         );
         if (!section.ok) throw malformedInput("macho", section.error.message);
-        const sectionView = new DataView(
-          sectionBytes.buffer,
-          sectionBytes.byteOffset,
-          sectionBytes.byteLength,
-        );
         sections.push({
           name: retain(section.value.nameBytes),
           segmentName: retain(section.value.segmentNameBytes),
           address: section.value.address,
           size: section.value.size,
           fileOffset: section.value.offset,
-          alignmentExponent: sectionView.getUint32(
-            segmentWide ? 52 : 44,
-            table.littleEndian,
-          ),
+          alignmentExponent: section.value.alignmentExponent,
           relocationOffset: section.value.relocationOffset,
           relocationCount: section.value.relocationCount,
-          reserved1: sectionView.getUint32(
-            segmentWide ? 68 : 60,
-            table.littleEndian,
-          ),
-          reserved2: sectionView.getUint32(
-            segmentWide ? 72 : 64,
-            table.littleEndian,
-          ),
-          ...(segmentWide
-            ? { reserved3: sectionView.getUint32(76, table.littleEndian) }
-            : {}),
+          reserved1: section.value.reserved1,
+          reserved2: section.value.reserved2,
+          ...(section.value.reserved3 === undefined
+            ? {}
+            : { reserved3: section.value.reserved3 }),
           flags: section.value.flags,
         });
       }

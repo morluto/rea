@@ -7,10 +7,14 @@ export interface MachoSectionHeader {
   readonly address: bigint;
   readonly size: bigint;
   readonly offset: number;
+  readonly alignmentExponent: number;
   /** `reloff` and `nreloc`: the section's own relocation entries, used by object files. */
   readonly relocationOffset: number;
   readonly relocationCount: number;
   readonly flags: number;
+  readonly reserved1: number;
+  readonly reserved2: number;
+  readonly reserved3?: number;
 }
 
 /** Fixed byte widths of Apple's section and section_64 records. */
@@ -45,9 +49,13 @@ export const readMachoSectionHeader = (
     address: reader.word(32, bits),
     size: reader.word(wide ? 40 : 36, bits),
     offset: reader.u32(wide ? 48 : 40),
+    alignmentExponent: reader.u32(wide ? 52 : 44),
     relocationOffset: reader.u32(wide ? 56 : 48),
     relocationCount: reader.u32(wide ? 60 : 52),
     flags: reader.u32(wide ? 64 : 56),
+    reserved1: reader.u32(wide ? 68 : 60),
+    reserved2: reader.u32(wide ? 72 : 64),
+    ...(wide ? { reserved3: reader.u32(76) } : {}),
   });
 };
 
