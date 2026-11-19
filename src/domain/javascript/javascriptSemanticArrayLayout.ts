@@ -3,7 +3,10 @@ import {
   javaScriptExpressionWrapperTarget,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
-import { ambientPathMayObserveAt } from "./javascriptSemanticEffectLog.js";
+import {
+  ambientPathMayObserveAt,
+  semanticOpaqueGlobalMayHaveChanged,
+} from "./javascriptSemanticEffectLog.js";
 import type { JavaScriptSemanticPropertySelection } from "./javascriptSemanticPropertyPaths.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 
@@ -21,6 +24,7 @@ export const semanticNativeArrayIteratorIntactAt = (
   acquisition: t.Node,
 ): boolean =>
   !state.arrayIterationUnknown &&
+  !semanticOpaqueGlobalMayHaveChanged(acquisition, state) &&
   !ambientPathMayObserveAt(state, acquisition, iteratorNextPath, "contents");
 
 type ArrayLiteralSlot = {
