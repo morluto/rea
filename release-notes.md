@@ -251,6 +251,7 @@
 * **ci:** use project deadlines for doctor and Kuna verifier tests ([2b25627](https://github.com/morluto/rea/commit/2b2562769d85db8291988de29fc3475cadaa6e53))
 * **ci:** use the official Ubuntu archive for binary layout fixtures ([#11904](https://github.com/morluto/rea/issues/11904)) ([bfc6a8c](https://github.com/morluto/rea/commit/bfc6a8cdd9bca2769feb569929f954689cc118a0))
 * **ci:** use the test deadline for conformance fixture commands ([#12022](https://github.com/morluto/rea/issues/12022)) ([40f9269](https://github.com/morluto/rea/commit/40f9269284fa1d3fa44d7465d0dc00327f80a7e9))
+* **ci:** verify dependency inventory on lockfile changes ([#12389](https://github.com/morluto/rea/issues/12389)) ([aa87d42](https://github.com/morluto/rea/commit/aa87d427c0fdd117bf3bab859f00bfbf12c21f75))
 * **cli:** admit activity extras with the runtime contract ([#10289](https://github.com/morluto/rea/issues/10289)) ([fceb469](https://github.com/morluto/rea/commit/fceb4693fc6c7ba0999806beab182a12f8fe6128))
 * **cli:** advertise parsed JSON documents in --schema ([d734e64](https://github.com/morluto/rea/commit/d734e6424df5fed42399dc22b759a1c9962c01f2))
 * **cli:** advertise the decimal token grammar on integer arguments ([884b683](https://github.com/morluto/rea/commit/884b683a94be222538aad84eb7993f62fda9aca7)), closes [#9344](https://github.com/morluto/rea/issues/9344)
