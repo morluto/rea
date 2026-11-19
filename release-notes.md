@@ -558,6 +558,7 @@
 * **windows:** report bytes appended after a Shell Link TerminalBlock ([#11745](https://github.com/morluto/rea/issues/11745)) ([ce9635b](https://github.com/morluto/rea/commit/ce9635bcb410416dc7960abf75e003f727c9f261))
 * **zip:** account 64-bit data descriptors that MSIX packages write ([#11733](https://github.com/morluto/rea/issues/11733)) ([43aaa9f](https://github.com/morluto/rea/commit/43aaa9f1903cd11826fd261794b5514da0bb6162))
 * **zip:** corroborate member extents before claiming complete coverage ([#11855](https://github.com/morluto/rea/issues/11855)) ([ad02201](https://github.com/morluto/rea/commit/ad02201d0b63d5a51830459f8669e5d6512fe875))
+* **zip:** publish EOF after extraction finalization ([#12164](https://github.com/morluto/rea/issues/12164)) ([ca3f35d](https://github.com/morluto/rea/commit/ca3f35dcbb9942c8d0432cee9c588b9c4996ab26))
 
 
 ### Performance Improvements
