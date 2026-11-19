@@ -13,7 +13,12 @@ import {
   readClangBundleDirectory,
   readCcobHeader,
 } from "./ClangOffloadBundle.js";
-import { gpuObject, gpuLocation, type GpuPayloadTarget } from "./GpuObject.js";
+import {
+  gpuObject,
+  gpuLocation,
+  recordDeclaredGpuDecodedSize,
+  type GpuPayloadTarget,
+} from "./GpuObject.js";
 import { readCudaTarget } from "./CudaTarget.js";
 import { readCudaFatbinary } from "./CudaFatbinary.js";
 import { decodeGpuPayload, decodeGpuPayloadStream } from "./GpuPayloadCodec.js";
@@ -303,7 +308,13 @@ export class GpuInventory {
   async #payload(
     source: GpuSource,
     row: GpuObject,
-    preparedAmd?: AmdElfMetadata,
+    {
+      amdMetadata,
+      declaredDecodedSize,
+    }: {
+      amdMetadata?: AmdElfMetadata;
+      declaredDecodedSize?: number | bigint;
+    } = {},
   ): Promise<void> {
     if (this.input.analysis !== "kernels") return;
     if (!this.#selected(row)) {
@@ -315,10 +326,11 @@ export class GpuInventory {
       return;
     }
     try {
+      const decodedSize = declaredDecodedSize ?? row.decoded_size;
       let coverage: "complete" | "partial" = "complete";
       if (
         row.kind === "ptx" &&
-        (row.decoded_size === null || row.decoded_size > GPU_REPORT_BYTES)
+        (decodedSize === null || decodedSize > GPU_REPORT_BYTES)
       )
         throw new BinaryResourceFailure(
           "structure",
@@ -330,11 +342,11 @@ export class GpuInventory {
         compression === "zstd" ||
         compression === "zlib" ||
         compression === "lz4";
-      if (compressed && row.decoded_size === null)
+      if (compressed && decodedSize === null)
         rejectGpu("Compressed GPU object has no decoded length");
       this.#budgetWork(
         row.location.size,
-        ...(compressed ? [row.decoded_size!] : []),
+        ...(compressed ? [decodedSize!] : []),
       );
       let bytes = await source.read(row.location.offset, row.location.size);
       if (compressed) {
@@ -342,7 +354,7 @@ export class GpuInventory {
           bytes = await decodeGpuPayload(
             bytes,
             compression,
-            row.decoded_size!,
+            Number(decodedSize),
             this.signal,
           );
         } catch (cause) {
@@ -400,7 +412,7 @@ export class GpuInventory {
       } else if (row.kind === "cubin" || row.kind === "amdgpu") {
         if (row.kind === "amdgpu" && isLlvmBitcode(bytes))
           throw new BinaryFormatFailure("unsupported", LLVM_BITCODE_LIMITATION);
-        coverage = await this.#elfFacts(decoded, row, row.kind, preparedAmd);
+        coverage = await this.#elfFacts(decoded, row, row.kind, amdMetadata);
       } else {
         row.inspection = "unsupported";
         this.#objectLimitations(row, [
@@ -523,7 +535,7 @@ export class GpuInventory {
       }
       const payloadSelected =
         this.input.analysis === "kernels" && this.#selected(row);
-      await this.#payload(source, row, prepared);
+      await this.#payload(source, row, { amdMetadata: prepared });
       if (!payloadSelected && prepared.limitations.length > 0)
         this.#objectLimitations(row, prepared.limitations);
     } catch (cause) {
@@ -555,9 +567,12 @@ export class GpuInventory {
     return conflict !== undefined ? "partial" : parsed.coverage;
   }
   async #cuda(source: GpuSource): Promise<void> {
-    for await (const row of readCudaFatbinary(source, this.signal)) {
+    for await (const { row, declaredDecodedSize } of readCudaFatbinary(
+      source,
+      this.signal,
+    )) {
       this.#add(row);
-      await this.#payload(source, row);
+      await this.#payload(source, row, { declaredDecodedSize });
     }
   }
   async #hip(source: GpuSource, depth: number): Promise<void> {
@@ -601,15 +616,8 @@ export class GpuInventory {
       row.compression =
         method === 0 ? "zlib" : method === 1 ? "zstd" : "unsupported";
       row.compression_id = `ccob:${version}:${method}`;
-      row.decoded_size =
-        declaredDecodedSize <= BigInt(Number.MAX_SAFE_INTEGER)
-          ? Number(declaredDecodedSize)
-          : null;
+      recordDeclaredGpuDecodedSize(row, declaredDecodedSize);
       if (extentKnown) this.#add(row);
-      if (row.decoded_size === null)
-        this.#objectLimitations(row, [
-          `CCOB declares ${String(declaredDecodedSize)} decoded bytes, outside the exact integer range of decoded_size`,
-        ]);
       if (row.compression === "unsupported") {
         row.inspection = "unsupported";
         this.#objectLimitations(row, ["Unsupported CCOB compression method"]);
