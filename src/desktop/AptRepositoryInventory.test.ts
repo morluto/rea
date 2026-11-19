@@ -81,6 +81,13 @@ describe.skipIf(
       if (typeof output !== "object" || output.exitCode !== 0)
         throw new Error(`APT target query failed: ${JSON.stringify(output)}`);
       const targets = parseAptIndexTargets(output.stdout);
+      const descriptions = targets.map((target) => target.description);
+      expect(descriptions).toContainEqual(
+        expect.stringMatching(/ i386 Packages$/u),
+      );
+      expect(descriptions).not.toContainEqual(
+        expect.stringMatching(/ arm64 Packages$/u),
+      );
       const selected = targets.filter(
         (target) =>
           target.component === "main,extra" &&
