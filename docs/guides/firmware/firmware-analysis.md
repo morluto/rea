@@ -35,7 +35,9 @@ Unblob. FFS file and section discovery applies to FFS2 and FFS3 volumes.
 Volumes with other file-system GUIDs retain their header and extent, with the
 body reported as unparsed. REA checks the volume header and block map against
 the declared volume extent. FFS traversal accounts for volume extensions and
-retains valid files after an unusable file header. A truncated file body
+retains valid files after an unusable file header. Malformed FV extension
+entries and conflicts between `UsedSize` and the claimed erased tail appear as
+volume-scoped gaps. Readable FFS files remain selectable. A truncated file body
 does not receive a verified checksum verdict.
 
 ```sh
@@ -100,9 +102,9 @@ reports partial coverage for incomplete successors.
 
 UEFI operations accept up to 128 MiB per image, with a shared limit of 100,000
 structural records. Artifact inventory applies the same ceiling to volume
-candidates and their block maps. Inventory reports unknown coverage when
-a volume exceeds the readable range, the file walk meets an unparsed suffix,
-or a scan limit is reached.
+candidates, block maps, and extension entries. Inventory reports unknown
+coverage when a volume exceeds the readable range, metadata conflicts with the
+bytes, the file walk meets an unparsed suffix, or a scan limit is reached.
 The nesting depth defaults to 3 for firmware and 2 for NVAR. Decoding is limited to 64 MiB per stream and 128 MiB across one operation.
 An admitted operation has a 60-second deadline covering input, parsing,
 decoding, and staging. Owned cleanup can continue past the deadline. Extraction

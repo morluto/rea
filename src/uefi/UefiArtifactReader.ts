@@ -1,6 +1,7 @@
 import { lstat } from "node:fs/promises";
 import { Readable } from "node:stream";
 
+import { Budget } from "../domain/budget.js";
 import type { ArtifactCommand } from "../domain/artifactGraph.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import {
@@ -13,6 +14,7 @@ import {
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
 import { readFfsHeader, type FfsPaddingRange } from "./FfsFile.js";
 import {
+  inspectFirmwareVolumeExtension,
   scanFirmwareVolumes,
   unsupportedVolumeBodyReason,
   type FirmwareVolumeHeader,
@@ -88,11 +90,16 @@ export class UefiArtifactReader implements ArtifactReader {
     };
     const imageTruncated = source.initial.size > image.length;
     if (imageTruncated) omit("image-truncated", IMAGE_TRUNCATION_LIMITATION);
-    const scan = scanFirmwareVolumes(
-      imageRegion(image, 0, image.length),
-      UEFI_FIRMWARE_LIMITS.maxVolumes,
-      { checkpoint: () => assertArtifactReadActive(signal) },
-    );
+    const region = imageRegion(image, 0, image.length);
+    const records = new Budget(UEFI_FIRMWARE_LIMITS.scanRecords);
+    const checkpoint = () => assertArtifactReadActive(signal);
+    const reserve = (): boolean => {
+      checkpoint();
+      return records.tryCharge(1);
+    };
+    const scan = scanFirmwareVolumes(region, UEFI_FIRMWARE_LIMITS.maxVolumes, {
+      reserve,
+    });
     if (scan.limit !== null) {
       omit(
         "volume-scan-limit",
@@ -133,6 +140,14 @@ export class UefiArtifactReader implements ArtifactReader {
       };
       this.#entries.set(entry.adapterKey, entry);
       yield entry;
+      for (const issue of inspectFirmwareVolumeExtension(
+        region,
+        header,
+        reserve,
+        checkpoint,
+      )) {
+        omit(`${name}/fv-extension-${hex(issue.offset)}`, issue.detail);
+      }
       if (header.fileSystem === "unsupported") {
         omit(
           name,

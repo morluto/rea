@@ -1674,3 +1674,92 @@ it.each([
     }
   },
 );
+
+it.each([
+  {
+    name: "valid unaligned UsedSize",
+    entrySize: 8,
+    usedSize: 129,
+    range: null,
+  },
+  {
+    name: "zero-sized entry",
+    entrySize: 0,
+    usedSize: 129,
+    range: { offset: 92, length: 8 },
+    detail: "invalid extent",
+  },
+  {
+    name: "entry exceeding the extension",
+    entrySize: 9,
+    usedSize: 129,
+    range: { offset: 92, length: 8 },
+    detail: "invalid extent",
+  },
+  {
+    name: "UsedSize before the extension ends",
+    entrySize: 8,
+    usedSize: 99,
+    range: { offset: 96, length: 4 },
+    detail: "outside the volume data extent",
+  },
+  {
+    name: "file in the claimed erased tail",
+    entrySize: 8,
+    usedSize: 104,
+    range: { offset: 96, length: 4 },
+    detail: "non-erased byte at 0x68",
+  },
+])(
+  "reports FV extension coverage and retains the FFS file for $name",
+  async ({ entrySize, usedSize, range, detail }) => {
+    const payload = Buffer.from([0x31]);
+    const file = buildFfsFile({ guid: GUID_RAW, typeCode: 1, payload });
+    const { buffer } = buildFv({ files: [file], extendedHeader: "standalone" });
+    buffer.writeUInt16LE(entrySize, 92);
+    buffer.writeUInt32LE(usedSize, 96);
+    const root = await createTestTempDirectory("rea-uefi-fv-extension-");
+    const path = join(root, "image.fd");
+    await writeFile(path, buffer);
+    const provider = new UefiAnalysisProvider();
+    try {
+      const inspected = expectOk(await provider.execute(inspectRequest(path)))
+        .value.result as UefiInspectResult;
+      expect(inspected.coverage).toBe(range === null ? "complete" : "partial");
+      expect(inspected.firmware_volumes[0]?.ffs_files).toMatchObject([
+        { offset: 104, length: 25 },
+      ]);
+      const result = expectOk(
+        await provider.execute(
+          extractRequest(path, join(root, "volume"), {
+            target: { kind: "volume", offset: 0 },
+          }),
+        ),
+      ).value.result as UefiExtractResult;
+      expect(result.files).toMatchObject([{ sha256: sha256(payload) }]);
+      expect(result.extraction_gaps).toMatchObject(
+        range === null
+          ? []
+          : [
+              {
+                kind: "unparsed-region",
+                logical_path: "flash/FV@0x0",
+                range,
+                detail: expect.stringContaining(detail ?? ""),
+              },
+            ],
+      );
+      const selected = expectOk(
+        await provider.execute(
+          extractRequest(path, join(root, "file"), {
+            target: { kind: "ffs-file", offset: 104 },
+          }),
+        ),
+      ).value.result as UefiExtractResult;
+      expect(selected.coverage).toBe("complete");
+      expect(selected.files).toMatchObject([{ sha256: sha256(payload) }]);
+    } finally {
+      await provider.close();
+    }
+  },
+);

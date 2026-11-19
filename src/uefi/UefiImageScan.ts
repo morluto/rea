@@ -35,6 +35,7 @@ import {
   type UefiDecodeFormat,
 } from "./FfsSections.js";
 import {
+  inspectFirmwareVolumeExtension,
   parseFirmwareVolumeHeader,
   scanFirmwareVolumes,
   type FirmwareVolumeHeader,
@@ -410,6 +411,21 @@ export const scanUefiImage = async (
         ffs_files: [],
       };
       volumes.push(volume);
+      for (const issue of inspectFirmwareVolumeExtension(
+        region,
+        header,
+        reserve,
+        checkpoint,
+      )) {
+        noteOmission(
+          issue.kind,
+          region,
+          logicalPath,
+          issue.offset,
+          issue.offset + issue.length,
+          issue.detail,
+        );
+      }
       if (header.fileSystem === "unsupported") {
         noteUnparsedRange(
           region,

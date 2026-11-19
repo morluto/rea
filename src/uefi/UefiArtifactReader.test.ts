@@ -279,3 +279,36 @@ it("marks inventory coverage unknown for unexpected bytes between two retained f
     await reader.close();
   }
 });
+
+it("retains a file in the erased tail claimed by the FV extension and reports unknown inventory", async () => {
+  const file = buildFfsFile({
+    guid: DRIVER_GUID,
+    typeCode: 1,
+    payload: Buffer.from([0x31]),
+  });
+  const { buffer } = buildFv({ files: [file], extendedHeader: "standalone" });
+  buffer.writeUInt32LE(104, 96);
+  const reader = await openReader(buffer);
+  const onOmission = vi.fn();
+  const onCoverage = vi.fn();
+  try {
+    const entries = await collectEntries(reader, { onOmission, onCoverage });
+    expect(
+      entries
+        .filter(({ kind }) => kind === "file")
+        .map(({ byteOffset }) => byteOffset),
+    ).toEqual([104]);
+    expect(onOmission).toHaveBeenCalledExactlyOnceWith({
+      kind: "unsupported",
+      path: "firmware-volume-0x0/fv-extension-0x60",
+    });
+    expect(onCoverage).toHaveBeenCalledWith({
+      status: "unknown",
+      limitations: [
+        expect.stringMatching(/UsedSize.*non-erased byte at 0x68/u),
+      ],
+    });
+  } finally {
+    await reader.close();
+  }
+});

@@ -20,6 +20,10 @@ import {
   type FfsPaddingRange,
 } from "./FfsFile.js";
 
+const FV_EXTENSION_ENTRY_HEADER_LENGTH = 4;
+const FV_EXT_TYPE_USED_SIZE = 0x03;
+const USED_SIZE_LENGTH = 4;
+
 const FVH_SIGNATURE = 0x4856465f; // "_FVH" read as a little-endian word
 
 export interface FirmwareVolumeBlockMapEntry {
@@ -38,6 +42,10 @@ export interface FirmwareVolumeHeader {
   readonly attributes: number;
   readonly erasePolarity: boolean;
   readonly extHeaderOffset: number | null;
+  readonly extensionEntries: {
+    readonly start: number;
+    readonly end: number;
+  } | null;
   readonly revision: number;
   readonly fileSystemGuid: string | null;
   readonly fileSystem: "ffs2" | "ffs3" | "unsupported";
@@ -181,6 +189,7 @@ export function parseFirmwareVolumeHeader(
     );
     if (padding !== null) filePrefixPadding.push(padding);
   };
+  let extensionEntries: FirmwareVolumeHeader["extensionEntries"] = null;
   if (extHeaderRaw !== 0 && blockMapTerminated) {
     const blockMapEnd =
       FV_HEADER_LAYOUT.blockMapOffset +
@@ -198,7 +207,10 @@ export function parseFirmwareVolumeHeader(
       const extEnd = extStart + extLength;
       if (extLength < extMinimumLength || extEnd > volumeEnd) {
         implausibilities.push("extended-header-length-implausible");
-      } else if (extEnd > headerEnd) {
+      } else {
+        extensionEntries = { start: extStart + extMinimumLength, end: extEnd };
+      }
+      if (extensionEntries !== null && extEnd > headerEnd) {
         const pad = parseFfsFileHeader(
           { ...region, end: volumeEnd },
           firstFileLocal,
@@ -240,6 +252,7 @@ export function parseFirmwareVolumeHeader(
     attributes,
     erasePolarity,
     extHeaderOffset: extHeaderRaw === 0 ? null : extHeaderRaw,
+    extensionEntries,
     revision,
     fileSystemGuid,
     fileSystem:
@@ -252,6 +265,120 @@ export function parseFirmwareVolumeHeader(
     checksumValid,
     implausibilities,
   };
+}
+
+interface FirmwareVolumeExtensionIssue {
+  readonly kind: "unparsed-region" | "size-truncated";
+  readonly offset: number;
+  readonly length: number;
+  readonly detail: string;
+}
+
+/** Check extension metadata in admitted volumes without changing FFS bounds. */
+export function* inspectFirmwareVolumeExtension(
+  region: ScanRegion,
+  header: FirmwareVolumeHeader,
+  reserve: () => boolean,
+  checkpoint: () => void,
+): Iterable<FirmwareVolumeExtensionIssue> {
+  const entries = header.extensionEntries;
+  if (entries === null || entries.start === entries.end) return;
+  const reader = new BinaryReader(region.buffer, true, "UEFI FV extension");
+  const minimumUsedSize = Math.max(
+    header.headerLength,
+    entries.end - header.localBase,
+  );
+  let usedSize: { value: number; offset: number } | undefined;
+  let sizeConflict = false;
+  let local = entries.start;
+
+  while (local < entries.end) {
+    const offset = absoluteOffset(region, local);
+    const available = entries.end - local;
+    if (!reserve()) {
+      yield {
+        kind: "size-truncated",
+        offset,
+        length: available,
+        detail: `Structural record limit reached at FV extension offset 0x${offset.toString(16)}.`,
+      };
+      return;
+    }
+    if (available < FV_EXTENSION_ENTRY_HEADER_LENGTH) {
+      yield {
+        kind: "unparsed-region",
+        offset,
+        length: available,
+        detail: `Incomplete FV extension entry header at 0x${offset.toString(16)}.`,
+      };
+      break;
+    }
+    const size = reader.u16(local);
+    if (size < FV_EXTENSION_ENTRY_HEADER_LENGTH || size > available) {
+      yield {
+        kind: "unparsed-region",
+        offset,
+        length: available,
+        detail: `FV extension entry at 0x${offset.toString(16)} has an invalid extent (declared ${size} bytes, ${available} bytes available).`,
+      };
+      break;
+    }
+    const type = reader.u16(local + 2);
+    const fieldLocal = local + FV_EXTENSION_ENTRY_HEADER_LENGTH;
+    local += size;
+    if (type !== FV_EXT_TYPE_USED_SIZE) continue;
+    if (size !== FV_EXTENSION_ENTRY_HEADER_LENGTH + USED_SIZE_LENGTH) {
+      yield {
+        kind: "unparsed-region",
+        offset,
+        length: size,
+        detail: `FV UsedSize entry at 0x${offset.toString(16)} has an invalid length (${size} bytes).`,
+      };
+      continue;
+    }
+
+    const value = reader.u32(fieldLocal);
+    const fieldOffset = absoluteOffset(region, fieldLocal);
+    if (value < minimumUsedSize || value > header.declaredLength) {
+      yield {
+        kind: "unparsed-region",
+        offset: fieldOffset,
+        length: USED_SIZE_LENGTH,
+        detail: `FV UsedSize ${value} at 0x${fieldOffset.toString(16)} is outside the volume data extent (${minimumUsedSize}–${header.declaredLength}).`,
+      };
+      continue;
+    }
+    if (usedSize === undefined) {
+      usedSize = { value, offset: fieldOffset };
+    } else if (usedSize.value !== value) {
+      sizeConflict = true;
+      yield {
+        kind: "unparsed-region",
+        offset: fieldOffset,
+        length: USED_SIZE_LENGTH,
+        detail: `FV UsedSize ${value} at 0x${fieldOffset.toString(16)} conflicts with earlier declaration ${usedSize.value}.`,
+      };
+    }
+  }
+
+  if (usedSize === undefined || sizeConflict) return;
+  const tailStart = header.localBase + usedSize.value;
+  const volumeEnd = Math.min(
+    region.end,
+    header.localBase + header.declaredLength,
+  );
+  const eraseByte = header.erasePolarity ? 0xff : 0;
+  for (let index = tailStart; index < volumeEnd; index += 1) {
+    if ((index & 0xffff) === 0) checkpoint();
+    if (region.buffer[index] === eraseByte) continue;
+    yield {
+      kind: "unparsed-region",
+      offset: usedSize.offset,
+      length: USED_SIZE_LENGTH,
+      detail: `FV UsedSize ${usedSize.value} at 0x${usedSize.offset.toString(16)} claims an erased tail with a non-erased byte at 0x${absoluteOffset(region, index).toString(16)}.`,
+    };
+    return;
+  }
 }
 
 /** Sum of 16-bit header words must reach zero (mod 2^16). */
