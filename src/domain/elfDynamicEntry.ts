@@ -1,3 +1,4 @@
+import { BinaryReader } from "./binaryContainer.js";
 import { err, ok, type Result } from "./result.js";
 
 export const DT_NEEDED = 1n;
@@ -15,20 +16,25 @@ export const DT_FLAGS_1 = 0x6ffffffbn;
 export const elfDynamicEntryWidth = (bits: 32 | 64): 8 | 16 =>
   bits === 64 ? 16 : 8;
 
-const readDynamicWords = (
-  view: DataView,
-  offset: number,
-  width: 8 | 16,
+const dynamicReader = (
+  bytes: Uint8Array,
   littleEndian: boolean,
+): BinaryReader =>
+  new BinaryReader(
+    Buffer.isBuffer(bytes)
+      ? bytes
+      : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    littleEndian,
+    "elf",
+  );
+
+const readDynamicWords = (
+  reader: BinaryReader,
+  offset: number,
+  bits: 32 | 64,
 ) => ({
-  tag:
-    width === 16
-      ? view.getBigInt64(offset, littleEndian)
-      : BigInt(view.getInt32(offset, littleEndian)),
-  value:
-    width === 16
-      ? view.getBigUint64(offset + 8, littleEndian)
-      : BigInt(view.getUint32(offset + 4, littleEndian)),
+  tag: bits === 64 ? reader.i64(offset) : BigInt(reader.i32(offset)),
+  value: reader.word(offset + bits / 8, bits),
 });
 
 /** Fixed Elf32_Dyn/Elf64_Dyn: signed d_tag and unsigned d_un, without tag or value admission. */
@@ -43,8 +49,8 @@ export const readElfDynamicEntry = (
       kind: "malformed" as const,
       message: "ELF dynamic entry is truncated",
     });
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  return ok(readDynamicWords(view, 0, width, littleEndian));
+  const reader = dynamicReader(bytes, littleEndian);
+  return ok(readDynamicWords(reader, 0, bits));
 };
 
 type DynamicRow = ReturnType<typeof readDynamicWords> & {
@@ -80,10 +86,10 @@ export const walkElfDynamicTable = <E>(
   DynamicTableFailure<E>
 > => {
   const width = elfDynamicEntryWidth(bits);
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const reader = dynamicReader(bytes, littleEndian);
   const firstOffsets = new Map<bigint, number>();
   for (let offset = 0; offset + width <= bytes.byteLength; offset += width) {
-    const { tag, value } = readDynamicWords(view, offset, width, littleEndian);
+    const { tag, value } = readDynamicWords(reader, offset, bits);
     if (tag === 0n) return ok({ terminatorOffset: offset });
     const singleton = singletonTags.has(tag);
     if (singleton) {

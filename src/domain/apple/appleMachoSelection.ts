@@ -9,9 +9,13 @@ import {
   machoDependencyCommand,
   readMachoDylibCommandFacts,
 } from "./machoDylibCommand.js";
-import { readMachoSectionHeader } from "./machoSectionHeader.js";
+import {
+  machoSectionHeaderSize,
+  readMachoSectionHeader,
+} from "./machoSectionHeader.js";
 import {
   admitMachoSegmentMapping,
+  machoSegmentSectionTableFits,
   readMachoSegmentHeader,
 } from "./machoSegmentHeader.js";
 import {
@@ -269,12 +273,13 @@ const collectSegment = (
     fileSize > 0n
   )
     state.baseAddress ??= address;
-  if (headerSize + count * 80 > size)
+  if (!machoSegmentSectionTableFits(parsed.value, size, true))
     throw truncatedInput("macho", "Truncated section table");
+  const sectionWidth = machoSectionHeaderSize(true);
   for (let section = 0; section < count; section++) {
-    const position = cursor + headerSize + section * 80;
+    const position = cursor + headerSize + section * sectionWidth;
     const parsedSection = readMachoSectionHeader(
-      bytes.subarray(position, position + 80),
+      bytes.subarray(position, position + sectionWidth),
       true,
       true,
     );

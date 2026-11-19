@@ -905,6 +905,46 @@ it("finds a split marker and uses the first apphost marker, including offset zer
 const sha = (bytes: Buffer): string =>
   createHash("sha256").update(bytes).digest("hex");
 
+it("reads the next member offset when it straddles a manifest read window", async () => {
+  const root = await createTestTempDirectory("rea-dotnet-numeric-window-");
+  const path = join(root, "host.exe");
+  // The second row starts four bytes before the first 64 KiB window ends.
+  const firstPath = "a".repeat(65_449);
+  const fixture = dotnetBundleFixture(
+    [
+      { path: firstPath, bytes: Buffer.from("x") },
+      { path: "second", bytes: Buffer.from("yz") },
+    ],
+    6,
+    "id",
+  );
+  const secondRow = fixture.fields.entries[1]!.offset;
+  expect(secondRow - fixture.headerOffset).toBe(64 * 1024 - 4);
+  await writeFile(path, fixture.bytes);
+  const handle = await open(path, "r");
+  const read = vi.spyOn(handle, "read");
+  try {
+    const bundle = await readDotnetBundle(
+      handle,
+      fixture.bytes.length,
+      fixture.headerOffset,
+    );
+    expect(bundle.files).toMatchObject([
+      { path: firstPath, offset: fixture.offsets[0], size: 1 },
+      { path: "second", offset: fixture.offsets[1], size: 2 },
+    ]);
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(read).toHaveBeenLastCalledWith(
+      expect.any(Buffer),
+      0,
+      fixture.bytes.length - secondRow,
+      secondRow,
+    );
+  } finally {
+    await handle.close();
+  }
+});
+
 it("preserves source I/O failures while reading a manifest string across the cache boundary", async () => {
   const root = await createTestTempDirectory("rea-dotnet-metadata-io-");
   const path = join(root, "host.exe");

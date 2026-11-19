@@ -254,6 +254,9 @@ describe("PNG chunk integrity", () => {
         }
         offset += length + 12;
       }
+      expect(readPngHeaderDimensions(bytes)).toEqual(
+        type === "IHDR" ? undefined : { width: 1, height: 1 },
+      );
       const image = createWebScreenshotArtifact(bytes);
       expect(() =>
         comparePngScreenshots(

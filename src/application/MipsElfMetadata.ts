@@ -5,6 +5,7 @@ import {
 } from "../domain/elfProgramHeader.js";
 import { readElfRawTableDeclarations } from "../domain/elfRawTableDeclarations.js";
 import type { FileHandle } from "node:fs/promises";
+import { BinaryReader } from "../domain/binaryContainer.js";
 import type {
   MipsAbiFlags,
   MipsElfMetadata,
@@ -16,12 +17,10 @@ import {
   readMipsElfSharedLoad,
   type MipsElfRelocationSection,
 } from "./MipsElfSharedLoad.js";
-import {
-  MIPS_GNU_ATTRIBUTES_MAX_BYTES,
-  parseMipsGnuAttributes,
-} from "./MipsGnuAttributes.js";
+import { parseMipsGnuAttributes } from "./MipsGnuAttributes.js";
 
 const SHT_GNU_ATTRIBUTES = 0x6ffffff5;
+const MIPS_GNU_ATTRIBUTES_MAX_BYTES = 4096;
 
 /** Observed ABI and load declarations, retaining unavailable source coverage. */
 export interface MipsElfInspection {
@@ -51,6 +50,7 @@ export const readMipsElfMetadata = async (
     offset: number,
     length: number,
     label: string,
+    maxBytes?: number,
   ): Promise<Result<Buffer, string>> => {
     checkCancelled();
     if (
@@ -60,6 +60,10 @@ export const readMipsElfMetadata = async (
       offset > fileSize - length
     )
       return err(`MIPS ${label} lies outside the file`);
+    if (maxBytes !== undefined && (length === 0 || length > maxBytes))
+      return err(
+        `MIPS ${label} size ${length} is outside REA's inspected bound of ${maxBytes} bytes`,
+      );
     const bytes = Buffer.alloc(length);
     let total = 0;
     while (total < length) {
@@ -82,10 +86,6 @@ export const readMipsElfMetadata = async (
   const fixedHeader = readElfFixedHeader(bytes, fileSize);
   if (!fixedHeader.ok) return fixedHeader;
   const little = metadata.byteOrder === "little";
-  const u16 = (data: Buffer, offset: number): number =>
-    little ? data.readUInt16LE(offset) : data.readUInt16BE(offset);
-  const u32 = (data: Buffer, offset: number): number =>
-    little ? data.readUInt32LE(offset) : data.readUInt32BE(offset);
   if (
     fixedHeader.value.elfClass !== 32 ||
     fixedHeader.value.byteOrder !== metadata.byteOrder ||
@@ -192,15 +192,11 @@ export const readMipsElfMetadata = async (
       if (table.optional && type === SHT_GNU_ATTRIBUTES) {
         if (gnuAttributes !== null)
           return err("duplicate MIPS GNU attribute sections");
-        const size = declaredSize;
-        if (size === 0 || size > MIPS_GNU_ATTRIBUTES_MAX_BYTES)
-          return err(
-            `MIPS GNU attribute section size ${size} is outside REA's inspected bound of ${MIPS_GNU_ATTRIBUTES_MAX_BYTES} bytes`,
-          );
         const section = await read(
           declaredOffset,
-          size,
+          declaredSize,
           "GNU attribute section",
+          MIPS_GNU_ATTRIBUTES_MAX_BYTES,
         );
         if (!section.ok) return section;
         const parsed = parseMipsGnuAttributes(section.value, little);
@@ -267,18 +263,19 @@ export const readMipsElfMetadata = async (
     return ok({ abiFlags: null, gnuAttributes, limitations, ...shared });
   // Preserve declarations verbatim, including unknown versions/values. Provider
   // admission, not parsing, decides which interpretations have been verified.
+  const reader = new BinaryReader(record, little, "mips-abi-flags");
   const abiFlags: MipsAbiFlags = {
-    version: u16(record, 0),
-    isaLevel: record.readUInt8(2),
-    isaRevision: record.readUInt8(3),
-    gprSize: record.readUInt8(4),
-    cpr1Size: record.readUInt8(5),
-    cpr2Size: record.readUInt8(6),
-    fpAbi: record.readUInt8(7),
-    isaExtension: u32(record, 8),
-    ases: u32(record, 12),
-    flags1: u32(record, 16),
-    flags2: u32(record, 20),
+    version: reader.u16(0),
+    isaLevel: reader.u8(2),
+    isaRevision: reader.u8(3),
+    gprSize: reader.u8(4),
+    cpr1Size: reader.u8(5),
+    cpr2Size: reader.u8(6),
+    fpAbi: reader.u8(7),
+    isaExtension: reader.u32(8),
+    ases: reader.u32(12),
+    flags1: reader.u32(16),
+    flags2: reader.u32(20),
   };
   if (
     gnuAttributes !== null &&

@@ -11,6 +11,10 @@ import type {
   WindowsShortcutUuidV1,
 } from "../../domain/native/windowsShortcut.js";
 import { WindowsShortcutResourceFailure } from "./WindowsShortcut.errors.js";
+import {
+  BinaryFormatFailure,
+  BinaryReader,
+} from "../../domain/binaryContainer.js";
 import { malformedInput } from "../../domain/parseFailure.js";
 import { byteToHex } from "../../kernel/byteToHex.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
@@ -23,6 +27,8 @@ const FILETIME_UNIX_EPOCH = 116444736000000000n;
 const UUID_UNIX_EPOCH = 0x01b21dd213814000n;
 const ENTRIES_PER_YIELD = 32;
 const VOLUME_UNICODE_LABEL_SELECTOR = 0x14;
+// MS-SHLLINK §2.4 exempts COMMAND_LINE_ARGUMENTS from this format limit.
+const MAX_STRING_DATA_CHARACTERS = 260;
 /** ECMAScript Date range: 8.64e15 ms either side of the Unix epoch. */
 const MAX_DATE_MS = 8_640_000_000_000_000n;
 
@@ -850,60 +856,52 @@ const parseLinkInfo = (
 };
 
 const parseStringField = (
-  bytes: Buffer,
+  reader: BinaryReader,
   walk: Walk,
   unicode: boolean,
   label: string,
 ): WindowsShortcutStringField | null => {
-  if (!fits(bytes, walk.offset, 2)) {
+  const offset = walk.offset;
+  const payloadOffset = offset + 2;
+  let count: number | undefined;
+  try {
+    count = reader.u16(offset);
+    const payloadBytes = count * (unicode ? 2 : 1);
+    const payload = reader.range(payloadOffset, payloadBytes, label);
+    if (
+      label !== "COMMAND_LINE_ARGUMENTS" &&
+      count > MAX_STRING_DATA_CHARACTERS
+    )
+      note(
+        walk,
+        "malformed_structure",
+        offset,
+        `${label} declares ${String(count)} characters, above the ${String(MAX_STRING_DATA_CHARACTERS)}-character StringData limit`,
+      );
+    charge(walk, payloadBytes);
+    walk.offset = payloadOffset + payloadBytes;
+    return {
+      encoding: unicode ? "unicode" : "ansi",
+      count_characters: count,
+      byte_length: payloadBytes,
+      value: payload.toString(unicode ? "utf16le" : "latin1"),
+      location: { offset, bytes: 2 + payloadBytes },
+    };
+  } catch (cause: unknown) {
+    if (!(cause instanceof BinaryFormatFailure)) throw cause;
+    const oddUnicodePayload =
+      count !== undefined &&
+      unicode &&
+      (reader.bytes.length - payloadOffset) % 2 === 1;
     note(
       walk,
-      "truncated",
-      walk.offset,
-      `${label} CountCharacters is truncated`,
+      oddUnicodePayload ? "odd_unicode_length" : "truncated",
+      offset,
+      `${label} ${count === undefined ? "CountCharacters is" : "string bytes are"} truncated`,
       true,
     );
     return null;
   }
-  const count = bytes.readUInt16LE(walk.offset);
-  const unit = unicode ? 2 : 1;
-  const payloadBytes = count * unit;
-  if (unicode && payloadBytes % 2 === 1) {
-    note(
-      walk,
-      "odd_unicode_length",
-      walk.offset,
-      `${label} Unicode payload is an odd length`,
-      true,
-    );
-    return null;
-  }
-  if (!fits(bytes, walk.offset + 2, payloadBytes)) {
-    const remaining = bytes.length - (walk.offset + 2);
-    note(
-      walk,
-      remaining % 2 === 1 && unicode ? "odd_unicode_length" : "truncated",
-      walk.offset,
-      `${label} string bytes are truncated`,
-      true,
-    );
-    return null;
-  }
-  const payload = bytes.subarray(
-    walk.offset + 2,
-    walk.offset + 2 + payloadBytes,
-  );
-  charge(walk, payloadBytes);
-  const value = payload.toString(unicode ? "utf16le" : "latin1");
-  const field: WindowsShortcutStringField = {
-    encoding: unicode ? "unicode" : "ansi",
-    count_characters: count,
-    byte_length: payloadBytes,
-    value,
-    location: { offset: walk.offset, bytes: 2 + payloadBytes },
-  };
-  walk.offset += 2 + payloadBytes;
-  return field;
 };
 
 const environmentTargets = (
@@ -1262,9 +1260,10 @@ export const parseWindowsShortcut = async (
     [0x00000040, "icon_location", "ICON_LOCATION"],
   ];
   if (!walk.stopped) {
+    const reader = new BinaryReader(bytes, true, "windows-shortcut");
     for (const [bit, key, label] of stringFlags) {
       if ((flags & bit) === 0) continue;
-      const field = parseStringField(bytes, walk, unicode, label);
+      const field = parseStringField(reader, walk, unicode, label);
       stringData[key] = field;
       if (field === null) break;
     }
