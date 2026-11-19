@@ -1000,13 +1000,13 @@ it("retains native Inspector verification on every documented package host", asy
   );
   expect(windowsBuild).toBeGreaterThanOrEqual(0);
   expect(windowsSteps[windowsBuild]?.if).toBeUndefined();
-  for (const verifier of [
-    "node scripts/verify/inspector/runtime-observation.mjs",
-    "node scripts/verify-windows-package.mjs",
-  ]) {
+  for (const [verifier, condition] of [
+    ["node scripts/verify/inspector/runtime-observation.mjs", undefined],
+    ["node scripts/verify-windows-package.mjs", "matrix.suite == 'package'"],
+  ] as const) {
     const step = windowsSteps.findIndex(({ run }) => run === verifier);
     expect(step).toBeGreaterThan(windowsBuild);
-    expect(windowsSteps[step]?.if).toBeUndefined();
+    expect(windowsSteps[step]?.if).toBe(condition);
   }
 });
 
