@@ -821,3 +821,177 @@ it.each([
     ).toBe(pointer);
   },
 );
+
+it.each([
+  [
+    "later write",
+    "const box = { items: [1] };",
+    "const [selected] = box.items; box.items[0] = 2;",
+    ["items", "0"],
+    "resolved",
+  ],
+  [
+    "later replacement",
+    "const box = { items: [1] };",
+    "const [selected] = box.items; box.items = [2];",
+    ["items", "0"],
+    "resolved",
+  ],
+  [
+    "later replacement after assignment",
+    "const box = { items: [1] };",
+    "let selected; [selected] = box.items; box.items = [2];",
+    ["items", "0"],
+    "resolved",
+  ],
+  [
+    "later write through the original",
+    "const box = { items: [1] }; const alias = box;",
+    "const [selected] = alias.items; box.items[0] = 2;",
+    ["items", "0"],
+    "resolved",
+  ],
+  [
+    "later write through the alias",
+    "const box = { items: [1] }; const alias = box;",
+    "const [selected] = box.items; alias.items[0] = 2;",
+    ["items", "0"],
+    "resolved",
+  ],
+  [
+    "nested own-data receiver",
+    "const box = { nested: { items: [1] } }; const alias = box;",
+    'const [selected] = alias.nested["items"]; box.nested.items[0] = 2;',
+    ["nested", "items", "0"],
+    "resolved",
+  ],
+  [
+    "skipping an own slot of the projected array",
+    "const box = { items: [0, 1] }; const alias = box;",
+    "const [,selected] = alias.items; box.items[1] = 2;",
+    ["items", "1"],
+    "resolved",
+  ],
+  [
+    "earlier write",
+    "const box = { items: [1] };",
+    "box.items[0] = 2; const [selected] = box.items;",
+    ["items", "0"],
+    "candidate",
+  ],
+  [
+    "earlier write through the original",
+    "const box = { items: [1] }; const alias = box;",
+    "box.items[0] = 2; const [selected] = alias.items;",
+    ["items", "0"],
+    "candidate",
+  ],
+  [
+    "earlier write through the alias",
+    "const box = { items: [1] }; const alias = box;",
+    "alias.items[0] = 2; const [selected] = box.items;",
+    ["items", "0"],
+    "candidate",
+  ],
+  [
+    "earlier shortening",
+    "const box = { items: [1] }; const alias = box;",
+    "alias.items.length = 0; const [selected] = box.items;",
+    ["items", "0"],
+    "candidate",
+  ],
+  [
+    "earlier receiver replacement",
+    "const box = { items: [1] }; const alias = box;",
+    "box.items = unknown; const [selected] = alias.items;",
+    ["items", "0"],
+    "candidate",
+  ],
+  [
+    "rebound source",
+    "let box = { items: [1] }; const alias = box; box = { items: [2] };",
+    "const [selected] = alias.items; alias.items[0] = 2;",
+    ["items", "0"],
+    "candidate",
+  ],
+  [
+    "getter",
+    "const box = { get items() { return [1]; } };",
+    "const [selected] = box.items;",
+    ["items", "0"],
+    "candidate",
+  ],
+  [
+    "inherited data",
+    "const box = { __proto__: { items: [1] } };",
+    "const [selected] = box.items;",
+    ["items", "0"],
+    "candidate",
+  ],
+  [
+    "earlier getter replacement",
+    "const box = { items: [1] };",
+    'Object.defineProperty(box, "items", { get() { return [2]; } }); const [selected] = box.items;',
+    ["items", "0"],
+    "candidate",
+  ],
+  [
+    "earlier own iterator replacement",
+    "const box = { items: [1] }; const alias = box;",
+    "alias.items[Symbol.iterator] = function* () { yield 2; }; const [selected] = box.items;",
+    ["items", "0"],
+    "candidate",
+  ],
+  [
+    "earlier custom array prototype",
+    "const box = { items: [1] };",
+    "Object.setPrototypeOf(box.items, { *[Symbol.iterator]() { yield 2; } }); const [selected] = box.items;",
+    ["items", "0"],
+    "candidate",
+  ],
+  [
+    "earlier shared next replacement",
+    "const box = { items: [1] };",
+    "Object.getPrototypeOf([].values()).next = () => ({ done: true }); const [selected] = box.items;",
+    ["items", "0"],
+    "candidate",
+  ],
+  [
+    "opaque receiver escape",
+    "const box = { items: [1] };",
+    "consume(box.items); const [selected] = box.items;",
+    ["items", "0"],
+    "candidate",
+  ],
+  [
+    "earlier target setter",
+    "const box = { items: [1, 2] }; const target = { set value(_) { box.items[1] = 3; } };",
+    "let selected; [target.value, selected] = box.items;",
+    ["items", "1"],
+    "candidate",
+  ],
+  [
+    "effectful key",
+    "const box = { undefined: [1] };",
+    "const [selected] = box[void (box.undefined.length = 0)];",
+    ["undefined", "0"],
+    "candidate",
+  ],
+] as const)(
+  "uses the projected array's own data and iteration for %s",
+  (_name, setup, read, propertyPath, resolution) => {
+    const graph = graphForJavaScript(`${setup} ${read}`);
+    const selected = graph.nodes.find(
+      ({ kind, label }) => kind === "binding" && label === "selected",
+    );
+    const edge = graph.relations.find(
+      ({ relation, target_node_id }) =>
+        relation === "destructures" && target_node_id === selected?.node_id,
+    );
+    expect(edge).toMatchObject({ resolution });
+    expect(
+      graph.nodes.find(({ node_id }) => node_id === edge?.source_node_id)
+        ?.properties.property_path,
+    ).toEqual(propertyPath);
+  },
+);

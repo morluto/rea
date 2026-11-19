@@ -2074,7 +2074,19 @@ export function* collectSemanticMemberMutationsSteps(
           continue;
         }
       }
-      const slot = semanticSelectedReferenceSlot(reference, state);
+      const { mutation, node, projection } = reference;
+      // A root array pattern acquires its iterator from the completed RHS.
+      // A nested iterator can run after earlier pattern reads and defaults.
+      const capturesRootPattern =
+        reference.iterationOnly &&
+        projection.length === 0 &&
+        ((t.isVariableDeclarator(mutation) && mutation.init === node) ||
+          (t.isAssignmentExpression(mutation) && mutation.right === node));
+      const slot = semanticSelectedReferenceSlot(
+        reference,
+        state,
+        capturesRootPattern ? node : undefined,
+      );
       // Custom iteration can yield the iterable itself as well as any child.
       // Treat its root as escaped, including writes through yielded references.
       const knownArray = semanticKnownArrayIteration(

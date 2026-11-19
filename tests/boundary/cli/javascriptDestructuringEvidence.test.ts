@@ -41,6 +41,10 @@ cliTest(
     const skipped = ["skip", "first"];
     const [,elided] = skipped;
     skipped[1] = "later";
+    const projectedSource = { items: ["projected"] };
+    const projectedAlias = projectedSource;
+    const [projected] = projectedAlias.items;
+    projectedSource.items[0] = "later";
     const box = { items: [] };
     const iterator = box.items.values();
     const prototype = Reflect.getPrototypeOf(iterator);
@@ -69,6 +73,7 @@ cliTest(
       ["ordinary", ["0"]],
       ["arrayAssigned", ["0"]],
       ["elided", ["1"]],
+      ["projected", ["items", "0"]],
       ["selected", ["0"], "candidate"],
     ] as const) {
       const binding = graph.nodes.find(
@@ -104,6 +109,7 @@ cliTest(
       "ordinary",
       "arrayAssigned",
       "elided",
+      "projected",
       "selected",
     ]) {
       const binding = graph.nodes.find(

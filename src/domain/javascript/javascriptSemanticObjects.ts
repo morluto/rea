@@ -147,13 +147,11 @@ const collectDestructuring = (
   const source = expressionObjectIdentity(initializer, state);
   const rootArray = t.isArrayPattern(root);
   let ownSlot =
-    initializer != null &&
-    source.path !== null &&
-    (!rootArray || source.path.length === 0)
+    initializer != null && source.path !== null
       ? readPresence(
           source.bindingId,
           initializer,
-          rootArray ? "array-iteration" : "property",
+          rootArray ? source.path : undefined,
         )
       : undefined;
   // An unsupported property still occupies its place in the pattern's
