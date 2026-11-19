@@ -125,10 +125,74 @@ describe.skipIf(
       expect(captured).not.toContain("fixture,password");
       expect(
         declaredPackageFiles(facts.repositories, facts.indexTargets),
-      ).toEqual(new Set(targets.map((target) => target.description)));
+      ).toEqual(
+        new Set(
+          targets
+            .filter(({ repoUri }) =>
+              repoUri.startsWith("https://mirror.invalid/"),
+            )
+            .map(({ description }) => description),
+        ),
+      );
     },
   );
 });
+
+it.each([
+  [
+    "https://vendor.invalid/a%2Cb",
+    "https://vendor.invalid/a,b/",
+    "https://vendor.invalid/a%2Cb",
+    false,
+  ],
+  [
+    "https://test-user%3Atest-secret%40vendor.invalid/a",
+    "https://test-user:test-secret@vendor.invalid/a/",
+    null,
+    true,
+  ],
+] as const)(
+  "retains separate sanitized authored and observed APT URIs for %s",
+  async (authored, observed, retained, credentials) => {
+    const root = await createTestTempDirectory("apt-repo-replay-");
+    const file = join(root, "vendor.list");
+    await writeFile(file, `deb ${authored} stable main\n`);
+    const source = "https://vendor.invalid/a stable/main arm64 Packages";
+    const output = [
+      `Description: ${source}`,
+      `Sourcesentry: ${file}:1`,
+      `Repo-URI: ${observed}`,
+      "Release: stable",
+      "Component: main",
+      "Base-URI: https://vendor.invalid/dists/stable/",
+      `Filename: ${join(root, "Packages")}`,
+    ].join("\n");
+    const runQuery: QueryRunner = async (command) => {
+      if (command !== "apt-get") throw new Error(`Unexpected query ${command}`);
+      return { stdout: output, exitCode: 0 };
+    };
+    const facts = await inspectAptRepositories(
+      { sources: [source], origins: ["Vendor"] },
+      {
+        runQuery,
+        apt: {
+          lists: root,
+          trustedParts: root,
+          trusted: join(root, "trusted.gpg"),
+        },
+      },
+      undefined,
+    );
+    expect(facts.repositories[0]).toMatchObject({
+      uri: retained,
+      repo_uri: observed.replace("test-user:test-secret@", ""),
+      uri_credentials_removed: credentials,
+    });
+    expect(JSON.stringify(facts.repositories)).not.toMatch(
+      /test-user|test-secret/u,
+    );
+  },
+);
 
 it.each(["list", "sources"] as const)(
   "does not broaden %s Signed-By fingerprint restrictions to every key in a keyring",

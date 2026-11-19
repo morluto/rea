@@ -251,28 +251,23 @@ const repositoryBase = (
   source: string,
   target: AptIndexTarget | undefined,
   entry: AptSourceEntry | undefined,
-): Omit<AptRepository, "signing_key" | "signing_key_reason"> =>
-  entry === undefined
-    ? {
-        source,
-        sources_file: null,
-        uri: null,
-        uri_credentials_removed: false,
-        suite: null,
-        components: [],
-        architectures: [],
-        release: target?.suite ?? target?.codename ?? null,
-      }
-    : {
-        source,
-        sources_file: entry.file,
-        uri: entry.uri,
-        uri_credentials_removed: entry.credentials,
-        suite: entry.suite,
-        components: [...entry.components],
-        architectures: [...entry.architectures],
-        release: target?.suite ?? target?.codename ?? null,
-      };
+): Omit<AptRepository, "signing_key" | "signing_key_reason"> => ({
+  source,
+  sources_file: entry?.file ?? null,
+  // When APT decoded credentials that the authored token did not delimit,
+  // retaining that token could retain the encoded credentials.
+  uri:
+    target?.repoUriCredentialsRemoved === true && entry?.credentials !== true
+      ? null
+      : (entry?.uri ?? null),
+  ...(target === undefined ? {} : { repo_uri: target.repoUri }),
+  uri_credentials_removed:
+    entry?.credentials === true || target?.repoUriCredentialsRemoved === true,
+  suite: entry?.suite ?? null,
+  components: [...(entry?.components ?? [])],
+  architectures: [...(entry?.architectures ?? [])],
+  release: target?.suite ?? target?.codename ?? null,
+});
 
 /** One vendor source with the entry apt read it from and the key gpgv verified its release with. */
 const repositoryFacts = async (
@@ -290,7 +285,7 @@ const repositoryFacts = async (
     key: undefined,
   });
   const origin = vendor.origin ?? target?.origin ?? null;
-  if (isUbuntuProRepository(origin, base.uri ?? target?.repoUri ?? null))
+  if (isUbuntuProRepository(origin, base.repo_uri ?? base.uri))
     return unverified(UBUNTU_PRO);
   const check = await keyCheck(target, entry, context);
   if ("reason" in check) return unverified(check.reason);

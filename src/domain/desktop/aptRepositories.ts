@@ -1,5 +1,6 @@
 import type { AptRepository } from "./desktopCapture.js";
 import { byteToHex } from "../../kernel/byteToHex.js";
+import { err, ok, type Result } from "../result.js";
 
 /**
  * One `deb` line, or one deb822 stanza, of an apt sources file. A stanza's
@@ -221,6 +222,7 @@ export interface AptIndexTarget {
   readonly position: number;
   /** Without a user name or password, as `baseUri`, whether or not apt printed them. */
   readonly repoUri: string;
+  readonly repoUriCredentialsRemoved?: true;
   /** The suite as the entry writes it; empty for the flat suite `/`. */
   readonly release: string;
   /** The entry's component the index belongs to; null for a flat repository. */
@@ -251,18 +253,22 @@ export const parseAptIndexTargets = (
       at?.file === undefined ||
       at.position === undefined ||
       description === undefined ||
-      repoUri === undefined ||
+      !repoUri ||
       baseUri === undefined ||
       filename?.startsWith("/") !== true
     )
       return [];
     const optional = (name: string) => fields.get(name) || null;
+    const sanitizedRepoUri = withoutCredentials(repoUri);
     return [
       {
         description: withoutCredentialsIn(description),
         sourcesFile: at.file,
         position: Number(at.position),
-        repoUri: withoutCredentials(repoUri),
+        repoUri: sanitizedRepoUri,
+        ...(sanitizedRepoUri === repoUri
+          ? {}
+          : { repoUriCredentialsRemoved: true as const }),
         release: fields.get("release") ?? "",
         component: optional("component"),
         baseUri: withoutCredentials(baseUri),
@@ -315,10 +321,99 @@ export const entryForTarget = (
   };
 };
 
-type RepositoryDeclaration = Pick<
+type ReplayRepository = Pick<
   AptRepository,
-  "source" | "uri" | "suite" | "components"
->;
+  "uri" | "repo_uri" | "uri_credentials_removed"
+> &
+  Partial<Pick<AptRepository, "sources_file">>;
+
+type RepositoryDeclaration = ReplayRepository &
+  Pick<AptRepository, "source" | "suite" | "components">;
+
+const oneLineSource = (repository: ReplayRepository): boolean =>
+  repository.sources_file?.endsWith(".sources") !== true;
+
+// APT decodes an escaped @ in a one-line URI before it separates userinfo.
+const ONE_LINE_ESCAPED_USER_INFO = /^[a-z][a-z0-9+.-]*:\/\/[^/]*%40/iu;
+
+/** Detect credentials left in a legacy or externally supplied capture. */
+export const aptRepositoryHoldsCredentials = (
+  repository: ReplayRepository,
+): boolean => {
+  const { uri, repo_uri } = repository;
+  return (
+    (uri !== null &&
+      (withoutCredentials(uri) !== uri ||
+        (oneLineSource(repository) && ONE_LINE_ESCAPED_USER_INFO.test(uri)))) ||
+    (repo_uri !== undefined && withoutCredentials(repo_uri) !== repo_uri)
+  );
+};
+
+type AptReplayRefusal = {
+  readonly kind: "credentials" | "uri";
+  readonly reason: string;
+};
+
+const httpSourceUri = (uri: string): boolean => /^https?:\/\/[^/]+/u.test(uri);
+const isDeb822UriToken = (uri: string): boolean =>
+  !/[\s\p{Cc}]/u.test(uri) && !uri.includes("$(ARCH)");
+
+/** Admit one AgentEnv deb822 URI and the APT Repo-URI it reproduces. */
+export const aptRepositoryReplayUri = (
+  repository: ReplayRepository,
+): Result<
+  { readonly uri: string; readonly repoUri: string },
+  AptReplayRefusal
+> => {
+  if (
+    repository.uri_credentials_removed === true ||
+    aptRepositoryHoldsCredentials(repository)
+  )
+    return err({
+      kind: "credentials",
+      reason:
+        "its sources entry's URI held a user name or password, which REA neither records nor exports",
+    });
+  const { uri, repo_uri: observed } = repository;
+  if (uri === null)
+    return err({ kind: "uri", reason: "no apt sources entry configures it" });
+  if (
+    !httpSourceUri(uri) ||
+    (observed !== undefined && !httpSourceUri(observed))
+  )
+    return err({
+      kind: "uri",
+      reason: "agentenv installs apt repositories over http or https only",
+    });
+
+  const oneLine = oneLineSource(repository);
+  // A one-line escape can break the indextargets field before REA reads it.
+  if (oneLine && /%(?:0[0-9a-f]|1[0-9a-f]|7f)/iu.test(uri))
+    return err({
+      kind: "uri",
+      reason:
+        "its one-line URI contains an escaped control byte, so apt's index URI cannot be established",
+    });
+  if (observed === undefined && oneLine && /%[0-9a-f]{2}/iu.test(uri))
+    return err({
+      kind: "uri",
+      reason:
+        "its one-line URI has percent escapes and the capture does not record apt's Repo-URI. Capture the application again",
+    });
+
+  const repoUri = observed ?? deb822RepoUri(uri);
+  const declaration =
+    deb822RepoUri(uri) === repoUri && isDeb822UriToken(uri)
+      ? uri
+      : withoutOptionalTrailingSlash(repoUri);
+  if (!isDeb822UriToken(declaration) || deb822RepoUri(declaration) !== repoUri)
+    return err({
+      kind: "uri",
+      reason:
+        "apt's repository URI cannot be represented as one AgentEnv deb822 URI token",
+    });
+  return ok({ uri: declaration, repoUri });
+};
 
 /**
  * The package files, as `apt-cache policy` prints them, that apt reads once
@@ -331,13 +426,19 @@ export const declaredPackageFiles = (
   targets: ReadonlyMap<string, AptIndexTarget>,
 ): ReadonlySet<string> => {
   const declarations = repositories.flatMap((repository) => {
-    const repoUri = targets.get(repository.source)?.repoUri;
-    return repoUri === undefined ||
-      repository.uri === null ||
-      deb822RepoUri(repository.uri) !== repoUri ||
+    const observed = targets.get(repository.source);
+    const replay = aptRepositoryReplayUri(repository);
+    return !replay.ok ||
+      observed?.repoUri !== replay.value.repoUri ||
       repository.suite === null
       ? []
-      : [{ ...repository, repoUri, suite: repository.suite }];
+      : [
+          {
+            ...repository,
+            repoUri: replay.value.repoUri,
+            suite: repository.suite,
+          },
+        ];
   });
   const files = new Set<string>();
   for (const target of targets.values()) {

@@ -516,7 +516,7 @@ describe("APT source URI lookup", () => {
     expect([...declaredPackageFiles([repository], targets)]).toEqual([]);
     expect([
       ...declaredPackageFiles(
-        [{ ...repository, uri: "https://vendor.invalid/a,b" }],
+        [{ ...repository, repo_uri: repoUri, sources_file: list }],
         targets,
       ),
     ]).toEqual([source, sibling]);
