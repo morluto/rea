@@ -175,7 +175,10 @@ it("collects failed default-branch pushes before a saturated PR sample", async (
     branch: "main",
     event: "push",
     conclusion: "failure",
+    attempt: 1,
     limit: 5,
+    scanLimit: 100,
+    omittedRunIds: [],
   });
   expect(manifest.truncation).toContainEqual(
     expect.objectContaining({ code: "default-branch-failure-sample-limit" }),
@@ -189,9 +192,93 @@ it("collects failed default-branch pushes before a saturated PR sample", async (
       event: "push",
       branch: "main",
       created: `>=${manifest.selection.createdAfter}`,
-      per_page: "5",
+      per_page: "100",
     },
   });
+});
+
+it("keeps an attempt-1 default-branch failure when newer reruns fill the sample page", async () => {
+  const createdAt = new Date().toISOString();
+  const rerun = {
+    id: 301,
+    run_attempt: 2,
+    status: "completed",
+    event: "push",
+    head_branch: "main",
+    conclusion: "failure",
+    created_at: createdAt,
+  };
+  const attemptOne = { ...rerun, id: 310, run_attempt: 1 };
+  const fixture = await createFixture([
+    {
+      workflow_runs: Array.from({ length: 100 }, (_, index) => ({
+        id: index + 1,
+        run_attempt: 1,
+        status: "completed",
+        event: "pull_request",
+        conclusion: "success",
+        created_at: createdAt,
+      })),
+    },
+    {
+      workflow_runs: [
+        {
+          id: 500,
+          run_attempt: 1,
+          status: "completed",
+          conclusion: "success",
+          created_at: createdAt,
+        },
+      ],
+    },
+    {
+      total_count: 6,
+      workflow_runs: [
+        rerun,
+        { ...rerun, id: 302 },
+        { ...rerun, id: 303 },
+        { ...rerun, id: 304 },
+        { ...rerun, id: 305 },
+        attemptOne,
+      ],
+    },
+  ]);
+
+  await collectDefaultBranchSample(fixture);
+
+  const manifest = await readBatchManifest(fixture);
+  expect(manifest.selection.defaultBranchFailureSample).toMatchObject({
+    attempt: 1,
+    limit: 5,
+    omittedRunIds: [301, 302, 303, 304, 305],
+  });
+  expect(manifest.errors).toEqual([]);
+  expect(manifest.coverage).toMatchObject({
+    workflowsQueried: ["CI", "Release"],
+    selectedRuns: 102,
+    collectedRuns: 102,
+  });
+  expect(manifest.runs).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        id: 310,
+        runAttempt: 1,
+        workflow: "CI",
+        status: "collected",
+        headBranch: "main",
+        event: "push",
+      }),
+      expect.objectContaining({ id: 1, workflow: "CI", status: "collected" }),
+      expect.objectContaining({
+        id: 500,
+        workflow: "Release",
+        status: "collected",
+      }),
+    ]),
+  );
+  const collectedIds = manifest.runs.map((run: { id: number }) => run.id);
+  for (const id of [301, 302, 303, 304, 305])
+    expect(collectedIds).not.toContain(id);
 });
 
 it.each(["request error", "mismatched runs"])(

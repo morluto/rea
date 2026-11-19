@@ -144,13 +144,19 @@ export function safeSha(value) {
     ? value.toLowerCase()
     : null;
 }
+
+/** Static-check artifacts are published for the first attempt only. */
+export function isStaticEvidenceAttempt(runAttempt) {
+  return runAttempt === 1;
+}
+
 export function selectStaticCheckArtifact(
   page,
   run,
   runAttempt,
   name = STATIC_EVIDENCE_ARTIFACTS["Static checks"],
 ) {
-  if (runAttempt !== 1) return null;
+  if (!isStaticEvidenceAttempt(runAttempt)) return null;
   if (
     !Array.isArray(page?.artifacts) ||
     !Number.isSafeInteger(page.total_count) ||

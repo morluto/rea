@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
+import { isStaticEvidenceAttempt } from "./artifacts.mjs";
 import { collectJobTimings } from "./job-timings.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -139,14 +140,18 @@ export async function collectJobTimingsBatch({
       event: "push",
       branch: defaultBranch,
       created: `>=${cutoff}`,
-      per_page: String(MAX_DEFAULT_BRANCH_FAILURES),
+      per_page: String(MAX_RUNS_PER_WORKFLOW),
     });
-    manifest.selection.defaultBranchFailureSample = {
+    const failureSample = {
       branch: defaultBranch,
       event: "push",
       conclusion: "failure",
+      attempt: 1,
       limit: MAX_DEFAULT_BRANCH_FAILURES,
+      scanLimit: MAX_RUNS_PER_WORKFLOW,
+      omittedRunIds: [],
     };
+    manifest.selection.defaultBranchFailureSample = failureSample;
     try {
       const response = await apiJson(
         `repos/${identity}/actions/workflows/ci.yml/runs?${params}`,
@@ -167,7 +172,7 @@ export async function collectJobTimingsBatch({
       const failures = [];
       for (const run of response.workflow_runs.slice(
         0,
-        MAX_DEFAULT_BRANCH_FAILURES,
+        MAX_RUNS_PER_WORKFLOW,
       )) {
         if (
           run?.status !== "completed" ||
@@ -187,8 +192,14 @@ export async function collectJobTimingsBatch({
           });
           continue;
         }
+        // A rerun has no static-check artifact, so it must not consume a sample slot.
+        if (!isStaticEvidenceAttempt(run.run_attempt)) {
+          failureSample.omittedRunIds.push(run.id);
+          continue;
+        }
         if (failures.some(({ id }) => id === run.id)) continue;
         failures.push(timingRun(run, "CI"));
+        if (failures.length === MAX_DEFAULT_BRANCH_FAILURES) break;
       }
       // Reserve collection time for attribution evidence even when newer PRs fill the sample.
       const failureIds = new Set(failures.map(({ id }) => id));
@@ -346,7 +357,7 @@ async function appendBatchSummary(summaryPath, manifest, manifestPath) {
     `Coverage uses the first ${String(MAX_RUNS_PER_WORKFLOW)} runs per workflow created in the preceding 24 hours and a ${String(TIME_BUDGET_MS / 1_000)} second total budget. This sample is bounded and is not exhaustive.`,
     ...(manifest.selection.defaultBranchFailureSample
       ? [
-          `The capped CI sample also prioritizes up to ${String(MAX_DEFAULT_BRANCH_FAILURES)} failed pushes to the default branch for failure attribution.`,
+          `The capped CI sample also prioritizes up to ${String(MAX_DEFAULT_BRANCH_FAILURES)} failed first-attempt pushes to the default branch for failure attribution.`,
         ]
       : []),
     `Manifest: \`${manifestPath}\`.`,

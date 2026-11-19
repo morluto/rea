@@ -7,6 +7,7 @@ import {
   diagnosticPaths,
   isEligibleMainRun,
   isFailedConclusion,
+  isStaticEvidenceAttempt,
   pullRequestBaseSha,
   readStaticCheckArtifact,
   safeSha,
@@ -367,7 +368,7 @@ export function createGitHubApi({
     async getStaticEvidence(repository, run, job) {
       const artifactName = STATIC_EVIDENCE_ARTIFACTS[job.name];
       if (!artifactName) return null;
-      if (run.run_attempt !== 1) return null;
+      if (!isStaticEvidenceAttempt(run.run_attempt)) return null;
       const page = await request(
         `repos/${repository}/actions/runs/${positiveId(run.id)}/artifacts?per_page=100&page=1`,
       );
