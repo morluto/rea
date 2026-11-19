@@ -312,7 +312,8 @@ export const comparisonLimitations = (
     limitations.push(
       "Recorded empty definition names leave nominal identities unresolved. The comparison has partial name coverage even if a source reported complete metadata.",
     );
-  limitations.push(...capacityLimitations(left, right));
+  for (const limitation of capacityLimitations(left, right))
+    limitations.push(limitation);
   if (scope.agreement === "different")
     limitations.push(
       "The observations select different declaring types; a member outside the other side's selection is unknown, not added or removed.",

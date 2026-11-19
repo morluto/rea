@@ -201,6 +201,38 @@ it("selects namespace-bearing nested declarations from parsed type facts and com
   ).toEqual([]);
 });
 
+it("retains a large inventory of capacity diagnostics and comparison recovery guidance", () => {
+  const bytes = buildManagedPeFixture({});
+  const left = inspect(bytes, "/fixture/limited.dll");
+  const right = inspect(bytes, "/fixture/complete.dll");
+  const count = 140_000;
+  left.result.coverage = {
+    state: "partial",
+    issues: Array.from({ length: count }, (_, offset) => ({
+      code: "resource-limit",
+      scope: `metadata:${offset}`,
+      offset,
+      detail: "Capacity reached",
+    })),
+  };
+
+  const comparison = compareManagedMembers(left, right);
+  const messages = comparison.limitations.filter((message) =>
+    message.startsWith("The left managed member observation exceeded capacity"),
+  );
+  expect(comparison.coverage.status).toBe("partial");
+  expect(comparison.left.resource_limits).toHaveLength(count);
+  expect(messages).toHaveLength(count);
+  expect(
+    messages.every((message, offset) =>
+      message.includes(`metadata:${offset}: Capacity reached.`),
+    ),
+  ).toBe(true);
+  expect(comparison.limitations).toContainEqual(
+    expect.stringContaining("Compare a smaller selection"),
+  );
+});
+
 describe("managed comparison selected nominal membership", () => {
   it("retains known selected pairs in a partial inventory without needing display labels", () => {
     const source = inspect(
