@@ -19,7 +19,6 @@
   "src/domain/apple/plistScalars.ts": 6,
   "src/domain/apple/propertyListDecodeBudget.ts": 2,
   "src/domain/binaryTarget.ts": 10,
-  "src/domain/desktop/elfDependencies.ts": 4,
   "src/domain/desktop/openPgpKeys.ts": 2,
   "src/domain/dosMz.ts": 10,
   "src/domain/elfDynamicEntry.ts": 4,
