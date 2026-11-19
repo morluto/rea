@@ -1,6 +1,6 @@
 import type { Devicetree, InspectDevicetreeInput } from "./devicetree.js";
 import { BinaryFormatFailure } from "../binaryContainer.js";
-import { decodeLimit, ParseFailureError } from "../parseFailure.js";
+import { decodeLimit, type ParseFailureError } from "../parseFailure.js";
 
 /** The ParseFailure format of flattened devicetree blobs. */
 export const DEVICETREE_FORMAT = "devicetree";
@@ -10,14 +10,6 @@ export const DEVICETREE_DECODED_BYTES = 33554432;
 export type DevicetreeLimit =
   | keyof Omit<InspectDevicetreeInput, "path">
   | "decoded_bytes";
-
-const DEVICETREE_LIMITS = new Set<DevicetreeLimit>([
-  "max_file_bytes",
-  "max_nodes",
-  "max_properties",
-  "max_depth",
-  "decoded_bytes",
-]);
 
 export const devicetreeLimitFailure = (
   limit: DevicetreeLimit,
@@ -31,18 +23,6 @@ export const devicetreeLimitFailure = (
     { name: limit, maximum },
   );
 
-export const devicetreeLimitOf = (
-  cause: unknown,
-): { readonly limit: DevicetreeLimit; readonly maximum: number } | undefined =>
-  cause instanceof ParseFailureError &&
-  cause.failure.kind === "limit" &&
-  cause.failure.format === DEVICETREE_FORMAT &&
-  DEVICETREE_LIMITS.has(cause.failure.limit.name as DevicetreeLimit)
-    ? {
-        limit: cause.failure.limit.name as DevicetreeLimit,
-        maximum: cause.failure.limit.maximum,
-      }
-    : undefined;
 const malformed = (message: string): never => {
   throw new BinaryFormatFailure("malformed", message);
 };

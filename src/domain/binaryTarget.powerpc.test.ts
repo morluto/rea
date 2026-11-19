@@ -49,10 +49,45 @@ describe("PowerPC ELF header boundaries", () => {
     });
   });
 
-  it("does not recognize EM_PPC64 as the 32-bit family", () => {
-    expect(parseExecutableHeader(header(false, 64, 21), "x64")).toEqual({
+  it.each([
+    [true, 2],
+    [false, 1],
+  ])(
+    "classifies EM_PPC64 in the family with its class and ABI flags (little=%s)",
+    (little, abi) => {
+      const bytes = header(little, 64, 21);
+      if (little) bytes.writeUInt32LE(abi, 48);
+      else bytes.writeUInt32BE(abi, 48);
+      const parsed = parseExecutableHeader(bytes, "x64");
+      if (!parsed.ok) throw new Error(parsed.error);
+      expect(parsed.value).toEqual({
+        format: "elf",
+        architecture: "powerpc",
+        availableArchitectures: ["powerpc"],
+        powerpc: {
+          elfClass: 64,
+          byteOrder: little ? "little" : "big",
+          type: 2,
+          flags: abi,
+        },
+      });
+    },
+  );
+
+  it.each([false, true])(
+    "refuses an ELF32 header that claims EM_PPC64 (little=%s)",
+    (little) => {
+      expect(parseExecutableHeader(header(little, 32, 21), "x64")).toEqual({
+        ok: false,
+        error: "unsupported ELF architecture: e_machine 21",
+      });
+    },
+  );
+
+  it("names the machine when no family covers it", () => {
+    expect(parseExecutableHeader(header(false, 64, 22), "x64")).toEqual({
       ok: false,
-      error: "unsupported ELF architecture: e_machine 21",
+      error: "unsupported ELF architecture: e_machine 22",
     });
   });
 });

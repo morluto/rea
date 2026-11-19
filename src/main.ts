@@ -10,6 +10,7 @@ import {
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 
 import { parseConfig } from "./config/parseConfig.js";
+import type { McpHttpCommand } from "./cliBuiltinArguments.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 import type { RuntimeDependencies } from "./main/types.js";
 import { runDeferred } from "./main/deferredRuntime.js";
@@ -160,14 +161,14 @@ const processIo: EntrypointIo = {
   },
 };
 
-/** Run `rea mcp --http`: parse its flags, resolve MCP_HOST/MCP_PORT, then serve over HTTP. */
+/** Validate the selected HTTP command, resolve MCP_HOST/MCP_PORT, then serve over HTTP. */
 export const runMcpHttpEntrypoint = async (
-  arguments_: readonly string[],
+  command: McpHttpCommand,
   io: EntrypointIo = processIo,
 ): Promise<void> => {
-  const { parseMcpHttpArguments, renderMcpHttpHelp } =
+  const { validateMcpHttpCommand, renderMcpHttpHelp } =
     await import("./main/mcpHttpArguments.js");
-  const parsed = parseMcpHttpArguments(arguments_);
+  const parsed = validateMcpHttpCommand(command);
   if (!parsed.ok) {
     if (parsed.help) {
       io.writeStdout(`${renderMcpHttpHelp()}\n`);

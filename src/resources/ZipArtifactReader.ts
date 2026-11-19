@@ -421,7 +421,7 @@ export class ZipArtifactReader implements ArtifactReader {
 }
 
 /** Coverage of a central-directory listing, given the member region's byte account. */
-const zipListingCoverage = (
+export const zipListingCoverage = (
   account: ZipMemberRegionAccount | undefined,
 ): ArtifactReaderTraversal => {
   if (account === undefined)
@@ -441,6 +441,11 @@ const zipListingCoverage = (
       ? []
       : [
           `${String(account.unlocatedHeaders)} ZIP central directory record(s) point at no local file header; the bytes they claim were not accounted for.`,
+        ]),
+    ...(account.unverifiedExtents === 0
+      ? []
+      : [
+          `${String(account.unverifiedExtents)} ZIP central directory record(s) have payload extents that conflict with or cannot be established from their local headers or required data descriptors; those claims were not used to establish complete coverage.`,
         ]),
   ];
   return {
@@ -481,14 +486,14 @@ const projectZipEntry = (
         : [
             `ZIP member name ${JSON.stringify(sourcePath)} has a leading current-directory prefix omitted from its logical path.`,
           ]),
-      ...legacyNameLimitations(entry),
+      ...zipEntryNameLimitations(entry),
     ],
     adapterKey: `zip-entry:${index}`,
   };
 };
 
 /** Preserve source bytes when an unflagged legacy name may use another code page. */
-const legacyNameLimitations = (entry: Entry): readonly string[] => {
+export const zipEntryNameLimitations = (entry: Entry): readonly string[] => {
   if (entry.filenameUTF8 || entry.extraFieldUnicodePath?.valid === true)
     return [];
   const bytes = entry.rawFilename;
@@ -564,11 +569,8 @@ const extractStream = (
       if (!output.write(Buffer.from(chunk)))
         await once(output, "drain", { signal: controller.signal });
     },
-    close: async () => {
-      await verifySource();
-      assertArtifactReadActive(signal);
-      output.end();
-    },
+    // Sink closure can precede getData's final validation or rejection.
+    // The producer's successful settlement owns consumer-visible EOF below.
     abort: (reason) => {
       output.destroy(toError(typedZipFailure(reason, entry.compressionMethod)));
     },
@@ -582,14 +584,14 @@ const extractStream = (
         onprogress: () => assertArtifactReadActive(signal),
       }),
     )
-    .then(
-      () => undefined,
-      (cause: unknown) => {
-        output.destroy(
-          toError(typedZipFailure(cause, entry.compressionMethod)),
-        );
-      },
-    );
+    .then(async () => {
+      await verifySource();
+      assertArtifactReadActive(signal);
+      output.end();
+    })
+    .catch((cause: unknown) => {
+      output.destroy(toError(typedZipFailure(cause, entry.compressionMethod)));
+    });
   return { output, completion };
 };
 
@@ -620,7 +622,7 @@ const ZIP_FAILURE_REASONS: ReadonlyMap<string, "format" | "unavailable"> =
   ]);
 
 /** Type a zip.js archive fault so consumers do not report it as file I/O. */
-const typedZipFailure = (
+export const typedZipFailure = (
   cause: unknown,
   compressionMethod?: number,
 ): unknown => {

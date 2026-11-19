@@ -647,6 +647,11 @@ Network and console coverage starts only after REA attaches and enables the rele
 
 Source maps are not fetched by inspection. Bundle analysis fetches them only when `fetch_source_maps` is selected, with exact-origin redirect checks and no credentials, cookies, or referrer. Each fetch operation uses `source_map_fetch_timeout_ms` (default 30000) and a default 64 MiB aggregate streamed-response budget across redirects. Select `source_map_limits.fetch_bytes` to change byte admission for the next call. After response cleanup completes, a fetch overrun is an item limitation, not a thrown analysis timeout. Pending or failed response cleanup instead returns an error retaining its owner. A deadline or byte-limit failure remains explicitly unavailable and makes bundle completeness partial. Source-map decoding defaults to 64 MiB for raw resolved identities and 32 MiB for aggregate inline evidence; `source_map_limits.fetch_bytes` and `source_map_limits.output_bytes` own those independent admissions. Failed maps preserve their failure context when it fits; if another context cannot fit, collection stops with the full requested count, the returned processed count, and an explicit unknown-results limitation. Retained mappings and original sources are returned inline. See [source-location limits](web-source-location.md) for the structural decoder bounds. Original source artifacts with `.ts`, `.tsx`, `.mts`, or `.cts` suffixes carry `text/typescript`; other source names retain `text/javascript`.
 
+When a fetched URL exceeds the output budget and its unread response cannot
+close, the resource error retains the response cleanup owner and reports the
+selected budget as `details.reported_limits.boundary: "output_bytes"` and
+`details.reported_limits.maximum`.
+
 A fully read response that fails UTF-8, JSON, mapping, or structural validation
 retains `artifact: null`, empty original-source, module-edge, and mapping
 arrays, and an explicit failure limitation. Invalid content is `invalid`;

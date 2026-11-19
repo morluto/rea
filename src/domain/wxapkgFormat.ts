@@ -1,3 +1,4 @@
+import { BinaryReader } from "./binaryContainer.js";
 import { err, ok, type Result } from "./result.js";
 
 /**
@@ -33,6 +34,16 @@ export const hasWxapkgEncryptedMagic = (bytes: Uint8Array): boolean =>
     WXAPKG_ENCRYPTED_MAGIC.length,
   ).equals(WXAPKG_ENCRYPTED_MAGIC);
 
+/**
+ * Whether bytes carry the plain wxapkg marks. Recognition is intentionally
+ * separate from admission: a damaged package keeps its format identity and the
+ * reader rejects impossible table accounting as a typed format failure.
+ */
+export const hasWxapkgHeader = (bytes: Uint8Array): boolean =>
+  bytes.length >= WXAPKG_HEADER_BYTES &&
+  bytes[0] === WXAPKG_FIRST_MARK &&
+  bytes[13] === WXAPKG_LAST_MARK;
+
 /** Declared header fields; support and extent admission belong to callers. */
 export interface WxapkgHeaderFacts {
   /** Unknown header field after the first mark; producers write zero. */
@@ -55,33 +66,22 @@ export interface WxapkgHeaderFacts {
 export const readWxapkgHeaderFacts = (
   bytes: Uint8Array,
 ): WxapkgHeaderFacts | undefined => {
-  if (
-    bytes.length < WXAPKG_HEADER_BYTES ||
-    bytes[0] !== WXAPKG_FIRST_MARK ||
-    bytes[13] !== WXAPKG_LAST_MARK
-  )
-    return undefined;
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const info = view.getUint32(1);
-  const indexLength = view.getUint32(5);
-  const dataLength = view.getUint32(9);
-  const fileCount = view.getUint32(14);
+  if (!hasWxapkgHeader(bytes)) return undefined;
+  const reader = new BinaryReader(
+    Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    false,
+    "wxapkg",
+  );
+  const info = reader.u32(1);
+  const indexLength = reader.u32(5);
+  const dataLength = reader.u32(9);
+  const fileCount = reader.u32(14);
   // Every row carries at least its fixed fields; a table too small for the
   // declared count cannot be a wxapkg index.
   if (fileCount === 0 || indexLength < fileCount * WXAPKG_MIN_ROW_BYTES)
     return undefined;
   return { info, indexLength, dataLength, fileCount };
 };
-
-/**
- * Whether bytes carry the plain wxapkg marks. Recognition is intentionally
- * separate from admission: a damaged package keeps its format identity and the
- * reader rejects impossible table accounting as a typed format failure.
- */
-export const hasWxapkgHeader = (bytes: Uint8Array): boolean =>
-  bytes.length >= WXAPKG_HEADER_BYTES &&
-  bytes[0] === WXAPKG_FIRST_MARK &&
-  bytes[13] === WXAPKG_LAST_MARK;
 
 /** Row table and declared data region for one index-length convention. */
 export interface WxapkgIndexLayout {
@@ -169,30 +169,33 @@ const memberFitsIndex = (
   );
 };
 
-/**
- * Choose the admitted index that contains the parsed rows and every member
- * range. An index that ends on the last parsed row wins a tie. Neither the
- * carrier end nor the shorter table is enough on its own: four trailing bytes
- * can make the other convention land on EOF.
- */
-export const selectWxapkgIndexLayout = (
+type WxapkgMemberExtentFailure<Member> =
+  | { readonly _tag: "TruncatedRows" }
+  | { readonly _tag: "MemberOutsideDataRegion"; readonly member: Member }
+  | { readonly _tag: "ConflictingMemberExtents" };
+
+/** Require one declared layout to contain the parsed rows and every member. */
+export const admitWxapkgMemberExtents = <
+  Member extends { readonly offset: number; readonly size: number },
+>(
   layouts: readonly WxapkgIndexLayout[],
   consumedRowBytes: number,
-  members: readonly { readonly offset: number; readonly size: number }[],
-): WxapkgIndexLayout | undefined => {
-  const fitting = layouts.filter(
-    (layout) =>
-      layout.tableBytes >= consumedRowBytes &&
+  members: readonly Member[],
+): Result<void, WxapkgMemberExtentFailure<Member>> => {
+  const candidates = layouts.filter(
+    (layout) => layout.tableBytes >= consumedRowBytes,
+  );
+  if (candidates.length === 0) return err({ _tag: "TruncatedRows" });
+  if (
+    candidates.some((layout) =>
       members.every((member) => memberFitsIndex(layout, member)),
+    )
+  )
+    return ok(undefined);
+  const outside = members.find((member) =>
+    candidates.every((layout) => !memberFitsIndex(layout, member)),
   );
-  const exactRows = fitting.filter(
-    (layout) => layout.tableBytes === consumedRowBytes,
-  );
-  const pool = exactRows.length > 0 ? exactRows : fitting;
-  let selected: WxapkgIndexLayout | undefined;
-  for (const layout of pool) {
-    if (selected === undefined || layout.tableBytes < selected.tableBytes)
-      selected = layout;
-  }
-  return selected;
+  return outside !== undefined
+    ? err({ _tag: "MemberOutsideDataRegion", member: outside })
+    : err({ _tag: "ConflictingMemberExtents" });
 };

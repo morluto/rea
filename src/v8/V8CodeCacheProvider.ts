@@ -1,4 +1,8 @@
-import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
+import {
+  isParseLimit,
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../domain/parseFailureAnalysisError.js";
 import {
   ArtifactResourceScope,
   ArtifactReaderFailure,
@@ -29,6 +33,7 @@ import {
 } from "../domain/v8/v8CodeCache.js";
 import { err, ok } from "../domain/result.js";
 import {
+  V8_CODE_CACHE_FORMAT,
   v8CodeCacheBudgetLimitOf,
   type V8CodeCacheBudgetBoundary,
   type V8CodeCacheBudgetLimit,
@@ -165,22 +170,14 @@ const v8CodeCacheFailurePrimary = (
   input: InspectV8CodeCacheInput,
 ) => {
   const { cause, origin } = facts;
-  const budgetLimit = v8CodeCacheBudgetLimitOf(cause);
-  if (budgetLimit !== undefined)
-    return new AnalysisResourceConstraintError(
-      OPERATION,
-      "capacity",
-      budgetLimit.message,
-      {
-        max_strings: input.max_strings,
-        min_string_bytes: input.min_string_bytes,
-      },
-      {
-        cause,
+  if (isParseLimit(cause, V8_CODE_CACHE_FORMAT)) {
+    const budgetLimit = v8CodeCacheBudgetLimitOf(cause);
+    if (budgetLimit !== undefined)
+      return parseLimitConstraint(OPERATION, "capacity", cause, {
         retryable: false,
         remediationAction: observationBudgetRemediation(budgetLimit, input),
-      },
-    );
+      });
+  }
   const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
   if (formatFailure !== undefined) return formatFailure;
   const identityFailure = projectOwnedArtifactIdentityFailure(

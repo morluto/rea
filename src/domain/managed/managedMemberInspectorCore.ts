@@ -33,6 +33,7 @@ import {
   type MetadataTokenFact,
   metadataToken,
   readMetadataString,
+  metadataBlobOffset,
 } from "./managedMetadataHeaps.js";
 import { memberListTable } from "./managedMemberPointers.js";
 import type {
@@ -1098,10 +1099,7 @@ export const methodGenericArity = (
   blob: Buffer,
 ): number | null => {
   const budget = managedDecodeBudget(layout);
-  budget.admitTransient(
-    blob.length * 256,
-    layout.blob?.offset ?? layout.rootOffset,
-  );
+  budget.admitTransient(blob.length * 256, metadataBlobOffset(layout));
   try {
     return signatureGenericArity(decodeSignature(blob));
   } finally {

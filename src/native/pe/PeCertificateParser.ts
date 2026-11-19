@@ -13,7 +13,7 @@ import {
   PeCertificateAsn1Failure,
   readAsn1,
 } from "./PeCertificateAsn1.js";
-import { readPeHeaders } from "../../domain/pe/peResourceLayout.js";
+import { readPeImageHeaders } from "../../domain/pe/peImageHeaders.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const fail = (message: string): never => {
@@ -23,7 +23,7 @@ const fail = (message: string): never => {
 /** Shared PE header admission, with malformed headers as format failures. */
 const readCertificateImageHeaders = (bytes: Buffer) => {
   try {
-    return readPeHeaders(bytes);
+    return readPeImageHeaders(bytes);
   } catch (cause) {
     throw artifactParseFailure(cause, undefined);
   }
@@ -116,6 +116,10 @@ export const parsePeCertificates = (
       fail("WIN_CERTIFICATE dwLength is shorter than its header.");
     if (at + length > table.length)
       fail("WIN_CERTIFICATE dwLength exceeds the certificate table.");
+    const next = align8(at + length);
+    if (next <= at) fail("WIN_CERTIFICATE alignment did not advance.");
+    if (next > table.length)
+      fail("WIN_CERTIFICATE alignment padding is truncated.");
     const entryPayload = table.subarray(at + 8, at + length);
     let payload = entryPayload;
     let pkcs7: PeCertificates["entries"][number]["pkcs7"] = null;
@@ -215,8 +219,6 @@ export const parsePeCertificates = (
       },
       pkcs7,
     });
-    const next = align8(at + length);
-    if (next <= at) fail("WIN_CERTIFICATE alignment did not advance.");
     at = next;
   }
   const certificates = entries.reduce(

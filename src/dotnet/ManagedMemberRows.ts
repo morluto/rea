@@ -38,6 +38,7 @@ import {
   metadataRowCursor,
   decodeMetadataCodedIndex,
   readMetadataBlob,
+  metadataBlobOffset,
   readMetadataString,
 } from "../domain/managed/managedMetadataHeaps.js";
 import {
@@ -123,12 +124,7 @@ export const parseFields = (
         kind: "field",
       });
       if (!isSelected(selected, declared)) return;
-      const sig = readMetadataBlob(
-        bytes,
-        layout,
-        signatureIndex,
-        layout.blob?.size ?? 0,
-      );
+      const sig = readMetadataBlob(bytes, layout, signatureIndex);
       const decoded = budgetedSignature(
         sig,
         layout,
@@ -180,8 +176,8 @@ export const parseExportedTypes = (
   for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
     readManagedValue(() => {
       const cursor = metadataRowCursor(bytes, layout, 39, row);
-      const flags = cursor.readUInt32();
-      const typeDefId = cursor.readUInt32();
+      const flags = cursor.u32();
+      const typeDefId = cursor.u32();
       const name = readMetadataString(
         bytes,
         layout,
@@ -270,12 +266,7 @@ export const parseMemberRefs = (
         nameIndex,
         layout.strings.size,
       );
-      const sig = readMetadataBlob(
-        bytes,
-        layout,
-        signatureIndex,
-        layout.blob?.size ?? 0,
-      );
+      const sig = readMetadataBlob(bytes, layout, signatureIndex);
       if (parent.kind !== "valid")
         issues.push({
           code: "invalid-row",
@@ -431,12 +422,7 @@ export const parseMethods = ({
       core.set(token, member);
       if (!inPage) return;
       if (!isSelected(selected, declared)) return;
-      const sig = readMetadataBlob(
-        bytes,
-        layout,
-        signatureIndex,
-        layout.blob?.size ?? 0,
-      );
+      const sig = readMetadataBlob(bytes, layout, signatureIndex);
       const decoded = budgetedSignature(
         sig,
         layout,
@@ -690,10 +676,7 @@ const budgetedSignature = (
   },
 ): ReturnType<typeof metadataSignature> => {
   const budget = managedDecodeBudget(layout);
-  budget.admitTransient(
-    bytes.length * 256,
-    layout.blob?.offset ?? layout.rootOffset,
-  );
+  budget.admitTransient(bytes.length * 256, metadataBlobOffset(layout));
   try {
     return admitManagedProjection(
       metadataSignature(bytes, {
@@ -704,7 +687,7 @@ const budgetedSignature = (
           if (name !== null)
             budget.admitTransient(
               (name.length * 6 + 2) * copies,
-              layout.blob?.offset ?? layout.rootOffset,
+              metadataBlobOffset(layout),
             );
           return name;
         },

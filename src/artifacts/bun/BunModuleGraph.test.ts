@@ -267,6 +267,28 @@ it("refuses multiple embedded graphs instead of selecting one", async () => {
   });
 });
 
+it.each([
+  ["zero-fill", (bytes: Buffer) => bytes.writeUInt32LE(0x12, 32 + 72 + 64)],
+  ["file extent", (bytes: Buffer) => bytes.writeBigUInt64LE(1n, 32 + 48)],
+  [
+    "virtual extent",
+    (bytes: Buffer) => bytes.writeBigUInt64LE(1n, 32 + 72 + 32),
+  ],
+] as const)(
+  "refuses a named Mach-O Bun section with invalid %s backing",
+  async (reason, change) => {
+    const section = bunPrefixedPayload(
+      bunModuleGraphPayload({ modules: [{}] }),
+    );
+    const bytes = machoBunSection(section);
+    change(bytes);
+    expect(await locate(bytes)).toMatchObject({
+      status: "present",
+      failure: { reason: "format", message: expect.stringContaining(reason) },
+    });
+  },
+);
+
 it("probes a section graph without reading its payload data", async () => {
   const contents = Buffer.alloc(1024 * 1024, 0x61);
   const bytes = machoBunSection(
@@ -322,16 +344,20 @@ it("reads a shared long ELF section name once without materializing its string t
   const shnum = 16_383;
   const stringOffset = 64;
   const strings = Buffer.alloc(1024 * 1024, 0x61);
+  strings[0] = 0;
+  strings[strings.length - 1] = 0;
   const tableOffset = stringOffset + strings.length;
   const bytes = Buffer.alloc(tableOffset + shnum * 64);
   elfPrefix().copy(bytes, 0);
   bytes.writeBigUInt64LE(BigInt(tableOffset), 40);
   bytes.writeUInt16LE(64, 58);
   bytes.writeUInt16LE(shnum, 60);
-  bytes.writeUInt16LE(0, 62);
+  bytes.writeUInt16LE(1, 62);
   strings.copy(bytes, stringOffset);
-  for (let index = 0; index < shnum; index += 1) {
+  for (let index = 1; index < shnum; index += 1) {
     const header = tableOffset + index * 64;
+    bytes.writeUInt32LE(1, header);
+    bytes.writeUInt32LE(index === 1 ? 3 : 1, header + 4);
     bytes.writeBigUInt64LE(BigInt(stringOffset), header + 24);
     bytes.writeBigUInt64LE(BigInt(strings.length), header + 32);
   }
@@ -434,4 +460,48 @@ it("recognizes an ELF Bun section name deep in the string table by reading only 
     claim: { carrier: "elf-section" },
   });
   expect(observed.bytesRead).toBeLessThan(1024);
+});
+
+it.each([
+  ["missing command", (image: Buffer) => image.writeUInt32LE(2, 16)],
+  [
+    "unused command bytes",
+    (image: Buffer) => image.writeUInt32LE(image.readUInt32LE(20) + 8, 20),
+  ],
+] as const)("refuses a Mach-O Bun graph with %s", async (_label, damage) => {
+  const image = machoBunSection(
+    bunPrefixedPayload(
+      bunModuleGraphPayload({
+        modules: [{ name: "main.js", contents: Buffer.from("hello") }],
+      }),
+    ),
+  );
+  damage(image);
+  const { result } = await probe(image);
+  expect(result).toMatchObject({
+    status: "present",
+    failure: { reason: "format" },
+  });
+});
+
+it("preserves Bun metadata UTF-8 text and keeps undecodable bytes as hex", async () => {
+  const result = await locate(
+    elfAppendedBunPayload(
+      bunModuleGraphPayload({
+        modules: [
+          { name: "\uFEFF資料𐐷.js" },
+          { name: Buffer.from([0xc3, 0x28]) },
+        ],
+        compileExecArgv: Buffer.from([0xff]),
+      }),
+    ),
+  );
+  if (result.status !== "present" || !result.graph)
+    throw new Error("missing graph");
+  const decoded = await decodeBunModuleGraph(result.graph);
+  expect(decoded.modules.map(({ nameText }) => nameText)).toEqual([
+    { text: "\uFEFF資料𐐷.js", hex: null },
+    { text: null, hex: "c328" },
+  ]);
+  expect(decoded.compileExecArgv).toEqual({ text: null, hex: "ff" });
 });

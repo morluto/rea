@@ -40,7 +40,12 @@ import {
 } from "./RustBinaryImage.js";
 import { requireSelectedNativeImage } from "../domain/apple/machoSliceSelection.js";
 import { RustAuditableResourceFailure } from "./RustAuditableReader.js";
-import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
+import { MAX_WASM_SECTIONS, WASM_FORMAT } from "./RustWasmImage.js";
+import {
+  isParseLimit,
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../domain/parseFailureAnalysisError.js";
 
 import {
   RUST_PRODUCER_DEFAULTS,
@@ -139,7 +144,7 @@ export class RustBinaryProvider implements RustBinaryPort {
         retainCompilerPathsWithinReport(
           report,
           limits.output_bytes,
-          rustcLimitation(image.rustc_commit),
+          rustcLimitation(image.rustc_commit, image.format),
         );
         if (
           Buffer.byteLength(JSON.stringify(report), "utf8") >
@@ -212,7 +217,12 @@ const limitationsFor = (
   image: ReturnType<typeof readRustBinaryImage>,
 ): string[] => [
   "Embedded dependency metadata is file content. It does not authenticate package names, versions, sources, or the compiler that produced the binary.",
-  "Only the .dep-v0 dependency section and read-only compiler path strings are inspected. Functions, types, and runtime behavior are not recovered.",
+  `Only the .dep-v0 dependency section and compiler path strings in ${compilerPathSource(image.format)} are inspected. Functions, types, and runtime behavior are not recovered.`,
+  ...(image.format === "wasm"
+    ? [
+        `WebAssembly declares no container word size, so bits is null. Memory address types were not inspected. Section framing is bounded to ${MAX_WASM_SECTIONS} sections.`,
+      ]
+    : []),
   RUST_RESOURCE_GUARD_LIMITATION,
   ...(image.section_names_limitation === undefined
     ? []
@@ -257,12 +267,18 @@ const unknownFormatLimitation = (
   ];
 };
 
+/** rustc keeps constant path strings in native read-only data or WebAssembly data segments. */
+const compilerPathSource = (format: RustBinary["format"]): string =>
+  format === "wasm" ? "the WebAssembly data section" : "read-only data";
+
 const rustcLimitation = (
   commit: ReturnType<typeof readRustBinaryImage>["rustc_commit"],
+  format: RustBinary["format"],
 ): string[] => {
+  const source = compilerPathSource(format);
   if (commit === null)
     return [
-      "No /rustc/<40-hex>/ path was found in read-only data, so a rustc commit hash is unknown.",
+      `No /rustc/<40-hex>/ path was found in ${source}, so a rustc commit hash is unknown.`,
     ];
   if (commit.coverage?.reason === "report_bytes")
     return [
@@ -274,10 +290,10 @@ const rustcLimitation = (
     ];
   if (commit.hashes.length === 1)
     return [
-      "The rustc commit hash is inferred from a /rustc/<40-hex>/ path in read-only data. It does not by itself prove which compiler produced the binary.",
+      `The rustc commit hash is inferred from a /rustc/<40-hex>/ path in ${source}. It does not by itself prove which compiler produced the binary.`,
     ];
   return [
-    "Read-only data contains more than one /rustc/<40-hex>/ path, so a single rustc commit is unknown.",
+    `More than one /rustc/<40-hex>/ path was found in ${source}, so a single rustc commit is unknown.`,
   ];
 };
 
@@ -382,6 +398,15 @@ const failureForPrimary = (
             )),
       },
     );
+  if (isParseLimit(cause, WASM_FORMAT))
+    return parseLimitConstraint(OPERATION, "cpu", cause, {
+      path,
+      ...fixedAllowanceOptions(
+        "The WebAssembly section-walk allowance",
+        "work",
+        { limit: cause.failure.limit.maximum, unit: "sections" },
+      ),
+    });
   return (
     parseFailureAnalysisError(OPERATION, path, cause) ??
     artifactFailure(facts, path, limits)

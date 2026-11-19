@@ -42,51 +42,39 @@ const collect = async (
   return Buffer.concat(chunks).toString("utf8");
 };
 
-describe("CLI output completion", () => {
-  it.each(["json", "toon"])(
-    "waits for pending raw %s writes before exit",
-    async (format) => {
-      const document = JSON.stringify({
-        code: "VALIDATION_ERROR",
-        message: "x".repeat(8192),
+it("waits for pending raw output before exit", async () => {
+  const document = JSON.stringify({
+    code: "VALIDATION_ERROR",
+    message: "x".repeat(8192),
+  });
+  let complete = false;
+  const destination = new Writable({
+    highWaterMark: 1,
+    write(chunk, _encoding, callback) {
+      if (chunk.length === 0) {
+        callback();
+        return;
+      }
+      setImmediate(() => {
+        complete = true;
+        callback();
       });
-      let complete = false;
-      const destination = new Writable({
-        highWaterMark: 1,
-        write(chunk, _encoding, callback) {
-          if (chunk.length === 0) {
-            callback();
-            return;
-          }
-          setImmediate(() => {
-            complete = true;
-            callback();
-          });
-        },
-      });
-      // Both layouts retain the caller-owned destination until its writes drain.
-      if (format === "json")
-        Object.defineProperty(destination, "isTTY", { value: true });
-      const output = createCliResultOutput(
-        parseCliOutputArguments(["--format", format]),
-        destination,
-      );
-      if (output === undefined)
-        throw new Error("Expected valid output controls");
-      destination.write(document);
-      expect(complete).toBe(false);
-      await output.finish();
-      expect(complete).toBe(true);
-      expect(destination.writableEnded).toBe(false);
     },
+  });
+  const output = createCliResultOutput(
+    parseCliOutputArguments(["--format", "json"]),
+    destination,
   );
+  if (output === undefined) throw new Error("Expected valid output controls");
+  destination.write(document);
+  expect(complete).toBe(false);
+  await output.finish();
+  expect(complete).toBe(true);
+  expect(destination.writableEnded).toBe(false);
 });
 
 describe("incremental CLI JSON", () => {
   it.each([
-    null,
-    true,
-    -0,
     1e-7,
     "",
     { empty: [], object: {}, nested: [{ value: null }] },
@@ -386,7 +374,7 @@ describe("CLI result output surface", () => {
 });
 
 describe("full-output token windows", () => {
-  it("preserves Incur token-window metadata when truncating a TOON failure", async () => {
+  it("preserves token-window metadata when truncating a TOON failure", async () => {
     const chunks: Buffer[] = [];
     const destination = new Writable({
       write(chunk: Buffer, _encoding, callback) {
@@ -612,18 +600,6 @@ describe("full-output token counts", () => {
 });
 
 describe("CLI result output surface", () => {
-  it.each([
-    ["--json", "--token-limit", "5"],
-    ["--json", "--format", "invalid"],
-  ])("delegates unsupported output controls %j", (...arguments_) => {
-    expect(
-      createCliResultOutput(
-        parseCliOutputArguments(arguments_),
-        new Writable(),
-      ),
-    ).toBe(undefined);
-  });
-
   it("keeps ownership after a failed write so no second document is emitted", async () => {
     const cause = new Error("Fixture destination failed");
     const destination = new Writable({

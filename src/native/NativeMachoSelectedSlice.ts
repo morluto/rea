@@ -5,11 +5,8 @@ import {
   validateFatSlice,
   type FatSliceDeclaration,
 } from "../domain/apple/machoContainer.js";
-import { malformedInput } from "../domain/parseFailure.js";
-import {
-  MachoCommandNamesLimitError,
-  type MachoCommandNames,
-} from "../domain/apple/machoCommandNames.js";
+import { decodeLimit, malformedInput } from "../domain/parseFailure.js";
+import type { MachoCommandNames } from "../domain/apple/machoCommandNames.js";
 import type { NativeMachoSource } from "./NativeMachoSource.js";
 import type { LipoArchitecture } from "../domain/apple/lipo.js";
 
@@ -44,7 +41,11 @@ export const resolveSelectedMachoSlice = async (
     );
   const rows = prefix.count + (selected.hidden ? 1 : 0);
   if (rows > maximumRecords)
-    throw new MachoCommandNamesLimitError(maximumRecords, "records");
+    throw decodeLimit(
+      "macho",
+      "Mach-O FAT slice records exceed the selected-slice table budget",
+      { name: "macho_fat_slice_records", maximum: maximumRecords },
+    );
   const entrySize = prefix.wide ? 32 : 20;
   const tableEnd = 8 + rows * entrySize;
   if (!Number.isSafeInteger(tableEnd) || tableEnd > source.bytes)

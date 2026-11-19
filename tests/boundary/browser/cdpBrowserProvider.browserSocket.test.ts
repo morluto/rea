@@ -217,7 +217,7 @@ describe("CdpBrowserProvider: browser socket eviction and per-call scoping", () 
   });
 });
 
-it("retains browser-socket siblings and reports invalid attachment as unknown, not omitted", async () => {
+it("retains browser-socket siblings and identifies malformed rows by their discovery position", async () => {
   const browser = await startFakeCdpBrowser({
     commandResult: ({ method }) =>
       method === "Target.getTargets"
@@ -238,9 +238,8 @@ it("retains browser-socket siblings and reports invalid attachment as unknown, n
                 attached: false,
               },
               {
-                targetId: 1,
+                targetId: "missing-url",
                 type: "page",
-                url: "https://example.test/invalid",
               },
               { id: "alias", type: "page", url: "https://example.test/alias" },
             ],
@@ -266,17 +265,22 @@ it("retains browser-socket siblings and reports invalid attachment as unknown, n
       ["first", null, ""],
       ["second", false, "Good"],
     ]);
-    const limitations = result.value.limitations.join("\n");
-    expect(limitations).toContain(
-      'reported malformed attached metadata "unknown"',
+    expect(result.value.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          'CDP Target.getTargets row 0 target first reported malformed attached metadata "unknown"',
+        ),
+        expect.stringContaining(
+          "CDP Target.getTargets row 0 target first reported malformed title metadata 3",
+        ),
+        expect.stringContaining(
+          "CDP Target.getTargets row 2 was excluded because its target identity is malformed",
+        ),
+        expect.stringContaining(
+          "CDP Target.getTargets row 3 was excluded because its target identity is malformed",
+        ),
+      ]),
     );
-    expect(limitations).toContain("reported malformed title metadata 3");
-    expect(
-      result.value.limitations.filter((item) =>
-        item.includes("target identity is malformed"),
-      ),
-    ).toHaveLength(2);
-    expect(limitations).not.toContain("omitted attachment");
   } finally {
     await provider.close();
   }
@@ -323,29 +327,53 @@ describe("CdpBrowserProvider: browser socket failures and cleanup", () => {
     await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   });
 
-  it("rejects malformed browser-socket discovery and closes the socket", async () => {
+  it("rejects malformed discovery replies and admits an explicitly empty inventory", async () => {
+    let malformed:
+      | { method: string; reply: Record<string, unknown> }
+      | undefined;
     const browser = await startFakeCdpBrowser({
-      commandResult: ({ method }) =>
-        method === "Browser.getVersion"
-          ? { product: "FakeChrome/1.0" }
-          : undefined,
-    });
-    trackBrowser(browser);
-    const result = await new CdpBrowserProvider().listTargets(
-      listBrowserTargetsInputSchema.parse({
-        cdp_endpoint: browser.browserWebSocketUrl,
-      }),
-    );
-
-    expect(result).toMatchObject({
-      ok: false,
-      error: {
-        _tag: "BrowserObservationError",
-        operation: "list_browser_targets",
-        reason: "invalid_endpoint_response",
+      commandResult: ({ method }) => {
+        if (method === malformed?.method) return malformed.reply;
+        return method === "Target.getTargets" ? { targetInfos: [] } : undefined;
       },
     });
-    await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+    trackBrowser(browser);
+    const provider = new CdpBrowserProvider();
+    const input = listBrowserTargetsInputSchema.parse({
+      cdp_endpoint: browser.browserWebSocketUrl,
+    });
+    try {
+      for (const invalidReply of [
+        {
+          method: "Browser.getVersion",
+          reply: { product: "FakeChrome/1.0", protocolVersion: "" },
+        },
+        { method: "Target.getTargets", reply: { targetInfos: null } },
+      ]) {
+        malformed = invalidReply;
+        expect(await provider.listTargets(input)).toMatchObject({
+          ok: false,
+          error: {
+            _tag: "BrowserObservationError",
+            operation: "list_browser_targets",
+            reason: "invalid_endpoint_response",
+            detail: expect.stringContaining(`CDP ${invalidReply.method}`),
+          },
+        });
+        await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+      }
+
+      malformed = undefined;
+      expect(await provider.listTargets(input)).toMatchObject({
+        ok: true,
+        value: {
+          targets: [],
+          excluded: { disallowed_origin: 0, non_page: 0, unsupported_url: 0 },
+        },
+      });
+    } finally {
+      await provider.close();
+    }
   });
 
   it("reports a refused browser socket as unreachable", async () => {
@@ -865,7 +893,8 @@ it("keeps an admitted shared browser socket alive for concurrent peers when a ca
 
 describe("CdpBrowserProvider: coalesced cold-start browser sockets", () => {
   it("coalesces concurrent cold-start calls onto one browser WebSocket handshake", async () => {
-    const browser = await startFakeCdpBrowser({ handshakeDelayMs: 40 });
+    const handshake = phaseGate<string>();
+    const browser = await startFakeCdpBrowser({ handshakeGate: handshake });
     trackBrowser(browser);
     const provider = new CdpBrowserProvider();
     let batch:
@@ -898,6 +927,8 @@ describe("CdpBrowserProvider: coalesced cold-start browser sockets", () => {
           }),
         ),
       ]);
+      await handshake.reached(batch, "coalesced browser handshake");
+      handshake.release();
       const [listed, inspected, screenshot] = await batch;
       if (!listed.ok) throw listed.error;
       if (!inspected.ok) throw inspected.error;
@@ -919,6 +950,7 @@ describe("CdpBrowserProvider: coalesced cold-start browser sockets", () => {
         .sort();
       expect(detachedSessionIds).toEqual(["session-1", "session-2"]);
     } finally {
+      handshake.release();
       await batch?.catch(() => undefined);
       await provider.close();
     }
@@ -926,7 +958,11 @@ describe("CdpBrowserProvider: coalesced cold-start browser sockets", () => {
   });
 
   it("keeps an in-flight cold-start handshake alive for a longer-deadline peer when one waiter times out", async () => {
-    const browser = await startFakeCdpBrowser({ handshakeDelayMs: 120 });
+    const handshake = phaseGate<string>();
+    const browser = await startFakeCdpBrowser({ handshakeGate: handshake });
+    const shortDeadlineMs = 25_000;
+    const longDeadlineMs = 45_000;
+    const scheduled = vi.spyOn(globalThis, "setTimeout");
     trackBrowser(browser);
     const provider = new CdpBrowserProvider();
     let shortCall: ReturnType<CdpBrowserProvider["listTargets"]> | undefined;
@@ -935,7 +971,7 @@ describe("CdpBrowserProvider: coalesced cold-start browser sockets", () => {
       shortCall = provider.listTargets(
         listBrowserTargetsInputSchema.parse({
           cdp_endpoint: browser.browserWebSocketUrl,
-          discovery_timeout_ms: 35,
+          discovery_timeout_ms: shortDeadlineMs,
         }),
       );
       longCall = provider.inspectPage(
@@ -943,10 +979,16 @@ describe("CdpBrowserProvider: coalesced cold-start browser sockets", () => {
           cdp_endpoint: browser.browserWebSocketUrl,
           target_id: "allowed-page",
           observation_ms: 0,
-          discovery_timeout_ms: 5_000,
+          discovery_timeout_ms: longDeadlineMs,
         }),
       );
 
+      await handshake.reached(shortCall, "cold-start browser handshake");
+      const shortTimers = scheduled.mock.calls.filter(
+        ([, delay]) => delay === shortDeadlineMs,
+      );
+      expect(shortTimers).toHaveLength(1);
+      shortTimers[0]?.[0]();
       const shortOutcome = await shortCall;
       expect(shortOutcome).toMatchObject({
         ok: false,
@@ -959,9 +1001,11 @@ describe("CdpBrowserProvider: coalesced cold-start browser sockets", () => {
       if (shortOutcome.ok)
         throw new Error("Expected short cold-start waiter to time out");
       expect(shortOutcome.error.userMessage).toContain(
-        "35 ms discovery_timeout_ms",
+        `${shortDeadlineMs} ms discovery_timeout_ms`,
       );
 
+      expect(browser.openedConnectionCount()).toBe(0);
+      handshake.release();
       const longOutcome = await longCall;
       if (!longOutcome.ok) throw longOutcome.error;
       expect(longOutcome.value.target.origin).toBe(browser.allowedOrigin);
@@ -976,7 +1020,9 @@ describe("CdpBrowserProvider: coalesced cold-start browser sockets", () => {
       if (!followUp.ok) throw followUp.error;
       expect(browser.openedConnectionCount()).toBe(1);
     } finally {
+      handshake.release();
       await Promise.allSettled([shortCall, longCall]);
+      scheduled.mockRestore();
       await provider.close();
     }
     await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
