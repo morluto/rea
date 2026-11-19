@@ -874,6 +874,7 @@
 * **apple-ips:** report crash-report format failures through ParseFailure ([#10665](https://github.com/morluto/rea/issues/10665)) ([d482bb9](https://github.com/morluto/rea/commit/d482bb936946e3cc36cc750dc7d12c6926fd8cb1))
 * **apple:** project IPS parser budgets from owned limit facts ([#12289](https://github.com/morluto/rea/issues/12289)) ([224e5e2](https://github.com/morluto/rea/commit/224e5e231f38e5f7fe549b3b8a272e0c98837d95))
 * **apple:** read an ObjC binding slot through BinaryReader ([#12466](https://github.com/morluto/rea/issues/12466)) ([0356ea8](https://github.com/morluto/rea/commit/0356ea8cddd87ab762d918945f238a6a44a2c295))
+* **apple:** share bounded JVM class field reads ([#12540](https://github.com/morluto/rea/issues/12540)) ([0efd54e](https://github.com/morluto/rea/commit/0efd54e1c16a382d6947c60255fe72896c1cab85))
 * **apple:** share lazy dylib payload field reads ([#12536](https://github.com/morluto/rea/issues/12536)) ([756f772](https://github.com/morluto/rea/commit/756f772430fe3ee2c0a814c212e3e403a1f2e8ea))
 * **application:** build application cancellations with a required reason ([#10574](https://github.com/morluto/rea/issues/10574)) ([2826592](https://github.com/morluto/rea/commit/28265927594d6929f6c84d6c65ddd6d72a0b6ee6))
 * **application:** own the finalization precedence in runOwned ([#10645](https://github.com/morluto/rea/issues/10645)) ([2e1e659](https://github.com/morluto/rea/commit/2e1e6593f266b859d2f0fc858d51ed2f280b6849))
