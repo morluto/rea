@@ -42,28 +42,34 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-vi.mock("../process/ExecFileOutput.js", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("../process/ExecFileOutput.js")>();
+vi.mock("./AdbProcess.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./AdbProcess.js")>();
+  // A host launch refusal reaches the adb process owner through its launcher.
+  const refusedLaunch = (failure: unknown) => ({
+    launcher: async () => {
+      throw failure;
+    },
+  });
   return {
     ...actual,
-    execFileBytes: async (
-      ...arguments_: Parameters<typeof actual.execFileBytes>
+    runAdbProcess: async (
+      ...[host, command, limits, signal]: Parameters<
+        typeof actual.runAdbProcess
+      >
     ) => {
-      const failure = adbTestHooks.digestCheckFailure;
-      if (failure !== undefined && arguments_[1].includes("sha256sum"))
-        throw failure;
-      const result = await actual.execFileBytes(...arguments_);
-      if (arguments_[1].includes("exec-out")) adbTestHooks.afterScreencap?.();
+      const failure = command.includes("sha256sum")
+        ? adbTestHooks.digestCheckFailure
+        : command.includes("version")
+          ? adbTestHooks.versionProbeFailure
+          : undefined;
+      const result = await actual.runAdbProcess(
+        failure === undefined ? host : { ...host, ...refusedLaunch(failure) },
+        command,
+        limits,
+        signal,
+      );
+      if (command.includes("exec-out")) adbTestHooks.afterScreencap?.();
       return result;
-    },
-    execFileOutput: async (
-      ...arguments_: Parameters<typeof actual.execFileOutput>
-    ) => {
-      const failure = adbTestHooks.versionProbeFailure;
-      if (failure !== undefined && arguments_[1].includes("version"))
-        throw failure;
-      return actual.execFileOutput(...arguments_);
     },
   };
 });
@@ -92,7 +98,12 @@ const writeAdbStub = async (
   const root = await mkdtemp(join("/tmp", "rea-adb-"));
   onTestFinished(() => rm(root, { recursive: true, force: true }));
   const binary = join(root, "adb");
-  await writeFile(binary, `#!/bin/sh\n${body(root)}\n`, { mode: 0o755 });
+  // A running adb server makes `adb start-server` a successful no-op.
+  await writeFile(
+    binary,
+    `#!/bin/sh\nif [ "$1" = "start-server" ]; then exit 0; fi\n${body(root)}\n`,
+    { mode: 0o755 },
+  );
   await chmod(binary, 0o755);
   return { binary, root };
 };
@@ -1692,6 +1703,9 @@ exit 1`,
   const evidence = parseEvidence(result.error.partialObservation);
   expect(evidence).toMatchObject({
     operation: "push_adb_file",
+    // The retained receipt names the service authority, not the subject-derived
+    // default a partial observation would otherwise fall back to.
+    authority: "external-service",
     normalized_result: {
       local_path: localFile,
       device_path: "/data/local/tmp/payload.bin",
@@ -2687,7 +2701,12 @@ exit 1`,
     code: "resource_constraint",
     details: { operation: "push_adb_file" },
   });
-  expect(result.error.partialObservation).toBeDefined();
+  // The retained receipt names the service authority, not the subject-derived
+  // default a partial observation would otherwise fall back to.
+  expect(parseEvidence(result.error.partialObservation)).toMatchObject({
+    operation: "push_adb_file",
+    authority: "external-service",
+  });
 });
 
 it("attributes version capture failures to the public operation and retains the prerequisite", async () => {
@@ -2716,7 +2735,8 @@ it("refuses a device file name the selected Windows host cannot store before pul
 exit 0`,
   );
   const provider = new AdbProvider({
-    environment: { REA_ADB_PATH: binary },
+    // A double leading slash gives Win32 a UNC root and still opens the POSIX fixture.
+    environment: { REA_ADB_PATH: `/${binary}` },
     platform: "win32",
   });
   const result = await provider.execute({
@@ -2742,5 +2762,47 @@ exit 0`,
   });
   await expect(access(join(root, "pull-ran"))).rejects.toMatchObject({
     code: "ENOENT",
+  });
+});
+
+it("retries retained cleanup in inspectAvailability before launching another probe", async () => {
+  const { binary, root } = await writeAdbStub(
+    () => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
+if [ "$1" = "-s" ] && [ "$3" = "bugreport" ]; then
+  printf 'bugreport-bytes' > "$4/bugreport.zip"
+  printf 'Bug report copied to %s/bugreport.zip\\n' "$4"
+  exit 0
+fi
+exit 1`,
+  );
+  const provider = providerOver(binary);
+  let keepFailing = true;
+  adbTestHooks.bugreportCleanupFailure = new Error("directory still busy");
+  adbTestHooks.afterBugreportCleanup = () => {
+    if (keepFailing)
+      adbTestHooks.bugreportCleanupFailure = new Error("directory still busy");
+  };
+  onTestFinished(async () => {
+    keepFailing = false;
+    adbTestHooks.afterBugreportCleanup = undefined;
+    adbTestHooks.bugreportCleanupFailure = undefined;
+    await provider.close();
+  });
+  const first = await provider.execute({
+    operation: "collect_adb_bugreport",
+    input: {
+      serial: "emulator-5554",
+      output_directory: root,
+    },
+  });
+  expect(first.ok).toBe(false);
+  await expect(provider.inspectAvailability()).rejects.toMatchObject({
+    _tag: "ProviderAdapterError",
+    cleanupIncomplete: true,
+  });
+  keepFailing = false;
+  adbTestHooks.bugreportCleanupFailure = undefined;
+  await expect(provider.inspectAvailability()).resolves.toMatchObject({
+    status: "available",
   });
 });

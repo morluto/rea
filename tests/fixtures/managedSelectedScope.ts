@@ -50,7 +50,7 @@ export const distinctSelectedNestedOwners = () => {
         layout.blob!.size,
       )[2] = 0x0a;
       const field = metadataRowCursor(bytes, layout, 4, 1);
-      field.readUInt16();
+      field.u16();
       field.readIndex(layout.stringIndexSize);
       readMetadataBlob(
         bytes,

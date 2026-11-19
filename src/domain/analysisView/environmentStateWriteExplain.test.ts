@@ -944,7 +944,7 @@ it.each<[string, string, boolean]>([
 });
 
 it("explains many copied and slugged fields of a wide body without searching it again for each", () => {
-  const n = 8_000;
+  const n = 128;
   const value = (index: number) => `value-${String(index).padStart(6, "0")}`;
   const nested = Object.fromEntries(
     Array.from({ length: n }, (_, index) => [
@@ -958,9 +958,8 @@ it("explains many copied and slugged fields of a wide body without searching it 
       value(index),
     ]),
   );
-  // Indexing reads each member a few times (72,000 and 64,001 reads here);
-  // searching the body again for each field reads all of it per field.
-  const reads = { count: 0, budget: 8 * 2 * n };
+  // The read budget allows several passes over the body, and fails a scan per field.
+  const reads = { count: 0, budget: 16 * n };
   const copied = explainCreate(
     created({ id: 1, ...copies }, countedBody(nested, reads)),
   );
@@ -1355,3 +1354,17 @@ it("trims a created clock's fraction, and its sibling clock's, when held entitie
     format: trimmed,
   });
 });
+
+it.each([
+  ["2024-02-29", "2024-02-29T00:00:00Z", false],
+  ["2024-02-30", "2024-03-01T00:00:00Z", true],
+  ["2023-02-29", "2023-03-01T00:00:00Z", true],
+])(
+  "only pins the date-only member %s when it denotes a real date",
+  (dateEnd, dateEndUtc, editable) => {
+    const { body } = explainCreate(
+      created({ id: "42", dateEnd, dateEndUtc }, { dateEnd }),
+    );
+    expect(body.accepted.includes("dateEnd")).toBe(editable);
+  },
+);

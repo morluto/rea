@@ -174,7 +174,7 @@ export const parseImplMaps = ({
   for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
     readManagedValue(() => {
       const cursor = metadataRowCursor(bytes, layout, 28, row);
-      const mappingFlags = cursor.readUInt16();
+      const mappingFlags = cursor.u16();
       const memberForwardedOffset = cursor.offset;
       const memberForwardedRaw = cursor.readIndex(
         layout.codedIndexSize("MemberForwarded"),

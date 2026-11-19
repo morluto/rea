@@ -133,7 +133,7 @@ it("preserves unsupported type-metadata tag reasons instead of reporting null", 
     admit: () => true,
   };
   const nominal = decodeSwiftNominalTypes({
-    entries: [0x100n],
+    entries: [{ address: 0x100n, section: "__swift5_types" }],
     result,
     visitor: vtables.visitor,
     readers: nominalReaders,

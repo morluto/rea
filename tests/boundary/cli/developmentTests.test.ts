@@ -166,8 +166,8 @@ describe("development test runner symlink aliases", () => {
 describe("development test runner prerequisite ownership", () => {
   it("prepares artifacts for filesystem aliases without folding distinct filenames", async () => {
     const root = await fixture();
-    const canonical = "tests/boundary/mcp/deferredRuntime.test.ts";
-    const selected = "tests/boundary/mcp/DEFERREDRuntime.test.ts";
+    const canonical = "tests/boundary/mcp/guidanceMcp.test.ts";
+    const selected = "tests/boundary/mcp/GUIDANCEMcp.test.ts";
     await mkdir(join(root, "tests/boundary/mcp"), { recursive: true });
     await writeFile(
       join(root, canonical),
@@ -192,7 +192,7 @@ describe("development test runner prerequisite ownership", () => {
         paths: [path],
         needsBuild: true,
         artifactTasks:
-          path === canonical || sameFile ? ["artifacts:mcp-catalog"] : [],
+          path === canonical || sameFile ? ["artifacts:skills"] : [],
         vitestArguments: ["run", path],
       });
     }
