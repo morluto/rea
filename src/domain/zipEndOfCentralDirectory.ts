@@ -18,6 +18,8 @@ export const ZIP64_END = {
   fixedBytes: 56,
   sizePrefixBytes: 12,
   sizeOffset: 4,
+  diskOffset: 16,
+  directoryDiskOffset: 20,
   entriesOnDiskOffset: 24,
   totalEntriesOffset: 32,
   directorySizeOffset: 40,
@@ -27,11 +29,38 @@ export const ZIP64_END = {
 export const ZIP64_LOCATOR = {
   signature: 0x07064b50,
   bytes: 20,
+  diskOffset: 4,
   recordOffset: 8,
+  totalDisksOffset: 16,
 } as const;
+
+type Zip64Locator = {
+  readonly disk: number;
+  readonly totalDisks: number;
+  readonly recordOffset: bigint;
+};
+
+export const readZip64Locator = (
+  reader: BinaryReader,
+  offset: number,
+): Zip64Locator | undefined => {
+  if (
+    offset < 0 ||
+    offset + ZIP64_LOCATOR.bytes > reader.bytes.length ||
+    reader.u32(offset) !== ZIP64_LOCATOR.signature
+  )
+    return undefined;
+  return {
+    disk: reader.u32(offset + ZIP64_LOCATOR.diskOffset),
+    totalDisks: reader.u32(offset + ZIP64_LOCATOR.totalDisksOffset),
+    recordOffset: reader.word(offset + ZIP64_LOCATOR.recordOffset, 64),
+  };
+};
 
 type Zip64DirectoryRecord = {
   readonly end: number;
+  readonly disk: number;
+  readonly directoryDisk: number;
   readonly entriesOnDisk: bigint;
   readonly totalEntries: bigint;
   readonly directorySize: bigint;
@@ -55,6 +84,8 @@ export const readZip64DirectoryRecord = (
     return err("size");
   return ok({
     end: offset + ZIP64_END.sizePrefixBytes + Number(bodyBytes),
+    disk: reader.u32(offset + ZIP64_END.diskOffset),
+    directoryDisk: reader.u32(offset + ZIP64_END.directoryDiskOffset),
     entriesOnDisk: reader.word(offset + ZIP64_END.entriesOnDiskOffset, 64),
     totalEntries: reader.word(offset + ZIP64_END.totalEntriesOffset, 64),
     directorySize: reader.word(offset + ZIP64_END.directorySizeOffset, 64),
@@ -76,12 +107,12 @@ export const ZIP_SINGLE_VOLUME = {
   classic: [0],
   zip64Classic: [0, 0xffff],
   zip64Locator: [
-    [4, 0],
-    [16, 1],
+    [ZIP64_LOCATOR.diskOffset, 0],
+    [ZIP64_LOCATOR.totalDisksOffset, 1],
   ],
   zip64End: [
-    [16, 0],
-    [20, 0],
+    [ZIP64_END.diskOffset, 0],
+    [ZIP64_END.directoryDiskOffset, 0],
   ],
 } as const;
 
@@ -109,18 +140,19 @@ export const zipEndUsesSingleVolume = (
   return allowed.includes(disk) && allowed.includes(directoryDisk);
 };
 
-/** Check the disk fields in the located Zip64 locator and end record. */
-export const zip64EndUsesSingleVolume = (
-  reader: BinaryReader,
-  locator: number,
-  end: number,
-): boolean =>
-  ZIP_SINGLE_VOLUME.zip64Locator.every(
-    ([field, value]) => reader.u32(locator + field) === value,
-  ) &&
-  ZIP_SINGLE_VOLUME.zip64End.every(
-    ([field, value]) => reader.u32(end + field) === value,
-  );
+export const zip64LocatorUsesSingleVolume = ({
+  disk,
+  totalDisks,
+}: Zip64Locator): boolean =>
+  disk === ZIP_SINGLE_VOLUME.zip64Locator[0][1] &&
+  totalDisks === ZIP_SINGLE_VOLUME.zip64Locator[1][1];
+
+export const zip64EndUsesSingleVolume = ({
+  disk,
+  directoryDisk,
+}: Zip64DirectoryRecord): boolean =>
+  disk === ZIP_SINGLE_VOLUME.zip64End[0][1] &&
+  directoryDisk === ZIP_SINGLE_VOLUME.zip64End[1][1];
 
 /**
  * Observe complete classic records whose declared comment ends this window,
