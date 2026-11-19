@@ -262,6 +262,15 @@ activation independently of readiness. An owned registration may be disabled
 or stale; unresolved ownership remains unknown. Consumers use those facts
 instead of reclassifying the raw command.
 
+When consumers in different runtimes receive raw input independently, reuse
+the same reader where the runtime is available. If separate implementations
+are needed, prefer generating them from one authored set of parsing rules.
+For example, desktop capture and an offline AppImage installer need the same
+rules to locate the executable after an `env` prefix. The installer also needs
+the executable's source span so it can replace that token while preserving the
+rest of the entry. Use shared fixtures with explicit expected results to check
+the common interpretation through both entry points.
+
 Owned provider commands follow the same rule. `providerOutcomeOf` in
 `src/process/ProviderOutcome.ts` reads what the supervisor observed (launch
 refusal, cancellation, deadline, output or memory limit, resource signal, exit
