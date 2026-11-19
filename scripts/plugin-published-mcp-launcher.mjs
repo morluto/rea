@@ -29,10 +29,11 @@ import { pathToFileURL } from "node:url";
 import { npmInvocation } from "./lib/npm-invocation.mjs";
 
 // Marketplace and Codex checkouts keep source package.json at the plugin root.
-// Install the published artifact under an owner-private cache in os.tmpdir() and
-// run it in-process so the plugin client owns the same process that registered
-// shutdown handlers. An npx/npm script-shell child can exit without delivering
-// signals or awaiting rea, orphaning session/provider resources.
+// Install the published artifact under an owner-private cache (POSIX tmpdir, or
+// Windows LOCALAPPDATA — never a shared TEMP) and run it in-process so the
+// plugin client owns the same process that registered shutdown handlers. An
+// npx/npm script-shell child can exit without delivering signals or awaiting
+// rea, orphaning session/provider resources.
 const PACKAGE = "rea-agents";
 const READY_MARKER = ".rea-plugin-ready";
 const CLEANUP_OWNER = ".rea-plugin-cleanup-owner";
@@ -53,17 +54,36 @@ try {
   process.exitCode = 1;
 }
 
-/** POSIX uid when the host reports one; Windows TEMP is already per-user. */
+/** POSIX uid when the host reports one; Windows uses LOCALAPPDATA + DACL. */
 const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
 
 const cacheDirectoryName =
   uid === undefined ? "rea-plugin-mcp" : `rea-plugin-mcp-${uid}`;
 
 /**
- * Logical spelling until ensurePrivateCacheRoot admits the temporary root and
- * rewrites this to the physical path used for lock and lease identity.
+ * Parent of the executable cache. POSIX uses the process temp root; Windows
+ * uses per-user LOCALAPPDATA so a shared TEMP/TMP (for example C:\\Temp) cannot
+ * host a foreign ready cache. Mirrors PrivateRuntimeRoot's Windows privacy
+ * boundary at the script layer without the native addon.
  */
-let cacheRoot = join(tmpdir(), cacheDirectoryName);
+const cacheParentRoot = () => {
+  if (process.platform !== "win32") return tmpdir();
+  const local = process.env.LOCALAPPDATA?.trim();
+  if (local) return local;
+  throw new Error("LOCALAPPDATA is required for the Windows executable cache");
+};
+
+/**
+ * Logical spelling until ensurePrivateCacheRoot admits the cache parent and
+ * rewrites this to the physical path used for lock and lease identity.
+ * Windows prefers LOCALAPPDATA when set; admission still requires it.
+ */
+let cacheRoot = join(
+  process.platform === "win32" && process.env.LOCALAPPDATA?.trim()
+    ? process.env.LOCALAPPDATA.trim()
+    : tmpdir(),
+  cacheDirectoryName,
+);
 
 // Native bindings (for example Frida) are arch-specific. ARM64 and Rosetta x64
 // clients under the same user must not share one install prefix or lock.
@@ -99,14 +119,90 @@ const tightenOwnedDirectory = (path, kind) => {
   }
 };
 
+/** Current Windows account name required for icacls owner-private DACLs. */
+const windowsCacheUser = () => {
+  const user = process.env.USERNAME?.trim();
+  if (!user)
+    throw new Error("USERNAME is required to verify Windows cache ownership");
+  return user;
+};
+
+/**
+ * Apply a user+SYSTEM protected DACL matching native PrivateRuntimeRoot.
+ * Call only after lstat rejected symlinks/junctions — icacls follows links.
+ */
+const applyWindowsPrivateAcl = (path, kind) => {
+  const user = windowsCacheUser();
+  const grant =
+    kind === "entry" || kind === "ready"
+      ? [`${user}:F`, "SYSTEM:F"]
+      : [`${user}:(OI)(CI)F`, "SYSTEM:(OI)(CI)F"];
+  const result = spawnSync(
+    "icacls",
+    [path, "/inheritance:r", "/grant:r", grant[0], "/grant:r", grant[1]],
+    { encoding: "utf8", windowsHide: true },
+  );
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    const detail = (result.stderr || result.stdout || "").trim();
+    throw new Error(
+      `executable cache ${kind} could not establish a private DACL${detail ? `: ${detail}` : ""}`,
+    );
+  }
+};
+
+/**
+ * Confirm icacls reports only the current user and SYSTEM. Foreign well-known
+ * principals (Everyone, Users, Authenticated Users) mean the warm-cache path
+ * must not trust the entry — mode 0o700 does not establish a Windows DACL.
+ */
+const inspectWindowsPrivateAcl = (path, kind) => {
+  const user = windowsCacheUser();
+  const result = spawnSync("icacls", [path], {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    const detail = (result.stderr || result.stdout || "").trim();
+    throw new Error(
+      `executable cache ${kind} DACL could not be read${detail ? `: ${detail}` : ""}`,
+    );
+  }
+  const output = result.stdout ?? "";
+  if (
+    /(?:^|\\)(?:Everyone|Users|Authenticated Users)\s*:/imu.test(output) ||
+    /\bBUILTIN\\Users\s*:/iu.test(output) ||
+    /\bNT AUTHORITY\\Authenticated Users\s*:/iu.test(output)
+  )
+    throw new Error(`executable cache ${kind} is not private to this user`);
+  const normalized = output.toLowerCase();
+  if (!normalized.includes(user.toLowerCase()))
+    throw new Error(`executable cache ${kind} is not owned by this user`);
+  if (!/system\s*:/iu.test(output))
+    throw new Error(`executable cache ${kind} is not private to this user`);
+};
+
+const verifyWindowsOwnedCachePath = (path, kind) => {
+  try {
+    inspectWindowsPrivateAcl(path, kind);
+  } catch (cause) {
+    if (kind === "entry" || kind === "ready") throw cause;
+    // Directories may still carry a parent-inherited ACL after mkdir; tighten
+    // then re-check, matching POSIX tightenOwnedDirectory after ownership.
+    applyWindowsPrivateAcl(path, kind);
+    inspectWindowsPrivateAcl(path, kind);
+  }
+};
+
 /**
  * Refuse foreign or group/other-writable cache paths before trusting an
  * executable entry. Owner-only directories match PrivateRuntimeRoot's POSIX
- * boundary; files must not be group/other-writable. Never chmod a path before
- * an lstat ownership/symlink check — path chmod follows symlinks.
+ * boundary; Windows uses a verified user+SYSTEM DACL under LOCALAPPDATA.
+ * Files must not be group/other-writable. Never chmod or icacls a path before
+ * an lstat ownership/symlink check — path chmod and icacls follow links.
  */
 const verifyOwnedCachePath = (path, kind) => {
-  if (uid === undefined) return;
   const stats = lstatSync(path);
   if (stats.isSymbolicLink())
     throw new Error(`executable cache ${kind} must not be a symlink`);
@@ -116,6 +212,12 @@ const verifyOwnedCachePath = (path, kind) => {
   } else if (!stats.isFile()) {
     throw new Error(`executable cache ${kind} must be a regular file`);
   }
+  if (process.platform === "win32") {
+    verifyWindowsOwnedCachePath(path, kind);
+    return;
+  }
+  if (uid === undefined)
+    throw new Error(`executable cache ${kind} ownership cannot be verified`);
   if (stats.uid !== uid)
     throw new Error(`executable cache ${kind} is not owned by this user`);
   const foreign = kind === "entry" || kind === "ready" ? 0o022 : 0o077;
@@ -139,13 +241,15 @@ const resolvedTemporaryRoot = (temporaryRoot = tmpdir()) => {
 };
 
 const ensurePrivateCacheRoot = () => {
-  const temporaryRoot = tmpdir();
-  // Admit the selected temporary root before canonicalizing so symlink-
-  // equivalent TMPDIR spellings share one physical cache and lease identity
+  const parent = cacheParentRoot();
+  // Admit the selected parent before canonicalizing so symlink-equivalent
+  // TMPDIR/LOCALAPPDATA spellings share one physical cache and lease identity
   // (PrivateRuntimeRoot physical-path boundary).
-  statSync(temporaryRoot === "" ? temporaryRoot : join(temporaryRoot, "."));
-  cacheRoot = join(resolvedTemporaryRoot(temporaryRoot), cacheDirectoryName);
+  statSync(parent === "" ? parent : join(parent, "."));
+  cacheRoot = join(resolvedTemporaryRoot(parent), cacheDirectoryName);
   mkdirSync(cacheRoot, { recursive: true, mode: 0o700 });
+  // verifyOwnedCachePath lstats before any icacls/chmod so a planted
+  // junction/symlink cannot redirect a privacy rewrite to its target.
   verifyOwnedCachePath(cacheRoot, "root");
 };
 
@@ -209,8 +313,12 @@ const heldLockServers = new Set();
 const lockIdentityKey = (lockPath) =>
   createHash("sha256").update(lockPath).digest("hex").slice(0, 32);
 
-/** Linux sockaddr_un.sun_path usable bytes (108 including the NUL). */
-const POSIX_SOCKET_PATH_LIMIT = 107;
+/**
+ * sockaddr_un.sun_path usable bytes (excluding the NUL). Darwin is 104 total
+ * (103 usable); Linux is 108 (107 usable). Matches the platform split in
+ * GhidraTransport without OpenJDK's two-byte NIO reservation.
+ */
+const POSIX_SOCKET_PATH_LIMIT = process.platform === "darwin" ? 103 : 107;
 
 const leaseDirectoryName = () =>
   uid === undefined ? "rea-mcp-l" : `rea-mcp-l-${uid}`;

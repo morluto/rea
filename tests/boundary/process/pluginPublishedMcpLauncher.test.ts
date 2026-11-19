@@ -54,9 +54,13 @@ const lockPathFor = (version: string, temporaryRoot: string) =>
 const stagingNamePattern = (version: string) =>
   new RegExp(`^${installKeyFor(version)}\\.staging-\\d+$`, "u");
 
+/** sockaddr_un.sun_path usable bytes; matches the launcher platform split. */
+const posixLeaseSocketPathLimit = process.platform === "darwin" ? 103 : 107;
+
 /**
  * Own the launcher cache under a createTestTempDirectory scope so
  * verify:test-temp-hygiene never sees a leftover rea-plugin-mcp-* root.
+ * Windows admits LOCALAPPDATA (not shared TEMP) as the cache parent.
  */
 const createLauncherTemp = async () => {
   const temporaryRoot = await createTestTempDirectory(
@@ -69,6 +73,7 @@ const createLauncherTemp = async () => {
       TMPDIR: temporaryRoot,
       TEMP: temporaryRoot,
       TMP: temporaryRoot,
+      LOCALAPPDATA: temporaryRoot,
     } satisfies NodeJS.ProcessEnv,
   };
 };
@@ -770,7 +775,7 @@ it.skipIf(process.platform === "win32")(
       Buffer.byteLength(
         join(root, leaseDirectoryName, sampleSocketName),
         "utf8",
-      ) <= 107;
+      ) <= posixLeaseSocketPathLimit;
 
     // Short physical root under /tmp so the preferred lease socket fits; a long
     // symlink spelling of the same directory sits past the sun_path budget and
@@ -902,6 +907,121 @@ writeFileSync(
     expect(firstResult.stdout).toBe(JSON.stringify({ installs: 1 }));
     expect(secondResult.stdout).toBe(JSON.stringify({ installs: 1 }));
     expect(await readFile(counterPath, "utf8")).toBe("1");
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "applies the host sun_path budget when selecting a preferred lease socket root",
+  async () => {
+    const version = "6.8.0-published-sun-path-budget";
+    const leaseDirectoryName =
+      uid === undefined ? "rea-mcp-l" : `rea-mcp-l-${uid}`;
+    const sampleSocketName = `${"0".repeat(32)}.sock`;
+    const socketBytes = (root: string) =>
+      Buffer.byteLength(
+        join(root, leaseDirectoryName, sampleSocketName),
+        "utf8",
+      );
+
+    // A 105-byte preferred socket fits Linux's 107-byte budget but exceeds
+    // Darwin's 103-byte sun_path; the launcher must choose accordingly.
+    const targetBytes = 105;
+    expect(targetBytes).toBeGreaterThan(103);
+    expect(targetBytes).toBeLessThanOrEqual(107);
+
+    const baseRoot = await realpath(
+      await mkdtemp(join(await realpath("/tmp"), "rea-pub-sun-")),
+    );
+    onTestFinished(async () => {
+      await removeTestWorkspace(baseRoot);
+    });
+    const pad = targetBytes - socketBytes(baseRoot) - 1; // -1 for path separator
+    expect(pad).toBeGreaterThan(0);
+    const physicalRoot = join(baseRoot, "p".repeat(pad));
+    await mkdir(physicalRoot, { recursive: true, mode: 0o700 });
+    expect(socketBytes(physicalRoot)).toBe(targetBytes);
+
+    const preferredSocketRoot = join(physicalRoot, leaseDirectoryName);
+    const fallbackSocketRoot = join("/tmp", leaseDirectoryName);
+    const expectsPreferred = targetBytes <= posixLeaseSocketPathLimit;
+    expect(expectsPreferred).toBe(process.platform !== "darwin");
+
+    const physicalLock = lockPathFor(version, physicalRoot);
+    const lockKey = createHash("sha256")
+      .update(physicalLock)
+      .digest("hex")
+      .slice(0, 32);
+    const preferredLeaseSocket = join(preferredSocketRoot, `${lockKey}.sock`);
+    const fallbackLeaseSocket = join(fallbackSocketRoot, `${lockKey}.sock`);
+
+    const prefix = installPrefix(version, physicalRoot);
+    await rm(prefix, { recursive: true, force: true });
+    await rm(physicalLock, { recursive: true, force: true }).catch(
+      () => undefined,
+    );
+    await rm(preferredLeaseSocket, { force: true }).catch(() => undefined);
+    await rm(fallbackLeaseSocket, { force: true }).catch(() => undefined);
+
+    const workspace = await createTestTempDirectory("rea-published-sun-path-");
+    const bin = join(workspace, "bin");
+    await mkdir(bin);
+    const npmEntry = join(bin, "npm-cli.cjs");
+    const startedPath = join(workspace, "started");
+    const releasePath = join(workspace, "release");
+    await writeFile(
+      npmEntry,
+      `#!/usr/bin/env node
+const { mkdirSync, readFileSync, writeFileSync } = require("node:fs");
+const { dirname, join } = require("node:path");
+const startedPath = ${JSON.stringify(startedPath)};
+const releasePath = ${JSON.stringify(releasePath)};
+const sleep = (ms) =>
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+const prefix = process.argv[process.argv.indexOf("--prefix") + 1];
+const entry = join(prefix, "node_modules", "rea-agents", "scripts", "rea.mjs");
+mkdirSync(dirname(entry), { recursive: true, mode: 0o700 });
+writeFileSync(entry, "process.stdout.write('imported-too-early');", { mode: 0o600 });
+writeFileSync(startedPath, prefix);
+for (;;) {
+  try {
+    readFileSync(releasePath);
+    break;
+  } catch {
+    sleep(20);
+  }
+}
+writeFileSync(
+  entry,
+  "process.stdout.write('ok'); process.exit(0);",
+  { mode: 0o600 },
+);
+`,
+    );
+
+    const { child, closed } = start([version], {
+      ...process.env,
+      TMPDIR: physicalRoot,
+      TEMP: physicalRoot,
+      TMP: physicalRoot,
+      PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+      npm_execpath: npmEntry,
+    });
+    await waitForFile(startedPath);
+    if (expectsPreferred) {
+      await access(preferredLeaseSocket);
+      await expect(access(fallbackLeaseSocket)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    } else {
+      await access(fallbackLeaseSocket);
+      await expect(access(preferredLeaseSocket)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    }
+    await writeFile(releasePath, "go", { mode: 0o600 });
+    const result = await closed;
+    expect(result.code).toBe(0);
+    expect(result.stdout).toBe("ok");
   },
 );
 
@@ -1191,44 +1311,47 @@ it.skipIf(uid === undefined)(
   },
 );
 
-it.skipIf(uid === undefined)(
-  "refuses a symlinked cache root without changing the target mode",
-  async () => {
-    const version = "6.8.0-published-symlink-root";
-    const workspace = await createTestTempDirectory(
-      "rea-published-symlink-root-",
-    );
-    const target = join(workspace, "served");
-    await mkdir(target, { mode: 0o755 });
-    await chmod(target, 0o755);
-    const temporaryRoot = join(workspace, "tmp");
-    await mkdir(temporaryRoot, { mode: 0o700 });
-    const linkedRoot = cacheRootFor(temporaryRoot);
-    await symlink(target, linkedRoot);
-    onTestFinished(async () => {
-      await rm(linkedRoot, { force: true });
-      await chmod(target, 0o700).catch(() => undefined);
-    });
-    const missingBin = await createTestTempDirectory(
-      "rea-published-symlink-root-bin-",
-    );
-    const { child, closed } = start([version], {
-      ...process.env,
-      PATH: missingBin,
-      TEMP: temporaryRoot,
-      TMP: temporaryRoot,
-      TMPDIR: temporaryRoot,
-    });
-    child.stdin.end();
-    const result = await closed;
-    expect(result.code).toBe(1);
-    expect(result.stdout).toBe("");
-    expect(result.stderr).toMatch(
-      /refused an untrusted executable cache: executable cache root must not be a symlink/u,
-    );
-    expect((await lstat(target)).mode & 0o777).toBe(0o755);
-  },
-);
+it("refuses a symlinked cache root without changing the target mode", async () => {
+  const version = "6.8.0-published-symlink-root";
+  const workspace = await createTestTempDirectory(
+    "rea-published-symlink-root-",
+  );
+  const target = join(workspace, "served");
+  await mkdir(target, { mode: 0o755 });
+  if (uid !== undefined) await chmod(target, 0o755);
+  const temporaryRoot = join(workspace, "tmp");
+  await mkdir(temporaryRoot, { mode: 0o700 });
+  const linkedRoot = cacheRootFor(temporaryRoot);
+  // Windows junctions need no symlink privilege; POSIX ignores the type.
+  await symlink(
+    target,
+    linkedRoot,
+    process.platform === "win32" ? "junction" : undefined,
+  );
+  onTestFinished(async () => {
+    await rm(linkedRoot, { force: true });
+    if (uid !== undefined) await chmod(target, 0o700).catch(() => undefined);
+  });
+  const missingBin = await createTestTempDirectory(
+    "rea-published-symlink-root-bin-",
+  );
+  const { child, closed } = start([version], {
+    ...process.env,
+    PATH: missingBin,
+    TEMP: temporaryRoot,
+    TMP: temporaryRoot,
+    TMPDIR: temporaryRoot,
+    LOCALAPPDATA: temporaryRoot,
+  });
+  child.stdin.end();
+  const result = await closed;
+  expect(result.code).toBe(1);
+  expect(result.stdout).toBe("");
+  expect(result.stderr).toMatch(
+    /refused an untrusted executable cache: executable cache root must not be a symlink/u,
+  );
+  if (uid !== undefined) expect((await lstat(target)).mode & 0o777).toBe(0o755);
+});
 
 it("preserves a temporary install prefix that contains spaces as one npm argument", async () => {
   const version = `6.8.0-space-${String(Date.now())}-${Math.random().toString(36).slice(2, 8)}`;
@@ -1261,6 +1384,7 @@ writeFileSync(entry, "process.exit(0);", { mode: 0o600 });
     TEMP: spacedTmp,
     TMP: spacedTmp,
     TMPDIR: spacedTmp,
+    LOCALAPPDATA: spacedTmp,
     npm_execpath: npmEntry,
   });
   const result = await closed;
@@ -1605,8 +1729,9 @@ ${holdOpen}
     expect(npmPid).toBeGreaterThan(0);
     expect(lifecyclePid).toBeGreaterThan(0);
     // Lease sockets use a length-checked owner-private root so long TMPDIR
-    // lock directories still fit Linux's ~107-byte sun_path limit. The same
-    // digest keys Windows pipe names so long TEMP prefixes cannot collide.
+    // lock directories still fit the host sun_path budget (Darwin 103 / Linux
+    // 107). The same digest keys Windows pipe names so long TEMP prefixes
+    // cannot collide.
     const lockKey = createHash("sha256")
       .update(lockPath)
       .digest("hex")
@@ -1628,11 +1753,16 @@ ${holdOpen}
       `${lockKey}.sock`,
     );
     const leaseSocket =
-      Buffer.byteLength(preferredLeaseSocket, "utf8") <= 107
+      Buffer.byteLength(preferredLeaseSocket, "utf8") <=
+      posixLeaseSocketPathLimit
         ? preferredLeaseSocket
         : join("/tmp", leaseDirectoryName, `${lockKey}.sock`);
-    expect(join(lockPath, "lease.sock").length).toBeGreaterThan(107);
-    expect(Buffer.byteLength(leaseSocket, "utf8")).toBeLessThanOrEqual(107);
+    expect(join(lockPath, "lease.sock").length).toBeGreaterThan(
+      posixLeaseSocketPathLimit,
+    );
+    expect(Buffer.byteLength(leaseSocket, "utf8")).toBeLessThanOrEqual(
+      posixLeaseSocketPathLimit,
+    );
     await access(leaseSocket);
     child.kill("SIGTERM");
     const result = await closed;
