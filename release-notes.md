@@ -1450,6 +1450,7 @@
 * **parsers:** bound Go, Solidity and managed lookups by counts instead of elapsed time ([#11656](https://github.com/morluto/rea/issues/11656)) ([0c45258](https://github.com/morluto/rea/commit/0c45258da0b4d378a3b143c4197a7d935d36f120))
 * **parsers:** compare adapters with admitted provider results ([#12203](https://github.com/morluto/rea/issues/12203)) ([63ea516](https://github.com/morluto/rea/commit/63ea5168327fbb951a1ff6ed47c28d9c7d764855))
 * **pcap:** verify relative tool diagnostics through MCP ([90fd58d](https://github.com/morluto/rea/commit/90fd58d37333d11c3c73cef04ef3244c3bbb958a)), closes [#7569](https://github.com/morluto/rea/issues/7569)
+* **pe:** pin stored resource name ordering ([#12518](https://github.com/morluto/rea/issues/12518)) ([1ec3272](https://github.com/morluto/rea/commit/1ec32721af3391c2e99ae0d6414343d54caf391a))
 * **pe:** qualify large icon declarations with real producers ([#12051](https://github.com/morluto/rea/issues/12051)) ([e70c4c9](https://github.com/morluto/rea/commit/e70c4c963a9c192140df029f3e580f36245829bd))
 * **process:** assert regex deadline and launcher grace outcomes instead of elapsed-time bounds ([#10957](https://github.com/morluto/rea/issues/10957)) ([bf074b8](https://github.com/morluto/rea/commit/bf074b8c064cade132e411ec2f8a5e180b7050cc))
 * **process:** await completed sampling coverage ([#11927](https://github.com/morluto/rea/issues/11927)) ([87b1b32](https://github.com/morluto/rea/commit/87b1b322e4cab47c733d5967f2fe0c7c2bfdcb7c))
