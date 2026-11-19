@@ -49,3 +49,15 @@ it("parses JSON with an explicit duplicate-member policy and string-literal help
   expect(parseLastWinsJson('{"a":1,"a":2}')).toEqual({ a: 2 });
   expect(parseJsonStringLiteral('"\\u0061"')).toBe("a");
 });
+
+it("preserves the duplicate offset past long strings and escaped boundaries", () => {
+  const literal = 'quote: " and slash: \\ '.repeat(8);
+  const value = "a".repeat(30) + '"' + literal;
+  const key = "member".repeat(12);
+  const source = `{${JSON.stringify(key)}:${JSON.stringify(value)},`;
+  const escapedKey = `"\\u006d${key.slice(1)}"`;
+  expect(findDuplicateJsonMember(`${source}${escapedKey}:0}`)).toEqual({
+    name: key,
+    offset: source.length,
+  });
+});
