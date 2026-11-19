@@ -631,6 +631,70 @@ const payloadsOf = (bytes: Buffer, name = "NODE_SEA_BLOB", maxEntries = 4096) =>
     maxEntries,
   );
 
+const supplementaryName = {
+  name: "\u{10000}",
+  utf16le_hex: "00d800dc",
+  payload: "supplementary",
+};
+const privateUseName = {
+  name: "\u{e000}",
+  utf16le_hex: "00e0",
+  payload: "private use",
+};
+
+it.each([
+  { order: "UTF-8 byte", first: privateUseName, second: supplementaryName },
+  {
+    order: "UTF-16 code unit",
+    first: supplementaryName,
+    second: privateUseName,
+  },
+])(
+  "preserves named siblings and exact payload lookup in $order order",
+  async ({ first, second }) => {
+    const { bytes, directoryOffsets } = peResourceFixture(
+      false,
+      [first, second].map(({ name, payload }) => ({
+        type: 10,
+        name,
+        language: 1033,
+        payload: Buffer.from(payload),
+      })),
+    );
+    const [root, names] = directoryOffsets;
+    if (root === undefined || names === undefined)
+      throw new Error("Missing resource fixture directories");
+    const firstEntry = names + 16;
+    const secondEntry = firstEntry + 8;
+    const firstName = root + (bytes.readUInt32LE(firstEntry) & 0x7fff_ffff) + 2;
+    // Store the selected order explicitly. The fixture's default name order
+    // only affects the placement of strings and child directories.
+    if (bytes.readUInt16LE(firstName) !== first.name.charCodeAt(0)) {
+      const saved = Buffer.from(bytes.subarray(firstEntry, secondEntry));
+      bytes.copy(bytes, firstEntry, secondEntry, secondEntry + 8);
+      saved.copy(bytes, secondEntry);
+    }
+
+    const report = peResourcesSchema.parse(await parse(bytes));
+    expect(report.coverage).toMatchObject({ status: "complete", resources: 2 });
+    expect(report.resources.map(({ name }) => name)).toMatchObject([
+      { kind: "name", name: first.name, utf16le_hex: first.utf16le_hex },
+      { kind: "name", name: second.name, utf16le_hex: second.utf16le_hex },
+    ]);
+    expect(
+      report.resources.map(({ entry_locations }) => entry_locations[1]?.offset),
+    ).toEqual([firstEntry, secondEntry]);
+    for (const { name, payload } of [first, second]) {
+      const ranges = await payloadsOf(bytes, name);
+      expect(
+        ranges.map((range) =>
+          bytes.toString("utf8", range.offset, range.offset + range.bytes),
+        ),
+      ).toEqual([payload]);
+    }
+  },
+);
+
 it("locates every language payload of a named resource with the bounded walk", async () => {
   const fixture = peResourceFixture(false, [
     { type: 10, name: "NODE_SEA_BLOB", language: 1, payload: Buffer.from("a") },
