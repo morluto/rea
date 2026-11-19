@@ -37,8 +37,14 @@ const denseInlineSlots = (
   state: JavaScriptSemanticAnalysisState,
   allowance: { remaining: number },
 ): readonly ArrayLiteralSlot[] | undefined => {
-  if (allowance.remaining === 0) return undefined;
-  allowance.remaining--;
+  const takeSelection = (): boolean => {
+    if (allowance.remaining === 0) {
+      state.valueResourceLimits.add("alias-selections");
+      return false;
+    }
+    allowance.remaining--;
+    return true;
+  };
   const spreadArray = (part: t.SpreadElement) => {
     const argument = unwrapJavaScriptExpression(part.argument).node;
     return t.isArrayExpression(argument) &&
@@ -47,7 +53,7 @@ const denseInlineSlots = (
       : undefined;
   };
   const root = spreadArray(spread);
-  if (root === undefined) return undefined;
+  if (root === undefined || !takeSelection()) return undefined;
   const pending = [{ array: root, index: 0 }];
   const slots: ArrayLiteralSlot[] = [];
   while (pending.length > 0) {
@@ -56,8 +62,7 @@ const denseInlineSlots = (
       pending.pop();
       continue;
     }
-    if (allowance.remaining === 0) return undefined;
-    allowance.remaining--;
+    if (!takeSelection()) return undefined;
     const element = frame.array.elements[frame.index++]!;
     if (element === null) return undefined;
     if (t.isSpreadElement(element)) {
