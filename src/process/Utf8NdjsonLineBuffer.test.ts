@@ -130,6 +130,20 @@ describe("UTF-8 NDJSON line buffer", () => {
     });
   });
 
+  it("releases a drained large frame when only a partial next frame remains", () => {
+    const bytes = 1024 * 1024;
+    const lines = new Utf8NdjsonLineBuffer(() => bytes);
+    expect(texts(lines.push(Buffer.alloc(bytes, 0x78)))).toEqual([]);
+
+    const [first] = texts(lines.push(Buffer.from("\npartial")));
+    expect(first?.length).toBe(bytes);
+    expect(lines.retainedTail()).toEqual({
+      pendingBytes: 7,
+      backingBytes: 7,
+    });
+    expect(texts(lines.push(Buffer.from(" line\n")))).toEqual(["partial line"]);
+  });
+
   it("discards an unterminated tail once it passes the ceiling", () => {
     const lines = new Utf8NdjsonLineBuffer(() => 16);
     expect([...lines.push(Buffer.alloc(16, 0x78))]).toEqual([]);
