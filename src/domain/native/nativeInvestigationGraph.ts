@@ -252,6 +252,11 @@ export const traceNativeInvestigationGraph = (
         continue;
       }
       const nextId = direction === "forward" ? edge.to : edge.from;
+      if (!nodeById.has(nextId)) {
+        truncated = true;
+        reason ??= "edge_target_missing_from_graph";
+        continue;
+      }
       const alreadyVisited = visited.has(nextId);
       if (!alreadyVisited && current.depth >= limits.max_depth) {
         truncated = true;
@@ -267,11 +272,6 @@ export const traceNativeInvestigationGraph = (
       }
       selectedEdges.set(edge.id, edge);
       if (alreadyVisited) continue;
-      if (!nodeById.has(nextId)) {
-        truncated = true;
-        reason ??= "edge_target_missing_from_graph";
-        continue;
-      }
       visited.add(nextId);
       // A retained node has already been reached even if a later sibling
       // exhausts a budget before this node is dequeued for expansion.
