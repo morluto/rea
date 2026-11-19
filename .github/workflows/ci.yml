@@ -730,6 +730,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: windows-native-inspection-fixture
+          overwrite: true
           path: .cache/windows-native-inspection-fixture/
           if-no-files-found: error
       # The process boundary observations are independent of the addon: they
@@ -764,11 +765,13 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: windows-process-boundary-fixture
+          overwrite: true
           path: .cache/windows-process-boundary/
           if-no-files-found: error
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: windows-native-controls
+          overwrite: true
           path: native/windows/build/
           if-no-files-found: error
 

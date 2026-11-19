@@ -175,6 +175,39 @@ it("keeps every SQLite runtime selector inside the published package engine rang
     expect(subset(selector, engines.node), selector).toBe(true);
 });
 
+it("replaces named Windows cross-build artifacts on producer reruns", async () => {
+  const { jobs } = await workflow();
+  const steps = z.array(
+    z.object({
+      uses: z.string().optional(),
+      with: z.record(z.string(), z.unknown()).optional(),
+    }),
+  );
+  const uploads = steps
+    .parse(jobs["windows-native-build"]?.steps)
+    .filter((step) => step.uses?.startsWith("actions/upload-artifact@"));
+  expect(uploads.map((step) => step.with)).toEqual([
+    {
+      name: "windows-native-inspection-fixture",
+      path: ".cache/windows-native-inspection-fixture/",
+      overwrite: true,
+      "if-no-files-found": "error",
+    },
+    {
+      name: "windows-process-boundary-fixture",
+      path: ".cache/windows-process-boundary/",
+      overwrite: true,
+      "if-no-files-found": "error",
+    },
+    {
+      name: "windows-native-controls",
+      path: "native/windows/build/",
+      overwrite: true,
+      "if-no-files-found": "error",
+    },
+  ]);
+});
+
 it("binds SQLite compatibility jobs to the build's prepared runtime artifact and root layout", async () => {
   expect((await workflow()).jobs["sqlite-runtime"]?.if).toBe(
     "needs.changes.outputs.sqlite == 'true'",
