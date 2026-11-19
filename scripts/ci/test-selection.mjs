@@ -260,7 +260,7 @@ export function traceAffectedTests({ files, snapshot }) {
   // selection, even when other changes select tests.
   for (const library of changedModules.filter(isScriptLibrary)) {
     const reached = throughHelpers([library]);
-    const paths = named(reached);
+    const paths = [...reached].filter(isNamedTarget);
     if (
       !tests.some(
         (test) =>
