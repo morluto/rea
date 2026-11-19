@@ -98,6 +98,15 @@ a decoded blob is omitted with partial coverage. A separate blob-backed fact
 such as a method's local-variable signature remains unknown when other facts
 about that method are available. An out-of-root stream declaration is malformed.
 
+Repeated `#Strings` declarations for the same range keep the existing name
+facts and disclose the duplicate. Distinct ranges leave nonzero string
+indices unresolved. When there is exactly one Module row, its token, file
+offset, generation, raw name index, and independently readable GUIDs remain
+in `metadata.unresolved_module_name`. The usual `module` object is null in
+this case. Index zero still reads as an empty string. A known MVID can bound
+build-local token identity even when the Module name is unresolved. Unreadable
+names do not supply nominal member or type lookup keys.
+
 If the metadata root declares both compressed (`#~`) and uncompressed (`#-`)
 tables, REA reports both declarations and leaves the row layout unresolved.
 The metadata version and PE/CLI evidence remain available. Member inventories,

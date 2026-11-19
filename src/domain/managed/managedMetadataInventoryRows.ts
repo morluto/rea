@@ -11,6 +11,7 @@ import type { TypeMemberListFacts } from "./managedTypeMemberLists.js";
 import type {
   ManagedArtifactInspection,
   ManagedParseIssue,
+  NamedManagedModule,
 } from "./managedArtifact.js";
 import {
   MANAGED_CODED_INDEXES,
@@ -37,7 +38,7 @@ import type { ManagedTypeReferenceLookup } from "./managedTypeReferences.js";
 import type { ManagedResourceDirectory } from "./managedMetadataInventory.js";
 import type { ManagedType, parseTypes } from "./managedMemberInspectorCore.js";
 
-type ModuleIdentity = NonNullable<ManagedArtifactInspection["module"]>;
+import type { ManagedModuleRow } from "./managedModuleIdentity.js";
 type AssemblyIdentity = NonNullable<ManagedArtifactInspection["assembly"]>;
 type AssemblyReference = ManagedArtifactInspection["references"][number];
 type ManagedResource = ManagedArtifactInspection["resources"][number];
@@ -70,48 +71,49 @@ const publicKeyIdentity = (
 export const readModule = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
-  heapExtent: number,
-): ModuleIdentity | null => {
+  issues: ManagedParseIssue[],
+): ManagedModuleRow | null => {
   const table = layout.table(0);
   if (table === undefined || table.rowCount === 0) return null;
   const cursor = metadataRowCursor(bytes, layout, 0, 1);
   const generation = cursor.u16();
-  const name = readMetadataString(
-    bytes,
-    layout,
-    cursor.readIndex(layout.stringIndexSize),
-    heapExtent,
-  );
-  const mvid = readMetadataGuid(
-    bytes,
-    layout,
-    cursor.readIndex(layout.guidIndexSize),
-  );
-  const encId = readMetadataGuid(
-    bytes,
-    layout,
-    cursor.readIndex(layout.guidIndexSize),
-  );
-  const encBaseId = readMetadataGuid(
-    bytes,
-    layout,
-    cursor.readIndex(layout.guidIndexSize),
-  );
+  const nameIndex = cursor.readIndex(layout.stringIndexSize);
+  const mvidIndex = cursor.readIndex(layout.guidIndexSize);
+  const encIndex = cursor.readIndex(layout.guidIndexSize);
+  const encBaseIndex = cursor.readIndex(layout.guidIndexSize);
+
+  const readGuid = (index: number) =>
+    readMetadataGuid(bytes, layout, index) ?? null;
+  if (layout.strings.kind === "ambiguous" && nameIndex !== 0) {
+    // Multiple Module rows cannot establish a new exact token scope.
+    if (table.rowCount !== 1) return null;
+    const independentGuid = (index: number) =>
+      readManagedValue(() => readGuid(index), issues) ?? null;
+    return {
+      name: null,
+      name_index: nameIndex,
+      generation,
+      mvid: independentGuid(mvidIndex),
+      enc_id: independentGuid(encIndex),
+      enc_base_id: independentGuid(encBaseIndex),
+      token: "0x00000001",
+      row_offset: table.offset,
+    };
+  }
   return {
-    name,
+    name: readMetadataString(bytes, layout, nameIndex),
     generation,
-    mvid: mvid ?? null,
-    enc_id: encId ?? null,
-    enc_base_id: encBaseId ?? null,
+    mvid: readGuid(mvidIndex),
+    enc_id: readGuid(encIndex),
+    enc_base_id: readGuid(encBaseIndex),
     token: metadataToken(0, 1),
     row_offset: table.offset,
-  };
+  } satisfies NamedManagedModule;
 };
 
 export const readAssembly = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
-  heapExtent: number,
 ): AssemblyIdentity | null => {
   const table = layout.table(32);
   if (table === undefined || table.rowCount === 0) return null;
@@ -130,13 +132,11 @@ export const readAssembly = (
     bytes,
     layout,
     cursor.readIndex(layout.stringIndexSize),
-    heapExtent,
   );
   const culture = readMetadataString(
     bytes,
     layout,
     cursor.readIndex(layout.stringIndexSize),
-    heapExtent,
   );
   return {
     name,
@@ -178,11 +178,10 @@ export const readAssemblyReferenceName = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
   row: number,
-  heapExtent: number,
 ): Pick<AssemblyReference, "name" | "token" | "row_offset"> => {
   const { nameIndex } = assemblyReferenceHeader(bytes, layout, row);
   return {
-    name: readMetadataString(bytes, layout, nameIndex, heapExtent),
+    name: readMetadataString(bytes, layout, nameIndex),
     token: metadataToken(35, row),
     row_offset: metadataRowOffset(layout, 35, row),
   };
@@ -192,18 +191,16 @@ export const readAssemblyReference = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
   row: number,
-  heapExtent: number,
 ): { readonly name: string; readonly reference: AssemblyReference | null } => {
   const { cursor, version, flags, keyIndex, nameIndex } =
     assemblyReferenceHeader(bytes, layout, row);
-  const name = readMetadataString(bytes, layout, nameIndex, heapExtent);
+  const name = readMetadataString(bytes, layout, nameIndex);
   try {
     const keyOrToken = readMetadataBlob(bytes, layout, keyIndex);
     const culture = readMetadataString(
       bytes,
       layout,
       cursor.readIndex(layout.stringIndexSize),
-      heapExtent,
     );
     const hashValue = readMetadataBlob(
       bytes,
@@ -319,18 +316,8 @@ export const managedMetadataTypeNames = (
       } else {
         const source = readTypeDefinitionRowFacts(bytes, layout, row);
         flags = source.flags;
-        name = readMetadataString(
-          bytes,
-          layout,
-          source.nameIndex,
-          layout.strings.size,
-        );
-        namespace = readMetadataString(
-          bytes,
-          layout,
-          source.namespaceIndex,
-          layout.strings.size,
-        );
+        name = readMetadataString(bytes, layout, source.nameIndex);
+        namespace = readMetadataString(bytes, layout, source.namespaceIndex);
       }
       parentRow = nesting.enclosing.get(row) ?? null;
       const isNested = (flags & 0x7) >= 2;
@@ -542,7 +529,6 @@ export const readResource = ({
     bytes,
     layout,
     cursor.readIndex(layout.stringIndexSize),
-    layout.strings.size,
   );
   const implementationOffset = cursor.offset;
   const implementationRaw = cursor.readIndex(
