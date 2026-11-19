@@ -945,6 +945,11 @@ not read artifact contents: the inventories of two builds are unresolved
 records, or one opaque change when you pair them. Use `compare-artifacts`,
 described at the end of this section, to compare their contents.
 
+If a selected file looks like an analysis snapshot, comparison reports the
+wrong artifact kind. To compare its Evidence, restore the snapshot with its
+matching target, provider and analysis profile, then export a standalone
+Evidence bundle from that session.
+
 `--record_pairs` accepts an inline JSON array or the path to a local JSON
 file containing that array, matching MCP `compare_bundles.record_pairs`. For a
 file, use `rea compare left.json right.json --record_pairs pairs.json --json`.
@@ -1488,7 +1493,20 @@ descendants in other process groups that inherited its run token. If that
 cleanup cannot be confirmed, the report keeps its earlier checks and adds a
 failed `cleanup` check with the reason and retained run identifier.
 
-The default terminal format is TOON. Use `--json` when saving results for a
+The default terminal format is TOON. Complete TOON results are validated
+before stdout receives the document. Large results use a private file in the
+system temporary directory until delivery finishes and need free space there.
+If closing or removing that stage fails, CLI shutdown retains and retries its
+cleanup in order. The reported cleanup failure preserves any original formatting
+or temporary-storage refusal. SIGINT/SIGTERM remain owned through staging,
+delivery and cleanup: pending I/O settles before further writes stop and the
+stage is removed.
+A document can exceed the runtime's string limit when each encoded line fits.
+Staging limits the encoded text kept in memory. The TOON encoder still
+normalizes the input tree before yielding lines, so working memory also
+depends on the size of the input and the longest encoded line.
+Token counting and token windows still require a complete formatted string.
+Use `--json` to stream the result without TOON staging or to save it for a
 JSON consumer. Valued output flags (`--format`, `--filter-output`,
 `--token-limit`, `--token-offset`) accept `--flag value` or `--flag=value`; a
 missing value fails with `MISSING_OUTPUT_VALUE` before the command runs.

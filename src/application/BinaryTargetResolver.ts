@@ -1088,6 +1088,7 @@ const readElfMetadata = async (
       ...parsed.value,
       riscv: {
         ...parsed.value.riscv,
+        ...(ranges.value.hasInterpreter ? { hasInterpreter: true } : {}),
         isa: await readElfDeclarations(
           handle,
           bytes,
@@ -1110,6 +1111,7 @@ const readElfMetadata = async (
       ...parsed.value.mips,
       abiFlags: declarations.value.abiFlags,
       gnuAttributes: declarations.value.gnuAttributes,
+      ...(ranges.value.hasInterpreter ? { hasInterpreter: true } : {}),
       ...(declarations.value.sharedLoad === undefined
         ? {}
         : { sharedLoad: declarations.value.sharedLoad }),

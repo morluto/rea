@@ -1125,6 +1125,7 @@ export const nativeFunctionSummarySchema = z.strictObject({
     referenced_names: declaredFacetCountSchema,
     swift_string_literals: recordedFacetCountSchema,
     swift_string_literal_omissions: recordedFacetCountSchema,
+    prototype_conflicts: recordedFacetCountSchema.optional(),
     value_flow_operations: valueFlowFacetCountSchema,
     value_flow_def_use: valueFlowFacetCountSchema,
     value_flow_effects: valueFlowFacetCountSchema,

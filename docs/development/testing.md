@@ -737,6 +737,13 @@ consumers. Add [lifecycle regressions](#lifecycle-regressions) when resource
 ownership or finalization changes; a single malformed fixture cannot establish
 the whole contract.
 
+When consolidating interpretation across consumers, use the same authored
+input and an independently specified expected fact at the boundary where
+each consumer previously made its own decision. Allow differences in
+recovery or display when those belong to the consumer. For generated
+installers and verifiers, exercise the emitted artifact in its supported
+runtime so the test covers the code that actually receives the input.
+
 | Failure class                         | Regression that catches it                                                                                                                                                                                                                                                                                                                         |
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Format assumptions                    | Pair valid padding, offsets, or names containing delimiters with malformed input. Identify the producer revision when behavior varies by version; an unrelated runtime API's range is not an on-disk format limit.                                                                                                                                 |

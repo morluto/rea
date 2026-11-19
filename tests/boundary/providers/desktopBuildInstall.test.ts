@@ -140,7 +140,15 @@ describe("download install scripts", () => {
     expect(failed?.stderr).toContain("drawio.desktop");
   });
 
-  it.each(["", "-- "])(
+  it.each([
+    "",
+    "-- ",
+    "-C /opt --chdir=/tmp -- ",
+    "-iC/tmp -- ",
+    "--ignore-environment ",
+    "-- - ",
+    "--chdir= -C /tmp -- ",
+  ])(
     "keeps an env %sprefix and its assignments when it points the AppImage's entry at AppRun",
     async (delimiter) => {
       const root = await stage("rea-appimage-env-");

@@ -262,6 +262,30 @@ activation independently of readiness. An owned registration may be disabled
 or stale; unresolved ownership remains unknown. Consumers use those facts
 instead of reclassifying the raw command.
 
+Keep the reader's observation independent of the operation that needs it.
+For example, the Evidence file reader can recognize the shape of an
+analysis snapshot before authenticating it. Import and comparison can
+recommend different next steps while reporting the same observed kind.
+The reader also retains disagreements in the input. If two observed header
+fields conflict, carry that uncertainty forward before projecting the fields
+into a single value. A command launcher likewise needs the parser's token
+boundaries so an option value cannot select a transport mode.
+
+Give each nested parser the admitted extent of its containing record.
+Retain the source offset and the reason when a field is malformed or its
+encoding is unsupported. A stream may need more bytes to complete a frame.
+A completed artifact with the same missing bytes has truncated data. Carry
+that distinction into coverage and preserve any independently observed facts.
+
+When consumers in different runtimes receive raw input independently, reuse
+the same reader where the runtime is available. If separate implementations
+are needed, prefer generating them from one authored set of parsing rules.
+For example, desktop capture and an offline AppImage installer need the same
+rules to locate the executable after an `env` prefix. The installer also needs
+the executable's source span so it can replace that token while preserving the
+rest of the entry. Use shared fixtures with explicit expected results to check
+the common interpretation through both entry points.
+
 Owned provider commands follow the same rule. `providerOutcomeOf` in
 `src/process/ProviderOutcome.ts` reads what the supervisor observed (launch
 refusal, cancellation, deadline, output or memory limit, resource signal, exit

@@ -247,6 +247,23 @@ const readHeader = async (
   }
 };
 
+const launchEnvironment = (
+  wrapper: ReturnType<typeof unwrapDesktopCommand>,
+  inherited: LinuxApplicationRequest["environment"],
+) => {
+  if (!wrapper.clearEnvironment) {
+    const environment = { ...inherited, ...wrapper.environment };
+    return { environment, lookupEnvironment: environment };
+  }
+  const environment = wrapper.environment;
+  // GNU env's execvp searches the Linux system path when PATH is absent.
+  const lookupEnvironment =
+    environment.PATH === undefined
+      ? { ...environment, PATH: "/bin:/usr/bin" }
+      : environment;
+  return { environment, lookupEnvironment };
+};
+
 /** The launched program as found on PATH and after resolving links. */
 interface ProgramLocation {
   readonly program: string;
@@ -382,6 +399,44 @@ const launchCommand = async (
   });
 };
 
+const envApplicationDirectory = async (
+  path: string | undefined,
+  workingDirectory: string,
+  signal: AbortSignal | undefined,
+): Promise<Result<string | undefined, LinuxApplicationRefusal>> => {
+  if (path === undefined) return ok(undefined);
+  const invalidDirectory = {
+    reason: "desktop_entry_invalid" as const,
+    detail: "env chdir does not name a directory",
+  };
+  if (path === "") return err(invalidDirectory);
+  const selected = absoluteCallerPath(path, { cwd: workingDirectory });
+  try {
+    assertArtifactReadActive(signal);
+    const physical = await realpath(selected);
+    assertArtifactReadActive(signal);
+    const directory = await stat(physical);
+    assertArtifactReadActive(signal);
+    return directory.isDirectory() ? ok(physical) : err(invalidDirectory);
+  } catch (cause: unknown) {
+    if (!isRefusedRead(cause) || signal?.aborted === true) throw cause;
+    return err(invalidDirectory);
+  }
+};
+
+const directLaunchStateHome = (
+  wrapper: ReturnType<typeof unwrapDesktopCommand>,
+  packageKind: Package["kind"],
+  hostHome: string,
+): string => {
+  // Sandbox-managed directories continue to use the host home.
+  if (wrapper.kind !== "direct" || packageKind === "snap") return hostHome;
+  const launchHome = wrapper.environment.HOME;
+  return launchHome !== undefined && isAbsolute(launchHome)
+    ? launchHome
+    : hostHome;
+};
+
 /** Resolve what the request launches, where it came from and where it may keep state. */
 export const inspectLinuxApplication = async (
   request: LinuxApplicationRequest,
@@ -392,13 +447,23 @@ export const inspectLinuxApplication = async (
   if (!command.ok) return command;
   const { argv, workingDirectory, entry } = command.value;
   const wrapper = unwrapDesktopCommand(argv);
+  const directory = await envApplicationDirectory(
+    wrapper.chdir?.path,
+    workingDirectory,
+    signal,
+  );
+  if (!directory.ok) return directory;
+  const applicationDirectory = directory.value;
   // An `env` prefix's assignments are what the program sees: its PATH finds
   // the program and its XDG folders hold the program's state.
-  const environment = { ...request.environment, ...wrapper.environment };
+  const { environment, lookupEnvironment } = launchEnvironment(
+    wrapper,
+    request.environment,
+  );
   const found = await resolveProgram(
     wrapper.program,
-    environment,
-    workingDirectory,
+    lookupEnvironment,
+    applicationDirectory ?? workingDirectory,
   );
   if (found === undefined)
     return err({ reason: "executable_not_found", program: wrapper.program });
@@ -457,6 +522,9 @@ export const inspectLinuxApplication = async (
       desktop_entry: entry,
       argv: [...argv],
       working_directory: workingDirectory,
+      ...(applicationDirectory === undefined
+        ? {}
+        : { application_working_directory: applicationDirectory }),
       executable: {
         path,
         resolved_path: resolved,
@@ -465,10 +533,14 @@ export const inspectLinuxApplication = async (
       package: package_,
       state_directories: await stateDirectories(
         names,
-        { environment, home: request.home },
+        {
+          environment,
+          home: directLaunchStateHome(wrapper, package_.kind, request.home),
+        },
         sandboxDirectories,
       ),
     },
+    ...(wrapper.index === 0 ? {} : { envProgramIndex: wrapper.index }),
     limitations,
     signingKeys,
   });
