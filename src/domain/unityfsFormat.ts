@@ -105,7 +105,15 @@ export const unityFsLayoutFlags = (
 };
 
 /** Producer version strings are short; the bound keeps a corrupt header local. */
-export const UNITYFS_HEADER_STRING_MAX = 1024;
+const UNITYFS_HEADER_STRING_MAX = 1024;
+const UNITYFS_VERSION_STRINGS_OFFSET = UNITYFS_SIGNATURE.length + 4;
+const UNITYFS_HEADER_TAIL_BYTES = 8 + 4 + 4 + 4;
+
+/** A prefix covering the signature, version, both bounded strings and fixed tail. */
+export const UNITYFS_HEADER_PREFIX_BYTES =
+  UNITYFS_VERSION_STRINGS_OFFSET +
+  2 * UNITYFS_HEADER_STRING_MAX +
+  UNITYFS_HEADER_TAIL_BYTES;
 
 /** Declared header fields; support and extent admission belong to callers. */
 export interface UnityFsHeaderFacts {
@@ -132,7 +140,7 @@ export const readUnityFsHeaderFacts = (
 ): UnityFsHeaderFacts | undefined => {
   if (!hasUnityFsHeader(bytes)) return undefined;
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  let cursor = 12;
+  let cursor = UNITYFS_VERSION_STRINGS_OFFSET;
   const readString = (): string | undefined => {
     const start = cursor;
     while (
@@ -157,7 +165,7 @@ export const readUnityFsHeaderFacts = (
   if (
     playerVersion === undefined ||
     engineVersion === undefined ||
-    cursor + 20 > bytes.length
+    cursor + UNITYFS_HEADER_TAIL_BYTES > bytes.length
   )
     return undefined;
   const fixed = cursor;
@@ -169,6 +177,6 @@ export const readUnityFsHeaderFacts = (
     compressedBlocksInfoSize: view.getUint32(fixed + 8),
     uncompressedBlocksInfoSize: view.getUint32(fixed + 12),
     flags: view.getUint32(fixed + 16),
-    afterFixed: fixed + 20,
+    afterFixed: fixed + UNITYFS_HEADER_TAIL_BYTES,
   };
 };
