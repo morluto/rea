@@ -66,7 +66,12 @@ it.each([false, true])(
         expect(projected).toMatchObject({
           code: "invalid_request",
           details: {
-            issues: [{ path: ["path"], reason: "invalid_format" }],
+            issues: [
+              {
+                path: ["path"],
+                reason: "invalid_format",
+              },
+            ],
           },
         });
     } finally {

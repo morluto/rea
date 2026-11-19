@@ -17,7 +17,10 @@ import {
 } from "../../domain/peSectionHeader.js";
 import { readElfHeaderFacts } from "../../domain/elfFixedHeader.js";
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
-import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
+import {
+  elfSectionHeaderWidth,
+  readElfSectionHeader,
+} from "../../domain/elfSectionHeader.js";
 import { observeElfStringTableEntry } from "../../domain/elfStringTable.js";
 import {
   readFatContainerHeader,
@@ -808,7 +811,7 @@ const elfClaims = async (
   const declarations = readElfRawTableDeclarations(header, format.value);
   if (!declarations.ok) return [];
   const { offset, width, count, namesIndex } = declarations.value.sections;
-  const sectionWidth = elfClass === 64 ? 64 : 40;
+  const sectionWidth = elfSectionHeaderWidth(elfClass);
   // Unsupported extended numbering does not establish a Bun graph.
   if (
     (width !== 0 && width !== sectionWidth) ||

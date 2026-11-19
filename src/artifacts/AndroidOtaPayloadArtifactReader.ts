@@ -29,6 +29,7 @@ import {
   parseAndroidOtaHeader,
   parseAndroidOtaPayload,
   reconstructAndroidOtaPartition,
+  withAndroidOtaPayloadSignature,
   type AndroidOtaPartition,
   type AndroidOtaPayload,
   type AndroidOtaPayloadParseError,
@@ -205,17 +206,21 @@ export class AndroidOtaPayloadArtifactReader implements ArtifactReader {
     );
     const header = parseAndroidOtaHeader(headerBytes, initial.size);
     if (!header.ok) throw parseFailure(header.error);
-    const prefixEnd = Math.min(initial.size, header.value.blobOffset);
-    const prefix = await readArtifactFileBytes(
+    const { manifestOffset, metadataPrefixEnd } = header.value;
+    const metadata = await readArtifactFileBytes(
       handle,
-      0,
-      prefixEnd,
+      manifestOffset,
+      metadataPrefixEnd - manifestOffset,
       initial.size,
       signal,
     );
-    const first = parseAndroidOtaPayload(prefix, initial.size);
-    if (!first.ok) throw parseFailure(first.error);
-    const signatureRange = first.value.payloadSignatureRange;
+    const payload = parseAndroidOtaPayload(
+      header.value,
+      metadata,
+      initial.size,
+    );
+    if (!payload.ok) throw parseFailure(payload.error);
+    const signatureRange = payload.value.payloadSignatureRange;
     const payloadSignature =
       signatureRange === null
         ? undefined
@@ -230,8 +235,8 @@ export class AndroidOtaPayloadArtifactReader implements ArtifactReader {
     this.#assertOpen(signal);
     const parsed =
       payloadSignature === undefined
-        ? first
-        : parseAndroidOtaPayload(prefix, initial.size, payloadSignature);
+        ? payload
+        : withAndroidOtaPayloadSignature(payload.value, payloadSignature);
     if (!parsed.ok) throw parseFailure(parsed.error);
     this.#payload = parsed.value;
     this.#entries.clear();

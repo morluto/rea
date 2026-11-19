@@ -601,18 +601,17 @@ const tablesStream = (
     if (tableRows === undefined) continue;
     counts.push(u32(tableRows.length));
   }
-  const data: Buffer[] = [];
-  for (let index = 0; index <= 44; index += 1) {
-    const tableRows = rows.get(index);
-    if (tableRows === undefined) continue;
-    data.push(...tableRows);
-  }
-  return Buffer.concat([
+  const stream = [
     header,
     ...counts,
     ...(extraData === undefined ? [] : [u32(extraData)]),
-    ...data,
-  ]);
+  ];
+  for (let index = 0; index <= 44; index += 1) {
+    const tableRows = rows.get(index);
+    if (tableRows === undefined) continue;
+    for (const row of tableRows) stream.push(row);
+  }
+  return Buffer.concat(stream);
 };
 
 interface FixtureMetadataRowContext {
