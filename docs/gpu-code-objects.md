@@ -44,8 +44,12 @@ such as `gfx11-generic` and `gfx9-4-generic`. Notes with the empty or explicit
 `unknown` environment use the same processor and feature comparison while
 retaining their raw triple spelling. CUDA's legacy fatbinary compression flag is
 retained as an unsupported codec with its encoded and decoded extents;
-compressed bytes are not treated as PTX text. CCOB is recognized by the exact
-four signature bytes `CCOB`; high-bit-corrupted bytes are not decoded as ASCII
+compressed bytes are not treated as PTX text. A CUDA entry whose declared
+decoded length exceeds the exact integer range of `decoded_size` retains
+its encoded range and reports the exact length in a limitation. Kernel decoding
+reports `capacity` for a selected entry with a supported codec.
+CCOB is recognized by the exact four signature bytes `CCOB`;
+high-bit-corrupted bytes are not decoded as ASCII
 and accepted as a bundle. CCOB v1 has no stored total size: the completed zlib
 or Zstd stream determines its encoded extent. Embedded `CCOB` text is ordinary
 compressed data; zero-byte alignment after the stream belongs to neither
