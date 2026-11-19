@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
+import { mkdir, truncate, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { err, ok } from "../domain/result.js";
 import {
   HOPPER_METADATA_TIMEOUT_MS,
@@ -10,10 +13,30 @@ import {
 } from "./HopperDownload.js";
 import {
   installMacHopper,
+  systemMacHopperInstallHost,
   type MacHopperBundleVerification,
   type MacHopperBundleInstallResult,
   type MacHopperInstallHost,
 } from "./MacHopper.js";
+
+it("bounds the system host's Hopper minimum-version plist read", async () => {
+  const root = await createTestTempDirectory("rea-hopper-plist-input-");
+  const app = join(root, "Hopper.app");
+  const plist = join(app, "Contents", "Info.plist");
+  await mkdir(join(app, "Contents"), { recursive: true });
+  await writeFile(
+    plist,
+    "<plist><dict><key>LSMinimumSystemVersion</key><string>13.0</string></dict></plist>",
+  );
+  const host = systemMacHopperInstallHost(root, {}, async () => "15.0");
+
+  await expect(host.minimumSystemVersion(app)).resolves.toBe("13.0");
+  await truncate(plist, 64 * 1024 * 1024 + 1);
+  await expect(host.minimumSystemVersion(app)).rejects.toMatchObject({
+    name: "BundleInfoPlistInputLimitError",
+    message: expect.stringContaining("67108864-byte input allowance"),
+  });
+});
 
 class FakeMacHopperHost implements MacHopperInstallHost {
   readonly archive = new TextEncoder().encode("hopper-dmg");

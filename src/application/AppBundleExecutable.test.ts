@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -60,6 +60,24 @@ it.each([
     });
   },
 );
+
+it("reports an oversized Info.plist as an input refusal before decoding", async () => {
+  const root = await createTestTempDirectory("rea-app-plist-input-");
+  const bundle = join(root, "Fixture.app");
+  const plist = join(bundle, "Contents", "Info.plist");
+  await mkdir(join(bundle, "Contents"), { recursive: true });
+  await writeFile(plist, "");
+  await truncate(plist, 64 * 1024 * 1024 + 1);
+
+  expect(await resolveAppleBundleExecutable(bundle)).toMatchObject({
+    ok: false,
+    error: {
+      path: plist,
+      reason: expect.stringContaining("67108864-byte input allowance"),
+      cause: { name: "BundleInfoPlistInputLimitError" },
+    },
+  });
+});
 
 describe("app bundle Info.plist magic", () => {
   it("decodes an executable when an unrelated UID uses a three-byte width", async () => {
