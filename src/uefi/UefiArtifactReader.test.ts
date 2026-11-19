@@ -243,3 +243,39 @@ it("retains the readable prefix of a truncated FFS body and reports unknown cove
     await reader.close();
   }
 });
+
+it("marks inventory coverage unknown for unexpected bytes between two retained files", async () => {
+  const file = buildFfsFile({
+    guid: DRIVER_GUID,
+    typeCode: 1,
+    payload: Buffer.from([1]),
+  });
+  const sibling = buildFfsFile({
+    guid: "81111111-2222-3333-4444-555555555555",
+    typeCode: 1,
+    payload: Buffer.from([2]),
+  });
+  const image = buildFv({ files: [file, sibling] }).buffer;
+  image[99] = 0x42;
+  const reader = await openReader(image);
+  const onOmission = vi.fn();
+  const onCoverage = vi.fn();
+  try {
+    const entries = await collectEntries(reader, { onOmission, onCoverage });
+    expect(
+      entries
+        .filter(({ kind }) => kind === "file")
+        .map(({ byteOffset }) => byteOffset),
+    ).toEqual([72, 104]);
+    expect(onOmission).toHaveBeenCalledExactlyOnceWith({
+      kind: "unsupported",
+      path: "firmware-volume-0x0/ffs-padding-0x61",
+    });
+    expect(onCoverage).toHaveBeenCalledWith({
+      status: "unknown",
+      limitations: [expect.stringMatching(/0x61.*7 bytes/u)],
+    });
+  } finally {
+    await reader.close();
+  }
+});

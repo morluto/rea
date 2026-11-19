@@ -24,8 +24,8 @@ import {
 import type { UefiDecodeFailureReason } from "./UefiLzmaProtocol.js";
 import {
   checkFfsFileData,
-  nextFfsFileLocal,
   readFfsHeader,
+  type FfsPaddingRange,
 } from "./FfsFile.js";
 import {
   AMD_ZLIB_HEADER_LENGTH,
@@ -252,6 +252,7 @@ export const scanUefiImage = async (
     known?: {
       detail: string;
       classification?: UefiUnknownRegion["classification"];
+      nonErased?: true;
     },
   ): void => {
     const length = absoluteEnd - absoluteStart;
@@ -277,10 +278,16 @@ export const scanUefiImage = async (
     );
     let classification: UefiUnknownRegion["classification"] = "no-fv-magic";
     let erasure: UefiUnknownRegion["erasure"] = "none";
-    if (isWindowUniform(region.buffer, localStart, localEnd, 0xff)) {
+    if (
+      !known?.nonErased &&
+      isWindowUniform(region.buffer, localStart, localEnd, 0xff)
+    ) {
       classification = "erased-ff";
       erasure = "0xff";
-    } else if (isWindowUniform(region.buffer, localStart, localEnd, 0x00)) {
+    } else if (
+      !known?.nonErased &&
+      isWindowUniform(region.buffer, localStart, localEnd, 0x00)
+    ) {
       classification = "erased-00";
       erasure = "0x00";
     }
@@ -455,8 +462,20 @@ export const scanUefiImage = async (
   ): Promise<void> => {
     const volumeLocalEnd = localOffsetOf(parentRegion, volumeEnd);
     const fileAreaStart = Math.min(header.firstFileLocal, volumeLocalEnd);
-    const fileArea = subRegion(parentRegion, fileAreaStart, volumeLocalEnd);
-    let cursor = fileArea.start;
+    const fileArea = subRegion(parentRegion, header.localBase, volumeLocalEnd);
+    const notePadding = ({ offset, length }: FfsPaddingRange): void =>
+      noteUnparsedRange(
+        fileArea,
+        offset,
+        offset + length,
+        volume.logical_path,
+        {
+          nonErased: true,
+          detail: `Unexpected FFS alignment bytes at ${hex(offset)}: ${length} bytes.`,
+        },
+      );
+    for (const padding of header.filePrefixPadding) notePadding(padding);
+    let cursor = fileAreaStart;
     const reserveFile = (): boolean =>
       filesDiscovered < limits.maxFiles && reserve();
     while (cursor < fileArea.end) {
@@ -619,15 +638,12 @@ export const scanUefiImage = async (
         sections,
       });
 
-      if (truncatesArea) return;
-      cursor = nextFfsFileLocal(fileHeader, header.localBase);
+      if (read.padding !== null) notePadding(read.padding);
+      cursor = read.nextLocal;
     }
-    const lastFile = volume.ffs_files.at(-1);
     noteUnparsedRange(
       fileArea,
-      lastFile === undefined
-        ? fileArea.origin
-        : lastFile.offset + lastFile.length,
+      absoluteOffset(fileArea, cursor),
       volumeEnd,
       volume.logical_path,
     );

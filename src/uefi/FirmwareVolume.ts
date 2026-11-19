@@ -14,7 +14,11 @@ import {
   FV_HEADER_LAYOUT,
 } from "./UefiCodeTables.js";
 
-import { parseFfsFileHeader } from "./FfsFile.js";
+import {
+  parseFfsFileHeader,
+  unexpectedFfsPadding,
+  type FfsPaddingRange,
+} from "./FfsFile.js";
 
 const FVH_SIGNATURE = 0x4856465f; // "_FVH" read as a little-endian word
 
@@ -30,6 +34,7 @@ export interface FirmwareVolumeHeader {
   readonly declaredLength: number;
   readonly headerLength: number;
   readonly firstFileLocal: number;
+  readonly filePrefixPadding: readonly FfsPaddingRange[];
   readonly attributes: number;
   readonly erasePolarity: boolean;
   readonly extHeaderOffset: number | null;
@@ -163,7 +168,19 @@ export function parseFirmwareVolumeHeader(
   }
 
   const erasePolarity = (attributes & FV_ATTRIBUTE_ERASE_POLARITY) !== 0;
+  const headerEnd = localHeaderBase + headerLength;
+  let prefixEnd = headerEnd;
   let firstFileLocal = localHeaderBase + alignUp(headerLength, 8);
+  const filePrefixPadding: FfsPaddingRange[] = [];
+  const checkPadding = (start: number, end: number): void => {
+    const padding = unexpectedFfsPadding(
+      { ...region, end: volumeEnd },
+      start,
+      end,
+      erasePolarity,
+    );
+    if (padding !== null) filePrefixPadding.push(padding);
+  };
   if (extHeaderRaw !== 0 && blockMapTerminated) {
     const blockMapEnd =
       FV_HEADER_LAYOUT.blockMapOffset +
@@ -181,7 +198,7 @@ export function parseFirmwareVolumeHeader(
       const extEnd = extStart + extLength;
       if (extLength < extMinimumLength || extEnd > volumeEnd) {
         implausibilities.push("extended-header-length-implausible");
-      } else if (extEnd > firstFileLocal) {
+      } else if (extEnd > headerEnd) {
         const pad = parseFfsFileHeader(
           { ...region, end: volumeEnd },
           firstFileLocal,
@@ -197,12 +214,15 @@ export function parseFirmwareVolumeHeader(
           pad.body.start > extStart ||
           pad.body.end < extEnd
         ) {
+          checkPadding(headerEnd, extStart);
+          prefixEnd = extEnd;
           firstFileLocal =
             localHeaderBase + alignUp(extEnd - localHeaderBase, 8);
         }
       }
     }
   }
+  checkPadding(prefixEnd, firstFileLocal);
   const checksumValid =
     localHeaderBase + headerLength <= volumeEnd &&
     verifyFirmwareVolumeChecksum(region.buffer, localHeaderBase, headerLength);
@@ -216,6 +236,7 @@ export function parseFirmwareVolumeHeader(
     declaredLength,
     headerLength,
     firstFileLocal,
+    filePrefixPadding,
     attributes,
     erasePolarity,
     extHeaderOffset: extHeaderRaw === 0 ? null : extHeaderRaw,

@@ -487,3 +487,27 @@ it("reports one gap when a confirmed decoded FV exceeds the volume budget", asyn
   ]);
   expect(scan.coverage).toBe("partial");
 });
+
+it("reports only the non-erased alignment span after a standalone FV extension", async () => {
+  const file = buildFfsFile({
+    guid: "81111111-2222-3333-4444-555555555555",
+    typeCode: 1,
+    payload: Buffer.from([1]),
+  });
+  const { buffer } = buildFv({ extendedHeader: "standalone", files: [file] });
+  buffer[101] = 0x42;
+  const scan = await scanUefiImage(
+    buffer,
+    { maxDepth: 2, maxFiles: 4, maxVolumes: 4 },
+    noDecoder,
+  );
+  expect(scan.volumes[0]?.ffs_files.map(({ offset }) => offset)).toEqual([104]);
+  expect(scan.coverage).toBe("partial");
+  expect(scan.omissions).toMatchObject([
+    {
+      kind: "unparsed-region",
+      logical_path: "flash/FV@0x0",
+      range: { offset: 100, length: 4 },
+    },
+  ]);
+});

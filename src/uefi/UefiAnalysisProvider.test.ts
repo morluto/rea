@@ -1608,3 +1608,69 @@ it("retains a signed guided section as opaque when its processing flag is clear"
     await provider.close();
   }
 });
+
+it.each([
+  { erase: 0xff as const, dirty: 0x00 },
+  { erase: 0x00 as const, dirty: 0xff },
+])(
+  "reports inter-file bytes that differ from erase polarity $erase",
+  async ({ erase, dirty }) => {
+    const first = buildFfsFile({
+      guid: GUID_DRIVER,
+      typeCode: 1,
+      payload: Buffer.from([1]),
+      erasePolarity: erase === 0xff,
+    });
+    const second = buildFfsFile({
+      guid: GUID_RAW,
+      typeCode: 1,
+      payload: RAW_BODY,
+      erasePolarity: erase === 0xff,
+    });
+    const image = buildFv({ files: [first, second], erase }).buffer;
+    image.fill(dirty, 97, 104);
+    const directory = await createTestTempDirectory(
+      "rea-uefi-inter-file-padding-",
+    );
+    const path = join(directory, "image.fd");
+    await writeFile(path, image);
+    const provider = new UefiAnalysisProvider();
+    try {
+      const inspected = expectOk(await provider.execute(inspectRequest(path)))
+        .value.result as UefiInspectResult;
+      expect(
+        inspected.firmware_volumes[0]?.ffs_files.map(({ offset }) => offset),
+      ).toEqual([72, 104]);
+      expect(inspected.coverage).toBe("partial");
+      expect(
+        inspected.unknown_regions.find(({ offset }) => offset === 97),
+      ).toMatchObject({
+        offset: 97,
+        length: 7,
+        erasure: "none",
+        sha256: sha256(Buffer.alloc(7, dirty)),
+      });
+      const whole = expectOk(
+        await provider.execute(extractRequest(path, join(directory, "whole"))),
+      ).value.result as UefiExtractResult;
+      expect(whole.extraction_gaps).toMatchObject([
+        {
+          kind: "unparsed-region",
+          range: { offset: 97, length: 7 },
+          logical_path: "flash/FV@0x0",
+        },
+      ]);
+      const selected = expectOk(
+        await provider.execute(
+          extractRequest(path, join(directory, "file"), {
+            target: { kind: "ffs-file", offset: 104 },
+          }),
+        ),
+      ).value.result as UefiExtractResult;
+      expect(selected.coverage).toBe("complete");
+      expect(selected.files).toMatchObject([{ sha256: sha256(RAW_BODY) }]);
+    } finally {
+      await provider.close();
+    }
+  },
+);
