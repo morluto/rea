@@ -25,6 +25,26 @@ const parse = (b: Buffer, limits = {}) =>
     },
     inspectDevicetreeInputSchema.parse({ path: "/board.dtb", ...limits }),
   );
+
+it.each([16, 17])("rejects v%s overlapping memory reservations", (version) => {
+  const bytes = devicetreeFixture({ name: "" }, version, [
+    [0x20000000000009n, 8n],
+    [0x20000000000001n, 9n],
+  ]);
+  expect(() => parse(bytes)).toThrow("Overlapping FDT memory reservations");
+});
+
+it("keeps unordered adjacent reservations in file order", () => {
+  const bytes = devicetreeFixture({ name: "" }, 17, [
+    [0x20000000000009n, 8n],
+    [0x20000000000001n, 8n],
+  ]);
+  expect(parse(bytes).reservations).toEqual([
+    { offset: 40, address: "0x20000000000009", size: "0x8" },
+    { offset: 56, address: "0x20000000000001", size: "0x8" },
+  ]);
+});
+
 describe("flattened devicetree", () => {
   it.each([16, 17])(
     "decodes v%s with derived facts and unresolved references",
