@@ -43,6 +43,28 @@ const arrayIteratorNextPath = [
   "next",
 ] as const;
 
+const arrayIteratorReturnGlobalOwners = new Set(["Iterator", "Object"]);
+
+/** Select prototype effects from spread sources whose exact index is unknown. */
+export const semanticArrayIterationPrototypeEffectPath = (
+  path: readonly (string | null)[],
+  kind: "write" | "escape",
+): readonly (string | null)[] | undefined => {
+  const [namespace, owner, property] = path;
+  if (namespace === semanticArrayIteratorPrototypePath[0]) return path;
+  if (
+    namespace !== "global" ||
+    typeof owner !== "string" ||
+    (owner !== "Array" && !arrayIteratorReturnGlobalOwners.has(owner))
+  )
+    return undefined;
+  return property === "prototype" ||
+    property === null ||
+    (kind === "escape" && path.length === 2)
+    ? [namespace, owner, "prototype", ...path.slice(3)]
+    : undefined;
+};
+
 /** Native array iteration preserves numeric slots only while its iterator is intact. */
 export const semanticKnownArrayIteration = (
   value: JavaScriptSemanticValue | undefined,
@@ -58,8 +80,12 @@ const arrayIteratorReturnPaths = [
   [...semanticArrayIteratorPrototypePath, "return"],
   [...semanticArrayIteratorPrototypePath, "__proto__", "return"],
   [...semanticArrayIteratorPrototypePath, "__proto__", "__proto__", "return"],
-  ["global", "Iterator", "prototype", "return"],
-  ["global", "Object", "prototype", "return"],
+  ...Array.from(arrayIteratorReturnGlobalOwners, (owner) => [
+    "global",
+    owner,
+    "prototype",
+    "return",
+  ]),
 ] as const;
 
 /** References a possible native close hook can still obtain by advancing its iterator. */
