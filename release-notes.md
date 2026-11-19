@@ -233,6 +233,7 @@
 * **cli:** advertise the decimal token grammar on integer arguments ([884b683](https://github.com/morluto/rea/commit/884b683a94be222538aad84eb7993f62fda9aca7)), closes [#9344](https://github.com/morluto/rea/issues/9344)
 * **cli:** bound advertised decimal-token schemas by the domain range ([#9808](https://github.com/morluto/rea/issues/9808)) ([80f533d](https://github.com/morluto/rea/commit/80f533da8a977516ed77625ee8cf2bcb417cd2eb)), closes [#9348](https://github.com/morluto/rea/issues/9348)
 * **cli:** bound streamed pretty JSON indentation ([#12185](https://github.com/morluto/rea/issues/12185)) ([6bbba76](https://github.com/morluto/rea/commit/6bbba76e8a34371494dbfb1e73a44516edf9929f))
+* **cli:** clamp token windows for dispatcher errors ([#12242](https://github.com/morluto/rea/issues/12242)) ([3506672](https://github.com/morluto/rea/commit/3506672e9fa81b507b5e7c56f713a17fe19b47ca))
 * **cli:** classify MCP launcher arguments once ([#12152](https://github.com/morluto/rea/issues/12152)) ([85ac88f](https://github.com/morluto/rea/commit/85ac88fe87631fec26c3daa1b2e8e54d0f13d508)), closes [#12129](https://github.com/morluto/rea/issues/12129)
 * **cli:** count the full-output envelope for TOON/YAML token counts ([a02202a](https://github.com/morluto/rea/commit/a02202aba2aea8a7289500ca3eb45acfa8778a0b)), closes [#7271](https://github.com/morluto/rea/issues/7271) [#7278](https://github.com/morluto/rea/issues/7278)
 * **cli:** deliver complete TOON beyond the string limit ([#12074](https://github.com/morluto/rea/issues/12074)) ([f10d557](https://github.com/morluto/rea/commit/f10d557f0612efc68bfbd29eed41448da481e7e0))
@@ -617,6 +618,7 @@
 
 ### Performance Improvements
 
+* **artifacts:** decode URL path escapes in one byte buffer ([#12241](https://github.com/morluto/rea/issues/12241)) ([cb00a4c](https://github.com/morluto/rea/commit/cb00a4c8debd58871f8ca69ed9270ba6686a1dd2))
 * **bun:** validate metadata UTF-8 without round-tripping bytes ([#12254](https://github.com/morluto/rea/issues/12254)) ([d7aee71](https://github.com/morluto/rea/commit/d7aee71bc7807dadcc274ae18eb881ef3a2958ab))
 * **ci:** cache npm downloads and portable builds in Ghidra, readiness, mutation, and recovery jobs ([f5285e6](https://github.com/morluto/rea/commit/f5285e6a54e846b9bbbbe5d79b5ddda295f835af))
 * **ci:** narrow PR test selection fallbacks, unify stray lanes, and cache Windows builds ([#11797](https://github.com/morluto/rea/issues/11797)) ([30d5ad2](https://github.com/morluto/rea/commit/30d5ad2a48fc8668ff0be961c7637fdbf638f65e))
@@ -628,6 +630,8 @@
 * **cli:** find recorded controls without reparsing whole union branches ([#11607](https://github.com/morluto/rea/issues/11607)) ([482165d](https://github.com/morluto/rea/commit/482165d7ceec9fb2eff6d798d6c7ff4d2fbdae65))
 * **cli:** load only the registrar a one-shot command needs ([b990eb4](https://github.com/morluto/rea/commit/b990eb496d10ca7d31b98edd2d22a4f58f41c4f5))
 * **doctor:** slim cold CLI/MCP doctor module graphs and run probes concurrently ([cb33fa8](https://github.com/morluto/rea/commit/cb33fa8376a996c958ae9009731bdd2ce1fdeef3))
+* **environment:** compare recorded state without serializing JSON ([#12255](https://github.com/morluto/rea/issues/12255)) ([09f5949](https://github.com/morluto/rea/commit/09f59494e298a4c363a462becefddc1c47735e4f))
+* **ghidra:** scan analysis seed lines incrementally ([#12250](https://github.com/morluto/rea/issues/12250)) ([3acc952](https://github.com/morluto/rea/commit/3acc95292529c0d9f7b9e8f8e71649de35e9501e))
 * **javascript:** queue binding initializers once per ambient alias query ([#10681](https://github.com/morluto/rea/issues/10681)) ([80af53b](https://github.com/morluto/rea/commit/80af53bbe525dc30ad280781183d21b888b881f6))
 * **javascript:** reuse member syntax across ambient alias queries ([#12174](https://github.com/morluto/rea/issues/12174)) ([e1cb620](https://github.com/morluto/rea/commit/e1cb620eccf04e934b4d5359703aa71fa0068534))
 * **javascript:** skip settled widened alias expansions ([#12224](https://github.com/morluto/rea/issues/12224)) ([14c6af9](https://github.com/morluto/rea/commit/14c6af9c270cdb91cfaadc4e273433c135607d13))
@@ -636,6 +640,7 @@
 * **mcp:** canonicalize the tool catalog once per digest profile ([#11298](https://github.com/morluto/rea/issues/11298)) ([e77793e](https://github.com/morluto/rea/commit/e77793e09a26799f2c101e01a6a24ce7712d36d1))
 * **mcp:** run Kilo's read-only Git probes through execFileOutput's process group ([#10800](https://github.com/morluto/rea/issues/10800)) ([7a7a917](https://github.com/morluto/rea/commit/7a7a917e8f6ff2c7f098dd24e3cf59c124d203d9))
 * **ntfs:** skip long zero runs in offline USN journals ([#12274](https://github.com/morluto/rea/issues/12274)) ([a3a7922](https://github.com/morluto/rea/commit/a3a7922243d09225db7b33fcb554e8e527baa280))
+* **output:** avoid encoding UTF-8 excerpts that fit ([#12243](https://github.com/morluto/rea/issues/12243)) ([41c00f5](https://github.com/morluto/rea/commit/41c00f52cb254fa14ca3d507e4baad04b2e80fe9))
 * **reference:** overlap reference-source identity lookups in traversal order ([#11585](https://github.com/morluto/rea/issues/11585)) ([65f78ed](https://github.com/morluto/rea/commit/65f78edce526277a5a563c44bc70418b50d1136f)), closes [#11365](https://github.com/morluto/rea/issues/11365)
 * **search:** avoid intermediate collections for one alias ([#12252](https://github.com/morluto/rea/issues/12252)) ([51e48b8](https://github.com/morluto/rea/commit/51e48b8a281c60434683cab3368fb3d9431712e4))
 * **test:** remove duplicate full-tree lint from isolation checks ([94bf2bd](https://github.com/morluto/rea/commit/94bf2bdecdfa686527f4b676f06575bee05af53f))
