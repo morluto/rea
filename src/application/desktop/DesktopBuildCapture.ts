@@ -39,7 +39,13 @@ import {
   notAnswered,
   type CaptureStep,
 } from "./DesktopBuildCaptureFailure.js";
-import { adapterError, refused, runRea, WORK } from "./DesktopBuildCommands.js";
+import {
+  adapterError,
+  parseBuildComputerJson,
+  refused,
+  runRea,
+  WORK,
+} from "./DesktopBuildCommands.js";
 import {
   exportBuild,
   type BuildExportRequest,
@@ -177,10 +183,8 @@ const checkExportRuntime = async (
       );
     let rawSchema: unknown;
     try {
-      rawSchema = JSON.parse(content.toString("utf8"));
+      rawSchema = parseBuildComputerJson(content);
     } catch {
-      // Parser errors can quote only a fragment of a credential, which cannot
-      // be removed reliably by exact-token redaction.
       return err(
         adapterError(
           START,
