@@ -30,13 +30,18 @@ import type { AppleIpsPort } from "../../ports/binaryDiagnostics/AppleIpsPort.js
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
-import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
+import {
+  isParseLimit,
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../../domain/parseFailureAnalysisError.js";
+import type { LimitRef } from "../../domain/parseFailure.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok } from "../../domain/result.js";
 import { APPLE_IPS_PROVIDER } from "../../domain/investigationProviders.js";
 import {
-  AppleIpsResourceFailure,
+  APPLE_IPS_FORMAT,
   type AppleIpsFixedBoundary,
   type AppleIpsSelectedBoundary,
 } from "./AppleIps.errors.js";
@@ -211,16 +216,15 @@ const SELECTED_BUDGETS = {
 >;
 
 const isSelectedBoundary = (
-  boundary: AppleIpsResourceFailure["boundary"],
+  boundary: string,
 ): boundary is AppleIpsSelectedBoundary =>
   Object.hasOwn(SELECTED_BUDGETS, boundary);
 
 const budgetRemediation = (
-  input: InspectAppleIpsInput,
   boundary: AppleIpsSelectedBoundary,
+  selected: number,
 ): string => {
   const { argument, maximum, unit } = SELECTED_BUDGETS[boundary];
-  const selected = input[argument];
   const recovery =
     selected >= maximum
       ? `This release has no override above the ${String(maximum)} ${unit} ceiling; select a smaller report.`
@@ -232,29 +236,32 @@ const budgetRemediation = (
   return `Effective ${argument} is ${String(selected)} ${unit}. ${recovery}${explanation}`;
 };
 
-const resourceRecovery = (
-  input: InspectAppleIpsInput,
-  cause: AppleIpsResourceFailure,
-) => {
-  const { boundary } = cause;
-  return isSelectedBoundary(boundary)
-    ? {
-        retryable: false,
-        remediationAction: budgetRemediation(input, boundary),
-      }
-    : fixedAllowanceOptions(
-        `The IPS ${boundary.replaceAll("_", " ")} allowance`,
-        "parser",
-        { limit: cause.maximum, unit: FIXED_BOUNDARY_UNITS[boundary] },
-      );
-};
-
 /** The unit each fixed IPS format ceiling counts. */
 const FIXED_BOUNDARY_UNITS: Readonly<Record<AppleIpsFixedBoundary, string>> = {
   termination_reasons: "termination reasons",
   unlisted_keys: "keys",
   nesting: "levels",
 };
+
+const isFixedBoundary = (name: string): name is AppleIpsFixedBoundary =>
+  Object.hasOwn(FIXED_BOUNDARY_UNITS, name);
+
+const resourceRecovery = ({ name, maximum }: LimitRef) =>
+  isSelectedBoundary(name)
+    ? {
+        retryable: false,
+        remediationAction: budgetRemediation(name, maximum),
+      }
+    : fixedAllowanceOptions(
+        `The IPS ${name.replaceAll("_", " ")} allowance`,
+        "parser",
+        {
+          limit: maximum,
+          ...(isFixedBoundary(name)
+            ? { unit: FIXED_BOUNDARY_UNITS[name] }
+            : {}),
+        },
+      );
 
 const appleIpsFailurePrimary = (
   facts: ArtifactFilePrimaryFacts,
@@ -270,14 +277,11 @@ const appleIpsFailurePrimary = (
     input.path,
   );
   if (identityFailure !== undefined) return identityFailure;
-  if (cause instanceof AppleIpsResourceFailure)
-    return new AnalysisResourceConstraintError(
-      OPERATION,
-      "capacity",
-      `Selected artifact ${input.path}: ${cause.message}`,
-      { boundary: cause.boundary, maximum: cause.maximum },
-      { cause, ...resourceRecovery(input, cause) },
-    );
+  if (isParseLimit(cause, APPLE_IPS_FORMAT))
+    return parseLimitConstraint(OPERATION, "capacity", cause, {
+      ...resourceRecovery(cause.failure.limit),
+      path: input.path,
+    });
   const formatFailure = parseFailureAnalysisError(
     OPERATION,
     input.path,
