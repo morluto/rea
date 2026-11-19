@@ -476,9 +476,20 @@ try {
         { timeout: 60000 },
       );
       const error = requireMcpToolError(reply);
-      const reason = "shared libraries without PT_INTERP";
-      assert.ok(JSON.stringify(error).includes(reason), JSON.stringify(error));
-      headers.push({ flags: "shared", outcome: "refused", reason });
+      assert.equal(error.details?.selection_reason, "target_unsupported");
+      assert.equal(error.details?.requested_provider_id, "ghidra");
+      const rejections = error.details?.rejections;
+      assert.ok(Array.isArray(rejections));
+      const rejection = rejections.find(
+        ({ provider_id }) => provider_id === "ghidra",
+      );
+      assert.ok(rejection);
+      assert.equal(rejection.code, "architecture_unsupported");
+      headers.push({
+        flags: "shared",
+        outcome: "refused",
+        reason: rejection.reason,
+      });
     } else {
       // Header-mutated copies test admission; they are not new compiler claims.
       for (const [flags, outcome] of stripped

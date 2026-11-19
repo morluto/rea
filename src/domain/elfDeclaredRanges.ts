@@ -238,9 +238,6 @@ function* inspectTableRanges(
             );
       if (!parsed.ok) return err(parsed.error.message);
       const facts = parsed.value;
-      if (kind === "program" && facts.type === PT_INTERP) {
-        hasInterpreter = true;
-      }
       if (facts.type === 0 || (kind === "section" && facts.type === 8))
         continue;
       const offset = facts.offset;
@@ -252,6 +249,11 @@ function* inspectTableRanges(
         fileSize,
       );
       if (failure !== undefined) return err(failure);
+      if (kind === "program" && facts.type === PT_INTERP) {
+        // The declared range must fit at least one pathname byte and its NUL.
+        if (length < 2n) return err("invalid ELF PT_INTERP file size");
+        hasInterpreter = true;
+      }
     }
   }
   return ok({ hasInterpreter });

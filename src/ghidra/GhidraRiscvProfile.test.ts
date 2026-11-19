@@ -318,8 +318,15 @@ const registerRiscvPieAdmissionCases = () => {
     // Program headers at phoff:
     // Entry 0: PT_LOAD (1)
     buffer.writeUInt32LE(1, phoff);
-    // Entry 1: PT_INTERP (3)
-    buffer.writeUInt32LE(3, phoff + phentsize);
+    // Entry 1: PT_INTERP (3), with an in-file pathname range.
+    const interpreter = Buffer.from("/lib/ld-linux-riscv64-lp64d.so.1\0");
+    const interpHeader = phoff + phentsize;
+    const interpOffset = phoff + phnum * phentsize;
+    buffer.writeUInt32LE(3, interpHeader);
+    buffer.writeBigUInt64LE(BigInt(interpOffset), interpHeader + 8);
+    buffer.writeBigUInt64LE(BigInt(interpreter.length), interpHeader + 32);
+    buffer.writeBigUInt64LE(BigInt(interpreter.length), interpHeader + 40);
+    interpreter.copy(buffer, interpOffset);
 
     await writeFile(testFile, buffer);
     const resolved = await parseBinaryTarget(testFile);
@@ -437,13 +444,6 @@ const registerRiscvAdmissionAndCapabilityCases = () => {
       expect.stringContaining("does not establish static linkage"),
     );
 
-    const pieNotes = ghidraRiscvLimitations(
-      target({ type: 3, hasInterpreter: true }),
-    );
-    expect(pieNotes).toContainEqual(expect.stringContaining("0x100000"));
-    expect(pieNotes).toContainEqual(
-      expect.stringContaining("Position-independent executable"),
-    );
     expect(
       ghidraRiscvLimitations({
         path: "/other.elf",

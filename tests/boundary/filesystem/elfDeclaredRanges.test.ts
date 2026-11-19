@@ -219,3 +219,19 @@ it("detects PT_INTERP in program headers and records hasInterpreter for RISC-V",
     expect(withInterp.value.riscv.hasInterpreter).toBe(true);
   }
 });
+
+it.each([0n, 1n])(
+  "refuses an implausibly short PT_INTERP range (%s bytes)",
+  async (size) => {
+    const fixture = image(64, true);
+    fixture.u32(fixture.program, 3);
+    fixture.word(fixture.program + 32, size);
+    expect(await admit(fixture.bytes)).toMatchObject({
+      ok: false,
+      error: {
+        constraint: "file_format_rejected",
+        reason: "invalid ELF PT_INTERP file size",
+      },
+    });
+  },
+);
