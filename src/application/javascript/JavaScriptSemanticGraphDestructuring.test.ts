@@ -1484,3 +1484,61 @@ it.each([
     ).toMatchObject({ resolution });
   },
 );
+
+it.each([
+  [
+    "native replacement before acquisition",
+    closeNextObject,
+    "none=(box.items=[0,box.next]),items:[used]",
+    "candidate",
+  ],
+  [
+    "native replacement after acquisition",
+    closeNextObject,
+    "items:[used],none=(box.items=[0,box.next])",
+    "resolved",
+  ],
+  [
+    "native replacement with no close hook",
+    "",
+    "none=(box.items=[0,box.next]),items:[used]",
+    "resolved",
+  ],
+  [
+    "custom replacement before acquisition",
+    "",
+    "none=(box.items={child:box.next,[Symbol.iterator](){delete this.child.mode;return [0].values();}}),items:[used]",
+    "candidate",
+  ],
+  [
+    "custom replacement after acquisition",
+    "",
+    "items:[used],none=(box.items={child:box.next,[Symbol.iterator](){delete this.child.mode;return [0].values();}})",
+    "resolved",
+  ],
+  [
+    "replacement's iterator updated before acquisition",
+    "",
+    "none=(box.items=[0,box.next]), second=(box.items[Symbol.iterator]=function(){delete this[1].mode;return [0].values();}),items:[used]",
+    "candidate",
+  ],
+] as const)(
+  "captures the nested iterator receiver for %s",
+  (_name, hook, pattern, resolution) => {
+    const graph = graphForJavaScript(`
+    const box={items:[0],next:{mode:"before"}};
+    ${hook}
+    const {${pattern},next:{mode:selected}}=box;
+  `);
+    const selected = graph.nodes.find(
+      (n) => n.kind === "binding" && n.label === "selected",
+    );
+    expect(
+      graph.relations.find(
+        (r) =>
+          r.relation === "destructures" &&
+          r.target_node_id === selected?.node_id,
+      ),
+    ).toMatchObject({ resolution });
+  },
+);

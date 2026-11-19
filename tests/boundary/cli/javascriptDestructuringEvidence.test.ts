@@ -19,6 +19,8 @@ const iteratorCloseSource = `
     const restSource = [undefined, { mode: "before" }];
     try { const [head = null.value, ...rest] = restSource; } catch {}
     const { 1: { mode: abruptAfterClose } } = restSource;
+    const replaced = { items: [0], next: { mode: "borrowed" } };
+    const { replace = (replaced.items = [0, replaced.next]), items: [use], next: { mode: replacedAfterClose } } = replaced;
   `;
 
 cliTest(
@@ -99,6 +101,7 @@ cliTest(
       ["afterClose", ["items", "1", "mode"], "candidate"],
       ["storedAfterClose", ["next", "mode"], "candidate"],
       ["abruptAfterClose", ["1", "mode"], "candidate"],
+      ["replacedAfterClose", ["next", "mode"], "candidate"],
     ] as const) {
       const binding = graph.nodes.find(
         (node) => node.kind === "binding" && node.label === name,

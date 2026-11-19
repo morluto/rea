@@ -38,9 +38,13 @@ import {
   evaluateSemanticExpression,
   evaluateSemanticExpressionProvenance,
 } from "./javascriptSemanticValues.js";
-import { bindingHasMemberWrites } from "./javascriptSemanticEffectLog.js";
+import {
+  bindingHasMemberWrites,
+  bindingProjectedContentsMayChangeAt,
+} from "./javascriptSemanticEffectLog.js";
 import { semanticContainer } from "./javascriptSemanticSlots.js";
 import {
+  hasFreshProjectedReceiver,
   semanticProjectedSourceFactsAtRead,
   semanticCapturedSelectionsAfterPropertyRead,
   semanticShiftCapturedSelections,
@@ -2008,6 +2012,78 @@ export function* collectSemanticMemberMutationsSteps(
   // A value thrown out of its function or the program reaches handlers the
   // throw-to-catch index does not link to it.
   for (const node of state.escapingThrows) markEscaped(node.argument, node);
+  const markAcquiredNestedIterator = (
+    reference: IterableReference,
+  ): boolean => {
+    const { arrayPattern: pattern, mutation, node, projection } = reference;
+    const receiver = unwrapJavaScriptExpression(node).node;
+    if (
+      pattern === undefined ||
+      projection.length === 0 ||
+      !t.isIdentifier(receiver)
+    )
+      return false;
+    const binding = resolveBinding(receiver, receiver.name);
+    if (binding === undefined || !bindingHasMemberWrites(binding)) return false;
+    const captured = semanticProjectedSourceFactsAtRead(
+      binding,
+      receiver,
+      projection,
+      state,
+      true,
+      pattern,
+      reference.capturedSelections,
+    );
+    // A later-only write can invalidate the merged lattice without changing
+    // this acquisition. Leave the original capture on its established route.
+    if (captured === undefined || captured.storedSources.length === 0)
+      return false;
+    const contentsMayChange = bindingProjectedContentsMayChangeAt(
+      state,
+      binding,
+      projection,
+      pattern,
+    );
+    for (const source of captured.sources) {
+      work.charge();
+      const value = semanticSelectedReferenceSlot(
+        { node: source.node, projection: source.path },
+        state,
+        source.node,
+      )?.value;
+      const native =
+        !contentsMayChange &&
+        semanticKnownArrayIteration(value, state, pattern) &&
+        hasFreshProjectedReceiver(source.node, source.path, state);
+      const selection = native
+        ? semanticArrayPatternCloseSelection(pattern, mutation, value, state)
+        : undefined;
+      if (!native || selection !== undefined)
+        markValue(
+          source.node,
+          selection === undefined ? source.path : [...source.path, selection],
+          reference.bindings,
+          "escape",
+          native ? semanticScopeExitEffect(pattern, mutation) : mutation,
+          source.node,
+          undefined,
+          false,
+          undefined,
+          false,
+          {
+            memberReadAt: source.node,
+            capturedSelections: semanticNormalizeCapturedSelections([
+              ...(semanticShiftCapturedSelections(
+                reference.capturedSelections,
+                source.path.length - projection.length,
+              ) ?? []),
+              ...(source.capturedSelections ?? []),
+            ]),
+          },
+        );
+    }
+    return true;
+  };
   // A later effect can make a previously defined destructuring source uncertain.
   // Reconsider defaults and iterable origins until their effects are stable.
   while (
@@ -2110,6 +2186,10 @@ export function* collectSemanticMemberMutationsSteps(
         state,
         capturesRootPattern ? node : undefined,
       );
+      // A slot's value lattice loses identities invalidated by writes. Recover
+      // stored alternatives at the nested receiver's actual acquisition.
+      if (slot?.presence !== "present" && markAcquiredNestedIterator(reference))
+        continue;
       // Custom iteration can yield the iterable itself as well as any child.
       // Treat its root as escaped, including writes through yielded references.
       const knownArray = semanticKnownArrayIteration(

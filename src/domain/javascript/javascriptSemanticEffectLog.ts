@@ -581,6 +581,27 @@ export const bindingMemberEffectMayPrecedeReads = (
   return false;
 };
 
+/** Whether a selected receiver's contents can change before use.
+ * Writes replacing the receiver are covered by the source-selection query.
+ */
+export const bindingProjectedContentsMayChangeAt = (
+  state: JavaScriptSemanticAnalysisState,
+  binding: JavaScriptSemanticBindingState,
+  path: JavaScriptSemanticPropertyPath,
+  read: t.Node,
+): boolean =>
+  opaqueCodeMayReachBindingReference(binding, state, read) ||
+  bindingMemberEffectMayPrecedeReads(
+    state,
+    binding,
+    (kind, effect) =>
+      (kind === "escape" || effect.path.length > path.length) &&
+      semanticEffectPathMatches(effect.path.slice(0, path.length), path)
+        ? [read]
+        : undefined,
+    "activation",
+  );
+
 /**
  * Whether an assignment to `binding` recorded as a reference initializer
  * (a pattern or other non-ordinary write) may run before `read`.
