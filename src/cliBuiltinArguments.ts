@@ -1,4 +1,5 @@
 import { err, ok, type Result } from "./domain/result.js";
+import { classifyMcpEntry } from "./main/mcpHttpArguments.js";
 
 /** Global output flags that take a value. */
 export const VALUED_OUTPUT_FLAGS: ReadonlySet<string> = new Set([
@@ -270,55 +271,27 @@ export const isProjectScopedAmpRegistration = ({
   return !global && (agents.length === 0 || agents.includes("amp"));
 };
 
-/** Flags `rea mcp --http` alone accepts besides `-h`; the HTTP parser owns their meanings. */
-const MCP_HTTP_VALUED_FLAGS: ReadonlySet<string> = new Set([
-  "--host",
-  "--port",
-  "--allowed-hosts",
-]);
-
-/**
- * Whether the caller addressed the HTTP transport reader. `mcp`/`--mcp` must be
- * the entry word and the next token must be a flag, so `mcp add --http` stays
- * the registration command. A flag-shaped output value (`--format --http`) is
- * consumed by the output reader before this scan, and a transport option's own
- * value is skipped, so neither selects the mode. A transport option without
- * `--http` still reaches this reader, which owns the "`--host` and `--port`
- * require `--http`" diagnostic. A `doctor` word keeps the request with the
- * doctor reader that owns output flags.
- */
-const requestsMcpHttpTransport = (global: CliGlobalArguments): boolean => {
-  // `--mcp` is a builtin switch the global reader removes from `command`.
-  const { command } = global;
-  const tail = command[0] === "mcp" ? command.slice(1) : command;
-  const first = tail[0];
-  if (first === undefined || !first.startsWith("-")) return false;
-  let transport = false;
-  for (let index = 0; index < tail.length; index += 1) {
-    const argument = tail[index]!;
-    if (argument === "doctor") return false;
-    const equals = argument.indexOf("=");
-    const flag = equals < 0 ? argument : argument.slice(0, equals);
-    if (flag !== "--http" && !MCP_HTTP_VALUED_FLAGS.has(flag)) continue;
-    transport = true;
-    if (flag !== "--http" && equals < 0) index += 1;
-  }
-  return transport;
-};
-
 /**
  * The arguments production `mcp --http` parses itself: the caller's, without a
- * leading `mcp`/`--mcp` entry. Returns undefined unless the caller asked for
+ * leading `mcp`/`--mcp` entry. Returns undefined unless the caller addressed
  * the HTTP transport.
+ *
+ * The global reader runs first, so an output flag's value is data and never a
+ * mode. What remains is handed to the HTTP entry's own classifier, so routing
+ * and parsing read one grammar instead of two copies of it.
  */
 export const productionMcpHttpArguments = (
   arguments_: readonly string[],
 ): readonly string[] | undefined => {
   const entry = arguments_[0];
   if (entry !== "mcp" && entry !== "--mcp") return undefined;
-  if (!requestsMcpHttpTransport(parseCliGlobalArguments(arguments_)))
-    return undefined;
-  return arguments_.slice(1);
+  const { command } = parseCliGlobalArguments(arguments_);
+  // `--mcp` is a builtin switch the global reader removes; the entry word it
+  // stood for stays the same, so only `mcp` is left to strip.
+  const mcpArguments = command[0] === "mcp" ? command.slice(1) : command;
+  return classifyMcpEntry(mcpArguments) === "http"
+    ? arguments_.slice(1)
+    : undefined;
 };
 
 /**

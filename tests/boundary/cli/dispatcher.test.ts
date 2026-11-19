@@ -418,6 +418,32 @@ describe("executable dispatcher argument routing", () => {
   );
 
   workspaceCliTest(
+    "keeps HTTP help reachable after a doctor-shaped word",
+    async ({ processes, workspace }) => {
+      await installCliRuntime(
+        workspace,
+        'export const closeCliResources = () => {}; export const createCli = () => ({ serve: (args) => process.stdout.write(JSON.stringify({ adapter: "cli", args })) });\n',
+      );
+      await installMcpDispatchStubs(workspace);
+      const result = await processes.run(
+        process.execPath,
+        [
+          workspace.path("scripts/rea.mjs"),
+          "mcp",
+          "--http",
+          "--help",
+          "doctor",
+        ],
+        { cwd: workspace.root },
+      );
+      expect(JSON.parse(result.stdout)).toEqual({
+        adapter: "mcp-http",
+        args: ["--http", "--help", "doctor"],
+      });
+    },
+  );
+
+  workspaceCliTest(
     "keeps an output flag's value with the output reader",
     async ({ processes, workspace }) => {
       await installCliRuntime(

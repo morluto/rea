@@ -130,3 +130,28 @@ export const parseMcpHttpArguments = (
     ...(allowedHosts === undefined ? {} : { allowedHosts: allowedHosts.data }),
   };
 };
+
+/**
+ * The facts the dispatcher needs to place `mcp`'s arguments, read from this
+ * entry's own grammar. Words that belong to another reader — output flags and
+ * an entry word consumed upstream — arrive already removed; a word this entry
+ * cannot place is reported as such rather than guessed at.
+ */
+export type McpEntryRouting = "http" | "doctor" | "command";
+
+/**
+ * Which reader `mcp`'s remaining arguments address. `doctor` keeps a request for
+ * the doctor reader that owns output flags; a word in command position is the
+ * stdio runtime's registration subcommand; anything else that starts with a
+ * flag is this entry, so `--format --http` cannot select it and `--port 8765`
+ * reaches its own missing-mode diagnostic.
+ */
+export const classifyMcpEntry = (
+  arguments_: readonly string[],
+): McpEntryRouting => {
+  // The doctor reader takes `mcp doctor` in that order; flags after it are its
+  // own. Any other flag in command position is this entry's.
+  const first = arguments_[0] ?? "";
+  if (first === "doctor") return "doctor";
+  return first.startsWith("-") ? "http" : "command";
+};

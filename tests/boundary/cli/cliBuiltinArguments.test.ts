@@ -158,9 +158,24 @@ describe("production mcp --http arguments", () => {
     expect(
       productionMcpHttpArguments(["mcp", "doctor", "--http"]),
     ).toBeUndefined();
+    // `--http` puts the entry in flag position, so a following word is this
+    // entry's own argument error, not a doctor request.
+    expect(productionMcpHttpArguments(["mcp", "--http", "doctor"])).toEqual([
+      "--http",
+      "doctor",
+    ]);
+  });
+
+  it("keeps help in flag position for the HTTP entry", () => {
+    // The doctor reader wants `mcp doctor` in that order; a word after a flag
+    // is not the doctor command, so this stays HTTP help.
     expect(
-      productionMcpHttpArguments(["mcp", "--http", "doctor"]),
-    ).toBeUndefined();
+      productionMcpHttpArguments(["mcp", "--http", "--help", "doctor"]),
+    ).toEqual(["--http", "--help", "doctor"]);
+    expect(productionMcpHttpArguments(["mcp", "--http", "--help"])).toEqual([
+      "--http",
+      "--help",
+    ]);
   });
 });
 
