@@ -152,6 +152,26 @@ class WebsiteLinkAuditChecks(unittest.TestCase):
                     self.assertEqual(report["status"], "ok")
                     self.assertEqual(report["endpoint"], f"repos/example/project/contents/README.md?ref={ref}")
 
+    def test_invalid_external_url_does_not_hide_other_audit_results(self):
+        invalid = "https://[::1/guide"
+        valid = "https://github.com/example/project"
+        source = "website/public/index.html"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            page = root / source
+            page.parent.mkdir(parents=True)
+            page.write_text(f'<a href="{invalid}">Invalid</a><a href="{valid}">Valid</a>')
+            references = AUDIT.external_links(root)
+
+            with patch.object(AUDIT, "github_api", return_value={"name": "project"}) as probe:
+                reports = {url: AUDIT.audit_url((url, sources)) for url, sources in references.items()}
+
+        probe.assert_called_once_with("repos/example/project")
+        self.assertEqual(reports[valid]["status"], "ok")
+        self.assertEqual(reports[invalid]["status"], "broken")
+        self.assertEqual(reports[invalid]["sources"], [source])
+        self.assertIn("Invalid URL", reports[invalid]["reason"])
+
     def test_missing_contents_and_unavailable_github_probes_remain_distinct(self):
         cases = (
             (ValueError("gh: Not Found (HTTP 404)"), "broken"),

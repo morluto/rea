@@ -64,7 +64,10 @@ def audit_url(item):
     """Classify confirmed missing links separately from blocked or unsupported probes."""
     value, sources = item
     result = {"url": value, "sources": sorted(set(sources))}
-    url = urlsplit(value)
+    try:
+        url = urlsplit(value)
+    except ValueError as error:
+        return dict(result, status="broken", reason=f"Invalid URL: {error}")
     try:
         if url.hostname in ("github.com", "raw.githubusercontent.com"):
             endpoint = github_target(url)
@@ -94,8 +97,14 @@ def external_links(root):
     references = {}
 
     def add(value, source):
-        url = urlsplit(value)
-        if url.scheme in ("http", "https") and url.hostname not in ("rea.tools", "localhost", "127.0.0.1", "::1"):
+        try:
+            url = urlsplit(value)
+        except ValueError:
+            # Keep invalid HTTP links so the audit can report their sources.
+            external = value.lstrip().lower().startswith(("http://", "https://"))
+        else:
+            external = url.scheme in ("http", "https") and url.hostname not in ("rea.tools", "localhost", "127.0.0.1", "::1")
+        if external:
             references.setdefault(value, []).append(str(source.relative_to(root)))
 
     class Links(HTMLParser):
