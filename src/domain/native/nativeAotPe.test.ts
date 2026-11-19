@@ -33,8 +33,10 @@ const linkedTableFixture = (shape: "deep" | "wide" | "interfaces") => {
           : 0x140002200n;
     bytes.writeBigUInt64LE(parent, offset + 8);
     if (shape === "interfaces" && index < 2) {
+      bytes.writeUInt16LE(1, offset + 16);
       bytes.writeUInt16LE(1, offset + 18);
-      bytes.writeBigUInt64LE(address(2), offset + 24);
+      bytes.writeBigUInt64LE(0x140001040n, offset + 24);
+      bytes.writeBigUInt64LE(address(2), offset + 32);
     }
   }
   return {
@@ -64,6 +66,24 @@ describe("NativeAOT indexed MethodTable closure", () => {
         "0x1400022c0",
         ...expected,
       ]);
+      if (shape === "interfaces") {
+        expect(
+          parsed.readTypeDetail("0x140002400", SUMMARY_BUDGET),
+        ).toMatchObject({
+          interfaces: [{ address: "0x140002480", type: null }],
+          virtual_slots: [
+            {
+              slot: 0,
+              slot_address: "0x140002418",
+              target_address: "0x140001040",
+            },
+          ],
+          derived_memory: {
+            size_bytes: 40,
+            sha256: nativeAotPeDigest(bytes.subarray(0xa00, 0xa28)),
+          },
+        });
+      }
       expect(Buffer.compare(bytes, before)).toBe(0);
     },
   );

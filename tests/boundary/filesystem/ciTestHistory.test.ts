@@ -52,6 +52,7 @@ async function invoke(
     repository?: string;
     repositoryId?: string;
     tier?: string;
+    successfulRuns?: unknown[];
   } = {},
 ) {
   const directory = await createTestTempDirectory("rea-ci-test-history-");
@@ -60,7 +61,14 @@ async function invoke(
   const fixture = join(directory, "api.json");
   const calls = join(directory, "api-calls");
   const output = join(directory, "github-output");
-  await writeFile(fixture, JSON.stringify({ artifacts, runs }));
+  await writeFile(
+    fixture,
+    JSON.stringify({
+      artifacts,
+      runs,
+      successfulRuns: options.successfulRuns ?? [],
+    }),
+  );
   await writeFile(output, "");
   await writeFile(calls, "");
   const fakeGh = join(fakeBin, "gh");
@@ -72,6 +80,8 @@ async function invoke(
       'if [ "$GH_API_ERROR" = "true" ]; then exit 1; fi',
       'if [ "$4" = "repos/example/rea/actions/artifacts" ]; then',
       '  node -e \'const fs=require("node:fs"); const x=JSON.parse(fs.readFileSync(process.env.GH_FIXTURE_RESPONSE,"utf8")); process.stdout.write(JSON.stringify({artifacts:x.artifacts}));\'',
+      'elif [ "$4" = "repos/example/rea/actions/workflows/ci.yml/runs" ]; then',
+      '  node -e \'const fs=require("node:fs"); const x=JSON.parse(fs.readFileSync(process.env.GH_FIXTURE_RESPONSE,"utf8")); process.stdout.write(JSON.stringify({workflow_runs:x.successfulRuns}));\'',
       "else",
       '  run_id="${4##*/}"',
       '  node -e \'const fs=require("node:fs"); const x=JSON.parse(fs.readFileSync(process.env.GH_FIXTURE_RESPONSE,"utf8")); const run=x.runs[Number(process.argv[1])]; if(run===null){console.error("gh: Not Found (HTTP 404)"); process.exit(1);} process.stdout.write(JSON.stringify(run ?? {}));\' "$run_id"',
@@ -343,4 +353,35 @@ it("uses the next valid timing run when one listed run disappears", async () => 
   expect(calls).toContain("actions/runs/81");
   expect(calls).toContain("actions/runs/80");
   expect(calls).not.toContain("actions/runs/79");
+});
+
+it("finds an older successful timing artifact beyond five unsuccessful runs", async () => {
+  const newest = [107, 106, 105, 104, 103];
+  const { result, calls } = await invoke(
+    [...newest, 102, 101, 100].map((id) =>
+      artifact(id, {
+        created_at: new Date(now - (108 - id) * 1000).toISOString(),
+      }),
+    ),
+    Object.fromEntries(
+      newest.map((id) => [id, run(id, { conclusion: "failure" })]),
+    ),
+    {
+      tier: "full",
+      successfulRuns: [
+        run(999), // A successful run without this timing artifact.
+        run(102, { head_repository: { full_name: "fork/rea" } }),
+        run(100),
+        run(101),
+      ],
+    },
+  );
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "101",
+    artifact_name: "test-timings-full",
+  });
+  expect(calls.match(/actions\/runs\//gu)).toHaveLength(5);
+  expect(calls.match(/actions\/workflows\/ci\.yml\/runs/gu)).toHaveLength(1);
+  expect(calls).toContain("branch=main");
+  expect(calls).toContain("status=success");
 });
