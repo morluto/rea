@@ -1,4 +1,4 @@
-import { win32 } from "node:path";
+import { posix, win32 } from "node:path";
 import { z } from "zod";
 import { digestSchema } from "../digests.js";
 import {
@@ -153,13 +153,11 @@ const cycloneDxSerialNumber = (evidenceDigest: string): string => {
   return `urn:uuid:${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 };
 
-/**
- * Final segment of a recorded artifact path. Windows separators count on every
- * host, so Evidence that names `C:\a\b.exe` produces the same component name
- * everywhere.
- */
+/** Use the recorded path spelling across hosts, including literal POSIX backslashes. */
 const fileComponentName = (path: string): string => {
-  const name = win32.basename(path);
+  const name = path.startsWith("/")
+    ? posix.basename(path)
+    : win32.basename(path);
   return name.length > 0 ? name : path;
 };
 

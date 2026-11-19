@@ -1166,15 +1166,19 @@ it("keeps a replaced Go module exact when its identity is normalized or malforme
   expect(unknownsNaming(view.unknowns, "example.com/")).toHaveLength(1);
 });
 
-it("names a Windows artifact path the same way on every host", () => {
+it.each([
+  ["C:\\a\\b.exe", "b.exe"],
+  ["\\\\server\\share\\b.exe", "b.exe"],
+  ["/artifacts/backup\\program", "backup\\program"],
+])("uses the recorded path style for artifact %s", (path, name) => {
   const base = goReport(null);
   const report = goBinarySchema.parse({
     ...base,
-    artifact: { ...base.artifact, path: "C:\\a\\b.exe" },
+    artifact: { ...base.artifact, path },
   });
   const view = projectGo(report);
-  expect(view.artifact.path).toBe("C:\\a\\b.exe");
-  expect(view.document.metadata.component.name).toBe("b.exe");
+  expect(view.artifact.path).toBe(path);
+  expect(view.document.metadata.component.name).toBe(name);
 });
 
 it("keeps a Go dependency whose Package URL matches the main module", () => {
