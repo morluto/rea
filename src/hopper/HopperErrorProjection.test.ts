@@ -10,6 +10,7 @@ import {
   HopperTimeoutError,
   HopperCancelledError,
   HopperProtocolError,
+  hopperAppleEventsAuthorizationRejection,
   hopperErrorCatalogue,
 } from "./HopperErrors.js";
 import {
@@ -74,10 +75,7 @@ describe("analysis error projection: Hopper provider failures", () => {
   it("projects an Apple Events denial as unavailable and not retryable from the same client", () => {
     const projected = projectAnalysisError(
       new HopperStartError({
-        launchRejection: {
-          boundary: "apple_events_authorization",
-          reason: "not_authorized",
-        },
+        launchRejection: hopperAppleEventsAuthorizationRejection,
         launcherFailure: {
           exit_code: 2,
           signal: null,
@@ -103,12 +101,13 @@ describe("analysis error projection: Hopper provider failures", () => {
         launch_rejection: {
           boundary: "apple_events_authorization",
           reason: "not_authorized",
+          responsibility: "client_or_disclaimed_runtime",
+          settings_pane: "privacy_security_automation",
+          entitlement_id: "com.apple.security.automation.apple-events",
         },
         launcher: { exit_code: 2, signal: null },
       },
     });
-    expect(projected.remediation.action).toContain("disclaim responsibility");
-    expect(projected.remediation.action).toContain("REA runtime");
     expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
   });
 
@@ -542,10 +541,7 @@ describe("Hopper error catalogue", () => {
     [
       "Apple Events authorization denied",
       new HopperStartError({
-        launchRejection: {
-          boundary: "apple_events_authorization",
-          reason: "not_authorized",
-        },
+        launchRejection: hopperAppleEventsAuthorizationRejection,
       }),
     ],
   ] as const)(

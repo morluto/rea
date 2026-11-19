@@ -32,6 +32,7 @@ import {
   type HopperServerInfo,
 } from "./HopperReplyContracts.js";
 import {
+  hopperAppleEventsAuthorizationRejection,
   hopperCancelledBySignal,
   type HopperCancelledError,
   type HopperError,
@@ -1212,10 +1213,7 @@ export class HopperClient<
     ) {
       this.#resources.shutdownConfirmed = true;
       return new HopperStartError({
-        launchRejection: {
-          boundary: "apple_events_authorization",
-          reason: "not_authorized",
-        },
+        launchRejection: hopperAppleEventsAuthorizationRejection,
         launcherFailure,
       });
     }

@@ -1017,7 +1017,13 @@ stage `connection`.
 
 If macOS denies Apple Events, REA reports
 `details.launch_rejection.boundary: "apple_events_authorization"` with
-`reason: "not_authorized"`, category `unavailable`, and `retryable: false`.
+`reason: "not_authorized"`,
+`responsibility: "client_or_disclaimed_runtime"`,
+`settings_pane: "privacy_security_automation"`, and
+`entitlement_id: "com.apple.security.automation.apple-events"`,
+category `unavailable`, and `retryable: false`. The helper does not identify
+the responsible process, so `responsibility` covers both an authorizable client
+and a client that disclaims TCC responsibility.
 Allow the application that macOS identifies as responsible for REA under
 **System Settings → Privacy & Security → Automation**. Some MCP clients, including
 Claude Desktop, disclaim responsibility, so macOS attributes the request to the
