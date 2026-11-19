@@ -53,6 +53,44 @@ it("rejects an unknown exec argv extension", async () => {
   });
 });
 
+it.each([
+  [0, "commonjs"],
+  [1, "module"],
+] as const)(
+  "retains the main code format byte %i and payload ranges",
+  async (mainCodeFormat, name) => {
+    const main = "x".repeat(2048);
+    const bytes = buildNodeSeaBlob({
+      mainCodeFormat,
+      codePath: "a.js",
+      main,
+      assets: [{ name: "asset", body: "bytes" }],
+      execArgv: ["--no-warnings"],
+    });
+    const decoded = await decodeNodeSeaBlob(bytes);
+    expect(decoded).toMatchObject({
+      mainCodeFormat: name,
+      codePath: "a.js",
+      assets: [{ name: "asset" }],
+      execArgv: ["--no-warnings"],
+    });
+    const range = decoded.mainScript;
+    if (range === null) throw new Error("Expected main script");
+    expect(
+      bytes.toString("utf8", range.offset, range.offset + range.length),
+    ).toBe(main);
+  },
+);
+
+it("rejects an unknown main code format in the newer header", async () => {
+  const bytes = buildNodeSeaBlob({ mainCodeFormat: 1 });
+  bytes[9] = 2;
+  await expect(decodeNodeSeaBlob(bytes)).rejects.toMatchObject({
+    reason: "format",
+    message: expect.stringMatching(/main code format.*unknown/iu),
+  });
+});
+
 it("rejects an empty code path", async () => {
   await expect(
     decodeNodeSeaBlob(buildNodeSeaBlob({ codePath: "" })),

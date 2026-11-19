@@ -11,6 +11,7 @@ import {
   projectArtifactCloseFailure,
   ArtifactReaderFailure,
   readStableArtifact,
+  type StableArtifactSnapshot,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   ArtifactResourceScope,
@@ -18,6 +19,7 @@ import {
 import type { ElfUnwindRangesPort } from "../../ports/binaryDiagnostics/ElfUnwindRangesPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
@@ -34,7 +36,7 @@ import {
 import {
   ELF_UNWIND_FORMAT,
   ELF_UNWIND_RECORD_LIMIT,
-  parseElfUnwindRanges,
+  parseElfUnwindRangesCooperative,
 } from "./ElfUnwindTables.js";
 
 const OPERATION = "inspect_elf_unwind_ranges";
@@ -60,30 +62,25 @@ export class ElfUnwindRangesProvider implements ElfUnwindRangesPort {
     input: InspectElfUnwindRangesInput,
     options?: ExecutionOptions,
   ) {
+    const signal = options?.signal;
+    let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        snapshot = await readStableArtifact(
           input.path,
           input.max_file_bytes,
-          options?.signal,
+          signal,
           undefined,
           this.#resources,
         );
+        const { bytes, sha256 } = snapshot;
+        const artifact = { path: input.path, sha256, bytes: bytes.length };
         return ok(
-          parseElfUnwindRanges(
-            snapshot.bytes,
-            {
-              path: input.path,
-              sha256: snapshot.sha256,
-              bytes: snapshot.bytes.length,
-            },
-            input,
-            options?.signal,
-          ),
+          await parseElfUnwindRangesCooperative(bytes, artifact, input, signal),
         );
       });
     } catch (cause) {
-      return err(elfUnwindFailure(cause, input));
+      return err(elfUnwindFailure(cause, input, snapshot));
     }
   }
 }
@@ -103,6 +100,8 @@ const elfUnwindFailurePrimary = (
   input: InspectElfUnwindRangesInput,
 ) => {
   const { cause, origin } = facts;
+  if (origin === "owned-or-classified" && cause instanceof AnalysisError)
+    return cause;
   if (isParseLimit(cause, ELF_UNWIND_FORMAT)) {
     const { detail, limit } = cause.failure;
     const records = limit.name === ELF_UNWIND_RECORD_LIMIT;
@@ -184,6 +183,7 @@ const elfUnwindFailurePrimary = (
 const elfUnwindFailure = (
   cause: unknown,
   input: InspectElfUnwindRangesInput,
+  snapshot?: StableArtifactSnapshot,
 ) => {
   const primary = elfUnwindFailurePrimary(
     artifactFilePrimaryFacts(cause),
@@ -195,5 +195,6 @@ const elfUnwindFailure = (
     input.path,
     ELF_UNWIND_RANGES_PROVIDER.id,
     OPERATION,
+    snapshot,
   );
 };

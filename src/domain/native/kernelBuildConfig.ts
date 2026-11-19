@@ -59,9 +59,12 @@ const range = z.strictObject({
   bytes: uint,
 });
 
-/** Matches a Kconfig `int` or `hex` value as written to `.config`. */
+/**
+ * Kconfig writes `int` and `hex` lexemes as stored. Hex may omit its prefix,
+ * so a digit-only value does not establish a base without the symbol type.
+ */
 export const KERNEL_BUILD_CONFIG_NUMBER =
-  /^(?:-?(?:0|[1-9][0-9]*)|0[xX][0-9A-Fa-f]+)$/u;
+  /^(?:-(?:0|[1-9][0-9]*)|(?:0[xX])?[0-9A-Fa-f]+)$/u;
 /** Length of the `IKCFG_ST` and `IKCFG_ED` markers. */
 export const KERNEL_BUILD_CONFIG_MARKER_BYTES = 8;
 

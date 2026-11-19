@@ -35,7 +35,7 @@ import { EspImageArtifactReader } from "./EspImageArtifactReader.js";
 import { FitArtifactReader } from "./FitArtifactReader.js";
 import type { GodotPckAdmission } from "./GodotPckLocation.js";
 import { GodotPckArtifactReader } from "./GodotPckArtifactReader.js";
-import { InesArtifactReader, INES_LIMITATION } from "./InesArtifactReader.js";
+import { InesArtifactReader } from "./InesArtifactReader.js";
 import { HexRecordArtifactReader } from "./HexRecordArtifactReader.js";
 import { MachOSliceArtifactReader } from "./MachOSliceArtifactReader.js";
 import { NativeDmgArtifactReader } from "./NativeDmgArtifactReader.js";
@@ -296,7 +296,6 @@ const NON_ZIP_FORMATS = {
     retainClassifiedSource: true,
     extractable: true,
     absentInventory: "unavailable",
-    readerLimitation: INES_LIMITATION,
     createReader: (path, options) => {
       const source = sourceOf(options);
       if (source === undefined)
