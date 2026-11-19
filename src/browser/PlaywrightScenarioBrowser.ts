@@ -388,12 +388,16 @@ const resolveAndroidChromiumExecutable = async (
     ? posix.dirname(selected)
     : dirname(selected);
   const termuxBin = posix.isAbsolute(prefix)
-    ? absoluteCallerPath(appendCallerPath(prefix, "bin"))
+    ? absoluteCallerPath(appendCallerPath(prefix, "bin", platform))
     : win32.isAbsolute(prefix)
       ? win32.resolve(prefix, "bin")
-      : absoluteCallerPath(appendCallerPath(prefix, "bin"));
+      : absoluteCallerPath(appendCallerPath(prefix, "bin", platform));
   if (parent !== termuxBin) return executablePath;
-  const sibling = appendCallerPath(parent, "../lib/chromium/chrome");
+  const sibling = appendCallerPath(
+    parent,
+    "../lib/chromium/chrome",
+    platform,
+  );
   try {
     await access(sibling, fsConstants.F_OK);
     return sibling;
@@ -999,7 +1003,11 @@ export const openPlaywrightScenarioBrowser = async (
   if (preferredTemp !== undefined)
     await mkdir(preferredTemp, { recursive: true });
   const profilePath = await mkdtemp(
-    appendCallerPath(preferredTemp ?? tmpdir(), "rea-browser-scenario-"),
+    appendCallerPath(
+      preferredTemp ?? tmpdir(),
+      "rea-browser-scenario-",
+      platform,
+    ),
   );
   let context: BrowserContext;
   const executablePath = await resolveAndroidChromiumExecutable(

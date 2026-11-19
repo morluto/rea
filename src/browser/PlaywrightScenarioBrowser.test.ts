@@ -197,7 +197,7 @@ it("keeps Termux execution support when launching Chromium on Android", async ()
     LANG: "selected-language",
     LD_PRELOAD: `${prefix}/lib/libtermux-exec.so`,
     TERMUX_EXEC__PROC_SELF_EXE: process.execPath,
-    TMPDIR: appendCallerPath(prefix, "tmp"),
+    TMPDIR: appendCallerPath(prefix, "tmp", "android"),
   });
 });
 
@@ -567,9 +567,11 @@ it("does not let a stuck Android launch block later launches", async () => {
   await expect(first).rejects.toMatchObject({
     diagnostics: { startup_error: "launch boundary reached" },
   });
-  expect(firstLookup).toBe(appendCallerPath(firstRoot, "tmp"));
-  expect(firstLookupAfterWait).toBe(appendCallerPath(firstRoot, "tmp"));
-  expect(secondLookup).toBe(appendCallerPath(secondRoot, "tmp"));
+  expect(firstLookup).toBe(appendCallerPath(firstRoot, "tmp", "android"));
+  expect(firstLookupAfterWait).toBe(
+    appendCallerPath(firstRoot, "tmp", "android"),
+  );
+  expect(secondLookup).toBe(appendCallerPath(secondRoot, "tmp", "android"));
   expect(process.env.TMPDIR).toBe("");
   expect(process.env.TMP).toBe("");
   expect(process.env.TEMP).toBe("");
@@ -617,7 +619,11 @@ it("publishes a writable Playwright browsers path before an Android launch", asy
     },
   });
   expect(process.env.PLAYWRIGHT_BROWSERS_PATH).toBe(
-    appendCallerPath(appendCallerPath(prefix, "tmp"), "ms-playwright"),
+    appendCallerPath(
+      appendCallerPath(prefix, "tmp", "android"),
+      "ms-playwright",
+      "android",
+    ),
   );
 });
 
@@ -659,8 +665,13 @@ it("launches Termux Chromium from the binary next to its ICU data", async () => 
   const remappedChrome = appendCallerPath(
     dirname(wrapper),
     "../lib/chromium/chrome",
+    "android",
   );
-  const icuDirectory = appendCallerPath(dirname(wrapper), "../lib/chromium");
+  const icuDirectory = appendCallerPath(
+    dirname(wrapper),
+    "../lib/chromium",
+    "android",
+  );
   expect(executablePath).toBe(remappedChrome);
   expect(launchOptions?.args).toEqual([
     "--disable-dev-shm-usage",
@@ -716,6 +727,7 @@ it.skipIf(process.platform === "win32")(
     const sibling = appendCallerPath(
       dirname(wrapper),
       "../lib/chromium/chrome",
+      "android",
     );
     expect(join(dirname(wrapper), "..", "lib", "chromium", "chrome")).toBe(
       decoyChrome,

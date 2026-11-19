@@ -28,7 +28,9 @@ export const androidScenarioTempDirectory = (
     .find((value) => value !== undefined);
   if (explicit !== undefined) return explicit;
   const prefix = nonemptyEnvironmentValue(environment, "PREFIX");
-  return prefix === undefined ? undefined : appendCallerPath(prefix, "tmp");
+  return prefix === undefined
+    ? undefined
+    : appendCallerPath(prefix, "tmp", platform);
 };
 
 /**
@@ -57,7 +59,7 @@ export const publishAndroidPlaywrightBrowsersPath = async (
       undefined
   )
     return;
-  const browsersPath = appendCallerPath(directory, "ms-playwright");
+  const browsersPath = appendCallerPath(directory, "ms-playwright", platform);
   await mkdir(browsersPath, { recursive: true });
   process.env.PLAYWRIGHT_BROWSERS_PATH = browsersPath;
 };
@@ -90,7 +92,10 @@ export const androidChromiumLaunchArgs = async (
   const args = ["--disable-dev-shm-usage", "--single-process"];
   const directory = callerDirectory(executablePath);
   try {
-    await access(appendCallerPath(directory, "icudtl.dat"), fsConstants.F_OK);
+    await access(
+      appendCallerPath(directory, "icudtl.dat", platform),
+      fsConstants.F_OK,
+    );
     args.push(`--icu-data-dir=${directory}`);
   } catch {
     // Generic Android flags still apply when the ICU bundle is absent.
