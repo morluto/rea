@@ -484,6 +484,7 @@
 * **javascript:** follow Electron through aliases of Webpack externals ([f99d73b](https://github.com/morluto/rea/commit/f99d73bf39f2660345d0ca754923e6ce65dfd5e9))
 * **javascript:** honor child-process callback overloads ([827b31c](https://github.com/morluto/rea/commit/827b31c128355f3c6428990514c2c1322dce0be5))
 * **javascript:** join wide symbolic branch returns without call spreads ([1582520](https://github.com/morluto/rea/commit/15825208c8c821ce400e6dc76a6352fe4c04cb39)), closes [#10445](https://github.com/morluto/rea/issues/10445)
+* **javascript:** keep array presence snapshots query-owned ([#12511](https://github.com/morluto/rea/issues/12511)) ([83192e9](https://github.com/morluto/rea/commit/83192e97507bac3c5960f6cfa8e047e8e8300c7a))
 * **javascript:** keep CommonJS wrapper redeclarations from inventing application owners ([#12084](https://github.com/morluto/rea/issues/12084)) ([ffae857](https://github.com/morluto/rea/commit/ffae857c20d3f6beec46d2578774fe6cfba8d92d))
 * **javascript:** keep computed definition key conversion effects ([f81cbd0](https://github.com/morluto/rea/commit/f81cbd0c43eaced30566034e901409534759635b)), closes [#9229](https://github.com/morluto/rea/issues/9229)
 * **javascript:** keep wrapper redeclarations from inventing application owners ([ffae857](https://github.com/morluto/rea/commit/ffae857c20d3f6beec46d2578774fe6cfba8d92d))
