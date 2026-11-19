@@ -4,6 +4,7 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
+  bindingPathOnlyEscapesAtLaterIteratorEffects,
   capturedBindingPathMayHaveChanged,
   hasRecordedReferenceEffects,
   opaqueCodeMayRebindBinding,
@@ -160,7 +161,11 @@ export const createSemanticReadPresenceQuery = (
           !semanticKnownArrayIteration(array, state, capture))
       )
         return undefined;
-      return (path: readonly string[]): t.Node | undefined => {
+      return (
+        path: readonly string[],
+        beforeIterator?: t.Node,
+      ): t.Node | undefined => {
+        if (beforeIterator !== undefined) return undefined;
         const key = path[arrayPath.length];
         if (key === undefined) return undefined;
         const index = semanticArrayIndex(key);
@@ -190,13 +195,28 @@ export const createSemanticReadPresenceQuery = (
       };
     }
     if (!t.isObjectExpression(value)) return undefined;
-    return (path: readonly string[]): t.Node | undefined => {
+    return (
+      path: readonly string[],
+      beforeIterator?: t.Node,
+    ): t.Node | undefined => {
       if (path.length === 0) return undefined;
       const selected = ownDataAtPath(value, path);
-      return selected === undefined ||
-        capturedBindingPathMayHaveChanged(origin.binding, path, capture, state)
-        ? undefined
-        : selected;
+      if (selected === undefined) return undefined;
+      const stillPresent =
+        beforeIterator === undefined
+          ? !capturedBindingPathMayHaveChanged(
+              origin.binding,
+              path,
+              capture,
+              state,
+            )
+          : bindingPathOnlyEscapesAtLaterIteratorEffects(
+              origin.binding,
+              path,
+              beforeIterator,
+              state,
+            );
+      return stillPresent ? selected : undefined;
     };
   };
 };

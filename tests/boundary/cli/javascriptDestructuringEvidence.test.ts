@@ -19,7 +19,34 @@ const iteratorCloseSource = `
     const restSource = [undefined, { mode: "before" }];
     try { const [head = null.value, ...rest] = restSource; } catch {}
     const { 1: { mode: abruptAfterClose } } = restSource;
+    const replaced = { items: [0], next: { mode: "borrowed" } };
+    const { replace = (replaced.items = [0, replaced.next]), next: { mode: replacedBeforeClose }, items: [use], next: { mode: replacedAfterClose } } = replaced;
+    const holder = { parent: { items: [0], next: { mode: "before" } } };
+    const custom = { child: holder.parent.next, [Symbol.iterator]() { delete this.child.mode; return [0].values(); } };
+    const { useCustom = (holder.parent.items = custom), items: [read], next: { mode: projectedAfterAcquisition } } = holder.parent;
   `;
+
+const expectedDependencies = [
+  ["declared", ["a"]],
+  ["a", ["a"]],
+  ["plain", ["a", "0"]],
+  ["fallback", ["a", "0"]],
+  ["scalar", ["b"]],
+  ["ordinary", ["0"]],
+  ["arrayAssigned", ["0"]],
+  ["elided", ["1"]],
+  ["projected", ["items", "0"]],
+  ["arrayObject", ["0", "mode"]],
+  ["selected", ["0"], "candidate"],
+  ["beforeClose", ["label"]],
+  ["consumed", ["items", "0", "mode"]],
+  ["afterClose", ["items", "1", "mode"], "candidate"],
+  ["storedAfterClose", ["next", "mode"], "candidate"],
+  ["abruptAfterClose", ["1", "mode"], "candidate"],
+  ["replacedBeforeClose", ["next", "mode"]],
+  ["replacedAfterClose", ["next", "mode"], "candidate"],
+  ["projectedAfterAcquisition", ["parent", "next", "mode"], "candidate"],
+] as const;
 
 cliTest(
   "traces proved destructuring dependencies and leaves custom iteration uncertain",
@@ -82,24 +109,7 @@ cliTest(
       .object({ normalized_result: javascriptApplicationAnalysisResultSchema })
       .parse(output.json);
     const graph = result.semantic_graph;
-    for (const [name, path, resolution = "resolved"] of [
-      ["declared", ["a"]],
-      ["a", ["a"]],
-      ["plain", ["a", "0"]],
-      ["fallback", ["a", "0"]],
-      ["scalar", ["b"]],
-      ["ordinary", ["0"]],
-      ["arrayAssigned", ["0"]],
-      ["elided", ["1"]],
-      ["projected", ["items", "0"]],
-      ["arrayObject", ["0", "mode"]],
-      ["selected", ["0"], "candidate"],
-      ["beforeClose", ["label"]],
-      ["consumed", ["items", "0", "mode"]],
-      ["afterClose", ["items", "1", "mode"], "candidate"],
-      ["storedAfterClose", ["next", "mode"], "candidate"],
-      ["abruptAfterClose", ["1", "mode"], "candidate"],
-    ] as const) {
+    for (const [name, path, resolution = "resolved"] of expectedDependencies) {
       const binding = graph.nodes.find(
         (node) => node.kind === "binding" && node.label === name,
       );
