@@ -19,6 +19,30 @@ import { expatXmlName } from "./expatXmlNames.js";
 import { decodeStateUtf16 } from "./stateTextEncoding.js";
 import { decodeStrictUtf8 } from "../strictUtf8.js";
 
+import {
+  DESKTOP_LINE_BREAK,
+  DESKTOP_SYNTAX_WHITESPACE,
+  KEYFILE_COMMENT_PREFIXES,
+  KEYFILE_GROUP,
+  KEYFILE_VALUE_PADDING,
+} from "./keyfileSyntax.js";
+
+const lineBreak = new RegExp(DESKTOP_LINE_BREAK, "gu");
+const keyfileGroup = new RegExp(KEYFILE_GROUP, "u");
+const keyfilePadding = new RegExp(`^[${KEYFILE_VALUE_PADDING}]+`, "u");
+const trimKeyfileSyntax = (text: string): string => {
+  let start = 0;
+  let end = text.length;
+  while (start < end && DESKTOP_SYNTAX_WHITESPACE.includes(text.charAt(start)))
+    start += 1;
+  while (
+    end > start &&
+    DESKTOP_SYNTAX_WHITESPACE.includes(text.charAt(end - 1))
+  )
+    end -= 1;
+  return text.slice(start, end);
+};
+
 /** Formats the state view reads into JSON. */
 export type DesktopStateFormat =
   | "text"
@@ -55,23 +79,32 @@ type KeyfileLine =
 
 /** One key file line: blank or comment, `[group]`, `key=value`, or anything else. */
 const keyfileLine = (raw: string): KeyfileLine => {
-  const line = raw.trim();
-  if (line.length === 0 || line.startsWith("#") || line.startsWith(";"))
+  const line = trimKeyfileSyntax(raw);
+  if (line.length === 0 || KEYFILE_COMMENT_PREFIXES.includes(line.charAt(0)))
     return { kind: "skip" };
-  const name = /^\[(?<name>[^\]]+)\]$/u.exec(line)?.groups?.name;
+  const name = keyfileGroup.exec(line)?.[1];
   if (name !== undefined) return { kind: "group", name };
   const equals = raw.indexOf("=");
   if (equals < 0) return { kind: "other" };
-  const key = raw.slice(0, equals).trim();
+  const key = trimKeyfileSyntax(raw.slice(0, equals));
   return key.length === 0
     ? { kind: "other" }
     : {
         kind: "entry",
         key,
         // Only ASCII space and tab immediately after '=' are padding.
-        value: raw.slice(equals + 1).replace(/^[ \t]+/u, ""),
+        value: raw.slice(equals + 1).replace(keyfilePadding, ""),
       };
 };
+
+function* keyfileLines(text: string): Generator<string> {
+  let start = 0;
+  for (const match of text.matchAll(lineBreak)) {
+    yield text.slice(start, match.index);
+    start = match.index + match[0].length;
+  }
+  yield text.slice(start);
+}
 
 /**
  * A key file has at least one group and nothing a key file view would drop.
@@ -79,13 +112,10 @@ const keyfileLine = (raw: string): KeyfileLine => {
  */
 const isKeyfile = (text: string): boolean => {
   let group = false;
-  for (let start = 0; start <= text.length;) {
-    const end = text.indexOf("\n", start);
-    const kind = keyfileLine(text.slice(start, end < 0 ? undefined : end)).kind;
+  for (const raw of keyfileLines(text)) {
+    const kind = keyfileLine(raw).kind;
     if (kind === "other") return false;
     if (kind === "group") group = true;
-    if (end < 0) break;
-    start = end + 1;
   }
   return group;
 };
@@ -415,7 +445,7 @@ export const textView = (
   text: string,
   policy: DesktopViewPolicy = DESKTOP_VIEW_DEFAULTS,
 ): JsonValue => {
-  const lines = text.split(/\r?\n/u);
+  const lines = text.split(lineBreak);
   if (lines.at(-1) === "") lines.pop();
   return {
     lines: lines.slice(0, policy.text_lines),
@@ -437,7 +467,7 @@ export const keyfileView = (
 ): Record<string, Record<string, string>> => {
   const groups = plainRecord<Record<string, string>>();
   let group = "";
-  for (const raw of text.split(/\r?\n/u)) {
+  for (const raw of keyfileLines(text)) {
     const line = keyfileLine(raw);
     if (line.kind === "group") {
       group = line.name;

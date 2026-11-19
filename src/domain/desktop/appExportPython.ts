@@ -1,3 +1,10 @@
+import {
+  DESKTOP_LINE_BREAK,
+  DESKTOP_SYNTAX_WHITESPACE,
+  KEYFILE_COMMENT_PREFIXES,
+  KEYFILE_GROUP,
+  KEYFILE_VALUE_PADDING,
+} from "./keyfileSyntax.js";
 import { XML_ELEMENT_OPENING } from "../xmlDocument.js";
 import {
   DESKTOP_VIEW_DEFAULTS,
@@ -77,8 +84,11 @@ def _opens_element(text: str) -> bool:
         elif character == ">":
             return XML_ELEMENT_OPENING.match(text[index + 1:].lstrip()) is not None
     return False
-GROUP_HEADER = re.compile(r"^\[([^\]]+)\]$")
-LINE_BREAK = re.compile(r"\r?\n")
+GROUP_HEADER = re.compile(${JSON.stringify(KEYFILE_GROUP)})
+LINE_BREAK = re.compile(${JSON.stringify(DESKTOP_LINE_BREAK)})
+SYNTAX_WHITESPACE = ${JSON.stringify(DESKTOP_SYNTAX_WHITESPACE)}
+KEYFILE_COMMENTS = ${JSON.stringify(KEYFILE_COMMENT_PREFIXES)}
+KEYFILE_PADDING = ${JSON.stringify(KEYFILE_VALUE_PADDING)}
 SQLITE_HEADER = b"SQLite format 3\x00"
 GVDB_HEADER = b"GVariant"
 ZIP_HEADER = b"PK\x03\x04"
@@ -332,16 +342,16 @@ def _text(text: str) -> dict:
 
 def _keyfile_line(raw: str) -> tuple:
     """A key file line as REA reads it: skip (blank or comment), group, entry or other."""
-    line = raw.strip()
-    if not line or line[0] in "#;":
+    line = raw.strip(SYNTAX_WHITESPACE)
+    if not line or line[0] in KEYFILE_COMMENTS:
         return ("skip",)
     header = GROUP_HEADER.match(line)
     if header:
         return ("group", header.group(1))
     key, equals, value = raw.partition("=")
-    key = key.strip()
+    key = key.strip(SYNTAX_WHITESPACE)
     # Only ASCII space and tab immediately after '=' are padding.
-    return ("entry", key, value.lstrip(" \t")) if equals and key else ("other",)
+    return ("entry", key, value.lstrip(KEYFILE_PADDING)) if equals and key else ("other",)
 
 
 def _each_line(text: str):
@@ -367,7 +377,7 @@ def _is_keyfile(text: str) -> bool:
 
 def _keyfile(text: str) -> dict:
     groups, group = {}, ""
-    for line in map(_keyfile_line, LINE_BREAK.split(text)):
+    for line in map(_keyfile_line, _each_line(text)):
         if line[0] == "group":
             group = line[1]
             groups.setdefault(group, {})

@@ -29,7 +29,6 @@ import {
 } from "../../../src/domain/desktop/appExportPython.js";
 import {
   detectStateFormat,
-  keyfileView,
   textSyntaxFormat,
   textualView,
 } from "../../../src/domain/desktop/stateFormats.js";
@@ -803,29 +802,55 @@ with sqlite3.connect(":memory:") as db:
   });
 });
 
-it("keeps the same keyfile whitespace as the retained state view", async () => {
-  const inputs = [
-    "[ui]\nsuffix=hello \nunicode=\u00a0hello\u00a0\npadded=   hello\n",
-    "[ui]\r\nsuffix=hello  \r\nunicode=\u00a0hello\u00a0\u00a0\r\npadded=\thello\r\n",
-  ];
-  const imports = PYTHON_IMPORTS.split("\n")
-    .filter((line) => !line.includes("agentenv_protocol"))
-    .join("\n");
-  const program = `${imports}${PYTHON_HELPERS}
-print(json.dumps([_text_view("settings.ini", text, len(text.encode()))["view"]["groups"] for text in json.load(sys.stdin)]))
-`;
-  const root = await createTestTempDirectory("rea-keyfile-python-");
-  const script = join(root, "fixture.py");
-  await writeFile(script, program, "utf8");
-  const output = execFileSync(
-    process.platform === "win32" ? "python" : "python3",
-    ["-I", "-B", "-X", "utf8", script],
-    {
-      input: JSON.stringify(inputs),
-      encoding: "utf8",
+it("keeps keyfile classification, names and value whitespace aligned", () => {
+  const files = [
+    [
+      "settings.ini",
+      "[ui]\nsuffix=hello \nunicode=\u00a0hello\u00a0\npadded=   hello\n",
+    ],
+    [
+      "settings.ini",
+      "[ui]\r\nsuffix=hello  \r\nunicode=\u00a0hello\u00a0\u00a0\r\npadded=\thello\r\n",
+    ],
+    ["settings.ini", "[ui]\n\u0085\nkey=value"],
+    ["settings.ini", "[ui]\n\u001c\nkey=value"],
+    ["settings.ini", " \ufeff[ui]\ufeff\n\ufeffkey\u2028=\t\ufeffvalue\u0085 "],
+    ["settings.ini", "[ui]\n\u0085key\u001f=literal"],
+  ] as const;
+  const { python, rea } = textViews(files);
+  expect(rea.map(({ format }) => format)).toEqual([
+    "keyfile",
+    "keyfile",
+    "text",
+    "text",
+    "keyfile",
+    "keyfile",
+  ]);
+  expect(rea[0]?.view).toEqual({
+    groups: {
+      ui: {
+        suffix: "hello ",
+        unicode: "\u00a0hello\u00a0",
+        padded: "hello",
+      },
     },
-  );
-  expect(JSON.parse(output)).toEqual(inputs.map(keyfileView));
+  });
+  expect(rea[1]?.view).toEqual({
+    groups: {
+      ui: {
+        suffix: "hello  ",
+        unicode: "\u00a0hello\u00a0\u00a0",
+        padded: "hello",
+      },
+    },
+  });
+  expect(rea[4]?.view).toEqual({
+    groups: { ui: { key: "\ufeffvalue\u0085 " } },
+  });
+  expect(rea[5]?.view).toEqual({
+    groups: { ui: { "\u0085key\u001f": "literal" } },
+  });
+  expect(python).toEqual(rea);
 });
 
 const hasPydantic2 =
