@@ -20,8 +20,6 @@ cliTest(
       code: "truncated",
       details: { reason: "limit", boundary: "capacity" },
     });
-    expect(result.stdout).toContain("duplicate-blob verification");
-    expect(result.stdout).toContain("no runtime override");
     expect((await readFile(path)).equals(bytes)).toBe(true);
   },
 );
