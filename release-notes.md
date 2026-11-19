@@ -495,6 +495,7 @@
 * **native:** select same-family universal slices by subtype name ([d5dd0b6](https://github.com/morluto/rea/commit/d5dd0b6fd9849aad7ac3349f2b783661e0a40e9c))
 * **native:** share ELF, PE, and Mach-O framing across artifact readers ([#12156](https://github.com/morluto/rea/issues/12156)) ([0b19b06](https://github.com/morluto/rea/commit/0b19b06bf60a920eae6e7f1765b22e61f4ff5a3d))
 * **native:** size link-time relocation kinds in x86-64 and AArch64 objects ([#12235](https://github.com/morluto/rea/issues/12235)) ([a143a28](https://github.com/morluto/rea/commit/a143a2811e2897745c9080372c54bc54a7a4e657))
+* **native:** skip missing endpoints in investigation traces ([#12220](https://github.com/morluto/rea/issues/12220)) ([fa84be9](https://github.com/morluto/rea/commit/fa84be9f3a3c1e458c15d35e7d710db7b7254825))
 * **navigation:** offer available instruction observations ([#10307](https://github.com/morluto/rea/issues/10307)) ([15a2de7](https://github.com/morluto/rea/commit/15a2de737c3401f9ef1e22290fa1b8a1ac3fead9))
 * **node-sea:** validate Mach-O segment bounds before blob limits ([#12263](https://github.com/morluto/rea/issues/12263)) ([b74b314](https://github.com/morluto/rea/commit/b74b314fbddffadb731d7cff43ea214f7808133d))
 * **ntfs:** reject invalid FILE_NAME namespaces ([#11986](https://github.com/morluto/rea/issues/11986)) ([f52229a](https://github.com/morluto/rea/commit/f52229a4a64235a72e9ddf8a744907ea77616911))
