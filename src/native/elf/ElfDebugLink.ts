@@ -6,6 +6,10 @@ import { ArtifactReaderFailure } from "../../resources/index.js";
 import { readElfFixedHeader } from "../../domain/elfFixedHeader.js";
 import { elfObjectTypeName } from "../../domain/native/elfNotes.js";
 import {
+  zstandardFrameAllowanceCause,
+  type ZstandardFrameAllowanceError,
+} from "../../domain/compression/zstandardFrameAllowance.js";
+import {
   debugFileNameIsSingleSegment,
   deriveDebugFileLookupPaths,
   ELF_DEBUG_LINK_CANDIDATE_BUDGET_LIMITATION,
@@ -386,7 +390,11 @@ const observeBuildId = (
       { maxGnuBuildIdBytes: MAX_ELF_DEBUG_ALT_BUILD_ID_BYTES },
     );
   } catch (cause) {
-    if (isRethrownBudget(cause)) throw cause;
+    if (
+      isRethrownBudget(cause) ||
+      zstandardFrameAllowanceCause(cause) !== undefined
+    )
+      throw cause;
     if (cause instanceof ArtifactReaderFailure && cause.reason === "format")
       return unknownBuildId(
         "note_tables_malformed",
@@ -583,23 +591,6 @@ const candidateSections = (
   };
 };
 
-/**
- * The candidate is decoded with the image's budgets. A candidate that exceeds
- * them leaves its identity unknown instead of failing the image report.
- */
-const observeCandidateBuildId = (
-  content: Buffer,
-  artifact: Report["artifact"],
-  input: InspectElfDebugLinkInput,
-): ObservedBuildId | null => {
-  try {
-    return observeBuildId(content, artifact, input);
-  } catch (cause) {
-    if (isRethrownBudget(cause)) return null;
-    throw cause;
-  }
-};
-
 const hasElfMagic = (bytes: Buffer): boolean =>
   bytes.length >= 4 && bytes.toString("hex", 0, 4) === "7f454c46";
 
@@ -617,6 +608,7 @@ const readCandidateIdentity = (
   >;
   readonly identity: CandidateIdentity;
   readonly budgetExceeded: boolean;
+  readonly frameAllowance?: ZstandardFrameAllowanceError;
 } => {
   const complete = content.length === totalBytes;
   const header = readElfFixedHeader(content, totalBytes);
@@ -682,15 +674,30 @@ const readCandidateIdentity = (
   let image: ReturnType<typeof readElfImage> | null = null;
   let imageMalformed = false;
   let imageBudgetExceeded = false;
+  let frameAllowance: ZstandardFrameAllowanceError | undefined;
   try {
     assertElfSectionNameBudget(content, input.max_file_bytes);
     image = readElfImage(content, "inspect_elf_debug_link");
   } catch (cause) {
-    if (cause instanceof AnalysisError) throw cause;
-    if (isRethrownBudget(cause)) imageBudgetExceeded = true;
-    else imageMalformed = true;
+    frameAllowance = zstandardFrameAllowanceCause(cause);
+    if (frameAllowance === undefined) {
+      if (cause instanceof AnalysisError) throw cause;
+      if (isRethrownBudget(cause)) imageBudgetExceeded = true;
+      else imageMalformed = true;
+    }
   }
-  const observed = observeCandidateBuildId(content, artifact, input);
+  // The candidate may lose named evidence without losing its file identity
+  // or CRC. If its section names already exceeded the frame allowance, the
+  // note reader cannot decode that same table either.
+  let observed: ObservedBuildId | null = null;
+  if (frameAllowance === undefined) {
+    try {
+      observed = observeBuildId(content, artifact, input);
+    } catch (cause) {
+      frameAllowance = zstandardFrameAllowanceCause(cause);
+      if (frameAllowance === undefined && !isRethrownBudget(cause)) throw cause;
+    }
+  }
   const buildId: BuildId = observed?.buildId ?? {
     status: "unknown",
     hex: null,
@@ -709,7 +716,10 @@ const readCandidateIdentity = (
       buildId,
       candidateHex: buildId.status === "observed" ? buildId.hex : null,
     },
-    budgetExceeded: imageBudgetExceeded || observed === null,
+    budgetExceeded:
+      imageBudgetExceeded ||
+      (frameAllowance === undefined && observed === null),
+    ...(frameAllowance === undefined ? {} : { frameAllowance }),
   };
 };
 
@@ -864,6 +874,10 @@ export const verifyElfDebugCandidate = (
     limitations.push(ELF_DEBUG_LINK_CANDIDATE_PREFIX_LIMITATION);
   if (read.budgetExceeded)
     limitations.push(ELF_DEBUG_LINK_CANDIDATE_BUDGET_LIMITATION);
+  if (read.frameAllowance !== undefined)
+    limitations.push(
+      `Candidate ELF section names could not be decoded because ${read.frameAllowance.failure.detail}.`,
+    );
   if (
     verification.status === "matches" &&
     (crc.status === "unavailable" || build.status === "unavailable")

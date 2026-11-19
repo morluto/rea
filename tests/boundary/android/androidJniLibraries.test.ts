@@ -31,6 +31,8 @@ import {
   zstandardZipFixture,
 } from "../../fixtures/zipZstandard.js";
 import { jniElfFixture } from "../../fixtures/android/jniElf.js";
+import { runWithAnalysisOperationSnapshot } from "../../../src/domain/analysisOperationSnapshot.js";
+import { elfFrameAllowanceFixture } from "../../fixtures/binaryDiagnostics/elfFrameAllowance.js";
 import {
   ArtifactReaderFailure,
   ZipArtifactReader,
@@ -238,6 +240,58 @@ it("keeps the ZIP decoder window's recompression advice in the library failure",
     kind: "limit",
     message: expect.stringContaining(ZIP_ZSTANDARD_WINDOW_CEILING.narrowing!),
   });
+});
+
+it("retains a backed library identity when the ELF section-name frame budget is refused", async () => {
+  const bytes = elfFrameAllowanceFixture();
+  const library = "lib/x86_64/libframe.so";
+  const source = await fixture([
+    [library, bytes],
+    [LIBRARY, jniElfFixture().bytes],
+  ]);
+  const result = await runWithAnalysisOperationSnapshot(
+    { revision: 1, overrides: { "zstd.max_frames": 1 } },
+    () => read(source),
+  );
+  expect(result.libraries).toEqual([
+    expect.objectContaining({
+      path: library,
+      size: bytes.length,
+      sha256: digest(bytes),
+      facts: null,
+      failure: {
+        kind: "capacity",
+        message: expect.stringContaining("zstd.max_frames"),
+      },
+    }),
+    expect.objectContaining({
+      path: LIBRARY,
+      facts: expect.any(Object),
+      failure: null,
+    }),
+  ]);
+  expect(source.resources.hasPending).toBe(false);
+
+  const checkpoints: AndroidJniLibraryCheckpoint[] = [];
+  const close = vi
+    .spyOn(ZipArtifactReader.prototype, "close")
+    .mockRejectedValueOnce(new Error("controlled ZIP close failure"));
+  try {
+    await expect(
+      runWithAnalysisOperationSnapshot(
+        { revision: 1, overrides: { "zstd.max_frames": 1 } },
+        () =>
+          read(source, {}, undefined, undefined, (checkpoint) =>
+            checkpoints.push(checkpoint),
+          ),
+      ),
+    ).rejects.toBeInstanceOf(ProviderCleanupError);
+    expect(checkpoints[0]?.libraries).toEqual(result.libraries);
+    expect(source.resources.hasPending).toBe(true);
+  } finally {
+    close.mockRestore();
+    await source.resources.close();
+  }
 });
 
 it("preserves declared capacity metadata without presenting unread bytes as verified", async () => {

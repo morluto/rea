@@ -626,9 +626,12 @@ export const ANALYSIS_SETTINGS = {
       "rea-native-initializers",
       "rea-kernel-module",
       "rea-elf-debug-link",
+      "go-build-info",
+      "rust-auditable",
+      "il2cpp-metadata",
+      "jadx",
     ],
     operations: [
-      "inspect_binary_layout",
       "inspect_artifact",
       "extract_artifact",
       "inspect_gpu_code_objects",

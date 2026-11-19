@@ -159,7 +159,6 @@ it("keeps accepted operations and their typed provider views stable across concu
 it("lists zstd.max_frames for every operation that enforces the cap", () => {
   const store = new AnalysisSettings({});
   for (const operation of [
-    "inspect_binary_layout",
     "inspect_artifact",
     "extract_artifact",
     "inspect_gpu_code_objects",
@@ -189,10 +188,19 @@ it("lists zstd.max_frames for every operation that enforces the cap", () => {
     "rea-native-initializers",
     "rea-kernel-module",
     "rea-elf-debug-link",
+    "go-build-info",
+    "rust-auditable",
+    "il2cpp-metadata",
+    "jadx",
   ])
     expect(
       store.inspect({ provider }).settings.map(({ setting }) => setting),
     ).toContain("zstd.max_frames");
+  expect(
+    store
+      .inspect({ operation: "inspect_binary_layout" })
+      .settings.map(({ setting }) => setting),
+  ).not.toContain("zstd.max_frames");
 });
 
 it("exposes shared provider controls and preserves the explicit unbounded decompile value", () => {

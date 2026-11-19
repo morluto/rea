@@ -5,6 +5,7 @@ import {
   MINIMUM_ZSTD_MAX_FRAMES,
 } from "../analysisResourceLimits.js";
 import { analysisSettingLimit } from "../analysisSettingDefinitions.js";
+import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 import { currentAnalysisSettingOverride } from "../analysisOperationSnapshot.js";
 import { ConfigurationError } from "../configurationErrors.js";
 import { parseLimitConstraint } from "../parseFailureAnalysisError.js";
@@ -143,6 +144,15 @@ export class ZstandardFrameAllowanceError extends ParseFailureError<"limit"> {
     this.offset = offset;
   }
 }
+
+/** Read the frame refusal carried by a raw parser or its public projection. */
+export const zstandardFrameAllowanceCause = (cause: unknown) =>
+  cause instanceof ZstandardFrameAllowanceError
+    ? cause
+    : cause instanceof AnalysisResourceConstraintError &&
+        cause.cause instanceof ZstandardFrameAllowanceError
+      ? cause.cause
+      : undefined;
 
 /**
  * The public resource refusal for one frame-cap. Callers keep the setting,
