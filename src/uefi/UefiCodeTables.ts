@@ -76,16 +76,6 @@ export const FFS_ATTRIBUTE_MASKS = {
   checksumValid: 0x40,
 } as const;
 
-/** FFS state bits after erase-polarity normalization (PI Specification 3.3.5). */
-export const FFS_STATE_BITS = {
-  headerConstruction: 0x01,
-  headerValid: 0x02,
-  dataValid: 0x04,
-  markedForUpdate: 0x08,
-  deleted: 0x10,
-  headerInvalid: 0x20,
-} as const;
-
 /** FIRMWARE_VOLUME_ATTRIBUTES: bit 0x800 marks bits-on-erased-when-set polarity. */
 export const FV_ATTRIBUTE_ERASE_POLARITY = 0x800;
 
