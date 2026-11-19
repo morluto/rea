@@ -278,6 +278,8 @@ and language. Other resource payload formats remain opaque.
 16384, the largest stock Windows resource image measured with headroom
 (maximum 65536). CLI options are `--max-file-bytes` and `--max-entries`.
 Metadata is bounded to 8 MiB; exceeding any budget fails without truncation.
+Parser refusals report the exhausted limit and enforced maximum in
+`details.reported_limits`.
 Large Evidence envelopes may require a caller-configured MCP transport receive
 buffer because envelope copies add overhead. Requests honor cancellation during
 snapshot reading, directory traversal and payload hashing. The operation reads
