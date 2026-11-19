@@ -1047,6 +1047,8 @@ it.each([
     { code: false, website: true, package: false },
   ],
   ["scripts/website_i18n.py", { code: false, website: true, package: false }],
+  ["scripts/read-authored-skill-manifest.mjs", { website: true }],
+  ["src/domain/skillManifest.ts", { website: true }],
   [
     "docs/readme/README_ja.md",
     { code: false, docs: true, website: true, package: false },
@@ -1071,6 +1073,7 @@ it.each([
     {
       code: true,
       runtime: true,
+      website: true,
       package: true,
       evm: false,
       browser: false,
