@@ -13,6 +13,7 @@ import {
   inspectWithService,
   registerContractCommand,
 } from "./contractCommand.js";
+import { cliDecimalField } from "./options.js";
 import type { CliInstance } from "./types.js";
 
 const FLASH_PATH = { description: "Local UEFI firmware image" };
@@ -21,7 +22,7 @@ const OFFSET_OPTIONS = {
   fileOffset: "ffs-file",
   sectionOffset: "section",
 } as const;
-const targetOffset = z.number().int().nonnegative().optional();
+const targetOffset = cliDecimalField(z.number().int().nonnegative().optional());
 
 /** One-shot UEFI firmware CLI commands backed by the same workflows as MCP. */
 export const registerUefiCommands = (
@@ -112,7 +113,7 @@ export const registerUefiCommands = (
         const offset = options[key];
         return offset === undefined
           ? []
-          : [{ key, kind: OFFSET_OPTIONS[key], offset }];
+          : [{ kind: OFFSET_OPTIONS[key], offset }];
       });
       const selected = selectors[0];
       const source = options.sourceStream;
