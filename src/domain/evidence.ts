@@ -506,10 +506,13 @@ export const adoptEvidenceDisplayMetadata = (
   incoming: Evidence,
 ): Evidence => {
   const subject = mergedSubjectDisplay(retained.subject, incoming.subject);
+  // Display metadata names the caller's selection for this observation. A
+  // record already held under the semantic ID keeps the selection this ledger
+  // recorded first; a later copy only supplies a fact the retained value lacks.
   const callerInputPath =
-    incoming.caller_input_path ?? retained.caller_input_path;
+    retained.caller_input_path ?? incoming.caller_input_path;
   const callerInputPaths =
-    incoming.caller_input_paths ?? retained.caller_input_paths;
+    retained.caller_input_paths ?? incoming.caller_input_paths;
   const providerSelection =
     incoming.provider_selection ?? retained.provider_selection;
   if (
