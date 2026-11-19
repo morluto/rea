@@ -401,6 +401,36 @@ it("keeps the result unknown when the head changes between API snapshots", async
   });
 });
 
+it.each([{ state: "closed" }, { draft: true }])(
+  "does not diagnose missing CI after a pull request becomes ineligible: %j",
+  async (change) => {
+    const report = await collectPrCiHealth({
+      repository: "owner/rea",
+      repositoryId: 11,
+      defaultBranch: "main",
+      now: observedAt,
+      apiRequest: async (_method, endpoint) => {
+        if (endpoint.includes("/pulls?")) return [rawPull(63)];
+        if (endpoint.includes("/actions/workflows/ci.yml/runs?"))
+          return { workflow_runs: [] };
+        return rawPull(63, { mergeable: true, ...change });
+      },
+    });
+    expect(report.pullRequests[0]).toMatchObject({
+      eligibilityChangedDuringScan: true,
+      ci: {
+        category: "unknown",
+        reason: "pull_request_eligibility_changed_during_scan",
+      },
+    });
+    expect(report.counts.missing).toBe(0);
+    expect(report.scan).toMatchObject({
+      status: "partial",
+      errors: ["pull_request_eligibility_changed_during_scan"],
+    });
+  },
+);
+
 it("public CLI uses only GET and produces a report from fixture GitHub responses", async () => {
   const fixture = await createFixture();
   const ghCalls = join(fixture.directory, "gh-calls.jsonl");
