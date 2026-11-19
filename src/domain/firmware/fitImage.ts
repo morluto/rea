@@ -21,7 +21,6 @@ export const hasFitImagesNode = (prefix: Buffer): boolean => {
     throw cause;
   }
   const start = extent.header.off_dt_struct;
-  if (start < extent.headerBytes || start % 4 !== 0) return false;
   const end = Math.min(
     bytes.length,
     extent.header.totalsize,
