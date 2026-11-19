@@ -1,5 +1,6 @@
 import {
   ArtifactReaderFailure,
+  assertArtifactReadActive,
   yieldArtifactRead,
 } from "../../resources/index.js";
 import { allKeyed, firstKeyed, keyedBy } from "../../domain/keyedCollection.js";
@@ -72,11 +73,6 @@ const inFile = (section: ElfSection, fileLength: number): boolean =>
 const rawHex = (bytes: Buffer): string | null =>
   bytes.length > MAX_KERNEL_MODULE_RAW_BYTES ? null : bytes.toString("hex");
 
-const compressionCodec = (bytes: Buffer): Report["compression"] => {
-  const codec = kernelCompressionCodecAt(bytes, 0, MODULE_CODECS);
-  return codec === null ? null : { codec, status: "unsupported" };
-};
-
 const baseLimitations = (): Limitations => [
   "This workflow does not execute the module, resolve imported symbols, or validate an appended signature.",
   "struct module in .gnu.linkonce.this_module is kernel-version specific and is not decoded.",
@@ -128,6 +124,17 @@ const unsupportedCompression = (
     "A compressed container is not proof the payload is a kernel module.",
   ],
 });
+
+/** A recognized outer container never enters the ELF image parser. */
+const moduleCompressionReport = (
+  bytes: Buffer,
+  artifact: Report["artifact"],
+): Report | null => {
+  const codec = kernelCompressionCodecAt(bytes, 0, MODULE_CODECS);
+  return codec === null
+    ? null
+    : unsupportedCompression(artifact, { codec, status: "unsupported" });
+};
 
 const notApplicable = (
   artifact: Report["artifact"],
@@ -509,17 +516,13 @@ const signatureLimitation = (signature: Report["signature"]): string => {
   return "The appended signature trailer was not accepted as an unvalidated PKCS#7 range.";
 };
 
-/** Decode kernel-module metadata from one in-memory ET_REL image. */
-export const parseKernelModule = (
+/** Decode kernel-module metadata from an admitted in-memory ELF image. */
+const parseKernelModuleImage = (
   bytes: Buffer,
   artifact: Report["artifact"],
   input: InspectKernelModuleInput,
-  image?: ReturnType<typeof readElfImage>,
+  image: ReturnType<typeof readElfImage>,
 ): Report => {
-  const compression = compressionCodec(bytes);
-  if (compression !== null)
-    return unsupportedCompression(artifact, compression);
-  image = image ?? readElfImage(bytes, "inspect_kernel_module");
   const facts = headerFacts(image);
   if (facts.type !== 1) return notApplicable(artifact, facts);
   const sections = image.sections.filter(
@@ -668,6 +671,19 @@ export const parseKernelModule = (
   };
 };
 
+export const parseKernelModule = (
+  bytes: Buffer,
+  artifact: Report["artifact"],
+  input: InspectKernelModuleInput,
+): Report =>
+  moduleCompressionReport(bytes, artifact) ??
+  parseKernelModuleImage(
+    bytes,
+    artifact,
+    input,
+    readElfImage(bytes, "inspect_kernel_module"),
+  );
+
 /** Same report as {@link parseKernelModule}. Section names yield for `signal`. */
 export const parseKernelModuleCooperative = async (
   bytes: Buffer,
@@ -675,15 +691,16 @@ export const parseKernelModuleCooperative = async (
   input: InspectKernelModuleInput,
   signal?: AbortSignal,
 ): Promise<Report> => {
-  const compression = compressionCodec(bytes);
-  if (compression !== null)
-    return unsupportedCompression(artifact, compression);
-  return parseKernelModule(
-    bytes,
-    artifact,
-    input,
-    await readElfImageCooperative(bytes, "inspect_kernel_module", () =>
-      yieldArtifactRead(signal),
-    ),
+  assertArtifactReadActive(signal);
+  return (
+    moduleCompressionReport(bytes, artifact) ??
+    parseKernelModuleImage(
+      bytes,
+      artifact,
+      input,
+      await readElfImageCooperative(bytes, "inspect_kernel_module", () =>
+        yieldArtifactRead(signal),
+      ),
+    )
   );
 };
