@@ -22,6 +22,7 @@ import {
   draftOf,
   statePath,
 } from "../../../src/domain/desktop/appTaskDraft.fixture.js";
+import { appStateViews } from "../../../src/domain/desktop/buildWitness.js";
 import { SETTLE_TIMING } from "../../../src/domain/desktop/appSettle.js";
 import { renderTaskVerifier } from "../../../src/domain/desktop/appTaskPython.js";
 import {
@@ -109,7 +110,12 @@ async def get_data(url, **_):
                                    file=types.SimpleNamespace(bytes=base64.b64encode(
                                        (file_contents[path] if path in file_contents else json.dumps(view)).encode()).decode()))
              for path, view in views.items()]
-    return types.SimpleNamespace(parts=[*files, types.SimpleNamespace(kind="data", data={"state": views})])
+    state_parts = scenario.get("state_parts")
+    if state_parts is None:
+        state_parts = [{"kind": "data", "data": {"state": views}}]
+    elif isinstance(state_parts, str):
+        state_parts = json.loads(state_parts)
+    return types.SimpleNamespace(parts=[*files, *(types.SimpleNamespace(**part) for part in state_parts)])
 
 
 async def sleep(seconds):
@@ -213,6 +219,7 @@ const runVerifier = async (
     readonly concurrent?: boolean;
     readonly parallelRetry?: boolean;
     readonly reportFailure?: boolean;
+    readonly stateParts?: readonly unknown[] | string;
   } = {},
 ): Promise<VerifierOutput> => {
   const folder = await createTestTempDirectory("desktop-task-python-");
@@ -259,12 +266,86 @@ const runVerifier = async (
           concurrent: computer.concurrent,
           parallel_retry: computer.parallelRetry,
           report_failure: computer.reportFailure,
+          state_parts: computer.stateParts,
         }),
         encoding: "utf8",
       },
     ),
   ) as VerifierOutput;
 };
+
+const statePart = (state: unknown) => ({ kind: "data", data: { state } });
+
+it.each([
+  ["missing view", { format: "text" }],
+  ["missing format", { view: null }],
+  ["nonstring format", { format: 7, view: null }],
+  ["nonstring error", { format: null, view: null, error: false }],
+])(
+  "skips a state part with %s before grading a valid empty state",
+  async (_name, invalid) => {
+    const path = "Documents/today.txt";
+    const checks = [
+      { id: "present", file: path, kind: "file_present" },
+    ] as const;
+    const stateParts = [statePart({ [path]: invalid }), statePart({})];
+    const host = appStateViews(stateParts);
+    if (!host.ok) throw new Error(host.error);
+    expect(
+      evaluateTaskChecks(checks, host.value).map(({ passed }) => passed),
+    ).toEqual([false]);
+    const { results } = await runVerifier(checks, [[0, {}]], [], {
+      stateParts,
+    });
+    expect(results.map(({ result }) => result)).toEqual([false]);
+  },
+);
+
+it("skips state whose JSON contains a nonfinite number in an extra field", async () => {
+  const path = "Documents/today.txt";
+  const checks = [{ id: "present", file: path, kind: "file_present" }] as const;
+  const stateParts = `[{"kind":"data","data":{"state":{"${path}":{"format":null,"view":null,"extra":1e400}}}},{"kind":"data","data":{"state":{}}}]`;
+  const parts = JSON.parse(stateParts) as unknown[];
+  const host = appStateViews(parts);
+  if (!host.ok) throw new Error(host.error);
+  expect(host.value.size).toBe(0);
+  const { results } = await runVerifier(checks, [[0, {}]], [], { stateParts });
+  expect(results.map(({ result }) => result)).toEqual([false]);
+});
+
+it("refuses to grade when all parts lack a valid state", async () => {
+  const stateParts = [
+    { kind: "data", data: null },
+    statePart([]),
+    statePart({ "Documents/today.txt": { format: "text" } }),
+  ];
+  expect(appStateViews(stateParts).ok).toBe(false);
+  const { results, first_error } = await runVerifier([], [[0, {}]], [], {
+    stateParts,
+    reportFailure: true,
+  });
+  expect(results).toEqual([]);
+  expect(first_error).toContain("data/get returned no state views");
+});
+
+it("accepts optional file fields and selects the first valid state", async () => {
+  const path = "Documents/today.txt";
+  const checks = [{ id: "present", file: path, kind: "file_present" }] as const;
+  const stateParts = [
+    { kind: "data", data: false },
+    statePart({
+      [path]: { format: null, view: null, error: null, truncated: false },
+    }),
+    statePart({}),
+  ];
+  const host = appStateViews(stateParts);
+  if (!host.ok) throw new Error(host.error);
+  expect(
+    evaluateTaskChecks(checks, host.value).map(({ passed }) => passed),
+  ).toEqual([true]);
+  const { results } = await runVerifier(checks, [[0, {}]], [], { stateParts });
+  expect(results.map(({ result }) => result)).toEqual([true]);
+});
 
 const INTERVAL_S = SETTLE_TIMING.intervalMs / 1000;
 const WINDOW_S = SETTLE_TIMING.windowMs / 1000;

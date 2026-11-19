@@ -1,7 +1,4 @@
-import { z } from "zod";
-
-import { jsonValueSchema } from "../jsonValue.js";
-import { jsonRecordSchema } from "../jsonRecord.js";
+import { appStatePartSchema } from "./appStateAdmission.js";
 import { err, ok, type Result } from "../result.js";
 import type { TaskCheckOutcome, TaskFileView } from "./appTaskChecks.js";
 import type { ComputerAction } from "./computerActions.js";
@@ -222,19 +219,6 @@ export const admitWitnessStage = (
   return ok(log.total);
 };
 
-const fileViewSchema = z.object({
-  format: z.string().nullable(),
-  view: jsonValueSchema.nullable(),
-  error: z
-    .string()
-    .nullish()
-    .transform((error) => error ?? null),
-});
-const statePartSchema = z.looseObject({
-  kind: z.literal("data"),
-  data: z.looseObject({ state: jsonRecordSchema(fileViewSchema) }),
-});
-
 /**
  * The typed views an exported app's `data/get` returns beside its files,
  * keyed by home path: the shape the task checks read.
@@ -243,7 +227,7 @@ export const appStateViews = (
   parts: readonly unknown[],
 ): Result<ReadonlyMap<string, TaskFileView>, string> => {
   for (const part of parts) {
-    const parsed = statePartSchema.safeParse(part);
+    const parsed = appStatePartSchema.safeParse(part);
     if (parsed.success)
       return ok(new Map(Object.entries(parsed.data.data.state)));
   }
