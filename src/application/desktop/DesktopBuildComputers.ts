@@ -66,7 +66,7 @@ import {
 import type { BuildSettle } from "./DesktopBuildSettle.js";
 import { DesktopBuildTurns } from "./DesktopBuildTurns.js";
 import { DesktopBuildWitness } from "./DesktopBuildWitness.js";
-import { ScreenJudgeProcess } from "../../desktop/ScreenJudgeProcess.js";
+import type { BuildScreenJudge } from "../../ports/BuildComputerControl.js";
 import { errorMessage } from "../../kernel/errorMessage.js";
 
 const START = "start_build_computer";
@@ -240,7 +240,7 @@ const liveComputer = (
   workspace: PrivateRuntimeRoot | undefined,
   source: BuildSource,
   { settle, secrets, readHostFile }: SharedSettings,
-  judge: ScreenJudgeProcess,
+  judge: BuildScreenJudge,
 ): HeldComputer => {
   const actions = new BuildComputerActionLog(secrets.redact);
   const turns = new DesktopBuildTurns();
@@ -421,6 +421,9 @@ export class DesktopBuildComputers {
   constructor(
     private readonly environment: Readonly<NodeJS.ProcessEnv>,
     private readonly readHostFile: HostFileReader,
+    private readonly createScreenJudge: (
+      environment: Readonly<NodeJS.ProcessEnv>,
+    ) => BuildScreenJudge,
     settle: BuildSettle = SETTLE_TIMING,
     private readonly defaults: BuildComputerDefaults = {},
     private readonly startTiming: ComputerStartTiming = COMPUTER_START_TIMING,
@@ -550,7 +553,7 @@ export class DesktopBuildComputers {
           target.workspace,
           source,
           this.#shared,
-          new ScreenJudgeProcess(environment),
+          this.createScreenJudge(environment),
         ),
       );
       return ok({

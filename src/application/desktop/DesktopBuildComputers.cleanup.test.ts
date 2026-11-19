@@ -9,7 +9,8 @@ import {
   ComputerStartFailure,
 } from "../../desktop/AgentEnvComputer.js";
 import { ComputerHelper } from "../../desktop/AgentEnvComputerHelper.js";
-import { ScreenJudgeProcess } from "../../desktop/ScreenJudgeProcess.js";
+import { createScreenJudge } from "../../desktop/ScreenJudgeProcess.js";
+import type { BuildScreenJudge } from "../../ports/BuildComputerControl.js";
 import { BuildComputerLongRuns } from "../../desktop/BuildComputerLongRuns.js";
 import { DesktopBuildComputers } from "./DesktopBuildComputers.js";
 import { DesktopRemoteTaskReaders } from "./DesktopRemoteTaskReaders.js";
@@ -37,6 +38,7 @@ it("resolves the original failed start's cleanup after its retained computer clo
       REA_DOCKER_COMMAND: "/docker",
     },
     readHostFile,
+    createScreenJudge,
   );
   try {
     const started = await computers.start(
@@ -85,6 +87,7 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
         REA_DOCKER_COMMAND: "/docker",
       },
       readHostFile,
+      createScreenJudge,
     );
     try {
       const started = await computers.start(
@@ -131,6 +134,7 @@ it("retains a failed bundle workspace and its write error until shutdown retries
       REA_BUILD_COMPUTER_REA_ARCHIVE: payload,
     },
     readHostFile,
+    createScreenJudge,
   );
   try {
     const started = await computers.start(
@@ -178,7 +182,7 @@ it.each([false, true])(
       )
       .mockResolvedValue({ verified: true, teardown: "agentenv" });
     const judgeClose = vi
-      .spyOn(ScreenJudgeProcess.prototype, "close")
+      .fn<BuildScreenJudge["close"]>()
       .mockResolvedValueOnce({
         verified: false,
         reason: "judge failed",
@@ -198,12 +202,14 @@ it.each([false, true])(
       computer: { close: computerClose, sandboxId: "sandbox" },
       frame: { structured: null, content: [] },
     } as never);
+    const createJudge = vi.fn(() => ({ judge: vi.fn(), close: judgeClose }));
     const computers = new DesktopBuildComputers(
       {
         REA_AGENT_ENV_COMMAND: "/runner",
         REA_DOCKER_COMMAND: "/docker",
       },
       readHostFile,
+      createJudge,
     );
     try {
       const started = await computers.start(
@@ -232,11 +238,11 @@ it.each([false, true])(
       expect(first.error.cleanupResources).toEqual([]);
       expect(computerClose).toHaveBeenCalledTimes(computerFails ? 2 : 1);
       expect(judgeClose).toHaveBeenCalledTimes(computerFails ? 3 : 2);
+      expect(createJudge).toHaveBeenCalledTimes(1);
     } finally {
       await computers.closeAll().catch(() => computers.closeAll());
       spawn.mockRestore();
       connect.mockRestore();
-      judgeClose.mockRestore();
     }
   },
 );
@@ -274,6 +280,7 @@ it("tears the computer down when a long run is unsettled, and resolves that run 
       REA_DOCKER_COMMAND: "/docker",
     },
     readHostFile,
+    createScreenJudge,
   );
   try {
     const started = await computers.start(
@@ -329,7 +336,7 @@ it("retains the computer while command and reader cleanup fail, but still releas
     })
     .mockResolvedValue({ verified: true, teardown: "agentenv" });
   const judge = vi
-    .spyOn(ScreenJudgeProcess.prototype, "close")
+    .fn<BuildScreenJudge["close"]>()
     .mockResolvedValueOnce({
       verified: false,
       reason: "judge failed",
@@ -343,12 +350,14 @@ it("retains the computer while command and reader cleanup fail, but still releas
     computer: { close: computerClose, sandboxId: "sandbox" },
     frame: { structured: null, content: [] },
   } as never);
+  const createJudge = vi.fn(() => ({ judge: vi.fn(), close: judge }));
   const computers = new DesktopBuildComputers(
     {
       REA_AGENT_ENV_COMMAND: "/runner",
       REA_DOCKER_COMMAND: "/docker",
     },
     readHostFile,
+    createJudge,
   );
   try {
     const started = await computers.start(
@@ -371,7 +380,7 @@ it("retains the computer while command and reader cleanup fail, but still releas
     await computers.closeAll().catch(() => computers.closeAll());
     commands.mockRestore();
     readers.mockRestore();
-    judge.mockRestore();
+
     spawn.mockRestore();
     connect.mockRestore();
   }

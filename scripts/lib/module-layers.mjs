@@ -282,6 +282,8 @@ export const ENTRY_FILES = Object.freeze(
         "DesktopSessionRequests.ts",
         // Build-computer composition (`capabilityServices`) wires `readHostFile` into `DesktopBuildComputers`.
         "HostFileRead.ts",
+        // The build-computer composition supplies a separate screen judge for each computer.
+        "ScreenJudgeProcess.ts",
       ],
       dotnet: ["ManagedStaticProvider.ts", "ManagedStaticProviderMetadata.ts"],
       electron: ["ElectronFuseProvider.ts", "ElectronFuseProviderIdentity.ts"],

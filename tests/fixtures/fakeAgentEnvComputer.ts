@@ -33,6 +33,7 @@ import { z } from "zod";
 import { onTestFinished } from "vitest";
 
 import { readHostFile } from "../../src/desktop/HostFileRead.js";
+import { createScreenJudge } from "../../src/desktop/ScreenJudgeProcess.js";
 import { DesktopBuildComputers } from "../../src/application/desktop/DesktopBuildComputers.js";
 import type { BuildComputerDefaults } from "../../src/desktop/BuildComputerEnvironment.js";
 import { awaitAcknowledgement } from "./lifecycleAcknowledgement.js";
@@ -861,6 +862,7 @@ export const fakeBuildComputers = async (
   const computers = new DesktopBuildComputers(
     { ...process.env, ...runner.environment, ...environment },
     readHostFile,
+    createScreenJudge,
     undefined,
     await isolatedBuildDefaults(),
   );

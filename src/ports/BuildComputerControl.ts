@@ -1,4 +1,6 @@
 import type { Buffer } from "node:buffer";
+import type { ScreenJudge } from "../domain/desktop/appTaskScreen.js";
+import type { ComputerRelease } from "../domain/desktop/computerRelease.js";
 
 /**
  * What the desktop build workflows ask of a running build computer, and what
@@ -64,4 +66,10 @@ export interface BuildControllerAnswer {
       }
     | undefined;
   readonly [key: string]: unknown;
+}
+
+/** The screen evaluator owned by one running build computer. */
+export interface BuildScreenJudge {
+  readonly judge: ScreenJudge;
+  close(): Promise<ComputerRelease>;
 }
