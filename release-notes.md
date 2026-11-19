@@ -143,6 +143,7 @@
 * **android:** qualify the JNI library inventory by required splits ([18b72ca](https://github.com/morluto/rea/commit/18b72ca4610d8ee1d9c75205bf0f78b07858704c)), closes [#9756](https://github.com/morluto/rea/issues/9756)
 * **android:** reject invoke coverage without site evidence ([#10679](https://github.com/morluto/rea/issues/10679)) ([fbd6fd1](https://github.com/morluto/rea/commit/fbd6fd1c4fd8be7ec00d1f12fb73a240e87a9c71))
 * **android:** report method disassembly failure as unavailable body ([#12090](https://github.com/morluto/rea/issues/12090)) ([dc6799d](https://github.com/morluto/rea/commit/dc6799d4880f3e0737be54dddfd4d48a8080fbf4))
+* **android:** share decoded Android XML admission ([#12158](https://github.com/morluto/rea/issues/12158)) ([61af8ab](https://github.com/morluto/rea/commit/61af8abeb6f8b95fe99e2470e6cb57ab974f5bca)), closes [#12139](https://github.com/morluto/rea/issues/12139)
 * **apk:** preserve ambiguous v1 certificate identity ([#11835](https://github.com/morluto/rea/issues/11835)) ([e7ed930](https://github.com/morluto/rea/commit/e7ed93004a734d156d6165f6dd5d2094a39daa94))
 * **apktool:** report the decoder JVM's heap exhaustion as memory, not a target refusal ([#10634](https://github.com/morluto/rea/issues/10634)) ([c296c91](https://github.com/morluto/rea/commit/c296c91770a0ac8d14d8773ae0e2d0699ab56888))
 * **apktool:** treat an EPERM launcher spawn as not executable ([4bf5226](https://github.com/morluto/rea/commit/4bf522672468cf21ff09a804ff287f0195501712))
@@ -200,6 +201,7 @@
 * **ci:** defer proposals for merged release commits ([5eef239](https://github.com/morluto/rea/commit/5eef239dfd774331d622aaa4762f42fa632121ab))
 * **ci:** exercise numeric guard source permissions ([#11913](https://github.com/morluto/rea/issues/11913)) ([3e5c48d](https://github.com/morluto/rea/commit/3e5c48debc904a25d6673b933e9e41e5cc8c580e))
 * **ci:** expose failed test modules in portable diagnostics ([#12069](https://github.com/morluto/rea/issues/12069)) ([644cb82](https://github.com/morluto/rea/commit/644cb8243d449c27aa63e483146cd82f53b57083))
+* **ci:** keep dispatcher fixture exports aligned with runtime ([#12131](https://github.com/morluto/rea/issues/12131)) ([3b81511](https://github.com/morluto/rea/commit/3b8151125cdbe9a391f29a19273b8d0f8121dc47))
 * **ci:** keep MinGW setup within the native build deadline ([#11887](https://github.com/morluto/rea/issues/11887)) ([2cc7f01](https://github.com/morluto/rea/commit/2cc7f01731e5049f4b5d0d9b338050caf5c13d94))
 * **ci:** let npm retry upstream registry connection resets ([3f361d8](https://github.com/morluto/rea/commit/3f361d820fd4a54e037bf60726e79217586ad431))
 * **ci:** preserve conformance subprocess cleanup ownership ([#12025](https://github.com/morluto/rea/issues/12025)) ([93fb79e](https://github.com/morluto/rea/commit/93fb79e3b881c2997e0a625bab1c416de0e2e170))
@@ -1173,6 +1175,7 @@
 * run required checks on merge-queue groups ([#11297](https://github.com/morluto/rea/issues/11297)) ([5efaedd](https://github.com/morluto/rea/commit/5efaedda88084e1d2e9523af44a0fe20e4e81ddc))
 * split fast built tests into twelve shards ([add0aa1](https://github.com/morluto/rea/commit/add0aa12934d126573f5a20970b278c468d698b7))
 * trace script modules and built-server consumers in PR test selection, and balance selected shards ([#11516](https://github.com/morluto/rea/issues/11516)) ([062b383](https://github.com/morluto/rea/commit/062b3835f9bead17456d24f0ca103b8e8df17ca3)), closes [#11382](https://github.com/morluto/rea/issues/11382)
+* **windows:** report package verification phase timings ([#12167](https://github.com/morluto/rea/issues/12167)) ([b95a757](https://github.com/morluto/rea/commit/b95a757c336c28cfb1d48f09628dc364938eeb3d))
 * **windows:** validate advertised MCP schemas in the Windows lane ([#10785](https://github.com/morluto/rea/issues/10785)) ([4588157](https://github.com/morluto/rea/commit/45881575a6bf9f050f19c76f310ecd36ffdebd6d))
 
 ---
