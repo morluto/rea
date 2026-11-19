@@ -564,6 +564,7 @@
 * **pcap:** resolve tshark and capinfos on the Windows PATH ([#11734](https://github.com/morluto/rea/issues/11734)) ([8a10fa9](https://github.com/morluto/rea/commit/8a10fa9c006a4b1032e713a4b862773039713049))
 * **pcap:** retain admitted DNS truncation facts ([#12373](https://github.com/morluto/rea/issues/12373)) ([7eac002](https://github.com/morluto/rea/commit/7eac002d5e99bf5d9eb552f00e569b0862e7881d))
 * **pe:** admit Authenticode nesting depth of signed Windows binaries ([#12082](https://github.com/morluto/rea/issues/12082)) ([0b95fa7](https://github.com/morluto/rea/commit/0b95fa7d6977efd733efc2adc824d0cb9e7121d9))
+* **pe:** distinguish positional resource framing from capacity ([#12402](https://github.com/morluto/rea/issues/12402)) ([0eac372](https://github.com/morluto/rea/commit/0eac37277d13a332320d8c9cf6fe5ce81e34b80c))
 * **pe:** enforce DER extension critical encoding ([#10212](https://github.com/morluto/rea/issues/10212)) ([937d10d](https://github.com/morluto/rea/commit/937d10df1c709c8b2f5af8d9406ef735d0b3a2dc))
 * **pe:** frame certificate entries before count admission ([15150b0](https://github.com/morluto/rea/commit/15150b017a1012ecc3bbd9e992f5086457a527c6))
 * **pe:** map import hints independently of names ([#11817](https://github.com/morluto/rea/issues/11817)) ([932afbe](https://github.com/morluto/rea/commit/932afbeec5f6fd2b503e9f173dc938ee66c2b918))
