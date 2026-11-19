@@ -1428,6 +1428,30 @@ describe("ReleaseExposureReader sibling map identity", () => {
     expect(scanned.source_maps).toMatchObject({ embedded: 0, skipped: 1 });
   });
 
+  it("keeps a linker map beside a script declared by lossy HTML", async () => {
+    const root = await createTestTempDirectory("rea-release-lossy-sibling-");
+    const page = join(root, "index.html");
+    const linkerMap = join(root, "linker.map");
+    await writeFile(
+      page,
+      Buffer.concat([
+        Buffer.from("<!--"),
+        Buffer.from([0xff]),
+        Buffer.from('--><script src="boot.map"></script>'),
+      ]),
+    );
+    await writeFile(join(root, "boot.map"), "console.log('boot');\n");
+    await writeFile(
+      linkerMap,
+      "Linker script and memory map\n\n.text 0x0000000000401000 0x10 main.o\n",
+    );
+
+    const scanned = await inspect(page);
+    expect(scanned.debug_companions.paths).toEqual([linkerMap]);
+    expect(debugCompanionsStatus(scanned)).toBe("exposed");
+    expect(sourceMapSourcesStatus(scanned)).toBe("unknown");
+  });
+
   it("does not report a native image beside a selected file as a linker map", async () => {
     const root = await createTestTempDirectory("rea-release-sibling-native-");
     const elf = Buffer.alloc(64);
