@@ -3,6 +3,7 @@ import {
   observeElfStringTableEntry,
   elfStringTableText,
 } from "../domain/elfStringTable.js";
+import { BinaryReader } from "../domain/binaryContainer.js";
 import { err, ok } from "../domain/result.js";
 import { readElfDynamicEntry } from "../domain/elfDynamicEntry.js";
 import {
@@ -20,9 +21,10 @@ import { Buffer } from "node:buffer";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { createElfLoadMap } from "./ElfLoadMap.js";
 import {
+  DART_SNAPSHOT_MAGIC,
+  readDartSnapshotHash,
   SNAPSHOT_HASH_LENGTH,
   SNAPSHOT_HASH_OFFSET,
-  SNAPSHOT_HASH_PATTERN,
 } from "./FlutterPayloadScan.js";
 import { readElfFixedHeader } from "../domain/elfFixedHeader.js";
 
@@ -37,35 +39,6 @@ const finishGnuHashCount = async (
     assertArtifactReadActive(signal);
   }
 };
-
-/** Bounds-checked little-endian reader over one loaded buffer. */
-class BoundedReader {
-  constructor(private readonly bytes: Buffer) {}
-
-  u8(offset: number): number | null {
-    return offset < this.bytes.length ? this.bytes.readUInt8(offset) : null;
-  }
-
-  u32(offset: number): number | null {
-    return offset + 4 <= this.bytes.length
-      ? this.bytes.readUInt32LE(offset)
-      : null;
-  }
-
-  u64(offset: number): number | null {
-    const low = this.u32(offset);
-    const high = this.u32(offset + 4);
-    if (low === null || high === null || high > 0x001fffff) return null;
-    return high * 0x1_0000_0000 + low;
-  }
-
-  cString(offset: number, tableEnd: number): string | null {
-    if (tableEnd < 0 || tableEnd > this.bytes.length) return null;
-    return elfStringTableText(
-      observeElfStringTableEntry(this.bytes.subarray(0, tableEnd), offset, 257),
-    );
-  }
-}
 
 export interface ElfSymbol {
   readonly name: string;
@@ -217,7 +190,7 @@ export const readElfSymbols = async (
     e_phentsize,
     e_phnum,
   } = parsed.header;
-  const reader = new BoundedReader(bytes);
+  const reader = new BinaryReader(bytes, true, "ELF");
   const entrySize = elfSymbolSize(is64 ? 64 : 32);
   const segments: { vaddr: number; offset: number; filesz: number }[] = [];
   let dynamicSegment: { offset: number; filesz: number } | null = null;
@@ -428,7 +401,7 @@ export const readElfSymbols = async (
       (offset) => {
         const mapped = toOffset(address, offset + 4);
         return mapped.ok
-          ? ok(reader.u32(mapped.value + offset)!)
+          ? ok(reader.u32(mapped.value + offset))
           : err(mapped.error.reason);
       };
     if (sysv === undefined && gnu === undefined)
@@ -472,6 +445,10 @@ export const readElfSymbols = async (
   const unresolved = new Set<string>();
   const failures = new Set<string>();
   for (const table of tables) {
+    const strings = bytes.subarray(
+      table.stringOffset,
+      table.stringOffset + table.stringSize,
+    );
     for (let index = 0; index < table.count; index += 1) {
       if (index % 4096 === 0) {
         await yieldToEventLoop();
@@ -493,9 +470,8 @@ export const readElfSymbols = async (
           sectionIndex < 0xff00 &&
           (table.source === "dynamic-segment" || sectionIndex < e_shnum));
       if (!defined || nameOffset >= table.stringSize) continue;
-      const name = reader.cString(
-        table.stringOffset + nameOffset,
-        table.stringOffset + table.stringSize,
+      const name = elfStringTableText(
+        observeElfStringTableEntry(strings, nameOffset, 257),
       );
       if (name === null || !wanted.has(name)) continue;
       if (
@@ -556,12 +532,13 @@ export const readSnapshotHeader = (
   hash: string | null;
   complete: boolean;
 } => {
-  const reader = new BoundedReader(bytes);
-  // The Dart magic bytes f5 f5 dc dc read little-endian. Kind and length
-  // fields are only meaningful in data-section headers; sections without
-  // the magic (instructions carry a different layout) report nulls.
-  const magic = reader.u32(offset);
-  if (magic !== 0xdcdcf5f5)
+  const magicSize = DART_SNAPSHOT_MAGIC.length;
+  if (
+    !Number.isSafeInteger(offset) ||
+    offset < 0 ||
+    offset > bytes.length - magicSize ||
+    !bytes.subarray(offset, offset + magicSize).equals(DART_SNAPSHOT_MAGIC)
+  )
     return {
       magicValid: false,
       kind: null,
@@ -569,23 +546,25 @@ export const readSnapshotHeader = (
       hash: null,
       complete: false,
     };
-  const headerLength = reader.u64(offset + 4);
-  const kind = reader.u64(offset + 12);
-  const candidate = bytes
-    .subarray(
-      offset + SNAPSHOT_HASH_OFFSET,
-      offset + SNAPSHOT_HASH_OFFSET + SNAPSHOT_HASH_LENGTH,
-    )
-    .toString("latin1");
-  const hash = SNAPSHOT_HASH_PATTERN.test(candidate) ? candidate : null;
+  const reader = new BinaryReader(bytes, true, "Dart snapshot");
+  const readSnapshotField = (fieldOffset: number): number | null => {
+    if (fieldOffset > bytes.length - 8) return null;
+    const value = reader.i64(fieldOffset);
+    return value >= 0n && value <= BigInt(Number.MAX_SAFE_INTEGER)
+      ? Number(value)
+      : null;
+  };
+  const headerLength = readSnapshotField(offset + magicSize);
+  const kind = readSnapshotField(offset + magicSize + 8);
+  const hash = readDartSnapshotHash(bytes, offset);
   // Dart's stored length excludes the four magic bytes and includes the
   // 20-byte fixed header and the version hash. Aligned data may follow it
   // inside the exported symbol, but the serialized snapshot must fit.
   // The export profile interprets the kind. Its enum values vary by producer.
   const complete =
     headerLength !== null &&
-    headerLength >= SNAPSHOT_HASH_OFFSET + SNAPSHOT_HASH_LENGTH - 4 &&
-    headerLength <= bytes.length - offset - 4 &&
+    headerLength >= SNAPSHOT_HASH_OFFSET + SNAPSHOT_HASH_LENGTH - magicSize &&
+    headerLength <= bytes.length - offset - magicSize &&
     kind !== null &&
     hash !== null;
   return { magicValid: true, kind, headerLength, hash, complete };
