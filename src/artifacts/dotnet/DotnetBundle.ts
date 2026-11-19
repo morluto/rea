@@ -274,9 +274,12 @@ class BundleCursor {
     let length = 0;
     for (let shift = 0; shift <= 28; shift += 7) {
       const byte = (await this.take(1))[0]!;
-      if (shift === 28 && byte > 15) fail("Invalid .NET bundle string length");
+      // BinaryReader.ReadString uses a nonnegative signed Int32 length.
+      if (shift === 28 && byte > 7) fail("Invalid .NET bundle string length");
       length += (byte & 127) * 2 ** shift;
       if ((byte & 128) !== 0) continue;
+      if (length > this.size - this.#position)
+        fail("Truncated .NET bundle manifest");
       if (length > this.limits.string_bytes)
         throw artifactReaderLimitFailure(
           "artifact_limits.dotnet_bundle.string_bytes",
