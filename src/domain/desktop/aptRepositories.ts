@@ -79,6 +79,8 @@ const withTrailingSlash = (uri: string): string =>
 const SCHEME_AUTHORITY = /^([a-z][a-z0-9+.-]*):\/\//iu;
 const LONG_MAX = (1n << 63n) - 1n;
 const LONG_MIN = -(1n << 63n);
+/** Largest magnitude strtol can return: LONG_MAX, or LONG_MIN's absolute value. */
+const PORT_MAGNITUDE_LIMIT = LONG_MAX + 1n;
 
 const isAsciiSpace = (character: string): boolean =>
   character === " " ||
@@ -89,8 +91,9 @@ const isAsciiSpace = (character: string): boolean =>
   character === "\r";
 
 /**
- * APT assigns `atoi(suffix)` to an unsigned 32-bit port. Trailing junk stops
- * the conversion, and a zero result is omitted.
+ * APT assigns `atoi(suffix)` to an unsigned 32-bit port. The magnitude stops
+ * growing once it passes the signed 64-bit limit; further digits are skipped.
+ * Trailing junk ends the conversion, and a zero result is omitted.
  */
 const aptPort = (suffix: string): number => {
   let index = 0;
@@ -99,15 +102,28 @@ const aptPort = (suffix: string): number => {
   const negative = sign === "-";
   if (sign === "+" || sign === "-") index += 1;
   let magnitude = 0n;
+  let overflow = false;
   while (index < suffix.length) {
     const code = suffix.charCodeAt(index);
     if (code < 48 || code > 57) break;
-    magnitude = magnitude * 10n + BigInt(code - 48);
     index += 1;
+    if (overflow) continue;
+    const digit = BigInt(code - 48);
+    if (magnitude > (PORT_MAGNITUDE_LIMIT - digit) / 10n) {
+      overflow = true;
+      continue;
+    }
+    magnitude = magnitude * 10n + digit;
   }
-  let value = negative ? -magnitude : magnitude;
-  if (value > LONG_MAX) value = LONG_MAX;
-  else if (value < LONG_MIN) value = LONG_MIN;
+  const value = overflow
+    ? negative
+      ? LONG_MIN
+      : LONG_MAX
+    : negative
+      ? -magnitude
+      : magnitude > LONG_MAX
+        ? LONG_MAX
+        : magnitude;
   return Number(BigInt.asUintN(32, BigInt.asIntN(32, value)));
 };
 

@@ -583,6 +583,83 @@ describe("single-stanza APT source identity", () => {
   );
 });
 
+describe("APT architecture tokens and saturated ports", () => {
+  it("matches an x86_64 $(ARCH) template to APT's expanded URI and release", () => {
+    const uri = "https://vendor.invalid/archive/$(ARCH)";
+    const suite = "stable/binary-$(ARCH)/";
+    const stanzas = parseDeb822Sources(
+      `Types: deb\nURIs: ${uri}\nSuites: ${suite}\nComponents: main\n`,
+      deb822LookupFile,
+    );
+    const repoUri = "https://vendor.invalid/archive/x86_64/";
+    const release = "stable/binary-x86_64/";
+    const transcript = [
+      `Description: ${repoUri.slice(0, -1)} ${release} Packages`,
+      "Filename: /var/lib/apt/lists/vendor",
+      `Base-URI: ${repoUri}${release}`,
+      `Repo-URI: ${repoUri}`,
+      `Release: ${release}`,
+      `Sourcesentry: ${deb822LookupFile}:1`,
+    ].join("\n");
+    const [target] = parseAptIndexTargets(transcript, "x86_64");
+    if (target === undefined) throw new Error("Missing APT target");
+    expect(entryForTarget(target, stanzas)).toEqual({
+      file: deb822LookupFile,
+      position: 1,
+      uri,
+      credentials: false,
+      suite,
+      components: [],
+      architectures: [],
+      signedBy: [],
+      inlineKey: null,
+    });
+    const [unconfigured] = parseAptIndexTargets(transcript);
+    if (unconfigured === undefined) throw new Error("Missing APT target");
+    expect(entryForTarget(unconfigured, stanzas)).toBeUndefined();
+  });
+
+  it.each([
+    ["decimal", "80", "80"],
+    ["trailing junk", "80abc", "80"],
+    ["non-numeric", "https", ""],
+    ["leading zeros", "0080", "80"],
+    ["long leading zeros", `${"0".repeat(5000)}80`, "80"],
+    ["long positive", "9".repeat(5000), "4294967295"],
+    ["long negative", `-${"9".repeat(5000)}`, ""],
+    ["long positive sign and junk", `+${"9".repeat(5000)}abc`, "4294967295"],
+    ["signed maximum", "9223372036854775807", "4294967295"],
+    ["one past signed maximum", "9223372036854775808", "4294967295"],
+    ["signed minimum", "-9223372036854775808", ""],
+    ["one above signed minimum", "-9223372036854775807", "1"],
+    ["negative wrap", "-80", "4294967216"],
+  ] as const)(
+    "maps a %s port suffix to APT's unsigned port",
+    (_kind, suffix, port) => {
+      const authored = `https://vendor.invalid:${suffix}/archive`;
+      const repoUri =
+        port === ""
+          ? "https://vendor.invalid/archive/"
+          : `https://vendor.invalid:${port}/archive/`;
+      const stanzas = parseDeb822Sources(
+        `Types: deb\nURIs: ${authored}\nSuites: stable\nComponents: main\n`,
+        deb822LookupFile,
+      );
+      expect(entryForTarget(targetFor(repoUri), stanzas)).toEqual({
+        file: deb822LookupFile,
+        position: 1,
+        uri: authored,
+        credentials: false,
+        suite: "stable",
+        components: ["main"],
+        architectures: [],
+        signedBy: [],
+        inlineKey: null,
+      });
+    },
+  );
+});
+
 describe("APT source URI lookup", () => {
   it("matches APT's deb822 Repo-URI spellings without changing the source URI", () => {
     const stanzas = parseDeb822Sources(

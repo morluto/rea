@@ -598,6 +598,48 @@ describe.skipIf(
     });
   });
 
+  it.each([
+    ["x86_64", "x86_64"],
+    ["amd64", "amd64"],
+    ["../etc", undefined],
+    ["x86_64/etc", undefined],
+  ] as const)(
+    "keeps APT architecture %s only when it is an architecture token",
+    async (configured, kept) => {
+      const root = await createTestTempDirectory("apt-config-arch-");
+      const selected = {
+        lists: `${root}/lists/`,
+        trustedParts: `${root}/trusted/`,
+        trusted: `${root}/trusted.gpg`,
+        status: `${root}/status`,
+      };
+      const configuredQuery: QueryRunner = (command, argv, signal) =>
+        runHostQuery(
+          command,
+          [
+            "-o",
+            `Dir::State::Lists=${selected.lists}`,
+            "-o",
+            `Dir::Etc::TrustedParts=${selected.trustedParts}`,
+            "-o",
+            `Dir::Etc::Trusted=${selected.trusted}`,
+            "-o",
+            `Dir::State::status=${selected.status}`,
+            "-o",
+            `APT::Architecture=${configured}`,
+            ...argv,
+          ],
+          signal,
+        );
+      const locations = await resolveAptLocations(configuredQuery, undefined);
+      expect(locations).toEqual(
+        kept === undefined
+          ? selected
+          : { ...selected, configuredArchitecture: kept },
+      );
+    },
+  );
+
   it("reads the lists folder an APT_CONFIG file names, resolved under Dir::State", async () => {
     const root = await createTestTempDirectory("apt-config-");
     const config = join(root, "apt.conf");

@@ -82,10 +82,13 @@ export const resolveAptLocations = async (
     trustedParts: value("PARTS") ?? fallback.trustedParts,
     trusted: value("TRUSTED") ?? fallback.trusted,
     status: value("STATUS") ?? fallback.status ?? DEFAULT_DPKG_STATUS_SOURCE,
-    ...(architecture === undefined ||
-    !/^[a-z0-9][a-z0-9-]*$/u.test(architecture)
-      ? {}
-      : { configuredArchitecture: architecture }),
+    // Debian architecture words use letters, digits, and hyphens. GNU CPU
+    // names such as x86_64 also use underscores. APT substitutes either form
+    // for $(ARCH). Dots, slashes, and whitespace are not architecture tokens.
+    ...(architecture !== undefined &&
+    /^[a-z0-9][a-z0-9_-]*$/u.test(architecture)
+      ? { configuredArchitecture: architecture }
+      : {}),
   };
 };
 
