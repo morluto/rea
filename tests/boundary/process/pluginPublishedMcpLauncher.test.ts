@@ -5,6 +5,7 @@ import {
   chmod,
   lstat,
   mkdir,
+  mkdtemp,
   readFile,
   realpath,
   rm,
@@ -20,6 +21,7 @@ import { describe, expect, it, onTestFinished } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { processHasStopped } from "../../support/process/observePosixProcess.js";
+import { removeTestWorkspace } from "../../support/workspace/workspaceFixture.js";
 
 /** Bound for launcher teardown to cancel an owned installer before force-kill. */
 const LAUNCHER_TEARDOWN_GRACE_MS = 2_000;
@@ -754,6 +756,152 @@ writeFileSync(
     expect(secondResult.stdout).toBe(JSON.stringify({ installs: 1 }));
     expect(await readFile(counterPath, "utf8")).toBe("1");
     await access(join(prefix, READY_MARKER));
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "selects one lease socket root for short and long TMPDIR aliases",
+  async () => {
+    const version = "6.8.0-published-alias-socket-root";
+    const leaseDirectoryName =
+      uid === undefined ? "rea-mcp-l" : `rea-mcp-l-${uid}`;
+    const sampleSocketName = `${"0".repeat(32)}.sock`;
+    const leaseSocketFits = (root: string) =>
+      Buffer.byteLength(
+        join(root, leaseDirectoryName, sampleSocketName),
+        "utf8",
+      ) <= 107;
+
+    // Short physical root under /tmp so the preferred lease socket fits; a long
+    // symlink spelling of the same directory sits past the sun_path budget and
+    // would fall back to /tmp if length were checked before realpath.
+    const physicalRoot = await realpath(
+      await mkdtemp(join(await realpath("/tmp"), "rea-pub-sock-")),
+    );
+    onTestFinished(async () => {
+      await removeTestWorkspace(physicalRoot);
+    });
+    expect(leaseSocketFits(physicalRoot)).toBe(true);
+
+    let longParent = await createTestTempDirectory(
+      "rea-published-alias-socket-long-",
+    );
+    while (leaseSocketFits(join(longParent, "tmpdir-alias"))) {
+      longParent = join(longParent, "n".repeat(24));
+      await mkdir(longParent, { recursive: true, mode: 0o700 });
+    }
+    const aliasRoot = join(longParent, "tmpdir-alias");
+    await symlink(physicalRoot, aliasRoot);
+    expect(await realpath(aliasRoot)).toBe(physicalRoot);
+    expect(leaseSocketFits(aliasRoot)).toBe(false);
+
+    const expectedSocketRoot = join(physicalRoot, leaseDirectoryName);
+    const rawAliasSocketRoot = join("/tmp", leaseDirectoryName);
+    expect(expectedSocketRoot).not.toBe(rawAliasSocketRoot);
+
+    const physicalLock = lockPathFor(version, physicalRoot);
+    const lockKey = createHash("sha256")
+      .update(physicalLock)
+      .digest("hex")
+      .slice(0, 32);
+    const expectedLeaseSocket = join(expectedSocketRoot, `${lockKey}.sock`);
+    const rawAliasLeaseSocket = join(rawAliasSocketRoot, `${lockKey}.sock`);
+
+    const prefix = installPrefix(version, physicalRoot);
+    await rm(prefix, { recursive: true, force: true });
+    await rm(physicalLock, { recursive: true, force: true }).catch(
+      () => undefined,
+    );
+    await rm(expectedLeaseSocket, { force: true }).catch(() => undefined);
+    await rm(rawAliasLeaseSocket, { force: true }).catch(() => undefined);
+
+    const workspace = await createTestTempDirectory(
+      "rea-published-alias-socket-",
+    );
+    const bin = join(workspace, "bin");
+    await mkdir(bin);
+    const npmEntry = join(bin, "npm-cli.cjs");
+    const counterPath = join(workspace, "install-count");
+    const releasePath = join(workspace, "release");
+    const startedPath = join(workspace, "started");
+    await writeFile(counterPath, "0", { mode: 0o600 });
+    await writeFile(
+      npmEntry,
+      `#!/usr/bin/env node
+const { mkdirSync, readFileSync, writeFileSync } = require("node:fs");
+const { dirname, join } = require("node:path");
+const counterPath = ${JSON.stringify(counterPath)};
+const startedPath = ${JSON.stringify(startedPath)};
+const releasePath = ${JSON.stringify(releasePath)};
+const sleep = (ms) =>
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+const count = Number(readFileSync(counterPath, "utf8")) + 1;
+writeFileSync(counterPath, String(count));
+const prefix = process.argv[process.argv.indexOf("--prefix") + 1];
+const entry = join(prefix, "node_modules", "rea-agents", "scripts", "rea.mjs");
+mkdirSync(dirname(entry), { recursive: true, mode: 0o700 });
+writeFileSync(entry, "process.stdout.write('imported-too-early');", { mode: 0o600 });
+writeFileSync(startedPath, prefix);
+for (;;) {
+  try {
+    readFileSync(releasePath);
+    break;
+  } catch {
+    sleep(20);
+  }
+}
+writeFileSync(
+  entry,
+  "process.stdout.write(JSON.stringify({ installs: " + count + " })); process.exit(0);",
+  { mode: 0o600 },
+);
+`,
+    );
+
+    const sharedPath = `${bin}${delimiter}${process.env.PATH ?? ""}`;
+    const physicalEnv = {
+      ...process.env,
+      TMPDIR: physicalRoot,
+      TEMP: physicalRoot,
+      TMP: physicalRoot,
+      PATH: sharedPath,
+      npm_execpath: npmEntry,
+    };
+    const aliasEnv = {
+      ...process.env,
+      TMPDIR: aliasRoot,
+      TEMP: aliasRoot,
+      TMP: aliasRoot,
+      PATH: sharedPath,
+      npm_execpath: npmEntry,
+    };
+
+    const first = start([version], physicalEnv);
+    await waitForFile(startedPath);
+    await access(expectedLeaseSocket);
+    await expect(access(rawAliasLeaseSocket)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+
+    const second = start([version], aliasEnv);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(second.child.exitCode).toBeNull();
+    expect(await readFile(counterPath, "utf8")).toBe("1");
+    await access(expectedLeaseSocket);
+    await expect(access(rawAliasLeaseSocket)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+
+    await writeFile(releasePath, "go", { mode: 0o600 });
+    const [firstResult, secondResult] = await Promise.all([
+      first.closed,
+      second.closed,
+    ]);
+    expect(firstResult.code).toBe(0);
+    expect(secondResult.code).toBe(0);
+    expect(firstResult.stdout).toBe(JSON.stringify({ installs: 1 }));
+    expect(secondResult.stdout).toBe(JSON.stringify({ installs: 1 }));
+    expect(await readFile(counterPath, "utf8")).toBe("1");
   },
 );
 

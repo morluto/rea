@@ -125,13 +125,26 @@ const verifyOwnedCachePath = (path, kind) => {
   tightenOwnedDirectory(path, kind);
 };
 
+/**
+ * Physical spelling of a temporary root. Symlink-equivalent TMPDIR values must
+ * share cache lock and lease-socket identity; keep the selected spelling when
+ * the host cannot resolve it.
+ */
+const resolvedTemporaryRoot = (temporaryRoot = tmpdir()) => {
+  try {
+    return realpathSync(temporaryRoot);
+  } catch {
+    return temporaryRoot;
+  }
+};
+
 const ensurePrivateCacheRoot = () => {
   const temporaryRoot = tmpdir();
   // Admit the selected temporary root before canonicalizing so symlink-
   // equivalent TMPDIR spellings share one physical cache and lease identity
   // (PrivateRuntimeRoot physical-path boundary).
   statSync(temporaryRoot === "" ? temporaryRoot : join(temporaryRoot, "."));
-  cacheRoot = join(realpathSync(temporaryRoot), cacheDirectoryName);
+  cacheRoot = join(resolvedTemporaryRoot(temporaryRoot), cacheDirectoryName);
   mkdirSync(cacheRoot, { recursive: true, mode: 0o700 });
   verifyOwnedCachePath(cacheRoot, "root");
 };
@@ -204,14 +217,18 @@ const leaseDirectoryName = () =>
 
 /**
  * Owner-private lease directory whose complete socket pathname fits sun_path.
- * Prefer the process temp root; when that root is already long (nested TMPDIR
- * hygiene layouts), fall back to `/tmp` so hashing the filename alone cannot
- * still exceed the Unix-socket pathname limit.
+ * Prefer the resolved process temp root so short and long symlink spellings of
+ * the same directory share one socket; when that root is already long (nested
+ * TMPDIR hygiene layouts), fall back to `/tmp` so hashing the filename alone
+ * cannot still exceed the Unix-socket pathname limit.
  */
 const leaseSocketRootPath = () => {
   const name = leaseDirectoryName();
   const sampleName = `${"0".repeat(32)}.sock`;
-  for (const root of [join(tmpdir(), name), join("/tmp", name)]) {
+  for (const root of [
+    join(resolvedTemporaryRoot(), name),
+    join("/tmp", name),
+  ]) {
     if (
       Buffer.byteLength(join(root, sampleName), "utf8") <=
       POSIX_SOCKET_PATH_LIMIT
