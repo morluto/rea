@@ -289,6 +289,7 @@
 * **desktop:** read BOM-marked UTF-16 in state and task views ([#12052](https://github.com/morluto/rea/issues/12052)) ([c47442a](https://github.com/morluto/rea/commit/c47442a2eb240c6590a98df7185d6f8b08962e82))
 * **desktop:** retain all matching APT primary-key blocks ([#11944](https://github.com/morluto/rea/issues/11944)) ([18c6b44](https://github.com/morluto/rea/commit/18c6b4490c45b8fb944a62d3ea50dd8c68a23c8b))
 * **desktop:** retain dconf failures without stderr ([#10230](https://github.com/morluto/rea/issues/10230)) ([913b029](https://github.com/morluto/rea/commit/913b029c9607421271b0203acf7084d129491623))
+* **desktop:** share launch syntax, replay paths, and runtime admission ([#12153](https://github.com/morluto/rea/issues/12153)) ([47461fd](https://github.com/morluto/rea/commit/47461fddab14539082ed17643670b392fb0691d8))
 * **desktop:** share state and window admission with exported verifiers ([#12154](https://github.com/morluto/rea/issues/12154)) ([0aee26d](https://github.com/morluto/rea/commit/0aee26def4e70eb4098dad4e8ab8d54d52d2baaa)), closes [#12140](https://github.com/morluto/rea/issues/12140)
 * **desktop:** validate guest file replies at their shared boundary ([#10224](https://github.com/morluto/rea/issues/10224)) ([50d4f7b](https://github.com/morluto/rea/commit/50d4f7bea42d171a839e1dd76d191209816da4de))
 * **doctor:** count installations by resolved launcher directory ([5557d9b](https://github.com/morluto/rea/commit/5557d9b3eb2d6b92936289792ea6f0521f68261d)), closes [#8122](https://github.com/morluto/rea/issues/8122)
@@ -382,8 +383,10 @@
 * **javascript:** retain timer delays after opaque global effects ([1abd327](https://github.com/morluto/rea/commit/1abd3279131244add66f15a34c0204c6f932b2e7))
 * **javascript:** retain wide function fingerprint inventories ([#10355](https://github.com/morluto/rea/issues/10355)) ([5d046b9](https://github.com/morluto/rea/commit/5d046b9ad7e962b3fd4ad3d99ff62aa4c2663552))
 * **javascript:** retain wide runtime load-state inventories ([#10354](https://github.com/morluto/rea/issues/10354)) ([c4cec63](https://github.com/morluto/rea/commit/c4cec6373d1a65679a695cfb8270b43ad15bb325))
+* **javascript:** share source-map admission and path resolution ([#12161](https://github.com/morluto/rea/issues/12161)) ([27e04ea](https://github.com/morluto/rea/commit/27e04ea2ecf7a35ca0000fe7f3c76720e295a61a))
 * **javascript:** stop an Electron alias walk at a read before its initializer ([98540f2](https://github.com/morluto/rea/commit/98540f24e0ed3e46139704eb5e1923f628a33aee)), closes [#4490](https://github.com/morluto/rea/issues/4490)
 * **kuna:** recover explicit direct-call destinations ([#12106](https://github.com/morluto/rea/issues/12106)) ([2182996](https://github.com/morluto/rea/commit/21829964ef95818db3b25d8d0e8490295f4d30c9))
+* **kuna:** reject lossy text in retained project exports ([#12171](https://github.com/morluto/rea/issues/12171)) ([f361ee1](https://github.com/morluto/rea/commit/f361ee1222f6fcffd08add5d268ab878b85f64fe))
 * **kuna:** stop calling executable-segment data sections definite data ([#10686](https://github.com/morluto/rea/issues/10686)) ([1920525](https://github.com/morluto/rea/commit/1920525900519f05553f37b178b788d31c193fb6))
 * **lifecycle:** supervise assetutil, keep cleanup-time interruptions, and cover browser-transport handshakes ([#11502](https://github.com/morluto/rea/issues/11502)) ([035d876](https://github.com/morluto/rea/commit/035d876d1f8ba4c3b6ce449ef5d30bd1fa3da0c4))
 * **managed:** compare verified same-artifact TypeSpec targets ([#11163](https://github.com/morluto/rea/issues/11163)) ([2d4a97b](https://github.com/morluto/rea/commit/2d4a97b405ea2b5845f0c6968551066a93406df8))
@@ -532,6 +535,7 @@
 * **tests:** restore worker fixture and allow setup completion ([6878a84](https://github.com/morluto/rea/commit/6878a847965ab63311c3a3fe82d6e83f15fab0fa))
 * **tests:** treat zombies as stopped in process liveness checks ([6c3e9e0](https://github.com/morluto/rea/commit/6c3e9e0847f24850383450b4d04e5122c0da4f0e))
 * **tests:** treat zombies as stopped in process liveness checks ([#11819](https://github.com/morluto/rea/issues/11819)) ([#12034](https://github.com/morluto/rea/issues/12034)) ([6c3e9e0](https://github.com/morluto/rea/commit/6c3e9e0847f24850383450b4d04e5122c0da4f0e))
+* **unityfs:** share bounded header probing with desktop inspection ([#12169](https://github.com/morluto/rea/issues/12169)) ([2b7d542](https://github.com/morluto/rea/commit/2b7d54257f2edba82f4d2eb4a2c65dce991a367b))
 * **v8:** report a pre-13.4 V8 module code cache as a module ([7a03182](https://github.com/morluto/rea/commit/7a031823492dbbb9d651574d7323e0341eadb19b)), closes [#10262](https://github.com/morluto/rea/issues/10262) [#10263](https://github.com/morluto/rea/issues/10263)
 * **verifiers:** accept Hopper's declared unknown relationship coverage ([30d23cc](https://github.com/morluto/rea/commit/30d23ccd926b41c9b23c971e0901a4fe383bc1b0))
 * **verifiers:** release fixture roots only after their owners finish ([#10491](https://github.com/morluto/rea/issues/10491)) ([67ce671](https://github.com/morluto/rea/commit/67ce671d66876da51c03220b2d4a16e6e02f4f00))
@@ -562,6 +566,7 @@
 * **zip:** account 64-bit data descriptors that MSIX packages write ([#11733](https://github.com/morluto/rea/issues/11733)) ([43aaa9f](https://github.com/morluto/rea/commit/43aaa9f1903cd11826fd261794b5514da0bb6162))
 * **zip:** corroborate member extents before claiming complete coverage ([#11855](https://github.com/morluto/rea/issues/11855)) ([ad02201](https://github.com/morluto/rea/commit/ad02201d0b63d5a51830459f8669e5d6512fe875))
 * **zip:** publish EOF after extraction finalization ([#12164](https://github.com/morluto/rea/issues/12164)) ([ca3f35d](https://github.com/morluto/rea/commit/ca3f35dcbb9942c8d0432cee9c588b9c4996ab26))
+* **zip:** share desktop and APK framing and preserve bounded ZIP64 views ([#12157](https://github.com/morluto/rea/issues/12157)) ([3d313b5](https://github.com/morluto/rea/commit/3d313b56bc16b3c132c91a1eeb313f4744ef2f0b))
 
 
 ### Performance Improvements
@@ -868,6 +873,7 @@
 * **changelog:** remove Copilot from 6.6.0 human thanks ([26e51d0](https://github.com/morluto/rea/commit/26e51d0ce1db1261525a88cfb476a668a87bb5d0)), closes [#7674](https://github.com/morluto/rea/issues/7674) [#7755](https://github.com/morluto/rea/issues/7755)
 * **ci:** describe CI lanes without counts that drift ([ee3e627](https://github.com/morluto/rea/commit/ee3e627efb2992f3c1405a979006fc4b9f571c28)), closes [#7616](https://github.com/morluto/rea/issues/7616) [#7617](https://github.com/morluto/rea/issues/7617)
 * **ci:** remove dated shard measurements from the testing guides ([#10414](https://github.com/morluto/rea/issues/10414)) ([243e401](https://github.com/morluto/rea/commit/243e4015cbf453448e42f66fbdf99df34adfb331))
+* clarify parser ownership and reader contracts ([a646971](https://github.com/morluto/rea/commit/a6469719ce640ad792302b047e006dcfd123c7f2))
 * **client-configuration:** document Cursor, Windsurf, and Command Code targets ([cc854f1](https://github.com/morluto/rea/commit/cc854f1ca11e4fb758b7870e4dfa9e75075fdd1e)), closes [#7650](https://github.com/morluto/rea/issues/7650) [#7750](https://github.com/morluto/rea/issues/7750)
 * **client-configuration:** state how doctor reads a Command Code transport ([5732aad](https://github.com/morluto/rea/commit/5732aad07725e386a202b7aaf1fb3c9f588314ed)), closes [#7650](https://github.com/morluto/rea/issues/7650)
 * describe omitted output schemas as the default in README translations ([#10658](https://github.com/morluto/rea/issues/10658)) ([0ddc732](https://github.com/morluto/rea/commit/0ddc732c693a4e7529ad2a22a611c02a7680f7f6))
