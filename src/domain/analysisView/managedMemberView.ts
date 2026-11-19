@@ -339,6 +339,7 @@ export const projectManagedMemberView = (
     parent.evidenceId,
   );
   if (!scope.ok) return scope;
+  const coordinates = report.unresolved_definitions;
   const shared = {
     parent_evidence_id: parent.evidenceId,
     parent_operation: "inspect_managed_members" as const,
@@ -350,7 +351,15 @@ export const projectManagedMemberView = (
       ...(report.selection === null
         ? []
         : [
-            "Exported types and member references cover the whole assembly; the other collections cover only the selected declaring types.",
+            "Exported types and member references cover the whole assembly. Named type rows, fields, methods, call edges, field accesses and user strings follow the declaring-type selection.",
+          ]),
+      ...(coordinates === undefined
+        ? []
+        : [
+            "Unresolved TypeDef coordinates cover the assembly-wide name scan.",
+            coordinates.method_names_examined
+              ? "Unresolved MethodDef coordinates follow the recorded source method interval and any declaring-type selection."
+              : "MethodDef name coordinates are unavailable in this capacity recovery.",
           ]),
       ...managedViewIdentityUnknowns(
         parent,
@@ -395,15 +404,6 @@ export const projectManagedMemberView = (
     shared.unknowns.push(
       `${page.unresolved_filter_rows} source rows have unknown requested names or declaring types and may match the filters; the matched total excludes them.`,
     );
-  if (view.collection === "unresolved_definitions") {
-    shared.unknowns.push(
-      "TypeDef coordinates cover the assembly-wide name scan. MethodDef coordinates cover only the source method interval and admitted declaring types; rows do not supply nominal names or satisfy name filters.",
-    );
-    if (report.unresolved_definitions?.method_names_examined === false)
-      shared.unknowns.push(
-        "Member decoding stopped at the representation limit. MethodDef name coordinates were not examined to completion.",
-      );
-  }
   return ok({
     kind: "managed-members" as const,
     view,
@@ -416,10 +416,9 @@ export const projectManagedMemberView = (
     selection: report.selection,
     method_rows: report.method_rows,
     ...(view.collection === "unresolved_definitions" &&
-    report.unresolved_definitions !== undefined
+    coordinates !== undefined
       ? {
-          unresolved_method_names_examined:
-            report.unresolved_definitions.method_names_examined,
+          unresolved_method_names_examined: coordinates.method_names_examined,
         }
       : {}),
     source_metadata_status: report.metadata.status,

@@ -3,7 +3,14 @@ import { join } from "node:path";
 import { expect } from "vitest";
 
 import { parseEvidence } from "../../src/domain/evidence.js";
+import { managedMemberSummaryViewResultSchema } from "../../src/domain/analysisView/analysisViewResult.js";
 import { managedMemberInspectionSchema } from "../../src/domain/managed/managedArtifact.js";
+import {
+  metadataRowOffset,
+  readManagedMetadataLayout,
+} from "../../src/domain/managed/managedMetadataLayout.js";
+import { readManagedPeLayout } from "../../src/domain/managed/managedPeReader.js";
+import { buildManagedPeFixture } from "../../src/dotnet/ManagedPe.fixture.js";
 import {
   managedStringsAmbiguity,
   STRING_AMBIGUITY_MVID,
@@ -118,6 +125,61 @@ cliTest(
       source_metadata_status: "partial",
       unresolved_module_name: report.metadata.unresolved_module_name,
       identity_scope: report.identity_scope,
+    });
+
+    const selectedPath = join(root, "selected.dll");
+    const selectedBytes = buildManagedPeFixture({ additionalEmptyTypes: 1 });
+    const pe = readManagedPeLayout(selectedBytes);
+    if (pe.cli === null) throw new Error("Fixture omitted CLI metadata");
+    const { rva, size } = pe.cli.metadata;
+    const layout = readManagedMetadataLayout(
+      selectedBytes,
+      pe.rvaToOffset(rva, size, "fixture"),
+      size,
+    );
+    selectedBytes.writeUInt16LE(0, metadataRowOffset(layout, 2, 1) + 4);
+    await writeFile(selectedPath, selectedBytes);
+    const selected = await call("inspect_managed_members", {
+      path: selectedPath,
+      type_names: ["Fixture.Program"],
+      detail: "summary",
+    });
+    expect(selected.isError, JSON.stringify(selected)).not.toBe(true);
+    const scope = [
+      "Exported types and member references cover the whole assembly. Named type rows, fields, methods, call edges, field accesses and user strings follow the declaring-type selection.",
+      "Unresolved TypeDef coordinates cover the assembly-wide name scan.",
+      "Unresolved MethodDef coordinates follow the recorded source method interval and any declaring-type selection.",
+    ];
+    const result = managedMemberSummaryViewResultSchema.parse(
+      parseEvidence(selected.structuredContent).normalized_result,
+    );
+    expect(result).toMatchObject({
+      summary: {
+        selection: {
+          type_names: ["Fixture.Program"],
+          unmatched_type_names: [],
+        },
+        reported_counts: { types: 1, unresolved_definitions: 1 },
+      },
+      unknowns: expect.arrayContaining(scope),
+    });
+    const selectedPage = await call("inspect_analysis_view", {
+      source: {
+        kind: "retained-evidence",
+        evidence_id: result.parent_evidence_id,
+      },
+      view: {
+        kind: "managed-members",
+        collection: "unresolved_definitions",
+        limit: 1,
+      },
+    });
+    expect(selectedPage.isError, JSON.stringify(selectedPage)).not.toBe(true);
+    expect(
+      parseEvidence(selectedPage.structuredContent).normalized_result,
+    ).toMatchObject({
+      page: { rows: [{ kind: "TypeDef", token: "0x02000001" }] },
+      unknowns: result.unknowns,
     });
   },
 );
