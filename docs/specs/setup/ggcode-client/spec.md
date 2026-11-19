@@ -39,14 +39,20 @@ other supported client, with the same plan-approve-apply flow and backups.
   stdio before alignment checks; a non-stdio `type` is stale/invalid like the
   other type-carrying dialects. Doctor reports the file a fallback-layer
   registration was actually read from.
-- Stored-configuration validation cannot permanently block repair: an invalid
-  legacy `REA_MCP_TOOL_FAMILIES` value is overridable by
-  `rea setup --tool-families` rather than failing before the override applies.
+- Validation of stored configuration cannot permanently block repair: an
+  invalid legacy `REA_MCP_TOOL_FAMILIES` value is overridable by
+  `rea setup --tool-families` rather than failing before the override applies
+  (covered by the tool-family environment and registration-status suites, not
+  the ggcode dialect suite).
 - Skill installs to `~/.ggcode/skills`, which ggcode discovers (it also reads
   the shared `~/.agents/skills` destination).
-- REA only ever writes the standalone `~/.ggcode/mcp_servers.yaml` (with a
-  `.rea.backup` recovery backup); it never writes `~/.ggcode/ggcode.yaml`.
-  Uninstall removes only the `rea` entry.
+- Setup writes only the standalone `~/.ggcode/mcp_servers.yaml` (with a
+  `.rea.backup` recovery backup) and never writes `~/.ggcode/ggcode.yaml`.
+  Uninstall removes only the `rea` entry: from the standalone file when
+  present, and — when a legacy `rea` entry in `ggcode.yaml` is the only
+  remaining source — by rewriting `ggcode.yaml` with only that entry removed
+  (the fallback layer becomes the writable source while the standalone file
+  is absent).
 
 ## Acceptance
 
@@ -59,7 +65,10 @@ retention, unnamed-entry refusal, and never-reseed); duplicate and
 `__proto__` names; aliased names in edit and setup gates; empty-`type`
 normalization; ownership refusal from both fallback and superseded sources;
 fallback source-path reporting in doctor; tool-families override of invalid
-stored values; and uninstall removing only `rea`.
+stored values (in `tests/boundary/filesystem/setupToolFamilyEnvironment.test.ts`
+and `tests/boundary/filesystem/clientRegistrationStatus.test.ts`); and
+uninstall removing only `rea`, including the legacy `ggcode.yaml` rewrite
+while the standalone file is absent.
 
 ## Out of scope
 
