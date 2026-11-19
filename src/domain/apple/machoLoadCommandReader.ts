@@ -20,7 +20,6 @@ import {
 import {
   hasJvmClassHeader,
   MAX_JVM_CLASS_IDENTITY_BYTES,
-  JVM_CLASS_IDENTITY_LIMIT_REASON,
 } from "./jvmClassFile.js";
 import type {
   MachoDependency,
@@ -38,6 +37,7 @@ import {
   findOverlappingFatSlices,
   hasMachoMagic,
   readFatContainerHeader,
+  readFatJvmIdentityLimitIssue,
   readFatSliceDeclarations,
   readMachoHeaderPrefixFacts,
   validateFatSlice,
@@ -191,22 +191,15 @@ export const readMachoContainer = async (
       identity.state === "needs-slice-header"
     )
       return { kind: "not-mach-o" };
-    // A large CAFEBABE input whose bounded prefix resembles an invalid
-    // known-CPU FAT table remains unknown until its JVM identity can be
-    // checked; do not turn the resource limit into a malformed claim. A slice
-    // with a valid range that starts with a Mach-O header settles identity,
-    // and its siblings' range faults then stay their own.
-    if (
-      identity.state === "malformed" &&
-      mayBeJvmClass &&
-      size > MAX_JVM_CLASS_IDENTITY_BYTES &&
-      !(await observesMachoSlice(readAt, header))
-    )
-      return {
-        kind: "issue",
-        status: "unsupported",
-        reason: JVM_CLASS_IDENTITY_LIMIT_REASON,
-      };
+    if (mayBeJvmClass && size > MAX_JVM_CLASS_IDENTITY_BYTES) {
+      const limitIssue = await readFatJvmIdentityLimitIssue(
+        header,
+        identity,
+        readAt,
+      );
+      if (limitIssue !== null)
+        return { kind: "issue", status: "unsupported", reason: limitIssue };
+    }
     // Aliased declarations are rejected at the declaration owner before any
     // slice payload is parsed. A declaration whose own range is already
     // defective keeps that fault; it does not turn its neighbours into aliases.
@@ -243,19 +236,6 @@ const readSliceMagic = async (
 ): Promise<number | null> => {
   const bytes = await readAt(offset, 4);
   return bytes.byteLength < 4 ? null : viewOf(bytes).getUint32(0, false);
-};
-
-const observesMachoSlice = async (
-  readAt: ReadAt,
-  header: ParsedFatContainerHeader,
-): Promise<boolean> => {
-  for (const [index, slice] of header.slices.entries())
-    if (
-      header.rangeIssues[index] === null &&
-      readMachoHeaderPrefixFacts(await readAt(slice.offset, 4)).format !== null
-    )
-      return true;
-  return false;
 };
 
 /** Decode every slice's dylib-loading load commands without reading code. */

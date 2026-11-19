@@ -394,7 +394,7 @@ const launchCommand = async (
       },
       request.arguments,
     ),
-    workingDirectory: workingDirectory ?? request.home,
+    workingDirectory: workingDirectory || request.home,
     entry: {
       id: located.value.id,
       path: located.value.path,
