@@ -688,6 +688,7 @@
 * **windows:** preserve opaque ANSI shortcut path identity ([#11923](https://github.com/morluto/rea/issues/11923)) ([e39a53d](https://github.com/morluto/rea/commit/e39a53d5cdc96e81e861f257915bca862d7f8a90))
 * **windows:** preserve pre-epoch shortcut timestamp milliseconds ([#10305](https://github.com/morluto/rea/issues/10305)) ([617e4cb](https://github.com/morluto/rea/commit/617e4cbfb3dd5a60402854365eb56e1e074b8bd6))
 * **windows:** report bytes appended after a Shell Link TerminalBlock ([#11745](https://github.com/morluto/rea/issues/11745)) ([ce9635b](https://github.com/morluto/rea/commit/ce9635bcb410416dc7960abf75e003f727c9f261))
+* **windows:** report out-of-spec shortcut StringData counts ([#12352](https://github.com/morluto/rea/issues/12352)) ([14aca26](https://github.com/morluto/rea/commit/14aca264eab2da4ffa22e0ecf8b61a8059b8de6b))
 * **wxapkg:** admit member extents under one index layout ([#12192](https://github.com/morluto/rea/issues/12192)) ([2ca44e5](https://github.com/morluto/rea/commit/2ca44e56ac8616fb69e3b883b00071f2cd336d08))
 * **zip:** account 64-bit data descriptors that MSIX packages write ([#11733](https://github.com/morluto/rea/issues/11733)) ([43aaa9f](https://github.com/morluto/rea/commit/43aaa9f1903cd11826fd261794b5514da0bb6162))
 * **zip:** bound central records to their directory ([#12197](https://github.com/morluto/rea/issues/12197)) ([b946cb8](https://github.com/morluto/rea/commit/b946cb83dd4ba25dc6d3e2aa894988ab811ca8b6))
