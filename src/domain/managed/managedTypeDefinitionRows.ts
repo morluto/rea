@@ -7,6 +7,7 @@ export interface TypeDefinitionRowFacts {
   readonly rowOffset: number;
   readonly flags: number;
   readonly nameIndex: number;
+  readonly nameOffset: number;
   readonly namespaceIndex: number;
   readonly extendsRaw: number;
   readonly extendsOffset: number;
@@ -23,6 +24,7 @@ export const readTypeDefinitionRowFacts = (
 ): TypeDefinitionRowFacts => {
   const cursor = metadataRowCursor(bytes, layout, 2, row);
   const flags = cursor.u32();
+  const nameOffset = cursor.offset;
   const nameIndex = cursor.readIndex(layout.stringIndexSize);
   const namespaceIndex = cursor.readIndex(layout.stringIndexSize);
   const extendsOffset = cursor.offset;
@@ -35,6 +37,7 @@ export const readTypeDefinitionRowFacts = (
     rowOffset: cursor.start,
     flags,
     nameIndex,
+    nameOffset,
     namespaceIndex,
     extendsRaw,
     extendsOffset,

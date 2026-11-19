@@ -71,6 +71,7 @@ const PATH_SCOPES = {
     "scripts/verify-signal-recording.mjs",
     ".github/workflows/real-signal-recording.yml",
     UBUNTU_ARCHIVE_ACTION,
+    ".github/actions/host-apt-packages/action.{yml,yaml}",
   ],
   readiness: [
     "tests/conformance/readiness/**",
@@ -252,6 +253,7 @@ const PATH_SCOPES = {
     "scripts/verify-windows-*.mjs",
     ".github/actions/windows-cross-compiler/action.{yml,yaml}",
     UBUNTU_ARCHIVE_ACTION,
+    ".github/actions/host-apt-packages/action.{yml,yaml}",
     "scripts/build-windows-native.mjs",
     "scripts/windows-capabilities.mjs",
     "scripts/prepack.mjs",
@@ -442,6 +444,7 @@ const PATH_SCOPES = {
   binary_layout: [
     ".github/workflows/real-binary-layout.yml",
     UBUNTU_ARCHIVE_ACTION,
+    ".github/actions/host-apt-packages/action.{yml,yaml}",
     "bridge/pwntools/**",
     "src/native/pwntools/**",
     "src/config/pwntoolsInputLimit*.ts",
