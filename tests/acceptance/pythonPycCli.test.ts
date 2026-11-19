@@ -1010,3 +1010,57 @@ cliTest(
     ).toEqual(report);
   },
 );
+
+cliTest(
+  "reports the pyc parser allowance that stopped inspection",
+  async ({ cli }) => {
+    const directory = await createTestTempDirectory("rea-pyc-parser-budget-");
+    const path = join(directory, "limits.pyc");
+    const name = Buffer.alloc(1000, 0x61);
+    const size = Buffer.alloc(4);
+    size.writeUInt32LE(name.length);
+    const namesObject = Buffer.concat([
+      Buffer.from([0x29, 101, 0x61 | 0x80]),
+      size,
+      name,
+      ...Array.from({ length: 100 }, () => Buffer.from([0x72, 0, 0, 0, 0])),
+    ]);
+    const bytes = Buffer.concat([
+      pythonPycHeader(3531),
+      marshalCode("py311", { namesObject }),
+    ]);
+    await writeFile(path, bytes);
+
+    for (const [flag, field, boundary, maximum, resource] of [
+      ["--max-depth", "max_depth", "max_depth", 1, "capacity"],
+      [
+        "--max-file-bytes",
+        "max_file_bytes",
+        "reported_string_bytes",
+        bytes.length,
+        "memory",
+      ],
+    ] as const) {
+      const result = await cli.run({
+        arguments: [
+          "inspect-python-pyc",
+          path,
+          flag,
+          String(maximum),
+          "--json",
+        ],
+      });
+      expect(result.exitCode).toBe(1);
+      expect.soft(result.json, flag).toMatchObject({
+        code: "resource_constraint",
+        retryable: false,
+        details: { resource, reported_limits: { boundary, maximum } },
+        remediation: {
+          action: expect.stringContaining(
+            `Raise ${field} (${flag}) above ${maximum}`,
+          ),
+        },
+      });
+    }
+  },
+);
