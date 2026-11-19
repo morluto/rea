@@ -44,14 +44,23 @@ such as `gfx11-generic` and `gfx9-4-generic`. Notes with the empty or explicit
 `unknown` environment use the same processor and feature comparison while
 retaining their raw triple spelling. CUDA's legacy fatbinary compression flag is
 retained as an unsupported codec with its encoded and decoded extents;
-compressed bytes are not treated as PTX text. CCOB is recognized by the exact
-four signature bytes `CCOB`; high-bit-corrupted bytes are not decoded as ASCII
+compressed bytes are not treated as PTX text. A CUDA entry whose declared
+decoded length exceeds the exact integer range of `decoded_size` retains
+its encoded range and reports the exact length in a limitation. Kernel decoding
+reports `capacity` for a selected entry with a supported codec.
+CCOB is recognized by the exact four signature bytes `CCOB`;
+high-bit-corrupted bytes are not decoded as ASCII
 and accepted as a bundle. CCOB v1 has no stored total size: the completed zlib
 or Zstd stream determines its encoded extent. Embedded `CCOB` text is ordinary
 compressed data; zero-byte alignment after the stream belongs to neither
 payload. If decoding fails or its codec is unsupported, a later `CCOB` marker
 is only an uncertain recovery candidate. The affected row retains that
 limitation and discovery remains partial.
+CCOB v2 and v3 declare the full encoded extent in their headers. If a decode
+exceeds the output budget, the row reports `capacity` and inspection can
+continue at the next bundle. A v3 decoded length outside the exact integer
+range of `decoded_size` leaves that field null and is recorded in the row's
+limitation.
 
 The declared decoded length bounds decompression. An understated length can
 stop decoding before codec completion, so any subsequent recovery extent stays
