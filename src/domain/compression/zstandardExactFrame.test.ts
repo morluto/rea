@@ -60,6 +60,28 @@ it("yields again after the last frame-by-frame decode before success", async () 
   expect(pauses).toBe(2);
 });
 
+it("observes cancellation while admitting a multi-block frame", async () => {
+  const first = zstdCompressSync(Buffer.alloc(8 * 1024 * 1024, "read me\n"));
+  const second = zstdCompressSync(Buffer.from("another frame"));
+  const bytes = Buffer.concat([first, second]);
+  const options = { allowance: allowance(1, "runtime") };
+  const stopped = new Error("cancelled");
+  await expect(
+    decodeZstandardFramesCooperative(bytes, options, async () => {
+      throw stopped;
+    }),
+  ).rejects.toBe(stopped);
+  await expect(
+    decodeZstandardFramesCooperative(bytes, options, async () => {}),
+  ).resolves.toMatchObject({
+    reason: "work_limit",
+    offset: first.length,
+    setting: "zstd.max_frames",
+    value: 1,
+    source: "runtime",
+  });
+});
+
 describe("exact Zstandard frames", () => {
   it("accepts concatenated frames and skippable frames", () => {
     const first = rawFrame(0x61);
@@ -138,17 +160,21 @@ describe("exact Zstandard frames", () => {
     ).toMatchObject({ ok: false, reason: "truncated_frame_header" });
   });
 
-  it("stops a prefix at the first non-frame byte", () => {
+  it("stops a prefix at the first non-frame byte", async () => {
     const frame = rawFrame(0x61);
     const suffix = Buffer.from("CCOB");
-    const decoded = decodeZstandardFrames(Buffer.concat([frame, suffix]), {
-      mode: "prefix",
-    });
-    expect(decoded).toMatchObject({
+    const input = Buffer.concat([frame, suffix]);
+    const options = { mode: "prefix" } as const;
+    const expected = {
       ok: true,
+      bytes: Buffer.from("a"),
       consumedBytes: frame.length,
       frames: 1,
-    });
+    };
+    expect(decodeZstandardFrames(input, options)).toMatchObject(expected);
+    await expect(
+      decodeZstandardFramesCooperative(input, options, async () => {}),
+    ).resolves.toMatchObject(expected);
   });
 
   it("refuses 65536 productive frames on the work allowance", () => {

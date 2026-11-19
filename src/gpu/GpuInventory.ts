@@ -580,6 +580,7 @@ export class GpuInventory {
         this.#retain(kernel);
         this.kernels.push(kernel);
       },
+      () => yieldArtifactRead(this.signal),
       preparedAmd,
       (target) => {
         conflict = this.#target(row, target);

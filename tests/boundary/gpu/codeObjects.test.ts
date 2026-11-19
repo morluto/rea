@@ -1,7 +1,7 @@
 import { expect, it, onTestFinished } from "vitest";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { deflateSync } from "node:zlib";
+import { deflateSync, zstdCompressSync } from "node:zlib";
 import { createHash } from "node:crypto";
 import { runWithAnalysisOperationSnapshot } from "../../../src/domain/analysisOperationSnapshot.js";
 import {
@@ -11,6 +11,7 @@ import {
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { gpuCodeObjectsPartialSchema } from "../../../src/domain/gpu/gpuCodeObjects.js";
 import { GpuCodeObjectsProvider } from "../../../src/gpu/GpuCodeObjectsProvider.js";
+import { GpuInventory } from "../../../src/gpu/GpuInventory.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   cudaFixture,
@@ -113,6 +114,52 @@ it.each(["none", "zstd", "lz4"] as const)(
     ]);
   },
 );
+
+it("observes cancellation during a cubin kernel directory read", async () => {
+  const cubin = cubinFixture();
+  const section = Number(cubin.readBigUInt64LE(40)) + 64;
+  const offset = Number(cubin.readBigUInt64LE(section + 24));
+  const size = Number(cubin.readBigUInt64LE(section + 32));
+  const names = cubin.subarray(offset, offset + size);
+  const compressionHeader = Buffer.alloc(24);
+  compressionHeader.writeUInt32LE(2);
+  compressionHeader.writeBigUInt64LE(BigInt(names.length), 8);
+  compressionHeader.writeBigUInt64LE(1n, 16);
+  const encodedNames = Buffer.concat([
+    compressionHeader,
+    zstdCompressSync(names),
+  ]);
+  const bytes = Buffer.concat([cubin, encodedNames]);
+  bytes.writeBigUInt64LE(0x800n, section + 8);
+  bytes.writeBigUInt64LE(BigInt(cubin.length), section + 24);
+  bytes.writeBigUInt64LE(BigInt(encodedNames.length), section + 32);
+
+  const controller = new AbortController();
+  const inventory = new GpuInventory(
+    { path: "/artifacts/cubin", analysis: "kernels" },
+    controller.signal,
+  );
+  const cancelled = new Error("kernel directory read cancelled");
+  let payloadReads = 0;
+  let pendingAbort: NodeJS.Immediate | undefined;
+  try {
+    await expect(
+      inventory.inspect({
+        size: bytes.length,
+        containerId: null,
+        read: async (at, count) => {
+          // The selected payload is re-read into the kernel parser's buffer.
+          if (at === 0 && count === bytes.length && ++payloadReads === 1)
+            pendingAbort = setImmediate(() => controller.abort(cancelled));
+          return bytes.subarray(at, at + count);
+        },
+      }),
+    ).rejects.toMatchObject({ reason: "cancelled", cause: cancelled });
+    expect(payloadReads).toBe(1);
+  } finally {
+    if (pendingAbort !== undefined) clearImmediate(pendingAbort);
+  }
+});
 it("decodes a CUDA 0x2000 LZ4 entry to the exact declared payload", async () => {
   const ptx = Buffer.from(ptxFixture),
     bytes = cudaFixture("lz4", [{ kind: 1, target: 80, bytes: ptx }]),

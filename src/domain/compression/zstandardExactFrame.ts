@@ -99,6 +99,14 @@ interface WalkSuccess {
   readonly consumed: number;
 }
 
+// Bound structural work between cooperative pauses, including across frames.
+const HEADERS_PER_PAUSE = 64;
+interface FrameWalkProgress {
+  headers: number;
+}
+const needsFrameWalkPause = (progress: FrameWalkProgress): boolean =>
+  ++progress.headers % HEADERS_PER_PAUSE === 0;
+
 const failure = (
   reason: ZstandardFrameReason,
   offset: number,
@@ -142,10 +150,11 @@ const hasMagic = (bytes: Uint8Array, offset: number): boolean => {
  * One Zstandard frame after its magic, per RFC 8878 §3.1.1. The walk uses
  * header and block sizes only; it does not interpret compressed blocks.
  */
-const zstdFrameLength = (
+function* zstdFrameLength(
   bytes: Uint8Array,
   offset: number,
-): { readonly length: number } | ZstandardFrameFailure => {
+  progress: FrameWalkProgress,
+): Generator<void, { readonly length: number } | ZstandardFrameFailure> {
   if (offset + 5 > bytes.length)
     return failure("truncated_frame_header", offset);
   const descriptor = bytes[offset + 4] ?? 0;
@@ -176,6 +185,7 @@ const zstdFrameLength = (
     return failure("truncated_frame_header", offset);
   let cursor = offset + headerBytes;
   for (;;) {
+    if (needsFrameWalkPause(progress)) yield;
     if (cursor + 3 > bytes.length) return failure("truncated_block", cursor);
     const header = u24(bytes, cursor);
     const last = header & 0x1;
@@ -195,7 +205,7 @@ const zstdFrameLength = (
     cursor += 4;
   }
   return { length: cursor - offset };
-};
+}
 
 const skippableFrameLength = (
   bytes: Uint8Array,
@@ -209,18 +219,19 @@ const skippableFrameLength = (
   return { length: 8 + userBytes };
 };
 
-const frameAt = (
+function* frameAt(
   bytes: Uint8Array,
   offset: number,
-):
-  | { readonly span: FrameSpan }
-  | { readonly stop: true }
-  | ZstandardFrameFailure => {
+  progress: FrameWalkProgress,
+): Generator<
+  void,
+  { readonly span: FrameSpan } | { readonly stop: true } | ZstandardFrameFailure
+> {
   if (!hasMagic(bytes, offset)) return { stop: true };
   const magic = u32(bytes, offset);
   const parsed =
     magic === ZSTD_MAGIC
-      ? zstdFrameLength(bytes, offset)
+      ? yield* zstdFrameLength(bytes, offset, progress)
       : skippableFrameLength(bytes, offset);
   if ("ok" in parsed) return parsed;
   return {
@@ -230,18 +241,19 @@ const frameAt = (
       kind: magic === ZSTD_MAGIC ? "zstd" : "skippable",
     },
   };
-};
+}
 
 /**
  * Exact frame boundaries for one buffer. The walk does not ask the decoder
  * how many bytes it consumed.
  */
-const walkFrames = (
+function* walkFrames(
   bytes: Uint8Array,
   allowance: ZstandardFrameAllowance,
   mode: ZstandardFrameMode,
-): WalkSuccess | ZstandardFrameFailure => {
+): Generator<void, WalkSuccess | ZstandardFrameFailure> {
   const frames: FrameSpan[] = [];
+  const progress = { headers: 0 };
   let offset = 0;
   while (offset < bytes.length) {
     if (frames.length === allowance.maxFrames) {
@@ -254,7 +266,8 @@ const walkFrames = (
       if (mode === "exact") return failure("trailing_bytes", offset);
       break;
     }
-    const next = frameAt(bytes, offset);
+    if (needsFrameWalkPause(progress)) yield;
+    const next = yield* frameAt(bytes, offset, progress);
     if ("stop" in next) {
       if (frames.length === 0) return failure("malformed", offset, "magic");
       if (mode === "exact") return failure("trailing_bytes", offset);
@@ -266,7 +279,7 @@ const walkFrames = (
   }
   if (frames.length === 0) return failure("truncated_frame_header", 0);
   return { ok: true, frames, consumed: offset };
-};
+}
 
 const decoderCode = (cause: unknown): string | undefined => {
   if (typeof cause !== "object" || cause === null || !("code" in cause))
@@ -485,10 +498,10 @@ interface PreparedDecode {
   readonly options: DecompressOptions;
 }
 
-const prepareDecode = (
+function* prepareDecode(
   bytes: Uint8Array,
   options: ZstandardDecodeOptions,
-): PreparedDecode | ZstandardFrameFailure => {
+): Generator<void, PreparedDecode | ZstandardFrameFailure> {
   const resolved =
     options.allowance === undefined
       ? currentZstandardFrameAllowance()
@@ -501,7 +514,7 @@ const prepareDecode = (
       configuration: resolved.error,
     };
   const mode = options.mode ?? "exact";
-  const walked = walkFrames(bytes, resolved.value, mode);
+  const walked = yield* walkFrames(bytes, resolved.value, mode);
   if ("reason" in walked) return walked;
   return {
     frames: walked.frames,
@@ -515,7 +528,7 @@ const prepareDecode = (
       rejectTrailing: nodeDecodesStrictSequence(),
     },
   };
-};
+}
 
 /**
  * Decode one Zstandard buffer. Frame boundaries come from the structural
@@ -527,7 +540,10 @@ export const decodeZstandardFrames = (
   bytes: Uint8Array,
   options: ZstandardDecodeOptions = {},
 ): ZstandardFrameResult => {
-  const prepared = prepareDecode(bytes, options);
+  const steps = prepareDecode(bytes, options);
+  let next = steps.next();
+  while (!next.done) next = steps.next();
+  const prepared = next.value;
   if ("reason" in prepared) return prepared;
   return decodeFrames(
     bytes,
@@ -537,23 +553,26 @@ export const decodeZstandardFrames = (
   );
 };
 
-/**
- * The same decode as {@link decodeZstandardFrames}, but the frame-by-frame
- * fallback awaits `pause` before each data frame and once more before
- * success. A caller that owns a cancellation signal can yield there, including
- * after the last synchronous frame. The strict sequence uses the async
- * decoder, and `pause` runs again after it so an abort during that decode
- * is visible before success is returned.
- */
-/** Yield point a caller uses to observe its existing abort signal between frames. */
+/** Yield point the caller uses to observe its existing abort signal. */
 export type ZstandardFramePause = () => Promise<void>;
 
+/**
+ * Pause during structural validation, before decoding, and before returning
+ * successful output. The strict sequence uses the async decoder. The fallback
+ * pauses before each synchronous data-frame decode.
+ */
 export const decodeZstandardFramesCooperative = async (
   bytes: Uint8Array,
   options: ZstandardDecodeOptions,
   pause: ZstandardFramePause,
 ): Promise<ZstandardFrameResult> => {
-  const prepared = prepareDecode(bytes, options);
+  const steps = prepareDecode(bytes, options);
+  let next = steps.next();
+  while (!next.done) {
+    await pause();
+    next = steps.next();
+  }
+  const prepared = next.value;
   if ("reason" in prepared) return prepared;
   if (prepared.options.rejectTrailing) {
     await pause();
