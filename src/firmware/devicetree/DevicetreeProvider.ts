@@ -61,17 +61,16 @@ export class DevicetreeProvider implements DevicetreePort {
           undefined,
           this.#resources,
         );
-        return ok(
-          parseDevicetree(
-            snapshot.bytes,
-            {
-              path: input.path,
-              sha256: snapshot.sha256,
-              bytes: snapshot.bytes.length,
-            },
-            input,
-          ),
+        const { report } = parseDevicetree(
+          snapshot.bytes,
+          {
+            path: input.path,
+            sha256: snapshot.sha256,
+            bytes: snapshot.bytes.length,
+          },
+          input,
         );
+        return ok(report);
       });
     } catch (cause) {
       return err(devicetreeFailure(cause, input, snapshot));
