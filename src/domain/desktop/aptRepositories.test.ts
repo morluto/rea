@@ -519,7 +519,7 @@ describe("APT source URI lookup", () => {
     const stanzas = parseDeb822Sources(
       [
         "Types: deb",
-        "URIs: file:///srv/a%20b copy:/srv/repo https://vendor.invalid:00080/archive https://[2001:db8::11]:08443/apt file:/srv/double//",
+        "URIs: file:///srv/a%20b copy:/srv/repo https://vendor.invalid:00080/archive https://empty.invalid:/archive https://[2001:db8::11]:08443/apt file:/srv/double//",
         "Suites: stable",
         "Components: main",
       ].join("\n"),
@@ -530,6 +530,7 @@ describe("APT source URI lookup", () => {
     const spellings = [
       ["file:/srv/a%20b/", "file:///srv/a%20b"],
       ["copy:/srv/repo/", "copy:/srv/repo"],
+      ["https://empty.invalid/archive/", "https://empty.invalid:/archive"],
       [
         "https://vendor.invalid:80/archive/",
         "https://vendor.invalid:00080/archive",

@@ -77,15 +77,15 @@ const withTrailingSlash = (uri: string): string =>
   uri.endsWith("/") ? uri : `${uri}/`;
 
 const EMPTY_AUTHORITY = /^([a-z][a-z0-9+.-]*:)\/\/(?=\/)/iu;
-const NUMERIC_PORT =
-  /^([a-z][a-z0-9+.-]*:\/\/(?:\[[^\]]+\]|[^/:]+)):([0-9]+)(?=\/|$)/iu;
+const DECIMAL_PORT =
+  /^([a-z][a-z0-9+.-]*:\/\/(?:\[[^\]]+\]|[^/:]+)):([0-9]*)(?=\/|$)/iu;
 
 /** APT fixes up deb822 URIs before emitting Repo-URI, leaving path octets intact. */
 const deb822RepoUri = (uri: string): string =>
   withTrailingSlash(
     uri
       .replace(EMPTY_AUTHORITY, "$1")
-      .replace(NUMERIC_PORT, (_match, authority: string, port: string) => {
+      .replace(DECIMAL_PORT, (_match, authority: string, port: string) => {
         const digits = port.replace(/^0+/u, "");
         return digits === "" ? authority : `${authority}:${digits}`;
       }),
