@@ -1,5 +1,4 @@
 {
-  "src/artifacts/DesktopFileInspection.ts": 4,
   "src/domain/apkSignature/apkSignatureSchemes.ts": 1,
   "src/domain/apkSignature/apkSigningBlock.ts": 2,
   "src/domain/apkSignature/apkV1Signature.ts": 5,
@@ -18,7 +17,6 @@
   "src/domain/apple/propertyListDecodeBudget.ts": 2,
   "src/domain/binaryTarget.ts": 10,
   "src/domain/desktop/openPgpKeys.ts": 2,
-  "src/domain/dosMz.ts": 10,
   "src/domain/elfProgramHeader.ts": 4,
   "src/domain/elfRawTableDeclarations.ts": 7,
   "src/domain/elfRelocation.ts": 6,
