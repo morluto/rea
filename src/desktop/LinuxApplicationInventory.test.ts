@@ -1341,3 +1341,36 @@ describe.skipIf(process.platform !== "linux")(
     );
   },
 );
+
+it.skipIf(process.platform === "win32")(
+  "rejects a desktop entry with invalid UTF-8",
+  async () => {
+    const { home, environment } = await fixture();
+    const desktopEntry = join(home, "encoding.desktop");
+    const before = "[Desktop Entry]\nType=Application\nName=Notes ";
+    const after = "\nExec=notes-app\n";
+    const inspect = () =>
+      inspectLinuxApplication({
+        desktopEntry,
+        executable: undefined,
+        arguments: [],
+        environment,
+        home,
+        callerDirectory: home,
+      });
+    await writeFile(desktopEntry, `${before}�${after}`);
+    expect(await inspect()).toMatchObject({ ok: true });
+    await writeFile(
+      desktopEntry,
+      Buffer.concat([
+        Buffer.from(before),
+        Buffer.from([0xff]),
+        Buffer.from(after),
+      ]),
+    );
+    expect(await inspect()).toMatchObject({
+      ok: false,
+      error: { reason: "desktop_entry_invalid", detail: "not valid UTF-8" },
+    });
+  },
+);

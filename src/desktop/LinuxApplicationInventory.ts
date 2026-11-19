@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { desktopLibraryPolicy } from "../domain/desktop/libraryPolicy.js";
 import { lstat, realpath, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join } from "node:path";
@@ -194,13 +195,11 @@ const readDesktopEntry = async (
     symlinks: "follow" as const,
     ...(signal === undefined ? {} : { signal }),
   };
-  let text: string;
+  let bytes: Uint8Array;
   try {
-    text = (
-      await withOwnedRegularFile(path, options, ({ handle }) =>
-        readStableFileBytes(handle, path, DESKTOP_ENTRY_MAX_BYTES, options),
-      )
-    ).toString("utf8");
+    bytes = await withOwnedRegularFile(path, options, ({ handle }) =>
+      readStableFileBytes(handle, path, DESKTOP_ENTRY_MAX_BYTES, options),
+    );
   } catch (cause: unknown) {
     const failure = hostReadFailure(cause);
     if (failure !== cause) throw failure;
@@ -212,6 +211,12 @@ const readDesktopEntry = async (
           ? "larger than 1 MiB"
           : "unreadable",
     });
+  }
+  let text: string;
+  try {
+    text = decodeStrictUtf8(bytes, "preserve");
+  } catch {
+    return err({ reason: "desktop_entry_invalid", detail: "not valid UTF-8" });
   }
   const parsed = parseDesktopEntry(text);
   if (!parsed.ok)
