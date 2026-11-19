@@ -116,18 +116,18 @@ export class GpuInventory {
     row.limitations.push(...messages);
   }
   /** Reserve input/output work atomically, before any payload allocation or read. */
-  #budgetWork(...sizes: number[]): void {
-    const total = sizes.reduce((sum, size) => sum + size, 0);
-    if (
-      sizes.some((size) => size > GPU_OBJECT_BYTES) ||
-      total > 512 * 1024 * 1024 - this.#workBytes
-    )
-      throw new BinaryResourceFailure(
-        "structure",
-        GPU_OBJECT_BYTES,
-        "GPU reads/decoding exceed 128 MiB per buffer or 512 MiB per inspection",
-      );
-    this.#workBytes += total;
+  #budgetWork(...sizes: (number | bigint)[]): void {
+    let workBytes = this.#workBytes;
+    for (const size of sizes) {
+      if (size > Math.min(GPU_OBJECT_BYTES, 512 * 1024 * 1024 - workBytes))
+        throw new BinaryResourceFailure(
+          "structure",
+          GPU_OBJECT_BYTES,
+          "GPU reads/decoding exceed 128 MiB per buffer or 512 MiB per inspection",
+        );
+      workBytes += Number(size);
+    }
+    this.#workBytes = workBytes;
   }
   #selected(row: GpuObject): boolean {
     return (
@@ -588,7 +588,7 @@ export class GpuInventory {
       if (!prefix.subarray(0, CCOB_MAGIC.length).equals(CCOB_MAGIC))
         rejectGpu("Unexpected bytes between Clang offload bundles");
       const header = readCcobHeader(prefix, source.size - base),
-        { width, decoded, hash, version, method } = header;
+        { width, decoded: declaredDecodedSize, hash, version, method } = header;
       let total = header.total;
       let extentKnown = version !== 1;
       const row = gpuObject(source, {
@@ -600,8 +600,15 @@ export class GpuInventory {
       row.compression =
         method === 0 ? "zlib" : method === 1 ? "zstd" : "unsupported";
       row.compression_id = `ccob:${version}:${method}`;
-      row.decoded_size = decoded;
+      row.decoded_size =
+        declaredDecodedSize <= BigInt(Number.MAX_SAFE_INTEGER)
+          ? Number(declaredDecodedSize)
+          : null;
       if (extentKnown) this.#add(row);
+      if (row.decoded_size === null)
+        this.#objectLimitations(row, [
+          `CCOB declares ${String(declaredDecodedSize)} decoded bytes, outside the exact integer range of decoded_size`,
+        ]);
       if (row.compression === "unsupported") {
         row.inspection = "unsupported";
         this.#objectLimitations(row, ["Unsupported CCOB compression method"]);
@@ -622,16 +629,17 @@ export class GpuInventory {
               start >= legacyWindow.offset &&
               start < legacyWindow.offset + legacyWindow.bytes.length;
             const readWindow = async (): Promise<Buffer> => {
-              this.#budgetWork(inputSize, decoded);
+              this.#budgetWork(inputSize, declaredDecodedSize);
               legacyWindow = undefined;
               const bytes = await source.read(start, inputSize);
               legacyWindow = { offset: start, bytes };
               return bytes;
             };
-            if (cached) this.#budgetWork(decoded);
+            if (cached) this.#budgetWork(declaredDecodedSize);
             let encoded: Buffer | undefined = cached
               ? legacyWindow!.bytes.subarray(start - legacyWindow!.offset)
               : await readWindow();
+            const decoded = Number(declaredDecodedSize);
             const available = encoded.length;
             const compression = row.compression;
             const completed = await decodeGpuPayloadStream(
@@ -668,11 +676,11 @@ export class GpuInventory {
                 "GPU decompressed length disagrees with its declaration",
               );
           } else {
-            this.#budgetWork(inputSize, decoded);
+            this.#budgetWork(inputSize, declaredDecodedSize);
             data = await decodeGpuPayload(
               await source.read(base + width, inputSize),
               row.compression,
-              decoded,
+              Number(declaredDecodedSize),
               this.signal,
             );
           }

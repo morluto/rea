@@ -138,23 +138,23 @@ export const readCcobHeader = (bytes: Buffer, remaining: number) => {
     rejectGpu("Invalid CCOB magic");
   const version = bytes.readUInt16LE(4),
     method = bytes.readUInt16LE(6);
-  let width: number, total: number, decoded: number, hash: bigint;
+  let width: number, total: number, decoded: bigint, hash: bigint;
   if (version === 1) {
     width = 20;
     total = remaining;
-    decoded = bytes.readUInt32LE(8);
+    decoded = BigInt(bytes.readUInt32LE(8));
     hash = bytes.readBigUInt64LE(12);
   } else if (version === 2) {
     width = 24;
     if (bytes.length < width) rejectGpu("CCOB v2 header is truncated");
     total = bytes.readUInt32LE(8);
-    decoded = bytes.readUInt32LE(12);
+    decoded = BigInt(bytes.readUInt32LE(12));
     hash = bytes.readBigUInt64LE(16);
   } else if (version === 3) {
     width = 32;
     if (bytes.length < width) rejectGpu("CCOB v3 header is truncated");
     total = gpuCount(bytes.readBigUInt64LE(8));
-    decoded = gpuCount(bytes.readBigUInt64LE(16));
+    decoded = bytes.readBigUInt64LE(16);
     hash = bytes.readBigUInt64LE(24);
   } else
     throw new BinaryFormatFailure(

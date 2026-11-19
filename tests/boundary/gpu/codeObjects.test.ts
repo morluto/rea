@@ -1301,6 +1301,43 @@ it("continues at the declared CCOB boundary after an unsupported codec", async (
   expect(result.value.coverage.discovery).toBe("partial");
 });
 
+it.each([
+  { label: "exact JSON integer", decoded: 1n << 28n, projected: 1 << 28 },
+  {
+    label: "outside exact JSON integer range",
+    decoded: 1n << 53n,
+    projected: null,
+  },
+])(
+  "keeps later CCOB v3 bundles after a decoded size $label exceeds capacity",
+  async ({ decoded, projected }) => {
+    const first = ccobFixture(3, "zlib");
+    first.writeBigUInt64LE(decoded, 16);
+    const result = await inspect(
+      Buffer.concat([first, ccobFixture(3, "zlib")]),
+    );
+    if (!result.ok) throw result.error;
+    const wrappers = result.value.objects.filter(
+      ({ kind }) => kind === "hip-bundle",
+    );
+    expect(wrappers).toMatchObject([
+      {
+        inspection: "capacity",
+        encoded_size: first.length - 32,
+        decoded_size: projected,
+        location: { offset: 32, size: first.length - 32 },
+      },
+      { inspection: "complete", metadata_location: { offset: first.length } },
+    ]);
+    if (projected === null)
+      expect(wrappers[0]?.limitations).toContain(
+        `CCOB declares ${String(decoded)} decoded bytes, outside the exact integer range of decoded_size`,
+      );
+    expect(result.value.coverage.discovery).toBe("partial");
+    expect(result.value.kernels.map(({ name }) => name)).toEqual(["add_one"]);
+  },
+);
+
 it("refuses escaped PTX report expansion while preserving bounded interrupted facts", async () => {
   const text = ptxFixture + "\n//" + "\u0001".repeat(3 * 1024 * 1024);
   const result = await inspect(Buffer.from(text));

@@ -52,6 +52,11 @@ compressed data; zero-byte alignment after the stream belongs to neither
 payload. If decoding fails or its codec is unsupported, a later `CCOB` marker
 is only an uncertain recovery candidate. The affected row retains that
 limitation and discovery remains partial.
+CCOB v2 and v3 declare the full encoded extent in their headers. If a decode
+exceeds the output budget, the row reports `capacity` and inspection can
+continue at the next bundle. A v3 decoded length outside the exact integer
+range of `decoded_size` leaves that field null and is recorded in the row's
+limitation.
 
 The declared decoded length bounds decompression. An understated length can
 stop decoding before codec completion, so any subsequent recovery extent stays
