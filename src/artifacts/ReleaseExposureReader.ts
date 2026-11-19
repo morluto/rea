@@ -2045,10 +2045,12 @@ const examineInlineMaps = (
     }
     try {
       const metadata = url.slice(0, comma);
-      const payload = url.slice(comma + 1);
+      const payload = decodeURIComponent(url.slice(comma + 1));
+      // Data URLs use forgiving base64: ASCII whitespace and omitted padding
+      // are valid, but other characters must not be silently dropped.
       const decoded = /;base64$/iu.test(metadata)
-        ? Buffer.from(decodeURIComponent(payload), "base64")
-        : Buffer.from(decodeURIComponent(payload), "utf8");
+        ? Buffer.from(atob(payload), "latin1")
+        : Buffer.from(payload, "utf8");
       if (decoded.length > MAX_RELEASE_EXPOSURE_SOURCE_MAP_BYTES) {
         state.skippedMaps += 1;
         continue;

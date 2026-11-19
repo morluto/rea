@@ -350,6 +350,34 @@ describe("ReleaseExposureReader review regressions", () => {
     },
   );
 
+  it.each(["!", "%21"])(
+    "does not report embedded source from an inline map with invalid base64 %s",
+    async (invalid) => {
+      const root = await createTestTempDirectory(
+        "rea-release-exposure-invalid-map-",
+      );
+      const path = join(root, "app.js");
+      const encoded = embeddedSourceMap()
+        .toString("base64")
+        .replace(/=+$/u, "");
+      await writeFile(
+        path,
+        `//${INLINE_MAP_PREFIX}${encoded.slice(0, 4)}%0A${encoded.slice(4)}\n`,
+      );
+      expect((await inspect(path)).source_maps).toMatchObject({
+        embedded: 1,
+        unparsed: 0,
+      });
+      await writeFile(
+        path,
+        `//${INLINE_MAP_PREFIX}${encoded.slice(0, 4)}${invalid}${encoded.slice(4)}\n`,
+      );
+      const scanned = await inspect(path);
+      expect(scanned.source_maps).toMatchObject({ embedded: 0, unparsed: 1 });
+      expect(sourceMapSourcesStatus(scanned)).toBe("unknown");
+    },
+  );
+
   it("preserves unknown coverage for malformed inline maps and skipped JavaScript", async () => {
     const root = await createTestTempDirectory(
       "rea-release-exposure-inline-unknown-",
