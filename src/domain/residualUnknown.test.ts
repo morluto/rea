@@ -171,3 +171,20 @@ it("keeps generated revisions subject to state and relationship validation", () 
     ),
   ).toThrow(/An unknown cannot relate to itself/u);
 });
+
+it("accepts an unknown scoped to a normalized function conclusion", () => {
+  const comparisonId = `ev_${"c".repeat(64)}`;
+  const scoped = recordUnknownInputSchema.parse({
+    ...input,
+    domain: "function-comparison",
+    supporting_evidence_ids: [comparisonId],
+    comparison_conclusion_scope: {
+      comparison_evidence_id: comparisonId,
+      dimensions: ["assembly_normalized", "pseudocode_normalized"],
+    },
+  });
+  const created = createResidualUnknown(scoped, mutationId, scopeDigest);
+  expect(
+    residualUnknownSchema.parse(created).comparison_conclusion_scope,
+  ).toEqual(scoped.comparison_conclusion_scope);
+});

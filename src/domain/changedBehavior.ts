@@ -297,7 +297,7 @@ const functionFindings = (
   >,
 ): Finding[] => {
   const { evidence, result } = comparison;
-  return result.dimensions.flatMap((dimension) => {
+  const exact = result.dimensions.flatMap((dimension) => {
     const finding = (status: "changed" | "unknown") =>
       makeFinding({
         evidence,
@@ -329,6 +329,25 @@ const functionFindings = (
       findings.push(finding("unknown"));
     return findings;
   });
+  const views = (result.normalized_views?.views ?? []).flatMap((view) =>
+    view.status === "unchanged"
+      ? []
+      : [
+          makeFinding({
+            evidence,
+            dimension: view.dimension,
+            scope: "static_candidate",
+            status: view.status,
+            classification:
+              view.status === "unknown"
+                ? "unresolved_branch"
+                : view.conclusion_kind,
+            limitations: view.limitations,
+            links: view.evidence_links,
+          }),
+        ],
+  );
+  return [...exact, ...views];
 };
 
 const artifactFindings = (
