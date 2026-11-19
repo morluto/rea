@@ -508,6 +508,7 @@
 * **protobuf:** preserve descriptor string identity ([#11834](https://github.com/morluto/rea/issues/11834)) ([0db5f93](https://github.com/morluto/rea/commit/0db5f93df695a89169d2c51f82bf730e81ed9d3a))
 * **providers:** decode MCP text replies by declared kind instead of guessing ([#10654](https://github.com/morluto/rea/issues/10654)) ([5f98047](https://github.com/morluto/rea/commit/5f98047a88a79a9505ce5a4f3658212f121ac053))
 * **providers:** treat undeclared bridge coverage and completion as unknown ([#10651](https://github.com/morluto/rea/issues/10651)) ([a11a54e](https://github.com/morluto/rea/commit/a11a54e797370bd794ed72ba295cff7e78c3543c))
+* **pyinstaller:** validate CArchive member name framing ([#12214](https://github.com/morluto/rea/issues/12214)) ([166347f](https://github.com/morluto/rea/commit/166347f38be5cd997beb39142fa0bcda99c8b7ec))
 * **python:** pin only the 3.14 and 3.15 magics checked locally ([9d3eb08](https://github.com/morluto/rea/commit/9d3eb083dda494fa44af8ef3ce022fb48c61dcd8))
 * **python:** walk slice members in the code hashability stack ([2caa259](https://github.com/morluto/rea/commit/2caa2598d339fa015f0285f3cbcf0166d941458e))
 * **reconstruction:** reject inconsistent artifact comparisons ([#10484](https://github.com/morluto/rea/issues/10484)) ([0fa03af](https://github.com/morluto/rea/commit/0fa03afe7d6823d342b7f713ef035a97cb7b55bc))
