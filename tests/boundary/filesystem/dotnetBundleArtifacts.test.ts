@@ -397,12 +397,34 @@ it.each([
     "unavailable",
   ],
   [
+    "entry count with no room for its manifest rows",
+    () => {
+      const fixture = dotnetBundleFixture();
+      fixture.bytes.writeInt32LE(0x7fff_ffff, fixture.fields.entryCount);
+      return fixture.bytes;
+    },
+    "format",
+  ],
+  [
+    "uncompressed member crossing the manifest above the member allowance",
+    () =>
+      dotnetBundleFixture([
+        {
+          path: "large",
+          bytes: Buffer.from("x"),
+          declaredSize: 600 * 1024 * 1024,
+        },
+      ]).bytes,
+    "format",
+  ],
+  [
     "expanded budget",
     () =>
       dotnetBundleFixture([
         {
           path: "large",
           bytes: Buffer.from("x"),
+          compressed: true,
           declaredSize: 600 * 1024 * 1024,
         },
       ]).bytes,
