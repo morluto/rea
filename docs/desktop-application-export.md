@@ -153,7 +153,11 @@ The class declares:
   captured working directory (`"$HOME"` when that was the home, as for a
   desktop entry without `Path`), which a relative argument or program path
   such as `./app` also needs, and still starts if that folder is missing. The
-  export refuses a capture that saw no application window.
+  export refuses a capture that saw no application window. When a launch path
+  traversed a parent directory through a symlink, export uses the recorded
+  physical state paths to place the seed and respell the launch together.
+  If those paths cannot share a replay location, capture again with an
+  explicit home or XDG directory without parent traversal.
 - The seed's document, opened at launch, so the app shows it rather than its
   start screen: when the seed holds exactly one file the state view gives the
   `document` role, and the desktop entry's `Exec` takes files (a `%f`, `%F`,

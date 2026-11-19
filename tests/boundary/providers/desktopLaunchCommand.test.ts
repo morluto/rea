@@ -11,7 +11,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { launchCommand } from "../../../src/domain/desktop/appExport.js";
+import {
+  capturedHomePlan,
+  launchCommand,
+} from "../../../src/domain/desktop/appExport.js";
 import { planLaunch } from "../../../src/application/desktop/DesktopExportLaunch.js";
 import type { DesktopApplicationCapture } from "../../../src/domain/desktop/desktopCapture.js";
 
@@ -43,7 +46,10 @@ it.skipIf(process.platform === "win32").each([
       } as unknown as DesktopApplicationCapture;
       const {
         command: [program, ...args],
-      } = planLaunch(capture, false, new Map(), new Map());
+      } = planLaunch(capture, false, new Map(), {
+        ...capturedHomePlan(capture),
+        files: new Map(),
+      });
       const result = spawnSync(program!, args, {
         encoding: "utf8",
         env: { ...process.env, HOME: home, REA_REPLAY_MARKER: "inherited" },

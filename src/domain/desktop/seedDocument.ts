@@ -38,6 +38,7 @@ const homePathOf = (
   known: (path: string) => boolean,
   knownSeed: (path: string) => boolean,
   mapOutside?: (path: string) => string | null,
+  mapTraversal?: (absolutePath: string) => string | undefined,
 ):
   | (({ readonly homePath: string } | { readonly seedPath: string }) & {
       readonly source: string;
@@ -59,6 +60,16 @@ const homePathOf = (
     if (parsed === undefined) return undefined;
     input = parsed.path;
     parsedUrl = parsed.url;
+  }
+  if (parsedUrl === undefined && mapTraversal !== undefined) {
+    // Only filesystem paths can traverse a captured symlink. File URLs
+    // above have already been interpreted under their URL rules.
+    const raw = posix.isAbsolute(input)
+      ? input
+      : `${workingDirectory}/${input}`;
+    const replayed = mapTraversal(raw);
+    if (replayed !== undefined)
+      return { seedPath: replayed, source: raw, url: undefined };
   }
   const path = posix.resolve(workingDirectory, input);
   if (path.startsWith(`${home}/`))
@@ -96,6 +107,8 @@ export const openSeedDocument = (
     readonly isCaptured?: (homePath: string) => boolean;
     /** The selected seed spelling for a captured absolute path outside the home. */
     readonly mapOutside?: (absolutePath: string) => string | null;
+    /** A portable replay name established from the raw captured traversal. */
+    readonly mapTraversal?: (absolutePath: string) => string | undefined;
   },
 ): { readonly argv: readonly string[]; readonly opens: LaunchDocument } => {
   const { home, exec, documents } = facts;
@@ -130,11 +143,14 @@ export const openSeedDocument = (
       namesCaptured,
       isCapturedSeed,
       facts.mapOutside,
+      facts.mapTraversal,
     );
     if (parsed === undefined) return value;
     const absolute =
       "seedPath" in parsed
-        ? `${home}/${parsed.seedPath}`
+        ? parsed.seedPath === ""
+          ? home
+          : `${home}/${parsed.seedPath}`
         : absoluteSeed(parsed.homePath);
     if (absolute === undefined) return value;
     if (parsed.url === undefined) return absolute;
@@ -204,6 +220,7 @@ export const openSeedDocument = (
         namesCaptured,
         isCapturedSeed,
         facts.mapOutside,
+        facts.mapTraversal,
       );
     })
     .map((path) =>

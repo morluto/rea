@@ -1,6 +1,13 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, readFile, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  readFile,
+  realpath,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -285,6 +292,152 @@ describe("exportDesktopApplication", () => {
     });
     expect(result.limitations.join("\n")).toContain("/media/usb");
   });
+});
+
+it.skipIf(process.platform === "win32")(
+  "replays a traversing launch root at the same path used for seed files and selected aliases",
+  async () => {
+    const home = await realpath(
+      await createTestTempDirectory("desktop-source-"),
+    );
+    const base = `${home}/profiles//current/..`;
+    const logical = `${base}/./notes`;
+    await mkdir(`${home}/profiles`);
+    await mkdir(`${home}/resolved/profile`, { recursive: true });
+    await mkdir(`${home}/resolved/notes`);
+    await symlink(`${home}/resolved/profile`, `${home}/profiles/current`);
+    const physical = await realpath(logical);
+    const settings = `${physical}/settings.ini`;
+    const text = "[ui]\nwrap=false\n";
+    await writeFile(settings, text);
+    const local = capture();
+    const { result, directory } = await exportCapture({
+      ...local,
+      host: { ...local.host, home },
+      application: {
+        ...local.application,
+        argv: [
+          "env",
+          `XDG_CONFIG_HOME=${base}`,
+          "sh",
+          "-c",
+          'cat "$XDG_CONFIG_HOME/notes/settings.ini" "$1"',
+          "notes",
+          `${logical}/settings.ini`,
+        ],
+        working_directory: home,
+        state_directories: [{ path: logical, exists_at_start: true }],
+      },
+      state: {
+        ...local.state,
+        roots: [home],
+        content_roots: [physical],
+        state_directories: [physical],
+        selected_paths: [
+          { path: `${home}/settings`, physical, kind: "directory" },
+        ],
+        checkpoints: [
+          checkpoint("baseline", "baseline", [], [retained(settings, text)]),
+        ],
+      },
+    });
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      paths: ["resolved/notes"],
+      seed_files: ["resolved/notes/settings.ini"],
+    });
+
+    const replay = await createTestTempDirectory("desktop-replay-");
+    const { stdout } = await execute("python3", [
+      "-I",
+      "-B",
+      "-c",
+      `import ast, subprocess, sys
+from pathlib import Path
+module = Path(sys.argv[1])
+home = Path(sys.argv[2])
+tree = ast.parse(module.read_text(encoding="utf-8"))
+launch = next(node for node in ast.walk(tree) if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "Launch")
+command = ast.literal_eval(next(key.value for key in launch.keywords if key.arg == "command"))
+tree.body = [node for node in tree.body
+             if not isinstance(node, ast.ClassDef)
+             and (not isinstance(node, ast.ImportFrom) or not node.module.startswith("agentenv_protocol"))]
+scope = {"__file__": str(module)}
+exec(compile(tree, str(module), "exec"), scope)
+scope["_seed_home"](home)
+scope["_ensure_state_aliases"](home)
+assert (home / "settings/settings.ini").read_bytes() == (home / "resolved/notes/settings.ini").read_bytes()
+assert not (home / "profiles").exists()
+subprocess.run(command, env={"HOME": str(home), "PATH": "/usr/bin:/bin"}, check=True)`,
+      join(directory, "envs/notes/notes_app.py"),
+      replay,
+    ]);
+    expect(stdout).toBe(text.repeat(2));
+  },
+);
+
+it("writes portable seed names for state paths with empty or self-directory components", async () => {
+  const local = capture();
+  const physical = `${HOME}/.config/notes`;
+  const { result, directory } = await exportCapture({
+    ...local,
+    application: {
+      ...local.application,
+      state_directories: [
+        { path: `${HOME}/./.config//notes`, exists_at_start: true },
+      ],
+    },
+    state: {
+      ...local.state,
+      content_roots: [physical],
+      state_directories: [physical],
+      checkpoints: [
+        checkpoint(
+          "baseline",
+          "baseline",
+          [],
+          [retained(`${physical}/settings.ini`, "[ui]\nwrap=false\n")],
+        ),
+      ],
+    },
+  });
+  if (result instanceof Error) throw result;
+  expect(result.normalized_result).toMatchObject({
+    seed_files: [".config/notes/settings.ini"],
+  });
+  expect(
+    await readFile(
+      join(directory, "envs/notes/seed/.config/notes/settings.ini"),
+      "utf8",
+    ),
+  ).toBe("[ui]\nwrap=false\n");
+});
+
+it("refuses a traversing launch root with conflicting seed locations", async () => {
+  const local = capture();
+  const base = `${HOME}/profiles/current/..`;
+  const settings = [`${HOME}/first/notes`, `${HOME}/second/notesrc`];
+  const { result, directory } = await exportCapture({
+    ...local,
+    application: {
+      ...local.application,
+      argv: ["env", `XDG_CONFIG_HOME=${base}`, "notes"],
+      state_directories: [
+        { path: `${base}/notes`, exists_at_start: true },
+        { path: `${base}/notesrc`, exists_at_start: true },
+      ],
+    },
+    state: {
+      ...local.state,
+      content_roots: settings,
+      state_directories: settings,
+    },
+  });
+  expect(result).toBeInstanceOf(AnalysisInputError);
+  if (!(result instanceof AnalysisInputError))
+    throw new Error("expected export refusal");
+  expect(result.userMessage).toContain("do not agree on a replay location");
+  expect(await exists(directory)).toBe(false);
 });
 
 it("seeds the app's state at its own path and retains a selected alias", async () => {

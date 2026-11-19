@@ -202,30 +202,55 @@ export const ownedPaths = (
   );
 };
 
-/** A captured path's home-relative path, in the innermost walked state directory's own spelling unless that leaves the home. */
-const capturedHomePlan = (capture: DesktopApplicationCapture) => {
+/** Omit portable no-op components without interpreting traversal through links. */
+const replaySegments = (path: string): string[] =>
+  path.split("/").filter((part) => part !== "" && part !== ".");
+
+const portableRelative = (path: string): string | null => {
+  const parts = replaySegments(path);
+  return parts.includes("..") ? null : parts.join("/");
+};
+
+/** Keep source spellings and projected replay names separate. */
+export const capturedHomePlan = (capture: DesktopApplicationCapture) => {
   const { home } = capture.host;
   const relative = (path: string) =>
-    path.startsWith(`${home}/`) ? path.slice(home.length + 1) : null;
+    path === home
+      ? ""
+      : path.startsWith(`${home}/`)
+        ? path.slice(home.length + 1)
+        : null;
+  const portable = (path: string) => {
+    const name = relative(path);
+    return name === null ? null : portableRelative(name);
+  };
+  const replayName = (logical: string, physical: string) =>
+    portable(logical) ??
+    (relative(logical) === null ? null : portable(physical));
   const logical = capture.application.state_directories;
   const walked = capture.state.state_directories ?? [];
   // The capture records one walked spelling per state directory, in order; lists of other lengths cannot be paired.
-  const renamed = (walked.length === logical.length ? walked : [])
-    .flatMap((physical, index) => {
+  const renamed = (walked.length === logical.length ? walked : []).flatMap(
+    (physical, index) => {
       const path = logical[index]?.path;
-      return path === undefined ? [] : [{ physical, logical: path }];
-    })
-    .sort((left, right) => right.physical.length - left.physical.length);
+      return path === undefined
+        ? []
+        : [{ physical, logical: path, target: replayName(path, physical) }];
+    },
+  );
   const selections = [...(capture.state.selected_paths ?? [])];
-  const stateAliases = capturedStateAliases(capture);
+  const stateTargets = new Map<string, string>();
+  for (const { physical, target } of renamed)
+    if (target !== null && !stateTargets.has(physical))
+      stateTargets.set(physical, target);
+  const stateAliases = capturedStateAliases(selections, stateTargets, portable);
   const aliasPaths = [...stateAliases].sort(
     (left, right) => right.alias.length - left.alias.length,
   );
   const selectedSpelling = (path: string) => {
     for (const { alias, target } of aliasPaths) {
-      const prefix = `${home}/${alias}`;
-      if (isWithinAny(path, [prefix]))
-        return `${home}/${target}${path.slice(prefix.length)}`;
+      if (isWithinAny(path, [alias]))
+        return `${target}${path.slice(alias.length)}`;
     }
     return path;
   };
@@ -262,18 +287,26 @@ const capturedHomePlan = (capture: DesktopApplicationCapture) => {
   // ~/.config/notes when that folder was walked at ~/settings/notes.
   const spellings = [
     ...renamed,
-    ...selections.map(({ physical, path }) => ({
-      physical,
-      logical: selectedSpelling(path),
-    })),
+    ...selections.map(({ physical, path }) => {
+      const target = replayName(path, physical);
+      return {
+        physical,
+        logical: path,
+        target: target === null ? null : selectedSpelling(target),
+      };
+    }),
   ].sort((left, right) => right.physical.length - left.physical.length);
   const spell = (path: string) => {
-    for (const { physical, logical } of spellings) {
-      if (!isWithinAny(path, [physical])) continue;
-      const spelled = relative(`${logical}${path.slice(physical.length)}`);
-      if (spelled !== null) return { spelled, specificity: physical.length };
+    for (const { physical, target } of spellings) {
+      if (target === null || !isWithinAny(path, [physical])) continue;
+      const suffix = portableRelative(path.slice(physical.length));
+      if (suffix !== null)
+        return {
+          spelled: [target, suffix].filter(Boolean).join("/"),
+          specificity: physical.length,
+        };
     }
-    const plain = relative(path);
+    const plain = portable(path);
     return plain === null ? undefined : { spelled: plain, specificity: 0 };
   };
   const homePath = (path: string) => {
@@ -299,44 +332,85 @@ const capturedHomePlan = (capture: DesktopApplicationCapture) => {
     }
     return own?.spelled ?? null;
   };
-  return { homePath, stateAliases };
+  const traversed = spellings.flatMap(({ logical, physical, target }) => {
+    const parts = replaySegments(logical);
+    // An unresolved walk retains its parent traversal in the recorded path.
+    // It contributes no evidence about a replay destination.
+    return parts.includes("..") && portableRelative(physical) !== null
+      ? [{ logical: parts.join("/"), target }]
+      : [];
+  });
+  const agree = (
+    paths: ReadonlySet<string | null>,
+  ): string | null | undefined =>
+    paths.size === 0
+      ? undefined
+      : paths.size === 1
+        ? (paths.values().next().value ?? null)
+        : null;
+  /**
+   * Replay a path with parent traversal only when the capture establishes a
+   * portable destination. Undefined means no recorded match, null means the
+   * recorded mappings have no common portable destination.
+   */
+  const launchPath = (absolute: string): string | null | undefined => {
+    if (traversed.length === 0) return undefined;
+    const parts = replaySegments(absolute);
+    if (!parts.includes("..")) return undefined;
+    const source = parts.join("/");
+    const direct = new Set<string | null>();
+    const parents = new Set<string | null>();
+    let specificity = 0;
+    for (const { logical, target } of traversed) {
+      if (isWithinAny(source, [logical])) {
+        const suffix = portableRelative(source.slice(logical.length));
+        if (suffix === null || logical.length < specificity) continue;
+        if (logical.length > specificity) direct.clear();
+        specificity = logical.length;
+        direct.add(
+          target === null ? null : [target, suffix].filter(Boolean).join("/"),
+        );
+      } else if (isWithinAny(logical, [source])) {
+        // For a launch root above the observed state files, retain their
+        // relative names. Every paired path must imply the same replay base.
+        const suffix = logical.slice(source.length + 1);
+        parents.add(
+          suffix === target
+            ? ""
+            : target?.endsWith(`/${suffix}`) === true
+              ? target.slice(0, -(suffix.length + 1))
+              : null,
+        );
+      }
+    }
+    return direct.size > 0 ? agree(direct) : agree(parents);
+  };
+  return { homePath, launchPath, stateAliases };
 };
-
-/** A captured path's home-relative spelling in the shared export plan. */
-export const capturedHomePath = (capture: DesktopApplicationCapture) =>
-  capturedHomePlan(capture).homePath;
 
 /** Selected links to an app state root must keep both the app's name and the selected name. */
 const capturedStateAliases = (
-  capture: DesktopApplicationCapture,
+  selections: NonNullable<DesktopApplicationCapture["state"]["selected_paths"]>,
+  stateTargets: ReadonlyMap<string, string>,
+  portable: (path: string) => string | null,
 ): {
   readonly alias: string;
   readonly target: string;
   readonly kind: "file" | "directory" | "unknown";
 }[] => {
-  const { home } = capture.host;
-  const walked = capture.state.state_directories ?? [];
-  const roots = capture.application.state_directories;
-  if (walked.length !== roots.length) return [];
-  const relative = (path: string) =>
-    path.startsWith(`${home}/`) ? path.slice(home.length + 1) : null;
-  const aliases = (capture.state.selected_paths ?? []).flatMap(
-    ({ path, physical, kind }) => {
-      const index = walked.indexOf(physical);
-      const state = index < 0 ? undefined : roots[index]?.path;
-      const alias = relative(path);
-      const target = state === undefined ? null : relative(state);
-      const recorded: "file" | "directory" | "unknown" =
-        kind === "directory"
-          ? "directory"
-          : kind === "file"
-            ? "file"
-            : "unknown";
-      return alias === null || target === null || alias === target
-        ? []
-        : [{ alias, target, kind: recorded }];
-    },
-  );
+  const aliases = selections.flatMap(({ path, physical, kind }) => {
+    const alias = portable(path);
+    const target = stateTargets.get(physical) ?? null;
+    const recorded: "file" | "directory" | "unknown" =
+      kind === "directory" ? "directory" : kind === "file" ? "file" : "unknown";
+    return alias === null ||
+      alias === "" ||
+      target === null ||
+      target === "" ||
+      alias === target
+      ? []
+      : [{ alias, target, kind: recorded }];
+  });
   const retained: {
     alias: string;
     target: string;
@@ -413,7 +487,8 @@ export const exportedStateFiles = (
   capture: DesktopApplicationCapture,
   state: DesktopApplicationState,
 ) => {
-  const { homePath, stateAliases } = capturedHomePlan(capture);
+  const replay = capturedHomePlan(capture);
+  const { homePath } = replay;
   const homePaths = (paths: readonly string[]) =>
     paths.map(homePath).filter((path): path is string => path !== null);
   const { files, dconf, collisions } = stateFilesByHomePath(
@@ -441,8 +516,7 @@ export const exportedStateFiles = (
     stateDirectories,
   );
   return {
-    homePath,
-    stateAliases,
+    ...replay,
     files,
     dconf,
     collisions,
