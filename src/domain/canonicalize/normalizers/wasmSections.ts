@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { readLeb128, ULEB32 } from "../../leb128.js";
 import { isStrictUtf8, strictUtf8Decoder } from "../../strictUtf8.js";
 import type {
   CanonicalizeFact,
@@ -55,30 +56,6 @@ const LINK_RELEVANT_CUSTOM = new Set([
   "target_features",
 ]);
 
-interface Leb {
-  readonly value: number;
-  readonly next: number;
-}
-
-/** Read an unsigned LEB128 u32 within 5 bytes; null on truncation or overflow. */
-const readU32Leb = (bytes: Buffer, offset: number): Leb | null => {
-  let result = 0;
-  let shift = 0;
-  let index = offset;
-  for (let part = 0; part < 5; part += 1) {
-    if (index >= bytes.length) return null;
-    const byte = bytes[index]!;
-    index += 1;
-    result += (byte & 0x7f) * 2 ** shift;
-    if ((byte & 0x80) === 0) {
-      if (result > 0xffffffff) return null;
-      return { value: result, next: index };
-    }
-    shift += 7;
-  }
-  return null;
-};
-
 interface CustomName {
   /** Bounded, decoded name prefix retained in the fact; "" when unreadable. */
   readonly name: string;
@@ -119,11 +96,14 @@ const readCustomName = (
   payloadStart: number,
   payloadEnd: number,
 ): CustomName | null => {
-  const header = readU32Leb(bytes, payloadStart);
-  if (header === null) return null;
-  const nameEnd = header.next + header.value;
+  // Reuse the shared LEB128 owner for the name-length prefix, bounded to this
+  // section's payload as the enclosing range rather than rescanning bytes.
+  const header = readLeb128(bytes, payloadStart, payloadEnd, ULEB32);
+  if ("failure" in header) return null;
+  const nameBytes = Number(header.value);
+  const nameEnd = header.next + nameBytes;
   if (nameEnd > payloadEnd) return null;
-  const truncated = header.value > MAX_CUSTOM_NAME_BYTES;
+  const truncated = nameBytes > MAX_CUSTOM_NAME_BYTES;
   const decodeEnd = Math.min(nameEnd, header.next + MAX_CUSTOM_NAME_BYTES);
   const decoded = decodeNamePrefix(
     bytes.subarray(header.next, decodeEnd),
@@ -131,7 +111,7 @@ const readCustomName = (
   );
   return {
     name: decoded ?? "",
-    nameBytes: header.value,
+    nameBytes,
     truncated,
     readable: decoded !== null,
     contentStart: nameEnd,
@@ -335,8 +315,10 @@ const canonicalize = (
       break;
     }
     const id = bytes[offset]!;
-    const size = readU32Leb(bytes, offset + 1);
-    if (size === null) {
+    // The section-length field reuses the shared LEB128 owner; the module end is
+    // its enclosing range. The width and overflow checks live in that owner.
+    const size = readLeb128(bytes, offset + 1, bytes.length, ULEB32);
+    if ("failure" in size) {
       truncated = true;
       limitations.push(
         `Malformed section length at byte ${String(offset)}; the remaining bytes are unverified.`,
@@ -344,11 +326,12 @@ const canonicalize = (
       break;
     }
     const payloadStart = size.next;
-    const payloadEnd = payloadStart + size.value;
+    const sectionSize = Number(size.value);
+    const payloadEnd = payloadStart + sectionSize;
     if (payloadEnd > bytes.length) {
       truncated = true;
       limitations.push(
-        `Truncated section at byte ${String(offset)} declares ${String(size.value)} payload bytes beyond the artifact; unverified.`,
+        `Truncated section at byte ${String(offset)} declares ${String(sectionSize)} payload bytes beyond the artifact; unverified.`,
       );
       break;
     }
@@ -363,8 +346,8 @@ const canonicalize = (
       coreSections.examined += 1;
       if (coreSections.retained < budget.maxFacts) {
         coreSections.retained += 1;
-        core.push(coreSectionFact(id, payloadStart, size.value));
-      } else collapseIntoGroup(coreSections, size.value, region);
+        core.push(coreSectionFact(id, payloadStart, sectionSize));
+      } else collapseIntoGroup(coreSections, sectionSize, region);
       offset = payloadEnd;
       continue;
     }
@@ -377,8 +360,8 @@ const canonicalize = (
       malformed.examined += 1;
       if (malformed.retained < budget.maxFacts) {
         malformed.retained += 1;
-        collapsed.push(malformedSectionFact(payloadStart, size.value, region));
-      } else collapseIntoGroup(malformed, size.value, region);
+        collapsed.push(malformedSectionFact(payloadStart, sectionSize, region));
+      } else collapseIntoGroup(malformed, sectionSize, region);
       offset = payloadEnd;
       continue;
     }
@@ -394,11 +377,11 @@ const canonicalize = (
           invalidNameSectionFact(
             payloadStart,
             parsed.nameBytes,
-            size.value,
+            sectionSize,
             region,
           ),
         );
-      } else collapseIntoGroup(invalidName, size.value, region);
+      } else collapseIntoGroup(invalidName, sectionSize, region);
       offset = payloadEnd;
       continue;
     }
@@ -406,8 +389,8 @@ const canonicalize = (
       link.examined += 1;
       if (link.retained < budget.maxFacts) {
         link.retained += 1;
-        core.push(linkSectionFact(parsed, payloadStart, size.value, region));
-      } else collapseIntoGroup(link, size.value, region);
+        core.push(linkSectionFact(parsed, payloadStart, sectionSize, region));
+      } else collapseIntoGroup(link, sectionSize, region);
     } else {
       padding.examined += 1;
       if (padding.retained < budget.maxFacts) {
@@ -418,12 +401,12 @@ const canonicalize = (
             parsed,
             payloadStart,
             payloadEnd,
-            size.value,
+            sectionSize,
             region,
             budget,
           ),
         );
-      } else collapseIntoGroup(padding, size.value, region);
+      } else collapseIntoGroup(padding, sectionSize, region);
     }
     offset = payloadEnd;
   }
