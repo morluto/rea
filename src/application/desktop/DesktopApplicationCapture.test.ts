@@ -1179,6 +1179,18 @@ const sessionInspectionFailure = async (
   });
 };
 
+// Supply the Linux identity sample even when the test host has no procfs.
+// The real run-token reader still transfers the descriptor failure.
+const fixtureProcessStat = samplingObservation({
+  pid: process.pid,
+  parent_pid: process.ppid,
+  process_group_id: process.pid,
+  session_id: process.pid,
+  command: "",
+  startTime: "1",
+  lifecycle: "non-zombie" as const,
+});
+
 it.for([
   { retrySucceeds: true, sessionOwns: false, neutralBatch: false },
   { retrySucceeds: false, sessionOwns: false, neutralBatch: false },
@@ -1217,19 +1229,8 @@ it.for([
       state: "listed",
       windows: [],
     });
-    // The test owns the Linux identity sample. The file descriptor failure
-    // still traverses the real optional run-token and capture cleanup path.
-    vi.spyOn(linuxSampling, "readLinuxProcessStat").mockImplementation(
-      async (pid) =>
-        samplingObservation({
-          pid,
-          parent_pid: process.ppid,
-          process_group_id: pid,
-          session_id: pid,
-          command: "",
-          startTime: "1",
-          lifecycle: "non-zombie",
-        }),
+    vi.spyOn(linuxSampling, "readLinuxProcessStat").mockResolvedValue(
+      fixtureProcessStat,
     );
     const environmentRead = vi
       .spyOn(systemProcessOwnershipHost, "environment")
