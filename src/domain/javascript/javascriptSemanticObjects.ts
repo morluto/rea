@@ -159,7 +159,7 @@ const collectDestructuring = (
   // An unsupported property still occupies its place in the pattern's
   // evaluation order, even when it cannot produce a graph operation.
   const pending: ({
-    readonly pattern: t.Node;
+    readonly pattern: t.Node | undefined;
     readonly path: readonly string[];
     readonly lookup?: "own" | "unproven";
   } | null)[] = [{ pattern: root, path: [] }];
@@ -181,6 +181,9 @@ const collectDestructuring = (
         !ownSlot(propertyPath))
     )
       ownSlot = undefined;
+    // Elision still advances the iterator and can read a property. It
+    // contributes no binding once the shared slot check has run.
+    if (next.pattern === undefined) continue;
     const occurrence = unwrapJavaScriptExpression(next.pattern).node;
     if (t.isAssignmentPattern(occurrence)) ownSlot = undefined;
     const pattern = t.isAssignmentPattern(occurrence)
@@ -210,10 +213,11 @@ const collectDestructuring = (
       if (pattern !== root) ownSlot = undefined;
       for (let index = pattern.elements.length - 1; index >= 0; index -= 1) {
         const element = pattern.elements[index];
-        if (element == null || t.isRestElement(element)) pending.push(null);
+        if (element === undefined || t.isRestElement(element))
+          pending.push(null);
         else
           pending.push({
-            pattern: element,
+            pattern: element ?? undefined,
             path: [...path, String(index)],
             lookup: "own",
           });

@@ -742,3 +742,82 @@ it.each([
     ).toMatchObject({ resolution });
   },
 );
+
+it.each([
+  [
+    "declaration",
+    "[0, 1]",
+    "const [,selected] = config; config[1] = 2;",
+    "/1",
+    "resolved",
+  ],
+  [
+    "assignment",
+    "[0, 1]",
+    "let selected; [,selected] = config; config[1] = 2;",
+    "/1",
+    "resolved",
+  ],
+  [
+    "const alias",
+    "[0, 1]",
+    "const alias = config; const [,selected] = alias; config[1] = 2;",
+    "/1",
+    "resolved",
+  ],
+  [
+    "two elisions",
+    "[0, 1, 2]",
+    "const [,,selected] = config; config[2] = 3;",
+    "/2",
+    "resolved",
+  ],
+  [
+    "array hole",
+    "[, 1]",
+    "const [,selected] = config; config[1] = 2;",
+    "/1",
+    "candidate",
+  ],
+  [
+    "previous deletion",
+    "[0, 1]",
+    "delete config[0]; const [,selected] = config; config[1] = 2;",
+    "/1",
+    "candidate",
+  ],
+  [
+    "skipped getter",
+    "[0, 1]",
+    'Object.defineProperty(config, "0", {get(){delete this[1]; return 0;}}); const [,selected] = config;',
+    "/1",
+    "candidate",
+  ],
+  [
+    "replaced iterator",
+    "[0, 1]",
+    "Object.getPrototypeOf([].values()).next = () => ({value: 3, done: false}); const [,selected] = config; config[1] = 2;",
+    "/1",
+    "candidate",
+  ],
+] as const)(
+  "preserves exactly the proved array elision dependencies for %s",
+  (_name, initial, source, pointer, resolution) => {
+    const graph = graphForJavaScript(`const config = ${initial}; ${source}`);
+    const selected = graph.nodes.find(
+      ({ kind, label }) => kind === "binding" && label === "selected",
+    );
+    const edges = graph.relations.filter(
+      ({ relation }) => relation === "destructures",
+    );
+    expect(edges).toHaveLength(1);
+    expect(edges[0]).toMatchObject({
+      target_node_id: selected?.node_id,
+      resolution,
+    });
+    expect(
+      graph.nodes.find(({ node_id }) => node_id === edges[0]?.source_node_id)
+        ?.properties.property_pointer,
+    ).toBe(pointer);
+  },
+);
