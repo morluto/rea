@@ -44,6 +44,7 @@ it.each([
   ["a tls NaN port", `tls.connect(NaN)`],
   ["a createConnection port above the range", `net.createConnection(65536)`],
   ["a createConnection empty path", `net.createConnection("")`],
+  ["an invalid port in options", `net.connect({ port: 65536 })`],
 ] as const)("emits no socket acquisition for %s", (_name, call) => {
   expect(socketAcquisitionsFor(call)).toEqual([]);
 });
@@ -53,6 +54,8 @@ it.each([
   ["a low port", `net.connect(80)`, "connect"],
   ["the highest port", `net.connect(65535)`, "connect"],
   ["a Unix socket path", `net.connect("/tmp/x.sock")`, "connect"],
+  ["a Unix socket path in options", `net.connect({ path: "/tmp/x.sock", port: -1 })`, "connect"],
+  ["a Unix socket path in later TLS options", `tls.connect({ port: -1 }, { path: "/tmp/x.sock" })`, "connect"],
   ["an options object", `net.connect({ port: 80 })`, "connect"],
   ["a computed argument", `net.connect(p)`, "connect"],
   [
