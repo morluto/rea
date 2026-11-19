@@ -180,8 +180,8 @@ export const parseExportedTypes = (
   for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
     readManagedValue(() => {
       const cursor = metadataRowCursor(bytes, layout, 39, row);
-      const flags = cursor.readUInt32();
-      const typeDefId = cursor.readUInt32();
+      const flags = cursor.u32();
+      const typeDefId = cursor.u32();
       const name = readMetadataString(
         bytes,
         layout,
