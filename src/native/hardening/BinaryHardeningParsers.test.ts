@@ -193,6 +193,12 @@ it("rejects truncated, duplicate and over-budget ELF tables", () => {
   if (dynamic === undefined) throw new Error("Fixture has no PT_DYNAMIC");
   wide.writeBigUInt64LE(BigInt(fixture.length), dynamic + 8);
   wide.writeBigUInt64LE(65_537n * 16n, dynamic + 32);
+  expect(() => readElfHardening(wide.subarray(0, fixture.length))).toThrow(
+    expect.objectContaining({
+      kind: "malformed",
+      message: expect.stringContaining("truncated ELF program"),
+    }),
+  );
   expect(() => readElfHardening(wide)).toThrow(
     expect.objectContaining({ maximum_bytes: 65_536, unit: "entries" }),
   );

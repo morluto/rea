@@ -57,6 +57,7 @@ type Package = DesktopApplicationInventory["package"];
 /** The `o=` origin of every package file `apt-cache policy` lists; undefined when apt could not be asked. */
 const policyOrigins = async (
   context: InventoryContext,
+  statusFile: string | undefined,
 ): Promise<ReadonlyMap<string, string | null> | undefined> => {
   const policy = await queryUtf8Text(
     context.host.runQuery,
@@ -71,7 +72,7 @@ const policyOrigins = async (
     return new Map();
   }
   return policy.kind === "read"
-    ? parseAptPolicyOrigins(policy.text)
+    ? parseAptPolicyOrigins(policy.text, statusFile)
     : undefined;
 };
 
@@ -331,7 +332,7 @@ export const debianPackage = async (
       ? [...parseAptPolicySources(policy.text, apt.status)]
       : [];
   // A local install's library packages are matched to the archive by origin too.
-  const origins = await policyOrigins(context);
+  const origins = await policyOrigins(context, apt.status);
   const installed = {
     kind: "deb" as const,
     name: parsed?.name ?? name,

@@ -25,6 +25,115 @@ import {
   namespaceBearingNestedTypes,
 } from "../../../fixtures/managedSelectedScope.js";
 
+describe("required managed definition names", () => {
+  it.each([
+    ["TypeDef", "nil", 2, 4, "Program", "0x02000001"],
+    ["TypeDef", "empty", 2, 4, "Program", "0x02000001"],
+    ["MethodDef", "nil", 6, 8, "Main", "0x06000001"],
+    ["MethodDef", "empty", 6, 8, "Main", "0x06000001"],
+  ] as const)(
+    "keeps a %s %s name out of cross-build identity",
+    (kind, encoding, table, column, name, token) => {
+      const fixture = (mvidByte: number) => {
+        const bytes = buildManagedPeFixture({
+          mvid: Buffer.alloc(16, mvidByte),
+        });
+        const pe = readManagedPeLayout(bytes);
+        if (pe.cli === null) throw new Error("Missing CLI metadata in fixture");
+        const { rva, size } = pe.cli.metadata;
+        const layout = readManagedMetadataLayout(
+          bytes,
+          pe.rvaToOffset(rva, size, "fixture"),
+          size,
+        );
+        const offset = metadataRowOffset(layout, table, 1) + column;
+        const index =
+          encoding === "nil" ? 0 : bytes.readUInt16LE(offset) + name.length;
+        bytes.writeUInt16LE(index, offset);
+        return {
+          side: inspect(bytes, `/fixture/definition-${String(mvidByte)}.dll`),
+          offset,
+        };
+      };
+      const left = fixture(0x11);
+      const right = fixture(0x22);
+      for (const {
+        side: { result },
+        offset,
+      } of [left, right]) {
+        expect(result.metadata).toMatchObject({
+          status: "partial",
+          table_row_counts: { TypeDef: 1, MethodDef: 1 },
+        });
+        expect(result.method_rows).toEqual({ offset: 0, count: 1, total: 1 });
+        expect(result.coverage.issues).toContainEqual(
+          expect.objectContaining({
+            code: "invalid-row",
+            scope: `metadata.${kind}:${token}`,
+            offset,
+          }),
+        );
+        if (kind === "TypeDef") {
+          expect(result.types).toEqual([]);
+          expect(result.methods).toEqual([
+            expect.objectContaining({
+              name: "Main",
+              declaring_type_token: token,
+              declaring_type: null,
+            }),
+          ]);
+        } else {
+          expect(result.types).toEqual([
+            expect.objectContaining({ full_name: "Fixture.Program" }),
+          ]);
+          expect(result.methods).toEqual([]);
+        }
+      }
+      const comparison = compareManagedMembers(left.side, right.side);
+      expect(comparison.coverage.status).toBe("partial");
+      expect(comparison.methods.map(({ status }) => status)).toEqual(
+        kind === "TypeDef" ? ["unknown", "unknown"] : [],
+      );
+      if (kind === "MethodDef") {
+        const named = inspect(buildManagedPeFixture(), "/fixture/named.dll");
+        expect(compareManagedMembers(named, right.side).methods).toEqual([
+          expect.objectContaining({ status: "unknown" }),
+        ]);
+      }
+    },
+  );
+
+  it("keeps valid type identity across builds when the namespace index is nil", () => {
+    const left = inspect(
+      buildManagedPeFixture({
+        typeNamespace: "",
+        mvid: Buffer.alloc(16, 0x11),
+      }),
+      "/fixture/global-left.dll",
+    );
+    const right = inspect(
+      buildManagedPeFixture({
+        typeNamespace: "",
+        mvid: Buffer.alloc(16, 0x22),
+      }),
+      "/fixture/global-right.dll",
+    );
+    expect(left.result.types).toEqual([
+      expect.objectContaining({
+        name: "Program",
+        namespace: "",
+        full_name: "Program",
+        name_sha256: expect.any(String),
+      }),
+    ]);
+    const comparison = compareManagedMembers(left, right);
+    expect(comparison.coverage.status).toBe("complete-within-inputs");
+    expect(comparison.methods).toEqual([
+      expect.objectContaining({ status: "unchanged" }),
+    ]);
+  });
+});
+
 it("selects namespace-bearing nested declarations from parsed type facts and compares the observed scope", () => {
   const bytes = namespaceBearingNestedTypes();
   const selected = inspect(bytes, "/fixture/nested-selection.dll", ["Inner"]);
@@ -3520,6 +3629,141 @@ const comparedTokens = (
         .filter((token) => token !== undefined),
     ),
   ].sort();
+
+describe("historical managed definition names", () => {
+  const archived = (
+    mvidByte: number,
+    missing: "TypeDef" | "MethodDef" | null,
+  ) => {
+    const side = inspect(
+      buildManagedPeFixture({
+        mvid: Buffer.alloc(16, mvidByte),
+        ...(missing === null ? { typeNamespace: "" } : {}),
+      }),
+      `/fixture/archive-${String(mvidByte)}.dll`,
+    );
+    const { result } = side;
+    // Recreate the facts persisted by the old parser. The current parser
+    // refuses those names, so asking it to produce them would miss replay.
+    const historical = {
+      ...result,
+      types:
+        missing === "TypeDef"
+          ? result.types.map((row) => ({
+              ...row,
+              name: "",
+              full_name: "Fixture.",
+              name_sha256:
+                "dbf9451565745937fb93b7371d62c715b3c10ab1e76f6a2c2b7c8ee877d6f4b7",
+            }))
+          : result.types,
+      methods: result.methods.map((row) => ({
+        ...row,
+        ...(missing === "TypeDef" ? { declaring_type: "Fixture." } : {}),
+        ...(missing === "MethodDef" ? { name: "" } : {}),
+      })),
+    };
+    return {
+      ...side,
+      result: managedMemberInspectionSchema.parse(historical),
+    };
+  };
+
+  it.each(["TypeDef", "MethodDef"] as const)(
+    "keeps a recorded empty %s name from establishing cross-build identity",
+    (missing) => {
+      const left = archived(0x11, missing);
+      const right = archived(0x22, missing);
+      const source = JSON.stringify(left.result);
+      const comparison = compareManagedMembers(left, right);
+
+      expect(comparison.coverage).toEqual({
+        status: "partial",
+        left_status: "complete",
+        right_status: "complete",
+      });
+      expect(
+        comparison.methods.map(({ status, match }) => [status, match.basis]),
+      ).toEqual([
+        ["unknown", "none"],
+        ["unknown", "none"],
+      ]);
+      expect(comparison.left).toMatchObject({
+        metadata_status: "complete",
+        methods_total: 1,
+      });
+      expect(JSON.stringify(left.result)).toBe(source);
+    },
+  );
+
+  it("keeps archived unqualified type names comparable when the namespace is empty", () => {
+    const comparison = compareManagedMembers(
+      archived(0x11, null),
+      archived(0x22, null),
+    );
+    expect(comparison.coverage.status).toBe("complete-within-inputs");
+    expect(comparison.methods).toEqual([
+      expect.objectContaining({ status: "unchanged" }),
+    ]);
+  });
+
+  it("discards historical nominal digests that include a recorded empty enclosing name", () => {
+    const archive = (path: string, mvidByte: number) => {
+      const bytes = buildManagedNestedTypeFixture();
+      const pe = readManagedPeLayout(bytes);
+      if (pe.cli === null) throw new Error("Fixture omitted CLI metadata");
+      const { rva, size } = pe.cli.metadata;
+      const layout = readManagedMetadataLayout(
+        bytes,
+        pe.rvaToOffset(rva, size, "fixture"),
+        size,
+      );
+      if (layout.guid.kind !== "available")
+        throw new Error("Fixture omitted #GUID");
+      bytes.fill(
+        mvidByte,
+        layout.guid.stream.offset,
+        layout.guid.stream.offset + 16,
+      );
+      const source = inspect(bytes, path);
+      const types = source.result.types.map((row) =>
+        row.token === "0x02000002"
+          ? { ...row, name: "", full_name: "Fixture." }
+          : row,
+      );
+      const methods = source.result.methods.map((row) =>
+        row.token === "0x06000002" ? { ...row, name: "KnownSibling" } : row,
+      );
+      return {
+        ...source,
+        result: managedMemberInspectionSchema.parse({
+          ...source.result,
+          types,
+          methods,
+        }),
+      };
+    };
+    const comparison = compareManagedMembers(
+      archive("/fixture/archive-enclosing-left.dll", 0x11),
+      archive("/fixture/archive-enclosing-right.dll", 0x22),
+    );
+    expect(
+      comparison.methods
+        .filter(({ match }) => match.status === "matched")
+        .map(({ left }) => left?.token),
+    ).toEqual(["0x06000002"]);
+    expect(comparison.methods).toContainEqual(
+      expect.objectContaining({
+        status: "unknown",
+        match: expect.objectContaining({
+          status: "ambiguous",
+          candidate_left_tokens: ["0x06000001", "0x06000003"],
+          candidate_right_tokens: ["0x06000001", "0x06000003"],
+        }),
+      }),
+    );
+  });
+});
 
 const inspect = (bytes: Buffer, path: string, typeNames?: string[]) => {
   const target = managedPeFixtureTarget(bytes, path);
