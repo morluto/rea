@@ -120,6 +120,7 @@ sliceTest(
     if (armSlice === undefined) throw new Error("Fixture lacks a slice");
     expect(report.artifact).toEqual({
       path,
+      file_name: "universal-go",
       sha256: sha256(universal.bytes),
       bytes: universal.bytes.length,
     });

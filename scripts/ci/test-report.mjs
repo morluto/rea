@@ -48,10 +48,18 @@ const groupResults = [
 const groupsCompleted = groupResults.every((state) =>
   ["success", "failure"].includes(state),
 );
-const passed =
+const failedFiles = files
+  .filter(({ state }) => state === "failed")
+  .map(({ name }) => name)
+  .sort();
+const workflowPassed =
   groupResults.every((state) => state === "success") &&
-  process.env.MERGE_RESULT === "success" &&
-  report.success;
+  process.env.MERGE_RESULT === "success";
+const passed =
+  workflowPassed &&
+  report.success &&
+  failedFiles.length === 0 &&
+  (report.unhandledErrors ?? 0) === 0;
 // Successful shards and merged reports must account for the complete portable
 // inventory, or exactly the selected subset. Coverage thresholds alone cannot
 // prove that every file ran.
@@ -88,10 +96,6 @@ if (passed && verifyInventory) {
 // A selected subset is not a timing baseline for the complete suite.
 const publishesHistory = passed && !selected;
 const skippedFiles = files.filter(({ state }) => state === "skipped");
-const failedFiles = files
-  .filter(({ state }) => state === "failed")
-  .map(({ name }) => name)
-  .sort();
 const failureListLimit = 20;
 const failureDetails =
   !passed || failedFiles.length > 0
@@ -153,6 +157,9 @@ if (process.env.GITHUB_STEP_SUMMARY) {
   await appendFile(process.env.GITHUB_STEP_SUMMARY, summary);
   if (failureDetails.length > 0) console.log(failureDetails.join("\n"));
 } else console.log(summary);
+
+if (workflowPassed && !passed)
+  throw new Error("Merged test report does not confirm successful tests");
 
 if (publishesHistory) {
   await mkdir(historyDirectory, { recursive: true });

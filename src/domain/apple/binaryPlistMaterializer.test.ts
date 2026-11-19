@@ -1,5 +1,9 @@
 import { expect, it, vi } from "vitest";
-import { binaryPlistObjectTable } from "../../../tests/fixtures/binaryPlistObjectTable.js";
+import {
+  binaryPlistObjectTable,
+  readBinaryPlistObjectTableLayout,
+  writeBinaryPlistObjectOffset,
+} from "../../../tests/fixtures/binaryPlistObjectTable.js";
 import { createPlistNumberProjection } from "./plistNumbers.js";
 import { projectPlistValue } from "./plistValue.js";
 import { scanBinaryPlistScalars } from "./plistScalars.js";
@@ -222,10 +226,11 @@ it("reads an unreferenced UTF-16BE string and data object", () => {
     wide,
     data,
   ]);
-  const { text: decoded, complete } = decodeBinaryPlistText(bytes, budget);
-  expect(decoded).toContain("é!");
-  expect(decoded).toContain("blob");
-  expect(complete).toBe(true);
+  // The final data payload ends exactly at the start of the offset table.
+  expect(decodeBinaryPlistText(bytes, budget)).toEqual({
+    text: "key\nkept\né!\nblob",
+    complete: true,
+  });
 });
 
 it("honors a byte order mark in a data object", () => {
@@ -250,6 +255,44 @@ it("honors a byte order mark in a data object", () => {
   ).toBe(false);
 });
 
+it.each([
+  ["UTF-8 string", Buffer.from([0x72, 0x61, 0xff])],
+  ["UTF-16BE string", Buffer.from([0x62, 0, 0x61, 0xd8, 0])],
+  ["UTF-16 data", Buffer.from([0x45, 0xff, 0xfe, 0x61, 0, 0x62])],
+] as const)("reports partial text beside malformed %s", (_name, malformed) => {
+  const bytes = source([
+    dictionary(1, 2),
+    text("key"),
+    text("kept"),
+    malformed,
+  ]);
+  expect(decodeBinaryPlistText(bytes, budget)).toEqual({
+    text: "key\nkept\na\ufffd",
+    complete: false,
+  });
+});
+
+it.each([
+  ["valid marked UTF-8", [0xef, 0xbb, 0xbf, 0xc3, 0xa9], "\ufeffé", true],
+  [
+    "lossy marked UTF-8",
+    [0xef, 0xbb, 0xbf, 0x61, 0xff],
+    "\ufeffa\ufffd",
+    false,
+  ],
+  ["unmarked raw data", [0x61, 0xff], "a\ufffd", true],
+] as const)(
+  "tracks stored data text coverage for %s",
+  (_name, payload, value, complete) => {
+    const data = Buffer.from([0x40 | payload.length, ...payload]);
+    const bytes = source([dictionary(1, 2), text("key"), data]);
+    expect(decodeBinaryPlistText(bytes, budget)).toEqual({
+      text: `key\n${value}`,
+      complete,
+    });
+  },
+);
+
 it("keeps readable text beside an unreferenced string it cannot read", () => {
   const bytes = source([
     dictionary(1, 2),
@@ -259,6 +302,34 @@ it("keeps readable text beside an unreferenced string it cannot read", () => {
   ]);
   expect(decodeBinaryPlistText(bytes, budget)).toEqual({
     text: expect.stringContaining("kept"),
+    complete: false,
+  });
+});
+
+it("keeps readable text when an unreferenced string crosses the offset table", () => {
+  const bytes = source([
+    dictionary(1, 2),
+    text("key"),
+    text("kept"),
+    Buffer.from([0x52, 0x61]), // Two declared characters, one in the object area.
+  ]);
+  expect(decodeBinaryPlistText(bytes, budget)).toEqual({
+    text: "key\nkept",
+    complete: false,
+  });
+});
+
+it("keeps readable text when an unreferenced entry starts at the offset table", () => {
+  const bytes = source([
+    dictionary(1, 2),
+    text("key"),
+    text("kept"),
+    Buffer.from([0x00]),
+  ]);
+  const table = readBinaryPlistObjectTableLayout(bytes);
+  writeBinaryPlistObjectOffset(bytes, table, 3, table.tableOffset);
+  expect(decodeBinaryPlistText(bytes, budget)).toEqual({
+    text: "key\nkept",
     complete: false,
   });
 });

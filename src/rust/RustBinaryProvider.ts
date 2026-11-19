@@ -1,3 +1,4 @@
+import { basename } from "node:path";
 import { producerLimitControl } from "../domain/producerResourceLimits.js";
 import { RUST_BINARY_PROVIDER_IDENTITY } from "./RustBinaryProviderIdentity.js";
 import {
@@ -12,6 +13,7 @@ import {
   type ArtifactFilePrimaryFacts,
   artifactFileCancellationCause,
   assertArtifactReadActive,
+  yieldArtifactRead,
   ArtifactResourceScope,
   ArtifactReaderFailure,
 } from "../resources/index.js";
@@ -36,10 +38,18 @@ import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   readRustBinaryImage,
+  readRustBinaryImageCooperative,
   type RustBinaryImage,
 } from "./RustBinaryImage.js";
 import { requireSelectedNativeImage } from "../domain/apple/machoSliceSelection.js";
-import { RustAuditableResourceFailure } from "./RustAuditableReader.js";
+import {
+  RUST_AUDITABLE_FORMAT,
+  RUST_AUDITABLE_GRAPH_LIMIT,
+} from "./RustAuditableReader.js";
+import {
+  BinaryResourceFailure,
+  binaryResourceCeiling,
+} from "../domain/binaryContainer.js";
 import { MAX_WASM_SECTIONS, WASM_FORMAT } from "./RustWasmImage.js";
 import {
   isParseLimit,
@@ -113,11 +123,18 @@ export class RustBinaryProvider implements RustBinaryPort {
           input.architecture,
         );
         const image = inFile(
-          readRustBinaryImage(
-            selected.bytes,
-            input.max_rustc_hashes,
-            limits.output_bytes,
-          ),
+          options?.signal === undefined
+            ? readRustBinaryImage(
+                selected.bytes,
+                input.max_rustc_hashes,
+                limits.output_bytes,
+              )
+            : await readRustBinaryImageCooperative(
+                selected.bytes,
+                input.max_rustc_hashes,
+                limits.output_bytes,
+                () => yieldArtifactRead(options.signal),
+              ),
           selected.fileOffset,
         );
         const report: RustBinary = {
@@ -129,6 +146,7 @@ export class RustBinaryProvider implements RustBinaryPort {
           rustc_commit: image.rustc_commit,
           artifact: {
             path: input.path,
+            file_name: basename(input.path),
             sha256: snapshot.sha256,
             bytes: snapshot.bytes.length,
           },
@@ -220,7 +238,7 @@ const limitationsFor = (
   `Only the .dep-v0 dependency section and compiler path strings in ${compilerPathSource(image.format)} are inspected. Functions, types, and runtime behavior are not recovered.`,
   ...(image.format === "wasm"
     ? [
-        `WebAssembly declares no container word size, so bits is null. Memory address types were not inspected. Section framing is bounded to ${MAX_WASM_SECTIONS} sections.`,
+        `WebAssembly declares no container word size, so bits is null. Memory address types were not inspected. At most ${MAX_WASM_SECTIONS} section payloads are examined.`,
       ]
     : []),
   RUST_RESOURCE_GUARD_LIMITATION,
@@ -370,34 +388,43 @@ const failureForPrimary = (
   const { cause, origin } = facts;
   if (origin === "owned-or-classified" && cause instanceof AnalysisError)
     return cause;
-  if (cause instanceof RustAuditableResourceFailure)
-    return new AnalysisResourceConstraintError(
-      OPERATION,
-      cause.constraint.resource,
-      `Selected artifact ${path}: ${cause.message}`,
-      cause.constraint.reported_limits,
-      {
-        cause,
-        ...(cause.constraint.resource === "transport"
-          ? {
-              retryable: false,
-              remediationAction: `Increase producer_limits.output_bytes above ${String(limits.output_bytes)} bytes on the next call; no restart is required. Compressed/inflated dependency parser and transport limits remain independent.`,
-              limit: producerLimitControl(
-                "output_bytes",
-                limits.output_bytes,
-                RUST_PRODUCER_DEFAULTS.output_bytes,
-              ),
-            }
-          : fixedAllowanceOptions(
-              "This Rust dependency parser allowance",
-              "parser",
-              {
-                limit: cause.constraint.reported_limits.maximum_bytes,
-                unit: "bytes",
-              },
-            )),
-      },
-    );
+  if (cause instanceof BinaryResourceFailure)
+    return parseLimitConstraint(OPERATION, "memory", cause, {
+      path,
+      legacyMaximumKey: "maximum_bytes",
+      ...fixedAllowanceOptions(
+        "This native container parser allowance",
+        "parser",
+        binaryResourceCeiling(cause),
+      ),
+    });
+  if (isParseLimit(cause, RUST_AUDITABLE_FORMAT)) {
+    const { name, maximum } = cause.failure.limit;
+    if (name === RUST_AUDITABLE_GRAPH_LIMIT)
+      return parseLimitConstraint(OPERATION, "transport", cause, {
+        path,
+        legacyMaximumKey: "maximum_output_bytes",
+        retryable: false,
+        remediationAction: `Increase producer_limits.output_bytes above ${String(maximum)} bytes on the next call; no restart is required. Compressed/inflated dependency parser and transport limits remain independent.`,
+        limit: producerLimitControl(
+          "output_bytes",
+          maximum,
+          RUST_PRODUCER_DEFAULTS.output_bytes,
+        ),
+      });
+    return parseLimitConstraint(OPERATION, "memory", cause, {
+      path,
+      legacyMaximumKey: "maximum_bytes",
+      ...fixedAllowanceOptions(
+        "This Rust dependency parser allowance",
+        "parser",
+        {
+          limit: maximum,
+          unit: "bytes",
+        },
+      ),
+    });
+  }
   if (isParseLimit(cause, WASM_FORMAT))
     return parseLimitConstraint(OPERATION, "cpu", cause, {
       path,

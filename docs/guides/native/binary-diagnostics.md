@@ -250,7 +250,9 @@ numeric IDs are distinct from UTF-16 names, whose original bytes are also
 reported. Directory headers, entries, data entries and payloads retain original
 file offsets and lengths. Each opaque payload has its own SHA-256; code page and
 reserved data-entry fields are preserved. The complete inventory requires
-numeric IDs to appear in ascending order within each directory.
+numeric IDs to appear in ascending order within each directory. REA inventories
+named siblings in their stored order and identifies names by their exact UTF-16
+bytes. Named-entry ordering varies across producers.
 
 Every `directories[]` row retains its identity `path` and the matching incoming
 `entry_locations`: both are empty for the root, then contain the type and
@@ -278,6 +280,8 @@ and language. Other resource payload formats remain opaque.
 16384, the largest stock Windows resource image measured with headroom
 (maximum 65536). CLI options are `--max-file-bytes` and `--max-entries`.
 Metadata is bounded to 8 MiB; exceeding any budget fails without truncation.
+Parser refusals report the exhausted limit and enforced maximum in
+`details.reported_limits`.
 Large Evidence envelopes may require a caller-configured MCP transport receive
 buffer because envelope copies add overhead. Requests honor cancellation during
 snapshot reading, directory traversal and payload hashing. The operation reads
@@ -467,6 +471,8 @@ rea inspect-native-exports ./libexample.so --detail summary --evidence_output ./
 
 Unreadable names, out-of-range name ordinals and unreadable forwarders are
 listed in `issues`, their entries are not reported, and coverage is `partial`.
+PE export tables and strings use file-backed headers and declared section
+content. A name's terminating NUL must also fit within those mapped bytes.
 PE export names are bounded null-terminated byte strings and may continue
 across adjacent file-backed section mappings when the virtual bytes are
 unambiguous. Gaps, zero-fill and conflicting mappings remain unreadable names.

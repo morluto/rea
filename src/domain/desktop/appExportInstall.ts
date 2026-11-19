@@ -1,6 +1,11 @@
 import { err, ok, type Result } from "../result.js";
 import type { DownloadInstall } from "./appDownloadInstall.js";
-import { withoutCredentials, withoutCredentialsIn } from "./aptRepositories.js";
+import {
+  aptRepositoryHoldsCredentials,
+  aptRepositoryReplayUri,
+  withoutCredentials,
+  withoutCredentialsIn,
+} from "./aptRepositories.js";
 import {
   DEBIAN_PACKAGE_NAME,
   dependencyPackages,
@@ -122,27 +127,26 @@ const describe = (repository: AptRepository): string =>
     ? withoutCredentialsIn(repository.source)
     : `${withoutCredentials(repository.uri)} ${[repository.suite, ...repository.components].join(" ")}`;
 
-/** A repository from a capture written before credentials were removed whose URI still holds them. */
-const heldCredentials = (repository: AptRepository): boolean =>
-  repository.uri !== null &&
-  withoutCredentials(repository.uri) !== repository.uri;
+/** Check the source, key, and replay spelling at the export boundary. */
+const repositoryReplay = (repository: AptRepository) => {
+  const replay = aptRepositoryReplayUri(repository);
+  if (!replay.ok && replay.error.kind === "credentials")
+    return err(replay.error.reason);
+  if (repository.signing_key === null)
+    return err(
+      repository.signing_key_reason ?? "its signing key was not verified",
+    );
+  if (repository.suite === null)
+    return err("no apt sources entry configures it");
+  return replay.ok ? replay : err(replay.error.reason);
+};
 
 /** Why the computer cannot install from a vendor repository, or undefined when the export can declare it. */
 export const repositoryRefusal = (
   repository: AptRepository,
 ): string | undefined => {
-  if (
-    repository.uri_credentials_removed === true ||
-    heldCredentials(repository)
-  )
-    return "its sources entry's URI held a user name or password, which REA neither records nor exports";
-  if (repository.signing_key === null)
-    return repository.signing_key_reason ?? "its signing key was not verified";
-  if (repository.uri === null || repository.suite === null)
-    return "no apt sources entry configures it";
-  return /^https?:\/\//u.test(repository.uri)
-    ? undefined
-    : "agentenv installs apt repositories over http or https only";
+  const replay = repositoryReplay(repository);
+  return replay.ok ? undefined : replay.error;
 };
 
 /**
@@ -175,20 +179,17 @@ const declaredSources = (
   const refused: string[] = [];
   const kept: AptRepository[] = [];
   for (const repository of repositories) {
-    const { uri, suite, components, signing_key: key } = repository;
-    const reason =
-      repositoryRefusal(repository) ??
-      architectureRefusal(repository, architecture);
-    if (
-      reason !== undefined ||
-      key === null ||
-      uri === null ||
-      suite === null
-    ) {
+    const { suite, components, signing_key: key } = repository;
+    const replay = repositoryReplay(repository);
+    const reason = replay.ok
+      ? architectureRefusal(repository, architecture)
+      : replay.error;
+    if (!replay.ok || reason !== undefined || key === null || suite === null) {
       refused.push(`${describe(repository)}: ${reason ?? "it is unusable"}`);
       continue;
     }
-    const id = `${uri}\n${suite}`;
+    const { uri, repoUri } = replay.value;
+    const id = `${repoUri}\n${suite}`;
     const existing = declared.get(id);
     if (existing !== undefined && existing.keySha256 !== key.sha256) {
       refused.push(
@@ -201,7 +202,7 @@ const declaredSources = (
       `apt-keys/${environment}${keyFiles.size === 0 ? "" : `-${String(keyFiles.size + 1)}`}.${key.format === "armored" ? "asc" : "gpg"}`;
     keyFiles.set(key.sha256, keyFile);
     declared.set(id, {
-      uri,
+      uri: existing?.uri ?? uri,
       suite,
       components: [
         ...new Set([...(existing?.components ?? []), ...components]),
@@ -283,7 +284,7 @@ const vendorInstall = (
   if (repositories.length === 0)
     return err({ refusal: localInstallRefusal(installed), skipped: [] });
   // Such a capture counted that repository's libraries as installable.
-  if (repositories.some(heldCredentials))
+  if (repositories.some(aptRepositoryHoldsCredentials))
     return err({
       refusal: refusal(
         "The capture recorded a user name or password in an apt repository's URI, from before REA removed them, so it cannot tell which library packages only that repository offers.",

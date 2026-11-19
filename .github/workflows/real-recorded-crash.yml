@@ -49,9 +49,22 @@ jobs:
       - name: Install fixture and debugger prerequisites in the disposable container
         shell: bash
         run: |
-          apt-get update -qq
-          apt-get install --yes --no-install-recommends \
-            ca-certificates git python3-venv gcc libc6-dev strace gdb
+          packages=(--yes --no-install-recommends ca-certificates git python3-venv gcc libc6-dev strace gdb)
+          # Fail on stale or partial indexes. Bound network acquisition
+          # separately so an interrupted download never interrupts dpkg.
+          timeout --kill-after=5s 90s \
+            apt-get -o Acquire::Retries=2 --error-on=any update -qq || {
+              status=$?
+              echo "::error::Recorded-crash APT index refresh failed (exit ${status})"
+              exit "$status"
+            }
+          timeout --kill-after=5s 180s \
+            apt-get -o Acquire::Retries=2 --download-only install "${packages[@]}" || {
+              status=$?
+              echo "::error::Recorded-crash APT package download failed (exit ${status})"
+              exit "$status"
+            }
+          apt-get --no-download install "${packages[@]}"
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0

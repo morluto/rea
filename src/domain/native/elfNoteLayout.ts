@@ -1,3 +1,4 @@
+import { BinaryReader } from "../binaryContainer.js";
 import { err, ok } from "../result.js";
 
 export const ELF_NOTE_HEADER_BYTES = 12;
@@ -26,11 +27,14 @@ export const readElfNoteHeader = (bytes: Uint8Array, littleEndian: boolean) => {
       kind: "malformed" as const,
       message: "ELF note header is truncated",
     });
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const prefix = Buffer.isBuffer(bytes)
+    ? bytes
+    : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const reader = new BinaryReader(prefix, littleEndian, "ELF note");
   return ok({
-    namesz: view.getUint32(0, littleEndian),
-    descsz: view.getUint32(4, littleEndian),
-    type: view.getUint32(8, littleEndian),
+    namesz: reader.u32(0),
+    descsz: reader.u32(4),
+    type: reader.u32(8),
   });
 };
 

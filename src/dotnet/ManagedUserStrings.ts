@@ -57,6 +57,9 @@ export const parseUserStrings = (
     (parsed.unreadableSelectedTypes ?? 0) === 0;
   const userStrings: ManagedUserString[] = [];
   const issues: ManagedParseIssue[] = [];
+  const declaration = layout.userStrings;
+  if (declaration?.issue)
+    issues.push(admitManagedProjection(declaration.issue, budget));
   const tokens = new Map<number, MetadataTokenFact>();
   try {
     // Only ldstr loads a literal; a malformed ldtoken can carry a 0x70 token.
@@ -85,7 +88,7 @@ export const parseUserStrings = (
           ),
         );
     }
-    if (references.length > 0 && layout.userStrings === null) {
+    if (references.length > 0 && declaration === null) {
       // A missing stream is one fact about the metadata, not one per token.
       issues.push(
         admitManagedProjection(
@@ -100,6 +103,9 @@ export const parseUserStrings = (
       );
       return inventory(userStrings, issues, scanned);
     }
+    if (declaration?.kind === "ambiguous")
+      return inventory(userStrings, issues, scanned);
+
     for (const reference of references) {
       const failures: ManagedParseIssue[] = [];
       readManagedValue(() => {

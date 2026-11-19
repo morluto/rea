@@ -17,6 +17,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { espFlashSelectionError } from "../../../src/domain/firmware/espFlashSelection.js";
+import { readMachoContainer } from "../../../src/domain/apple/machoLoadCommandReader.js";
 import { resolveAppleBundleExecutable } from "../../../src/application/AppBundleExecutable.js";
 import {
   dosMz,
@@ -117,6 +118,76 @@ it.each([MAX_JVM_CLASS_IDENTITY_BYTES, MAX_JVM_CLASS_IDENTITY_BYTES + 1])(
           size === MAX_JVM_CLASS_IDENTITY_BYTES
             ? "unsupported binary format"
             : JVM_CLASS_IDENTITY_LIMIT_REASON,
+      },
+    });
+  },
+);
+
+it.each([
+  { length: 32, subtype: CPU.arm64.subtype, established: true },
+  { length: 32, subtype: CPU.arm64e.subtype, established: false },
+  { length: 28, subtype: CPU.arm64.subtype, established: false },
+  { length: 1, subtype: CPU.arm64.subtype, established: false },
+  {
+    length: 32,
+    subtype: CPU.arm64e.subtype,
+    matchingSibling: true,
+    established: true,
+  },
+])(
+  "shares FAT identity evidence after the JVM scan cap (length=$length, subtype=$subtype, matching sibling=$matchingSibling)",
+  async ({ length, subtype, matchingSibling, established }) => {
+    const directory = await createTestTempDirectory("rea-fat-class-boundary-");
+    const path = join(directory, "image");
+    const sliceOffset = 4096;
+    const slices = Array.from({ length: 65 }, (_, index) => ({
+      cpu: CPU.arm64,
+      bytes:
+        index === 0
+          ? machoImage({ cpu: { ...CPU.arm64, subtype } })
+          : index === 1 && matchingSibling
+            ? machoImage({ cpu: CPU.arm64 })
+            : new Uint8Array(0),
+    }));
+    const bytes = Buffer.from(fatImage(slices));
+    const invalidRow = matchingSibling ? 2 : 1;
+    const rangeReason = `FAT architecture ${invalidRow} has an invalid slice range`;
+    bytes.writeUInt32BE(length, 20);
+    const size = MAX_JVM_CLASS_IDENTITY_BYTES + 1;
+    const handle = await open(path, "w+");
+    try {
+      await handle.write(bytes);
+      await handle.truncate(size);
+      const container = await readMachoContainer(async (offset, requested) => {
+        if (offset === sliceOffset)
+          expect(requested).toBeLessThanOrEqual(length);
+        const buffer = Buffer.alloc(requested);
+        const { bytesRead } = await handle.read(buffer, 0, requested, offset);
+        return buffer.subarray(0, bytesRead);
+      }, size);
+      expect(container).toMatchObject(
+        established
+          ? {
+              kind: "fat",
+              header: {
+                rangeIssues: expect.arrayContaining([
+                  expect.objectContaining({
+                    reason: rangeReason,
+                  }),
+                ]),
+              },
+            }
+          : { kind: "issue", reason: JVM_CLASS_IDENTITY_LIMIT_REASON },
+      );
+    } finally {
+      await handle.close();
+    }
+    expect(
+      await parseBinaryTarget(path, { hostArchitecture: "arm64" }),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        reason: established ? rangeReason : JVM_CLASS_IDENTITY_LIMIT_REASON,
       },
     });
   },
@@ -352,14 +423,16 @@ describe("binary target I/O: app plist permissions and decoding", () => {
     await writeFile(join(app, "Contents", "Info.plist"), "placeholder");
     const denied = Object.assign(new Error("denied"), { code });
     const fileSystem: NonNullable<
-      Parameters<typeof resolveAppleBundleExecutable>[1]
+      NonNullable<
+        Parameters<typeof resolveAppleBundleExecutable>[1]
+      >["fileSystem"]
     > = {
       readFile: async () => {
         throw denied;
       },
       realpath,
     };
-    const result = await resolveAppleBundleExecutable(app, fileSystem);
+    const result = await resolveAppleBundleExecutable(app, { fileSystem });
     expect(result).toMatchObject({
       ok: false,
       error: {
@@ -379,10 +452,12 @@ describe("binary target I/O: app plist permissions and decoding", () => {
     await writeFile(join(app, "Contents", "Info.plist"), "placeholder");
     const readError = Object.assign(new Error("I/O failure"), { code: "EIO" });
     const result = await resolveAppleBundleExecutable(app, {
-      readFile: async () => {
-        throw readError;
+      fileSystem: {
+        readFile: async () => {
+          throw readError;
+        },
+        realpath,
       },
-      realpath,
     });
     expect(result).toMatchObject({
       ok: false,
@@ -407,7 +482,9 @@ describe("binary target I/O: app plist permissions and decoding", () => {
       );
       const denied = Object.assign(new Error("denied"), { code });
       const fileSystem: NonNullable<
-        Parameters<typeof resolveAppleBundleExecutable>[1]
+        NonNullable<
+          Parameters<typeof resolveAppleBundleExecutable>[1]
+        >["fileSystem"]
       > = {
         readFile,
         realpath: async (path) => {
@@ -415,7 +492,7 @@ describe("binary target I/O: app plist permissions and decoding", () => {
           return realpath(path);
         },
       };
-      const result = await resolveAppleBundleExecutable(app, fileSystem);
+      const result = await resolveAppleBundleExecutable(app, { fileSystem });
       expect(result).toMatchObject({
         ok: false,
         error: {
@@ -1116,7 +1193,7 @@ describe("binary target I/O: explicit kinds and executable headers", () => {
       path,
       pe(0x8664, 64, 0x0002, false, {
         type: "RSDS",
-        pdbPath: "C:\\build\\test.pdb",
+        pdbPath: "C:\\build\\café.pdb",
         guid: "12345678-abcd-ef01-2345-6789abcdef01",
         age: 3,
       }),
@@ -1130,8 +1207,8 @@ describe("binary target I/O: explicit kinds and executable headers", () => {
       format: "pe",
       architecture: "x86_64",
       codeView: {
-        pdbPath: "C:\\build\\test.pdb",
-        pdbFileName: "test.pdb",
+        pdbPath: "C:\\build\\café.pdb",
+        pdbFileName: "café.pdb",
         guid: "12345678-abcd-ef01-2345-6789abcdef01",
         age: 3,
       },
@@ -1213,6 +1290,35 @@ describe("binary target I/O: explicit kinds and executable headers", () => {
         reason: `load command 1 at offset ${firstCommand.length} has invalid cmdsize 0`,
       },
     });
+  });
+});
+
+it("retains NB10 path bytes whose original ANSI code page is unavailable", async () => {
+  const directory = await createTestTempDirectory("rea-target-");
+  const path = join(directory, "legacy.exe");
+  await writeFile(
+    path,
+    pe(0x014c, 64, 2, false, {
+      type: "NB10",
+      // A valid UTF-8 byte sequence does not identify NB10's ANSI code page.
+      pdbPath: Buffer.from("443a5cc3a92e706462", "hex"),
+      age: 7,
+    }),
+  );
+  const result = await parseBinaryTarget(path, {
+    cwd: directory,
+    hostArchitecture: "ia32",
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value).toMatchObject({
+    format: "pe",
+    codeView: {
+      pdbPath: null,
+      pdbFileName: null,
+      pdbPathBytesHex: "443a5cc3a92e706462",
+      guid: null,
+      age: 7,
+    },
   });
 });
 
