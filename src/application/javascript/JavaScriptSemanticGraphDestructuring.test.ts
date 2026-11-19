@@ -81,6 +81,160 @@ it.each([
 );
 
 it.each([
+  [
+    "a copied slot",
+    'const items=[...["old"]];const [selected]=items;items[0]="late";',
+    ["0"],
+    "resolved",
+  ],
+  [
+    "indices after a dense spread",
+    'const items=[...["prefix"],"old"];const [,selected]=items;items[1]="late";',
+    ["1"],
+    "resolved",
+  ],
+  [
+    "nested inline spread",
+    'const items=[...[...["prefix","old"]]];const [,selected]=items;items[1]="late";',
+    ["1"],
+    "resolved",
+  ],
+  [
+    "an empty spread",
+    'const items=[...[],"old"];const [selected]=items;items[0]="late";',
+    ["0"],
+    "resolved",
+  ],
+  [
+    "an object reached after a spread",
+    'const items=[...[{mode:"a"}],{mode:"b"}];const [,{mode:selected}]=items;items[1].mode="late";',
+    ["1", "mode"],
+    "resolved",
+  ],
+  [
+    "an opaque operand",
+    'const items=[...other,"old"];const [selected]=items;items[0]="late";',
+    ["0"],
+    "candidate",
+  ],
+  [
+    "a sparse operand",
+    'const items=[...[,],"old"];const [,selected]=items;items[1]="late";',
+    ["1"],
+    "candidate",
+  ],
+  [
+    "iterator replaced during operand evaluation",
+    'const items=[...[(Object.getPrototypeOf([].values()).next=()=>({done:true}),"x")],"old"];const [selected]=items;items[0]="late";',
+    ["0"],
+    "candidate",
+  ],
+  [
+    "iterator replaced between spread and pattern",
+    'const items=[...["x"],"old"];Object.getPrototypeOf([].values()).next=()=>({done:true});const [,selected]=items;',
+    ["1"],
+    "candidate",
+  ],
+  [
+    "iterator replaced after both acquisitions",
+    'const items=[...["x"],"old"];const [,selected]=items;Object.getPrototypeOf([].values()).next=()=>({done:true});items[1]="late";',
+    ["1"],
+    "resolved",
+  ],
+] as const)(
+  "tracks %s in an array literal",
+  (_name, source, path, resolution) => {
+    const graph = graphForJavaScript(source);
+    const target = graph.nodes.find(
+      (node) => node.kind === "binding" && node.label === "selected",
+    );
+    const relation = graph.relations.find(
+      (edge) =>
+        edge.relation === "destructures" &&
+        edge.target_node_id === target?.node_id,
+    );
+    expect(relation).toMatchObject({ resolution });
+    expect(
+      graph.nodes.find((node) => node.node_id === relation?.source_node_id)
+        ?.properties.property_path,
+    ).toEqual(path);
+  },
+);
+
+it.each([
+  [
+    "an earlier call",
+    "configure();",
+    "function configure() { Array.prototype[Symbol.iterator] = function* () {}; }",
+  ],
+  [
+    "a reflected prototype alias",
+    "const proto = Object.getPrototypeOf([]); proto[Symbol.iterator] = function* () {};",
+    "",
+  ],
+  [
+    "an earlier call through a reflected alias",
+    "configure();",
+    "function configure() { const proto = Reflect.getPrototypeOf([]); proto[Symbol.iterator] = function* () {}; }",
+  ],
+  [
+    "a reflected prototype stored by spread",
+    "const protos = [...[Object.getPrototypeOf([])]]; protos[0][Symbol.iterator] = function* () {};",
+    "",
+  ],
+  [
+    "a reflected iterator prototype stored by spread",
+    "const protos = [...[Reflect.getPrototypeOf([].values())]]; Reflect.set(protos[0], 'next', () => ({ done: true }));",
+    "",
+  ],
+])(
+  "keeps the selected reference uncertain when %s replaces the spread iterator",
+  (_name, before, after) => {
+    const graph = graphForJavaScript(`
+    const source = {mode: "source"}, tail = {mode: "tail"};
+    ${before}
+    const items = [...[source], tail];
+    items[0].mode = "changed";
+    const {mode: selected} = tail;
+    ${after}
+  `);
+    const target = graph.nodes.find(
+      (node) => node.kind === "binding" && node.label === "selected",
+    );
+    expect(
+      graph.relations.find(
+        (edge) =>
+          edge.relation === "destructures" &&
+          edge.target_node_id === target?.node_id,
+      ),
+    ).toMatchObject({ resolution: "candidate" });
+  },
+);
+
+it.each([
+  [0, "a", "candidate"],
+  [0, "b", "resolved"],
+  [1, "a", "resolved"],
+  [1, "b", "candidate"],
+] as const)(
+  "retains only actual copies after an array literal write to slot %s, read of %s",
+  (index, receiver, resolution) => {
+    const graph = graphForJavaScript(
+      `const a={mode:"a"},b={mode:"b"};const items=[...[a],b];items[${index}].mode="changed";const {mode:selected}=${receiver};`,
+    );
+    const target = graph.nodes.find(
+      (node) => node.kind === "binding" && node.label === "selected",
+    );
+    const relation = graph.relations.find(
+      (edge) =>
+        edge.relation === "destructures" &&
+        edge.target_node_id === target?.node_id,
+    );
+    expect(relation).toMatchObject({ resolution });
+  },
+);
+
+it.each([
   "const { mode: selected, fallback = 0 } = config;",
   'const { mode: selected, ["fallback"]: later } = config;',
   "const { mode: selected, nested: { fallback = 0 } } = config;",

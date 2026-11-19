@@ -48,8 +48,8 @@ import {
   isIntrinsicGlobalReference,
 } from "./javascriptSemanticGlobalReference.js";
 import { readSemanticRequireLoader } from "./javascriptSemanticRequireOriginSlot.js";
+import { semanticArrayIteratorPrototypePath } from "./javascriptSemanticArrayLayout.js";
 import {
-  semanticArrayIteratorPrototypePath,
   semanticReferenceIterationUnknown,
   semanticReferenceSourcesInactive,
 } from "./javascriptSemanticReferenceSources.js";

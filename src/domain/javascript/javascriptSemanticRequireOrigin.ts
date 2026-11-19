@@ -1138,7 +1138,7 @@ const loaderObjectPropertySources = (
   return semanticAliasSelectionChoices(key).flatMap((choice) =>
     (t.isObjectExpression(object)
       ? semanticObjectPropertyReferences(object, [choice], state)
-      : semanticArrayPropertyReferences(object, [choice])
+      : semanticArrayPropertyReferences(object, [choice], state)
     )
       .filter(
         (source) =>

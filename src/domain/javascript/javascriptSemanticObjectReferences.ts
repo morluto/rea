@@ -15,6 +15,7 @@ import {
   type JavaScriptSemanticPropertyPath as PropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
+import { semanticArrayLiteralLayout } from "./javascriptSemanticArrayLayout.js";
 import {
   SemanticGetterQuery,
   type GetterQueryJob,
@@ -854,6 +855,7 @@ const objectExpressionDefinedKeys = (
 export const semanticArrayPropertyReferences = (
   node: t.ArrayExpression,
   path: PropertyPath,
+  state?: JavaScriptSemanticAnalysisState,
 ): readonly JavaScriptSemanticObjectReference[] => {
   const [key, ...remaining] = path;
   const selected = key ?? null;
@@ -863,8 +865,8 @@ export const semanticArrayPropertyReferences = (
   const references: JavaScriptSemanticObjectReference[] = [];
   let minimumIndex = 0;
   let uncertainIndex = false;
-  for (const element of node.elements) {
-    if (t.isSpreadElement(element)) {
+  for (const part of semanticArrayLiteralLayout(node, state)) {
+    if (part.kind === "opaque-spread") {
       if (selectedIndex === null || selectedIndex >= minimumIndex) {
         let sourceKey: PropertyPath[number] = null;
         if (!uncertainIndex) {
@@ -884,15 +886,16 @@ export const semanticArrayPropertyReferences = (
             };
         }
         references.push({
-          node: element.argument,
+          node: part.argument,
           path: [sourceKey, ...remaining],
-          capturedSelectionAt: element.argument,
+          capturedSelectionAt: part.argument,
           iterableFallbackPath: [],
         });
       }
       uncertainIndex = true;
       continue;
     }
+    const { element } = part;
     if (
       element !== null &&
       (uncertainIndex
@@ -909,13 +912,14 @@ export const semanticArrayPropertyReferences = (
 export const semanticNativePrototypeChain = (
   node: t.ObjectExpression | t.ArrayExpression,
   key: PropertyPath[number],
+  state?: JavaScriptSemanticAnalysisState,
 ): readonly ("Object" | "Array")[] => {
   const exact =
     key !== null && typeof key !== "object" ? String(key) : undefined;
   if (t.isArrayExpression(node)) {
     if (exact === "length") return [];
     if (exact !== undefined) {
-      const sources = semanticArrayPropertyReferences(node, [exact]);
+      const sources = semanticArrayPropertyReferences(node, [exact], state);
       if (
         sources.length > 0 &&
         sources.every((source) => source.capturedSelectionAt === undefined)
