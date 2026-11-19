@@ -190,11 +190,18 @@ export function selectedReleaseNotes(text, version) {
 function proseBullets(text) {
   let fence;
   return text.split("\n").filter((line) => {
-    const marker = /^\s*(`{3,}|~{3,})/u.exec(line)?.[1];
+    const marker = /^ {0,3}(`{3,}|~{3,})([^\r]*)(?:\r)?$/u.exec(line);
     if (marker) {
-      if (!fence) fence = marker;
-      else if (marker[0] === fence[0] && marker.length >= fence.length)
+      const [, run, rest] = marker;
+      if (!fence) {
+        if (run[0] === "~" || !rest.includes("`")) fence = run;
+      } else if (
+        run[0] === fence[0] &&
+        run.length >= fence.length &&
+        /^[ \t]*$/u.test(rest)
+      ) {
         fence = undefined;
+      }
       return false;
     }
     return !fence && /^[-*] /u.test(line);

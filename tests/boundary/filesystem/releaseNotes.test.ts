@@ -770,3 +770,27 @@ it.each(pluginMarketplaces)(
     });
   },
 );
+
+it("keeps release credit examples inside Markdown fences until a valid closer", async () => {
+  const f = await fixture();
+  const example = [
+    "~~~markdown",
+    "~~~not a closing fence",
+    "- Example issue #999.",
+    "~~~~",
+    "",
+  ].join("\n");
+  const notes = f.notes.replace("### Changes\n", `### Changes\n\n${example}`);
+  await writeFile(join(f.directory, "CHANGELOG.md"), notes);
+  await f.invoke(["check", "--manifest", f.manifest]);
+
+  await writeFile(
+    join(f.directory, "CHANGELOG.md"),
+    notes.replace("~~~~\n", "~~~~\n\n- Real issue #999.\n"),
+  );
+  await expect(
+    f.invoke(["check", "--manifest", f.manifest]),
+  ).rejects.toMatchObject({
+    stderr: expect.stringContaining("Unknown release reference #999"),
+  });
+});
