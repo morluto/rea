@@ -54,6 +54,7 @@ export interface FakeKunaBehavior {
   /** Extra C comment bytes inside each exported body, for buffered-read capacity. */
   readonly cPadding?: number;
   readonly decompile?: "ok" | "hang";
+  readonly standaloneFunctions?: readonly FakeKunaFunction[];
   /** Hold successful work until releaseFakeKunaCommand acknowledges the test phase. */
   readonly gatedCommands?: readonly ("decompile" | "decompile-project")[];
   /** Milliseconds one `decompile --addr` run takes before printing. */
@@ -81,6 +82,17 @@ export interface FakeKunaBehavior {
   readonly pointerAliasReferences?: boolean;
   /** Additional exact-target incoming call-site addresses. */
   readonly extraXrefSources?: readonly number[];
+  readonly incomingRows?: Readonly<
+    Record<
+      string,
+      readonly {
+        readonly from: number;
+        readonly caller: number;
+        readonly kind: "call" | "data";
+        readonly instruction: string;
+      }[]
+    >
+  >;
   readonly referenceDelayMs?: number;
   readonly referencePadding?: number;
   /** `invalid-then-hang` writes a contradictory first row, then never finishes. */
@@ -173,7 +185,13 @@ if (args[0] === "--version") {
     const identity = (name, value) => ({ name, address: value, address_hex: "0x" + value.toString(16) });
     const aliases = target === "0x2000" ? [identity("puts.slot", 12288)] : [];
     const row = (from, to, kind) => ({ address: from, address_hex: "0x" + from.toString(16), from_address: from, from_address_hex: "0x" + from.toString(16), to_address: to, to_address_hex: "0x" + to.toString(16), kind, from_function: identity("main", 4096), to_function: null, instruction: "fixture reference" + "x".repeat(behavior.referencePadding ?? 0) });
-    const rows = [4100, ...(behavior.extraXrefSources ?? [])].map((source) => row(source, parseInt(target, 16), "call"));
+    const rows = behavior.incomingRows === undefined
+      ? [4100, ...(behavior.extraXrefSources ?? [])].map((source) => row(source, parseInt(target, 16), "call"))
+      : (behavior.incomingRows[target] ?? []).map(({ from, caller, kind, instruction }) => ({
+          ...row(from, parseInt(target, 16), kind),
+          from_function: identity("main", caller),
+          instruction,
+        }));
     if (aliases.length) rows.push(row(4164, 12288, "call"));
     const pointer = (from, to) => ({ kind: "pointer", from_address: from, from_address_hex: "0x" + from.toString(16), from_name: null, to_address: to, to_address_hex: "0x" + to.toString(16), to_name: null, width: 8, source: "dynamic-relocations" });
     const pointers = behavior.pointerAliasReferences ? [pointer(4352, parseInt(target, 16)), pointer(4368, 12288)] : undefined;
@@ -210,7 +228,7 @@ if (args[0] === "--version") {
   }, behavior.delayMs ?? 0));
 } else if (args[0] === "decompile") {
   // decompile <input> <0xaddr> --addr: the single-function path.
-  const fn = functions.find((candidate) => candidate.addr === args[2]);
+  const fn = (behavior.standaloneFunctions ?? functions).find((candidate) => candidate.addr === args[2]);
   if (behavior.decompile === "hang") hang();
   else if (fn === undefined) { process.stderr.write("error: no function at " + args[2] + "\n"); process.exit(1); }
   else whenReleased("decompile", () => setTimeout(() => {
