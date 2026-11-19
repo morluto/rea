@@ -81,11 +81,15 @@ it.each([
   },
 );
 describe("native UI screenshot validation", () => {
-  it.each([24, 32, "crc"])(
+  it.each([24, 32, "crc", "invalid filter"])(
     "rejects incomplete or corrupt IHDR despite matching native digest: %s",
     async (kind) => {
       const bytes = Buffer.from(validPng);
       if (kind === "crc") bytes[29] = (bytes[29] ?? 0) ^ 1;
+      if (kind === "invalid filter") {
+        bytes[27] = 1;
+        bytes.writeUInt32BE(crc32(bytes.subarray(12, 29)), 29);
+      }
       const payload =
         typeof kind === "number" ? bytes.subarray(0, kind) : bytes;
       expect((await observeWithScreenshot(screenshotOf(payload))).ok).toBe(
