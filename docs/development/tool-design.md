@@ -278,6 +278,9 @@ normalized lookup value. Verify both operations with the same authored inputs
 and independently specified expectations. See [boundary regressions](testing.md#boundary-regressions).
 
 Give each nested parser the admitted extent of its containing record.
+Check a child's declared encoded range against that extent before applying
+its decoding allowance. When the range cannot fit, report the format failure
+even if the declared decoded size would also exceed a budget.
 Retain the source offset and the reason when a field is malformed or its
 encoding is unsupported. A stream may need more bytes to complete a frame.
 A completed artifact with the same missing bytes has truncated data. Carry
@@ -345,7 +348,10 @@ A byte-format parser reports failure with `ParseFailureError` from
 fields through `BinaryReader` (`src/domain/binaryContainer.ts`), which
 raises that failure instead of a bare `RangeError`. Providers project the
 failure with `parseFailureAnalysisError` rather than their own `instanceof`
-ladder; a `limit` stays with its producer, which knows the budget to name.
+ladder. The producing reader identifies the named limit and effective maximum.
+Use those facts for the public refusal and recovery. When decoding stops before
+the reader can measure the final allowance, report the bound that actually
+stopped it.
 
 For retained managed metadata rows, use `metadataRowCursor` in
 `src/domain/managed/managedMetadataHeaps.ts`. Its column reads use
