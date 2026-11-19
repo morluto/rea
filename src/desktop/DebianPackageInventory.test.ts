@@ -1113,40 +1113,6 @@ describe.skipIf(process.platform === "win32")("desktop entry package", () => {
     },
   );
 
-  it("keeps exact executable ownership and stops on an undecodable first spelling", async () => {
-    const { root, runQuery, inspect } = await writerFixture();
-    const selected = join(root, "bin/libreoffice");
-    const aliasName = "damaged-�";
-    const alias = join(root, "bin", aliasName);
-    await symlink(selected, alias);
-    const raw = mixedDpkgOwnershipStdout(selected, alias);
-    const queried: string[] = [];
-    const run: QueryRunner = async (command, argv, signal, options) => {
-      if (command !== "dpkg-query" || argv[0] !== "-S")
-        return runQuery(command, argv, signal, options);
-      queried.push(...argv.slice(1));
-      return {
-        stdout: raw.toString("utf8"),
-        ...(options?.preserveStdoutBytes ? { stdoutBuffer: raw } : {}),
-        exitCode: 1,
-      };
-    };
-
-    const owned = await inspect({ executable: "libreoffice" }, { run });
-    expect(owned.installed).toMatchObject({
-      kind: "deb",
-      name: "actual-owner",
-    });
-    expect(queried.splice(0)).toEqual([selected]);
-
-    const unknown = await inspect({ executable: aliasName }, { run });
-    expect(unknown.installed).toMatchObject({ kind: "unknown", name: null });
-    expect(unknown.limitations).toContain(
-      `dpkg-query returned unreadable ownership records for ${alias}, so the package that owns the executable is unknown.`,
-    );
-    expect(queried).toEqual([alias]);
-  });
-
   it("keeps the program's package for an executable launch and an entry no package owns", async () => {
     const { inspect } = await writerFixture();
 
@@ -1181,6 +1147,43 @@ describe.skipIf(process.platform === "win32")("desktop entry package", () => {
     });
   });
 });
+
+it.skipIf(process.platform === "win32")(
+  "keeps exact executable ownership and stops on an undecodable first spelling",
+  async () => {
+    const { root, runQuery, inspect } = await writerFixture();
+    const selected = join(root, "bin/libreoffice");
+    const aliasName = "damaged-�";
+    const alias = join(root, "bin", aliasName);
+    await symlink(selected, alias);
+    const raw = mixedDpkgOwnershipStdout(selected, alias);
+    const queried: string[] = [];
+    const run: QueryRunner = async (command, argv, signal, options) => {
+      if (command !== "dpkg-query" || argv[0] !== "-S")
+        return runQuery(command, argv, signal, options);
+      queried.push(...argv.slice(1));
+      return {
+        stdout: raw.toString("utf8"),
+        ...(options?.preserveStdoutBytes ? { stdoutBuffer: raw } : {}),
+        exitCode: 1,
+      };
+    };
+
+    const owned = await inspect({ executable: "libreoffice" }, { run });
+    expect(owned.installed).toMatchObject({
+      kind: "deb",
+      name: "actual-owner",
+    });
+    expect(queried.splice(0)).toEqual([selected]);
+
+    const unknown = await inspect({ executable: aliasName }, { run });
+    expect(unknown.installed).toMatchObject({ kind: "unknown", name: null });
+    expect(unknown.limitations).toContain(
+      `dpkg-query returned unreadable ownership records for ${alias}, so the package that owns the executable is unknown.`,
+    );
+    expect(queried).toEqual([alias]);
+  },
+);
 
 describe.skipIf(process.platform === "win32")(
   "desktop entry program ownership",
