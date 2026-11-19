@@ -3489,6 +3489,141 @@ const comparedTokens = (
     ),
   ].sort();
 
+describe("historical managed definition names", () => {
+  const archived = (
+    mvidByte: number,
+    missing: "TypeDef" | "MethodDef" | null,
+  ) => {
+    const side = inspect(
+      buildManagedPeFixture({
+        mvid: Buffer.alloc(16, mvidByte),
+        ...(missing === null ? { typeNamespace: "" } : {}),
+      }),
+      `/fixture/archive-${String(mvidByte)}.dll`,
+    );
+    const { result } = side;
+    // Recreate the facts persisted by the old parser. The current parser
+    // refuses those names, so asking it to produce them would miss replay.
+    const historical = {
+      ...result,
+      types:
+        missing === "TypeDef"
+          ? result.types.map((row) => ({
+              ...row,
+              name: "",
+              full_name: "Fixture.",
+              name_sha256:
+                "dbf9451565745937fb93b7371d62c715b3c10ab1e76f6a2c2b7c8ee877d6f4b7",
+            }))
+          : result.types,
+      methods: result.methods.map((row) => ({
+        ...row,
+        ...(missing === "TypeDef" ? { declaring_type: "Fixture." } : {}),
+        ...(missing === "MethodDef" ? { name: "" } : {}),
+      })),
+    };
+    return {
+      ...side,
+      result: managedMemberInspectionSchema.parse(historical),
+    };
+  };
+
+  it.each(["TypeDef", "MethodDef"] as const)(
+    "keeps a recorded empty %s name from establishing cross-build identity",
+    (missing) => {
+      const left = archived(0x11, missing);
+      const right = archived(0x22, missing);
+      const source = JSON.stringify(left.result);
+      const comparison = compareManagedMembers(left, right);
+
+      expect(comparison.coverage).toEqual({
+        status: "partial",
+        left_status: "complete",
+        right_status: "complete",
+      });
+      expect(
+        comparison.methods.map(({ status, match }) => [status, match.basis]),
+      ).toEqual([
+        ["unknown", "none"],
+        ["unknown", "none"],
+      ]);
+      expect(comparison.left).toMatchObject({
+        metadata_status: "complete",
+        methods_total: 1,
+      });
+      expect(JSON.stringify(left.result)).toBe(source);
+    },
+  );
+
+  it("keeps archived unqualified type names comparable when the namespace is empty", () => {
+    const comparison = compareManagedMembers(
+      archived(0x11, null),
+      archived(0x22, null),
+    );
+    expect(comparison.coverage.status).toBe("complete-within-inputs");
+    expect(comparison.methods).toEqual([
+      expect.objectContaining({ status: "unchanged" }),
+    ]);
+  });
+
+  it("discards historical nominal digests that include a recorded empty enclosing name", () => {
+    const archive = (path: string, mvidByte: number) => {
+      const bytes = buildManagedNestedTypeFixture();
+      const pe = readManagedPeLayout(bytes);
+      if (pe.cli === null) throw new Error("Fixture omitted CLI metadata");
+      const { rva, size } = pe.cli.metadata;
+      const layout = readManagedMetadataLayout(
+        bytes,
+        pe.rvaToOffset(rva, size, "fixture"),
+        size,
+      );
+      if (layout.guid.kind !== "available")
+        throw new Error("Fixture omitted #GUID");
+      bytes.fill(
+        mvidByte,
+        layout.guid.stream.offset,
+        layout.guid.stream.offset + 16,
+      );
+      const source = inspect(bytes, path);
+      const types = source.result.types.map((row) =>
+        row.token === "0x02000002"
+          ? { ...row, name: "", full_name: "Fixture." }
+          : row,
+      );
+      const methods = source.result.methods.map((row) =>
+        row.token === "0x06000002" ? { ...row, name: "KnownSibling" } : row,
+      );
+      return {
+        ...source,
+        result: managedMemberInspectionSchema.parse({
+          ...source.result,
+          types,
+          methods,
+        }),
+      };
+    };
+    const comparison = compareManagedMembers(
+      archive("/fixture/archive-enclosing-left.dll", 0x11),
+      archive("/fixture/archive-enclosing-right.dll", 0x22),
+    );
+    expect(
+      comparison.methods
+        .filter(({ match }) => match.status === "matched")
+        .map(({ left }) => left?.token),
+    ).toEqual(["0x06000002"]);
+    expect(comparison.methods).toContainEqual(
+      expect.objectContaining({
+        status: "unknown",
+        match: expect.objectContaining({
+          status: "ambiguous",
+          candidate_left_tokens: ["0x06000001", "0x06000003"],
+          candidate_right_tokens: ["0x06000001", "0x06000003"],
+        }),
+      }),
+    );
+  });
+});
+
 const inspect = (bytes: Buffer, path: string, typeNames?: string[]) => {
   const target = managedPeFixtureTarget(bytes, path);
   const result = inspectManagedMembersBytes(
