@@ -841,6 +841,7 @@
 * **source-maps:** report decoder failures through ParseFailure ([#10690](https://github.com/morluto/rea/issues/10690)) ([133e776](https://github.com/morluto/rea/commit/133e7762b618900b65512fe9237029ef03f6346f))
 * **sqlite:** classify database failures through the shared provider classifier ([#10870](https://github.com/morluto/rea/issues/10870)) ([c966d6f](https://github.com/morluto/rea/commit/c966d6f49a15b73c6253899af8a5a927250df0ab))
 * **sqlite:** classify worker-reply read failures through the shared provider classifier ([#10849](https://github.com/morluto/rea/issues/10849)) ([382ad03](https://github.com/morluto/rea/commit/382ad0343f111dbf968f6ed2f6e2547c6c9b3a70))
+* **targets:** share the resolved target format vocabulary ([#12165](https://github.com/morluto/rea/issues/12165)) ([10309f9](https://github.com/morluto/rea/commit/10309f9c69d6a1b9c3d9d0d50bb46f71c9392285))
 * **verify:** count plain throws in parser-folder process-lifecycle owners ([#11071](https://github.com/morluto/rea/issues/11071)) ([1b8dc20](https://github.com/morluto/rea/commit/1b8dc202d16cf222b9d96e3b843cb30502b1472c))
 * **verify:** give seven verifier directories' fixture roots to VerifierFixture ([#11055](https://github.com/morluto/rea/issues/11055)) ([c0dd084](https://github.com/morluto/rea/commit/c0dd0843769560975bade4001e3661089c060392))
 * **verify:** give the Apple verifiers' fixture roots to VerifierFixture ([#11024](https://github.com/morluto/rea/issues/11024)) ([53f1b62](https://github.com/morluto/rea/commit/53f1b626e64338b881843f2ce51435223d9d757d))
