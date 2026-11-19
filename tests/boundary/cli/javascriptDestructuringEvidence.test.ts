@@ -37,6 +37,12 @@ const arrayPrototypeAliasSource = `
   pairs[0][0] = "later";
   `;
 
+const abruptObjectPatternSource = `
+  const box = { first: [0], empty: null, sibling: ["before"] };
+  const { first: [used], empty: {}, sibling: [unreachedSibling] } = box;
+  box.sibling[0] = "later";
+`;
+
 const expectedDependencies = [
   ["declared", ["a"]],
   ["a", ["a"]],
@@ -49,6 +55,8 @@ const expectedDependencies = [
   ["projected", ["items", "0"]],
   ["arrayObject", ["0", "mode"]],
   ["nestedElement", ["items", "0"]],
+  ["siblingObjectElement", ["sibling", "0"]],
+  ["unreachedSibling", ["sibling", "0"], "candidate"],
   ["innerElement", ["0", "0"]],
   ["siblingInnerElement", ["1", "0"]],
   ["spreadElement", ["1"]],
@@ -72,6 +80,8 @@ const tracedBindings = [
   "projected",
   "arrayObject",
   "nestedElement",
+  "siblingObjectElement",
+  "unreachedSibling",
   "innerElement",
   "siblingInnerElement",
   "spreadElement",
@@ -123,9 +133,10 @@ cliTest(
     const nestedArray = [{ mode: "read-time" }];
     const [{ mode: arrayObject }] = nestedArray;
     nestedArray[0].mode = "later";
-    const nestedSource = { items: ["nested"] };
-    const { items: [nestedElement] } = nestedSource;
+    const nestedSource = { items: ["nested"], empty: 0, sibling: ["sibling"] };
+    const { items: [nestedElement], empty: {}, sibling: [siblingObjectElement] } = nestedSource;
     nestedSource.items[0] = "later";
+    nestedSource.sibling[0] = "later";
     const nestedPairs = [["read-time"], ["sibling"]];
     const [[innerElement], [siblingInnerElement]] = nestedPairs;
     nestedPairs[0][0] = "later";
@@ -148,6 +159,10 @@ cliTest(
     await writeFile(
       join(root, "array-prototype-alias.js"),
       arrayPrototypeAliasSource,
+    );
+    await writeFile(
+      join(root, "abrupt-object-pattern.js"),
+      abruptObjectPatternSource,
     );
     const output = await cli.run({
       arguments: ["analyze-javascript-application", root, "--json"],
@@ -215,9 +230,10 @@ cliTest(
         },
       };
       if (
-        name === "selected" ||
-        name === "afterClose" ||
-        name === "aliasedPrototypeElement"
+        expectedDependencies.some(
+          ([binding, , resolution]) =>
+            binding === name && resolution === "candidate",
+        )
       )
         expect(trace.json).not.toMatchObject(relation);
       else expect(trace.json).toMatchObject(relation);
