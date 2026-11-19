@@ -47,7 +47,7 @@ export const readPeResourceEntryFacts = (bytes: Buffer) => {
 
 /** Observe the length only; callers admit decoded-name costs before reading or decoding payload. */
 export const readPeResourceNameFacts = (bytes: Buffer) => {
-  const utf16Units = bytes.readUInt16LE(0);
+  const utf16Units = new BinaryReader(bytes, true, "pe").u16(0);
   return { utf16Units, payloadBytes: utf16Units * 2 };
 };
 

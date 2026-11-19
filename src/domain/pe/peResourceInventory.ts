@@ -134,8 +134,8 @@ export const parsePeResources = async (
     const { utf16Units, payloadBytes: length } = readPeResourceNameFacts(
       bytes.subarray(start, start + PE_RESOURCE_NAME_PREFIX_BYTES),
     );
-    reserveDecodedName(utf16Units);
     relative(at, PE_RESOURCE_NAME_PREFIX_BYTES + length);
+    reserveDecodedName(utf16Units);
     const raw = bytes.subarray(
       start + PE_RESOURCE_NAME_PREFIX_BYTES,
       start + PE_RESOURCE_NAME_PREFIX_BYTES + length,
