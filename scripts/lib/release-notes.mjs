@@ -192,11 +192,12 @@ function bulletCredits(parts, repository) {
   let localProse = "";
   for (const { text, href } of parts) {
     prose += text;
-    if (href) links.push(href);
+    const target = href?.split(/[?#]/u, 1)[0]?.replace(/\/$/u, "");
     const reference =
       /^https:\/\/github\.com\/([^/]+\/[^/]+)\/(?:pull|issues)\/(\d+)$/u.exec(
-        href ?? "",
+        target ?? "",
       );
+    if (href) links.push(reference && target ? target : href);
     if (reference) {
       // Use the destination's repository and number instead of its display label.
       if (reference[1].toLowerCase() === repository.toLowerCase())
