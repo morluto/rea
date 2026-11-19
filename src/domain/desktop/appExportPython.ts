@@ -7,6 +7,12 @@ import {
 import { PYTHON_JSON_READER } from "./appExportPythonJson.js";
 import { PYTHON_XML_READER } from "./appExportPythonXml.js";
 import { PYTHON_ZIP_HELPERS } from "./appExportPythonZip.js";
+import {
+  DESKTOP_LINE_BREAK,
+  KEYFILE_CONTROL_LINE,
+  KEYFILE_ENTRY_LINE,
+  PYTHON_ECMASCRIPT_TRIM_CHARACTERS,
+} from "./desktopTextSyntax.js";
 
 /** The generated module's imports. */
 /** The class method that holds readiness until the app's own window shows, not a splash screen with its class. */
@@ -77,8 +83,10 @@ def _opens_element(text: str) -> bool:
         elif character == ">":
             return XML_ELEMENT_OPENING.match(text[index + 1:].lstrip()) is not None
     return False
-GROUP_HEADER = re.compile(r"^\[([^\]]+)\]$")
-LINE_BREAK = re.compile(r"\r?\n")
+KEYFILE_CONTROL_LINE = re.compile(${JSON.stringify(KEYFILE_CONTROL_LINE)})
+KEYFILE_ENTRY_LINE = re.compile(${JSON.stringify(KEYFILE_ENTRY_LINE)})
+LINE_BREAK = re.compile(${JSON.stringify(DESKTOP_LINE_BREAK)})
+ECMASCRIPT_TRIM_CHARACTERS = ${PYTHON_ECMASCRIPT_TRIM_CHARACTERS}
 SQLITE_HEADER = b"SQLite format 3\x00"
 GVDB_HEADER = b"GVariant"
 ZIP_HEADER = b"PK\x03\x04"
@@ -332,16 +340,16 @@ def _text(text: str) -> dict:
 
 def _keyfile_line(raw: str) -> tuple:
     """A key file line as REA reads it: skip (blank or comment), group, entry or other."""
-    line = raw.strip()
-    if not line or line[0] in "#;":
-        return ("skip",)
-    header = GROUP_HEADER.match(line)
-    if header:
-        return ("group", header.group(1))
-    key, equals, value = raw.partition("=")
-    key = key.strip()
-    # Only ASCII space and tab immediately after '=' are padding.
-    return ("entry", key, value.lstrip(" \t")) if equals and key else ("other",)
+    control = KEYFILE_CONTROL_LINE.fullmatch(raw.strip(ECMASCRIPT_TRIM_CHARACTERS))
+    if control is not None:
+        name = control.group(1)
+        return ("skip",) if name is None else ("group", name)
+    entry = KEYFILE_ENTRY_LINE.fullmatch(raw)
+    if entry is not None:
+        key = entry.group(1).strip(ECMASCRIPT_TRIM_CHARACTERS)
+        if key:
+            return ("entry", key, entry.group(2))
+    return ("other",)
 
 
 def _each_line(text: str):
@@ -367,7 +375,7 @@ def _is_keyfile(text: str) -> bool:
 
 def _keyfile(text: str) -> dict:
     groups, group = {}, ""
-    for line in map(_keyfile_line, LINE_BREAK.split(text)):
+    for line in map(_keyfile_line, _each_line(text)):
         if line[0] == "group":
             group = line[1]
             groups.setdefault(group, {})
@@ -383,7 +391,7 @@ ${PYTHON_JSON_READER}
 def _text_view(name: str, text: str, size: int) -> dict:
     """The format REA's state view detects for decoded text of size bytes, and its view; a JSON or key file over the
     parsed-view limit is refused before its value is built."""
-    trimmed = re.sub(r"^[\s﻿]+", "", text)
+    trimmed = text.lstrip(ECMASCRIPT_TRIM_CHARACTERS)
     if name.lower().endswith(".json") or trimmed[:1] in ("[", "{"):
         view = _json_view(text, size)
         if view is not None:

@@ -29,7 +29,6 @@ import {
 } from "../../../src/domain/desktop/appExportPython.js";
 import {
   detectStateFormat,
-  keyfileView,
   textSyntaxFormat,
   textualView,
 } from "../../../src/domain/desktop/stateFormats.js";
@@ -803,29 +802,43 @@ with sqlite3.connect(":memory:") as db:
   });
 });
 
-it("keeps the same keyfile whitespace as the retained state view", async () => {
-  const inputs = [
-    "[ui]\nsuffix=hello \nunicode=\u00a0hello\u00a0\npadded=   hello\n",
-    "[ui]\r\nsuffix=hello  \r\nunicode=\u00a0hello\u00a0\u00a0\r\npadded=\thello\r\n",
-  ];
-  const imports = PYTHON_IMPORTS.split("\n")
-    .filter((line) => !line.includes("agentenv_protocol"))
-    .join("\n");
-  const program = `${imports}${PYTHON_HELPERS}
-print(json.dumps([_text_view("settings.ini", text, len(text.encode()))["view"]["groups"] for text in json.load(sys.stdin)]))
-`;
-  const root = await createTestTempDirectory("rea-keyfile-python-");
-  const script = join(root, "fixture.py");
-  await writeFile(script, program, "utf8");
-  const output = execFileSync(
-    process.platform === "win32" ? "python" : "python3",
-    ["-I", "-B", "-X", "utf8", script],
+it("agrees on keyfile whitespace in both state readers", () => {
+  const files = [
+    ["settings.ini", "[ui]\n\u0085\nzoom=2\n"],
+    ["settings.ini", "[ui]\n\ufeffzoom=2\n"],
+    [
+      "settings.ini",
+      "[ui]\r\nsuffix=hello  \r\nunicode=\u00a0hello\u00a0\u00a0\r\npadded=\thello\r\n",
+    ],
+  ] as const;
+  const expected = [
     {
-      input: JSON.stringify(inputs),
-      encoding: "utf8",
+      format: "text",
+      view: {
+        lines: ["[ui]", "\u0085", "zoom=2"],
+        line_count: 3,
+        truncated: false,
+      },
+      error: null,
     },
-  );
-  expect(JSON.parse(output)).toEqual(inputs.map(keyfileView));
+    { format: "keyfile", view: { groups: { ui: { zoom: "2" } } }, error: null },
+    {
+      format: "keyfile",
+      view: {
+        groups: {
+          ui: {
+            suffix: "hello  ",
+            unicode: "\u00a0hello\u00a0\u00a0",
+            padded: "hello",
+          },
+        },
+      },
+      error: null,
+    },
+  ];
+  const { python, rea } = textViews(files);
+  expect(rea).toEqual(expected);
+  expect(python).toEqual(expected);
 });
 
 const hasPydantic2 =
