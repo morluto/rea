@@ -405,7 +405,7 @@ export const learnIds = (
   );
 
 /** A live identifier as the environment's value, in its own type; unchanged when unmapped. */
-export const translateScalarId = (
+const translateScalarId = (
   value: JsonValue,
   map: IdMap,
   scope?: string,

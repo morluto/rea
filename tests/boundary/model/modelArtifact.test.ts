@@ -9,8 +9,8 @@ import {
   MODEL_JSON_NESTING,
   MODEL_METADATA_NESTING,
   MODEL_REPORT_BYTES,
-  modelCapacityRemediation,
-  modelCapacityReportedLimits,
+  modelCapacityConstraint,
+  modelCapacityFailure,
 } from "../../../src/model/ModelFormat.js";
 import { readSafetensorsHeader } from "../../../src/model/SafetensorsHeader.js";
 import { ParseFailureError } from "../../../src/domain/parseFailure.js";
@@ -946,36 +946,50 @@ it.each([
   },
 );
 
-it("chooses model recovery from the producing limit", () => {
-  const header = modelCapacityRemediation("header-bytes");
-  expect(header).toContain("100,000,000 bytes");
-  expect(header).not.toContain("Safetensors");
-  expect(header).not.toContain(String(MODEL_REPORT_BYTES));
-  const report = modelCapacityRemediation("report-bytes");
-  expect(report).toContain(`report allowance is ${String(MODEL_REPORT_BYTES)}`);
-  expect(report).not.toContain("representation");
-  const representation = modelCapacityRemediation("representation-bytes");
-  expect(representation).toContain("representation allowance");
-  expect(representation).not.toContain("report allowance");
-  const offset = modelCapacityRemediation("exact-offset");
-  expect(offset).toContain(String(Number.MAX_SAFE_INTEGER));
-  expect(offset).not.toContain(String(MODEL_REPORT_BYTES));
-  const nesting = modelCapacityRemediation("metadata-nesting");
-  expect(nesting).toContain(`${String(MODEL_METADATA_NESTING)} array frames`);
-  expect(nesting).not.toContain(String(MODEL_REPORT_BYTES));
-  const jsonNesting = modelCapacityRemediation("json-nesting");
-  expect(jsonNesting).toContain(`${String(MODEL_JSON_NESTING)} levels`);
-  expect(jsonNesting).not.toContain(String(MODEL_REPORT_BYTES));
-  expect(modelCapacityReportedLimits("report-bytes")).toEqual({
-    maximum_report_bytes: MODEL_REPORT_BYTES,
-  });
-  expect(modelCapacityReportedLimits("exact-offset")).toEqual({
-    maximum_exact_offset: Number.MAX_SAFE_INTEGER,
-  });
-  expect(modelCapacityReportedLimits("json-nesting")).toEqual({
-    maximum_json_depth: MODEL_JSON_NESTING,
-  });
-});
+it.each([
+  [
+    "header-bytes",
+    { maximum_header_bytes: 100_000_000 },
+    "header allowance is 100,000,000 bytes",
+  ],
+  [
+    "report-bytes",
+    { maximum_report_bytes: MODEL_REPORT_BYTES },
+    `report allowance is ${String(MODEL_REPORT_BYTES)} bytes`,
+  ],
+  [
+    "representation-bytes",
+    { maximum_representation_bytes: MODEL_REPORT_BYTES },
+    `representation allowance is ${String(MODEL_REPORT_BYTES)} bytes`,
+  ],
+  [
+    "exact-offset",
+    { maximum_exact_offset: Number.MAX_SAFE_INTEGER },
+    `offset precision stops at ${String(Number.MAX_SAFE_INTEGER)}`,
+  ],
+  [
+    "metadata-nesting",
+    { maximum_array_frames: MODEL_METADATA_NESTING },
+    `GGUF metadata nesting is limited to ${String(MODEL_METADATA_NESTING)} array frames`,
+  ],
+  [
+    "json-nesting",
+    { maximum_json_depth: MODEL_JSON_NESTING },
+    `Safetensors JSON nesting is limited to ${String(MODEL_JSON_NESTING)} levels`,
+  ],
+] as const)(
+  "projects legacy fields and recovery for %s",
+  (limit, reportedLimits, remediation) => {
+    const cause = modelCapacityFailure(limit, "Model allowance exhausted");
+    const error = modelCapacityConstraint("inspect_model_artifact", cause);
+    expect(error).toMatchObject({
+      reason: "Model allowance exhausted",
+      remediationAction: expect.stringContaining(remediation),
+      cause,
+    });
+    expect(error?.reportedLimits).toEqual(reportedLimits);
+  },
+);
 
 it("refuses an oversized declared header before reading or expanding it", async () => {
   const bytes = Buffer.alloc(9);

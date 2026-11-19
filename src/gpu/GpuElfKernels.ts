@@ -28,7 +28,7 @@ import {
   type NativeSectionDirectory,
 } from "../domain/native/nativeSectionDirectory.js";
 import { readElfStringBytes } from "../domain/native/elfStringBytes.js";
-import { readElfSymbol } from "../domain/elfSymbol.js";
+import { elfSymbolSize, readElfSymbol } from "../domain/elfSymbol.js";
 import {
   ELF_SHN_XINDEX,
   ElfSymbolSectionIndexTables,
@@ -276,7 +276,7 @@ const cudaKernels = async (
     if (section.type !== 2 && section.type !== 11) continue;
     symbolTables++;
     const width = gpuCount(section.entry_size),
-      minimum = directory.bits === 64 ? 24 : 16;
+      minimum = elfSymbolSize(directory.bits);
     if (width < minimum || section.size % BigInt(width) !== 0n)
       rejectGpu("CUBIN symbol table width is invalid");
     const namesSection = directory.sections[section.link];

@@ -55,6 +55,7 @@ import {
   ArtifactReaderFailure,
   artifactParseFailure,
 } from "../../resources/index.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 import { locatePeResourcePayloads } from "../../domain/pe/peResourceLayout.js";
 import { DENO_SECTION_MAGIC } from "./DenoSectionLayout.js";
 
@@ -863,6 +864,20 @@ const locatePeResources = async (
       MAX_INSPECT_PE_DIRECTORY_ENTRIES,
     );
   } catch (cause) {
+    if (cause instanceof ParseFailureError && cause.failure.kind === "limit") {
+      const parserLimit = cause.failure.limit;
+      throw new ArtifactReaderFailure("limit", cause.message, {
+        cause,
+        boundary: "capacity",
+        parserLimit,
+        fixedAllowance: {
+          kind: "parser",
+          name: parserLimit.name,
+          limit: parserLimit.maximum,
+          unit: "entries",
+        },
+      });
+    }
     // Range reads tag cancellation at its origin. Coincidence with the
     // caller's abort reason cannot turn a physical read failure into cancellation.
     throw artifactParseFailure(cause, undefined);
