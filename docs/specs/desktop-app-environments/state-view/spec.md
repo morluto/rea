@@ -12,7 +12,9 @@ generation reads the kinds of change.
 
 - CLI only, like the capture. The folder's `capture.json` must be
   `capture_desktop_application` Evidence from provider `rea-desktop` v1 with a
-  valid result; anything else is refused as invalid input.
+  valid result, including its baseline non-file inventory; anything else is
+  refused as invalid input. Captures from before that inventory was recorded
+  must be made again.
 - Retained bytes are read without following links and used only when their
   SHA-256 matches the name they are stored under.
 - A path in a folder beside a state directory whose name differs from it only
@@ -27,13 +29,23 @@ generation reads the kinds of change.
   refused when either existed but was not retained or the capture did not
   record whether it existed (unknown is never read as absent; absence holds
   only under content roots the baseline walked completely, with no truncation,
-  unreadable directory or unchecked path, outside recorded exclusions); dconf through
+  unreadable directory or unchecked path, outside recorded exclusions). A
+  later incomplete walk leaves a database or sidecar unconfirmed until an
+  explicit change records it; a subsequent complete walk alone cannot recover
+  a change the incomplete walk missed. Read SQLite only when the database and
+  both sidecars are confirmed at that version; dconf through
   `dconf dump /` on a private file profile, keeping only
   groups whose path names the application; JSON up to 4 MiB and 500 levels
-  with exact numbers; XML through the shared strict parser with DOCTYPEs
-  refused; key files up to 4 MiB whose every line parses; zip archives by
+  with exact numbers; XML through the shared strict parser, a DOCTYPE read
+  only when it has no internal subset and its DTD never read
+  ([XML text checks](../xml-text-checks/spec.md)); key files up to 4 MiB
+  whose every line parses; zip archives by
   their local file header, as their entries with each entry's own format and
-  view ([document views](../document-views/spec.md)); text; binary.
+  view ([document views](../document-views/spec.md)); text; binary. A gzip
+  file, told by its magic bytes, is read as the document inside, its members
+  joined, within a zip entry's 16 MiB and 100-times limits, and its version
+  records `compression: "gzip"` beside that document's format; past the
+  limits, or damaged, it has a `view_error`.
 - Changes between versions are created, deleted, or lines, values, keys or
   rows with added, removed and changed lists (100 each, with counts); content
   for binary files and unreadable when a view is missing. Values are JSON
@@ -49,5 +61,6 @@ generation reads the kinds of change.
 
 - No export, seed selection or task generation.
 - No parsing of other binary formats (GVDB other than dconf, LevelDB, Realm,
-  protobuf); they are listed as binary.
+  protobuf), or of compression other than gzip (xz, Zstandard, bzip2); they
+  are listed as binary.
 - No redaction: views contain the user's real data, as the capture does.

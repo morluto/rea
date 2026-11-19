@@ -12,15 +12,7 @@ import {
 import { verifyGhidraCompactReferences } from "./lib/real-ghidra-compact-references.mjs";
 import { verifyWindowsGhidraByteSearch } from "./lib/ghidra-windows-byte-search.mjs";
 import { createHash } from "node:crypto";
-import {
-  mkdtemp,
-  mkdir,
-  readFile,
-  readdir,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -31,6 +23,7 @@ import {
   closeVerifierResources,
   withVerifierCleanup,
 } from "./lib/verifier-cleanup.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 if (process.platform !== "win32" || process.arch !== "x64")
   throw new Error(
@@ -48,10 +41,16 @@ const [packageRootArgument, targetArgument, reportArgument] =
 // Windows locks the loaded package-owned addon until the verifier exits.
 // Keep installation cleanup in a parent that never loads that addon.
 if (!internalWorkspace) {
-  const ownedWorkspace = await mkdtemp(join(tmpdir(), "rea-packaged-ghidra-"));
+  // Windows children write beneath the root; a private root's DELETE handle would block them.
+  const workspaceFixture = await VerifierFixture.open({
+    prefix: "rea-packaged-ghidra-",
+    private: false,
+  });
+  const ownedWorkspace = workspaceFixture.path;
+  // The package command owner releases the fixture after its commands close.
   const workspaceOwner = {
     path: ownedWorkspace,
-    close: () => rm(ownedWorkspace, { recursive: true, force: true }),
+    close: () => workspaceFixture.release(),
   };
   let commands;
   let result;
@@ -75,8 +74,10 @@ if (!internalWorkspace) {
         commands === undefined ? workspaceOwner.close() : commands.close(),
     ]);
   } catch (cause) {
-    if (typeof cause.stdout === "string") process.stdout.write(cause.stdout);
-    if (typeof cause.stderr === "string") process.stderr.write(cause.stderr);
+    const stdout = cause?.snapshot?.stdout?.text;
+    const stderr = cause?.snapshot?.stderr?.text;
+    if (typeof stdout === "string") process.stdout.write(stdout);
+    if (typeof stderr === "string") process.stderr.write(stderr);
     throw cause;
   }
   const report = JSON.parse(result.stdout);

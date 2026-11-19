@@ -1,3 +1,4 @@
+import { isJavaScriptModuleUnit } from "./javascriptModuleUnits.js";
 import type { ApplicationNode } from "./javascriptApplicationGraphSchemas.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import type { ParsedStaticLayer } from "./javascriptRuntimeReconciliationParsing.js";
@@ -39,7 +40,7 @@ export const classifyStaticLoadStates = (
         reconciliationComplete: options.reconciliationComplete,
       },
     );
-    states.push(...projection.states);
+    for (const state of projection) states.push(state);
   }
   return { states, omittedStates: 0 };
 };
@@ -52,7 +53,7 @@ const classifyLayer = (
   options: {
     readonly reconciliationComplete: boolean;
   },
-): { readonly states: JavaScriptStaticLoadState[] } => {
+): readonly JavaScriptStaticLoadState[] => {
   const nodes = layer.graph.nodes.filter(isLoadStateNode);
   const direct = new Map<string, string[]>();
   const ambiguous = new Set<string>();
@@ -88,7 +89,7 @@ const classifyLayer = (
       ({ codeInventoryCompleteWithinScope }) =>
         codeInventoryCompleteWithinScope,
     );
-  const states = nodes.map((node) => {
+  return nodes.map((node) => {
     const runtimeNodeIds = uniqueSorted(direct.get(node.node_id) ?? []);
     if (runtimeNodeIds.length > 0)
       return state(layer, node, {
@@ -126,7 +127,6 @@ const classifyLayer = (
           : "static-or-runtime-coverage-incomplete",
     });
   });
-  return { states };
 };
 
 const residentNodes = (
@@ -171,9 +171,8 @@ const isLoadStateNode = (
 ): node is ApplicationNode & {
   readonly kind: "javascript-asset" | "javascript-chunk" | "javascript-module";
 } =>
-  node.kind === "javascript-asset" ||
   node.kind === "javascript-chunk" ||
-  node.kind === "javascript-module";
+  (isJavaScriptModuleUnit(node) && node.kind !== "source-module");
 
 const state = (
   layer: ParsedStaticLayer,

@@ -2,10 +2,11 @@ import { z } from "zod";
 
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { emptyArraySchema } from "../emptyArraySchema.js";
-import { evidenceSchema } from "../evidence.js";
 import { evidenceInputSchema } from "../evidenceReference.js";
 import {
+  managedInspectionStateSchema,
   cliMetadataGuidSchema,
+  managedMetadataStatusSchema,
   managedMetadataTokenSchema,
   managedMemberInspectionSchema,
   type ManagedMemberInspection,
@@ -24,11 +25,10 @@ import {
   buildMethodItems,
 } from "./managedMemberComparisonItems.js";
 import { keyMembers } from "./managedMemberComparisonMatch.js";
-import { hasSignatureResolution } from "./managedMemberSignatureIdentity.js";
 import { digestSchema, prefixedDigestSchema } from "../digests.js";
+import { nonEmptyTextSchema } from "../textSchemas.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
-const boundedTextSchema = z.string().min(1);
 
 const memberComparisonShape = <Source extends z.ZodType>(source: Source) => ({
   left: source,
@@ -52,11 +52,6 @@ const distinctMemberSources = (
       message: "Managed member Evidence must be distinct",
     });
 };
-
-/** Two complete managed member observations for semantic consumers. */
-export const compareManagedMembersInputSchema = z
-  .strictObject(memberComparisonShape(evidenceSchema))
-  .superRefine(distinctMemberSources);
 
 /** Public member comparison selects records inline or by exact retained identity. */
 export const compareManagedMembersRequestSchema = z
@@ -137,9 +132,42 @@ const comparisonItemSchema = <
     }),
   ]);
 
+/** Stable codes for why one comparison item's facts stayed limited. */
+export const MANAGED_MEMBER_COMPARISON_LIMITATION_CODES = [
+  "declaring-type-name-not-resolved",
+  "counterpart-declaring-type-name-not-resolved",
+  "unknown-within-incomplete-metadata",
+  "signature-not-decoded",
+  "counterpart-signature-not-decoded",
+  "signature-not-resolved",
+  "counterpart-signature-not-resolved",
+  "signature-malformed",
+  "ambiguous-signature",
+  "ambiguous-il-signature",
+  "ambiguous-method-shape",
+  "local-signature-unknown",
+  "local-signature-bytes-changed",
+  "body-unavailable",
+  "call-target-unavailable",
+  "field-target-unavailable",
+  "catch-type-unavailable",
+] as const;
+
+/** One reason a comparison item's facts stayed limited, with its explanation. */
+const comparisonItemLimitationSchema = z.strictObject({
+  code: z.enum(MANAGED_MEMBER_COMPARISON_LIMITATION_CODES),
+  side: z
+    .enum(["left", "right"])
+    .optional()
+    .describe(
+      "The inventory this limitation concerns when it is the other side's, such as an incomplete or ambiguous counterpart inventory.",
+    ),
+  message: nonEmptyTextSchema,
+});
+
 const comparisonItemContextShape = {
   evidence_links: z.array(evidenceIdSchema).length(2),
-  limitations: z.array(boundedTextSchema),
+  limitations: z.array(comparisonItemLimitationSchema),
 };
 
 const methodComparisonItemSchema = comparisonItemSchema(
@@ -179,7 +207,7 @@ const comparisonSideSchema = z.strictObject({
   artifact_sha256: digestSchema,
   mvid: cliMetadataGuidSchema.nullable(),
   module_name: z.string().nullable(),
-  metadata_status: z.enum(["absent", "complete", "partial", "malformed"]),
+  metadata_status: managedMetadataStatusSchema,
   methods_total: z.int().min(0),
   fields_total: z.int().min(0),
   resource_limits: z
@@ -188,9 +216,8 @@ const comparisonSideSchema = z.strictObject({
         code: z.literal("resource-limit"),
       }),
     )
-    .optional()
     .describe(
-      "Resource-limit diagnostics reported by this source; an empty array means none were reported. Historical comparisons omit this field; omission does not establish that no resource limit occurred.",
+      "Resource-limit diagnostics reported by this source; an empty array means none were reported.",
     ),
 });
 
@@ -222,12 +249,16 @@ export const managedMemberComparisonResultSchema = z.strictObject({
   methods: z.array(methodComparisonItemSchema),
   fields: z.array(fieldComparisonItemSchema),
   coverage: z.strictObject({
-    status: z.enum(["complete-within-inputs", "partial"]),
-    left_status: z.enum(["complete", "partial", "unavailable"]),
-    right_status: z.enum(["complete", "partial", "unavailable"]),
+    status: z
+      .enum(["complete-within-inputs", "partial", "unknown"])
+      .describe(
+        "complete-within-inputs only when both observations are complete over the same selected scope and method rows; unknown when a side is unavailable or the selected scope agreement cannot be established.",
+      ),
+    left_status: managedInspectionStateSchema,
+    right_status: managedInspectionStateSchema,
   }),
   evidence_links: z.array(evidenceIdSchema).length(2),
-  limitations: z.array(boundedTextSchema),
+  limitations: z.array(nonEmptyTextSchema),
 });
 
 export type ManagedMemberComparisonResult = z.infer<
@@ -296,9 +327,6 @@ export const compareManagedMembers = (
       right.result.metadata.status === "complete" &&
       hasCompleteMethodRows(right.result),
     scope,
-    signatureResolutionExamined:
-      hasSignatureResolution(left.result) &&
-      hasSignatureResolution(right.result),
     sameArtifact: left.result.artifact.sha256 === right.result.artifact.sha256,
     leftAssembly: left.result.assembly,
     rightAssembly: right.result.assembly,

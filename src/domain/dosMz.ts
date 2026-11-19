@@ -82,8 +82,14 @@ export type MzWindowsHeaderObservation =
       readonly signature: "PE" | "NE" | "LE" | "LX";
     };
 
-/** Exact signature bytes observed at the DOS header's declared offset. */
+/** Bytes observed at the DOS header's declared Windows-header offset. */
 export interface MzWindowsHeaderSignatureEvidence {
+  readonly offset: number;
+  readonly bytes: Buffer;
+}
+
+/** Structural bytes observed at a PE header's declared offset. */
+export interface MzWindowsHeaderRecordEvidence {
   readonly offset: number;
   readonly bytes: Buffer;
 }
@@ -194,17 +200,6 @@ const windowsHeaderSignature = (
   if (bytes.length < 4) return "unobserved";
   return bytes[2] === 0 && bytes[3] === 0 ? "PE" : "other";
 };
-
-/**
- * Validate a DOS MZ load module using a bounded header/table and the actual
- * file length. Appended overlay bytes are retained separately; they are not
- * silently included in the initialized load module.
- */
-export const parseDosMzHeader = (
-  bytes: Buffer,
-  fileSize = bytes.length,
-): Result<DosMzHeader, string> =>
-  parseDeclaredDosMzHeader(bytes, fileSize, readDosMzDeclarations(bytes));
 
 const parseDeclaredDosMzHeader = (
   bytes: Buffer,

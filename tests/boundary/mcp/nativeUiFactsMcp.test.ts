@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished, vi } from "vitest";
 
-import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../../src/resources/AnalysisCleanupLease.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
@@ -14,6 +14,7 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { NativeFixtureRunner } from "../../fixtures/nativeCommands.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const scope = {
   pid: 123,
@@ -32,10 +33,11 @@ const connectNativeUi = async () => {
   const replies: unknown[] = [];
   const factory = vi
     .spyOn(runtimes, "createNativeUiHelperRuntime")
-    .mockImplementation(() => {
+    .mockImplementation((_environment, deadlineMs = 180_000) => {
       const cleanupLease = new AnalysisCleanupLease(async () => {});
       return {
         signal: new AbortController().signal,
+        deadlineMs,
         cleanupLease,
         invoke: async () => {
           if (replies.length === 0)
@@ -50,7 +52,10 @@ const connectNativeUi = async () => {
     new NativeMacOSProvider({}, new NativeFixtureRunner(), "darwin"),
   );
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "native-ui-facts", version: "1" });
+  const client = new Client(
+    { name: "native-ui-facts", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [ct, st] = InMemoryTransport.createLinkedPair();
   onTestFinished(async () => {
     factory.mockRestore();
@@ -92,6 +97,42 @@ const connectNativeUi = async () => {
   });
   return { client, replies, snapshot };
 };
+
+it("advertises and explains the capture source requirement through both MCP tools", async () => {
+  const { client } = await connectNativeUi();
+  const tools = (await client.listTools()).tools;
+  for (const name of [
+    "observe_native_ui",
+    "capture_native_ui_scenario",
+  ] as const) {
+    const tool = tools.find((entry) => entry.name === name);
+    expect(tool).toBeDefined();
+    expect(tool?.description).toMatch(
+      /screenshot or accessibility must be enabled/iu,
+    );
+    const response = await client.callTool({
+      name,
+      arguments: {
+        ...scope,
+        accessibility: false,
+        ...(name === "capture_native_ui_scenario"
+          ? { steps: [{ kind: "wait", milliseconds: 0 }] }
+          : {}),
+      },
+    });
+    expect(parseMcpToolError(response)).toMatchObject({
+      error: {
+        code: "invalid_request",
+        details: {
+          issues: [
+            expect.objectContaining({ path: ["screenshot"] }),
+            expect.objectContaining({ path: ["accessibility"] }),
+          ],
+        },
+      },
+    });
+  }
+});
 
 it("preserves scalar accessibility values in passive and scenario Evidence", async () => {
   const { client, replies, snapshot } = await connectNativeUi();

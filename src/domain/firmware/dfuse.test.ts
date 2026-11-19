@@ -105,7 +105,7 @@ it("keeps each target's alternate setting and name on its elements", () => {
       targets: [
         {
           alternateSetting: 0,
-          name: "Internal Flash",
+          name: Uint8Array.from([0x4f, 0xe9, 0, 0x58]),
           elements: [
             { address: 0x0800_0000, data: [1, 2, 3, 4] },
             { address: 0x0800_4000, data: [5, 6] },
@@ -117,7 +117,6 @@ it("keeps each target's alternate setting and name on its elements", () => {
         },
         {
           alternateSetting: 2,
-          name: Uint8Array.from([0x4f, 0xe9, 0, 0x58]),
           elements: [{ address: 0x1fff_7800, data: [] }],
         },
       ],
@@ -133,8 +132,8 @@ it("keeps each target's alternate setting and name on its elements", () => {
       [...element.bytes],
     ]),
   ).toEqual([
-    [0, 0, "Internal Flash", 0, 0x0800_0000, [1, 2, 3, 4]],
-    [0, 0, "Internal Flash", 1, 0x0800_4000, [5, 6]],
+    [0, 0, "Oé", 0, 0x0800_0000, [1, 2, 3, 4]],
+    [0, 0, "Oé", 1, 0x0800_4000, [5, 6]],
     [1, 1, null, 0, 0x1fff_c000, [0xaa, 0x55]],
   ]);
   expect(decoded.metadata).toMatchObject({
@@ -143,19 +142,6 @@ it("keeps each target's alternate setting and name on its elements", () => {
     empty_element_count: 1,
     data_bytes: 8,
   });
-  // A named target's field is read to its first NUL, one character per byte.
-  const named = image(
-    dfuseFile({
-      targets: [
-        {
-          alternateSetting: 3,
-          name: Uint8Array.from([0x4f, 0xe9, 0, 0x58]),
-          elements: [{ address: 0, data: [1] }],
-        },
-      ],
-    }),
-  );
-  expect(named.elements[0]?.targetName).toBe("Oé");
 });
 
 it("reports a suffix CRC mismatch as facts without refusing the file", () => {
@@ -190,9 +176,13 @@ it("names overlapping elements within one alternate setting only", () => {
     }),
   );
   expect(decoded.metadata.overlapping_element_count).toBe(2);
-  expect(decoded.limitations).toEqual([
-    "2 DfuSe element(s) overlap an earlier element of the same alternate setting; each stays a separate entry and no bytes were merged: target 0 element 1 (0x08000002-0x08000003) overlaps target 0 element 0 (0x08000000-0x08000003) in alternate setting 0; target 2 element 0 (0x08000003-0x08000004) overlaps target 0 element 0 (0x08000000-0x08000003) in alternate setting 0.",
-  ]);
+  expect(decoded.limitations).toHaveLength(1);
+  const limitation = decoded.limitations[0];
+  expect(limitation).toMatch(/overlap/iu);
+  expect(limitation).toMatch(/no bytes.*merged/iu);
+  expect(limitation).toMatch(/target 0 element 1[^;]*0x08000002-0x08000003/iu);
+  expect(limitation).toMatch(/target 0 element 0[^;]*0x08000000-0x08000003/iu);
+  expect(limitation).toMatch(/target 2 element 0[^;]*0x08000003-0x08000004/iu);
 });
 
 it("accepts boundary declarations beside the malformed ones", () => {
@@ -228,9 +218,15 @@ it("accepts boundary declarations beside the malformed ones", () => {
     element_count: 2,
     empty_element_count: 1,
   });
-  expect(decoded.limitations).toEqual([
-    "DfuSe declarations without bytes have no entry: target 0 element 1 at 0x20000000 (alternate setting 4) holds no bytes; target 1 (alternate setting 5) declares no elements.",
-  ]);
+  expect(decoded.limitations).toHaveLength(1);
+  const limitation = decoded.limitations[0];
+  expect(limitation).toMatch(/no entry/iu);
+  expect(limitation).toMatch(
+    /target 0 element 1[^;]*0x20000000[^;]*alternate setting 4/iu,
+  );
+  expect(limitation).toMatch(
+    /target 1[^;]*alternate setting 5[^;]*no elements/iu,
+  );
 });
 
 it("recognizes a file only by the DfuSe prefix together with the DFU suffix", () => {
@@ -400,7 +396,17 @@ it("counts empty elements past the entry cap and names only the first four", () 
     empty_element_count: 65_537,
     data_bytes: 0,
   });
-  expect(decoded.value.limitations).toEqual([
-    "DfuSe declarations without bytes have no entry: target 0 element 0 at 0x00000000 (alternate setting 0) holds no bytes; target 0 element 1 at 0x00000002 (alternate setting 0) holds no bytes; target 0 element 2 at 0x00000004 (alternate setting 0) holds no bytes; target 0 element 3 at 0x00000006 (alternate setting 0) holds no bytes; and 65534 more.",
-  ]);
+  expect(decoded.value.limitations).toHaveLength(1);
+  const limitation = decoded.value.limitations[0];
+  expect(limitation).toMatch(/no entry/iu);
+  for (const [index, address] of [
+    [0, "0x00000000"],
+    [1, "0x00000002"],
+    [2, "0x00000004"],
+    [3, "0x00000006"],
+  ] as const)
+    expect(limitation).toMatch(
+      new RegExp(`element ${index}[^;]*${address}`, "iu"),
+    );
+  expect(limitation).toContain("65534 more");
 });

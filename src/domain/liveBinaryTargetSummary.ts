@@ -2,10 +2,11 @@ import { z } from "zod";
 
 import {
   BINARY_ARCHITECTURES,
-  ELF_METADATA_ARCHITECTURES,
+  HEADER_ARCHITECTURE_EXCLUSIONS,
   RAW_ONLY_ARCHITECTURES,
 } from "./binaryTargetTypes.js";
 import { digestSchema } from "./digests.js";
+import { localPathStringSchema } from "./localPath.js";
 import {
   binaryArchitectureSchema,
   rawBinaryEntryPointSchema,
@@ -13,13 +14,18 @@ import {
 import { ZIP_PACKAGE_FORMATS } from "./zipPackageFormat.js";
 
 const architectureSchema = z.enum(BINARY_ARCHITECTURES);
-const headerArchitectureSchema = architectureSchema.exclude([
-  ...ELF_METADATA_ARCHITECTURES,
-  ...RAW_ONLY_ARCHITECTURES,
-  "hexagon",
-  "arm64_32",
-]);
-const identity = { path: z.string(), sha256: digestSchema };
+const headerArchitectureSchema = architectureSchema.exclude(
+  HEADER_ARCHITECTURE_EXCLUSIONS,
+);
+const identity = {
+  path: z.string(),
+  sha256: digestSchema,
+  caller_input_path: localPathStringSchema
+    .exactOptional()
+    .describe(
+      "Verbatim selected path when it differs from the inspected file path.",
+    ),
+};
 const executable = { ...identity, kind: z.literal("executable") };
 
 /** Live target classifications; historical Evidence and snapshots retain their own admission. */
@@ -75,6 +81,8 @@ export const liveBinaryTargetSummaryVariants = [
       "unityfs",
       "wxapkg",
       "uimage",
+      "android-boot-image",
+      "android-ota-payload",
       "dmg",
       "pkg",
       "intel-hex",
@@ -83,6 +91,7 @@ export const liveBinaryTargetSummaryVariants = [
       "uf2",
       "dfuse",
       "fit",
+      "ntfs-mft",
     ]),
     architecture: z.null(),
   }),

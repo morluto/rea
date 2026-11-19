@@ -1,16 +1,9 @@
 #!/usr/bin/env node
+import { canonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-  mkdtemp,
-  mkdir,
-  readFile,
-  readdir,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -23,6 +16,7 @@ import { parseAnalysisSnapshot } from "../dist/domain/analysisSnapshot.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
 import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
+import { SUPPORTED_GHIDRA_VERSION } from "../dist/ghidra/GhidraReleasePolicy.js";
 import {
   buildRiscvFixture,
   stripRiscvFixture,
@@ -41,6 +35,8 @@ import {
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { requireLaneToolchain } from "../tests/conformance/ghidra/fixture-toolchain.mjs";
 
 if (process.argv.length !== 2)
   throw new Error("Usage: node scripts/verify-real-ghidra-riscv.mjs");
@@ -61,12 +57,24 @@ const installation = await inspectVerifierGhidraInstallation({
     : { javaHome: process.env.JAVA_HOME }),
 });
 assert.equal(installation.status, "available", JSON.stringify(installation));
-assert.equal(installation.providerVersion, "12.1.4");
+assert.equal(installation.providerVersion, SUPPORTED_GHIDRA_VERSION);
 
 const execute = promisify(execFile);
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const run = createVerifierRun();
-const workspace = await mkdtemp(join(tmpdir(), "rea-riscv-proof-"));
+// Refuse a host without the fixture toolchain before allocating anything.
+await requireLaneToolchain("riscv");
+const workspaceFixture = await VerifierFixture.open({
+  prefix: "rea-riscv-proof-",
+  // Ghidra children use the workspace as TMPDIR; a plain root admits them on every host.
+  private: false,
+});
+const workspace = workspaceFixture.path;
+// A failed run keeps its workspace for diagnosis; the fixture records why.
+const retainWorkspace = (message, options) => {
+  workspaceFixture.retain(message);
+  return new Error(message, options);
+};
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const env = {
@@ -83,7 +91,7 @@ for (const key of ["GHIDRA_HEADLESS_MAXMEM", "GHIDRA_MAXMEM"])
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
-  env,
+  env: env,
   stderr: "pipe",
 });
 const client = new Client({ name: "rea-real-riscv-proof", version: "1" });
@@ -125,14 +133,17 @@ try {
   const validators = new Map();
   for (const tool of catalog.tools) {
     assert.ok(
-      ajv.validateSchema(tool.outputSchema),
+      ajv.validateSchema(canonicalOutputSchema(tool.name)),
       `${tool.name}: invalid output schema`,
     );
     const existing =
-      typeof tool.outputSchema.$id === "string"
-        ? ajv.getSchema(tool.outputSchema.$id)
+      typeof canonicalOutputSchema(tool.name).$id === "string"
+        ? ajv.getSchema(canonicalOutputSchema(tool.name).$id)
         : undefined;
-    validators.set(tool.name, existing ?? ajv.compile(tool.outputSchema));
+    validators.set(
+      tool.name,
+      existing ?? ajv.compile(canonicalOutputSchema(tool.name)),
+    );
   }
 
   const typedSoft = await buildRiscvFixture(workspace, 32, "soft");
@@ -161,14 +172,14 @@ try {
       const parameters = profile.parameters;
       assert.equal(parameters.language_id, expectedLanguage);
       assert.equal(parameters.compiler_spec_id, "gcc");
-      assert.equal(parameters.language_selection, "provider-pinned-v1");
+      assert.equal(parameters.language_selection, "provider-pinned");
       assert.equal(parameters.riscv_support_lane, want.lane);
       assert.equal(parameters.riscv_calling_convention, want.callingConvention);
       assert.deepEqual(parameters.riscv_elf, want.riscvElf);
     };
     const assertEvidence = (evidence) => {
-      assert.equal(evidence.subject.architecture, "riscv");
-      assert.equal(evidence.subject.digest.sha256, fixture.sha256);
+      assert.equal(evidence.subject.identity.architecture, "riscv");
+      assert.equal(evidence.subject.identity.sha256, fixture.sha256);
       // Composed workflows such as inspect_native_api commit the Ghidra
       // profile as their upstream profile. The residual-unknown registry
       // records what they could not establish, such as the types of a
@@ -358,8 +369,8 @@ try {
     const snapshot = parseAnalysisSnapshot(
       JSON.parse(await readFile(snapshotPath, "utf8")),
     );
-    assert.equal(snapshot.target.architecture, "riscv");
-    assert.equal(snapshot.target.sha256, fixture.sha256);
+    assert.equal(snapshot.target.identity.architecture, "riscv");
+    assert.equal(snapshot.target.identity.sha256, fixture.sha256);
     assertProfile(snapshot.binding.analysis_profile);
     for (const record of snapshot.evidence_bundle.records)
       assertEvidence(parseEvidence(record));
@@ -562,20 +573,23 @@ if (
   completed.process_lineage.status !== "verified" ||
   completed.process_lineage.descendants.length !== 0
 )
-  throw new Error(`Cleanup unverified; retained workspace: ${workspace}`, {
-    cause: failure,
-  });
+  throw retainWorkspace(
+    `Cleanup unverified; retained workspace: ${workspace}`,
+    {
+      cause: failure,
+    },
+  );
 if (failure !== undefined)
-  throw new Error(
+  throw retainWorkspace(
     `RISC-V verification failed; retained workspace: ${workspace}; MCP stderr: ${stderr}`,
     { cause: failure },
   );
-assert.deepEqual(
-  await readdir(runtime),
-  [],
-  `Runtime resources survived server shutdown; retained workspace: ${workspace}`,
-);
-await rm(workspace, { recursive: true, force: true });
+const survivors = await readdir(runtime);
+if (survivors.length > 0)
+  throw retainWorkspace(
+    `Runtime resources survived server shutdown (${survivors.join(", ")}); retained workspace: ${workspace}`,
+  );
+await workspaceFixture.release();
 console.log(
   JSON.stringify(
     {

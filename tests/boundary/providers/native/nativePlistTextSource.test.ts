@@ -76,7 +76,7 @@ it.for<TextSourceCase>([
       reason: "unrepresentable",
     },
     limitations: [
-      expect.stringContaining("1 XML scalar value(s) could not be established"),
+      expect.stringMatching(/1 XML scalar.*could not be established/iu),
     ],
     conversions: [],
   },

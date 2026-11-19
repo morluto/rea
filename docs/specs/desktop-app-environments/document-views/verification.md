@@ -60,7 +60,8 @@ touched files still pass there.
   undeclared default namespace, `xml:` attributes, CDATA, comments and
   processing instructions, what both parsers refuse (an undeclared prefix,
   one attribute twice under two prefixes, a prefix bound to `""`, two colons
-  in a name, a colon in a processing instruction's target, a DOCTYPE),
+  in a name, a colon in a processing instruction's target, a DOCTYPE with an
+  internal subset),
   and the node and depth limits on prefixed names.
 - Selectors and tolerance in the shared check cases both evaluators run: one
   member matched, several, none before or at the last segment, a malformed

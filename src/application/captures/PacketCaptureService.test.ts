@@ -3,7 +3,7 @@ import { expect, it } from "vitest";
 import {
   createAnalysisExecution,
   type ExecutionOptions,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import { PacketCaptureService } from "./PacketCaptureService.js";
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 import { inspectPacketCaptureInputSchema } from "../../domain/captures/packetCapture.js";
@@ -90,7 +90,6 @@ it("retains provider metadata in a late-cancellation observation", async () => {
 
   const result = await service.inspect(input, { signal: controller.signal });
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected late cancellation");
   expect(result.error).toMatchObject({ _tag: "AnalysisCancelledError" });
   expect(result.error.cause).toBe(reason);

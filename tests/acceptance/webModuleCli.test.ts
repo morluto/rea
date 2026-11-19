@@ -8,6 +8,7 @@ import { createTestBinarySession } from "../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { webModuleArtifactsFixture } from "../fixtures/webModuleTrace.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 cliTest(
   "accepts zero-based numeric source indices and returns the same engine-free CLI/MCP trace",
@@ -24,7 +25,7 @@ cliTest(
       join(root, "files", "modules", "main.js"),
       artifacts.source,
     );
-    let manifestPath = join(root, "manifest.json").replaceAll("\\", "/");
+    let manifestPath = join(root, "manifest.json");
     await writeFile(manifestPath, JSON.stringify(manifest));
     if (process.platform !== "win32") {
       await mkdir(join(root, "lexical"));
@@ -37,13 +38,20 @@ cliTest(
       REA_BROWSER_EXECUTABLE: "relative-missing-browser",
     };
     const cliResponse = await cli.run({
-      arguments: ["trace-web-module-imports", manifestPath, "0", "--json"],
+      arguments: [
+        "trace-web-module-imports",
+        process.platform === "win32"
+          ? "manifest.json"
+          : "lexical/link/../manifest.json",
+        "0",
+        "--json",
+      ],
+      cwd: root,
       environment: {
         ...environment,
         // This single CLI invocation cannot reuse a newly written cache.
         NODE_DISABLE_COMPILE_CACHE: "1",
       },
-      timeoutMs: 15000,
     });
     expect(cliResponse.exitCode, cliResponse.stdout + cliResponse.stderr).toBe(
       0,
@@ -70,7 +78,10 @@ cliTest(
         webModuleTrace: createWebModuleTraceService(environment),
       },
     );
-    const client = new Client({ name: "module-cli-parity", version: "1" });
+    const client = new Client(
+      { name: "module-cli-parity", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     onTestFinished(async () => {
       await client.close();
       await server.close();
@@ -87,6 +98,23 @@ cliTest(
     expect(response.isError).not.toBe(true);
     const expected = cliResponse.json;
     expect(response.structuredContent).toEqual(expected);
+    // The CLI renders native separators; MCP keeps the caller's spelling and
+    // still selects the same manifest root from a forward-slash Windows path.
+    const forwardSlash = manifestPath.replaceAll("\\", "/");
+    const forward = await client.callTool({
+      name: "trace_web_module_imports",
+      arguments: { manifest_path: forwardSlash, script_index: 0 },
+    });
+    expect(forward.isError, JSON.stringify(forward)).not.toBe(true);
+    const { manifest: _manifest, ...cliRest } = (
+      expected as { normalized_result: Record<string, unknown> }
+    ).normalized_result;
+    expect(forward.structuredContent).toMatchObject({
+      normalized_result: {
+        ...cliRest,
+        manifest: { path: forwardSlash, reported_output_directory: root },
+      },
+    });
   },
 );
 

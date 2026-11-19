@@ -1,3 +1,5 @@
+import { projectWebSourceLocationView } from "./webSourceLocationView.js";
+import { projectNativeProcedureReferencesView } from "./nativeProcedureReferencesView.js";
 import { projectPlaywrightTraceView } from "./playwrightTraceView.js";
 import { projectApiContractView } from "./apiContractView.js";
 import {
@@ -5,6 +7,7 @@ import {
   NATIVE_OBSERVATION_OPERATIONS,
 } from "../native/nativeObservation.js";
 import { projectNativeObservationView } from "./nativeObservationView.js";
+import { projectRecordedArrayView } from "./recordedArrayView.js";
 import { projectNativeInstructionReferencesView } from "./nativeInstructionReferencesView.js";
 import { projectNativeValueTraceView } from "./nativeValueTraceView.js";
 import { projectDevicetreeView } from "./devicetreeView.js";
@@ -12,11 +15,14 @@ import { projectApkSignatureView } from "./apkSignatureView.js";
 import { byteEntropySchema } from "../native/byteEntropy.js";
 import { projectErlangBeamView } from "./erlangBeamView.js";
 import { projectPythonPycView } from "./pythonPycView.js";
+import { projectNugetNupkgView } from "./nugetNupkgView.js";
 import { projectNativeExportsView } from "./nativeExportsView.js";
+import { projectElfDependenciesView } from "./elfDependenciesView.js";
 import { projectByteEntropyView } from "./byteEntropyView.js";
 import {
   parseAnalysisViewResult,
   analysisViewResultInputError,
+  parentArtifactPath,
 } from "./analysisViewParent.js";
 import { projectJavaScriptRoutesView } from "./javascriptRoutesView.js";
 import { projectWebBundleView } from "./webBundleView.js";
@@ -31,6 +37,7 @@ import { projectCommandObservationView } from "./commandObservationView.js";
 import { projectFridaSessionStatusView } from "./fridaSessionStatusView.js";
 import { projectGoBinaryView } from "./goBinaryView.js";
 import { projectRustBinaryView } from "./rustBinaryView.js";
+import { projectCycloneDxView } from "./cyclonedxView.js";
 import { projectNativeFunctionMatchingView } from "./nativeFunctionMatchingView.js";
 import { projectNativeInventoryView } from "./nativeInventoryView.js";
 import {
@@ -50,7 +57,7 @@ import {
   analysisViewInputError,
 } from "./analysisViewErrors.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
-import { digestSchema } from "../digests.js";
+import { prefixedDigestSchema } from "../digests.js";
 import { err, ok, type Result } from "../result.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { safeParseOwnedBinaryLayout } from "../native/binaryLayout.js";
@@ -97,157 +104,12 @@ import { projectIl2cppMetadataView } from "./il2cppMetadataView.js";
 
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import type { GroupingViewKind } from "./analysisViewShape.js";
+import type { AnalysisViewRequest } from "./analysisViewRequest.js";
 import {
-  analysisViewRequestSchema,
-  inspectAnalysisViewInputSchema,
-  type AnalysisViewRequest,
-  type InspectAnalysisViewInput,
-} from "./analysisViewRequest.js";
-import {
-  procedurePseudocodeSummaryViewResultSchema,
-  nativeObservationSummaryViewResultSchemas,
-  byteEntropySummaryViewResultSchema,
-  nativeExportsSummaryViewResultSchema,
-  devicetreeSummaryViewResultSchema,
-  erlangBeamSummaryViewResultSchema,
-  erlangBeamTableViewResultSchema,
-  pythonPycSummaryViewResultSchema,
-  pythonPycCodeObjectsViewResultSchema,
-  gdbCommandSummaryViewResultSchema,
-  objdumpSummaryViewResultSchema,
-  fridaSessionStatusSummaryViewResultSchema,
-  goBinarySummaryViewResultSchema,
-  rustBinarySummaryViewResultSchema,
-  rustBinaryPageViewResultSchema,
-  binaryLayoutSummaryViewResultSchema,
-  javascriptApplicationSummaryViewResultSchema,
-  artifactInventorySummaryViewResultSchema,
-  desktopApplicationSummaryViewResultSchema,
-  wasmArtifactSummaryViewResultSchema,
-  machoSummaryViewResultSchema,
-  interfaceBuilderSummaryViewResultSchema,
-  evmInterfaceSummaryViewResultSchema,
-  managedArtifactSummaryViewResultSchema,
-  managedMemberSummaryViewResultSchema,
-  webNetworkCaptureSummaryViewResultSchema,
-  browserScenarioSummaryViewResultSchema,
-  androidPackageSummaryViewResultSchema,
-  androidJniSummaryViewResultSchema,
-  androidJniPageViewResultSchema,
-  androidClassSummaryViewResultSchema,
-  androidMethodSummaryViewResultSchema,
-  androidManifestViewResultSchema,
-  androidComponentsViewResultSchema,
-  androidComponentSummaryViewResultSchema,
-  pcapCaptureSummaryViewResultSchema,
-  dartAotSummaryViewResultSchema,
-  javaScriptRoutesViewResultSchema,
-  webBundleSummaryViewResultSchema,
-  webBundlePageViewResultSchema,
-  gpuCodeObjectsSummaryViewResultSchema,
-  gpuCodeObjectsPageViewResultSchema,
-  apkSignatureSummaryViewResultSchema,
-  apkSignaturePageViewResultSchema,
-  modelArtifactSummaryViewResultSchema,
-  modelArtifactPageViewResultSchema,
-  il2cppMetadataSummaryViewResultSchema,
-  nativeInventorySummaryViewResultSchema,
-  nativeFeatureTraceSummaryViewResultSchema,
-  nativeLoadImageSummaryViewResultSchema,
-  nativeFunctionMatchingSummaryViewResultSchema,
-  nativeFunctionSummaryViewResultSchema,
-  sourceToBundleSummaryViewResultSchema,
-  sourceToBundlePageViewResultSchema,
-  endpointComparisonSummaryViewResultSchema,
-  apiContractSummaryViewResultSchema,
-  playwrightTraceSummaryViewResultSchema,
-  playwrightTracePageViewResultSchema,
-  apiContractPageViewResultSchema,
-  graphqlContractPageViewResultSchema,
-  endpointComparisonPageViewResultSchema,
-  featureTraceSummaryViewResultSchema,
-  batchDecompileSummaryViewResultSchema,
-  featureTraceViewResultSchema,
   analysisViewResultSchema,
   type AnalysisViewResult,
   type UnsignedAnalysisView,
 } from "./analysisViewResult.js";
-export {
-  analysisViewRequestSchema,
-  inspectAnalysisViewInputSchema,
-  type AnalysisViewRequest,
-  type InspectAnalysisViewInput,
-  type AnalysisViewParent,
-};
-export {
-  procedurePseudocodeSummaryViewResultSchema,
-  nativeObservationSummaryViewResultSchemas,
-  nativeFeatureTraceSummaryViewResultSchema,
-  byteEntropySummaryViewResultSchema,
-  nativeExportsSummaryViewResultSchema,
-  devicetreeSummaryViewResultSchema,
-  erlangBeamSummaryViewResultSchema,
-  erlangBeamTableViewResultSchema,
-  pythonPycSummaryViewResultSchema,
-  pythonPycCodeObjectsViewResultSchema,
-  gdbCommandSummaryViewResultSchema,
-  objdumpSummaryViewResultSchema,
-  fridaSessionStatusSummaryViewResultSchema,
-  goBinarySummaryViewResultSchema,
-  rustBinarySummaryViewResultSchema,
-  rustBinaryPageViewResultSchema,
-  binaryLayoutSummaryViewResultSchema,
-  javascriptApplicationSummaryViewResultSchema,
-  artifactInventorySummaryViewResultSchema,
-  desktopApplicationSummaryViewResultSchema,
-  wasmArtifactSummaryViewResultSchema,
-  machoSummaryViewResultSchema,
-  interfaceBuilderSummaryViewResultSchema,
-  evmInterfaceSummaryViewResultSchema,
-  managedArtifactSummaryViewResultSchema,
-  managedMemberSummaryViewResultSchema,
-  webNetworkCaptureSummaryViewResultSchema,
-  browserScenarioSummaryViewResultSchema,
-  androidPackageSummaryViewResultSchema,
-  androidJniSummaryViewResultSchema,
-  androidJniPageViewResultSchema,
-  androidClassSummaryViewResultSchema,
-  androidMethodSummaryViewResultSchema,
-  androidManifestViewResultSchema,
-  androidComponentsViewResultSchema,
-  androidComponentSummaryViewResultSchema,
-  pcapCaptureSummaryViewResultSchema,
-  dartAotSummaryViewResultSchema,
-  javaScriptRoutesViewResultSchema,
-  webBundleSummaryViewResultSchema,
-  webBundlePageViewResultSchema,
-  gpuCodeObjectsSummaryViewResultSchema,
-  gpuCodeObjectsPageViewResultSchema,
-  apkSignatureSummaryViewResultSchema,
-  apkSignaturePageViewResultSchema,
-  modelArtifactSummaryViewResultSchema,
-  modelArtifactPageViewResultSchema,
-  il2cppMetadataSummaryViewResultSchema,
-  nativeInventorySummaryViewResultSchema,
-  nativeLoadImageSummaryViewResultSchema,
-  nativeFunctionMatchingSummaryViewResultSchema,
-  nativeFunctionSummaryViewResultSchema,
-  sourceToBundleSummaryViewResultSchema,
-  sourceToBundlePageViewResultSchema,
-  endpointComparisonSummaryViewResultSchema,
-  apiContractSummaryViewResultSchema,
-  playwrightTraceSummaryViewResultSchema,
-  playwrightTracePageViewResultSchema,
-  apiContractPageViewResultSchema,
-  graphqlContractPageViewResultSchema,
-  endpointComparisonPageViewResultSchema,
-  featureTraceSummaryViewResultSchema,
-  batchDecompileSummaryViewResultSchema,
-  featureTraceViewResultSchema,
-  analysisViewResultSchema,
-  type AnalysisViewResult,
-  type UnsignedAnalysisView,
-};
 
 /** Attach the content digest that must change when projected bytes change. */
 export const sealAnalysisView = (
@@ -258,7 +120,7 @@ export const sealAnalysisView = (
     view_digest: digestCanonicalValue(projection, "Analysis view"),
   });
 
-const parentDigest = (evidenceId: string): string => evidenceId.slice(3);
+const parentEvidenceIdSchema = prefixedDigestSchema("ev");
 
 const parseJavaScriptParent = (
   input: unknown,
@@ -289,27 +151,6 @@ const unsupportedParent = (
     },
   );
 
-const parentArtifactPath = (parent: AnalysisViewParent): string => {
-  if (
-    typeof parent.normalizedResult === "object" &&
-    parent.normalizedResult !== null &&
-    "artifact" in parent.normalizedResult &&
-    typeof parent.normalizedResult.artifact === "object" &&
-    parent.normalizedResult.artifact !== null &&
-    "path" in parent.normalizedResult.artifact &&
-    typeof parent.normalizedResult.artifact.path === "string"
-  )
-    return parent.normalizedResult.artifact.path;
-  if (
-    typeof parent.normalizedResult === "object" &&
-    parent.normalizedResult !== null &&
-    "input_path" in parent.normalizedResult &&
-    typeof parent.normalizedResult.input_path === "string"
-  )
-    return parent.normalizedResult.input_path;
-  return parent.evidenceId;
-};
-
 /** Check a projector result against the result union before sealing it. */
 const sealProjected = (
   projected: Result<UnsignedAnalysisView, AnalysisError>,
@@ -335,12 +176,15 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   ...NATIVE_OBSERVATION_OPERATIONS.map((operation) =>
     retain(operation, projectNativeObservationView),
   ),
+  retain("procedure_references", projectNativeProcedureReferencesView),
   retain("trace_native_values", projectNativeValueTraceView),
   retain("inspect_erlang_beam", projectErlangBeamView),
   retain("inspect_devicetree", projectDevicetreeView),
   retain("inspect_native_exports", projectNativeExportsView),
+  retain("inspect_elf_dependencies", projectElfDependenciesView),
   retain("inspect_native_load_image", projectNativeLoadImageView),
   retain("inspect_python_pyc", projectPythonPycView),
+  retain("inspect_nuget_nupkg", projectNugetNupkgView),
   retain("frida_session_status", projectFridaSessionStatusView),
   retain("gdb_console", projectCommandObservationView),
   retain("inspect_with_objdump", projectCommandObservationView),
@@ -379,6 +223,7 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("inspect_artifact", projectArtifactInventoryView),
   retain("inventory_artifact", projectArtifactInventoryView),
   retain("analyze_web_bundle", projectWebBundleView),
+  retain("trace_web_source_location", projectWebSourceLocationView),
 ]);
 
 /** Budgets retained across source admission and the selected grouping projection. */
@@ -460,8 +305,7 @@ export const projectAnalysisView = (
   view: AnalysisViewRequest,
   accumulators: AnalysisViewAccumulators = {},
 ): Result<AnalysisViewResult, AnalysisError> => {
-  const digest = parentDigest(parent.evidenceId);
-  if (!digestSchema.safeParse(digest).success)
+  if (!parentEvidenceIdSchema.safeParse(parent.evidenceId).success)
     return err(
       analysisViewInputError([
         {
@@ -475,6 +319,7 @@ export const projectAnalysisView = (
     parent.operation === "match_native_functions"
       ? NATIVE_FUNCTION_MATCHING_PREDICATE
       : parent.operation === "analyze_function" ||
+          parent.operation === "procedure_references" ||
           parent.operation === "procedure_pseudo_code" ||
           parent.operation === "inspect_native_instruction" ||
           parent.operation === "trace_feature" ||
@@ -497,6 +342,11 @@ export const projectAnalysisView = (
         },
       ]),
     );
+  if (view.kind === "cyclonedx")
+    return sealProjected(projectCycloneDxView(parent, view));
+  if (view.kind === "recorded-array") {
+    return sealProjected(projectRecordedArrayView(parent, view));
+  }
   if (view.kind === "javascript-routes") {
     const projected = projectJavaScriptRoutesView(parent, view);
     return sealProjected(projected);

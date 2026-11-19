@@ -8,7 +8,7 @@ This changes initial hot/cold visibility: clients that assumed the view was alwa
 
 ## Pinned verification
 
-Baseline: `1480a7c72e601f4444e21ecd50118c1afa774209`; candidate is that checkout with the `src/catalogDiscovery.ts` policy change recorded in the [JSON receipt](recent-tools-progressive-catalog-2026-11-06.json). Node 24.22.1 and MCP client/server 2.3.1, Linux x64. No target execution or browser launch occurs during these offline tasks.
+Baseline: `1480a7c72e601f4444e21ecd50118c1afa774209`; candidate is that checkout with the `src/catalogDiscovery.ts` policy change recorded in the [JSON receipt](https://github.com/morluto/rea/blob/main/docs/verification/recent-tools-progressive-catalog-2026-11-06.json). Node 24.22.1 and MCP client/server 2.3.1, Linux x64. No target execution or browser launch occurs during these offline tasks.
 
 Three alternating before/after suite repetitions use sequential fresh MCP servers, Client and AJV instances for six cases. The Node harness/SDK code is shared across the six cases in a repetition, so later cases have warm code. Filesystem caches were not flushed; these are repeat measurements, not a cold-disk qualification. Capture acquisition, fixture generation and builds preceded profiling. Two separate alternating batched controls use a fresh Node harness per trial. All Node processes use normal JIT and 1 GiB heaps. Stock SDK output validation/caching is retained without per-call tool-definition overrides.
 

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect } from "vitest";
@@ -17,9 +17,11 @@ import {
 } from "../../src/domain/desktop/appExportPython.js";
 import { PYTHON_TASK_EVALUATOR } from "../../src/domain/desktop/appTaskPython.js";
 import {
-  detectStateFormat,
-  textualView,
-} from "../../src/domain/desktop/stateFormats.js";
+  compressionOf,
+  openStateDocument,
+} from "../../src/domain/desktop/gzipDocument.js";
+import { textualView } from "../../src/domain/desktop/stateFormats.js";
+import { zipArchive } from "../../src/domain/desktop/zipArchive.fixture.js";
 import type { JsonValue } from "../../src/domain/jsonValue.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
@@ -28,6 +30,37 @@ export interface SavedFile {
   readonly name: string;
   readonly bytes: Uint8Array;
 }
+
+const FIXTURES = join(import.meta.dirname, "../fixtures");
+
+/**
+ * A fixture's two saves, before and after its edit, read from
+ * `tests/fixtures/FOLDER/{before,after}/FILE` as the file `name`, each
+ * wrapped, such as a Writer `content.xml` zipped into an `.odt`.
+ */
+export const savedEnds = (
+  folder: string,
+  file: string,
+  name: string = file,
+  wrap: (bytes: Uint8Array) => Uint8Array = (bytes) => bytes,
+): Promise<SavedFile[]> =>
+  Promise.all(
+    (["before", "after"] as const).map(async (end) => ({
+      name,
+      bytes: wrap(await readFile(join(FIXTURES, folder, end, file))),
+    })),
+  );
+
+/** A Writer `content.xml` zipped into an `.odt` after its stored `mimetype`, as Writer saves one. */
+export const odtOf = (content: Uint8Array): Uint8Array =>
+  zipArchive([
+    {
+      name: "mimetype",
+      data: "application/vnd.oasis.opendocument.text",
+      method: 0,
+    },
+    { name: "content.xml", data: content },
+  ]);
 
 /** The exported module's standard library imports, its helpers and the verifier's evaluator, as one program. */
 const PYTHON = `${PYTHON_IMPORTS.split("\n")
@@ -96,19 +129,26 @@ export const pythonXmlViews = (texts: readonly string[]) =>
     ),
   );
 
-/** REA's state view of a zip, text, JSON, key file or XML file, in the shape data/get serves it. */
+/** REA's state view of a zip, text, JSON, key file, XML or binary file, plain or gzip-compressed, in the shape data/get serves it. */
 export const typescriptFileView = async ({
   name,
   bytes,
 }: SavedFile): Promise<TaskFileView> => {
-  const format = detectStateFormat(name, bytes);
-  if (format === "sqlite" || format === "dconf" || format === "binary")
+  const document = openStateDocument(name, bytes);
+  const file = { format: document.format, ...compressionOf(document) };
+  if ("error" in document)
+    return { ...file, view: null, error: document.error };
+  const { format } = document;
+  if (format === "sqlite" || format === "dconf")
     throw new Error(`${name} is ${format}, which these tests do not read`);
+  if (format === "binary") return { ...file, view: null };
   const read =
-    format === "zip" ? await readZipView(bytes) : textualView(format, bytes);
+    format === "zip"
+      ? await readZipView(document.bytes)
+      : textualView(format, document.bytes);
   return read.ok
-    ? { format, view: read.value }
-    : { format, view: null, error: read.error };
+    ? { ...file, view: read.value }
+    : { ...file, view: null, error: read.error };
 };
 
 /** Both readers give each file the same format and view, or the same error. */
@@ -118,6 +158,7 @@ export const expectSameFileViews = async (files: readonly SavedFile[]) => {
     const ours = await typescriptFileView(file);
     const theirs = fromPython[index] ?? {};
     expect(theirs.format).toBe(ours.format);
+    expect(theirs.compression).toBe(ours.compression);
     expect(theirs.view).toEqual(ours.view);
     expect(theirs.error).toBe(ours.error);
   }

@@ -1,6 +1,9 @@
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { createHash } from "node:crypto";
-import { rm, writeFile } from "node:fs/promises";
+import { realpath, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -9,10 +12,11 @@ import type { CallToolResult } from "@modelcontextprotocol/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
+import { sha256Hex } from "../../../src/kernel/sha256Hex.js";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { createDeferred } from "../../fixtures/binarySession.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { phaseArrival, phaseGate } from "../../support/lifecycleHarness.js";
 import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
 
 import {
@@ -21,7 +25,7 @@ import {
   type AnalysisProviderInspectionOptions,
   type CapabilityDescriptor,
   type ProviderIdentity,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
@@ -46,14 +50,12 @@ import {
   toolAvailabilityInventory,
   toolAvailabilitySummaryInventory,
 } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const resources: Array<{ close(): Promise<unknown> }> = [];
-let directory: string | undefined;
 afterEach(async () => {
   await Promise.all(resources.splice(0).map((resource) => resource.close()));
-  if (directory !== undefined)
-    await rm(directory, { recursive: true, force: true });
-  directory = undefined;
 });
 
 it("delivers provider-owned diagnostic keys without narrowing their JSON facts", async () => {
@@ -80,7 +82,10 @@ it("delivers provider-owned diagnostic keys without narrowing their JSON facts",
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const mcp = new Client({ name: "provider-diagnostics", version: "1" });
+  const mcp = new Client(
+    { name: "provider-diagnostics", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server, { close: () => session.close() });
@@ -107,9 +112,302 @@ it("delivers provider-owned diagnostic keys without narrowing their JSON facts",
   expect(JSON.parse(text.text)).toEqual(response.structuredContent);
 });
 
+const createAliasedTargetMcp = async (beforeLookup?: () => Promise<void>) => {
+  const directory = await createTestTempDirectory("rea-session-aliases-");
+  const physical = join(directory, "fixture.com");
+  const bytes = Buffer.from([0xb8, 0, 0x4c, 0xcd, 0x21]);
+  const digest = sha256Hex(bytes);
+  await writeFile(physical, bytes);
+  const canonical = await realpath(physical);
+  const firstAlias = join(directory, "first");
+  const secondAlias = join(directory, "second");
+  await Promise.all([
+    symlink(canonical, firstAlias),
+    symlink(canonical, secondAlias),
+  ]);
+  const starts: string[] = [];
+  const provider = candidate("alpha", starts);
+  const session = composeBinarySession(
+    new AnalysisProviderRegistry([
+      {
+        ...provider,
+        createClient: (...args) => {
+          const child = provider.createClient(...args);
+          return {
+            ...child,
+            execute: async (operation, ...parameters) => {
+              if (operation === "address_name") await beforeLookup?.();
+              return child.execute(operation, ...parameters);
+            },
+          };
+        },
+      },
+    ]),
+  );
+  const server = createServer(
+    { kind: "session", session },
+    { logger: silentLogger },
+  );
+  const client = new Client(
+    { name: "target-aliases", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  resources.push(client, server, { close: () => session.close() });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  const tools = new Map(
+    (await client.listTools()).tools.map((tool) => [tool.name, tool]),
+  );
+  const call = (name: string, input: Record<string, unknown> = {}) => {
+    const definition = tools.get(name);
+    if (definition === undefined) throw new Error(`Missing tool ${name}`);
+    return client.callTool(
+      { name, arguments: input },
+      {
+        toolDefinition: withCanonicalOutputSchema(definition),
+      },
+    );
+  };
+  const open = (path: string) =>
+    call("open_binary", { path, format: "dos-com" });
+  const current = async () => structured(await call("binary_session")).result;
+  const observation = async (document?: string) =>
+    parseEvidence(
+      structured(
+        await call("address_name", {
+          address: "0x100",
+          ...(document === undefined ? {} : { document }),
+        }),
+      ),
+    );
+
+  const selected = (path: string) => ({
+    path: canonical,
+    sha256: digest,
+    caller_input_path: path,
+  });
+  return {
+    directory,
+    canonical,
+    digest,
+    firstAlias,
+    secondAlias,
+    session,
+    starts,
+    call,
+    open,
+    current,
+    observation,
+    selected,
+  };
+};
+
+it.skipIf(process.platform === "win32")(
+  "keeps caller-selected aliases separate from native session and Evidence identity",
+  async () => {
+    const firstDispatch = phaseGate();
+    const {
+      directory,
+      canonical,
+      digest,
+      firstAlias,
+      secondAlias,
+      session,
+      starts,
+      call,
+      open,
+      current,
+      observation,
+      selected,
+    } = await createAliasedTargetMcp(() => firstDispatch.hold());
+    expect(structured(await open(firstAlias)).result).toMatchObject(
+      selected(firstAlias),
+    );
+    const firstStatus = await current();
+    expect(firstStatus).toMatchObject(selected(firstAlias));
+    const reopening = phaseArrival();
+    const openTarget = session.open.bind(session);
+    const openSpy = vi.spyOn(session, "open").mockImplementation((...args) => {
+      const opened = openTarget(...args);
+      reopening.arrive();
+      return opened;
+    });
+    const inFlight = observation();
+    let secondOpen: Promise<CallToolResult> | undefined;
+    try {
+      await firstDispatch.reached(inFlight, "first-alias analysis dispatch");
+      secondOpen = open(secondAlias);
+      await reopening.reached(secondOpen, "second-alias open queued");
+      expect(await current()).toMatchObject(selected(firstAlias));
+    } finally {
+      firstDispatch.release();
+      await Promise.allSettled([inFlight, secondOpen]);
+      openSpy.mockRestore();
+    }
+    const first = await inFlight;
+    expect(first).toMatchObject({
+      caller_input_path: firstAlias,
+      subject: { local_path: canonical, identity: { sha256: digest } },
+    });
+    if (secondOpen === undefined) throw new Error("Expected an alias reopen");
+    expect(structured(await secondOpen).result).toMatchObject(
+      selected(secondAlias),
+    );
+    const secondStatus = await current();
+    expect(secondStatus).toMatchObject(selected(secondAlias));
+    const firstRun = z
+      .object({ analysis_run: z.object({ run_id: z.string() }) })
+      .parse(firstStatus).analysis_run;
+    expect(secondStatus).toMatchObject({ analysis_run: firstRun });
+    expect(starts).toEqual(["alpha"]);
+    const second = await observation();
+    expect(second).toMatchObject({
+      evidence_id: first.evidence_id,
+      caller_input_path: secondAlias,
+      subject: first.subject,
+    });
+
+    const rejected = await open(join(directory, "missing"));
+    expect(parseMcpToolError(rejected).error.details).toMatchObject({
+      selection_at_failure: selected(secondAlias),
+      target_at_open_completion: selected(secondAlias),
+    });
+    expect(await current()).toMatchObject(selected(secondAlias));
+    expect(
+      structured(await call("get_evidence_bundle", { detail: "complete" }))
+        .result,
+    ).toMatchObject({
+      records: [
+        { evidence_id: first.evidence_id, caller_input_path: firstAlias },
+      ],
+    });
+
+    expect(structured(await open(canonical)).result).not.toHaveProperty(
+      "caller_input_path",
+    );
+    expect(await current()).not.toHaveProperty("caller_input_path");
+    expect(await observation()).not.toHaveProperty("caller_input_path");
+    expect(starts).toEqual(["alpha"]);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "replays a snapshot against the same file through a different selected alias",
+  async () => {
+    const {
+      directory,
+      canonical,
+      firstAlias,
+      secondAlias,
+      call,
+      open,
+      observation,
+      selected,
+    } = await createAliasedTargetMcp();
+    expect((await open(firstAlias)).isError).not.toBe(true);
+    const seeded = await observation(canonical);
+    expect(seeded.caller_input_path).toBe(firstAlias);
+    const snapshotPath = join(directory, "analysis.json");
+    expect(
+      structured(await call("close_binary", { snapshot_path: snapshotPath }))
+        .result,
+    ).toMatchObject({ primitive_entries: 1 });
+    expect(
+      structured(
+        await call("open_binary", {
+          path: secondAlias,
+          format: "dos-com",
+          snapshot_path: snapshotPath,
+        }),
+      ).result,
+    ).toMatchObject(selected(secondAlias));
+    const replay = await observation(canonical);
+    expect(replay).toMatchObject({
+      caller_input_path: secondAlias,
+      subject: seeded.subject,
+      normalized_result: seeded.normalized_result,
+    });
+    expect(replay.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Loaded from a local REA analysis snapshot"),
+      ]),
+    );
+  },
+);
+
+const expectUnknownProviderKeepsBinding = async (
+  mcp: Client,
+  session: ReturnType<typeof composeBinarySession>,
+  workspace: string,
+  target: string,
+  opened: Awaited<ReturnType<Client["callTool"]>>,
+): Promise<void> => {
+  const unknown = await mcp.callTool({
+    name: "open_binary",
+    arguments: { path: target, provider_id: "missing" },
+  });
+  expect(unknown.isError).toBe(true);
+  const refusal = structured(unknown);
+  expect(refusal).toMatchObject({
+    error: {
+      details: {
+        selection_reason: "unknown_provider",
+        target_at_open_completion: structured(opened).result,
+        provider_id_at_open_completion: "beta",
+      },
+    },
+  });
+  expect(
+    structured(
+      await mcp.callTool({
+        name: "binary_session",
+        arguments: {},
+      }),
+    ).result,
+  ).toMatchObject({
+    analysis_provider_binding: { provider: { id: "beta" } },
+  });
+  await checkQueuedSwitchReceipt(
+    mcp,
+    session,
+    target,
+    workspace,
+    opened,
+    refusal,
+  );
+};
+
+const expectRefreshedExplicitBinding = async (mcp: Client): Promise<void> => {
+  for (const detail of ["summary", "complete"] as const) {
+    const refreshed = structured(
+      await mcp.callTool({
+        name: "binary_session",
+        arguments: { detail, refresh_candidates: true },
+      }),
+    );
+    expect(refreshed.result).toMatchObject({
+      analysis_provider_binding: { selection_source: "request" },
+      analysis_provider_candidates: [
+        {
+          provider: { id: "alpha" },
+          selected: false,
+          selection_source: null,
+        },
+        {
+          provider: { id: "beta" },
+          selected: true,
+          selection_source: "request",
+        },
+      ],
+    });
+  }
+};
+
 describe("provider selection over MCP", () => {
   it("keeps open_binary and binary_session binding semantics exact", async () => {
-    directory = await createTestTempDirectory("rea-provider-mcp-");
+    const directory = await createTestTempDirectory("rea-provider-mcp-");
     const target = join(directory, "fixture.hop");
     await writeFile(target, "fixture");
     const starts: string[] = [];
@@ -123,7 +421,10 @@ describe("provider selection over MCP", () => {
       { kind: "session", session },
       { logger: silentLogger },
     );
-    const mcp = new Client({ name: "provider-selection", version: "1.0.0" });
+    const mcp = new Client(
+      { name: "provider-selection", version: "1.0.0" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     resources.push(mcp, server);
@@ -199,6 +500,29 @@ describe("provider selection over MCP", () => {
     });
     expect(starts).toEqual(["beta"]);
 
+    const unsupported = await mcp.callTool({
+      name: "read_bytes",
+      arguments: { address: "0x1000", length: 4 },
+    });
+    expect(unsupported.isError).toBe(true);
+    expect(structured(unsupported)).toMatchObject({
+      error: {
+        code: "capability_unavailable",
+        message: expect.stringContaining("read_bytes"),
+        details: { provider_id: "beta", operation: "read_bytes" },
+        remediation: {
+          action: expect.stringMatching(
+            /binary_session.*complete.*open_binary.*provider_id/u,
+          ),
+        },
+      },
+    });
+    const unsupportedError = parseMcpToolError(unsupported).error;
+    expect(unsupportedError.message).not.toContain(
+      unsupportedError.remediation.action,
+    );
+    expect(starts).toEqual(["beta"]);
+
     const status = structured(
       await mcp.callTool({
         name: "binary_session",
@@ -223,44 +547,21 @@ describe("provider selection over MCP", () => {
       ],
     });
 
-    const unknown = await mcp.callTool({
-      name: "open_binary",
-      arguments: { path: target, provider_id: "missing" },
-    });
-    expect(unknown.isError).toBe(true);
-    const refusal = structured(unknown);
-    expect(refusal).toMatchObject({
-      error: {
-        details: {
-          selection_reason: "unknown_provider",
-          target_at_open_completion: structured(opened).result,
-          provider_id_at_open_completion: "beta",
-        },
-      },
-    });
-    expect(
-      structured(
-        await mcp.callTool({
-          name: "binary_session",
-          arguments: {},
-        }),
-      ).result,
-    ).toMatchObject({
-      analysis_provider_binding: { provider: { id: "beta" } },
-    });
-    await checkQueuedSwitchReceipt(
+    await expectRefreshedExplicitBinding(mcp);
+    expect(starts).toEqual(["beta"]);
+
+    await expectUnknownProviderKeepsBinding(
       mcp,
       session,
-      target,
       directory,
+      target,
       opened,
-      refusal,
     );
   });
 });
 
 it("offers admitted providers and retains unconfigured rejections", async () => {
-  directory = await createTestTempDirectory("rea-provider-mcp-mixed-");
+  const directory = await createTestTempDirectory("rea-provider-mcp-mixed-");
   const target = join(directory, "fixture.hop");
   await writeFile(target, "fixture");
   const starts: string[] = [];
@@ -276,7 +577,10 @@ it("offers admitted providers and retains unconfigured rejections", async () => 
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const mcp = new Client({ name: "provider-selection", version: "1.0.0" });
+  const mcp = new Client(
+    { name: "provider-selection", version: "1.0.0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server);
@@ -378,24 +682,43 @@ const candidateStatus = (candidates: unknown) =>
     z
       .array(z.record(z.string(), z.unknown()))
       .parse(candidates)
-      .map(({ provider, selected, availability, target_support }) => {
-        const state = (value: unknown) => {
-          const { status, code, reason } = z
-            .object({
-              status: z.string(),
-              code: z.unknown(),
-              reason: z.unknown(),
-            })
-            .parse(value);
-          return { status, code, reason };
-        };
-        return {
+      .map(
+        ({
           provider,
           selected,
-          availability: state(availability),
-          target_support: state(target_support),
-        };
-      }),
+          selection_source,
+          availability,
+          target_support,
+          rejections,
+        }) => {
+          const state = (value: unknown) => {
+            const { status, code, reason } = z
+              .object({
+                status: z.string(),
+                code: z.unknown(),
+                reason: z.unknown(),
+              })
+              .parse(value);
+            return { status, code, reason };
+          };
+          return {
+            provider,
+            selected,
+            selection_source,
+            availability: state(availability),
+            target_support: state(target_support),
+            rejections: z
+              .array(z.record(z.string(), z.unknown()))
+              .parse(rejections)
+              .map(({ provider_id, origin, code, reason }) => ({
+                provider_id,
+                origin,
+                code,
+                reason,
+              })),
+          };
+        },
+      ),
   );
 
 const expectSummaryKeepsDecisionFacts = (
@@ -451,7 +774,10 @@ const connectDetailFixture = async (starts: string[]) => {
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const mcp = new Client({ name: "session-detail", version: "1.0.0" });
+  const mcp = new Client(
+    { name: "session-detail", version: "1.0.0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server, { close: () => session.close() });
@@ -462,7 +788,7 @@ const connectDetailFixture = async (starts: string[]) => {
 
 describe("binary_session detail over MCP", () => {
   it("defaults to a summary that keeps every decision fact and names what complete detail adds", async () => {
-    directory = await createTestTempDirectory("rea-session-detail-mcp-");
+    const directory = await createTestTempDirectory("rea-session-detail-mcp-");
     const target = join(directory, "fixture.hop");
     await writeFile(target, "fixture");
     const starts: string[] = [];
@@ -514,13 +840,8 @@ describe("binary_session detail over MCP", () => {
     const summary = (await sessionStatusOf(mcp, {})).raw.result;
     const complete = (await sessionStatusOf(mcp, { detail: "complete" })).raw
       .result;
-    const advertised = (await mcp.listTools()).tools.find(
-      ({ name }) => name === "binary_session",
-    )?.outputSchema;
-    if (advertised === undefined)
-      throw new Error("binary_session omitted its output schema");
     const validate = new AjvJsonSchemaValidator().getValidator(
-      z.record(z.string(), z.unknown()).parse(advertised),
+      canonicalOutputSchema("binary_session"),
     );
     const canonical = toolContract("binary_session").outputSchema;
     const { omitted_fields: _omitted, ...summaryWithoutOmissions } = summary;
@@ -576,6 +897,9 @@ const expectedOpenSelection = (path: string, sha256: string) => ({
   sha256,
 });
 
+const firstSha = sha256Hex("first fixture");
+const secondSha = sha256Hex("second fixture");
+
 const expectQueuedOpenReceipt = async (
   mcp: Client,
   session: BinarySession,
@@ -586,15 +910,13 @@ const expectQueuedOpenReceipt = async (
   const call = (name: string, args: Record<string, unknown>) =>
     mcp.callTool({ name, arguments: args });
   const originalOpen = session.open.bind(session);
-  const failedSettled = createDeferred<void>();
-  const deliverFailure = createDeferred<void>();
+  const failedSnapshotOpen = phaseGate();
   const intercept = vi
     .spyOn(session, "open")
     .mockImplementation(async (path, options) => {
       const result = await originalOpen(path, options);
       if (path === second && options?.loadSnapshot !== undefined) {
-        failedSettled.resolve();
-        await deliverFailure.promise;
+        await failedSnapshotOpen.hold();
       }
       return result;
     });
@@ -605,28 +927,22 @@ const expectQueuedOpenReceipt = async (
     snapshot_path: snapshotPath,
   });
   try {
-    await awaitAcknowledgement(
-      failedSettled.promise,
-      failedSwitch,
-      "failed snapshot open",
-    );
+    await failedSnapshotOpen.reached(failedSwitch, "failed snapshot open");
     const nextReply = await call("open_binary", {
       path: second,
       provider_id: "beta",
     });
     expect(nextReply.isError).not.toBe(true);
-    const sha = (value: string) =>
-      createHash("sha256").update(value).digest("hex");
     expect((await call("binary_session", {})).structuredContent).toMatchObject({
-      result: { path: second, sha256: sha("second fixture") },
+      result: { path: second, sha256: secondSha },
     });
-    deliverFailure.resolve();
+    failedSnapshotOpen.release();
     const failedReply = await failedSwitch;
     expect(
       parseMcpToolError(failedReply).error.details?.selection_at_failure,
-    ).toEqual(expectedOpenSelection(first, sha("first fixture")));
+    ).toEqual(expectedOpenSelection(first, firstSha));
   } finally {
-    deliverFailure.resolve();
+    failedSnapshotOpen.release();
     await failedSwitch.catch(() => undefined);
     intercept.mockRestore();
   }
@@ -644,11 +960,49 @@ const writeSnapshotMismatchTargets = async () => {
   return { testDirectory, first, second, snapshotPath };
 };
 
+/** A raw-binary snapshot names the entry point its target was opened with. */
+const expectRawEntryPointMismatch = async (
+  call: (
+    name: string,
+    args: Record<string, unknown>,
+  ) => ReturnType<Client["callTool"]>,
+  testDirectory: string,
+) => {
+  const raw = join(testDirectory, "raw.bin");
+  const rawSnapshot = join(testDirectory, "raw-snapshot.json");
+  await writeFile(raw, Buffer.from([0, 1, 2, 3]));
+  const rawTarget = {
+    path: raw,
+    provider_id: "alpha",
+    format: "raw-binary",
+    architecture: "arm64",
+  };
+  expect(
+    (await call("open_binary", { ...rawTarget, entry_point: "0x1000" }))
+      .isError,
+  ).not.toBe(true);
+  expect(
+    (await call("close_binary", { snapshot_path: rawSnapshot })).isError,
+  ).not.toBe(true);
+  const differentEntry = await call("open_binary", {
+    ...rawTarget,
+    entry_point: "0x2000",
+    snapshot_path: rawSnapshot,
+  });
+  expect(differentEntry.isError).toBe(true);
+  expect(parseMcpToolError(differentEntry).error.details).toMatchObject({
+    binding_mismatch: {
+      target: {
+        snapshot: { identity: { selection: { entry_point: "0x1000" } } },
+        selected: { identity: { selection: { entry_point: "0x2000" } } },
+      },
+    },
+  });
+};
+
 it("reports confirmed snapshot binding differences and keeps the active session", async () => {
   const { testDirectory, first, second, snapshotPath } =
     await writeSnapshotMismatchTargets();
-  const sha = (value: string) =>
-    createHash("sha256").update(value).digest("hex");
   let revision = 1;
   const alphaProfile = createAnalysisProfile(
     { id: "alpha", name: "alpha provider", version: "1" },
@@ -677,7 +1031,10 @@ it("reports confirmed snapshot binding differences and keeps the active session"
     ]),
   );
   const server = createServer({ kind: "session", session });
-  const mcp = new Client({ name: "snapshot-mismatch", version: "1" });
+  const mcp = new Client(
+    { name: "snapshot-mismatch", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server, { close: () => session.close() });
@@ -703,8 +1060,8 @@ it("reports confirmed snapshot binding differences and keeps the active session"
     const error = parseMcpToolError(result).error;
     expect(error.code).toBe("evidence_integrity_mismatch");
     expect(error.details).toMatchObject({
-      target_at_open_completion: { sha256: sha("first fixture") },
-      selection_at_failure: expectedOpenSelection(first, sha("first fixture")),
+      target_at_open_completion: { sha256: firstSha },
+      selection_at_failure: expectedOpenSelection(first, firstSha),
     });
     expect(error.remediation.action).toBe(
       analysisErrorRemediationAction(new AnalysisSnapshotMismatchError("")),
@@ -720,10 +1077,19 @@ it("reports confirmed snapshot binding differences and keeps the active session"
     });
     return error.details?.binding_mismatch;
   };
+  // A snapshot names its target by the target identity it persisted.
   expect(await mismatch(second, "alpha")).toEqual({
     target: {
-      snapshot: expect.objectContaining({ sha256: sha("first fixture") }),
-      selected: expect.objectContaining({ sha256: sha("second fixture") }),
+      snapshot: expect.objectContaining({
+        identity: expect.objectContaining({
+          sha256: firstSha,
+        }),
+      }),
+      selected: expect.objectContaining({
+        identity: expect.objectContaining({
+          sha256: secondSha,
+        }),
+      }),
     },
   });
   const otherProvider = await mismatch(first, "beta");
@@ -748,8 +1114,8 @@ it("reports confirmed snapshot binding differences and keeps the active session"
   const combined = await mismatch(second, "beta");
   expect(combined).toMatchObject({
     target: {
-      snapshot: { sha256: sha("first fixture") },
-      selected: { sha256: sha("second fixture") },
+      snapshot: { identity: { sha256: firstSha } },
+      selected: { identity: { sha256: secondSha } },
     },
     provider: { snapshot: { id: "alpha" }, selected: { id: "beta" } },
   });
@@ -760,33 +1126,175 @@ it("reports confirmed snapshot binding differences and keeps the active session"
   await expectQueuedOpenReceipt(mcp, session, first, second, snapshotPath);
 
   revision = 1;
-  const raw = join(testDirectory, "raw.bin");
-  const rawSnapshot = join(testDirectory, "raw-snapshot.json");
-  await writeFile(raw, Buffer.from([0, 1, 2, 3]));
-  const rawTarget = {
-    path: raw,
-    provider_id: "alpha",
-    format: "raw-binary",
-    architecture: "arm64",
-  };
+  await expectRawEntryPointMismatch(call, testDirectory);
+});
+
+it.each([true, false])(
+  "offers an entry-comment handoff only when the selected provider admits it (%s)",
+  async (entryCommentAvailable) => {
+    const directory = await createTestTempDirectory("rea-comment-recovery-");
+    const target = join(directory, "fixture.hop");
+    await writeFile(target, "fixture");
+    const starts: string[] = [];
+    const selected = candidate("beta", starts);
+    const identity = selected.identity();
+    const annotation = capability(identity);
+    const session = composeBinarySession(
+      new AnalysisProviderRegistry([
+        {
+          ...selected,
+          capabilities: () => [
+            capability(identity),
+            entryCommentAvailable
+              ? { ...annotation, operation: "annotate_native_function" }
+              : {
+                  ...annotation,
+                  operation: "annotate_native_function",
+                  available: false,
+                  reason: "Selected analysis is read-only.",
+                  availabilityCode: "open_options_invalid",
+                },
+          ],
+        },
+      ]),
+    );
+    const server = createServer(
+      { kind: "session", session },
+      { logger: silentLogger },
+    );
+    const mcp = new Client(
+      { name: "comment-recovery", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    resources.push(mcp, server, { close: () => session.close() });
+    await server.connect(serverTransport);
+    await mcp.connect(clientTransport);
+    expect(
+      (
+        await mcp.callTool({
+          name: "open_binary",
+          arguments: { path: target, provider_id: "beta" },
+        })
+      ).isError,
+    ).not.toBe(true);
+    for (const [operation, field, flag] of [
+      ["set_comment", "comment", "--comment"],
+      ["set_inline_comment", "inline_comment", "--inline-comment"],
+    ] as const) {
+      const reply = await mcp.callTool({
+        name: operation,
+        arguments: { address: "0x1000", comment: "note" },
+      });
+      const error = parseMcpToolError(reply).error;
+      expect(error.code).toBe("capability_unavailable");
+      expect(error.details).toMatchObject({ provider_id: "beta", operation });
+      expect(error.remediation.action).toMatch(
+        /binary_session.*complete.*open_binary.*provider_id/u,
+      );
+      if (entryCommentAvailable) {
+        expect(error.remediation.action).toContain("annotate_native_function");
+        expect(error.remediation.action).toContain(field);
+        expect(error.remediation.action).toContain(flag);
+      } else
+        expect(error.remediation.action).not.toContain(
+          "annotate_native_function",
+        );
+    }
+    expect(starts).toEqual([]);
+    const after = structured(
+      await mcp.callTool({ name: "binary_session", arguments: {} }),
+    );
+    expect(after.result).toMatchObject({
+      analysis_provider_binding: { provider: { id: "beta" } },
+    });
+  },
+);
+
+it("keeps containing-function recovery for undeclared comment facets", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-undeclared-comment-facet-",
+  );
+  const target = join(directory, "fixture.hop");
+  await writeFile(target, "fixture");
+  const starts: string[] = [];
+  const selected = candidate("beta", starts);
+  const identity = selected.identity();
+  const session = composeBinarySession(
+    new AnalysisProviderRegistry([
+      {
+        ...selected,
+        capabilities: () => [
+          capability(identity),
+          {
+            ...capability(identity),
+            operation: "resolve_containing_procedure",
+          },
+        ],
+        createClient: (_target, profile) => ({
+          execute: async (operation) =>
+            ok(
+              createAnalysisExecution(
+                operation === "resolve_containing_procedure"
+                  ? {
+                      query_address: "0x1001",
+                      found: true,
+                      procedure: {
+                        address: "0x1000",
+                        name: "entry",
+                        classification: null,
+                        body: { available: false, reason: "not recorded" },
+                      },
+                    }
+                  : "entry",
+                profile?.provider ?? identity,
+              ),
+            ),
+          close: async () => ok(null),
+        }),
+      },
+    ]),
+  );
+  const server = createServer(
+    { kind: "session", session },
+    { logger: silentLogger },
+  );
+  const mcp = new Client(
+    { name: "undeclared-comment-facet", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  resources.push(mcp, server, { close: () => session.close() });
+  await server.connect(serverTransport);
+  await mcp.connect(clientTransport);
   expect(
-    (await call("open_binary", { ...rawTarget, entry_point: "0x1000" }))
-      .isError,
+    (
+      await mcp.callTool({
+        name: "open_binary",
+        arguments: { path: target, provider_id: "beta" },
+      })
+    ).isError,
   ).not.toBe(true);
-  expect(
-    (await call("close_binary", { snapshot_path: rawSnapshot })).isError,
-  ).not.toBe(true);
-  const differentEntry = await call("open_binary", {
-    ...rawTarget,
-    entry_point: "0x2000",
-    snapshot_path: rawSnapshot,
+  const reply = await mcp.callTool({
+    name: "inspect_address_context",
+    arguments: { address: "0x1001", document: "fixture" },
   });
-  expect(differentEntry.isError).toBe(true);
-  expect(parseMcpToolError(differentEntry).error.details).toMatchObject({
-    binding_mismatch: {
-      target: {
-        snapshot: { entry_point: "0x1000" },
-        selected: { entry_point: "0x2000" },
+  expect(reply.isError).not.toBe(true);
+  expect(structured(reply)).toMatchObject({
+    result: {
+      comment: {
+        state: "unavailable",
+        remediation: expect.stringContaining("inspect_analysis_view"),
+      },
+      inline_comment: {
+        state: "unavailable",
+        remediation: expect.stringContaining("inspect_analysis_view"),
+      },
+      bookmarks: {
+        state: "unavailable",
+        remediation: expect.stringContaining("open_binary"),
       },
     },
   });
@@ -875,6 +1383,100 @@ const structured = (result: CallToolResult): Record<string, unknown> =>
     ? parseMcpToolError(result)
     : z.record(z.string(), z.unknown()).parse(result.structuredContent);
 
+it.each(["compact"] as const)(
+  "keeps provider-owned release verification bound to the selected session (%s)",
+  async (profile) => {
+    const directory = await createTestTempDirectory(
+      "rea-provider-verification-",
+    );
+    const target = join(directory, "fixture.hop");
+    await writeFile(target, "fixture");
+    const starts: string[] = [];
+    const alpha = candidate("alpha", starts);
+    const verification = {
+      status: "unverified" as const,
+      basis: "reported_version" as const,
+      reported_version: "1",
+      verified_version: "2",
+      explanation: "The reported version does not authenticate the executable.",
+      remediation:
+        "Continue with the selected version or choose another explicitly.",
+    };
+    const session = composeBinarySession(
+      new AnalysisProviderRegistry([
+        {
+          ...alpha,
+          resolveAnalysisProfile: async (...args) => {
+            const resolved = await alpha.resolveAnalysisProfile(...args);
+            return resolved.ok
+              ? ok({ ...resolved.value, releaseVerification: verification })
+              : resolved;
+          },
+        },
+        candidate("beta", starts),
+      ]),
+    );
+    const server = createServer(
+      { kind: "session", session },
+      {
+        logger: silentLogger,
+        environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: profile },
+      },
+    );
+    const mcp = new Client(
+      { name: "provider-verification", version: "1" },
+      {
+        jsonSchemaValidator: new AjvJsonSchemaValidator(),
+      },
+    );
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    resources.push(mcp, server, { close: () => session.close() });
+    await server.connect(serverTransport);
+    await mcp.connect(clientTransport);
+    const definitions = new Map(
+      (await mcp.listTools()).tools.map((tool) => [tool.name, tool]),
+    );
+    const call = (name: string, args: Record<string, unknown> = {}) => {
+      const definition = definitions.get(name);
+      if (definition === undefined) throw new Error(`Missing tool ${name}`);
+      return mcp.callTool(
+        { name, arguments: args },
+        { toolDefinition: withCanonicalOutputSchema(definition) },
+      );
+    };
+    expect(structured(await call("binary_session")).result).toMatchObject({
+      analysis_provider_binding: null,
+    });
+    expect(
+      (await call("open_binary", { path: target, provider_id: "alpha" }))
+        .isError,
+    ).toBeFalsy();
+    for (const detail of ["summary", "complete"]) {
+      expect(
+        structured(await call("binary_session", { detail })).result,
+      ).toMatchObject({
+        analysis_provider_binding: {
+          provider: { id: "alpha" },
+          release_verification: verification,
+        },
+      });
+    }
+    expect(
+      (await call("open_binary", { path: target, provider_id: "beta" }))
+        .isError,
+    ).toBeFalsy();
+    const status = toolContract("binary_session").outputSchema.parse(
+      (await call("binary_session")).structuredContent,
+    );
+    expect(status.result.analysis_provider_binding?.provider.id).toBe("beta");
+    expect(status.result.analysis_provider_binding).not.toHaveProperty(
+      "release_verification",
+    );
+    expect((await call("close_binary")).isError).toBeFalsy();
+  },
+);
+
 const checkQueuedSwitchReceipt = async (
   mcp: Client,
   session: ReturnType<typeof composeBinarySession>,
@@ -885,16 +1487,14 @@ const checkQueuedSwitchReceipt = async (
 ): Promise<void> => {
   const other = join(directory, "other.hop");
   await writeFile(other, "other fixture");
-  const settled = createDeferred<void>();
-  const release = createDeferred<void>();
+  const failedOpenReceipt = phaseGate();
   const open = session.open.bind(session);
   const spy = vi
     .spyOn(session, "open")
     .mockImplementation(async (path, options) => {
       const result = await open(path, options);
       if (options?.providerId === "missing") {
-        settled.resolve();
-        await release.promise;
+        await failedOpenReceipt.hold();
       }
       return result;
     });
@@ -903,16 +1503,14 @@ const checkQueuedSwitchReceipt = async (
     arguments: { path: target, provider_id: "missing" },
   });
   try {
-    await awaitAcknowledgement(settled.promise, pending, "failed-open receipt");
+    await failedOpenReceipt.reached(pending, "failed-open receipt");
     const switched = await mcp.callTool({
       name: "open_binary",
       arguments: { path: other, provider_id: "alpha" },
     });
     expect(switched.isError).not.toBe(true);
-    expect(session.activeTarget()?.sha256).toBe(
-      createHash("sha256").update("other fixture").digest("hex"),
-    );
-    release.resolve();
+    expect(session.activeTarget()?.sha256).toBe(sha256Hex("other fixture"));
+    failedOpenReceipt.release();
     const queuedRefusal = await pending;
     for (const result of [structured(queuedRefusal), refusal])
       expect(result).toMatchObject({
@@ -924,7 +1522,7 @@ const checkQueuedSwitchReceipt = async (
         },
       });
   } finally {
-    release.resolve();
+    failedOpenReceipt.release();
     await Promise.allSettled([pending]);
     spy.mockRestore();
   }
@@ -959,7 +1557,10 @@ it("preserves a selected Ghidra project's read-only guidance when an edit is req
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const mcp = new Client({ name: "project-refusal", version: "1" });
+  const mcp = new Client(
+    { name: "project-refusal", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server, { close: () => session.close() });
@@ -994,8 +1595,434 @@ it("preserves a selected Ghidra project's read-only guidance when an edit is req
   expect(starts).toEqual([]);
 });
 
+it("labels unbound provider observations as selection-time after a repair", async () => {
+  const directory = await createTestTempDirectory("rea-candidate-observation-");
+  const target = join(directory, "fixture.hop");
+  await writeFile(target, "fixture");
+  let available = false;
+  const base = candidate("alpha", []);
+  const session = composeBinarySession(
+    new AnalysisProviderRegistry([
+      {
+        ...base,
+        inspectAvailability: () =>
+          candidate("alpha", [], available).inspectAvailability(),
+      },
+    ]),
+  );
+  const server = createServer(
+    { kind: "session", session },
+    { logger: silentLogger },
+  );
+  const mcp = new Client(
+    { name: "candidate-scope", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  resources.push(mcp, server, { close: () => session.close() });
+  await server.connect(serverTransport);
+  await mcp.connect(clientTransport);
+  expect(
+    (await mcp.callTool({ name: "open_binary", arguments: { path: target } }))
+      .isError,
+  ).toBeFalsy();
+  available = true;
+  const stale = toolContract("binary_session").outputSchema.parse(
+    (await mcp.callTool({ name: "binary_session", arguments: {} }))
+      .structuredContent,
+  ).result;
+  expect(stale.analysis_provider_binding).toBeNull();
+  expect(stale.analysis_provider_candidates_observed).toBe("target_selection");
+  expect(stale.analysis_provider_candidates[0]?.availability.status).toBe(
+    "unavailable",
+  );
+  const inspected = toolContract("binary_session").outputSchema.parse(
+    (
+      await mcp.callTool({
+        name: "binary_session",
+        arguments: { refresh_candidates: true },
+      })
+    ).structuredContent,
+  ).result;
+  expect(inspected.analysis_provider_binding).toBeNull();
+  expect(inspected.analysis_provider_candidates_observed).toBe(
+    "status_request",
+  );
+  expect(inspected.analysis_provider_candidates[0]?.availability.status).toBe(
+    "available",
+  );
+  const retained = toolContract("binary_session").outputSchema.parse(
+    (await mcp.callTool({ name: "binary_session", arguments: {} }))
+      .structuredContent,
+  ).result;
+  expect(retained.analysis_provider_candidates[0]?.availability.status).toBe(
+    "unavailable",
+  );
+  expect(
+    (await mcp.callTool({ name: "open_binary", arguments: { path: target } }))
+      .isError,
+  ).toBeFalsy();
+  const reused = toolContract("binary_session").outputSchema.parse(
+    (await mcp.callTool({ name: "binary_session", arguments: {} }))
+      .structuredContent,
+  ).result;
+  expect(reused.analysis_provider_binding).toBeNull();
+  expect(reused.analysis_provider_candidates[0]?.availability.status).toBe(
+    "unavailable",
+  );
+  expect(
+    (
+      await mcp.callTool({
+        name: "open_binary",
+        arguments: { path: target, provider_id: "alpha" },
+      })
+    ).isError,
+  ).toBeFalsy();
+  const refreshed = toolContract("binary_session").outputSchema.parse(
+    (await mcp.callTool({ name: "binary_session", arguments: {} }))
+      .structuredContent,
+  ).result;
+  expect(refreshed.analysis_provider_candidates_observed).toBe(
+    "target_selection",
+  );
+  expect(refreshed.analysis_provider_binding?.provider.id).toBe("alpha");
+});
+
+it("preserves the bound client when a candidate refresh is cancelled during finalization", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-candidate-refresh-cancel-",
+  );
+  const target = join(directory, "fixture.hop");
+  await writeFile(target, "fixture");
+  const starts: string[] = [];
+  const base = candidate("alpha", starts);
+  let hold = false;
+  let finalized!: () => void;
+  const candidateRefresh = phaseGate();
+  const done = new Promise<void>((resolve) => {
+    finalized = resolve;
+  });
+  const session = composeBinarySession(
+    new AnalysisProviderRegistry([
+      {
+        ...base,
+        inspectAvailability: async ({
+          signal,
+        }: AnalysisProviderInspectionOptions = {}) => {
+          const result = await base.inspectAvailability();
+          if (!hold) return result;
+          await candidateRefresh.hold();
+          finalized();
+          if (signal?.aborted)
+            throw new AnalysisCancelledError("binary_session", {
+              cause: signal.reason,
+            });
+          return result;
+        },
+      },
+    ]),
+  );
+  const server = createServer(
+    { kind: "session", session },
+    { logger: silentLogger },
+  );
+  const mcp = new Client(
+    { name: "candidate-refresh-cancel", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  resources.push(mcp, server, { close: () => session.close() });
+  await server.connect(serverTransport);
+  await mcp.connect(clientTransport);
+  let refreshing: ReturnType<typeof mcp.callTool> | undefined;
+  try {
+    expect(
+      (
+        await mcp.callTool({
+          name: "open_binary",
+          arguments: { path: target, provider_id: "alpha" },
+        })
+      ).isError,
+    ).toBeFalsy();
+    expect(
+      (await mcp.callTool({ name: "address_name", arguments: {} })).isError,
+    ).toBeFalsy();
+    expect(starts).toEqual(["alpha"]);
+    hold = true;
+    const controller = new AbortController();
+    refreshing = mcp.callTool(
+      { name: "binary_session", arguments: { refresh_candidates: true } },
+      { signal: controller.signal },
+    );
+    await candidateRefresh.reached(refreshing, "candidate refresh");
+    controller.abort();
+    await expect(refreshing).rejects.toThrow();
+    candidateRefresh.release();
+    await done;
+    hold = false;
+    expect(
+      structured(await mcp.callTool({ name: "binary_session", arguments: {} }))
+        .result,
+    ).toMatchObject({
+      analysis_provider_binding: { provider: { id: "alpha" } },
+      analysis_provider_candidates_observed: "target_selection",
+    });
+    expect(
+      (await mcp.callTool({ name: "address_name", arguments: {} })).isError,
+    ).toBeFalsy();
+    expect(starts).toEqual(["alpha"]);
+  } finally {
+    hold = false;
+    candidateRefresh.release();
+    await Promise.allSettled(refreshing === undefined ? [] : [refreshing]);
+  }
+});
+
+it("orders a provider switch after an in-flight candidate refresh", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-candidate-refresh-switch-",
+  );
+  const target = join(directory, "fixture.hop");
+  await writeFile(target, "fixture");
+  const starts: string[] = [];
+  const alpha = candidate("alpha", starts);
+  let hold = false;
+  const candidateRefresh = phaseGate();
+  const session = composeBinarySession(
+    new AnalysisProviderRegistry([
+      {
+        ...alpha,
+        inspectAvailability: async () => {
+          if (hold) {
+            hold = false;
+            await candidateRefresh.hold();
+          }
+          return alpha.inspectAvailability();
+        },
+      },
+      candidate("beta", starts),
+    ]),
+  );
+  const server = createServer(
+    { kind: "session", session },
+    { logger: silentLogger },
+  );
+  const mcp = new Client(
+    { name: "refresh-switch-race", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  resources.push(mcp, server, { close: () => session.close() });
+  await server.connect(serverTransport);
+  await mcp.connect(clientTransport);
+  let refreshing: ReturnType<typeof mcp.callTool> | undefined;
+  let switching: ReturnType<typeof mcp.callTool> | undefined;
+  try {
+    expect(
+      (
+        await mcp.callTool({
+          name: "open_binary",
+          arguments: { path: target, provider_id: "alpha" },
+        })
+      ).isError,
+    ).toBeFalsy();
+    hold = true;
+    refreshing = mcp.callTool({
+      name: "binary_session",
+      arguments: { refresh_candidates: true },
+    });
+    await candidateRefresh.reached(refreshing, "candidate refresh");
+    let switched = false;
+    switching = mcp
+      .callTool({
+        name: "open_binary",
+        arguments: { path: target, provider_id: "beta" },
+      })
+      .then((result) => {
+        switched = true;
+        return result;
+      });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(switched).toBe(false);
+    candidateRefresh.release();
+    const result = await refreshing;
+    expect(result.isError).toBeFalsy();
+    expect(structured(result).result).toMatchObject({
+      analysis_provider_binding: { provider: { id: "alpha" } },
+    });
+    expect((await switching).isError).toBeFalsy();
+    expect(
+      structured(await mcp.callTool({ name: "binary_session", arguments: {} }))
+        .result,
+    ).toMatchObject({
+      analysis_provider_binding: { provider: { id: "beta" } },
+    });
+  } finally {
+    candidateRefresh.release();
+    await Promise.allSettled(
+      [refreshing, switching].filter((operation) => operation !== undefined),
+    );
+  }
+});
+
+it("does not cancel an already admitted prompt lookup for a candidate refresh", async () => {
+  const directory = await createTestTempDirectory("rea-refresh-prompt-");
+  const target = join(directory, "fixture.hop");
+  await writeFile(target, "fixture");
+  const base = candidate("alpha", []);
+  const promptLookup = phaseGate();
+  const session = composeBinarySession(
+    new AnalysisProviderRegistry([
+      {
+        ...base,
+        createClient: (selected, profile, context) => {
+          const client = base.createClient(selected, profile, context);
+          return {
+            ...client,
+            executeIfReady: async (operation, args, options) => {
+              await promptLookup.hold();
+              if (options?.signal?.aborted)
+                throw new Error("Prompt lookup was cancelled");
+              return client.execute(operation, args, options);
+            },
+          };
+        },
+      },
+    ]),
+  );
+  const server = createServer(
+    { kind: "session", session },
+    { logger: silentLogger },
+  );
+  const mcp = new Client(
+    { name: "refresh-prompt", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  resources.push(mcp, server, { close: () => session.close() });
+  await server.connect(serverTransport);
+  await mcp.connect(clientTransport);
+  let lookup: ReturnType<typeof session.executeIfProviderReady> | undefined;
+  try {
+    expect(
+      (
+        await mcp.callTool({
+          name: "open_binary",
+          arguments: { path: target, provider_id: "alpha" },
+        })
+      ).isError,
+    ).toBeFalsy();
+    expect(
+      (await mcp.callTool({ name: "address_name", arguments: {} })).isError,
+    ).toBeFalsy();
+    lookup = session.executeIfProviderReady("address_name", {});
+    await promptLookup.reached(lookup, "prompt lookup");
+    expect(
+      (
+        await mcp.callTool({
+          name: "binary_session",
+          arguments: { refresh_candidates: true },
+        })
+      ).isError,
+    ).toBeFalsy();
+    promptLookup.release();
+    expect((await lookup)?.ok).toBe(true);
+  } finally {
+    promptLookup.release();
+    await Promise.allSettled(lookup === undefined ? [] : [lookup]);
+  }
+});
+
+it("retains failed candidate-refresh cleanup while preserving the selected binding", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-candidate-refresh-cleanup-",
+  );
+  const target = join(directory, "fixture.hop");
+  await writeFile(target, "fixture");
+  const starts: string[] = [];
+  const beta = candidate("beta", starts);
+  let fail = false;
+  let release = false;
+  const failure = new ProviderCleanupError("beta", ["beta-refresh-owner"], {
+    reason: "controlled cleanup failure",
+  });
+  const session = composeBinarySession(
+    new AnalysisProviderRegistry([
+      candidate("alpha", starts),
+      {
+        ...beta,
+        inspectAvailability: () => {
+          if (fail) throw failure;
+          return beta.inspectAvailability();
+        },
+        closeOwnedResources: async () => {
+          if (!fail) return ok(null);
+          if (!release) return err(failure);
+          releaseOwnedCleanup(failure);
+          return ok(null);
+        },
+      },
+    ]),
+  );
+  const server = createServer(
+    { kind: "session", session },
+    { logger: silentLogger },
+  );
+  const mcp = new Client(
+    { name: "candidate-refresh-cleanup", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  resources.push(mcp, server, { close: () => session.close() });
+  await server.connect(serverTransport);
+  await mcp.connect(clientTransport);
+  try {
+    expect(
+      (
+        await mcp.callTool({
+          name: "open_binary",
+          arguments: { path: target, provider_id: "alpha" },
+        })
+      ).isError,
+    ).toBeFalsy();
+    fail = true;
+    const failed = parseMcpToolError(
+      await mcp.callTool({
+        name: "binary_session",
+        arguments: { refresh_candidates: true },
+      }),
+    );
+    expect(failed.error).toMatchObject({
+      code: "cleanup_incomplete",
+      details: { resources: ["beta-refresh-owner"] },
+    });
+    const status = structured(
+      await mcp.callTool({ name: "binary_session", arguments: {} }),
+    );
+    expect(status.result).toMatchObject({
+      cleanup_pending: true,
+      analysis_provider_binding: { provider: { id: "alpha" } },
+    });
+    release = true;
+    expect(
+      (await mcp.callTool({ name: "close_binary", arguments: {} })).isError,
+    ).toBeFalsy();
+    expect(failure.cleanupIncomplete).toBe(false);
+  } finally {
+    release = true;
+    await session.close();
+  }
+});
+
 it("retains attributed mixed profile cleanup through registered MCP calls and partial retry", async () => {
-  directory = await createTestTempDirectory("rea-profile-completion-mcp-");
+  const directory = await createTestTempDirectory(
+    "rea-profile-completion-mcp-",
+  );
   const path = join(directory, "fixture.hop");
   await writeFile(path, "fixture");
   const starts: string[] = [];
@@ -1014,7 +2041,7 @@ it("retains attributed mixed profile cleanup through registered MCP calls and pa
     resolveAnalysisProfile: async () => err(failures[id]),
     closeOwnedResources: async () => {
       if (!released.has(id)) return err(failures[id]);
-      failures[id].resolveCleanup();
+      releaseOwnedCleanup(failures[id]);
       return ok(null);
     },
   }));
@@ -1023,7 +2050,10 @@ it("retains attributed mixed profile cleanup through registered MCP calls and pa
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const mcp = new Client({ name: "profile-completion", version: "1.0.0" });
+  const mcp = new Client(
+    { name: "profile-completion", version: "1.0.0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server, { close: () => session.close() });
@@ -1079,14 +2109,7 @@ it.each(["ready", "cancelled", "physical"] as const)(
   async (mode) => {
     const starts: string[] = [];
     const base = candidate("alpha", starts);
-    let enter!: () => void;
-    let finish!: () => void;
-    const entered = new Promise<void>((resolve) => {
-      enter = resolve;
-    });
-    const gate = new Promise<void>((resolve) => {
-      finish = resolve;
-    });
+    const providerReadiness = phaseGate();
     const session = composeBinarySession(
       new AnalysisProviderRegistry([
         {
@@ -1094,8 +2117,7 @@ it.each(["ready", "cancelled", "physical"] as const)(
           inspectAvailability: async ({
             signal,
           }: AnalysisProviderInspectionOptions = {}) => {
-            enter();
-            await gate;
+            await providerReadiness.hold();
             if (mode === "physical")
               throw new ProviderAdapterError("alpha", "binary_session", {
                 diagnostics: {
@@ -1115,7 +2137,10 @@ it.each(["ready", "cancelled", "physical"] as const)(
       { kind: "session", session },
       { logger: silentLogger },
     );
-    const mcp = new Client({ name: "async-readiness", version: "1.0.0" });
+    const mcp = new Client(
+      { name: "async-readiness", version: "1.0.0" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     resources.push(mcp, server, { close: () => session.close() });
@@ -1130,7 +2155,7 @@ it.each(["ready", "cancelled", "physical"] as const)(
       });
     let closing: ReturnType<typeof session.close> | undefined;
     try {
-      await entered;
+      await providerReadiness.reached(observing, "provider readiness");
       if (mode !== "ready") {
         closing = session.close();
         const during = structured(
@@ -1171,7 +2196,7 @@ it.each(["ready", "cancelled", "physical"] as const)(
       }
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(settled).toBe(false);
-      finish();
+      providerReadiness.release();
       const result = await observing;
       if (mode === "ready") {
         expect(result.isError).not.toBe(true);
@@ -1201,10 +2226,12 @@ it.each(["ready", "cancelled", "physical"] as const)(
       }
       expect(starts).toEqual([]);
     } finally {
-      finish();
-      await observing;
-      await closing;
-      await session.close();
+      providerReadiness.release();
+      try {
+        await Promise.all([observing, closing]);
+      } finally {
+        await session.close();
+      }
     }
   },
 );

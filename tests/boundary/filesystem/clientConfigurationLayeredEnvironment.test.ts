@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -20,6 +21,7 @@ import {
   readClientConfigurationFiles,
 } from "../../../src/application/ClientConfigurationFiles.js";
 import { clientRegistrationEnvironmentDetails } from "../../../src/application/ClientRegistrationEnvironment.js";
+import { supportedClientRegistrationProfile } from "../../fixtures/clientRegistrationProfile.js";
 
 const command = currentClientRegistrationCommand({
   platform: process.platform,
@@ -68,6 +70,7 @@ it.each(["missing", "empty", "legacy", "native"] as const)(
       );
     const client = {
       name: "opencode",
+      registrationProfile: supportedClientRegistrationProfile("opencode"),
       format: "opencode",
       configPath: upper,
       configPaths: [lower, upper],
@@ -75,10 +78,17 @@ it.each(["missing", "empty", "legacy", "native"] as const)(
     expect(
       await configureClientConfiguration(client, {}, command),
     ).toMatchObject({ status: "configured" });
-    const files = await readClientConfigurationFiles(client);
-    expect(files.ok).toBe(true);
+    const files = await readClientConfigurationFiles(
+      client,
+      undefined,
+      HOST_PLATFORM.platform,
+    );
     if (!files.ok) throw new Error(files.error.detail);
-    const effective = effectiveClientConfiguration(files.value);
+    const effective = effectiveClientConfiguration(
+      files.value,
+      undefined,
+      HOST_PLATFORM.platform,
+    );
     expect(effective?.dialect).toBe("opencode_v2");
     expect(
       effective === undefined
@@ -126,6 +136,7 @@ const layered = async (lower: unknown, upper: unknown) => {
     await writeFile(path, sources[index]!);
   const client = {
     name: "opencode",
+    registrationProfile: supportedClientRegistrationProfile("opencode"),
     format: "opencode",
     configPath: paths[1]!,
     configPaths: paths,
@@ -133,6 +144,7 @@ const layered = async (lower: unknown, upper: unknown) => {
   const status = async () =>
     (
       await readClientRegistrationStatuses(home, command[1], {
+        platform: HOST_PLATFORM.platform,
         environment: { XDG_CONFIG_HOME: join(home, ".config") },
       })
     ).find(({ client }) => client === "opencode");
@@ -161,13 +173,21 @@ it.skipIf(process.platform !== "win32").each([
         command,
       ),
     ).toMatchObject({ status: "configured" });
-    const sources = await readClientConfigurationFiles(fixture.client);
-    expect(sources.ok).toBe(true);
+    const sources = await readClientConfigurationFiles(
+      fixture.client,
+      undefined,
+      HOST_PLATFORM.platform,
+    );
     if (!sources.ok) throw new Error(sources.error.detail);
     const environment = clientRegistrationEnvironmentDetails(
-      effectiveClientConfiguration(sources.value),
+      effectiveClientConfiguration(
+        sources.value,
+        undefined,
+        HOST_PLATFORM.platform,
+      ),
+      undefined,
+      HOST_PLATFORM.platform,
     );
-    expect(environment.ok).toBe(true);
     if (!environment.ok) throw environment.error;
     expect(environment.value.timeoutInputs?.analysisProvider).toBe("ghidra");
     expect(environment.value.values).toHaveProperty(
@@ -286,10 +306,14 @@ it("merges caller server names as own keys without inventing absent registration
     "opencode",
   );
   expect(effectiveClientServer(lower, "constructor")).toBeUndefined();
-  const effective = effectiveClientConfiguration([
-    { ...lower, sourcePath: "lower.json" },
-    { ...upper, sourcePath: "upper.json" },
-  ]);
+  const effective = effectiveClientConfiguration(
+    [
+      { ...lower, sourcePath: "lower.json" },
+      { ...upper, sourcePath: "upper.json" },
+    ],
+    undefined,
+    HOST_PLATFORM.platform,
+  );
   expect(effective).toBeDefined();
   if (effective === undefined) throw new Error("missing layered configuration");
   expect(Object.keys(effective.servers)).toEqual(["__proto__"]);

@@ -11,7 +11,7 @@ import {
   PYTHON_TASK_EVALUATOR,
   renderTaskVerifier,
 } from "../../../src/domain/desktop/appTaskPython.js";
-import { jsonView } from "../../../src/domain/desktop/stateFormats.js";
+import { textualView } from "../../../src/domain/desktop/stateFormats.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const PYTHON = process.platform === "win32" ? "python" : "python3";
@@ -47,7 +47,9 @@ it.each(["object", "array", "mixed"])(
     const value = nested(499, 1, shape);
     const final = { payload: value };
     const seed = { payload: nested(499, 0, shape) };
-    expect(jsonView(JSON.stringify(final)).ok).toBe(true);
+    expect(textualView("json", Buffer.from(JSON.stringify(final))).ok).toBe(
+      true,
+    );
     const task = parseDesktopTask(
       {
         name: "nested-value",

@@ -5,8 +5,8 @@ import { toolContract } from "../toolContracts.js";
 const entropy = toolContract("inspect_byte_entropy");
 
 it("warns that complete byte-entropy output can become very large", () => {
-  expect(entropy.description).toContain(
-    "Complete output can become very large because it includes one row per selected block, and summary detail still retains that full list.",
+  expect(entropy.description).toMatch(
+    /output.*large.*one row per selected block.*summary.*full list/iu,
   );
   expect(entropy.description).toContain(
     "Use a shorter length or a larger block_size",

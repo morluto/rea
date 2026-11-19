@@ -1,11 +1,24 @@
 import type { JsonValue } from "../jsonValue.js";
 import {
+  gunzip,
+  gzipDeterministic,
+  hasExtraField,
+  isGzip,
+} from "./gzipDocument.js";
+import {
   identityLeftIn,
   identitySpellings,
   scrubHostIdentity,
   type HostIdentity,
 } from "./hostIdentity.js";
-import { isTextualFormat, textSyntaxFormat } from "./stateFormats.js";
+import {
+  detectStateFormat,
+  isTextualFormat,
+  textSyntaxFormat,
+} from "./stateFormats.js";
+import { decodeStateUtf16 } from "./stateTextEncoding.js";
+import { strictUtf8Decoder } from "../strictUtf8.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /** What the export ships for one seed. */
 export interface SeedScrub {
@@ -13,6 +26,8 @@ export interface SeedScrub {
   readonly bytes: Buffer | undefined;
   /** Whether what it ships still holds the captured home, `user@host` or the host name, its escapes decoded. */
   readonly holdsIdentity: boolean;
+  /** The bytes are a gzip file compressed again only to clear its header: its document is as captured. */
+  readonly recompressed?: true;
 }
 
 /** Seeds up to this size are decoded, well inside a JavaScript string; a larger one is only searched byte for byte. */
@@ -279,11 +294,6 @@ const scrubGVariant = (
   return { text: scrubbed, decoded: [scrubbed, ...strings].join("\n") };
 };
 
-const isRecord = (
-  value: JsonValue | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
 /**
  * A dconf view's groups as the key file the computer compiles, each value's
  * strings scrubbed, and whether it still holds the identity, strings decoded.
@@ -321,33 +331,6 @@ const plainScrub = (text: string, identity: HostIdentity): TextScrub => {
   return { text: scrubbed, decoded: scrubbed };
 };
 
-/** UTF-16 text after a byte-order mark, decoded and encoded as the computer's boot respelling does; undefined otherwise. */
-const utf16Text = (bytes: Buffer) => {
-  const order = [
-    { mark: [0xff, 0xfe], swap: false },
-    { mark: [0xfe, 0xff], swap: true },
-  ].find(({ mark }) => mark.every((byte, index) => bytes[index] === byte));
-  if (order === undefined) return undefined;
-  const little = Buffer.from(bytes.subarray(2));
-  if (order.swap && little.length % 2 === 0) little.swap16();
-  try {
-    return {
-      // The signature is already removed; a leading U+FEFF here is content.
-      text: new TextDecoder("utf-16le", {
-        fatal: true,
-        ignoreBOM: true,
-      }).decode(little),
-      encode: (scrubbed: string) => {
-        const encoded = Buffer.from(scrubbed, "utf16le");
-        if (order.swap) encoded.swap16();
-        return Buffer.concat([Buffer.from(order.mark), encoded]);
-      },
-    };
-  } catch {
-    return undefined;
-  }
-};
-
 /** A seed by its home path and the format the state view read it as. */
 interface Seed {
   readonly home: string;
@@ -361,20 +344,26 @@ interface Seed {
  */
 const seedText = (bytes: Buffer, { home, format }: Seed) => {
   if (bytes.length > MAX_SCRUBBED_BYTES) return undefined;
-  if (!isTextualFormat(format)) {
-    const utf16 = utf16Text(bytes);
-    return utf16 === undefined
-      ? undefined
-      : { ...utf16, format: textSyntaxFormat(home, utf16.text) };
+  const utf16 = decodeStateUtf16(bytes);
+  if (utf16 !== undefined) {
+    return {
+      text: utf16.text,
+      format: textSyntaxFormat(home, utf16.text),
+      encode: (scrubbed: string) => {
+        const encoded = Buffer.from(scrubbed, "utf16le");
+        if (utf16.order === "be") encoded.swap16();
+        return Buffer.concat([bytes.subarray(0, 2), encoded]);
+      },
+    };
   }
+  if (!isTextualFormat(format)) return undefined;
   try {
+    const text = strictUtf8Decoder("preserve").decode(bytes);
     return {
       // The byte-order mark is kept, as Python's utf-8 codec keeps it.
-      text: new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-        bytes,
-      ),
+      text,
       encode: (scrubbed: string) => Buffer.from(scrubbed, "utf8"),
-      format,
+      format: format === "text" ? textSyntaxFormat(home, text) : format,
     };
   } catch {
     return undefined;
@@ -406,7 +395,7 @@ const holdsIdentity = (bytes: Buffer, identity: HostIdentity): boolean => {
  * syntax changes. Other bytes ship as captured. Either way what ships is
  * searched, its escapes decoded, for what is left.
  */
-export const scrubSeed = (
+const scrubDocument = (
   bytes: Buffer,
   seed: Seed,
   identity: HostIdentity,
@@ -423,5 +412,45 @@ export const scrubSeed = (
   return {
     bytes: scrub.text === decoded.text ? undefined : decoded.encode(scrub.text),
     holdsIdentity: identityLeftIn(scrub.decoded, identity) !== undefined,
+  };
+};
+
+/**
+ * Scrub a seed as `scrubDocument` does; a gzip file's document uses its
+ * captured format, or the format detected from decoded bytes when unknown,
+ * then is compressed again alike on every host whether or not it changed, so no file name, comment or time in the
+ * captured header ships. One already so ships as captured, as do one that
+ * does not decompress within the size decoded and one whose document needs no
+ * edit but a member of which has an extra field, where BGZF and dictzip index
+ * their blocks; both are searched as their bytes.
+ */
+export const scrubSeed = (
+  bytes: Buffer,
+  seed: Seed,
+  identity: HostIdentity,
+): SeedScrub => {
+  if (!isGzip(bytes)) return scrubDocument(bytes, seed, identity);
+  const document = gunzip(bytes, MAX_SCRUBBED_BYTES);
+  if (!document.ok)
+    return { bytes: undefined, holdsIdentity: holdsIdentity(bytes, identity) };
+  // The captured gzip may have exceeded the view's expansion-ratio limit;
+  // once decoded for shipping, detect its document format at this boundary.
+  const documentSeed =
+    seed.format === null
+      ? { ...seed, format: detectStateFormat(seed.home, document.value) }
+      : seed;
+  const scrub = scrubDocument(document.value, documentSeed, identity);
+  if (scrub.bytes === undefined && hasExtraField(bytes))
+    return {
+      bytes: undefined,
+      holdsIdentity: scrub.holdsIdentity || holdsIdentity(bytes, identity),
+    };
+  const shipped = gzipDeterministic(scrub.bytes ?? document.value);
+  if (shipped.equals(bytes))
+    return { bytes: undefined, holdsIdentity: scrub.holdsIdentity };
+  return {
+    bytes: shipped,
+    holdsIdentity: scrub.holdsIdentity,
+    ...(scrub.bytes === undefined ? { recompressed: true as const } : {}),
   };
 };
