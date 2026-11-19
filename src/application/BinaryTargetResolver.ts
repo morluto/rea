@@ -1,3 +1,7 @@
+import {
+  BINARY_TARGET_FORMAT_KINDS,
+  type TargetFormatHint,
+} from "../domain/targetFormats.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   artifactNameForClassification,
@@ -43,12 +47,11 @@ import {
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
-import {
-  BINARY_TARGET_FORMAT_KINDS,
-  type BinaryTarget,
-  type BinaryArchitecture,
-  type PeCodeViewRecord,
-  type UniversalMachOSlice,
+import type {
+  BinaryTarget,
+  BinaryArchitecture,
+  PeCodeViewRecord,
+  UniversalMachOSlice,
 } from "../domain/binaryTargetTypes.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { readMipsElfMetadata } from "./MipsElfMetadata.js";
@@ -66,10 +69,7 @@ import {
   isUnopenedAppleBundleExtension,
   openableAppleBundleExtension,
 } from "../domain/apple/appleBundleTypes.js";
-import {
-  validateDosComLength,
-  type ExecutableFormatHint,
-} from "../domain/dosCom.js";
+import { validateDosComLength } from "../domain/dosCom.js";
 import {
   admitRawBinary,
   rawBinarySelectionError,
@@ -141,7 +141,7 @@ export interface BinaryTargetResolverOptions {
   readonly cwd?: string;
   readonly hostArchitecture?: NodeJS.Architecture;
   readonly targetKind?: BinaryTarget["kind"];
-  readonly formatHint?: ExecutableFormatHint;
+  readonly formatHint?: TargetFormatHint;
   readonly architecture?: BinaryArchitecture;
   readonly entryPoint?: string;
   /** Inputs for format=esp-flash-image; rejected with any other format. */
