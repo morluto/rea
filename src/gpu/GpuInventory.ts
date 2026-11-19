@@ -301,10 +301,7 @@ export class GpuInventory {
   #retainFailure(row: GpuObject, cause: unknown): void {
     if (cause instanceof GpuReportCapacityFailure) throw cause;
     if (cause instanceof ZstandardFrameAllowanceError)
-      throw projectZstandardFrameAllowance(
-        "inspect_gpu_code_objects",
-        cause,
-      );
+      throw projectZstandardFrameAllowance("inspect_gpu_code_objects", cause);
     if (cause instanceof AnalysisError) throw cause;
     const capacity =
       cause instanceof BinaryResourceFailure || isBinaryStringReadLimit(cause);
