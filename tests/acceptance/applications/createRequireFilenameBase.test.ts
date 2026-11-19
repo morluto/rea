@@ -132,3 +132,49 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     );
   },
 );
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "keeps unknown loader and search-path evidence distinct through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-resolver-evidence-");
+    await writeFixtureFiles(root, {
+      "known.cjs": 'require.resolve("./dep.cjs", { paths: [] });',
+      "unknown.MJS": 'require.resolve("./dep.cjs", { paths: [] });',
+      "dep.cjs": 'throw new Error("the analysis must not load this file");',
+    });
+    const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
+    const edges = graph.edges.filter(
+      ({ relation, properties }) =>
+        relation === "imports" &&
+        properties.operation === "resolve" &&
+        properties.specifier === "./dep.cjs",
+    );
+    expect(edges).toHaveLength(2);
+    const edgeFrom = (source: string) =>
+      edges.find(
+        ({ evidence }) =>
+          evidence.location.available &&
+          evidence.location.value.kind === "source-range" &&
+          evidence.location.value.source === source,
+      );
+    const known = edgeFrom("known.cjs");
+    expect(known).toMatchObject({
+      properties: { resolved_path: null, resolution_status: "unavailable" },
+      evidence: { confidence: "high" },
+    });
+    expect(known?.evidence.limitations.join(" ")).toContain(
+      "require.resolve search path is unknown",
+    );
+    const unknown = edgeFrom("unknown.MJS");
+    expect(unknown).toMatchObject({
+      properties: { loader_authority: "candidate", resolved_path: null },
+      evidence: { confidence: "low" },
+    });
+    expect(unknown?.evidence.limitations.join(" ")).toContain(
+      "module loader is unknown",
+    );
+    expect(unknown?.evidence.limitations.join(" ")).not.toContain(
+      "require.resolve search path is unknown",
+    );
+  },
+);
