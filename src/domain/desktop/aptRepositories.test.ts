@@ -350,6 +350,20 @@ describe("apt index targets", () => {
     expect(aptListFileName(uri.href)).toBe("apt.example.com_a%5fb%7ec_");
   });
 
+  it.each([
+    ["file:/srv/apt/dists/stable/", "_srv_apt_dists_stable_InRelease"],
+    [
+      "copy:/tmp/snapshot/dists/stable/",
+      "_tmp_snapshot_dists_stable_InRelease",
+    ],
+    [
+      "file://machine/srv/apt/dists/stable/",
+      "machine_srv_apt_dists_stable_InRelease",
+    ],
+  ])("matches apt's cached release spelling for %s", (baseUri, expected) => {
+    expect(`${aptListFileName(baseUri)}InRelease`).toBe(expected);
+  });
+
   it("finds the sources entry of each target, by position and then URI and suite", () => {
     const [typora, k8s, noble] = targets;
     if (typora === undefined || k8s === undefined || noble === undefined)

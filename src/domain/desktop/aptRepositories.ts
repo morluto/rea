@@ -364,7 +364,7 @@ const QUOTED = new Set('\\|{}[]<>"^~_=!@#$%^&*');
 /** apt's file name for a URI in its lists directory: no scheme or credentials, special characters quoted, `/` as `_`. */
 export const aptListFileName = (uri: string): string => {
   const path = uri
-    .replace(/^[a-z][a-z0-9+.-]*:\/\//iu, "")
+    .replace(/^[a-z][a-z0-9+.-]*:(?:\/\/)?/iu, "")
     .replace(/^[^/@]*@/u, "");
   let quoted = "";
   for (const character of path) {
