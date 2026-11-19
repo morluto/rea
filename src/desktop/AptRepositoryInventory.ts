@@ -22,15 +22,17 @@ import {
   type VerifiedKey,
 } from "./GpgvKeyCheck.js";
 import { hostFileKind, readHostFile } from "./HostFileRead.js";
-import { succeeded, type QueryRunner } from "./HostQuery.js";
+import { queryUtf8Text, type QueryRunner } from "./HostQuery.js";
 
-/** Where apt keeps trusted keys, downloaded lists and installed state. */
+/** APT configuration used for repository lookup and suite identity. */
 export interface AptLocations {
   readonly trustedParts: string;
   readonly trusted: string;
   readonly lists: string;
   /** Omitted by injected hosts that use APT's default installed database. */
   readonly status?: string;
+  /** Omitted when apt-config did not establish the architecture. */
+  readonly configuredArchitecture?: string;
 }
 
 export const APT_LOCATIONS: AptLocations = {
@@ -44,31 +46,33 @@ export const APT_LOCATIONS: AptLocations = {
  * apt's folders as `apt-config` resolves them under `Dir`, which an
  * `APT_CONFIG` file can move, as a user-space `apt-get update` does with its
  * lists. Each is the fallback's when apt-config is missing, fails or does not
- * name it.
+ * name it. APT::Architecture requires a successful configuration query.
  */
 export const resolveAptLocations = async (
   runQuery: QueryRunner,
   signal: AbortSignal | undefined,
   fallback: AptLocations = APT_LOCATIONS,
 ): Promise<AptLocations> => {
-  const output = succeeded(
-    await runQuery(
-      "apt-config",
-      [
-        "shell",
-        "LISTS",
-        "Dir::State::Lists/d",
-        "PARTS",
-        "Dir::Etc::TrustedParts/d",
-        "TRUSTED",
-        "Dir::Etc::Trusted/f",
-        "STATUS",
-        "Dir::State::status/f",
-      ],
-      signal,
-    ),
+  const output = await queryUtf8Text(
+    runQuery,
+    "apt-config",
+    [
+      "shell",
+      "LISTS",
+      "Dir::State::Lists/d",
+      "PARTS",
+      "Dir::Etc::TrustedParts/d",
+      "TRUSTED",
+      "Dir::Etc::Trusted/f",
+      "STATUS",
+      "Dir::State::status/f",
+      "ARCH",
+      "APT::Architecture",
+    ],
+    signal,
   );
-  const values = parseAptConfigShell(output ?? "");
+  const values = parseAptConfigShell(output.kind === "read" ? output.text : "");
+  const architecture = values.get("ARCH");
   const value = (name: string) => {
     const found = values.get(name);
     return found?.startsWith("/") === true ? found : undefined;
@@ -78,6 +82,10 @@ export const resolveAptLocations = async (
     trustedParts: value("PARTS") ?? fallback.trustedParts,
     trusted: value("TRUSTED") ?? fallback.trusted,
     status: value("STATUS") ?? fallback.status ?? DEFAULT_DPKG_STATUS_SOURCE,
+    ...(architecture === undefined ||
+    !/^[a-z0-9][a-z0-9-]*$/u.test(architecture)
+      ? {}
+      : { configuredArchitecture: architecture }),
   };
 };
 
@@ -105,6 +113,7 @@ const UBUNTU_PRO =
 const indexTargets = async (
   runQuery: QueryRunner,
   signal: AbortSignal | undefined,
+  configuredArchitecture?: string,
 ): Promise<
   | {
       readonly entries: ReadonlyMap<string, AptIndexTarget>;
@@ -121,7 +130,7 @@ const indexTargets = async (
   if (typeof query !== "object" || query.exitCode !== 0) return undefined;
   const output = query.stdoutBuffer ?? query.stdout;
   const targets = new Map<string, AptIndexTarget>();
-  for (const target of parseAptIndexTargets(output))
+  for (const target of parseAptIndexTargets(output, configuredArchitecture))
     if (!targets.has(target.description))
       targets.set(target.description, target);
   return {
@@ -343,7 +352,11 @@ export const inspectAptRepositories = async (
       indexTargets: new Map(),
       limitations: [],
     };
-  const targets = await indexTargets(host.runQuery, signal);
+  const targets = await indexTargets(
+    host.runQuery,
+    signal,
+    host.apt.configuredArchitecture,
+  );
   const files = sourcesFiles(signal);
   return withGpgvKeyCheck(host.runQuery, signal, async (check) => {
     const context: RepositoryContext = {

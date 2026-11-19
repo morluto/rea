@@ -12,6 +12,7 @@ export interface AptSourceStanza {
   readonly file: string;
   /** apt's number for the entry: a one-line entry's line, a deb822 entry's stanza, counted from 1. */
   readonly position: number;
+  readonly format: "one-line" | "deb822";
   readonly uris: readonly AptSourceUri[];
   readonly suites: readonly string[];
   readonly components: readonly string[];
@@ -31,7 +32,7 @@ interface AptSourceUri {
 /** One `deb` entry of an apt sources file for one URI and suite. */
 export interface AptSourceEntry extends Omit<
   AptSourceStanza,
-  "uris" | "suites"
+  "uris" | "suites" | "format"
 > {
   readonly uri: string | null;
   /** Whether the entry's URI held a user name or password, which `uri` leaves out. */
@@ -106,9 +107,18 @@ const inlineKeyBlock = (value: string): string | null => {
   return `${lines.slice(begin, end < begin ? lines.length : end + 1).join("\n")}\n`;
 };
 
-/** Whether a suite as an entry writes it is a target's release, which apt leaves empty for the flat suite `/`. */
-const isRelease = (suite: string, release: string): boolean =>
-  suite === release || (suite === "/" && release === "");
+/** Match the selected release without changing an authored suite. */
+const isRelease = (suite: string, target: AptIndexTarget): boolean => {
+  const architectureVariable = "$(ARCH)";
+  if (suite.includes(architectureVariable)) {
+    if (target.configuredArchitecture === undefined) return false;
+    suite = suite.replaceAll(
+      architectureVariable,
+      target.configuredArchitecture,
+    );
+  }
+  return suite === target.release || (suite === "/" && target.release === "");
+};
 
 const stanza = (
   at: { readonly file: string; readonly position: number },
@@ -124,6 +134,7 @@ const stanza = (
   const inlineKey = inlineKeyBlock(signedBy);
   return {
     ...at,
+    format: fields.oneLine === true ? "one-line" : "deb822",
     uris: fields.uris.map((source) => {
       const uri = withoutCredentials(source);
       return fields.oneLine === true && ONE_LINE_ESCAPED_USER_INFO.test(uri)
@@ -262,8 +273,10 @@ export interface AptIndexTarget {
   /** Without a user name or password, as `baseUri`, whether or not apt printed them. */
   readonly repoUri: string;
   readonly repoUriCredentialsRemoved?: true;
-  /** The suite as the entry writes it; empty for the flat suite `/`. */
+  /** APT's selected suite after variable expansion; empty for the flat suite `/`. */
   readonly release: string;
+  /** Effective APT::Architecture from apt-config, distinct from an index's architecture. */
+  readonly configuredArchitecture?: string;
   /** The entry's component the index belongs to; null for a flat repository. */
   readonly component: string | null;
   /** The URI of the folder holding the release's InRelease, Release and Release.gpg. */
@@ -281,6 +294,7 @@ const SOURCES_ENTRY = /^(?<file>\/.*):(?<position>[1-9]\d*)$/u;
 /** The index targets of `apt-get indextargets` output; a paragraph missing a field REA needs is skipped. */
 export const parseAptIndexTargets = (
   output: string | Buffer,
+  configuredArchitecture?: string,
 ): readonly AptIndexTarget[] =>
   deb822Paragraphs(output).flatMap((fields) => {
     const at = SOURCES_ENTRY.exec(fields.get("sourcesentry") ?? "")?.groups;
@@ -309,6 +323,9 @@ export const parseAptIndexTargets = (
           ? {}
           : { repoUriCredentialsRemoved: true as const }),
         release: fields.get("release") ?? "",
+        ...(configuredArchitecture === undefined
+          ? {}
+          : { configuredArchitecture }),
         component: optional("component"),
         baseUri: withoutCredentials(baseUri),
         filename,
@@ -333,9 +350,8 @@ export const entryForTarget = (
       candidate.position === target.position,
   );
   if (at === undefined) return undefined;
-  const { uris, suites, ...entry } = at;
-  const single =
-    !at.file.endsWith(".sources") && uris.length === 1 && suites.length === 1;
+  const { uris, suites, format, ...entry } = at;
+  const single = format === "one-line";
   // A one-line entry has one URI and one suite. Only deb822 needs a URI lookup.
   const matches = single
     ? uris
@@ -348,7 +364,7 @@ export const entryForTarget = (
     first.uri === null ? null : withoutOptionalTrailingSlash(first.uri);
   const suite = single
     ? suites[0]
-    : suites.find((listed) => isRelease(listed, target.release));
+    : suites.find((listed) => isRelease(listed, target));
   if (
     suite === undefined ||
     matches.some(({ uri: listed }) =>
@@ -489,7 +505,7 @@ export const declaredPackageFiles = (
       declarations.some(
         ({ repoUri, suite, components }) =>
           repoUri === target.repoUri &&
-          isRelease(suite, target.release) &&
+          isRelease(suite, target) &&
           (target.component === null
             ? components.length === 0
             : components.includes(target.component)),

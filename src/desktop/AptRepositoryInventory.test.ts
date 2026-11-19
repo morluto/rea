@@ -511,11 +511,16 @@ describe.skipIf(
           `Dir::Etc::Trusted=${selected.trusted}`,
           "-o",
           `Dir::State::status=${selected.status}`,
+          "-o",
+          "APT::Architecture=armhf",
           ...argv,
         ],
         signal,
       );
-    expect(await resolveAptLocations(configured, undefined)).toEqual(selected);
+    expect(await resolveAptLocations(configured, undefined)).toEqual({
+      ...selected,
+      configuredArchitecture: "armhf",
+    });
   });
 
   it("reads the lists folder an APT_CONFIG file names, resolved under Dir::State", async () => {
@@ -523,7 +528,7 @@ describe.skipIf(
     const config = join(root, "apt.conf");
     await writeFile(
       config,
-      `Dir::State "${root}/state";\nDir::State::Lists "user lists";\n`,
+      `Dir::State "${root}/state";\nDir::State::Lists "user lists";\nAPT::Architecture "amd64";\n`,
     );
     const configured: QueryRunner = (command, argv, signal) =>
       runHostQuery("env", [`APT_CONFIG=${config}`, command, ...argv], signal);
@@ -535,6 +540,7 @@ describe.skipIf(
       trustedParts: "/etc/apt/trusted.gpg.d/",
       trusted: "/etc/apt/trusted.gpg",
       status: "/var/lib/dpkg/status",
+      configuredArchitecture: "amd64",
     });
     expect(
       await resolveAptLocations(

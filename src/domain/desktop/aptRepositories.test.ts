@@ -141,6 +141,7 @@ describe("parseOneLineSources", () => {
       {
         file: TYPORA_LIST,
         position: 1,
+        format: "one-line",
         uris: [
           { uri: "https://downloads.typora.io/linux", credentials: false },
         ],
@@ -412,31 +413,31 @@ describe("apt index targets", () => {
   });
 });
 
-describe("APT source URI lookup", () => {
-  const file = "/etc/apt/sources.list.d/vendor.sources";
+const deb822LookupFile = "/etc/apt/sources.list.d/vendor.sources";
 
-  const targetFor = (
-    repoUri: string,
-    description = repoUri,
-    component = "main",
-  ) => ({
-    description,
-    sourcesFile: file,
-    position: 1,
-    repoUri,
-    release: "stable",
-    component,
-    baseUri: `${repoUri}dists/stable/`,
-    filename: "/var/lib/apt/lists/vendor",
-    origin: null,
-    suite: null,
-    codename: null,
-  });
+const targetFor = (
+  repoUri: string,
+  description = repoUri,
+  component = "main",
+) => ({
+  description,
+  sourcesFile: deb822LookupFile,
+  position: 1,
+  repoUri,
+  release: "stable",
+  component,
+  baseUri: `${repoUri}dists/stable/`,
+  filename: "/var/lib/apt/lists/vendor",
+  origin: null,
+  suite: null,
+  codename: null,
+});
 
+describe("single-stanza APT source identity", () => {
   it("requires a single deb822 declaration to match the observed URI and suite", () => {
     const stanzas = parseDeb822Sources(
       "Types: deb\nURIs: https://vendor.invalid/archive\nSuites: stable\nComponents: main\n",
-      file,
+      deb822LookupFile,
     );
     expect(
       entryForTarget(targetFor("https://vendor.invalid/archive/"), stanzas),
@@ -452,6 +453,53 @@ describe("APT source URI lookup", () => {
     ).toBeUndefined();
   });
 
+  it("uses APT's configured architecture for both exact-path source identity and attribution", () => {
+    const suite = "unstable/binary-$(ARCH)/";
+    const uri = "https://vendor.invalid/archive";
+    const stanzas = parseDeb822Sources(
+      `Types: deb\nURIs: ${uri}\nSuites: ${suite}\n`,
+      deb822LookupFile,
+    );
+    const description = `${uri} unstable/binary-amd64/ Packages`;
+    // Offline APT emits the expanded Release and no per-target Architecture
+    // on this flat index. The source file and index still retain different facts.
+    const transcript = [
+      `Description: ${description}`,
+      "Filename: /var/lib/apt/lists/apt-owned-Packages",
+      `Base-URI: ${uri}/unstable/binary-amd64/`,
+      `Repo-URI: ${uri}/`,
+      "Release: unstable/binary-amd64/",
+      `Sourcesentry: ${deb822LookupFile}:1`,
+    ].join("\n");
+    const repository = {
+      source: description,
+      uri,
+      repo_uri: `${uri}/`,
+      sources_file: deb822LookupFile,
+      uri_credentials_removed: false,
+      suite,
+      components: [],
+    };
+    for (const architecture of ["amd64", "arm64", undefined]) {
+      const [target] = parseAptIndexTargets(transcript, architecture);
+      if (target === undefined) throw new Error("Missing APT target");
+      const entry = entryForTarget(target, stanzas);
+      const files = declaredPackageFiles(
+        [repository],
+        new Map([[description, target]]),
+      );
+      if (architecture === "amd64") {
+        expect(entry).toMatchObject({ suite, components: [] });
+        expect(files).toEqual(new Set([description]));
+      } else {
+        expect(entry).toBeUndefined();
+        expect(files).toEqual(new Set());
+      }
+    }
+  });
+});
+
+describe("APT source URI lookup", () => {
   it("matches APT's deb822 Repo-URI spellings without changing the source URI", () => {
     const stanzas = parseDeb822Sources(
       [
@@ -460,7 +508,7 @@ describe("APT source URI lookup", () => {
         "Suites: stable",
         "Components: main",
       ].join("\n"),
-      file,
+      deb822LookupFile,
     );
 
     // Repo-URI values from apt-get indextargets --no-release-info (APT 3.2.0).
@@ -499,7 +547,7 @@ describe("APT source URI lookup", () => {
         where === "before the stanza"
           ? Buffer.concat([comment, Buffer.from("\n"), types, fields])
           : Buffer.concat([types, comment, fields]);
-      const stanzas = parseDeb822Sources(source, file);
+      const stanzas = parseDeb822Sources(source, deb822LookupFile);
       expect(stanzas).toHaveLength(1);
       expect(
         entryForTarget(targetFor("https://good.invalid/archive/"), stanzas),
@@ -514,7 +562,7 @@ describe("APT source URI lookup", () => {
       Buffer.from(declaration("bad.invalid/ÿ"), "latin1"),
       Buffer.from(`\n${declaration("good.invalid")}`),
     ]);
-    const stanzas = parseDeb822Sources(source, file);
+    const stanzas = parseDeb822Sources(source, deb822LookupFile);
     expect(stanzas).toHaveLength(1);
     expect(
       entryForTarget(
@@ -532,7 +580,7 @@ describe("APT source URI lookup", () => {
         "Suites: stable",
         "Components: main",
       ].join("\n"),
-      file,
+      deb822LookupFile,
     );
 
     expect(
