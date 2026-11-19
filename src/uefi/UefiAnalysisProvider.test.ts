@@ -286,11 +286,14 @@ it.skipIf(!lzmaWorkerAvailable)(
     expect(result.derivations[0]?.handler.startsWith("lzma-purejs@0.9.")).toBe(
       true,
     );
-    // The only gap is the pad file; the LZMA stream decoded, so coverage holds.
-    expect(result.extraction_gaps.every((gap) => gap.kind === "pad-file")).toBe(
-      true,
-    );
-    expect(result.coverage).toBe("complete");
+    expect(result.extraction_gaps).toMatchObject([
+      {
+        kind: "unparsed-region",
+        source_stream: result.derivations[0]?.child_stream,
+        range: { offset: 0, length: decoded.length },
+      },
+    ]);
+    expect(result.coverage).toBe("partial");
   },
   45_000,
 );
@@ -1110,3 +1113,120 @@ it("maps a decoded FV-image section and its PE32 sibling in the original chain",
     await provider.close();
   }
 });
+
+it("uses common-header framing for an unknown decoded section and keeps its PE32 sibling selectable", async () => {
+  const unknown = buildSection(0x80, Buffer.from("vendor record"));
+  const pe = buildSection(0x10, MODULE_A);
+  const suffix = Buffer.from([0x12, 0x34]);
+  const file = buildFfsFile({
+    guid: GUID_DRIVER,
+    typeCode: 7,
+    payload: amdZlibSection(Buffer.concat([unknown, pe, suffix])),
+  });
+  const directory = await createTestTempDirectory("rea-uefi-unknown-frame-");
+  const path = join(directory, "image.fd");
+  await writeFile(path, buildFv({ files: [file] }).buffer);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const inspected = expectOk(await provider.execute(inspectRequest(path)))
+      .value.result as UefiInspectResult;
+    const sections = inspected.firmware_volumes[0]?.ffs_files[0]?.sections;
+    expect(sections?.slice(1)).toMatchObject([
+      { type_code: 0x80, type_name: "unknown", offset: 0 },
+      { type_code: 0x10, type_name: "pe32", offset: unknown.length },
+    ]);
+    expect(inspected.coverage).toBe("partial");
+    const source = sections?.[0]?.logical_path;
+    if (source === undefined) throw new Error("decoded source was lost");
+
+    const selected = expectOk(
+      await provider.execute(
+        extractRequest(path, join(directory, "pe"), {
+          target: {
+            kind: "section",
+            offset: unknown.length,
+            source_stream: source,
+          },
+        }),
+      ),
+    ).value.result as UefiExtractResult;
+    expect(selected.coverage).toBe("complete");
+    expect(selected.files).toMatchObject([{ sha256: sha256(MODULE_A) }]);
+
+    const whole = expectOk(
+      await provider.execute(extractRequest(path, join(directory, "whole"))),
+    ).value.result as UefiExtractResult;
+    expect(whole.extraction_gaps).toMatchObject([
+      {
+        kind: "unparsed-region",
+        source_stream: source,
+        range: { offset: unknown.length + pe.length, length: suffix.length },
+      },
+    ]);
+  } finally {
+    await provider.close();
+  }
+});
+
+const verifyOutputLimitCoverage = async (
+  section: Buffer,
+  workerPath?: string,
+) => {
+  const file = buildFfsFile({
+    guid: GUID_DRIVER,
+    typeCode: 7,
+    payload: section,
+  });
+  const vol = buildFv({ files: [file] });
+  const directory = await createTestTempDirectory("rea-uefi-decode-limit-");
+  const path = join(directory, "image.fd");
+  await writeFile(path, vol.buffer);
+  const provider = new UefiAnalysisProvider(workerPath);
+  try {
+    const inspected = expectOk(await provider.execute(inspectRequest(path)))
+      .value.result as UefiInspectResult;
+    expect(inspected.coverage).toBe("partial");
+    const extracted = expectOk(
+      await provider.execute(
+        extractRequest(path, join(directory, "out"), {
+          include_compressed: false,
+        }),
+      ),
+    ).value.result as UefiExtractResult;
+    expect(extracted.coverage).toBe("partial");
+    expect(extracted.files).toEqual([]);
+    expect(extracted.extraction_gaps).toMatchObject([
+      {
+        kind: "size-truncated",
+        source_stream: null,
+        detail: expect.stringMatching(/exceeds.*bytes/u),
+      },
+    ]);
+  } finally {
+    await provider.close();
+  }
+};
+
+it("keeps a real zlib output-limit failure distinct from unsupported compression", async () => {
+  const bytes = Buffer.alloc(UEFI_FIRMWARE_LIMITS.lzmaOutputBytes + 1);
+  buildFv({ files: [] }).buffer.copy(bytes);
+  await verifyOutputLimitCoverage(amdZlibSection(bytes));
+});
+
+it.skipIf(!lzmaWorkerAvailable)(
+  "keeps the owned LZMA worker's declared output limit across its reply boundary",
+  async () => {
+    const header = Buffer.alloc(13);
+    header[0] = 0x5d;
+    header.writeUInt32LE(4096, 1);
+    header.writeBigUInt64LE(
+      BigInt(UEFI_FIRMWARE_LIMITS.lzmaOutputBytes + 1),
+      5,
+    );
+    await verifyOutputLimitCoverage(
+      buildLzmaGuidedSection(header),
+      distUefiLzmaWorker,
+    );
+  },
+);

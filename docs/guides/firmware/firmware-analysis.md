@@ -73,6 +73,9 @@ stream. Read `derivations` to trace each decoded stream back to its carrier.
 
 LZMA-custom, LZMAF86, and AMD-zlib can yield nested volumes or section chains.
 The LZMAF86 worker reverses the x86 branch filter before mapping decoded bytes.
+A decoder limit makes inspection partial and appears as a size gap in
+extraction. When decoded bytes lack confirmed framing, extraction retains the
+decoded stream and reports its unparsed range.
 EFI standard compression and other unsupported guided handlers produce
 extraction gaps. Set MCP `include_compressed` to false or pass
 `--no-include-compressed` to omit undecoded carriers. PSP locations remain

@@ -14,9 +14,9 @@ import type {
 import {
   FFS_TYPE_NAME_BY_CODE,
   FV_HEADER_LAYOUT,
-  SECTION_LAYOUT,
   SECTION_TYPE_NAME_BY_CODE,
 } from "./UefiCodeTables.js";
+import type { UefiDecodeFailureReason } from "./UefiLzmaProtocol.js";
 import {
   firstFfsFileLocal,
   nextFfsFileLocal,
@@ -72,7 +72,11 @@ interface UefiLzmaDecodeRequest {
  */
 export type UefiDecodeResult =
   | { readonly ok: true; readonly outcome: UefiLzmaDecodeOutcome }
-  | { readonly ok: false; readonly message: string };
+  | {
+      readonly ok: false;
+      readonly reason: UefiDecodeFailureReason;
+      readonly message: string;
+    };
 
 export type UefiLzmaDecoder = (
   request: UefiLzmaDecodeRequest,
@@ -128,7 +132,7 @@ type ScanOmission = UefiExtractResult["extraction_gaps"][number];
 type DecodeGap = {
   readonly kind: Extract<
     ScanOmission["kind"],
-    "unsupported-compression" | "size-truncated" | "depth-limited"
+    "unparsed-region" | "size-truncated" | "depth-limited"
   >;
   readonly detail: string;
 };
@@ -264,7 +268,7 @@ export const scanUefiImage = async (
   const decodeGap = (
     path: string,
     detail: string,
-    kind: DecodeGap["kind"] = "unsupported-compression",
+    kind: DecodeGap["kind"] = "unparsed-region",
   ): null => {
     decodeGaps.set(path, { kind, detail });
     noteLimitations([detail]);
@@ -811,9 +815,7 @@ export const scanUefiImage = async (
           sourceStream: logicalPath,
         };
         // Select the outer framing before scanning for embedded volume magic.
-        const sectionCandidate = hasRecognizedSectionType(decodedRegion);
-        const leadingSection =
-          sectionCandidate && startsWithSectionFrame(decodedRegion);
+        const leadingSection = startsWithSectionFrame(decodedRegion);
         const rootVolume = leadingSection
           ? parseFirmwareVolumeHeader(
               decodedRegion,
@@ -833,13 +835,18 @@ export const scanUefiImage = async (
             false,
           );
           record.sub_volumes = nested.map((entry) => entry.logical_path);
-        }
-        if (
-          sectionsFirst ||
-          (sectionCandidate &&
-            record.sub_volumes.length === 0 &&
-            !structuralLimitReached)
-        ) {
+          if (nested.length === 0 && !structuralLimitReached) {
+            noteUnparsedRange(
+              decodedRegion,
+              0,
+              decoded.bytes.length,
+              logicalPath,
+              {
+                detail: `Decoded stream at ${logicalPath} has no confirmed volume or section framing; decoded bytes retained.`,
+              },
+            );
+          }
+        } else {
           const childUi = await walkSectionChain(
             decodedRegion,
             0,
@@ -917,6 +924,9 @@ export const scanUefiImage = async (
       return decodeGap(
         logicalPath,
         `${format} decode failed at ${logicalPath}: ${decodedResult.message}`,
+        decodedResult.reason === "output-limit"
+          ? "size-truncated"
+          : "unparsed-region",
       );
     }
     const outcome = decodedResult.outcome;
@@ -959,9 +969,7 @@ export const scanUefiImage = async (
       structuralLimitReached ||
       incompleteFraming ||
       omissions.length > 0 ||
-      [...decodeGaps.values()].some(
-        ({ kind }) => kind === "depth-limited" || kind === "size-truncated",
-      )
+      decodeGaps.size > 0
         ? "partial"
         : "complete",
   };
@@ -980,16 +988,6 @@ const subRegion = (
 
 const sectionTypeNameFor = (code: number): string =>
   SECTION_TYPE_NAME_BY_CODE[code] ?? "unknown";
-
-const hasRecognizedSectionType = (region: ScanRegion): boolean => {
-  const typeOffset = region.start + SECTION_LAYOUT.typeOffset;
-  const typeCode = region.buffer[typeOffset];
-  return (
-    typeOffset < region.end &&
-    typeCode !== undefined &&
-    SECTION_TYPE_NAME_BY_CODE[typeCode] !== undefined
-  );
-};
 
 /** A complete leading frame takes precedence over volume magic in its body. */
 const startsWithSectionFrame = (region: ScanRegion): boolean => {

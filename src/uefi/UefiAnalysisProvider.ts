@@ -7,7 +7,6 @@ import { inflate } from "node:zlib";
 import { promisify } from "node:util";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { z } from "zod";
 import {
   ArtifactResourceScope,
   readStableArtifact,
@@ -31,7 +30,6 @@ import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCle
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { digestSchema } from "../domain/digests.js";
 import type { Result } from "../domain/result.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
 import {
@@ -65,24 +63,8 @@ import {
   type UefiPublicationEntry,
 } from "./UefiPublication.js";
 
+import { lzmaReplySchema } from "./UefiLzmaProtocol.js";
 import { UEFI_PROVIDER_IDENTITY } from "./UefiProviderIdentity.js";
-
-/** Mirror of the owned worker's reply contract; parsed before use. */
-const lzmaReplySchema = z.discriminatedUnion("ok", [
-  z.strictObject({
-    ok: z.literal(true),
-    lzma_version: z.string(),
-    output: z.strictObject({
-      sha256: digestSchema,
-      bytes: z.number().int().min(0),
-    }),
-  }),
-  z.strictObject({
-    ok: z.literal(false),
-    reason: z.enum(["format", "decoder", "output-limit"]),
-    message: z.string(),
-  }),
-]);
 
 const inflateBounded = promisify(inflate);
 const FFS_FILE_TYPE_PAD = 0xf0;
@@ -812,12 +794,13 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           },
         };
       } catch (cause: unknown) {
+        const limit = hostRangeErrorKind(cause) === "host-capacity";
         return {
           ok: false,
-          message:
-            hostRangeErrorKind(cause) === "host-capacity"
-              ? `output-limit: zlib stream exceeds ${maxOutputBytes} bytes`
-              : `zlib decode failed: ${errorMessage(cause)}`,
+          reason: limit ? "output-limit" : "decoder",
+          message: limit
+            ? `zlib output exceeds the configured or host buffer ceiling of ${maxOutputBytes} bytes: ${errorMessage(cause)}`
+            : errorMessage(cause),
         };
       }
     }
@@ -902,7 +885,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         JSON.parse(replyFile.bytes.toString("utf8")),
       );
       if (!reply.ok) {
-        return { ok: false, message: `${reply.reason}: ${reply.message}` };
+        return reply;
       }
       signal.throwIfAborted();
       const decoded = await readStableArtifact(
@@ -918,6 +901,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       ) {
         return {
           ok: false,
+          reason: "decoder",
           message: `LZMA worker output digest mismatch (${reply.output.sha256}).`,
         };
       }

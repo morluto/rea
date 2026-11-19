@@ -13,6 +13,7 @@ import { scanUefiImage, type UefiLzmaDecoder } from "./UefiImageScan.js";
 
 const noDecoder: UefiLzmaDecoder = async () => ({
   ok: false,
+  reason: "decoder",
   message: "test decoder unavailable",
 });
 
@@ -36,7 +37,7 @@ const decodeNestedFv = (
           ok: true,
           outcome: { bytes: nestedFv, decoderVersion: "stub-1.0" },
         }
-      : { ok: false, message: "unexpected carrier bytes" };
+      : { ok: false, reason: "decoder", message: "unexpected carrier bytes" };
   };
   return { decoder, requests };
 };
@@ -269,6 +270,7 @@ it("keeps walking when the decoder returns null and records the gap", async () =
     noDecoder,
   );
   expect(summary.volumes).toHaveLength(1);
+  expect(summary.coverage).toBe("partial");
   expect(
     summary.limitations.some((line) => line.includes("lzma decode failed")),
   ).toBe(true);

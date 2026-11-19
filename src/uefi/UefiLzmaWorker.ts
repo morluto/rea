@@ -1,26 +1,20 @@
 import { BinaryReader } from "../domain/binaryContainer.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 import { Budget } from "../domain/budget.js";
-import { decodeLimit, parseFailureFromCause } from "../domain/parseFailure.js";
+import {
+  decodeLimit,
+  malformedInput,
+  parseFailureFromCause,
+  truncatedInput,
+} from "../domain/parseFailure.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { z } from "zod";
 import { undoUefiX86BranchFilter } from "./UefiX86BranchFilter.js";
+import { lzmaRequestSchema, type UefiLzmaReply } from "./UefiLzmaProtocol.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
-
-const requestSchema = z.strictObject({
-  format: z.enum(["lzma", "lzmaf86"]),
-  payload_path: z.string(),
-  output_path: z.string(),
-  reply_path: z.string(),
-  max_output_bytes: z
-    .number()
-    .int()
-    .min(1)
-    .max(UEFI_FIRMWARE_LIMITS.lzmaOutputBytes),
-});
 
 /**
  * Output sink that enforces the byte budget while the decoder writes, instead
@@ -64,10 +58,10 @@ const main = async (): Promise<void> => {
   if (requestPath === undefined) {
     throw new Error("Owned worker request path missing.");
   }
-  const request = requestSchema.parse(
+  const request = lzmaRequestSchema.parse(
     JSON.parse(await readFile(requestPath, "utf8")),
   );
-  let reply: unknown;
+  let reply: UefiLzmaReply;
   try {
     const require2 = createRequire(import.meta.url);
     const lzma = require2("lzma-purejs");
@@ -83,7 +77,7 @@ const main = async (): Promise<void> => {
     // .lzma (LZMA-Alone) declares the dictionary before any compressed bytes.
     // The upstream decoder allocates its window before it writes to our sink.
     if (payload.length < 13)
-      throw new Error("Incomplete LZMA stream properties.");
+      throw truncatedInput("LZMA-Alone", "Incomplete LZMA stream properties.");
     const reader = new BinaryReader(payload, true, "LZMA-Alone");
     const dictionaryBytes = reader.u32(1);
     if (dictionaryBytes > UEFI_FIRMWARE_LIMITS.lzmaOutputBytes) {
@@ -118,7 +112,8 @@ const main = async (): Promise<void> => {
     lzma.decompressFile(payload, output);
     const decoded = output.getBuffer();
     if (declaredOutput !== null && BigInt(decoded.length) !== declaredOutput) {
-      throw new Error(
+      throw malformedInput(
+        "LZMA-Alone",
         `LZMA decoded ${decoded.length} bytes; stream declared ${declaredOutput} bytes.`,
       );
     }
@@ -133,25 +128,26 @@ const main = async (): Promise<void> => {
       },
     };
   } catch (cause: unknown) {
-    const message = errorMessage(cause);
+    const failure = parseFailureFromCause(cause);
     reply = {
       ok: false,
       reason:
-        parseFailureFromCause(cause)?.kind === "limit"
-          ? "output-limit"
-          : message.includes("properties")
-            ? "format"
-            : "decoder",
-      message,
+        failure === undefined
+          ? "decoder"
+          : failure.kind === "limit"
+            ? "output-limit"
+            : "format",
+      message: errorMessage(cause),
     };
   }
   let encoded = JSON.stringify(reply);
   if (Buffer.byteLength(encoded) > UEFI_FIRMWARE_LIMITS.diagnosticBytes) {
-    encoded = JSON.stringify({
+    const bounded: UefiLzmaReply = {
       ok: false,
-      reason: "output-limit",
+      reason: reply.ok ? "decoder" : reply.reason,
       message: "LZMA reply exceeds the diagnostic budget.",
-    });
+    };
+    encoded = JSON.stringify(bounded);
   }
   await writeFile(request.reply_path, encoded, { flag: "wx", mode: 0o600 });
 };
