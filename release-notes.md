@@ -882,6 +882,7 @@
 * **artifacts:** read FIT, PYZ, and Deno fields via BinaryReader ([#11869](https://github.com/morluto/rea/issues/11869)) ([3b88cb9](https://github.com/morluto/rea/commit/3b88cb9ed2721e69e60611e7b5d15a3729d45d78))
 * **artifacts:** read Godot PCK fields via BinaryReader ([#11911](https://github.com/morluto/rea/issues/11911)) ([843a1e1](https://github.com/morluto/rea/commit/843a1e1b0d2a394ebb2c6d75de4bfe77af78e71c))
 * **artifacts:** reuse the ZIP package format vocabulary ([#12195](https://github.com/morluto/rea/issues/12195)) ([195e62e](https://github.com/morluto/rea/commit/195e62ef1f16abe04c9479b038fc7718f8b8d687))
+* **artifacts:** share bounded NES header reads ([#12524](https://github.com/morluto/rea/issues/12524)) ([8fb1a3c](https://github.com/morluto/rea/commit/8fb1a3ce9956f2675fd3bf904494bc1ef6a65ded))
 * **artifacts:** take the host from HOST_PLATFORM or the caller instead of process.platform ([#11090](https://github.com/morluto/rea/issues/11090)) ([b06c340](https://github.com/morluto/rea/commit/b06c34031da2d52350d9f88101a01589bb4c1799))
 * **asar:** read header Pickle extents via BinaryReader ([#12076](https://github.com/morluto/rea/issues/12076)) ([13dfefa](https://github.com/morluto/rea/commit/13dfefa71f82f368d3c67c43a6f1975b417e6b1b))
 * **boundaries:** declare active Electron capture's fuse reader dependency ([#11446](https://github.com/morluto/rea/issues/11446)) ([3f0d7dc](https://github.com/morluto/rea/commit/3f0d7dcc5d3fd8785b97c9637613bdc0a827ee5a))
