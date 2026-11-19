@@ -6,6 +6,7 @@ import {
   createPlistDuplicateKeyCollector,
   type PlistDuplicateKeys,
 } from "./plistDuplicateKeys.js";
+import { isStrictUtf8 } from "../strictUtf8.js";
 import { byteOrderMarkEncoding } from "../textByteOrderMark.js";
 import type { ParsedPropertyList } from "../propertyListKeys.js";
 import {
@@ -191,27 +192,54 @@ const storedPlistPayload = (
   return { type, payload: bytes.subarray(start, end) };
 };
 
-/** The text a data payload holds, honoring a byte order mark; null when no reader scans it. */
-const storedDataText = (payload: Buffer): string | null => {
+/** Decode declared wide text while preserving readable portions on a malformed input. */
+const storedWideText = (
+  payload: Buffer,
+  encoding: "utf-16le" | "utf-16be",
+  ignoreBOM: boolean,
+): BinaryPlistText => {
+  try {
+    const text = new TextDecoder(encoding, { fatal: true, ignoreBOM }).decode(
+      payload,
+    );
+    return { text, complete: true };
+  } catch (cause: unknown) {
+    if (!(cause instanceof TypeError)) throw cause;
+    return {
+      text: new TextDecoder(encoding, { ignoreBOM }).decode(payload),
+      complete: false,
+    };
+  }
+};
+
+/** Scan data bytes as before unless a byte order mark names a specific encoding. */
+const storedDataText = (payload: Buffer): BinaryPlistText | null => {
   const encoding = byteOrderMarkEncoding(payload);
   if (encoding === "utf-32") return null;
   return encoding === null
-    ? payload.toString("utf8")
-    : new TextDecoder(encoding).decode(payload);
+    ? { text: payload.toString("utf8"), complete: true }
+    : storedWideText(payload, encoding, false);
 };
 
-/**
- * Decode a payload `storedPlistPayload` found; call only once it fits the
- * budget. Null when its encoding cannot be scanned.
- */
-const storedPlistText = (type: number, payload: Buffer): string | null =>
-  type === 5
-    ? payload.toString("latin1")
-    : type === 6
-      ? Buffer.from(payload).swap16().toString("utf16le")
-      : type === 4
-        ? storedDataText(payload)
-        : payload.toString("utf8");
+/** Decode a stored payload after its byte budget is admitted. */
+const storedPlistText = (
+  type: number,
+  payload: Buffer,
+): BinaryPlistText | null => {
+  switch (type) {
+    case 4:
+      return storedDataText(payload);
+    case 5:
+      return { text: payload.toString("latin1"), complete: true };
+    case 6:
+      return storedWideText(payload, "utf-16be", true);
+    default:
+      return {
+        text: payload.toString("utf8"),
+        complete: isStrictUtf8(payload),
+      };
+  }
+};
 
 /** The text a binary plist stores; `complete` is false when part of it went unread. */
 export interface BinaryPlistText {
@@ -256,8 +284,8 @@ export const decodeBinaryPlistText = (
     }
     decoded += stored.payload.length;
     const text = storedPlistText(stored.type, stored.payload);
-    if (text === null) complete = false;
-    else texts.push(text);
+    if (text?.complete !== true) complete = false;
+    if (text !== null) texts.push(text.text);
   }
   return { text: texts.join("\n"), complete };
 };
