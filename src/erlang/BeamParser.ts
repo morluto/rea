@@ -1,24 +1,13 @@
 import { isUtf8 } from "node:buffer";
 import { ArtifactReaderFailure } from "../resources/index.js";
 import { BinaryReader } from "../domain/binaryContainer.js";
+import { decodeLimit } from "../domain/parseFailure.js";
 import {
   MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS,
   type ErlangBeam,
   type InspectErlangBeamInput,
 } from "../domain/erlang/beam.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
-
-/** The producing parser names its count allowance independently of diagnostic text. */
-export class BeamCapacityFailure extends ArtifactReaderFailure {
-  constructor(
-    readonly resource: "atoms" | "chunks" | "table-rows",
-    readonly maximum: number,
-    message: string,
-  ) {
-    super("limit", message, { boundary: "capacity" });
-    this.name = "BeamCapacityFailure";
-  }
-}
 
 const fail = (message: string): never => {
   throw new ArtifactReaderFailure("format", message);
@@ -139,10 +128,10 @@ const parseAtoms = (
   // Reject an impossible table before treating its count as a budget refusal.
   if (count > payload.length - 4) fail("BEAM atom table is truncated.");
   if (count > maxAtoms)
-    throw new BeamCapacityFailure(
-      "atoms",
-      maxAtoms,
+    throw decodeLimit(
+      "beam",
       `BEAM atom table exceeds the ${String(maxAtoms)}-atom budget.`,
+      { name: "max_atoms", maximum: maxAtoms, required: count },
     );
   const atoms: NonNullable<ErlangBeam["atoms"]> = [];
   let at = 4;
@@ -244,10 +233,10 @@ export const parseErlangBeam = (
     const padded = payloadOffset + size + ((4 - (size % 4)) % 4);
     if (padded > formEnd) fail("BEAM chunk padding exceeds the form.");
     if (chunks.length >= input.max_chunks)
-      throw new BeamCapacityFailure(
-        "chunks",
-        input.max_chunks,
+      throw decodeLimit(
+        "beam",
         `BEAM form exceeds the ${String(input.max_chunks)}-chunk budget.`,
+        { name: "max_chunks", maximum: input.max_chunks },
       );
     const name = form.range(at, 4, "BEAM chunk name").toString("latin1");
     const payload = form.range(payloadOffset, size, "BEAM chunk payload");
@@ -299,16 +288,19 @@ export const parseErlangBeam = (
     lambdaChunk === undefined || lambdaChunk.payload.length === 0
       ? null
       : frameRows(lambdaChunk.payload, 6, "lambda");
-  if (
+  const tableRows =
     (exportTable?.count ?? 0) +
-      (importTable?.count ?? 0) +
-      (lambdaTable?.count ?? 0) >
-    MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS
-  )
-    throw new BeamCapacityFailure(
-      "table-rows",
-      MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS,
+    (importTable?.count ?? 0) +
+    (lambdaTable?.count ?? 0);
+  if (tableRows > MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS)
+    throw decodeLimit(
+      "beam",
       `BEAM tables exceed the ${String(MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS)}-row budget.`,
+      {
+        name: "max_table_rows",
+        maximum: MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS,
+        required: tableRows,
+      },
     );
   const exports =
     exportTable === null

@@ -6,6 +6,7 @@ import {
   type ResourceConstraintRecovery,
 } from "./analysisErrorCore.js";
 import type { AnalysisErrorOptions } from "./analysisErrorBase.js";
+import type { JsonValue } from "./jsonValue.js";
 import { ParseFailureError } from "./parseFailure.js";
 
 /** A parse limit of `format`; any other cause, or another format's limit, is not one. */
@@ -25,8 +26,8 @@ const reportedRequired = (required: number | bigint): number | string =>
  * the failure's detail (prefixed with `Selected artifact <path>:` when `path`
  * names one) and `reportedLimits` comes from the failure's `LimitRef`
  * (`{ boundary: name, maximum, required? }`), so neither is spelled again at
- * the catch site. Existing contracts may select their established field for
- * the maximum. The producer supplies recovery for its own budget.
+ * the catch site. Existing contracts may keep context fields and select their
+ * established field for the maximum. The producer supplies budget recovery.
  */
 export const parseLimitConstraint = (
   operation: string,
@@ -36,15 +37,14 @@ export const parseLimitConstraint = (
     ResourceConstraintRecovery & {
       readonly path?: string | undefined;
       readonly legacyMaximumKey?: string;
+      readonly reportedLimitContext?: Readonly<Record<string, JsonValue>>;
       readonly requestSent?: boolean;
     },
 ): AnalysisResourceConstraintError => {
   const { detail, limit } = cause.failure;
-  const { path, legacyMaximumKey, ...errorOptions } = options;
-  return new AnalysisResourceConstraintError(
-    operation,
-    resource,
-    path === undefined ? detail : `Selected artifact ${path}: ${detail}`,
+  const { path, legacyMaximumKey, reportedLimitContext, ...errorOptions } =
+    options;
+  const reportedLimit =
     legacyMaximumKey === undefined
       ? {
           boundary: limit.name,
@@ -53,7 +53,12 @@ export const parseLimitConstraint = (
             ? {}
             : { required: reportedRequired(limit.required) }),
         }
-      : { [legacyMaximumKey]: limit.maximum },
+      : { [legacyMaximumKey]: limit.maximum };
+  return new AnalysisResourceConstraintError(
+    operation,
+    resource,
+    path === undefined ? detail : `Selected artifact ${path}: ${detail}`,
+    { ...reportedLimitContext, ...reportedLimit },
     { ...errorOptions, cause },
   );
 };
