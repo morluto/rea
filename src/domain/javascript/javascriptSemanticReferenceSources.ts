@@ -1,7 +1,8 @@
-import type * as t from "@babel/types";
+import * as t from "@babel/types";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 import {
   semanticArrayIndex,
+  type JavaScriptSemanticPropertySelection,
   type JavaScriptSemanticPropertyPath as PropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
 import {
@@ -52,6 +53,68 @@ export const semanticKnownArrayIteration = (
   value?.status === "array" &&
   !ambientPathMayObserveAt(state, read, arrayIteratorNextPath, "contents") &&
   value.items.every((item) => semanticArrayIndex(item.name) !== null);
+
+const arrayIteratorReturnPaths = [
+  [...semanticArrayIteratorPrototypePath, "return"],
+  [...semanticArrayIteratorPrototypePath, "__proto__", "return"],
+  [...semanticArrayIteratorPrototypePath, "__proto__", "__proto__", "return"],
+  ["global", "Iterator", "prototype", "return"],
+  ["global", "Object", "prototype", "return"],
+] as const;
+
+/** References a possible native close hook can still obtain by advancing its iterator. */
+export const semanticArrayPatternCloseSelection = (
+  pattern: t.ArrayPattern,
+  owner: t.Node | undefined,
+  array: Extract<JavaScriptSemanticValue, { status: "array" }>,
+  state: JavaScriptSemanticAnalysisState,
+): JavaScriptSemanticPropertySelection | undefined => {
+  if (
+    !arrayIteratorReturnPaths.some((path) =>
+      ambientPathMayObserveAt(state, pattern, path, "contents"),
+    )
+  )
+    return undefined;
+  const declaration =
+    owner === undefined ? undefined : state.parentsByNode.get(owner);
+  const last = pattern.elements.at(-1);
+  const hasRest = t.isRestElement(last);
+  let consumed = 0;
+  if (
+    t.isVariableDeclarator(owner) &&
+    t.isVariableDeclaration(declaration) &&
+    (declaration.kind === "const" || declaration.kind === "let")
+  ) {
+    for (const [index, element] of pattern.elements.entries()) {
+      // A lexical rest drains the iterator only after earlier pattern work
+      // reaches it. A preceding default or nested binding can throw first.
+      if (hasRest && element === last) return undefined;
+      const slot = array.items[index];
+      const ownSlot =
+        consumed === index &&
+        slot?.name === String(index) &&
+        slot.presence === "present";
+      if (
+        element !== null &&
+        !t.isIdentifier(element) &&
+        !(
+          hasRest &&
+          owner.id === pattern &&
+          ownSlot &&
+          t.isAssignmentPattern(element) &&
+          t.isIdentifier(element.left) &&
+          semanticValueDefinitelyDefined(slot.value)
+        )
+      )
+        break;
+      if (ownSlot) consumed += 1;
+      else if (!hasRest) break;
+    }
+  }
+  // The literal suffix can be empty while the iterator still has references
+  // from stored writes. Resolve those separately at the close site.
+  return { excludedKeys: [], startIndex: consumed };
+};
 
 /** Invocation spreads use the same native-iteration proof at their source read. */
 export const semanticKnownArrayIterationAt = (
