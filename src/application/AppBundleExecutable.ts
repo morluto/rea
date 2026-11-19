@@ -8,6 +8,7 @@ import {
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { isPlistDecodeBudgetFailure } from "../domain/apple/propertyListDecodeBudget.js";
 import { decodeInfoPlistValue } from "../domain/apple/infoPlist.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
@@ -474,12 +475,13 @@ const plistReadFailure = (
   plistPath: string,
   noun: string,
   failure: unknown,
+  signal?: AbortSignal,
 ): BinaryTargetError => {
   const cause =
     failure instanceof RegularFileReadFailure
       ? failure.operationCause
       : failure;
-  return new BinaryTargetError(
+  const error = new BinaryTargetError(
     plistPath,
     cause instanceof ParseFailureError && cause.kind === "limit"
       ? cause.message
@@ -490,6 +492,12 @@ const plistReadFailure = (
           : `could not read ${noun} Info.plist ${plistPath}${codeDescription(cause)}`,
     { cause },
   );
+  if (signal?.aborted === true)
+    analysisErrorWithCancellation(
+      error,
+      bundlePlistCancellation(signal.reason),
+    );
+  return error;
 };
 
 const readLayoutPlist = async (
@@ -503,7 +511,7 @@ const readLayoutPlist = async (
   } catch (cause: unknown) {
     if (cause instanceof AnalysisCancelledError) throw cause;
     if (!(cause instanceof RetainedRegularFileCleanupFailure))
-      return err(plistReadFailure(path, noun, cause));
+      return err(plistReadFailure(path, noun, cause, signal));
 
     // The target resolver already tracks this operation. Retry only the owned
     // descriptor, since re-entering scope admission could wait on this read.
@@ -524,17 +532,18 @@ const readLayoutPlist = async (
               path,
               noun,
               failure.operationFailure ?? outcome.cause,
+              signal,
             ),
           );
     }
 
     const primary =
       failure.operationFailure !== undefined
-        ? plistReadFailure(path, noun, failure.operationFailure)
+        ? plistReadFailure(path, noun, failure.operationFailure, signal)
         : cancellation !== undefined
           ? bundlePlistCancellation(cancellation.reason)
           : outcome.kind === "failed"
-            ? plistReadFailure(path, noun, outcome.cause)
+            ? plistReadFailure(path, noun, outcome.cause, signal)
             : undefined;
     const retained = retry?.failure ?? failure;
     const error = new BinaryTargetError(

@@ -192,9 +192,8 @@ export const parseBinaryTarget = async (
       HOST_PLATFORM.platform === "win32" ? candidate : canonical;
     throwIfTargetResolutionCancelled(signal);
     const resolved = await resolveAppBundle(canonical, options);
-    if (!resolved.ok && resolved.error.cleanupIncomplete) return resolved;
-    throwIfTargetResolutionCancelled(signal);
     if (!resolved.ok) return resolved;
+    throwIfTargetResolutionCancelled(signal);
     const { executable: path, infoPlist } = resolved.value;
     const bundle =
       infoPlist === undefined ? {} : { bundleInfoPlist: infoPlist };
