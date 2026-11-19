@@ -365,7 +365,9 @@ const QUOTED = new Set('\\|{}[]<>"^~_=!@#$%^&*');
 export const aptListFileName = (uri: string): string => {
   const path = uri
     .replace(/^[a-z][a-z0-9+.-]*:\/\//iu, "")
-    .replace(/^[^/@]*@/u, "");
+    .replace(/^[^/@]*@/u, "")
+    // APT removes authority brackets before encoding the path for the cache.
+    .replace(/^\[([0-9a-f.:]+)\](?=[:/]|$)/iu, "$1");
   let quoted = "";
   for (const character of path) {
     const code = character.codePointAt(0) ?? 0;
