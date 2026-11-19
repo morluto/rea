@@ -1,7 +1,13 @@
-import { readFieldDefinitionRow } from "./ManagedFieldDefinitionRows.js";
+import {
+  readFieldDefinitionName,
+  readFieldDefinitionRow,
+} from "./ManagedFieldDefinitionRows.js";
 import { createManagedFieldConstantReader } from "./ManagedFieldConstants.js";
 import { readMemberReferenceRowFacts } from "../domain/managed/managedMemberReferenceRows.js";
-import { readMethodDefinitionRow } from "./ManagedMethodDefinitionRows.js";
+import {
+  readMethodDefinitionName,
+  readMethodDefinitionRow,
+} from "./ManagedMethodDefinitionRows.js";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
 import { isManagedMemberReferenceInstruction } from "../domain/managed/managedMemberInstructionFacts.js";
 import {
@@ -108,9 +114,9 @@ export const parseFields = (
     )
       continue;
     readManagedValue(() => {
-      const { token, rowOffset, flags, nameIndex, signatureIndex } =
-        readFieldDefinitionRow(bytes, layout, row);
-      const name = readMetadataString(bytes, layout, nameIndex);
+      const definition = readFieldDefinitionRow(bytes, layout, row);
+      const { token, rowOffset, flags, signatureIndex } = definition;
+      const name = readFieldDefinitionName(bytes, layout, definition);
       const owned = owner ?? 0;
       core.set(token, {
         token,
@@ -385,17 +391,17 @@ export const parseMethods = ({
     }
     const produced = methods.length;
     readManagedValue(() => {
+      const definition = readMethodDefinitionRow(bytes, layout, row);
       const {
         token,
         rowOffset,
         rva,
         implFlags,
         flags,
-        nameIndex,
         signatureIndex,
         implementation,
-      } = readMethodDefinitionRow(bytes, layout, row);
-      const name = readMetadataString(bytes, layout, nameIndex);
+      } = definition;
+      const name = readMethodDefinitionName(bytes, layout, definition);
       const member = {
         token,
         name,
@@ -502,11 +508,18 @@ export const readReferencedMemberCores = (
     if (row < 1 || row > (layout.table(table)?.rowCount ?? 0)) continue;
     readManagedValue(() => {
       const declared = ranges[ownerOf(table, row) - 1];
-      const { nameIndex } =
+      const name =
         table === 4
-          ? readFieldDefinitionRow(bytes, layout, row)
-          : readMethodDefinitionRow(bytes, layout, row);
-      const name = readMetadataString(bytes, layout, nameIndex);
+          ? readFieldDefinitionName(
+              bytes,
+              layout,
+              readFieldDefinitionRow(bytes, layout, row),
+            )
+          : readMethodDefinitionName(
+              bytes,
+              layout,
+              readMethodDefinitionRow(bytes, layout, row),
+            );
       core.set(token, {
         token,
         name,

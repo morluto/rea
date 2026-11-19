@@ -32,6 +32,7 @@ import {
   type MetadataCodedIndexCoordinate,
   type MetadataTokenFact,
   metadataToken,
+  readRequiredMetadataName,
   readMetadataString,
   metadataBlobOffset,
 } from "./managedMetadataHeaps.js";
@@ -186,14 +187,14 @@ const readTypeDefinition = (
   current: TypeMemberListEntry,
 ): TypeDefinition => {
   const { source } = current;
-  const { nameIndex, namespaceIndex } = source;
+  const token = metadataToken(2, row);
   // Keep both independent name failures, but decode each heap coordinate once.
   const namespace = readManagedValue(
-    () => readMetadataString(bytes, layout, namespaceIndex),
+    () => readMetadataString(bytes, layout, source.namespaceIndex),
     issues,
   );
   const name = readManagedValue(
-    () => readMetadataString(bytes, layout, nameIndex),
+    () => readRequiredMetadataName(bytes, layout, "TypeDef", token, source),
     issues,
   );
   return {
@@ -201,7 +202,7 @@ const readTypeDefinition = (
     row,
     name,
     namespace,
-    token: metadataToken(2, row),
+    token,
     fullName:
       namespace === undefined || name === undefined
         ? null

@@ -275,16 +275,18 @@ export const decodeMachoFixedWordFields = (
   );
 };
 
-/** `symtab_command` fields from an admitted command body. Null when truncated. */
-export const readMachoSymtabCommand = (
-  body: Uint8Array,
-  littleEndian: boolean,
-): {
+interface MachoSymtabDeclaration {
   readonly symoff: number;
   readonly nsyms: number;
   readonly stroff: number;
   readonly strsize: number;
-} | null => {
+}
+
+/** `symtab_command` fields from an admitted command body. Null when truncated. */
+export const readMachoSymtabCommand = (
+  body: Uint8Array,
+  littleEndian: boolean,
+): MachoSymtabDeclaration | null => {
   const fields = decodeMachoFixedWordFields(
     LC.SYMTAB,
     body.subarray(8),
@@ -300,6 +302,24 @@ export const readMachoSymtabCommand = (
   )
     return null;
   return { symoff, nsyms, stroff, strsize };
+};
+
+/** Admit slice-relative LC_SYMTAB ranges before applying a consumer's scan allowance. */
+export const admitMachoSymtabRanges = (
+  { symoff, nsyms, stroff, strsize }: MachoSymtabDeclaration,
+  wide: boolean,
+  sliceSize: number,
+): {
+  readonly width: 12 | 16;
+  readonly symbolsEnd: number;
+  readonly stringsEnd: number;
+} | null => {
+  const width = wide ? 16 : 12;
+  const symbolsEnd = symoff + nsyms * width;
+  const stringsEnd = stroff + strsize;
+  return symbolsEnd <= sliceSize && stringsEnd <= sliceSize
+    ? { width, symbolsEnd, stringsEnd }
+    : null;
 };
 
 /**
