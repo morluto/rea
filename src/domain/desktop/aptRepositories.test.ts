@@ -497,6 +497,8 @@ describe("single-stanza APT source identity", () => {
       "https://vendor.invalid/archive:80abc/x/",
     ],
     ["file://hostname:80abc/path", "file://hostname:80/path/"],
+    ["file://", "file://"],
+    ["file:///", "file:/"],
     ["file:///srv/a%20b", "file:/srv/a%20b/"],
   ])(
     "matches %s to the Repo-URI APT emits and keeps the authored URI",
@@ -658,6 +660,45 @@ describe("APT architecture tokens and saturated ports", () => {
       });
     },
   );
+});
+
+describe("empty-authority file URIs", () => {
+  it("accepts file:// when its Packages index is present and keeps the authored URI and suite", () => {
+    const uri = "file://";
+    const suite = "stable";
+    const stanzas = parseDeb822Sources(
+      `Types: deb\nURIs: ${uri}\nSuites: ${suite}\nComponents: main\n`,
+      deb822LookupFile,
+    );
+    const transcript = [
+      "Description: file:/ stable/main amd64 Packages",
+      "Filename: /var/lib/apt/lists/dists_stable_main_binary-amd64_Packages",
+      "Base-URI: file://dists/stable/",
+      "Repo-URI: file://",
+      "Release: stable",
+      "Component: main",
+      "Created-By: Packages",
+      `Sourcesentry: ${deb822LookupFile}:1`,
+    ].join("\n");
+    const [target] = parseAptIndexTargets(transcript);
+    if (target === undefined) throw new Error("Missing APT target");
+    expect(target).toMatchObject({
+      repoUri: "file://",
+      release: "stable",
+      component: "main",
+    });
+    expect(entryForTarget(target, stanzas)).toEqual({
+      file: deb822LookupFile,
+      position: 1,
+      uri,
+      credentials: false,
+      suite,
+      components: ["main"],
+      architectures: [],
+      signedBy: [],
+      inlineKey: null,
+    });
+  });
 });
 
 describe("APT source URI lookup", () => {

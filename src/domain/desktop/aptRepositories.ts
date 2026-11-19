@@ -151,7 +151,10 @@ const aptAuthorityUri = (uri: string): string => {
   const end = authorityEnd(rest);
   const authority = rest.slice(0, end);
   const path = rest.slice(end);
-  if (authority.length === 0) return `${schemeText}:${path}`;
+  // `file://` has no path, and APT keeps both slashes. A path after the
+  // empty host, as in `file:///srv`, drops that host.
+  if (authority.length === 0)
+    return path.length === 0 ? `${schemeText}://` : `${schemeText}:${path}`;
 
   const at = authority.lastIndexOf("@");
   const userinfo = at === -1 ? "" : authority.slice(0, at + 1);
