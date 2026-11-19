@@ -4,6 +4,7 @@ import { expect } from "vitest";
 
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { managedMemberSummaryViewResultSchema } from "../../src/domain/analysisView/analysisViewResult.js";
+import { MANAGED_MEMBER_SCOPE_GUIDANCE } from "../../src/domain/analysisView/managedMemberView.js";
 import { managedMemberInspectionSchema } from "../../src/domain/managed/managedArtifact.js";
 import {
   metadataRowOffset,
@@ -150,9 +151,9 @@ cliTest(
     });
     expect(selected.isError, JSON.stringify(selected)).not.toBe(true);
     const scope = [
-      "Exported types and member references cover the whole assembly. Named type rows, fields, methods, call edges, field accesses and user strings follow the declaring-type selection.",
-      "Unresolved TypeDef coordinates cover the assembly-wide name scan.",
-      "Unresolved MethodDef coordinates follow the recorded source method interval and any declaring-type selection.",
+      MANAGED_MEMBER_SCOPE_GUIDANCE.selectedNominalRows,
+      MANAGED_MEMBER_SCOPE_GUIDANCE.unresolvedTypeRows,
+      MANAGED_MEMBER_SCOPE_GUIDANCE.unresolvedMethodRows,
     ];
     const result = managedMemberSummaryViewResultSchema.parse(
       parseEvidence(selected.structuredContent).normalized_result,
