@@ -112,14 +112,14 @@ describe("Ghidra COM loader", () => {
       descriptorPath: "/tmp/session.json",
       ghidraLogPath: "/tmp/ghidra.log",
       scriptLogPath: "/tmp/script.log",
-      dosCom: true,
+      dosCom: { loader: "ComLoader" },
     });
     expectOptions(arguments_, [
-      ["-loader", "BinaryLoader"],
-      ["-loader-baseAddr", "1000:0100"],
+      ["-loader", "ComLoader"],
       ["-processor", "x86:LE:16:Real Mode"],
       ["-cspec", "default"],
     ]);
+    expect(arguments_).not.toContain("-loader-baseAddr");
     const prepare = arguments_.indexOf("-preScript");
     expect(arguments_[prepare + 1]).toBe(
       join("/package/bridge", "ReaGhidraPrepareCom.java"),
@@ -127,6 +127,27 @@ describe("Ghidra COM loader", () => {
     expect(prepare).toBeLessThan(arguments_.indexOf("-postScript"));
     expect(arguments_).toContain("-readOnly");
     expect(arguments_).toContain("-deleteProject");
+  });
+
+  it("keeps BinaryLoader at 1000:0100 when ComLoader is not selected", () => {
+    const arguments_ = ghidraHeadlessArguments({
+      projectRoot: "/tmp/project",
+      targetPath: "/tmp/target.bin",
+      bridgeScriptPath: "/package/bridge/ReaGhidraBridge.java",
+      descriptorPath: "/tmp/session.json",
+      ghidraLogPath: "/tmp/ghidra.log",
+      scriptLogPath: "/tmp/script.log",
+      dosCom: { loader: "BinaryLoader" },
+    });
+    expectOptions(arguments_, [
+      ["-loader", "BinaryLoader"],
+      ["-loader-baseAddr", "1000:0100"],
+      ["-processor", "x86:LE:16:Real Mode"],
+      ["-cspec", "default"],
+    ]);
+    expect(arguments_).toContain(
+      join("/package/bridge", "ReaGhidraPrepareCom.java"),
+    );
   });
 });
 
@@ -236,7 +257,7 @@ describe("Ghidra GameCube DOL loader", () => {
   it.each([
     ["PSP", { psp: true }],
     ["DOS MZ", { dosMz: true }],
-    ["DOS COM", { dosCom: true }],
+    ["DOS COM", { dosCom: { loader: "ComLoader" } }],
     ["MIPS soft-float", { mipsSoftFloat: true }],
     [
       "RISC-V calling convention",
@@ -346,7 +367,7 @@ describe("Ghidra headless launcher", () => {
     for (const conflict of [
       { psp: true as const },
       { dosMz: true as const },
-      { dosCom: true as const },
+      { dosCom: { loader: "ComLoader" } as const },
       {
         rawBinary: {
           languageId: "x86:LE:32:default",
@@ -403,7 +424,7 @@ describe("Ghidra headless launcher", () => {
       { psp: true as const },
       { mipsSoftFloat: true as const },
       { dosMz: true as const },
-      { dosCom: true as const },
+      { dosCom: { loader: "ComLoader" } as const },
       {
         rawBinary: {
           languageId: "x86:LE:32:default",
@@ -509,7 +530,7 @@ describe("Ghidra configured import language and seeds", () => {
         ...base,
         platform,
         bridgeScriptPath: path.join(bridgeDirectory, "ReaGhidraBridge.java"),
-        dosCom: true,
+        dosCom: { loader: "ComLoader" },
         seedPath,
       });
       const prepare = arguments_.indexOf(
@@ -547,7 +568,7 @@ describe("Ghidra disabled analyzers", () => {
   it("applies the analyzer options after seeds and before analysis scripts", () => {
     const arguments_ = ghidraHeadlessArguments({
       ...base,
-      dosCom: true,
+      dosCom: { loader: "ComLoader" },
       seedPath: posix.join("/tmp/runtime/seeds", "seeds.tsv"),
       disabledAnalyzers: [
         "Objective-C Message Analyzer",
@@ -667,7 +688,7 @@ describe("Ghidra existing project", () => {
 
   it.each([
     [{ dosMz: true as const }, "existing_project_dos"],
-    [{ dosCom: true as const }, "existing_project_dos"],
+    [{ dosCom: { loader: "ComLoader" } as const }, "existing_project_dos"],
     [
       {
         rawBinary: {

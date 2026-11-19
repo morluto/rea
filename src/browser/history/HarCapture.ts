@@ -33,7 +33,9 @@ export const decodeHarCapture = (
 ): DecodedCapture => {
   const raw = parseCaptureJson(text, "HAR");
   const validation = projectHar(raw, [], "validation");
-  const ipv6Adaptation = createHarValidator()(validation.reported);
+  const adaptations = createHarValidator()(validation.reported);
+  const ipv6Adaptation = adaptations.bracketedIpv6;
+  const failedRequests = new Set(adaptations.failedRequests);
   const adaptedIpv6Entries = new Set(ipv6Adaptation?.entries);
   const ipv6Limitations =
     ipv6Adaptation === null
@@ -82,6 +84,11 @@ export const decodeHarCapture = (
       limitations: [
         "HAR text without an encoding declaration is producer-decoded Unicode. Unsupported declared body encodings remain opaque; original body bytes remain unknown unless content explicitly uses valid base64. Declared sizes are preserved independently of retained bytes. mitmproxy 12.2.3 SaveHar may report null optional postData.text; that null is retained and omitted only from the upstream validation copy.",
         ...(adaptedIpv6Entries.has(ordinal) ? ipv6Limitations : []),
+        ...(failedRequests.has(ordinal)
+          ? [
+              "This capture declares Playwright 1.64.1 and records a failed request with unavailable timings (-1). The original failure and timing sentinels are retained; only the validation copy substitutes nonnegative timings. Producer declarations are not authenticated.",
+            ]
+          : []),
         ...(recordsExcluded
           ? [
               "This record's payload and sidecars are excluded because its structural ancestor property was explicitly marked sensitive.",

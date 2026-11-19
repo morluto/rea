@@ -1,3 +1,4 @@
+import { crc32 } from "node:zlib";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -6,9 +7,9 @@ import { createElfDebugLinkService } from "../../../src/composition/binaryDiagno
 import {
   ELF_DEBUG_LINK_CANDIDATE_BUDGET_LIMITATION,
   ELF_DEBUG_LINK_CANDIDATE_PREFIX_LIMITATION,
+  ELF_DEBUG_LINK_UNAVAILABLE_CHECK_LIMITATION,
   elfDebugLinkSchema,
 } from "../../../src/domain/native/elfDebugLink.js";
-import { gnuDebuglinkCrc32 } from "../../../src/native/elf/ElfDebugLink.js";
 import { gnuBuildIdNote } from "../../../src/native/elf/ElfNotes.fixture.js";
 import {
   debuglinkSection,
@@ -152,6 +153,44 @@ describe("ELF debug-link stable filesystem boundary", () => {
 });
 
 describe("ELF debug-link streamed candidate boundary", () => {
+  it("matches the known CRC32 of a non-ELF candidate", async () => {
+    const root = await createTestTempDirectory("rea-elf-debug-link-crc32-");
+    const path = join(root, "prog");
+    const candidatePath = join(root, FIXTURE_DEBUG_NAME);
+    await writeFile(
+      path,
+      elfDebugLinkFixture({
+        debuglink: debuglinkSection(FIXTURE_DEBUG_NAME, 0xcbf43926, true),
+      }),
+    );
+    await writeFile(candidatePath, "123456789");
+    const service = createElfDebugLinkService();
+    try {
+      const result = await service.inspect({
+        path,
+        candidate_path: candidatePath,
+      });
+      if (!result.ok) throw result.error;
+      const report = elfDebugLinkSchema.parse(result.value.normalized_result);
+      expect(report.candidate).toMatchObject({
+        format: null,
+        byte_order: null,
+        debug_info: "not_elf",
+        symtab: "not_elf",
+      });
+      expect(report.verification).toMatchObject({
+        status: "matches",
+        crc32: { status: "match", observed_hex: "cbf43926" },
+        build_id: { status: "unavailable", reason: "candidate_not_elf" },
+      });
+      expect(report.limitations).toContain(
+        ELF_DEBUG_LINK_UNAVAILABLE_CHECK_LIMITATION,
+      );
+    } finally {
+      await service.close();
+    }
+  });
+
   it("streams a candidate larger than the image read budget", async () => {
     const root = await createTestTempDirectory("rea-elf-debug-link-stream-");
     // Trailing padding keeps the ELF header while exceeding several chunks.
@@ -160,11 +199,7 @@ describe("ELF debug-link streamed candidate boundary", () => {
       Buffer.alloc(200_000, 0x5a),
     ]);
     const image = elfDebugLinkFixture({
-      debuglink: debuglinkSection(
-        FIXTURE_DEBUG_NAME,
-        gnuDebuglinkCrc32(candidate),
-        true,
-      ),
+      debuglink: debuglinkSection(FIXTURE_DEBUG_NAME, 0x5f6d3801, true),
     });
     const path = join(root, "prog");
     const candidatePath = join(root, FIXTURE_DEBUG_NAME);
@@ -183,25 +218,35 @@ describe("ELF debug-link streamed candidate boundary", () => {
       expect(report.candidate).toMatchObject({
         bytes: candidate.length,
         format: "elf64",
+        byte_order: "little",
         debug_info: "unknown",
         symtab: "unknown",
       });
       expect(report.verification).toMatchObject({
         status: "matches",
-        crc32: { status: "match" },
+        crc32: {
+          status: "match",
+          expected_hex: "5f6d3801",
+          observed_hex: "5f6d3801",
+        },
         build_id: {
           status: "unavailable",
           reason: "candidate_build_id_unknown",
         },
       });
-      expect(report.limitations).toContain(
-        ELF_DEBUG_LINK_CANDIDATE_PREFIX_LIMITATION,
+      expect(report.limitations).toEqual(
+        expect.arrayContaining([
+          ELF_DEBUG_LINK_CANDIDATE_PREFIX_LIMITATION,
+          ELF_DEBUG_LINK_UNAVAILABLE_CHECK_LIMITATION,
+        ]),
       );
     } finally {
       await service.close();
     }
   });
+});
 
+describe("ELF debug-link candidate degradation", () => {
   it.each([
     ["with", "candidate_elf_malformed"],
     ["without", "binary_build_id_absent"],
@@ -216,11 +261,7 @@ describe("ELF debug-link streamed candidate boundary", () => {
       candidate.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 9]);
       const image = elfDebugLinkFixture({
         ...(presence === "with" ? {} : { notes: null }),
-        debuglink: debuglinkSection(
-          FIXTURE_DEBUG_NAME,
-          gnuDebuglinkCrc32(candidate),
-          true,
-        ),
+        debuglink: debuglinkSection(FIXTURE_DEBUG_NAME, crc32(candidate), true),
       });
       const path = join(root, "prog");
       const candidatePath = join(root, FIXTURE_DEBUG_NAME);
@@ -236,6 +277,7 @@ describe("ELF debug-link streamed candidate boundary", () => {
         const report = elfDebugLinkSchema.parse(result.value.normalized_result);
         expect(report.candidate).toMatchObject({
           format: null,
+          byte_order: null,
           debug_info: "unknown",
           symtab: "unknown",
         });
@@ -254,17 +296,14 @@ describe("ELF debug-link streamed candidate boundary", () => {
     const root = await createTestTempDirectory("rea-elf-debug-link-entries-");
     const candidate = elfDebugLinkFixture({
       debuglink: null,
+      debugInfo: Buffer.from("debug-info", "latin1"),
       notes: Buffer.concat([
         gnuBuildIdNote(FIXTURE_BUILD_ID_HEX, true),
         gnuBuildIdNote("bb".repeat(20), true),
       ]),
     });
     const image = elfDebugLinkFixture({
-      debuglink: debuglinkSection(
-        FIXTURE_DEBUG_NAME,
-        gnuDebuglinkCrc32(candidate),
-        true,
-      ),
+      debuglink: debuglinkSection(FIXTURE_DEBUG_NAME, crc32(candidate), true),
     });
     const path = join(root, "prog");
     const candidatePath = join(root, FIXTURE_DEBUG_NAME);
@@ -283,16 +322,27 @@ describe("ELF debug-link streamed candidate boundary", () => {
         status: "observed",
         hex: FIXTURE_BUILD_ID_HEX,
       });
+      expect(report.debuglink.status).toBe("present");
+      expect(report.candidate).toMatchObject({
+        format: "elf64",
+        debug_info: "present",
+        symtab: "absent",
+      });
       expect(report.verification).toMatchObject({
         status: "matches",
         crc32: { status: "match" },
         build_id: {
           status: "unavailable",
+          binary_hex: FIXTURE_BUILD_ID_HEX,
+          candidate_hex: null,
           reason: "candidate_build_id_unknown",
         },
       });
-      expect(report.limitations).toContain(
-        ELF_DEBUG_LINK_CANDIDATE_BUDGET_LIMITATION,
+      expect(report.limitations).toEqual(
+        expect.arrayContaining([
+          ELF_DEBUG_LINK_CANDIDATE_BUDGET_LIMITATION,
+          ELF_DEBUG_LINK_UNAVAILABLE_CHECK_LIMITATION,
+        ]),
       );
     } finally {
       await service.close();

@@ -1,9 +1,6 @@
 import { ParseFailureError } from "../domain/parseFailure.js";
 import { expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import {
   TextReader,
   Uint8ArrayWriter,
@@ -21,13 +18,8 @@ import {
   nugetNupkgMalformedNuspecFixture,
   nugetNupkgMissingNuspecFixture,
   ungroupedNuspec,
-  NUPKG_NAME_ENCODING_CASES,
-  nugetNupkgNameEncodingFixture,
 } from "./NugetNupkg.fixture.js";
-import {
-  ArtifactReaderFailure,
-  ZipArtifactReader,
-} from "../resources/index.js";
+import { ArtifactReaderFailure } from "../resources/index.js";
 import {
   NUPKG_LIMITATIONS,
   distinctTargetMatches,
@@ -43,48 +35,6 @@ const artifactOf = (bytes: Uint8Array) => ({
   sha256: createHash("sha256").update(bytes).digest("hex"),
   bytes: bytes.length,
 });
-
-it.each(NUPKG_NAME_ENCODING_CASES)(
-  "preserves $encoding filename provenance consistently with the shared ZIP reader",
-  async (input) => {
-    const bytes = await nugetNupkgNameEncodingFixture(input);
-    const result = await parseNugetNupkg(bytes, artifactOf(bytes), defaults);
-    expect(result.contents).toContainEqual(
-      expect.objectContaining({
-        name: input.name,
-        path: input.name,
-        role: "lib",
-      }),
-    );
-    const root = await createTestTempDirectory("rea-nupkg-name-encoding-");
-    const path = join(root, "package.nupkg");
-    await writeFile(path, bytes);
-    const reader = new ZipArtifactReader(path, "zip");
-    try {
-      const entries = [];
-      for await (const entry of reader.entries()) entries.push(entry);
-      const shared = entries.find((entry) => entry.path === input.name);
-      expect(shared).toBeDefined();
-      const warnings = result.limitations.filter((value) =>
-        value.includes("CP437"),
-      );
-      if (input.uncertain) {
-        expect(shared?.limitations).toEqual([
-          expect.stringContaining(input.rawName.toString("hex")),
-        ]);
-        expect(warnings).toEqual([
-          expect.stringContaining(shared!.limitations[0]!),
-        ]);
-        expect(warnings[0]).toContain(JSON.stringify(input.name));
-      } else {
-        expect(shared?.limitations).toEqual([]);
-        expect(warnings).toEqual([]);
-      }
-    } finally {
-      await reader.close();
-    }
-  },
-);
 
 it("redacts an unfollowed authority manifest target before package-path normalization", async () => {
   const bytes = await nugetNupkgFixture({
@@ -191,6 +141,9 @@ it("reads identity, license, repository, dependency groups and folder roles", as
   );
   expect(report.coverage.status).toBe("complete");
   expect(report.limitations).toContain(NUPKG_LIMITATIONS.memberRoles);
+  expect(report.limitations).not.toContainEqual(
+    expect.stringContaining("beside <group> elements were omitted"),
+  );
 });
 
 it("keeps the stored ZIP member name beside its logical path", async () => {
@@ -235,7 +188,49 @@ it("records ungrouped dependencies as a group with a null target framework", asy
       ],
     },
   ]);
+  expect(report.limitations).not.toContain(
+    NUPKG_LIMITATIONS.ungroupedBesideGroups(1),
+  );
 });
+
+const NET8_GROUP =
+  '<group targetFramework="net8.0"><dependency id="Bar" version="2.0.0" /></group>';
+
+it.for([
+  ["in one <dependencies> element", `<dependencies>\n      ${NET8_GROUP}`],
+  [
+    "in a separate <dependencies> element",
+    `<dependencies>${NET8_GROUP}</dependencies>\n    <dependencies>`,
+  ],
+])(
+  "omits ungrouped dependencies beside groups %s, as NuGet does",
+  async ([, opening]) => {
+    const bytes = await nugetNupkgFixture({
+      nuspec: ungroupedNuspec.replace("<dependencies>", opening!),
+      includeRels: false,
+    });
+    const report = nugetNupkgSchema.parse(
+      await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+    );
+    expect(report.dependency_groups).toEqual([
+      {
+        target_framework: "net8.0",
+        dependencies: [
+          {
+            id: "Bar",
+            version: "2.0.0",
+            include: null,
+            exclude: null,
+            development_dependency: null,
+          },
+        ],
+      },
+    ]);
+    expect(report.limitations).toContain(
+      NUPKG_LIMITATIONS.ungroupedBesideGroups(1),
+    );
+  },
+);
 
 it("inventories a package with no .nuspec and leaves identity unknown", async () => {
   const bytes = await nugetNupkgMissingNuspecFixture();
@@ -429,6 +424,25 @@ const manifestRels = (target: string) => `<?xml version="1.0" encoding="utf-8"?>
 </Relationships>
 `;
 
+it("uses the root nuspec when an unrelated relationship ends in /manifest", async () => {
+  const bytes = await nugetNupkgFixture({
+    includeRels: false,
+    extraMembers: {
+      "_rels/.rels": manifestRels("content/Other.nuspec").replace(
+        "http://schemas.microsoft.com/packaging/2010/07/manifest",
+        "https://example.invalid/manifest",
+      ),
+      "content/Other.nuspec": ungroupedNuspec,
+    },
+  });
+  const report = await parseNugetNupkg(bytes, artifactOf(bytes), defaults);
+  expect(report.nuspec).toMatchObject({
+    path: "Demo.Package.nuspec",
+    source: "root-nuspec",
+  });
+  expect(report.identity?.id).toBe("Demo.Package");
+});
+
 it.for(["manifests/./Actual.nuspec", "/manifests/extra/../Actual.nuspec"])(
   "resolves dot segments in the manifest relationship Target %s",
   async (target) => {
@@ -573,6 +587,23 @@ it("reads manifest text written as CDATA and as mixed text and CDATA", async () 
     id: "Ungrouped.Package",
     description: "A & B C",
   });
+});
+
+it("applies XML end-of-line handling to manifest text", async () => {
+  const bytes = await nugetNupkgFixture({
+    nuspec: ungroupedNuspec
+      .replaceAll("\n", "\r\n")
+      .replace(
+        /<description>[^<]*<\/description>/u,
+        "<description>First line.\r\nSecond line.\rThird line.</description>",
+      ),
+  });
+  const report = nugetNupkgSchema.parse(
+    await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.identity?.description).toBe(
+    "First line.\nSecond line.\nThird line.",
+  );
 });
 
 it.for(["constructor/file.txt", "__proto__/file.txt", "toString/file.txt"])(

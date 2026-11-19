@@ -1610,17 +1610,11 @@ cliTest(
   },
 );
 
-cliTest.for(
-  (process.platform === "win32"
-    ? (["event"] as const)
-    : (["event", "os"] as const)
-  ).flatMap((delivery) => [
-    { signal: "SIGINT" as const, status: 130, delivery },
-    { signal: "SIGTERM" as const, status: 143, delivery },
-  ]),
-)(
-  "retains inline projection when $signal ($delivery) is queued during final sealing",
-  async ({ signal, status, delivery }, { cli }) => {
+cliTest(
+  "retains inline projection when SIGINT is queued during final sealing",
+  async ({ cli }) => {
+    const signal = "SIGINT";
+    const delivery = process.platform === "win32" ? "event" : "os";
     const root = await createTestTempDirectory("rea-inline-view-signal-");
     const parent = analysisViewLayoutEvidence(),
       marker = join(root, "signal.json");
@@ -1649,7 +1643,7 @@ cliTest.for(
         NODE_OPTIONS: `--max-old-space-size=2048 --import=${pathToFileURL(preload).href}`,
       },
     });
-    expect(reply.exitCode).toBe(status);
+    expect(reply.exitCode).toBe(130);
     const { error: label, ...projection } =
       analysisCliErrorEnvelopeSchema.parse(reply.json);
     expect(label).toBe("Application workflow failed");

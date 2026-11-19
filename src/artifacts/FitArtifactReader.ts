@@ -3,6 +3,7 @@ import { Readable, Transform } from "node:stream";
 import { setImmediate } from "node:timers/promises";
 
 import type { FitMetadata } from "../domain/artifactFormatMetadata.js";
+import { BinaryReader } from "../domain/binaryContainer.js";
 import { MAX_DEVICETREE_FILE_BYTES } from "../domain/firmware/devicetree.js";
 import {
   ArtifactReaderFailure,
@@ -162,7 +163,7 @@ export class FitArtifactReader implements ArtifactReader {
         "format",
         "FIT devicetree header is truncated",
       );
-    const totalsize = header.readUInt32BE(4);
+    const totalsize = new BinaryReader(header, false, "fit").u32(4);
     if (totalsize > initial.size)
       throw new ArtifactReaderFailure(
         "format",

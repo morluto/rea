@@ -38,7 +38,6 @@ import { err, ok, type Result } from "../result.js";
 export const ANDROID_OTA_MAGIC = "CrAU";
 export const ANDROID_OTA_MAGIC_BYTES = Buffer.from(ANDROID_OTA_MAGIC, "latin1");
 export const ANDROID_OTA_MAJOR_VERSION = 2n;
-export const ANDROID_OTA_HEADER_V1_BYTES = 20;
 export const ANDROID_OTA_HEADER_V2_BYTES = 24;
 export const ANDROID_OTA_MAX_MANIFEST_BYTES = 16 * 1024 * 1024;
 export const ANDROID_OTA_MAX_PARTITIONS = 4096;
@@ -167,9 +166,7 @@ const capacity = (
     { name: `Android OTA payload ${name}`, maximum },
   );
 
-export const androidOtaUnsupportedVersion = (
-  version: bigint | number | string,
-): string =>
+const androidOtaUnsupportedVersion = (version: bigint): string =>
   `Android OTA payload major version ${String(version)} is unsupported; this reader supports version 2 only`;
 
 const u32be = (bytes: Uint8Array, at: number): number =>
@@ -220,6 +217,7 @@ export interface AndroidOtaInstallOperation {
   readonly typeName: string;
   readonly dataOffset: number;
   readonly dataLength: number;
+  readonly dataHashHex: string | null;
   readonly srcExtents: readonly AndroidOtaExtent[];
   readonly dstExtents: readonly AndroidOtaExtent[];
 }
@@ -431,6 +429,7 @@ interface OperationDraft {
   typeCode: number;
   dataOffset: number;
   dataLength: number;
+  dataHashHex: string | null;
   srcExtents: ExtentDraft[];
   dstExtents: ExtentDraft[];
 }
@@ -515,8 +514,10 @@ const decodeExtent = (
 
 const decodePartitionInfo = (
   bytes: Uint8Array,
+  info: PartitionInfoDraft,
 ): Result<PartitionInfoDraft, AndroidOtaPayloadParseError> => {
-  const info = emptyPartitionInfo();
+  // Protobuf singular messages merge across occurrences. Only fields present
+  // in this occurrence replace earlier values; an empty message erases none.
   const walked = walk(bytes, (field, wire, reader) => {
     if (field === 1 && wire === WireType.Varint) {
       info.size = unwrap(asSafeUint(reader.uint64(), "partition size"));
@@ -540,6 +541,7 @@ const decodeOperation = (
     typeCode: 0,
     dataOffset: 0,
     dataLength: 0,
+    dataHashHex: null,
     srcExtents: [],
     dstExtents: [],
   };
@@ -570,6 +572,13 @@ const decodeOperation = (
       (field === 4 ? operation.srcExtents : operation.dstExtents).push(
         unwrap(decodeExtent(reader.bytes())),
       );
+      return;
+    }
+    if (field === 8 && wire === WireType.LengthDelimited) {
+      const digest = reader.bytes();
+      if (digest.length !== 0 && digest.length !== 32)
+        fail(malformed("operation data_sha256_hash must be 32 bytes or empty"));
+      operation.dataHashHex = digest.length === 0 ? null : hex(digest);
       return;
     }
     reader.skip(wire);
@@ -615,11 +624,18 @@ const decodePartition = (
       return;
     }
     if (field === 6 && wire === WireType.LengthDelimited) {
-      partition.oldPartitionInfo = unwrap(decodePartitionInfo(reader.bytes()));
+      partition.oldPartitionInfo = unwrap(
+        decodePartitionInfo(
+          reader.bytes(),
+          partition.oldPartitionInfo ?? emptyPartitionInfo(),
+        ),
+      );
       return;
     }
     if (field === 7 && wire === WireType.LengthDelimited) {
-      partition.newPartitionInfo = unwrap(decodePartitionInfo(reader.bytes()));
+      partition.newPartitionInfo = unwrap(
+        decodePartitionInfo(reader.bytes(), partition.newPartitionInfo),
+      );
       return;
     }
     if (field === 8 && wire === WireType.LengthDelimited) {
@@ -1061,6 +1077,7 @@ export const parseAndroidOtaPayload = (
           typeName: INSTALL_OPERATION_NAMES[operation.typeCode] ?? "unknown",
           dataOffset: operation.dataOffset,
           dataLength: operation.dataLength,
+          dataHashHex: operation.dataHashHex,
           srcExtents: operation.srcExtents.map((extent) => ({
             startBlock: extent.startBlock,
             numBlocks: extent.numBlocks,
@@ -1396,9 +1413,9 @@ const hasCompleteExtentCoverage = (
 };
 
 /**
- * Rebuild a full-payload partition image. A declared-hash mismatch fails
- * unless `verifyDeclaredHash` is false, which leaves that decision to a caller
- * that applies its own integrity policy to the returned bytes.
+ * Rebuild a full-payload partition image after checking declared blob hashes.
+ * A partition image hash mismatch fails unless `verifyDeclaredHash` is false,
+ * which leaves that decision to a caller applying its own integrity policy.
  */
 export const reconstructAndroidOtaPartition = (
   partition: AndroidOtaPartition,
@@ -1412,8 +1429,10 @@ export const reconstructAndroidOtaPartition = (
   const budget = chargeReconstructionWork(partition.operations, blockSize);
   if (!budget.ok) return budget;
   const image = Buffer.alloc(size);
+  // The reader shares one byte array for repeated references to the same blob.
+  const blobHashes = new WeakMap<Uint8Array, string>();
   try {
-    for (const operation of partition.operations) {
+    for (const [index, operation] of partition.operations.entries()) {
       if (operation.typeCode === 6) {
         const written = writeExtents(
           image,
@@ -1435,6 +1454,17 @@ export const reconstructAndroidOtaPartition = (
             `operation data for ${partition.name} is truncated: expected ${String(operation.dataLength)} bytes`,
           ),
         );
+      if (operation.dataHashHex !== null) {
+        const observed = blobHashes.get(raw) ?? sha256Hex(raw);
+        blobHashes.set(raw, observed);
+        if (operation.dataHashHex !== observed)
+          return err({
+            _tag: "AndroidOtaPayloadIntegrityFailure",
+            message: `Android OTA partition ${partition.name} operation ${String(index)} data hash mismatch`,
+            declaredHashHex: operation.dataHashHex,
+            observedHashHex: observed,
+          });
+      }
       let payload: Uint8Array = raw;
       if (operation.typeCode === 14) {
         const dstBytes = destinationExtentBytes(

@@ -281,6 +281,8 @@ export const ENTRY_FILES = Object.freeze(
         "DesktopBuildSetupHost.ts",
         "DesktopCaptureProvider.ts",
         "DesktopSessionRequests.ts",
+        // Build-computer composition (`capabilityServices`) wires `readHostFile` into `DesktopBuildComputers`.
+        "HostFileRead.ts",
       ],
       dotnet: ["ManagedStaticProvider.ts", "ManagedStaticProviderMetadata.ts"],
       electron: ["ElectronFuseProvider.ts", "ElectronFuseProviderIdentity.ts"],

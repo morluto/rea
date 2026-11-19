@@ -33,7 +33,7 @@ import {
   type AgentEnvComputer,
 } from "../../desktop/AgentEnvComputer.js";
 import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
-import { readHostFile } from "../../desktop/HostFileRead.js";
+import type { HostFileReader } from "../../ports/HostFileReader.js";
 import { errorMessage } from "../../kernel/errorMessage.js";
 
 const CHECK = "check_build_task";
@@ -68,6 +68,7 @@ export const bundleTaskDifference = async (
   bundle: string,
   task: DesktopTask,
   signal: AbortSignal,
+  readHostFile: HostFileReader,
 ): Promise<string | undefined> => {
   const stepsPath = `tasks/${task.name}.json`;
   const verifierPath = `artifacts/${taskVerifierArtifact(task)}/verify.py`;

@@ -43,25 +43,30 @@ import { readFile, readdir } from "node:fs/promises";
  */
 /** @typedef {{ readonly pid: number; readonly parentPid: number; readonly processGroupId: number }} ProcessMember */
 
-/** @type {VerifierRunStart | undefined} */
+/** @type {{ readonly report: VerifierRunStart, readonly processRunId: string } | undefined} */
 let activeVerifierRun;
 
 /**
- * Allocate one verifier identity before work and propagate it to child processes.
+ * Allocate one verifier report identity before work and propagate a process token.
+ * A verifier launched as an owned command can retain its caller's process token
+ * so its descendants remain attributable during interruption and cleanup.
+ * @param {{ readonly inheritProcessRunId?: boolean }} [options]
  * @returns {VerifierRunStart}
  */
-export const createVerifierRun = () => {
-  if (activeVerifierRun !== undefined) {
-    process.env.REA_PROCESS_RUN_ID = activeVerifierRun.run_id;
-    return activeVerifierRun;
+export const createVerifierRun = (options = {}) => {
+  if (activeVerifierRun === undefined) {
+    const report = Object.freeze({
+      run_id: randomUUID(),
+      verifier_pid: process.pid,
+      parent_pid: process.ppid,
+    });
+    const inherited = options.inheritProcessRunId
+      ? process.env.REA_PROCESS_RUN_ID
+      : undefined;
+    activeVerifierRun = { report, processRunId: inherited || report.run_id };
   }
-  activeVerifierRun = Object.freeze({
-    run_id: randomUUID(),
-    verifier_pid: process.pid,
-    parent_pid: process.ppid,
-  });
-  process.env.REA_PROCESS_RUN_ID = activeVerifierRun.run_id;
-  return activeVerifierRun;
+  process.env.REA_PROCESS_RUN_ID = activeVerifierRun.processRunId;
+  return activeVerifierRun.report;
 };
 
 /**
@@ -127,6 +132,10 @@ const observeVerifierLineage = async (run, observedAt) => {
       members.filter(({ pid }) => pid !== observerPid),
       run.verifier_pid,
     );
+    const expectedProcessRunId =
+      activeVerifierRun?.report === run
+        ? activeVerifierRun.processRunId
+        : run.run_id;
     for (const member of descendants) {
       let memberRunId;
       try {
@@ -139,7 +148,7 @@ const observeVerifierLineage = async (run, observedAt) => {
           `descendant ${String(member.pid)} environment was unreadable`,
         );
       }
-      if (memberRunId !== run.run_id)
+      if (memberRunId !== expectedProcessRunId)
         return unavailableLineage(
           run,
           observedAt,
@@ -193,7 +202,15 @@ const processSnapshot = async () => {
   return posixProcessSnapshot();
 };
 
+/** @type {Promise<typeof import("../../src/process/LinuxProcessStat.js")> | undefined} */
+let linuxStatParser;
+
 const linuxProcessSnapshot = async () => {
+  // The pinned Node can strip this leaf module without a transform or loader.
+  linuxStatParser ??= import(
+    new URL("../../src/process/LinuxProcessStat.ts", import.meta.url).href
+  );
+  const { parseLinuxProcessStat } = await linuxStatParser;
   const entries = await readdir("/proc", { withFileTypes: true });
   /** @type {ProcessMember[]} */
   const members = [];
@@ -201,13 +218,16 @@ const linuxProcessSnapshot = async () => {
     if (!entry.isDirectory() || !/^\d+$/u.test(entry.name)) continue;
     try {
       const stat = await readFile(`/proc/${entry.name}/stat`, "utf8");
-      const match = /^\d+ \(.*\) (\S) (\d+) (\d+) /u.exec(stat);
-      if (match === null || match[1] === "Z") continue;
-      members.push({
-        pid: Number(entry.name),
-        parentPid: Number(match[2]),
-        processGroupId: Number(match[3]),
-      });
+      const parsed = parseLinuxProcessStat(stat);
+      if (
+        parsed === undefined ||
+        parsed.pid !== Number(entry.name) ||
+        parsed.lifecycle === "zombie" ||
+        parsed.lifecycle === "dead"
+      )
+        continue;
+      const { pid, parentPid, processGroupId } = parsed;
+      members.push({ pid, parentPid, processGroupId });
     } catch {
       // Processes can exit while /proc is being sampled.
     }

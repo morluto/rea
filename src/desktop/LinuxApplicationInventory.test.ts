@@ -667,28 +667,33 @@ const inventoryOf = async (
 describe.skipIf(process.platform === "win32")(
   "inspectLinuxApplication state and environment",
   () => {
-    it("finds the program on the PATH an env prefix sets, not the host's", async () => {
-      const installed = await fixture();
-      const { home, bin } = installed;
-      const opt = join(home, "opt/bin");
-      await mkdir(opt, { recursive: true });
-      for (const directory of [bin, opt]) {
-        await writeFile(join(directory, "notes"), "#!/bin/sh\nexit 0\n");
-        await chmod(join(directory, "notes"), 0o755);
-      }
-      await mkdir(join(home, ".local/share/applications"), { recursive: true });
-      await writeFile(
-        join(home, ".local/share/applications/org.example.env.desktop"),
-        `[Desktop Entry]\nType=Application\nName=Env\nExec=env PATH=${opt}/:/usr/bin XDG_CONFIG_HOME=${home}/settings notes\n`,
-      );
+    it.each(["", "-- "])(
+      "finds the program on the PATH an env %sprefix sets, not the host's",
+      async (delimiter) => {
+        const installed = await fixture();
+        const { home, bin } = installed;
+        const opt = join(home, "opt/bin");
+        await mkdir(opt, { recursive: true });
+        for (const directory of [bin, opt]) {
+          await writeFile(join(directory, "notes"), "#!/bin/sh\nexit 0\n");
+          await chmod(join(directory, "notes"), 0o755);
+        }
+        await mkdir(join(home, ".local/share/applications"), {
+          recursive: true,
+        });
+        await writeFile(
+          join(home, ".local/share/applications/org.example.env.desktop"),
+          `[Desktop Entry]\nType=Application\nName=Env\nExec=env ${delimiter}PATH=${opt}/:/usr/bin XDG_CONFIG_HOME=${home}/settings notes\n`,
+        );
 
-      const inventory = await inventoryOf("org.example.env", installed);
+        const inventory = await inventoryOf("org.example.env", installed);
 
-      expect(inventory.executable.path).toBe(join(opt, "notes"));
-      expect(inventory.state_directories.map((entry) => entry.path)).toContain(
-        join(home, "settings/notes"),
-      );
-    });
+        expect(inventory.executable.path).toBe(join(opt, "notes"));
+        expect(
+          inventory.state_directories.map((entry) => entry.path),
+        ).toContain(join(home, "settings/notes"));
+      },
+    );
 
     it("reads a relative PATH entry from the folder the entry starts in", async () => {
       const installed = await fixture();

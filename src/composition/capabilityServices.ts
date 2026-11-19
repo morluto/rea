@@ -26,6 +26,7 @@ import {
 import { createSqliteDatabaseService } from "./sqlite.js";
 import { createDesktopApplicationService } from "./desktop.js";
 import { DesktopBuildComputers } from "../application/desktop/DesktopBuildComputers.js";
+import { readHostFile } from "../desktop/HostFileRead.js";
 import { createGoBinaryService } from "./go.js";
 import { createRustBinaryService } from "./rust.js";
 import { createBeamService } from "./erlang.js";
@@ -355,6 +356,7 @@ const modules = {
     ({ providerEnvironment, options }) =>
       new DesktopBuildComputers(
         providerEnvironment,
+        readHostFile,
         options.desktopBuildSettle,
         options.desktopBuildDefaults,
         options.desktopBuildStartTiming,

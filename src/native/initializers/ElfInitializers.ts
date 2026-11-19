@@ -993,7 +993,7 @@ export const readElfInitializers = async (
   if (scan.relocatable)
     note(
       scan,
-      "Relocatable object (ET_REL): slot and value addresses are offsets inside the named section, not load addresses.",
+      "Relocatable object (ET_REL): section-associated slot and value addresses are offsets inside that section, not load addresses. Absolute symbols do not name a section.",
       "complete",
     );
   const tags = readDynamicTags(

@@ -5,6 +5,7 @@ import {
   projectObjcClassMethods,
   type ObjcSwiftMetadata,
 } from "../domain/native/objcSwiftMetadata.js";
+import type { PointerResolution } from "../domain/apple/appleMachoFixups.js";
 import type { Segment, Section } from "../domain/apple/appleMachoSelection.js";
 import { boundClassName, decodeObjcCategories } from "./AppleObjcCategories.js";
 import { readObjcPropertiesOf } from "./AppleObjcProperties.js";
@@ -25,6 +26,8 @@ export interface ObjcDispatchReaders {
   u64(address: bigint): bigint;
   i32(address: bigint): number;
   pointer(address: bigint): bigint;
+  /** The pointer's fixup outcome; `pointer` reads a bind as zero and an unknown as its raw word. */
+  resolvePointer(address: bigint): PointerResolution;
   /** The symbol a pointer at `address` is bound to, when it is a bind fixup. */
   bound(
     address: bigint,

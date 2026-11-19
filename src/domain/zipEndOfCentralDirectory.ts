@@ -1,6 +1,10 @@
+import { BinaryReader } from "./binaryContainer.js";
+
 /** Classic ZIP EOCD fixed record and its format-defined comment limit. */
 export const ZIP_EOCD_BYTES = 22;
 export const ZIP_MAX_COMMENT_BYTES = 0xffff;
+
+const EOCD_SIGNATURE = Buffer.from([0x50, 0x4b, 0x05, 0x06]);
 
 export interface ZipEndOfCentralDirectory {
   /** Relative to the supplied byte window, which ends at the archive's end. */
@@ -22,27 +26,30 @@ export interface ZipEndOfCentralDirectory {
 export function* zipEndOfCentralDirectoryCandidates(
   bytes: Uint8Array,
 ): Generator<ZipEndOfCentralDirectory> {
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const earliest = Math.max(
     0,
     bytes.byteLength - ZIP_EOCD_BYTES - ZIP_MAX_COMMENT_BYTES,
   );
-  for (
-    let offset = bytes.byteLength - ZIP_EOCD_BYTES;
-    offset >= earliest;
-    offset--
-  ) {
-    if (view.getUint32(offset, true) !== 0x06054b50) continue;
-    const commentLength = view.getUint16(offset + 20, true);
-    if (offset + ZIP_EOCD_BYTES + commentLength !== bytes.byteLength) continue;
+  const tail = Buffer.from(
+    bytes.buffer,
+    bytes.byteOffset + earliest,
+    bytes.byteLength - earliest,
+  );
+  const reader = new BinaryReader(tail, true, "zip");
+  for (let searchFrom = tail.length - ZIP_EOCD_BYTES; searchFrom >= 0;) {
+    const offset = tail.lastIndexOf(EOCD_SIGNATURE, searchFrom);
+    if (offset < 0) break;
+    searchFrom = offset - 1;
+    const commentLength = reader.u16(offset + 20);
+    if (offset + ZIP_EOCD_BYTES + commentLength !== tail.length) continue;
     yield {
-      offset,
-      disk: view.getUint16(offset + 4, true),
-      directoryDisk: view.getUint16(offset + 6, true),
-      entriesOnDisk: view.getUint16(offset + 8, true),
-      totalEntries: view.getUint16(offset + 10, true),
-      directorySize: view.getUint32(offset + 12, true),
-      directoryOffset: view.getUint32(offset + 16, true),
+      offset: earliest + offset,
+      disk: reader.u16(offset + 4),
+      directoryDisk: reader.u16(offset + 6),
+      entriesOnDisk: reader.u16(offset + 8),
+      totalEntries: reader.u16(offset + 10),
+      directorySize: reader.u32(offset + 12),
+      directoryOffset: reader.u32(offset + 16),
       commentLength,
     };
   }

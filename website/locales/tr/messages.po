@@ -3648,12 +3648,8 @@ msgctxt "page:get-started/index.html"
 msgid ""
 "Windows x64 has experimental, read-only support for native x86 and x64 PE "
 "applications and DLLs on fixed local NTFS/ReFS drives. Use an existing "
-"Ghidra 12.1.x installation and a 64-bit JDK 21 or newer:"
+"Ghidra 12.2 installation and a 64-bit JDK 25 or newer:"
 msgstr ""
-"Windows x64, sabit yerel NTFS/ReFS sürücülerindeki native x86 ve x64 PE "
-"uygulamaları ve DLL'ler için deneysel, salt okunur desteğe sahiptir. Mevcut "
-"bir Ghidra 12.1.x kurulumu ve 64 bit JDK 21 veya daha yeni bir sürüm "
-"kullanın:"
 
 #: website/public/get-started/index.html:1182
 msgctxt "page:get-started/index.html"
@@ -5187,10 +5183,8 @@ msgstr "REA, yerel programları okumak için bunlardan birine ihtiyaç duyar:"
 msgctxt "page:guides/native/index.html"
 msgid ""
 "{ph0}Ghidra{ph1} (macOS or Linux; experimental on Windows): free, but needs "
-"an existing Ghidra 12.1.x installation and a 64-bit JDK 21 or newer."
+"an existing Ghidra 12.2 installation and a 64-bit JDK 25 or newer."
 msgstr ""
-"{ph0} Ghidra{ph1} (macOS veya Linux; Windows üzerinde deneysel): ücretsiz, "
-"ancak mevcut bir Ghidra 12.1.x kurulumu ve 64 bit JDK 21 veya daha yenisi."
 
 #. {ph0}: <a href="../../get-started/#native">
 #. {ph1}: </a>
@@ -13765,22 +13759,18 @@ msgstr "Ghidra · ücretsiz analiz aracını ve Java’yı kurun"
 #: website/public/get-started/index.html:1111
 msgctxt "page:get-started/index.html"
 msgid ""
-"Install a 64-bit JDK 21 or newer, including the Java compiler. Choose the "
+"Install a 64-bit JDK 25 or newer, including the Java compiler. Choose the "
 "package matching your computer's architecture."
 msgstr ""
-"Java derleyicisini de içeren 64 bit JDK 21 veya daha yeni bir sürüm kurun. "
-"Bilgisayarınızın mimarisine uygun paketi seçin."
 
 #. {ph0}: <code>ghidra_…_PUBLIC_….zip</code>
 #: website/public/get-started/index.html:1116
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
-"Download Ghidra 12.1.4 from the release's Assets list and extract the {ph0} "
+"Download Ghidra 12.2 from the release's Assets list and extract the {ph0} "
 "archive. Choose the release archive, not “Source code”."
 msgstr ""
-"Ghidra 12.1.4’ü sürümün Assets listesinden indirin ve {ph0} arşivini açın. "
-"“Source code” yerine sürüm arşivini seçin."
 
 #. {ph0}: <code>ghidraRun</code>
 #. {ph1}: <code>ghidraRun.bat</code>
@@ -13795,17 +13785,17 @@ msgstr ""
 "Açılan dosyalar arasında {ph0} veya {ph1} içeren klasörü bulun. {ph2} için "
 "bu klasörü kullanın."
 
-#. {ph0}: <a href="https://adoptium.net/temurin/releases/?version=21" >
+#. {ph0}: <a href="https://adoptium.net/temurin/releases/?version=25" >
 #. {ph1}: </a >
 #. {ph2}: <a
-#. href="https://github.com/NationalSecurityAgency/ghidra/releases/tag/Ghidra_12.1.4_build"
+#. href="https://github.com/NationalSecurityAgency/ghidra/releases/tag/Ghidra_12.2_build"
 #. >
 #. {ph3}: </a >
 #: website/public/get-started/index.html:1127
 #, python-brace-format
 msgctxt "page:get-started/index.html"
-msgid "{ph0}Download a JDK{ph1} · {ph2}Download Ghidra 12.1.4{ph3}"
-msgstr "{ph0}JDK indirin{ph1} · {ph2}Ghidra 12.1.4’ü indirin{ph3}"
+msgid "{ph0}Download a JDK{ph1} · {ph2}Download Ghidra 12.2{ph3}"
+msgstr ""
 
 #. {ph0}: <code>java.home</code>
 #. {ph1}: <code>JAVA_HOME</code>
@@ -14398,7 +14388,7 @@ msgid "{ph0}macOS · Apple Silicon{ph1}"
 msgstr "{ph0}macOS · Apple Silicon{ph1}"
 
 #. {ph0}: <a
-#. href="https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.1.4_build/GhidraDocs/GettingStarted.md#building-
+#. href="https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.2_build/GhidraDocs/GettingStarted.md#building-
 #. native-components" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1228

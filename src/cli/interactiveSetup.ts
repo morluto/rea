@@ -188,11 +188,13 @@ const selectSetupActions = async (
 const clientHint = (state: SetupClientState): string =>
   state.configured
     ? "REA already configured · selected from existing configuration"
-    : state.status === "invalid"
-      ? "Existing configuration needs repair before setup"
-      : state.detected
-        ? "Detected · choose to configure"
-        : "Not detected · configuration is still available";
+    : state.client.configPathError !== undefined
+      ? state.client.configPathError
+      : state.status === "invalid"
+        ? "Existing configuration needs repair before setup"
+        : state.detected
+          ? "Detected · choose to configure"
+          : "Not detected · configuration is still available";
 
 const selectClients = async (
   states: readonly SetupClientState[],

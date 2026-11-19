@@ -1,3 +1,4 @@
+import { BinaryReader } from "../../domain/binaryContainer.js";
 import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
 import {
   hashArtifactRange,
@@ -480,7 +481,7 @@ const locateIntelTrailers = async (
       const at = BigInt(sentinelStart);
       if (owned.some((range) => at >= range.start && at < range.end)) continue;
       if (lengthAt + 8 > window.length) continue;
-      const claimed = window.readBigUInt64LE(lengthAt);
+      const claimed = new BinaryReader(window, true, "deno").word(lengthAt, 64);
       const sliceEnd = base + sliceSize;
       const offset = sentinelStart + INTEL_SENTINEL.length + 8;
       if (offset < base || offset > sliceEnd) continue;
@@ -820,7 +821,8 @@ const confirmsSuiNote = async (
   );
   return (
     prefix !== undefined &&
-    prefix.readUInt16LE(0) === SECTION_NAME_BYTES.length &&
+    new BinaryReader(prefix, true, "deno").u16(0) ===
+      SECTION_NAME_BYTES.length &&
     prefix.subarray(2).equals(SECTION_NAME_BYTES)
   );
 };
@@ -835,7 +837,7 @@ const readSuiRange = async (
   const prefix = await readExact(carrier, descriptorOffset, wanted);
   if (prefix === undefined)
     throw denoCarrierFailure("ELF SUI descriptor is truncated");
-  const nameLength = prefix.readUInt16LE(0);
+  const nameLength = new BinaryReader(prefix, true, "deno").u16(0);
   if (nameLength !== SECTION_NAME_BYTES.length) return undefined;
   // A descriptor too short for the whole name has not shown `d3n0l4nd`, so
   // the note stays unconfirmed and the image stays with native inventory.
