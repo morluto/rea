@@ -15,6 +15,7 @@ import {
   carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { safeParseJson } from "../domain/safeJson.js";
+import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 import {
   readRegularFileText,
   RetainedRegularFileCleanupFailure,
@@ -548,12 +549,13 @@ const doctorFileCleanupFailure = (
   resources: readonly string[],
   reason: string,
   cause: unknown,
+  cleanupPrimary?: AnalysisCancelledError,
 ): ProviderCleanupError => {
   const failure = new ProviderCleanupError(
     "rea",
     resources,
     { reason },
-    { operation: "doctor", cause },
+    { operation: "doctor", cause, cleanupPrimary },
   );
   new AnalysisCleanupLeaseGroup(failure, [lease]);
   return failure;
@@ -591,11 +593,15 @@ const canReadModelConfig = async (
   } catch (cause: unknown) {
     if (cause instanceof RetainedRegularFileCleanupFailure) {
       input.resources.retain(cause.cleanupOwner);
+      const cancellation = regularFileCancellation(cause);
       throw doctorFileCleanupFailure(
         cause.cleanupLease,
         [cause.path],
         cause.message,
         cause,
+        cancellation === undefined
+          ? undefined
+          : cancelledBy("doctor", carriedReason(cancellation.reason)),
       );
     }
     if (cause instanceof AnalysisCancelledError) throw cause;

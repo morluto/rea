@@ -6,6 +6,7 @@ import {
   open,
   readFile,
   rm,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -22,6 +23,8 @@ import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import type { ClientRegistrationStatus } from "../application/ClientRegistrationStatus.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { primaryAnalysisError } from "../domain/analysisErrorBase.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
@@ -239,6 +242,92 @@ it("propagates cancellation before reading a model configuration", async () => {
     await resources.close();
   }
 });
+
+it.skipIf(process.platform === "win32").each([false, true])(
+  "keeps ownership and the selected model-file read outcome if close fails (cancelled: %s)",
+  async (cancelled) => {
+    const root = await createTestTempDirectory("rea-doctor-config-close-");
+    const config = join(root, "config.toml");
+    const runner = join(root, "agent-env");
+    await configRunner(runner);
+    await writeFile(config, "[model]\nname = 'example'\n");
+    const selected = await stat(config);
+    const resources = new ArtifactResourceScope();
+    const controller = new AbortController();
+    const reason = new Error("caller cancelled during config close");
+    const closeFailure = new Error(
+      "controlled config descriptor close failure",
+    );
+    const close = OwnedFileHandle.prototype.close;
+    let retained: OwnedFileHandle | undefined;
+    let explained = false;
+    const closeSpy = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(async function (this: OwnedFileHandle) {
+        const actual = await this.handle.stat();
+        if (
+          retained === undefined &&
+          actual.dev === selected.dev &&
+          actual.ino === selected.ino
+        ) {
+          retained = this;
+          if (cancelled) controller.abort(reason);
+          throw closeFailure;
+        }
+        await close.call(this);
+      });
+    try {
+      const failure: unknown = await readDesktopBuildFacts({
+        environment: {
+          HOME: root,
+          PATH: "",
+          AGENT_ENV_CONFIG: config,
+          REA_AGENT_ENV_COMMAND: runner,
+          REA_BUILD_COMPUTER_REA_ARCHIVE: join(root, "missing.tar.gz"),
+        },
+        platform: process.platform,
+        resources,
+        signal: controller.signal,
+        run: async (_command, args) => {
+          if (args[0] === "config" && args[1] === "explain") explained = true;
+          const stdout =
+            args[0] === "config" && args[1] === "debug"
+              ? JSON.stringify({
+                  search_path: [{ path: config, exists: true }],
+                })
+              : "agent-env 0.9.1485\n";
+          return {
+            stdout,
+            stderr: "",
+            stdoutBytes: Buffer.byteLength(stdout),
+            stderrBytes: 0,
+          };
+        },
+        clientIds: [],
+        registrations: async () => [],
+      }).catch((cause: unknown) => cause);
+      if (!(failure instanceof ProviderCleanupError)) throw failure;
+      expect(projectAnalysisError(failure).code).toBe("cleanup_incomplete");
+      expect(failure.cleanupResources).toEqual([config]);
+      expect(resources.cleanupResources).toEqual([config]);
+      expect(retained?.handle.fd).toBeGreaterThanOrEqual(0);
+      expect(explained).toBe(false);
+      const primary = primaryAnalysisError(failure);
+      if (cancelled) {
+        expect(primary).toBeInstanceOf(AnalysisCancelledError);
+        expect(primary.cause).toBe(reason);
+      } else expect(primary).toBe(failure);
+      await resources.retryCleanup();
+      expect(retained?.handle.fd).toBe(-1);
+      expect(failure.cleanupIncomplete).toBe(false);
+      if (cancelled)
+        expect(projectAnalysisError(failure).code).toBe("cancelled");
+    } finally {
+      closeSpy.mockRestore();
+      await resources.close();
+    }
+  },
+);
 
 it.skipIf(process.platform === "win32")(
   "reads a symlinked regular model configuration",
