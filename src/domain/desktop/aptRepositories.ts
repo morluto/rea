@@ -1,6 +1,7 @@
 import type { AptRepository } from "./desktopCapture.js";
 import { byteToHex } from "../../kernel/byteToHex.js";
 import { err, ok, type Result } from "../result.js";
+import { isStrictUtf8 } from "../strictUtf8.js";
 
 /**
  * One `deb` line, or one deb822 stanza, of an apt sources file. A stanza's
@@ -22,8 +23,8 @@ export interface AptSourceStanza {
 }
 
 interface AptSourceUri {
-  /** The authored URI without credentials. */
-  readonly uri: string;
+  /** The authored URI without credentials, or null when their boundary is unclear. */
+  readonly uri: string | null;
   readonly credentials: boolean;
 }
 
@@ -32,7 +33,7 @@ export interface AptSourceEntry extends Omit<
   AptSourceStanza,
   "uris" | "suites"
 > {
-  readonly uri: string;
+  readonly uri: string | null;
   /** Whether the entry's URI held a user name or password, which `uri` leaves out. */
   readonly credentials: boolean;
   readonly suite: string;
@@ -54,6 +55,11 @@ const optionValues = (value: string | undefined): readonly string[] =>
 /** Keep redundant path separators that APT preserves in Repo-URI. */
 const withoutOptionalTrailingSlash = (uri: string): string =>
   uri.replace(/(?<!\/)\/$/u, "");
+
+// APT decodes one-line URI escapes before separating userinfo. A slash,
+// even when escaped, ends the authority.
+const ONE_LINE_ESCAPED_USER_INFO =
+  /^[a-z][a-z0-9+.-]*:\/\/(?:(?!%2f)[^/])*%40/iu;
 
 /** A URI's user name and password: up to the last `@` before its path, as apt reads them. */
 const USER_INFO = /^(?<scheme>[a-z][a-z0-9+.-]*:\/\/)[^/]*@/iu;
@@ -111,6 +117,7 @@ const stanza = (
     readonly suites: readonly string[];
     readonly components: readonly string[];
     readonly options: ReadonlyMap<string, string>;
+    readonly oneLine?: true;
   },
 ): AptSourceStanza => {
   const signedBy = fields.options.get("signed-by") ?? "";
@@ -119,7 +126,9 @@ const stanza = (
     ...at,
     uris: fields.uris.map((source) => {
       const uri = withoutCredentials(source);
-      return { uri, credentials: source !== uri };
+      return fields.oneLine === true && ONE_LINE_ESCAPED_USER_INFO.test(uri)
+        ? { uri: null, credentials: true }
+        : { uri, credentials: source !== uri };
     }),
     suites: fields.suites,
     components: fields.components,
@@ -129,15 +138,31 @@ const stanza = (
   };
 };
 
+/** Keep the position of undecodable lines without inserting replacement text. */
+function* sourceLines(text: string | Buffer): Generator<string | undefined> {
+  if (typeof text === "string") {
+    yield* text.split("\n");
+    return;
+  }
+  for (let start = 0; start <= text.length;) {
+    const end = text.indexOf(0x0a, start);
+    const line = text.subarray(start, end === -1 ? text.length : end);
+    yield isStrictUtf8(line) ? line.toString("utf8") : undefined;
+    if (end === -1) break;
+    start = end + 1;
+  }
+}
+
 const ONE_LINE =
   /^deb(?:\s+\[(?<options>[^\]]*)\])?\s+(?<uri>\S+)\s+(?<suite>\S+)(?<components>(?:\s+\S+)*)\s*$/u;
 
 /** The `deb` lines of a one-line `sources.list` file; `deb-src` lines and comments are skipped. */
 export const parseOneLineSources = (
-  text: string,
+  text: string | Buffer,
   file: string,
 ): readonly AptSourceStanza[] =>
-  text.split("\n").flatMap((line, index) => {
+  [...sourceLines(text)].flatMap((line, index) => {
+    if (line === undefined) return [];
     const groups = ONE_LINE.exec(line.replace(/#.*$/u, "").trim())?.groups;
     if (groups?.uri === undefined || groups.suite === undefined) return [];
     const options = new Map(
@@ -156,6 +181,7 @@ export const parseOneLineSources = (
           suites: [groups.suite],
           components: fieldValues(groups.components),
           options,
+          oneLine: true,
         },
       ),
     ];
@@ -163,16 +189,25 @@ export const parseOneLineSources = (
 
 /** Fields of each deb822 paragraph by lowercase name; continuation lines keep their line breaks. */
 export const deb822Paragraphs = (
-  text: string,
+  text: string | Buffer,
 ): ReadonlyMap<string, string>[] => {
   const found: Map<string, string>[] = [];
   let current = new Map<string, string>();
   let last: string | undefined;
-  for (const line of [...text.split("\n"), ""]) {
-    if (line.trim().length === 0) {
-      if (current.size > 0) found.push(current);
-      current = new Map();
-      last = undefined;
+  let readable = true;
+  const finish = () => {
+    // A sources-file stanza's position still counts when it cannot be read.
+    if (!readable) found.push(new Map());
+    else if (current.size > 0) found.push(current);
+    current = new Map();
+    last = undefined;
+    readable = true;
+  };
+  for (const line of sourceLines(text)) {
+    if (line === undefined) {
+      readable = false;
+    } else if (line.trim().length === 0) {
+      finish();
     } else if (line.startsWith("#")) continue;
     else if (/^[ \t]/u.test(line) && last !== undefined)
       current.set(last, `${current.get(last) ?? ""}\n${line.trim()}`);
@@ -183,12 +218,13 @@ export const deb822Paragraphs = (
       current.set(last, line.slice(colon + 1).trim());
     }
   }
+  finish();
   return found;
 };
 
 /** The `deb` stanzas of a deb822 `.sources` file; disabled paragraphs are skipped but still counted. */
 export const parseDeb822Sources = (
-  text: string,
+  text: string | Buffer,
   file: string,
 ): readonly AptSourceStanza[] =>
   deb822Paragraphs(text).flatMap((fields, index) => {
@@ -241,7 +277,7 @@ const SOURCES_ENTRY = /^(?<file>\/.*):(?<position>[1-9]\d*)$/u;
 
 /** The index targets of `apt-get indextargets` output; a paragraph missing a field REA needs is skipped. */
 export const parseAptIndexTargets = (
-  output: string,
+  output: string | Buffer,
 ): readonly AptIndexTarget[] =>
   deb822Paragraphs(output).flatMap((fields) => {
     const at = SOURCES_ENTRY.exec(fields.get("sourcesentry") ?? "")?.groups;
@@ -299,17 +335,23 @@ export const entryForTarget = (
   // A one-line entry has one URI and one suite. Only deb822 needs a URI lookup.
   const matches = single
     ? uris
-    : uris.filter(({ uri }) => deb822RepoUri(uri) === target.repoUri);
+    : uris.filter(
+        ({ uri }) => uri !== null && deb822RepoUri(uri) === target.repoUri,
+      );
   const first = matches[0];
+  if (first === undefined) return undefined;
   const uri =
-    first === undefined ? undefined : withoutOptionalTrailingSlash(first.uri);
+    first.uri === null ? null : withoutOptionalTrailingSlash(first.uri);
   const suite = single
     ? suites[0]
     : suites.find((listed) => isRelease(listed, target.release));
   if (
-    uri === undefined ||
     suite === undefined ||
-    matches.some((listed) => withoutOptionalTrailingSlash(listed.uri) !== uri)
+    matches.some(({ uri: listed }) =>
+      listed === null
+        ? uri !== null
+        : withoutOptionalTrailingSlash(listed) !== uri,
+    )
   )
     return undefined;
   return {
@@ -332,9 +374,6 @@ type RepositoryDeclaration = ReplayRepository &
 
 const oneLineSource = (repository: ReplayRepository): boolean =>
   repository.sources_file?.endsWith(".sources") !== true;
-
-// APT decodes an escaped @ in a one-line URI before it separates userinfo.
-const ONE_LINE_ESCAPED_USER_INFO = /^[a-z][a-z0-9+.-]*:\/\/[^/]*%40/iu;
 
 /** Detect credentials left in a legacy or externally supplied capture. */
 export const aptRepositoryHoldsCredentials = (

@@ -31,7 +31,7 @@ import {
   resolveAptLocations,
   type AptRepositoryHost,
 } from "./AptRepositoryInventory.js";
-import { succeeded } from "./HostQuery.js";
+import { queryUtf8Text, succeeded } from "./HostQuery.js";
 import {
   inspectLibraryPackages,
   installableLibraries,
@@ -57,10 +57,21 @@ type Package = DesktopApplicationInventory["package"];
 const policyOrigins = async (
   context: InventoryContext,
 ): Promise<ReadonlyMap<string, string | null> | undefined> => {
-  const policy = succeeded(
-    await context.host.runQuery("apt-cache", ["policy"], context.signal),
+  const policy = await queryUtf8Text(
+    context.host.runQuery,
+    "apt-cache",
+    ["policy"],
+    context.signal,
   );
-  return policy === undefined ? undefined : parseAptPolicyOrigins(policy);
+  if (policy.kind === "undecodable") {
+    context.limitations.push(
+      "apt-cache policy contained unreadable UTF-8, so the origins of repository sources are unknown.",
+    );
+    return new Map();
+  }
+  return policy.kind === "read"
+    ? parseAptPolicyOrigins(policy.text)
+    : undefined;
 };
 
 /**
@@ -284,9 +295,16 @@ export const debianPackage = async (
     ),
   );
   const parsed = status === undefined ? undefined : parseDpkgStatus(status);
-  const policy = succeeded(
-    await host.runQuery("apt-cache", ["policy", name], signal),
+  const policy = await queryUtf8Text(
+    host.runQuery,
+    "apt-cache",
+    ["policy", name],
+    signal,
   );
+  if (policy.kind === "undecodable")
+    limitations.push(
+      "apt-cache policy contained unreadable UTF-8, so the installed version's repository sources are unknown.",
+    );
   const apt = await resolveAptLocations(host.runQuery, signal, host.apt);
   const listsPresent = await readdir(apt.lists).then(
     (lists) => lists.some((list) => /_Packages(?:\.[a-z0-9]+)?$/u.test(list)),
@@ -303,7 +321,9 @@ export const debianPackage = async (
       "No apt package lists are present, so whether the installed version comes from a package archive is unknown.",
     );
   const sources =
-    policy === undefined ? [] : [...parseAptPolicySources(policy, apt.status)];
+    policy.kind === "read"
+      ? [...parseAptPolicySources(policy.text, apt.status)]
+      : [];
   // A local install's library packages are matched to the archive by origin too.
   const origins = await policyOrigins(context);
   const installed = {

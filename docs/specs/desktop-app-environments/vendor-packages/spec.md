@@ -17,7 +17,9 @@ that key, with those libraries, and starts it.
   deb822 stanza; `sources.list`, one-line `*.list` or deb822 `*.sources`) with
   its authored URI, suite, components and architecture restriction. The optional
   `repo_uri` field records the index's sanitized `Repo-URI` independently of
-  the authored URI. Flat repositories
+  the authored URI. Undecodable UTF-8 entries and index paragraphs are withheld
+  without substituting replacement characters. A policy query with undecodable
+  bytes leaves repository attribution unknown. Flat repositories
   (suite `./` or `/`, no components), `[signed-by=…]` and `Signed-By:` options
   and architecture options are read; a deb822 stanza's URIs and suites are
   kept as lists, never expanded into every pair. `release` is the release's

@@ -15,6 +15,7 @@ import {
 } from "../domain/desktop/aptRepositories.js";
 import type { AptRepository } from "../domain/desktop/desktopCapture.js";
 import { DEFAULT_DPKG_STATUS_SOURCE } from "../domain/desktop/linuxPackages.js";
+import { isStrictUtf8 } from "../domain/strictUtf8.js";
 import {
   withGpgvKeyCheck,
   type HeldKey,
@@ -104,37 +105,53 @@ const UBUNTU_PRO =
 const indexTargets = async (
   runQuery: QueryRunner,
   signal: AbortSignal | undefined,
-): Promise<ReadonlyMap<string, AptIndexTarget> | undefined> => {
-  const output = succeeded(
-    await runQuery("apt-get", ["indextargets", "Created-By: Packages"], signal),
+): Promise<
+  | {
+      readonly entries: ReadonlyMap<string, AptIndexTarget>;
+      readonly incomplete: boolean;
+    }
+  | undefined
+> => {
+  const query = await runQuery(
+    "apt-get",
+    ["indextargets", "Created-By: Packages"],
+    signal,
+    { preserveStdoutBytes: true },
   );
-  if (output === undefined) return undefined;
+  if (typeof query !== "object" || query.exitCode !== 0) return undefined;
+  const output = query.stdoutBuffer ?? query.stdout;
   const targets = new Map<string, AptIndexTarget>();
   for (const target of parseAptIndexTargets(output))
     if (!targets.has(target.description))
       targets.set(target.description, target);
-  return targets;
+  return {
+    entries: targets,
+    incomplete: typeof output !== "string" && !isStrictUtf8(output),
+  };
 };
 
 /** The stanzas of each sources file apt names, read once; files that could not be read are kept for the limitations. */
 const sourcesFiles = (signal: AbortSignal | undefined) => {
   const parsed = new Map<string, readonly AptSourceStanza[]>();
   const unreadable: string[] = [];
+  const incomplete: string[] = [];
   const read = async (file: string): Promise<readonly AptSourceStanza[]> => {
     const cached = parsed.get(file);
     if (cached !== undefined) return cached;
     const bytes = await readHostFile(file, FILE_MAX_BYTES, signal);
     if (bytes === "unreadable") unreadable.push(file);
+    if (typeof bytes !== "string" && !isStrictUtf8(bytes))
+      incomplete.push(file);
     const stanzas =
       typeof bytes === "string"
         ? []
         : (file.endsWith(".sources")
             ? parseDeb822Sources
-            : parseOneLineSources)(bytes.toString("utf8"), file);
+            : parseOneLineSources)(bytes, file);
     parsed.set(file, stanzas);
     return stanzas;
   };
-  return { read, unreadable };
+  return { read, unreadable, incomplete };
 };
 
 const fileNames = async (directory: string): Promise<readonly string[]> =>
@@ -189,7 +206,7 @@ type KeyCandidates = readonly string[] | HeldKey;
 
 interface RepositoryContext {
   readonly apt: AptLocations;
-  readonly targets: ReadonlyMap<string, AptIndexTarget> | undefined;
+  readonly targets: Awaited<ReturnType<typeof indexTargets>>;
   readonly sources: (file: string) => Promise<readonly AptSourceStanza[]>;
   readonly verify: (
     candidates: KeyCandidates,
@@ -214,7 +231,9 @@ const keyCheck = async (
       reason:
         context.targets === undefined
           ? "apt-get indextargets did not list apt's indexes"
-          : "apt-get indextargets lists no index with this source",
+          : context.targets.incomplete
+            ? "apt-get indextargets contained unreadable UTF-8 and did not establish an index for this source"
+            : "apt-get indextargets lists no index with this source",
     };
   if (entry === undefined)
     return {
@@ -274,7 +293,7 @@ const repositoryFacts = async (
   vendor: { readonly source: string; readonly origin: string | null },
   context: RepositoryContext,
 ): Promise<{ repository: AptRepository; key: VerifiedKey | undefined }> => {
-  const target = context.targets?.get(vendor.source);
+  const target = context.targets?.entries.get(vendor.source);
   const entry =
     target === undefined
       ? undefined
@@ -346,11 +365,22 @@ export const inspectAptRepositories = async (
     return {
       repositories,
       keys,
-      indexTargets: targets ?? new Map(),
-      limitations: files.unreadable.map(
-        (file) =>
-          `The apt sources file ${file} could not be read, so repositories it lists are not matched.`,
-      ),
+      indexTargets: targets?.entries ?? new Map(),
+      limitations: [
+        ...files.unreadable.map(
+          (file) =>
+            `The apt sources file ${file} could not be read, so repositories it lists are not matched.`,
+        ),
+        ...files.incomplete.map(
+          (file) =>
+            `The apt sources file ${file} contains unreadable UTF-8 entries, so those entries are not matched.`,
+        ),
+        ...(targets?.incomplete !== true
+          ? []
+          : [
+              "apt-get indextargets contained unreadable UTF-8. Those index paragraphs were withheld.",
+            ]),
+      ],
     };
   });
 };

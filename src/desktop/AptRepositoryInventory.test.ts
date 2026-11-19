@@ -51,7 +51,7 @@ describe.skipIf(
       );
       // No update, download or package installation: APT only describes the
       // configured targets, with source and state paths confined to this root.
-      const query: QueryRunner = async (command, argv, signal) => {
+      const query: QueryRunner = async (command, argv, signal, options) => {
         // Key verification uses the existing captured status fixture; only
         // APT's source grammar and target coordinates are exercised natively.
         if (command === "gpgv") return { stdout: GPGV_A_ONLY, exitCode: 2 };
@@ -70,6 +70,7 @@ describe.skipIf(
             "--no-release-info",
           ],
           signal,
+          options,
         );
       };
       const output = await query(
@@ -151,6 +152,18 @@ it.each([
     null,
     true,
   ],
+  [
+    "https://test-user:test-secret@secret-suffix%40vendor.invalid/a",
+    "https://test-user:test-secret%40secret-suffix@vendor.invalid/a/",
+    null,
+    true,
+  ],
+  [
+    "https://vendor.invalid/a%40b",
+    "https://vendor.invalid/a@b/",
+    "https://vendor.invalid/a%40b",
+    false,
+  ],
 ] as const)(
   "retains separate sanitized authored and observed APT URIs for %s",
   async (authored, observed, retained, credentials) => {
@@ -185,7 +198,7 @@ it.each([
     );
     expect(facts.repositories[0]).toMatchObject({
       uri: retained,
-      repo_uri: observed.replace("test-user:test-secret@", ""),
+      repo_uri: observed.replace(/^https:\/\/[^/]*@/u, "https://"),
       uri_credentials_removed: credentials,
     });
     expect(JSON.stringify(facts.repositories)).not.toMatch(
@@ -193,6 +206,73 @@ it.each([
     );
   },
 );
+
+it("withholds an undecodable APT index and preserves an intact peer", async () => {
+  const root = await createTestTempDirectory("apt-index-encoding-");
+  const file = join(root, "vendor.list");
+  await writeFile(
+    file,
+    "deb https://bad.invalid/a%FFb stable main\ndeb https://good.invalid/a%EF%BF%BDb stable main\n",
+  );
+  const bad = "https://bad.invalid/a\ufffdb stable/main arm64 Packages";
+  const good = "https://good.invalid/a\ufffdb stable/main arm64 Packages";
+  const paragraph = (source: string, uri: string, position: number) =>
+    [
+      `Description: ${source}`,
+      `Sourcesentry: ${file}:${position}`,
+      `Repo-URI: ${uri}`,
+      "Release: stable",
+      "Component: main",
+      `Base-URI: ${uri}dists/stable/`,
+      `Filename: ${join(root, "Packages")}`,
+    ].join("\n");
+  const bytes = Buffer.from(
+    `${paragraph(bad.replace("\ufffd", "ÿ"), "https://bad.invalid/aÿb/", 1)}\n\n`,
+    "latin1",
+  );
+  const output = Buffer.concat([
+    bytes,
+    Buffer.from(paragraph(good, "https://good.invalid/a\ufffdb/", 2)),
+  ]);
+  const query: QueryRunner = async (command, _argv, signal, options) => {
+    if (command !== "apt-get") throw new Error(`Unexpected query ${command}`);
+    return runHostQuery(
+      process.execPath,
+      [
+        "-e",
+        'process.stdout.write(Buffer.from(process.argv[1], "base64"))',
+        output.toString("base64"),
+      ],
+      signal,
+      options,
+    );
+  };
+  const facts = await inspectAptRepositories(
+    { sources: [bad, good], origins: ["Vendor", "Vendor"] },
+    {
+      runQuery: query,
+      apt: {
+        lists: root,
+        trustedParts: root,
+        trusted: join(root, "trusted.gpg"),
+      },
+    },
+    undefined,
+  );
+  expect([...facts.indexTargets.keys()]).toEqual([good]);
+  expect(facts.repositories[0]).toMatchObject({
+    uri: null,
+    signing_key_reason: expect.stringContaining("unreadable UTF-8"),
+  });
+  expect(facts.repositories[0]).not.toHaveProperty("repo_uri");
+  expect(facts.repositories[1]).toMatchObject({
+    uri: "https://good.invalid/a%EF%BF%BDb",
+    repo_uri: "https://good.invalid/a\ufffdb/",
+  });
+  expect(declaredPackageFiles(facts.repositories, facts.indexTargets)).toEqual(
+    new Set([good]),
+  );
+});
 
 it.each(["list", "sources"] as const)(
   "does not broaden %s Signed-By fingerprint restrictions to every key in a keyring",

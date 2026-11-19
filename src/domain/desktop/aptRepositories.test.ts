@@ -468,6 +468,23 @@ describe("APT source URI lookup", () => {
     ).toBeUndefined();
   });
 
+  it("keeps the position of a valid stanza after undecodable source bytes", () => {
+    const declaration = (host: string) =>
+      `Types: deb\nURIs: https://${host}/archive\nSuites: stable\nComponents: main\n`;
+    const source = Buffer.concat([
+      Buffer.from(declaration("bad.invalid/ÿ"), "latin1"),
+      Buffer.from(`\n${declaration("good.invalid")}`),
+    ]);
+    const stanzas = parseDeb822Sources(source, file);
+    expect(stanzas).toHaveLength(1);
+    expect(
+      entryForTarget(
+        { ...targetFor("https://good.invalid/archive/"), position: 2 },
+        stanzas,
+      ),
+    ).toMatchObject({ uri: "https://good.invalid/archive" });
+  });
+
   it("leaves different authored URIs that APT collapses unresolved", () => {
     const stanzas = parseDeb822Sources(
       [
