@@ -11,7 +11,7 @@ const record = {
   _meta: { "io.modelcontextprotocol.registry/official": { status: "active" } },
 };
 const page = (servers: unknown[], metadata = {}) =>
-  Response.json({ servers, metadata });
+  Response.json({ servers, metadata: { count: servers.length, ...metadata } });
 
 it("finds an identical existing version after paging past substring matches", async () => {
   const urls: URL[] = [];
@@ -51,6 +51,28 @@ it("permits publication only after a complete successful lookup finds no exact m
     ),
   ).rejects.toThrow("non-advancing cursor");
 });
+
+it("rejects inconsistent page counts before an absent result", async () => {
+  await expect(
+    registryPublicationState(server, async () => page([], { count: 1 })),
+  ).rejects.toThrow("Registry page count does not match its server records");
+  await expect(
+    registryPublicationState(server, async () =>
+      Response.json({ servers: [], metadata: [] }),
+    ),
+  ).rejects.toThrow("Registry response omitted metadata");
+});
+
+it.each([null, ""])(
+  "treats a terminal cursor of %j as the final page",
+  async (nextCursor) => {
+    await expect(
+      registryPublicationState(server, async () =>
+        page([record], { nextCursor }),
+      ),
+    ).resolves.toBe("present");
+  },
+);
 
 it("refuses changed, inactive or ambiguous published metadata", async () => {
   await expect(

@@ -29,9 +29,17 @@ export async function registryPublicationState(server, request = fetch) {
     const page = await response.json();
     assert(Array.isArray(page?.servers), "Registry response omitted servers");
     assert(
-      page.metadata && typeof page.metadata === "object",
+      page.metadata &&
+        typeof page.metadata === "object" &&
+        !Array.isArray(page.metadata),
       "Registry response omitted metadata",
     );
+    if (page.metadata.count !== undefined)
+      assert.equal(
+        page.metadata.count,
+        page.servers.length,
+        "Registry page count does not match its server records",
+      );
     for (const entry of page.servers) {
       assert(
         typeof entry?.server?.name === "string" &&
@@ -44,10 +52,11 @@ export async function registryPublicationState(server, request = fetch) {
       )
         matches.push(entry);
     }
-    cursor = page.metadata.nextCursor;
+    const nextCursor = page.metadata.nextCursor;
+    cursor = nextCursor === null || nextCursor === "" ? undefined : nextCursor;
     if (cursor !== undefined) {
       assert(
-        typeof cursor === "string" && cursor.length > 0 && !cursors.has(cursor),
+        typeof cursor === "string" && !cursors.has(cursor),
         "Registry returned a non-advancing cursor",
       );
       cursors.add(cursor);
