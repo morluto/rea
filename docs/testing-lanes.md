@@ -54,6 +54,7 @@ the verified Ghidra 12.2 and JDK 25 build.
 | `npm run verify:ghidra:cross-format`       | Any supported Ghidra host; also analyzes AArch64 ELF, x86-64 PE, and x86-64 Mach-O                                                                          | `clang`, LLD, and `lld-link` in addition to host-lane prerequisites       |
 | `npm run verify:ghidra:windows`            | Controlled Windows x64 with native x86-64 PE; `-- --x86` selects native x86 PE                                                                              | Ghidra 12.2, full JDK 25, and the matching native artifact                |
 | `npm run verify:ghidra:dol`                | Any supported Ghidra host; source-owned PowerPC GameCube DOL fixture built from a linker script (never executed)                                            | Clang with PowerPC target, LLD, GNU readelf, Ghidra 12.2, and full JDK 25 |
+| `npm run verify:ghidra:ppc64`              | Linux/macOS Ghidra host; source-owned ELFv2 PPC64 executables in both byte orders through CLI and MCP (never executed)                                      | Clang with PowerPC target, LLD, GNU readelf, Ghidra 12.2, and full JDK 25 |
 
 The optional Swift lane compiles a source-owned fixture and checks modern and
 provider-demangled procedure names through real stdio MCP, with and without the
