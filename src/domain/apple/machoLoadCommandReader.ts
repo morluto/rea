@@ -12,6 +12,7 @@ import { readMachoSegmentHeader } from "./machoSegmentHeader.js";
 import {
   MachoLoadCommandCursor,
   machoCommandTableIssue,
+  machoWordReader,
   readMachoHeaderDeclarations,
   readMachoCommandStringBytes,
   readMachoLinkeditDataCommand,
@@ -793,14 +794,17 @@ const decodeLazyLoadDylibInfoCommand = (
   body: Uint8Array,
   index: number,
 ): LazyLoadDylibInfoCommand => {
-  if (body.byteLength < 16)
+  const data = readMachoLinkeditDataCommand(
+    LC.LAZY_LOAD_DYLIB_INFO,
+    body,
+    true,
+  );
+  if (data === null)
     throw machoIssue(
       "malformed",
       `load command ${index} is too short for LC_LAZY_LOAD_DYLIB_INFO`,
     );
-  const view = viewOf(body);
-  const dataOffset = view.getUint32(8, true);
-  const dataSize = view.getUint32(12, true);
+  const { dataOffset, dataSize } = data;
   if (dataSize < LAZY_INFO_HEADER_BYTES)
     throw machoIssue(
       "malformed",
@@ -884,13 +888,13 @@ const decodeLazyLoadDylibInfoPayload = (
   maxVmOffset: bigint,
   work: LazyPayloadWork,
 ): MachoDependency => {
-  const view = viewOf(payload);
-  const pathOffset = view.getUint32(0, true);
-  const flagImageOffset = view.getUint32(4, true);
-  const flags = view.getUint16(8, true);
-  const chainStartImageOffset = view.getUint32(12, true);
-  const symbolCount = view.getUint32(16, true);
-  const symbolArrayOffset = view.getUint32(20, true);
+  const reader = machoWordReader(payload, true);
+  const pathOffset = reader.u32(0);
+  const flagImageOffset = reader.u32(4);
+  const flags = reader.u16(8);
+  const chainStartImageOffset = reader.u32(12);
+  const symbolCount = reader.u32(16);
+  const symbolArrayOffset = reader.u32(20);
   if (BigInt(flagImageOffset) > maxVmOffset)
     throw machoIssue(
       "malformed",
@@ -931,7 +935,7 @@ const decodeLazyLoadDylibInfoPayload = (
     );
   work.symbolReferences = symbolReferences;
   for (let symbol = 0; symbol < symbolCount; symbol += 1) {
-    const offset = view.getUint32(symbolArrayOffset + symbol * 4, true);
+    const offset = reader.u32(symbolArrayOffset + symbol * 4);
     payloadString(
       payload,
       offset,

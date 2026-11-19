@@ -22,6 +22,7 @@ import {
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { cliTest } from "../support/cli/cliFixture.js";
 
 const execute = promisify(execFile);
 const cli = fileURLToPath(new URL("../../scripts/rea.mjs", import.meta.url));
@@ -482,3 +483,107 @@ it("publishes distinct AMI NVAR link, attributes, GUID index and data digest", a
     },
   ]);
 });
+
+cliTest(
+  "shares volume and file scan limits across MCP and CLI extraction",
+  async ({ cli: command }) => {
+    const root = await createTestTempDirectory("rea-uefi-scan-limit-");
+    const path = join(root, "many-volumes.fd");
+    const empty = buildFv({ files: [], blockSize: 128 }).buffer;
+    const payload = Buffer.from("last firmware file");
+    const last = buildFv({
+      blockSize: 128,
+      files: [
+        buildFfsFile({
+          guid: DRIVER_GUID,
+          typeCode: 1,
+          payload: Buffer.from("first firmware file"),
+        }),
+        buildFfsFile({
+          guid: "12345678-1234-4321-aaaa-bbbbbbbbbbbb",
+          typeCode: 1,
+          payload,
+        }),
+      ],
+    }).buffer;
+    await writeFile(
+      path,
+      Buffer.concat([...Array<Buffer>(512).fill(empty), last]),
+    );
+
+    const { call } = await connectLocalToolsMcp();
+    const observed = await call("inspect_uefi_firmware", {
+      path,
+      max_volumes: 513,
+      max_files: 2,
+    });
+    expect(observed.isError, JSON.stringify(observed.content)).not.toBe(true);
+    const inspection = uefiResultSchemas.inspect_uefi_firmware.parse(
+      parseEvidence(observed.structuredContent).normalized_result,
+    );
+    const volume = inspection.firmware_volumes.at(-1);
+    expect(volume?.offset).toBe(empty.length * 512);
+    const offset = volume?.ffs_files[1]?.offset;
+    if (offset === undefined)
+      throw new Error("Inspection omitted the second FFS file");
+    const extractMcp = (maxFiles: number) =>
+      call("extract_uefi_firmware", {
+        path,
+        output_directory: join(root, `mcp-out-${maxFiles}`),
+        max_volumes: 513,
+        max_files: maxFiles,
+        target: { kind: "ffs-file", offset, source_stream: null },
+      });
+    const extractCli = (maxFiles: number) =>
+      command.run({
+        arguments: [
+          "extract-uefi-firmware",
+          path,
+          join(root, `cli-out-${maxFiles}`),
+          "--file-offset",
+          String(offset),
+          "--source-stream",
+          "flash",
+          "--max-volumes",
+          "513",
+          "--max-files",
+          String(maxFiles),
+          "--json",
+        ],
+      });
+    const refused = {
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: ["target"],
+            reason: "invalid_value",
+            message: `No mapped ffs-file at 0x${offset.toString(16)} in the selected stream.`,
+          },
+        ],
+      },
+    };
+    expect(parseMcpToolError(await extractMcp(1)).error).toMatchObject(refused);
+    const cliRefusal = await extractCli(1);
+    expect(cliRefusal.exitCode).not.toBe(0);
+    expect(cliRefusal.json).toMatchObject(refused);
+
+    const extraction = await extractMcp(2);
+    expect(extraction.isError, JSON.stringify(extraction.content)).not.toBe(
+      true,
+    );
+    const cliExtraction = await extractCli(2);
+    expect(cliExtraction.exitCode, cliExtraction.stderr).toBe(0);
+    for (const evidence of [extraction.structuredContent, cliExtraction.json]) {
+      const result = uefiResultSchemas.extract_uefi_firmware.parse(
+        parseEvidence(evidence).normalized_result,
+      );
+      expect(result.selection).toMatchObject({
+        offset,
+        target_kind: "ffs-file",
+      });
+      expect(result.coverage).toBe("complete");
+      expect(result.files).toMatchObject([{ sha256: sha256(payload) }]);
+    }
+  },
+);

@@ -949,3 +949,27 @@ it.each(["DOS", "NE", "LE", "LX"] as const)(
     await expect(payloadsOf(bytes)).resolves.toEqual([]);
   },
 );
+
+it("preserves unsigned group-icon fields and rejects a partial entry", async () => {
+  const group = Buffer.alloc(20);
+  group.writeUInt16LE(1, 2);
+  group.writeUInt16LE(1, 4);
+  group.writeUInt16LE(0x8123, 10);
+  group.writeUInt16LE(0x4567, 12);
+  group.writeUInt32LE(0xfedcba98, 14);
+  group.writeUInt16LE(0xabcd, 18);
+  const fixture = (payload: Buffer) =>
+    peResourceFixture(false, [{ type: 14, name: 7, language: 1033, payload }])
+      .bytes;
+  const result = await parse(fixture(group));
+  expect(result.icon_groups[0]?.images[0]).toMatchObject({
+    planes: 0x8123,
+    bit_count: 0x4567,
+    declared_bytes: 0xfedcba98,
+    resource_id: 0xabcd,
+    candidate_resource_indices: [],
+  });
+  await expect(parse(fixture(group.subarray(0, 19)))).rejects.toMatchObject({
+    kind: "malformed",
+  });
+});

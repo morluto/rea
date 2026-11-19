@@ -17,11 +17,18 @@ const noDecoder: UefiLzmaDecoder = async () => ({
   message: "test decoder unavailable",
 });
 
-const decodeNestedFv =
+const decodeCarrierAs =
   (nestedFv: Buffer): UefiLzmaDecoder =>
   async ({ payload }) =>
     payload.equals(Buffer.from([0xde, 0xad, 0xbe, 0xef]))
-      ? { ok: true, outcome: { bytes: nestedFv, decoderVersion: "test" } }
+      ? {
+          ok: true,
+          outcome: {
+            bytes: nestedFv,
+            decoderVersion: "test",
+            consumedBytes: payload.length,
+          },
+        }
       : { ok: false, reason: "decoder", message: "Unexpected carrier bytes" };
 
 const driverFile = (guid: string, payload: Buffer): Buffer =>
@@ -109,6 +116,45 @@ it("recurses into firmware-volume-image sections with parent linkage", async () 
   ]);
 });
 
+it.each([
+  { layout: "leading erased bytes", prefix: true, followingVolume: false },
+  { layout: "trailing erased bytes", prefix: false, followingVolume: false },
+  { layout: "a second volume", prefix: false, followingVolume: true },
+])(
+  "retains the FV-image payload and reports unexplained bytes when it contains $layout",
+  async ({ prefix, followingVolume }) => {
+    const nested = buildFv({ files: [] }).buffer;
+    const extra = followingVolume ? nested : Buffer.alloc(8, 0xff);
+    const payload = Buffer.concat(prefix ? [extra, nested] : [nested, extra]);
+    const file = driverFile(
+      "23111111-2222-3333-4444-555555555555",
+      buildSection(0x17, payload),
+    );
+    const summary = await scanUefiImage(
+      buildFv({ files: [file] }).buffer,
+      { maxDepth: 3, maxVolumes: 8, maxFiles: 64 },
+      noDecoder,
+    );
+    const section = summary.volumes[0]?.ffs_files[0]?.sections[0];
+    expect(section?.sub_volumes).toHaveLength(prefix ? 0 : 1);
+    expect(summary.volumes).toHaveLength(prefix ? 1 : 2);
+    expect(summary.coverage).toBe("partial");
+    expect(
+      summary.payloads.get(section?.logical_path ?? "")?.bytes.equals(payload),
+    ).toBe(true);
+    expect(summary.omissions).toContainEqual(
+      expect.objectContaining({
+        kind: "unparsed-region",
+        logical_path: section?.logical_path,
+        range: {
+          offset: (section?.offset ?? 0) + 4 + (prefix ? 0 : nested.length),
+          length: prefix ? payload.length : extra.length,
+        },
+      }),
+    );
+  },
+);
+
 it("reinterprets a raw file body that directly carries an embedded firmware volume", async () => {
   const holeInner = buildFfsFile({
     guid: "25111111-2222-3333-4444-555555555555",
@@ -167,7 +213,7 @@ it("decodes LZMA-guided sections through the injected decoder lane", async () =>
   });
   const nestedFv = buildFv({ files: [nestedInner] });
   const ui = buildSection(0x15, Buffer.from("CompressedMain\0", "utf16le"));
-  const decoder = decodeNestedFv(nestedFv.buffer);
+  const decoder = decodeCarrierAs(nestedFv.buffer);
   const compressedCarrier = Buffer.from([0xde, 0xad, 0xbe, 0xef]);
   const wrapper = driverFile(
     "25111111-2222-3333-4444-555555555555",
@@ -201,6 +247,91 @@ it("decodes LZMA-guided sections through the injected decoder lane", async () =>
   expect(summary.limitations).toHaveLength(0);
 });
 
+it.each([
+  {
+    format: "known codec",
+    definitionGuid: "ee4e5898-3914-4259-9d6e-dc7bd79403cf",
+  },
+  {
+    format: "stored fallback",
+    definitionGuid: "99999999-8888-7777-6666-555555555555",
+  },
+])(
+  "retains the carrier without interpreting reserved guided attributes on a $format",
+  async ({ definitionGuid }) => {
+    const body = buildSection(0x19, Buffer.from("child"));
+    const file = driverFile(
+      "23111111-2222-3333-4444-555555555555",
+      buildGuidedSection({ definitionGuid, attributes: 0x04, body }),
+    );
+    let decodeCalls = 0;
+    const summary = await scanUefiImage(
+      buildFv({ files: [file] }).buffer,
+      { maxDepth: 3, maxVolumes: 8, maxFiles: 64 },
+      async ({ payload }) => {
+        decodeCalls += 1;
+        return {
+          ok: true,
+          outcome: {
+            bytes: body,
+            decoderVersion: "test",
+            consumedBytes: payload.length,
+          },
+        };
+      },
+    );
+    const sections = summary.volumes[0]?.ffs_files[0]?.sections;
+    const wrapper = sections?.[0];
+    expect(sections).toHaveLength(1);
+    expect(wrapper?.compression).toMatchObject({
+      guid: definitionGuid,
+      attributes: 0x04,
+    });
+    expect(decodeCalls).toBe(0);
+    expect(summary.coverage).toBe("partial");
+    expect(
+      summary.compressedCarriers.get(wrapper?.logical_path ?? "")?.bytes,
+    ).toEqual(body);
+    expect(summary.omissions).toContainEqual(
+      expect.objectContaining({
+        kind: "unparsed-region",
+        logical_path: wrapper?.logical_path,
+        detail: expect.stringContaining("reserved attribute"),
+      }),
+    );
+  },
+);
+
+it("preserves a decoded sibling after an on-disk retrieval wildcard", async () => {
+  const wildcard = buildSection(0x00, Buffer.from("opaque"));
+  const raw = buildSection(0x19, Buffer.from("child"));
+  const bytes = Buffer.concat([wildcard, raw]);
+  const file = driverFile(
+    "23111111-2222-3333-4444-555555555555",
+    buildLzmaGuidedSection(Buffer.from([0xde, 0xad, 0xbe, 0xef])),
+  );
+  const summary = await scanUefiImage(
+    buildFv({ files: [file] }).buffer,
+    { maxDepth: 3, maxVolumes: 8, maxFiles: 64 },
+    decodeCarrierAs(bytes),
+  );
+
+  const [wrapper, invalid, valid] =
+    summary.volumes[0]?.ffs_files[0]?.sections ?? [];
+  expect(invalid).toMatchObject({ type_code: 0, malformed: true });
+  expect(summary.payloads.has(invalid?.logical_path ?? "")).toBe(false);
+  expect(
+    summary.payloads.get(valid?.logical_path ?? "")?.bytes.toString(),
+  ).toBe("child");
+  expect(summary.omissions).toContainEqual(
+    expect.objectContaining({
+      source_stream: wrapper?.logical_path,
+      logical_path: invalid?.logical_path,
+      detail: expect.stringContaining("retrieval wildcard"),
+    }),
+  );
+});
+
 it("decodes AMI-zlib guided sections after peeling the AMD header", async () => {
   const nestedInner = buildFfsFile({
     guid: "2b111111-2222-3333-4444-555555555555",
@@ -211,7 +342,7 @@ it("decodes AMI-zlib guided sections after peeling the AMD header", async () => 
   const stream = Buffer.from([0xde, 0xad, 0xbe, 0xef]);
   const amdHeader = Buffer.alloc(AMD_ZLIB_HEADER_LENGTH, 0);
   amdHeader.writeUInt32LE(stream.length, 0x14);
-  const decoder = decodeNestedFv(nestedFv.buffer);
+  const decoder = decodeCarrierAs(nestedFv.buffer);
   const wrapper = driverFile(
     "2c111111-2222-3333-4444-555555555555",
     buildGuidedSection({
@@ -422,23 +553,39 @@ it("marks partial when the structural budget ends inside a section chain", async
   for (let offset = 0; offset < frames.length; offset += 4) {
     frames.writeUInt32LE(0x19000004, offset);
   }
-  const file = driverFile("22111111-2222-3333-4444-555555555555", frames);
+  const carrier = buildLzmaGuidedSection(Buffer.from([0xde, 0xad, 0xbe, 0xef]));
+  const file = driverFile(
+    "22111111-2222-3333-4444-555555555555",
+    Buffer.concat([carrier, frames]),
+  );
+  const decoded = Buffer.from("opaque decoded bytes");
   const scan = await scanUefiImage(
     buildFv({ files: [file] }).buffer,
     { maxDepth: 3, maxVolumes: 4, maxFiles: 4 },
-    noDecoder,
+    decodeCarrierAs(decoded),
   );
   expect(scan.coverage).toBe("partial");
   expect(
     scan.limitations.some((line) => line.includes("Structural record limit")),
   ).toBe(true);
-  expect(scan.volumes[0]?.ffs_files[0]?.sections.length).toBeLessThan(100_000);
+  const sections = scan.volumes[0]?.ffs_files[0]?.sections;
+  expect(sections?.length).toBeLessThan(100_000);
+  const carrierPath = sections?.[0]?.logical_path;
+  expect(
+    scan.decodedStreams.get(carrierPath ?? "")?.bytes.equals(decoded),
+  ).toBe(true);
   expect(scan.omissions).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
         kind: "size-truncated",
         logical_path: expect.stringContaining("/FFS:"),
         detail: expect.stringContaining("section walk"),
+      }),
+      expect.objectContaining({
+        kind: "size-truncated",
+        logical_path: carrierPath,
+        source_stream: carrierPath,
+        range: { offset: 0, length: decoded.length },
       }),
     ]),
   );
@@ -466,9 +613,32 @@ it("reports a checksum mismatch over the actual file body", async () => {
   ]);
 });
 
+it("locates a wrong fixed FFS checksum marker on the observed header byte", async () => {
+  const file = buildFfsFile({
+    guid: "29111111-2222-3333-4444-555555555555",
+    typeCode: 1,
+    payload: Buffer.from("data"),
+  });
+  file[17] = 0x55;
+  const fv = buildFv({ files: [file] });
+  const scan = await scanUefiImage(
+    fv.buffer,
+    { maxDepth: 3, maxVolumes: 2, maxFiles: 2 },
+    noDecoder,
+  );
+  expect(scan.volumes[0]?.ffs_files[0]?.checksum).toBe("invalid");
+  expect(scan.integrity).toMatchObject([
+    {
+      kind: "ffs-file-checksum-mismatch",
+      range: { offset: fv.headerLength + 17, length: 1 },
+      detail: expect.stringContaining("0xaa"),
+    },
+  ]);
+});
+
 it("reports one gap when a confirmed decoded FV exceeds the volume budget", async () => {
   const nested = buildFv({ files: [] });
-  const decoder = decodeNestedFv(nested.buffer);
+  const decoder = decodeCarrierAs(nested.buffer);
   const file = driverFile(
     "29111111-2222-3333-4444-555555555555",
     buildLzmaGuidedSection(Buffer.from([0xde, 0xad, 0xbe, 0xef])),
@@ -486,4 +656,28 @@ it("reports one gap when a confirmed decoded FV exceeds the volume budget", asyn
     },
   ]);
   expect(scan.coverage).toBe("partial");
+});
+
+it("reports only the non-erased alignment span after a standalone FV extension", async () => {
+  const file = buildFfsFile({
+    guid: "81111111-2222-3333-4444-555555555555",
+    typeCode: 1,
+    payload: Buffer.from([1]),
+  });
+  const { buffer } = buildFv({ extendedHeader: "standalone", files: [file] });
+  buffer[101] = 0x42;
+  const scan = await scanUefiImage(
+    buffer,
+    { maxDepth: 2, maxFiles: 4, maxVolumes: 4 },
+    noDecoder,
+  );
+  expect(scan.volumes[0]?.ffs_files.map(({ offset }) => offset)).toEqual([104]);
+  expect(scan.coverage).toBe("partial");
+  expect(scan.omissions).toMatchObject([
+    {
+      kind: "unparsed-region",
+      logical_path: "flash/FV@0x0",
+      range: { offset: 100, length: 4 },
+    },
+  ]);
 });

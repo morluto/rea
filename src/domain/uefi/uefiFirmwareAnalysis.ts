@@ -60,11 +60,6 @@ export const ffsChecksumVerdictSchema = z.enum([
   "pad-file-unchecked",
   "unchecked",
 ]);
-/** FFS file types that carry sections in FFS2 layout. */
-export const sectionedFfsTypeNameSchema = ffsTypeNameSchema.exclude([
-  "raw",
-  "freeform",
-]);
 const alignmentSchema = z.enum([
   "1",
   "16",
@@ -168,33 +163,37 @@ export const uefiFfsFileRecordSchema = z.strictObject({
   sections: z.array(uefiSectionRecordSchema),
 });
 
+const firmwareScanLimits = {
+  max_depth: z
+    .number()
+    .int()
+    .min(1)
+    .max(UEFI_FIRMWARE_LIMITS.maxDepth)
+    .default(UEFI_FIRMWARE_LIMITS.defaultMaxDepth)
+    .describe(
+      "Nesting depth for sections and volumes inside compressed payloads",
+    ),
+  max_volumes: z
+    .number()
+    .int()
+    .min(1)
+    .max(UEFI_FIRMWARE_LIMITS.maxVolumes)
+    .default(UEFI_FIRMWARE_LIMITS.defaultMaxVolumes)
+    .describe("Maximum firmware volumes mapped before partial coverage"),
+  max_files: z
+    .number()
+    .int()
+    .min(1)
+    .max(UEFI_FIRMWARE_LIMITS.maxFiles)
+    .default(UEFI_FIRMWARE_LIMITS.defaultMaxFiles)
+    .describe("Maximum FFS files mapped before partial coverage"),
+} as const;
+
 /** Explicit UEFI firmware inspection and extraction intent, engine-independent. */
 export const uefiInputSchemas = {
   inspect_uefi_firmware: z.strictObject({
     ...target,
-    max_depth: z
-      .number()
-      .int()
-      .min(1)
-      .max(UEFI_FIRMWARE_LIMITS.maxDepth)
-      .default(UEFI_FIRMWARE_LIMITS.defaultMaxDepth)
-      .describe(
-        "Nesting depth for sections and volumes inside compressed payloads",
-      ),
-    max_volumes: z
-      .number()
-      .int()
-      .min(1)
-      .max(UEFI_FIRMWARE_LIMITS.maxVolumes)
-      .default(UEFI_FIRMWARE_LIMITS.defaultMaxVolumes)
-      .describe("Maximum firmware volumes mapped before partial coverage"),
-    max_files: z
-      .number()
-      .int()
-      .min(1)
-      .max(UEFI_FIRMWARE_LIMITS.maxFiles)
-      .default(UEFI_FIRMWARE_LIMITS.defaultMaxFiles)
-      .describe("Maximum FFS files mapped before partial coverage"),
+    ...firmwareScanLimits,
   }),
   extract_uefi_firmware: z.strictObject({
     ...target,
@@ -223,15 +222,7 @@ export const uefiInputSchemas = {
         }),
       ])
       .default({ kind: "whole-image" }),
-    max_depth: z
-      .number()
-      .int()
-      .min(1)
-      .max(UEFI_FIRMWARE_LIMITS.maxDepth)
-      .default(UEFI_FIRMWARE_LIMITS.defaultMaxDepth)
-      .describe(
-        "Nesting depth for sections and volumes inside compressed payloads",
-      ),
+    ...firmwareScanLimits,
     max_output_bytes: z
       .number()
       .int()
@@ -533,10 +524,6 @@ export type UefiInspectResult = z.infer<
 export type UefiExtractResult = z.infer<
   (typeof uefiResultSchemas)["extract_uefi_firmware"]
 >;
-export type UefiNvramVariableRecord = z.infer<
-  typeof uefiNvramVariableRecordSchema
->;
-export type UefiNvramStoreRecord = z.infer<typeof uefiNvramStoreRecordSchema>;
 export type UefiNvramInspectResult = z.infer<
   (typeof uefiResultSchemas)["inspect_uefi_nvram"]
 >;
