@@ -158,7 +158,7 @@ export class ProgressiveToolCatalog {
       next_step:
         selected.length === 0
           ? matches.length === 0
-            ? "No matches. Try fewer or different task keywords, or browse without query."
+            ? "No matches. Try different task keywords, or browse without query."
             : "No remaining matches at this offset. Use offset 0 to restart this query, or select an earlier offset."
           : "Call the returned tool by its original name using input_schema. Your client must refresh tools/list first; if it cannot, reconnect with REA_MCP_TOOL_CATALOG_PROFILE=full.",
     };
