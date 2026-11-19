@@ -229,6 +229,47 @@ it.each([
   },
 );
 
+const analysisModules = [
+  "main/eagerRuntime.js",
+  "server/createServer.js",
+  "composition/binary.js",
+  "contracts/toolContracts.js",
+];
+
+const observeRuntimeModules = async () => {
+  const directory = await createTestTempDirectory("rea-mcp-module-loads-");
+  const log = join(directory, "loaded.jsonl");
+  await writeFile(log, "");
+  const hook = `data:text/javascript,${encodeURIComponent(`
+import { registerHooks } from "node:module";
+import { appendFileSync } from "node:fs";
+const modules = ${JSON.stringify(analysisModules)};
+registerHooks({
+  load(url, context, next) {
+    const loaded = next(url, context);
+    const source = loaded.source?.toString() ?? "";
+    const names = modules.filter((name) =>
+      url.endsWith("/dist/" + name) || source.includes("//#region dist/" + name + "\\n"));
+    if (url.endsWith("/scripts/rea.mjs")) names.push("entrypoint");
+    for (const name of names)
+      appendFileSync(${JSON.stringify(log)}, JSON.stringify(name) + "\\n");
+    return loaded;
+  },
+});
+`)}`;
+  return {
+    nodeArguments: [`--import=${hook}`],
+    loadedModules: async () =>
+      new Set(
+        (await readFile(log, "utf8"))
+          .trim()
+          .split("\n")
+          .filter(Boolean)
+          .map((line): unknown => JSON.parse(line)),
+      ),
+  };
+};
+
 it.each([
   { name: "deferred", environment: {}, eager: false },
   {
@@ -254,43 +295,12 @@ it.each([
 ])(
   "loads compiled analysis at the intended phase for $name startup",
   async ({ environment, eager }) => {
-    const directory = await createTestTempDirectory("rea-mcp-module-loads-");
-    const log = join(directory, "loaded.jsonl");
-    await writeFile(log, "");
-    const modules = [
-      "main/eagerRuntime.js",
-      "server/createServer.js",
-      "composition/binary.js",
-      "contracts/toolContracts.js",
-    ];
-    const hook = `data:text/javascript,${encodeURIComponent(`
-import { registerHooks } from "node:module";
-import { appendFileSync } from "node:fs";
-const modules = ${JSON.stringify(modules)};
-registerHooks({
-  load(url, context, next) {
-    const loaded = next(url, context);
-    const source = loaded.source?.toString() ?? "";
-    const names = modules.filter((name) =>
-      url.endsWith("/dist/" + name) || source.includes("//#region dist/" + name + "\\n"));
-    if (url.endsWith("/scripts/rea.mjs")) names.push("entrypoint");
-    for (const name of names)
-      appendFileSync(${JSON.stringify(log)}, JSON.stringify(name) + "\\n");
-    return loaded;
-  },
-});
-`)}`;
-    const loadedModules = async () =>
-      new Set(
-        (await readFile(log, "utf8"))
-          .trim()
-          .split("\n")
-          .filter(Boolean)
-          .map((line): unknown => JSON.parse(line)),
-      );
-    const { client, stderr } = await connect("legacy", environment, [
-      `--import=${hook}`,
-    ]);
+    const { nodeArguments, loadedModules } = await observeRuntimeModules();
+    const { client, stderr } = await connect(
+      "legacy",
+      environment,
+      nodeArguments,
+    );
     let discovery = await client.listTools();
     await client.listPrompts();
     if (environment.REA_MCP_TOOL_CATALOG_PROFILE === "hot-cold") {
@@ -301,7 +311,7 @@ registerHooks({
       discovery = await client.listTools();
     }
     expect(await loadedModules()).toEqual(
-      new Set(eager ? ["entrypoint", ...modules] : ["entrypoint"]),
+      new Set(eager ? ["entrypoint", ...analysisModules] : ["entrypoint"]),
     );
     // Keep output-off coverage too, using this connection's named definition.
     const toolDefinition = discovery.tools.find(
@@ -313,7 +323,56 @@ registerHooks({
       { toolDefinition },
     );
     expect(result.isError).not.toBe(true);
-    expect(await loadedModules()).toEqual(new Set(["entrypoint", ...modules]));
+    expect(await loadedModules()).toEqual(
+      new Set(["entrypoint", ...analysisModules]),
+    );
+    expect(stderr()).toBe("");
+  },
+);
+
+it.each(["get", "complete"] as const)(
+  "loads the scoped stdio runtime on the first prompt %s request",
+  async (operation) => {
+    const { nodeArguments, loadedModules } = await observeRuntimeModules();
+    const { client, stderr } = await connect(
+      "auto",
+      { REA_MCP_TOOL_FAMILIES: "artifact,session" },
+      nodeArguments,
+    );
+    const listing = await client.listPrompts();
+    expect(listing.prompts.map(({ name }) => name)).toEqual([
+      "verify_reconstruction",
+      "audit_residual_unknowns",
+      "prepare_bounded_process_capture",
+    ]);
+    expect(await loadedModules()).toEqual(new Set(["entrypoint"]));
+
+    if (operation === "get") {
+      const { messages } = await client.getPrompt({
+        name: "audit_residual_unknowns",
+        arguments: { audit_scope: "scoped startup probe" },
+      });
+      expect(messages).toEqual([
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: expect.stringContaining("scoped startup probe"),
+          },
+        },
+      ]);
+    } else {
+      const { completion } = await client.complete({
+        ref: { type: "ref/prompt", name: "verify_reconstruction" },
+        argument: { name: "provider_id", value: "au" },
+      });
+      expect(completion.values).toEqual(["auto"]);
+    }
+
+    expect(await loadedModules()).toEqual(
+      new Set(["entrypoint", ...analysisModules]),
+    );
+    expect(await client.listPrompts()).toEqual(listing);
     expect(stderr()).toBe("");
   },
 );
