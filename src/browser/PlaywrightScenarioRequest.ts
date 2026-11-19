@@ -266,6 +266,8 @@ const sendFromPage = (
         // Keep the text only up to the limit, so a large answer is never held whole.
         const reader = answer.body?.getReader();
         if (reader === undefined) return { status: answer.status, body: "" };
+        // This callback runs in the page, where REA's modules are absent, so
+        // the fatal decoder stays inline; strictUtf8Decoder cannot be reached.
         const decoder = new TextDecoder("utf-8", {
           fatal: true,
           ignoreBOM: true,
@@ -389,7 +391,9 @@ export const performScenarioRequest = async (input: {
     headers,
     body: json === undefined ? undefined : JSON.stringify(json),
     deadlineEpochMs:
-      deadline === undefined ? undefined : Date.now() + deadline.remainingMs(),
+      deadline === undefined
+        ? undefined
+        : deadline.wallClockEpochMs(Date.now()),
     readLimit:
       action.save.length > 0 ? MAX_SAVED_RESPONSE_CHARACTERS : undefined,
   };
