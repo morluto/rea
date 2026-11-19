@@ -157,7 +157,7 @@ jobs:
           SOURCE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
         run: |
           node scripts/release-notes.mjs publication --repository "$GH_REPO" \
-            --source "$SOURCE_SHA" --pr "$RELEASE_PR"
+            --source "$SOURCE_SHA" --pr "$RELEASE_PR" --target-branch main
 
       - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
         id: release
@@ -276,10 +276,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
+          RELEASE_BRANCH: ${{ inputs.release_branch }}
           SOURCE_SHA: ${{ steps.branch.outputs.sha }}
         run: |
           node scripts/release-notes.mjs publication --repository "$GH_REPO" \
-            --source "$SOURCE_SHA"
+            --source "$SOURCE_SHA" --target-branch "$RELEASE_BRANCH"
 
       - name: Prepare checkpoint release proposal
         if: inputs.phase == 'prepare'
