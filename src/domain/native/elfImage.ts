@@ -17,7 +17,7 @@ import {
   type ElfSectionDirectory,
 } from "./nativeSectionDirectory.js";
 
-const readElfImageFromDirectory = (
+export const readElfImageFromDirectory = (
   bytes: Buffer,
   directory: ElfSectionDirectory,
 ): Extract<BinaryContainer, { format: "elf" }> => {

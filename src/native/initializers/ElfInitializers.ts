@@ -36,7 +36,10 @@ import {
   mappedFileOffset,
   type FileMappingIndex,
 } from "../../domain/binaryContainer.js";
-import { readElfDirectoryFromBufferCooperative } from "../../domain/native/nativeSectionDirectory.js";
+import {
+  readElfDirectoryFromBuffer,
+  readElfDirectoryFromBufferCooperative,
+} from "../../domain/native/nativeSectionDirectory.js";
 import type { NativeSection } from "../../domain/native/nativeSectionDirectory.js";
 import {
   loadElfSymbolIndex,
@@ -978,17 +981,17 @@ export const readElfInitializers = async (
   signal?: AbortSignal,
 ): Promise<NativeInitializerInspection> => {
   assertArtifactReadActive(signal);
-  const pause = () => yieldArtifactRead(signal);
-  const image = await readElfImageCooperative(
-    bytes,
-    "inspect_native_initializers",
-    pause,
-  );
-  const directory = await readElfDirectoryFromBufferCooperative(
-    bytes,
-    pause,
-    "inspect_native_initializers",
-  );
+  const operation = "inspect_native_initializers";
+  const directory =
+    signal === undefined
+      ? readElfDirectoryFromBuffer(bytes, operation)
+      : await readElfDirectoryFromBufferCooperative(
+          bytes,
+          () => yieldArtifactRead(signal),
+          operation,
+        );
+  assertArtifactReadActive(signal);
+  const image = readElfImageFromDirectory(bytes, directory);
   const scan: ElfScan = {
     bytes,
     bits: image.bits,
