@@ -412,7 +412,11 @@ class OwnedCodec implements SourceMapCleanupOwner {
     const outcome = this.#outcome;
     if (outcome?.kind === "physical")
       return this.#physicalFailure(outcome.observation);
-    if (outcome?.kind === "cancelled")
+    // The launcher reports cancellation separately from a physical admission failure.
+    if (
+      outcome?.kind === "cancelled" &&
+      !(cause instanceof ProcessAdmissionError)
+    )
       return cancelledBy(OPERATION, carriedReason(outcome.callerReason));
     if (outcome?.kind === "timeout")
       return new AnalysisTimeoutError(
