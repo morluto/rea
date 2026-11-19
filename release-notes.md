@@ -497,6 +497,8 @@
 * **managed:** report a managed graph over an unavailable source as unknown ([#11280](https://github.com/morluto/rea/issues/11280)) ([c931ba4](https://github.com/morluto/rea/commit/c931ba43ab1379d12e2a3dc984f4e902bcc525b2))
 * **managed:** report comparison and native-verification coverage unknown when an input cannot tell ([#11257](https://github.com/morluto/rea/issues/11257)) ([067f4ff](https://github.com/morluto/rea/commit/067f4ff98b5e1a98ef57e65fb4ef084af8720a87))
 * **managed:** require unique Module rows with ambiguous string heaps ([#12277](https://github.com/morluto/rea/issues/12277)) ([b406649](https://github.com/morluto/rea/commit/b406649be0e4ab8afb203a4a448885172107dfbf))
+* **managed:** retain module identity when its name is malformed ([760478c](https://github.com/morluto/rea/commit/760478c5e9d63a88f54df6d114b8f61232d085a6))
+* **managed:** retain Module identity when its name is unreadable ([#12441](https://github.com/morluto/rea/issues/12441)) ([760478c](https://github.com/morluto/rea/commit/760478c5e9d63a88f54df6d114b8f61232d085a6))
 * **managed:** size member lists by pointer and target widths ([#12207](https://github.com/morluto/rea/issues/12207)) ([e9e3574](https://github.com/morluto/rea/commit/e9e3574744babc9e1d37a4aa4cfd7891b76947ed))
 * **maven:** classify embedded brackets as literal qualifiers ([#12228](https://github.com/morluto/rea/issues/12228)) ([ce02c89](https://github.com/morluto/rea/commit/ce02c899e89a3477afc7bfc944687b35e4466282))
 * **maven:** preserve qualified property keys ([004c43e](https://github.com/morluto/rea/commit/004c43e32ac4a6b4a4c8d06f4e033a47e3971499))
