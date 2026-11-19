@@ -9,6 +9,7 @@ export interface TypeDefinitionRowFacts {
   readonly nameIndex: number;
   readonly nameOffset: number;
   readonly namespaceIndex: number;
+  readonly namespaceOffset: number;
   readonly extendsRaw: number;
   readonly extendsOffset: number;
   readonly fieldListRaw: number;
@@ -26,6 +27,7 @@ export const readTypeDefinitionRowFacts = (
   const flags = cursor.u32();
   const nameOffset = cursor.offset;
   const nameIndex = cursor.readIndex(layout.stringIndexSize);
+  const namespaceOffset = cursor.offset;
   const namespaceIndex = cursor.readIndex(layout.stringIndexSize);
   const extendsOffset = cursor.offset;
   const extendsRaw = cursor.readIndex(layout.codedIndexSize("TypeDefOrRef"));
@@ -39,6 +41,7 @@ export const readTypeDefinitionRowFacts = (
     nameIndex,
     nameOffset,
     namespaceIndex,
+    namespaceOffset,
     extendsRaw,
     extendsOffset,
     fieldListRaw,
