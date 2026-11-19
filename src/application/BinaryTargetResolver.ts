@@ -1111,6 +1111,7 @@ const readElfMetadata = async (
       ...parsed.value.mips,
       abiFlags: declarations.value.abiFlags,
       gnuAttributes: declarations.value.gnuAttributes,
+      ...(ranges.value.hasInterpreter ? { hasInterpreter: true } : {}),
       ...(declarations.value.sharedLoad === undefined
         ? {}
         : { sharedLoad: declarations.value.sharedLoad }),

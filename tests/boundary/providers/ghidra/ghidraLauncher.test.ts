@@ -554,6 +554,75 @@ describe("Ghidra configured import language and seeds", () => {
   });
 });
 
+describe("Ghidra committed ELF image base", () => {
+  const base = {
+    platform: "darwin" as const,
+    projectRoot: "/tmp/project",
+    targetPath: "/tmp/target",
+    bridgeScriptPath: "/package/bridge/ReaGhidraBridge.java",
+    descriptorPath: "/tmp/session.json",
+    ghidraLogPath: "/tmp/ghidra.log",
+    scriptLogPath: "/tmp/script.log",
+  };
+
+  it("selects the ELF loader at the committed image base, with or without a language", () => {
+    expectOptions(ghidraHeadlessArguments({ ...base, elfImageBase: "0" }), [
+      ["-loader", "ElfLoader"],
+      ["-loader-imagebase", "0"],
+    ]);
+    const pinned = ghidraHeadlessArguments({
+      ...base,
+      elfImageBase: "2aaa0000",
+      languageOverride: { languageId: "MIPS:BE:32:default" },
+    });
+    expectOptions(pinned, [
+      ["-loader-imagebase", "2aaa0000"],
+      ["-processor", "MIPS:BE:32:default"],
+    ]);
+  });
+
+  it.each([
+    [{ psp: true as const }, "elf_image_base_scope"],
+    [{ dosMz: true as const }, "elf_image_base_scope"],
+    [
+      {
+        rawBinary: {
+          languageId: "ARM:LE:32:v7",
+          compilerSpecId: "default",
+          baseAddr: "0x8000000",
+        },
+      },
+      "elf_image_base_scope",
+    ],
+    [
+      {
+        gamecubeDol: {
+          languageId: "PowerPC:BE:32:default",
+          sectionFilePath: "/tmp/gamecube-dol-sections.txt",
+        },
+      },
+      "elf_image_base_scope",
+    ],
+    // A restored Program keeps the base it was saved at; the loader option
+    // would not re-apply, so the restore is refused rather than ignored.
+    [
+      { packedProgramPath: "/tmp/runtime/restored-program.gzf" },
+      "elf_image_base_scope",
+    ],
+    [{}, "elf_image_base_format", "0x0"],
+    [{}, "elf_image_base_format", "100000000"],
+  ])(
+    "refuses an image base it cannot apply %j",
+    (conflict, code, value = "0") => {
+      expect(() =>
+        ghidraHeadlessArguments({ ...base, ...conflict, elfImageBase: value }),
+      ).toThrow(
+        expect.objectContaining({ _tag: "GhidraAdmissionError", code }),
+      );
+    },
+  );
+});
+
 describe("Ghidra disabled analyzers", () => {
   const base = {
     platform: "darwin" as const,
@@ -709,6 +778,7 @@ describe("Ghidra existing project", () => {
       { riscvCallingConvention: "ilp32-prototype-v1" as const },
       "existing_project_riscv_calling_convention",
     ],
+    [{ elfImageBase: "0" }, "existing_project_elf_image_base"],
     [{ seedPath: "/tmp/runtime/seeds/seeds.tsv" }, "existing_project_analysis"],
     [
       { disabledAnalyzers: ["Decompiler Parameter ID"] },
