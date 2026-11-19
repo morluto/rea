@@ -27,7 +27,10 @@ import {
   declaredFileRange,
   type ElfDynamicSegment,
 } from "../binaryContainer.js";
-import { decodeElfSectionNameTable } from "./elfSectionNameTable.js";
+import {
+  decodeElfSectionNameTable,
+  elfSectionNameBudgetFailure,
+} from "./elfSectionNameTable.js";
 
 /** A borrowed positional source. Drivers own admission, cancellation and file identity. */
 export interface NativeReadRequest {
@@ -139,6 +142,7 @@ const request = (
 /** One ELF interpretation for in-memory images and bounded descriptor-backed inspections. */
 export function* readElfSectionDirectory(
   fileSize: number,
+  maximumSourceAndDecodedNamesBytes?: number,
 ): Generator<NativeReadRequest, ElfSectionDirectory, Buffer> {
   const prefix = yield request(fileSize, 0n, 16n);
   const headerSize = elfFixedHeaderWidth(prefix[4] === 1 ? 32 : 64);
@@ -235,19 +239,36 @@ export function* readElfSectionDirectory(
         namesSection.offset,
         namesSection.size,
       );
+      const structuralRemaining = Math.max(
+        0,
+        STRUCTURE_BYTES - rawNames.length,
+      );
+      const callerRemaining =
+        maximumSourceAndDecodedNamesBytes === undefined
+          ? structuralRemaining
+          : Math.max(0, maximumSourceAndDecodedNamesBytes - fileSize);
       const decoded = decodeElfSectionNameTable(
         rawNames,
         namesSection.flags,
         bits,
         little,
-        Math.max(0, STRUCTURE_BYTES - rawNames.length),
+        Math.min(structuralRemaining, callerRemaining),
       );
       if (decoded.state === "malformed") return reject(decoded.message);
+      if (
+        decoded.state === "limit" &&
+        maximumSourceAndDecodedNamesBytes !== undefined &&
+        decoded.requiredBytes > BigInt(callerRemaining)
+      )
+        throw elfSectionNameBudgetFailure(
+          BigInt(fileSize) + decoded.requiredBytes,
+          maximumSourceAndDecodedNamesBytes,
+        );
       if (decoded.state === "limit")
         throw new BinaryResourceFailure(
           "structure",
           STRUCTURE_BYTES,
-          `Decoded ELF section names require ${String(decoded.requiredBytes)} bytes, above the ${String(decoded.maximumBytes)}-byte remaining structural budget`,
+          `Decoded ELF section names require ${String(decoded.requiredBytes)} bytes, above the ${String(structuralRemaining)}-byte remaining structural budget`,
           "structure",
           "bytes",
         );
@@ -470,12 +491,12 @@ const driveFromBuffer = <T>(
 /** Borrow ELF bytes; file drivers satisfy the identical requests without loading payloads. */
 export const readElfDirectoryFromBuffer = (
   bytes: Buffer,
+  maximumSourceAndDecodedNamesBytes?: number,
 ): ElfSectionDirectory =>
-  driveFromBuffer(bytes, readElfSectionDirectory(bytes.length));
-
-/** Resolve ELF table declarations, including extended counts in section zero, from these bytes. */
-export const readElfTableDeclarationsFromBuffer = (bytes: Buffer) =>
-  driveFromBuffer(bytes, readElfTableDeclarations(bytes, bytes.length));
+  driveFromBuffer(
+    bytes,
+    readElfSectionDirectory(bytes.length, maximumSourceAndDecodedNamesBytes),
+  );
 
 /** Reject a program or section payload the declared tables place outside these bytes. */
 export const assertElfDeclaredRangesFromBuffer = (bytes: Buffer): void => {
