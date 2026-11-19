@@ -792,9 +792,13 @@ it("excludes explicit literals from XML, HTTP byte views, member coordinates and
     sha256: null,
     content_base64: null,
   });
+  // The Evidence ID hashes the already redacted record. Its hexadecimal
+  // spelling can contain the short session ID by coincidence.
+  const { evidence_id, ...redactedRecord } = result;
+  expect(JSON.stringify(redactedRecord)).not.toContain("0042");
+
   const text = JSON.stringify(result);
   for (const secret of [
-    "0042",
     "unicode-",
     "retained metadata",
     compressedBody.toString("base64"),

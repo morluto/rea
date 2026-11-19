@@ -125,8 +125,9 @@ and response transport capacity still apply.
   `access_denied`, while a missing or non-regular selected path reports
   `invalid_request` with the rejected `path` field.
 - **Metadata comes from apktool.yml as apktool printed it.** Version codes
-  keep their own spelling (`'7'` versus `7`); `package_name` is read from
-  the decoded manifest, not inferred.
+  keep their own spelling (`'7'` versus `7`). The `package_name` field
+  follows the [decoded manifest rules](android-analysis.md#manifest-component-projection)
+  and preserves the decoded attribute value.
   The `version: 2.9.0`-or-later header that Apktool 2.9+ and 3 emit selects
   their single-line string dialect: literal hashes, single quotes, empty
   strings, and the text `null` stay part of the value; producer backslashes
@@ -138,7 +139,9 @@ and response transport capacity still apply.
   and [string escape owner](https://github.com/iBotPeaches/Apktool/blob/18b5e99cb56ff9451e8aa55b065dcf5bbd616975/brut.j.yaml/src/main/java/brut/yaml/YamlStringEscapeUtils.java#L55-L116).
 - **The manifest is the decoded text**, bounded at 512 KiB and reported as
   truncated when larger.
-- **Strings are projected verbatim.** Escaped entities stay escaped, and
+- **Strings are projected verbatim.** The root must be `<resources>` in no
+  namespace. Only its direct `<string>` children in no namespace contribute
+  entries. Escaped entities stay escaped, and
   entries containing nested markup (`<b>`, `<xliff:g>`) are counted as
   unparsed rather than flattened — the limitation names the examined count.
   Malformed XML and a wrong document root are whole-document projection

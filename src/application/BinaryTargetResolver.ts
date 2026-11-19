@@ -1,3 +1,7 @@
+import {
+  BINARY_TARGET_FORMAT_KINDS,
+  type TargetFormatHint,
+} from "../domain/targetFormats.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   artifactNameForClassification,
@@ -43,12 +47,11 @@ import {
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
-import {
-  BINARY_TARGET_FORMAT_KINDS,
-  type BinaryTarget,
-  type BinaryArchitecture,
-  type PeCodeViewRecord,
-  type UniversalMachOSlice,
+import type {
+  BinaryTarget,
+  BinaryArchitecture,
+  PeCodeViewRecord,
+  UniversalMachOSlice,
 } from "../domain/binaryTargetTypes.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { readMipsElfMetadata } from "./MipsElfMetadata.js";
@@ -66,10 +69,7 @@ import {
   isUnopenedAppleBundleExtension,
   openableAppleBundleExtension,
 } from "../domain/apple/appleBundleTypes.js";
-import {
-  validateDosComLength,
-  type ExecutableFormatHint,
-} from "../domain/dosCom.js";
+import { validateDosComLength } from "../domain/dosCom.js";
 import {
   admitRawBinary,
   rawBinarySelectionError,
@@ -97,7 +97,7 @@ import {
 } from "../domain/firmware/espFlashLocation.js";
 import { espFlashSelectionError } from "../domain/firmware/espFlashSelection.js";
 import {
-  locateTrailingZipArchive,
+  hasTrailingZipArchive,
   zipRootPackageFormat,
 } from "../domain/zipPackageFormat.js";
 
@@ -141,7 +141,7 @@ export interface BinaryTargetResolverOptions {
   readonly cwd?: string;
   readonly hostArchitecture?: NodeJS.Architecture;
   readonly targetKind?: BinaryTarget["kind"];
-  readonly formatHint?: ExecutableFormatHint;
+  readonly formatHint?: TargetFormatHint;
   readonly architecture?: BinaryArchitecture;
   readonly entryPoint?: string;
   /** Inputs for format=esp-flash-image; rejected with any other format. */
@@ -213,6 +213,7 @@ export const parseBinaryTarget = async (
             {
               path,
               sourcePath,
+              callerInputPath: admitted.data,
               selectedPath: candidate,
               classifiedAs,
               ...bundle,
@@ -293,6 +294,7 @@ const readOpenedBinaryTarget = async (
   selected: {
     readonly path: string;
     readonly sourcePath: string;
+    readonly callerInputPath: string;
     readonly selectedPath: string;
     /** Spelling whose name supplies format hints: the selected file, or a bundle's executable. */
     readonly classifiedAs: string;
@@ -301,13 +303,20 @@ const readOpenedBinaryTarget = async (
   options: BinaryTargetResolverOptions,
 ): Promise<TargetResolution> => {
   const { handle, initial: metadata } = source;
-  const { path, sourcePath, selectedPath, classifiedAs, bundleInfoPlist } =
-    selected;
+  const {
+    path,
+    sourcePath,
+    callerInputPath,
+    selectedPath,
+    classifiedAs,
+    bundleInfoPlist,
+  } = selected;
   const bundle = bundleInfoPlist === undefined ? {} : { bundleInfoPlist };
   // Every admitted target shares one identity; routes add their own facts.
   const identity = async () => ({
     path,
     sourcePath,
+    ...(callerInputPath === path ? {} : { callerInputPath }),
     ...bundle,
     sha256: await sha256Handle(source, path, signal),
   });
@@ -519,9 +528,9 @@ const readOpenedBinaryTarget = async (
     // executable with an appended archive keeps its executable route.
     if (
       !(await claimsLeadingExecutableHeader(handle, metadata.size, signal)) &&
-      (await locateTrailingZipArchive(metadata.size, (position, length) =>
+      (await hasTrailingZipArchive(metadata.size, (position, length) =>
         readHandleRange(handle, position, length, signal),
-      )) !== undefined
+      ))
     )
       return ok({
         ...(await artifactIdentity()),
@@ -1079,6 +1088,7 @@ const readElfMetadata = async (
       ...parsed.value,
       riscv: {
         ...parsed.value.riscv,
+        ...(ranges.value.hasInterpreter ? { hasInterpreter: true } : {}),
         isa: await readElfDeclarations(
           handle,
           bytes,
@@ -1101,6 +1111,7 @@ const readElfMetadata = async (
       ...parsed.value.mips,
       abiFlags: declarations.value.abiFlags,
       gnuAttributes: declarations.value.gnuAttributes,
+      ...(ranges.value.hasInterpreter ? { hasInterpreter: true } : {}),
       ...(declarations.value.sharedLoad === undefined
         ? {}
         : { sharedLoad: declarations.value.sharedLoad }),

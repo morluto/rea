@@ -12,6 +12,7 @@ import {
 } from "../domain/binaryContainer.js";
 import { setImmediate } from "node:timers/promises";
 import {
+  hasUnityFsHeader,
   readUnityFsHeaderFacts,
   UNITYFS_COMPRESSION_LZ4,
   UNITYFS_COMPRESSION_LZ4HC,
@@ -20,8 +21,7 @@ import {
   UNITYFS_FLAG_COMPRESSION_MASK,
   UNITYFS_FORMAT_VERSION_MAX,
   UNITYFS_FORMAT_VERSION_MIN,
-  UNITYFS_HEADER_STRING_MAX,
-  UNITYFS_SIGNATURE,
+  UNITYFS_HEADER_PREFIX_BYTES,
   unityFsLayoutFlags,
 } from "../domain/unityfsFormat.js";
 import { strictUtf8Decoder } from "../domain/strictUtf8.js";
@@ -42,8 +42,6 @@ const directoryLimit = (): ArtifactReaderFailure =>
     { boundary: "memory" },
   );
 
-/** Signature, version, two bounded strings and the fixed tail; reads are bounded. */
-const HEADER_PREFIX_MAX = 8 + 4 + UNITYFS_HEADER_STRING_MAX * 2 + 20;
 const UTF8 = strictUtf8Decoder("preserve");
 
 export interface UnityFsHeader {
@@ -112,12 +110,11 @@ export const readUnityFsHeader = async (
   const prefix = await readArtifactFileBytes(
     handle,
     0,
-    Math.min(size, HEADER_PREFIX_MAX),
+    Math.min(size, UNITYFS_HEADER_PREFIX_BYTES),
     size,
     signal,
   );
-  if (prefix.length < 20 || !prefix.subarray(0, 8).equals(UNITYFS_SIGNATURE))
-    return undefined;
+  if (prefix.length < 20 || !hasUnityFsHeader(prefix)) return undefined;
   const facts = readUnityFsHeaderFacts(prefix);
   if (facts === undefined)
     throw unityFsFormatFailure("header is truncated or exceeds its bounds");

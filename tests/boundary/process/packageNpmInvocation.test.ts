@@ -6,20 +6,24 @@ import { expect } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { processTest } from "../../support/process/processFixture.js";
 
-processTest(
-  "runs the caller-selected npm entry through Node without rewriting its inputs",
-  async ({ processes }) => {
+processTest.for([
+  {
+    command: "pack",
+    args: ["value with spaces", "--literal=$HOME", "quote'and\"double"],
+  },
+  {
+    command: "install",
+    args: ["--no-save", "--no-audit", "local package.tgz"],
+  },
+])(
+  "preserves the selected npm entry, arguments, and lifecycle policy for $command",
+  async ({ command, args }, { processes }) => {
+    const arguments_ = [command, ...args];
     const root = await createTestTempDirectory("rea-npm-invocation-");
     const npmEntry = join(root, "selected npm entry.mjs");
-    const arguments_ = [
-      "pack",
-      "value with spaces",
-      "--literal=$HOME",
-      "quote'and\"double",
-    ];
     await writeFile(
       npmEntry,
-      `process.stdout.write(JSON.stringify({ arguments: process.argv.slice(2), cwd: process.cwd(), marker: process.env.REA_NPM_TEST_MARKER, ambient: process.env.REA_NPM_TEST_AMBIENT ?? null }));\n`,
+      `process.stdout.write(JSON.stringify({ arguments: process.argv.slice(2), cwd: process.cwd(), marker: process.env.REA_NPM_TEST_MARKER, policy: process.env.npm_config_allow_scripts, ambient: process.env.REA_NPM_TEST_AMBIENT ?? null }));\n`,
     );
     const helper = pathToFileURL(
       resolve("scripts/lib/verify-package-commands.mjs"),
@@ -41,6 +45,7 @@ processTest(
             ...(process.platform === "win32" ? { SystemRoot: process.env.SystemRoot } : {}),
             npm_execpath: ${JSON.stringify(npmEntry)},
             REA_NPM_TEST_MARKER: "caller-selected",
+            npm_config_allow_scripts: "caller-selected-package",
           },
         }),
         [() => commands.close()],
@@ -58,6 +63,7 @@ processTest(
       arguments: arguments_,
       cwd: root,
       marker: "caller-selected",
+      policy: "caller-selected-package",
       ambient: null,
     });
   },

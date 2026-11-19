@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { withElf64DirectSectionCount } from "../native/elf/ElfNotes.fixture.js";
 import { readElfSymbols, readSnapshotHeader } from "./DartElf.js";
 import {
   REFERENCE_HASH,
@@ -70,6 +71,16 @@ describe("readElfSymbol", () => {
     const header = readSnapshotHeader(image, isolateData.symbol.offset);
     expect(header.magicValid).toBe(true);
     expect(header.kind).toBe(3);
+  });
+
+  it("refuses to read snapshot symbols through a reserved direct section count", async () => {
+    const image = withElf64DirectSectionCount(imageWithSections(), 0xff00);
+    expect(await readElfSymbols(image, ["_kDartIsolateSnapshotData"])).toEqual({
+      symbols: [],
+      failures: [
+        { reason: "ELF e_shnum uses a reserved direct section count" },
+      ],
+    });
   });
 
   it("refuses a non-ELF image instead of guessing", async () => {

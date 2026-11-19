@@ -1999,8 +1999,8 @@ const noteScriptTarget = (state: ScanState, location: string): void => {
   const target = memberLocationKey(state, location);
   const spellings = state.scriptTargets.get(target);
   const spelling = anchoredLocation(state, location);
-  if (spellings?.has(spelling)) return;
   retractLinkerMapGuesses(state, location);
+  if (spellings?.has(spelling)) return;
   state.scriptTargetBytes += Buffer.byteLength(spelling);
   if (state.scriptTargetBytes > MAX_RELEASE_EXPOSURE_SCRIPT_TARGET_BYTES) {
     state.skippedMaps += 1;
@@ -2038,17 +2038,27 @@ const examineInlineMaps = (
       noteLocalMapReference(state, member, url);
       continue;
     }
-    const comma = url.indexOf(",");
-    if (state.mapsRead >= MAX_RELEASE_EXPOSURE_SOURCE_MAPS || comma < 0) {
+    if (state.mapsRead >= MAX_RELEASE_EXPOSURE_SOURCE_MAPS) {
       state.skippedMaps += 1;
       continue;
     }
     try {
-      const metadata = url.slice(0, comma);
-      const payload = url.slice(comma + 1);
+      // The data URL processor retains the query and excludes the fragment.
+      const dataUrl = new URL(url);
+      dataUrl.hash = "";
+      const serialized = dataUrl.href;
+      const comma = serialized.indexOf(",");
+      if (comma < 0) {
+        state.skippedMaps += 1;
+        continue;
+      }
+      const metadata = serialized.slice(0, comma);
+      const payload = decodeURIComponent(serialized.slice(comma + 1));
+      // Data URLs use forgiving base64: ASCII whitespace and omitted padding
+      // are valid, but other characters must not be silently dropped.
       const decoded = /;base64$/iu.test(metadata)
-        ? Buffer.from(decodeURIComponent(payload), "base64")
-        : Buffer.from(decodeURIComponent(payload), "utf8");
+        ? Buffer.from(atob(payload), "latin1")
+        : Buffer.from(payload, "utf8");
       if (decoded.length > MAX_RELEASE_EXPOSURE_SOURCE_MAP_BYTES) {
         state.skippedMaps += 1;
         continue;
@@ -2114,7 +2124,6 @@ const noteMapTarget = (state: ScanState, location: string): void => {
   const target = memberLocationKey(state, location);
   const spellings = state.mapTargets.get(target);
   const spelling = anchoredLocation(state, location);
-  if (spellings?.has(spelling)) return;
   // A late declaration can identify an exact occurrence already examined as
   // a linker-map candidate. Claim that identity before final target coverage
   // considers other spellings in the normalized bucket.
@@ -2123,6 +2132,7 @@ const noteMapTarget = (state: ScanState, location: string): void => {
   // Retract once per exact declaration; repeating it must not consume peers
   // that only share its normalized lookup key.
   state.skippedMaps += retractLinkerMapGuesses(state, location);
+  if (spellings?.has(spelling)) return;
   state.mapTargetBytes += Buffer.byteLength(spelling);
   if (state.mapTargetBytes > MAX_RELEASE_EXPOSURE_MAP_TARGET_BYTES) {
     state.skippedMaps += 1;
@@ -2178,6 +2188,14 @@ const retractLinkerMapGuesses = (
     if (paths.size === 0) state.linkerMapGuesses.delete(key);
     return 1;
   }
+  // A read can add an exact guess after an early declaration. Retract that
+  // guess first; an admitted missing spelling cannot identify a peer source.
+  if (
+    state.examinedMembers.get(key)?.has(spelling) === true &&
+    (state.mapTargets.get(key)?.has(spelling) === true ||
+      state.scriptTargets.get(key)?.has(spelling) === true)
+  )
+    return 0;
   // Without an exact source spelling, normalization cannot prove which
   // occurrence the declaration means. Keep companion coverage unresolved.
   state.skippedCompanions += paths.size;

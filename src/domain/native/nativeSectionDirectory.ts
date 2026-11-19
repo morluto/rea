@@ -5,12 +5,15 @@ import {
 import {
   mzWindowsHeaderLayoutLimitation,
   parseMzHeaderEvidence,
-  withMzWindowsHeaderSignature,
 } from "../dosMz.js";
 import { readElfSectionHeader } from "../elfSectionHeader.js";
 import { readElfProgramHeader } from "../elfProgramHeader.js";
-import { readPeCoffHeader } from "../peCoffHeader.js";
-import { readPeSectionHeader } from "../peSectionHeader.js";
+import { observePeCoffFrame, PE_COFF_FRAME_BYTES } from "../peCoffHeader.js";
+import {
+  PE_SECTION_HEADER_BYTES,
+  peSectionTableExtent,
+  readPeSectionHeader,
+} from "../peSectionHeader.js";
 import {
   readElfTableDeclarations,
   validateElfDeclaredRanges,
@@ -359,23 +362,14 @@ export function* readPeSectionDirectory(
       throw new BinaryFormatFailure("unsupported", limitation);
   }
   const pe = observed.offset;
-  const coff = new BinaryReader(
-    yield request(fileSize, BigInt(pe), 24n),
-    true,
-    "pe",
-  );
-  const confirmed = withMzWindowsHeaderSignature(
-    dos.bytes,
-    fileSize,
-    evidence,
-    { offset: pe, bytes: coff.bytes },
-  ).windowsHeader;
-  if (confirmed.state !== "declared" || confirmed.signature !== "PE")
-    return reject("PE signature is invalid");
-  const limitation = mzWindowsHeaderLayoutLimitation(confirmed);
+  // Native sections require a complete PE frame before decoding its fields.
+  request(fileSize, BigInt(pe), BigInt(PE_COFF_FRAME_BYTES));
+  const frame = yield* observePeCoffFrame(dos.bytes, fileSize, evidence);
+  if (frame.kind !== "pe") return reject("PE signature is invalid");
+  const limitation = mzWindowsHeaderLayoutLimitation(frame.observation);
   if (limitation !== undefined)
     throw new BinaryFormatFailure("unsupported", limitation);
-  const parsedCoff = readPeCoffHeader(coff.bytes.subarray(4, 24));
+  const { coff: parsedCoff } = frame;
   if (!parsedCoff.ok) return reject(parsedCoff.error.message);
   const {
     sectionCount: count,
@@ -386,7 +380,11 @@ export function* readPeSectionDirectory(
     symbolCount,
   } = parsedCoff.value;
   const optional = readPeOptionalHeaderStructure(
-    yield request(fileSize, BigInt(pe + 24), BigInt(optionalSize)),
+    yield request(
+      fileSize,
+      BigInt(pe + PE_COFF_FRAME_BYTES),
+      BigInt(optionalSize),
+    ),
   );
   if (!optional.ok) {
     switch (optional.error.reason) {
@@ -403,12 +401,21 @@ export function* readPeSectionDirectory(
     }
   }
   const { bits } = optional.value;
-  const start = pe + 24 + optionalSize;
-  const table = yield request(fileSize, BigInt(start), BigInt(count) * 40n);
+  const { sectionTableOffset, sectionTableBytes } = peSectionTableExtent(
+    pe + PE_COFF_FRAME_BYTES,
+    optionalSize,
+    count,
+  );
+  const table = yield request(
+    fileSize,
+    BigInt(sectionTableOffset),
+    BigInt(sectionTableBytes),
+  );
   const sections: NativeSection[] = [];
   for (let index = 0; index < count; index++) {
+    const at = index * PE_SECTION_HEADER_BYTES;
     const parsed = readPeSectionHeader(
-      table.subarray(index * 40, (index + 1) * 40),
+      table.subarray(at, at + PE_SECTION_HEADER_BYTES),
     );
     if (!parsed.ok) return reject(parsed.error.message);
     const row = parsed.value;
@@ -416,7 +423,7 @@ export function* readPeSectionDirectory(
       index,
       name: row.name,
       name_state: "known",
-      header_offset: start + index * 40,
+      header_offset: sectionTableOffset + at,
       offset: BigInt(row.offset),
       size: BigInt(row.size),
       address: BigInt(row.virtual_address),

@@ -100,8 +100,11 @@ For PIE executables and shared objects the array slots are usually zero on
 disk. A slot is reported `unresolved`, never as its stored zero, when the
 dynamic relocation tables use an encoding this inspection does not decode
 (for example legacy Android APS1 relocations or an unsupported machine). Relative
-relocations are decoded for x86-64, i386, AArch64 and 32-bit ARM. A slot is
-also `unresolved` when a dynamic relocation writes only part of it, starts
+relocations are decoded for x86-64, i386, AArch64, 32-bit ARM and RISC-V
+(RV32/RV64). RISC-V word-sized absolute relocations also resolve defined
+symbols in section tables; imported symbols remain unresolved imports. TLS
+and indirect-function resolver results are not treated as function addresses.
+A slot is also `unresolved` when a dynamic relocation writes only part of it, starts
 inside it, or writes it more than once with different values.
 
 Android APS2 packed REL/RELA tables are decoded through the same relocation
@@ -145,6 +148,13 @@ Relocation ownership follows virtual addresses in linked images and section
 identity plus offset in relocatable objects. Distinct slots that share source
 file bytes keep independent values and overlap checks; a write to one does not
 relocate or invalidate the other.
+
+ELF symbols using `SHN_XINDEX` get their actual section from the uniquely
+linked `SHT_SYMTAB_SHNDX` table. Missing, conflicting, compressed or malformed
+companions leave affected symbols unresolved with incomplete coverage; ordinary
+symbols remain available. Extended section numbers stay distinct from equally
+numbered special markers. `SHN_ABS` values have no section-relative file mapping,
+and tentative `SHN_COMMON` values are not treated as allocated addresses.
 
 An absolute relocation against an `STT_GNU_IFUNC` symbol is `unresolved`: the
 symbol value is the resolver, and the loader stores whatever the resolver
