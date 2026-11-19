@@ -456,7 +456,9 @@ export class CallerAbort extends DOMException {
   }
 
   /** The reason for a process signal delivered to a one-shot command. */
-  static forProcessSignal(signal: "SIGINT" | "SIGTERM"): CallerAbort {
+  static forProcessSignal(
+    signal: "SIGINT" | "SIGTERM" | "SIGHUP",
+  ): CallerAbort {
     return new CallerAbort(signal === "SIGINT" ? "interrupt" : "terminate");
   }
 }

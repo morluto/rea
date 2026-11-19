@@ -71,12 +71,15 @@ export class ToonOutputCleanupFailure extends ProviderCleanupError {
 
 // Only this output owner can attest a process disposition for a cancellation.
 // The shared factory remains the sole constructor of the domain error.
-const cancellationStatuses = new WeakMap<AnalysisCancelledError, 130 | 143>();
+const cancellationStatuses = new WeakMap<
+  AnalysisCancelledError,
+  130 | 143 | 129
+>();
 
 /** Read the output owner's disposition without inferring it from ambient state. */
 export const toonOutputCancellationStatus = (
   cause: unknown,
-): 130 | 143 | undefined => {
+): 130 | 143 | 129 | undefined => {
   const failure =
     cause instanceof ToonOutputCleanupFailure
       ? cause.outputFailure?.cause

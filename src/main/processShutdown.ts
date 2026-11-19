@@ -1,9 +1,10 @@
-type ShutdownSignal = "SIGINT" | "SIGTERM";
+type ShutdownSignal = "SIGINT" | "SIGTERM" | "SIGHUP";
 
 /** Exit status a signal-terminated process reports (128 + signal number). */
 const SIGNAL_EXIT_STATUS: Readonly<Record<ShutdownSignal, number>> = {
   SIGINT: 130,
   SIGTERM: 143,
+  SIGHUP: 129,
 };
 
 interface ShutdownSignalSource {
@@ -37,14 +38,17 @@ export const registerProcessShutdown = (
 ): (() => void) => {
   const onInterrupt = (): void => handler("SIGINT");
   const onTerminate = (): void => handler("SIGTERM");
+  const onHangup = (): void => handler("SIGHUP");
   const onInputEnd = (): void => handler();
   events.signals.on("SIGINT", onInterrupt);
   events.signals.on("SIGTERM", onTerminate);
+  events.signals.on("SIGHUP", onHangup);
   events.stdin?.on("end", onInputEnd);
   events.stdin?.on("close", onInputEnd);
   return () => {
     events.signals.off("SIGINT", onInterrupt);
     events.signals.off("SIGTERM", onTerminate);
+    events.signals.off("SIGHUP", onHangup);
     events.stdin?.off("end", onInputEnd);
     events.stdin?.off("close", onInputEnd);
   };
@@ -80,12 +84,15 @@ export const latchSignalShutdown = (
   };
   const onInterrupt = record("SIGINT");
   const onTerminate = record("SIGTERM");
+  const onHangup = record("SIGHUP");
   signals.on("SIGINT", onInterrupt);
   signals.on("SIGTERM", onTerminate);
+  signals.on("SIGHUP", onHangup);
   return {
     release: () => {
       signals.off("SIGINT", onInterrupt);
       signals.off("SIGTERM", onTerminate);
+      signals.off("SIGHUP", onHangup);
       return pending;
     },
   };
