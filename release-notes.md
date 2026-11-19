@@ -908,6 +908,7 @@
 * **electron:** carry fuse limits from the reader ([#12221](https://github.com/morluto/rea/issues/12221)) ([c34a00c](https://github.com/morluto/rea/commit/c34a00c70a041b88edc2f7d2e10c92392a7c13e1))
 * **elf:** preserve unwind parser limit facts ([#12308](https://github.com/morluto/rea/issues/12308)) ([9a9ddc9](https://github.com/morluto/rea/commit/9a9ddc9605fe767feb2fbe548f4cfeb7336ba0e0))
 * **elf:** preserve unwind parser limit ownership ([9a9ddc9](https://github.com/morluto/rea/commit/9a9ddc9605fe767feb2fbe548f4cfeb7336ba0e0))
+* **elf:** share fixed header declaration widths ([#12391](https://github.com/morluto/rea/issues/12391)) ([1ba93c8](https://github.com/morluto/rea/commit/1ba93c8a1bbddab3c775320ac37f8977717b4bca))
 * **elf:** share fixed symbol record widths ([#12379](https://github.com/morluto/rea/issues/12379)) ([205ab4a](https://github.com/morluto/rea/commit/205ab4a587bf4567d15285e16477a945f31a64d7))
 * **elf:** use shared readers for fixed and dynamic fields ([#12345](https://github.com/morluto/rea/issues/12345)) ([9a3aec3](https://github.com/morluto/rea/commit/9a3aec331b5b056a705e13993ed27d9ed5966baa))
 * **errors:** compose multi-part provider cleanup failures through one owner ([#12002](https://github.com/morluto/rea/issues/12002)) ([b6363ef](https://github.com/morluto/rea/commit/b6363efc97fbeb6f813f8488d15e89d3c68dac72))
