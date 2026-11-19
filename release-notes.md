@@ -958,6 +958,7 @@
 * **kuna:** decide Kuna readiness once for doctor and runtime ([#10997](https://github.com/morluto/rea/issues/10997)) ([27b732e](https://github.com/morluto/rea/commit/27b732e957ae55827c46157ed667b13a13894cde))
 * **limits:** declare the Node timer bound and duration schema once ([#10640](https://github.com/morluto/rea/issues/10640)) ([8443930](https://github.com/morluto/rea/commit/8443930bd33c58514138cd23c95fb9ce9e8f4860))
 * **macho:** name load-command codes through the shared LC table ([#10714](https://github.com/morluto/rea/issues/10714)) ([78fd365](https://github.com/morluto/rea/commit/78fd365bddcf33f86853a97874ed0a5c3e0184e7))
+* **macho:** own complete fixed segment and section fields ([#12405](https://github.com/morluto/rea/issues/12405)) ([ad99635](https://github.com/morluto/rea/commit/ad996352c3c7150ac448a418f546b8ead3321b9e))
 * **macho:** read universal Mach-O slices only where admission selected them ([#10642](https://github.com/morluto/rea/issues/10642)) ([b342254](https://github.com/morluto/rea/commit/b342254f9ab1e53a0b8e417a7e522c41e94c1116))
 * **macho:** report inspection limits from LimitRef ([#12205](https://github.com/morluto/rea/issues/12205)) ([0e07437](https://github.com/morluto/rea/commit/0e07437bc77a68aacb9c9bd54e4809f177317e03))
 * **macho:** select slices through one owner with typed refusals ([#10874](https://github.com/morluto/rea/issues/10874)) ([557bf41](https://github.com/morluto/rea/commit/557bf41c2c7971242ed013fddf12d8f7c6117612))
