@@ -21,6 +21,7 @@ import { createHash } from "node:crypto";
 import { scheduler } from "node:timers/promises";
 import {
   BinaryFormatFailure,
+  BinaryReader,
   BinaryResourceFailure,
   isBinaryStringReadLimit,
 } from "../domain/binaryContainer.js";
@@ -677,7 +678,11 @@ export class GpuInventory {
             );
           }
           if (
-            createHash("md5").update(data).digest().readBigUInt64LE(0) !== hash
+            new BinaryReader(
+              createHash("md5").update(data).digest(),
+              true,
+              "ccob",
+            ).word(0, 64) !== hash
           )
             rejectGpu("CCOB truncated MD5 does not match decoded bytes");
           this.#decoded(row, sha256Hex(data), data.length);
@@ -718,10 +723,11 @@ export class GpuInventory {
 const LLVM_BITCODE_LIMITATION =
   "LLVM bitcode kernel metadata is outside current coverage; bitcode validity and inner target were not inspected.";
 /** LLVM raw and wrapper signatures identify representation, not bitcode validity. */
-const isLlvmBitcode = (bytes: Buffer): boolean =>
-  bytes.length >= 4 &&
-  (bytes.readUInt32LE(0) === 0xdec04342 ||
-    bytes.readUInt32LE(0) === 0x0b17c0de);
+const isLlvmBitcode = (bytes: Buffer): boolean => {
+  if (bytes.length < 4) return false;
+  const magic = new BinaryReader(bytes, true, "llvm-bitcode").u32(0);
+  return magic === 0xdec04342 || magic === 0x0b17c0de;
+};
 const isGpuSection = (name: string): boolean =>
   [
     ".nv_fatbin",
