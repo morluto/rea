@@ -39,11 +39,17 @@ import {
   readElfImage,
   readElfImageCooperative,
 } from "../../domain/native/elfImage.js";
-import { parseElfNotes } from "./ElfNoteParser.js";
+import { parseElfNotes, parseElfNotesCooperative } from "./ElfNoteParser.js";
+import type { ZstandardFramePause } from "../../domain/compression/zstandardExactFrame.js";
+import {
+  sharedElfSectionNameDecoder,
+  type CooperativeElfSectionNameDecoder,
+} from "../../domain/native/elfSectionNameTable.js";
 
 import { err, ok, type Result } from "../../domain/result.js";
 
 type PreparedCandidateImage = Result<ReturnType<typeof readElfImage>, unknown>;
+type PreparedNotes = Result<ReturnType<typeof parseElfNotes>, unknown>;
 
 type ElfSection = Extract<ImageSection, { format: "elf" }>;
 type Report = ElfDebugLink;
@@ -387,19 +393,20 @@ const observeBuildId = (
   bytes: Buffer,
   artifact: Report["artifact"],
   input: InspectElfDebugLinkInput,
+  preparedNotes?: PreparedNotes,
 ): ObservedBuildId => {
   let notes: ReturnType<typeof parseElfNotes>;
   try {
-    notes = parseElfNotes(
-      bytes,
-      artifact,
-      {
-        path: artifact.path,
-        max_file_bytes: input.max_file_bytes,
-        max_entries: input.max_entries,
-      },
-      { maxGnuBuildIdBytes: MAX_ELF_DEBUG_ALT_BUILD_ID_BYTES },
-    );
+    if (preparedNotes !== undefined && !preparedNotes.ok)
+      throw preparedNotes.error;
+    notes =
+      preparedNotes?.value ??
+      parseElfNotes(
+        bytes,
+        artifact,
+        buildIdNoteInput(artifact, input),
+        BUILD_ID_NOTE_OPTIONS,
+      );
   } catch (cause) {
     if (
       isRethrownBudget(cause) ||
@@ -489,6 +496,18 @@ const sectionsNamed = (
   name: string,
 ): readonly ElfSection[] => sections.filter((section) => section.name === name);
 
+const BUILD_ID_NOTE_OPTIONS = {
+  maxGnuBuildIdBytes: MAX_ELF_DEBUG_ALT_BUILD_ID_BYTES,
+};
+const buildIdNoteInput = (
+  artifact: Report["artifact"],
+  input: InspectElfDebugLinkInput,
+) => ({
+  path: artifact.path,
+  max_file_bytes: input.max_file_bytes,
+  max_entries: input.max_entries,
+});
+
 /** Decode separate-debug linkage from one in-memory ELF image. */
 const ELF_DEBUG_LINK_OPERATION = "inspect_elf_debug_link";
 
@@ -497,6 +516,7 @@ export const parseElfDebugLink = (
   artifact: Report["artifact"],
   input: InspectElfDebugLinkInput,
   image?: ReturnType<typeof readElfImage>,
+  preparedNotes?: PreparedNotes,
 ): Report => {
   // The directory admits section names before either decoder inflates them.
   image =
@@ -525,7 +545,7 @@ export const parseElfDebugLink = (
     sectionsNamed(sections, ".gnu_debugdata"),
     namesComplete,
   );
-  const observed = observeBuildId(bytes, artifact, input);
+  const observed = observeBuildId(bytes, artifact, input, preparedNotes);
   const limitations: Limitations = [...ELF_DEBUG_LINK_LIMITATIONS];
   if (image.section_names_limitation !== undefined)
     limitations.push(image.section_names_limitation);
@@ -614,6 +634,7 @@ const readCandidateIdentity = (
   artifact: Report["artifact"],
   input: InspectElfDebugLinkInput,
   preparedImage?: PreparedCandidateImage,
+  preparedNotes?: PreparedNotes,
 ): {
   readonly format: NonNullable<Report["candidate"]>["format"];
   readonly byte_order: NonNullable<Report["candidate"]>["byte_order"];
@@ -710,7 +731,7 @@ const readCandidateIdentity = (
   let observed: ObservedBuildId | null = null;
   if (frameAllowance === undefined) {
     try {
-      observed = observeBuildId(content, artifact, input);
+      observed = observeBuildId(content, artifact, input, preparedNotes);
     } catch (cause) {
       frameAllowance = zstandardFrameAllowanceCause(cause);
       if (frameAllowance === undefined && !isRethrownBudget(cause)) throw cause;
@@ -873,18 +894,15 @@ export const verifyElfDebugCandidate = (
   candidate: ElfDebugCandidateFile,
   input: InspectElfDebugLinkInput,
   preparedImage?: PreparedCandidateImage,
+  preparedNotes?: PreparedNotes,
 ): Report => {
-  const identityArtifact = {
-    path: candidate.path,
-    sha256: candidate.sha256,
-    bytes: candidate.bytes,
-  };
   const read = readCandidateIdentity(
     candidate.prefix,
     candidate.bytes,
-    identityArtifact,
+    candidateArtifact(candidate),
     input,
     preparedImage,
+    preparedNotes,
   );
   const crc = crcCheck(report.debuglink.crc32_hex, candidate.crc32);
   const build = buildIdCheck(report.build_id, read.identity);
@@ -923,24 +941,65 @@ export const verifyElfDebugCandidate = (
 const debugLinkPause = (signal?: AbortSignal) => () =>
   yieldArtifactRead(signal);
 
+const candidateArtifact = (candidate: ElfDebugCandidateFile) => ({
+  path: candidate.path,
+  sha256: candidate.sha256,
+  bytes: candidate.bytes,
+});
+
+const prepareBuildIdNotes = async (
+  bytes: Buffer,
+  artifact: Report["artifact"],
+  input: InspectElfDebugLinkInput,
+  pause: ZstandardFramePause,
+  decode: CooperativeElfSectionNameDecoder,
+  signal: AbortSignal | undefined,
+): Promise<PreparedNotes> => {
+  assertArtifactReadActive(signal);
+  try {
+    return ok(
+      await parseElfNotesCooperative(
+        bytes,
+        artifact,
+        buildIdNoteInput(artifact, input),
+        pause,
+        BUILD_ID_NOTE_OPTIONS,
+        decode,
+      ),
+    );
+  } catch (cause) {
+    assertArtifactReadActive(signal);
+    return err(cause);
+  }
+};
+
 /** Same linkage as {@link parseElfDebugLink}. Section names yield for `signal`. */
 export const parseElfDebugLinkCooperative = async (
   bytes: Buffer,
   artifact: Report["artifact"],
   input: InspectElfDebugLinkInput,
   signal?: AbortSignal,
-): Promise<Report> =>
-  parseElfDebugLink(
+): Promise<Report> => {
+  const pause = debugLinkPause(signal);
+  const decode = sharedElfSectionNameDecoder(pause);
+  const image = await readElfImageCooperative(
+    bytes,
+    ELF_DEBUG_LINK_OPERATION,
+    pause,
+    input.max_file_bytes,
+    decode,
+  );
+  const notes = await prepareBuildIdNotes(
     bytes,
     artifact,
     input,
-    await readElfImageCooperative(
-      bytes,
-      ELF_DEBUG_LINK_OPERATION,
-      debugLinkPause(signal),
-      input.max_file_bytes,
-    ),
+    pause,
+    decode,
+    signal,
   );
+  assertArtifactReadActive(signal);
+  return parseElfDebugLink(bytes, artifact, input, image, notes);
+};
 
 /** Same comparison as {@link verifyElfDebugCandidate}. Section names yield for `signal`. */
 export const verifyElfDebugCandidateCooperative = async (
@@ -955,21 +1014,46 @@ export const verifyElfDebugCandidateCooperative = async (
     !hasElfMagic(candidate.prefix)
   )
     return verifyElfDebugCandidate(report, candidate, input);
+  const pause = debugLinkPause(signal);
+  const decode = sharedElfSectionNameDecoder(pause);
   let preparedImage: PreparedCandidateImage;
   try {
     preparedImage = ok(
       await readElfImageCooperative(
         candidate.prefix,
         ELF_DEBUG_LINK_OPERATION,
-        debugLinkPause(signal),
+        pause,
         input.max_file_bytes,
+        decode,
       ),
     );
   } catch (cause) {
     assertArtifactReadActive(signal);
     preparedImage = err(cause);
   }
-  return verifyElfDebugCandidate(report, candidate, input, preparedImage);
+  // A typed image error already determines the candidate outcome.
+  if (
+    !preparedImage.ok &&
+    (preparedImage.error instanceof AnalysisError ||
+      zstandardFrameAllowanceCause(preparedImage.error) !== undefined)
+  )
+    return verifyElfDebugCandidate(report, candidate, input, preparedImage);
+  const notes = await prepareBuildIdNotes(
+    candidate.prefix,
+    candidateArtifact(candidate),
+    input,
+    pause,
+    decode,
+    signal,
+  );
+  assertArtifactReadActive(signal);
+  return verifyElfDebugCandidate(
+    report,
+    candidate,
+    input,
+    preparedImage,
+    notes,
+  );
 };
 
 /** Keep the decoded image linkage when the selected candidate cannot be read. */
