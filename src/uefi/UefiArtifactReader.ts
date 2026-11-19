@@ -19,10 +19,10 @@ import {
 } from "./FfsFile.js";
 import {
   scanFirmwareVolumes,
+  unsupportedVolumeBodyReason,
   type FirmwareVolumeHeader,
 } from "./FirmwareVolume.js";
 import { imageRegion } from "./UefiBytes.js";
-import { FFS2_FILE_SYSTEM_GUID, FFS3_FILE_SYSTEM_GUID } from "./UefiGuid.js";
 import {
   ArtifactReaderFailure,
   sameArtifactEntry,
@@ -36,24 +36,14 @@ import {
 
 const hex = (value: number): string => `0x${value.toString(16)}`;
 
-/** Reuse the admission probes so the reader maps exactly what was admitted. */
-export const ffsContainerGuidLabel = (guid: string | null): string =>
-  guid === FFS2_FILE_SYSTEM_GUID
-    ? "PI firmware file system 2 (FFS2)"
-    : guid === FFS3_FILE_SYSTEM_GUID
-      ? "PI firmware file system 3 (FFS3)"
-      : guid === null
-        ? "an unrecognized firmware file system"
-        : `firmware file system ${guid}`;
-
 const IMAGE_TRUNCATION_LIMITATION =
   `The image exceeds the ${UEFI_FIRMWARE_LIMITS.inputBytes}-byte admission budget; ` +
   "only the leading admission window is mapped.";
 
 const volumeLimitation = (header: FirmwareVolumeHeader): string =>
-  `Firmware volume at ${hex(header.absoluteBase)} declares ${ffsContainerGuidLabel(
-    header.fileSystemGuid,
-  )}; its complete section and compression map is available through inspect_uefi_firmware.`;
+  header.fileSystem === "unsupported"
+    ? unsupportedVolumeBodyReason(header)
+    : `Firmware volume at ${hex(header.absoluteBase)} declares PI firmware file system ${header.fileSystem === "ffs2" ? "2 (FFS2)" : "3 (FFS3)"}; inspect_uefi_firmware maps its sections and compression.`;
 
 /** Read-only FV/FFS level adapter over one PI flash image. */
 export class UefiArtifactReader implements ArtifactReader {
@@ -108,6 +98,7 @@ export class UefiArtifactReader implements ArtifactReader {
     );
     if (scan.exhausted)
       options?.onOmission?.({ path: "volume-scan-limit", kind: "unsupported" });
+    let omittedVolumeBody = false;
     let filesMapped = 0;
     let fileBudgetExhausted = false;
     for (const hit of scan.volumes) {
@@ -133,6 +124,11 @@ export class UefiArtifactReader implements ArtifactReader {
       };
       this.#entries.set(entry.adapterKey, entry);
       yield entry;
+      if (header.fileSystem === "unsupported") {
+        omittedVolumeBody = true;
+        options?.onOmission?.({ path: name, kind: "unsupported" });
+        continue;
+      }
       for await (const file of this.#volumeFiles(header, image, name, signal)) {
         if (filesMapped >= UEFI_FIRMWARE_LIMITS.maxFiles) {
           fileBudgetExhausted = true;
@@ -151,11 +147,19 @@ export class UefiArtifactReader implements ArtifactReader {
     }
     options?.onCoverage?.({
       status:
-        imageTruncated || scan.exhausted || fileBudgetExhausted
+        imageTruncated ||
+        scan.exhausted ||
+        fileBudgetExhausted ||
+        omittedVolumeBody
           ? "unknown"
           : "complete",
       limitations: [
         ...(imageTruncated ? [IMAGE_TRUNCATION_LIMITATION] : []),
+        ...(omittedVolumeBody
+          ? [
+              "Volumes with unsupported file-system GUIDs were retained without FFS entries.",
+            ]
+          : []),
         ...(scan.exhausted
           ? ["UEFI volume search reached its candidate limit."]
           : []),

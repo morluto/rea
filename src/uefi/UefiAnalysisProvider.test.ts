@@ -879,3 +879,35 @@ it("preserves the timeout and failed rollback when the deadline expires before c
     await provider.close();
   }
 });
+
+it.each([
+  ["unrecognized", Buffer.from("unrecognized flash bytes")],
+  ["erased", Buffer.alloc(64, 0xff)],
+])(
+  "reports a full-range gap for a %s image without volumes",
+  async (_name, bytes) => {
+    const directory = await createTestTempDirectory("rea-uefi-unparsed-");
+    const path = join(directory, "image.fd");
+    await writeFile(path, bytes);
+    const provider = new UefiAnalysisProvider();
+    try {
+      const request = extractRequest(path, join(directory, "out"));
+      const result = expectOk(await provider.execute(request)).value
+        .result as UefiExtractResult;
+      expect(result).toMatchObject({
+        coverage: "partial",
+        files: [],
+        extraction_gaps: [
+          {
+            kind: "unparsed-region",
+            logical_path: "flash",
+            source_stream: null,
+            range: { offset: 0, length: bytes.length },
+          },
+        ],
+      });
+    } finally {
+      await provider.close();
+    }
+  },
+);

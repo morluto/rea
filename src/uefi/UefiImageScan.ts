@@ -31,6 +31,7 @@ import {
 import {
   scanFirmwareVolumes,
   type FirmwareVolumeHeader,
+  unsupportedVolumeBodyReason,
 } from "./FirmwareVolume.js";
 import {
   absoluteOffset,
@@ -120,13 +121,20 @@ interface UefiDecodedStream {
   readonly carrier: UefiPayload;
 }
 
+interface UnparsedRegion {
+  readonly observation: UefiUnknownRegion;
+  readonly logicalPath: string;
+  /** Erased padding has no extraction impact. */
+  readonly omission: string | null;
+}
+
 export interface UefiImageScanSummary {
   readonly inputSize: number;
   readonly payloads: ReadonlyMap<string, UefiPayload>;
   readonly decodedStreams: ReadonlyMap<string, UefiDecodedStream>;
   readonly decodeGaps: ReadonlyMap<string, string>;
   readonly volumes: readonly UefiVolumeRecord[];
-  readonly unknownRegions: readonly UefiUnknownRegion[];
+  readonly unknownRegions: readonly UnparsedRegion[];
   readonly integrity: readonly UefiIntegrityRecord[];
   readonly pspTables: readonly PspTableRecord[];
   readonly pspCandidates: readonly PspCandidateRecord[];
@@ -198,7 +206,7 @@ export const scanUefiImage = async (
     range: { offset: absoluteOffset(region, start), length: end - start },
   });
   const volumes: VolumeBuilder[] = [];
-  const unknownRegions: UefiUnknownRegion[] = [];
+  const unknownRegions: UnparsedRegion[] = [];
   const integrity: UefiIntegrityRecord[] = [];
   const limitations: string[] = [];
   const pspTables: PspTableRecord[] = [];
@@ -239,11 +247,12 @@ export const scanUefiImage = async (
     return null;
   };
 
-  const classifyLeftover = (
+  const noteUnparsedRange = (
     region: ScanRegion,
     absoluteStart: number,
     absoluteEnd: number,
     logicalPath: string,
+    unsupportedBody?: string,
   ): void => {
     const length = absoluteEnd - absoluteStart;
     if (length <= 0 || !reserve()) {
@@ -266,19 +275,27 @@ export const scanUefiImage = async (
       classification = "erased-00";
       erasure = "0x00";
     }
+    const omission =
+      unsupportedBody ??
+      (erasure === "none"
+        ? `Unparsed region under ${logicalPath} at ${hex(absoluteStart)}, ${length} bytes.`
+        : null);
     unknownRegions.push({
-      source_stream: region.sourceStream ?? null,
-      offset: absoluteStart,
-      length,
-      sha256: sha256Hex(region.buffer.subarray(localStart, localEnd)),
-      classification,
-      erasure,
+      observation: {
+        source_stream: region.sourceStream ?? null,
+        offset: absoluteStart,
+        length,
+        sha256: sha256Hex(region.buffer.subarray(localStart, localEnd)),
+        classification:
+          unsupportedBody === undefined
+            ? classification
+            : "unsupported-file-system",
+        erasure,
+      },
+      logicalPath,
+      omission,
     });
-    if (classification === "no-fv-magic") {
-      noteLimitations([
-        `Unparsed region under ${logicalPath} at ${hex(absoluteStart)}, ${length} bytes.`,
-      ]);
-    }
+    if (omission !== null) noteLimitations([omission]);
   };
 
   const scanVolumesInRegion = async (
@@ -323,7 +340,7 @@ export const scanUefiImage = async (
         break;
       }
       volumesDiscovered += 1;
-      classifyLeftover(
+      noteUnparsedRange(
         region,
         mappedThrough,
         header.absoluteBase,
@@ -373,13 +390,22 @@ export const scanUefiImage = async (
         ffs_files: [],
       };
       volumes.push(volume);
-      await walkFiles(volume, header, depth, region, volumeEnd);
-      const lastFile = volume.ffs_files[volume.ffs_files.length - 1];
-      const filesMappedThrough =
-        lastFile == null
+      const unsupportedBody =
+        header.fileSystem === "unsupported"
+          ? unsupportedVolumeBodyReason(header)
+          : undefined;
+      if (unsupportedBody === undefined)
+        await walkFiles(volume, header, depth, region, volumeEnd);
+      const lastFile = volume.ffs_files.at(-1);
+      noteUnparsedRange(
+        region,
+        lastFile === undefined
           ? volume.offset + volume.header_length
-          : lastFile.offset + lastFile.length;
-      classifyLeftover(region, filesMappedThrough, volumeEnd, logicalPath);
+          : lastFile.offset + lastFile.length,
+        volumeEnd,
+        logicalPath,
+        unsupportedBody,
+      );
       mappedThrough = volumeEnd;
       localRecords.push(volume);
     }
@@ -388,7 +414,7 @@ export const scanUefiImage = async (
       localRecords.length === discovered.volumes.length &&
       (classifyNoVolumes || localRecords.length > 0)
     ) {
-      classifyLeftover(
+      noteUnparsedRange(
         region,
         mappedThrough,
         absoluteOffset(region, region.end),
@@ -543,6 +569,7 @@ export const scanUefiImage = async (
               depth + 1,
               volume.offset,
               `${logicalPath}/embedded`,
+              false,
             );
           }
         }

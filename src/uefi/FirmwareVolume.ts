@@ -3,10 +3,13 @@ import { Buffer } from "node:buffer";
 import {
   absoluteOffset,
   isWindowUniform,
-  sliceRegion,
   type ScanRegion,
 } from "./UefiBytes.js";
-import { formatGuidLittleEndian } from "./UefiGuid.js";
+import {
+  FFS2_FILE_SYSTEM_GUID,
+  FFS3_FILE_SYSTEM_GUID,
+  formatGuidLittleEndian,
+} from "./UefiGuid.js";
 import {
   FV_ATTRIBUTE_ERASE_POLARITY,
   FV_HEADER_LAYOUT,
@@ -30,11 +33,18 @@ export interface FirmwareVolumeHeader {
   readonly extHeaderOffset: number | null;
   readonly revision: number;
   readonly fileSystemGuid: string | null;
+  readonly fileSystem: "ffs2" | "ffs3" | "unsupported";
   readonly blockMap: readonly FirmwareVolumeBlockMapEntry[];
   readonly checksumValid: boolean;
   /** Plausibility findings that gate the hit; empty when fully plausible. */
   readonly implausibilities: readonly string[];
 }
+
+/** Explain the unparsed body using the exact GUID reported by the header. */
+export const unsupportedVolumeBodyReason = (
+  header: FirmwareVolumeHeader,
+): string =>
+  `Firmware volume at 0x${header.absoluteBase.toString(16)} has an unsupported file-system GUID (${header.fileSystemGuid ?? "unavailable"}); its body was not parsed.`;
 
 /**
  * Parse one header at a local position. Returns null when the position cannot
@@ -140,11 +150,9 @@ export function parseFirmwareVolumeHeader(
   const checksumValid =
     localHeaderBase + headerLength <= region.end &&
     verifyFirmwareVolumeChecksum(region.buffer, localHeaderBase, headerLength);
-  const fileSystemGuidRaw = sliceRegion(
-    region,
-    absoluteOffset(region, localHeaderBase) +
-      FV_HEADER_LAYOUT.fileSystemGuidOffset,
-    16,
+  const fileSystemGuid = formatGuidLittleEndian(
+    region.buffer,
+    localHeaderBase + FV_HEADER_LAYOUT.fileSystemGuidOffset,
   );
   return {
     localBase: localHeaderBase,
@@ -155,10 +163,13 @@ export function parseFirmwareVolumeHeader(
     erasePolarity: (attributes & FV_ATTRIBUTE_ERASE_POLARITY) !== 0,
     extHeaderOffset: extHeaderRaw === 0 ? null : extHeaderRaw,
     revision,
-    fileSystemGuid:
-      fileSystemGuidRaw == null
-        ? null
-        : formatGuidLittleEndian(fileSystemGuidRaw, 0),
+    fileSystemGuid,
+    fileSystem:
+      fileSystemGuid === FFS2_FILE_SYSTEM_GUID
+        ? "ffs2"
+        : fileSystemGuid === FFS3_FILE_SYSTEM_GUID
+          ? "ffs3"
+          : "unsupported",
     blockMap,
     checksumValid,
     implausibilities,
@@ -268,8 +279,8 @@ export function scanFirmwareVolumes(
       continue;
     }
     volumes.push({ header });
-    if (options.skipNested) {
-      // Nested search belongs to the accepted volume's file and section walkers.
+    if (options.skipNested || header.fileSystem === "unsupported") {
+      // Only supported volume bodies can supply nested candidates.
       searchFrom = Math.max(searchFrom, headerLocal + header.declaredLength);
     }
   }

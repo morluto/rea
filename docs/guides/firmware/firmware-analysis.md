@@ -31,7 +31,9 @@ decoded root filesystems or arbitrary firmware formats.
 The bundled UEFI tools map PI firmware volumes, FFS files and sections in local
 flash images. They also report plausible AMD PSP directory tables and scan for
 AMI NVAR chains such as `StdDefaults`. They run independently of Binwalk and
-Unblob.
+Unblob. FFS file and section discovery applies to FFS2 and FFS3 volumes.
+Volumes with other file-system GUIDs retain their header and extent, with the
+body reported as unparsed.
 
 ```sh
 rea inspect-uefi-firmware /path/to/flash.bin --json
@@ -55,7 +57,11 @@ Use `inspect_uefi_firmware` and `inspect_uefi_nvram` from MCP with
 ```
 
 Extraction also accepts `ffs-file`, `section`, and `whole-image` targets.
-Volume, file, and section targets include mapped descendants. A decoded record's
+Volume, file, and section targets include mapped descendants. Unparsed ranges
+within the selection appear in `extraction_gaps` and make extraction partial.
+Erased padding alone does not make a mapped volume partial. A whole-image
+request that maps no volumes reports a gap with no published payloads.
+A decoded record's
 offset starts at zero in the stream named by `source_stream`. Pass that carrier
 logical path when extracting by offset. For the original image, use MCP
 `source_stream: null` or CLI `--source-stream flash` to disambiguate offsets.

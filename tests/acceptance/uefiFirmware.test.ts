@@ -296,3 +296,111 @@ it("keeps deep-provider analysis unavailable for the admitted uefi target", asyn
     },
   });
 });
+
+it("retains an opaque volume and reports only the unparsed ranges in the selected extraction scope", async () => {
+  const root = await createTestTempDirectory("rea-uefi-opaque-volume-");
+  const path = join(root, "mixed.fd");
+  const nvDataGuid = "fff12b8d-7696-4c8b-a985-2747075b4f50";
+  const valid = buildFv({
+    fileSystemGuid: "54731207-5c41-4cbd-b5e5-cd26d80770b1",
+    files: [
+      buildFfsFile({ guid: DRIVER_GUID, typeCode: 0x07, payload: PE_SECTION }),
+    ],
+  });
+  const opaque = buildFv({
+    fileSystemGuid: nvDataGuid,
+    // These bytes could be walked as FFS if the volume GUID were ignored.
+    files: [
+      buildFfsFile({ guid: DRIVER_GUID, typeCode: 0x07, payload: PE_SECTION }),
+    ],
+  });
+  const opaqueOffset = valid.buffer.length;
+  const suffix = Buffer.from("vendor footer");
+  const suffixOffset = opaqueOffset + opaque.buffer.length;
+  await writeFile(path, Buffer.concat([valid.buffer, opaque.buffer, suffix]));
+
+  const { call } = await connectLocalToolsMcp();
+  const { normalized_result: inspection } = parseEvidence(
+    (await call("inspect_uefi_firmware", { path })).structuredContent,
+  );
+  const inspected = uefiResultSchemas.inspect_uefi_firmware.parse(inspection);
+  expect(inspected.coverage).toBe("partial");
+  expect(inspected.firmware_volumes).toMatchObject([
+    { offset: 0, ffs_files: [{ guid: DRIVER_GUID }] },
+    { offset: opaqueOffset, file_system_guid: nvDataGuid, ffs_files: [] },
+  ]);
+  expect(inspected.unknown_regions).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        classification: "unsupported-file-system",
+        sha256: sha256(opaque.buffer.subarray(opaque.headerLength)),
+        offset: opaqueOffset + opaque.headerLength,
+        length: opaque.buffer.length - opaque.headerLength,
+      }),
+    ]),
+  );
+
+  const opened = await call("open_binary", { path });
+  expect(opened.isError, JSON.stringify(opened.content)).not.toBe(true);
+  const inventoryEvidence = parseEvidence(
+    (await call("inspect_artifact", {})).structuredContent,
+  );
+  const inventory = artifactInventoryResultSchema.parse(
+    artifactInspectionResultSchema.parse(inventoryEvidence.normalized_result)
+      .substeps[0]?.evidence?.normalized_result,
+  );
+  const opaquePath = `firmware-volume-0x${opaqueOffset.toString(16)}`;
+  expect(
+    inventory.occurrences
+      .filter(({ logical_path }) => logical_path.startsWith(opaquePath))
+      .map(({ logical_path }) => logical_path),
+  ).toEqual([opaquePath]);
+  expect(inventory.coverage.status).toBe("unknown");
+
+  const extract = async (
+    name: string,
+    target?: { kind: "volume"; offset: number },
+  ) =>
+    uefiResultSchemas.extract_uefi_firmware.parse(
+      parseEvidence(
+        (
+          await call("extract_uefi_firmware", {
+            path,
+            output_directory: join(root, name),
+            ...(target === undefined ? {} : { target }),
+          })
+        ).structuredContent,
+      ).normalized_result,
+    );
+  const whole = await extract("whole");
+  expect(whole.files.map(({ sha256 }) => sha256)).toEqual([sha256(PAYLOAD)]);
+  expect(whole.coverage).toBe("partial");
+  expect(whole.extraction_gaps).toMatchObject([
+    {
+      kind: "unparsed-region",
+      logical_path: `flash/FV@0x${opaqueOffset.toString(16)}`,
+      source_stream: null,
+      range: {
+        offset: opaqueOffset + opaque.headerLength,
+        length: opaque.buffer.length - opaque.headerLength,
+      },
+    },
+    {
+      kind: "unparsed-region",
+      logical_path: "flash",
+      source_stream: null,
+      range: { offset: suffixOffset, length: suffix.length },
+    },
+  ]);
+
+  const selected = await extract("volume", { kind: "volume", offset: 0 });
+  expect(selected.coverage).toBe("complete");
+  expect(selected.extraction_gaps).toEqual([]);
+  const selectedOpaque = await extract("opaque", {
+    kind: "volume",
+    offset: opaqueOffset,
+  });
+  expect(selectedOpaque.coverage).toBe("partial");
+  expect(selectedOpaque.files).toEqual([]);
+  expect(selectedOpaque.extraction_gaps).toEqual([whole.extraction_gaps[0]]);
+});

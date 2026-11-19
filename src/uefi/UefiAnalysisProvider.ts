@@ -39,8 +39,8 @@ import {
   type UefiExtractResult,
   type UefiInspectResult,
   type UefiNvramInspectResult,
+  type UefiRequest,
 } from "../domain/uefi/uefiFirmwareAnalysis.js";
-import type { UefiRequest } from "../domain/uefi/uefiFirmwareAnalysis.js";
 import {
   OwnedCommandFailure,
   runOwnedCommand,
@@ -436,10 +436,14 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           entry_stride_basis: table.entryStrideBasis,
         })),
         psp_candidates: scan.pspCandidates,
-        unknown_regions: scan.unknownRegions,
+        unknown_regions: scan.unknownRegions.map(
+          ({ observation }) => observation,
+        ),
         integrity: scan.integrity,
         coverage:
-          scan.budgetExhausted || scan.truncationObserved
+          scan.budgetExhausted ||
+          scan.truncationObserved ||
+          scan.unknownRegions.some(({ omission }) => omission !== null)
             ? "partial"
             : "complete",
         limitations: [...scan.limitations],
@@ -721,6 +725,28 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           }
         }
       }
+    }
+
+    for (const { observation, logicalPath, omission } of scan.unknownRegions) {
+      if (omission === null || !includes(logicalPath)) continue;
+      checkpoint();
+      recordDerivation(observation.source_stream);
+      gap(
+        "unparsed-region",
+        logicalPath,
+        observation.source_stream,
+        { offset: observation.offset, length: observation.length },
+        omission,
+      );
+    }
+    if (scan.volumes.length === 0 && gaps.length === 0) {
+      gap(
+        "unparsed-region",
+        selection.logical_path,
+        selection.source_stream,
+        { offset: selection.offset, length: selection.length },
+        "No firmware volumes were mapped in the input image.",
+      );
     }
 
     const publication = await publishUefiFiles({

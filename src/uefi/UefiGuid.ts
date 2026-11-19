@@ -39,9 +39,6 @@ export function guidEquals(left: string, right: string): boolean {
   return left.toLowerCase() === right.toLowerCase();
 }
 
-/** EFI_FIRMWARE_VOLUME_HEADER.FileSystemGuid byte offset inside the header. */
-export const FV_HEADER_FILE_SYSTEM_GUID_OFFSET = 16;
-
 /**
  * FFS2 container GUID (PI Specification, firmware file system 2).
  * Raw bytes: 78 E5 8C 8C 3D 8A 1C 4F 99 35 89 61 85 C3 2D D3.
@@ -53,14 +50,3 @@ export const FFS2_FILE_SYSTEM_GUID = "8c8ce578-8a3d-4f1c-9935-896185c32dd3";
  * Raw bytes: 07 12 73 54 41 5C BD 4C B5 E5 CD 26 D8 07 70 B1.
  */
 export const FFS3_FILE_SYSTEM_GUID = "54731207-5c41-4cbd-b5e5-cd26d80770b1";
-
-/** Read a firmware volume's declared file system GUID at its header base. */
-export function readFileSystemGuid(
-  buffer: Buffer,
-  volumeOffset: number,
-): string | null {
-  return formatGuidLittleEndian(
-    buffer,
-    volumeOffset + FV_HEADER_FILE_SYSTEM_GUID_OFFSET,
-  );
-}

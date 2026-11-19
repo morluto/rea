@@ -4,7 +4,6 @@ import {
   FFS2_FILE_SYSTEM_GUID,
   formatGuidLittleEndian,
   guidEquals,
-  readFileSystemGuid,
 } from "./UefiGuid.js";
 
 const ffs2RawBytes = Buffer.from([
@@ -28,9 +27,6 @@ it("formats the FFS2 container GUID from raw little-endian bytes", () => {
   expect(formatGuidLittleEndian(header, 16)).toBe(
     "8c8ce578-8a3d-4f1c-9935-896185c32dd3",
   );
-  expect(readFileSystemGuid(header, 0)).toBe(
-    "8c8ce578-8a3d-4f1c-9935-896185c32dd3",
-  );
 });
 
 it("formats the LZMA custom compression GUID", () => {
@@ -48,7 +44,6 @@ it("formats the LZMAF86 compression GUID", () => {
 it("returns null for out-of-bounds and truncated reads", () => {
   const truncated = ffs2RawBytes.subarray(0, 15);
   expect(formatGuidLittleEndian(truncated, 0)).toBeNull();
-  expect(readFileSystemGuid(Buffer.alloc(31, 0x00), 0)).toBeNull();
   expect(formatGuidLittleEndian(Buffer.alloc(0), -1)).toBeNull();
   expect(formatGuidLittleEndian(ffs2RawBytes, 1)).toBeNull();
 });

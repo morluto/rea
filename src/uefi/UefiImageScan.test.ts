@@ -89,7 +89,7 @@ it("maps one volume with UI string, PE payload, checksums and pad classification
   expect(mappedPad?.checksum).toBe("pad-file-unchecked");
   expect(summary.budgetExhausted).toBe(false);
   // Volume block padding (erased) stays classified, never hidden.
-  const tail = summary.unknownRegions.at(-1);
+  const tail = summary.unknownRegions.at(-1)?.observation;
   expect(tail?.classification).toBe("erased-ff");
   expect(tail?.erasure).toBe("0xff");
 });
@@ -387,7 +387,12 @@ it("classifies uncovered ranges around volumes and in an image without a volume"
   const image = Buffer.concat([prefix, fv, middle, fv, suffix]);
   const limits = { maxDepth: 3, maxVolumes: 2, maxFiles: 8 };
   const { unknownRegions } = await scanUefiImage(image, limits, noDecoder);
-  expect(unknownRegions.map(({ offset, length }) => [offset, length])).toEqual(
+  expect(
+    unknownRegions.map(({ observation: { offset, length } }) => [
+      offset,
+      length,
+    ]),
+  ).toEqual(
     expect.arrayContaining([
       [0, prefix.length],
       [prefix.length + fv.length, middle.length],
@@ -395,7 +400,9 @@ it("classifies uncovered ranges around volumes and in an image without a volume"
     ]),
   );
   expect(
-    (await scanUefiImage(prefix, limits, noDecoder)).unknownRegions,
+    (await scanUefiImage(prefix, limits, noDecoder)).unknownRegions.map(
+      ({ observation }) => observation,
+    ),
   ).toMatchObject([
     { offset: 0, length: prefix.length, classification: "no-fv-magic" },
   ]);

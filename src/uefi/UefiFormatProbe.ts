@@ -1,6 +1,5 @@
 import type { FileHandle } from "node:fs/promises";
 import { cancelledBy } from "../domain/analysisErrorCore.js";
-import { FFS2_FILE_SYSTEM_GUID, FFS3_FILE_SYSTEM_GUID } from "./UefiGuid.js";
 import { imageRegion, type ScanRegion } from "./UefiBytes.js";
 import { scanFirmwareVolumes } from "./FirmwareVolume.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
@@ -24,8 +23,7 @@ export function admitUefiFlashImage(buffer: Buffer): boolean {
     ({ header }) =>
       header.checksumValid &&
       header.absoluteBase % VOLUME_ALIGNMENT_BYTES === 0 &&
-      (header.fileSystemGuid === FFS2_FILE_SYSTEM_GUID ||
-        header.fileSystemGuid === FFS3_FILE_SYSTEM_GUID),
+      header.fileSystem !== "unsupported",
   );
 }
 

@@ -350,6 +350,7 @@ export const uefiUnknownRegionSchema = z.strictObject({
   sha256: digestSchema.nullable(),
   classification: z.enum([
     "no-fv-magic",
+    "unsupported-file-system",
     "erased-ff",
     "erased-00",
     "sparse",
