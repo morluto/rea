@@ -485,12 +485,10 @@ it.each([
       capture_path: "/selected/capture.har",
       format: "har",
     });
-    const projected = projectAnalysisError(
-      protobufCaptureFailure(
-        input,
-        new CaptureFormatError(limit, "Protobuf limit reached"),
-      ),
-    );
+    const cause = new CaptureFormatError(limit, "Protobuf limit reached");
+    const error = protobufCaptureFailure(input, cause);
+    expect.soft(error.cause).toBe(cause);
+    const projected = projectAnalysisError(error);
     expect(projected).toMatchObject({
       code: "resource_constraint",
       retryable: false,
@@ -499,6 +497,7 @@ it.each([
         action: expect.stringContaining(`Increase ${parameter}`),
       },
     });
+    expect(projected.remediation.action).toContain(String(limit.maximum));
   },
 );
 
