@@ -550,6 +550,7 @@
 * **navigation:** offer available instruction observations ([#10307](https://github.com/morluto/rea/issues/10307)) ([15a2de7](https://github.com/morluto/rea/commit/15a2de737c3401f9ef1e22290fa1b8a1ac3fead9))
 * **nib:** validate row framing before decode capacity ([#12327](https://github.com/morluto/rea/issues/12327)) ([9b64217](https://github.com/morluto/rea/commit/9b642175b061e1cd4df92e0e772298cc5a2093f9))
 * **nib:** validate table extents before decode budgets ([#12315](https://github.com/morluto/rea/issues/12315)) ([23ad8ce](https://github.com/morluto/rea/commit/23ad8ce57894727afd5732e04c6791ae2eaf44ee))
+* **node-sea:** bound duplicate blob verification work ([#11736](https://github.com/morluto/rea/issues/11736)) ([4491c84](https://github.com/morluto/rea/commit/4491c84c82140a43fa12390b727840a433875ba8))
 * **node-sea:** reserve framing for required blob fields ([#12317](https://github.com/morluto/rea/issues/12317)) ([96dae7d](https://github.com/morluto/rea/commit/96dae7de70954db12458f766de6886010013c7b5))
 * **node-sea:** validate Mach-O segment bounds before blob limits ([#12263](https://github.com/morluto/rea/issues/12263)) ([b74b314](https://github.com/morluto/rea/commit/b74b314fbddffadb731d7cff43ea214f7808133d))
 * **ntfs:** reject invalid FILE_NAME namespaces ([#11986](https://github.com/morluto/rea/issues/11986)) ([f52229a](https://github.com/morluto/rea/commit/f52229a4a64235a72e9ddf8a744907ea77616911))
