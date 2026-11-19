@@ -265,21 +265,25 @@ export const expandDesktopExec = (
 export type DesktopCommandWrapper = {
   /** The program `env` runs, or the first argument when there is no `env`. */
   readonly program: string;
+  /** The program's position in the expanded command, after any env operands. */
+  readonly index: number;
   /** Variables an `env` prefix sets; its `PATH` is the one that finds the program. */
   readonly environment: Readonly<Record<string, string>>;
+  /** Present when the env wrapper discards all inherited variables. */
+  readonly clearEnvironment?: true;
   /** The last env chdir option and the argv span that carries its operand. */
   readonly chdir?: {
     readonly path: string;
     readonly start: number;
     readonly end: number;
+    /** This option also requests a clean environment, as in `-iC`. */
+    readonly includesClearEnvironment?: true;
   };
   /** First argument of the application, after the program or flatpak's app id. */
   readonly argumentIndex: number;
 } & (
   | {
       readonly kind: "direct";
-      /** The program's position in the command. */
-      readonly index: number;
     }
   | { readonly kind: "flatpak"; readonly application_id: string | null }
 );
@@ -353,50 +357,80 @@ const flatpakApplication = (argv: readonly string[], start: number) => {
   return { application_id: null, argumentIndex: argv.length };
 };
 
-/** Apply env directory and assignment prefixes and recognise flatpak run launchers. */
-export const unwrapDesktopCommand = (
-  argv: readonly string[],
-): DesktopCommandWrapper => {
-  let index = 0;
+const desktopEnvironment = (argv: readonly string[]) => {
+  let index = 1;
+  let clearEnvironment = false;
   let chdir: DesktopCommandWrapper["chdir"];
   // No prototype, so an assignment such as `__proto__=x` stays a variable.
   const environment: Record<string, string> = Object.create(null);
-  if (argv[0]?.split("/").at(-1) === "env") {
-    index = 1;
-    while (index < argv.length) {
-      const option = argv[index]!;
-      const separate = option === "-C" || option === "--chdir";
-      const path = separate
-        ? (argv[index + 1] ?? "")
-        : option.startsWith("--chdir=")
-          ? option.slice("--chdir=".length)
-          : option.startsWith("-C")
-            ? option.slice(2)
-            : undefined;
-      if (path === undefined) break;
-      const start = index;
-      index += separate ? 2 : 1;
-      chdir = { path, start, end: index };
-    }
-    // Only the option terminator before the first operand belongs to env;
-    // a later `--` can name the command or belong to the application.
-    if (argv[index] === "--") index += 1;
-    while (/^[A-Za-z_][A-Za-z0-9_]*=/u.test(argv[index] ?? "")) {
-      const assignment = argv[index] ?? "";
-      const split = assignment.indexOf("=");
-      environment[assignment.slice(0, split)] = assignment.slice(split + 1);
+  while (index < argv.length) {
+    const option = argv[index]!;
+    if (/^-i+$/u.test(option) || option === "--ignore-environment") {
+      clearEnvironment = true;
       index += 1;
+      continue;
     }
+    const shortDirectory = /^-(i*)C(.*)$/su.exec(option);
+    const separate = shortDirectory?.[2] === "" || option === "--chdir";
+    const path = separate
+      ? (argv[index + 1] ?? "")
+      : option.startsWith("--chdir=")
+        ? option.slice("--chdir=".length)
+        : shortDirectory?.[2];
+    if (path === undefined) break;
+    const start = index;
+    index += separate ? 2 : 1;
+    const combined = Boolean(shortDirectory?.[1]);
+    if (combined) clearEnvironment = true;
+    chdir = {
+      path,
+      start,
+      end: index,
+      ...(combined ? { includesClearEnvironment: true as const } : {}),
+    };
   }
+  // Only the option terminator before the first operand belongs to env;
+  // a later `--` can name the command or belong to the application.
+  if (argv[index] === "--") index += 1;
+  if (argv[index] === "-") {
+    clearEnvironment = true;
+    index += 1;
+  }
+  while (/^[A-Za-z_][A-Za-z0-9_]*=/u.test(argv[index] ?? "")) {
+    const assignment = argv[index] ?? "";
+    const split = assignment.indexOf("=");
+    environment[assignment.slice(0, split)] = assignment.slice(split + 1);
+    index += 1;
+  }
+  return { index, chdir, clearEnvironment, environment };
+};
+
+/** Apply env prefixes and recognise flatpak run launchers. */
+export const unwrapDesktopCommand = (
+  argv: readonly string[],
+): DesktopCommandWrapper => {
+  const { index, chdir, clearEnvironment, environment } =
+    argv[0]?.split("/").at(-1) === "env"
+      ? desktopEnvironment(argv)
+      : {
+          index: 0,
+          chdir: undefined,
+          clearEnvironment: false,
+          environment: Object.create(null) as Record<string, string>,
+        };
   const program = argv[index] ?? "";
-  const directoryOption = chdir === undefined ? {} : { chdir };
+  const wrapperOptions = {
+    ...(chdir === undefined ? {} : { chdir }),
+    ...(clearEnvironment ? { clearEnvironment: true as const } : {}),
+  };
   if (program.split("/").at(-1) === "flatpak" && argv[index + 1] === "run")
     return {
       kind: "flatpak",
       program,
+      index,
       environment,
       ...flatpakApplication(argv, index + 2),
-      ...directoryOption,
+      ...wrapperOptions,
     };
   return {
     kind: "direct",
@@ -404,6 +438,6 @@ export const unwrapDesktopCommand = (
     environment,
     index,
     argumentIndex: index + 1,
-    ...directoryOption,
+    ...wrapperOptions,
   };
 };
