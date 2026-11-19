@@ -36,6 +36,28 @@ it("preserves representable offsets for invalid file ranges", () => {
   );
 });
 
+it("decodes signed and floating fields in both byte orders", () => {
+  const bytes = Buffer.alloc(18);
+  bytes.writeInt16LE(-2, 0);
+  bytes.writeInt32LE(-3, 2);
+  bytes.writeFloatLE(1.5, 6);
+  bytes.writeBigInt64LE(-4n, 10);
+  const little = new BinaryReader(bytes, true, "zip");
+  expect([little.u8(0), little.i8(0), little.i16(0), little.i32(2)]).toEqual([
+    0xfe, -2, -2, -3,
+  ]);
+  expect([little.f32(6), little.i64(10)]).toEqual([1.5, -4n]);
+  bytes.writeDoubleBE(-0.25, 0);
+  const big = new BinaryReader(bytes, false, "zip");
+  expect([big.f64(0), big.i16(0), big.i32(0)]).toEqual([
+    -0.25,
+    bytes.readInt16BE(0),
+    bytes.readInt32BE(0),
+  ]);
+  expect(() => little.i64(11)).toThrow(BinaryFormatFailure);
+  expect(() => big.f32(15)).toThrow(BinaryFormatFailure);
+});
+
 it("decodes numeric fields at nonzero buffer offsets and preserves malformed and truncated range failures", () => {
   const backing = Buffer.from([
     0xff, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0xfe,
