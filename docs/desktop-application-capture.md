@@ -55,6 +55,11 @@ computer would not have that entry. An `--executable` runs from
 the current directory, as it would from a shell, and a relative path to it is
 resolved there.
 
+An `env -i`, `env --ignore-environment` or `env -` prefix drops the
+inherited environment before applying any assignments in the command.
+Inventory uses the resulting XDG roots and the Linux system search path
+when the prefix leaves `PATH` unset.
+
 A nested desktop file uses a dashed ID: `vendor/app.desktop` has ID
 `vendor-app`. REA checks path spellings that can encode that ID within each
 XDG root before trying the next root. Unrelated directories do not affect

@@ -407,6 +407,23 @@ const envApplicationDirectory = async (
   }
 };
 
+const launchEnvironment = (
+  wrapper: ReturnType<typeof unwrapDesktopCommand>,
+  inherited: LinuxApplicationRequest["environment"],
+) => {
+  if (!wrapper.clearEnvironment) {
+    const environment = { ...inherited, ...wrapper.environment };
+    return { environment, lookupEnvironment: environment };
+  }
+  const environment = wrapper.environment;
+  // GNU env's execvp searches the Linux system path when PATH is absent.
+  const lookupEnvironment =
+    environment.PATH === undefined
+      ? { ...environment, PATH: "/bin:/usr/bin" }
+      : environment;
+  return { environment, lookupEnvironment };
+};
+
 /** Resolve what the request launches, where it came from and where it may keep state. */
 export const inspectLinuxApplication = async (
   request: LinuxApplicationRequest,
@@ -426,10 +443,13 @@ export const inspectLinuxApplication = async (
   const applicationDirectory = directory.value;
   // An `env` prefix's assignments are what the program sees: its PATH finds
   // the program and its XDG folders hold the program's state.
-  const environment = { ...request.environment, ...wrapper.environment };
+  const { environment, lookupEnvironment } = launchEnvironment(
+    wrapper,
+    request.environment,
+  );
   const found = await resolveProgram(
     wrapper.program,
-    environment,
+    lookupEnvironment,
     applicationDirectory ?? workingDirectory,
   );
   if (found === undefined)

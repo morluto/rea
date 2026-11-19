@@ -727,6 +727,52 @@ describe.skipIf(process.platform === "win32")(
   },
 );
 
+describe.skipIf(process.platform !== "linux")(
+  "clean env launch inventory",
+  () => {
+    it.each([
+      ["-i", false],
+      ["--ignore-environment", true],
+      ["-- -", false],
+    ])(
+      "models env %s without borrowing PATH or XDG roots from the host",
+      async (flags, explicit) => {
+        const installed = await fixture();
+        const { home, bin, environment } = installed;
+        const ambient = join(home, "ambient");
+        const selected = join(home, "selected");
+        await writeFile(join(bin, "true"), "#!/bin/sh\nexit 2\n");
+        await chmod(join(bin, "true"), 0o755);
+        const prefix = [
+          "/usr/bin/env",
+          ...flags.split(" "),
+          ...(explicit ? [`PATH=${bin}`, `XDG_CONFIG_HOME=${selected}`] : []),
+        ];
+        await writeFile(
+          join(
+            environment.XDG_DATA_DIRS,
+            "applications/org.example.notes.desktop",
+          ),
+          `[Desktop Entry]\nType=Application\nName=Notes\nExec=${prefix.join(" ")} true -- -i\n`,
+        );
+        const inventory = await inventoryOf("org.example.notes", {
+          ...installed,
+          environment: { ...environment, XDG_CONFIG_HOME: ambient },
+        });
+        expect(inventory.argv).toEqual([...prefix, "true", "--", "-i"]);
+        expect(inventory.executable.path).toBe(
+          explicit ? join(bin, "true") : "/bin/true",
+        );
+        const paths = inventory.state_directories.map(({ path }) => path);
+        expect(paths).toContain(
+          join(explicit ? selected : join(home, ".config"), "true"),
+        );
+        expect(paths).not.toContain(join(ambient, "true"));
+      },
+    );
+  },
+);
+
 describe.skipIf(process.platform === "win32")(
   "inspectLinuxApplication state and environment",
   () => {
