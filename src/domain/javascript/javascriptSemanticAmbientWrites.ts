@@ -56,6 +56,7 @@ import {
 } from "./javascriptSemanticReferenceSources.js";
 import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReferencePaths.js";
 import {
+  semanticCapturedSelectionsAfterPropertyRead,
   semanticNormalizeCapturedSelections,
   semanticShiftCapturedSelections,
   type SemanticCapturedSelection,
@@ -878,6 +879,37 @@ export const createAmbientPathResolver = (
             for (const source of semanticArrayPropertyReferences(root, [
               key ?? null,
             ])) {
+              if (
+                observes === "array-receiver" &&
+                source.iterableFallbackPath !== undefined &&
+                t.isArrayExpression(
+                  unwrapJavaScriptExpression(source.node).node,
+                )
+              ) {
+                // Follow the selected source slot of a fresh array. A
+                // borrowed iterator can still expose the source itself.
+                const path = [
+                  ...source.path.map((part) =>
+                    part === null || typeof part === "object"
+                      ? null
+                      : String(part),
+                  ),
+                  ...remaining,
+                ];
+                queue(
+                  source.node,
+                  path,
+                  current.readsAtSelf,
+                  semanticNormalizeCapturedSelections(
+                    semanticCapturedSelectionsAfterPropertyRead(
+                      capturedSelections,
+                      source,
+                    ),
+                    path.length,
+                  ),
+                );
+                continue;
+              }
               continueWith(source.node, remaining);
               // Native iteration depends on the effects being collected here.
               // A spread may expose its receiver or any of its children.

@@ -423,6 +423,41 @@ it.each([
     "resolved",
   ],
   [
+    "custom iterator from an inline spread slot",
+    "const items = [...[{ values() { return {}; } }]]; Object.getPrototypeOf(items[0].values()).next = replacement;",
+    "resolved",
+  ],
+  [
+    "native array from an inline spread slot",
+    "const items = [0, ...[[]]]; Object.getPrototypeOf(items[1].values()).next = replacement;",
+    "candidate",
+  ],
+  [
+    "typed array from a borrowed spread slot",
+    "const source = [new Uint8Array()]; const items = [...source]; Object.getPrototypeOf(items[0].values()).next = replacement;",
+    "candidate",
+  ],
+  [
+    "a Map copied by a fresh spread before a later member store",
+    "const source = { value: new Map() }; const items = [0, ...[source.value]]; source.value = []; Object.getPrototypeOf(items[1].values()).next = replacement;",
+    "resolved",
+  ],
+  [
+    "native array written to a source slot before the spread",
+    "const source = [new Map()]; source[0] = []; const items = [...source]; Object.getPrototypeOf(items[0].values()).next = replacement;",
+    "candidate",
+  ],
+  [
+    "source array yielded by its custom iterator",
+    "const source = [{ values() { return {}; } }]; source[Symbol.iterator] = function* () { yield source; }; const items = [...source]; Object.getPrototypeOf(items[0].values()).next = replacement;",
+    "candidate",
+  ],
+  [
+    "borrowed source whose iterator was installed by a descriptor",
+    "const source = [{}]; Object.defineProperty(source, Symbol.iterator, { value: function* () { yield source; } }); const items = [...source]; Object.getPrototypeOf(items[0].values()).next = replacement;",
+    "candidate",
+  ],
+  [
     "direct prototype assignment",
     "Object.getPrototypeOf([][Symbol.iterator]()).next = replacement;",
     "candidate",
