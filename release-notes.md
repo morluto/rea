@@ -123,6 +123,7 @@
 * **setup:** manage fx, Junie, Goose and Kilo registrations through the client table ([#10709](https://github.com/morluto/rea/issues/10709)) ([fd2eabb](https://github.com/morluto/rea/commit/fd2eabb12ab8f35e9d8946057dac86e863f711c4))
 * **setup:** mark a shared enable:false registration as a manual conflict in doctor status ([#11019](https://github.com/morluto/rea/issues/11019)) ([b572dba](https://github.com/morluto/rea/commit/b572dbaf25ee388c7305d4e60b9c607ad38e1182))
 * **snapshots:** persist the target identity as the snapshot target ([#11551](https://github.com/morluto/rea/issues/11551)) ([ff01762](https://github.com/morluto/rea/commit/ff0176256a98f0eac8c8fc0aff511544073c8a98))
+* **uefi:** add pure-TypeScript UEFI firmware analysis tools ([#12342](https://github.com/morluto/rea/issues/12342)) ([d380dc2](https://github.com/morluto/rea/commit/d380dc2409904edf058db0444a2a9eb29f827d4d))
 * **verify:** allocate kept verifier artifact directories through VerifierFixture ([#11091](https://github.com/morluto/rea/issues/11091)) ([3f88f69](https://github.com/morluto/rea/commit/3f88f6974652c8de2db18abcef0c9c65457c931e))
 
 
