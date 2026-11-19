@@ -367,6 +367,7 @@
 * **doctor:** count installations by resolved launcher directory ([5557d9b](https://github.com/morluto/rea/commit/5557d9b3eb2d6b92936289792ea6f0521f68261d)), closes [#8122](https://github.com/morluto/rea/issues/8122)
 * **doctor:** refuse an empty --target like other target inputs ([82f3bfb](https://github.com/morluto/rea/commit/82f3bfb6e8903d8119923970a0950936b0b20d5b)), closes [#7561](https://github.com/morluto/rea/issues/7561)
 * **doctor:** refuse Ghidra on Windows when REA_GHIDRA_PROJECT_PATH selects an existing project ([#10981](https://github.com/morluto/rea/issues/10981)) ([80755a9](https://github.com/morluto/rea/commit/80755a9d162f4aa79ce1c27c229830c8f7c29f75))
+* **dol:** require exact file extent for header admission ([#12460](https://github.com/morluto/rea/issues/12460)) ([11c014f](https://github.com/morluto/rea/commit/11c014f0225a03192289323746f688421f222111))
 * **dotnet:** check manifest bounds before metadata budget ([#12287](https://github.com/morluto/rea/issues/12287)) ([fce3362](https://github.com/morluto/rea/commit/fce336236eabd22358cf22efd13c348cf53db4ba))
 * **dotnet:** validate bundle extents before adjustable limits ([#12270](https://github.com/morluto/rea/issues/12270)) ([bf04d61](https://github.com/morluto/rea/commit/bf04d616fd354886375a9bc572b0e014297fa496))
 * **dotnet:** validate bundle string lengths before reader limits ([#12272](https://github.com/morluto/rea/issues/12272)) ([e744f5d](https://github.com/morluto/rea/commit/e744f5d9e43b27e19e4120a2d620cc8f99123ffe))
