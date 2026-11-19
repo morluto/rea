@@ -156,6 +156,12 @@ Text views decode UTF-8 or strictly valid UTF-16 with a leading byte-order
 mark. UTF-16 containing a NUL character stays binary. These rules also apply
 to documents inside gzip and ZIP files and to the exported task verifier.
 
+Keyfile views trim keys and skip spaces or tabs immediately after the first
+`=`. The rest of the value is preserved, including trailing whitespace and
+any additional `=` characters. Entries before the first group use the empty
+group name. Repeated groups share one view, and the last value for a key in
+that group wins. Capture and the exported verifier apply the same rules.
+
 A gzip file is read as the document inside it; see
 [compressed documents](#compressed-documents).
 
