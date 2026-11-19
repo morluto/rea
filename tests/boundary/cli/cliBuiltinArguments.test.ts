@@ -10,6 +10,7 @@ import {
   classifyMcpAddDiscovery,
   isProjectScopedAmpRegistration,
   parseCliGlobalArguments,
+  productionMcpHttpArguments,
 } from "../../../src/cliBuiltinArguments.js";
 
 /** Whether these caller arguments ask for a project-scoped Amp registration. */
@@ -98,6 +99,68 @@ describe("project-scoped Amp registration guard", () => {
     expect(projectScoped(["mcp", "add", "--no-global", "--agent", "Amp"])).toBe(
       false,
     );
+  });
+});
+
+describe("production mcp --http arguments", () => {
+  it("selects the HTTP reader only for flags that follow the entry", () => {
+    expect(productionMcpHttpArguments(["mcp", "--http"])).toEqual(["--http"]);
+    expect(productionMcpHttpArguments(["--mcp", "--http"])).toEqual(["--http"]);
+    expect(
+      productionMcpHttpArguments(["mcp", "--http", "--port", "8765"]),
+    ).toEqual(["--http", "--port", "8765"]);
+    expect(
+      productionMcpHttpArguments(["mcp", "--host", "127.0.0.1", "--http"]),
+    ).toEqual(["--host", "127.0.0.1", "--http"]);
+    expect(productionMcpHttpArguments(["mcp", "-h", "--http"])).toEqual([
+      "-h",
+      "--http",
+    ]);
+  });
+
+  it("keeps registration, subcommands, and a bare alias with the dispatcher", () => {
+    expect(
+      productionMcpHttpArguments(["mcp", "add", "--http"]),
+    ).toBeUndefined();
+    expect(productionMcpHttpArguments(["--http"])).toBeUndefined();
+    expect(productionMcpHttpArguments(["mcp", "--json", "--http"])).toEqual([
+      "--json",
+      "--http",
+    ]);
+  });
+
+  it("treats an output flag's value as data, not as the mode", () => {
+    expect(
+      productionMcpHttpArguments(["mcp", "--format", "--http"]),
+    ).toBeUndefined();
+    expect(
+      productionMcpHttpArguments(["mcp", "--format=--http"]),
+    ).toBeUndefined();
+    expect(
+      productionMcpHttpArguments(["mcp", "--format", "json", "--http"]),
+    ).toEqual(["--format", "json", "--http"]);
+  });
+
+  it("treats a transport option's value as data", () => {
+    // A transport option's value is data: `doctor` here is its host name.
+    expect(
+      productionMcpHttpArguments(["mcp", "--host", "doctor", "--http"]),
+    ).toEqual(["--host", "doctor", "--http"]);
+    expect(
+      productionMcpHttpArguments(["mcp", "--host", "--http", "--http"]),
+    ).toEqual(["--host", "--http", "--http"]);
+    expect(
+      productionMcpHttpArguments(["mcp", "--host", "127.0.0.1", "--http"]),
+    ).toEqual(["--host", "127.0.0.1", "--http"]);
+  });
+
+  it("leaves doctor with the reader that owns output flags", () => {
+    expect(
+      productionMcpHttpArguments(["mcp", "doctor", "--http"]),
+    ).toBeUndefined();
+    expect(
+      productionMcpHttpArguments(["mcp", "--http", "doctor"]),
+    ).toBeUndefined();
   });
 });
 

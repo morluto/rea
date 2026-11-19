@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import {
   cliCompletionShell,
   productionMcpDoctorArguments,
+  productionMcpHttpArguments,
   parseCliGlobalArguments,
 } from "../../../src/cliBuiltinArguments.js";
 import { DEFAULT_INFO_LOGGING_COMMANDS } from "../../../src/contracts/cliCommandNames.js";
@@ -154,7 +155,9 @@ export const cliCompileCacheEnvironment = (
  * Mirror `scripts/rea.mjs` entry routing for invocations handled outside
  * `runOneShotCli` (`rea mcp` / `rea --mcp`, `rea mcp ... --http`, and
  * production `rea mcp doctor ...`). Subcommands such as `rea mcp add` and
- * `rea mcp --help` still dispatch through `runOneShotCli`.
+ * `rea mcp --help` still dispatch through `runOneShotCli`. The transport and
+ * doctor readers are the shared argument owner's, so the fixture cannot drift
+ * from the executable's dispatch.
  */
 const isDirectMcpLauncherEntry = (
   arguments_: readonly string[],
@@ -162,12 +165,10 @@ const isDirectMcpLauncherEntry = (
 ): boolean => {
   if (cliCompletionShell(environment ?? {}) !== undefined) return false;
   if (productionMcpDoctorArguments([...arguments_]) !== undefined) return true;
-  if (arguments_[0] !== "mcp" && arguments_[0] !== "--mcp") return false;
-  return (
-    arguments_.length === 1 ||
-    ((arguments_[1]?.startsWith("-") ?? false) &&
-      arguments_.slice(1).includes("--http"))
-  );
+  if (productionMcpHttpArguments([...arguments_]) !== undefined) return true;
+  if (arguments_.length === 1)
+    return arguments_[0] === "mcp" || arguments_[0] === "--mcp";
+  return false;
 };
 
 /**

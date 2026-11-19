@@ -42,16 +42,17 @@ const isShellCompletion =
 const doctorArguments = isShellCompletion
   ? undefined
   : builtinArguments?.productionMcpDoctorArguments(args);
+const httpArguments = isShellCompletion
+  ? undefined
+  : builtinArguments?.productionMcpHttpArguments(args);
 const isMcpEntry =
   !isShellCompletion && (args[0] === "--mcp" || args[0] === "mcp");
 const isMcpMode = isMcpEntry && args.length === 1;
 const isMcpDoctorMode = doctorArguments !== undefined;
-// Only flags may follow the entry: `mcp add --http` stays Incur's `mcp add`,
-// while `mcp -h --http` reaches the HTTP entry's own help.
-const isMcpHttpMode =
-  isMcpEntry &&
-  (args[1]?.startsWith("-") ?? false) &&
-  args.slice(1).includes("--http");
+// The argument owner reads `--http` from its position and meaning, so a
+// flag-shaped value (`--format --http`) and a transport option's value stay
+// data instead of selecting this entry.
+const isMcpHttpMode = httpArguments !== undefined;
 /** How long an exiting command may wait for its remaining handles to close. */
 const EXIT_DRAIN_GRACE_MS = 1_000;
 /** Exit status of a writer terminated by SIGPIPE (128 + 13). */
@@ -81,7 +82,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   await runEntrypoint();
 } else if (isMcpHttpMode) {
   const { runMcpHttpEntrypoint } = await import("../dist/mcp/main.js");
-  await runMcpHttpEntrypoint(args.slice(1));
+  await runMcpHttpEntrypoint(httpArguments);
 } else if (isMcpDoctorMode) {
   guardClosedStdout();
   // Doctor runs outside the command dispatcher, so the launcher measures its

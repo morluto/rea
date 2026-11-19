@@ -9,10 +9,19 @@ import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 import { copyScriptsWithImports } from "../../support/scriptImportClosure.js";
 import type { TestWorkspace } from "../../support/workspace/workspaceFixture.js";
 
+/**
+ * Result-output stub for the replaced runtime chunk. The one-shot owner reads
+ * the cancellation classifier from this chunk beside the factory, so the stub
+ * must keep that export to reach the dispatch behavior under test.
+ */
+const STUBBED_RESULT_OUTPUT =
+  "export const createCliResultOutput = () => undefined;\n" +
+  "export const cliOutputCancellationStatus = () => undefined;\n";
+
 const installCliRuntime = async (
   workspace: TestWorkspace,
   cliSource: string,
-  resultOutput = "export const createCliResultOutput = () => undefined;\n",
+  resultOutput = STUBBED_RESULT_OUTPUT,
 ): Promise<void> => {
   await workspace.mkdir("dist");
   // The bundle's entrypoints and shared chunks form one emitted runtime. The
@@ -39,6 +48,23 @@ const installCliRuntime = async (
     workspace.write(
       "dist/recordedCliCommandRegistrations.js",
       "export const RECORDED_CLI_COMMAND_REGISTRATIONS = undefined;\n",
+    ),
+  ]);
+};
+
+/** Stub the MCP runtime and doctor entrypoints so dispatch routing is observable. */
+const installMcpDispatchStubs = async (
+  workspace: TestWorkspace,
+): Promise<void> => {
+  await workspace.mkdir("dist/mcp");
+  await Promise.all([
+    workspace.write(
+      "dist/mcp/main.js",
+      'export const runEntrypoint = () => process.stdout.write(JSON.stringify({ adapter: "mcp" })); export const runMcpHttpEntrypoint = (args) => process.stdout.write(JSON.stringify({ adapter: "mcp-http", args }));\n',
+    ),
+    workspace.write(
+      "dist/cli-runtime/mcpDoctor.js",
+      'export const runProductionMcpDoctorCli = (args, input) => Promise.resolve({ output: JSON.stringify({ adapter: "mcp-doctor", args, stdoutIsTerminal: input.stdoutIsTerminal }), exitCode: 0 });\n',
     ),
   ]);
 };
@@ -254,7 +280,7 @@ describe("executable dispatcher", () => {
       await installCliRuntime(
         workspace,
         'export const closeCliResources = () => {}; export const createCli = () => ({ serve: (_args, options) => { options.stdout("first document\\n"); throw new RangeError("Invalid string length"); } });\n',
-        'export const createCliResultOutput = () => ({ handled: false, failed: false, finish: async () => {}, recoverFormattingFailure: () => { process.stdout.write("unexpected second document"); return true; } });\n',
+        'export const cliOutputCancellationStatus = () => undefined; export const createCliResultOutput = () => ({ handled: false, failed: false, finish: async () => {}, recoverFormattingFailure: () => { process.stdout.write("unexpected second document"); return true; } });\n',
       );
       const result = await processes.run(
         process.execPath,
@@ -274,18 +300,8 @@ describe("executable dispatcher", () => {
         workspace,
         'export const closeCliResources = () => {}; export const createCli = () => ({ serve: (args) => process.stdout.write(JSON.stringify({ adapter: "cli", args })) });\n',
       );
+      await installMcpDispatchStubs(workspace);
       const scripts = workspace.path("scripts");
-      await workspace.mkdir("dist/mcp");
-      await Promise.all([
-        workspace.write(
-          "dist/mcp/main.js",
-          'export const runEntrypoint = () => process.stdout.write(JSON.stringify({ adapter: "mcp" })); export const runMcpHttpEntrypoint = (args) => process.stdout.write(JSON.stringify({ adapter: "mcp-http", args }));\n',
-        ),
-        workspace.write(
-          "dist/cli-runtime/mcpDoctor.js",
-          'export const runProductionMcpDoctorCli = (args, input) => Promise.resolve({ output: JSON.stringify({ adapter: "mcp-doctor", args, stdoutIsTerminal: input.stdoutIsTerminal }), exitCode: 0 });\n',
-        ),
-      ]);
 
       const invoke = async (args: readonly string[]): Promise<unknown> => {
         const { exitCode, stdout } = await processes.run(
@@ -376,6 +392,52 @@ describe("executable dispatcher", () => {
   );
 });
 
+describe("executable dispatcher argument routing", () => {
+  workspaceCliTest(
+    "keeps a transport option without its mode with the HTTP reader",
+    async ({ processes, workspace }) => {
+      await installCliRuntime(
+        workspace,
+        'export const closeCliResources = () => {}; export const createCli = () => ({ serve: (args) => process.stdout.write(JSON.stringify({ adapter: "cli", args })) });\n',
+      );
+      await installMcpDispatchStubs(workspace);
+      const result = await processes.run(
+        process.execPath,
+        [workspace.path("scripts/rea.mjs"), "mcp", "--port", "8765"],
+        { cwd: workspace.root },
+      );
+      expect(JSON.parse(result.stdout)).toEqual({
+        adapter: "mcp-http",
+        args: ["--port", "8765"],
+      });
+    },
+  );
+
+  workspaceCliTest(
+    "keeps an output flag's value with the output reader",
+    async ({ processes, workspace }) => {
+      await installCliRuntime(
+        workspace,
+        'export const closeCliResources = () => {}; export const createCli = () => ({ serve: (args) => process.stdout.write(JSON.stringify({ adapter: "cli", args })) });\n',
+      );
+      await installMcpDispatchStubs(workspace);
+      const result = await processes.run(
+        process.execPath,
+        [workspace.path("scripts/rea.mjs"), "mcp", "--format", "--http"],
+        { cwd: workspace.root },
+      );
+      // The output reader owns `--format` and refuses its `--http` value before
+      // any command runs; reaching the MCP HTTP stub would mean it was data no
+      // longer and became a mode.
+      expect(result).toMatchObject({ exitCode: 1 });
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        ok: false,
+        error: { code: "INVALID_OUTPUT_VALUE" },
+      });
+    },
+  );
+});
+
 describe("executable dispatcher JavaScript shutdown", () => {
   workspaceCliTest.for([false, true])(
     "handles a thrown pipe error while preserving mixed cleanup failure: %s",
@@ -460,7 +522,7 @@ describe("executable dispatcher JavaScript shutdown", () => {
       await installCliRuntime(
         workspace,
         'export const closeCliResources = () => { globalThis.cleaned = true; return Promise.reject(new Error("worker still owned")); }; export const createCli = () => ({ serve: (_args, options) => { options.exit(); } });\n',
-        'export const createCliResultOutput = () => ({ handled: false, failed: false, finish: async () => { if (!globalThis.cleaned) throw new Error("output preceded cleanup"); } });\n',
+        'export const cliOutputCancellationStatus = () => undefined; export const createCliResultOutput = () => ({ handled: false, failed: false, finish: async () => { if (!globalThis.cleaned) throw new Error("output preceded cleanup"); } });\n',
       );
       const result = await processes.run(
         process.execPath,
@@ -479,7 +541,7 @@ describe("executable dispatcher JavaScript shutdown", () => {
       await installCliRuntime(
         workspace,
         "export const closeCliResources = () => Promise.resolve(); export const createCli = () => ({ serve: (_args, options) => { options.exit(); } });\n",
-        'export const createCliResultOutput = () => ({ handled: false, failed: false, finish: async () => { throw new Error("output completion failed"); } });\n',
+        'export const cliOutputCancellationStatus = () => undefined; export const createCliResultOutput = () => ({ handled: false, failed: false, finish: async () => { throw new Error("output completion failed"); } });\n',
       );
       const result = await processes.run(
         process.execPath,
