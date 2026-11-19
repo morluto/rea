@@ -45,7 +45,10 @@ import {
   readMachoHeaderPrefixFacts,
 } from "../../domain/apple/machoContainer.js";
 import { readElfFixedHeader } from "../../domain/elfFixedHeader.js";
-import { readMachoLoadCommandTableHeader } from "../../domain/apple/machoLoadCommands.js";
+import {
+  MachoLoadCommandCursor,
+  readMachoLoadCommandTableHeader,
+} from "../../domain/apple/machoLoadCommands.js";
 import {
   ELF_NOTE_HEADER_BYTES,
   elfNoteAlignment,
@@ -300,7 +303,6 @@ const locateThinMachO = async (
   const {
     headerSize,
     littleEndian: little,
-    commandCount: ncmds,
     commandBytes: sizeofcmds,
   } = framing.value;
   const limits = carrier.limits ?? DEFAULT_NODE_SEA_READER_LIMITS;
@@ -315,22 +317,17 @@ const locateThinMachO = async (
   const commands = await readExact(carrier, base + headerSize, sizeofcmds);
   if (commands === undefined) return [];
   const found: BlobRange[] = [];
-  let offset = 0;
-  let seen = 0;
-  while (offset + 8 <= commands.length && seen < ncmds) {
+  const cursor = new MachoLoadCommandCursor(framing.value);
+  while (cursor.nextOffset !== null) {
     abortIfNeeded(carrier.signal);
-    const cmd = readU32(commands, offset, little);
-    const cmdsize = readU32(commands, offset + 4, little);
-    if (cmdsize < 8 || offset + cmdsize > commands.length) {
-      if (found.length > 0)
-        throw formatFailure(NODE_SEA_MACHO_COMMANDS_TRUNCATED);
-      return found;
-    }
+    const read = cursor.read(commands.subarray(cursor.nextOffset));
+    if (!read.ok) break;
+    const { command: cmd, offset, size } = read.value;
     if (cmd === LC.SEGMENT || cmd === LC.SEGMENT_64) {
       const segment64 = cmd === LC.SEGMENT_64;
       const sectionSize = segment64 ? 80 : 68;
       const parsedSegment = readMachoSegmentHeader(
-        commands.subarray(offset, offset + cmdsize),
+        commands.subarray(offset, offset + size),
         segment64,
         little,
       );
@@ -346,10 +343,7 @@ const locateThinMachO = async (
         const segmentHeader = segment.headerSize;
         const nsects = segment.sectionCount;
         const table = offset + segmentHeader;
-        if (
-          nsects > Math.floor((cmdsize - segmentHeader) / sectionSize) ||
-          table + nsects * sectionSize > offset + cmdsize
-        )
+        if (nsects > Math.floor((size - segmentHeader) / sectionSize))
           throw formatFailure(NODE_SEA_MACHO_SEGMENT_TRUNCATED);
         for (let index = 0; index < nsects; index += 1) {
           const section = table + index * sectionSize;
@@ -378,10 +372,8 @@ const locateThinMachO = async (
         }
       }
     }
-    offset += cmdsize;
-    seen += 1;
   }
-  if (found.length > 0 && (seen !== ncmds || offset !== commands.length))
+  if (found.length > 0 && !cursor.finish().ok)
     throw formatFailure(NODE_SEA_MACHO_COMMANDS_TRUNCATED);
   return found;
 };
@@ -746,6 +738,3 @@ const cString = (bytes: Buffer, offset: number, length: number): string => {
   while (end < limit && bytes[end] !== 0) end += 1;
   return bytes.toString("latin1", offset, end);
 };
-
-const readU32 = (bytes: Buffer, offset: number, little: boolean): number =>
-  little ? bytes.readUInt32LE(offset) : bytes.readUInt32BE(offset);

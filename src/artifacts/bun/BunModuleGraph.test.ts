@@ -457,3 +457,25 @@ it("recognizes an ELF Bun section name deep in the string table by reading only 
   });
   expect(observed.bytesRead).toBeLessThan(1024);
 });
+
+it.each([
+  ["missing command", (image: Buffer) => image.writeUInt32LE(2, 16)],
+  [
+    "unused command bytes",
+    (image: Buffer) => image.writeUInt32LE(image.readUInt32LE(20) + 8, 20),
+  ],
+] as const)("refuses a Mach-O Bun graph with %s", async (_label, damage) => {
+  const image = machoBunSection(
+    bunPrefixedPayload(
+      bunModuleGraphPayload({
+        modules: [{ name: "main.js", contents: Buffer.from("hello") }],
+      }),
+    ),
+  );
+  damage(image);
+  const { result } = await probe(image);
+  expect(result).toMatchObject({
+    status: "present",
+    failure: { reason: "format" },
+  });
+});

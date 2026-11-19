@@ -1169,7 +1169,7 @@ it.each(["__TEXT", "NODE_SEA"])(
   },
 );
 
-it("retains SEA admission for a complete segment with a nonaligned command size", async () => {
+it("leaves a SEA section in a misaligned Mach-O command unrecognized", async () => {
   const original = nodeSeaMachO();
   const commandSize = original.readUInt32LE(20);
   const payloadAt = 32 + commandSize;
@@ -1187,11 +1187,7 @@ it("retains SEA admission for a complete segment with a nonaligned command size"
     "r",
   );
   try {
-    expect(await locateNodeSea(handle, bytes.length)).toEqual({
-      carrier: "mach-o",
-      blobOffset: payloadAt + 1,
-      blobLength: Number(original.readBigUInt64LE(32 + 72 + 40)),
-    });
+    expect(await locateNodeSea(handle, bytes.length)).toBeUndefined();
   } finally {
     await handle.close();
   }

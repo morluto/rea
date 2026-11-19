@@ -38,6 +38,8 @@ classification while the root occurrence represents the SEA container.
 
 REA reports a named Mach-O SEA section as malformed when it declares zero-fill
 or falls outside its containing segment's file or virtual address range.
+The load command containing the section must be aligned and within the declared
+command table. A framing failure later in that table prevents blob recovery.
 
 Root `format_metadata` preserves raw flags, decoded flags, code path, blob
 location, exec arguments and fuse observations. Main and asset children retain

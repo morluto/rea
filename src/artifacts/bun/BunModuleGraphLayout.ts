@@ -122,6 +122,8 @@ interface SectionWindow {
   readonly available: number;
   /** The declared section extent ends past EOF. */
   readonly truncated: boolean;
+  /** The Mach-O table could not be fully framed after this section was located. */
+  readonly loadCommandsFailure?: string;
 }
 
 type SectionClaim = SectionWindow | { readonly failure: ArtifactReaderFailure };
@@ -387,6 +389,10 @@ const evaluateSection = async (
   );
   const failure = suffixFailure(suffix, length, limits);
   if (failure !== undefined) return presentFailure(failure);
+  if (claim.loadCommandsFailure !== undefined)
+    return presentFailure(
+      bunFormatFailure(`Mach-O load commands: ${claim.loadCommandsFailure}`),
+    );
   return {
     status: "present",
     claim: { carrier: claim.carrier, payloadOffset, payloadLength: length },
@@ -521,10 +527,14 @@ const machOClaims = async (
   if (commands === null || commands.length !== sizeofcmds) return [];
   const claims: SectionClaim[] = [];
   const cursor = new MachoLoadCommandCursor(table);
+  let framingFailure: string | undefined;
   while (cursor.nextOffset !== null) {
     abortIfNeeded(signal);
     const read = cursor.read(commands.subarray(cursor.nextOffset));
-    if (!read.ok) break;
+    if (!read.ok) {
+      framingFailure = read.error;
+      break;
+    }
     const { command: cmd, offset, size } = read.value;
     if (cmd === LC.SEGMENT_64 || cmd === LC.SEGMENT)
       for (const claim of segmentClaims(
@@ -536,7 +546,15 @@ const machOClaims = async (
       ))
         claims.push(claim);
   }
-  return claims;
+  const complete = cursor.finish();
+  if (!complete.ok) framingFailure ??= complete.error;
+  return framingFailure === undefined
+    ? claims
+    : claims.map((claim) =>
+        "failure" in claim
+          ? claim
+          : { ...claim, loadCommandsFailure: framingFailure },
+      );
 };
 
 const segmentClaims = (
