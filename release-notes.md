@@ -192,6 +192,7 @@
 * **artifacts:** report ZIP bytes the central directory does not account for ([#10580](https://github.com/morluto/rea/issues/10580)) ([a395104](https://github.com/morluto/rea/commit/a395104168e124b62595a954c91e9b0ebdd6842c))
 * **artifacts:** require DOS magic before applying Windows path semantics ([#12340](https://github.com/morluto/rea/issues/12340)) ([7758d03](https://github.com/morluto/rea/commit/7758d03c5d1744057b43f4feafd5c1a3e899fe72))
 * **artifacts:** require each reader traversal to declare its coverage ([#10572](https://github.com/morluto/rea/issues/10572)) ([2f4c588](https://github.com/morluto/rea/commit/2f4c588584c3e02e2ca997c0db60ebb2f4489d3d))
+* **artifacts:** retain parser limits in inventory failures ([#12435](https://github.com/morluto/rea/issues/12435)) ([bc7ed74](https://github.com/morluto/rea/commit/bc7ed746deff07356f216b9817473fc21e9bd687))
 * **artifacts:** run hdiutil under owned supervision with a SIGTERM-first stop ([#11632](https://github.com/morluto/rea/issues/11632)) ([d0dded7](https://github.com/morluto/rea/commit/d0dded7d6e9bbce720b1c2f749276ba338864841))
 * **artifacts:** verify Android OTA operation data hashes ([#12043](https://github.com/morluto/rea/issues/12043)) ([d084b19](https://github.com/morluto/rea/commit/d084b1987ff8290e777292855b782c4ea2b30efc))
 * **artifacts:** verify FAT identities before Bun and Node SEA claims ([#12288](https://github.com/morluto/rea/issues/12288)) ([1e5956a](https://github.com/morluto/rea/commit/1e5956a5878a0e9a0a29c6cc2df9ab9a79cb341c))
