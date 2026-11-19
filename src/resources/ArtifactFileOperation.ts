@@ -1,4 +1,5 @@
 import type { FileHandle } from "node:fs/promises";
+import { scheduler } from "node:timers/promises";
 import {
   RegularFileOperationCancelled,
   type StableRegularFileDescriptor,
@@ -243,6 +244,17 @@ export const assertArtifactReadActive = (
     throw new ArtifactReaderFailure("cancelled", "Artifact read cancelled", {
       cause: signal.reason,
     });
+};
+
+/**
+ * Let a queued abort land, then report it. Synchronous multi-frame decoding
+ * cannot observe the signal until the caller yields.
+ */
+export const yieldArtifactRead = async (
+  signal: AbortSignal | undefined,
+): Promise<void> => {
+  await scheduler.yield();
+  assertArtifactReadActive(signal);
 };
 
 /**

@@ -43,6 +43,61 @@ cliTest(
   },
 );
 
+cliTest(
+  "preserves the check-source bit and discloses when it is inactive",
+  async ({ cli }) => {
+    const directory = await createTestTempDirectory("rea-pyc-header-flags-");
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected file MCP session");
+
+    for (const flags of [0x02, 0x03]) {
+      const hashBased = flags === 0x03;
+      const path = join(directory, `flags-${flags}.pyc`);
+      await writeFile(
+        path,
+        pythonPycFixture("py311", {
+          header: {
+            flags,
+            mtime: 7,
+            sourceSize: 11,
+            sourceHash: Buffer.from("0102030405060708", "hex"),
+          },
+        }),
+      );
+
+      const response = await cli.run({
+        arguments: ["inspect-python-pyc", path, "--json"],
+      });
+      expect(response.exitCode, response.stderr).toBe(0);
+      const report = completePycEvidenceSchema.parse(
+        response.json,
+      ).normalized_result;
+      expect(report.header).toMatchObject({
+        flags,
+        check_source: true,
+        hash_based: hashBased,
+        source_hash_hex: hashBased ? "0102030405060708" : null,
+        source_mtime: hashBased ? null : 7,
+        source_size: hashBased ? null : 11,
+      });
+      expect(
+        report.limitations.some((note) =>
+          note.includes(
+            "check_source bit is set but applies only to hash-based",
+          ),
+        ),
+      ).toBe(!hashBased);
+
+      const mcp = await call("inspect_python_pyc", { path });
+      expect(mcp.isError).not.toBe(true);
+      expect(
+        completePycEvidenceSchema.parse(mcp.structuredContent)
+          .normalized_result,
+      ).toEqual(report);
+    }
+  },
+);
+
 const marshalUtf8 = (bytes: Buffer): Buffer => {
   const length = Buffer.alloc(4);
   length.writeUInt32LE(bytes.length);

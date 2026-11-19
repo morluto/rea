@@ -1,4 +1,8 @@
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
+import {
+  projectZstandardFrameAllowance,
+  ZstandardFrameAllowanceError,
+} from "../domain/compression/zstandardFrameAllowance.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import { InternalInvariantError } from "../domain/internalInvariant.js";
@@ -18,6 +22,8 @@ export const translateArtifactFailure = (
   cause: unknown,
 ): AnalysisError => {
   if (cause instanceof InternalInvariantError) throw cause;
+  if (cause instanceof ZstandardFrameAllowanceError)
+    return projectZstandardFrameAllowance(operation, cause);
   if (cause instanceof ArtifactReaderFailure) {
     const error = new ArtifactOperationError(
       operation,

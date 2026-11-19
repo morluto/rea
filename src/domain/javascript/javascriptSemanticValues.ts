@@ -1,8 +1,6 @@
 import type { JavaScriptSemanticPrecision } from "./javascriptSemanticPrecision.js";
 import {
   applySemanticBindingReferenceEffects,
-  capturedBindingPathMayHaveChanged,
-  hasRecordedReferenceEffects,
   opaqueCodeMayRebindBinding,
 } from "./javascriptSemanticEffectLog.js";
 import * as t from "@babel/types";
@@ -41,7 +39,6 @@ import { readSemanticRequireOriginCandidate } from "./javascriptSemanticRequireO
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
   readExactJavaScriptLiteral,
-  staticObjectPropertyReader,
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
@@ -98,8 +95,15 @@ type ReadSnapshotValues = WeakMap<
   Map<string, Map<number, ReadSnapshotValue>>
 >;
 
+type CapturedBindingValues = WeakMap<
+  t.Node,
+  Map<string, JavaScriptSemanticValue>
+>;
+
 /** Read/provenance memos live for one query; whole values follow state effects. */
 interface EvaluationMemo {
+  /** Capture snapshots scoped to this evaluation instead of the source state. */
+  readonly capturedBindings?: CapturedBindingValues;
   snapshotValues?: ReadSnapshotValues;
   capturedSnapshotValues?: WeakMap<t.Node, ReadSnapshotValues>;
   readonly provenance: Map<
@@ -119,6 +123,7 @@ const dependencyProofsByState = new WeakMap<
 
 const createEvaluationMemo = (
   state: JavaScriptSemanticAnalysisState,
+  capturedBindings?: CapturedBindingValues,
 ): EvaluationMemo => {
   let dependencies = dependencyProofsByState.get(state);
   if (dependencies === undefined) {
@@ -128,6 +133,7 @@ const createEvaluationMemo = (
     dependencyProofsByState.set(state, dependencies);
   }
   return {
+    ...(capturedBindings === undefined ? {} : { capturedBindings }),
     provenance: new Map(),
     dependencyFrames: [],
     dependencies: dependencies.forQuery(),
@@ -181,7 +187,7 @@ const primitiveExpressionValuesByState = new WeakMap<
 
 const capturedBindingValuesByState = new WeakMap<
   JavaScriptSemanticAnalysisState,
-  WeakMap<t.Node, Map<string, JavaScriptSemanticValue>>
+  CapturedBindingValues
 >();
 
 /** Discard every state-owned value derived before the effects boundary changed. */
@@ -242,71 +248,48 @@ export const evaluateSemanticBinding = (
         memo: createEvaluationMemo(state),
       });
 
+const expressionEvaluationContext = (
+  state: JavaScriptSemanticAnalysisState,
+  captureScope: "state" | "query" = "state",
+): EvaluationContext => ({
+  state,
+  bindings: new Map(),
+  expressionDepth: 0,
+  primitiveBindingValues: primitiveBindingValuesFor(state),
+  dependence: { lowest: CALLER_INDEPENDENT },
+  memo: createEvaluationMemo(
+    state,
+    captureScope === "query" ? new WeakMap() : undefined,
+  ),
+});
+
+/** Select control-flow branches without merging their distinct source values. */
+export const semanticSelectedBranchNodesAt = (
+  node: t.ConditionalExpression | t.LogicalExpression,
+  state: JavaScriptSemanticAnalysisState,
+  capture: t.Node,
+): readonly t.Node[] => {
+  const context = expressionEvaluationContext(state);
+  return semanticSelectedBranches(
+    node,
+    captureContextAt(capture, context) ?? context,
+  ).map(({ node }) => node);
+};
+
 /** Evaluate an inert expression, optionally at an earlier reference capture. */
 export const evaluateSemanticExpression = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
   capturePoint?: t.Node,
+  captureScope: "state" | "query" = "state",
 ): JavaScriptSemanticValue => {
-  const context: EvaluationContext = {
-    state,
-    bindings: new Map(),
-    expressionDepth: 0,
-    primitiveBindingValues: primitiveBindingValuesFor(state),
-    dependence: { lowest: CALLER_INDEPENDENT },
-    memo: createEvaluationMemo(state),
-  };
+  const context = expressionEvaluationContext(state, captureScope);
   return capturePoint === undefined
     ? evaluateCapturedExpression(node, context)
     : evaluateExpression(
         node,
         captureContextAt(capturePoint, context) ?? context,
       );
-};
-
-/** Prove a direct data slot at a read without evaluating the entire object at each read. */
-export const createSemanticReadPresenceQuery = (
-  state: JavaScriptSemanticAnalysisState,
-) => {
-  const readers = new WeakMap<
-    t.ObjectExpression,
-    ReturnType<typeof staticObjectPropertyReader>
-  >();
-  return (bindingId: string | null, capture: t.Node) => {
-    const binding =
-      bindingId === null ? undefined : state.bindingsById.get(bindingId);
-    const initializer = binding?.initializers[0];
-    if (
-      !state.memberMutationFactsComplete ||
-      binding === undefined ||
-      initializer === undefined ||
-      initializer.projection.length !== 0 ||
-      binding.referenceInitializers.length !== 0 ||
-      !hasRecordedReferenceEffects(binding, state) ||
-      state.conditionallySkippedExpressions.has(initializer.node) ||
-      !semanticBindingPrecedesCapture(binding, capture, state.parentsByNode) ||
-      opaqueCodeMayRebindBinding(binding, state, capture)
-    )
-      return undefined;
-    const value = unwrapJavaScriptExpression(initializer.node).node;
-    if (!t.isObjectExpression(value)) return undefined;
-    return (path: readonly string[]): boolean => {
-      if (path.length === 0) return false;
-      let receiver: t.Node = value;
-      for (const key of path) {
-        if (!t.isObjectExpression(receiver)) return false;
-        let read = readers.get(receiver);
-        if (read === undefined) {
-          read = staticObjectPropertyReader(receiver);
-          readers.set(receiver, read);
-        }
-        const property = read(key);
-        if (property.status !== "explicit") return false;
-        receiver = unwrapJavaScriptExpression(property.value).node;
-      }
-      return !capturedBindingPathMayHaveChanged(binding, path, capture, state);
-    };
-  };
 };
 
 /** Resolve an expression using the same alias and module provenance owner. */
@@ -1506,7 +1489,9 @@ const captureContextAt = (
     semanticCapturePosition(node, context.state.parentsByNode) === null
   )
     return undefined;
-  let captures = capturedBindingValuesByState.get(context.state);
+  let captures =
+    context.memo.capturedBindings ??
+    capturedBindingValuesByState.get(context.state);
   if (captures === undefined) {
     captures = new WeakMap();
     capturedBindingValuesByState.set(context.state, captures);

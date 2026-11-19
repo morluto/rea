@@ -314,10 +314,23 @@ async function exerciseTrustedRetentionWithLegacyTarget(
     npmDuplicateDeleteCount: 0,
     npmDuplicateDeleteBytes: 0,
   });
-  expect(requests.trim().split("\n")).toEqual([
-    "GET repos/morluto/rea/actions/caches?per_page=100&page=1&key=rea-static-v1-Linux-X64-",
-    "DELETE repos/morluto/rea/actions/caches/1",
-  ]);
+  const calls = requests.trim().split("\n");
+  expect(calls).toHaveLength(2);
+  const [listing, deletion] = calls;
+  expect(listing).toMatch(/^GET /u);
+  const endpoint = new URL(
+    listing!.slice("GET ".length),
+    "https://example.test",
+  );
+  expect(endpoint.pathname).toBe("/repos/morluto/rea/actions/caches");
+  expect(Object.fromEntries(endpoint.searchParams)).toEqual({
+    per_page: "100",
+    page: "1",
+    sort: "created_at",
+    direction: "desc",
+    key: prefix,
+  });
+  expect(deletion).toBe("DELETE repos/morluto/rea/actions/caches/1");
 }
 
 describe("hosted npm download-cache policy", () => {

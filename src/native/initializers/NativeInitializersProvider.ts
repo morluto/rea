@@ -15,6 +15,7 @@ import {
   artifactFilePrimaryFacts,
   assertArtifactReadActive,
   type ArtifactFilePrimaryFacts,
+  type StableArtifactSnapshot,
   ArtifactResourceScope,
 } from "../../resources/index.js";
 import {
@@ -77,9 +78,10 @@ export class NativeInitializersProvider implements NativeInitializersPort {
     input: InspectNativeInitializersInput,
     options?: ExecutionOptions,
   ) {
+    let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        snapshot = await readStableArtifact(
           input.path,
           input.max_file_bytes,
           options?.signal,
@@ -101,7 +103,7 @@ export class NativeInitializersProvider implements NativeInitializersPort {
         return ok(report);
       });
     } catch (cause) {
-      return err(nativeInitializersFailure(cause, input));
+      return err(nativeInitializersFailure(cause, input, snapshot));
     }
   }
 }
@@ -264,6 +266,7 @@ const failurePrimary = (
 const nativeInitializersFailure = (
   cause: unknown,
   input: InspectNativeInitializersInput,
+  snapshot?: StableArtifactSnapshot,
 ): AnalysisError =>
   projectStableArtifactFailure(
     cause,
@@ -271,4 +274,5 @@ const nativeInitializersFailure = (
     input.path,
     NATIVE_INITIALIZERS_PROVIDER.id,
     OPERATION,
+    snapshot,
   );

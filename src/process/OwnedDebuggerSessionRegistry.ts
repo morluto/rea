@@ -1,3 +1,4 @@
+import { withInheritedCleanupOwnership } from "../domain/analysisErrorCleanup.js";
 import type {
   AnalysisError,
   AnalysisErrorOptions,
@@ -294,7 +295,7 @@ export const cancelledWithCallerReason = (
       ? {}
       : { partialObservation: previous.partialObservation }),
   });
-  if (previous?.cleanupIncomplete)
-    cancellation.bindCleanupDependencies([previous]);
-  return cancellation;
+  return previous === undefined
+    ? cancellation
+    : withInheritedCleanupOwnership(cancellation, previous);
 };

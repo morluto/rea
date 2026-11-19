@@ -10,17 +10,18 @@ import {
   type LoadRegion,
 } from "../binaryContainer.js";
 import { elfArchitecture } from "../elfFixedHeader.js";
-import { readElfDirectoryFromBuffer } from "./nativeSectionDirectory.js";
+import type { ZstandardFramePause } from "../compression/zstandardExactFrame.js";
+import type { CooperativeElfSectionNameDecoder } from "./elfSectionNameTable.js";
+import {
+  readElfDirectoryFromBuffer,
+  readElfDirectoryFromBufferCooperative,
+  type ElfSectionDirectory,
+} from "./nativeSectionDirectory.js";
 
-/** Read ELF sections and file-backed program mappings without interpreting language metadata. */
-export const readElfImage = (
+export const readElfImageFromDirectory = (
   bytes: Buffer,
-  maximumSourceAndDecodedNamesBytes?: number,
+  directory: ElfSectionDirectory,
 ): Extract<BinaryContainer, { format: "elf" }> => {
-  const directory = readElfDirectoryFromBuffer(
-    bytes,
-    maximumSourceAndDecodedNamesBytes,
-  );
   const { bits } = directory;
   const reader = new BinaryReader(bytes, directory.little, "elf");
   const mappings: FileMapping[] = [];
@@ -138,3 +139,37 @@ export const architectureForElfMachine = (machine: number): string => {
       return `elf-machine-${machine}`;
   }
 };
+
+/** Read ELF sections and file-backed program mappings without interpreting language metadata. */
+export const readElfImage = (
+  bytes: Buffer,
+  operation: string,
+  maximumSourceAndDecodedNamesBytes?: number,
+): Extract<BinaryContainer, { format: "elf" }> =>
+  readElfImageFromDirectory(
+    bytes,
+    readElfDirectoryFromBuffer(
+      bytes,
+      operation,
+      maximumSourceAndDecodedNamesBytes,
+    ),
+  );
+
+/** Same image as {@link readElfImage}. Section names yield through `pause`. */
+export const readElfImageCooperative = async (
+  bytes: Buffer,
+  operation: string,
+  pause: ZstandardFramePause,
+  maximumSourceAndDecodedNamesBytes?: number,
+  decode?: CooperativeElfSectionNameDecoder,
+): Promise<Extract<BinaryContainer, { format: "elf" }>> =>
+  readElfImageFromDirectory(
+    bytes,
+    await readElfDirectoryFromBufferCooperative(
+      bytes,
+      pause,
+      operation,
+      maximumSourceAndDecodedNamesBytes,
+      decode,
+    ),
+  );

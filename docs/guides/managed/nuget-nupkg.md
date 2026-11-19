@@ -73,8 +73,12 @@ When selection is missing or ambiguous, `nuspec` is `null` and the inventory
 still succeeds with a limitation.
 
 The `.nuspec` is chosen from a unique OPC relationship with Type
-`http://schemas.microsoft.com/packaging/2010/07/manifest` when that target exists in the ZIP. Otherwise a unique `.nuspec` at
-the package root is used. Multiple conflicting manifests are not decoded.
+`http://schemas.microsoft.com/packaging/2010/07/manifest` when that target
+exists in the ZIP. Both `Relationships` and `Relationship` must use the OPC
+relationships namespace. The inspector skips other child elements and still
+considers eligible relationships beside them. Without an eligible target, it
+uses a unique `.nuspec` at the package root. Multiple conflicting manifests
+are not decoded.
 
 ## Limits and failures
 

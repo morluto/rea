@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { inesFixture } from "../../fixtures/ines.js";
+import { inesFixture, nes2Fixture } from "../../fixtures/ines.js";
 import {
   inventoryArtifact,
   scanArtifactInventory,
@@ -219,15 +219,165 @@ it("inventories and reconstructs all bytes without trainer or CHR ROM", async ()
   }
 });
 
+it("routes, inventories and extracts NES 2.0 regions with miscellaneous ROM bytes", async () => {
+  const root = await createTestTempDirectory("rea-nes2-inventory-");
+  const path = join(root, "fixture.nes");
+  const bytes = nes2Fixture({
+    trainer: true,
+    // Submapper 2, mapper bits 8..11 = 1, 8 KiB PRG-RAM, one misc ROM.
+    header: { 8: 0x21, 10: 0x07, 14: 1 },
+    miscRom: Buffer.from("misc rom bytes"),
+  });
+  await writeFile(path, bytes);
+  expect(await parseBinaryTarget(path)).toMatchObject({
+    ok: true,
+    value: { kind: "archive", format: "ines" },
+  });
+  const inventory = await inventoryArtifact(path);
+  expect(inventory.manifest.root_format).toBe("ines");
+  expect(inventory.ines?.header).toMatchObject({
+    format: "nes-2.0",
+    header_hex: bytes.subarray(0, 16).toString("hex"),
+    prg_rom_units_16k: 2,
+    chr_rom_bytes: 8_192,
+    mapper: 0x113,
+    submapper: 2,
+    trainer_present: true,
+    prg_ram_bytes: 8_192,
+    misc_rom_count: 1,
+  });
+  expect(inventory.ines?.reconstruction).toEqual({
+    region_order: [
+      "header.bin",
+      "trainer.bin",
+      "prg/000.bin",
+      "prg/001.bin",
+      "chr/000.bin",
+      "misc-rom.bin",
+    ],
+    bytes: bytes.length,
+    sha256: sha256(bytes),
+    verified: true,
+  });
+  const misc = inventory.occurrences.find(
+    ({ logical_path }) => logical_path === "misc-rom.bin",
+  );
+  expect(misc?.source_location).toMatchObject({
+    offset: bytes.length - 14,
+    length: 14,
+  });
+
+  const scope = new ArtifactResourceScope();
+  const outputRoot = join(root, "extracted");
+  try {
+    await extractArtifact({
+      inputPath: path,
+      inputFormat: "ines",
+      outputRoot,
+      environment: process.env,
+      integrityPolicy: "fail",
+      resourceScope: scope,
+    });
+    const reconstructed = Buffer.concat(
+      await Promise.all(
+        (inventory.ines?.reconstruction.region_order ?? []).map((region) =>
+          readFile(join(outputRoot, region)),
+        ),
+      ),
+    );
+    expect(reconstructed.equals(bytes)).toBe(true);
+  } finally {
+    await scope.close();
+  }
+});
+
+it("extracts an exponent-sized PRG-ROM area beside a counted CHR-ROM area", async () => {
+  const root = await createTestTempDirectory("rea-nes2-exponent-");
+  const path = join(root, "fixture.nes");
+  // Byte 9's PRG nibble 0xf selects the exponent form: 2^10 * (2 * 1 + 1).
+  // Its CHR nibble 0 keeps one counted 8 KiB unit.
+  const header = Buffer.from([
+    0x4e,
+    0x45,
+    0x53,
+    0x1a,
+    (10 << 2) | 1,
+    1,
+    0,
+    0x08,
+    0,
+    0x0f,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+  ]);
+  const prg = Buffer.from(Array.from({ length: 3_072 }, (_, at) => at % 251));
+  const chr = Buffer.from(
+    Array.from({ length: 8_192 }, (_, at) => 255 - (at % 241)),
+  );
+  const bytes = Buffer.concat([header, prg, chr]);
+  await writeFile(path, bytes);
+  const inventory = await inventoryArtifact(path);
+  expect(inventory.ines?.header).toMatchObject({
+    format: "nes-2.0",
+    prg_rom_bytes: 3_072,
+    chr_rom_units_8k: 1,
+    chr_rom_bytes: 8_192,
+  });
+  // An exponent-sized area has no unit count to report.
+  expect(inventory.ines?.header).not.toHaveProperty("prg_rom_units_16k");
+  expect(inventory.ines?.reconstruction).toEqual({
+    region_order: ["header.bin", "prg.bin", "chr/000.bin"],
+    bytes: bytes.length,
+    sha256: sha256(bytes),
+    verified: true,
+  });
+  const location = (logicalPath: string) =>
+    inventory.occurrences.find(
+      ({ logical_path }) => logical_path === logicalPath,
+    )?.source_location;
+  expect(location("prg.bin")).toMatchObject({ offset: 16, length: 3_072 });
+  expect(location("chr/000.bin")).toMatchObject({
+    offset: 16 + 3_072,
+    length: 8_192,
+  });
+
+  const scope = new ArtifactResourceScope();
+  const outputRoot = join(root, "extracted");
+  try {
+    await extractArtifact({
+      inputPath: path,
+      inputFormat: "ines",
+      outputRoot,
+      environment: process.env,
+      integrityPolicy: "fail",
+      resourceScope: scope,
+    });
+    const [extractedPrg, extractedChr, extractedHeader] = await Promise.all([
+      readFile(join(outputRoot, "prg.bin")),
+      readFile(join(outputRoot, "chr/000.bin")),
+      readFile(join(outputRoot, "header.bin")),
+    ]);
+    expect(extractedPrg.equals(prg)).toBe(true);
+    expect(extractedChr.equals(chr)).toBe(true);
+    expect(
+      Buffer.concat([extractedHeader, extractedPrg, extractedChr]).equals(
+        bytes,
+      ),
+    ).toBe(true);
+  } finally {
+    await scope.close();
+  }
+});
+
 it.each([
   {
-    name: "NES 2.0",
-    bytes: () => {
-      const bytes = inesFixture();
-      bytes[7] = 8;
-      return bytes;
-    },
-    reason: "nes-2.0",
+    name: "oversized NES 2.0",
+    bytes: () => nes2Fixture({ header: { 9: 0x01 } }),
+    reason: "truncated NES 2.0 payload",
   },
   { name: "UNIF", bytes: () => Buffer.from("UNIF"), reason: "unif" },
   {

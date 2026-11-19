@@ -306,6 +306,14 @@ const unretainedSize =
 it.each([
   ["-1000", invalidSize("size -1000")],
   ["1.5", invalidSize("size 1.5")],
+  [
+    "1.0000000000000000001",
+    'ASAR entry declares numeric size "1.0000000000000000001", which does not exactly represent a non-negative safe integer.',
+  ],
+  [
+    "1e-1000",
+    'ASAR entry declares numeric size "1e-1000", which does not exactly represent a non-negative safe integer.',
+  ],
   ['"12"', invalidSize('size "12"')],
   ["null", invalidSize("a null size")],
   ["true", invalidSize("a boolean size")],
@@ -386,6 +394,30 @@ it.each([
     });
     expect(occurrence("main.js")?.hash_status).toBe("verified");
     expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
+  },
+);
+
+it.each(["1.0000000000000000000", "10e-1"] as const)(
+  "uses an exactly integral ASAR size spelled %s",
+  async (sizeText) => {
+    const bytes = Buffer.concat([
+      asarHeaderBytes(
+        `{"files":{"member.txt":{"size":${sizeText},"offset":"0"}}}`,
+      ),
+      Buffer.from("x"),
+    ]);
+    const path = await archiveWith(bytes);
+    const reader = new AsarArtifactReader(path);
+    try {
+      for await (const entry of reader.entries()) {
+        expect(entry.declaredSize).toBe(1);
+        expect((await buffer(await reader.open(entry))).toString()).toBe("x");
+        return;
+      }
+      throw new Error("The member was not listed");
+    } finally {
+      await reader.close();
+    }
   },
 );
 

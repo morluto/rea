@@ -12,6 +12,7 @@ import {
   ArtifactReaderFailure,
   type StableArtifactSnapshot,
   readStableArtifact,
+  yieldArtifactRead,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   ArtifactResourceScope,
@@ -20,6 +21,11 @@ import type { ElfNotesPort } from "../../ports/binaryDiagnostics/ElfNotesPort.js
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { decodeLimit } from "../../domain/parseFailure.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import {
+  projectZstandardFrameAllowance,
+  ZstandardFrameAllowanceError,
+} from "../../domain/compression/zstandardFrameAllowance.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
   MAX_INSPECT_ELF_NOTE_ENTRIES,
@@ -28,8 +34,11 @@ import {
 } from "../../domain/native/elfNotes.js";
 import { err, ok } from "../../domain/result.js";
 import { ELF_NOTES_PROVIDER } from "../../domain/investigationProviders.js";
-import { ELF_NOTE_TEXT_ALLOWANCE, parseElfNotes } from "./ElfNoteParser.js";
 import { elfSectionNameBudget } from "../../domain/native/elfSectionNameTable.js";
+import {
+  ELF_NOTE_TEXT_ALLOWANCE,
+  parseElfNotesCooperative,
+} from "./ElfNoteParser.js";
 
 const OPERATION = "inspect_elf_notes";
 
@@ -62,7 +71,7 @@ export class ElfNotesProvider implements ElfNotesPort {
           this.#resources,
         );
         return ok(
-          parseElfNotes(
+          await parseElfNotesCooperative(
             snapshot.bytes,
             {
               path: input.path,
@@ -70,6 +79,7 @@ export class ElfNotesProvider implements ElfNotesPort {
               bytes: snapshot.bytes.length,
             },
             input,
+            () => yieldArtifactRead(options?.signal),
           ),
         );
       });
@@ -101,6 +111,9 @@ const elfNotesFailurePrimary = (
   input: InspectElfNotesInput,
 ) => {
   const { cause, origin } = facts;
+  if (cause instanceof AnalysisError) return cause;
+  if (cause instanceof ZstandardFrameAllowanceError)
+    return projectZstandardFrameAllowance(OPERATION, cause);
   const sectionNameBudget = elfSectionNameBudget(cause);
   if (isParseLimit(cause, "elf") && sectionNameBudget !== undefined)
     return parseLimitConstraint(OPERATION, "memory", cause, {

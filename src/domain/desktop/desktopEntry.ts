@@ -37,6 +37,8 @@ const ENTRY = new RegExp(
   "su",
 );
 const valueEscape = new RegExp(DESKTOP_VALUE_ESCAPE, "gu");
+// GLib strips its ASCII whitespace from the raw boolean. LF ends the record.
+const TERMINAL_TRUE = /^[ \t\f\r]*(?:true|1)[ \t\f\r]*$/u;
 
 /** Undo the escapes the desktop entry format allows in string values. */
 const unescapeValue = (value: string): string =>
@@ -127,9 +129,8 @@ const readDesktopEntryFields = (text: string) => {
     if (group !== DESKTOP_ENTRY_GROUP || entry?.groups === undefined) continue;
     const { key, value } = entry.groups;
     if (key !== undefined && value !== undefined)
-      // Keep the existing enum/boolean token treatment before value unescaping.
       fields.set(key, {
-        value: key === "Type" || key === "Terminal" ? value.trimEnd() : value,
+        value: key === "Type" ? value.trimEnd() : value,
         part: index,
       });
   }
@@ -157,7 +158,7 @@ export const parseDesktopEntry = (
     startup_wm_class: field("StartupWMClass"),
     categories: listValue(rawField("Categories")),
     mime_types: listValue(rawField("MimeType")),
-    terminal: field("Terminal") === "true",
+    terminal: TERMINAL_TRUE.test(rawField("Terminal") ?? ""),
   });
 };
 

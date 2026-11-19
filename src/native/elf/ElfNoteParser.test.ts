@@ -653,7 +653,7 @@ it.each([
     bytes.set([0x41, 0x42, 0xe9, 0], bytes.length - 4);
     bytes.writeUInt32LE(offset, 64 + 2 * 64);
     const notes = parse(bytes);
-    const directory = readElfDirectoryFromBuffer(bytes);
+    const directory = readElfDirectoryFromBuffer(bytes, "elf-directory");
     expect(notes.tables[0]?.name).toBe(name);
     expect(directory.sections[2]).toMatchObject({ name, name_state: state });
     if (name === null) {
@@ -675,7 +675,7 @@ it.each([65535, 65536])(
     bytes[bytes.length - 1] = 0;
     const name = "A".repeat(terminatorOffset);
     const notes = parse(bytes);
-    const directory = readElfDirectoryFromBuffer(bytes);
+    const directory = readElfDirectoryFromBuffer(bytes, "elf-directory");
     expect(notes.tables[0]?.name).toBe(name);
     expect(notes.coverage.status).toBe("complete");
     expect(directory.sections[2]).toMatchObject(
@@ -757,14 +757,16 @@ it("checks direct section count encoding in notes and the native directory", () 
   bytes.writeBigUInt64LE(0n, sectionZero + 32);
   bytes.writeUInt16LE(0xfeff, 60);
   expect(parse(bytes).tables[0]?.name).toBe(".note.gnu.build-id");
-  expect(readElfDirectoryFromBuffer(bytes).sections[1]?.name).toBe(
-    ".note.gnu.build-id",
-  );
+  expect(
+    readElfDirectoryFromBuffer(bytes, "elf-directory").sections[1]?.name,
+  ).toBe(".note.gnu.build-id");
 
   bytes.writeUInt16LE(0xff00, 60);
   const reason = /e_shnum uses a reserved direct section count/u;
   expect(() => parse(bytes)).toThrow(reason);
-  expect(() => readElfDirectoryFromBuffer(bytes)).toThrow(reason);
+  expect(() => readElfDirectoryFromBuffer(bytes, "elf-directory")).toThrow(
+    reason,
+  );
 });
 
 const repeatedNotes = (count: number, notes: Buffer): Buffer => {

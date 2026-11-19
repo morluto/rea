@@ -461,6 +461,30 @@ function expectAmbientEffectPaths({
 }
 
 it.each([
+  {
+    source:
+      "const proto=Object.getPrototypeOf([]);proto[Symbol.iterator]=function*(){};",
+    writes: [["global", "Array", "prototype", null]],
+    escapes: [],
+  },
+  {
+    source:
+      "change();function change(){const proto=Reflect.getPrototypeOf([]);proto[Symbol.iterator]=function*(){};}",
+    writes: [["global", "Array", "prototype", null]],
+    escapes: [],
+  },
+  {
+    source:
+      "const Object={getPrototypeOf:()=>({})};const proto=Object.getPrototypeOf([]);proto[Symbol.iterator]=function*(){};",
+    writes: [],
+    escapes: [],
+  },
+])(
+  "keeps native array prototype identity through $source",
+  expectAmbientEffectPaths,
+);
+
+it.each([
   { source: "(function(g){})(this);", writes: [], escapes: [] },
   { source: "(function(){})(this);", writes: [], escapes: [] },
   {
