@@ -50,6 +50,7 @@ const expectedDependencies = [
   ["arrayObject", ["0", "mode"]],
   ["nestedElement", ["items", "0"]],
   ["innerElement", ["0", "0"]],
+  ["siblingInnerElement", ["1", "0"]],
   ["spreadElement", ["1"]],
   ["aliasedPrototypeElement", ["0", "0"], "candidate"],
   ["selected", ["0"], "candidate"],
@@ -72,6 +73,7 @@ const tracedBindings = [
   "arrayObject",
   "nestedElement",
   "innerElement",
+  "siblingInnerElement",
   "spreadElement",
   "aliasedPrototypeElement",
   "selected",
@@ -124,9 +126,10 @@ cliTest(
     const nestedSource = { items: ["nested"] };
     const { items: [nestedElement] } = nestedSource;
     nestedSource.items[0] = "later";
-    const nestedPairs = [["read-time"]];
-    const [[innerElement]] = nestedPairs;
+    const nestedPairs = [["read-time"], ["sibling"]];
+    const [[innerElement], [siblingInnerElement]] = nestedPairs;
     nestedPairs[0][0] = "later";
+    nestedPairs[1][0] = "later";
     const spreadSource = [...["prefix"], "read-time"];
     const [,spreadElement] = spreadSource;
     spreadSource[1] = "later";

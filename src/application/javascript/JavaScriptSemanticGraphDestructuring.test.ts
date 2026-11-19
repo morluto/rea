@@ -2160,9 +2160,51 @@ it.each([
     "candidate",
   ],
   [
-    "proof stops at the inner close",
+    "next outer slot after a native inner close",
     'const pairs=[[0],"next"];const [[used],selected]=pairs;pairs[1]="later";',
     ["1"],
+    "resolved",
+  ],
+  [
+    "second nested array after a native inner close",
+    'const pairs=[[0],["next"]];const [[used],[selected]]=pairs;pairs[1][0]="later";',
+    ["1", "0"],
+    "resolved",
+  ],
+  [
+    "second nested array after an empty inner pattern",
+    'const pairs=[[0],["next"]];const [[],[selected]]=pairs;pairs[1][0]="later";',
+    ["1", "0"],
+    "resolved",
+  ],
+  [
+    "second nested array after a later-installed close hook",
+    'const pairs=[[0],["next"]];const [[used],[selected]]=pairs;Object.getPrototypeOf([].values()).return=()=>({});pairs[1][0]="later";',
+    ["1", "0"],
+    "resolved",
+  ],
+  [
+    "second nested array after a possible inherited close hook",
+    'const pairs=[[0],["next"]];Object.prototype.return=()=>({});const [[used],[selected]]=pairs;pairs[1][0]="later";',
+    ["1", "0"],
+    "candidate",
+  ],
+  [
+    "second nested array after an effectful default",
+    'const pairs=[[undefined],["next"]];const [[used=(pairs[1][0]="default")],[selected]]=pairs;pairs[1][0]="later";',
+    ["1", "0"],
+    "candidate",
+  ],
+  [
+    "second nested array after an unproved hole",
+    'const pairs=[[,0],["next"]];const [[,used],[selected]]=pairs;pairs[1][0]="later";',
+    ["1", "0"],
+    "candidate",
+  ],
+  [
+    "second nested array after an assignment target",
+    'const pairs=[[0],["next"]];let used,selected;[[used],[selected]]=pairs;pairs[1][0]="later";',
+    ["1", "0"],
     "candidate",
   ],
   [
