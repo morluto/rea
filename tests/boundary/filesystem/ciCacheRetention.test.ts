@@ -93,6 +93,27 @@ describe("Turbo snapshot retention", () => {
     ).toEqual([1, 4]);
   });
 
+  it("keeps restorable generations across cache versions on the same ref", () => {
+    const olderVersion = "a".repeat(64);
+    const newerVersion = "b".repeat(64);
+    const entries = [olderVersion, newerVersion].flatMap((version, index) =>
+      [1, 2, 3].map((hour) => {
+        const id = index * 3 + hour;
+        return cache(
+          id,
+          `${prefix}${id}`,
+          `2026-10-20T0${id}:00:00Z`,
+          undefined,
+          100,
+          version,
+        );
+      }),
+    );
+    expect(
+      selectPrefixDeletions(entries, { prefix }).map((entry) => entry.id),
+    ).toEqual([1, 4]);
+  });
+
   it("keeps an in-flight generation when the saved key is already newest", () => {
     const keepKey = `${prefix}newest`;
     const deletions = selectPrefixDeletions(
