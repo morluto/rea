@@ -3,7 +3,10 @@ import {
   hashArtifactRange,
   readArtifactRange as readExact,
 } from "../ArtifactCarrierRange.js";
-import { readMachoSegmentHeader } from "../../domain/apple/machoSegmentHeader.js";
+import {
+  admitMachoSegmentCommand,
+  readMachoSegmentHeader,
+} from "../../domain/apple/machoSegmentHeader.js";
 import {
   machoSectionBacking,
   readMachoSectionHeader,
@@ -44,6 +47,8 @@ import {
   readFatContainerHeader,
   readFatHeaderPrefix,
   readMachoHeaderPrefixFacts,
+  validateFatSliceIdentity,
+  type FatSliceDeclaration,
 } from "../../domain/apple/machoContainer.js";
 import { readElfFixedHeader } from "../../domain/elfFixedHeader.js";
 import {
@@ -88,6 +93,13 @@ interface BlobRange {
   readonly offset: number;
   readonly length: number;
 }
+
+interface MachoSliceScan {
+  readonly ranges: readonly BlobRange[];
+  readonly identityIssue?: string;
+}
+
+const EMPTY_MACHO_SLICE: MachoSliceScan = { ranges: [] };
 
 interface Carrier {
   readonly handle: FileHandle;
@@ -141,7 +153,7 @@ export const locateNodeSea = async (
   if (thin !== null || fat.state === "incomplete" || fat.state === "parsed") {
     const ranges =
       thin !== null
-        ? await locateThinMachO(carrier, 0, fileSize)
+        ? (await locateThinMachO(carrier, 0, fileSize)).ranges
         : await locateFatMachO(carrier, prefix);
     return collapseRanges(carrier, "mach-o", ranges);
   }
@@ -254,7 +266,7 @@ const collapseRanges = async (
 const locateFatMachO = async (
   carrier: Carrier,
   prefix: Buffer,
-): Promise<BlobRange[]> => {
+): Promise<readonly BlobRange[]> => {
   let bytes = prefix;
   let header = readFatContainerHeader(bytes, carrier.fileSize);
   if (header.state === "needs-data") {
@@ -270,19 +282,24 @@ const locateFatMachO = async (
   }
   if (header.state !== "parsed") {
     if (readMachoHeaderPrefixFacts(bytes).format !== null)
-      return locateThinMachO(carrier, 0, carrier.fileSize);
+      return (await locateThinMachO(carrier, 0, carrier.fileSize)).ranges;
     return [];
   }
   const found: BlobRange[] = [];
+  let identityIssue: string | undefined;
   for (const [index, slice] of header.slices.entries()) {
     if (slice === undefined || header.rangeIssues[index] != null) continue;
-    for (const range of await locateThinMachO(
+    const scan = await locateThinMachO(
       carrier,
       slice.offset,
       slice.size,
-    ))
-      found.push(range);
+      slice,
+    );
+    for (const range of scan.ranges) found.push(range);
+    identityIssue ??= scan.identityIssue;
   }
+  if (found.length === 0 && identityIssue !== undefined)
+    throw formatFailure(identityIssue);
   return found;
 };
 
@@ -290,27 +307,33 @@ const locateThinMachO = async (
   carrier: Carrier,
   base: number,
   sliceSize: number,
-): Promise<BlobRange[]> => {
+  fat?: FatSliceDeclaration,
+): Promise<MachoSliceScan> => {
   if (
     !Number.isSafeInteger(base) ||
     !Number.isSafeInteger(sliceSize) ||
     base < 0 ||
-    sliceSize < 32 ||
+    sliceSize < 4 ||
     base > carrier.fileSize ||
     sliceSize > carrier.fileSize - base
   )
-    return [];
-  const header = await readExact(carrier, base, 32);
-  if (header === undefined) return [];
+    return EMPTY_MACHO_SLICE;
+  const header = await readExact(carrier, base, Math.min(32, sliceSize));
+  if (header === undefined) return EMPTY_MACHO_SLICE;
   const framing = readMachoLoadCommandTableHeader(header, sliceSize);
-  if (!framing.ok || framing.value === null) return [];
+  if (!framing.ok || framing.value === null) return EMPTY_MACHO_SLICE;
+  const identityIssue =
+    fat === undefined
+      ? null
+      : validateFatSliceIdentity(fat, framing.value.identity);
   const {
     headerSize,
     littleEndian: little,
     commandBytes: sizeofcmds,
   } = framing.value;
   const limits = carrier.limits ?? DEFAULT_NODE_SEA_READER_LIMITS;
-  if (sizeofcmds > limits.recognition_load_command_bytes)
+  if (sizeofcmds > limits.recognition_load_command_bytes) {
+    if (identityIssue !== null) return EMPTY_MACHO_SLICE;
     throw artifactReaderLimitFailure(
       "artifact_limits.node_sea.recognition_load_command_bytes",
       limits.recognition_load_command_bytes,
@@ -318,8 +341,9 @@ const locateThinMachO = async (
       sizeofcmds,
       "memory",
     );
+  }
   const commands = await readExact(carrier, base + headerSize, sizeofcmds);
-  if (commands === undefined) return [];
+  if (commands === undefined) return EMPTY_MACHO_SLICE;
   const found: BlobRange[] = [];
   const cursor = new MachoLoadCommandCursor(framing.value);
   while (cursor.nextOffset !== null) {
@@ -347,8 +371,16 @@ const locateThinMachO = async (
         const segmentHeader = segment.headerSize;
         const nsects = segment.sectionCount;
         const table = offset + segmentHeader;
-        if (nsects > Math.floor((size - segmentHeader) / sectionSize))
+        if (nsects > Math.floor((size - segmentHeader) / sectionSize)) {
+          if (identityIssue !== null) continue;
           throw formatFailure(NODE_SEA_MACHO_SEGMENT_TRUNCATED);
+        }
+        const admission = admitMachoSegmentCommand(
+          segment,
+          size,
+          framing.value.wide ? 64 : 32,
+          sliceSize,
+        );
         for (let index = 0; index < nsects; index += 1) {
           const section = table + index * sectionSize;
           const parsedSection = readMachoSectionHeader(
@@ -360,18 +392,20 @@ const locateThinMachO = async (
             throw formatFailure(NODE_SEA_MACHO_SEGMENT_TRUNCATED);
           const record = parsedSection.value;
           if (cString(record.nameBytes, 0, 16) !== SEA_SECTION) continue;
+          // Only a named declaration is attributed to SEA. A mismatch
+          // cannot supply bytes or block an independently admitted sibling.
+          if (identityIssue !== null) return { ranges: [], identityIssue };
+          if (!admission.ok)
+            throw formatFailure(`Node SEA ${admission.error.message}`);
           const { issue } = machoSectionBacking(record, segment);
           if (issue !== null)
             throw formatFailure(`Mach-O Node SEA section ${issue}`);
-          const length = Number(record.size);
           const fileOffset = record.offset;
-          if (!Number.isSafeInteger(length))
-            throw limitFailure(
-              "Node SEA blob length exceeds exact-number representation",
-            );
+          // The segment and section bounds admit every nonempty payload.
+          // Empty segments can still declare an offset outside the image.
+          if (fileOffset > sliceSize) throw formatFailure(NODE_SEA_TRUNCATED);
+          const length = Number(record.size);
           admitBlobBytes(carrier, length);
-          if (fileOffset > sliceSize || length > sliceSize - fileOffset)
-            throw formatFailure(NODE_SEA_TRUNCATED);
           found.push({ offset: base + fileOffset, length });
         }
       }
@@ -379,7 +413,7 @@ const locateThinMachO = async (
   }
   if (found.length > 0 && !cursor.finish().ok)
     throw formatFailure(NODE_SEA_MACHO_COMMANDS_TRUNCATED);
-  return found;
+  return { ranges: found };
 };
 
 const locateElfNotes = async (

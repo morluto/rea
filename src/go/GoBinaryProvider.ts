@@ -1,3 +1,4 @@
+import { basename } from "node:path";
 import type { AnalysisControlLimit } from "../domain/analysisSettings.js";
 import {
   parseFailureAnalysisError,
@@ -352,6 +353,7 @@ export class GoBinaryProvider implements GoBinaryPort {
           ...publicImage,
           artifact: {
             path: input.path,
+            file_name: basename(input.path),
             sha256: snapshot.sha256,
             bytes: snapshot.bytes.length,
           },

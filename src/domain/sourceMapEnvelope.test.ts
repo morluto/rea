@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { inspectLocalSourceMapDeclarations } from "./sourceMapFormat.js";
+import {
+  inspectLocalSourceMapDeclarations,
+  inspectSourceMapSourceContent,
+} from "./sourceMapFormat.js";
 import { selectedSourceMapLimits } from "./sourceMapLimits.js";
 
 const inspect = (root: unknown) =>
@@ -12,6 +15,35 @@ const leaf = {
   sources: ["app.ts"],
   names: [],
 };
+
+it("applies observed-content policy to complete and partially invalid maps", () => {
+  const replacement = { ...leaf, sourcesContent: ["\ufffd"] };
+  const options = {
+    hasObservedContent: (content: string) => /[^\ufffd]/u.test(content),
+  };
+  expect(
+    inspectSourceMapSourceContent(JSON.stringify(replacement)).embedded,
+  ).toBe(true);
+  expect(
+    inspectSourceMapSourceContent(JSON.stringify(replacement), options),
+  ).toMatchObject({ embedded: false, complete: true });
+  const indexed = (content: string) => ({
+    version: 3,
+    sections: [
+      {
+        offset: { line: 0, column: 0 },
+        map: { ...leaf, sourcesContent: [content] },
+      },
+      { offset: { line: 1, column: 0 }, map: { ...leaf, mappings: "!" } },
+    ],
+  });
+  expect(
+    inspectSourceMapSourceContent(JSON.stringify(indexed("\ufffd")), options),
+  ).toMatchObject({ embedded: false, complete: false });
+  expect(
+    inspectSourceMapSourceContent(JSON.stringify(indexed("source")), options),
+  ).toMatchObject({ embedded: true, complete: false });
+});
 
 describe("source-map envelope walk", () => {
   it("retains ordered declarations under nested section offsets", () => {

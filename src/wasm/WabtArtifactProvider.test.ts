@@ -232,10 +232,9 @@ const assertCancellationDuringRootRelease = async (options: {
   });
 };
 
-const createWabtArtifactFixture = async () => {
+const createWabtArtifactFixture = async (bytes = Buffer.alloc(76, 1)) => {
   const selectedRoot = await createTestTempDirectory("rea-wabt-seam-");
   const path = join(selectedRoot, "selected.wasm");
-  const bytes = Buffer.alloc(76, 1);
   await writeFile(path, bytes);
   for (const tool of ["wasm-validate", "wasm-objdump", "wasm2wat"])
     await writeFile(
@@ -249,6 +248,105 @@ const createWabtArtifactFixture = async () => {
   );
   return { selectedRoot, path, bytes, dump };
 };
+
+it.each([
+  { label: "muted", diagnostic: "", tool: "wasm2wat", valid: true },
+  {
+    label: "corroborated",
+    diagnostic:
+      "000000d: error: invalid utf-8 encoding: section name\nmodule.wasm: warning: opaque producer detail \t\n",
+    tool: "wasm2wat",
+    valid: true,
+  },
+  {
+    label: "unmatched",
+    diagnostic: "000000c: error: invalid utf-8 encoding: section name\n",
+    tool: "wasm2wat",
+    valid: false,
+  },
+  {
+    label: "unrecognized",
+    diagnostic: "000000d: error: another diagnostic\n",
+    tool: "wasm-objdump",
+    valid: false,
+  },
+])(
+  "preserves $label diagnostics for a byte-corroborated blank name",
+  async ({ diagnostic, tool, valid }) => {
+    const bytes = Buffer.from(
+      "0061736d01000000000a02fffe7061796c6f6164",
+      "hex",
+    );
+    const fixture = await createWabtArtifactFixture(bytes);
+    const dump =
+      "\nmodule.wasm:\tfile format wasm 0x1\n\nSections:\n\n" +
+      "   Custom start=0x0000000a end=0x00000014 (size=0x0000000a) \n" +
+      "Section Details:\n";
+    const wat = "(module)\n";
+    const executed: string[] = [];
+    const provider = new WabtArtifactProvider(
+      { REA_WABT_BIN_DIRECTORY: fixture.selectedRoot },
+      (input) => {
+        const version = input.arguments[0] === "--version";
+        const command = input.command.includes("wasm-objdump")
+          ? "wasm-objdump"
+          : input.command.includes("wasm2wat")
+            ? "wasm2wat"
+            : "wasm-validate";
+        if (!version) executed.push(command);
+        const stdout = version
+          ? "1.0.42\n"
+          : command === "wasm-objdump"
+            ? dump
+            : command === "wasm2wat"
+              ? wat
+              : "";
+        const stderr = !version && command === tool ? diagnostic : "";
+        return spawnOwnedProviderProcess({
+          ...input,
+          hostEnvironment: nodeHostEnvironment(input.hostEnvironment),
+          command: process.execPath,
+          arguments: [
+            "-e",
+            `process.stdout.write(${JSON.stringify(stdout)}); process.stderr.write(${JSON.stringify(stderr)});`,
+          ],
+        });
+      },
+    );
+    try {
+      const result = await provider.inspect({
+        path: fixture.path,
+        glue_paths: [],
+        candidate_paths: [],
+      });
+      if (!valid) {
+        expect(result).toMatchObject({
+          ok: false,
+          error: {
+            _tag: "AnalysisOutputError",
+            capturedOutput: {
+              stdout: tool === "wasm-objdump" ? dump : wat,
+              stderr: diagnostic,
+            },
+          },
+        });
+        expect(executed.at(-1)).toBe(tool);
+        return;
+      }
+      if (!result.ok) throw result.error;
+      expect(wasmArtifactSchema.parse(result.value.result)).toMatchObject({
+        validation: "valid",
+        debug_name_metadata: "unknown",
+        sections: [{ kind: "Custom", start: 10, end: 20, description: "" }],
+        custom_section_warnings:
+          diagnostic === "" ? [] : [{ tool, text: diagnostic }],
+        wat: { text: wat },
+      });
+    } finally {
+      await provider.close();
+    }
+  },
+);
 
 it.each(["stdout", "stderr"] as const)(
   "rejects malformed UTF-8 in WABT %s while retaining literal replacement characters",

@@ -24,6 +24,7 @@ import {
 import { indexJavaScriptBindingsWithReceiversSteps } from "./javascript/javascriptSemanticAnalysis.js";
 import type { JavaScriptOpenReceiverFact } from "./javascript/javascriptSemanticReceiverFacts.js";
 import { isIntrinsicMapLookup } from "./javascript/javascriptSemanticIntrinsicInstances.js";
+import { isUnmodifiedGlobalReference } from "./javascript/javascriptSemanticGlobalReference.js";
 import {
   semanticStaticPropertyKey,
   isNullishJavaScriptSyntax,
@@ -46,7 +47,7 @@ import {
 } from "./webBundleAnalyzerAst.js";
 import { createJavaScriptRpcScan } from "./javascript/javascriptRpcEndpoints.js";
 import { semanticStaticModuleSource } from "./javascript/javascriptModuleDeclaration.js";
-import { parseJavaScriptSource } from "./javascript/javascriptSourceParser.js";
+import { parseCapturedJavaScriptSource } from "./javascript/javascriptSourceParser.js";
 import {
   semanticPrecisionControl,
   semanticResourceLimitFacts,
@@ -68,7 +69,10 @@ export const analyzeScript = (
   readonly routeFacts: JavaScriptRouteSourceFacts | null;
   readonly semanticLimits: readonly WebBundleSemanticLimit[];
 } => {
-  const file = parseJavaScriptSource(script.source.artifact.text);
+  const file = parseCapturedJavaScriptSource(
+    script.source.artifact.text,
+    script.language,
+  );
   if (file === null) {
     accumulator.failedScripts.push(script.script_key);
     return { routeFacts: null, semanticLimits: [] };
@@ -243,7 +247,13 @@ const inspectCall = (
       node,
       accumulator,
     });
-  if (name === "importScripts" || name.endsWith(".importScripts"))
+  if (
+    !t.isNewExpression(node) &&
+    (name === "importScripts" ||
+      name === "self.importScripts" ||
+      name === "globalThis.importScripts") &&
+    isUnmodifiedGlobalReference(node.callee, bindings, "importScripts")
+  )
     for (const argument of node.arguments) {
       const specifier = stringValue(argument);
       if (specifier === undefined) continue;

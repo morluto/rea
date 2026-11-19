@@ -138,6 +138,91 @@ function respond(value: unknown, status = 200) {
   });
 }
 
+it.each([true, false])(
+  "handles an HTTP 200 Git blob without content (recovers: %s)",
+  async (recovers) => {
+    const sleep = vi
+      .spyOn(githubRuntime, "sleepInMs")
+      .mockResolvedValue(undefined);
+    const path = "CHANGELOG.md";
+    const contents = "# Changelog\n";
+    let reads = 0;
+    const github = await upstream.GitHub.create({
+      owner: "fixture",
+      repo: "rea",
+      defaultBranch: "main",
+      logger: silent,
+      fetch: async (input: string, options: { method?: string }) => {
+        const { pathname } = new URL(input);
+        expect(options.method).toBe("GET");
+        if (pathname === "/repos/fixture/rea/git/trees/main")
+          return respond({ tree: [{ path, sha: baseline, type: "blob" }] });
+        expect(pathname).toBe(`/repos/fixture/rea/git/blobs/${baseline}`);
+        reads += 1;
+        return respond({
+          sha: baseline,
+          encoding: "base64",
+          ...(recovers && reads > 1
+            ? { content: Buffer.from(contents).toString("base64") }
+            : {}),
+        });
+      },
+    });
+    const result = github.getFileContentsOnBranch(path, "main");
+    if (recovers)
+      await expect(result).resolves.toMatchObject({ parsedContent: contents });
+    else
+      await expect(result).rejects.toThrow(
+        "GitHub returned an incomplete Git blob for CHANGELOG.md on main",
+      );
+    expect(reads).toBe(recovers ? 2 : 3);
+    expect(sleep.mock.calls).toEqual(recovers ? [[1000]] : [[1000], [2000]]);
+  },
+);
+
+it.each([0, 12])(
+  "checks an empty Git blob response declaring size %s",
+  async (size) => {
+    const sleep = vi
+      .spyOn(githubRuntime, "sleepInMs")
+      .mockResolvedValue(undefined);
+    let reads = 0;
+    const github = await upstream.GitHub.create({
+      owner: "fixture",
+      repo: "rea",
+      defaultBranch: "main",
+      logger: silent,
+      fetch: async (input: string) => {
+        const { pathname } = new URL(input);
+        if (pathname === "/repos/fixture/rea/git/trees/main")
+          return respond({
+            tree: [{ path: "CHANGELOG.md", sha: baseline, type: "blob" }],
+          });
+        expect(pathname).toBe(`/repos/fixture/rea/git/blobs/${baseline}`);
+        reads += 1;
+        return respond({
+          sha: baseline,
+          encoding: "base64",
+          content: "",
+          size,
+        });
+      },
+    });
+    const result = github.getFileContentsOnBranch("CHANGELOG.md", "main");
+    if (size === 0) {
+      await expect(result).resolves.toMatchObject({ parsedContent: "" });
+      expect(reads).toBe(1);
+      expect(sleep).not.toHaveBeenCalled();
+    } else {
+      await expect(result).rejects.toThrow(
+        "GitHub returned an incomplete Git blob",
+      );
+      expect(reads).toBe(3);
+      expect(sleep.mock.calls).toEqual([[1000], [2000]]);
+    }
+  },
+);
+
 it.each([
   { statuses: [504, 200], expectedReads: 2, status: null },
   { statuses: [504, 504, 504], expectedReads: 3, status: 504 },

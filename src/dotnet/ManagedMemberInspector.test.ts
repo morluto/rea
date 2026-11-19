@@ -403,7 +403,6 @@ it.each([
       bytes,
       layout,
       row.readIndex(layout.blobIndexSize),
-      layout.blob?.size ?? 0,
     );
     const blobOffset = blob.byteOffset - bytes.byteOffset;
     const result = inspectManagedMembersBytes(
@@ -493,7 +492,6 @@ const memberSignatureBlobOffset = (
     bytes,
     layout,
     row.readIndex(layout.blobIndexSize),
-    layout.blob?.size ?? 0,
   );
   return blob.byteOffset - bytes.byteOffset;
 };
@@ -1812,7 +1810,11 @@ describe("managed user string issues", () => {
       ...Array.from({ length: 64 }, () => Buffer.from([0x80, 0x00])),
     ]);
     const layout = {
-      userStrings: { name: "#US", offset: 0, size: heap.length },
+      userStrings: {
+        kind: "available",
+        stream: { name: "#US", offset: 0, size: heap.length },
+        issue: null,
+      },
     } as unknown as ManagedMetadataLayout;
     // Leave 24 KiB: enough for the failures, not for 512 bytes leaked each.
     managedDecodeBudget(layout).reserve(64 * 1024 * 1024 - 24 * 1024, null);
@@ -1963,7 +1965,11 @@ describe("managed user string scan completeness", () => {
 
   it("marks user strings partial when selected type identity is unreadable", () => {
     const layout = {
-      userStrings: { name: "#US", offset: 0, size: 1 },
+      userStrings: {
+        kind: "available",
+        stream: { name: "#US", offset: 0, size: 1 },
+        issue: null,
+      },
     } as unknown as ManagedMetadataLayout;
     expect(
       parseUserStrings(Buffer.from([0]), layout, {
@@ -1976,7 +1982,11 @@ describe("managed user string scan completeness", () => {
 
   it("marks user strings partial when an inspected method row was not read", () => {
     const layout = {
-      userStrings: { name: "#US", offset: 0, size: 1 },
+      userStrings: {
+        kind: "available",
+        stream: { name: "#US", offset: 0, size: 1 },
+        issue: null,
+      },
     } as unknown as ManagedMetadataLayout;
     // The omitted row's body, and any ldstr in it, was never scanned.
     expect(
@@ -2128,36 +2138,52 @@ describe("managed derived edges", () => {
 });
 
 describe("managed derived caller names", () => {
-  it("admits a caller name before building it", () => {
-    let built = false;
-    // A string-like type name records whether the caller was interpolated.
-    const declaringType = {
-      length: 2048,
-      charCodeAt: () => 0x54,
-      toString: () => {
-        built = true;
-        return "T";
-      },
-    } as unknown as string;
-    const method = {
-      token: "0x06000001",
-      declaring_type: declaringType,
-      name: "m",
-    } as unknown as ManagedMethod;
-
+  it("admits the transient caller name alongside the retained edge", () => {
+    const declaringType = "T".repeat(2048);
+    const bytes = buildManagedPeFixture({
+      typeName: declaringType,
+      typeNamespace: "",
+    });
+    const method = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    ).methods[0];
+    if (method === undefined) throw new Error("Fixture has no method");
     const decoded: DecodedMethod = {
       method,
       tokenInstructions: decodedTokenInstructions(0x28, [0x0a000001]),
       catchTokens: new Map(),
     };
-
-    const budget = new ManagedDecodeBudget();
-    // Only the remaining capacity matters to refusal before interpolation.
-    budget.reserve(64 * 1024 * 1024 - 1024, null);
-    expect(() => edges([decoded], new Map(), budget)).toThrow(
-      ManagedReaderFailure,
+    const caller = `${declaringType}.Main`;
+    const edge = {
+      caller_token: "0x06000001",
+      il_offset: 0,
+      target_identity_sha256: null,
+      target_row_resolved: false,
+      caller,
+      opcode: "call",
+      target_token: "0x0a000001",
+      target_kind: "member-ref",
+      target_name: null,
+      target_declaring_type: null,
+    };
+    // Allow record bookkeeping, with no room for another copy of the name.
+    const retainedOnly = Buffer.byteLength(JSON.stringify(edge)) + 32;
+    const withTransient =
+      retainedOnly + Buffer.byteLength(JSON.stringify(caller));
+    expect(() =>
+      edges([decoded], new Map(), new ManagedDecodeBudget(retainedOnly)),
+    ).toThrow(
+      expect.objectContaining({
+        issue: expect.objectContaining({
+          code: "resource-limit",
+          scope: "metadata.representation",
+        }),
+      }),
     );
-    expect(built).toBe(false);
+    expect(
+      edges([decoded], new Map(), new ManagedDecodeBudget(withTransient)),
+    ).toEqual({ callEdges: [edge], fieldAccesses: [] });
   });
 });
 

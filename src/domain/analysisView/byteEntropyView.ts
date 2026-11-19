@@ -18,6 +18,26 @@ export const byteEntropySummarySchema = byteEntropySchema
     top_runs: byteEntropySchema.shape.runs,
   });
 
+const TOP_RUN_LIMIT = 10;
+
+type EntropyRun = ByteEntropy["runs"][number];
+
+const compareRuns = (a: EntropyRun, b: EntropyRun): number =>
+  b.length - a.length || a.offset - b.offset;
+
+const topRuns = (runs: readonly EntropyRun[]): EntropyRun[] => {
+  const retained: EntropyRun[] = [];
+  for (const run of runs) {
+    const last = retained[TOP_RUN_LIMIT - 1];
+    if (last !== undefined && compareRuns(run, last) >= 0) continue;
+    let index = retained.length;
+    while (index > 0 && compareRuns(run, retained[index - 1]!) < 0) index -= 1;
+    retained.splice(index, 0, run);
+    if (retained.length > TOP_RUN_LIMIT) retained.pop();
+  }
+  return retained;
+};
+
 /** Rank ten longest runs for triage; the full series remains in parent Evidence. */
 export const projectByteEntropyView = (
   parent: AnalysisViewParent,
@@ -51,9 +71,7 @@ export const projectByteEntropyView = (
       thresholds: report.thresholds,
       block_count: report.blocks.length,
       run_count: report.runs.length,
-      top_runs: [...report.runs]
-        .sort((a, b) => b.length - a.length || a.offset - b.offset)
-        .slice(0, 10),
+      top_runs: topRuns(report.runs),
     },
     coverage: completeWithinViewCoverage(report.blocks.length),
     limitations: [

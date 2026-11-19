@@ -1,3 +1,4 @@
+import { basename } from "node:path";
 import { producerLimitControl } from "../domain/producerResourceLimits.js";
 import { RUST_BINARY_PROVIDER_IDENTITY } from "./RustBinaryProviderIdentity.js";
 import {
@@ -129,6 +130,7 @@ export class RustBinaryProvider implements RustBinaryPort {
           rustc_commit: image.rustc_commit,
           artifact: {
             path: input.path,
+            file_name: basename(input.path),
             sha256: snapshot.sha256,
             bytes: snapshot.bytes.length,
           },

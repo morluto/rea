@@ -375,12 +375,7 @@ const inspectPeFile = async (
         await setImmediate();
         abortIfNeeded(signal);
       }
-      const reference = readAssemblyReferenceName(
-        bytes,
-        layout,
-        index,
-        layout.strings.size,
-      );
+      const reference = readAssemblyReferenceName(bytes, layout, index);
       if (
         reference.name !== "UnityEngine" &&
         !reference.name.startsWith("UnityEngine.")

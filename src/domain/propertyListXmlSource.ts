@@ -27,8 +27,9 @@ export const readXmlPlistSource = (
   text: string,
   maximumDepth = MAX_PLIST_DEPTH,
 ) => {
-  const normalized = text.replace(XML_LINE_ENDING, "\n");
-  const parsed = parseXmlDocument(normalized, {
+  // CoreFoundation keeps a literal CR in a key or string, so the document is
+  // read as written; XML 1.0 line-ending normalization would rewrite both.
+  const parsed = parseXmlDocument(text, {
     doctype: "allow",
     lineEndings: "preserve",
   });
