@@ -632,6 +632,7 @@
 * **mcp:** run Kilo's read-only Git probes through execFileOutput's process group ([#10800](https://github.com/morluto/rea/issues/10800)) ([7a7a917](https://github.com/morluto/rea/commit/7a7a917e8f6ff2c7f098dd24e3cf59c124d203d9))
 * **ntfs:** skip long zero runs in offline USN journals ([#12274](https://github.com/morluto/rea/issues/12274)) ([a3a7922](https://github.com/morluto/rea/commit/a3a7922243d09225db7b33fcb554e8e527baa280))
 * **reference:** overlap reference-source identity lookups in traversal order ([#11585](https://github.com/morluto/rea/issues/11585)) ([65f78ed](https://github.com/morluto/rea/commit/65f78edce526277a5a563c44bc70418b50d1136f)), closes [#11365](https://github.com/morluto/rea/issues/11365)
+* **search:** avoid intermediate collections for one alias ([#12252](https://github.com/morluto/rea/issues/12252)) ([51e48b8](https://github.com/morluto/rea/commit/51e48b8a281c60434683cab3368fb3d9431712e4))
 * **test:** remove duplicate full-tree lint from isolation checks ([94bf2bd](https://github.com/morluto/rea/commit/94bf2bdecdfa686527f4b676f06575bee05af53f))
 * **test:** run CI change-scope cases concurrently in workspace-owned repositories ([#11009](https://github.com/morluto/rea/issues/11009)) ([482a98a](https://github.com/morluto/rea/commit/482a98a95b92ac2c0dc0f55eef54ce345b93c114))
 * **tests:** admit registration guard in shared CLI session and cache boundary compiles ([5c1f58e](https://github.com/morluto/rea/commit/5c1f58e24f9f46fa8e45ffd6bf65cf77f3e68b5f))
