@@ -233,7 +233,9 @@ export const parseDeb822Sources = (
   deb822Paragraphs(text).flatMap((fields, index) => {
     if (
       !fieldValues(fields.get("types")).includes("deb") ||
-      fields.get("enabled")?.toLowerCase() === "no"
+      /^(?:no|false|without|off|disable|[+-]?(?:0+|0x0+))$/iu.test(
+        fields.get("enabled") ?? "yes",
+      )
     )
       return [];
     return [

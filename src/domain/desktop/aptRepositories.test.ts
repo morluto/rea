@@ -731,3 +731,14 @@ describe("repository kinds and key files", () => {
     expect(dearmorPublicKeys(Buffer.from("not a key"))).toBeUndefined();
   });
 });
+
+it("keeps APT's source positions when a false Enabled field disables a stanza", () => {
+  const source = (enabled: string) =>
+    `Types: deb\nURIs: https://example.org/repo\nSuites: stable\nComponents: main\nEnabled: ${enabled}\n`;
+  const inputs = ["false", "0", "Off", "without", "disable", "yes"];
+  const stanzas = parseDeb822Sources(
+    inputs.map(source).join("\n"),
+    "example.sources",
+  );
+  expect(stanzas.map((entry) => entry.position)).toEqual([6]);
+});
