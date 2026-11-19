@@ -152,24 +152,23 @@ const inflateDeclared = (
   let decoded: Buffer;
   try {
     const maxOutputLength = Math.max(1, expected);
-    if (compression === "zstd") {
-      decoded = zstdDecompressSync(payload, {
-        maxOutputLength,
-        // Retain Zstandard's default maximum decoder window of 128 MiB.
-        params: { [constants.ZSTD_d_windowLogMax]: 27 },
-      });
-    } else {
-      const result = nodeCodecResult(
-        inflateSync(payload, { info: true, maxOutputLength }),
-      );
-      if (result.consumedBytes !== payload.length)
-        return {
-          state: "malformed",
-          message: `${subject} has bytes after its zlib stream`,
-          inflatedBytes,
-        };
-      decoded = result.buffer;
-    }
+    const result = nodeCodecResult(
+      compression === "zstd"
+        ? zstdDecompressSync(payload, {
+            info: true,
+            maxOutputLength,
+            // Retain Zstandard's default maximum decoder window of 128 MiB.
+            params: { [constants.ZSTD_d_windowLogMax]: 27 },
+          })
+        : inflateSync(payload, { info: true, maxOutputLength }),
+    );
+    if (result.consumedBytes !== payload.length)
+      return {
+        state: "malformed",
+        message: `${subject} has bytes after its ${compression} stream`,
+        inflatedBytes,
+      };
+    decoded = result.buffer;
   } catch (cause: unknown) {
     return {
       state: "malformed",

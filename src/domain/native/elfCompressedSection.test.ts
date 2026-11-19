@@ -246,3 +246,22 @@ describe("ELF compressed section declaration admission", () => {
     },
   );
 });
+
+it("rejects unread encoded bytes after a Zstandard ELF section frame", () => {
+  const payload = zstdCompressSync(plain);
+  const header = chdr(64, true, 2, plain.length);
+  const decode = (body: Buffer) =>
+    decodeElfCompressedSection(
+      Buffer.concat([header, body]),
+      0x800n,
+      64,
+      true,
+      1024,
+      "ELF sample section",
+    );
+  expect(decode(payload)).toMatchObject({ state: "available", bytes: plain });
+  expect(decode(Buffer.concat([payload, Buffer.of(0)]))).toMatchObject({
+    state: "malformed",
+    message: "ELF sample section has bytes after its zstd stream",
+  });
+});
