@@ -11,7 +11,12 @@ import {
   createFileMappingIndex,
   imageFileMappings,
 } from "../../domain/binaryContainer.js";
-import { readPeImage, type PeImage } from "../../domain/native/peImage.js";
+import {
+  mappedPeDeclaredFileOffset,
+  readPeImage,
+  type PeImage,
+} from "../../domain/native/peImage.js";
+import { peSectionVirtualExtent } from "../../domain/peSectionHeader.js";
 import {
   guardFlagRecord,
   loadConfigFieldCovered,
@@ -37,13 +42,9 @@ const PE_LOAD_CONFIG_DIRECTORY = 10;
 const ENTRIES_PER_YIELD = 1024;
 
 /** Derived locations may be unmapped; ambiguous mappings remain malformed. */
-const optionalFileOffset = (
-  lookup: { offset(address: bigint, size: number): number },
-  address: bigint,
-  size: number,
-): number | null => {
+const optionalFileOffset = (lookup: () => number): number | null => {
   try {
-    return lookup.offset(address, size);
+    return lookup();
   } catch (cause) {
     if (!(cause instanceof BinaryMappingFailure) || cause.reason !== "unmapped")
       throw cause;
@@ -77,8 +78,7 @@ const sectionNameIndex = (
   const events: { at: number; index: number; open: boolean }[] = [];
   sections.forEach((section, index) => {
     if (section.format !== "pe") return;
-    const span =
-      section.virtual_size === 0 ? section.raw_size : section.virtual_size;
+    const span = peSectionVirtualExtent(section.virtual_size, section.raw_size);
     if (span <= 0) return;
     events.push(
       { at: section.virtual_address, index, open: true },
@@ -185,7 +185,7 @@ export const parsePeLoadConfig = async (
     const rva = rvaOf(va);
     let fileOffset: number | null = null;
     if (rva !== null) {
-      fileOffset = optionalFileOffset(lookup, va, 1);
+      fileOffset = optionalFileOffset(() => lookup.offset(va, 1));
     }
     return {
       va: hex(va),
@@ -205,6 +205,10 @@ export const parsePeLoadConfig = async (
     rvaOf,
     sectionName,
     lookup,
+    templateFileOffset: (address, size) =>
+      optionalFileOffset(() =>
+        mappedPeDeclaredFileOffset(image, address, size),
+      ),
     maxCallbacks: input.max_callbacks,
     signal,
   });
@@ -255,6 +259,7 @@ const readTls = async ({
   rvaOf,
   sectionName,
   lookup,
+  templateFileOffset,
   maxCallbacks,
   signal,
 }: {
@@ -267,6 +272,7 @@ const readTls = async ({
   readonly rvaOf: (va: bigint) => number | null;
   readonly sectionName: (rva: number) => string | null;
   readonly lookup: { offset(address: bigint, size: number): number };
+  readonly templateFileOffset: (address: bigint, size: number) => number | null;
   readonly maxCallbacks: number;
   readonly signal: AbortSignal | undefined;
 }): Promise<PeLoadConfigTls | null> => {
@@ -305,7 +311,7 @@ const readTls = async ({
     const rva = rvaOf(start);
     rawSection = rva === null ? null : sectionName(rva);
   } else {
-    rawFile = optionalFileOffset(lookup, start, rawSize);
+    rawFile = templateFileOffset(start, rawSize);
     const startRva = rvaOf(start);
     const last = startRva === null ? null : startRva + rawSize - 1;
     if (startRva !== null && last !== null && last <= 0xffffffff) {

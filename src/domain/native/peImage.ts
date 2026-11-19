@@ -12,6 +12,7 @@ import {
 } from "../dosMz.js";
 import {
   declaredFileRange,
+  mappedFileOffset,
   BinaryFormatFailure,
   BinaryReader,
   type BinaryContainer,
@@ -76,6 +77,24 @@ export type PeImage = BinaryContainer & {
   readonly dll_characteristics: number;
   readonly dll_characteristics_file_offset: number;
   readonly sections: readonly PeImageSection[];
+};
+
+/** Project a VA through admitted header bytes and file-backed section content. */
+export const mappedPeDeclaredFileOffset = (
+  image: PeImage,
+  address: bigint,
+  size: number,
+): number => {
+  const mappings: FileMapping[] = [image.pe_header_mapping];
+  for (const section of image.sections) {
+    if (!section.file_backed) continue;
+    mappings.push({
+      address: image.image_base + BigInt(section.virtual_address),
+      offset: section.offset,
+      size: section.size,
+    });
+  }
+  return mappedFileOffset(mappings, address, size, image.zero_fills);
 };
 
 /** Read PE32/PE32+ native image mappings and section facts. */
