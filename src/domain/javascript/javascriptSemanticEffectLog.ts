@@ -967,6 +967,62 @@ const opaqueCodeMayReachBindingReference = (
 ): boolean =>
   semanticBindingMayHaveOpaqueEffect(binding, state, capturePoint, "reference");
 
+const observesCapturedWrite = (
+  binding: JavaScriptSemanticBindingState,
+  capture: t.Node | undefined,
+  node: t.Node | undefined,
+  parents: JavaScriptSemanticAnalysisState["parentsByNode"],
+): boolean =>
+  capture === undefined ||
+  node === undefined ||
+  !semanticBindingEffectFollowsCapture(binding, capture, node, parents);
+
+const observesCapturedEscape = (
+  binding: JavaScriptSemanticBindingState,
+  capture: t.Node | undefined,
+  node: t.Node | undefined,
+  parents: JavaScriptSemanticAnalysisState["parentsByNode"],
+): boolean =>
+  capture === undefined ||
+  !semanticEscapeFollowsCapture(binding, capture, node, parents);
+
+/** Whether a captured own slot or its receiver may have changed before the read. */
+export const capturedBindingPathMayHaveChanged = (
+  binding: JavaScriptSemanticBindingState,
+  path: readonly string[],
+  capture: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  return (
+    opaqueCodeMayReachBindingReference(binding, state, capture) ||
+    semanticOpaqueGlobalMayHaveChanged(capture, state) ||
+    semanticSomeEffectPathCandidate(
+      binding.memberWrites,
+      path,
+      (effect) =>
+        semanticEffectPathMatches(effect.path, path) &&
+        observesCapturedWrite(
+          binding,
+          capture,
+          effect.node,
+          state.parentsByNode,
+        ),
+    ) ||
+    semanticSomeEffectPathCandidate(
+      binding.escapedPaths,
+      path,
+      (effect) =>
+        semanticEffectPathMatches(effect.path, path) &&
+        observesCapturedEscape(
+          binding,
+          capture,
+          effect.node,
+          state.parentsByNode,
+        ),
+    )
+  );
+};
+
 /**
  * The value of `binding`'s reference as a read captured at `capturePoint`
  * observes it, after the recorded effects that may precede the capture:
@@ -983,16 +1039,8 @@ export const applySemanticBindingReferenceEffects = (
   let projected = invalidateSemanticMutationPaths(
     value,
     binding.memberWrites
-      .filter(
-        ({ node }) =>
-          capturePoint === undefined ||
-          node === undefined ||
-          !semanticBindingEffectFollowsCapture(
-            binding,
-            capturePoint,
-            node,
-            state.parentsByNode,
-          ),
+      .filter(({ node }) =>
+        observesCapturedWrite(binding, capturePoint, node, state.parentsByNode),
       )
       .map(({ path }) => path),
   );
@@ -1000,8 +1048,7 @@ export const applySemanticBindingReferenceEffects = (
     // Escapes only invalidate object references; other lattice values survive.
     if (projected.status !== "object" && projected.status !== "array") break;
     if (
-      capturePoint !== undefined &&
-      semanticEscapeFollowsCapture(
+      !observesCapturedEscape(
         binding,
         capturePoint,
         escape.node,

@@ -18,6 +18,7 @@ import {
 } from "./javascriptSemanticState.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
+import { createSemanticReadPresenceQuery } from "./javascriptSemanticValues.js";
 
 /** Recover bounded static property reads, writes, spreads, and destructuring. */
 export const collectJavaScriptSemanticObjects = (
@@ -32,6 +33,7 @@ export const collectJavaScriptSemanticObjects = (
     state,
     output,
     writeTargets: new Map(),
+    readPresence: createSemanticReadPresenceQuery(state),
   };
   traverseJavaScriptValueAst(program, state.erasedSyntaxNodes, {
     enter: (node, parent) => {
@@ -65,24 +67,12 @@ export const collectJavaScriptSemanticObjects = (
         t.isVariableDeclarator(node) &&
         (t.isObjectPattern(node.id) || t.isArrayPattern(node.id))
       )
-        collectDestructuring(
-          node.id,
-          node.init,
-          ownerCallableId,
-          state,
-          output,
-        );
+        collectDestructuring(node.id, node.init, ownerCallableId, context);
       else if (
         t.isAssignmentExpression(node, { operator: "=" }) &&
         (t.isObjectPattern(node.left) || t.isArrayPattern(node.left))
       )
-        collectDestructuring(
-          node.left,
-          node.right,
-          ownerCallableId,
-          state,
-          output,
-        );
+        collectDestructuring(node.left, node.right, ownerCallableId, context);
     },
     exit: (node) => callableStack.exit(node),
   });
@@ -93,6 +83,7 @@ interface ObjectCollectionContext {
   readonly state: JavaScriptSemanticAnalysisState;
   readonly output: JavaScriptSemanticObjectOperation[];
   readonly writeTargets: Map<t.Node, t.Node>;
+  readonly readPresence: ReturnType<typeof createSemanticReadPresenceQuery>;
 }
 
 const collectMember = (
@@ -132,6 +123,11 @@ const collectMember = (
     {
       node,
       kind: write ? "write" : "read",
+      provenOwnSlot:
+        !write &&
+        identity.path !== null &&
+        context.readPresence(identity.bindingId, node)?.(identity.path) ===
+          true,
       ownerCallableId,
       objectBindingId: identity.bindingId,
       targetBindingId: null,
@@ -146,10 +142,14 @@ const collectDestructuring = (
   root: t.Node,
   initializer: t.Node | null | undefined,
   ownerCallableId: string | null,
-  state: JavaScriptSemanticAnalysisState,
-  output: JavaScriptSemanticObjectOperation[],
+  { state, output, readPresence }: ObjectCollectionContext,
 ): void => {
   const source = expressionObjectIdentity(initializer, state);
+  let ownSlot =
+    initializer == null || source.path === null
+      ? undefined
+      : readPresence(source.bindingId, initializer);
+  const staged: AddObjectOperationInput[] = [];
   const pending: {
     readonly pattern: t.Node;
     readonly path: readonly string[];
@@ -159,19 +159,35 @@ const collectDestructuring = (
     if (next === undefined) break;
     const { path } = next;
     const occurrence = unwrapJavaScriptExpression(next.pattern).node;
+    if (t.isAssignmentPattern(occurrence)) ownSlot = undefined;
     const pattern = t.isAssignmentPattern(occurrence)
       ? unwrapJavaScriptExpression(occurrence.left).node
       : occurrence;
     if (t.isObjectPattern(pattern)) {
       for (const property of pattern.properties.toReversed()) {
-        if (!t.isObjectProperty(property)) continue;
+        if (!t.isObjectProperty(property)) {
+          ownSlot = undefined;
+          continue;
+        }
+        if (property.computed) ownSlot = undefined;
         const name = semanticStaticPropertyKey(property.key, property.computed);
-        if (name !== null)
-          pending.push({ pattern: property.value, path: [...path, name] });
+        if (name === null) {
+          ownSlot = undefined;
+          continue;
+        }
+        const pathToProperty = [...path, name];
+        if (
+          ownSlot !== undefined &&
+          source.path !== null &&
+          !ownSlot([...source.path, ...pathToProperty])
+        )
+          ownSlot = undefined;
+        pending.push({ pattern: property.value, path: pathToProperty });
       }
       continue;
     }
     if (t.isArrayPattern(pattern)) {
+      ownSlot = undefined;
       for (let index = pattern.elements.length - 1; index >= 0; index -= 1) {
         const element = pattern.elements[index];
         if (
@@ -183,22 +199,30 @@ const collectDestructuring = (
       }
       continue;
     }
-    if (!t.isIdentifier(pattern)) continue;
+    if (!t.isIdentifier(pattern)) {
+      ownSlot = undefined;
+      continue;
+    }
+    staged.push({
+      node: occurrence,
+      kind: "destructure",
+      ownerCallableId,
+      objectBindingId: source.bindingId,
+      targetBindingId:
+        resolveSemanticBindingState(state, pattern, pattern.name)?.bindingId ??
+        null,
+      propertyPath: source.path === null ? null : [...source.path, ...path],
+    });
+  }
+  // Earlier lookups of the pattern must also be ordinary data reads before
+  // the RHS snapshot can prove a later leaf's presence.
+  const provenOwnSlot = ownSlot !== undefined;
+  for (const input of staged)
     addObjectOperation(
-      {
-        node: occurrence,
-        kind: "destructure",
-        ownerCallableId,
-        objectBindingId: source.bindingId,
-        targetBindingId:
-          resolveSemanticBindingState(state, pattern, pattern.name)
-            ?.bindingId ?? null,
-        propertyPath: source.path === null ? null : [...source.path, ...path],
-      },
+      provenOwnSlot ? { ...input, provenOwnSlot } : input,
       state,
       output,
     );
-  }
 };
 
 interface AddObjectOperationInput {
@@ -208,6 +232,7 @@ interface AddObjectOperationInput {
   readonly objectBindingId: string | null;
   readonly targetBindingId: string | null;
   readonly propertyPath: readonly string[] | null;
+  readonly provenOwnSlot?: boolean;
 }
 
 const addObjectOperation = (
@@ -224,6 +249,9 @@ const addObjectOperation = (
       String(input.node.end ?? -1),
     ].join(":"),
     kind: input.kind,
+    ...(input.provenOwnSlot === true
+      ? { sourcePresence: "present" as const }
+      : {}),
     location: range(input.node),
     ownerCallableId: input.ownerCallableId,
     objectBindingId: input.objectBindingId,

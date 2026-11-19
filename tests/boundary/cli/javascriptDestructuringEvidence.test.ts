@@ -8,7 +8,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 cliTest(
-  "retains assignment and nested-default destructuring Evidence",
+  "retains earlier property dependencies through analysis and default tracing",
   async ({ cli }) => {
     const root = await createTestTempDirectory(
       "rea-js-destructuring-evidence-",
@@ -20,6 +20,8 @@ cliTest(
     const { a: declared } = src;
     let a;
     ({ a } = src);
+    const direct = src.a;
+    src.a = 2;
     const nested = { a: [1], b: 2 };
     const { a: [plain] } = nested;
     const { a: [fallback] = [] } = nested;
@@ -58,5 +60,36 @@ cliTest(
         )?.properties.property_path,
       ).toEqual(path);
     }
+    expect(
+      graph.relations.find(({ relation }) => relation === "reads-property"),
+    ).toMatchObject({ resolution: "resolved" });
+    const declared = graph.nodes.find(
+      ({ kind, label }) => kind === "binding" && label === "declared",
+    );
+    const queryPath = join(root, "query.json");
+    await writeFile(
+      queryPath,
+      JSON.stringify({
+        application: output.json,
+        query: {
+          seed: { kind: "semantic-node", node_id: declared?.node_id },
+          direction: "backward-provenance",
+        },
+      }),
+    );
+    const trace = await cli.run({
+      arguments: ["trace-javascript-semantics", queryPath, "--json"],
+    });
+    expect(trace.exitCode, trace.stderr).toBe(0);
+    expect(trace.json).toMatchObject({
+      normalized_result: {
+        relations: expect.arrayContaining([
+          expect.objectContaining({
+            relation: "destructures",
+            resolution: "resolved",
+          }),
+        ]),
+      },
+    });
   },
 );

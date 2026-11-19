@@ -1,6 +1,65 @@
 import { expect, it } from "vitest";
 import { graphForJavaScript } from "../../../tests/fixtures/javascriptSemanticGraph.js";
 
+it.each([
+  { read: "const { mode: selected } = config;", relation: "destructures" },
+  {
+    read: "let selected; ({ mode: selected } = config);",
+    relation: "destructures",
+  },
+  { read: "const selected = config.mode;", relation: "reads-property" },
+] as const)(
+  "keeps earlier $relation at its read position",
+  ({ read, relation }) => {
+    const source = 'const config = { mode: "strict", other: 0 };';
+    for (const [before, after, resolution] of [
+      ["", 'config.mode = "loose";', "resolved"],
+      ["", "config.other = 1;", "resolved"],
+      ["delete config.mode;", "", "candidate"],
+      ["mutate(config);", "", "candidate"],
+    ]) {
+      const graph = graphForJavaScript(
+        [source, before, read, after].join("\n"),
+      );
+      expect(
+        graph.relations.find((edge) => edge.relation === relation),
+      ).toMatchObject({ resolution });
+    }
+  },
+);
+
+it("keeps a direct nested data-slot dependency after a later write", () => {
+  const graph = graphForJavaScript(`
+    const config = { nested: { mode: "strict" } };
+    const { mode: selected } = config.nested;
+    config.nested.mode = "loose";
+  `);
+  expect(
+    graph.relations.find(({ relation }) => relation === "destructures"),
+  ).toMatchObject({ resolution: "resolved" });
+});
+
+it.each([
+  `const config = { mode: "strict" }; const { first = (delete config.mode), mode: selected } = config;`,
+  `const config = { get first() { delete this.mode; return {}; }, mode: "strict" };
+   const { first: {}, mode: selected } = config;`,
+])(
+  "leaves a dependency uncertain after an effectful earlier pattern lookup",
+  (source) => {
+    const graph = graphForJavaScript(source + 'config.mode = "loose";');
+    const selected = graph.nodes.find(
+      ({ kind, label }) => kind === "binding" && label === "selected",
+    );
+    expect(
+      graph.relations.find(
+        (edge) =>
+          edge.relation === "destructures" &&
+          edge.target_node_id === selected?.node_id,
+      ),
+    ).toMatchObject({ resolution: "candidate" });
+  },
+);
+
 it("links declared and assigned destructuring bindings to their exact source slots", () => {
   const cases = [
     { pattern: "{ a: selected }", source: "{ a: 1 }", path: ["a"] },
