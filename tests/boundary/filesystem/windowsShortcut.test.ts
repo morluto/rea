@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -476,3 +477,54 @@ describe("Windows shortcut deep parent paths", () => {
     expect(lstatCalls).not.toHaveBeenCalledWith("C:\\missing\\a");
   });
 });
+
+it.each([
+  { payloadBytes: 0, status: "partial", kind: "raw" },
+  { payloadBytes: 3, status: "partial", kind: "raw" },
+  { payloadBytes: 4, status: "complete", kind: "property_store" },
+])(
+  "reports $status coverage for a PropertyStoreDataBlock with $payloadBytes payload bytes",
+  async ({ payloadBytes, status, kind }) => {
+    const root = await createTestTempDirectory("rea-shortcut-property-store-");
+    const path = join(root, "property-store.lnk");
+    const payload = Buffer.alloc(payloadBytes);
+    const bytes = windowsShortcutBytes({
+      flags: 0,
+      idList: null,
+      linkInfo: null,
+      extraData: [
+        { kind: "property_store", payload },
+        { kind: "console_fe", codePage: 437 },
+      ],
+    });
+    await writeFile(path, bytes);
+    const result = await createWindowsShortcutService().inspect({ path });
+    if (!result.ok) throw result.error;
+    expect(result.value.normalized_result).toMatchObject({
+      coverage: { status, failing_offset: status === "partial" ? 76 : null },
+      issues:
+        status === "partial"
+          ? [{ code: "malformed_structure", offset: 76 }]
+          : [],
+      extra_data: {
+        blocks: [
+          {
+            offset: 76,
+            size: 8 + payloadBytes,
+            signature_name: "PropertyStoreDataBlock",
+            decoded: {
+              kind,
+              bytes: payloadBytes,
+              sha256: createHash("sha256").update(payload).digest("hex"),
+            },
+          },
+          {
+            offset: 84 + payloadBytes,
+            decoded: { kind: "console_fe", code_page: 437 },
+          },
+        ],
+        terminal_offset: bytes.length - 4,
+      },
+    });
+  },
+);

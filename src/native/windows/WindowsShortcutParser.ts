@@ -27,6 +27,8 @@ const FILETIME_UNIX_EPOCH = 116444736000000000n;
 const UUID_UNIX_EPOCH = 0x01b21dd213814000n;
 const ENTRIES_PER_YIELD = 32;
 const VOLUME_UNICODE_LABEL_SELECTOR = 0x14;
+// MS-SHLLINK §2.5.7 requires at least 12 bytes including the 8-byte block header.
+const PROPERTY_STORE_MIN_PAYLOAD_BYTES = 4;
 // MS-SHLLINK §2.4 exempts COMMAND_LINE_ARGUMENTS from this format limit.
 const MAX_STRING_DATA_CHARACTERS = 260;
 /** ECMAScript Date range: 8.64e15 ms either side of the Unix epoch. */
@@ -1127,12 +1129,20 @@ const decodeExtra = (
       item_offset: payload.readUInt32LE(16),
     };
   }
-  if (signature === 0xa0000009)
-    return {
-      kind: "property_store",
-      bytes: payload.length,
-      sha256: sha256Hex(payload),
-    };
+  if (signature === 0xa0000009) {
+    if (payload.length >= PROPERTY_STORE_MIN_PAYLOAD_BYTES)
+      return {
+        kind: "property_store",
+        bytes: payload.length,
+        sha256: sha256Hex(payload),
+      };
+    note(
+      walk,
+      "malformed_structure",
+      offset,
+      `PropertyStoreDataBlock payload is shorter than ${String(PROPERTY_STORE_MIN_PAYLOAD_BYTES)} bytes`,
+    );
+  }
   return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
 };
 
