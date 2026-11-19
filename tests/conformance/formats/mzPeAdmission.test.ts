@@ -223,11 +223,36 @@ it("keeps a PE signature outside an inspected prefix unresolved until its requir
         : undefined,
     ),
   ).rejects.toThrow("Truncated PE header range at 128.");
+  const reads: { offset: number; length: number }[] = [];
   await expect(
-    readPeImageHeadersAt(prefix, bytes.length, async (offset, length) =>
-      bytes.subarray(offset, offset + length),
-    ),
+    readPeImageHeadersAt(prefix, bytes.length, async (offset, length) => {
+      reads.push({ offset, length });
+      return bytes.subarray(offset, offset + length);
+    }),
   ).resolves.toEqual(readPeImageHeaders(bytes));
+  // The borrowed source supplies the signature and fixed COFF record once.
+  expect(reads.filter(({ offset }) => offset >= 128 && offset < 152)).toEqual([
+    { offset: 128, length: 24 },
+  ]);
+});
+
+it("recognizes a bounded non-PE Windows signature without requiring a COFF record", async () => {
+  const bytes = peResourceFixture().bytes.subarray(0, 130);
+  bytes.write("NE", 128, "ascii");
+  const reads: { offset: number; length: number }[] = [];
+  await expect(
+    readPeImageHeadersAt(
+      bytes.subarray(0, 64),
+      bytes.length,
+      async (offset, length) => {
+        reads.push({ offset, length });
+        return bytes.subarray(offset, offset + length);
+      },
+    ),
+  ).rejects.toThrow(
+    "NE images do not contain PE resource or certificate tables",
+  );
+  expect(reads).toEqual([{ offset: 128, length: 2 }]);
 });
 
 it("does not inventory PE GPU sections from relocation-owned DOS bytes", async () => {
