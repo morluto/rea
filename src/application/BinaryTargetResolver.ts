@@ -1,3 +1,4 @@
+import { BINARY_TARGET_FORMAT_KINDS } from "../domain/targetFormats.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   artifactNameForClassification,
@@ -43,12 +44,11 @@ import {
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
-import {
-  BINARY_TARGET_FORMAT_KINDS,
-  type BinaryTarget,
-  type BinaryArchitecture,
-  type PeCodeViewRecord,
-  type UniversalMachOSlice,
+import type {
+  BinaryTarget,
+  BinaryArchitecture,
+  PeCodeViewRecord,
+  UniversalMachOSlice,
 } from "../domain/binaryTargetTypes.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { readMipsElfMetadata } from "./MipsElfMetadata.js";

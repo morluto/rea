@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 
 import {
   analysisSnapshotSchema,
@@ -11,13 +11,13 @@ import {
   createImmutableEvidenceBundle,
   parseEvidenceBundle,
 } from "../../domain/evidenceBundle.js";
+import type { TargetFormat } from "../../domain/targetFormats.js";
 import { binaryTargetSummary } from "./BinaryTargetSummary.js";
 
 /**
  * One admitted target per format. A format added to `BinaryTarget` fails
  * compilation here until it has a fixture, and the cases below then require
- * every vocabulary that persists or projects targets to accept it. This guards
- * the failure class of #7290 until target formats have a single owner.
+ * every vocabulary that persists or projects targets to accept it.
  */
 type TargetFixtures = {
   readonly [Format in BinaryTarget["format"]]: BinaryTarget & {
@@ -148,6 +148,10 @@ const roundTrip = (value: unknown): unknown =>
   JSON.parse(JSON.stringify(value));
 
 describe("target format vocabularies", () => {
+  it("defines a target type for every canonical format", () => {
+    expectTypeOf<BinaryTarget["format"]>().toEqualTypeOf<TargetFormat>();
+  });
+
   it.each(Object.values(TARGETS))(
     "persists and projects $format targets",
     (target) => {
