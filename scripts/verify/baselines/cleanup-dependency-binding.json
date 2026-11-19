@@ -10,7 +10,6 @@
   "src/browser/PlaywrightBrowserScenarioProvider.ts": 1,
   "src/browser/WebSourceMapFetcher.ts": 2,
   "src/cli/desktopCaptureCommands.ts": 1,
-  "src/cutter/CutterBridgeClient.ts": 1,
   "src/desktop/ScreenJudgeProcess.ts": 1,
   "src/domain/explicitSensitiveFailure.ts": 1,
   "src/evm/EvmoleInterfaceProvider.ts": 3,

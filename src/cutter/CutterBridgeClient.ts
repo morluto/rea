@@ -1,5 +1,8 @@
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
-import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  providerCleanupErrorFromFailures,
+} from "../domain/analysisErrorCleanup.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import {
   ArtifactResourceScope,
@@ -1302,12 +1305,12 @@ const discoveryFailure = (
     });
     const cleanup = failures.filter((failure) => failure.cleanupIncomplete);
     if (cleanup.length === 0) return failures[0];
-    return new ProviderCleanupError(
+    return providerCleanupErrorFromFailures(
       "cutter",
-      cleanup.flatMap((failure) => failure.cleanupResources),
-      { reason: "Cutter descriptor discovery failed with unconfirmed closes" },
-      { operation, cause: new AggregateError(failures, cause.message) },
-    ).bindCleanupDependencies(cleanup);
+      cleanup,
+      "Cutter descriptor discovery failed with unconfirmed closes",
+      { operation, causes: failures, message: cause.message },
+    );
   }
   if (!(cause instanceof ArtifactReaderFailure)) return cause;
   if (cause.cleanup !== undefined) {
