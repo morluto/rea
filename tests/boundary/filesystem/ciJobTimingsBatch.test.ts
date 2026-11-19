@@ -194,96 +194,6 @@ it("collects failed default-branch pushes before a saturated PR sample", async (
   });
 });
 
-it("records a failed supplemental failure query and still collects the original CI and Release selections", async () => {
-  const createdAt = new Date().toISOString();
-  const fixture = await createFixture([
-    saturatedCompletedRuns(createdAt),
-    { workflow_runs: [completedRun(500, createdAt)] },
-    { error: true },
-  ]);
-
-  await collectDefaultBranchSample(fixture);
-
-  const manifest = await readBatchManifest(fixture);
-  expect(manifest.errors).toEqual([
-    expect.objectContaining({ scope: "workflow:CI default-branch failures" }),
-  ]);
-  expect(manifest.errors[0]).not.toHaveProperty("runId");
-  expect(manifest.coverage).toMatchObject({
-    workflowsQueried: ["CI", "Release"],
-    selectedRuns: 101,
-    collectedRuns: 101,
-  });
-  expect(manifest.runs).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({ id: 1, workflow: "CI", status: "collected" }),
-      expect.objectContaining({
-        id: 500,
-        workflow: "Release",
-        status: "collected",
-      }),
-    ]),
-  );
-  expect(manifest.truncation).not.toContainEqual(
-    expect.objectContaining({ code: "default-branch-failure-sample-limit" }),
-  );
-});
-
-it("rejects supplemental records on the wrong branch or before the lookback and still collects the original selections", async () => {
-  const createdAt = new Date().toISOString();
-  const staleAt = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
-  const fixture = await createFixture([
-    saturatedCompletedRuns(createdAt),
-    { workflow_runs: [completedRun(500, createdAt)] },
-    {
-      total_count: 2,
-      workflow_runs: [
-        completedRun(300, createdAt, {
-          event: "push",
-          head_branch: "feature",
-          conclusion: "failure",
-        }),
-        completedRun(301, staleAt, {
-          event: "push",
-          head_branch: "main",
-          conclusion: "failure",
-        }),
-      ],
-    },
-  ]);
-
-  await collectDefaultBranchSample(fixture);
-
-  const manifest = await readBatchManifest(fixture);
-  expect(manifest.errors).toEqual([
-    expect.objectContaining({
-      scope: "workflow:CI default-branch failures",
-      runId: 300,
-    }),
-    expect.objectContaining({
-      scope: "workflow:CI default-branch failures",
-      runId: 301,
-    }),
-  ]);
-  expect(manifest.coverage).toMatchObject({
-    workflowsQueried: ["CI", "Release"],
-    selectedRuns: 101,
-    collectedRuns: 101,
-  });
-  expect(manifest.runs).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({ id: 1, workflow: "CI", status: "collected" }),
-      expect.objectContaining({
-        id: 500,
-        workflow: "Release",
-        status: "collected",
-      }),
-    ]),
-  );
-  expect(manifest.runs.map((run: { id: number }) => run.id)).not.toContain(300);
-  expect(manifest.runs.map((run: { id: number }) => run.id)).not.toContain(301);
-});
-
 it.each(["request error", "mismatched runs"])(
   "keeps the original CI and Release samples after supplemental %s",
   async (mode) => {
@@ -448,30 +358,6 @@ it("retains a partial manifest when its collection budget is exhausted", async (
     manifest.truncation.map((entry: { code: string }) => entry.code),
   ).toEqual(["time-budget-before-collection", "time-budget-unattempted"]);
 });
-
-function completedRun(
-  id: number,
-  createdAt: string,
-  overrides: Record<string, unknown> = {},
-) {
-  return {
-    id,
-    run_attempt: 1,
-    status: "completed",
-    event: "pull_request",
-    conclusion: "success",
-    created_at: createdAt,
-    ...overrides,
-  };
-}
-
-function saturatedCompletedRuns(createdAt: string) {
-  return {
-    workflow_runs: Array.from({ length: 100 }, (_, index) =>
-      completedRun(index + 1, createdAt),
-    ),
-  };
-}
 
 async function readBatchManifest(
   fixture: Awaited<ReturnType<typeof createFixture>>,
