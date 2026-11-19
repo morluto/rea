@@ -15,7 +15,7 @@
     "decompiler",
     "mcp-server"
   ],
-  "skills": ".cursor-plugin/skills",
+  "skills": "./.cursor-plugin/skills",
   "mcpServers": "./.codex-plugin/mcp.json",
   "interface": {
     "displayName": "REA",

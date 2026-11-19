@@ -221,7 +221,7 @@ describe("plugin manifests", () => {
       skills: "./skills",
     });
     expect(await readJson(".codex-plugin/plugin.json")).toMatchObject({
-      skills: ".cursor-plugin/skills",
+      skills: "./.cursor-plugin/skills",
     });
     expect(await readJson(".claude-plugin/marketplace.json")).toMatchObject({
       plugins: [

@@ -259,7 +259,7 @@ export async function verifyPackagePack({ root, workspace, commands }) {
     if (
       manifest.version !== packedManifest.version ||
       (path.startsWith(".codex")
-        ? manifest.skills !== ".cursor-plugin/skills" ||
+        ? manifest.skills !== "./.cursor-plugin/skills" ||
           manifest.mcpServers !== "./.codex-plugin/mcp.json" ||
           serverConfig.mcpServers?.rea?.command !== "node" ||
           serverConfig.mcpServers?.rea?.startup_timeout_sec !==
