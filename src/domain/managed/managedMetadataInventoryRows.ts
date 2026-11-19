@@ -1,3 +1,4 @@
+import { BinaryReader } from "../binaryContainer.js";
 import { decodeStrictUtf8 } from "../strictUtf8.js";
 import { readMemberReferenceRowFacts } from "./managedMemberReferenceRows.js";
 import { readTypeDefinitionRowFacts } from "./managedTypeDefinitionRows.js";
@@ -419,7 +420,13 @@ const decodeFixedString = (
   blob: Buffer,
   layout: ManagedMetadataLayout,
 ): string | null => {
-  if (blob.length < 3 || blob.readUInt16LE(0) !== 1 || blob[2] === 0xff)
+  // The blob's kind word is read by the shared reader after the three-byte minimum is
+  // established, so a shorter blob stays a "not this kind" answer rather than a failure.
+  if (
+    blob.length < 3 ||
+    new BinaryReader(blob, true, "managed-metadata-blob").u16(0) !== 1 ||
+    blob[2] === 0xff
+  )
     return null;
   const decoded = readManagedCompressedUnsigned(blob, 2);
   if (!decoded.ok) return null;
@@ -563,7 +570,9 @@ export const readResource = ({
       });
     } else {
       const start = directory.offset + declaredOffset;
-      dataLength = bytes.readUInt32LE(start);
+      dataLength = new BinaryReader(bytes, true, "managed-cli-resources").u32(
+        start,
+      );
       if (dataLength > directory.size - declaredOffset - 4) {
         issues.push({
           code: "invalid-resource",
