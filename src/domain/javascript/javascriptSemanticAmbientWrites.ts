@@ -35,7 +35,11 @@ import {
 } from "./javascriptSemanticMutationInitializers.js";
 import { semanticIterationSources } from "./javascriptSemanticIterationSources.js";
 import type { SemanticIterationSource } from "./javascriptSemanticIterationFacts.js";
-import { joinSemanticPropertyPaths } from "./javascriptSemanticPropertyPaths.js";
+import {
+  joinSemanticPropertyPaths,
+  semanticArrayIndex,
+} from "./javascriptSemanticPropertyPaths.js";
+import { semanticArrayPropertyReferences } from "./javascriptSemanticObjectReferences.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 import {
   GLOBAL_OBJECT_NAMES,
@@ -150,6 +154,20 @@ const isReadOnlyPrototypeInspection = (
 
 type AmbientPath = readonly (string | null)[];
 
+const arrayPrototypeEffectPath = (
+  path: AmbientPath,
+  kind: "write" | "escape",
+): AmbientPath | undefined => {
+  if (path[0] === semanticArrayIteratorPrototypePath[0]) return path;
+  if (path[0] !== "global" || (path[1] !== "Array" && path[1] !== "Object"))
+    return undefined;
+  return path[2] === "prototype" ||
+    path[2] === null ||
+    (kind === "escape" && path.length === 2)
+    ? ["global", path[1], "prototype", ...path.slice(3)]
+    : undefined;
+};
+
 const retainedAmbientEffects = new WeakMap<
   JavaScriptSemanticAnalysisState,
   Map<t.Node | undefined, Set<string>>
@@ -248,6 +266,8 @@ type AmbientIdentityUnknownReason =
 
 interface AmbientResolution {
   readonly paths: readonly AmbientPath[];
+  /** Tentative identities usable only to guard native iteration. */
+  readonly spreadEffectPaths?: readonly AmbientPath[];
   readonly callerPaths: readonly AmbientPath[];
   readonly ownership: "local" | "ambient" | "unknown";
   readonly unknownReasons: readonly AmbientIdentityUnknownReason[];
@@ -293,13 +313,14 @@ export const createAmbientPathResolver = (
     escapedContents = false,
     projection: AmbientProjection = [],
     receiver?: (node: t.Node, path: AmbientProjection) => void,
-    observes?: "array-receiver",
+    observes?: "array-receiver" | "ambient-effects" | "spread-effects",
   ): AmbientResolution => {
     const prior = possibleWrites ? undefined : cached.get(node);
     if (prior !== undefined) return prior;
     const result = new Map<string, AmbientPath>();
     const callerPaths = new Map<string, AmbientPath>();
     let hasLocalIdentity = false;
+    let projectedSpread = false;
     const unknownReasons = new Set<AmbientIdentityUnknownReason>();
     // The caller's write site selects initializers for the written target.
     // Reads reached through an initializer occur at their own position.
@@ -706,7 +727,9 @@ export const createAmbientPathResolver = (
         if (callResult?.kind === "prototype") {
           continueWith(
             callResult.target,
-            suffix === undefined ? undefined : ["__proto__", ...suffix],
+            suffix === undefined && observes !== "spread-effects"
+              ? undefined
+              : ["__proto__", ...(suffix ?? [])],
           );
           continue;
         }
@@ -848,29 +871,39 @@ export const createAmbientPathResolver = (
               continueWith(property.value, suffix.slice(1));
           }
         } else if (t.isArrayExpression(root)) {
+          const hasSpread = root.elements.some(t.isSpreadElement);
           if (possibleWrites && suffix?.[0] === "__proto__") {
             retain(["global", "Array", "prototype", ...suffix.slice(1)]);
             resolvedIdentity = true;
           } else if (suffix === undefined) {
+            if (hasSpread && observes === "ambient-effects")
+              projectedSpread = true;
             for (const element of root.elements)
               if (t.isSpreadElement(element)) continueWith(element.argument);
               else if (t.isExpression(element)) continueWith(element);
-          } else if (!root.elements.some(t.isSpreadElement)) {
-            const index = Number(key);
-            if (key === null && possibleWrites) {
-              for (const element of root.elements)
-                if (t.isExpression(element))
-                  continueWith(element, suffix.slice(1));
-            } else if (
-              key !== null &&
-              Number.isInteger(index) &&
-              index >= 0 &&
-              String(index) === key
-            ) {
-              const element = root.elements[index];
-              if (t.isExpression(element))
-                continueWith(element, suffix.slice(1));
+          } else if (
+            hasSpread
+              ? possibleWrites &&
+                (observes === "spread-effects" || observes === "array-receiver")
+              : possibleWrites || key !== null
+          ) {
+            const remaining = suffix.slice(1);
+            for (const source of semanticArrayPropertyReferences(root, [
+              key ?? null,
+            ])) {
+              continueWith(source.node, remaining);
+              // Native iteration depends on the effects being collected here.
+              // A spread may expose its receiver or any of its children.
+              if (source.iterableFallbackPath !== undefined)
+                continueWith(source.node, [null, ...remaining]);
             }
+          } else if (
+            hasSpread &&
+            observes === "ambient-effects" &&
+            (key === null ||
+              (key !== undefined && semanticArrayIndex(key) !== null))
+          ) {
+            projectedSpread = true;
           }
         }
       } finally {
@@ -879,10 +912,23 @@ export const createAmbientPathResolver = (
       }
     }
     const paths = [...result.values()];
+    // A separate walk cannot let a tentative selection mask an ordinary one
+    // in the identity cache, or publish unrelated tentative ambient paths.
+    const spreadEffectPaths = projectedSpread
+      ? resolve(
+          node,
+          capture,
+          escapedContents,
+          projection,
+          undefined,
+          "spread-effects",
+        ).paths
+      : undefined;
     if (paths.length > 0 && hasLocalIdentity)
       unknownReasons.add("mixed-identities");
     const resolution: AmbientResolution = {
       paths,
+      ...(spreadEffectPaths === undefined ? {} : { spreadEffectPaths }),
       callerPaths: [...callerPaths.values()],
       ownership:
         unknownReasons.size > 0
@@ -1150,15 +1196,33 @@ export function* indexJavaScriptAmbientWritesSteps(
   for (const { node, path } of writes) {
     const target =
       path[0] === "pending-target" ? targets[Number(path[1])] : undefined;
-    const paths =
-      target === undefined
-        ? [path]
-        : ambientWrites(target.node, target.capture).paths.map((identity) => [
-            ...identity,
-            ...path.slice(2),
-          ]);
-    for (const resolved of paths) {
-      retainSemanticAmbientEffect(state, "write", resolved, node);
+    if (target === undefined) {
+      retainSemanticAmbientEffect(state, "write", path, node);
+      continue;
+    }
+    const resolved = ambientWrites(
+      target.node,
+      target.capture,
+      false,
+      [],
+      undefined,
+      "ambient-effects",
+    );
+    const suffix = path.slice(2);
+    for (const identity of resolved.paths)
+      retainSemanticAmbientEffect(
+        state,
+        "write",
+        [...identity, ...suffix],
+        node,
+      );
+    for (const identity of resolved.spreadEffectPaths ?? []) {
+      const prototype = arrayPrototypeEffectPath(
+        [...identity, ...suffix],
+        "write",
+      );
+      if (prototype !== undefined)
+        retainSemanticAmbientEffect(state, "write", prototype, node);
     }
   }
   // Settle other ambient effects first. A syntactic resolver call is safe only
@@ -1277,7 +1341,14 @@ export function* indexJavaScriptAmbientWritesSteps(
     { node, target, browserReceiver, projection }: (typeof escapes)[number],
     trackPrototypeInspectionEffects = false,
   ): boolean {
-    const resolved = ambientWrites(target, node, true, projection);
+    const resolved = ambientWrites(
+      target,
+      node,
+      true,
+      projection,
+      undefined,
+      "ambient-effects",
+    );
     if (
       browserReceiver &&
       resolved.ownership === "ambient" &&
@@ -1286,7 +1357,17 @@ export function* indexJavaScriptAmbientWritesSteps(
     )
       state.retainedGlobalCallReceivers.add(target);
     let changed = false;
-    for (const path of resolved.paths) {
+    const paths =
+      resolved.spreadEffectPaths === undefined
+        ? resolved.paths
+        : [
+            ...resolved.paths,
+            ...resolved.spreadEffectPaths.flatMap((identity) => {
+              const path = arrayPrototypeEffectPath(identity, "escape");
+              return path === undefined ? [] : [path];
+            }),
+          ];
+    for (const path of paths) {
       // Only proven browser APIs keep their global receiver from user code.
       if (browserReceiver && path.length === 1 && path[0] === "global")
         continue;

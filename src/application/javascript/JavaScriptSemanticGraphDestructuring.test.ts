@@ -2,6 +2,85 @@ import { expect, it } from "vitest";
 import { graphForJavaScript } from "../../../tests/fixtures/javascriptSemanticGraph.js";
 
 it.each([
+  [
+    "reflected prototype",
+    "const protos=[...[Object.getPrototypeOf([])]];protos[0][Symbol.iterator]=function*(){};",
+    "candidate",
+  ],
+  [
+    "reflected iterator next",
+    "const protos=[...[Reflect.getPrototypeOf([].values())]];Reflect.set(protos[0], 'next', ()=>({done:true}));",
+    "candidate",
+  ],
+  [
+    "reflective receiver in an earlier call",
+    "configure();function configure(){const protos=[...[Reflect.getPrototypeOf([])]];protos[0][Symbol.iterator]=function*(){}}",
+    "candidate",
+  ],
+  [
+    "a stored prototype passed to an earlier call",
+    "const protos=[...[Object.getPrototypeOf([])]];disable(protos[0]);function disable(p){p[Symbol.iterator]=function*(){}}",
+    "candidate",
+  ],
+  [
+    "an unknown projected index",
+    "const protos=[...[Object.getPrototypeOf([])]];protos[index][Symbol.iterator]=function*(){};",
+    "candidate",
+  ],
+  [
+    "an array operand borrowed through an alias",
+    "const source=[Object.getPrototypeOf([])];const protos=[...source];protos[0][Symbol.iterator]=function*(){};",
+    "candidate",
+  ],
+  [
+    "a prototype selected by destructuring",
+    "const protos=[...[Object.getPrototypeOf([])]];const [p]=protos;p[Symbol.iterator]=function*(){};",
+    "candidate",
+  ],
+  [
+    "a prototype selected by nested destructuring",
+    "const [[p]]=[...[[Object.getPrototypeOf([])]]];p[Symbol.iterator]=function*(){};",
+    "candidate",
+  ],
+  [
+    "a quoted index",
+    'const protos=[...[Object.getPrototypeOf([])]];protos["0"][Symbol.iterator]=function*(){};',
+    "candidate",
+  ],
+  [
+    "a folded index",
+    "const protos=[...[Object.getPrototypeOf([])]];protos[0+0][Symbol.iterator]=function*(){};",
+    "candidate",
+  ],
+  [
+    "an earlier disjoint slot",
+    "const protos=[{},...[Object.getPrototypeOf([])]];protos[0][Symbol.iterator]=function*(){};",
+    "resolved",
+  ],
+  [
+    "a shadowed prototype reader",
+    "const Object={getPrototypeOf(){return {}}};const protos=[...[Object.getPrototypeOf([])]];protos[0][Symbol.iterator]=function*(){};",
+    "resolved",
+  ],
+] as const)(
+  "keeps iterator evidence sound through %s stored in an array with spread",
+  (_name, edit, resolution) => {
+    const graph = graphForJavaScript(
+      `${edit} const pairs=[["before"]];const [[selected]]=pairs;pairs[0][0]="later";`,
+    );
+    const target = graph.nodes.find(
+      (node) => node.kind === "binding" && node.label === "selected",
+    );
+    const relation = graph.relations.find(
+      (edge) =>
+        edge.relation === "destructures" &&
+        edge.target_node_id === target?.node_id,
+    );
+    expect(relation).toMatchObject({ resolution });
+  },
+);
+
+it.each([
   "const { mode: selected, fallback = 0 } = config;",
   'const { mode: selected, ["fallback"]: later } = config;',
   "const { mode: selected, nested: { fallback = 0 } } = config;",
