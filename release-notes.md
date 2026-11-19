@@ -981,6 +981,7 @@
 * **dotnet:** read metadata constant scalars through BinaryReader ([#12371](https://github.com/morluto/rea/issues/12371)) ([091b8b0](https://github.com/morluto/rea/commit/091b8b0339f3ab5b1075715e9dedfce5d6df8df1))
 * **dotnet:** share checked CIL operand and exception reads ([#12372](https://github.com/morluto/rea/issues/12372)) ([1b172f1](https://github.com/morluto/rea/commit/1b172f1e021edffb795640dc47d1fe76ec6e924a))
 * **electron:** carry fuse limits from the reader ([#12221](https://github.com/morluto/rea/issues/12221)) ([c34a00c](https://github.com/morluto/rea/commit/c34a00c70a041b88edc2f7d2e10c92392a7c13e1))
+* **elf:** decode REL and RELA entries through BinaryReader ([#12522](https://github.com/morluto/rea/issues/12522)) ([b824f95](https://github.com/morluto/rea/commit/b824f9510d746faf78f9877caded244495510673))
 * **elf:** preserve unwind parser limit facts ([#12308](https://github.com/morluto/rea/issues/12308)) ([9a9ddc9](https://github.com/morluto/rea/commit/9a9ddc9605fe767feb2fbe548f4cfeb7336ba0e0))
 * **elf:** preserve unwind parser limit ownership ([9a9ddc9](https://github.com/morluto/rea/commit/9a9ddc9605fe767feb2fbe548f4cfeb7336ba0e0))
 * **elf:** read IKCONFIG gzip and boot fields through BinaryReader ([#12525](https://github.com/morluto/rea/issues/12525)) ([84731ee](https://github.com/morluto/rea/commit/84731eefdf4f7489b87b96ce096ec7dab2befabb))
