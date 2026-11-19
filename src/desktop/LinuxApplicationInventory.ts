@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { desktopLibraryPolicy } from "../domain/desktop/libraryPolicy.js";
 import { lstat, realpath, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join } from "node:path";
@@ -194,13 +195,11 @@ const readDesktopEntry = async (
     symlinks: "follow" as const,
     ...(signal === undefined ? {} : { signal }),
   };
-  let text: string;
+  let bytes: Uint8Array;
   try {
-    text = (
-      await withOwnedRegularFile(path, options, ({ handle }) =>
-        readStableFileBytes(handle, path, DESKTOP_ENTRY_MAX_BYTES, options),
-      )
-    ).toString("utf8");
+    bytes = await withOwnedRegularFile(path, options, ({ handle }) =>
+      readStableFileBytes(handle, path, DESKTOP_ENTRY_MAX_BYTES, options),
+    );
   } catch (cause: unknown) {
     const failure = hostReadFailure(cause);
     if (failure !== cause) throw failure;
@@ -212,6 +211,12 @@ const readDesktopEntry = async (
           ? "larger than 1 MiB"
           : "unreadable",
     });
+  }
+  let text: string;
+  try {
+    text = decodeStrictUtf8(bytes, "preserve");
+  } catch {
+    return err({ reason: "desktop_entry_invalid", detail: "not valid UTF-8" });
   }
   const parsed = parseDesktopEntry(text);
   if (!parsed.ok)
@@ -245,6 +250,24 @@ const readHeader = async (
     if (!isRefusedRead(cause)) throw cause;
     return new Uint8Array();
   }
+};
+
+const launchEnvironment = (
+  wrapper: ReturnType<typeof unwrapDesktopCommand>,
+  inherited: LinuxApplicationRequest["environment"],
+) => {
+  const inheritedEnvironment = wrapper.clearEnvironment ? {} : { ...inherited };
+  for (const name of wrapper.unsetEnvironment ?? [])
+    delete inheritedEnvironment[name];
+  const environment = { ...inheritedEnvironment, ...wrapper.environment };
+  // GNU env's execvp searches the Linux system path when the prefix removes PATH.
+  const pathRemoved =
+    wrapper.clearEnvironment || wrapper.unsetEnvironment?.includes("PATH");
+  const lookupEnvironment =
+    pathRemoved && environment.PATH === undefined
+      ? { ...environment, PATH: "/bin:/usr/bin" }
+      : environment;
+  return { environment, lookupEnvironment };
 };
 
 /** The launched program as found on PATH and after resolving links. */
@@ -411,13 +434,14 @@ const directLaunchStateHome = (
   wrapper: ReturnType<typeof unwrapDesktopCommand>,
   packageKind: Package["kind"],
   hostHome: string,
-): string => {
+): string | undefined => {
   // Sandbox-managed directories continue to use the host home.
   if (wrapper.kind !== "direct" || packageKind === "snap") return hostHome;
   const launchHome = wrapper.environment.HOME;
-  return launchHome !== undefined && isAbsolute(launchHome)
-    ? launchHome
-    : hostHome;
+  if (launchHome !== undefined && isAbsolute(launchHome)) return launchHome;
+  if (wrapper.clearEnvironment || wrapper.unsetEnvironment?.includes("HOME"))
+    return undefined;
+  return hostHome;
 };
 
 /** Resolve what the request launches, where it came from and where it may keep state. */
@@ -430,6 +454,11 @@ export const inspectLinuxApplication = async (
   if (!command.ok) return command;
   const { argv, workingDirectory, entry } = command.value;
   const wrapper = unwrapDesktopCommand(argv);
+  if (wrapper.invalidUnset)
+    return err({
+      reason: "desktop_entry_invalid",
+      detail: "env unset does not name a variable",
+    });
   const directory = await envApplicationDirectory(
     wrapper.chdir?.path,
     workingDirectory,
@@ -439,10 +468,13 @@ export const inspectLinuxApplication = async (
   const applicationDirectory = directory.value;
   // An `env` prefix's assignments are what the program sees: its PATH finds
   // the program and its XDG folders hold the program's state.
-  const environment = { ...request.environment, ...wrapper.environment };
+  const { environment, lookupEnvironment } = launchEnvironment(
+    wrapper,
+    request.environment,
+  );
   const found = await resolveProgram(
     wrapper.program,
-    environment,
+    lookupEnvironment,
     applicationDirectory ?? workingDirectory,
   );
   if (found === undefined)
@@ -497,6 +529,11 @@ export const inspectLinuxApplication = async (
     wrapper.kind === "flatpak" ? null : path,
     entry,
   );
+  const stateHome = directLaunchStateHome(wrapper, package_.kind, request.home);
+  if (stateHome === undefined)
+    limitations.push(
+      "The launch prefix provides no absolute HOME after removing the inherited value. The application's default home state paths are unknown. Select known locations with --state-path.",
+    );
   return ok({
     inventory: {
       desktop_entry: entry,
@@ -515,11 +552,12 @@ export const inspectLinuxApplication = async (
         names,
         {
           environment,
-          home: directLaunchStateHome(wrapper, package_.kind, request.home),
+          home: stateHome,
         },
         sandboxDirectories,
       ),
     },
+    ...(wrapper.index === 0 ? {} : { envProgramIndex: wrapper.index }),
     limitations,
     signingKeys,
   });

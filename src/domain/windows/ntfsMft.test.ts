@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   createMftDecoder,
+  hasMftFileRecordHeader,
   parseMftIndex,
   selectMftMetadata,
 } from "./ntfsMft.js";
@@ -210,12 +211,17 @@ describe("MFT header facts", () => {
     );
   });
 
-  it("verifies the older FILE header without reading its fixup words as a record number", () => {
+  it("recognizes the older FILE header and verifies its fixups without reading them as a record number", () => {
     const oldRecord = recordOf({ usaOffset: 42 });
     const newRecord = recordOf();
     new DataView(newRecord.buffer).setUint32(44, 1, true);
 
-    const parsed = parseMftIndex(streamOf(oldRecord, newRecord));
+    const stream = streamOf(oldRecord, newRecord);
+    const carrier = Buffer.alloc(stream.length + 7, 0xcc);
+    carrier.set(stream, 7);
+    const bytes = carrier.subarray(7);
+    expect(hasMftFileRecordHeader(bytes.subarray(0, 42))).toBe(true);
+    const parsed = parseMftIndex(bytes);
     if (!parsed.ok) throw new Error(parsed.error.message);
     expect(parsed.value.records).toMatchObject([
       {

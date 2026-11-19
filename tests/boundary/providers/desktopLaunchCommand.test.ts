@@ -11,13 +11,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { launchCommand } from "../../../src/domain/desktop/appExport.js";
+import {
+  capturedHomePlan,
+  launchCommand,
+} from "../../../src/domain/desktop/appExport.js";
 import { planLaunch } from "../../../src/application/desktop/DesktopExportLaunch.js";
 import type { DesktopApplicationCapture } from "../../../src/domain/desktop/desktopCapture.js";
 
-it.skipIf(process.platform === "win32")(
-  "launches in an empty env-selected directory under the replay home",
-  () => {
+it.skipIf(process.platform === "win32").each([
+  ["--chdir", false],
+  ["-iC", true],
+])(
+  "replays an empty directory selected by env %s with the expected environment",
+  (option, clean) => {
     const home = mkdtempSync(join(tmpdir(), "rea-working-home-"));
     try {
       const selected = "Projects/Empty workspace";
@@ -26,9 +32,11 @@ it.skipIf(process.platform === "win32")(
         application: {
           argv: [
             "/usr/bin/env",
-            "--chdir",
+            option,
             `/home/ada/${selected}`,
-            "/bin/pwd",
+            process.execPath,
+            "-e",
+            "console.log(process.cwd()); console.log(process.env.REA_REPLAY_MARKER)",
           ],
           working_directory: "/home/ada/ambient",
           application_working_directory: `/home/ada/${selected}`,
@@ -38,13 +46,20 @@ it.skipIf(process.platform === "win32")(
       } as unknown as DesktopApplicationCapture;
       const {
         command: [program, ...args],
-      } = planLaunch(capture, false, new Map(), new Map());
+      } = planLaunch(capture, false, new Map(), {
+        ...capturedHomePlan(capture),
+        files: new Map(),
+        restoredFiles: [],
+      });
       const result = spawnSync(program!, args, {
         encoding: "utf8",
-        env: { ...process.env, HOME: home },
+        env: { ...process.env, HOME: home, REA_REPLAY_MARKER: "inherited" },
       });
       expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout.trimEnd()).toBe(join(realpathSync(home), selected));
+      expect(result.stdout.trimEnd().split("\n")).toEqual([
+        join(realpathSync(home), selected),
+        clean ? "undefined" : "inherited",
+      ]);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

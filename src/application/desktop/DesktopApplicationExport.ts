@@ -240,7 +240,10 @@ const planExport = async (
     paths,
     seed: context.seed,
   });
-  const launch = planLaunch(capture, electron, seeds, files);
+  const launch = planLaunch(capture, electron, seeds, {
+    ...stateFiles,
+    restoredFiles: versions.seeds.keys(),
+  });
   const plan: DesktopAppExportPlan = {
     viewPolicy: request.viewPolicy,
     name: source,

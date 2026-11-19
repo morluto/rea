@@ -144,9 +144,9 @@ it("names the selected CPU budget separately from tighter inherited limits", () 
       phase: "worker",
       path: "/selected.hex",
       workerLimits: {
-        addressSpaceBytes: 1024,
-        cpuSeconds: 30,
-        fileSizeBytes: 1024,
+        address_space_bytes: 1024,
+        cpu_seconds: 30,
+        file_bytes: 1024,
       },
     }),
   );

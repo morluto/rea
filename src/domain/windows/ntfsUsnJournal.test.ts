@@ -68,14 +68,14 @@ it("stops at a truncated record", () => {
   ]);
 });
 
-it("decodes V3 opaque 128-bit identifiers without narrowing to MFT references", () => {
+it("preserves V3 opaque 128-bit identifiers and signed USN words", () => {
   const bytes = Buffer.alloc(88);
   bytes.writeUInt32LE(bytes.length);
   bytes.writeUInt16LE(3, 4);
   bytes.writeBigUInt64LE(0x0002_0000_0000_0007n, 8);
   bytes.writeBigUInt64LE(0xfedcba9876543210n, 16);
   bytes.writeBigUInt64LE(9007199254740993n, 24);
-  bytes.writeBigInt64LE(9007199254740993n, 40);
+  bytes.writeBigInt64LE(-9007199254740993n, 40);
   bytes.writeBigUInt64LE(133000000000000001n, 48);
   bytes.writeUInt16LE(6, 72);
   bytes.writeUInt16LE(76, 74);
@@ -89,7 +89,7 @@ it("decodes V3 opaque 128-bit identifiers without narrowing to MFT references", 
         name: "new",
         fileReference: 0xfedcba98765432100002000000000007n,
         parentReference: 9007199254740993n,
-        usn: 9007199254740993n,
+        usn: -9007199254740993n,
         timestampFileTime: 133000000000000001n,
       },
     },

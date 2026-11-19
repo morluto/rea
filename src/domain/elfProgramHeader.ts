@@ -1,4 +1,5 @@
 import { err, ok } from "./result.js";
+import type { FileMapping, ZeroFillMapping } from "./virtualFileMapping.js";
 
 export const PT_INTERP = 3;
 
@@ -52,3 +53,35 @@ export const admitElfLoadSegment = (
         message: "ELF load segment sizes or addresses are invalid",
       })
     : ok(null);
+
+export interface ElfLoadMappings {
+  readonly fileBacked: readonly FileMapping[];
+  readonly zeroFills: readonly ZeroFillMapping[];
+}
+
+/** Project an admitted PT_LOAD into its file-backed prefix and zero-filled tail. */
+export const elfLoadSpans = ({
+  virtualAddress,
+  offset,
+  fileSize,
+  memorySize,
+}: Pick<
+  ElfProgramHeader,
+  "virtualAddress" | "offset" | "fileSize" | "memorySize"
+>): {
+  readonly fileBacked: FileMapping | undefined;
+  readonly zeroFill: ZeroFillMapping | undefined;
+} => ({
+  fileBacked:
+    fileSize === 0n
+      ? undefined
+      : {
+          address: virtualAddress,
+          offset: Number(offset),
+          size: Number(fileSize),
+        },
+  zeroFill:
+    memorySize > fileSize
+      ? { address: virtualAddress + fileSize, size: memorySize - fileSize }
+      : undefined,
+});
