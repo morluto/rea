@@ -1,7 +1,11 @@
-import { expect, it } from "vitest";
+import { afterAll, expect, it } from "vitest";
 
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { ArtifactResourceScope } from "../resources/index.js";
 import { runAdbCapture } from "./AdbCommand.js";
+
+const resources = new ArtifactResourceScope();
+afterAll(() => resources.close());
 
 // Exercise the real subprocess capture and public error projection, substituting
 // only the bring-your-own executable. These are not Android-device checks.
@@ -20,6 +24,7 @@ it.each([
     source:
       'process.stdout.write("partial-雪"); process.stderr.write("waiting\\n"); setInterval(() => {}, 1000)',
     code: "provider_timeout",
+    timeoutMs: 500,
     stdout: "partial-雪",
     stderr: "waiting\n",
   },
@@ -28,6 +33,7 @@ it.each([
     source:
       'process.stdout.write("partial-雪"); process.stderr.write("adb: error: device offline\\n"); process.exitCode = 1',
     code: "unsupported_target",
+    expectedPath: "caller-device",
     stdout: "partial-雪",
     stderr: "adb: error: device offline\n",
   },
@@ -36,6 +42,7 @@ it.each([
     source:
       'process.stdout.write("partial-雪"); process.stderr.write("adb: error: cannot stat \'/host/token file\': Permission denied\\n"); process.exitCode = 1',
     code: "unsupported_target",
+    expectedPath: "/host/token file",
     stdout: "partial-雪",
     stderr: "adb: error: cannot stat '/host/token file': Permission denied\n",
   },
@@ -51,10 +58,11 @@ it.each([
       binary: process.execPath,
       pathSource: "environment",
       environment: { REA_TEST_PRIVATE: "ambient-value-must-not-be-persisted" },
+      resources,
     },
     ["-e", testCase.source],
     {
-      timeoutMs: testCase.name === "timeout" ? 500 : 5_000,
+      timeoutMs: testCase.timeoutMs ?? 5_000,
       maxOutputBytes: testCase.maxOutputBytes ?? 1024,
     },
     undefined,
@@ -75,12 +83,39 @@ it.each([
     },
   });
   if (testCase.code === "unsupported_target")
-    expect(projected.details?.path).toBe(
-      testCase.name === "local path refusal"
-        ? "/host/token file"
-        : "caller-device",
-    );
+    expect(projected.details?.path).toBe(testCase.expectedPath);
+  if (testCase.code === "provider_timeout") {
+    expect(projected.details?.timeout_ms).toBe(testCase.timeoutMs);
+    expect(projected.details?.limit).toBeUndefined();
+  }
   expect(JSON.stringify(projected)).not.toContain(
     "ambient-value-must-not-be-persisted",
   );
 });
+
+it.each([true, false])(
+  "projects a truncated adb capture as retryable only for volatile output (%s)",
+  async (volatileOutput) => {
+    const result = await runAdbCapture(
+      volatileOutput ? "read_adb_logcat" : "install_adb_package",
+      { device: "device" },
+      {
+        binary: process.execPath,
+        pathSource: "environment",
+        environment: {},
+        resources,
+      },
+      ["-e", 'process.stdout.write("X".repeat(4096))'],
+      { timeoutMs: 5_000, maxOutputBytes: 1024, volatileOutput },
+      undefined,
+    );
+    if (result.ok) throw new Error("Expected a capture allowance refusal");
+    const projected = projectAnalysisError(result.error);
+    expect(projected.retryable).toBe(volatileOutput);
+    expect(projected).toMatchObject({
+      code: "resource_constraint",
+      details: { reported_limits: { max_output_bytes: 1024 } },
+    });
+    expect(projected.details?.limit).toBeUndefined();
+  },
+);

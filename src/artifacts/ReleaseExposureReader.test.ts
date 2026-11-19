@@ -1,3 +1,5 @@
+import { WEB_SOURCE_MAP_LIMITS } from "../domain/sourceMapLimits.js";
+import { writeMinimalElfHeader } from "../../tests/fixtures/nativeHeaders.js";
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 import { deflateRawSync, deflateSync } from "node:zlib";
@@ -24,18 +26,18 @@ import {
   pyzArchive,
   PYTHON_39_MAGIC,
 } from "./pyinstaller/CArchive.fixture.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { asarHeaderBytes } from "../../tests/fixtures/asarHeader.js";
 import { binaryPlistObjectTable } from "../../tests/fixtures/binaryPlistObjectTable.js";
 import { javaClassFile } from "../../tests/fixtures/javaClassFile.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { universalMacho } from "../../tests/fixtures/universalMacho.js";
-import { windowsNativeArtifactFixture } from "../../tests/fixtures/windowsNativeArtifact.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReader,
-} from "./ArtifactReader.js";
+} from "../resources/ArtifactReader.js";
 import {
   assembleReleaseExposureReport,
   MAX_RELEASE_EXPOSURE_INVENTORY_BYTES,
@@ -53,6 +55,7 @@ import {
 } from "../domain/releaseExposure.js";
 import { HTML_INLINE_SCRIPT_LOCATION_LIMIT } from "../domain/javascript/htmlArtifactReferences.js";
 import { ReleaseExposureReader } from "./ReleaseExposureReader.js";
+import { RegularFileChangedError } from "../filesystem/RegularFile.js";
 import { AsarArtifactReader } from "./AsarArtifactReader.js";
 import type { AsarHeaderAdmission } from "../config/asarHeaderAdmission.js";
 
@@ -61,17 +64,17 @@ const stableRead = vi.hoisted(() => ({
     | undefined
     | ((
         ...args: Parameters<
-          typeof import("./readStableArtifact.js").readStableArtifact
+          typeof import("../resources/readStableArtifact.js").readStableArtifact
         >
       ) => ReturnType<
-        typeof import("./readStableArtifact.js").readStableArtifact
+        typeof import("../resources/readStableArtifact.js").readStableArtifact
       >),
 }));
 
-vi.mock("./readStableArtifact.js", async () => {
+vi.mock("../resources/readStableArtifact.js", async () => {
   const actual = await vi.importActual<
-    typeof import("./readStableArtifact.js")
-  >("./readStableArtifact.js");
+    typeof import("../resources/readStableArtifact.js")
+  >("../resources/readStableArtifact.js");
   stableRead.impl = actual.readStableArtifact;
   return {
     ...actual,
@@ -201,6 +204,64 @@ vi.mock("node:fs/promises", async () => {
 const PLANTED_SOURCE = "release-exposure-planted-secret-7c2e9a";
 const PLANTED_KEY = "AKIAPLANT9EXPOSUREXX";
 const ignoreText = (): void => undefined;
+// Keep the marker separate so Vite does not treat fixture text as this file's source map.
+const INLINE_MAP_PREFIX = "# sourceMappingURL=data:application/json;base64,";
+
+it.each([80, 200])(
+  "keeps a PE header truncated at %s bytes unclassified with PDB coverage unresolved",
+  async (length) => {
+    const root = await createTestTempDirectory(
+      "rea-release-exposure-truncated-header-",
+    );
+    const path = join(root, "app.exe");
+    const bytes = pe(0x8664, 64, 0x0002, false, { pdbPath: "app.pdb" });
+    await writeFile(path, bytes.subarray(0, length));
+    for (const input of [root, path]) {
+      const scanned = await inspect(input);
+      expect(scanned.native_images).toEqual([]);
+      expect(scanned.pdb).toMatchObject({
+        examined: 0,
+        failed: 1,
+        paths: [],
+      });
+      expect(scanned.limitations).toContain(
+        `Could not decode the PE header in ${path} to inspect debug records.`,
+      );
+    }
+  },
+);
+
+describe("ReleaseExposureReader inline base64 map URLs", () => {
+  const encoded = embeddedSourceMap().toString("base64").replace(/=+$/u, "");
+
+  it.each([
+    { separator: "%0A", suffix: "", exposed: true },
+    { separator: "", suffix: "#", exposed: true },
+    { separator: "", suffix: "#ignored,fragment", exposed: true },
+    { separator: "!", suffix: "", exposed: false },
+    { separator: "%21", suffix: "", exposed: false },
+    { separator: "%23", suffix: "#ignored", exposed: false },
+    { separator: "", suffix: "?body#ignored", exposed: false },
+  ])(
+    "treats separator '$separator' and suffix '$suffix' as exposed=$exposed",
+    async ({ separator, suffix, exposed }) => {
+      const root = await createTestTempDirectory("rea-release-inline-map-url-");
+      const path = join(root, "app.js");
+      await writeFile(
+        path,
+        `//${INLINE_MAP_PREFIX}${encoded.slice(0, 4)}${separator}${encoded.slice(4)}${suffix}\n`,
+      );
+      const scanned = await inspect(path);
+      expect(scanned.source_maps).toMatchObject({
+        embedded: exposed ? 1 : 0,
+        unparsed: exposed ? 0 : 1,
+      });
+      expect(sourceMapSourcesStatus(scanned)).toBe(
+        exposed ? "exposed" : "unknown",
+      );
+    },
+  );
+});
 
 describe("ReleaseExposureReader review regressions", () => {
   it("keeps inline CSS source-map coverage unknown in files and packages", async () => {
@@ -249,8 +310,8 @@ describe("ReleaseExposureReader review regressions", () => {
     },
   );
 
-  it.each([80, 200, 520, 550])(
-    "preserves CodeView parsing truncated at %s bytes as unresolved",
+  it.each([520, 550])(
+    "preserves CodeView data truncated at %s bytes as unresolved",
     async (length) => {
       const root = await createTestTempDirectory(
         "rea-release-exposure-truncated-",
@@ -260,7 +321,10 @@ describe("ReleaseExposureReader review regressions", () => {
       });
       await writeFile(join(root, "app.exe"), bytes.subarray(0, length));
       const scanned = await inspect(root);
-      expect(scanned.pdb).toMatchObject({ failed: 1, paths: [] });
+      expect(scanned.native_images).toMatchObject([
+        { path: join(root, "app.exe"), format: "pe" },
+      ]);
+      expect(scanned.pdb).toMatchObject({ examined: 1, failed: 1, paths: [] });
     },
   );
 
@@ -411,7 +475,7 @@ describe("ReleaseExposureReader", () => {
   it("carries the inventoried digest of each native image", async () => {
     const root = await createTestTempDirectory("rea-release-exposure-digest-");
     const elf = Buffer.alloc(64);
-    elf.set([0x7f, 0x45, 0x4c, 0x46], 0);
+    writeMinimalElfHeader(elf);
     await writeFile(join(root, "app"), elf);
     const sha256 = createHash("sha256").update(elf).digest("hex");
     expect((await inspect(root)).native_images).toEqual([
@@ -425,16 +489,13 @@ describe("ReleaseExposureReader", () => {
   it("registers native images larger than the text budget and parses PE debug records", async () => {
     const root = await createTestTempDirectory("rea-release-exposure-native-");
     const elf = Buffer.alloc(300 * 1024);
-    elf[0] = 0x7f;
-    elf[1] = 0x45;
-    elf[2] = 0x4c;
-    elf[3] = 0x46;
+    writeMinimalElfHeader(elf);
     await writeFile(join(root, "app.elf"), elf);
-    const pe = Buffer.concat([
-      windowsNativeArtifactFixture().bytes,
+    const peImage = Buffer.concat([
+      pe(0x8664, 64, 0x0002, false, { pdbPath: "app.pdb" }),
       Buffer.alloc(300 * 1024),
     ]);
-    await writeFile(join(root, "app.exe"), pe);
+    await writeFile(join(root, "app.exe"), peImage);
     const calls: string[] = [];
     const real = stableRead.impl;
     stableRead.impl = async (...args) => {
@@ -449,7 +510,14 @@ describe("ReleaseExposureReader", () => {
           (image) => image.format === "elf" && image.path.endsWith("app.elf"),
         ),
       ).toBe(true);
-      expect(scanned.pdb.examined).toBeGreaterThanOrEqual(1);
+      expect(scanned.native_images).toContainEqual(
+        expect.objectContaining({ path: join(root, "app.exe"), format: "pe" }),
+      );
+      expect(scanned.pdb).toMatchObject({
+        examined: 1,
+        failed: 0,
+        paths: ["app.pdb"],
+      });
       expect(calls.some((path) => path.endsWith("app.elf"))).toBe(false);
       expect(calls.some((path) => path.endsWith("app.exe"))).toBe(true);
     } finally {
@@ -612,6 +680,33 @@ describe("ReleaseExposureReader member reads", () => {
   });
 });
 
+it("keeps observed embedded sources when generated coordinates exceed their budget", async () => {
+  const root = await createTestTempDirectory("rea-release-exposure-offset-");
+  const map = {
+    version: 3,
+    sections: [
+      {
+        offset: { line: WEB_SOURCE_MAP_LIMITS.decodedRows - 1, column: 0 },
+        map: {
+          version: 3,
+          sources: ["src/app.ts"],
+          sourcesContent: ["export {};"],
+          mappings: ";",
+        },
+      },
+    ],
+  };
+  await writeFile(join(root, "app.js.map"), JSON.stringify(map));
+  const scanned = await inspect(root);
+  expect(scanned.source_maps).toMatchObject({
+    embedded: 1,
+    unparsed: 1,
+    without_sources: 0,
+    embedded_paths: [join(root, "app.js.map")],
+  });
+  expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
+});
+
 describe("ReleaseExposureReader limits", () => {
   it("counts sourcesContent nested past the old depth-8 walker", async () => {
     const root = await createTestTempDirectory("rea-release-exposure-depth-");
@@ -659,6 +754,10 @@ describe("ReleaseExposureReader limits", () => {
     try {
       const scanned = await inspect(root);
       expect(scanned.limitations).toHaveLength(8);
+      // The reports past the cap are counted, not dropped silently.
+      expect(scanned.omitted).toContainEqual(
+        expect.objectContaining({ subject: "limitations", count: 4 }),
+      );
     } finally {
       stableRead.impl = real;
     }
@@ -674,6 +773,7 @@ describe("ReleaseExposureReader limits", () => {
       throw new ArtifactReaderFailure(
         "integrity",
         `Artifact changed during inventory: ${target}`,
+        { integrityCheck: "container-identity" },
       );
     };
     const reader = new ReleaseExposureReader();
@@ -691,34 +791,37 @@ describe("ReleaseExposureReader limits", () => {
     }
   });
 
-  it("counts members past the package entry cap and marks coverage unknown", async () => {
-    const root = await createTestTempDirectory("rea-release-exposure-entries-");
-    const files = [
-      ...Array.from({ length: 4096 }, (_, index) => ({
-        path: `f${String(index)}.bin`,
-        bytes: Buffer.from("x"),
-      })),
-      { path: "hidden.js.map", bytes: Buffer.from("{not json") },
-      { path: "secret.txt", bytes: Buffer.from("hello\n") },
-    ];
-    await writeFile(join(root, "app.dll"), dotnetBundleFixture(files).bytes);
-    const scanned = await inspect(root);
-    expect(scanned.coverage).toBe("unknown");
-    expect(scanned.source_maps.skipped).toBeGreaterThan(0);
-    expect(scanned.text_members.skipped).toBeGreaterThan(0);
-    expect(scanned.omitted.map((item) => item.subject)).toEqual(
-      expect.arrayContaining(["source maps", "text members"]),
-    );
-  }, 60_000);
+  it(
+    "counts members past the package entry cap and marks coverage unknown",
+    { tags: ["long-running"] },
+    async () => {
+      const root = await createTestTempDirectory(
+        "rea-release-exposure-entries-",
+      );
+      const files = [
+        ...Array.from({ length: 4096 }, (_, index) => ({
+          path: `f${String(index)}.bin`,
+          bytes: Buffer.from("x"),
+        })),
+        { path: "hidden.js.map", bytes: Buffer.from("{not json") },
+        { path: "secret.txt", bytes: Buffer.from("hello\n") },
+      ];
+      await writeFile(join(root, "app.dll"), dotnetBundleFixture(files).bytes);
+      const scanned = await inspect(root);
+      expect(scanned.coverage).toBe("unknown");
+      expect(scanned.source_maps.skipped).toBeGreaterThan(0);
+      expect(scanned.text_members.skipped).toBeGreaterThan(0);
+      expect(scanned.omitted.map((item) => item.subject)).toEqual(
+        expect.arrayContaining(["source maps", "text members"]),
+      );
+    },
+  );
 
   it("does not drop native images before the service samples them", async () => {
     const root = await createTestTempDirectory("rea-release-exposure-natives-");
     for (let index = 0; index < 5; index += 1) {
       const elf = Buffer.alloc(64);
-      elf[0] = 0x7f;
-      elf[1] = 0x45;
-      elf[2] = 0x4c;
-      elf[3] = 0x46;
+      writeMinimalElfHeader(elf);
       await writeFile(join(root, `lib${String(index)}.so`), elf);
     }
     const scanned = await inspect(root);
@@ -785,9 +888,11 @@ describe("ReleaseExposureReader unpacked ASAR members", () => {
       );
       if (result.ok) throw new Error("Expected a failed audit.");
       expect(result.error).toBeInstanceOf(AnalysisArtifactChangedError);
-      expect(result.error.message).toContain(
-        "ASAR member changed before interpretation: dist/notes.txt",
-      );
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "artifact_changed",
+        details: { integrity_check: "member-identity" },
+      });
+      expect(result.error.message).toContain("dist/notes.txt");
     } finally {
       inventoryRead.impl = undefined;
       await reader.close();
@@ -1307,7 +1412,7 @@ describe("ReleaseExposureReader sibling map identity", () => {
   it("does not report a native image beside a selected file as a linker map", async () => {
     const root = await createTestTempDirectory("rea-release-sibling-native-");
     const elf = Buffer.alloc(64);
-    elf.set([0x7f, 0x45, 0x4c, 0x46], 0);
+    writeMinimalElfHeader(elf);
     await writeFile(join(root, "release.map"), elf);
     await writeFile(join(root, "app"), "plain file");
     const scanned = await inspect(join(root, "app"));
@@ -1498,28 +1603,34 @@ describe("ReleaseExposureReader member allowances", () => {
     },
   );
 
-  it("keeps a later source map readable after many large binary members", async () => {
-    const root = await createTestTempDirectory("rea-release-exposure-budget-");
-    const binary = Buffer.alloc(MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES);
-    const oversizedScript = Buffer.alloc(
-      MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES + 1,
-      0x20,
-    );
-    await writeFile(
-      join(root, "app.asar"),
-      asarArchive([
-        ...Array.from({ length: 160 }, (_, index) => ({
-          name: `a${String(index)}.bin`,
-          bytes: binary,
-        })),
-        { name: "b.js", bytes: oversizedScript },
-        { name: "z.js.map", bytes: embeddedSourceMap() },
-      ]),
-    );
-    const scanned = await inspect(join(root, "app.asar"));
-    expect(scanned.source_maps).toMatchObject({ embedded: 1, skipped: 1 });
-    expect(scanned.extractable.readable_members).toBe(162);
-  }, 60_000);
+  it(
+    "keeps a later source map readable after many large binary members",
+    { tags: ["long-running"] },
+    async () => {
+      const root = await createTestTempDirectory(
+        "rea-release-exposure-budget-",
+      );
+      const binary = Buffer.alloc(MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES);
+      const oversizedScript = Buffer.alloc(
+        MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES + 1,
+        0x20,
+      );
+      await writeFile(
+        join(root, "app.asar"),
+        asarArchive([
+          ...Array.from({ length: 160 }, (_, index) => ({
+            name: `a${String(index)}.bin`,
+            bytes: binary,
+          })),
+          { name: "b.js", bytes: oversizedScript },
+          { name: "z.js.map", bytes: embeddedSourceMap() },
+        ]),
+      );
+      const scanned = await inspect(join(root, "app.asar"));
+      expect(scanned.source_maps).toMatchObject({ embedded: 1, skipped: 1 });
+      expect(scanned.extractable.readable_members).toBe(162);
+    },
+  );
 
   it("reports an oversized linker map as a debug companion wherever it ships", async () => {
     const root = await createTestTempDirectory("rea-release-exposure-link-");
@@ -1533,7 +1644,7 @@ describe("ReleaseExposureReader member allowances", () => {
     await writeFile(join(root, "bin", "app"), "not a package");
     const directory = await inspect(join(root, "bin"));
     expect(directory.debug_companions.paths).toEqual([
-      expect.stringMatching(/bin\/app\.map$/u),
+      expect.stringMatching(/bin[\\/]app\.map$/u),
     ]);
     expect(directory.source_maps.skipped).toBe(0);
 
@@ -1720,7 +1831,7 @@ describe("ReleaseExposureReader nested packages in a host", () => {
   it("keeps coverage complete past a packaged image with no package", async () => {
     const root = await createTestTempDirectory("rea-release-plain-exe-");
     const elf = Buffer.alloc(64);
-    elf.set([0x7f, 0x45, 0x4c, 0x46], 0);
+    writeMinimalElfHeader(elf);
     await writeFile(
       join(root, "app.asar"),
       asarArchive([{ name: "addon.node", bytes: elf }]),
@@ -1733,7 +1844,7 @@ describe("ReleaseExposureReader nested packages in a host", () => {
   it("keeps a packaged image past the byte allowance unknown", async () => {
     const root = await createTestTempDirectory("rea-release-large-exe-");
     const elf = Buffer.alloc(64);
-    elf.set([0x7f, 0x45, 0x4c, 0x46], 0);
+    writeMinimalElfHeader(elf);
     await writeFile(
       join(root, "app.asar"),
       asarArchive([
@@ -1752,6 +1863,153 @@ describe("ReleaseExposureReader nested packages in a host", () => {
       expect(result.value.coverage).toBe("unknown");
       expect(result.value.omitted).toContainEqual(
         expect.objectContaining({ subject: "embedded package probes" }),
+      );
+    } finally {
+      await reader.close();
+    }
+  });
+});
+
+describe("ReleaseExposureReader packaged probe allowance", () => {
+  const withPostInventoryArchive = async <T>(
+    archive: string,
+    wrap: (reader: ArtifactReader) => ArtifactReader,
+    run: () => Promise<T>,
+  ): Promise<T> => {
+    const actual = await vi.importActual<
+      typeof import("./inventory/ArtifactInventory.js")
+    >("./inventory/ArtifactInventory.js");
+    let inventoried = false;
+    inventoryRead.impl = async (...args) => {
+      const inventory = await actual.inventoryArtifactInScope(...args);
+      inventoried = true;
+      return inventory;
+    };
+    createdReaders.wrap = (reader, path) =>
+      path === archive && inventoried ? wrap(reader) : reader;
+    try {
+      return await run();
+    } finally {
+      inventoryRead.impl = undefined;
+      createdReaders.wrap = undefined;
+    }
+  };
+
+  it("keeps probing after a zero-byte unread packaged image", async () => {
+    const root = await createTestTempDirectory("rea-release-unread-probe-");
+    const broken = Buffer.alloc(8192);
+    writeMinimalElfHeader(broken);
+    const archive = join(root, "app.asar");
+    await writeFile(
+      archive,
+      asarArchive([
+        { name: "01-broken.node", bytes: broken },
+        { name: "02-embedded", bytes: nodeSeaElf() },
+      ]),
+    );
+    let brokenOpens = 0;
+    const scanned = await withPostInventoryArchive(
+      archive,
+      (reader) => {
+        const open = reader.open.bind(reader);
+        reader.open = (entry, signal) => {
+          if (!entry.path.endsWith("01-broken.node")) {
+            return open(entry, signal);
+          }
+          brokenOpens += 1;
+          return brokenOpens === 1
+            ? open(entry, signal)
+            : Promise.reject(new Error("member read failed"));
+        };
+        return reader;
+      },
+      () => inspect(root),
+    );
+    expect(brokenOpens).toBe(2);
+    expect(scanned.coverage).toBe("unknown");
+    expect(scanned.limitations).toContainEqual(
+      expect.stringMatching(
+        /^Did not probe .*01-broken\.node for an embedded package\.$/u,
+      ),
+    );
+    expect(scanned.limitations).not.toContainEqual(
+      expect.stringMatching(
+        /^Did not probe .*02-embedded for an embedded package\.$/u,
+      ),
+    );
+    expect(scanned.limitations.join("\n")).toContain("was not expanded");
+    expect(scanned.omitted).toContainEqual(
+      expect.objectContaining({ subject: "embedded package probes", count: 1 }),
+    );
+  });
+
+  it("charges partial unread bytes to the packaged allowance", async () => {
+    const root = await createTestTempDirectory("rea-release-partial-probe-");
+    const elf = (size: number): Buffer => {
+      const bytes = Buffer.alloc(size);
+      writeMinimalElfHeader(bytes);
+      return bytes;
+    };
+    const archive = join(root, "app.asar");
+    await writeFile(
+      archive,
+      asarArchive([
+        { name: "01-first.node", bytes: elf(8192) },
+        { name: "02-second.node", bytes: elf(5000) },
+      ]),
+    );
+    let firstOpens = 0;
+    let secondOpens = 0;
+    const reader = new ReleaseExposureReader();
+    try {
+      const result = await withPostInventoryArchive(
+        archive,
+        (source) => {
+          const open = source.open.bind(source);
+          source.open = (entry, signal) => {
+            if (entry.path.endsWith("01-first.node")) {
+              firstOpens += 1;
+              if (firstOpens > 1) {
+                return Promise.resolve(
+                  Readable.from(
+                    (function* (): Generator<Buffer> {
+                      yield Buffer.alloc(4096);
+                      throw new Error("damaged image");
+                    })(),
+                  ),
+                );
+              }
+            }
+            if (entry.path.endsWith("02-second.node")) secondOpens += 1;
+            return open(entry, signal);
+          };
+          return source;
+        },
+        () =>
+          reader.inspect(
+            { path: root, max_file_bytes: 8192 },
+            undefined,
+            () => undefined,
+          ),
+      );
+      if (!result.ok) throw result.error;
+      expect(firstOpens).toBe(2);
+      expect(secondOpens).toBe(2);
+      expect(result.value.limitations).toContainEqual(
+        expect.stringMatching(
+          /^Did not probe .*01-first\.node for an embedded package\.$/u,
+        ),
+      );
+      expect(result.value.limitations).toContainEqual(
+        expect.stringMatching(
+          /^Did not probe .*02-second\.node for an embedded package\.$/u,
+        ),
+      );
+      expect(result.value.omitted).toContainEqual(
+        expect.objectContaining({
+          subject: "embedded package probes",
+          count: 2,
+        }),
       );
     } finally {
       await reader.close();
@@ -1784,6 +2042,38 @@ describe("ReleaseExposureReader unread packaged maps", () => {
 });
 
 describe("ReleaseExposureReader undecided PE members", () => {
+  it("keeps a malformed complete member separate from an unexamined header", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-pe-");
+    const bytes = pe(0x8664, 64, 0x0002, false, { pdbPath: "app.pdb" });
+    const image = Buffer.concat([bytes, Buffer.alloc(2 * 1024 * 1024)]);
+    // The complete optional header lies in the probe, but its magic is invalid.
+    image.writeUInt16LE(0, 64 + 24);
+    await writeFile(
+      join(root, "app.exe"),
+      cArchiveExecutable({
+        carrier: "pe",
+        layout: "2.1",
+        pythonVersion: 310,
+        members: [
+          {
+            name: "malformed.bin",
+            typeCode: "x",
+            compress: false,
+            payload: image,
+          },
+        ],
+      }),
+    );
+    const scanned = await inspect(root);
+    expect(scanned.pdb).toMatchObject({ examined: 1, failed: 1, paths: [] });
+    expect(scanned.omitted).not.toContainEqual(
+      expect.objectContaining({ subject: PACKAGED_NATIVE_IMAGES }),
+    );
+    expect(scanned.limitations.join("\n")).toContain(
+      "malformed.bin to inspect debug records.",
+    );
+  });
+
   it.each(["payload.map", "payload.bin", "payload.json"])(
     "keeps a large PE member named %s with a late header undecided",
     async (name) => {
@@ -2067,7 +2357,7 @@ const plistObject = (type: number, length: number, body: Buffer): Buffer =>
 
 describe("ReleaseExposureReader text encodings", () => {
   const marker = "-----BEGIN PRIVATE KEY-----\n";
-  const inlineMap = `//# sourceMappingURL=data:application/json;base64,${Buffer.from(
+  const inlineMap = `//${INLINE_MAP_PREFIX}${Buffer.from(
     JSON.stringify({
       version: 3,
       sources: ["src/app.ts"],
@@ -2657,9 +2947,9 @@ describe("ReleaseExposureReader unexpanded packages", () => {
 describe("ReleaseExposureReader native members named as maps", () => {
   it("keeps a selected or listed native image named release.map out of map routing", async () => {
     const root = await createTestTempDirectory("rea-release-map-selected-");
-    const elf = Buffer.alloc(64);
-    elf.set([0x7f, 0x45, 0x4c, 0x46], 0);
-    elf.write("not a map\n", 16);
+    const elf = Buffer.alloc(80);
+    writeMinimalElfHeader(elf);
+    elf.write("not a map\n", 64);
     const file = join(root, "release.map");
     await writeFile(file, elf);
     for (const scanned of [await inspect(file), await inspect(root)]) {
@@ -2847,7 +3137,7 @@ describe("ReleaseExposureReader unexpanded package PE reads", () => {
 
   it("omits a packaged native image from the language readers visibly", async () => {
     const elf = Buffer.alloc(64);
-    elf.set([0x7f, 0x45, 0x4c, 0x46], 0);
+    writeMinimalElfHeader(elf);
     const root = await bundled([{ path: "libnative.so", bytes: elf }]);
     const scanned = await inspect(root);
     expect(scanned.omitted).toContainEqual(
@@ -2864,7 +3154,7 @@ describe("ReleaseExposureReader unexpanded package PE reads", () => {
   it("leaves member coverage unknown when a packaged native image cannot be read", async () => {
     const root = await createTestTempDirectory("rea-release-unread-native-");
     const elf = Buffer.alloc(64);
-    elf.set([0x7f, 0x45, 0x4c, 0x46], 0);
+    writeMinimalElfHeader(elf);
     await writeFile(
       join(root, "app.asar"),
       asarArchive([{ name: "native.node", bytes: elf }]),
@@ -2907,7 +3197,8 @@ describe("ReleaseExposureReader unexpanded package PE reads", () => {
       const scanned = await inspect(root);
       expect(scanned.coverage).toBe("unknown");
       expect(scanned.limitations).toContain(
-        `Could not read ${join(root, "app.dll", "payload.bin")} to rule out a native image or package.`,
+        // A packaged member is named by its host file, then its "/" member path.
+        `Could not read ${join(root, "app.dll")}/payload.bin to rule out a native image or package.`,
       );
     } finally {
       createdReaders.wrap = undefined;
@@ -3091,7 +3382,7 @@ describe("ReleaseExposureReader bounded listing and cleanup", () => {
       selected: "lib.so",
       write: async (root: string) => {
         const elf = Buffer.alloc(64);
-        elf.set([0x7f, 0x45, 0x4c, 0x46], 0);
+        writeMinimalElfHeader(elf);
         await writeFile(join(root, "lib.so"), elf);
       },
     },
@@ -4328,7 +4619,7 @@ describe("ReleaseExposureReader script roles over a .map name", () => {
 });
 
 describe("ReleaseExposureReader HTML script references", () => {
-  const inlineMap = `//# sourceMappingURL=data:application/json;base64,${Buffer.from(
+  const inlineMap = `//${INLINE_MAP_PREFIX}${Buffer.from(
     JSON.stringify({
       version: 3,
       sources: ["src/app.ts"],
@@ -4620,7 +4911,7 @@ describe("ReleaseExposureReader cumulative text allowance", () => {
 
 describe("ReleaseExposureReader unfollowed map links", () => {
   const SCRIPT = "const value = 1;\n//# sourceMappingURL=app.js.map\n";
-  const EMBEDDED_PAYLOAD = `const value = 1;\n//# sourceMappingURL=data:application/json;base64,${Buffer.from(
+  const EMBEDDED_PAYLOAD = `const value = 1;\n//${INLINE_MAP_PREFIX}${Buffer.from(
     JSON.stringify({
       version: 3,
       sources: ["a.ts"],
@@ -4791,9 +5082,19 @@ describe("ReleaseExposureReader packaged map identity", () => {
   );
 });
 
-it.for(["a.js", "z.js"])(
-  "keeps a distinct normalized linker-map occurrence when %s declares the other",
-  async (script, context) => {
+it.for(
+  ["map", "script"].flatMap((role) =>
+    ["a", "z"].flatMap((order) =>
+      [1, 2].map((declarations) => ({
+        role,
+        owner: `${order}.${role === "map" ? "js" : "html"}`,
+        declarations,
+      })),
+    ),
+  ),
+)(
+  "keeps a distinct normalized linker-map occurrence for $declarations $role declarations in $owner",
+  async ({ role, owner, declarations }, context) => {
     const root = await createTestTempDirectory("rea-map-identities-");
     const first = "café.map";
     const second = "cafe\u0301.map";
@@ -4803,25 +5104,101 @@ it.for(["a.js", "z.js"])(
       context.skip();
       return;
     }
-    await writeFile(join(root, script), `//# sourceMappingURL=${first}\n`);
+    const declaration =
+      role === "map"
+        ? `//# ${"sourceMappingURL"}=${first}\n`
+        : `<script src="${first}"></script>`;
+    await writeFile(join(root, owner), declaration.repeat(declarations));
     const scanned = await inspect(root);
     expect(scanned.debug_companions.paths).toEqual([join(root, second)]);
   },
 );
 
-it("keeps a distinct normalized linker map beside a page's script target", async (context) => {
-  const root = await createTestTempDirectory("rea-script-map-identities-");
-  const first = "café.map";
-  const second = "cafe\u0301.map";
-  await writeFile(join(root, first), "const value = 1;\n");
+it.for(
+  ["map", "script"].flatMap((firstRole) =>
+    [false, true].map((otherSpelling) => ({ firstRole, otherSpelling })),
+  ),
+)(
+  "retracts exact occurrences across callers, $firstRole first, other spelling: $otherSpelling",
+  async ({ firstRole, otherSpelling }, context) => {
+    const root = await createTestTempDirectory("rea-shared-map-identity-");
+    const first = "café.map";
+    const second = "cafe\u0301.map";
+    await writeFile(join(root, first), "linker map\n");
+    await writeFile(join(root, second), "linker map\n");
+    if ((await readdir(root)).length !== 2) {
+      context.skip();
+      return;
+    }
+    await writeFile(
+      join(root, firstRole === "map" ? "z.js" : "zz.js"),
+      `//# ${"sourceMappingURL"}=${firstRole === "map" || !otherSpelling ? first : second}\n`,
+    );
+    await writeFile(
+      join(root, firstRole === "script" ? "z.html" : "zz.html"),
+      `<script src="${firstRole === "script" || !otherSpelling ? first : second}"></script>`,
+    );
+    const scanned = await inspect(root);
+    expect(scanned.debug_companions.paths).toEqual(
+      otherSpelling ? [] : [join(root, second)],
+    );
+  },
+);
+
+it.for([false, true])(
+  "retracts an exact guess produced after an early script declaration (NFD script: %s)",
+  async (nfdScript, context) => {
+    const root = await createTestTempDirectory("rea-late-exact-map-guess-");
+    const first = "café.map";
+    const second = "cafe\u0301.map";
+    await writeFile(join(root, first), "linker map\n");
+    await writeFile(join(root, second), "linker map\n");
+    if ((await readdir(root)).length !== 2) {
+      context.skip();
+      return;
+    }
+    const scriptTarget = nfdScript ? second : first;
+    const otherTarget = nfdScript ? first : second;
+    await writeFile(
+      join(root, "a.html"),
+      `<script src="${scriptTarget}"></script>`,
+    );
+    await writeFile(
+      join(root, "b.js"),
+      `//# ${"sourceMappingURL"}=${otherTarget}\n`,
+    );
+    // The other spelling's map declaration routes both candidates through the
+    // map reader. That can create an exact guess after the HTML was admitted.
+    await writeFile(
+      join(root, "z.js"),
+      `//# ${"sourceMappingURL"}=${scriptTarget}\n`,
+    );
+    const scanned = await inspect(root);
+    expect(scanned.debug_companions).toEqual({ paths: [], skipped: 0 });
+    expect(debugCompanionsStatus(scanned)).not.toBe("exposed");
+    expect(scanned.source_maps.skipped).toBeGreaterThan(0);
+  },
+);
+
+it("keeps a missing exact declaration unresolved when later guesses share its lookup key", async (context) => {
+  const root = await createTestTempDirectory("rea-missing-exact-map-guess-");
+  const missing = "cấ.map";
+  const first = "câ\u0301.map";
+  const second = "ca\u0302\u0301.map";
+  await writeFile(join(root, first), "linker map\n");
   await writeFile(join(root, second), "linker map\n");
   if ((await readdir(root)).length !== 2) {
     context.skip();
     return;
   }
-  await writeFile(join(root, "a.html"), `<script src="${first}"></script>`);
+  expect(first.normalize("NFC")).toBe(missing);
+  expect(second.normalize("NFC")).toBe(missing);
+  await writeFile(join(root, "a.html"), `<script src="${missing}"></script>`);
+  await writeFile(join(root, "b.js"), `//# ${"sourceMappingURL"}=${first}\n`);
+  await writeFile(join(root, "z.js"), `//# ${"sourceMappingURL"}=${missing}\n`);
   const scanned = await inspect(root);
-  expect(scanned.debug_companions.paths).toEqual([join(root, second)]);
+  expect(scanned.debug_companions).toEqual({ paths: [], skipped: 1 });
+  expect(debugCompanionsStatus(scanned)).toBe("unknown");
 });
 
 it("keeps a distinct normalized sibling linker map beside a declared one", async (context) => {
@@ -4942,5 +5319,47 @@ it.each([
       pageName === "z.html" ? "unknown" : "exposed",
     );
     expect(scanned.debug_companions.paths).toEqual([]);
+  },
+);
+
+it.each(["member", "selected artifact"] as const)(
+  "names which file changed while being read (%s)",
+  async (changed) => {
+    const root = await createTestTempDirectory(
+      "rea-release-exposure-read-changed-",
+    );
+    const archive = join(root, "app.asar");
+    await writeFile(archive, sourceMapArchive());
+    const notes = join(root, "notes.txt");
+    await writeFile(notes, "release notes\n");
+    const real = stableRead.impl;
+    if (changed === "member")
+      stableRead.impl = async (...args) => {
+        if (args[0] === notes) throw new RegularFileChangedError(notes);
+        return real === undefined ? Promise.reject() : real(...args);
+      };
+    else
+      inventoryRead.impl = () =>
+        Promise.reject(new RegularFileChangedError(archive));
+    const reader = new ReleaseExposureReader();
+    try {
+      const result = await reader.inspect(
+        { path: changed === "member" ? root : archive },
+        undefined,
+        ignoreText,
+      );
+      if (result.ok) throw new Error("Expected a failed audit.");
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "artifact_changed",
+        details: {
+          integrity_check:
+            changed === "member" ? "member-identity" : "container-identity",
+        },
+      });
+    } finally {
+      stableRead.impl = real;
+      inventoryRead.impl = undefined;
+      await reader.close();
+    }
   },
 );

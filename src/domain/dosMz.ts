@@ -82,8 +82,14 @@ export type MzWindowsHeaderObservation =
       readonly signature: "PE" | "NE" | "LE" | "LX";
     };
 
-/** Exact signature bytes observed at the DOS header's declared offset. */
+/** Bytes observed at the DOS header's declared Windows-header offset. */
 export interface MzWindowsHeaderSignatureEvidence {
+  readonly offset: number;
+  readonly bytes: Buffer;
+}
+
+/** Structural bytes observed at a PE header's declared offset. */
+export interface MzWindowsHeaderRecordEvidence {
   readonly offset: number;
   readonly bytes: Buffer;
 }

@@ -1,5 +1,8 @@
-import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
-import { metadataRowCursor, metadataToken } from "./ManagedMetadataHeaps.js";
+import type { ManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
+import {
+  metadataRowCursor,
+  metadataToken,
+} from "../domain/managed/managedMetadataHeaps.js";
 
 /** Meaning of the MethodDef implementation bits, independent of RVA or ImplMap evidence. */
 export interface ManagedMethodImplementationFlags {
@@ -29,9 +32,9 @@ export const readMethodDefinitionRow = (
 } => {
   // Layout admission bounds the whole fixed-width row before a cursor is created.
   const cursor = metadataRowCursor(bytes, layout, 6, row);
-  const rva = cursor.readUInt32();
-  const implFlags = cursor.readUInt16();
-  const flags = cursor.readUInt16();
+  const rva = cursor.u32();
+  const implFlags = cursor.u16();
+  const flags = cursor.u16();
   return {
     token: metadataToken(6, row),
     rowOffset: cursor.start,

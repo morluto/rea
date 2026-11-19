@@ -2,8 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 
 import { SUPPORTED_NODE_VERSION_PROSE } from "../domain/runtimeVersion.js";
 import { createDoctorHostFixture } from "./Doctor.fixture.js";
-import { runDoctor, type DoctorCheck, type DoctorHost } from "./Doctor.js";
-import type { DesktopBuildFacts } from "./DesktopBuildDoctor.js";
+import { runDoctor, type DoctorHost } from "./Doctor.js";
+import type { DoctorCheck } from "../ports/DoctorProviderInspection.js";
+import type { DesktopBuildFacts } from "../ports/DesktopBuildHost.js";
 
 const ready: DesktopBuildFacts = {
   ps: { found: true, detail: "/usr/bin/ps" },
@@ -36,7 +37,7 @@ const buildHost = (
   createDoctorHostFixture({
     platform: "linux",
     architecture: "x64",
-    installationPaths: () => Promise.resolve([]),
+    installationLaunchers: () => Promise.resolve([]),
     clientRegistrations: () => Promise.resolve([]),
     desktopBuildFacts: () => Promise.resolve({ ...ready, ...facts }),
     ...overrides,

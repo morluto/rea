@@ -1,12 +1,14 @@
 import type { FileHandle } from "node:fs/promises";
 import { hashReadable } from "../ArtifactHash.js";
-import { readArtifactFileChunks } from "../readArtifactFileChunks.js";
+import { readArtifactFileChunks } from "../../resources/index.js";
 import { readPyInstallerBytes } from "./PyInstallerBytes.js";
 
+import { BinaryReader } from "../../domain/binaryContainer.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { readMarshalSubset, type MarshalValue } from "./MarshalSubset.js";
 import {
   pyInstallerFailure,
+  pyInstallerLayoutFailure,
   type PyInstallerFailure,
 } from "./PyInstallerFailure.js";
 import { pythonVersionForMagic } from "./PythonBytecode.js";
@@ -44,7 +46,7 @@ export type PyzArchive =
     };
 
 /** Bound the transient marshal table allocation independently of image expansion. */
-export const MAX_PYZ_TABLE_BYTES = 16 * 1024 * 1024;
+const MAX_PYZ_TABLE_BYTES = 16 * 1024 * 1024;
 
 interface PyzHeaderFacts {
   readonly signatureMatches: boolean;
@@ -58,7 +60,7 @@ interface PyzHeaderFacts {
 /** Called only after the exact fixed-header read has succeeded. */
 const readPyzHeaderFacts = (header: Buffer, size: number): PyzHeaderFacts => {
   const pythonMagic = Buffer.from(header.subarray(4, 8));
-  const tocOffset = header.readUInt32BE(8);
+  const tocOffset = new BinaryReader(header, false, "pyz").u32(8);
   return {
     signatureMatches: header.subarray(0, 4).equals(PYZ_MAGIC),
     pythonMagic,
@@ -271,8 +273,7 @@ const onePyzEntry = (
     (length > 0 && offset < PYZ_HEADER_BYTES)
   )
     return err(
-      pyInstallerFailure(
-        "integrity",
+      pyInstallerLayoutFailure(
         `PYZ entry at table index ${String(index)} extends outside the archive payload region`,
       ),
     );

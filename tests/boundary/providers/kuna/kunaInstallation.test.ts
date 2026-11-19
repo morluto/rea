@@ -28,7 +28,7 @@ const it = test.skipIf(process.platform === "win32");
 it("identifies a caller-selected kuna by version and digest", async () => {
   const root = await createTestTempDirectory("rea-kuna-install-");
   const kuna = await writeFakeKuna(root, {
-    version: { stdout: "kuna 1.990\n" },
+    version: { stdout: "kuna 1.1000\n" },
   });
   const link = join(root, "current-kuna");
   await symlink(kuna, link);
@@ -43,7 +43,7 @@ it("identifies a caller-selected kuna by version and digest", async () => {
     value: {
       configuration: { command: link, cacheRoot: join(root, "cache") },
       executable: await realpath(kuna),
-      version: "1.990",
+      version: "1.1000",
       verified: true,
       // A `#!` launcher reports its interpreter; ownership checks must not expect the path.
       script: true,
@@ -295,7 +295,6 @@ it("parses cache, timeout and job settings at the configuration boundary", () =>
 it("stops a version probe that ignores SIGTERM instead of waiting on it", async () => {
   const root = await createTestTempDirectory("rea-kuna-probe-term-");
   const kuna = await writeFakeKuna(root, { version: { ignoreTerm: true } });
-  const started = Date.now();
 
   const result = await inspectKunaInstallation(
     { REA_KUNA_COMMAND: kuna },
@@ -310,14 +309,15 @@ it("stops a version probe that ignores SIGTERM instead of waiting on it", async 
       diagnostics: {
         probe_failure_reason: "timeout",
         deadline_ms: 4_000,
+        signal: "SIGKILL",
       },
     },
   });
-  // The owned process-group stop is bounded and must not wait on inherited output forever.
-  expect(Date.now() - started).toBeLessThan(10_000);
+  // The stop escalated past the ignored SIGTERM; waiting on the probe instead
+  // would hang until the test deadline names it.
   const pid = (await fakeKunaCalls(kuna))[0]?.pid ?? 0;
   expect(() => process.kill(pid, 0)).toThrow();
-}, 20_000);
+});
 
 it("keeps a version deadline ahead of cancellation during its joined stop", async () => {
   const root = await createTestTempDirectory("rea-kuna-deadline-first-");
@@ -374,13 +374,11 @@ setTimeout(() => process.exit(9), 10000).unref();
   );
   try {
     await expect
-      .poll(
-        () =>
-          readFile(stopped).then(
-            () => true,
-            () => false,
-          ),
-        { timeout: 5000 },
+      .poll(() =>
+        readFile(stopped).then(
+          () => true,
+          () => false,
+        ),
       )
       .toBe(true);
     controller.abort({ request: "late doctor cancellation" });

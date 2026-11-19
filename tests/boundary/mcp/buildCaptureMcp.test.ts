@@ -11,7 +11,6 @@ import {
 } from "../../../src/application/desktop/desktopCapture.fixture.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import type { DesktopApplicationCapture } from "../../../src/domain/desktop/desktopCapture.js";
-import { seedWording } from "../../../src/domain/desktop/appExport.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { LINUX_ARGUMENT_VECTOR_BYTES } from "../../../src/desktop/BuildComputerController.js";
 import {
@@ -25,6 +24,10 @@ import {
   expectNoToken,
   startBuildComputer,
 } from "../../fixtures/buildComputerMcp.js";
+import {
+  INVALID_BUILD_SCREENSHOTS,
+  VALID_BUILD_SCREENSHOT,
+} from "../../fixtures/buildScreenshotData.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -191,21 +194,33 @@ it("captures the app inside the computer, acknowledges checkpoints, drafts the t
       .parameters,
   ).toMatchObject({ synthetic_seed: true });
   expect(await readFile(join(directory, "README.md"), "utf8")).toContain(
-    seedWording({
-      name: exported.environment,
-      seedCheckpoint: "seed",
-      syntheticSeed: true,
-    }).notice,
+    `The seed was made for this task, not taken from a user's own data; read \`envs/${exported.environment}/seed/\` before publishing the bundle.`,
   );
   expectNoToken(computer, [started, seed, stopped, exported]);
 });
 
-it("keeps a screenshot of each checkpoint in the computer, which the export takes as a screen judge's examples", async () => {
-  const { rea, client } = await fakes();
+it("keeps valid checkpoint screenshots byte for byte for export and skips invalid screenshots without failing checkpoints", async () => {
+  const screenshots = [
+    { name: "seed", data: VALID_BUILD_SCREENSHOT.data },
+    ...INVALID_BUILD_SCREENSHOTS,
+    { name: "end", data: VALID_BUILD_SCREENSHOT.data },
+  ];
+  const { rea, client } = await fakes({
+    jpegScreenshotData: screenshots.map(({ data }) => data),
+  });
   const id = await startBuildComputer(client, REQUEST);
   await callOk(client, "start_build_capture", { computer_id: id });
-  for (const name of ["seed", "end"])
-    await callOk(client, "mark_build_checkpoint", { computer_id: id, name });
+  for (const { name } of screenshots) {
+    const marked = await callOk(client, "mark_build_checkpoint", {
+      computer_id: id,
+      name,
+    });
+    expect(
+      toolContract("mark_build_checkpoint").outputSchema.parse(
+        marked.structuredContent,
+      ).checkpoint.name,
+    ).toBe(name);
+  }
   await callOk(client, "stop_build_capture", { computer_id: id });
   await callOk(client, "export_build_environment", {
     computer_id: id,
@@ -220,6 +235,10 @@ it("keeps a screenshot of each checkpoint in the computer, which the export take
     "screens/end.jpg",
     "screens/seed.jpg",
   ]);
+  for (const path of shots) {
+    const bytes = await readFile(join(rea.home, ".rea-build", path));
+    expect(bytes.equals(VALID_BUILD_SCREENSHOT.bytes), path).toBe(true);
+  }
   const exported = (
     (await rea.notes("calls.jsonl")) as { argv: string[] }[]
   ).findLast(({ argv }) => argv[0] === "export-desktop-application");

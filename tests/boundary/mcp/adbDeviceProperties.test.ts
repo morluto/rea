@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { chmod } from "node:fs/promises";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -13,6 +14,7 @@ import {
   createTestWorkspace,
   removeTestWorkspace,
 } from "../../support/workspace/workspaceFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const scenarios = [
   {
@@ -55,6 +57,7 @@ for (const scenario of scenarios) {
       const binary = await workspace.write(
         "adb",
         `#!/bin/sh
+[ "$1" = start-server ] && exit 0
 if [ "$1" = version ]; then
   printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-stub\\nInstalled as %s\\n' "$0"
   exit 0
@@ -101,7 +104,10 @@ exit 1
           },
         );
         onTestFinished(() => server.close());
-        const client = new Client({ name: "adb-properties", version: "1" });
+        const client = new Client(
+          { name: "adb-properties", version: "1" },
+          { jsonSchemaValidator: createMcpSchemaValidation() },
+        );
         onTestFinished(() => client.close());
         const [clientTransport, serverTransport] =
           InMemoryTransport.createLinkedPair();
@@ -109,9 +115,7 @@ exit 1
         await client.connect(clientTransport);
         const { tools } = await client.listTools();
         const advertised = tools.find(({ name }) => name === scenario.tool);
-        const outputSchema = z
-          .record(z.string(), z.unknown())
-          .parse(advertised?.outputSchema);
+        const outputSchema = canonicalOutputSchema(advertised!.name);
         const ajv = new Ajv2020({ strict: false, allErrors: true });
         expect(ajv.validateSchema(outputSchema)).toBe(true);
         const validate = ajv.compile(outputSchema);

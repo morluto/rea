@@ -43,7 +43,7 @@ export interface CdpResponseFacts {
   readonly encodedDataLength: number | undefined;
   readonly headers: unknown;
 }
-export const readCdpResponseFacts = (
+const readCdpResponseFacts = (
   reported: unknown,
 ): CdpResponseFacts | undefined => {
   const source = recordValue(reported);
@@ -196,5 +196,25 @@ export const readCdpLoadingFailed = (reported: unknown) => {
     requestId: requestIdentity(source),
     timestamp: numberValue(source?.timestamp),
     errorText: source?.errorText,
+  };
+};
+
+/** A WebSocket handshake's request identity and URL, before policy. */
+export const readCdpWebSocketCreated = (reported: unknown) => {
+  const source = recordValue(reported);
+  return {
+    requestId: cdpStringValue(source?.requestId),
+    url: cdpStringValue(source?.url),
+  };
+};
+
+/** One WebSocket frame's connection identity, reported opcode and payload text. */
+export const readCdpWebSocketFrame = (reported: unknown) => {
+  const source = recordValue(reported);
+  const response = recordValue(source?.response);
+  return {
+    requestId: cdpStringValue(source?.requestId),
+    opcode: numberValue(response?.opcode),
+    payloadData: cdpStringValue(response?.payloadData),
   };
 };
