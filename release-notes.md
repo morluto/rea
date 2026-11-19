@@ -751,6 +751,7 @@
 * **trace:** report the enforced JSON parser limit ([#12335](https://github.com/morluto/rea/issues/12335)) ([7d5e9be](https://github.com/morluto/rea/commit/7d5e9be81c6dccbe6e69ba2f293157812784c280))
 * **trace:** retain cancellation after an earlier decode refusal ([#12334](https://github.com/morluto/rea/issues/12334)) ([6b4d1f7](https://github.com/morluto/rea/commit/6b4d1f7d9dc50eb478525acfdac9574b9b1d836e))
 * **uefi:** account for FFS alignment bytes ([#12532](https://github.com/morluto/rea/issues/12532)) ([745869e](https://github.com/morluto/rea/commit/745869e7074205f8223c1c23079ffa5cfc26d7e0))
+* **uefi:** share inspection and extraction scan limits ([#12538](https://github.com/morluto/rea/issues/12538)) ([9d0502b](https://github.com/morluto/rea/commit/9d0502bc5173d7b71e9fc50bfb1b4ae3ccefcb26))
 * **uf2:** count comment blocks without a flash address range ([#12350](https://github.com/morluto/rea/issues/12350)) ([55719ca](https://github.com/morluto/rea/commit/55719cafb698be63cd6f2cb3e0f97cce6facda66))
 * **unityfs:** share bounded header probing with desktop inspection ([#12169](https://github.com/morluto/rea/issues/12169)) ([2b7d542](https://github.com/morluto/rea/commit/2b7d54257f2edba82f4d2eb4a2c65dce991a367b))
 * **unityfs:** validate encoded block extents before decoder limits ([#12223](https://github.com/morluto/rea/issues/12223)) ([56d31bc](https://github.com/morluto/rea/commit/56d31bc7a87e96d49642d3a8db308a99cae2e7af))
