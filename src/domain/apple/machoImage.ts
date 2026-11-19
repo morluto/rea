@@ -3,6 +3,7 @@ import type { FileMapping, ZeroFillMapping } from "../virtualFileMapping.js";
 import { decodeMachoFixedName } from "./appleMachoNames.js";
 import {
   machoSectionBacking,
+  machoSectionHeaderSize,
   readMachoSectionHeader,
   type MachoSectionHeader,
 } from "./machoSectionHeader.js";
@@ -61,7 +62,7 @@ export const readMachoImage = (
           "malformed",
           "Mach-O segment command does not match the header width",
         );
-      const sectionWidth = wide ? 80 : 68;
+      const sectionWidth = machoSectionHeaderSize(wide);
       const parsedSegment = readMachoSegmentHeader(
         bytes.subarray(offset, offset + size),
         wide,
