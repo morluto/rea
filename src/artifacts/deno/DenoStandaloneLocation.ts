@@ -7,7 +7,7 @@ import {
 import type { FileHandle } from "node:fs/promises";
 
 import {
-  isMachoZeroFillSection,
+  machoSectionBacking,
   readMachoSectionHeader,
 } from "../../domain/apple/machoSectionHeader.js";
 import {
@@ -360,45 +360,18 @@ const namesDenoSection = (body: Uint8Array, at: number): boolean =>
  * matching MachoImage, even when the file itself still holds them.
  */
 const denoSectionRange = (
-  record: {
-    readonly address: bigint;
-    readonly size: bigint;
-    readonly offset: number;
-    readonly flags: number;
-  },
-  segment: {
-    readonly fileOffset: bigint;
-    readonly fileSize: bigint;
-    readonly address: bigint;
-    readonly memorySize: bigint;
-  },
+  record: Parameters<typeof machoSectionBacking>[0],
+  segment: Parameters<typeof machoSectionBacking>[1],
   base: number,
   sliceSize: number,
   fileSize: number,
 ): SectionRange => {
-  if (isMachoZeroFillSection(record.flags))
-    throw denoCarrierFailure("Mach-O d3n0l4nd section is zero-fill");
+  const { issue } = machoSectionBacking(record, segment);
+  if (issue !== null)
+    throw denoCarrierFailure(`Mach-O d3n0l4nd section ${issue}`);
   if (record.size > BigInt(Number.MAX_SAFE_INTEGER))
     throw denoCarrierFailure(
       "Mach-O d3n0l4nd section size is not a safe integer",
-    );
-  const virtualDelta = record.address - segment.address;
-  if (
-    virtualDelta < 0n ||
-    virtualDelta > segment.memorySize ||
-    record.size > segment.memorySize - virtualDelta
-  )
-    throw denoCarrierFailure(
-      "Mach-O d3n0l4nd section exceeds its segment's virtual extent",
-    );
-  const segmentDelta = BigInt(record.offset) - segment.fileOffset;
-  if (
-    segmentDelta < 0n ||
-    segmentDelta > segment.fileSize ||
-    record.size > segment.fileSize - segmentDelta
-  )
-    throw denoCarrierFailure(
-      "Mach-O d3n0l4nd section exceeds its segment's file extent",
     );
   const length = Number(record.size);
   const fileOffset = record.offset;

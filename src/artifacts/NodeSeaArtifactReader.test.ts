@@ -303,6 +303,30 @@ it("reads a 32-bit and a big-endian Mach-O section", async () => {
   }
 });
 
+it.each([
+  ["zero-fill", (bytes: Buffer) => bytes.writeUInt32LE(0x1, 32 + 72 + 64)],
+  ["file extent", (bytes: Buffer) => bytes.writeBigUInt64LE(1n, 32 + 48)],
+  [
+    "virtual extent",
+    (bytes: Buffer) => bytes.writeBigUInt64LE(1n, 32 + 72 + 32),
+  ],
+] as const)(
+  "refuses a named Mach-O SEA section with invalid %s backing",
+  async (reason, change) => {
+    const bytes = nodeSeaMachO();
+    change(bytes);
+    const handle = await open(await writeCarrier("macho-backing", bytes), "r");
+    try {
+      await expect(locateNodeSea(handle, bytes.length)).rejects.toMatchObject({
+        reason: "format",
+        message: expect.stringContaining(reason),
+      });
+    } finally {
+      await handle.close();
+    }
+  },
+);
+
 it("classifies a main script without a JavaScript suffix as javascript-bundle", async () => {
   const snapshot = await scanCanonicalArtifactInventory(
     await writeCarrier(

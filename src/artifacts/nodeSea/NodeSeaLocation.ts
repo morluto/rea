@@ -4,7 +4,10 @@ import {
   readArtifactRange as readExact,
 } from "../ArtifactCarrierRange.js";
 import { readMachoSegmentHeader } from "../../domain/apple/machoSegmentHeader.js";
-import { readMachoSectionHeader } from "../../domain/apple/machoSectionHeader.js";
+import {
+  machoSectionBacking,
+  readMachoSectionHeader,
+} from "../../domain/apple/machoSectionHeader.js";
 import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
 import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
@@ -359,6 +362,9 @@ const locateThinMachO = async (
             throw formatFailure(NODE_SEA_MACHO_SEGMENT_TRUNCATED);
           const record = parsedSection.value;
           if (cString(record.nameBytes, 0, 16) !== SEA_SECTION) continue;
+          const { issue } = machoSectionBacking(record, segment);
+          if (issue !== null)
+            throw formatFailure(`Mach-O Node SEA section ${issue}`);
           const length = Number(record.size);
           const fileOffset = record.offset;
           if (!Number.isSafeInteger(length))

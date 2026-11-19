@@ -36,6 +36,9 @@ with different slice blobs are rejected as ambiguous; identical blobs are
 inventoried once. Native carrier bytes keep their content hash and native
 classification while the root occurrence represents the SEA container.
 
+REA reports a named Mach-O SEA section as malformed when it declares zero-fill
+or falls outside its containing segment's file or virtual address range.
+
 Root `format_metadata` preserves raw flags, decoded flags, code path, blob
 location, exec arguments and fuse observations. Main and asset children retain
 their role and exact declared name in `source_path`. Safe, noncolliding names

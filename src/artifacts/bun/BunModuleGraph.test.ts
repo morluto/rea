@@ -267,6 +267,28 @@ it("refuses multiple embedded graphs instead of selecting one", async () => {
   });
 });
 
+it.each([
+  ["zero-fill", (bytes: Buffer) => bytes.writeUInt32LE(0x12, 32 + 72 + 64)],
+  ["file extent", (bytes: Buffer) => bytes.writeBigUInt64LE(1n, 32 + 48)],
+  [
+    "virtual extent",
+    (bytes: Buffer) => bytes.writeBigUInt64LE(1n, 32 + 72 + 32),
+  ],
+] as const)(
+  "refuses a named Mach-O Bun section with invalid %s backing",
+  async (reason, change) => {
+    const section = bunPrefixedPayload(
+      bunModuleGraphPayload({ modules: [{}] }),
+    );
+    const bytes = machoBunSection(section);
+    change(bytes);
+    expect(await locate(bytes)).toMatchObject({
+      status: "present",
+      failure: { reason: "format", message: expect.stringContaining(reason) },
+    });
+  },
+);
+
 it("probes a section graph without reading its payload data", async () => {
   const contents = Buffer.alloc(1024 * 1024, 0x61);
   const bytes = machoBunSection(
