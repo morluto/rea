@@ -485,6 +485,7 @@
 * **javascript:** keep computed definition key conversion effects ([f81cbd0](https://github.com/morluto/rea/commit/f81cbd0c43eaced30566034e901409534759635b)), closes [#9229](https://github.com/morluto/rea/issues/9229)
 * **javascript:** keep wrapper redeclarations from inventing application owners ([ffae857](https://github.com/morluto/rea/commit/ffae857c20d3f6beec46d2578774fe6cfba8d92d))
 * **javascript:** move reader effect reads into the effect log and order require and process rebinding by activation ([#11356](https://github.com/morluto/rea/issues/11356)) ([0a7d288](https://github.com/morluto/rea/commit/0a7d288ed81ae63bd0270c67feb2e8fad6b77696))
+* **javascript:** observe shared array iterator prototype effects ([#12493](https://github.com/morluto/rea/issues/12493)) ([50913e3](https://github.com/morluto/rea/commit/50913e3ba0ba551958479f5b51fa2284ebfa2baa))
 * **javascript:** omit effects refused by host construction ([#11122](https://github.com/morluto/rea/issues/11122)) ([44d359b](https://github.com/morluto/rea/commit/44d359bd05c9a3ec2bb14ed048430601428f13b1)), closes [#10522](https://github.com/morluto/rea/issues/10522) [#10523](https://github.com/morluto/rea/issues/10523) [#10524](https://github.com/morluto/rea/issues/10524)
 * **javascript:** omit Node timers with rejected delay values ([186b2c3](https://github.com/morluto/rea/commit/186b2c352c55227bec71fad10fab1715e48b8ab7))
 * **javascript:** preserve global escapes across callback boundaries ([4e1e9b6](https://github.com/morluto/rea/commit/4e1e9b62a7d2763a0ca528f9f70173e86ccf841d))
