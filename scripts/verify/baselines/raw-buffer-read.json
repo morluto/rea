@@ -30,7 +30,7 @@
   "src/domain/managed/managedPeReader.ts": 5,
   "src/domain/native/elfNoteLayout.ts": 3,
   "src/domain/native/elfPointerRelocations.ts": 6,
-  "src/domain/native/nativeAotPe.ts": 37,
+  "src/domain/native/nativeAotPe.ts": 26,
   "src/domain/native/readBinaryContainer.ts": 1,
   "src/domain/pe/peResourceInventory.ts": 7,
   "src/domain/pe/peResourceTreeFacts.ts": 8,
