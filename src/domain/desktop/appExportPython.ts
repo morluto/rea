@@ -7,6 +7,13 @@ import {
 import { PYTHON_JSON_READER } from "./appExportPythonJson.js";
 import { PYTHON_XML_READER } from "./appExportPythonXml.js";
 import { PYTHON_ZIP_HELPERS } from "./appExportPythonZip.js";
+import {
+  DESKTOP_LINE_BREAK,
+  KEYFILE_CONTROL_LINE,
+  KEYFILE_ENTRY_LINE,
+  PYTHON_ECMASCRIPT_TRIM_CHARACTERS,
+} from "./desktopTextSyntax.js";
+import { PYTHON_X11_PROPERTIES } from "./x11Windows.js";
 
 /** The generated module's imports. */
 /** The class method that holds readiness until the app's own window shows, not a splash screen with its class. */
@@ -77,8 +84,10 @@ def _opens_element(text: str) -> bool:
         elif character == ">":
             return XML_ELEMENT_OPENING.match(text[index + 1:].lstrip()) is not None
     return False
-GROUP_HEADER = re.compile(r"^\[([^\]]+)\]$")
-LINE_BREAK = re.compile(r"\r?\n")
+KEYFILE_CONTROL_LINE = re.compile(${JSON.stringify(KEYFILE_CONTROL_LINE)})
+KEYFILE_ENTRY_LINE = re.compile(${JSON.stringify(KEYFILE_ENTRY_LINE)})
+LINE_BREAK = re.compile(${JSON.stringify(DESKTOP_LINE_BREAK)})
+ECMASCRIPT_TRIM_CHARACTERS = ${PYTHON_ECMASCRIPT_TRIM_CHARACTERS}
 SQLITE_HEADER = b"SQLite format 3\x00"
 GVDB_HEADER = b"GVariant"
 ZIP_HEADER = b"PK\x03\x04"
@@ -115,8 +124,7 @@ def _respelled_utf16(data: bytes, home: Path) -> bytes:
     return mark + _respelled(text, home).encode(codec) if SEED_HOME in text else data
 
 
-#: What marks a window as not yet the app's own: skipping the taskbar, as splash screens and dialogs do, or a splash type.
-SPLASH_MARKS = ("_NET_WM_STATE_SKIP_TASKBAR", "_NET_WM_WINDOW_TYPE_SPLASH")
+${PYTHON_X11_PROPERTIES}
 
 
 def _taskbar_window(window_class: str) -> bool:
@@ -126,10 +134,14 @@ def _taskbar_window(window_class: str) -> bool:
         done = subprocess.run(["xprop", *args], capture_output=True, text=True)
         return done.stdout if done.returncode == 0 else ""
 
-    for window in re.findall(r"0x[0-9a-f]+", xprop("-root", "_NET_CLIENT_LIST").partition("#")[2]):
-        props = xprop("-id", window, "WM_CLASS", "_NET_WM_STATE", "_NET_WM_WINDOW_TYPE")
-        classes = re.findall(r'"((?:[^"\\]|\\.)*)"', props.partition("WM_CLASS")[2].split("\n", 1)[0])
-        if window_class in classes and not any(mark in props for mark in SPLASH_MARKS):
+    root = _x11_properties(xprop("-root", "_NET_CLIENT_LIST"))
+    for window in _x11_client_ids(root):
+        props = _x11_properties(xprop("-id", window, "WM_CLASS", "_NET_WM_STATE", "_NET_WM_WINDOW_TYPE"))
+        if _x11_window_class(props) != window_class:
+            continue
+        states = [atom.strip(ECMASCRIPT_TRIM_CHARACTERS) for atom in props.get("_NET_WM_STATE", "").split(",")]
+        types = [atom.strip(ECMASCRIPT_TRIM_CHARACTERS) for atom in props.get("_NET_WM_WINDOW_TYPE", "").split(",")]
+        if "_NET_WM_STATE_SKIP_TASKBAR" not in states and "_NET_WM_WINDOW_TYPE_SPLASH" not in types:
             return True
     return False
 
@@ -332,16 +344,16 @@ def _text(text: str) -> dict:
 
 def _keyfile_line(raw: str) -> tuple:
     """A key file line as REA reads it: skip (blank or comment), group, entry or other."""
-    line = raw.strip()
-    if not line or line[0] in "#;":
-        return ("skip",)
-    header = GROUP_HEADER.match(line)
-    if header:
-        return ("group", header.group(1))
-    key, equals, value = raw.partition("=")
-    key = key.strip()
-    # Only ASCII space and tab immediately after '=' are padding.
-    return ("entry", key, value.lstrip(" \t")) if equals and key else ("other",)
+    control = KEYFILE_CONTROL_LINE.fullmatch(raw.strip(ECMASCRIPT_TRIM_CHARACTERS))
+    if control is not None:
+        name = control.group(1)
+        return ("skip",) if name is None else ("group", name)
+    entry = KEYFILE_ENTRY_LINE.fullmatch(raw)
+    if entry is not None:
+        key = entry.group(1).strip(ECMASCRIPT_TRIM_CHARACTERS)
+        if key:
+            return ("entry", key, entry.group(2))
+    return ("other",)
 
 
 def _each_line(text: str):
@@ -367,7 +379,7 @@ def _is_keyfile(text: str) -> bool:
 
 def _keyfile(text: str) -> dict:
     groups, group = {}, ""
-    for line in map(_keyfile_line, LINE_BREAK.split(text)):
+    for line in map(_keyfile_line, _each_line(text)):
         if line[0] == "group":
             group = line[1]
             groups.setdefault(group, {})
@@ -383,7 +395,7 @@ ${PYTHON_JSON_READER}
 def _text_view(name: str, text: str, size: int) -> dict:
     """The format REA's state view detects for decoded text of size bytes, and its view; a JSON or key file over the
     parsed-view limit is refused before its value is built."""
-    trimmed = re.sub(r"^[\s﻿]+", "", text)
+    trimmed = text.lstrip(ECMASCRIPT_TRIM_CHARACTERS)
     if name.lower().endswith(".json") or trimmed[:1] in ("[", "{"):
         view = _json_view(text, size)
         if view is not None:
