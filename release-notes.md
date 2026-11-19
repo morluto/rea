@@ -466,6 +466,7 @@
 * **native:** select same-family universal slices by subtype name ([d5dd0b6](https://github.com/morluto/rea/commit/d5dd0b6fd9849aad7ac3349f2b783661e0a40e9c))
 * **native:** share ELF, PE, and Mach-O framing across artifact readers ([#12156](https://github.com/morluto/rea/issues/12156)) ([0b19b06](https://github.com/morluto/rea/commit/0b19b06bf60a920eae6e7f1765b22e61f4ff5a3d))
 * **navigation:** offer available instruction observations ([#10307](https://github.com/morluto/rea/issues/10307)) ([15a2de7](https://github.com/morluto/rea/commit/15a2de737c3401f9ef1e22290fa1b8a1ac3fead9))
+* **node-sea:** validate Mach-O segment bounds before blob limits ([#12263](https://github.com/morluto/rea/issues/12263)) ([b74b314](https://github.com/morluto/rea/commit/b74b314fbddffadb731d7cff43ea214f7808133d))
 * **ntfs:** reject invalid FILE_NAME namespaces ([#11986](https://github.com/morluto/rea/issues/11986)) ([f52229a](https://github.com/morluto/rea/commit/f52229a4a64235a72e9ddf8a744907ea77616911))
 * **ntfs:** reject unaligned USN v4 extents ([#11969](https://github.com/morluto/rea/issues/11969)) ([7c25842](https://github.com/morluto/rea/commit/7c25842bae6906de375406b99717e20807ec0ca4))
 * **nuget:** match the manifest relationship type exactly ([#11934](https://github.com/morluto/rea/issues/11934)) ([754589d](https://github.com/morluto/rea/commit/754589d4bf1053369fa5250fd05c0cb3ae595df6))
