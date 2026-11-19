@@ -2,7 +2,7 @@ REA npm dependency inventory
 Prepared from the root package-lock.json; refresh this inventory when locked dependencies change.
 License identifiers are upstream lockfile declarations, not a legal assessment.
 Runtime includes transitive and optional platform packages; development includes build, test and website tooling.
-Locked package entries: 750; runtime: 178.
+Locked package entries: 753; runtime: 181.
 Full runtime copyright/license/NOTICE texts: npm-runtime-notices.txt.
 
 @algolia/abtesting@1.25.0 | development | MIT
@@ -1805,6 +1805,11 @@ algoliasearch@5.59.0 | development | MIT
   Package: https://www.npmjs.com/package/algoliasearch/v/5.59.0
   Archive: https://registry.npmjs.org/algoliasearch/-/algoliasearch-5.59.0.tgz
   Integrity: sha512-wUXzaeI7B526W4y1gFg3lcxgDZ67XSgRJIiellYWOas/pLpO7rOtxm9Gr2E/C8aiSDXIgx1q5TdSsvK67Uakqw==
+amdefine@0.1.1 | runtime | BSD-3-Clause AND MIT
+  Lockfile path: node_modules/amdefine
+  Package: https://www.npmjs.com/package/amdefine/v/0.1.1
+  Archive: https://registry.npmjs.org/amdefine/-/amdefine-0.1.1.tgz
+  Integrity: sha512-cE/769sItEDt5sSdqmrWMsat+XaA5FJiEou+ZwlY7ef/Jf/517k6nYyUIRPR2o/QbpBg4FiYXj9GyRGNg5f/bg==
 angular-html-parser@10.11.0 | development | MIT
   Lockfile path: node_modules/angular-html-parser
   Package: https://www.npmjs.com/package/angular-html-parser/v/10.11.0
@@ -2670,6 +2675,16 @@ lru-cache@11.5.2 | runtime | BlueOak-1.0.0
   Package: https://www.npmjs.com/package/lru-cache/v/11.5.2
   Archive: https://registry.npmjs.org/lru-cache/-/lru-cache-11.5.2.tgz
   Integrity: sha512-4pfM1Ff0x50o0tQwb5ucw/RzNyD0/YJME6IVcStalZuMWxdt3sR3huStTtxz4PUmvZfRguvDejasvQ2kifR11g==
+lzma-purejs@0.9.3 | runtime | BSD
+  Lockfile path: node_modules/lzma-purejs
+  Package: https://www.npmjs.com/package/lzma-purejs/v/0.9.3
+  Archive: https://registry.npmjs.org/lzma-purejs/-/lzma-purejs-0.9.3.tgz
+  Integrity: sha512-6VPTP6dEwoEeXYxK9/9ZsUH8zD/lGdTCKenEv2C4mrZkp111CttGYVVrLTcCY6BM+dnADTMrARnG8PZQctJUeg==
+commander@2.0.0 | runtime | UNDECLARED
+  Lockfile path: node_modules/lzma-purejs/node_modules/commander
+  Package: https://www.npmjs.com/package/commander/v/2.0.0
+  Archive: https://registry.npmjs.org/commander/-/commander-2.0.0.tgz
+  Integrity: sha512-qebjpyeaA/nJ4w3EO2cV2++/zEkccPnjWogzA2rff+Lk8ILI75vULeTmyd4wPxWdKwtP3J+G39IXVZadh0UHyw==
 magic-string@1.4.3 | development | MIT
   Lockfile path: node_modules/magic-string
   Package: https://www.npmjs.com/package/magic-string/v/1.4.3
