@@ -1221,6 +1221,88 @@ it("retains GGUF representation capacity when declared string bytes can fit", as
   });
 });
 
+it.each([
+  "metadata row",
+  "tensor descriptor",
+  "array element",
+  "outer array sibling",
+] as const)(
+  "checks required GGUF %s framing before charging a large string",
+  async (following) => {
+    const seed = ggufFixture({ tensors: [] });
+    const largeStringBytes = 6_000_000;
+    const stringLength = seed.u64(BigInt(largeStringBytes));
+    const twoStrings = Buffer.concat([seed.u32(8), seed.u64(2n)]);
+    const array =
+      following === "array element" || following === "outer array sibling";
+    const outer = following === "outer array sibling";
+    const prefix = ggufFixture({
+      tensors: [],
+      metadata: [
+        {
+          key: "custom.value",
+          type: array ? 9 : 8,
+          value: Buffer.concat([
+            ...(outer ? [seed.u32(9), seed.u64(2n)] : []),
+            ...(array ? [twoStrings] : []),
+            stringLength,
+          ]),
+        },
+      ],
+    }).header;
+    if (following === "metadata row") prefix.writeBigUInt64LE(2n, 16);
+    if (following === "tensor descriptor") prefix.writeBigUInt64LE(1n, 8);
+    const stringEnd = prefix.length + largeStringBytes;
+    const emptyString = seed.text("");
+    const tail = {
+      "metadata row": Buffer.concat([
+        seed.text("custom.tail"),
+        seed.u32(0),
+        Buffer.from([1]),
+      ]),
+      "tensor descriptor": Buffer.concat([
+        seed.text("weight"),
+        seed.u32(1),
+        seed.u64(1n),
+        seed.u32(0),
+        seed.u64(0n),
+      ]),
+      "array element": emptyString,
+      "outer array sibling": Buffer.concat([
+        emptyString,
+        seed.u32(8),
+        seed.u64(0n),
+      ]),
+    }[following];
+    const { provider, path } = await providerAt(prefix);
+    const handle = await open(path, "r+");
+    try {
+      // For nested arrays the immediate string sibling fits. Only the outer
+      // array's second element is missing, so its minimum must propagate.
+      if (outer)
+        await handle.write(emptyString, 0, emptyString.length, stringEnd);
+      else await handle.truncate(stringEnd);
+      const malformed = await provider.inspect({ path, hash: "header" });
+      if (malformed.ok) throw new Error("Missing GGUF framing was accepted");
+      expect.soft(malformed.error).toMatchObject(INVALID_FORMAT);
+
+      await handle.write(tail, 0, tail.length, stringEnd);
+      if (following === "tensor descriptor")
+        await handle.truncate(
+          Math.ceil((stringEnd + tail.length) / 32) * 32 + 4,
+        );
+      const limited = await provider.inspect({ path, hash: "header" });
+      if (limited.ok) throw new Error("Oversized representation was accepted");
+      expect(limited.error).toMatchObject({
+        _tag: "AnalysisResourceConstraintError",
+        reportedLimits: { maximum_representation_bytes: MODEL_REPORT_BYTES },
+      });
+    } finally {
+      await handle.close();
+    }
+  },
+);
+
 it("retains GGUF representation capacity when the declared directory can fit", async () => {
   const header = Buffer.alloc(24);
   header.write("GGUF");

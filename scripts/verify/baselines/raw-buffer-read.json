@@ -1,8 +1,6 @@
 {
   "src/application/MipsElfMetadata.ts": 10,
   "src/application/MipsGnuAttributes.ts": 2,
-  "src/artifacts/bun/BunModuleGraphLayout.ts": 10,
-  "src/artifacts/dotnet/DotnetBundle.ts": 5,
   "src/domain/apkSignature/apkSignatureSchemes.ts": 1,
   "src/domain/apkSignature/apkSigningBlock.ts": 2,
   "src/domain/apkSignature/apkV1Signature.ts": 5,
@@ -79,7 +77,6 @@
   "src/native/initializers/MachoInitializers.ts": 22,
   "src/native/initializers/NativeInitializersProvider.ts": 1,
   "src/native/pe/PeCertificateAsn1.ts": 2,
-  "src/native/pe/PeCertificateParser.ts": 3,
   "src/native/pe/PeLoadConfigParser.ts": 7,
   "src/native/pwndbg/CoreFileMappingAuthority.ts": 1,
   "src/native/pwntools/PwntoolsRecordedCrashProvider.ts": 1,
