@@ -15,6 +15,10 @@ import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 import { isRecord } from "../../kernel/isRecord.js";
 
 const DEFAULT_DECODE_BUDGET_BYTES = 128 * 1024 * 1024;
+const MINIMUM_OBJECT_ROW_BYTES = 3; // Class index, value start, field count.
+const MINIMUM_KEY_ROW_BYTES = 1; // Name length.
+const MINIMUM_CLASS_ROW_BYTES = 2; // Name length and extension count.
+const MINIMUM_VALUE_ROW_BYTES = 2; // Key index and value tag.
 
 interface NibObjectRecord {
   readonly class_index: number;
@@ -104,15 +108,30 @@ export const decodeNibArchive = (
   ]);
   // Length-prefixed rows still have a minimum size on the wire. Prove each
   // count can fit its own table before charging any projected representation.
-  assertTableExtent("object", objectCount, 3, keysOffset - objectsOffset);
-  assertTableExtent("key", keyCount, 1, valuesOffset - keysOffset);
+  assertTableExtent(
+    "object",
+    objectCount,
+    MINIMUM_OBJECT_ROW_BYTES,
+    keysOffset - objectsOffset,
+  );
+  assertTableExtent(
+    "key",
+    keyCount,
+    MINIMUM_KEY_ROW_BYTES,
+    valuesOffset - keysOffset,
+  );
   assertTableExtent(
     "value",
     valueCount,
     MINIMUM_VALUE_ROW_BYTES,
     classesOffset - valuesOffset,
   );
-  assertTableExtent("class", classCount, 2, bytes.length - classesOffset);
+  assertTableExtent(
+    "class",
+    classCount,
+    MINIMUM_CLASS_ROW_BYTES,
+    bytes.length - classesOffset,
+  );
   const objectRecords = readObjects(
     bytes,
     objectsOffset,
@@ -122,14 +141,7 @@ export const decodeNibArchive = (
     classCount,
     budget,
   );
-  const keys = parseStrings(
-    bytes,
-    keysOffset,
-    valuesOffset,
-    keyCount,
-    "key",
-    budget,
-  );
+  const keys = parseKeys(bytes, keysOffset, valuesOffset, keyCount, budget);
   const classes = parseClasses(
     bytes,
     classesOffset,
@@ -240,9 +252,10 @@ const visitObjectRecords = (
 ): void => {
   const cursor = { offset: start };
   for (let index = 0; index < count; index += 1) {
-    const classIndex = readVarint(bytes, cursor, end);
-    const valueStart = readVarint(bytes, cursor, end);
-    const fieldCount = readVarint(bytes, cursor, end);
+    const rowEnd = tableRowEnd(end, count, index, MINIMUM_OBJECT_ROW_BYTES);
+    const classIndex = readVarint(bytes, cursor, rowEnd);
+    const valueStart = readVarint(bytes, cursor, rowEnd);
+    const fieldCount = readVarint(bytes, cursor, rowEnd);
     if (
       classIndex >= classCount ||
       valueStart > valueCount ||
@@ -319,24 +332,24 @@ const readObjects = (
   return output;
 };
 
-const parseStrings = (
+const parseKeys = (
   bytes: Buffer,
   start: number,
   end: number,
   count: number,
-  label: string,
   budget: InterfaceBuilderDecodeBudget,
 ): string[] => {
   const cursor = { offset: start };
   const output: string[] = [];
   for (let index = 0; index < count; index += 1) {
-    const length = readVarint(bytes, cursor, end);
-    const next = checkedEnd(cursor.offset, length, end, `${label} ${index}`);
+    const rowEnd = tableRowEnd(end, count, index, MINIMUM_KEY_ROW_BYTES);
+    const length = readVarint(bytes, cursor, rowEnd);
+    const next = checkedEnd(cursor.offset, length, rowEnd, `key ${index}`);
     budget.reserve(
       32 + length * 2,
-      `NIBArchive ${label} strings exceed the aggregate Interface Builder decode budget`,
+      "NIBArchive key strings exceed the aggregate Interface Builder decode budget",
     );
-    const value = decodeUtf8(bytes, cursor.offset, next, `${label} ${index}`);
+    const value = decodeUtf8(bytes, cursor.offset, next, `key ${index}`);
     cursor.offset = next;
     output.push(value);
   }
@@ -353,8 +366,9 @@ const parseClasses = (
   const cursor = { offset: start };
   const output: string[] = [];
   for (let index = 0; index < count; index += 1) {
-    const length = readVarint(bytes, cursor, end);
-    const extraCount = readVarint(bytes, cursor, end);
+    const rowEnd = tableRowEnd(end, count, index, MINIMUM_CLASS_ROW_BYTES);
+    const length = readVarint(bytes, cursor, rowEnd);
+    const extraCount = readVarint(bytes, cursor, rowEnd);
     if (extraCount > 16)
       throw malformedInput(
         "nib-archive",
@@ -363,11 +377,11 @@ const parseClasses = (
     ensureRange(
       cursor.offset,
       extraCount * 4,
-      end,
+      rowEnd,
       `class ${index} extensions`,
     );
     cursor.offset += extraCount * 4;
-    const next = checkedEnd(cursor.offset, length, end, `class ${index}`);
+    const next = checkedEnd(cursor.offset, length, rowEnd, `class ${index}`);
     budget.reserve(
       32 + length * 2,
       "NIBArchive class names exceed the aggregate Interface Builder decode budget",
@@ -384,9 +398,6 @@ const parseClasses = (
   return output;
 };
 
-// A value row starts with a key index and a type tag.
-const MINIMUM_VALUE_ROW_BYTES = 2;
-
 const parseValues = (
   reader: BinaryReader,
   start: number,
@@ -400,7 +411,7 @@ const parseValues = (
   const cursor = { offset: start };
   const output = new Map<number, NibValueRecord>();
   for (let index = 0; index < count; index += 1) {
-    const rowEnd = end - (count - index - 1) * MINIMUM_VALUE_ROW_BYTES;
+    const rowEnd = tableRowEnd(end, count, index, MINIMUM_VALUE_ROW_BYTES);
     const keyIndex = readVarint(bytes, cursor, rowEnd);
     if (keyIndex >= keyCount)
       throw malformedInput(
@@ -498,6 +509,13 @@ const valueIndexes = (
     );
   return indexes;
 };
+
+const tableRowEnd = (
+  tableEnd: number,
+  count: number,
+  index: number,
+  minimumRowBytes: number,
+): number => tableEnd - (count - index - 1) * minimumRowBytes;
 
 const assertTableExtent = (
   label: string,

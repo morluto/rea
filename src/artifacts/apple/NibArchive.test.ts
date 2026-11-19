@@ -248,6 +248,27 @@ it.each([
   },
 );
 
+it.each([
+  { table: "key", tableOffset: 30, length: 0x83, maximum: 310 },
+  { table: "class", tableOffset: 46, length: 0x84, maximum: 378 },
+])(
+  "checks that a NIBArchive $table leaves room for the next row",
+  ({ tableOffset, length, maximum }) => {
+    const valid = encodeArchive({
+      classes: ["A", "B"],
+      objects: [{ classIndex: 0, values: { x: null, y: null } }],
+    });
+    const invalid = Buffer.from(valid);
+    invalid[invalid.readUInt32LE(tableOffset)] = length;
+    expect(() =>
+      decodeNibArchive(valid, new InterfaceBuilderDecodeBudget(maximum)),
+    ).toThrow(expect.objectContaining({ kind: "limit" }));
+    expect(() =>
+      decodeNibArchive(invalid, new InterfaceBuilderDecodeBudget(maximum)),
+    ).toThrow(expect.objectContaining({ kind: "truncated" }));
+  },
+);
+
 it("checks that a NIBArchive value leaves room for the next row", () => {
   const valid = encodeArchive({
     classes: ["NSObject"],
