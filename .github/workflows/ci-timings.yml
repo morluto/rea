@@ -45,6 +45,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CI_REPOSITORY: ${{ github.repository }}
+          CI_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: node scripts/ci/job-timings-batch.mjs
       - name: Upload CI timing artifacts
         if: always() && hashFiles('.cache/ci-job-timings/*') != ''

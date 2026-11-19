@@ -127,6 +127,85 @@ it("collects the latest attempt for recent completed CI and Release runs into a 
   expect(failedReport.jobs[0].execution.seconds).toBe(55);
 });
 
+it("collects failed default-branch pushes before a saturated PR sample", async () => {
+  const createdAt = new Date().toISOString();
+  const mainFailure = {
+    id: 200,
+    run_attempt: 1,
+    status: "completed",
+    event: "push",
+    head_branch: "main",
+    conclusion: "failure",
+    created_at: createdAt,
+  };
+  const fixture = await createFixture([
+    {
+      total_count: 1238,
+      workflow_runs: [
+        ...Array.from({ length: 99 }, (_, index) => ({
+          id: index + 1,
+          run_attempt: 1,
+          status: "completed",
+          event: "pull_request",
+          conclusion: "success",
+          created_at: createdAt,
+        })),
+        mainFailure,
+      ],
+    },
+    { workflow_runs: [] },
+    {
+      total_count: 6,
+      workflow_runs: [mainFailure, { ...mainFailure, id: 201 }],
+    },
+  ]);
+
+  await executeWorkflowFixture(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+    const { collectJobTimingsBatch } = await import(${JSON.stringify(pathToFileURL(batchScript).href)});
+    let clock = Date.now();
+    await collectJobTimingsBatch({
+      repository: "example/rea",
+      defaultBranch: "main",
+      outputDirectory: process.env.CI_JOB_TIMINGS_DIRECTORY,
+      now: () => clock,
+      collect: async ({ runId }) => {
+        if (runId === "201") clock += 240001;
+        return { rawPath: "jobs.json", reportPath: "report.json" };
+      },
+    });
+  `,
+    ],
+    { cwd: fixture.directory, env: fixtureEnvironment(fixture) },
+  );
+
+  const manifest = JSON.parse(
+    await readFile(
+      join(fixture.outputDirectory, "batch-manifest.json"),
+      "utf8",
+    ),
+  );
+  expect(manifest.coverage).toMatchObject({
+    selectedRuns: 101,
+    collectedRuns: 2,
+  });
+  expect(manifest.runs).toMatchObject([
+    { id: 200, status: "collected", headBranch: "main", event: "push" },
+    { id: 201, status: "collected", headBranch: "main", event: "push" },
+  ]);
+  expect(manifest.truncation).toContain(
+    "Default-branch CI failures exceeded the supplemental sample limit.",
+  );
+  expect(manifest.errors).toEqual([]);
+  const calls = JSON.parse(await readFile(fixture.calls, "utf8"));
+  expect(calls[2][1]).toContain("status=failure&event=push&branch=main");
+  expect(calls[2][1]).toContain("per_page=5");
+});
+
 it("records listing and per-run errors without claiming complete coverage", async () => {
   const recent = new Date().toISOString();
   const fixture = await createFixture([
