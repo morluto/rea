@@ -1036,6 +1036,7 @@
 * **ida:** let IDA close failures read the session's later close ([#10811](https://github.com/morluto/rea/issues/10811)) ([b98fbdc](https://github.com/morluto/rea/commit/b98fbdc44212c860fbbd929393d74981ec946be8))
 * **ida:** remove the legacy ida-pro-mcp 1.4 attached protocol ([#11546](https://github.com/morluto/rea/issues/11546)) ([c1546be](https://github.com/morluto/rea/commit/c1546be70d4be0a6ca38d628cbcf50d76d284140))
 * **ida:** require the host platform for IDA MCP connections and snapshot the child environment with it ([#11073](https://github.com/morluto/rea/issues/11073)) ([bae5d74](https://github.com/morluto/rea/commit/bae5d74eb034668bfbd81a9af8fb400ad7e4942c))
+* **il2cpp:** decode metadata tables through one shared binary reader ([#12554](https://github.com/morluto/rea/issues/12554)) ([5c3fe9c](https://github.com/morluto/rea/commit/5c3fe9caeb399e54ea3c8ffe1b267804876744d7))
 * **il2cpp:** report format failures through ParseFailure ([#10701](https://github.com/morluto/rea/issues/10701)) ([3a29b6b](https://github.com/morluto/rea/commit/3a29b6b8eac4d958ade8cffce3f7d53fcf7052b1))
 * **il2cpp:** share metadata section table framing ([#12364](https://github.com/morluto/rea/issues/12364)) ([7e7516f](https://github.com/morluto/rea/commit/7e7516fbe942b8eb2899ae910a29ca8c7dc11cc1))
 * **inspector:** declare the V8 inspector's use of the browser Electron file scope ([#11529](https://github.com/morluto/rea/issues/11529)) ([1e66337](https://github.com/morluto/rea/commit/1e663371a0ffa7fb3f282e4fe2e8d1f8b85fd63e))
