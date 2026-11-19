@@ -10,7 +10,7 @@ import {
 } from "../binaryContainer.js";
 import { architectureForElfMachine } from "./elfImage.js";
 import { readElfStringBytes } from "./elfStringBytes.js";
-import { readElfSymbol } from "../elfSymbol.js";
+import { elfSymbolSize, readElfSymbol } from "../elfSymbol.js";
 import {
   readElfDirectoryFromBuffer,
   type NativeSection,
@@ -721,7 +721,7 @@ function* parseElfExports(
         ...ELF_LIMITATIONS,
       ],
     };
-  const width = directory.bits === 64 ? 24 : 16;
+  const width = elfSymbolSize(directory.bits);
   const strings = sections[dynsym.link];
   const compressed = dynsym.compressed
     ? dynsym

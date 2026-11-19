@@ -5,7 +5,7 @@ import {
   readElfRelocationEntry,
 } from "../elfRelocation.js";
 import { readLeb128, SLEB64 } from "../leb128.js";
-import { readElfSymbol } from "../elfSymbol.js";
+import { elfSymbolSize, readElfSymbol } from "../elfSymbol.js";
 import {
   readElfHashSymbolCount,
   readElfGnuHashSymbolCount,
@@ -661,7 +661,7 @@ export function* readElfRelocationWritesSteps(
       value === null ? fileOffset(address, width) : target(address, width),
     ...record,
   });
-  const symbolBytes = input.bits === 64 ? 24 : 16;
+  const symbolBytes = elfSymbolSize(input.bits);
   const symbolTable =
     tags.get(DT_SYMENT) === BigInt(symbolBytes)
       ? tags.get(DT_SYMTAB)

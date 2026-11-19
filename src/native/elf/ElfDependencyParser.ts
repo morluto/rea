@@ -29,7 +29,7 @@ import {
   elfStringTableText,
   observeElfStringTableEntry,
 } from "../../domain/elfStringTable.js";
-import { readElfSymbol } from "../../domain/elfSymbol.js";
+import { elfSymbolSize, readElfSymbol } from "../../domain/elfSymbol.js";
 import {
   readElfGnuHashSymbolCount,
   readElfHashSymbolCount,
@@ -982,7 +982,7 @@ export const readElfDependenciesSteps = function* (
   );
   // Elf32_Sym and Elf64_Sym have fixed widths, so a DT_SYMENT or .dynsym
   // sh_entsize that disagrees is reported and never used to stride the table.
-  const symbolEntrySize = bits === 64 ? 24 : 16;
+  const symbolEntrySize = elfSymbolSize(bits);
   if (syment !== undefined && syment !== symbolEntrySize)
     issues.push({
       code: "malformed_entry",

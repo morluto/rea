@@ -18,7 +18,6 @@
   "src/domain/elfRawTableDeclarations.ts": 7,
   "src/domain/elfRelocation.ts": 6,
   "src/domain/elfSectionHeader.ts": 6,
-  "src/domain/elfSymbol.ts": 8,
   "src/domain/gamecubeDol.ts": 6,
   "src/domain/inesContainer.ts": 5,
   "src/domain/managed/managedCliHeaderPrefix.ts": 5,
