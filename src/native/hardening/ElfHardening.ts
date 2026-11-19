@@ -60,6 +60,7 @@ import {
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
+  BinaryReader,
 } from "../../domain/binaryContainer.js";
 import {
   ELF_PT_GNU_PROPERTY,
@@ -664,10 +665,9 @@ const readSymbolNames = (
 };
 
 const hashWords = (
-  bytes: Buffer,
+  reader: BinaryReader,
   va: bigint,
   mapVa: MapVa,
-  little: boolean,
 ): ElfHashWordReader => {
   const mapping = mapVa(va, 4n);
   return (relative) => {
@@ -677,8 +677,8 @@ const hashWords = (
     if (end > mapping.backed) return err("is not file-backed in its PT_LOAD");
     if (end > mapping.available) return err("crosses another PT_LOAD mapping");
     const at = mapping.offset + relative;
-    if (at > bytes.length - 4) return err("extends outside the file");
-    return ok(little ? bytes.readUInt32LE(at) : bytes.readUInt32BE(at));
+    if (at > reader.bytes.length - 4) return err("extends outside the file");
+    return ok(reader.u32(at));
   };
 };
 
@@ -711,12 +711,13 @@ const symbolCount = (
 ): number | null => {
   const hash = dynamic.entries.get(DT_HASH);
   const gnu = dynamic.entries.get(DT_GNU_HASH);
+  const reader = new BinaryReader(bytes, little, "elf");
   const classic =
     hash === undefined
       ? null
       : admitHashCount(
           readElfHashSymbolCount(
-            hashWords(bytes, hash.value, mapVa, little),
+            hashWords(reader, hash.value, mapVa),
             MAX_BINARY_HARDENING_TABLE_ENTRIES,
           ),
         );
@@ -726,7 +727,7 @@ const symbolCount = (
       : admitHashCount(
           finishGnuHashCount(
             readElfGnuHashSymbolCount(
-              hashWords(bytes, gnu.value, mapVa, little),
+              hashWords(reader, gnu.value, mapVa),
               bits === 64 ? 8 : 4,
               MAX_BINARY_HARDENING_TABLE_ENTRIES,
             ),
