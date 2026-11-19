@@ -353,6 +353,10 @@ it, and tears down once that call has ended. Closing the
 MCP server closes every computer the same way, and a helper whose REA server
 exits sees its stdin close and tears down.
 
+Once the helper reports a computer, SIGTERM or SIGINT can request teardown
+while stdin remains open. It exits 0 when agentenv confirms nothing is left,
+or 1 when agentenv still reports resources.
+
 A timed-out or cancelled export command is stopped by that command's
 supervisor. It sends SIGINT, then SIGTERM, then SIGKILL, with two seconds
 between each, to processes that are still in the command's session. A child

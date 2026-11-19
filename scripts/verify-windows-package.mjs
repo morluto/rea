@@ -70,7 +70,16 @@ try {
   const tarball = join(workspace, packageResult.filename);
   await access(tarball);
   await commands.execNpm(
-    ["install", "--no-package-lock", "--no-save", "--prefix", prefix, tarball],
+    [
+      "install",
+      "--no-package-lock",
+      "--no-save",
+      "--no-audit",
+      "--no-fund",
+      "--prefix",
+      prefix,
+      tarball,
+    ],
     { cwd: workspace, windowsHide: true },
   );
   const entry = join(

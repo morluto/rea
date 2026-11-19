@@ -59,6 +59,7 @@ import {
   clientRegistrationOwnershipRemediation,
   refreshClientRegistration,
 } from "./ClientRegistration.js";
+import { recommendedMcpToolTimeoutMs } from "../config/mcpStartupPolicy.js";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
@@ -1346,18 +1347,28 @@ const clientConfigurationDesired = async (
   const launcher =
     command.length === 0 ? [PRODUCT_IDENTITY.cliBinary, "mcp"] : command;
   if (format === "dsh") {
-    const validated = clientRegistrationEnvironment(
+    // The budget resolver's declared read set keeps the gate fail-closed only
+    // for settings the derivation may actually read, so unrelated Cordis
+    // expressions stay preserved while the budget still resolves.
+    const validated = await clientRegistrationEnvironmentDetailsWithBudget(
       effective,
       client,
-      platform,
       providerEnvironment,
+      "effective",
+      resolveProviderRequestBudget,
+      platform,
     );
     if (!validated.ok) throw validated.error;
     const desired = (
       parsed === undefined
         ? new DshCordisDocument("")
         : dshDocument(parsed.document)
-    ).desired(launcher, providerEnvironment, platform);
+    ).desired(
+      launcher,
+      providerEnvironment,
+      platform,
+      recommendedMcpToolTimeoutMs(validated.value.timeoutInputs),
+    );
     if (!desired.ok) throw desired.error;
     return desired.value;
   }

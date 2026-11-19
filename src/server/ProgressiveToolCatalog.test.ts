@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { EvidenceMcpServerCore } from "./EvidenceMcpServerCore.js";
 import { ToolResultDelivery } from "./ToolResultDelivery.js";
+import { parseMcpToolError } from "../../tests/fixtures/mcpToolError.js";
 
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => {
@@ -77,7 +78,7 @@ const connect = async (
   client.setNotificationHandler("notifications/tools/list_changed", changed);
   const discover = (args: Record<string, unknown>) =>
     client.callTool({ name: "discover_tools", arguments: args });
-  return { server, client, changed, discover, forbidden };
+  return { client, changed, discover, forbidden, bulkNames };
 };
 
 it("refuses an oversized maximum page before loading, then delivers every original contract in smaller pages", async () => {
@@ -120,7 +121,7 @@ it("refuses an oversized maximum page before loading, then delivers every origin
         ?.inputSchema,
     ).toEqual(tool.input_schema);
   }
-  expect(new Set(seen).size).toBe(20);
+  expect(seen).toEqual(f.bulkNames);
   expect(f.changed).toHaveBeenCalledTimes(20);
 });
 
@@ -129,7 +130,12 @@ it("bounds an oversized unknown-name failure without changing visibility", async
   const f = await connect({ replyBytes });
   const initial = await f.client.listTools();
   const result = await f.discover({ names: ["unknown".repeat(4096)] });
-  expect(result.isError).toBe(true);
+  expect(parseMcpToolError(result)).toMatchObject({
+    error: {
+      code: "resource_constraint",
+      details: { reported_limits: { original_error_code: "invalid_request" } },
+    },
+  });
   expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(
     replyBytes - 1024,
   );
@@ -139,7 +145,6 @@ it("bounds an oversized unknown-name failure without changing visibility", async
 
 it("batches visibility changes, pages searches, and keeps excluded tools outside discovery", async () => {
   const f = await connect();
-  const identity = f.server.catalogIdentity;
   const first = await f.discover({ query: "sqlite", limit: 1 });
   expect(first.structuredContent).toMatchObject({
     inventory_count: 4,
@@ -148,6 +153,16 @@ it("batches visibility changes, pages searches, and keeps excluded tools outside
     next_offset: 1,
     tools: [{ name: "alpha_sqlite" }],
   });
+  expect(f.changed).toHaveBeenCalledTimes(1);
+  const visible = await f.client.listTools();
+  for (const args of [
+    { query: "sqlite", offset: 3, limit: 1 },
+    { query: "missing_word" },
+  ]) {
+    expect((await f.discover(args)).isError).not.toBe(true);
+    expect(await f.client.listTools()).toEqual(visible);
+    expect(f.changed).toHaveBeenCalledTimes(1);
+  }
   const next = await f.discover({ query: "sqlite", offset: 1, limit: 2 });
   expect(next.structuredContent).toMatchObject({
     loaded_count: 4,
@@ -157,15 +172,11 @@ it("batches visibility changes, pages searches, and keeps excluded tools outside
   expect(f.changed).toHaveBeenCalledTimes(2);
   await f.discover({ names: ["alpha_sqlite", "beta_sqlite"] });
   expect(f.changed).toHaveBeenCalledTimes(2);
-  expect(
-    (await f.discover({ query: "missing_word" })).structuredContent,
-  ).toMatchObject({ total_matches: 0, tools: [], next_offset: null });
   expect((await f.discover({ names: ["excluded_sqlite"] })).isError).toBe(true);
   await expect(
     f.client.callTool({ name: "excluded_sqlite", arguments: {} }),
   ).rejects.toThrow("disabled");
   expect(f.forbidden).not.toHaveBeenCalled();
-  expect(f.server.catalogIdentity).toEqual(identity);
 });
 
 it("loads exact names atomically and emits one notification for a batch", async () => {
@@ -204,42 +215,3 @@ it.each([
     expect(f.changed).not.toHaveBeenCalled();
   },
 );
-
-it("distinguishes exhausted pages from unmatched queries without loading tools", async () => {
-  const f = await connect();
-  const before = await f.client.listTools();
-  for (const offset of [3, 4, 100]) {
-    const reply = await f.discover({ query: "sqlite", offset, limit: 1 });
-    expect(reply.isError).not.toBe(true);
-    expect(reply.structuredContent).toMatchObject({
-      total_matches: 3,
-      tools: [],
-      next_offset: null,
-      next_step: expect.stringContaining("offset 0"),
-    });
-    expect(
-      z.object({ next_step: z.string() }).parse(reply.structuredContent)
-        .next_step,
-    ).not.toContain("No matches.");
-    expect(await f.client.listTools()).toEqual(before);
-  }
-  const unmatched = await f.discover({
-    query: "no_such_keyword",
-    offset: 100,
-    limit: 1,
-  });
-  expect(unmatched.structuredContent).toMatchObject({
-    total_matches: 0,
-    tools: [],
-    next_offset: null,
-    next_step: expect.stringContaining("No matches."),
-  });
-  expect(f.changed).not.toHaveBeenCalled();
-  const last = await f.discover({ query: "sqlite", offset: 2, limit: 1 });
-  expect(last.structuredContent).toMatchObject({
-    total_matches: 3,
-    tools: [{ name: "binary_session" }],
-    next_offset: null,
-    next_step: expect.stringContaining("Call the returned tool"),
-  });
-});

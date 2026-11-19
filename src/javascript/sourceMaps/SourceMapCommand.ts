@@ -49,6 +49,7 @@ import {
   type SpawnedOwnedProviderProcess,
 } from "../../process/ProviderProcess.js";
 import { prepareProcessOwnershipInspection } from "../../process/ProcessOwnershipObservation.js";
+import { capturedProviderOutput } from "../../process/capturedProviderOutput.js";
 import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "trace_web_source_location";
@@ -544,15 +545,14 @@ class OwnedCodec implements SourceMapCleanupOwner {
     outputComplete: boolean,
   ) {
     if (snapshot === undefined) return undefined;
+    const captured = capturedProviderOutput(
+      exit === undefined
+        ? snapshot
+        : { ...snapshot, exitCode: exit.code, signal: exit.signal },
+    );
     return {
-      stdout: snapshot.stdout.text,
-      stderr: snapshot.stderr.text,
-      truncated: snapshot.diagnosticTruncated === true || !outputComplete,
-      stdout_bytes: snapshot.stdout.observedBytes,
-      stderr_bytes: snapshot.stderr.observedBytes,
-      ...(exit === undefined
-        ? {}
-        : { exit_code: exit.code, signal: exit.signal }),
+      ...captured,
+      truncated: captured.truncated || !outputComplete,
     };
   }
 

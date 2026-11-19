@@ -1,40 +1,14 @@
 import { expect, it } from "vitest";
 
-import {
-  classifyLaunchErrno,
-  describeLaunchFailure,
-  launcherFailureOf,
-} from "./launchFailure.js";
+import { describeLaunchFailure, launcherFailureOf } from "./launchFailure.js";
 
 it.each([
-  ["ENOENT", "missing"],
-  ["ENOTDIR", "missing"],
-  ["ELOOP", "missing"],
-  ["ENAMETOOLONG", "missing"],
-  ["EACCES", "not_executable"],
-  ["EPERM", "not_executable"],
-  ["ENOEXEC", "not_executable"],
-  ["EISDIR", "not_executable"],
-])("classifies spawn %s as %s", (code, kind) => {
-  expect(classifyLaunchErrno(code)).toEqual({ kind, code });
-});
-
-it.each([["ETIMEDOUT"], ["toString"]])(
-  "leaves %j an unrecognised launch failure",
-  (code) => {
-    expect(classifyLaunchErrno(code)).toEqual({ kind: "failed", code });
-  },
-);
-
-it.each([[1], [null]])("drops a non-string launch code %j", (code) => {
-  expect(classifyLaunchErrno(code)).toEqual({
-    kind: "failed",
-    code: undefined,
-  });
-});
-
-it.each([
-  ["EAGAIN", { kind: "host-exhausted", code: "EAGAIN", resource: "processes" }],
+  ["ELOOP", { kind: "missing", code: "ELOOP" }],
+  ["ENAMETOOLONG", { kind: "missing", code: "ENAMETOOLONG" }],
+  ["ENOEXEC", { kind: "not_executable", code: "ENOEXEC" }],
+  ["EFTYPE", { kind: "not_executable", code: "EFTYPE" }],
+  ["EISDIR", { kind: "not_executable", code: "EISDIR" }],
+  ["EPERM", { kind: "not_executable", code: "EPERM" }],
   ["ENOMEM", { kind: "host-exhausted", code: "ENOMEM", resource: "memory" }],
   [
     "EMFILE",
@@ -44,16 +18,16 @@ it.each([
     "ENFILE",
     { kind: "host-exhausted", code: "ENFILE", resource: "file-descriptors" },
   ],
-  ["E2BIG", { kind: "argument-list", code: "E2BIG" }],
-  ["ENOENT", { kind: "missing", code: "ENOENT" }],
-  ["EACCES", { kind: "not_executable", code: "EACCES" }],
-  ["ENOEXEC", { kind: "not_executable", code: "ENOEXEC" }],
-  ["EPERM", { kind: "not_executable", code: "EPERM" }],
-  ["EIO", { kind: "failed", code: "EIO" }],
+  ["ETIMEDOUT", { kind: "failed", code: "ETIMEDOUT" }],
   [undefined, { kind: "failed", code: undefined }],
+  [1, { kind: "failed", code: undefined }],
   ["toString", { kind: "failed", code: "toString" }],
-])("classifies launch errno %j once", (code, expected) => {
-  expect(classifyLaunchErrno(code)).toEqual(expected);
+])("classifies %j reported by the OS launcher", (code, expected) => {
+  expect(
+    launcherFailureOf(
+      Object.assign(new Error("failed"), { code, syscall: "spawn" }),
+    ),
+  ).toEqual({ ...expected, executable: undefined, syscall: "spawn" });
 });
 
 it.each([
@@ -77,6 +51,36 @@ it.each([
     {
       kind: "not_executable",
       code: "EACCES",
+      executable: "C:\\tools\\tool.exe",
+      syscall: undefined,
+    },
+  ],
+  [
+    "Windows native launcher bad image",
+    {
+      code: "ERR_REA_WINDOWS_NATIVE",
+      win32Code: 193,
+      constraint: "Create process atomically inside owned Job Object failed",
+      requestedPath: "C:\\tools\\tool.dll",
+    },
+    {
+      kind: "not_executable",
+      code: "EFTYPE",
+      executable: "C:\\tools\\tool.dll",
+      syscall: undefined,
+    },
+  ],
+  [
+    "Windows native launcher other code",
+    {
+      code: "ERR_REA_WINDOWS_NATIVE",
+      win32Code: 216,
+      constraint: "Create process atomically inside owned Job Object failed",
+      requestedPath: "C:\\tools\\tool.exe",
+    },
+    {
+      kind: "failed",
+      code: "ERR_REA_WINDOWS_NATIVE",
       executable: "C:\\tools\\tool.exe",
       syscall: undefined,
     },

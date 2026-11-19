@@ -895,6 +895,10 @@ itWithCaptureCapability(
       partial.observations.exit,
       "no SIGTERM interval ran, so no finalization record exists",
     ).not.toHaveProperty("value.finalization");
+    expect(partial.observations.finalization).toMatchObject({
+      state: "unavailable",
+      reason: expect.stringMatching(/\S/u),
+    });
     expect(
       Date.now() - started,
       "cancellation does not wait for either deadline",
@@ -1144,17 +1148,23 @@ itWithCaptureCapability(
 itWithCaptureCapability(
   "keeps the attempts when the escalation cannot be delivered through the retained identity",
   async () => {
-    const calls: string[] = [];
+    const calls: { pid: number; identity: string; signal: string }[] = [];
+    let observedPid: number | undefined;
     let observedAt: number | undefined;
     let firstSignalAt: number | undefined;
+    let identityReads = 0;
     const finalizationHost: FinalizationHost = {
-      observe: async () => {
+      observe: async (pid) => {
+        observedPid = pid;
         observedAt ??= performance.now();
-        return { state: "readable" as const, identity: "launch" };
+        return {
+          state: "readable" as const,
+          identity: `read-${++identityReads}`,
+        };
       },
-      signal: async (_pid, identity, signal) => {
+      signal: async (pid, identity, signal) => {
         firstSignalAt ??= performance.now();
-        calls.push(`${identity}:${signal}`);
+        calls.push({ pid, identity, signal });
         return signal === "SIGTERM" ? "signaled" : "unverified";
       },
     };
@@ -1183,10 +1193,15 @@ itWithCaptureCapability(
     if (!(result.error instanceof ProcessCaptureError)) throw result.error;
     if (result.error.cleanupIncomplete)
       expectUnverifiedHostCleanup(result.error);
+    expect(observedPid).toEqual(expect.any(Number));
     expect(
       calls,
       "both finalization signals went through the identity-checked host",
-    ).toEqual(["launch:SIGTERM", "launch:SIGKILL"]);
+    ).toEqual([
+      { pid: observedPid, identity: "read-1", signal: "SIGTERM" },
+      { pid: observedPid, identity: "read-1", signal: "SIGKILL" },
+    ]);
+    expect(identityReads).toBe(1);
     expect(
       (firstSignalAt ?? 0) - (observedAt ?? Number.POSITIVE_INFINITY),
       "the start identity was read at launch, well before the 500 ms deadline signalled",

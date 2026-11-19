@@ -94,7 +94,7 @@ class AgentPublishingChecks(unittest.TestCase):
             self.assertIn('const value = a < b ? "x_y" : "&";\n  keepIndent();', markdown)
             self.assertIn("Hidden evidence remains available.", markdown)
             self.assertIn("Shortened display paths.", markdown)
-            self.assertNotIn("Read`input.exe`", markdown)
+            self.assertRegex(markdown, r"Read\s+`input\.exe`\s+Keep evidence\.")
             self.assertIn("https://rea.tools/zh-CN/guides/other/?q=a%2Fb#code", markdown)
             self.assertIn("https://rea.tools/assets/diagram.svg", markdown)
             for text in ("Outside navigation", "Contents navigation", "Copy code", "doNotPublish"):

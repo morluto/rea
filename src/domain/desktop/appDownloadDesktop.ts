@@ -59,6 +59,8 @@ def program_span(raw):
     index = 0
     if tokens and tokens[0][0].split("/")[-1] == "env":
         index = 1
+        if index < len(tokens) and tokens[index][0] == "--":
+            index += 1
         while index < len(tokens) and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[index][0]):
             index += 1
     if index >= len(tokens) or not tokens[index][0]:

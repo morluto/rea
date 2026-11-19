@@ -99,10 +99,21 @@ Symbol and section names are untrusted file text and carry
 For PIE executables and shared objects the array slots are usually zero on
 disk. A slot is reported `unresolved`, never as its stored zero, when the
 dynamic relocation tables use an encoding this inspection does not decode
-(for example Android packed relocations or an unsupported machine). Relative
+(for example legacy Android APS1 relocations or an unsupported machine). Relative
 relocations are decoded for x86-64, i386, AArch64 and 32-bit ARM. A slot is
 also `unresolved` when a dynamic relocation writes only part of it, starts
 inside it, or writes it more than once with different values.
+
+Android APS2 packed REL/RELA tables are decoded through the same relocation
+rules, including grouped offsets, signed addend deltas and zero-addend groups.
+Their relative slots use `relative_addend`; unresolved symbolic or indirect
+values remain unresolved. APS2 and standard RELR tables can coexist.
+
+RELR address/bitmap tables support both standard `DT_RELR`/`DT_RELRSZ`/
+`DT_RELRENT` and Android's older `DT_ANDROID_RELR`/`DT_ANDROID_RELRSZ`/
+`DT_ANDROID_RELRENT` tags. Both retain `relr` slot provenance and the original
+record file offsets. Repeated declarations and mixtures of the two tag
+families are refused instead of choosing, combining or applying tables twice.
 
 A `COPY` relocation writes as many bytes as the image's own dynamic symbol
 records, and a TLS descriptor relocation writes two words. A slot outside
@@ -134,6 +145,13 @@ Relocation ownership follows virtual addresses in linked images and section
 identity plus offset in relocatable objects. Distinct slots that share source
 file bytes keep independent values and overlap checks; a write to one does not
 relocate or invalidate the other.
+
+ELF symbols using `SHN_XINDEX` get their actual section from the uniquely
+linked `SHT_SYMTAB_SHNDX` table. Missing, conflicting, compressed or malformed
+companions leave affected symbols unresolved with incomplete coverage; ordinary
+symbols remain available. Extended section numbers stay distinct from equally
+numbered special markers. `SHN_ABS` values have no section-relative file mapping,
+and tentative `SHN_COMMON` values are not treated as allocated addresses.
 
 An absolute relocation against an `STT_GNU_IFUNC` symbol is `unresolved`: the
 symbol value is the resolver, and the loader stores whatever the resolver
@@ -168,6 +186,14 @@ A stored zero in an initializer array is listed, so the array length stays
 visible.
 
 ## Paging and limits
+
+Each APS2 table has a fixed 16 MiB compressed-input and decode-work allowance.
+Before group expansion, the declared count multiplied by the equivalent
+unpacked REL/RELA record width must fit 16 MiB. This bounds interpretation work
+even when a tiny group encodes millions of records; it is separate from retained
+pointer-index and result limits, and has no runtime override. Decoding yields
+within groups for cancellation. Only zero linker padding is accepted after the
+declared records.
 
 `offset` and `limit` page the ordered list (default limit 64, maximum 4096).
 `coverage.examined_entries` counts every slot read, including omitted

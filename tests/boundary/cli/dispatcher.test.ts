@@ -515,7 +515,7 @@ describe("project-scoped Amp registration dispatch", () => {
   const installGuardRuntime = async (workspace: TestWorkspace) =>
     installCliRuntime(
       workspace,
-      `export const closeCliJavaScriptResources = () => {}; export const createCli = () => ({ serve: (_args, options) => { options.stdout(${JSON.stringify(runtimeReached)}); } });\n`,
+      `export const closeCliResources = () => {}; export const createCli = () => ({ serve: (_args, options) => { options.stdout(${JSON.stringify(runtimeReached)}); } });\n`,
     );
   workspaceCliTest(
     "rejects a real project-scoped Amp registration before the CLI runtime loads",
