@@ -248,6 +248,34 @@ export const evaluateSemanticBinding = (
         memo: createEvaluationMemo(state),
       });
 
+const expressionEvaluationContext = (
+  state: JavaScriptSemanticAnalysisState,
+  captureScope: "state" | "query" = "state",
+): EvaluationContext => ({
+  state,
+  bindings: new Map(),
+  expressionDepth: 0,
+  primitiveBindingValues: primitiveBindingValuesFor(state),
+  dependence: { lowest: CALLER_INDEPENDENT },
+  memo: createEvaluationMemo(
+    state,
+    captureScope === "query" ? new WeakMap() : undefined,
+  ),
+});
+
+/** Select control-flow branches without merging their distinct source values. */
+export const semanticSelectedBranchNodesAt = (
+  node: t.ConditionalExpression | t.LogicalExpression,
+  state: JavaScriptSemanticAnalysisState,
+  capture: t.Node,
+): readonly t.Node[] => {
+  const context = expressionEvaluationContext(state);
+  return semanticSelectedBranches(
+    node,
+    captureContextAt(capture, context) ?? context,
+  ).map(({ node }) => node);
+};
+
 /** Evaluate an inert expression, optionally at an earlier reference capture. */
 export const evaluateSemanticExpression = (
   node: t.Node,
@@ -255,17 +283,7 @@ export const evaluateSemanticExpression = (
   capturePoint?: t.Node,
   captureScope: "state" | "query" = "state",
 ): JavaScriptSemanticValue => {
-  const context: EvaluationContext = {
-    state,
-    bindings: new Map(),
-    expressionDepth: 0,
-    primitiveBindingValues: primitiveBindingValuesFor(state),
-    dependence: { lowest: CALLER_INDEPENDENT },
-    memo: createEvaluationMemo(
-      state,
-      captureScope === "query" ? new WeakMap() : undefined,
-    ),
-  };
+  const context = expressionEvaluationContext(state, captureScope);
   return capturePoint === undefined
     ? evaluateCapturedExpression(node, context)
     : evaluateExpression(

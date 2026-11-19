@@ -1542,3 +1542,111 @@ it.each([
     ).toMatchObject({ resolution });
   },
 );
+
+it.each([
+  ["two native arms", "flag ? [0,box.next] : [0]", "resolved"],
+  [
+    "a possible custom arm",
+    "flag ? [0,box.next] : {child:box.next,[Symbol.iterator](){delete this.child.mode;return [0].values();}}",
+    "candidate",
+  ],
+  [
+    "an inactive custom arm",
+    "false ? {child:box.next,[Symbol.iterator](){delete this.child.mode;return [0].values();}} : [0,box.next]",
+    "resolved",
+  ],
+] as const)(
+  "retains conditional stored acquisition for %s",
+  (_name, store, resolution) => {
+    const graph = graphForJavaScript(`
+    const box={items:[0],next:{mode:"before"}};
+    const {none=(box.items=${store}),items:[used],next:{mode:selected}}=box;
+  `);
+    const binding = graph.nodes.find(
+      (n) => n.kind === "binding" && n.label === "selected",
+    );
+    expect(
+      graph.relations.find(
+        (r) =>
+          r.target_node_id === binding?.node_id &&
+          r.relation === "destructures",
+      ),
+    ).toMatchObject({ resolution });
+  },
+);
+
+it.each([
+  ["native close", closeNextObject, "[0,box.next]", "", "resolved"],
+  [
+    "custom acquisition",
+    "",
+    "{child:box.next,[Symbol.iterator](){delete this.child.mode;return [0].values();}}",
+    "",
+    "resolved",
+  ],
+  [
+    "an ordinary prior write",
+    closeNextObject,
+    "[0,box.next]",
+    'write=(box.next.mode="alternate"),',
+    "candidate",
+  ],
+] as const)(
+  "orders sibling reads around stored %s",
+  (_name, hook, store, earlier, before) => {
+    const graph = graphForJavaScript(`
+    const box={items:[0],next:{mode:"initial"}};
+    ${hook}
+    const {none=(box.items=${store}),${earlier}next:{mode:before},items:[used],next:{mode:after}}=box;
+  `);
+    for (const [name, resolution] of [
+      ["before", before],
+      ["after", "candidate"],
+    ]) {
+      const binding = graph.nodes.find(
+        (n) => n.kind === "binding" && n.label === name,
+      );
+      expect(
+        graph.relations.find(
+          (r) =>
+            r.target_node_id === binding?.node_id &&
+            r.relation === "destructures",
+        ),
+      ).toMatchObject({ resolution });
+    }
+  },
+);
+
+it.each([
+  ["ordinary property receiver", "box.parent", "candidate"],
+  ["parenthesized property receiver", '((box)["parent"])', "candidate"],
+  ["unknown receiver key", "box[key]", undefined],
+] as const)(
+  "recovers a stored nested iterator for %s",
+  (_name, source, resolution) => {
+    const graph = graphForJavaScript(`
+    const box={parent:{items:[0],next:{mode:"before"}}};
+    const replacement={child:box.parent.next,[Symbol.iterator](){delete this.child.mode;return [0].values();}};
+    const {none=(box.parent.items=replacement),items:[used],next:{mode:selected}}=${source};
+  `);
+    const binding = graph.nodes.find(
+      (n) => n.kind === "binding" && n.label === "selected",
+    );
+    const relation = graph.relations.find(
+      (r) =>
+        r.target_node_id === binding?.node_id && r.relation === "destructures",
+    );
+    expect(relation?.resolution).toBe(resolution);
+    if (relation === undefined)
+      expect(
+        graph.unknowns.some(({ relation_kinds }) =>
+          relation_kinds.includes("destructures"),
+        ),
+      ).toBe(true);
+    else
+      expect(
+        graph.nodes.find(({ node_id }) => node_id === relation.source_node_id)
+          ?.properties.property_path,
+      ).toEqual(["parent", "next", "mode"]);
+  },
+);

@@ -27,6 +27,7 @@ import {
 } from "./javascriptSemanticEffectPathIndex.js";
 import {
   isUnshadowedGlobal,
+  isSemanticArrayPatternEffect,
   semanticBindingEffectFollowsCapture,
   semanticEscapeFollowsCapture,
   semanticDefiniteEffectPrecedesReference,
@@ -1049,6 +1050,37 @@ export const capturedBindingPathMayHaveChanged = (
           state.parentsByNode,
         ),
     )
+  );
+};
+
+/** Preserve an own-data read when the only possible changes follow it in an iterator phase. */
+export const bindingPathOnlyEscapesAtLaterIteratorEffects = (
+  binding: JavaScriptSemanticBindingState,
+  path: readonly string[],
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  let laterIterator = false;
+  const matches = (effect: JavaScriptSemanticMemberEffect): boolean =>
+    semanticEffectPathMatches(effect.path, path);
+  if (
+    semanticSomeEffectPathCandidate(binding.escapedPaths, path, (effect) => {
+      if (!matches(effect)) return false;
+      if (
+        !isSemanticArrayPatternEffect(effect.node) ||
+        semanticEffectTiming(read, effect.node, state) !== "after"
+      )
+        return true;
+      laterIterator = true;
+      return false;
+    }) ||
+    !laterIterator
+  )
+    return false;
+  return (
+    !opaqueCodeMayReachBindingReference(binding, state, read) &&
+    !semanticOpaqueGlobalMayHaveChanged(read, state) &&
+    !semanticSomeEffectPathCandidate(binding.memberWrites, path, matches)
   );
 };
 

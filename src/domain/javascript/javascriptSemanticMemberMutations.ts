@@ -37,6 +37,7 @@ import {
   evaluateSemanticBinding,
   evaluateSemanticExpression,
   evaluateSemanticExpressionProvenance,
+  semanticSelectedBranchNodesAt,
 } from "./javascriptSemanticValues.js";
 import {
   bindingHasMemberWrites,
@@ -76,6 +77,7 @@ import {
   semanticBindingAtRead,
   semanticCaptureOrderingIdentity,
   semanticArrayPatternCloseScope,
+  semanticArrayPatternAcquisitionEffect,
   semanticScopeExitEffect,
 } from "./javascriptSemanticMutationInitializers.js";
 import {
@@ -109,6 +111,7 @@ import {
 } from "./javascriptSemanticTraversal.js";
 import {
   semanticStaticPropertyKey,
+  semanticMemberChain,
   semanticWriteTargets,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
@@ -2016,23 +2019,31 @@ export function* collectSemanticMemberMutationsSteps(
     reference: IterableReference,
   ): boolean => {
     const { arrayPattern: pattern, mutation, node, projection } = reference;
-    const receiver = unwrapJavaScriptExpression(node).node;
-    if (
-      pattern === undefined ||
-      projection.length === 0 ||
-      !t.isIdentifier(receiver)
-    )
-      return false;
-    const binding = resolveBinding(receiver, receiver.name);
+    if (pattern === undefined || projection.length === 0) return false;
+    const receiver = semanticMemberChain(node);
+    if (receiver === undefined || !t.isIdentifier(receiver.root)) return false;
+    const binding = resolveBinding(receiver.root, receiver.root.name);
     if (binding === undefined || !bindingHasMemberWrites(binding)) return false;
+    const path = [...receiver.members, ...projection];
+    // The RHS captures the parent, while the nested pattern selects the
+    // iterable later, after any preceding defaults or assignments.
+    const receiverCaptures = semanticNormalizeCapturedSelections([
+      ...(semanticShiftCapturedSelections(
+        reference.capturedSelections,
+        receiver.members.length,
+      ) ?? []),
+      ...(receiver.members.length === 0
+        ? []
+        : [{ at: node, depth: receiver.members.length }]),
+    ]);
     const captured = semanticProjectedSourceFactsAtRead(
       binding,
-      receiver,
-      projection,
+      receiver.root,
+      path,
       state,
       true,
       pattern,
-      reference.capturedSelections,
+      receiverCaptures,
     );
     // A later-only write can invalidate the merged lattice without changing
     // this acquisition. Leave the original capture on its established route.
@@ -2041,46 +2052,64 @@ export function* collectSemanticMemberMutationsSteps(
     const contentsMayChange = bindingProjectedContentsMayChangeAt(
       state,
       binding,
-      projection,
+      path,
       pattern,
     );
     for (const source of captured.sources) {
-      work.charge();
-      const value = semanticSelectedReferenceSlot(
-        { node: source.node, projection: source.path },
-        state,
-        source.node,
-      )?.value;
-      const native =
-        !contentsMayChange &&
-        semanticKnownArrayIteration(value, state, pattern) &&
-        hasFreshProjectedReceiver(source.node, source.path, state);
-      const selection = native
-        ? semanticArrayPatternCloseSelection(pattern, mutation, value, state)
-        : undefined;
-      if (!native || selection !== undefined)
-        markValue(
+      const pending = [source.node];
+      while (pending.length > 0) {
+        work.charge();
+        const alternative = unwrapJavaScriptExpression(pending.pop()!).node;
+        if (
+          t.isConditionalExpression(alternative) ||
+          t.isLogicalExpression(alternative)
+        ) {
+          for (const branch of semanticSelectedBranchNodesAt(
+            alternative,
+            state,
+            source.node,
+          ))
+            pending.push(branch);
+          continue;
+        }
+        const value = semanticSelectedReferenceSlot(
+          { node: alternative, projection: source.path },
+          state,
           source.node,
-          selection === undefined ? source.path : [...source.path, selection],
-          reference.bindings,
-          "escape",
-          native ? semanticScopeExitEffect(pattern, mutation) : mutation,
-          source.node,
-          undefined,
-          false,
-          undefined,
-          false,
-          {
-            memberReadAt: source.node,
-            capturedSelections: semanticNormalizeCapturedSelections([
-              ...(semanticShiftCapturedSelections(
-                reference.capturedSelections,
-                source.path.length - projection.length,
-              ) ?? []),
-              ...(source.capturedSelections ?? []),
-            ]),
-          },
-        );
+        )?.value;
+        const native =
+          !contentsMayChange &&
+          semanticKnownArrayIteration(value, state, pattern) &&
+          hasFreshProjectedReceiver(alternative, source.path, state);
+        const selection = native
+          ? semanticArrayPatternCloseSelection(pattern, mutation, value, state)
+          : undefined;
+        if (!native || selection !== undefined)
+          markValue(
+            alternative,
+            selection === undefined ? source.path : [...source.path, selection],
+            reference.bindings,
+            "escape",
+            native
+              ? semanticScopeExitEffect(pattern, mutation)
+              : semanticArrayPatternAcquisitionEffect(pattern, mutation),
+            alternative,
+            undefined,
+            false,
+            undefined,
+            false,
+            {
+              memberReadAt: source.node,
+              capturedSelections: semanticNormalizeCapturedSelections([
+                ...(semanticShiftCapturedSelections(
+                  reference.capturedSelections,
+                  source.path.length - projection.length,
+                ) ?? []),
+                ...(source.capturedSelections ?? []),
+              ]),
+            },
+          );
+      }
     }
     return true;
   };
