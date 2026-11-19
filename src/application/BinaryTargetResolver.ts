@@ -255,14 +255,17 @@ export const parseBinaryTarget = async (
         return err(
           targetFileCleanupError(retried.failure, candidate, stage, signal),
         );
-      if (retried.outcome.kind === "failed")
+      // Retry settles ownership. Use the file owner's original outcome so
+      // the retry helper's raw cancellation reason cannot be mistaken for I/O.
+      const { operationFailure, outcome } = fileFailure;
+      if (outcome.kind === "failed")
         return targetResolutionFailure(
-          fileFailure.operationFailure ?? retried.outcome.cause,
+          operationFailure ?? outcome.cause,
           candidate,
           stage,
           signal,
         );
-      return finalizedTargetResolution(retried.outcome.value, signal);
+      return finalizedTargetResolution(outcome.value, signal);
     }
     if (cause instanceof RegularFileCancelled)
       return finalizedTargetResolution(

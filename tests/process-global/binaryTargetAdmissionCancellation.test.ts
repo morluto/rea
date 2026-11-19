@@ -216,6 +216,31 @@ it("retains the cleanup failure and its file owner when cancelled admission cann
   expect(result.error.cleanupIncomplete).toBe(false);
 });
 
+it.each([
+  "stop before admission",
+  Object.assign(new Error("caller-selected reason"), { code: "EIO" }),
+])(
+  "preserves typed cancellation after a successful descriptor close retry",
+  async (reason) => {
+    const { path, controller } = await fixture(1, reason);
+    admission.closeFailure = new Error("first descriptor close failed");
+    const resources = new ArtifactResourceScope();
+    try {
+      const resolved = await parseBinaryTarget(path, {
+        signal: controller.signal,
+        resources,
+      });
+      if (resolved.ok) throw new Error("cancelled target was admitted");
+      expect(resolved.error._tag).toBe("AnalysisCancelledError");
+      expect(resolved.error.cause).toBe(reason);
+      expect(resolved.error.cleanupIncomplete).toBe(false);
+      expect(admission.handles[0]?.fd).toBe(-1);
+    } finally {
+      await resources.close();
+    }
+  },
+);
+
 it("settles SDK cancellation at the admission boundary and reuses the same MCP connection", async () => {
   const { path, controller } = await fixture(0);
   const createClient = vi.fn(() => {
