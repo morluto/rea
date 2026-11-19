@@ -44,9 +44,13 @@ const parse = (
 
 const defaultNeeded = ["libstdc++.so.6", "libm.so.6", "libc.so.6"];
 
-it.each([true, false])(
-  "leaves dynamic strings unknown when a zero-filled PT_LOAD overlaps the table (stripped: %s)",
-  (stripped) => {
+it.each([
+  { stripped: true, unmappedTail: false },
+  { stripped: false, unmappedTail: false },
+  { stripped: false, unmappedTail: true },
+])(
+  "leaves dynamic strings unknown on a zero-fill overlap (stripped: $stripped, unmapped tail: $unmappedTail)",
+  ({ stripped, unmappedTail }) => {
     const original = elfDependencyFixture({ bits: 64, little: true, stripped });
     const phoff = Number(original.readBigUInt64LE(32));
     const phentsize = original.readUInt16LE(54);
@@ -88,6 +92,16 @@ it.each([true, false])(
     bytes.writeBigUInt64LE(1n, alias + 40);
     bytes.writeBigUInt64LE(1n, alias + 48);
 
+    if (unmappedTail) {
+      const load = programHeaders.find(
+        (offset) => original.readUInt32LE(offset) === 1,
+      );
+      if (load === undefined) throw new Error("Expected PT_LOAD");
+      const movedLoad = original.length + load - phoff;
+      // The table starts in the identity mapping, but its section alone describes the tail.
+      bytes.writeBigUInt64LE(stringAddress + 2n, movedLoad + 32);
+      bytes.writeBigUInt64LE(stringAddress + 2n, movedLoad + 40);
+    }
     bytes.writeBigUInt64LE(stringAddress + stringSize, alias + 16);
     expect(parse(bytes).needed.map(({ name }) => name)).toEqual(defaultNeeded);
 

@@ -828,10 +828,15 @@ export const readElfDependenciesSteps = function* (
           Math.max(1, strsz ?? dynstrSection?.size ?? 0),
           zeroFills,
         );
+  const mappingFailure =
+    mappedStrings?.ok === false ? mappedStrings.error : undefined;
+  // A section can recover an unmapped span, but cannot provide file bytes
+  // where the load mapping supplies zeros or conflicts.
   const ambiguousStrings =
-    mappedStrings?.ok === false && mappedStrings.error.reason === "ambiguous";
-  // A section cannot resolve a conflicting load mapping. An unmapped tail
-  // still allows the section to describe a readable prefix as before.
+    mappingFailure?.reason === "ambiguous" ||
+    (dynstrSection !== undefined &&
+      mappingFailure?.reason === "unmapped" &&
+      mappingFailure.overlapsZeroFill);
   const dynstrTable = ambiguousStrings
     ? null
     : (tableFromSection(

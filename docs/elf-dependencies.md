@@ -61,13 +61,15 @@ each import keeps its version index, hidden bit, and a resolved
 A missing `PT_DYNAMIC` is an observed empty load-time dependency inventory. It
 is not proof another overlay or container carried dynamic linking metadata.
 `DT_*` entries are the load-time facts. A section header is used for a table
-only when it names the same address, maps to the same file bytes, and agrees
-on any declared size or entry width; a disagreeing section is reported as an
-issue and the `DT_*` declaration is used. When section headers are stripped,
+when its starting address and file offset agree with the load mapping and it
+agrees on any declared size or entry width. A disagreeing section is reported
+as an issue and the `DT_*` declaration is used. An agreeing string-table
+section can recover readable names when the load mapping leaves a gap. If the
+requested string-table span also conflicts with a file mapping or a declared
+zero-fill range, names remain unresolved. When section headers are stripped,
 tables are located from `PT_DYNAMIC` and `DT_*` virtual addresses through
-`PT_LOAD`. Coverage is `partial` when a table
-cannot be located or a string cannot be read. Complete coverage never retains
-issues.
+`PT_LOAD`. Coverage is `partial` when a table cannot be located or a string
+cannot be read. Complete coverage never retains issues.
 
 ## Limits and failures
 
