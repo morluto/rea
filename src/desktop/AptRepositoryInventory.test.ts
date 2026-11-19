@@ -117,11 +117,15 @@ describe.skipIf(
         ),
       );
       expect([...facts.keys.values()]).toEqual([VENDOR_A.key]);
-      expect(JSON.stringify(facts)).not.toContain("fixture-user");
-      expect(JSON.stringify(facts)).not.toContain("fixture,password");
-      expect(declaredPackageFiles(facts.repositories, targets)).toEqual(
-        new Set(targets.map((target) => target.description)),
-      );
+      const captured = JSON.stringify([
+        facts.repositories,
+        ...facts.indexTargets.values(),
+      ]);
+      expect(captured).not.toContain("fixture-user");
+      expect(captured).not.toContain("fixture,password");
+      expect(
+        declaredPackageFiles(facts.repositories, facts.indexTargets),
+      ).toEqual(new Set(targets.map((target) => target.description)));
     },
   );
 });

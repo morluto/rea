@@ -91,7 +91,7 @@ export interface AptRepositoryFacts {
   readonly repositories: readonly AptRepository[];
   readonly keys: ReadonlyMap<string, Buffer>;
   /** The Packages indexes apt lists; empty when it was not asked or could not list them. */
-  readonly indexTargets: readonly AptIndexTarget[];
+  readonly indexTargets: ReadonlyMap<string, AptIndexTarget>;
   readonly limitations: readonly string[];
 }
 
@@ -326,7 +326,7 @@ export const inspectAptRepositories = async (
     return {
       repositories: [],
       keys: new Map(),
-      indexTargets: [],
+      indexTargets: new Map(),
       limitations: [],
     };
   const targets = await indexTargets(host.runQuery, signal);
@@ -351,7 +351,7 @@ export const inspectAptRepositories = async (
     return {
       repositories,
       keys,
-      indexTargets: [...(targets?.values() ?? [])],
+      indexTargets: targets ?? new Map(),
       limitations: files.unreadable.map(
         (file) =>
           `The apt sources file ${file} could not be read, so repositories it lists are not matched.`,

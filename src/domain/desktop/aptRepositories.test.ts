@@ -141,8 +141,9 @@ describe("parseOneLineSources", () => {
       {
         file: TYPORA_LIST,
         position: 1,
-        uris: ["https://downloads.typora.io/linux"],
-        credentialed: [],
+        uris: [
+          { uri: "https://downloads.typora.io/linux", credentials: false },
+        ],
         suites: ["./"],
         components: [],
         architectures: [],
@@ -165,7 +166,7 @@ describe("parseOneLineSources", () => {
     ).toEqual([
       expect.objectContaining({
         position: 3,
-        uris: ["https://apt.example.com/repo"],
+        uris: [{ uri: "https://apt.example.com/repo/", credentials: false }],
         suites: ["noble"],
         components: ["main", "contrib"],
         architectures: ["amd64", "arm64"],
@@ -184,7 +185,9 @@ describe("parseDeb822Sources", () => {
       [["noble-security"], 2],
     ]);
     expect(stanzas[0]).toMatchObject({
-      uris: ["http://ports.ubuntu.com/ubuntu-ports"],
+      uris: [
+        { uri: "http://ports.ubuntu.com/ubuntu-ports/", credentials: false },
+      ],
       components: ["main", "universe", "restricted", "multiverse"],
       signedBy: ["/usr/share/keyrings/ubuntu-archive-keyring.gpg"],
     });
@@ -217,7 +220,12 @@ describe("parseDeb822Sources", () => {
     expect(stanzas).toEqual([
       expect.objectContaining({
         position: 2,
-        uris: ["https://ppa.launchpadcontent.net/a/b/ubuntu"],
+        uris: [
+          {
+            uri: "https://ppa.launchpadcontent.net/a/b/ubuntu/",
+            credentials: false,
+          },
+        ],
         architectures: ["arm64"],
         signedBy: [],
         inlineKey:
@@ -404,6 +412,123 @@ describe("apt index targets", () => {
   });
 });
 
+describe("APT source URI lookup", () => {
+  const file = "/etc/apt/sources.list.d/vendor.sources";
+
+  const targetFor = (
+    repoUri: string,
+    description = repoUri,
+    component = "main",
+  ) => ({
+    description,
+    sourcesFile: file,
+    position: 1,
+    repoUri,
+    release: "stable",
+    component,
+    baseUri: `${repoUri}dists/stable/`,
+    filename: "/var/lib/apt/lists/vendor",
+    origin: null,
+    suite: null,
+    codename: null,
+  });
+
+  it("matches APT's deb822 Repo-URI spellings without changing the source URI", () => {
+    const stanzas = parseDeb822Sources(
+      [
+        "Types: deb",
+        "URIs: file:///srv/a%20b copy:/srv/repo https://vendor.invalid:00080/archive https://[2001:db8::11]:08443/apt file:/srv/double//",
+        "Suites: stable",
+        "Components: main",
+      ].join("\n"),
+      file,
+    );
+
+    // Repo-URI values from apt-get indextargets --no-release-info (APT 3.2.0).
+    const spellings = [
+      ["file:/srv/a%20b/", "file:///srv/a%20b"],
+      ["copy:/srv/repo/", "copy:/srv/repo"],
+      [
+        "https://vendor.invalid:80/archive/",
+        "https://vendor.invalid:00080/archive",
+      ],
+      ["https://[2001:db8::11]:8443/apt/", "https://[2001:db8::11]:08443/apt"],
+      ["file:/srv/double//", "file:/srv/double//"],
+    ] as const;
+    for (const [repoUri, uri] of spellings) {
+      expect(entryForTarget(targetFor(repoUri), stanzas)).toMatchObject({
+        uri,
+      });
+    }
+    expect(
+      entryForTarget(targetFor("file:/srv/a b/"), stanzas),
+    ).toBeUndefined();
+    expect(
+      entryForTarget(targetFor("file:/srv/double/"), stanzas),
+    ).toBeUndefined();
+  });
+
+  it("leaves different authored URIs that APT collapses unresolved", () => {
+    const stanzas = parseDeb822Sources(
+      [
+        "Types: deb",
+        "URIs: file:/srv/a%20b file:///srv/a%20b",
+        "Suites: stable",
+        "Components: main",
+      ].join("\n"),
+      file,
+    );
+
+    expect(
+      entryForTarget(targetFor("file:/srv/a%20b/"), stanzas),
+    ).toBeUndefined();
+  });
+
+  it("attributes package indexes only when the deb822 declaration reproduces the observed Repo-URI", () => {
+    const source = "https://vendor.invalid/a,b stable/main amd64 Packages";
+    const sibling = "https://vendor.invalid/a,b stable/contrib amd64 Packages";
+    const repoUri = "https://vendor.invalid/a,b/";
+    const unrelated = "https://vendor.invalid/a%2Cb/";
+    const list = "/etc/apt/sources.list.d/vendor.list";
+    const stanzas = parseOneLineSources(
+      "deb https://vendor.invalid/a%2Cb stable main contrib",
+      list,
+    );
+    const index = { ...targetFor(repoUri, source), sourcesFile: list };
+    const targets = new Map(
+      [
+        index,
+        targetFor(repoUri, sibling, "contrib"),
+        targetFor(unrelated),
+        { ...targetFor(repoUri, "other release"), release: "testing" },
+      ].map((target) => [target.description, target]),
+    );
+    const entry = entryForTarget(index, stanzas);
+    expect(entry?.uri).toBe("https://vendor.invalid/a%2Cb");
+    if (entry === undefined) throw new Error("missing source entry");
+    const repository = {
+      source,
+      uri: entry.uri,
+      suite: entry.suite,
+      components: [...entry.components],
+    };
+
+    expect([...declaredPackageFiles([repository], targets)]).toEqual([]);
+    expect([
+      ...declaredPackageFiles(
+        [{ ...repository, uri: "https://vendor.invalid/a,b" }],
+        targets,
+      ),
+    ]).toEqual([source, sibling]);
+    expect([
+      ...declaredPackageFiles(
+        [{ ...repository, source: "unobserved" }],
+        targets,
+      ),
+    ]).toEqual([]);
+  });
+});
+
 describe("credentials in a source URI", () => {
   const ONE_LINE_FILE = "/etc/apt/sources.list.d/private.list";
   const DEB822_FILE = "/etc/apt/sources.list.d/private.sources";
@@ -420,22 +545,11 @@ describe("credentials in a source URI", () => {
       ONE_LINE_FILE,
     );
 
-    expect(
-      stanzas.map(({ uris, credentialed }) => ({ uris, credentialed })),
-    ).toEqual([
-      {
-        uris: ["https://apt.example.com/repo"],
-        credentialed: ["https://apt.example.com/repo"],
-      },
-      {
-        uris: ["https://apt.example.com/user-only"],
-        credentialed: ["https://apt.example.com/user-only"],
-      },
-      {
-        uris: ["https://apt.example.com/at-sign"],
-        credentialed: ["https://apt.example.com/at-sign"],
-      },
-      { uris: ["https://apt.example.com/open"], credentialed: [] },
+    expect(stanzas.map(({ uris }) => uris)).toEqual([
+      [{ uri: "https://apt.example.com/repo/", credentials: true }],
+      [{ uri: "https://apt.example.com/user-only", credentials: true }],
+      [{ uri: "https://apt.example.com/at-sign", credentials: true }],
+      [{ uri: "https://apt.example.com/open", credentials: false }],
     ]);
     expect(JSON.stringify(stanzas)).not.toMatch(CREDENTIALS);
   });
@@ -454,13 +568,9 @@ describe("credentials in a source URI", () => {
     expect(stanzas).toEqual([
       expect.objectContaining({
         uris: [
-          "https://apt.example.com/repo",
-          "https://mirror.example.com/repo",
-          "https://open.example.com/repo",
-        ],
-        credentialed: [
-          "https://apt.example.com/repo",
-          "https://mirror.example.com/repo",
+          { uri: "https://apt.example.com/repo/", credentials: true },
+          { uri: "https://mirror.example.com/repo", credentials: true },
+          { uri: "https://open.example.com/repo", credentials: false },
         ],
       }),
     ]);
@@ -511,12 +621,13 @@ describe("credentials in a source URI", () => {
         ...declaredPackageFiles(
           [
             {
+              source: description,
               uri: "https://apt.example.com/repo",
               suite: "stable",
               components: ["main"],
             },
           ],
-          [target],
+          new Map([[description, target]]),
         ),
       ]).toEqual([description]);
     }
