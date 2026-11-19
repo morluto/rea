@@ -341,22 +341,24 @@ export const readMetadataUserString = (
   };
 };
 
-/** Read one conventional GUID value from the one-based #GUID heap. */
+/** A zero index denotes absence; undefined denotes an ambiguous heap. */
 export const readMetadataGuid = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
   index: number,
-): string | null => {
+): string | null | undefined => {
   if (index === 0) return null;
+  if (layout.guid.kind === "ambiguous") return undefined;
+  const { offset: heapOffset, size } = layout.guid.stream;
   const relative = (index - 1) * 16;
-  if (relative < 0 || relative > layout.guid.size - 16)
+  if (relative < 0 || relative > size - 16)
     throw managedFailure(
       "invalid-guid",
       "metadata.#GUID",
       "GUID heap index is outside #GUID",
-      layout.guid.offset + Math.max(relative, 0),
+      heapOffset + Math.max(relative, 0),
     );
-  const offset = layout.guid.offset + relative;
+  const offset = heapOffset + relative;
   const part1 = bytes.readUInt32LE(offset).toString(16).padStart(8, "0");
   const part2 = bytes
     .readUInt16LE(offset + 4)

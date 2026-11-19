@@ -95,9 +95,9 @@ export const readModule = (
   return {
     name,
     generation,
-    mvid,
-    enc_id: encId,
-    enc_base_id: encBaseId,
+    mvid: mvid ?? null,
+    enc_id: encId ?? null,
+    enc_base_id: encBaseId ?? null,
     token: metadataToken(0, 1),
     row_offset: table.offset,
   };

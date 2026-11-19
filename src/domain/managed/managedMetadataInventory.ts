@@ -109,7 +109,8 @@ export const readManagedModuleIdentity = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
 ): Pick<ManagedMetadataInventory, "module" | "issues"> => {
-  const issues: ManagedParseIssue[] = [];
+  const issues: ManagedParseIssue[] =
+    layout.guid.issue === null ? [] : [layout.guid.issue];
   validateIdentityTableCounts(layout, issues);
   const module =
     readManagedValue(
