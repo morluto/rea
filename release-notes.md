@@ -614,6 +614,7 @@
 * **doctor:** slim cold CLI/MCP doctor module graphs and run probes concurrently ([cb33fa8](https://github.com/morluto/rea/commit/cb33fa8376a996c958ae9009731bdd2ce1fdeef3))
 * **javascript:** queue binding initializers once per ambient alias query ([#10681](https://github.com/morluto/rea/issues/10681)) ([80af53b](https://github.com/morluto/rea/commit/80af53bbe525dc30ad280781183d21b888b881f6))
 * **javascript:** reuse member syntax across ambient alias queries ([#12174](https://github.com/morluto/rea/issues/12174)) ([e1cb620](https://github.com/morluto/rea/commit/e1cb620eccf04e934b4d5359703aa71fa0068534))
+* **javascript:** skip settled widened alias expansions ([#12224](https://github.com/morluto/rea/issues/12224)) ([14c6af9](https://github.com/morluto/rea/commit/14c6af9c270cdb91cfaadc4e273433c135607d13))
 * **mcp:** advertise large output union alternatives as shared definitions ([#11005](https://github.com/morluto/rea/issues/11005)) ([7181e7f](https://github.com/morluto/rea/commit/7181e7f515e953eb821d61994d67fea0fa648260))
 * **mcp:** build advertised tool schemas once per contract ([#10421](https://github.com/morluto/rea/issues/10421)) ([fcc0a8c](https://github.com/morluto/rea/commit/fcc0a8c4547b78168ed4479aab8c1b5266e223ee))
 * **mcp:** canonicalize the tool catalog once per digest profile ([#11298](https://github.com/morluto/rea/issues/11298)) ([e77793e](https://github.com/morluto/rea/commit/e77793e09a26799f2c101e01a6a24ce7712d36d1))
