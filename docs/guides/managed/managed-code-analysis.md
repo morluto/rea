@@ -113,6 +113,17 @@ TypeDef or MethodDef name leaves member inventory and cross-build comparison
 coverage partial when the unreadable name could affect a match. A nil
 TypeDef namespace is valid and leaves the type name unqualified.
 
+Member inspection records readable row coordinates for unresolved names in
+`unresolved_definitions`. It reports the TypeDef or MethodDef token, file offset,
+and each failed Name or Namespace column with its original heap index. Method
+rows also retain the raw RVA and any known declaring TypeDef token. TypeDef
+coordinates cover the assembly-wide name scan. MethodDef coordinates cover the
+source method interval and any exact declaring-type selection. Use
+`inspect_analysis_view` with `kind: "managed-members"` and
+`collection: "unresolved_definitions"` to page retained coordinates. A missing
+collection in earlier Evidence means the inspection did not record it. When
+capacity recovery keeps only the type inventory, `method_names_examined` is false.
+
 If the metadata root declares both compressed (`#~`) and uncompressed (`#-`)
 tables, REA reports both declarations and leaves the row layout unresolved.
 The metadata version and PE/CLI evidence remain available. Member inventories,
