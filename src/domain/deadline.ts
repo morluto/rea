@@ -55,6 +55,15 @@ export class Deadline {
   }
 
   /**
+   * The epoch this deadline lands on for a reader that only has its own wall
+   * clock, such as a browser page. This is the one projection from the
+   * monotonic budget onto `now`; the budget itself never follows the clock.
+   */
+  wallClockEpochMs(now: number): number {
+    return now + this.remainingMs();
+  }
+
+  /**
    * Start the finalize budget, whether or not work expired. The first call
    * starts it; later calls return the same deadline, so cleanup stages share
    * one window instead of each restarting it. The result grants no further
