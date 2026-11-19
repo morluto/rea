@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from "node:util";
+
 import { evidenceFileTarget } from "./evidence.js";
 import { z } from "zod";
 import {
@@ -12,7 +14,11 @@ import { readComparisonResult } from "./comparisonEvidenceResult.js";
 import type { Evidence } from "./evidence.js";
 import { hasComparisonEvidenceIdentity } from "./comparisonEvidenceIdentity.js";
 import { readEvidenceBundle } from "./evidenceBundle.js";
-import { AnalysisInputError } from "./analysisErrorCore.js";
+import {
+  AnalysisInputError,
+  AnalysisResourceConstraintError,
+  AnalysisUnsupportedTargetError,
+} from "./analysisErrorCore.js";
 import { EvidenceIntegrityError } from "./evidenceErrors.js";
 import { analysisInputErrorFromIssues } from "./inputIssueProjection.js";
 import { readEvidencePayload } from "./evidenceValidation.js";
@@ -30,6 +36,7 @@ import {
 import type { ProcessObservationSource } from "./process/processObservation.js";
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import {
+  countReconstructionClaimKinds,
   reconstructionClaimResultSchema,
   reconstructionSpecificationSchema,
   reconstructionVerificationResultSchema,
@@ -44,7 +51,8 @@ import {
   reconstructionUnknownHeads,
 } from "./reconstructionUnknowns.js";
 import type { ResidualUnknown } from "./residualUnknown.js";
-import { webScreenshotSchema } from "./webScreenshot.js";
+import { comparePngScreenshots } from "./pngVisualDiff.js";
+import { webScreenshotSchema, type WebScreenshot } from "./webScreenshot.js";
 
 const comparisonOperationsByClaimKind = {
   behavioral: "compare_process_captures",
@@ -98,9 +106,12 @@ export const verifyReconstruction = (
   );
   const heads = reconstructionUnknownHeads(bundle.unknowns);
   const artifactReplays = new Map<string, ArtifactReplay>();
+  const screenshots = specification.claims.some(({ kind }) => kind === "visual")
+    ? indexScreenshotCaptures(records.values())
+    : new Map<string, ScreenshotCapture[]>();
   const results = specification.claims
     .map((claim, index) =>
-      evaluateClaim(claim, index, records, heads, artifactReplays),
+      evaluateClaim(claim, index, records, heads, artifactReplays, screenshots),
     )
     .sort((left, right) =>
       compareUnicodeCodePoints(left.claim_id, right.claim_id),
@@ -127,8 +138,7 @@ export const verifyReconstruction = (
       passed: count(results, "pass"),
       failed,
       unknown: unresolved,
-      behavioral: results.filter(({ kind }) => kind === "behavioral").length,
-      structural: results.filter(({ kind }) => kind !== "behavioral").length,
+      ...countReconstructionClaimKinds(results),
     },
     claims: {
       items: results,
@@ -148,6 +158,7 @@ const evaluateClaim = (
   records: ReadonlyMap<string, Evidence>,
   heads: ReadonlyMap<string, ResidualUnknown>,
   artifactReplays: Map<string, ArtifactReplay>,
+  screenshots: ReadonlyMap<string, readonly ScreenshotCapture[]>,
 ): ClaimResult => {
   const comparison = records.get(claim.comparison_evidence_id);
   if (comparison === undefined)
@@ -156,10 +167,14 @@ const evaluateClaim = (
       `Missing comparison Evidence ${claim.comparison_evidence_id}`,
     );
   validateComparisonIdentity(claim, comparison, claimIndex);
-  const sides =
+  const { sides, observation, visualBlockers } =
     claim.kind === "visual"
-      ? screenshotComparisonSourceEvidenceSides(comparison, records)
-      : comparisonSourceEvidenceSides(comparison);
+      ? assessScreenshotComparison(comparison, screenshots)
+      : {
+          sides: comparisonSourceEvidenceSides(comparison),
+          observation: comparisonObservation(claim, comparison),
+          visualBlockers: [],
+        };
   const allSourceIds = uniqueSorted([...sides.left, ...sides.right]);
   if (
     claim.kind !== "visual" &&
@@ -193,8 +208,10 @@ const evaluateClaim = (
       );
     return source;
   });
-  const sourceFacts = readValidatedSourceFacts(claim, sources);
-  const observation = comparisonObservation(claim, comparison);
+  const sourceFacts =
+    claim.kind === "visual"
+      ? { functions: [], processes: [] }
+      : readValidatedSourceFacts(claim, sources);
   const observed = observation.status;
   const callCoverage = sourceCallCoverage(
     claim,
@@ -204,6 +221,7 @@ const evaluateClaim = (
   const blockers = [
     ...authorityLimitations(claim, sources, sides),
     ...callCoverage.blockers,
+    ...visualBlockers,
     ...sourceProcessCoverage(claim, sourceFacts.processes, observed),
     ...(claim.kind === "structural-artifact"
       ? assessArtifactSourceComparison(
@@ -255,11 +273,45 @@ const screenshotComparisonParametersSchema = z.strictObject({
     .optional(),
 });
 
-/** Match screenshot comparison artifacts back to their captured Evidence. */
-const screenshotComparisonSourceEvidenceSides = (
+interface ScreenshotCapture {
+  readonly evidenceId: string;
+  readonly screenshot: WebScreenshot;
+}
+
+const indexScreenshotCaptures = (records: Iterable<Evidence>) => {
+  const captures = new Map<string, ScreenshotCapture[]>();
+  for (const source of records) {
+    if (
+      source.operation !== "capture_web_screenshot" ||
+      source.predicate_type !== "rea.web-screenshot"
+    )
+      continue;
+    const parsed = readEvidencePayload(
+      webScreenshotSchema,
+      source.normalized_result,
+      { within: ["normalized_result"] },
+    );
+    if (!parsed.ok) throw parsed.error;
+    const sha256 = parsed.value.artifact.sha256;
+    const capture = {
+      evidenceId: source.evidence_id,
+      screenshot: parsed.value,
+    };
+    const existing = captures.get(sha256);
+    if (existing === undefined) captures.set(sha256, [capture]);
+    else existing.push(capture);
+  }
+  return captures;
+};
+
+const assessScreenshotComparison = (
   comparison: Evidence,
-  records: ReadonlyMap<string, Evidence>,
-): { left: string[]; right: string[] } => {
+  captures: ReadonlyMap<string, readonly ScreenshotCapture[]>,
+): {
+  sides: { left: string[]; right: string[] };
+  observation: ComparisonObservation;
+  visualBlockers: string[];
+} => {
   const parsed = readEvidencePayload(
     screenshotComparisonParametersSchema,
     comparison.parameters,
@@ -267,33 +319,68 @@ const screenshotComparisonSourceEvidenceSides = (
   );
   if (!parsed.ok) throw parsed.error;
   const sourceForArtifact = (sha256: string, side: "before" | "after") => {
-    const matches: string[] = [];
-    for (const [evidenceId, source] of records) {
-      if (
-        source.operation !== "capture_web_screenshot" ||
-        source.predicate_type !== "rea.web-screenshot"
-      )
-        continue;
-      const screenshot = readEvidencePayload(
-        webScreenshotSchema,
-        source.normalized_result,
-        { within: ["normalized_result"] },
-      );
-      if (!screenshot.ok) throw screenshot.error;
-      if (screenshot.value.artifact.sha256 === sha256) matches.push(evidenceId);
+    const matches = captures.get(sha256);
+    if (matches?.length !== 1) {
+      const message = `Screenshot comparison ${side} artifact does not identify exactly one captured Evidence record`;
+      throw new EvidenceIntegrityError(message, { userMessage: message });
     }
-    if (matches.length !== 1)
-      throw new EvidenceIntegrityError(
-        `Screenshot comparison ${side} artifact does not identify exactly one captured Evidence record`,
-        {
-          userMessage: `Screenshot comparison ${side} artifact does not identify exactly one captured Evidence record`,
-        },
-      );
     return matches[0]!;
   };
+  const before = sourceForArtifact(
+    parsed.value.before_artifact_sha256,
+    "before",
+  );
+  const after = sourceForArtifact(parsed.value.after_artifact_sha256, "after");
+  const saved = readComparisonResult(comparison, "compare_web_screenshots");
+  if (!saved.ok) throw saved.error;
+  const { limitations, ...recorded } = saved.value.result;
+  const visualBlockers: string[] = [];
+  for (const { evidenceId, screenshot } of [before, after]) {
+    const { status, conditions } = screenshot.completeness;
+    if (
+      status !== "complete_within_window" ||
+      conditions.some((condition) => condition !== "complete_within_window")
+    )
+      visualBlockers.push(
+        `Source ${evidenceId}: Screenshot coverage is incomplete (${uniqueSorted([status, ...conditions]).join(", ")}).`,
+      );
+  }
+  try {
+    const { limitations: _limitations, ...replayed } = comparePngScreenshots({
+      before: before.screenshot.artifact,
+      after: after.screenshot.artifact,
+      channel_threshold: parsed.value.channel_threshold,
+    });
+    if (!isDeepStrictEqual(recorded, replayed))
+      visualBlockers.push(
+        "Retained screenshot pixels do not corroborate the recorded comparison.",
+      );
+  } catch (cause) {
+    if (
+      !(cause instanceof TypeError) &&
+      !(cause instanceof AnalysisResourceConstraintError) &&
+      !(cause instanceof AnalysisUnsupportedTargetError)
+    )
+      throw cause;
+    visualBlockers.push(
+      `Retained screenshot comparison could not be replayed: ${cause.message}`,
+    );
+  }
   return {
-    left: [sourceForArtifact(parsed.value.before_artifact_sha256, "before")],
-    right: [sourceForArtifact(parsed.value.after_artifact_sha256, "after")],
+    sides: { left: [before.evidenceId], right: [after.evidenceId] },
+    observation: {
+      status:
+        recorded.status === "identical"
+          ? "unchanged"
+          : recorded.status === "different"
+            ? "changed"
+            : "unknown",
+      limitations:
+        recorded.status === "dimension_mismatch"
+          ? [...limitations, "Screenshot dimensions differ."]
+          : limitations,
+    },
+    visualBlockers,
   };
 };
 
@@ -368,7 +455,7 @@ const assessArtifactSourceComparison = (
 };
 
 const readValidatedSourceFacts = (
-  claim: Claim,
+  claim: Exclude<Claim, { kind: "visual" }>,
   sources: readonly Evidence[],
 ): ValidatedSourceFacts => {
   const isExpectedType = (source: Evidence): boolean => {
@@ -381,11 +468,6 @@ const readValidatedSourceFacts = (
       return (
         source.operation === "analyze_function" &&
         source.predicate_type === "rea.analysis"
-      );
-    if (claim.kind === "visual")
-      return (
-        source.operation === "capture_web_screenshot" &&
-        source.predicate_type === "rea.web-screenshot"
       );
     return (
       (source.operation === "inventory_artifact" ||
@@ -435,13 +517,6 @@ const readValidatedSourceFacts = (
         ],
         callCoverageDiagnostics: callCoverage.diagnostics,
       });
-    } else if (claim.kind === "visual") {
-      const screenshot = readEvidencePayload(
-        webScreenshotSchema,
-        source.normalized_result,
-        { within: ["normalized_result"] },
-      );
-      if (!screenshot.ok) throw screenshot.error;
     } else {
       try {
         parseArtifactInventoryEvidence(source);
@@ -476,15 +551,17 @@ const validateComparisonIdentity = (
   }
 };
 
-const comparisonObservation = (
-  claim: Claim,
-  evidence: Evidence,
-): {
+interface ComparisonObservation {
   readonly status: ObservedStatus;
   readonly limitations: readonly string[];
   readonly hasIndependentFunctionChange?: boolean;
   readonly selectedDimensions?: readonly string[];
-} => {
+}
+
+const comparisonObservation = (
+  claim: Exclude<Claim, { kind: "visual" }>,
+  evidence: Evidence,
+): ComparisonObservation => {
   if (claim.kind === "behavioral") {
     const parsed = readComparisonResult(evidence, "compare_process_captures");
     if (!parsed.ok) throw parsed.error;
@@ -538,25 +615,6 @@ const comparisonObservation = (
       throw new EvidenceIntegrityError(message, { userMessage: message });
     }
     return { status: dimension.status, limitations: dimension.limitations };
-  }
-  if (claim.kind === "visual") {
-    const parsed = readComparisonResult(evidence, "compare_web_screenshots");
-    if (!parsed.ok) throw parsed.error;
-    const result = parsed.value.result;
-    return {
-      status:
-        result.status === "identical"
-          ? "unchanged"
-          : result.status === "different"
-            ? "changed"
-            : "unknown",
-      limitations: [
-        ...result.limitations,
-        ...(result.status === "dimension_mismatch"
-          ? ["Screenshot dimensions differ."]
-          : []),
-      ],
-    };
   }
   const parsed = readComparisonResult(evidence, "compare_artifacts");
   if (!parsed.ok) throw parsed.error;
