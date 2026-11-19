@@ -1168,6 +1168,7 @@
 * **client-configuration:** document Cursor, Windsurf, and Command Code targets ([cc854f1](https://github.com/morluto/rea/commit/cc854f1ca11e4fb758b7870e4dfa9e75075fdd1e)), closes [#7650](https://github.com/morluto/rea/issues/7650) [#7750](https://github.com/morluto/rea/issues/7750)
 * **client-configuration:** state how doctor reads a Command Code transport ([5732aad](https://github.com/morluto/rea/commit/5732aad07725e386a202b7aaf1fb3c9f588314ed)), closes [#7650](https://github.com/morluto/rea/issues/7650)
 * describe omitted output schemas as the default in README translations ([#10658](https://github.com/morluto/rea/issues/10658)) ([0ddc732](https://github.com/morluto/rea/commit/0ddc732c693a4e7529ad2a22a611c02a7680f7f6))
+* **desktop:** clarify Unity Mono evidence scope ([#12509](https://github.com/morluto/rea/issues/12509)) ([7ad140b](https://github.com/morluto/rea/commit/7ad140b5a1f7f404f9079d8cab3fc5845f5fcd3a))
 * **dev:** clarify parser ownership across runtimes ([c5e44c8](https://github.com/morluto/rea/commit/c5e44c88577b218521757dbdaa6cbde8bf8d571d)), closes [#12120](https://github.com/morluto/rea/issues/12120)
 * **dev:** clarify parser ownership and boundary verification ([72be66d](https://github.com/morluto/rea/commit/72be66d0509216cdf5c59dc9160de493d451cb8d))
 * **devicetree:** use the ev_ retained Evidence id prefix in the example ([cb4ffa0](https://github.com/morluto/rea/commit/cb4ffa022060d0fa11807e7c8b4fc3491f4e182e)), closes [#7612](https://github.com/morluto/rea/issues/7612) [#7760](https://github.com/morluto/rea/issues/7760)
