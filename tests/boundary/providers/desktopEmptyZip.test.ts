@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { gzipSync } from "node:zlib";
 
 import { expect, it } from "vitest";
 
@@ -141,4 +142,12 @@ it("does not turn incomplete or damaged end records into empty views", async () 
     expect(python?.file.error).toBeTypeOf("string");
     expect(python?.passed).toBe(false);
   }
+});
+
+it("reads the same empty archive when gzip wraps its bytes", async () => {
+  const [view] = await pythonViews([gzipSync(empty)]);
+  expect(view).toMatchObject({
+    file: { format: "zip", compression: "gzip", view: { entry_count: 0 } },
+    passed: true,
+  });
 });
