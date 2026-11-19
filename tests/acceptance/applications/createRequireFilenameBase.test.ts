@@ -184,7 +184,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
 );
 
 cliTest.for(["CLI", "stdio MCP"] as const)(
-  "preserves default and normalized source-directory resolve paths through %s",
+  "preserves default paths and uncertain traversal through %s",
   async (surface, { cli }) => {
     const root = await createTestTempDirectory("rea-resolver-default-paths-");
     await writeFixtureFiles(root, {
@@ -193,6 +193,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         'require.resolve("./dep.cjs", { paths: void 0 });',
         'require.resolve("./dep.cjs", { paths: [__dirname + "/."] });',
         'require.resolve("./dep.cjs", { paths: [__dirname + "/sub/.."] });',
+        'require.resolve("./dep.cjs", { paths: [__dirname + "/missing/.."] });',
         'require.resolve("./dep.cjs", { paths: [] });',
         'require.resolve("./dep.cjs", { paths: [__dirname + "/sub"] });',
         'function shadow(undefined) { require.resolve("./dep.cjs", { paths: undefined }); }',
@@ -214,9 +215,18 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     expect(resolve("./dep.cjs", { paths: [join(root, ".")] })).toBe(
       join(root, "dep.cjs"),
     );
-    expect(resolve("./dep.cjs", { paths: [join(root, "sub", "..")] })).toBe(
+    expect(resolve("./dep.cjs", { paths: [`${root}/sub/..`] })).toBe(
       join(root, "dep.cjs"),
     );
+    if (process.platform === "win32") {
+      expect(resolve("./dep.cjs", { paths: [`${root}/missing/..`] })).toBe(
+        join(root, "dep.cjs"),
+      );
+    } else if (process.platform === "linux") {
+      expect(() =>
+        resolve("./dep.cjs", { paths: [`${root}/missing/..`] }),
+      ).toThrow();
+    }
     expect(() => resolve("./dep.cjs", { paths: [] })).toThrow();
     const nested = createRequire(join(root, "sub/anchor.cjs")).resolve;
     expect(nested("./dep.cjs", { paths: undefined })).toBe(
@@ -242,15 +252,19 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
           ]
         : [];
     });
-    expect(lookups).toHaveLength(9);
+    expect(lookups).toHaveLength(10);
     expect(lookups).toEqual(
       expect.arrayContaining([
-        ...[1, 2, 3, 4].map((line) => ({
+        ...[1, 2, 3].map((line) => ({
           source: "main.cjs",
           line,
           path: "dep.cjs",
         })),
-        ...[5, 6, 7].map((line) => ({ source: "main.cjs", line, path: null })),
+        ...[4, 5, 6, 7, 8].map((line) => ({
+          source: "main.cjs",
+          line,
+          path: null,
+        })),
         { source: "nested.mjs", line: 3, path: "sub/dep.cjs" },
         { source: "nested.mjs", line: 4, path: null },
       ]),

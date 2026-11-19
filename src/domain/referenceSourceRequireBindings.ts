@@ -142,7 +142,11 @@ export const referenceSourceRequireCalls = (
                 runtimeContext === "commonjs"
               ? "source-file"
               : "unknown";
-      const searchBase = requireResolveSearchBase(callFact, index.bindings);
+      const searchBase = requireResolveSearchBase(
+        callFact,
+        index.bindings,
+        node,
+      );
       candidates.push({
         call: node,
         arguments: callFact.arguments,

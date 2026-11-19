@@ -3,7 +3,6 @@ import {
   isFetchCall,
 } from "./javascriptNetworkRequests.js";
 import * as t from "@babel/types";
-import { isBuiltin } from "node:module";
 import {
   intrinsicPrototypeMemberMayHaveChanged,
   isIntrinsicMapLookup,
@@ -353,11 +352,7 @@ const requireCallSpecifier = (
     };
   }
   const specifier = argumentValue(call.arguments?.[0]);
-  // Node resolves known builtins before it reads any search options.
-  const searchBase =
-    specifier !== undefined && isBuiltin(specifier)
-      ? "loader"
-      : requireResolveSearchBase(call, bindings);
+  const searchBase = requireResolveSearchBase(call, bindings, node);
   return {
     operation: call.operation,
     specifier,

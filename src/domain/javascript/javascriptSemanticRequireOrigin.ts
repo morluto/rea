@@ -8,6 +8,7 @@ import {
   type SemanticCapturedSelection,
 } from "./javascriptSemanticProjectedSources.js";
 import * as t from "@babel/types";
+import { isBuiltin } from "node:module";
 import {
   createGlobalPathReader,
   type GlobalReferenceRead,
@@ -40,6 +41,7 @@ import {
 } from "./javascriptAstValues.js";
 import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
 import {
+  argumentValue,
   staticFileExpressionPath,
   staticSourceRelativeUrlPath,
   stringValue,
@@ -51,6 +53,7 @@ import {
 import {
   ambientBindingMayObserveWriteAt,
   ambientPathMayObserveAt,
+  opaqueCodeMayChangeGlobalRead,
   semanticEffectMayPrecede,
 } from "./javascriptSemanticEffectLog.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
@@ -705,11 +708,26 @@ export interface JavaScriptRequireCallFact {
 export const requireResolveSearchBase = (
   { operation, arguments: callArguments }: JavaScriptRequireCallFact,
   bindings: JavaScriptSemanticAnalysisState,
+  site: t.Node,
 ): "loader" | RequireResolveSearchPaths => {
   const arguments_ = callArguments ?? [];
-  if (operation !== "resolve" || arguments_.length < 2) return "loader";
+  const specifier = argumentValue(arguments_[0]);
+  if (specifier !== undefined && isBuiltin(specifier)) return "loader";
+  const defaultSearch = (): "loader" | "unknown" =>
+    ambientPathMayObserveAt(
+      bindings,
+      site,
+      ["global", "Object", "prototype", "paths"],
+      "contents",
+    ) || opaqueCodeMayChangeGlobalRead(site, bindings, "Object")
+      ? "unknown"
+      : "loader";
+  if (operation !== "resolve") return "loader";
+  if (arguments_.length < 2) return defaultSearch();
   if (arguments_.length !== 2) return "unknown";
-  const options = t.isExpression(arguments_[1]) ? arguments_[1] : undefined;
+  const options = t.isExpression(arguments_[1])
+    ? unwrapJavaScriptExpression(arguments_[1]).node
+    : undefined;
   const definitelyUndefined = (node: t.Node): boolean => {
     const value = unwrapJavaScriptExpression(node).node;
     return (
@@ -722,15 +740,17 @@ export const requireResolveSearchBase = (
     t.isNullLiteral(options) ||
     (options !== undefined && definitelyUndefined(options))
   )
-    return "loader";
+    return defaultSearch();
   if (options === undefined || !t.isObjectExpression(options)) return "unknown";
-  if (options.properties.length === 0) return "loader";
+  if (options.properties.length === 0) return defaultSearch();
   if (options.properties.length !== 1) return "unknown";
   const property = options.properties[0];
   if (!t.isObjectProperty(property)) return "unknown";
   if (semanticStaticPropertyKey(property.key, property.computed) !== "paths")
     return "unknown";
-  const value = t.isExpression(property.value) ? property.value : undefined;
+  const value = t.isExpression(property.value)
+    ? unwrapJavaScriptExpression(property.value).node
+    : undefined;
   if (value !== undefined && definitelyUndefined(value)) return "loader";
   if (!t.isArrayExpression(value)) return "unknown";
   const sourceDirectory = (node: t.Node): boolean =>
@@ -738,6 +758,13 @@ export const requireResolveSearchBase = (
     t.isIdentifier(node, { name: "__dirname" }) &&
     isUnmodifiedGlobalReference(node, bindings, "__dirname");
   const [directory] = value.elements;
+  const unwrappedDirectory =
+    directory == null ? undefined : unwrapJavaScriptExpression(directory).node;
+  const suffix =
+    t.isBinaryExpression(unwrappedDirectory, { operator: "+" }) &&
+    sourceDirectory(unwrapJavaScriptExpression(unwrappedDirectory.left).node)
+      ? stringValue(unwrappedDirectory.right)
+      : undefined;
   const pathFact =
     directory == null
       ? undefined
@@ -748,8 +775,11 @@ export const requireResolveSearchBase = (
   if (
     value.elements.length === 1 &&
     directory != null &&
-    (sourceDirectory(directory) ||
-      (pathFact?.base === "source-directory" && pathFact.path === "."))
+    (sourceDirectory(unwrappedDirectory ?? directory) ||
+      (pathFact?.base === "source-directory" &&
+        pathFact.path === "." &&
+        suffix !== undefined &&
+        /^\/(?:\.?\/)*\.?$/u.test(suffix)))
   )
     return "source-file";
   return value.elements.every(
