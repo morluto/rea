@@ -5,11 +5,10 @@ import {
 import {
   mzWindowsHeaderLayoutLimitation,
   parseMzHeaderEvidence,
-  withMzWindowsHeaderSignature,
 } from "../dosMz.js";
 import { readElfSectionHeader } from "../elfSectionHeader.js";
 import { readElfProgramHeader } from "../elfProgramHeader.js";
-import { readPeCoffHeader } from "../peCoffHeader.js";
+import { observePeCoffFrame, PE_COFF_FRAME_BYTES } from "../peCoffHeader.js";
 import {
   PE_SECTION_HEADER_BYTES,
   peSectionTableExtent,
@@ -363,23 +362,14 @@ export function* readPeSectionDirectory(
       throw new BinaryFormatFailure("unsupported", limitation);
   }
   const pe = observed.offset;
-  const coff = new BinaryReader(
-    yield request(fileSize, BigInt(pe), 24n),
-    true,
-    "pe",
-  );
-  const confirmed = withMzWindowsHeaderSignature(
-    dos.bytes,
-    fileSize,
-    evidence,
-    { offset: pe, bytes: coff.bytes },
-  ).windowsHeader;
-  if (confirmed.state !== "declared" || confirmed.signature !== "PE")
-    return reject("PE signature is invalid");
-  const limitation = mzWindowsHeaderLayoutLimitation(confirmed);
+  // Native sections require a complete PE frame before decoding its fields.
+  request(fileSize, BigInt(pe), BigInt(PE_COFF_FRAME_BYTES));
+  const frame = yield* observePeCoffFrame(dos.bytes, fileSize, evidence);
+  if (frame.kind !== "pe") return reject("PE signature is invalid");
+  const limitation = mzWindowsHeaderLayoutLimitation(frame.observation);
   if (limitation !== undefined)
     throw new BinaryFormatFailure("unsupported", limitation);
-  const parsedCoff = readPeCoffHeader(coff.bytes.subarray(4, 24));
+  const { coff: parsedCoff } = frame;
   if (!parsedCoff.ok) return reject(parsedCoff.error.message);
   const {
     sectionCount: count,
@@ -390,7 +380,11 @@ export function* readPeSectionDirectory(
     symbolCount,
   } = parsedCoff.value;
   const optional = readPeOptionalHeaderStructure(
-    yield request(fileSize, BigInt(pe + 24), BigInt(optionalSize)),
+    yield request(
+      fileSize,
+      BigInt(pe + PE_COFF_FRAME_BYTES),
+      BigInt(optionalSize),
+    ),
   );
   if (!optional.ok) {
     switch (optional.error.reason) {
@@ -408,7 +402,7 @@ export function* readPeSectionDirectory(
   }
   const { bits } = optional.value;
   const { sectionTableOffset, sectionTableBytes } = peSectionTableExtent(
-    pe + 24,
+    pe + PE_COFF_FRAME_BYTES,
     optionalSize,
     count,
   );

@@ -1,10 +1,7 @@
-import {
-  parseMzHeaderEvidence,
-  withMzWindowsHeaderSignature,
-} from "../dosMz.js";
+import { parseMzHeaderEvidence } from "../dosMz.js";
 import { BinaryFormatFailure } from "../binaryContainer.js";
 import { malformedInput } from "../parseFailure.js";
-import { readPeCoffHeader } from "../peCoffHeader.js";
+import { observePeCoffFrame, PE_COFF_FRAME_BYTES } from "../peCoffHeader.js";
 import { observePeHeaderExtent } from "../peSectionHeader.js";
 import {
   readPeOptionalHeaderStructure,
@@ -52,7 +49,7 @@ export const requirePeExtent = (
 
 interface HeaderRead {
   readonly offset: number;
-  readonly bytes: number;
+  readonly size: number;
 }
 
 interface PeImageHeaders {
@@ -77,7 +74,7 @@ const headerRead = (
   bytes: number,
 ): HeaderRead => {
   requirePeExtent(fileSize, offset, bytes);
-  return { offset, bytes };
+  return { offset, size: bytes };
 };
 
 /** Admit the PE header directory using its declared spans in either source. */
@@ -89,18 +86,8 @@ function* peImageHeaderReads(
   if (prefix[0] !== 0x4d || prefix[1] !== 0x5a)
     peFailure("Expected an MZ PE image.");
   const evidence = parseMzHeaderEvidence(prefix, fileSize);
-  let observed = evidence.windowsHeader;
-  if (observed.state === "signature-needed") {
-    const signature = yield headerRead(
-      fileSize,
-      observed.offset,
-      Math.min(fileSize - observed.offset, 4),
-    );
-    observed = withMzWindowsHeaderSignature(prefix, fileSize, evidence, {
-      offset: observed.offset,
-      bytes: signature,
-    }).windowsHeader;
-  }
+  const frame = yield* observePeCoffFrame(prefix, fileSize, evidence);
+  const observed = frame.observation;
   if (observed.state === "absent" && evidence.dos.ok)
     throw new BinaryFormatFailure(
       "unsupported",
@@ -111,17 +98,16 @@ function* peImageHeaderReads(
       "unsupported",
       `${observed.signature} images do not contain PE resource or certificate tables`,
     );
-  if (observed.state !== "declared" || observed.signature !== "PE")
+  if (frame.kind !== "pe")
     return peFailure(
       "MZ header does not declare a PE image in the inspected bytes.",
     );
-  const pe = observed.offset;
-  requirePeExtent(fileSize, pe, 24);
-  const coffBytes = yield headerRead(fileSize, pe + 4, 20);
-  const coff = readPeCoffHeader(coffBytes);
+  const pe = frame.observation.offset;
+  requirePeExtent(fileSize, pe, PE_COFF_FRAME_BYTES);
+  const { coff } = frame;
   if (!coff.ok) return peFailure(coff.error.message);
   const { sectionCount, optionalHeaderSize, machine } = coff.value;
-  const optionalHeaderOffset = pe + 24;
+  const optionalHeaderOffset = pe + PE_COFF_FRAME_BYTES;
   const optional = yield headerRead(
     fileSize,
     optionalHeaderOffset,
@@ -169,7 +155,7 @@ export const readPeImageHeaders = (bytes: Buffer) => {
   const steps = peImageHeaderReads(bytes, bytes.length);
   let next = steps.next();
   while (!next.done) {
-    const { offset, bytes: size } = next.value;
+    const { offset, size } = next.value;
     next = steps.next(bytes.subarray(offset, offset + size));
   }
   return next.value;
@@ -184,7 +170,7 @@ export const readPeImageHeadersAt = async (
   const steps = peImageHeaderReads(prefix, fileSize);
   let next = steps.next();
   while (!next.done) {
-    const { offset, bytes } = next.value;
+    const { offset, size: bytes } = next.value;
     // A PE can declare no sections. The caller need not support empty I/O.
     const record =
       bytes === 0 || offset + bytes <= prefix.length
