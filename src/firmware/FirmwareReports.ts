@@ -302,7 +302,14 @@ export const normalizeUnblobReport = (
   const taskFailures = new Set<string>();
   const missingDependencies = new Map<string, DependencyFacts>();
   /** Dependencies reported by one chunk's extraction, keyed with its chunk id. */
-  const chunkMissingDependencies = new Map<string, DependencyFacts>();
+  const chunkMissingDependencies = new Map<
+    string,
+    {
+      readonly input_path: string;
+      readonly provider_id: string;
+      readonly facts: DependencyFacts;
+    }
+  >();
   const dependencyRows = (
     facts: DependencyFacts,
   ): readonly { dependencies: readonly string[] }[] => [
@@ -409,11 +416,21 @@ export const normalizeUnblobReport = (
           detail?.extraction_reports ?? [],
         );
         // Chunk-nested reports retain their owning chunk, not the whole task.
-        accumulateDependencies(
-          chunkMissingDependencies,
-          JSON.stringify([path, parsed.id]),
-          problems.dependencies,
-        );
+        if (problems.dependencies !== null) {
+          const chunkKey = JSON.stringify([path, parsed.id]);
+          const knownChunk = chunkMissingDependencies.get(chunkKey);
+          if (knownChunk === undefined) {
+            chunkMissingDependencies.set(chunkKey, {
+              input_path: path,
+              provider_id: parsed.id,
+              facts: problems.dependencies,
+            });
+          } else {
+            for (const name of problems.dependencies.names)
+              knownChunk.facts.names.add(name);
+            knownChunk.facts.unnamed ||= problems.dependencies.unnamed;
+          }
+        }
         if (detail !== null)
           for (const problem of detail.extraction_reports) {
             diagnostics.push(
@@ -611,15 +628,14 @@ export const normalizeUnblobReport = (
             ? 1
             : 0,
       ),
-    chunk_missing_dependencies: [...chunkMissingDependencies.entries()]
-      .flatMap(([key, facts]) => {
-        const [input_path, provider_id] = JSON.parse(key) as [string, string];
-        return dependencyRows(facts).map(({ dependencies }) => ({
+    chunk_missing_dependencies: [...chunkMissingDependencies.values()]
+      .flatMap(({ input_path, provider_id, facts }) =>
+        dependencyRows(facts).map(({ dependencies }) => ({
           input_path,
           provider_id,
           dependencies,
-        }));
-      })
+        })),
+      )
       .sort((left, right) =>
         `${left.input_path}\u0000${left.provider_id}` <
         `${right.input_path}\u0000${right.provider_id}`

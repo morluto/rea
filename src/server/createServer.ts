@@ -9,12 +9,19 @@ import { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { parseMcpInputBudget } from "../config/mcpInputBudget.js";
 import { serverInstructions } from "./serverInstructions.js";
 import { registerServiceTools } from "./serviceToolBindings.js";
+import {
+  artifactExecutionParameters,
+  managedAnalysisForAdmission,
+} from "./providerOperationFamilies.js";
+import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
+import { NATIVE_TOOL_CONTRACTS } from "../contracts/native/nativeToolContracts.js";
+import { ARTIFACT_TOOL_CONTRACTS } from "../contracts/artifactToolContracts.js";
+import { MANAGED_TOOL_CONTRACTS } from "../contracts/managed/managedToolContracts.js";
+import { promptsForToolFamilies } from "../contracts/promptToolFamilyScope.js";
 import { retainedDebuggerDiagnostics } from "../process/ownedDebuggerCleanupError.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { captureProviderEnvironment } from "./providerEnvironment.js";
 import { createByteEntropyService } from "../composition/binaryDiagnostics.js";
-import { registerDesktopBuildTools } from "./registerDesktopBuildTools.js";
-import { registerBinaryDiagnosticsTools } from "./registerBinaryDiagnosticsTools.js";
 import { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import { catalogIdentityForToolFamilies } from "../contracts/catalog/catalogIdentity.js";
@@ -26,25 +33,20 @@ import { parseMcpResponseBudget } from "../config/mcpResponseBudget.js";
 import { parseMcpOutputSchemaProfile } from "../config/mcpOutputSchemaProfile.js";
 import { parseMcpInputSchemaProfile } from "../config/mcpInputSchemaProfile.js";
 import type { CompactInputSchemaPresentation } from "../contracts/compactInputSchema.js";
-import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
+import type {
+  BinarySessionPort,
+  ManagedBinarySessionPort,
+} from "../application/binary/BinarySessionPort.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { silentLogger } from "../logger.js";
 import type { Logger } from "pino";
-import { registerGuidedWorkflowTool } from "./registerGuidedWorkflowTool.js";
-import { registerArtifactTools } from "./registerArtifactTools.js";
-import { registerNativeTools } from "./registerNativeTools.js";
-import { registerBrowserScenarioTool } from "./registerBrowserScenarioTool.js";
 import { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
-import { registerElectronTools } from "./registerElectronTools.js";
-import { registerJavaScriptRuntimeObservationTools } from "./registerJavaScriptRuntimeObservationTools.js";
-import { registerManagedTools } from "./registerManagedTools.js";
 import { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
 import { JebAnalysisService } from "../application/jeb/JebAnalysisService.js";
 import { PcapAnalysisService } from "../application/pcap/PcapAnalysisService.js";
 import { ApktoolResourceAnalysisService } from "../application/apktool/ApktoolResourceAnalysisService.js";
 import { FlutterBuildAnalysisService } from "../application/flutter/FlutterBuildAnalysisService.js";
 import { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";
-import { registerOfficialTools } from "./registerOfficialTools.js";
 import { registerGuidedPrompts } from "./registerPrompts.js";
 import { registerSessionTools } from "./registerSessionTools.js";
 import type { AvailabilityPolicy } from "../application/CapabilityInventory.js";
@@ -53,9 +55,6 @@ import {
   withAdmittedAnalysis,
   type ServerAnalysisSource,
 } from "./analysisAdmission.js";
-import { registerReverseEngineeringTools } from "./registerReverseEngineeringTools.js";
-import { registerCutterTools } from "./registerCutterTools.js";
-import { registerGdbTools } from "./registerGdbTools.js";
 import {
   resolveMcpOutputSchemaProfile,
   type McpOutputSchemaProfile,
@@ -74,6 +73,9 @@ export interface CreateServerOptions extends CapabilityServiceOptions {
   readonly providerEnvironment?: Readonly<NodeJS.ProcessEnv>;
   readonly logger?: Logger;
   readonly availabilityPolicy?: () => AvailabilityPolicy;
+  readonly createManagedBinarySession?: () =>
+    | ManagedBinarySessionPort
+    | Promise<ManagedBinarySessionPort>;
   /**
    * The host the server's integrations run on: it decides environment-name
    * rules, host-restricted availability and execution checks. Defaults to the
@@ -186,6 +188,7 @@ export const createServer = (
     nativeExports,
     devicetree,
     elfNotes,
+    elfDebugLink,
     nativeInitializers,
     elfUnwindRanges,
     appleIps,
@@ -198,7 +201,11 @@ export const createServer = (
     windowsShortcut,
     electronFuses,
     releaseExposure,
+    nugetNupkg,
     pythonPyc,
+    mavenGradleMetadata,
+    dwarfUnits,
+    elfDependencies,
     webNetworkCapture,
     javascriptRecovery,
     artifactResources,
@@ -301,14 +308,6 @@ export const createServer = (
   } = createSessionRecorders(server, session);
   const analysisAdmission = withAdmittedAnalysis(source);
   server.withAdmittedAnalysis = analysisAdmission;
-  const recordSessionEvidence =
-    session === undefined
-      ? undefined
-      : (
-          evidence: Parameters<
-            NonNullable<typeof session>["recordEvidence"]
-          >[0],
-        ) => session.recordEvidence(evidence);
   const previousOnclose = server.server.onclose;
   server.server.onclose = () => {
     previousOnclose?.();
@@ -332,27 +331,6 @@ export const createServer = (
     if (failures.length > 1)
       throw new AggregateError(failures, "REA server cleanup failed");
   };
-  const analysisOptions = {
-    logger: toolLogger,
-    activeTarget,
-    recordEvidence,
-    evidenceById,
-    withAdmittedAnalysis: analysisAdmission,
-    ...(session === undefined
-      ? {}
-      : { admitRecovery: session.admitRecoveryObservation.bind(session) }),
-  };
-  const evidenceOptions = {
-    logger: toolLogger,
-    activeTarget,
-    recordEvidence,
-    withAdmittedAnalysis: analysisAdmission,
-  };
-  const common = {
-    logger: toolLogger,
-    recordEvidence,
-    withAdmittedAnalysis: analysisAdmission,
-  };
   const contractTools = {
     logger: toolLogger,
     recordEvidence,
@@ -364,7 +342,22 @@ export const createServer = (
     javascriptRecovery,
   );
   registerToolFamilies({
-    direct: () => registerOfficialTools(server, analysisOptions),
+    direct: () =>
+      registerServiceTools(
+        server,
+        {
+          providerOperations: {
+            contracts: OFFICIAL_TOOL_CONTRACTS,
+            activeTarget,
+            ...(session === undefined
+              ? {}
+              : {
+                  admitRecovery: session.admitRecoveryObservation.bind(session),
+                }),
+          },
+        },
+        contractTools,
+      ),
     enhanced: () =>
       registerServiceTools(
         server,
@@ -372,67 +365,40 @@ export const createServer = (
         contractTools,
       ),
     native: () => {
-      registerNativeTools(server, { ...evidenceOptions, evidenceById });
-      registerReverseEngineeringTools(
+      registerServiceTools(
         server,
-        reverseEngineering,
-        toolLogger,
-        delivery,
-        recordSessionEvidence,
-        analysisAdmission,
-        session === undefined
-          ? undefined
-          : () => session.invalidateSnapshotForExternalMutation(),
-        session === undefined
-          ? undefined
-          : (path, signal, operation, rebindFailure) =>
-              session.withAdmittedExternalMutation(
-                path,
-                signal,
-                operation,
-                rebindFailure,
-              ),
-        evidenceById,
-      );
-      registerCutterTools(
-        server,
-        cutter,
-        toolLogger,
-        delivery,
-        recordSessionEvidence,
-        session,
-      );
-      registerGdbTools(
-        server,
-        gdbSessions,
-        toolLogger,
-        delivery,
-        recordSessionEvidence,
-        session,
-        evidenceById,
+        {
+          providerOperations: {
+            contracts: NATIVE_TOOL_CONTRACTS,
+            activeTarget,
+          },
+        },
+        contractTools,
       );
       registerServiceTools(
         server,
-        { rizinDebug: { manager: rizinDebugSessions, session } },
-        { logger: toolLogger, recordEvidence, evidenceById },
-      );
-      registerBinaryDiagnosticsTools(
-        server,
-        binaryLayout,
-        toolLogger,
-        recordEvidence,
-        evidenceById,
-        analysisAdmission,
+        { reverseEngineering: { service: reverseEngineering, session } },
+        contractTools,
       );
       registerServiceTools(
         server,
         {
-          cutterSessions: cutter,
+          cutter: { service: cutter, session },
+          gdb: { manager: gdbSessions, session },
+          rizinDebug: { manager: rizinDebugSessions, session },
+        },
+        { logger: toolLogger, recordEvidence, evidenceById },
+      );
+      registerServiceTools(
+        server,
+        {
+          binaryLayout,
           byteEntropy: createByteEntropyService(artifactResources),
           peResources,
           nativeExports,
           devicetree,
           elfNotes,
+          elfDebugLink,
           nativeInitializers,
           elfUnwindRanges,
           appleIps,
@@ -445,12 +411,24 @@ export const createServer = (
           peImports,
           windowsShortcut,
           recordedCrash,
+          dwarfUnits,
+          elfDependencies,
         },
         contractTools,
       );
     },
     artifact: () => {
-      registerArtifactTools(server, { ...evidenceOptions, evidenceById });
+      registerServiceTools(
+        server,
+        {
+          providerOperations: {
+            contracts: ARTIFACT_TOOL_CONTRACTS,
+            activeTarget,
+            parametersForExecution: artifactExecutionParameters,
+          },
+        },
+        contractTools,
+      );
       registerServiceTools(
         server,
         {
@@ -461,6 +439,7 @@ export const createServer = (
           goBinary,
           il2cppMetadata,
           rustBinary,
+          nugetNupkg,
           pythonPyc,
           erlangBeam,
           v8CodeCache,
@@ -469,12 +448,31 @@ export const createServer = (
           sqliteDatabase,
           packetCapture,
           signalRecording,
+          mavenGradleMetadata,
         },
         contractTools,
       );
     },
     managed: () => {
-      registerManagedTools(server, { ...evidenceOptions, evidenceById });
+      registerServiceTools(
+        server,
+        {
+          providerOperations: {
+            contracts: MANAGED_TOOL_CONTRACTS,
+            activeTarget,
+            analysisForAdmission: managedAnalysisForAdmission(
+              activeTarget,
+              options.createManagedBinarySession ??
+                (session === undefined
+                  ? capabilities.createManagedBinarySession
+                  : () =>
+                      session.createManagedBinarySession?.() ??
+                      capabilities.createManagedBinarySession()),
+            ),
+          },
+        },
+        contractTools,
+      );
       if (session !== undefined)
         registerServiceTools(
           server,
@@ -544,40 +542,56 @@ export const createServer = (
         },
         contractTools,
       );
-      registerBrowserScenarioTool(server, {
-        ...common,
-        evidenceById,
-        provider: options.browserScenarioCapture,
-        loadFailure:
-          options.optionalProviderLoadFailures?.browserScenarioCapture,
-      });
       registerServiceTools(
         server,
-        { webRuntime, webNetworkCapture },
+        {
+          browserScenario: {
+            provider: options.browserScenarioCapture,
+            loadFailure:
+              options.optionalProviderLoadFailures?.browserScenarioCapture,
+          },
+          webRuntime,
+          webNetworkCapture,
+        },
         contractTools,
       );
     },
     electron: () =>
-      registerElectronTools(server, {
-        ...common,
-        artifactResources,
-        environment,
-        evidenceById,
-        electron: options.electronObservation,
-        electronActive: options.electronActiveObservation,
-        electronFuses,
-        observationLoadFailure:
-          options.optionalProviderLoadFailures?.electronObservation,
-        activeLoadFailure:
-          options.optionalProviderLoadFailures?.electronActiveObservation,
-      }),
+      registerServiceTools(
+        server,
+        {
+          electronFuses,
+          electronObservation: {
+            provider: options.electronObservation,
+            loadFailure:
+              options.optionalProviderLoadFailures?.electronObservation,
+          },
+          electronScenario: {
+            provider: options.electronActiveObservation,
+            loadFailure:
+              options.optionalProviderLoadFailures?.electronActiveObservation,
+          },
+          javascriptApplication: {
+            resources: artifactResources,
+            environment,
+            settings: analysisSettings.read,
+          },
+        },
+        contractTools,
+      ),
     "javascript-runtime": () =>
-      registerJavaScriptRuntimeObservationTools(server, {
-        ...common,
-        runtime: options.javascriptRuntimeObservation,
-        loadFailure:
-          options.optionalProviderLoadFailures?.javascriptRuntimeObservation,
-      }),
+      registerServiceTools(
+        server,
+        {
+          javascriptRuntime: {
+            runtime: options.javascriptRuntimeObservation,
+            loadFailure:
+              options.optionalProviderLoadFailures
+                ?.javascriptRuntimeObservation,
+          },
+        },
+        contractTools,
+      ),
     application: () => {
       registerServiceTools(
         server,
@@ -593,11 +607,18 @@ export const createServer = (
           webSourceLocation,
           javascriptRecovery: javascriptRecoveryService,
           applicationWorkflows: { resources: artifactResources },
+          guidedWorkflows: promptsForToolFamilies(
+            server.advertisedToolFamilies,
+          ),
         },
         contractTools,
       );
-      registerGuidedWorkflowTool(server);
-      registerDesktopBuildTools(server, desktopBuildComputers, toolLogger);
+      // Build tool responses are redacted as a whole; they record nothing.
+      registerServiceTools(
+        server,
+        { desktopBuild: desktopBuildComputers },
+        { logger: toolLogger },
+      );
     },
     session: () => {
       if (session === undefined) return;

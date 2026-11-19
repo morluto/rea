@@ -9,6 +9,7 @@ import { createEvidence } from "../../../src/domain/evidence.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it.each([false, true])(
   "stops an SDK export cancellation before publication and keeps the same session usable (overwrite: %s)",
@@ -30,10 +31,13 @@ it.each([false, true])(
     );
     expect(session.recordEvidence(evidence).ok).toBe(true);
     const server = createServer({ kind: "session", session });
-    const client = new Client({
-      name: "evidence-export-cancellation",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "evidence-export-cancellation",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const controller = new AbortController();
     onTestFinished(async () => {
       controller.abort();

@@ -236,6 +236,29 @@ describe("portable PE resource parsing", () => {
   });
 });
 
+it.each([false, true])(
+  "rejects descending numeric sibling IDs without sorting the resource tree (PE32+ = %s)",
+  async (plus) => {
+    const { bytes, directoryOffsets } = peResourceFixture(plus, [
+      { type: 10, name: 4, language: 1, payload: Buffer.from("a") },
+      { type: 10, name: 9, language: 1, payload: Buffer.from("b") },
+    ]);
+    const ordered = await parse(bytes);
+    expect(ordered.resources.map(({ name }) => name)).toEqual([
+      { kind: "id", id: 4 },
+      { kind: "id", id: 9 },
+    ]);
+    const nameDirectory = directoryOffsets[1];
+    if (nameDirectory === undefined) throw new Error("Missing name directory");
+    bytes.writeUInt32LE(9, nameDirectory + 16);
+    bytes.writeUInt32LE(4, nameDirectory + 24);
+    await expect(parse(bytes)).rejects.toMatchObject({
+      kind: "malformed",
+      message: "PE resource directory numeric IDs are out of order.",
+    });
+  },
+);
+
 describe("PE header admission and bounded traversal", () => {
   it.each([
     [
@@ -584,7 +607,7 @@ describe("PE resource ownership boundaries", () => {
 
 const probeSeaName = (bytes: Buffer) =>
   hasPeResourceName(
-    bytes,
+    bytes.subarray(0, 64),
     bytes.length,
     async (offset, length) =>
       offset < 0 || length > bytes.length - offset
@@ -597,7 +620,7 @@ const probeSeaName = (bytes: Buffer) =>
 
 const payloadsOf = (bytes: Buffer, name = "NODE_SEA_BLOB") =>
   locatePeResourcePayloads(
-    bytes,
+    bytes.subarray(0, 64),
     bytes.length,
     async (offset, length) =>
       offset < 0 || length > bytes.length - offset

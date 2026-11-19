@@ -15,6 +15,10 @@ describe("RuntimeRetention", () => {
           retained_bytes: WEB_RUNTIME_LIMITS.retainedEventBytes + 5,
           limit_bytes: WEB_RUNTIME_LIMITS.retainedEventBytes,
         }),
+        fixedAllowance: expect.objectContaining({
+          limit: WEB_RUNTIME_LIMITS.retainedEventBytes,
+          unit: "bytes",
+        }),
       }),
     );
   });

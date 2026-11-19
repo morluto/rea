@@ -6,7 +6,6 @@ import { deflateRawSync } from "node:zlib";
 import { expect, it, vi } from "vitest";
 
 import { DEFAULT_DOTNET_BUNDLE_READER_LIMITS } from "../../../src/domain/artifactReaderLimits.js";
-import { artifactFixedLimitFailure } from "../../../src/resources/ArtifactReader.js";
 import { DotnetBundleArtifactReader } from "../../../src/artifacts/DotnetBundleArtifactReader.js";
 import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { extractArtifact } from "../../../src/artifacts/extraction/ArtifactExtraction.js";
@@ -129,17 +128,17 @@ it("retains the exact integer representation ceiling independently of reader bud
   await writeFile(path, fixture.bytes);
   const handle = await open(path, "r");
   try {
-    const expected = artifactFixedLimitFailure(
-      ".NET bundle exact integer range",
-      9_007_199_254_740_991,
-      "integer units",
-    );
     await expect(
       readDotnetBundle(handle, fixture.bytes.length, fixture.headerOffset),
     ).rejects.toMatchObject({
       reason: "limit",
       boundary: "capacity",
-      message: expected.message,
+      fixedAllowance: {
+        name: "The .NET bundle exact integer range",
+        kind: "parser",
+        limit: 9_007_199_254_740_991,
+        unit: "integer units",
+      },
     });
   } finally {
     await handle.close();

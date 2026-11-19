@@ -5,9 +5,12 @@ import { MAX_FLUTTER_BUILD_ID_BYTES } from "../domain/flutter/flutterBuildAnalys
 import type { FileHandle } from "node:fs/promises";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import {
+  ELF_NOTE_HEADER_BYTES,
   elfNoteAlignment,
-  elfNoteLayout,
-  readElfNoteHeader,
+  elfNoteSectionStorage,
+  isElfNotePadding,
+  readElfNoteFrame,
+  type ElfNoteAlignment,
 } from "../domain/native/elfNoteLayout.js";
 import {
   readElfHeader,
@@ -73,7 +76,7 @@ export const readElfBuildIds = async (
   const h = parsed.header;
   const ranges = new Map<
     string,
-    { offset: number; size: number; alignment: number }
+    { offset: number; size: number; alignment: ElfNoteAlignment }
   >();
   let compressedNotes = false;
   tables: for (const table of [
@@ -114,7 +117,13 @@ export const readElfBuildIds = async (
           );
       if (!parsedRecord.ok) return failure(parsedRecord.error.message);
       const record = parsedRecord.value;
-      if (record.type !== (table.program ? 4 : 7)) continue;
+      const storage =
+        "size" in record
+          ? elfNoteSectionStorage(record)
+          : record.type === 4
+            ? "uncompressed"
+            : "not-note";
+      if (storage === "not-note") continue;
       const offset = Number(record.offset);
       const size = Number("fileSize" in record ? record.fileSize : record.size);
       if (
@@ -123,16 +132,14 @@ export const readElfBuildIds = async (
         size > totalBytes - offset
       )
         return failure("ELF note range is not file-backed");
-      if ("size" in record) {
-        if (record.compressed) {
-          if (!compressedNotes) {
-            failures.push({
-              reason: "Compressed ELF note sections are unsupported",
-            });
-            compressedNotes = true;
-          }
-          continue;
+      if (storage === "compressed") {
+        if (!compressedNotes) {
+          failures.push({
+            reason: "Compressed ELF note sections are unsupported",
+          });
+          compressedNotes = true;
         }
+        continue;
       }
       if (size === 0) continue;
       const alignment = elfNoteAlignment(record.alignment);
@@ -161,38 +168,42 @@ export const readElfBuildIds = async (
         assertArtifactReadActive(signal);
         yieldedAt = at;
       }
-      if (notes.length - at < 12) {
-        if (notes.subarray(at).some((byte) => byte !== 0))
+      if (notes.length - at < ELF_NOTE_HEADER_BYTES) {
+        if (!isElfNotePadding(notes.subarray(at)))
           return failure("ELF note header is truncated");
         break;
       }
-      const parsedHeader = readElfNoteHeader(notes.subarray(at, at + 12), true);
-      if (!parsedHeader.ok) return failure(parsedHeader.error.message);
-      const { namesz, descsz, type } = parsedHeader.value;
-      const layout = elfNoteLayout(namesz, descsz, range.alignment);
-      if (layout.next > notes.length - at)
+      const frame = readElfNoteFrame(
+        notes.subarray(at, at + ELF_NOTE_HEADER_BYTES),
+        true,
+        range.alignment,
+        notes.length - at,
+      );
+      if (!frame.ok) return failure(frame.error.message);
+      const { namesz, descsz, type, descriptor, next, framing } = frame.value;
+      if (framing !== "complete")
         return failure("ELF note entry exceeds its declared note range");
-      const descriptor = at + layout.descriptor;
-      const end = descriptor + descsz;
-      if (end > notes.length)
-        return failure("ELF note descriptor exceeds its declared note range");
+      const nameOffset = at + ELF_NOTE_HEADER_BYTES;
       if (
         namesz === 4 &&
         type === 3 &&
-        notes.subarray(at + 12, at + 16).equals(Buffer.from("GNU\0"))
+        notes
+          .subarray(nameOffset, nameOffset + namesz)
+          .equals(Buffer.from("GNU\0"))
       ) {
         if (descsz < 1 || descsz > MAX_FLUTTER_BUILD_ID_BYTES)
           return failure(
             `GNU build-id descriptor is outside the 1–${MAX_FLUTTER_BUILD_ID_BYTES} byte projection`,
           );
-        const candidate = notes.subarray(descriptor, end).toString("hex");
+        const start = at + descriptor;
+        const candidate = notes.subarray(start, start + descsz).toString("hex");
         if (!candidates.has(candidate) && candidates.size === MAX_BUILD_IDS)
           return failure(
             "ELF build-id candidates exceed the 64-value evidence budget",
           );
         candidates.add(candidate);
       }
-      at += layout.next;
+      at += next;
     }
   }
   assertArtifactReadActive(signal);

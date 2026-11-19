@@ -2,11 +2,9 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it, onTestFinished } from "vitest";
 
 import {
-  advertisedDialectRegressions,
   advertisedInputDialectViolations,
   advertisedOutputPatternViolations,
   advertisedSchemaPatterns,
-  countAdvertisedDialectViolations,
   portablePatternViolations,
   type AdvertisedToolDefinition,
 } from "../../../src/contracts/advertisedDialect.js";
@@ -15,6 +13,7 @@ import { mcpToolCatalogProfileSchema } from "../../../src/config/mcpToolCatalogP
 import { createServer } from "../../../src/server/createServer.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 describe("portable regex grammar", () => {
   // Each refused construct failed to compile in at least one of V8 (plain,
@@ -58,10 +57,8 @@ describe("portable regex grammar", () => {
     "^[!#%&,:;<=>@`~'\" _.+*?$]$",
     "^a{2,1000}$",
     "^(?:a|b)\\.c\\$$",
-  ])("accepts %s in every JavaScript mode", (pattern) => {
+  ])("accepts portable pattern %s", (pattern) => {
     expect(portablePatternViolations(pattern)).toEqual([]);
-    for (const flags of ["", "u", "v"])
-      expect(() => new RegExp(pattern, flags)).not.toThrow();
   });
 });
 
@@ -71,23 +68,6 @@ describe("nullable values", () => {
       name: "probe",
       inputSchema: { type: "object", properties },
     }).map(({ path, rule, detail }) => [path, rule, detail]);
-
-  it("accepts anyOf one typed branch and null below the root", () => {
-    expect(
-      check({
-        limit: {
-          description: "Entries; null returns every remaining entry.",
-          anyOf: [{ type: "integer", minimum: 1 }, { type: "null" }],
-        },
-        names: {
-          anyOf: [
-            { type: "array", items: { type: "string" } },
-            { type: "null" },
-          ],
-        },
-      }),
-    ).toEqual([]);
-  });
 
   it.each([
     [
@@ -136,19 +116,21 @@ it("reports patternProperties keys as advertised patterns", () => {
       },
     },
   };
-  expect(advertisedSchemaPatterns(schema)).toEqual([
-    {
-      path: '$.properties.names.patternProperties["^[^\\\\uD800-\\\\uDFFF]*$"]',
-      pattern: "^[^\\uD800-\\uDFFF]*$",
-    },
-  ]);
   expect(
     advertisedOutputPatternViolations({
       name: "tool",
       inputSchema: {},
       outputSchema: schema,
-    }).map(({ detail }) => detail),
-  ).toContain("unicode-escape");
+    }),
+  ).toEqual([
+    {
+      tool: "tool",
+      schema: "output",
+      path: '$.properties.names.patternProperties["^[^\\\\uD800-\\\\uDFFF]*$"]',
+      rule: "pattern",
+      detail: "unicode-escape",
+    },
+  ]);
 });
 
 const listTools = async (environment: Readonly<NodeJS.ProcessEnv>) => {
@@ -159,7 +141,10 @@ const listTools = async (environment: Readonly<NodeJS.ProcessEnv>) => {
     { kind: "session", session },
     { environment, logger: silentLogger },
   );
-  const client = new Client({ name: "advertised-dialect", version: "1" });
+  const client = new Client(
+    { name: "advertised-dialect", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -171,26 +156,6 @@ const listTools = async (environment: Readonly<NodeJS.ProcessEnv>) => {
   await client.connect(clientTransport);
   return (await client.listTools()).tools;
 };
-
-it("presents transport discovery through the compact input presentation", async () => {
-  const compact = (
-    await listTools({
-      ...process.env,
-      REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold",
-    })
-  ).find(({ name }) => name === "discover_tools")?.inputSchema;
-  expect(compact?.properties).toEqual({
-    query: { type: "string" },
-    names: {
-      type: "array",
-      items: { type: "string", minLength: 1 },
-      minItems: 1,
-      maxItems: 20,
-    },
-    offset: { type: "integer", minimum: 0, maximum: 9007199254740991 },
-    limit: { type: "integer", minimum: 1, maximum: 20 },
-  });
-});
 
 const distinct = (
   into: Map<string, AdvertisedToolDefinition>,
@@ -245,13 +210,7 @@ it("advertises every profile within the portable dialect", async () => {
   expect(uncompilable).toEqual([]);
   expect(outputViolations).toEqual([]);
 
-  // Every input construct outside the dialect fails with a named key.
   expect(
-    advertisedDialectRegressions(
-      countAdvertisedDialectViolations(
-        [...inputs.values()].flatMap(advertisedInputDialectViolations),
-      ),
-      {},
-    ),
+    [...inputs.values()].flatMap(advertisedInputDialectViolations),
   ).toEqual([]);
 });

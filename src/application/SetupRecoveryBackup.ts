@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import { copyFile } from "node:fs/promises";
 import { err, ok, type Result } from "../domain/result.js";
@@ -6,6 +5,7 @@ import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { readRegularFile } from "../process/RegularFileRead.js";
 import type { ArtifactResourceScope } from "../resources/index.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 export interface RecoveryBackupSelection {
   readonly backupPath: string;
@@ -52,7 +52,7 @@ export const selectCurrentRecoveryBackup = async (
   if (firstBackup.equals(expected))
     return ok({ backupPath: firstBackupPath, present: true });
 
-  const digest = createHash("sha256").update(expected).digest("hex");
+  const digest = sha256Hex(expected);
   const recoveryPath = `${firstBackupPath}.${digest}.recovery`;
   let recovery: Buffer | undefined;
   try {

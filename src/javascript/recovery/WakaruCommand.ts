@@ -267,8 +267,8 @@ export const runWakaruCommand = async (context: WakaruCommandContext) => {
     if (failure === undefined || failure instanceof AnalysisError)
       failure = analysisErrorWithCancellation(failure, cancelled);
   }
-  if (failure instanceof AnalysisError)
-    failure.retainCapturedOutput(capturedProviderOutput(snapshot));
+  const captured = capturedProviderOutput(snapshot);
+  if (failure instanceof AnalysisError) failure.retainCapturedOutput(captured);
   if (stopped.status === "incomplete")
     throw new WakaruCleanupFailure(
       supervisor,
@@ -280,10 +280,10 @@ export const runWakaruCommand = async (context: WakaruCommandContext) => {
     );
   if (failure !== undefined) throw failure;
   return {
-    exit_code: snapshot.exitCode ?? null,
-    signal: snapshot.signal ?? null,
-    stdout: snapshot.stdout.text,
-    stderr: snapshot.stderr.text,
+    exit_code: captured.exit_code ?? null,
+    signal: captured.signal ?? null,
+    stdout: captured.stdout,
+    stderr: captured.stderr,
     command: context.command,
     arguments: [...context.arguments],
     resource_limiter: context.limiter,

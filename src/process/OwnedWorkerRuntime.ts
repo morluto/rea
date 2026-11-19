@@ -7,6 +7,7 @@ import {
   type OwnedProviderProcessSpawnOptions,
   type ProviderProcessSupervisorOptions,
   type ProviderProcessStopResult,
+  type ProviderProcessOutputTokenOptions,
 } from "./ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "./ProcessOwnership.js";
 import type {
@@ -19,7 +20,8 @@ import { errorMessage } from "../kernel/errorMessage.js";
 export interface OwnedWorkerRuntimeOptions {
   readonly rootPrefix: string;
   readonly launcher?: typeof spawnOwnedProviderProcess;
-  readonly supervisorOptions?: ProviderProcessSupervisorOptions;
+  readonly supervisorOptions?: ProviderProcessSupervisorOptions &
+    ProviderProcessOutputTokenOptions;
   /** Report request-stream failure at the lifecycle owner observation point. */
   readonly onInputFailure?: (cause: Error) => void;
   /** Let a higher-level owner release its dependent resources before this root. */

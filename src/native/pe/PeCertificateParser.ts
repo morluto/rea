@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import {
   ArtifactReaderFailure,
   artifactParseFailure,
@@ -14,7 +13,8 @@ import {
   PeCertificateAsn1Failure,
   readAsn1,
 } from "./PeCertificateAsn1.js";
-import { readPeHeaders } from "../../domain/pe/peResourceLayout.js";
+import { readPeImageHeaders } from "../../domain/pe/peImageHeaders.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const fail = (message: string): never => {
   throw new ArtifactReaderFailure("format", message);
@@ -23,7 +23,7 @@ const fail = (message: string): never => {
 /** Shared PE header admission, with malformed headers as format failures. */
 const readCertificateImageHeaders = (bytes: Buffer) => {
   try {
-    return readPeHeaders(bytes);
+    return readPeImageHeaders(bytes);
   } catch (cause) {
     throw artifactParseFailure(cause, undefined);
   }
@@ -43,9 +43,6 @@ const requireRange = (bytes: Buffer, offset: number, length: number): void => {
 };
 
 const align8 = (value: number): number => Math.ceil(value / 8) * 8;
-
-const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 const LIMITATIONS = [
   "This workflow does not verify signatures, certificate chains, timestamps, or Authenticode digest coverage of image bytes.",
@@ -119,6 +116,10 @@ export const parsePeCertificates = (
       fail("WIN_CERTIFICATE dwLength is shorter than its header.");
     if (at + length > table.length)
       fail("WIN_CERTIFICATE dwLength exceeds the certificate table.");
+    const next = align8(at + length);
+    if (next <= at) fail("WIN_CERTIFICATE alignment did not advance.");
+    if (next > table.length)
+      fail("WIN_CERTIFICATE alignment padding is truncated.");
     const entryPayload = table.subarray(at + 8, at + length);
     let payload = entryPayload;
     let pkcs7: PeCertificates["entries"][number]["pkcs7"] = null;
@@ -153,7 +154,7 @@ export const parsePeCertificates = (
               offset: tableOffset + at + 8 + certificate.start,
               bytes: certificate.end - certificate.start,
             },
-            der_sha256: sha256(
+            der_sha256: sha256Hex(
               payload.subarray(certificate.start, certificate.end),
             ),
             serial_hex: certificate.serial_hex,
@@ -214,12 +215,10 @@ export const parsePeCertificates = (
       payload: {
         location: { offset: tableOffset + at + 8, bytes: payload.length },
         bytes: payload.length,
-        sha256: sha256(payload),
+        sha256: sha256Hex(payload),
       },
       pkcs7,
     });
-    const next = align8(at + length);
-    if (next <= at) fail("WIN_CERTIFICATE alignment did not advance.");
     at = next;
   }
   const certificates = entries.reduce(

@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 
 import {
   parseRecordedTransportUrl,
+  redactRecordedTransportUrl,
   parseUrlQueryParameterNames,
   iterateUrlQueryParameters,
   recordedPathSegments,
@@ -83,3 +84,26 @@ it("reads only requested path coordinates, retaining empty and raw segments", ()
     ),
   ).toBe("wanted");
 });
+
+it.each([
+  [
+    "HTTPS://user:password@Example.invalid/a/../b?token=visible#hash",
+    "HTTPS://Example.invalid/a/../b?token=visible#hash",
+    true,
+  ],
+  [
+    "https://example.invalid/a?password=public-metadata",
+    "https://example.invalid/a?password=public-metadata",
+    false,
+  ],
+  ["https:user:password@example.invalid/a", null, true],
+  [null, null, false],
+] as const)(
+  "redacts only the recorded transport credential span in %s",
+  (source, url, redacted) => {
+    expect(redactRecordedTransportUrl(source)).toEqual({
+      url,
+      url_credentials_redacted: redacted,
+    });
+  },
+);
