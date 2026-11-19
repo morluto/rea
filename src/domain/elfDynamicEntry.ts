@@ -13,14 +13,51 @@ export const DT_FLAGS = 30n;
 export const DT_GNU_HASH = 0x6ffffef5n;
 export const DT_FLAGS_1 = 0x6ffffffbn;
 
-const elfDynamicEntryWidth = (bits: 32 | 64): 8 | 16 =>
-  bits === 64 ? 16 : 8;
+const elfDynamicEntryWidth = (bits: 32 | 64): 8 | 16 => (bits === 64 ? 16 : 8);
 
 /** Geometry of a bounded file extent, independent of the logical DT_NULL. */
 export const elfDynamicTableGeometry = (bytes: number, bits: 32 | 64) => {
   const width = elfDynamicEntryWidth(bits);
   const trailingBytes = bytes % width;
   return { width, completeBytes: bytes - trailingBytes, trailingBytes };
+};
+
+/** Admit the strict native directory before applying its byte budget. */
+export const admitElfDynamicDirectory = (
+  fileBytes: number,
+  span: { readonly offset: bigint; readonly size: bigint },
+  bits: 32 | 64,
+): Result<
+  { readonly offset: number; readonly size: number; readonly width: number },
+  | { readonly kind: "malformed"; readonly message: string }
+  | {
+      readonly kind: "capacity";
+      readonly message: string;
+      readonly maximum: number;
+    }
+> => {
+  const malformed = () =>
+    err({
+      kind: "malformed" as const,
+      message: "PT_DYNAMIC is truncated or outside the file",
+    });
+  if (
+    span.offset < 0n ||
+    span.size < 0n ||
+    span.offset + span.size > BigInt(fileBytes)
+  )
+    return malformed();
+  const size = Number(span.size);
+  const { width, trailingBytes } = elfDynamicTableGeometry(size, bits);
+  if (trailingBytes !== 0) return malformed();
+  const maximum = 16 * 1024 * 1024;
+  if (size > maximum)
+    return err({
+      kind: "capacity",
+      message: "ELF dynamic directory exceeds the 16 MiB structural allowance",
+      maximum,
+    });
+  return ok({ offset: Number(span.offset), size, width });
 };
 
 const dynamicReader = (

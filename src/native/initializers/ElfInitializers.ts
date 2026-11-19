@@ -5,7 +5,7 @@ import {
   type CoverageStatus,
 } from "../../domain/coverage.js";
 import {
-  elfDynamicTableGeometry,
+  admitElfDynamicDirectory,
   readElfDynamicEntry,
 } from "../../domain/elfDynamicEntry.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
@@ -156,27 +156,19 @@ const readDynamicTags = (
   if (segment === undefined) return tags;
   if (extra > 0)
     throw new BinaryFormatFailure("malformed", "multiple PT_DYNAMIC segments");
-  const invalidRange = "PT_DYNAMIC is truncated or outside the file";
-  if (
-    segment.offset < 0n ||
-    segment.size < 0n ||
-    segment.offset + segment.size > BigInt(scan.bytes.length)
-  )
-    throw new BinaryFormatFailure("malformed", invalidRange);
-  const size = Number(segment.size);
-  const { width, trailingBytes } = elfDynamicTableGeometry(size, scan.bits);
-  if (trailingBytes !== 0)
-    throw new BinaryFormatFailure("malformed", invalidRange);
-  const maximum = 16 * 1024 * 1024;
-  if (size > maximum)
+  const table = admitElfDynamicDirectory(scan.bytes.length, segment, scan.bits);
+  if (!table.ok) {
+    if (table.error.kind === "malformed")
+      throw new BinaryFormatFailure("malformed", table.error.message);
     throw new BinaryResourceFailure(
       "structure",
-      maximum,
-      "ELF dynamic directory exceeds the 16 MiB structural allowance",
+      table.error.maximum,
+      table.error.message,
       "structure",
       "bytes",
     );
-  const start = Number(segment.offset);
+  }
+  const { offset: start, size, width } = table.value;
   let terminated = false;
   for (let at = start; at + width <= start + size; at += width) {
     const parsed = readElfDynamicEntry(
