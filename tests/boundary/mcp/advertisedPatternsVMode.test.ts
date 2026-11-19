@@ -117,3 +117,21 @@ it("advertises base64 without rejecting valid inputs or overflowing V8", async (
   for (const pattern of base64Patterns)
     expect(new RegExp(pattern, "v").test(large)).toBe(true);
 });
+
+it("advertises no pattern that names a lone surrogate", async () => {
+  const tools = await listAdvertisedTools();
+  // ECMA-262 spells the surrogate block only as `\uD800-\uDFFF`, and strict
+  // schema validators refuse a pattern containing those escapes: one refused
+  // pattern rejects the whole tools/list response (#11706, #12387).
+  const loneSurrogateEscape = /\\u[dD][89abAB][0-9a-fA-F]{2}/u;
+  // The detector itself must recognise the spelling clients refused.
+  expect(loneSurrogateEscape.test("^[^\\uD800-\\uDFFF]*$")).toBe(true);
+  expect(loneSurrogateEscape.test("^[^\\x00]*$")).toBe(false);
+  const offenders: string[] = [];
+  for (const tool of tools)
+    for (const schema of [tool.inputSchema, canonicalOutputSchema(tool.name)])
+      for (const { pattern } of advertisedSchemaPatterns(schema))
+        if (loneSurrogateEscape.test(pattern))
+          offenders.push(`${tool.name}: ${pattern}`);
+  expect(offenders).toEqual([]);
+});
