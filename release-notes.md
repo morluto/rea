@@ -603,6 +603,7 @@
 * **reference:** retain cancellation during policy file cleanup ([#12323](https://github.com/morluto/rea/issues/12323)) ([00e2346](https://github.com/morluto/rea/commit/00e2346c2c6c80f1dde003375708722287c6d51c))
 * **release-exposure:** count scan limitations past the cap instead of dropping them silently ([#11267](https://github.com/morluto/rea/issues/11267)) ([b41fe5a](https://github.com/morluto/rea/commit/b41fe5a238c1883bfb6b8e5462b8bb9f2e3e07e7))
 * **release:** honor selected npm in update verification ([#10240](https://github.com/morluto/rea/issues/10240)) ([418e3f5](https://github.com/morluto/rea/commit/418e3f5e91f43d05412935aa36db7e4f61b3f6ff))
+* **release:** keep credit examples inside Markdown fences ([#12239](https://github.com/morluto/rea/issues/12239)) ([ff1d06e](https://github.com/morluto/rea/commit/ff1d06ecb09ce0da4fc2cd812b7b41ae6dad95c3))
 * **release:** reject invalid inline source map encodings ([#12183](https://github.com/morluto/rea/issues/12183)) ([c0bdcf7](https://github.com/morluto/rea/commit/c0bdcf7d6c807a357b3949706c7cdc7820b15f4d))
 * **release:** retry incomplete Git blob reads ([#12122](https://github.com/morluto/rea/issues/12122)) ([a997c3e](https://github.com/morluto/rea/commit/a997c3ee4bd58946cba104a8f8bcbff0d88c54f8))
 * **release:** validate notes with the publication parser ([653c494](https://github.com/morluto/rea/commit/653c49419e65515d5567ebf13c0e6dd2ac794f7e))
