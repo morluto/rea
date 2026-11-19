@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { compositeKey } from "./unicodeCodePointOrder.js";
 import { IDENTIFIER_PATTERN } from "./stringPatterns.js";
 import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 import { PROCESS_COMPARISON_DIMENSIONS } from "./process/processComparison.js";
@@ -56,6 +57,24 @@ const reconstructionClaimSchema = z.discriminatedUnion("kind", [
   visualClaimSchema,
 ]);
 
+export const reconstructionClaimSelector = (
+  claim: ReconstructionClaim,
+  resolvedPair?: readonly [string, string],
+): string => {
+  const selected = claim.kind === "visual" ? claim.source_evidence : undefined;
+  const pair =
+    resolvedPair ??
+    (selected === undefined
+      ? []
+      : [selected.before_evidence_id, selected.after_evidence_id]);
+  return compositeKey([
+    claim.kind,
+    claim.comparison_evidence_id,
+    claim.dimension,
+    ...pair,
+  ]);
+};
+
 /** Finite, typed behavioral, structural, and visual specification. */
 export const reconstructionSpecificationSchema = z
   .object({
@@ -66,9 +85,8 @@ export const reconstructionSpecificationSchema = z
     const ids = value.claims.map(({ claim_id: id }) => id);
     if (new Set(ids).size !== ids.length)
       context.addIssue({ code: "custom", message: "Claim IDs must be unique" });
-    const selectors = value.claims.map(
-      ({ kind, comparison_evidence_id: id, dimension }) =>
-        `${kind}:${id}:${dimension}`,
+    const selectors = value.claims.map((claim) =>
+      reconstructionClaimSelector(claim),
     );
     if (new Set(selectors).size !== selectors.length)
       context.addIssue({

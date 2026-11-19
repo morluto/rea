@@ -230,25 +230,91 @@ describe("visual reconstruction capture identity", () => {
     ).toThrow(/does not identify exactly one captured Evidence record/u);
   });
 
-  it("binds byte-identical captures to distinct Evidence on the requested sides", () => {
-    const before = screenshot(beforePng, "2026-01-01T00:00:00.000Z");
-    const after = screenshot(beforePng, "2026-01-01T00:00:01.000Z");
-    const unrelated = screenshot(beforePng, "2026-01-01T00:00:02.000Z");
-    const saved = comparison(before, after, "identical");
-    const spec = specification(saved, {
-      before_evidence_id: before.evidence_id,
-      after_evidence_id: after.evidence_id,
-    });
-    const bundle = createEvidenceBundle([unrelated, after, saved, before]);
+  it.each([false, true])(
+    "checks capture pairs independently when they share one comparison (second pair limited: %s)",
+    (limited) => {
+      const before = screenshot(beforePng, "2026-01-01T00:00:00.000Z");
+      const after = screenshot(beforePng, "2026-01-01T00:00:01.000Z");
+      const repeatedBefore = screenshot(beforePng, "2026-01-01T00:00:02.000Z", {
+        limited,
+      });
+      const repeatedAfter = screenshot(beforePng, "2026-01-01T00:00:03.000Z");
+      const saved = comparison(before, after, "identical");
+      const spec = specification(saved, {
+        before_evidence_id: before.evidence_id,
+        after_evidence_id: after.evidence_id,
+      });
+      const second = specification(saved, {
+        before_evidence_id: repeatedBefore.evidence_id,
+        after_evidence_id: repeatedAfter.evidence_id,
+      }).claims[0]!;
+      const bundle = createEvidenceBundle([
+        repeatedAfter,
+        after,
+        saved,
+        before,
+        repeatedBefore,
+      ]);
 
-    expect(verifyReconstruction(spec, bundle).claims.items).toMatchObject([
-      {
-        status: "pass",
-        left_evidence_ids: [before.evidence_id],
-        right_evidence_ids: [after.evidence_id],
-      },
-    ]);
-  });
+      const result = verifyReconstruction(
+        {
+          ...spec,
+          claims: [...spec.claims, { ...second, claim_id: "repeated" }],
+        },
+        bundle,
+      );
+      expect(result.claims.items).toMatchObject([
+        {
+          claim_id: "repeated",
+          status: limited ? "unknown" : "pass",
+          left_evidence_ids: [repeatedBefore.evidence_id],
+          right_evidence_ids: [repeatedAfter.evidence_id],
+        },
+        {
+          claim_id: "viewport",
+          status: "pass",
+          left_evidence_ids: [before.evidence_id],
+          right_evidence_ids: [after.evidence_id],
+        },
+      ]);
+    },
+  );
+
+  it.each(["explicit", "inferred"] as const)(
+    "rejects the same capture pair when the second selector is %s",
+    (selection) => {
+      const before = screenshot(beforePng, "2026-01-01T00:00:00.000Z");
+      const after = screenshot(samePng, "2026-01-01T00:00:01.000Z");
+      const saved = comparison(before, after, "identical");
+      const sources = {
+        before_evidence_id: before.evidence_id,
+        after_evidence_id: after.evidence_id,
+      };
+      const spec = specification(saved, sources);
+      const second = specification(
+        saved,
+        selection === "explicit" ? sources : undefined,
+      ).claims[0]!;
+
+      expect(() =>
+        verifyReconstruction(
+          {
+            ...spec,
+            claims: [...spec.claims, { ...second, claim_id: "repeat" }],
+          },
+          createEvidenceBundle([before, after, saved]),
+        ),
+      ).toThrow(
+        expect.objectContaining({
+          issues: expect.arrayContaining([
+            expect.objectContaining({
+              message: "Claim comparison selectors must be unique",
+            }),
+          ]),
+        }),
+      );
+    },
+  );
 
   it("rejects an explicit screenshot source whose bytes disagree with that side", () => {
     const before = screenshot(beforePng, "2026-01-01T00:00:00.000Z");

@@ -38,6 +38,7 @@ import { digestCanonicalValue } from "./canonicalDigest.js";
 import {
   countReconstructionClaimKinds,
   reconstructionClaimResultSchema,
+  reconstructionClaimSelector,
   reconstructionSpecificationSchema,
   reconstructionVerificationResultSchema,
   type ReconstructionClaim as Claim,
@@ -106,13 +107,38 @@ export const verifyReconstruction = (
   );
   const heads = reconstructionUnknownHeads(bundle.unknowns);
   const artifactReplays = new Map<string, ArtifactReplay>();
-  const screenshots = specification.claims.some(({ kind }) => kind === "visual")
-    ? indexScreenshotCaptures(records.values())
-    : new Map<string, ScreenshotCapture[]>();
+  const screenshots: ScreenshotAssessment = {
+    captures: specification.claims.some(({ kind }) => kind === "visual")
+      ? indexScreenshotCaptures(records.values())
+      : new Map(),
+    replayBlockers: new Map(),
+  };
+  const visualSelectors = new Set<string>();
   const results = specification.claims
-    .map((claim, index) =>
-      evaluateClaim(claim, index, records, heads, artifactReplays, screenshots),
-    )
+    .map((claim, index) => {
+      const result = evaluateClaim(
+        claim,
+        index,
+        records,
+        heads,
+        artifactReplays,
+        screenshots,
+      );
+      if (claim.kind === "visual") {
+        // An inferred capture pair can resolve to the same selector as an explicit pair.
+        const selector = reconstructionClaimSelector(claim, [
+          result.left_evidence_ids[0]!,
+          result.right_evidence_ids[0]!,
+        ]);
+        if (visualSelectors.has(selector))
+          throw claimComparisonInputError(
+            index,
+            "Claim comparison selectors must be unique",
+          );
+        visualSelectors.add(selector);
+      }
+      return result;
+    })
     .sort((left, right) =>
       compareUnicodeCodePoints(left.claim_id, right.claim_id),
     );
@@ -158,11 +184,11 @@ const evaluateClaim = (
   records: ReadonlyMap<string, Evidence>,
   heads: ReadonlyMap<string, ResidualUnknown>,
   artifactReplays: Map<string, ArtifactReplay>,
-  screenshots: ReadonlyMap<string, readonly ScreenshotCapture[]>,
+  screenshots: ScreenshotAssessment,
 ): ClaimResult => {
   const comparison = records.get(claim.comparison_evidence_id);
   if (comparison === undefined)
-    throw missingSourceInputError(
+    throw claimComparisonInputError(
       claimIndex,
       `Missing comparison Evidence ${claim.comparison_evidence_id}`,
     );
@@ -202,7 +228,7 @@ const evaluateClaim = (
   const sources = allSourceIds.map((id) => {
     const source = records.get(id);
     if (source === undefined)
-      throw missingSourceInputError(
+      throw claimComparisonInputError(
         claimIndex,
         `Missing source Evidence ${id}`,
       );
@@ -278,6 +304,11 @@ interface ScreenshotCapture {
   readonly screenshot: WebScreenshot;
 }
 
+interface ScreenshotAssessment {
+  readonly captures: ReadonlyMap<string, readonly ScreenshotCapture[]>;
+  readonly replayBlockers: Map<string, string | null>;
+}
+
 const indexScreenshotCaptures = (records: Iterable<Evidence>) => {
   const captures = new Map<string, ScreenshotCapture[]>();
   for (const source of records) {
@@ -307,7 +338,7 @@ const indexScreenshotCaptures = (records: Iterable<Evidence>) => {
 const assessScreenshotComparison = (
   claim: Extract<Claim, { kind: "visual" }>,
   comparison: Evidence,
-  captures: ReadonlyMap<string, readonly ScreenshotCapture[]>,
+  { captures, replayBlockers }: ScreenshotAssessment,
 ): {
   sides: { left: string[]; right: string[] };
   observation: ComparisonObservation;
@@ -361,27 +392,31 @@ const assessScreenshotComparison = (
         `Source ${evidenceId}: Screenshot coverage is incomplete (${uniqueSorted([status, ...conditions]).join(", ")}).`,
       );
   }
-  try {
-    const { limitations: _limitations, ...replayed } = comparePngScreenshots({
-      before: before.screenshot.artifact,
-      after: after.screenshot.artifact,
-      channel_threshold: parsed.value.channel_threshold,
-    });
-    if (!isDeepStrictEqual(recorded, replayed))
-      visualBlockers.push(
-        "Retained screenshot pixels do not corroborate the recorded comparison.",
-      );
-  } catch (cause) {
-    if (
-      !(cause instanceof TypeError) &&
-      !(cause instanceof AnalysisResourceConstraintError) &&
-      !(cause instanceof AnalysisUnsupportedTargetError)
-    )
-      throw cause;
-    visualBlockers.push(
-      `Retained screenshot comparison could not be replayed: ${cause.message}`,
-    );
+  // The comparison fixes both artifact digests and the threshold. Coverage
+  // stays specific to the selected captures, while the pixel replay is reusable.
+  let replayBlocker = replayBlockers.get(comparison.evidence_id);
+  if (replayBlocker === undefined) {
+    try {
+      const { limitations: _limitations, ...replayed } = comparePngScreenshots({
+        before: before.screenshot.artifact,
+        after: after.screenshot.artifact,
+        channel_threshold: parsed.value.channel_threshold,
+      });
+      replayBlocker = isDeepStrictEqual(recorded, replayed)
+        ? null
+        : "Retained screenshot pixels do not corroborate the recorded comparison.";
+    } catch (cause) {
+      if (
+        !(cause instanceof TypeError) &&
+        !(cause instanceof AnalysisResourceConstraintError) &&
+        !(cause instanceof AnalysisUnsupportedTargetError)
+      )
+        throw cause;
+      replayBlocker = `Retained screenshot comparison could not be replayed: ${cause.message}`;
+    }
+    replayBlockers.set(comparison.evidence_id, replayBlocker);
   }
+  if (replayBlocker !== null) visualBlockers.push(replayBlocker);
   return {
     sides: { left: [before.evidenceId], right: [after.evidenceId] },
     observation: {
@@ -564,7 +599,7 @@ const validateComparisonIdentity = (
 ): void => {
   const expectedOperation = comparisonOperationsByClaimKind[claim.kind];
   if (evidence.operation !== expectedOperation)
-    throw missingSourceInputError(
+    throw claimComparisonInputError(
       claimIndex,
       `Claim ${claim.claim_id} requires ${expectedOperation} Evidence; selected ${evidence.operation}`,
     );
@@ -645,7 +680,7 @@ const comparisonObservation = (
   return { status: result.status, limitations: [] };
 };
 
-const missingSourceInputError = (claimIndex: number, message: string) =>
+const claimComparisonInputError = (claimIndex: number, message: string) =>
   new AnalysisInputError("verify_reconstruction", { userMessage: message }, [
     {
       path: ["claims", claimIndex, "comparison_evidence_id"],
