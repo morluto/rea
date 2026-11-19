@@ -24,7 +24,6 @@
   "src/domain/pngVisualDiff.ts": 2,
   "src/domain/riscvIsaDeclaration.ts": 1,
   "src/dotnet/ManagedMethodBodyReader.ts": 5,
-  "src/flutter/DartElf.ts": 2,
   "src/ghidra/GhidraLoadImageValues.ts": 1,
   "src/ghidra/extensions/GhidraExtensions.ts": 1,
   "src/go/GoStringLiterals.ts": 4,
