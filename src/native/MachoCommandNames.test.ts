@@ -2,7 +2,12 @@ import { expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { readMachoCommandNames } from "../domain/apple/machoCommandNames.js";
 import { projectMachoBinary } from "./MachoBinaryProjection.js";
-import { machoImage, readerOf } from "../artifacts/apple/MachoImage.fixture.js";
+import {
+  dylibUseCommand,
+  machoImage,
+  readerOf,
+} from "../artifacts/apple/MachoImage.fixture.js";
+import { LC } from "../domain/apple/machoLoadCommandCodes.js";
 
 it("owns retained command bytes independently of Buffer-backed read windows", async () => {
   const paddedSize = 256 * 1024;
@@ -191,6 +196,28 @@ it("retains alternate dylib flags and legacy platform versions", async () => {
     sdk: 0x000f0000,
   });
 });
+
+it.each([LC.REEXPORT_DYLIB, LC.LOAD_UPWARD_DYLIB])(
+  "preserves marker-bearing encoding for dependency command %i",
+  async (command) => {
+    const image = machoImage({
+      commands: [dylibUseCommand(command, "@rpath/libMarked.dylib", 0x0a)],
+    });
+    const result = await readMachoCommandNames(
+      readerOf(image),
+      image.length,
+      128,
+      1,
+    );
+    expect(result.commands[0]?.dylib).toMatchObject({
+      nameOffset: 28,
+      encoding: { kind: "use", flags: 0x0a },
+    });
+    expect(projectMachoBinary(result).commands[0]?.fields).toMatchObject({
+      options: 0x0a,
+    });
+  },
+);
 
 it("retains bounded linker options and dylinker strings with embedded framing", async () => {
   const strings = Buffer.from("-lone\0\nLoad command 1\0");

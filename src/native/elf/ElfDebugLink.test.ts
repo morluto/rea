@@ -376,7 +376,7 @@ const verify = (image: Buffer, candidate: Buffer, candidatePath: string) => {
 
 it("counts legacy .zdebug_info as present candidate debug info", () => {
   const candidate = elfDebugCandidateFixture({ zdebugInfo: true });
-  const sections = readElfImage(candidate).sections;
+  const sections = readElfImage(candidate, "elf-directory").sections;
   expect(
     sections.some(
       (section) => section.format === "elf" && section.name === ".zdebug_info",
@@ -397,7 +397,7 @@ it("counts legacy .zdebug_info as present candidate debug info", () => {
 /** Point one named section of a little-endian ELF64 candidate past its end. */
 const moveSectionPastEnd = (candidate: Buffer, name: string): Buffer => {
   const damaged = Buffer.from(candidate);
-  const declared = readElfImage(candidate).sections.find(
+  const declared = readElfImage(candidate, "elf-directory").sections.find(
     (section) => section.format === "elf" && section.name === name,
   );
   if (declared?.format !== "elf") throw new Error(`missing ${name}`);

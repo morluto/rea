@@ -13,16 +13,73 @@ it("retains the exact UTF-8 title independently read from XGetWindowProperty", (
   });
 });
 
+it("decodes octal UTF-8 title bytes separately from legacy property bytes", () => {
+  const output = String.raw`WM_CLASS = "r\351a", "Notes"
+_NET_WM_NAME = "Caf\303\251 \346\227\245\346\234\254\t\\303"
+WM_NAME = "Caf\351 (legacy)"
+`;
+  expect(parseX11WindowProperties(output)).toMatchObject({
+    instance: "réa",
+    class: "Notes",
+    title: "Café 日本\t\\303",
+  });
+});
+
 it.each([
   [String.raw`"one\ntwo"`, "one\ntwo"],
   [String.raw`"one\ttwo"`, "one\ttwo"],
   [String.raw`"literal \\n \"quote\""`, 'literal \\n "quote"'],
   ['"plain caption"', "plain caption"],
+  ['"one\u2028two\u2029three"', "one\u2028two\u2029three"],
 ])("decodes the producer's quoted title %s", (wire, title) => {
   expect(parseX11WindowProperties(`_NET_WM_NAME = ${wire}\n`).title).toBe(
     title,
   );
 });
+
+it.each([
+  String.raw`"bad \303"`,
+  '<Invalid UTF-8 string: Tail too short> "quoted prefix"',
+])("uses the legacy title for malformed UTF-8 property %s", (wire) => {
+  const legacy = String.raw`WM_NAME(STRING): bytes = "Caf\351"`;
+  expect(
+    parseX11WindowProperties(`_NET_WM_NAME = ${wire}\n${legacy}`).title,
+  ).toBe("Café");
+});
+
+// Real xprop 1.2.8 writes different escaping in its default and 8s formats.
+it.each([
+  {
+    type: "STRING",
+    rendered: String.raw`"Caf\351 "quoted" C:\notes \123"`,
+    bytes: String.raw`"Caf\351 \"quoted\" C:\\notes \\123"`,
+    title: 'Café "quoted" C:\\notes \\123',
+  },
+  {
+    type: "UTF8_STRING",
+    rendered: String.raw`""quoted" 日本 \123"`,
+    bytes: String.raw`"\"quoted\" \346\227\245\346\234\254 \\123"`,
+    title: '"quoted" 日本 \\123',
+  },
+])(
+  "reads an exact legacy title from the typed $type property",
+  ({ type, rendered, bytes, title }) => {
+    const output = `WM_NAME(${type}) = ${rendered}\nWM_NAME(${type}): bytes = ${bytes}\n`;
+    expect(parseX11WindowProperties(output).title).toBe(title);
+  },
+);
+
+it.each([
+  ['"a "quoted" title"', 'a "quoted" title'],
+  [String.raw`"literal \012 or line break"`, null],
+])(
+  "does not invent a title when the compound-text rendering %s is ambiguous",
+  (rendered, title) => {
+    expect(
+      parseX11WindowProperties(`WM_NAME(COMPOUND_TEXT) = ${rendered}\n`).title,
+    ).toBe(title);
+  },
+);
 
 // Captured with native xprop; expected text was independently read through Xlib.
 const nativeSamples = [
@@ -108,7 +165,7 @@ it.each(nativeSamples)(
 it("keeps an unknown class member in position and falls back from an unknown title", () => {
   const output = String.raw`WM_CLASS = "unknown\q", "RealClass"
 _NET_WM_NAME = "unknown\777"
-WM_NAME = "fallback\ncaption"
+WM_NAME(STRING): bytes = "fallback\ncaption"
 _NET_WM_PID = 21
 _NET_WM_WINDOW_TYPE = _NET_WM_WINDOW_TYPE_DIALOG
 `;

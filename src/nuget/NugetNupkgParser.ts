@@ -69,11 +69,22 @@ const childElements = (element: Element): Element[] => {
   return children;
 };
 
-const childrenNamed = (element: Element, local: string): Element[] =>
-  childElements(element).filter((child) => child.localName === local);
+const childrenNamed = (
+  element: Element,
+  local: string,
+  namespace?: string,
+): Element[] =>
+  childElements(element).filter(
+    (child) =>
+      child.localName === local &&
+      (namespace === undefined || (child.namespaceURI ?? "") === namespace),
+  );
 
-const firstNamed = (element: Element, local: string): Element | undefined =>
-  childrenNamed(element, local)[0];
+const firstNamed = (
+  element: Element,
+  local: string,
+  namespace?: string,
+): Element | undefined => childrenNamed(element, local, namespace)[0];
 
 const nonempty = (value: string | null | undefined): string | null => {
   if (value === null || value === undefined) return null;
@@ -216,6 +227,9 @@ interface OpcManifestTarget {
 const targetLabel = (display: string | null): string =>
   display === null ? "[URL withheld]" : JSON.stringify(display);
 
+const OPC_RELATIONSHIP_NAMESPACE =
+  "http://schemas.openxmlformats.org/package/2006/relationships";
+
 const NUGET_MANIFEST_RELATIONSHIP =
   "http://schemas.microsoft.com/packaging/2010/07/manifest";
 
@@ -236,14 +250,19 @@ const opcManifestTargets = (
     return [];
   }
   const root = parsed.value.documentElement;
-  if (!isElement(root) || root.localName !== "Relationships") {
+  if (
+    !isElement(root) ||
+    root.localName !== "Relationships" ||
+    root.namespaceURI !== OPC_RELATIONSHIP_NAMESPACE
+  ) {
     limitations.push(
-      "OPC relationships root is not Relationships; the .nuspec was selected by ZIP name when possible.",
+      "OPC relationships root is not Relationships in the OPC namespace; the .nuspec was selected by ZIP name when possible.",
     );
     return [];
   }
   const targets = new Map<string, OpcManifestTarget>();
   for (const relationship of childrenNamed(root, "Relationship")) {
+    if (relationship.namespaceURI !== OPC_RELATIONSHIP_NAMESPACE) continue;
     const type = attribute(relationship, "Type");
     if (type !== NUGET_MANIFEST_RELATIONSHIP) continue;
     const target = attribute(relationship, "Target");
@@ -285,16 +304,17 @@ const parseBooleanAttribute = (value: string | null): boolean | null => {
 
 const parseDependencies = (
   metadata: Element,
+  namespace: string,
   limitations: string[],
 ): NugetNupkg["dependency_groups"] => {
   // NuspecReader walks every <dependencies> element, with one decision about
   // groups across all of them.
-  const containers = childrenNamed(metadata, "dependencies");
+  const containers = childrenNamed(metadata, "dependencies", namespace);
   const groups = containers.flatMap((container) =>
-    childrenNamed(container, "group"),
+    childrenNamed(container, "group", namespace),
   );
   const ungrouped = containers.flatMap((container) =>
-    childrenNamed(container, "dependency"),
+    childrenNamed(container, "dependency", namespace),
   );
   const readDependency = (
     element: Element,
@@ -311,7 +331,9 @@ const parseDependencies = (
     element: Element,
   ): NugetNupkg["dependency_groups"][number] => ({
     target_framework: attribute(element, "targetFramework"),
-    dependencies: childrenNamed(element, "dependency").map(readDependency),
+    dependencies: childrenNamed(element, "dependency", namespace).map(
+      readDependency,
+    ),
   });
   // NuGet's NuspecReader reads ungrouped dependencies only when no group is
   // present, so those beside groups never reach restore.
@@ -368,17 +390,24 @@ const parseNuspecDocument = (
     limitations.push("The selected .nuspec has no metadata element.");
     return empty;
   }
-  const metadataText = (local: string): string | null => {
-    const element = firstNamed(metadata, local);
+  // NuGet's typed getters select children in the default namespace in scope.
+  // Authors and description come from its local-name metadata index.
+  const metadataNamespace = metadata.lookupNamespaceURI("") ?? "";
+  const metadataText = (local: string, namespace?: string): string | null => {
+    const element = firstNamed(metadata, local, namespace);
     return element === undefined ? null : elementText(element);
   };
-  const licenseElement = firstNamed(metadata, "license");
+  const licenseElement = firstNamed(metadata, "license", metadataNamespace);
   const licenseType = licenseElement ? attribute(licenseElement, "type") : null;
-  const repositoryElement = firstNamed(metadata, "repository");
+  const repositoryElement = firstNamed(
+    metadata,
+    "repository",
+    metadataNamespace,
+  );
   return {
     identity: {
-      id: metadataText("id"),
-      version: metadataText("version"),
+      id: metadataText("id", metadataNamespace),
+      version: metadataText("version", metadataNamespace),
       authors: metadataText("authors"),
       description: metadataText("description"),
     },
@@ -401,7 +430,11 @@ const parseNuspecDocument = (
             commit: attribute(repositoryElement, "commit"),
             branch: attribute(repositoryElement, "branch"),
           },
-    dependency_groups: parseDependencies(metadata, limitations),
+    dependency_groups: parseDependencies(
+      metadata,
+      metadataNamespace,
+      limitations,
+    ),
   };
 };
 

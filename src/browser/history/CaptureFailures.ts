@@ -21,6 +21,10 @@ import {
 } from "../../domain/analysisErrorCleanup.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
+  isParseLimit,
+  parseLimitConstraint,
+} from "../../domain/parseFailureAnalysisError.js";
+import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
   AnalysisOutputError,
@@ -53,6 +57,7 @@ import {
 import { NODE_CAPTURE_HEAP_ENFORCED } from "./CaptureRelease.js";
 import { CAPTURE_DECODER_SEMI_SPACE_MIB } from "../../domain/analysisResourceLimits.js";
 import {
+  CAPTURE_FORMAT,
   CAPTURE_LIMITS,
   type CaptureFormatError,
 } from "./CaptureFormatError.js";
@@ -65,8 +70,8 @@ export const protobufCaptureFailure = (
   cause: CaptureFormatError,
 ): AnalysisError => {
   const { limit } = cause;
-  if (limit === undefined)
-    return new AnalysisInputError(OPERATION, undefined, [
+  if (limit === undefined || !isParseLimit(cause, CAPTURE_FORMAT))
+    return new AnalysisInputError(OPERATION, { cause }, [
       {
         path: ["protobuf"],
         reason: "invalid_format",
@@ -74,23 +79,19 @@ export const protobufCaptureFailure = (
       },
     ]);
   const { parameter, expected } = CAPTURE_LIMITS[limit.name];
-  return new AnalysisResourceConstraintError(
-    OPERATION,
-    "capacity",
-    cause.message,
-    { [expected]: limit.maximum },
-    {
-      retryable: false,
-      ...(parameter === null
-        ? {}
-        : {
-            remediationAction: webNetworkCaptureBudgetRecovery(
-              input,
-              parameter,
-            ),
-          }),
-    },
-  );
+  return parseLimitConstraint(OPERATION, "capacity", cause, {
+    legacyMaximumKey: expected,
+    retryable: false,
+    ...(parameter === null
+      ? {}
+      : {
+          remediationAction: webNetworkCaptureBudgetRecovery(
+            input,
+            parameter,
+            limit.maximum,
+          ),
+        }),
+  });
 };
 
 /** Reason for a decoder whose owned process tree reached its Job Object commit limit. */

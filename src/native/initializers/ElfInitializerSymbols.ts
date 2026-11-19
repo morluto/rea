@@ -1,7 +1,7 @@
 import { setImmediate as immediate } from "node:timers/promises";
 import { assertArtifactReadActive } from "../../resources/index.js";
 import { readElfRelocationEntry } from "../../domain/elfRelocation.js";
-import { readElfSymbol } from "../../domain/elfSymbol.js";
+import { elfSymbolSize, readElfSymbol } from "../../domain/elfSymbol.js";
 import {
   ELF_SHN_XINDEX,
   ElfSymbolSectionIndexTables,
@@ -176,7 +176,7 @@ const readTable = (
   readonly truncated: boolean;
   readonly incomplete: boolean;
 } => {
-  const width = facts.bits === 64 ? 24 : 16;
+  const width = elfSymbolSize(facts.bits);
   const strings = stringTableBytes(facts.bytes, sections[section.link]);
   const compressedStrings = sections[section.link]?.compressed === true;
   if (compressedStrings)
@@ -320,7 +320,7 @@ export const loadElfSymbolIndex = (
       unreadable = true;
       return;
     }
-    const width = BigInt(facts.bits === 64 ? 24 : 16);
+    const width = BigInt(elfSymbolSize(facts.bits));
     if (section.entry_size !== 0n && section.entry_size !== width) {
       notes.add(
         "A symbol table has an unexpected entry size; its symbols were not decoded.",

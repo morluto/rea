@@ -1538,7 +1538,7 @@ describe("native plist defaults for iOS-style bundles", () => {
   });
 });
 
-it("rejects malformed selected plist bytes before mocked conversion can invent facts", async () => {
+it("rejects malformed selected plist bytes that plutil also rejects instead of inventing facts", async () => {
   directory = await createTestTempDirectory("rea-native-malformed-plist-");
   const app = join(directory, "Malformed.app");
   const path = join(app, "Contents/Info.plist");
@@ -1547,9 +1547,19 @@ it("rejects malformed selected plist bytes before mocked conversion can invent f
   const tools: string[] = [];
   const replay = new FixtureRunner();
   const runner: NativeCommandRunner = {
-    run(tool, arguments_, options) {
+    async run(tool, arguments_, options) {
       tools.push(tool);
-      return replay.run(tool, arguments_, options);
+      const result = await replay.run(tool, arguments_, options);
+      // REA's XML reader refuses these bytes, so plutil decides (#12234);
+      // like the real tool, it rejects them rather than printing a plist.
+      if (tool !== "plutil" || !result.ok) return result;
+      return ok({
+        ...result.value,
+        stdout: "",
+        stdoutBytes: 0,
+        stderr: `${path}: Property List error`,
+        exitCode: 1,
+      });
     },
   };
   const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
@@ -1565,7 +1575,14 @@ it("rejects malformed selected plist bytes before mocked conversion can invent f
       error: { _tag: tag, operation: "inspect_plist" },
     });
   }
-  expect(tools).toEqual(["file", "file"]);
+  expect(tools).toEqual([
+    "file",
+    "plutil",
+    "plutil",
+    "file",
+    "plutil",
+    "plutil",
+  ]);
   expect(await readFile(path, "utf8")).toBe("fixture");
 });
 
