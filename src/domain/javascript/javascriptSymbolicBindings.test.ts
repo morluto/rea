@@ -215,6 +215,215 @@ it.each([
   expect(values[0]?.kind).toBe("unknown");
 });
 
+it.each([
+  [
+    "a direct read",
+    `function f(o){o.channel="real";return o.channel} inspect(f({channel:"stale"}));`,
+  ],
+  [
+    "destructuring",
+    `function f(o){o.channel="real";const {channel}=o;return channel} inspect(f({channel:"stale"}));`,
+  ],
+  [
+    "an alias",
+    `function f(o){o.channel="real";const alias=o;return alias.channel} inspect(f({channel:"stale"}));`,
+  ],
+  [
+    "a returned parameter",
+    `function f(o){o.channel="real";return o} inspect(f({channel:"stale"}).channel);`,
+  ],
+  [
+    "a forwarded parameter",
+    `function g(p){return p.channel} function f(o){o.channel="real";return g(o)} inspect(f({channel:"stale"}));`,
+  ],
+  [
+    "a spread of an added member",
+    `function f(o){o.channel="real";return {channel:"stale",...o}.channel} inspect(f({}));`,
+  ],
+  [
+    "a nested member",
+    `function f(o){o.options.channel="real";return o.options.channel} inspect(f({options:{channel:"stale"}}));`,
+  ],
+])("keeps a written parameter member unresolved for %s", (_name, source) => {
+  expect(inspectOne(source).kind).toBe("unknown");
+});
+
+it.each([
+  'o.channel+="!"',
+  "delete o.channel",
+  'Object.defineProperty(o,"channel",{value:"real"})',
+])("treats %s as a parameter member write", (write) => {
+  expect(
+    inspectOne(
+      `function f(o){${write};return o.channel} inspect(f({channel:"stale"}));`,
+    ),
+  ).toEqual({ kind: "unknown", reason: "overwritten object members" });
+});
+
+it("keeps parameter members its function does not write", () => {
+  expect(
+    inspectOne(
+      `function f(o){o.handled=true;return o.channel} inspect(f({channel:"kept"}));`,
+    ),
+  ).toEqual({ kind: "literal", value: "kept" });
+  expect(
+    inspectOne(
+      `function f(o){o.extra=1;return {channel:"kept",...o}.channel} inspect(f({}));`,
+    ),
+  ).toEqual({ kind: "literal", value: "kept" });
+});
+
+it("enumerates a member a parameter's function adds without resolving it", () => {
+  const { values } = inspectFixture(
+    `function f(o){o.extra="added";return o} inspect(f({keep:"kept"}));`,
+    (bindings, node) => {
+      const value = bindings.evaluate(node.arguments[0]);
+      expect([...bindings.members(value)].sort()).toEqual(["extra", "keep"]);
+      expect(bindings.unknownMembers(value)).toBe(0);
+      expect(bindings.property(value, "extra").kind).toBe("unknown");
+      expect(bindings.property(value, "keep")).toEqual({
+        kind: "literal",
+        value: "kept",
+      });
+      return value;
+    },
+  );
+  expect(values).toHaveLength(1);
+});
+
+it("loads modules through a loader parameter whose members a module writes", () => {
+  expect(
+    inspectOne(`(() => {
+    const modules = {
+      1(module) { module.exports = require("electron"); },
+      2(module, exports, load) { load.p = "/"; inspect(load(1).ipcMain); }
+    };
+    function load(id) { const m = {exports:{}}; modules[id](m,m.exports,load); return m.exports; }
+    load(2);
+  })();`),
+  ).toEqual({ kind: "external", path: ["electron", "ipcMain"] });
+});
+
+it.each([
+  [
+    "a spread of a written element",
+    `function g(a){return a} function f(...args){args[0]="real";return g(...args)} inspect(f("stale"));`,
+  ],
+  [
+    "a spread after a written length",
+    `function g(a,b){return b} function f(...args){args.length=1;return g(...args)} inspect(f("first","stale"));`,
+  ],
+  [
+    "an index read after a written length",
+    `function f(...args){args.length=0;return args[0]} inspect(f("stale"));`,
+  ],
+  [
+    "an argument after a spread written past its end",
+    `function g(a,b,c){return c} function f(...args){args[2]="added";return g(...args,"after")} inspect(f("first","second"));`,
+  ],
+])(
+  "keeps a written rest parameter element unresolved for %s",
+  (_name, source) => {
+    expect(inspectOne(source).kind).toBe("unknown");
+  },
+);
+
+it.each(['args[0]="real"', 'args[2]="added"', "args.handled=true"])(
+  "spreads the rest parameter elements %s does not write",
+  (write) => {
+    expect(
+      inspectOne(
+        `function g(a,b){return b} function f(...args){${write};return g(...args)} inspect(f("first","kept"));`,
+      ),
+    ).toEqual({ kind: "literal", value: "kept" });
+  },
+);
+
+it.each([
+  [
+    "a written length",
+    `function g(a,b){return b} function f(...args){args.length=2;return g(...args,"fallback")} inspect(f("first","second"));`,
+  ],
+  [
+    "an index written past its end",
+    `function g(a,b,c,d){return d} function f(...args){args[2]="added";return g(...args,"after")} inspect(f("first","second"));`,
+  ],
+  [
+    "an unknown value",
+    `function g(a,b){return b} function f(x){return g(...x,"fallback")} inspect(f(extraArguments));`,
+  ],
+  [
+    "unknown length through a later rest parameter",
+    `function k(a){return a} function h(x,...rest){return k(...rest,"after")} function f(...args){args.length=1;return h(...args)} inspect(f("first","second"));`,
+  ],
+])("does not position arguments after a spread of %s", (_name, source) => {
+  expect(inspectOne(source).kind).toBe("unknown");
+});
+
+it("keeps argument positions after a spread of known length", () => {
+  expect(
+    inspectOne(
+      `function g(a,b,c){return c} function f(...args){return g(...args,"after")} inspect(f("first","second"));`,
+    ),
+  ).toEqual({ kind: "literal", value: "after" });
+  expect(
+    inspectOne(
+      `function g(a,b){return b} function f(x){return g(x,"kept")} inspect(f(extraArguments));`,
+    ),
+  ).toEqual({ kind: "literal", value: "kept" });
+});
+
+it("builds a parameter's written members once for every read and call", () => {
+  const { parsed, resolver } = resolverFor(
+    `function f(o){o.channel="real";o.extra=1;inspect(o);inspect(o)}`,
+  );
+  const fn = parsed.program.body[0];
+  if (!t.isFunctionDeclaration(fn)) throw new Error("f declaration missing");
+  const reads: t.Node[] = [];
+  traverseJavaScriptAst(fn, {
+    enter: (node) => {
+      if (
+        t.isCallExpression(node) &&
+        t.isIdentifier(node.callee, { name: "inspect" }) &&
+        node.arguments[0] !== undefined
+      )
+        reads.push(node.arguments[0]);
+    },
+  });
+  const call = (argument: SymbolicValue) => {
+    const env = resolver.bind(
+      {
+        kind: "function",
+        node: fn,
+        environment: { values: new Map() },
+        origins: [],
+      },
+      [argument],
+    );
+    return reads.map((read) => resolver.evaluate(read, env));
+  };
+  const record = (channel: string): SymbolicValue => ({
+    kind: "record",
+    values: new Map([["channel", { kind: "literal", value: channel }]]),
+  });
+  const [first, second] = call(record("stale"));
+  const [other] = call(record("other"));
+  const [merged, mergedAgain] = call({
+    ...record("outer"),
+    overwrittenMembers: new Set(["outer"]),
+  });
+  expect(first?.overwrittenMembers).toEqual(new Set(["channel", "extra"]));
+  // Reads of one argument share its view; other calls share the member set.
+  expect(second).toBe(first);
+  expect(other).not.toBe(first);
+  expect(other?.overwrittenMembers).toBe(first?.overwrittenMembers);
+  expect(merged?.overwrittenMembers).toEqual(
+    new Set(["outer", "channel", "extra"]),
+  );
+  expect(mergedAgain).toBe(merged);
+  expect(resolver.truncated).toBe(false);
+});
+
 it("does not substitute a lexical or var initializer before its source write", () => {
   for (const source of [
     `inspect(value); const value = require("electron");`,
