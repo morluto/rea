@@ -26,6 +26,7 @@ export interface DotnetBundleFile {
   readonly offset: number;
   readonly size: number;
   readonly compressedSize: number;
+  readonly storedSize: number;
   readonly fileType: number;
 }
 
@@ -143,13 +144,15 @@ export const readDotnetBundle = async (
     const fileSize = await cursor.nonnegativeI64();
     const compressedSize =
       majorVersion === 6 ? await cursor.nonnegativeI64() : 0;
+    const storedSize = compressedSize || fileSize;
+    if (offset > headerOffset || storedSize > headerOffset - offset)
+      fail(
+        `.NET bundle entry crosses the manifest or file boundary (entry ${index + 1}, offset ${offset}, stored size ${storedSize})`,
+      );
     const fileType = (await cursor.take(1))[0]!;
     const path = await cursor.string();
     const normalized = normalizeArtifactPath(path);
     paths.add(normalized, "file");
-    const storedSize = compressedSize || fileSize;
-    if (offset > headerOffset || storedSize > headerOffset - offset)
-      fail(`.NET bundle entry crosses the manifest or file boundary: ${path}`);
     if (fileSize > limits.member_bytes || compressedSize > limits.member_bytes)
       throw artifactReaderLimitFailure(
         "artifact_limits.dotnet_bundle.member_bytes",
@@ -165,16 +168,23 @@ export const readDotnetBundle = async (
         "bytes",
         expandedBytes,
       );
-    files.push({ path, offset, size: fileSize, compressedSize, fileType });
+    files.push({
+      path,
+      offset,
+      size: fileSize,
+      compressedSize,
+      storedSize,
+      fileType,
+    });
   }
   const ranges = files
-    .filter((file) => (file.compressedSize || file.size) > 0)
+    .filter((file) => file.storedSize > 0)
     .toSorted((a, b) => a.offset - b.offset);
   let end = 0;
   for (const file of ranges) {
     if (file.offset < end)
       fail(`Overlapping .NET bundle entries: ${file.path}`);
-    end = file.offset + (file.compressedSize || file.size);
+    end = file.offset + file.storedSize;
   }
   for (const item of configuration) {
     if (item.offset === 0 && item.size === 0) continue;
@@ -212,8 +222,15 @@ class BundleCursor {
     return this.size - this.#position;
   }
 
+  #requireRemaining(length: number): number {
+    const remaining = this.remainingBytes;
+    if (length > remaining) fail("Truncated .NET bundle manifest");
+    return remaining;
+  }
+
   async take(length: number): Promise<Buffer> {
     abortIfNeeded(this.signal);
+    const remaining = this.#requireRemaining(length);
     const consumed = this.#position - this.start;
     if (consumed + length > this.limits.metadata_bytes)
       throw artifactReaderLimitFailure(
@@ -222,15 +239,13 @@ class BundleCursor {
         "bytes",
         consumed + length,
       );
-    if (length > this.size - this.#position)
-      fail("Truncated .NET bundle manifest");
     const cached = this.#position - this.#cacheOffset;
     if (cached < 0 || cached + length > this.#cache.length) {
       this.#cacheOffset = this.#position;
       this.#cache = Buffer.alloc(
         Math.min(
           Math.max(length, 64 * 1024),
-          this.size - this.#position,
+          remaining,
           this.limits.metadata_bytes - consumed,
         ),
       );
@@ -288,8 +303,7 @@ class BundleCursor {
       if (shift === 28 && byte > 7) fail("Invalid .NET bundle string length");
       length += (byte & 127) * 2 ** shift;
       if ((byte & 128) !== 0) continue;
-      if (length > this.size - this.#position)
-        fail("Truncated .NET bundle manifest");
+      this.#requireRemaining(length);
       if (length > this.limits.string_bytes)
         throw artifactReaderLimitFailure(
           "artifact_limits.dotnet_bundle.string_bytes",
