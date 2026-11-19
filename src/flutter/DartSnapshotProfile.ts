@@ -82,6 +82,7 @@ const profileFacts = (
     present,
     data,
     qualified: validData.length > 0,
+    poolUsable: validData.some(({ symbol }) => symbol.name === profile.pool),
     complete:
       validData.length === profile.data.length &&
       text.every((symbol) => symbol !== undefined && symbol.size > 0) &&
@@ -150,8 +151,10 @@ export const observeDartSnapshot = async (
   let selected: typeof legacy | null = null;
   if (!mixed) selected = legacy.present.length > 0 ? legacy : unified;
   else if (aliases) selected = unified;
-  else if (legacy.complete && unified.data.length === 0) selected = legacy;
-  else if (unified.complete && legacy.data.length === 0) selected = unified;
+  // A bounded, matching-kind pool header can establish a sole usable source
+  // even if the other layout's names resolve to invalid data or to text alone.
+  else if (legacy.poolUsable && !unified.qualified) selected = legacy;
+  else if (unified.poolUsable && !legacy.qualified) selected = unified;
   const failures = inventory.failures.filter(
     ({ missingSymbol }) =>
       missingSymbol === undefined ||
@@ -169,15 +172,7 @@ export const observeDartSnapshot = async (
       "Legacy exports alias the unified text or data ranges. Each physical header counts once.",
     );
   if (selected !== null) {
-    const {
-      profile,
-      present,
-      names,
-      data,
-      aliased,
-      overlapping,
-      textOverlapsData,
-    } = selected;
+    const { present, names, aliased, overlapping, textOverlapsData } = selected;
     if (present.length < names.length)
       limitations.push(
         `Only ${present.length} of ${names.length} snapshot symbols were present`,
@@ -192,12 +187,13 @@ export const observeDartSnapshot = async (
       );
     if (textOverlapsData)
       limitations.push("Unified snapshot text and data symbol ranges overlap.");
+  }
+  for (const { profile, data } of aliases ? [unified] : [legacy, unified])
     for (const { symbol, header } of data)
       if (!header.complete || header.kind !== profile.kind)
         limitations.push(
           `${symbol.name} has an incomplete or invalid snapshot header: kind ${String(header.kind)} (AOT app requires ${profile.kind}), declared length ${String(header.headerLength)} excludes the four magic bytes, symbol size ${symbol.size}, valid hash ${String(header.hash !== null)}`,
         );
-  }
   const pool =
     selected === null ? undefined : symbols.get(selected.profile.pool);
   return {

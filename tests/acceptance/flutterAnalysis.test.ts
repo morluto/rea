@@ -104,6 +104,7 @@ cliTest(
         image: unifiedAotFixtureImage(),
         profile: "unified",
         sources: 1,
+        hash: REFERENCE_HASH,
         sections: 2,
         coverage: "complete",
         pool: ["package:app/unified.dart"],
@@ -113,6 +114,7 @@ cliTest(
         image: unifiedAotFixtureImage({ aliases: true }),
         profile: "unified",
         sources: 1,
+        hash: REFERENCE_HASH,
         sections: 6,
         coverage: "complete",
         pool: ["package:app/unified.dart"],
@@ -122,9 +124,35 @@ cliTest(
         image: mixedAotFixtureImage(),
         profile: null,
         sources: 3,
+        hash: null,
         sections: 6,
         coverage: "partial",
         pool: [],
+      },
+      {
+        label: "malformed-unified",
+        image: mixedAotFixtureImage("unified"),
+        profile: "legacy-split",
+        sources: 2,
+        hash: REFERENCE_HASH,
+        sections: 6,
+        coverage: "partial",
+        pool: [
+          "package:adaptive_breakpoints/src/adaptive_breakpoints.dart",
+          "package:animations/src/fade_scale_transition.dart",
+        ],
+        malformed: { name: "_kDartSnapshotData", size: 4, kind: null },
+      },
+      {
+        label: "malformed-legacy",
+        image: mixedAotFixtureImage("legacy-split"),
+        profile: "unified",
+        sources: 1,
+        hash: "a".repeat(32),
+        sections: 6,
+        coverage: "partial",
+        pool: ["package:app/mixed.dart"],
+        malformed: { name: "_kDartIsolateSnapshotData", magic_valid: false },
       },
     ]) {
       const path = await createFlutterApk(`${test.label}.apk`, [
@@ -151,11 +179,17 @@ cliTest(
         coverage: test.coverage,
         snapshot_profile: test.profile,
         snapshot_hash_sources: test.sources,
-        snapshot_hash: test.profile === null ? null : REFERENCE_HASH,
+        snapshot_hash: test.hash,
         sha256: createHash("sha256").update(test.image).digest("hex"),
       });
       expect(report.libapp.sections).toHaveLength(test.sections);
       expect(report.string_pool.package_uris).toEqual(test.pool);
+      if (test.malformed !== undefined) {
+        expect(report.libapp.sections).toContainEqual(
+          expect.objectContaining(test.malformed),
+        );
+        expect(report.string_pool.coverage).toBe("complete");
+      }
     }
   },
 );

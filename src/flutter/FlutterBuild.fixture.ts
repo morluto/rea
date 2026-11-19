@@ -336,15 +336,25 @@ export const unifiedAotFixtureImage = ({
   return image;
 };
 
-/** Distinct split and unified exports, with independently conflicting headers. */
-export const mixedAotFixtureImage = (): Buffer => {
+/** Distinct split and unified exports, with conflicting or malformed headers. */
+export const mixedAotFixtureImage = (
+  malformed?: "legacy-split" | "unified",
+): Buffer => {
   const image = Buffer.alloc(0x2810);
   aotFixtureImage(REFERENCE_HASH, [
-    { name: "_kDartSnapshotData", value: 0x2700, size: 0x100 },
+    {
+      name: "_kDartSnapshotData",
+      value: 0x2700,
+      size: malformed === "unified" ? 4 : 0x100,
+    },
     { name: "_kDartSnapshotText", value: 0x2800, size: 16 },
   ]).copy(image);
   snapshotSection("a".repeat(32), 2).copy(image, 0x2700);
   image.write("\0package:app/mixed.dart\0", 0x2700 + 52);
+  if (malformed === "legacy-split") {
+    image.writeUInt32LE(0, 0x1000);
+    image.writeUInt32LE(0, 0x2000);
+  }
   return image;
 };
 
