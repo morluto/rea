@@ -6,6 +6,7 @@ import {
   readFile,
   readlink,
   stat,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -13,6 +14,10 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { PRODUCT_IDENTITY } from "../../../src/identity.js";
+import { readDesktopBuildFacts } from "../../../src/desktop/DesktopBuildDoctorFacts.js";
+import { defaultBuildComputerArchive } from "../../../src/desktop/BuildComputerEnvironment.js";
+import { ArtifactResourceScope } from "../../../src/resources/index.js";
 import {
   expandDesktopExec,
   parseDesktopEntry,
@@ -310,16 +315,32 @@ describe("download install scripts and archive links", () => {
 const shellQuote = (value: string): string =>
   `'${value.replaceAll("'", `'"'"'`)}'`;
 
-describe("installed launch paths", () => {
-  it("keeps an archive folder with spaces as the rea entrypoint", async () => {
-    const root = await createTestTempDirectory("rea-launcher-spaces-");
+it.each([
+  { folder: "REA Build", link: null, cached: false, problem: null },
+  { folder: "runtime", link: "cli.mjs", cached: false, problem: null },
+  {
+    folder: ".runtime",
+    link: null,
+    cached: false,
+    problem: "visible top folder",
+  },
+  {
+    folder: "runtime",
+    link: "missing.mjs",
+    cached: true,
+    problem: "regular file supplied by the archive",
+  },
+])(
+  "agrees on build runtime archive readiness for %j",
+  async ({ folder, link, cached, problem }) => {
+    const root = await createTestTempDirectory("rea-launcher-layout-");
     const nodeDir = join(
       root,
       "node-src",
       `node-v${BUILD_NODE_VERSION}-linux-x64`,
       "bin",
     );
-    const payloadDir = join(root, "payload-src", "REA Build", "scripts");
+    const payloadDir = join(root, "payload-src", folder, "scripts");
     await mkdir(nodeDir, { recursive: true });
     await mkdir(payloadDir, { recursive: true });
     const marker = join(root, "node-args");
@@ -327,9 +348,17 @@ describe("installed launch paths", () => {
     await writeFile(
       join(nodeDir, "node"),
       `#!/bin/sh\nprintf '%s\\n' "$@" > ${shellQuote(marker)}\n`,
+      { mode: 0o755 },
     );
-    await chmod(join(nodeDir, "node"), 0o755);
-    await writeFile(join(payloadDir, "rea.mjs"), entrypoint);
+    await writeFile(
+      join(payloadDir, "..", "package.json"),
+      JSON.stringify({ version: PRODUCT_IDENTITY.packageVersion }),
+    );
+    if (link === null) await writeFile(join(payloadDir, "rea.mjs"), entrypoint);
+    else {
+      if (problem === null) await writeFile(join(payloadDir, link), entrypoint);
+      await symlink(link, join(payloadDir, "rea.mjs"));
+    }
     await execute("tar", [
       "-cJf",
       join(root, "node-amd64.tar.xz"),
@@ -337,13 +366,55 @@ describe("installed launch paths", () => {
       join(root, "node-src"),
       `node-v${BUILD_NODE_VERSION}-linux-x64`,
     ]);
+    const archive = join(root, "rea-payload.tar");
     await execute("tar", [
       "-cf",
-      join(root, "rea-payload.tar"),
+      archive,
       "-C",
       join(root, "payload-src"),
-      "REA Build",
+      folder,
     ]);
+    const resources = new ArtifactResourceScope();
+    const environment = {
+      HOME: root,
+      USERPROFILE: root,
+      PATH: "",
+      XDG_CACHE_HOME: join(root, "cache"),
+      ...(cached ? {} : { REA_BUILD_COMPUTER_REA_ARCHIVE: archive }),
+    };
+    if (cached) {
+      const cachePath = defaultBuildComputerArchive(environment, "linux");
+      await mkdir(dirname(cachePath), { recursive: true });
+      await writeFile(cachePath, await readFile(archive));
+    }
+    try {
+      const facts = await readDesktopBuildFacts({
+        environment,
+        platform: "linux",
+        resources,
+        signal: new AbortController().signal,
+        run: async (command, args) => {
+          const { stdout, stderr } = await execute(command, args);
+          return {
+            stdout,
+            stderr,
+            stdoutBytes: Buffer.byteLength(stdout),
+            stderrBytes: Buffer.byteLength(stderr),
+          };
+        },
+        clientIds: [],
+        registrations: async () => [],
+      });
+      expect(facts.archive.status).toBe(
+        problem === null ? "current" : "invalid",
+      );
+      if (problem !== null) {
+        expect(facts.archive.detail).toContain(problem);
+        expect(facts.archive.detail).toContain(PRODUCT_IDENTITY.packageVersion);
+      }
+    } finally {
+      await resources.close();
+    }
     const bundle = renderBuildBundle(
       request({ kind: "archive", package: "mousepad", extra_packages: [] }),
       localPayload,
@@ -354,18 +425,26 @@ describe("installed launch paths", () => {
     await mkdir(join(root, "bin"), { recursive: true });
     const scriptPath = join(root, "install-rea.sh");
     await writeFile(scriptPath, script);
-    await chmod(scriptPath, 0o755);
-    await execute("sh", [scriptPath], { cwd: root });
+    const installed = execute("sh", [scriptPath], { cwd: root });
+    if (problem !== null) {
+      await expect(installed).rejects.toMatchObject({
+        stderr: expect.stringContaining(problem),
+      });
+      return;
+    }
+    await installed;
 
     const linked = join(root, "opt/rea/rea.mjs");
     expect(await readlink(linked)).toBe(
-      join(root, "opt/rea/payload/REA Build/scripts/rea.mjs"),
+      join(root, "opt/rea/payload", folder, "scripts/rea.mjs"),
     );
     expect(await readFile(linked, "utf8")).toBe(entrypoint);
     await execute(join(root, "bin/rea"), ["--version"]);
     expect(await readFile(marker, "utf8")).toBe(`${linked}\n--version\n`);
-  });
+  },
+);
 
+describe("installed launch paths", () => {
   it.each(["", "/usr/bin/env -- REA_TEST_ENV=selected "])(
     "rewrites and launches an Electron-style command with the shared launch policy (prefix %j)",
     async (prefix) => {
@@ -382,11 +461,19 @@ describe("installed launch paths", () => {
         localPayload,
       );
       const root = await createTestTempDirectory("rea-electron-launch-");
-      const policy = join(
-        root,
-        "opt/rea/payload/rea/dist/domain/desktop/appExportInstall.js",
-      );
+      const runtime = join(root, "opt/rea/payload/rea");
+      const policy = join(runtime, "dist/domain/desktop/appExportInstall.js");
       await mkdir(dirname(policy), { recursive: true });
+      const launcher = join(runtime, "scripts/rea.mjs");
+      await mkdir(dirname(launcher), { recursive: true });
+      await writeFile(launcher, "");
+      await symlink(launcher, join(root, "opt/rea/rea.mjs"));
+      const unrelatedPolicy = join(
+        root,
+        "opt/rea/payload/unrelated/dist/domain/desktop/appExportInstall.js",
+      );
+      await mkdir(dirname(unrelatedPolicy), { recursive: true });
+      await writeFile(unrelatedPolicy, "");
       const source = fileURLToPath(
         new URL(
           "../../../src/domain/desktop/appExportInstall.ts",
