@@ -24,7 +24,7 @@ const parse = (b: Buffer, limits = {}) =>
       sha256: createHash("sha256").update(b).digest("hex"),
     },
     inspectDevicetreeInputSchema.parse({ path: "/board.dtb", ...limits }),
-  );
+  ).report;
 describe("flattened devicetree", () => {
   it.each([16, 17])(
     "decodes v%s with derived facts and unresolved references",

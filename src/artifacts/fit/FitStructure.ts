@@ -557,7 +557,7 @@ const fitConfigurations = (
   return { default_configuration: defaultConfiguration, configurations };
 };
 
-const parseFit = (fdt: Buffer, path: string): Devicetree => {
+const parseFit = (fdt: Buffer, path: string) => {
   try {
     // The artifact field is only echoed back; the reader binds the carrier hash.
     return parseDevicetree(
@@ -595,7 +595,7 @@ export const readFitStructure = (
   path: string,
   fileSize: number,
 ): FitStructure => {
-  const tree = parseFit(fdt, path);
+  const { report: tree, structureLimitations } = parseFit(fdt, path);
   const byPath = new Map(tree.nodes.map((node) => [node.path, node]));
   const children = new Map<string, FitNode[]>();
   for (const node of tree.nodes) {
@@ -627,7 +627,7 @@ export const readFitStructure = (
       `FIT images declare ${String(declared)} bytes, exceeding this file's ${String(budget)}-byte expansion budget`,
       { boundary: "memory" },
     );
-  const facts: FitFacts = { fdt, limitations: [] };
+  const facts: FitFacts = { fdt, limitations: [...structureLimitations] };
   return {
     images,
     limitations: facts.limitations,
