@@ -122,6 +122,18 @@ const stanza = (
 ): AptSourceStanza => {
   const signedBy = fields.options.get("signed-by") ?? "";
   const inlineKey = inlineKeyBlock(signedBy);
+  let architectures = optionValues(fields.options.get("arch"));
+  if (architectures.length > 0) {
+    // Without an explicit base, APT applies modifiers to host configuration.
+    const removed = new Set(optionValues(fields.options.get("arch-")));
+    const effective = new Set([
+      ...architectures,
+      ...optionValues(fields.options.get("arch+")),
+    ]);
+    architectures = [...effective].filter(
+      (architecture) => !removed.has(architecture),
+    );
+  }
   return {
     ...at,
     uris: fields.uris.map((source) => {
@@ -132,7 +144,7 @@ const stanza = (
     }),
     suites: fields.suites,
     components: fields.components,
-    architectures: optionValues(fields.options.get("arch")),
+    architectures,
     signedBy: inlineKey === null ? optionValues(signedBy) : [],
     inlineKey,
   };
@@ -264,6 +276,8 @@ export const parseDeb822Sources = (
           options: new Map([
             ["signed-by", fields.get("signed-by") ?? ""],
             ["arch", fields.get("architectures") ?? ""],
+            ["arch+", fields.get("architectures-add") ?? ""],
+            ["arch-", fields.get("architectures-remove") ?? ""],
           ]),
         },
       ),
