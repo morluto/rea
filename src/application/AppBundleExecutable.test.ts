@@ -74,7 +74,13 @@ it("reports an oversized Info.plist as an input refusal before decoding", async 
     error: {
       path: plist,
       reason: expect.stringContaining("67108864-byte input allowance"),
-      cause: { name: "BundleInfoPlistInputLimitError" },
+      cause: {
+        name: "ParseFailureError",
+        kind: "limit",
+        failure: {
+          limit: { maximum: 64 * 1024 * 1024, required: 64 * 1024 * 1024 + 1 },
+        },
+      },
     },
   });
 });

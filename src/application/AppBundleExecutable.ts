@@ -6,6 +6,7 @@ import { z } from "zod";
 import { preflightPropertyListDecode } from "../domain/apple/propertyListDecodeBudget.js";
 import { decodeBinaryPropertyList } from "../domain/apple/binaryPlistMaterializer.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
+import { decodeLimit, ParseFailureError } from "../domain/parseFailure.js";
 import { isPathWithinRoot } from "../domain/localPath.js";
 import { parseXmlPropertyList } from "../domain/propertyListKeys.js";
 import { decodeXmlPlistText } from "../domain/propertyListXmlText.js";
@@ -26,21 +27,20 @@ import {
 /** Match the native plist inspector's input allowance, independent of decoding. */
 const BUNDLE_INFO_PLIST_INPUT_BYTES = 64 * 1024 * 1024;
 
-class BundleInfoPlistInputLimitError extends Error {
-  constructor(path: string, size: number) {
-    super(
-      `Info.plist exceeds the ${String(BUNDLE_INFO_PLIST_INPUT_BYTES)}-byte input allowance: ${path} (${String(size)} bytes)`,
-    );
-    this.name = "BundleInfoPlistInputLimitError";
-  }
-}
-
 export const readBundleInfoPlist = (path: string): Promise<Buffer> =>
   readRegularFile(path, {
     symlinks: "follow",
     admit: ({ size }) => {
       if (size > BUNDLE_INFO_PLIST_INPUT_BYTES)
-        throw new BundleInfoPlistInputLimitError(path, size);
+        throw decodeLimit(
+          "plist",
+          `Info.plist exceeds the ${String(BUNDLE_INFO_PLIST_INPUT_BYTES)}-byte input allowance: ${path} (${String(size)} bytes)`,
+          {
+            name: "bundle Info.plist input bytes",
+            maximum: BUNDLE_INFO_PLIST_INPUT_BYTES,
+            required: size,
+          },
+        );
     },
   });
 
@@ -458,7 +458,7 @@ const resolveLayoutExecutable = async (
   } catch (cause: unknown) {
     const error = new BinaryTargetError(
       plistPath,
-      cause instanceof BundleInfoPlistInputLimitError
+      cause instanceof ParseFailureError && cause.kind === "limit"
         ? cause.message
         : isPermissionDenied(cause)
           ? `permission denied reading ${noun} Info.plist ${plistPath}`

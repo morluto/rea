@@ -33,7 +33,11 @@ it("bounds the system host's Hopper minimum-version plist read", async () => {
   await expect(host.minimumSystemVersion(app)).resolves.toBe("13.0");
   await truncate(plist, 64 * 1024 * 1024 + 1);
   await expect(host.minimumSystemVersion(app)).rejects.toMatchObject({
-    name: "BundleInfoPlistInputLimitError",
+    name: "ParseFailureError",
+    kind: "limit",
+    failure: {
+      limit: { maximum: 64 * 1024 * 1024, required: 64 * 1024 * 1024 + 1 },
+    },
     message: expect.stringContaining("67108864-byte input allowance"),
   });
 });
