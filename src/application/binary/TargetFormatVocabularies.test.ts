@@ -11,7 +11,10 @@ import {
   createImmutableEvidenceBundle,
   parseEvidenceBundle,
 } from "../../domain/evidenceBundle.js";
-import type { TargetFormat } from "../../domain/targetFormats.js";
+import type {
+  BINARY_TARGET_FORMAT_KINDS,
+  TargetFormat,
+} from "../../domain/targetFormats.js";
 import { binaryTargetSummary } from "./BinaryTargetSummary.js";
 
 /**
@@ -20,8 +23,9 @@ import { binaryTargetSummary } from "./BinaryTargetSummary.js";
  * every vocabulary that persists or projects targets to accept it.
  */
 type TargetFixtures = {
-  readonly [Format in BinaryTarget["format"]]: BinaryTarget & {
+  readonly [Format in TargetFormat]: BinaryTarget & {
     readonly format: Format;
+    readonly kind: (typeof BINARY_TARGET_FORMAT_KINDS)[Format];
   };
 };
 
