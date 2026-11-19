@@ -398,6 +398,7 @@
     "isomorphic-git": "1.38.7",
     "jsonc-parser": "3.3.1",
     "lossless-json": "4.3.1",
+    "lzma-purejs": "0.9.3",
     "openpgp": "6.3.2",
     "parse5": "8.0.1",
     "pino": "10.4.0",
