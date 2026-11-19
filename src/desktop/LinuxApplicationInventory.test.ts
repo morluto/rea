@@ -703,6 +703,37 @@ const inventoryOf = async (
 describe.skipIf(process.platform === "win32")(
   "env chdir desktop launch",
   () => {
+    it("looks up a relative executable from home when the entry has an empty Path", async () => {
+      const { home, bin, environment } = await fixture();
+      const executable = join(home, "notes-in-home");
+      await writeFile(executable, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      await writeFile(
+        join(
+          environment.XDG_DATA_DIRS,
+          "applications/org.example.notes.desktop",
+        ),
+        "[Desktop Entry]\nType=Application\nName=Notes\nPath=\nExec=./notes-in-home\n",
+      );
+
+      const result = await inspectLinuxApplication({
+        desktopEntry: "org.example.notes",
+        executable: undefined,
+        arguments: [],
+        environment,
+        home,
+        callerDirectory: bin,
+      });
+      expect(result).toMatchObject({
+        ok: true,
+        value: {
+          inventory: {
+            working_directory: home,
+            executable: { resolved_path: await realpath(executable) },
+          },
+        },
+      });
+    });
+
     it("finds the executable from the selected physical directory while preserving argv and launch Path", async () => {
       const installed = await fixture();
       const { home, environment } = installed;
