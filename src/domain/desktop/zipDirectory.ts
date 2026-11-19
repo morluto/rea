@@ -3,7 +3,7 @@ import { crc32 } from "node:zlib";
 import {
   ZIP_EOCD_BYTES,
   ZIP_MAX_COMMENT_BYTES,
-  ZIP_SINGLE_VOLUME,
+  zip64EndUsesSingleVolume,
   zipEndOfCentralDirectoryCandidates,
   zipEndUsesSingleVolume,
 } from "../zipEndOfCentralDirectory.js";
@@ -63,12 +63,7 @@ const directoryEnd = (view: DataView) => {
   if (view.getUint32(record, true) === ZIP64_END) {
     if (
       !zipEndUsesSingleVolume(eocd, "zip64Classic") ||
-      !ZIP_SINGLE_VOLUME.zip64Locator.every(
-        ([field, value]) => view.getUint32(locator + field, true) === value,
-      ) ||
-      !ZIP_SINGLE_VOLUME.zip64End.every(
-        ([field, value]) => view.getUint32(record + field, true) === value,
-      )
+      !zip64EndUsesSingleVolume(view, locator, record)
     )
       return undefined;
     return {

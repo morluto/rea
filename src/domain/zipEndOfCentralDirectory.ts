@@ -51,6 +51,27 @@ export const zipEndUsesSingleVolume = (
   return allowed.includes(disk) && allowed.includes(directoryDisk);
 };
 
+/** Check the disk fields in the located Zip64 locator and end record. */
+export const zip64EndUsesSingleVolume = (
+  view: DataView,
+  locator: number,
+  end: number,
+): boolean => {
+  const reader = new BinaryReader(
+    Buffer.from(view.buffer, view.byteOffset, view.byteLength),
+    true,
+    "zip",
+  );
+  return (
+    ZIP_SINGLE_VOLUME.zip64Locator.every(
+      ([field, value]) => reader.u32(locator + field) === value,
+    ) &&
+    ZIP_SINGLE_VOLUME.zip64End.every(
+      ([field, value]) => reader.u32(end + field) === value,
+    )
+  );
+};
+
 /**
  * Observe complete classic records whose declared comment ends this window,
  * latest first. Candidate recognition does not establish directory validity,
