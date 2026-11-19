@@ -509,7 +509,11 @@ const workflowAvailabilityFor = ({
           remediation:
             "On Linux x64, set absolute REA_PWNTOOLS_PYTHON to caller-supplied Python with pwntools 4.15.0. No active binary target is required.",
         };
-  if (name === "inspect_uefi_firmware" || name === "extract_uefi_firmware")
+  if (
+    name === "inspect_uefi_firmware" ||
+    name === "extract_uefi_firmware" ||
+    name === "inspect_uefi_nvram"
+  )
     // rea-uefi is a bundled pure-TypeScript parser with one owned worker
     // lane; no external tool probe gates its availability.
     return { reason: "available", remediation: null };

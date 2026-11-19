@@ -16,6 +16,7 @@ import type { UefiAnalysisPort } from "../application/uefi/UefiAnalysisPort.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
+  AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { digestSchema } from "../domain/digests.js";
@@ -293,7 +294,55 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     }
     // Admit one operation at a time so the advertised single decode-worker lane
     // cannot become one worker per overlapping call.
-    return this.#serialize(() => this.#executeWithDeadline(request, options));
+    const signal = options?.signal;
+    if (signal?.aborted) return this.#cancelled(request, signal.reason);
+    const queued = this.#serialize(async () => {
+      // A queued request cancelled while waiting must not run behind the active
+      // one; skip it when it reaches the head of the queue.
+      if (signal?.aborted) return this.#cancelled(request, signal.reason);
+      return this.#executeWithDeadline(request, options);
+    });
+    // Let a caller stop waiting on a queued request immediately.
+    return signal === undefined
+      ? queued
+      : this.#raceWithAbort(queued, request, signal);
+  }
+
+  #cancelled(
+    request: UefiRequest,
+    reason: unknown,
+  ): Result<AnalysisExecution, AnalysisError> {
+    return {
+      ok: false,
+      error: new AnalysisCancelledError(request.operation, { cause: reason }),
+    };
+  }
+
+  #raceWithAbort(
+    queued: Promise<Result<AnalysisExecution, AnalysisError>>,
+    request: UefiRequest,
+    signal: AbortSignal,
+  ): Promise<Result<AnalysisExecution, AnalysisError>> {
+    if (signal.aborted) {
+      return Promise.resolve(this.#cancelled(request, signal.reason));
+    }
+    return new Promise<Result<AnalysisExecution, AnalysisError>>((resolve) => {
+      const onAbort = () => resolve(this.#cancelled(request, signal.reason));
+      signal.addEventListener("abort", onAbort, { once: true });
+      queued.then(
+        (result) => {
+          signal.removeEventListener("abort", onAbort);
+          resolve(result);
+        },
+        (cause: unknown) => {
+          signal.removeEventListener("abort", onAbort);
+          resolve({
+            ok: false,
+            error: uefiFailure(cause, request.operation, request.input.path),
+          });
+        },
+      );
+    });
   }
 
   #serialize<T>(task: () => Promise<T>): Promise<T> {
@@ -311,15 +360,15 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     options?: ExecutionOptions,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     const controller = new AbortController();
-    const timer = setTimeout(
-      () =>
-        controller.abort(
-          new Error(
-            `UEFI operation exceeded the ${UEFI_FIRMWARE_LIMITS.timeoutMs} ms deadline.`,
-          ),
+    let deadlineExceeded = false;
+    const timer = setTimeout(() => {
+      deadlineExceeded = true;
+      controller.abort(
+        new Error(
+          `UEFI operation exceeded the ${UEFI_FIRMWARE_LIMITS.timeoutMs} ms deadline.`,
         ),
-      UEFI_FIRMWARE_LIMITS.timeoutMs,
-    );
+      );
+    }, UEFI_FIRMWARE_LIMITS.timeoutMs);
     const parent = options?.signal;
     const onParentAbort = () => controller.abort(parent?.reason);
     if (parent !== undefined) {
@@ -327,7 +376,19 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       else parent.addEventListener("abort", onParentAbort, { once: true });
     }
     try {
-      return await this.#executeWithSignal(request, controller.signal);
+      const result = await this.#executeWithSignal(request, controller.signal);
+      // An internal deadline must surface as a timeout, not as a caller
+      // cancellation that runOwnedCommand reports for any external abort.
+      if (!result.ok && deadlineExceeded) {
+        return {
+          ok: false,
+          error: new AnalysisTimeoutError(
+            request.operation,
+            UEFI_FIRMWARE_LIMITS.timeoutMs,
+          ),
+        };
+      }
+      return result;
     } finally {
       clearTimeout(timer);
       parent?.removeEventListener("abort", onParentAbort);

@@ -99,6 +99,12 @@ export class UefiArtifactReader implements ArtifactReader {
     this.#entries.clear();
     const image = await this.#readImage(source, signal);
     const imageTruncated = source.initial.size > image.length;
+    if (imageTruncated) {
+      // Report the unread suffix through the traversal contract so inventory
+      // coverage reflects the omission even when no volume was found in the
+      // scanned prefix.
+      options?.onOmission?.({ path: "image-truncated", kind: "unsupported" });
+    }
     const scan = scanFirmwareVolumes(
       imageRegion(image, 0, image.length),
       UEFI_FIRMWARE_LIMITS.maxVolumes,
