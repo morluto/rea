@@ -21,6 +21,7 @@ import {
 import {
   DEB_PACKAGE_LIMITATIONS,
   parseDebPackage,
+  parsePax,
   undecodableTarNamesLimitation,
   unreadableRelationshipsDetail,
 } from "./DebPackageParser.js";
@@ -474,6 +475,24 @@ it("reads PAX records by byte length, so a UTF-8 path keeps the next field", () 
     (candidate) => candidate.path === "usr/share/café",
   );
   expect(entry?.link_target).toBe("target");
+});
+
+it("keeps only the PAX keys it applies, so distinct unknown keys cost no storage", () => {
+  const unknown = Array.from({ length: 10_000 }, (_, index) =>
+    paxRecord(`k${String(index)}`, ""),
+  );
+  const parsed = parsePax(
+    Buffer.concat([
+      ...unknown,
+      paxRecord("path", "./usr/share/a"),
+      paxRecord("mtime", "1"),
+      paxRecord("uname", Buffer.from([0xff])),
+    ]),
+  );
+  expect(parsed.incompleteAt).toBeUndefined();
+  expect(Object.keys(parsed.fields).sort()).toEqual(["path", "uname"]);
+  expect(parsed.fields.path).toBe("./usr/share/a");
+  expect([...parsed.undecodable]).toEqual(["uname"]);
 });
 
 it("reports a PAX path that is not UTF-8 as a limitation", () => {

@@ -440,18 +440,27 @@ type TarParse = {
   readonly undecodableNames: number;
 };
 
+type PaxKey = (typeof PAX_KEYS)[number];
+
+const PAX_KEY_SET: ReadonlySet<string> = new Set(PAX_KEYS);
+
+const isPaxKey = (key: string): key is PaxKey => PAX_KEY_SET.has(key);
+
 type PaxFields = {
-  readonly fields: Readonly<Record<string, string>>;
+  /** Only the keys in `PAX_KEYS`; other records are read and dropped. */
+  readonly fields: Readonly<Partial<Record<PaxKey, string>>>;
   /** Keys whose value is not UTF-8 and carries U+FFFD replacements. */
   readonly undecodable: ReadonlySet<string>;
   /** Offset of the first record that could not be read, if any. */
   readonly incompleteAt: number | undefined;
 };
 
-const parsePax = (bytes: Uint8Array): PaxFields => {
+export const parsePax = (bytes: Uint8Array): PaxFields => {
   // Each record is "<length> <key>=<value>\n", where <length> counts bytes,
-  // so walk the bytes and decode each record on its own.
-  const fields: Record<string, string> = {};
+  // so walk the bytes and decode each record on its own. Only the keys this
+  // reader applies are stored: a header of many short records with distinct
+  // keys would otherwise grow one object property per record.
+  const fields: Partial<Record<PaxKey, string>> = {};
   const undecodable = new Set<string>();
   // A record that cannot be read leaves the extended header's facts unknown.
   const incomplete = (at: number): PaxFields => ({
@@ -473,8 +482,8 @@ const parsePax = (bytes: Uint8Array): PaxFields => {
     if (index + length > bytes.length) return incomplete(index);
     const record = tarText(bytes.subarray(space + 1, index + length));
     const eq = record.text.indexOf("=");
-    if (eq !== -1) {
-      const key = record.text.slice(0, eq);
+    const key = eq === -1 ? undefined : record.text.slice(0, eq);
+    if (key !== undefined && isPaxKey(key)) {
       fields[key] = record.text.slice(eq + 1).replace(/\n$/u, "");
       if (record.undecodable) undecodable.add(key);
       else undecodable.delete(key);
