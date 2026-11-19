@@ -193,11 +193,11 @@ interface StaticPathFact {
   readonly base: "source-directory" | "literal-path" | "unknown";
 }
 
-/** Resolve a path string composed only from inert literal syntax. */
+/** Project path text only after its source-directory or literal base is proven. */
 export const staticPath = (
   node: t.Node,
   pathIntrinsics?: JavaScriptStaticPathIntrinsicQuery,
-): string | undefined => staticPathFact(node, pathIntrinsics)?.path;
+): string | undefined => staticFileExpressionPath(node, pathIntrinsics)?.path;
 
 /** Parse spelling and its source-directory provenance together at the owning boundary. */
 const staticPathFact = (
