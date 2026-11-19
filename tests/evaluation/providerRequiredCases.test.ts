@@ -218,3 +218,63 @@ it.each([
     );
   },
 );
+
+it.each([0, 124])(
+  "installs signal recording prerequisites only after bounded acquisition (%i)",
+  (status) => {
+    const workflow = z
+      .object({
+        jobs: z.object({
+          sigrok: z.object({
+            steps: z.array(
+              z.object({
+                name: z.string().optional(),
+                run: z.string().optional(),
+              }),
+            ),
+          }),
+        }),
+      })
+      .parse(
+        parse(
+          readFileSync(".github/workflows/real-signal-recording.yml", "utf8"),
+        ),
+      );
+    const script = workflow.jobs.sigrok.steps.find(
+      ({ name }) => name === "Install signal recording prerequisites",
+    )?.run;
+    expect(script).toBeDefined();
+    const command = `
+      sudo() {
+        printf '%s\n' "$*"
+        if [[ "$*" == *--download-only* ]]; then return ${status}; fi
+      }
+      ${script}
+    `;
+    const execute = () =>
+      execFileSync("bash", ["-eo", "pipefail", "-c", command], {
+        encoding: "utf8",
+        stdio: "pipe",
+      });
+    const download =
+      "timeout --kill-after=5s 90s apt-get -o Acquire::Retries=2 --download-only install --yes sigrok-cli util-linux python3";
+    const install =
+      "apt-get --no-download install --yes sigrok-cli util-linux python3";
+    if (status === 0) {
+      expect(execute().trim().split("\n")).toEqual([download, install]);
+    } else {
+      expect(execute).toThrow();
+      try {
+        execute();
+      } catch (error) {
+        expect(error).toMatchObject({
+          status,
+          stdout: expect.stringContaining(download),
+        });
+        expect(error).not.toMatchObject({
+          stdout: expect.stringContaining(install),
+        });
+      }
+    }
+  },
+);

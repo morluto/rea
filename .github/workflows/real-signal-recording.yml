@@ -44,7 +44,16 @@ jobs:
         uses: ./.github/actions/npm-cache
       - uses: ./.github/actions/ubuntu-archive
       - name: Install signal recording prerequisites
-        run: sudo apt-get install -y sigrok-cli util-linux python3
+        shell: bash
+        run: |
+          packages=(--yes sigrok-cli util-linux python3)
+          sudo timeout --kill-after=5s 90s \
+            apt-get -o Acquire::Retries=2 --download-only install "${packages[@]}" || {
+              status=$?
+              echo "::error::Signal recording APT package download failed (exit ${status})"
+              exit "$status"
+            }
+          sudo apt-get --no-download install "${packages[@]}"
       - run: npm ci
       - uses: ./.github/actions/portable-build-cache
         with:
