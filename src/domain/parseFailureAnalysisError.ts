@@ -25,8 +25,8 @@ const reportedRequired = (required: number | bigint): number | string =>
  * the failure's detail (prefixed with `Selected artifact <path>:` when `path`
  * names one) and `reportedLimits` comes from the failure's `LimitRef`
  * (`{ boundary: name, maximum, required? }`), so neither is spelled again at
- * the catch site. The producer still supplies the recovery, which names a
- * budget only it knows.
+ * the catch site. Existing contracts may select their established field for
+ * the maximum. The producer supplies recovery for its own budget.
  */
 export const parseLimitConstraint = (
   operation: string,
@@ -35,22 +35,25 @@ export const parseLimitConstraint = (
   options: Omit<AnalysisErrorOptions, "cause"> &
     ResourceConstraintRecovery & {
       readonly path?: string | undefined;
+      readonly legacyMaximumKey?: string;
       readonly requestSent?: boolean;
     },
 ): AnalysisResourceConstraintError => {
   const { detail, limit } = cause.failure;
-  const { path, ...errorOptions } = options;
+  const { path, legacyMaximumKey, ...errorOptions } = options;
   return new AnalysisResourceConstraintError(
     operation,
     resource,
     path === undefined ? detail : `Selected artifact ${path}: ${detail}`,
-    {
-      boundary: limit.name,
-      maximum: limit.maximum,
-      ...(limit.required === undefined
-        ? {}
-        : { required: reportedRequired(limit.required) }),
-    },
+    legacyMaximumKey === undefined
+      ? {
+          boundary: limit.name,
+          maximum: limit.maximum,
+          ...(limit.required === undefined
+            ? {}
+            : { required: reportedRequired(limit.required) }),
+        }
+      : { [legacyMaximumKey]: limit.maximum },
     { ...errorOptions, cause },
   );
 };
