@@ -1122,7 +1122,7 @@ describe("binary target I/O: explicit kinds and executable headers", () => {
       path,
       pe(0x8664, 64, 0x0002, false, {
         type: "RSDS",
-        pdbPath: "C:\\build\\test.pdb",
+        pdbPath: "C:\\build\\café.pdb",
         guid: "12345678-abcd-ef01-2345-6789abcdef01",
         age: 3,
       }),
@@ -1136,8 +1136,8 @@ describe("binary target I/O: explicit kinds and executable headers", () => {
       format: "pe",
       architecture: "x86_64",
       codeView: {
-        pdbPath: "C:\\build\\test.pdb",
-        pdbFileName: "test.pdb",
+        pdbPath: "C:\\build\\café.pdb",
+        pdbFileName: "café.pdb",
         guid: "12345678-abcd-ef01-2345-6789abcdef01",
         age: 3,
       },
@@ -1219,6 +1219,35 @@ describe("binary target I/O: explicit kinds and executable headers", () => {
         reason: `load command 1 at offset ${firstCommand.length} has invalid cmdsize 0`,
       },
     });
+  });
+});
+
+it("retains NB10 path bytes whose original ANSI code page is unavailable", async () => {
+  const directory = await createTestTempDirectory("rea-target-");
+  const path = join(directory, "legacy.exe");
+  await writeFile(
+    path,
+    pe(0x014c, 64, 2, false, {
+      type: "NB10",
+      // A valid UTF-8 byte sequence does not identify NB10's ANSI code page.
+      pdbPath: Buffer.from("443a5cc3a92e706462", "hex"),
+      age: 7,
+    }),
+  );
+  const result = await parseBinaryTarget(path, {
+    cwd: directory,
+    hostArchitecture: "ia32",
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value).toMatchObject({
+    format: "pe",
+    codeView: {
+      pdbPath: null,
+      pdbFileName: null,
+      pdbPathBytesHex: "443a5cc3a92e706462",
+      guid: null,
+      age: 7,
+    },
   });
 });
 
