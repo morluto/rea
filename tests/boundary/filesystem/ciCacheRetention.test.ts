@@ -54,6 +54,45 @@ describe("Turbo snapshot retention", () => {
     expect(deletions.reduce((sum, entry) => sum + entry.size, 0)).toBe(10);
   });
 
+  it("keeps restorable generations when another ref has newer snapshots", () => {
+    const rows = [
+      cache(1, prefix + "old-main", "2026-10-20T01:00:00Z"),
+      cache(2, prefix + "main-a", "2026-10-20T02:00:00Z"),
+      cache(3, prefix + "main-b", "2026-10-20T03:00:00Z"),
+      cache(
+        4,
+        prefix + "old-feature",
+        "2026-10-20T04:00:00Z",
+        undefined,
+        100,
+        undefined,
+        "refs/heads/feature",
+      ),
+      cache(
+        5,
+        prefix + "feature-a",
+        "2026-10-20T05:00:00Z",
+        undefined,
+        100,
+        undefined,
+        "refs/heads/feature",
+      ),
+      cache(
+        6,
+        prefix + "feature-b",
+        "2026-10-20T06:00:00Z",
+        undefined,
+        100,
+        undefined,
+        "refs/heads/feature",
+      ),
+    ];
+
+    expect(
+      selectPrefixDeletions(rows, { prefix }).map((entry) => entry.id),
+    ).toEqual([1, 4]);
+  });
+
   it("keeps an in-flight generation when the saved key is already newest", () => {
     const keepKey = `${prefix}newest`;
     const deletions = selectPrefixDeletions(
@@ -343,14 +382,13 @@ describe("cache listing and retention", () => {
     expect(deleted).toEqual([]);
   });
 
-  it("stops listing once a short page proves the inventory is complete", async () => {
+  it("keeps page boundaries stable across a cache restore", async () => {
     const requests: string[] = [];
     const caches = await listAllCaches(
       async (_method, endpoint) => {
         requests.push(endpoint);
-        const page = new URL(endpoint, "https://example.test").searchParams.get(
-          "page",
-        );
+        const query = new URL(endpoint, "https://example.test").searchParams;
+        const page = query.get("page");
         return {
           actions_caches:
             page === "1"
@@ -361,13 +399,18 @@ describe("cache listing and retention", () => {
                     "2026-10-20T01:00:00Z",
                   ),
                 )
-              : [cache(101, `${prefix}last`, "2026-10-20T02:00:00Z")],
+              : query.get("sort") === "created_at" &&
+                  query.get("direction") === "desc"
+                ? [cache(101, `${prefix}last`, "2026-10-20T00:00:00Z")]
+                : // Restoring the last entry moves it to the front under the API default.
+                  [cache(100, `${prefix}99`, "2026-10-20T01:00:00Z")],
         };
       },
       repository,
       prefix,
     );
     expect(caches).toHaveLength(101);
+    expect(caches.at(-1)?.id).toBe(101);
     expect(requests).toHaveLength(2);
   });
 

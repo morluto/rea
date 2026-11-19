@@ -1112,7 +1112,7 @@ it.each(["outside", "misaligned", "duplicate"] as const)(
       bytes.copy(bytes, 176, 120, 176);
       bytes.writeUInt16LE(3, 56);
     }
-    expect(() => readBinaryContainer(bytes)).not.toThrow();
+    expect(() => readBinaryContainer(bytes, "elf-directory")).not.toThrow();
     expect(() => link(bytes)).toThrow(
       shape === "duplicate"
         ? "multiple PT_DYNAMIC segments"

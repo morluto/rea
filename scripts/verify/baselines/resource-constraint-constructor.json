@@ -103,7 +103,7 @@
   "src/kuna/KunaReferenceQueries.ts": 1,
   "src/kuna/KunaSessionClient.ts": 1,
   "src/main/StdioStartupInput.ts": 1,
-  "src/model/ModelArtifactProvider.ts": 3,
+  "src/model/ModelArtifactProvider.ts": 2,
   "src/native/AppleDispatchMetadata.ts": 1,
   "src/native/LldbCallTracer.ts": 1,
   "src/native/NativeCommandAnalysisError.ts": 1,

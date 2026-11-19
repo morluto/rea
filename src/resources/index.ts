@@ -39,6 +39,7 @@ export {
   artifactReadCancelledBy,
   artifactSelectedPathErrno,
   assertArtifactReadActive,
+  yieldArtifactRead,
   bindArtifactFileCleanup,
   mapArtifactFileFailure,
   withArtifactFileHandle,

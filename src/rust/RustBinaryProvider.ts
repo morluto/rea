@@ -13,6 +13,7 @@ import {
   type ArtifactFilePrimaryFacts,
   artifactFileCancellationCause,
   assertArtifactReadActive,
+  yieldArtifactRead,
   ArtifactResourceScope,
   ArtifactReaderFailure,
 } from "../resources/index.js";
@@ -37,6 +38,7 @@ import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   readRustBinaryImage,
+  readRustBinaryImageCooperative,
   type RustBinaryImage,
 } from "./RustBinaryImage.js";
 import { requireSelectedNativeImage } from "../domain/apple/machoSliceSelection.js";
@@ -121,11 +123,18 @@ export class RustBinaryProvider implements RustBinaryPort {
           input.architecture,
         );
         const image = inFile(
-          readRustBinaryImage(
-            selected.bytes,
-            input.max_rustc_hashes,
-            limits.output_bytes,
-          ),
+          options?.signal === undefined
+            ? readRustBinaryImage(
+                selected.bytes,
+                input.max_rustc_hashes,
+                limits.output_bytes,
+              )
+            : await readRustBinaryImageCooperative(
+                selected.bytes,
+                input.max_rustc_hashes,
+                limits.output_bytes,
+                () => yieldArtifactRead(options.signal),
+              ),
           selected.fileOffset,
         );
         const report: RustBinary = {
@@ -229,7 +238,7 @@ const limitationsFor = (
   `Only the .dep-v0 dependency section and compiler path strings in ${compilerPathSource(image.format)} are inspected. Functions, types, and runtime behavior are not recovered.`,
   ...(image.format === "wasm"
     ? [
-        `WebAssembly declares no container word size, so bits is null. Memory address types were not inspected. Section framing is bounded to ${MAX_WASM_SECTIONS} sections.`,
+        `WebAssembly declares no container word size, so bits is null. Memory address types were not inspected. At most ${MAX_WASM_SECTIONS} section payloads are examined.`,
       ]
     : []),
   RUST_RESOURCE_GUARD_LIMITATION,

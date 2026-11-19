@@ -6,6 +6,10 @@ import {
   BinaryFormatFailure,
   BinaryResourceFailure,
 } from "../../../src/domain/binaryContainer.js";
+import {
+  MAX_LOAD_COMMAND_BYTES,
+  readSliceCommandTable,
+} from "../../../src/domain/apple/machoLoadCommandReader.js";
 import { readMachoLoadCommandTableHeader } from "../../../src/domain/apple/machoLoadCommands.js";
 import { readBinaryContainer } from "../../../src/domain/native/readBinaryContainer.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
@@ -49,6 +53,52 @@ const commandImage = (
 };
 
 it.each([
+  {
+    label: "an oversized declaration outside the slice",
+    tableBytes: MAX_LOAD_COMMAND_BYTES + 8,
+    count: 1,
+    length: 32,
+    status: "malformed",
+    reason: /extend beyond/,
+  },
+  {
+    label: "an impossible count in a backed oversized table",
+    tableBytes: MAX_LOAD_COMMAND_BYTES + 8,
+    count: 0xffffffff,
+    length: 32 + MAX_LOAD_COMMAND_BYTES + 8,
+    status: "malformed",
+    reason: /count.*cannot fit/,
+  },
+  {
+    label: "a plausible count in a backed oversized table",
+    tableBytes: MAX_LOAD_COMMAND_BYTES + 8,
+    count: 1,
+    length: 32 + MAX_LOAD_COMMAND_BYTES + 8,
+    status: "unsupported",
+    reason: /above the .* limit/,
+  },
+])("reports $label before reading its payload", async (fixture) => {
+  const header = commandImage(true, true, []);
+  header.writeUInt32LE(fixture.count, 16);
+  header.writeUInt32LE(fixture.tableBytes, 20);
+  const reads: number[] = [];
+  const result = await readSliceCommandTable(
+    async (offset, size) => {
+      reads.push(offset);
+      return header.subarray(offset, offset + size);
+    },
+    0,
+    fixture.length,
+  );
+  expect(result).toMatchObject({
+    status: fixture.status,
+    reason: expect.stringMatching(fixture.reason),
+    header: { commandCount: fixture.count, commandBytes: fixture.tableBytes },
+  });
+  expect(reads).toEqual([0]);
+});
+
+it.each([
   { label: "undersized", field: 36, value: 4 },
   { label: "unaligned", field: 36, value: 12 },
   { label: "outside table", field: 36, value: 0xffffffff },
@@ -67,7 +117,9 @@ it.each([
     );
     await writeFile(path, bytes);
     expect(parseExecutableHeader(bytes, "arm64").ok).toBe(false);
-    expect(() => readBinaryContainer(bytes)).toThrow(/load command/iu);
+    expect(() => readBinaryContainer(bytes, "elf-directory")).toThrow(
+      /load command/iu,
+    );
     const resolved = await parseBinaryTarget(path);
     expect(resolved.ok).toBe(false);
     if (resolved.ok || !(resolved.error instanceof BinaryTargetError))
@@ -94,7 +146,7 @@ it.each([
       "image",
     );
     await writeFile(path, bytes);
-    expect(readBinaryContainer(bytes)).toMatchObject({
+    expect(readBinaryContainer(bytes, "elf-directory")).toMatchObject({
       format: "macho",
       bits: wide ? 64 : 32,
       byte_order: littleEndian ? "little" : "big",
@@ -169,8 +221,10 @@ const OVERSIZED_COMMAND_BYTES = 16 * 1024 * 1024 + 8;
 it("reports truncation when an oversized command table cannot fit the file", () => {
   const bytes = commandImage(true, true, [16]);
   bytes.writeUInt32LE(OVERSIZED_COMMAND_BYTES, 20);
-  expect(() => readBinaryContainer(bytes)).toThrow(BinaryFormatFailure);
-  expect(() => readBinaryContainer(bytes)).toThrow(
+  expect(() => readBinaryContainer(bytes, "elf-directory")).toThrow(
+    BinaryFormatFailure,
+  );
+  expect(() => readBinaryContainer(bytes, "elf-directory")).toThrow(
     expect.objectContaining({
       kind: "truncated",
       failure: expect.objectContaining({ field: "Mach-O load commands" }),
@@ -188,5 +242,7 @@ it("retains the native capacity result for a backed oversized command table", ()
     ok: true,
     value: { commandBytes: OVERSIZED_COMMAND_BYTES },
   });
-  expect(() => readBinaryContainer(bytes)).toThrow(BinaryResourceFailure);
+  expect(() => readBinaryContainer(bytes, "elf-directory")).toThrow(
+    BinaryResourceFailure,
+  );
 });

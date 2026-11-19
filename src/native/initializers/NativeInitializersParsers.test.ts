@@ -36,7 +36,11 @@ vi.mock("../../domain/binaryContainer.js", async (importOriginal) => {
   };
 });
 /** Element reads of every parsed ELF section table, so tests can count section walks. */
-const sectionReads = vi.hoisted(() => ({ count: 0, budget: Infinity }));
+const sectionReads = vi.hoisted(() => ({
+  count: 0,
+  budget: Infinity,
+  directories: 0,
+}));
 vi.mock(
   "../../domain/native/nativeSectionDirectory.js",
   async (importOriginal) => {
@@ -49,6 +53,7 @@ vi.mock(
       readElfDirectoryFromBuffer: (
         ...args: Parameters<typeof actual.readElfDirectoryFromBuffer>
       ) => {
+        sectionReads.directories += 1;
         const directory = actual.readElfDirectoryFromBuffer(...args);
         return {
           ...directory,
@@ -137,6 +142,13 @@ it.each([
     });
   },
 );
+
+it("uses one ELF directory for initializer mappings and section facts", async () => {
+  sectionReads.directories = 0;
+  const report = await read(elf64PieInitializers());
+  expect(report.entries.length).toBeGreaterThan(0);
+  expect(sectionReads.directories).toBe(1);
+});
 
 it("preserves a real mapping to file offset zero instead of treating zero as missing", async () => {
   const bytes = elfUnmappedInitializerTargets({ type: 3 });

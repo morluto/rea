@@ -2,6 +2,7 @@ import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import { parseJsonWithDuplicatePolicy } from "../domain/jsonDuplicateMember.js";
+import { retainRoundedAsarSize } from "../domain/asarNode.js";
 
 import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
@@ -460,7 +461,10 @@ export const parseAsarHeaderJson = (bytes: Uint8Array): unknown => {
       { cause },
     );
   }
-  const parsed = parseJsonWithDuplicatePolicy(json, "reject");
+  const parsed = parseJsonWithDuplicatePolicy(json, "reject", {
+    name: "size",
+    read: retainRoundedAsarSize,
+  });
   if (!parsed.ok) {
     if (parsed.duplicate !== undefined)
       throw new ArtifactReaderFailure(

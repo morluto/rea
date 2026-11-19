@@ -2524,12 +2524,13 @@ Custom clients upgrading from 6.1 should follow the
 [6.2 migration guide](../migrations/migration-6.2.md#mcp-results-and-evidence).
 
 Run `npm run docs:generate` in a source checkout to generate the machine-readable
-catalog at `docs/public/product-catalog.json`. Documentation deployments serve
-the same file at [/rea/product-catalog.json](../public/product-catalog.json). PR CI retains it with the packaged
-skill and portable conformance projections in the `generated-docs` artifact.
-These outputs describe the exact source revision being built; they are not
-checked-in snapshots. For a running server, `binary_session` remains the
-authoritative source of catalog identity and tool availability.
+catalog at `docs/public/product-catalog.json`. Run `npm run docs:build` and
+`npm run docs:preview` to serve it locally at `/rea/product-catalog.json`. A
+successful [CI documentation job](https://github.com/morluto/rea/blob/main/.github/workflows/ci.yml)
+uploads the catalog, packaged skill, and portable conformance projections in
+the `generated-docs` artifact. These copies describe the source revision that
+generated them. For a running server, use `binary_session` for catalog identity
+and tool availability.
 
 ## Offline Playwright traces
 

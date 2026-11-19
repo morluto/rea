@@ -20,6 +20,7 @@ import {
 } from "./machoSegmentHeader.js";
 import {
   MachoLoadCommandCursor,
+  machoCommandTableIssue,
   readMachoLoadCommandDeclarations,
 } from "./machoLoadCommands.js";
 import {
@@ -34,6 +35,8 @@ import type { SelectedNativeImage } from "./machoSliceSelection.js";
 /** One mapped Mach-O segment with file-backed VA range. */
 export interface Segment {
   address: bigint;
+  /** Declared VM base when a leading zero-fill separates it from file backing. */
+  declaredAddress?: bigint;
   size: bigint;
   offset: number;
   executable: boolean;
@@ -127,9 +130,14 @@ export const parseMachoLayout = (
         undecodedContent: true,
       },
     );
-  const commandEnd = slice + table.headerSize + table.commandBytes;
-  if (commandEnd > sliceEnd)
-    throw malformedInput("macho", "Malformed Mach-O command bounds");
+  const issue = machoCommandTableIssue(table, selectedBytes.length);
+  if (issue !== null)
+    throw malformedInput(
+      "macho",
+      issue.kind === "extent"
+        ? "Malformed Mach-O command bounds"
+        : issue.message,
+    );
   const state: LayoutState = {
     slice,
     sliceEnd,
@@ -236,7 +244,6 @@ const collectSegment = (
   if (!parsed.ok) throw truncatedInput("macho", "Truncated segment command");
   const {
     address,
-    memorySize,
     nameBytes,
     fileSize,
     fileOffset,
@@ -246,33 +253,27 @@ const collectSegment = (
   } = parsed.value;
   const admitted = admitMachoSegmentMapping(parsed.value, 64);
   if (!admitted.ok) throw malformedInput("macho", admitted.error.message);
+  const { unmapped, fileAddress, zeroFill } = admitted.value;
   if (fileOffset + fileSize > BigInt(state.sliceEnd - state.slice))
     throw malformedInput("macho", "Segment file range exceeds target bytes");
   const name = decodeMachoFixedName(nameBytes);
   state.segments.push({
-    address,
+    address: fileAddress,
+    ...(fileAddress === address ? {} : { declaredAddress: address }),
     size: fileSize,
     offset: state.slice + Number(fileOffset),
     executable: (protection & 4) !== 0,
   });
-  if (!admitted.value.unmapped && name !== "__PAGEZERO")
+  if (!unmapped && name !== "__PAGEZERO")
     state.mappings.push({
-      address,
+      address: fileAddress,
       size: Number(fileSize),
       offset: state.slice + Number(fileOffset),
     });
-  if (memorySize > fileSize && name !== "__PAGEZERO")
-    state.zeroFills.push({
-      address: address + fileSize,
-      size: memorySize - fileSize,
-    });
-  if (
-    !admitted.value.unmapped &&
-    name !== "__PAGEZERO" &&
-    fileOffset === 0n &&
-    fileSize > 0n
-  )
-    state.baseAddress ??= address;
+  if (zeroFill !== null && name !== "__PAGEZERO")
+    state.zeroFills.push(zeroFill);
+  if (!unmapped && name !== "__PAGEZERO" && fileOffset === 0n && fileSize > 0n)
+    state.baseAddress ??= fileAddress;
   if (!machoSegmentSectionTableFits(parsed.value, size, true))
     throw truncatedInput("macho", "Truncated section table");
   const sectionWidth = machoSectionHeaderSize(true);
@@ -341,6 +342,7 @@ const collectFixupCommand = (
   } else if (machoDependencyCommand(kind) !== null) {
     const parsed = readMachoDylibCommandFacts(
       bytes.subarray(cursor, cursor + size),
+      kind,
       true,
     );
     if (!parsed.ok) {
