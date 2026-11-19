@@ -53,8 +53,8 @@ const catalog: RecordedMcpCatalog = {
       outputSchema: z.toJSONSchema(output),
     },
   ],
-  toolFamilies: {},
-  promptRequirements: {},
+  toolFamilies: { fixture: "artifact" },
+  promptRequirements: { explain: ["fixture"] },
   evidenceReferenceAlternatives: [],
   prompts: [
     {
