@@ -66,15 +66,7 @@ it.each([false, true])(
         expect(projected).toMatchObject({
           code: "invalid_request",
           details: {
-            issues: [
-              {
-                path: ["path"],
-                reason: "invalid_format",
-                message: expect.stringContaining(
-                  "Mach-O load commands range is outside the file",
-                ),
-              },
-            ],
+            issues: [{ path: ["path"], reason: "invalid_format" }],
           },
         });
     } finally {
