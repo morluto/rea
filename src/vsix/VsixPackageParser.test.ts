@@ -1,6 +1,11 @@
 import { ParseFailureError } from "../domain/parseFailure.js";
 import { expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { VsixPackageProvider } from "./VsixPackageProvider.js";
 import { ZipReader } from "@zip.js/zip.js";
 
 import {
@@ -413,6 +418,49 @@ it("refuses a vsixmanifest with more XML nodes than its tree allowance", async (
       },
     },
   });
+});
+
+it("reports the vsixmanifest node refusal as a fixed parser allowance", async () => {
+  const root = await createTestTempDirectory("rea-vsix-xml-nodes-");
+  const path = join(root, "demo.hello-1.2.3.vsix");
+  await writeFile(
+    path,
+    await vsixPackageFixture({
+      vsixmanifest: `<PackageManifest>${"<x/>".repeat(MAX_INSPECT_VSIX_PACKAGE_MANIFEST_XML_NODES)}</PackageManifest>`,
+    }),
+  );
+  const provider = new VsixPackageProvider();
+  try {
+    const result = await provider.inspect(
+      inspectVsixPackageInputSchema.parse({
+        path,
+        max_manifest_bytes: MAX_INSPECT_VSIX_PACKAGE_MANIFEST_BYTES,
+      }),
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({
+      retryable: false,
+      fixedAllowance: {
+        kind: "parser",
+        limit: MAX_INSPECT_VSIX_PACKAGE_MANIFEST_XML_NODES,
+        unit: "nodes",
+      },
+    });
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      remediation: {
+        action: expect.stringContaining(
+          `${String(MAX_INSPECT_VSIX_PACKAGE_MANIFEST_XML_NODES)}-node allowance`,
+        ),
+      },
+    });
+    expect(JSON.stringify(projected)).not.toMatch(/more memory|Raise /);
+  } finally {
+    await provider.close();
+  }
 });
 
 it("lists an oversize interesting member without a digest", async () => {

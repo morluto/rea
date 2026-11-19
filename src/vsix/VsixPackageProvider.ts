@@ -21,6 +21,7 @@ import {
 import { decodeLimit } from "../domain/parseFailure.js";
 import { fixedCeilingConstraint } from "../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import {
   VSIX_PACKAGE_FORMAT,
   VSIX_PACKAGE_LIMIT_MAXIMA,
@@ -52,6 +53,15 @@ const vsixFailurePrimary = (
   );
   if (identityFailure !== undefined) return identityFailure;
   if (isParseLimit(cause, VSIX_PACKAGE_FORMAT)) {
+    if (cause.failure.limit.name === "xml_nodes")
+      return parseLimitConstraint(OPERATION, "memory", cause, {
+        path: input.path,
+        ...fixedAllowanceOptions(
+          `The ${String(cause.failure.limit.maximum)}-node allowance for an extension.vsixmanifest document tree`,
+          "parser",
+          { limit: cause.failure.limit.maximum, unit: "nodes" },
+        ),
+      });
     const parameter = (
       Object.keys(
         VSIX_PACKAGE_LIMIT_MAXIMA,
