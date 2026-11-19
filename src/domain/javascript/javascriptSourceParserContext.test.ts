@@ -28,8 +28,8 @@ import {
 } from "./javascriptSourceParser.js";
 
 it.each([
-  ["entry.cts", ["ReservedArrowTypeParam", "ReservedTypeAssertion"]],
-  ["entry.mts", ["ReservedArrowTypeParam", "ReservedTypeAssertion"]],
+  ["entry.cts", ["ReservedArrowTypeParam"]],
+  ["entry.mts", ["ReservedArrowTypeParam"]],
   ["entry.ts", []],
 ] as const)(
   "applies the TypeScript suffix grammar for %s and preserves recovered declarations",
@@ -236,12 +236,7 @@ it.each([
 ] as const)(
   "preserves parser-owned %s context over an observed %s package type",
   (path, observed, expected) => {
-    const parsed = parseRecoveredJavaScript(
-      "",
-      path,
-      {},
-      observed,
-    );
+    const parsed = parseRecoveredJavaScript("", path, {}, observed);
     expect(parsed.file.errors).toEqual([]);
     expect(parsed.moduleOnlyErrors).toEqual([]);
     expect(javaScriptRuntimeContext(parsed.file.program)).toBe(expected);

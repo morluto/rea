@@ -260,9 +260,17 @@ const parseBabelFile = (
   source: string,
   options: ParserOptions,
 ): ParsedJavaScriptSource => {
-  const { comments, tokens, ...file } = parse(source, options);
+  const { comments, tokens, errors, ...file } = parse(source, options);
   return {
     ...file,
+    // Babel couples the ambiguous generic-arrow diagnostic with a legacy
+    // assertion restriction. Modern TypeScript accepts the recovered assertion.
+    errors:
+      errors.length === 0
+        ? errors
+        : errors.filter(
+            ({ reasonCode }) => reasonCode !== "ReservedTypeAssertion",
+          ),
     ...(comments === undefined ? {} : { comments }),
     ...(tokens === undefined ? {} : { tokens }),
   };
@@ -432,8 +440,8 @@ const parseWithRuntimeContext = (
  *   `a<b>(c)` as a generic call), so it must not select their meaning.
  * - JSX enabled for `.tsx` and unknown paths; disabled for plain
  *   `.ts/.cts/.mts` (angle-bracket assertions, not JSX) and for all
- *   declaration files. `.cts/.mts` and their declaration files use Babel's
- *   explicit-module-suffix restrictions for JSX-like TypeScript syntax.
+ *   declaration files. `.cts/.mts` and their declaration files report
+ *   ambiguous generic arrows using Babel's explicit-module-suffix option.
  * - `sourcePhaseImports` retains Node-supported WASM source imports as AST data.
  * - `decorators-legacy` always present: without it decorated sources fail
  *   hard instead of reporting recovered syntax, losing every derived fact.
