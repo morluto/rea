@@ -794,7 +794,7 @@ it.each(["", "not-a-commit"])(
   },
 );
 
-it("selects only a trusted successful ancestor from recent CI push runs", async ({
+it("selects a completed CI ancestor rather than a foreign or non-terminal run", async ({
   skip,
 }) => {
   skip(process.platform === "win32", "the fake gh is a POSIX shell script");
@@ -812,6 +812,8 @@ it("selects only a trusted successful ancestor from recent CI push runs", async 
     JSON.stringify({
       workflow_runs: [
         {
+          status: "completed",
+          path: ".github/workflows/ci.yml@refs/heads/main",
           event: "push",
           conclusion: "success",
           head_branch: "main",
@@ -819,6 +821,26 @@ it("selects only a trusted successful ancestor from recent CI push runs", async 
           head_sha: foreignBase,
         },
         {
+          status: "in_progress",
+          path: ".github/workflows/ci.yml@refs/heads/main",
+          event: "push",
+          conclusion: "success",
+          head_branch: "main",
+          head_repository: { full_name: "owner/repo" },
+          head_sha: foreignBase,
+        },
+        {
+          status: "completed",
+          path: ".github/workflows/release.yml@refs/heads/main",
+          event: "push",
+          conclusion: "success",
+          head_branch: "main",
+          head_repository: { full_name: "owner/repo" },
+          head_sha: foreignBase,
+        },
+        {
+          status: "completed",
+          path: ".github/workflows/ci.yml@refs/heads/main",
           event: "push",
           conclusion: "success",
           head_branch: "main",
