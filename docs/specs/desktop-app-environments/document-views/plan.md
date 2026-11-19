@@ -1,6 +1,7 @@
 # Plan
 
-1. Format and reader: `zip` detected by its local file header; the text, JSON,
+1. Format and reader: `zip` detected by its local file header or an empty
+   classic/Zip64 archive signature; the text, JSON,
    key file and XML readers shared as `textualView`, so a file and an entry
    read alike; a domain module for the entry limits, the entry view and the
    archive view, and an application reader that walks the verified bytes with

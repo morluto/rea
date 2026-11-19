@@ -82,7 +82,7 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisUnsupportedTargetError,
-  AnalysisResourceConstraintError,
+  type AnalysisResourceConstraintError,
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
@@ -159,11 +159,12 @@ import {
   withNativeMachoSource,
   NativeMachoSourceVerificationFailure,
 } from "./NativeMachoSource.js";
-import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 import {
-  MachoCommandNamesLimitError,
-  readMachoCommandNames,
-} from "../domain/apple/machoCommandNames.js";
+  isParseLimit,
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../domain/parseFailureAnalysisError.js";
+import { readMachoCommandNames } from "../domain/apple/machoCommandNames.js";
 import {
   assertSelectedMachoSlice,
   resolveSelectedMachoSlice,
@@ -1766,15 +1767,10 @@ const nativeMachoSourcePrimary = (
   operation: "inspect_macho" | "list_architectures",
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
-  if (cause instanceof MachoCommandNamesLimitError)
-    return new AnalysisResourceConstraintError(
-      operation,
-      "memory",
-      cause.message,
-      { maximum: cause.maximum, unit: cause.unit },
-      { cause, retryable: false },
-    );
-  // The selected Mach-O's own bytes failed to parse; a limit falls through.
+  if (isParseLimit(cause, "macho"))
+    return parseLimitConstraint(operation, "memory", cause, {
+      retryable: false,
+    });
   const formatFailure = parseFailureAnalysisError(operation, path, cause);
   if (formatFailure !== undefined) return formatFailure;
   const completed =

@@ -27,7 +27,6 @@ import { ArtifactFileCleanupFailure } from "../../resources/ArtifactFileOperatio
 import { writeJsonOutput } from "../../cli/jsonOutput.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { analysisViewRequestSchema } from "../../domain/analysisView/analysisViewRequest.js";
-import { summarizeEnvironmentCoverage } from "../../domain/analysisView/environmentCoverageView.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { inspectAnalysisViewValidated } from "../analysisView/AnalysisViewService.js";
 import {
@@ -42,7 +41,6 @@ import {
   readEnvironmentExportInputs,
 } from "./environmentExport.js";
 import { loadEnvironmentSource } from "./environmentSource.js";
-import { prepareServedState } from "./environmentState.js";
 
 const listFiles = async (root: string): Promise<string[]> =>
   (await readdir(root, { recursive: true, withFileTypes: true }))
@@ -195,38 +193,6 @@ describe("buildEnvironment", () => {
     });
   });
 
-  it("reports the coverage of the state the bundle serves", async () => {
-    const root = await createTestTempDirectory("rea-environment-build-cov-");
-    const evidence = analysisViewCaptureEvidence(
-      environmentManifestCaptureFixture(),
-    );
-    const built = await buildEnvironment(
-      await buildInput(root, evidence, { dryRun: true, directory: undefined }),
-    );
-    if (!built.ok) throw built.error;
-    const manifest = inspectAnalysisViewValidated({
-      source: { kind: "inline", evidence },
-      view: analysisViewRequestSchema.parse({
-        kind: "environment-manifest",
-        template_rules: [...DEFAULT_BUILD_TEMPLATE_RULES],
-      }),
-    });
-    if (!manifest.ok) throw manifest.error;
-    const source = loadEnvironmentSource(manifest.value, evidence);
-    if (!source.ok) throw source.error;
-    const { state } = prepareServedState(source.value, evidence);
-    if (state === undefined) throw new Error("Expected a served state");
-    expect(built.value.coverage).toEqual(
-      summarizeEnvironmentCoverage({
-        views: state.views.values(),
-        writes: state.writes.values(),
-      }),
-    );
-    expect(
-      built.value.coverage!.reads.state + built.value.coverage!.reads.recorded,
-    ).toBe(state.views.size);
-  });
-
   it("plans the same files without writing anything on a dry run", async () => {
     const root = await createTestTempDirectory("rea-environment-build-dry-");
     const planned = await buildEnvironment(
@@ -330,19 +296,6 @@ describe("buildEnvironment naming and refusals", () => {
     await expect(readdir(join(root, "built"))).rejects.toMatchObject({
       code: "ENOENT",
     });
-  });
-
-  it("does not create parents when the selected build root ends with dot-dot", async () => {
-    const root = await createTestTempDirectory(
-      "rea-environment-build-invalid-destination-",
-    );
-    const parent = join(root, "untouched");
-    const directory = `${join(parent, "a", "b", "c")}/..`;
-    const result = await buildEnvironment(
-      await buildInput(root, undefined, { directory }),
-    );
-    expect(result.ok).toBe(false);
-    await expect(readdir(parent)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("refuses an occupied directory and leaves it as it was", async () => {

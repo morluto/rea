@@ -25,8 +25,11 @@ const SOURCE = [
 ].join("\n");
 
 /** Feed the text in fixed-size pieces so headers straddle chunk boundaries. */
-async function* chunked(text: string, size: number): AsyncGenerator<Buffer> {
-  const bytes = Buffer.from(text);
+async function* chunked(
+  text: string | Buffer,
+  size: number,
+): AsyncGenerator<Buffer> {
+  const bytes = typeof text === "string" ? Buffer.from(text) : text;
   for (let offset = 0; offset < bytes.length; offset += size)
     yield bytes.subarray(offset, offset + size);
 }
@@ -205,3 +208,41 @@ it("indexes code listings and data labels in Kuna's .asm", async () => {
     await scanKunaAssembly(chunked("a:  ; 0x10\n\nb:  ; 0x10\n", 64)),
   ).toEqual({ ok: false, error: "the .asm repeats code address 0x10" });
 });
+
+it.each([
+  {
+    scan: (bytes: Buffer) =>
+      scanKunaProjectSource(chunked(bytes, 1), { decompiled: 1, failed: 0 }),
+    prefix: '#include "sample.h"\n\n',
+    head: "// Function: ",
+    tail: " @ 0x1000\n",
+  },
+  {
+    scan: (bytes: Buffer) => scanKunaAssembly(chunked(bytes, 1)),
+    prefix: "; code\n",
+    head: "",
+    tail: ":  ; 0x1000",
+  },
+])(
+  "validates complete structural lines before indexing them",
+  async ({ scan, prefix, head, tail }) => {
+    const bytesWithName = (name: Buffer) =>
+      Buffer.concat([Buffer.from(prefix + head), name, Buffer.from(tail)]);
+    const invalid = await scan(bytesWithName(Buffer.from([0xff])));
+    expect(invalid).toEqual({
+      ok: false,
+      error: expect.stringContaining(
+        `the structural line at byte ${Buffer.byteLength(prefix)} is not valid UTF-8`,
+      ),
+    });
+    const valid = await scan(bytesWithName(Buffer.from("�Δ")));
+    const functions = valid.ok
+      ? "code" in valid.value
+        ? [...valid.value.code.values()]
+        : valid.value
+      : [];
+    expect(functions).toEqual([
+      expect.objectContaining({ name: "�Δ", address: "0x1000" }),
+    ]);
+  },
+);

@@ -556,6 +556,39 @@ it("routes license inventories to docs checks and keeps blame-ignore edits forma
     runtime: false,
     package: false,
   });
+  for (const staticOnly of [
+    "scripts/lib/module-layers.baseline.json",
+    "scripts/verify/architecture-guards.mjs",
+    "scripts/verify/baselines/raw-buffer-read.json",
+    "tsconfig.scripts.json",
+  ]) {
+    expect(await classifyPaths([staticOnly]), staticOnly).toMatchObject({
+      code: true,
+      docs: false,
+      runtime: false,
+      package: false,
+    });
+  }
+  for (const docsAndCode of [
+    "scripts/check-doc-facts.mjs",
+    "scripts/lib/product-catalog.mjs",
+  ]) {
+    expect(await classifyPaths([docsAndCode]), docsAndCode).toMatchObject({
+      code: true,
+      docs: true,
+      runtime: false,
+      package: false,
+    });
+  }
+  expect(
+    await classifyPaths([
+      ".cursor-plugin/skills/reverse-engineer-anything/SKILL.md",
+    ]),
+  ).toMatchObject({
+    docs: true,
+    runtime: true,
+    package: false,
+  });
 });
 
 it("passes the workflow environment through the entrypoint unchanged", async () => {
@@ -917,12 +950,20 @@ it("retains native Inspector verification on every documented package host", asy
       { os: "macos-15-intel", platform: "darwin", architecture: "x64" },
     ],
   });
-  const windowsInspector = stepSchema.parse(
-    workflow.jobs["windows-curated"].steps.find(
-      (step) => step.run === "npm run verify:inspector",
-    ),
+  const windowsSteps = workflow.jobs["windows-curated"].steps;
+  const windowsBuild = windowsSteps.findIndex(
+    (step) => step.run === "npm run build:cached",
   );
-  expect(windowsInspector.if).toBeUndefined();
+  expect(windowsBuild).toBeGreaterThanOrEqual(0);
+  expect(windowsSteps[windowsBuild]?.if).toBeUndefined();
+  for (const verifier of [
+    "node scripts/verify/inspector/runtime-observation.mjs",
+    "node scripts/verify-windows-package.mjs",
+  ]) {
+    const step = windowsSteps.findIndex(({ run }) => run === verifier);
+    expect(step).toBeGreaterThan(windowsBuild);
+    expect(windowsSteps[step]?.if).toBeUndefined();
+  }
 });
 
 it.each([
@@ -1006,6 +1047,8 @@ it.each([
     { code: false, website: true, package: false },
   ],
   ["scripts/website_i18n.py", { code: false, website: true, package: false }],
+  ["scripts/read-authored-skill-manifest.mjs", { website: true }],
+  ["src/domain/skillManifest.ts", { website: true }],
   [
     "docs/readme/README_ja.md",
     { code: false, docs: true, website: true, package: false },
@@ -1030,6 +1073,7 @@ it.each([
     {
       code: true,
       runtime: true,
+      website: true,
       package: true,
       evm: false,
       browser: false,
@@ -1069,6 +1113,10 @@ it.each([
     { code: true, ghidra_bridge: true, runtime: false, package: false },
   ],
   [
+    "scripts/verify-ghidra-prototype-conflicts.mjs",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
     "tests/conformance/ghidra/ReaLoaderRelocationProbe.java",
     { code: true, ghidra_bridge: true, runtime: false, package: false },
   ],
@@ -1102,6 +1150,10 @@ it.each([
   ],
   [
     "tests/conformance/ghidra/ReaDecodeProbe.java",
+    { ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "tests/conformance/ghidra/ReaPrototypeConflictProbe.java",
     { ghidra_bridge: true, runtime: false, package: false },
   ],
   [
@@ -1184,6 +1236,14 @@ it.each([
   [
     "src/domain/windowsNativeArtifact.ts",
     { code: true, runtime: true, package: true },
+  ],
+  [
+    ".github/actions/windows-cross-compiler/action.yml",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    ".github/actions/ubuntu-archive/action.yml",
+    { code: true, runtime: true, package: true, binary_layout: true },
   ],
   ["src/domain/peCoffHeader.ts", { code: true, runtime: true, package: true }],
   ["src/domain/dosMz.ts", { code: true, runtime: true, package: true }],
@@ -1749,10 +1809,6 @@ it.each([
   ],
   [
     ".github/workflows/release.yml",
-    { workflows: true, code: true, package: false, website: false },
-  ],
-  [
-    ".github/workflows/pr-readiness.yml",
     { workflows: true, code: true, package: false, website: false },
   ],
   [

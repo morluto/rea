@@ -7,11 +7,9 @@ import {
   TOOL_CONTRACTS,
   toolContract,
 } from "../../../src/contracts/toolContracts.js";
-import { PROMPT_CONTRACTS } from "../../../src/contracts/promptContracts.js";
 import { advertisedInputJsonSchema } from "../../../src/contracts/toolSchemaMetadata.js";
 import { advertiseTool } from "../../../src/contracts/advertisedTool.js";
 import { createCatalogDigests } from "../../../src/contracts/catalog/catalogIdentity.js";
-import { parseMcpInputSchemaProfile } from "../../../src/config/mcpInputSchemaProfile.js";
 import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
@@ -69,65 +67,35 @@ const canonicalTools = (): readonly AdvertisedTool[] =>
     inputSchema: advertisedInputJsonSchema(contract),
   }));
 
-describe("MCP compact input schema profile", () => {
-  it("matches the catalog digest to tools/list and excludes stripped annotations", async () => {
-    const compactPresentation = {
-      budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
-    };
-    const compact = compactServer();
-    registerCatalog(compact);
-    const compactTools = new Map(
-      (await listToolsThroughTransport(compact)).map((tool) => [
-        tool.name,
-        tool,
-      ]),
-    );
-    for (const contract of TOOL_CONTRACTS)
-      expect(compactTools.get(contract.name)?.inputSchema).toEqual(
-        advertiseTool(
-          { inputSchema: advertisedInputJsonSchema(contract) },
-          advertisedToolPresentation("off", compactPresentation),
-        ).inputSchema,
-      );
-
-    const compactIdentity = createCatalogDigests();
-    expect(compact.catalogIdentity.digests).toEqual(compactIdentity);
-    expect(
-      createCatalogDigests(TOOL_CONTRACTS, PROMPT_CONTRACTS, {
-        budgetBytes: 1,
-      }).tools_sha256,
-    ).not.toBe(compactIdentity.tools_sha256);
-
-    // Examples are not advertised, so they do not change the identity.
-    const withoutExamples = TOOL_CONTRACTS.map((contract) =>
-      contract.examples.length === 0 ? contract : { ...contract, examples: [] },
-    );
-    expect(createCatalogDigests(withoutExamples).tools_sha256).toBe(
-      compactIdentity.tools_sha256,
-    );
-  });
-});
-
-it("extends tool descriptions only with input guidance", async () => {
+it("advertises compact inputs and guidance with matching default catalog identity", async () => {
   const compact = compactServer();
   registerCatalog(compact);
   const compactTools = await listToolsThroughTransport(compact);
-  expect(compactTools.length).toBe(TOOL_CONTRACTS.length);
-  for (const tool of compactTools) {
-    // Guidance the compact schema omits follows the unchanged description.
-    const contract = TOOL_CONTRACTS.find(({ name }) => name === tool.name);
-    if (contract === undefined) throw new Error(`Missing ${tool.name}`);
-    expect(tool.description, tool.name).toBe(
-      advertiseTool(
-        {
-          description: toolRegistrationOptions(contract).description,
-          inputSchema: advertisedInputJsonSchema(contract),
-        },
-        advertisedToolPresentation("off"),
-      ).description,
+  expect(compactTools).toHaveLength(TOOL_CONTRACTS.length);
+  const byName = new Map(compactTools.map((tool) => [tool.name, tool]));
+  for (const contract of TOOL_CONTRACTS) {
+    const tool = byName.get(contract.name);
+    const expected = advertiseTool(
+      {
+        description: toolRegistrationOptions(contract).description,
+        inputSchema: advertisedInputJsonSchema(contract),
+      },
+      advertisedToolPresentation("off"),
     );
-    expect(tool.inputSchema.description, tool.name).toBeUndefined();
+    expect(tool?.inputSchema, contract.name).toEqual(expected.inputSchema);
+    expect(tool?.description, contract.name).toBe(expected.description);
+    expect(tool?.inputSchema.description, contract.name).toBeUndefined();
   }
+
+  const identity = createCatalogDigests();
+  expect(compact.catalogIdentity.digests).toEqual(identity);
+  // Examples are absent from the advertised catalog and its identity.
+  const withoutExamples = TOOL_CONTRACTS.map((contract) =>
+    contract.examples.length === 0 ? contract : { ...contract, examples: [] },
+  );
+  expect(createCatalogDigests(withoutExamples).tools_sha256).toBe(
+    identity.tools_sha256,
+  );
 });
 
 it("detects missing client-required items in nested array alternatives", () => {
@@ -352,14 +320,6 @@ it("retains parameter types and avoids client-side reference expansion", async (
     coverage: { type: "object" },
     boundary_id: { type: "string" },
   });
-});
-
-it("parses the profile selection the server startup reads", () => {
-  expect(parseMcpInputSchemaProfile("compact")).toEqual({
-    ok: true,
-    value: "compact",
-  });
-  expect(parseMcpInputSchemaProfile("surprise")).not.toHaveProperty("value");
 });
 
 describe("MCP compact input schema canonical enforcement", () => {

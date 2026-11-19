@@ -2785,3 +2785,270 @@ describe("Objective-C adopted protocol-list count limit", () => {
     },
   );
 });
+
+describe("Swift type record sections", () => {
+  it("lists a noncopyable type recorded in __swift5_types2 beside __swift5_types", () => {
+    const bytes = Buffer.alloc(4096);
+    const u32 = (at: number, n: number) => bytes.writeUInt32LE(n, at);
+    const rel = (at: number, n: number) => bytes.writeInt32LE(n - at, at);
+    u32(0, 0xfeedfacf);
+    u32(4, 0x0100000c);
+    u32(12, 2);
+    u32(16, 1);
+    u32(20, 232);
+    u32(32, 0x19);
+    u32(36, 232);
+    bytes.write("__TEXT", 40);
+    bytes.writeBigUInt64LE(base, 56);
+    bytes.writeBigUInt64LE(4096n, 64);
+    bytes.writeBigUInt64LE(4096n, 80);
+    u32(88, 5);
+    u32(92, 5);
+    u32(96, 2);
+    const records = [
+      { section: "__swift5_types", record: 0x200, descriptor: 0x300 },
+      { section: "__swift5_types2", record: 0x210, descriptor: 0x380 },
+    ];
+    for (const [index, { section, record, descriptor }] of records.entries()) {
+      const command = 104 + index * 80;
+      bytes.write(section, command);
+      bytes.write("__TEXT", command + 16);
+      bytes.writeBigUInt64LE(base + BigInt(record), command + 32);
+      bytes.writeBigUInt64LE(4n, command + 40);
+      u32(command + 48, record);
+      rel(record, descriptor);
+      u32(descriptor, 0x11);
+      rel(descriptor + 4, 0x400);
+      rel(descriptor + 8, 0x500 + index * 0x20);
+    }
+    rel(0x408, 0x540);
+    bytes.write("Plain\0", 0x500);
+    bytes.write("Owned\0", 0x520);
+    bytes.write("Fixture\0", 0x540);
+
+    const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
+    expect(
+      result.swift_decls.map(
+        ({ kind, qualified_name, module, decode, evidence }) => ({
+          kind,
+          qualified_name,
+          module,
+          decode,
+          evidence: evidence.map(({ description }) => description),
+        }),
+      ),
+    ).toEqual([
+      {
+        kind: "struct",
+        qualified_name: "Plain",
+        module: "Fixture",
+        decode: { status: "decoded", reason: null },
+        evidence: [
+          "Swift __swift5_types record of the nominal type descriptor at location",
+        ],
+      },
+      {
+        kind: "struct",
+        qualified_name: "Owned",
+        module: "Fixture",
+        decode: { status: "decoded", reason: null },
+        evidence: [
+          "Swift __swift5_types2 record of the nominal type descriptor at location",
+        ],
+      },
+    ]);
+    expect(
+      result.coverage.find(({ facet }) => facet === "swift_declarations"),
+    ).toMatchObject({ status: "complete", examined: 2, decoded: 2 });
+  });
+});
+
+/** A fully decoded category beside an image info; `_classProperties` is at 0xb70. */
+const categoryImage = (flags: number, classProperties: number): Buffer => {
+  const bytes = fixture(false, "partial-method");
+  bytes.writeBigUInt64LE(base + 0x700n, 0xb98);
+  bytes.writeUInt32LE(312, 20);
+  bytes.writeUInt32LE(312, 36);
+  bytes.writeUInt32LE(3, 96);
+  bytes.write("__objc_imageinfo", 264);
+  bytes.write("__DATA", 280);
+  bytes.writeBigUInt64LE(base + 0xc00n, 296);
+  bytes.writeBigUInt64LE(8n, 304);
+  bytes.writeUInt32LE(0xc00, 312);
+  bytes.writeUInt32LE(flags, 0xc04);
+  if (classProperties !== 0)
+    bytes.writeBigUInt64LE(base + BigInt(classProperties), 0xb70);
+  return bytes;
+};
+const categoryFacts = (bytes: Buffer) => {
+  const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
+  return {
+    decode: result.objc_categories.map(({ decode }) => decode),
+    coverage: result.coverage.find(
+      ({ facet }) => facet === "objc_properties_categories",
+    ),
+  };
+};
+
+describe("Objective-C category class properties", () => {
+  it("marks a category partial when its declared class property list is not decoded", () => {
+    const { decode, coverage } = categoryFacts(categoryImage(0x40, 0x600));
+    expect(decode).toEqual([
+      { status: "partial", reason: "category_class_properties_not_decoded" },
+    ]);
+    expect(coverage).toMatchObject({
+      status: "partial",
+      reason:
+        "category_class_properties_not_decoded at 0x100000b70: Category FixtureCategory class property list is not decoded",
+      examined: 1,
+      decoded: 0,
+    });
+  });
+
+  it.each([
+    ["has no class property list", 0x40, 0],
+    ["does not declare the field", 0, 0x600],
+  ])("keeps a category decoded when the image %s", (_, flags, list) => {
+    const { decode, coverage } = categoryFacts(categoryImage(flags, list));
+    expect(decode).toEqual([{ status: "decoded", reason: null }]);
+    expect(coverage).toMatchObject({ status: "complete", decoded: 1 });
+  });
+
+  it.each([
+    [
+      "class property field is unmapped",
+      (bytes: Buffer) => {
+        // End the record at the segment boundary, so its last field lies past it.
+        bytes.copy(bytes, 0xfd0, 0xb40, 0xb70);
+        bytes.writeBigUInt64LE(base + 0xfd0n, 0xb00);
+      },
+      "0x100001000",
+    ],
+    [
+      "image info is unmapped",
+      (bytes: Buffer) => bytes.writeBigUInt64LE(base + 0x2000n, 296),
+      "0x100002004",
+    ],
+    [
+      "image info is too short to hold its flags",
+      (bytes: Buffer) => bytes.writeBigUInt64LE(4n, 304),
+      "0x100000c00",
+    ],
+  ])("retains a category whose %s", (_, damage, field) => {
+    const bytes = categoryImage(0x40, 0);
+    damage(bytes);
+    const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
+    expect(result.objc_categories).toMatchObject([
+      {
+        name: "FixtureCategory",
+        class_name: "Fixture",
+        instance_methods: [expect.any(String)],
+        decode: {
+          status: "partial",
+          reason: "category_class_properties_unreadable",
+        },
+      },
+    ]);
+    expect(
+      result.coverage.find(
+        ({ facet }) => facet === "objc_properties_categories",
+      ),
+    ).toMatchObject({
+      status: "partial",
+      reason: expect.stringContaining(
+        `category_class_properties_unreadable at ${field}: Category FixtureCategory class property list: `,
+      ),
+      examined: 1,
+      decoded: 0,
+    });
+  });
+});
+
+describe("Objective-C category class property applicability", () => {
+  /** Move the class list pointer out of the header so load commands can grow. */
+  const freeLoadCommandSpace = (bytes: Buffer): void => {
+    bytes.writeBigUInt64LE(bytes.readBigUInt64LE(0x180), 0xe00);
+    bytes.writeBigUInt64LE(0n, 0x180);
+    bytes.writeBigUInt64LE(base + 0xe00n, 136);
+    bytes.writeUInt32LE(0xe00, 152);
+  };
+  /** Append LC_DYLD_INFO_ONLY; its rebase and bind streams are at 352 and 360. */
+  const withLegacyFixups = (bytes: Buffer): Buffer => {
+    freeLoadCommandSpace(bytes);
+    bytes.writeUInt32LE(2, 16);
+    bytes.writeUInt32LE(360, 20);
+    bytes.writeUInt32LE(0x80000022, 344);
+    bytes.writeUInt32LE(48, 348);
+    return bytes;
+  };
+
+  it("reports a class property list bound to another image as not decoded", () => {
+    const bytes = withLegacyFixups(categoryImage(0x40, 0));
+    const bindings = Buffer.from([
+      0x40,
+      ...Buffer.from("_external_list\0"),
+      0x51, // SET_TYPE_IMM pointer
+      0x70, // SET_SEGMENT_AND_OFFSET_ULEB: segment 0, offset 0xb70
+      0xf0,
+      0x16,
+      0x90,
+      0x00,
+    ]);
+    bindings.copy(bytes, 0xf00);
+    bytes.writeUInt32LE(0xf00, 360);
+    bytes.writeUInt32LE(bindings.length, 364);
+    const { decode, coverage } = categoryFacts(bytes);
+    expect(decode).toEqual([
+      { status: "partial", reason: "category_class_properties_not_decoded" },
+    ]);
+    expect(coverage).toMatchObject({
+      status: "partial",
+      reason:
+        "category_class_properties_not_decoded at 0x100000b70: Category FixtureCategory class property list is bound to _external_list and is not decoded",
+      examined: 1,
+      decoded: 0,
+    });
+  });
+
+  it("does not read a zero class property field as null when its fixups are unknown", () => {
+    const bytes = withLegacyFixups(categoryImage(0x40, 0));
+    // An undecodable rebase stream leaves every raw pointer's fixup unknown.
+    bytes.writeUInt32LE(0xf80, 352);
+    bytes.writeUInt32LE(1, 356);
+    bytes.writeUInt8(0xf0, 0xf80);
+    const { decode, coverage } = categoryFacts(bytes);
+    expect(decode).toEqual([
+      { status: "partial", reason: "category_class_properties_unreadable" },
+    ]);
+    expect(coverage).toMatchObject({
+      status: "partial",
+      reason: expect.stringContaining(
+        "category_class_properties_unreadable at 0x100000b70: Category FixtureCategory class property list: LC_DYLD_INFO pointer-fixup applicability was not completely decoded",
+      ),
+      examined: 1,
+      decoded: 0,
+    });
+  });
+
+  it("reads the field when one image info declares it beside one too short to hold flags", () => {
+    const bytes = categoryImage(0x40, 0x600);
+    freeLoadCommandSpace(bytes);
+    bytes.writeUInt32LE(392, 20);
+    bytes.writeUInt32LE(392, 36);
+    bytes.writeUInt32LE(4, 96);
+    bytes.write("__objc_imageinfo", 344);
+    bytes.write("__DATA", 360);
+    bytes.writeBigUInt64LE(base + 0xc40n, 376);
+    bytes.writeBigUInt64LE(4n, 384);
+    bytes.writeUInt32LE(0xc40, 392);
+    const { decode, coverage } = categoryFacts(bytes);
+    expect(decode).toEqual([
+      { status: "partial", reason: "category_class_properties_not_decoded" },
+    ]);
+    expect(coverage).toMatchObject({
+      reason: expect.stringContaining(
+        "category_class_properties_not_decoded at 0x100000b70",
+      ),
+    });
+  });
+});

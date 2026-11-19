@@ -166,7 +166,7 @@ export const inspectManagedNativeBoundariesBytes = (
     });
   }
   try {
-    const heapExtent = Math.max(layout.strings.size, layout.blob?.size ?? 0);
+    const heapExtent = layout.strings.size;
     appendManagedParseIssues(issues, inventory.issues);
     const moduleRefs = parseModuleRefs(bytes, layout, heapExtent, issues);
     const members = new Map([

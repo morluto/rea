@@ -4,6 +4,7 @@ import {
   clockDigits,
   fittedClockFormat,
   trimmedLike,
+  type ClockPattern,
 } from "./environmentStateWriteClockFormats.js";
 import type { ClockFormat } from "./environmentStateWriteValues.js";
 
@@ -98,14 +99,12 @@ it("trims a sibling clock spelled alike unless its own value shows a fixed width
   ).toEqual(iso(" ", 9, "Z"));
 });
 
-it.each<[JsonValue, string, string | undefined]>([
+it.each<[JsonValue, ClockPattern, string | undefined]>([
   ["2026-03-04T05:06:07.123Z", "YYYYMMDDhhmmss", "20260304050607"],
   ["2026-03-04T05:06:07Z", "YYYYMMDD", "20260304"],
   ["2026-03-04T23:30:00-05:00", "YYYY-MM-DD", "2026-03-04"],
   [WITH_MS, "YYYY/MM/DD", "2026/03/04"],
   ["not a clock", "YYYYMMDD", undefined],
 ])("spells the clock %j's wall clock in %s", (value, pattern, expected) => {
-  expect(clockDigits(value, pattern as Parameters<typeof clockDigits>[1])).toBe(
-    expected,
-  );
+  expect(clockDigits(value, pattern)).toBe(expected);
 });

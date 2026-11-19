@@ -79,19 +79,11 @@ const retainedInventoryView =
     return analysisViewResultSchema.parse(evidence.normalized_result);
   };
 
-const assertInvalidNodeField = async (
-  client: Client,
-  evidenceId: string,
-  validators?: Awaited<ReturnType<typeof viewValidators>>,
-) => {
+const assertInvalidNodeField = async (client: Client, evidenceId: string) => {
   const arguments_ = {
     source: { kind: "retained-evidence", evidence_id: evidenceId },
     view: { kind: "inventory", collection: "nodes", fields: ["logical_path"] },
   };
-  if (validators !== undefined)
-    expect(validators.ajv.validate(validators.inputSchema, arguments_)).toBe(
-      false,
-    );
   const rejected = await client.callTool({
     name: "inspect_analysis_view",
     arguments: arguments_,
@@ -126,19 +118,13 @@ const expectedPckMembers = (
   return expected;
 };
 
-const profiles = ["compact"] as const;
 const members = [
   { path: "res://a.txt", data: "a" },
   { path: "res://b.txt", data: "b" },
 ];
-const inventoryCases = profiles.flatMap((profile) => [
-  { profile, version: 1 as const },
-  { profile, version: 4 as const },
-]);
-it.for(inventoryCases)(
-  "retains PCK ($profile/v$version)",
-  async (input, { mcp }) => {
-    const { profile, version } = input;
+it.for([1, 4] as const)(
+  "retains PCK v%s through compact MCP delivery",
+  async (version, { mcp }) => {
     const root = await createTestTempDirectory("rea-pck-mcp-");
     const path = join(root, "game.pck");
     await writeFile(
@@ -150,7 +136,10 @@ it.for(inventoryCases)(
     const server = createServer(
       { kind: "session", session },
       {
-        environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: profile },
+        environment: {
+          ...process.env,
+          REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
+        },
       },
     );
     const client = await mcp.connect(
@@ -193,7 +182,7 @@ it.for(inventoryCases)(
     ).toBe(nested.normalized_result);
     const graph = nested.normalized_result;
     const view = retainedInventoryView(client, parent.evidence_id, validators);
-    await assertInvalidNodeField(client, parent.evidence_id, undefined);
+    await assertInvalidNodeField(client, parent.evidence_id);
     const wanted = graph.occurrences.filter((row) => row.logical_path !== ".");
     const expectedMembers = expectedPckMembers(members, wanted);
     const occurrences = await view({
@@ -206,7 +195,6 @@ it.for(inventoryCases)(
         "format_metadata",
       ],
     });
-    expect(occurrences.kind).toBe("inventory");
     if (occurrences.kind !== "inventory")
       throw new Error("Expected inventory view");
     expect(occurrences.items).toEqual(
@@ -219,13 +207,6 @@ it.for(inventoryCases)(
         declared_integrity: row.declared_integrity,
         format_metadata: row.format_metadata,
       })),
-    );
-    expect(occurrences.items).toEqual(
-      expect.arrayContaining(
-        expectedMembers.map(({ logical_path, source_path, artifact_id }) =>
-          expect.objectContaining({ logical_path, source_path, artifact_id }),
-        ),
-      ),
     );
     const ids = expectedMembers.map((member) => member.artifact_id);
     const nodes = await view({

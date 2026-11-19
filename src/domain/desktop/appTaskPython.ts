@@ -1,7 +1,9 @@
 import type { JsonValue } from "../jsonValue.js";
 import { SETTLE_TIMING } from "./appSettle.js";
+import { renderPythonAppStateViews } from "./appStateViews.js";
 import type { DesktopTask } from "./appTask.js";
 import { PYTHON_POINTER } from "./appTaskPythonPointer.js";
+import { PYTHON_ECMASCRIPT_TRIM_CHARACTERS } from "./desktopTextSyntax.js";
 import {
   PYTHON_READER_VIEWS,
   renderReaderConstants,
@@ -19,6 +21,11 @@ INDEX = re.compile(r"0|[1-9][0-9]*")
 VIEW_FORMATS = ("text", "json", "keyfile", "xml")
 NUMERAL = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
 WHITESPACE_RUN = re.compile(r"[ \t\r\n]+")
+
+
+def _trim(text: str) -> str:
+    """ECMAScript String.trim(), as REA uses for numeral and saved-time recognition."""
+    return text.strip(${PYTHON_ECMASCRIPT_TRIM_CHARACTERS})
 
 
 def _shown(value) -> str:
@@ -44,12 +51,15 @@ def _same(actual, expected) -> bool:
 ${PYTHON_POINTER}
 
 def _number(value):
-    """A number, or a numeral string read as one; None for anything else, a boolean, or a numeral past the doubles."""
+    """A number, or a whitespace-trimmed numeral; None for anything else, a boolean, or a numeral past the doubles."""
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
         return value
-    if not isinstance(value, str) or not NUMERAL.fullmatch(value):
+    if not isinstance(value, str):
+        return None
+    value = _trim(value)
+    if not NUMERAL.fullmatch(value):
         return None
     number = float(value)
     return number if math.isfinite(number) else None
@@ -195,7 +205,7 @@ def _near(at: str, found, expected, tolerance, join: bool):
     """A value compared within a tolerance: numbers, and numeral strings, by their difference. An element's text is
     joined only when join says the view is XML."""
     read = _element_text(found) if join else found
-    number = _number(read.strip() if isinstance(read, str) else read)
+    number = _number(read)
     within = f"within {_shown(tolerance)} of {_shown(expected)}"
     if number is None:
         return False, f"{at} is {_shown(found)}, not a number"
@@ -456,11 +466,10 @@ def _files(answer) -> list:
 
 async def _read(url):
     answer = await protocol.get_data(url, timeout=120)
-    states = [part.data["state"] for part in answer.parts
-              if part.kind == "data" and isinstance(part.data.get("state"), dict)]
-    if not states:
+    views = _app_state_views(answer.parts)
+    if views is None:
         raise RuntimeError(f"the {APP} app's data/get returned no state views")
-    return states[0], _files(answer)
+    return views, _files(answer)
 
 
 async def _settled_views(url):
@@ -543,7 +552,7 @@ SETTLE_WINDOW_S = ${pythonSeconds(SETTLE_TIMING.windowMs)}
 SETTLE_BOUND_S = ${pythonSeconds(SETTLE_TIMING.boundMs)}
 #: Where a data/get file part names its path in the home.
 DATA_OBJECTS = "urn:agentenv:data-objects/v1"
-${task.readers === undefined ? "" : renderReaderConstants(task.readers)}${PYTHON_TASK_EVALUATOR}${PYTHON_SETTLE}${task.readers === undefined ? "" : PYTHON_READER_VIEWS}
+${task.readers === undefined ? "" : renderReaderConstants(task.readers)}${PYTHON_TASK_EVALUATOR}${renderPythonAppStateViews()}${PYTHON_SETTLE}${task.readers === undefined ? "" : PYTHON_READER_VIEWS}
 
 async def verify(mcp_url, env_url):
     card = await protocol.get_card(env_url)

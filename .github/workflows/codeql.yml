@@ -57,6 +57,10 @@ jobs:
         with:
           fetch-depth: ${{ github.event_name == 'pull_request' && 0 || 1 }}
           filter: blob:none
+          sparse-checkout: |
+            .nvmrc
+            scripts/ci
+          sparse-checkout-cone-mode: false
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:

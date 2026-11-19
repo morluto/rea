@@ -58,6 +58,7 @@ const LAUNCHES_BUILT_RUNTIME =
 const isCheckerInput = (path) =>
   /\.d\.m?ts$/u.test(path) ||
   path === "scripts/lib/module-layers.baseline.json" ||
+  path === "scripts/check-doc-facts.mjs" ||
   path === ".git-blame-ignore-revs" ||
   path === "scripts/run-python-tests.py" ||
   /^tests\/support\/analysis-efficiency\/.+\.py$/u.test(path) ||
@@ -81,11 +82,12 @@ const explicitFixtureOwners = (path) =>
 // Verifier scripts are imported by their tests like source modules.
 const isVerifier = (path) =>
   /^scripts\/(verify-[^/]+|verify\/.+)\.mjs$/u.test(path);
-// Shared script modules. A change is traced through the tests, verifiers and
-// other shared modules that import it; any other consumer (build, test
-// runners, configuration) shapes every run, so it selects the full suite.
+// Shared script and fixture modules. A change is traced through the tests,
+// verifiers and other shared modules that import it; any other consumer (build,
+// test runners, configuration) shapes every run, so it selects the full suite.
 const isScriptLibrary = (path) =>
-  !isCheckerInput(path) && /^scripts\/lib\/.+\.m?[jt]s$/u.test(path);
+  !isCheckerInput(path) &&
+  /^scripts\/(?:lib|fixtures)\/.+\.m?[jt]s$/u.test(path);
 // Other scripts (build, test runners, CI) shape every run and are not traced.
 const isModule = (path) =>
   !isCheckerInput(path) &&
@@ -96,7 +98,8 @@ const isModule = (path) =>
 // Production importers never widen the selection transitively.
 const isHelper = (path) =>
   !isTest(path) &&
-  (/^tests\/.+\.m?ts$/u.test(path) ||
+  !isCheckerInput(path) &&
+  (/^tests\/.+\.(?:[cm]?[jt]s|d\.m?ts)$/u.test(path) ||
     /^src\/.+\.fixture[^/]*\.ts$/u.test(path) ||
     isVerifier(path) ||
     isScriptLibrary(path));
@@ -126,6 +129,12 @@ const isProse = (path) =>
     !DOCS_CODE.test(path) &&
     !path.endsWith("/package.json")) ||
   path.startsWith("licenses/");
+const isNonModuleFixture = (path) =>
+  path.startsWith("tests/fixtures/") &&
+  !isModule(path) &&
+  !isProse(path) &&
+  !isCheckerInput(path) &&
+  explicitFixtureOwners(path).length === 0;
 /** Why a changed path cannot be traced to tests, if it cannot. */
 const untracedInput = (path) =>
   !isTest(path) && SHARED_BOUNDARY.test(path)
@@ -133,6 +142,7 @@ const untracedInput = (path) =>
     : !isModule(path) &&
         !isProse(path) &&
         !isCheckerInput(path) &&
+        !isNonModuleFixture(path) &&
         explicitFixtureOwners(path).length === 0
       ? `Input is not traced to tests: ${path}`
       : undefined;
@@ -181,6 +191,7 @@ export function traceAffectedTests({ files, snapshot }) {
   const changedModules = files.filter(
     (path) => isModule(path) && !isTest(path),
   );
+  const changedNonModuleFixtures = files.filter(isNonModuleFixture);
   for (const path of files) {
     if (isTest(path)) select(path, "changed");
     for (const owner of explicitFixtureOwners(path)) {
@@ -190,38 +201,60 @@ export function traceAffectedTests({ files, snapshot }) {
     }
   }
 
-  // A seed and every helper that imports it, directly or through another.
+  const isNamedTarget = (path) =>
+    path.startsWith("scripts/") || path.startsWith("tests/fixtures/");
+  // A seed and every helper that imports or names it, directly or through another.
   const throughHelpers = (seed) => {
     const reached = new Set(seed);
     for (let grew = true; grew;) {
       grew = false;
-      for (const helper of helpers)
+      const namedReached = [...reached].filter(isNamedTarget);
+      for (const helper of helpers) {
+        if (reached.has(helper)) continue;
+        const source = sources.get(helper) ?? "";
         if (
-          !reached.has(helper) &&
-          imports.get(helper).some((target) => reached.has(target))
+          imports.get(helper).some((target) => reached.has(target)) ||
+          namedReached.some((target) => source.includes(target))
         ) {
           reached.add(helper);
           grew = true;
         }
+      }
     }
     return reached;
   };
   // Close over test-only helpers, verifiers and shared script modules, then
   // take the tests that import a change.
-  const affected = throughHelpers(changedModules);
+  const affected = throughHelpers([
+    ...changedModules,
+    ...changedNonModuleFixtures,
+  ]);
   for (const test of tests)
     if (imports.get(test).some((target) => affected.has(target)))
       select(test, "imports");
-  // Script paths a test can start or read by name: changed files, plus the
-  // verifiers and shared modules a change reaches.
+  // Script and fixture paths a test can start or read by name: changed files,
+  // plus the verifiers, shared modules and fixtures a change reaches.
   const named = (reached) => [
-    ...new Set([
-      ...files,
-      ...[...reached].filter((path) => path.startsWith("scripts/")),
-    ]),
+    ...new Set([...files, ...[...reached].filter(isNamedTarget)]),
   ];
   const names = (test, paths) =>
     paths.some((path) => (sources.get(test) ?? "").includes(path));
+
+  // A changed non-module fixture under tests/fixtures/ that no test reaches
+  // via URL/import or path literal (for example, a directory-scanned asset)
+  // fails closed to the complete suite.
+  for (const fixture of changedNonModuleFixtures) {
+    const reached = throughHelpers([fixture]);
+    const paths = [fixture, ...[...reached].filter(isNamedTarget)];
+    if (
+      !tests.some(
+        (test) =>
+          imports.get(test).some((target) => reached.has(target)) ||
+          names(test, paths),
+      )
+    )
+      untraced.push(`Input is not traced to tests: ${fixture}`);
+  }
 
   // A changed shared module that no test reaches has no coverage in a
   // selection, even when other changes select tests.
@@ -240,13 +273,14 @@ export function traceAffectedTests({ files, snapshot }) {
 
   // A shared script module that another script, configuration file, hook or
   // workflow imports or names as a standalone file name can shape every run.
-  // Require a token boundary before the basename so `verify-module-boundaries.mjs`
-  // in package.json does not falsely match `scripts/lib/module-boundaries.mjs`.
+  // Ignore single-line comments and require a non-hyphen token boundary before
+  // the basename so hyphenated wrapper names do not match shared library names.
   const namesScriptBasename = (source, libraryPath) => {
+    const code = source.replace(/^\s*(?:\/\/|#).*$/gmu, "");
     const escaped = posix
       .basename(libraryPath)
       .replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-    return new RegExp(`(?<![\\w-])${escaped}(?![\\w.-])`, "u").test(source);
+    return new RegExp(`(?<![\\w-])${escaped}(?![\\w.-])`, "u").test(code);
   };
   const libraries = [...affected].filter(isScriptLibrary);
   if (libraries.length) {

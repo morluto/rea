@@ -13,7 +13,10 @@ import {
   managedMembersInputSchema,
   type ManagedToolName,
 } from "../contracts/managed/managedToolContracts.js";
-import { enhancedInputSchemas } from "../contracts/enhancedInputs.js";
+import {
+  enhancedInputSchemas,
+  type EnhancedToolName,
+} from "../contracts/enhancedInputs.js";
 import type { NativeToolName } from "../contracts/native/nativeToolContracts.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
@@ -46,6 +49,12 @@ export type DirectAnalysisTool =
   | "trace_native_ui_action"
   | "trace_native_values"
   | "decompile_all";
+
+/** Direct workflows composed by EnhancedTools. The dossier has its own path. */
+export type DirectEnhancedToolName = Exclude<
+  Extract<DirectAnalysisTool, EnhancedToolName>,
+  "analyze_function"
+>;
 
 type OneShotOperation =
   | DirectAnalysisTool

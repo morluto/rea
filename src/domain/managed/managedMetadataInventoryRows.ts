@@ -24,10 +24,15 @@ import {
   type ManagedCodedIndex,
   metadataToken,
   readMetadataBlob,
+  metadataBlobOffset,
   readMetadataGuid,
   readMetadataString,
 } from "./managedMetadataHeaps.js";
-import { managedFailure, readManagedValue } from "./managedReaderFailure.js";
+import {
+  managedFailure,
+  ManagedHeapAmbiguityFailure,
+  readManagedValue,
+} from "./managedReaderFailure.js";
 import type { ManagedTypeReferenceLookup } from "./managedTypeReferences.js";
 import type { ManagedResourceDirectory } from "./managedMetadataInventory.js";
 import type { ManagedType, parseTypes } from "./managedMemberInspectorCore.js";
@@ -70,7 +75,7 @@ export const readModule = (
   const table = layout.table(0);
   if (table === undefined || table.rowCount === 0) return null;
   const cursor = metadataRowCursor(bytes, layout, 0, 1);
-  const generation = cursor.readUInt16();
+  const generation = cursor.u16();
   const name = readMetadataString(
     bytes,
     layout,
@@ -95,9 +100,9 @@ export const readModule = (
   return {
     name,
     generation,
-    mvid,
-    enc_id: encId,
-    enc_base_id: encBaseId,
+    mvid: mvid ?? null,
+    enc_id: encId ?? null,
+    enc_base_id: encBaseId ?? null,
     token: metadataToken(0, 1),
     row_offset: table.offset,
   };
@@ -111,19 +116,15 @@ export const readAssembly = (
   const table = layout.table(32);
   if (table === undefined || table.rowCount === 0) return null;
   const cursor = metadataRowCursor(bytes, layout, 32, 1);
-  const hashAlgorithm = cursor.readUInt32();
-  const version = [
-    cursor.readUInt16(),
-    cursor.readUInt16(),
-    cursor.readUInt16(),
-    cursor.readUInt16(),
-  ].join(".");
-  const flags = cursor.readUInt32();
+  const hashAlgorithm = cursor.u32();
+  const version = [cursor.u16(), cursor.u16(), cursor.u16(), cursor.u16()].join(
+    ".",
+  );
+  const flags = cursor.u32();
   const key = readMetadataBlob(
     bytes,
     layout,
     cursor.readIndex(layout.blobIndexSize),
-    heapExtent,
   );
   const name = readMetadataString(
     bytes,
@@ -160,16 +161,13 @@ const assemblyReferenceHeader = (
   row: number,
 ) => {
   const cursor = metadataRowCursor(bytes, layout, 35, row);
-  const version = [
-    cursor.readUInt16(),
-    cursor.readUInt16(),
-    cursor.readUInt16(),
-    cursor.readUInt16(),
-  ].join(".");
+  const version = [cursor.u16(), cursor.u16(), cursor.u16(), cursor.u16()].join(
+    ".",
+  );
   return {
     cursor,
     version,
-    flags: cursor.readUInt32(),
+    flags: cursor.u32(),
     keyIndex: cursor.readIndex(layout.blobIndexSize),
     nameIndex: cursor.readIndex(layout.stringIndexSize),
   };
@@ -195,41 +193,48 @@ export const readAssemblyReference = (
   layout: ManagedMetadataLayout,
   row: number,
   heapExtent: number,
-): AssemblyReference => {
+): { readonly name: string; readonly reference: AssemblyReference | null } => {
   const { cursor, version, flags, keyIndex, nameIndex } =
     assemblyReferenceHeader(bytes, layout, row);
-  const keyOrToken = readMetadataBlob(bytes, layout, keyIndex, heapExtent);
   const name = readMetadataString(bytes, layout, nameIndex, heapExtent);
-  const culture = readMetadataString(
-    bytes,
-    layout,
-    cursor.readIndex(layout.stringIndexSize),
-    heapExtent,
-  );
-  const hashValue = readMetadataBlob(
-    bytes,
-    layout,
-    cursor.readIndex(layout.blobIndexSize),
-    heapExtent,
-  );
-  return {
-    name,
-    version,
-    culture: culture.length === 0 ? null : culture,
-    flags,
-    public_key_or_token: publicKeyIdentity(
-      keyOrToken,
-      (flags & 1) === 0 ? "public-key-token" : "public-key",
+  try {
+    const keyOrToken = readMetadataBlob(bytes, layout, keyIndex);
+    const culture = readMetadataString(
+      bytes,
       layout,
-    ),
-    hash_value_sha256:
-      hashValue.length === 0
-        ? null
-        : managedDecodeBudget(layout).digest(hashValue, "sha256"),
-    hash_value_length: hashValue.length,
-    token: metadataToken(35, row),
-    row_offset: metadataRowOffset(layout, 35, row),
-  };
+      cursor.readIndex(layout.stringIndexSize),
+      heapExtent,
+    );
+    const hashValue = readMetadataBlob(
+      bytes,
+      layout,
+      cursor.readIndex(layout.blobIndexSize),
+    );
+    const reference = {
+      name,
+      version,
+      culture: culture.length === 0 ? null : culture,
+      flags,
+      public_key_or_token: publicKeyIdentity(
+        keyOrToken,
+        (flags & 1) === 0 ? "public-key-token" : "public-key",
+        layout,
+      ),
+      hash_value_sha256:
+        hashValue.length === 0
+          ? null
+          : managedDecodeBudget(layout).digest(hashValue, "sha256"),
+      hash_value_length: hashValue.length,
+      token: metadataToken(35, row),
+      row_offset: metadataRowOffset(layout, 35, row),
+    };
+    return { name, reference };
+  } catch (cause: unknown) {
+    // The name comes from #Strings and is independent of key and hash bytes.
+    if (cause instanceof ManagedHeapAmbiguityFailure)
+      return { name, reference: null };
+    throw cause;
+  }
 };
 
 export type ManagedMetadataTypeNameLookup = (
@@ -430,10 +435,7 @@ const decodeFixedString = (
   const { value: length, width } = decoded.value;
   const start = 2 + width;
   if (start > blob.length - length) return null;
-  managedDecodeBudget(layout).reserveString(
-    length,
-    layout.blob?.offset ?? layout.rootOffset,
-  );
+  managedDecodeBudget(layout).reserveString(length, metadataBlobOffset(layout));
   try {
     return decodeStrictUtf8(blob.subarray(start, start + length), "preserve");
   } catch (cause: unknown) {
@@ -447,7 +449,6 @@ export const readCustomAttribute = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
   row: number,
-  heapExtent: number,
   issues: ManagedParseIssue[],
   memberLists: TypeMemberListFacts,
   typeNames: ManagedMetadataTypeNameLookup,
@@ -464,7 +465,6 @@ export const readCustomAttribute = (
     bytes,
     layout,
     cursor.readIndex(layout.blobIndexSize),
-    heapExtent,
   );
   const parent = decodeMetadataCodedIndex(
     parentRaw,
@@ -536,13 +536,13 @@ export const readResource = ({
   issues,
 }: ReadResourceContext): ManagedResource => {
   const cursor = metadataRowCursor(bytes, layout, 40, row);
-  const declaredOffset = cursor.readUInt32();
-  const flags = cursor.readUInt32();
+  const declaredOffset = cursor.u32();
+  const flags = cursor.u32();
   const name = readMetadataString(
     bytes,
     layout,
     cursor.readIndex(layout.stringIndexSize),
-    Math.max(layout.strings.size, layout.blob?.size ?? 0),
+    layout.strings.size,
   );
   const implementationOffset = cursor.offset;
   const implementationRaw = cursor.readIndex(

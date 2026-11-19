@@ -14,10 +14,17 @@ export interface ZeroFillMapping {
 }
 
 /** Why a declared virtual span does not establish one contiguous file span. */
-export interface VirtualFileMappingFailure {
-  readonly reason: "invalid-size" | "unmapped" | "ambiguous";
-  readonly message: string;
-}
+export type VirtualFileMappingFailure =
+  | {
+      readonly reason: "invalid-size" | "ambiguous";
+      readonly message: string;
+    }
+  | {
+      readonly reason: "unmapped";
+      readonly message: string;
+      /** A gap does not erase the zero-initialized ranges within the request. */
+      readonly overlapsZeroFill: boolean;
+    };
 
 /** Map a physically contiguous virtual span across consistent adjacent ranges. */
 export const resolveMappedFileOffset = (
@@ -31,7 +38,18 @@ export const resolveMappedFileOffset = (
       reason: "invalid-size",
       message: "Virtual span size is invalid",
     });
-  const end = address + BigInt(size);
+  const spanBytes = BigInt(size);
+  const end = address + spanBytes;
+  const overlapsZeroFill = () =>
+    zeroFills.some(({ address: start, size: bytes }) =>
+      spansOverlap(address, spanBytes, start, bytes),
+    );
+  const unmapped = () =>
+    err({
+      reason: "unmapped" as const,
+      message: "Virtual address or string range is not file mapped",
+      overlapsZeroFill: overlapsZeroFill(),
+    });
   let found: number | undefined;
   const covered: { start: bigint; end: bigint }[] = [];
   let whollyCovered = size === 0;
@@ -55,37 +73,23 @@ export const resolveMappedFileOffset = (
     if (start === address && overlapEnd === end) whollyCovered = true;
     else if (!whollyCovered) covered.push({ start, end: overlapEnd });
   }
-  if (found === undefined)
-    return err({
-      reason: "unmapped",
-      message: "Virtual address or string range is not file mapped",
-    });
+  if (found === undefined) return unmapped();
   if (!whollyCovered) {
     covered.sort((left, right) =>
       left.start < right.start ? -1 : left.start > right.start ? 1 : 0,
     );
     let cursor = address;
     for (const span of covered) {
-      if (span.start > cursor)
-        return err({
-          reason: "unmapped",
-          message: "Virtual address or string range is not file mapped",
-        });
+      if (span.start > cursor) return unmapped();
       if (span.end > cursor) cursor = span.end;
     }
-    if (cursor < end)
-      return err({
-        reason: "unmapped",
-        message: "Virtual address or string range is not file mapped",
-      });
+    if (cursor < end) return unmapped();
   }
-  for (const zeroFill of zeroFills) {
-    if (spansOverlap(address, BigInt(size), zeroFill.address, zeroFill.size))
-      return err({
-        reason: "ambiguous",
-        message: "Virtual address has ambiguous file and zero-fill mappings",
-      });
-  }
+  if (overlapsZeroFill())
+    return err({
+      reason: "ambiguous",
+      message: "Virtual address has ambiguous file and zero-fill mappings",
+    });
   return ok(found);
 };
 
