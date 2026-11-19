@@ -93,10 +93,12 @@ The root `format_metadata` (`esp-flash-image`) records:
 - `partition_table`: its flash address, the `method` that found it
   (`default`, `caller` or `scan`), the partition count and the MD5 `status`
   (`valid`, `invalid` or `absent`) with the stored and computed digests.
-  `entries_after_checksum` is how many partition entries follow the MD5
-  record and sit outside its digest: 0 when the record is absent or every
-  partition entry precedes it. When it is greater than zero, a limitation
-  names that count and the MD5 entry's offset from the start of the table;
+  `entries_after_checksum`, when present, is how many partition entries
+  follow the MD5 record and sit outside its digest. New inventories emit
+  0 when the record is absent or every partition entry precedes it.
+  Evidence saved before the field omits it, and that omission leaves the
+  count unknown. When the count is greater than zero, a limitation names
+  it and the MD5 entry's offset from the start of the table;
 - `apps`: ESP image facts for each app partition the dump holds; app
   partitions declared over the same bytes share one decode;
 - `otadata`: the otadata partition's records, or null without one;
