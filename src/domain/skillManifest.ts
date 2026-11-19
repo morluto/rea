@@ -129,37 +129,70 @@ export const parseSkillManifestMetadata = (
   return frontmatter.ok ? metadataOf(frontmatter.value.document) : frontmatter;
 };
 
-/** Update only authored YAML frontmatter, retaining the instruction body. */
-export const addSkillManifestToolCount = (
-  content: string,
-  toolCount: number,
-): Result<string, SkillManifestMetadataError> => {
+const readAuthoredSkillManifest = (content: string) => {
   const frontmatter = readFrontmatter(content);
   if (!frontmatter.ok) return frontmatter;
-  const metadata = metadataOf(frontmatter.value.document);
+  const { document, body } = frontmatter.value;
+  const metadata = metadataOf(document);
   if (!metadata.ok) return metadata;
-  if (metadata.value.version === null)
+  const { version, hasToolCount, hasCatalogDigest } = metadata.value;
+  if (version === null)
     return err(
       new SkillManifestMetadataError(
         "Missing authored skill version",
         metadata.value,
       ),
     );
-  if (metadata.value.hasToolCount || metadata.value.hasCatalogDigest)
+  if (hasToolCount || hasCatalogDigest)
     return err(
       new SkillManifestMetadataError(
         "Catalog metadata belongs in the generated skill, not the authored source",
         metadata.value,
       ),
     );
+  const name = document.get("name");
+  const description = document.get("description");
+  if (
+    typeof name !== "string" ||
+    name.trim() === "" ||
+    typeof description !== "string" ||
+    description.trim() === ""
+  )
+    return err(
+      new SkillManifestMetadataError(
+        "An authored skill needs a nonempty name and description",
+        metadata.value,
+      ),
+    );
+  return ok({
+    document,
+    body,
+    metadata: metadata.value,
+    fields: { name, description, version },
+  });
+};
+
+/** Read the validated fields shared by authored skill publishers. */
+export const parseAuthoredSkillManifest = (content: string) => {
+  const manifest = readAuthoredSkillManifest(content);
+  return manifest.ok ? ok(manifest.value.fields) : manifest;
+};
+
+/** Update only authored YAML frontmatter, retaining the instruction body. */
+export const addSkillManifestToolCount = (
+  content: string,
+  toolCount: number,
+): Result<string, SkillManifestMetadataError> => {
+  const manifest = readAuthoredSkillManifest(content);
+  if (!manifest.ok) return manifest;
+  const { document, body, metadata } = manifest.value;
   if (!Number.isSafeInteger(toolCount) || toolCount < 0)
     return err(
       new SkillManifestMetadataError(
         "Generated tool_count must be a safe nonnegative integer",
-        metadata.value,
+        metadata,
       ),
     );
-  const { document, body } = frontmatter.value;
   document.setIn(["metadata", "tool_count"], toolCount);
   return ok(`---\n${document.toString({ lineWidth: 0 })}---\n${body}`);
 };

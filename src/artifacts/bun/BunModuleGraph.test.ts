@@ -267,6 +267,28 @@ it("refuses multiple embedded graphs instead of selecting one", async () => {
   });
 });
 
+it.each([
+  ["zero-fill", (bytes: Buffer) => bytes.writeUInt32LE(0x12, 32 + 72 + 64)],
+  ["file extent", (bytes: Buffer) => bytes.writeBigUInt64LE(1n, 32 + 48)],
+  [
+    "virtual extent",
+    (bytes: Buffer) => bytes.writeBigUInt64LE(1n, 32 + 72 + 32),
+  ],
+] as const)(
+  "refuses a named Mach-O Bun section with invalid %s backing",
+  async (reason, change) => {
+    const section = bunPrefixedPayload(
+      bunModuleGraphPayload({ modules: [{}] }),
+    );
+    const bytes = machoBunSection(section);
+    change(bytes);
+    expect(await locate(bytes)).toMatchObject({
+      status: "present",
+      failure: { reason: "format", message: expect.stringContaining(reason) },
+    });
+  },
+);
+
 it("probes a section graph without reading its payload data", async () => {
   const contents = Buffer.alloc(1024 * 1024, 0x61);
   const bytes = machoBunSection(
@@ -434,4 +456,26 @@ it("recognizes an ELF Bun section name deep in the string table by reading only 
     claim: { carrier: "elf-section" },
   });
   expect(observed.bytesRead).toBeLessThan(1024);
+});
+
+it.each([
+  ["missing command", (image: Buffer) => image.writeUInt32LE(2, 16)],
+  [
+    "unused command bytes",
+    (image: Buffer) => image.writeUInt32LE(image.readUInt32LE(20) + 8, 20),
+  ],
+] as const)("refuses a Mach-O Bun graph with %s", async (_label, damage) => {
+  const image = machoBunSection(
+    bunPrefixedPayload(
+      bunModuleGraphPayload({
+        modules: [{ name: "main.js", contents: Buffer.from("hello") }],
+      }),
+    ),
+  );
+  damage(image);
+  const { result } = await probe(image);
+  expect(result).toMatchObject({
+    status: "present",
+    failure: { reason: "format" },
+  });
 });

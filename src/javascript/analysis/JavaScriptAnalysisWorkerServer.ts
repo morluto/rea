@@ -18,6 +18,7 @@ import {
   type BoundedControlLine,
 } from "../../process/BoundedControlLines.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import { isHostLimitFailure } from "../../domain/parseFailure.js";
 import { javaScriptRuntime } from "../../domain/runtimeVersion.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import type { JavaScriptPackageType } from "../../domain/javascript/javascriptSourceParser.js";
@@ -94,10 +95,13 @@ export const serveJavaScriptAnalysisWorker = async (
     for (;;) {
       const next = await requests.next();
       if (next.done) break;
-      if (!next.value.ok)
+      if (!next.value.ok) {
+        if (next.value.error._tag === "ControlLineMalformedUtf8")
+          throw new TypeError("JavaScript worker request is not valid UTF-8");
         throw new RangeError(
           "JavaScript worker request exceeds its byte budget",
         );
+      }
       const raw: unknown = JSON.parse(next.value.value);
       const request = javaScriptWorkerRequestSchema.parse(raw);
       // Function scope releases source AST/IR/results before accepting another job.
@@ -181,6 +185,14 @@ const analyzeJob = async (
             sha256: sha256Hex(text),
           });
           const next = await requests.next();
+          if (
+            !next.done &&
+            !next.value.ok &&
+            next.value.error._tag === "ControlLineMalformedUtf8"
+          )
+            throw new TypeError(
+              "JavaScript worker admission frame is not valid UTF-8",
+            );
           if (next.done || !next.value.ok)
             throw new TypeError(
               "JavaScript worker admission frame is missing or oversized",
@@ -214,12 +226,12 @@ const analyzeJob = async (
           );
     await send({ kind: "complete", id: request.id, descriptor });
   } catch (cause: unknown) {
+    const hostLimit = isHostLimitFailure(cause);
     await send({
       kind: "failure",
       id: request.id,
       reason:
-        cause instanceof AnalysisResourceConstraintError ||
-        cause instanceof RangeError
+        cause instanceof AnalysisResourceConstraintError || hostLimit
           ? "resource"
           : cause instanceof TypeError
             ? "output"
@@ -227,7 +239,7 @@ const analyzeJob = async (
       resource:
         cause instanceof AnalysisResourceConstraintError
           ? cause.resource
-          : cause instanceof RangeError
+          : hostLimit
             ? "memory"
             : null,
       limits:

@@ -104,15 +104,15 @@ class FixtureLauncher implements GhidraLauncher {
 const installationHost: GhidraInstallationHost = {
   platform: "linux",
   architecture: "x64",
-  readText: () => "application.version=12.1.4\napplication.java.min=21\n",
+  readText: () => "application.version=12.2\napplication.java.min=25\n",
   executable: () => true,
   probeJava: () =>
     javaProbeOk<GhidraJavaObservation>({
       osArch: "amd64",
       osName: "Linux",
-      version: "21.0.11",
-      major: 21,
-      home: "/fixture/jdk-21",
+      version: "25.0.1",
+      major: 25,
+      home: "/fixture/jdk-25",
       bits: 64,
       runtime: "jdk",
     }),
@@ -126,7 +126,7 @@ const connectGhidra = async () => {
   const source = elf(2, 1, 62);
   await writeFile(target, source);
   const config = parseConfig({
-    GHIDRA_INSTALL_DIR: "/fixture/ghidra_12.1.4_PUBLIC",
+    GHIDRA_INSTALL_DIR: "/fixture/ghidra_12.2_PUBLIC",
   });
   if (!config.ok) throw config.error;
   const launcher = new FixtureLauncher();

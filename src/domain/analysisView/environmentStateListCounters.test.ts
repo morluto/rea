@@ -93,12 +93,11 @@ it("renders a nested counter and a nested query total from the state, leaving th
 });
 
 it("takes no nested member for a counter unless it equals the number listed", () => {
-  const offBy = rows.map((row): TimedCaptureRow =>
-    row[1] === "/api/records?limit=25" && row[2] !== undefined
-      ? [row[0], row[1], { ...(row[2] as JsonObject), meta: { total: 99 } }]
-      : row,
+  const state = environmentStateViewOf(
+    timedCaptureEvidence([
+      ["GET", "/api/records", { ...page(SEEDED), meta: { total: 99 } }],
+    ]),
   );
-  const state = environmentStateViewOf(timedCaptureEvidence(offBy));
   // The mismatched member is excluded while the recorded list keeps its valid counter.
   expect(state.views.find((view) => view.tool === "get_records")).toMatchObject(
     {

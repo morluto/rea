@@ -1,7 +1,9 @@
 import {
+  PE_RESOURCE_DATA_ENTRY_BYTES,
   PE_RESOURCE_DIRECTORY_BYTES,
   PE_RESOURCE_ENTRY_BYTES,
   PE_RESOURCE_NAME_PREFIX_BYTES,
+  readPeResourceDataEntryFacts,
   readPeResourceDirectoryFacts,
   readPeResourceEntryFacts,
   readPeResourceNameFacts,
@@ -17,11 +19,8 @@ import type {
   PeResources,
 } from "../native/peResources.js";
 import { decodeLimit, type LimitRef } from "../parseFailure.js";
-import {
-  peFailure,
-  readPeResourceLayout,
-  requirePeRange,
-} from "./peResourceLayout.js";
+import { peFailure, requirePeRange } from "./peImageHeaders.js";
+import { readPeResourceLayout } from "./peResourceLayout.js";
 
 type PeResourceLayout = ReturnType<typeof readPeResourceLayout>;
 
@@ -193,6 +192,7 @@ export const parsePeResources = async (
     account(directory);
     directories.push(directory);
     const keys = new Set<string>();
+    let previousId = -1;
     const nested = new Set([...ancestors, at]);
     for (let index = 0; index < count; index++) {
       if (index % 128 === 0) {
@@ -213,6 +213,11 @@ export const parsePeResources = async (
       if (keys.has(key))
         peFailure("Duplicate identity within a resource directory.");
       keys.add(key);
+      if (identity.kind === "id") {
+        if (identity.id < previousId)
+          peFailure("PE resource directory numeric IDs are out of order.");
+        previousId = identity.id;
+      }
       const next = [...path, identity];
       const locations = [
         ...entryLocations,
@@ -230,9 +235,10 @@ export const parsePeResources = async (
           peFailure(
             "Unsupported resource leaf outside the type/name/language profile.",
           );
-        const data = relative(offset, 16);
-        const rva = bytes.readUInt32LE(data);
-        const size = bytes.readUInt32LE(data + 4);
+        const data = relative(offset, PE_RESOURCE_DATA_ENTRY_BYTES);
+        const { rva, size, codePage, reserved } = readPeResourceDataEntryFacts(
+          bytes.subarray(data, data + PE_RESOURCE_DATA_ENTRY_BYTES),
+        );
         const payloadOffset = layout.map(rva, size);
         const [type, name, language] = next;
         if (type === undefined || name === undefined || language === undefined)
@@ -243,9 +249,13 @@ export const parsePeResources = async (
           name,
           language,
           entry_locations: locations,
-          data_entry_location: recordRange(data, 16, "data-entry"),
-          code_page: bytes.readUInt32LE(data + 8),
-          reserved: bytes.readUInt32LE(data + 12),
+          data_entry_location: recordRange(
+            data,
+            PE_RESOURCE_DATA_ENTRY_BYTES,
+            "data-entry",
+          ),
+          code_page: codePage,
+          reserved,
           payload: {
             rva,
             location: recordRange(payloadOffset, size, "payload"),

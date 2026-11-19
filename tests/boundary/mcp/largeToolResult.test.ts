@@ -18,6 +18,7 @@ import {
   parseEvidence,
   type Evidence,
 } from "../../../src/domain/evidence.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 import {
   jsonObjectSchema,
   type JsonValue,
@@ -196,11 +197,14 @@ describe("MCP response budget recovery", () => {
       }),
       toolContract("get_evidence_bundle"),
     );
-    const action = z
-      .object({
-        error: z.object({ remediation: z.object({ action: z.string() }) }),
-      })
-      .parse(delivered.structuredContent).error.remediation.action;
+    expect(delivered.isError).toBe(true);
+    const { error } = z
+      .object({ error: analysisErrorProjectionSchema })
+      .parse(delivered.structuredContent);
+    const action = error.remediation.action;
+    expect(error.details).toMatchObject({
+      reported_limits: { next_operation: "get_evidence_bundle" },
+    });
     expect(action).toContain(MCP_TRANSPORT_EVIDENCE_SUMMARY);
     expect(action).toContain("export_evidence_bundle");
     expect(action).toContain("caller-selected path");
@@ -281,7 +285,9 @@ describe("large complete Evidence MCP delivery", () => {
     expect(encoded.bytes).toBe(Buffer.byteLength(JSON.stringify(result)));
     expect(JSON.parse(responseWire).result.structuredContent).toEqual(evidence);
   });
+});
 
+describe("oversized Evidence MCP retention", () => {
   it("reports a true escaped-wire overrun and keeps acknowledged evidence recoverable", async () => {
     // Control characters expand once in structured JSON and again in the text mirror.
     const payload = "\u0000".repeat(
@@ -293,6 +299,9 @@ describe("large complete Evidence MCP delivery", () => {
       true,
     );
     expect(result.isError).toBe(true);
+    expect(result._meta).toEqual({
+      provenance: { untrusted_content: true, source: "analysis_target" },
+    });
     const limits = z
       .object({
         error: z.object({
@@ -356,6 +365,7 @@ describe("large complete Evidence MCP delivery", () => {
     expect(limits.details.reported_limits).not.toHaveProperty(
       "evidence_reference",
     );
+    expect(limits.details.reported_limits).not.toHaveProperty("next_operation");
     expect(limits.details.reported_limits).toHaveProperty(
       "evidence_id",
       evidence.evidence_id,

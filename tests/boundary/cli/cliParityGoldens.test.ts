@@ -86,6 +86,8 @@ const NEWER_VERSION = "999.0.0";
 
 const TERMINAL_CASES: readonly ParityCase[] = [
   terminal("help-root-bare", fixed()),
+  terminal("error-invalid-completion-shell", fixed("completions", "bogus")),
+  terminal("error-command-update", fixed("doctor", "--update")),
   terminal("help-command", fixed("inspect-byte-entropy", "--help")),
   terminal("output", (w) => entropy(w, ...WINDOW)),
   terminal("output-explicit-format", (w) =>
@@ -146,6 +148,11 @@ const CASES: readonly ParityCase[] = [
   },
   { name: "help-update", arguments: fixed("update", "--help") },
   { name: "help-mcp", arguments: fixed("mcp", "--help") },
+  { name: "help-mcp-without-subcommand", arguments: fixed("mcp", "--json") },
+  {
+    name: "help-after-unknown-command",
+    arguments: fixed("no-such-command", "--help"),
+  },
   { name: "help-mcp-add", arguments: fixed("mcp", "add", "--help") },
   { name: "help-mcp-doctor", arguments: fixed("mcp", "doctor", "--help") },
   { name: "help-completions", arguments: fixed("completions", "--help") },
@@ -158,7 +165,44 @@ const CASES: readonly ParityCase[] = [
     name: "schema-command-json",
     arguments: fixed("inspect-byte-entropy", "--schema", "--format", "json"),
   },
+  {
+    name: "schema-command-md",
+    arguments: fixed("inspect-byte-entropy", "--schema", "--format", "md"),
+  },
+  {
+    name: "schema-unknown-command",
+    arguments: fixed("inspect-byte-entropi", "--schema"),
+  },
   { name: "llms-command", arguments: fixed("inspect-byte-entropy", "--llms") },
+  {
+    name: "llms-command-json",
+    arguments: fixed("inspect-byte-entropy", "--llms", "--format", "json"),
+  },
+  // Which discovery document wins when several are asked for.
+  {
+    name: "discovery-llms-over-help",
+    arguments: fixed("inspect-byte-entropy", "--llms", "--help"),
+  },
+  {
+    name: "discovery-llms-over-version",
+    arguments: fixed("inspect-byte-entropy", "--llms", "--version"),
+  },
+  {
+    name: "discovery-llms-full-over-llms",
+    arguments: fixed("inspect-byte-entropy", "--llms", "--llms-full"),
+  },
+  {
+    name: "discovery-version-over-schema",
+    arguments: fixed("inspect-byte-entropy", "--schema", "--version"),
+  },
+  {
+    name: "discovery-help-over-schema",
+    arguments: fixed("inspect-byte-entropy", "--schema", "--help"),
+  },
+  {
+    name: "llms-full-command-yaml",
+    arguments: fixed("inspect-byte-entropy", "--llms-full", "--format", "yaml"),
+  },
   {
     name: "llms-full-command",
     arguments: fixed("inspect-byte-entropy", "--llms-full"),
@@ -207,7 +251,28 @@ const CASES: readonly ParityCase[] = [
   // Command resolution and argument errors
   { name: "error-unknown-command", arguments: fixed("no-such-command") },
   { name: "error-empty-command", arguments: fixed("") },
+  {
+    name: "error-unknown-command-full-output",
+    arguments: fixed("no-such-command", "--full-output", "--json"),
+  },
+  {
+    name: "error-unknown-command-token-limit",
+    arguments: fixed("no-such-command", "--token-limit", "6"),
+  },
   { name: "error-unknown-mcp-subcommand", arguments: fixed("mcp", "bogus") },
+  {
+    name: "error-invalid-completion-shell",
+    arguments: fixed("completions", "bogus"),
+  },
+  {
+    name: "error-invalid-completion-shell-json",
+    arguments: fixed("completions", "bogus", "--json"),
+  },
+  { name: "error-command-update", arguments: fixed("doctor", "--update") },
+  {
+    name: "error-command-update-json",
+    arguments: fixed("doctor", "--update", "--json"),
+  },
   {
     name: "error-missing-positional",
     arguments: fixed("inspect-byte-entropy"),
@@ -428,7 +493,10 @@ const render = (
         ? JSON.stringify(argument)
         : argument,
     );
-  const stdout = /^(?:terminal-)?help-root/u.test(testCase.name)
+  // The root page, whichever invocation printed it, opens with `rea@<version>`.
+  const stdout = result.stdout.startsWith(
+    `rea@${PRODUCT_IDENTITY.packageVersion} `,
+  )
     ? elideRootCommandRows(result.stdout)
     : result.stdout;
   return [
@@ -486,7 +554,6 @@ describe("CLI parity goldens", () => {
           ? {}
           : { COMPLETE: testCase.complete }),
       },
-      ...(testCase.complete === undefined ? {} : { freshProcess: true }),
       ...(testCase.terminal === true ? { terminal: true } : {}),
     });
     const actual = render(testCase, workspace, result);

@@ -14,6 +14,12 @@ describe("open_binary raw-binary input contract", () => {
       }).success,
     ).toBe(true);
   });
+  it.each(["raw", "elf"])("rejects %s as an explicit format hint", (format) => {
+    expect(
+      openBinaryInputSchema.safeParse({ path: "/tmp/fixture.bin", format })
+        .success,
+    ).toBe(false);
+  });
   it("accepts raw-binary with architecture and entry", () => {
     expect(
       openBinaryInputSchema.safeParse({

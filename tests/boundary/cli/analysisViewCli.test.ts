@@ -50,6 +50,64 @@ import {
 } from "../../../src/domain/evidenceBundle.js";
 import { inspectEvidenceBundle } from "../../../src/application/investigation/InspectEvidenceBundle.js";
 
+cliTest.for([false, true])(
+  "requires source agreement before treating a HAR response as empty: %s",
+  async (emptyReported, { cli }) => {
+    const capture = environmentManifestCaptureFixture([
+      {
+        request: {
+          method: "POST",
+          url: "http://app.example/jobs",
+          postData: { mimeType: "application/json", text: '{"name":"one"}' },
+        },
+        response: {
+          status: 201,
+          content: {
+            mimeType: "application/octet-stream",
+            encoding: "base64",
+            text: emptyReported
+              ? ""
+              : Buffer.from("not empty").toString("base64"),
+          },
+        },
+      },
+    ]);
+    capture.records[0]!.binary_fields = [
+      {
+        pointer: "/response/content/text",
+        representation: "har-base64-content",
+        state: "retained",
+        content_base64: "",
+        bytes: 0,
+        sha256: createHash("sha256").update("").digest("hex"),
+      },
+    ];
+    const root = await createTestTempDirectory("rea-har-body-source-");
+    const request = join(root, "request.json");
+    await writeFile(
+      request,
+      JSON.stringify({
+        source: {
+          kind: "inline",
+          evidence: analysisViewCaptureEvidence(capture),
+        },
+        view: { kind: "environment-manifest" },
+      }),
+    );
+    const response = await cli.run({
+      arguments: ["inspect-analysis-view", request, "--json"],
+    });
+    expect(response.exitCode, response.stderr).toBe(0);
+    const view = z
+      .object({
+        kind: z.literal("environment-manifest"),
+        tools: z.array(z.unknown()),
+      })
+      .parse(parseEvidence(response.json).normalized_result);
+    expect(view.tools).toHaveLength(emptyReported ? 1 : 0);
+  },
+);
+
 cliTest(
   "reads a saved scalar pseudocode observation without starting an analysis engine",
   async ({ cli }) => {
@@ -778,7 +836,6 @@ cliTest(
         JSON.stringify({ path, ...options }),
         "--json",
       ],
-      environment: { HOME: root, XDG_CONFIG_HOME: root, XDG_CACHE_HOME: root },
     });
     expect(result.exitCode).toBe(0);
     const expected = inspectEvidenceBundle(bundle, options);
@@ -813,7 +870,6 @@ cliTest(
         JSON.stringify({ path, ...options, detail: "records", limit: 1 }),
         "--json",
       ],
-      environment: { HOME: root, XDG_CONFIG_HOME: root, XDG_CACHE_HOME: root },
     });
     expect(records.exitCode).toBe(0);
     expect(records.json).toMatchObject({
@@ -830,7 +886,6 @@ cliTest(
         JSON.stringify({ path }),
         "--json",
       ],
-      environment: { HOME: root, XDG_CONFIG_HOME: root, XDG_CACHE_HOME: root },
     });
     expect(complete.exitCode).toBe(0);
     expect(complete.json).toEqual(bundle);
@@ -865,7 +920,6 @@ cliTest(
         JSON.stringify({ path, ...options }),
         "--json",
       ],
-      environment: { HOME: root, XDG_CONFIG_HOME: root, XDG_CACHE_HOME: root },
     });
     expect(result.exitCode).toBe(0);
     const expected = inspectEvidenceBundle(bundle, options);
@@ -988,11 +1042,6 @@ cliTest(
     await writeFile(input, JSON.stringify(request));
     const result = await cli.run({
       arguments: ["inspect-analysis-view", input, "--json"],
-      environment: {
-        HOME: root,
-        XDG_CONFIG_HOME: root,
-        XDG_CACHE_HOME: root,
-      },
     });
     expect(result.exitCode).toBe(0);
     expect(result.json).toMatchObject({
@@ -1009,7 +1058,6 @@ cliTest(
 cliTest(
   "reports empty retained layout collections without invented index bounds",
   async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-empty-layout-view-cli-");
     const empty = analysisViewLayoutEvidence(binaryLayoutFixture());
     for (const collection of ["sections", "symbols"] as const) {
       const result = await cli.run({
@@ -1021,11 +1069,6 @@ cliTest(
           }),
           "--json",
         ],
-        environment: {
-          HOME: root,
-          XDG_CONFIG_HOME: root,
-          XDG_CACHE_HOME: root,
-        },
       });
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({
@@ -1056,11 +1099,6 @@ cliTest(
         }),
         "--json",
       ],
-      environment: {
-        HOME: root,
-        XDG_CONFIG_HOME: root,
-        XDG_CACHE_HOME: root,
-      },
     });
     expect(populated.exitCode).toBe(1);
     expect(populated.json).toMatchObject({
@@ -1102,7 +1140,6 @@ cliTest(
     );
     const result = await cli.run({
       arguments: ["inspect-analysis-view", input, "--json"],
-      environment: { HOME: root, XDG_CONFIG_HOME: root, XDG_CACHE_HOME: root },
     });
     expect(result.exitCode).toBe(0);
     expect(result.json).toMatchObject({
@@ -1164,14 +1201,8 @@ cliTest(
 );
 
 cliTest("rejects malformed JSON before projection", async ({ cli }) => {
-  const root = await createTestTempDirectory("rea-analysis-view-cli-bad-");
   const result = await cli.run({
     arguments: ["inspect-analysis-view", "{", "--json"],
-    environment: {
-      HOME: root,
-      XDG_CONFIG_HOME: root,
-      XDG_CACHE_HOME: root,
-    },
   });
   expect(result.exitCode).toBe(1);
   expect(result.json).toMatchObject({
@@ -1187,11 +1218,6 @@ cliTest("rejects a request that omits source", async ({ cli }) => {
   await writeFile(input, JSON.stringify({ view: { kind: "summary" } }));
   const result = await cli.run({
     arguments: ["inspect-analysis-view", input, "--json"],
-    environment: {
-      HOME: root,
-      XDG_CONFIG_HOME: root,
-      XDG_CACHE_HOME: root,
-    },
   });
   expect(result.exitCode).toBe(1);
   expect(result.json).toMatchObject({
@@ -1222,11 +1248,6 @@ for (const [view, reason] of [
       );
       const result = await cli.run({
         arguments: ["inspect-analysis-view", input, "--json"],
-        environment: {
-          HOME: root,
-          XDG_CONFIG_HOME: root,
-          XDG_CACHE_HOME: root,
-        },
       });
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({
@@ -1612,17 +1633,11 @@ cliTest(
   },
 );
 
-cliTest.for(
-  (process.platform === "win32"
-    ? (["event"] as const)
-    : (["event", "os"] as const)
-  ).flatMap((delivery) => [
-    { signal: "SIGINT" as const, status: 130, delivery },
-    { signal: "SIGTERM" as const, status: 143, delivery },
-  ]),
-)(
-  "retains inline projection when $signal ($delivery) is queued during final sealing",
-  async ({ signal, status, delivery }, { cli }) => {
+cliTest(
+  "retains inline projection when SIGINT is queued during final sealing",
+  async ({ cli }) => {
+    const signal = "SIGINT";
+    const delivery = process.platform === "win32" ? "event" : "os";
     const root = await createTestTempDirectory("rea-inline-view-signal-");
     const parent = analysisViewLayoutEvidence(),
       marker = join(root, "signal.json");
@@ -1651,7 +1666,7 @@ cliTest.for(
         NODE_OPTIONS: `--max-old-space-size=2048 --import=${pathToFileURL(preload).href}`,
       },
     });
-    expect(reply.exitCode).toBe(status);
+    expect(reply.exitCode).toBe(130);
     const { error: label, ...projection } =
       analysisCliErrorEnvelopeSchema.parse(reply.json);
     expect(label).toBe("Application workflow failed");

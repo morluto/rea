@@ -1,4 +1,6 @@
 import { isAbsolute, win32 } from "node:path";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import { z } from "zod";
 
 import { expect, it } from "vitest";
 
@@ -19,6 +21,20 @@ const PATHS = [
   "//server/share/path",
   "file:///absolute/path",
 ];
+
+it("serializes portable path constraints for catalogs shipped to another host", () => {
+  const ajv = new Ajv2020({ strict: false });
+  for (const io of ["input", "output"] as const) {
+    const schema = JSON.parse(
+      JSON.stringify(z.toJSONSchema(absoluteLocalPathStringSchema, { io })),
+    );
+    const validate = ajv.compile(schema);
+    for (const path of PATHS.filter((path) => win32.isAbsolute(path)))
+      expect(validate(path), `${io}: ${path}`).toBe(true);
+    for (const path of ["", "relative/path", "C:relative/path", "/tmp/\0"])
+      expect(validate(path), `${io}: ${path}`).toBe(false);
+  }
+});
 
 it("matches the host path module for absolute local paths", () => {
   const checked: string[] = [];

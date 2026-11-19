@@ -18,11 +18,7 @@ import { resolveSwiftcCompileTimeoutMs } from "../../../src/process/DarwinProces
 const preparationBudget =
   process.platform === "darwin" ? resolveSwiftcCompileTimeoutMs() : 0;
 
-async function prepareController(
-  controller: string,
-  version: string,
-  imports: Readonly<Record<string, string>>,
-) {
+async function prepareController(controller: string) {
   // The verifier loads its production-owned TypeScript source graph at runtime.
   // Keep that graph in the isolated controller so imports cannot drift from a hand-maintained list.
   await mkdir(join(controller, "scripts"), { recursive: true });
@@ -41,10 +37,9 @@ async function prepareController(
     recursive: true,
     filter: (source) => !/\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(source),
   });
-  await writeFile(
-    join(controller, "package.json"),
-    JSON.stringify({ name: "rea-agents", version, type: "module", imports }),
-  );
+  // These scripts execute as this package, including its private runtime
+  // imports. Copy the owning manifest instead of reconstructing its resolver.
+  await copyFile("package.json", join(controller, "package.json"));
   await symlink(
     resolve("node_modules"),
     join(controller, "node_modules"),
@@ -60,11 +55,8 @@ processTest.skipIf(process.platform === "win32")(
     const root = await createTestTempDirectory("rea-release-canary-");
     const candidate = join(root, "candidate");
     const controller = join(root, "controller");
-    const { version, imports } = z
-      .object({
-        version: z.string(),
-        imports: z.record(z.string(), z.string()),
-      })
+    const { version } = z
+      .object({ version: z.string() })
       .parse(JSON.parse(await readFile("package.json", "utf8")));
     const harness = await createApplicationMcpHarness();
     let snapshot;
@@ -95,6 +87,7 @@ processTest.skipIf(process.platform === "win32")(
         version,
         type: "module",
         files: ["scripts"],
+        scripts: { preinstall: 'node -e "process.exit(42)"' },
       }),
     );
     await copyFile(
@@ -131,7 +124,7 @@ if (process.argv[2] === "mcp") {
       .tuple([z.object({ filename: z.string() })])
       .parse(JSON.parse(packed.stdout));
     const tarball = join(candidate, filename);
-    await prepareController(controller, version, imports);
+    await prepareController(controller);
     const invoke = (selected = tarball) =>
       processes.run(
         process.execPath,
@@ -142,6 +135,7 @@ if (process.argv[2] === "mcp") {
         ],
         {
           cwd: controller,
+          env: { ...process.env, npm_config_allow_scripts: "rea-test-control" },
           timeoutMs: Math.min(2_147_483_647, preparationBudget + 30_000),
         },
       );

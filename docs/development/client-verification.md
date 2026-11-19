@@ -239,7 +239,9 @@ POSIX lane isolates `GROK_HOME`, an independent Git workspace and additional
 skill roots, disables foreign configuration discovery, guards setup writes,
 preserves unrelated registrations/backups and checks idempotence. Call mode
 loads the full skill through native `read_file`, queries all REA names and input
-schemas through native `search_tool`, and calls analysis through `use_tool`.
+schemas through bounded native `search_tool` keyword queries, checking the
+collected union against the complete catalog, and calls analysis through
+`use_tool`.
 If discovery reports `partial`, the native agent diagnoses REA registration and
 retries discovery. No startup-timeout override or fixed readiness delay is used.
 A larger Unicode-path fixture exercises native result offloading: the full
