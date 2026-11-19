@@ -479,3 +479,25 @@ it.each([
     failure: { reason: "format" },
   });
 });
+
+it("preserves Bun metadata UTF-8 text and keeps undecodable bytes as hex", async () => {
+  const result = await locate(
+    elfAppendedBunPayload(
+      bunModuleGraphPayload({
+        modules: [
+          { name: "\uFEFF資料𐐷.js" },
+          { name: Buffer.from([0xc3, 0x28]) },
+        ],
+        compileExecArgv: Buffer.from([0xff]),
+      }),
+    ),
+  );
+  if (result.status !== "present" || !result.graph)
+    throw new Error("missing graph");
+  const decoded = await decodeBunModuleGraph(result.graph);
+  expect(decoded.modules.map(({ nameText }) => nameText)).toEqual([
+    { text: "\uFEFF資料𐐷.js", hex: null },
+    { text: null, hex: "c328" },
+  ]);
+  expect(decoded.compileExecArgv).toEqual({ text: null, hex: "ff" });
+});
