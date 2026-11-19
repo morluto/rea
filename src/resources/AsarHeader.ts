@@ -18,6 +18,7 @@ import {
 } from "../domain/analysisResourceLimits.js";
 import { parseAsarListingAdmission } from "../config/asarListingAdmission.js";
 import { strictUtf8Decoder } from "../domain/strictUtf8.js";
+import { BinaryReader } from "../domain/binaryContainer.js";
 
 /**
  * Resolve the admission from a composition root's selected environment; an
@@ -139,12 +140,16 @@ const parseAsarHeaderExtents = (
         "Truncated ASAR Pickle extent prefix",
       ),
     );
-  const bytes = Buffer.from(prefix.buffer, prefix.byteOffset, 16);
-  const headerBytes = bytes.readUInt32LE(4);
-  const payloadBytes = bytes.readUInt32LE(8);
-  const jsonBytes = bytes.readUInt32LE(12);
+  const reader = new BinaryReader(
+    Buffer.from(prefix.buffer, prefix.byteOffset, 16),
+    true,
+    "asar",
+  );
+  const headerBytes = reader.u32(4);
+  const payloadBytes = reader.u32(8);
+  const jsonBytes = reader.u32(12);
   if (
-    bytes.readUInt32LE(0) !== 4 ||
+    reader.u32(0) !== 4 ||
     headerBytes < 8 ||
     payloadBytes !== headerBytes - 4 ||
     jsonBytes > payloadBytes - 4
