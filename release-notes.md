@@ -604,6 +604,7 @@
 
 ### Performance Improvements
 
+* **bun:** validate metadata UTF-8 without round-tripping bytes ([#12254](https://github.com/morluto/rea/issues/12254)) ([d7aee71](https://github.com/morluto/rea/commit/d7aee71bc7807dadcc274ae18eb881ef3a2958ab))
 * **ci:** cache npm downloads and portable builds in Ghidra, readiness, mutation, and recovery jobs ([f5285e6](https://github.com/morluto/rea/commit/f5285e6a54e846b9bbbbe5d79b5ddda295f835af))
 * **ci:** narrow PR test selection fallbacks, unify stray lanes, and cache Windows builds ([#11797](https://github.com/morluto/rea/issues/11797)) ([30d5ad2](https://github.com/morluto/rea/commit/30d5ad2a48fc8668ff0be961c7637fdbf638f65e))
 * **ci:** optimize semantic graph construction, directory containment checks, gate checkouts, and boundary stragglers ([#11851](https://github.com/morluto/rea/issues/11851)) ([84ee604](https://github.com/morluto/rea/commit/84ee604c6d06b93cc5e139469e836e2283a4c09e))
