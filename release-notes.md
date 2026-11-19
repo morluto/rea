@@ -877,6 +877,7 @@
 * **domain:** type UTF-8 excerpts apart from identity strings ([#11272](https://github.com/morluto/rea/issues/11272)) ([b6659b7](https://github.com/morluto/rea/commit/b6659b70a3e55f6bc0d1e71cee21a87acd6131b9))
 * **dotnet:** decode manifest fields through BinaryReader ([#12332](https://github.com/morluto/rea/issues/12332)) ([77be47f](https://github.com/morluto/rea/commit/77be47fbf9c4a2dfe6e931312f826475f1947a91))
 * **dotnet:** read metadata constant scalars through BinaryReader ([#12371](https://github.com/morluto/rea/issues/12371)) ([091b8b0](https://github.com/morluto/rea/commit/091b8b0339f3ab5b1075715e9dedfce5d6df8df1))
+* **dotnet:** share checked CIL operand and exception reads ([#12372](https://github.com/morluto/rea/issues/12372)) ([1b172f1](https://github.com/morluto/rea/commit/1b172f1e021edffb795640dc47d1fe76ec6e924a))
 * **electron:** carry fuse limits from the reader ([#12221](https://github.com/morluto/rea/issues/12221)) ([c34a00c](https://github.com/morluto/rea/commit/c34a00c70a041b88edc2f7d2e10c92392a7c13e1))
 * **elf:** preserve unwind parser limit facts ([#12308](https://github.com/morluto/rea/issues/12308)) ([9a9ddc9](https://github.com/morluto/rea/commit/9a9ddc9605fe767feb2fbe548f4cfeb7336ba0e0))
 * **elf:** preserve unwind parser limit ownership ([9a9ddc9](https://github.com/morluto/rea/commit/9a9ddc9605fe767feb2fbe548f4cfeb7336ba0e0))
