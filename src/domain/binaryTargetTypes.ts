@@ -55,8 +55,6 @@ export const ELF_METADATA_ARCHITECTURES = [
   "riscv",
   "powerpc",
 ] as const satisfies readonly BinaryArchitecture[];
-export type ElfMetadataArchitecture =
-  (typeof ELF_METADATA_ARCHITECTURES)[number];
 
 /** Families that require a specialized target variant instead of generic headers. */
 export const HEADER_ARCHITECTURE_EXCLUSIONS = [
