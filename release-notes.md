@@ -406,6 +406,7 @@
 * **javascript:** retain wide function fingerprint inventories ([#10355](https://github.com/morluto/rea/issues/10355)) ([5d046b9](https://github.com/morluto/rea/commit/5d046b9ad7e962b3fd4ad3d99ff62aa4c2663552))
 * **javascript:** retain wide runtime load-state inventories ([#10354](https://github.com/morluto/rea/issues/10354)) ([c4cec63](https://github.com/morluto/rea/commit/c4cec6373d1a65679a695cfb8270b43ad15bb325))
 * **javascript:** share source-map admission and path resolution ([#12161](https://github.com/morluto/rea/issues/12161)) ([27e04ea](https://github.com/morluto/rea/commit/27e04ea2ecf7a35ca0000fe7f3c76720e295a61a))
+* **javascript:** share TypeScript suffix grammar across parsers ([#12257](https://github.com/morluto/rea/issues/12257)) ([fe6c9bc](https://github.com/morluto/rea/commit/fe6c9bcf663d1b34942a41e969e07455ca4951f0))
 * **javascript:** stop an Electron alias walk at a read before its initializer ([98540f2](https://github.com/morluto/rea/commit/98540f24e0ed3e46139704eb5e1923f628a33aee)), closes [#4490](https://github.com/morluto/rea/issues/4490)
 * **kuna:** recover explicit direct-call destinations ([#12106](https://github.com/morluto/rea/issues/12106)) ([2182996](https://github.com/morluto/rea/commit/21829964ef95818db3b25d8d0e8490295f4d30c9))
 * **kuna:** reject lossy text in retained project exports ([#12171](https://github.com/morluto/rea/issues/12171)) ([f361ee1](https://github.com/morluto/rea/commit/f361ee1222f6fcffd08add5d268ab878b85f64fe))
