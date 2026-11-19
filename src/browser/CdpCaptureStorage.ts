@@ -82,12 +82,28 @@ export const captureStorage = async (
     : { items: [], complete: false };
   // A malformed or partly unusable name list is an incomplete enumeration
   // rather than an empty one.
-  const structuredStorageComplete =
-    indexedValues !== undefined &&
-    indexed.length === indexedValues.length &&
+  const cacheListComplete =
     cacheValues !== undefined &&
     caches.length === cacheValues.length &&
     caches.every(({ id }) => id !== undefined);
+  const structuredStorageComplete =
+    indexedValues !== undefined &&
+    indexed.length === indexedValues.length &&
+    cacheListComplete;
+  // The entry walk is only as complete as the cache list it walks, so a list
+  // that failed or dropped rows is reported on the entry section too.
+  const cacheListExclusion: BrowserExclusionReason | undefined =
+    cacheReply === undefined || commandUnavailable(cacheReply)
+      ? "provider_unavailable"
+      : cacheListComplete
+        ? undefined
+        : "invalid_protocol_value";
+  const cacheEntriesExclusion = !context.input.include_cache_storage_entries
+    ? undefined
+    : cacheListExclusion === "provider_unavailable" ||
+        cacheEntries.exclusion === "provider_unavailable"
+      ? "provider_unavailable"
+      : (cacheListExclusion ?? cacheEntries.exclusion);
   const keysExclusion = !context.input.include_storage_keys
     ? undefined
     : local.exclusion === "provider_unavailable" ||
@@ -100,7 +116,7 @@ export const captureStorage = async (
         : undefined;
   return {
     keysExclusion,
-    cacheEntriesExclusion: cacheEntries.exclusion,
+    cacheEntriesExclusion,
     value: {
       origin,
       usage_bytes: quota.ok ? quota.value.usage : null,

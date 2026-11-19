@@ -24,13 +24,16 @@ const CACHE_ENTRY = {
 };
 
 const UNSUPPORTED_ENTRIES = Symbol("unsupported");
+const UNSUPPORTED_CACHE_NAMES = Symbol("unsupported-cache-names");
 
 type StorageCapture = Awaited<ReturnType<typeof captureStorage>>;
 
 const captureWithEntries = async (
   includeCacheStorageEntries: boolean,
   entryPages: unknown[][] | typeof UNSUPPORTED_ENTRIES = [[CACHE_ENTRY]],
-  caches: unknown[] = [{ cacheName: "fixture-cache", cacheId: "fixture-id" }],
+  caches: unknown[] | typeof UNSUPPORTED_CACHE_NAMES = [
+    { cacheName: "fixture-cache", cacheId: "fixture-id" },
+  ],
   returnCount?: number,
 ): Promise<
   StorageCapture & {
@@ -52,7 +55,16 @@ const captureWithEntries = async (
         case "IndexedDB.requestDatabaseNames":
           return Promise.resolve({ databaseNames: [] });
         case "CacheStorage.requestCacheNames":
-          return Promise.resolve({ caches });
+          return caches === UNSUPPORTED_CACHE_NAMES
+            ? Promise.reject(
+                new CdpCommandRejection(
+                  "inspect_web_page",
+                  method,
+                  -32601,
+                  "Method not found",
+                ),
+              )
+            : Promise.resolve({ caches });
         case "CacheStorage.requestEntries": {
           expect(params.cacheId).toEqual(expect.any(String));
           if (entryPages === UNSUPPORTED_ENTRIES)
@@ -237,6 +249,26 @@ it("keeps a cache without an identifier out of the entry walk", async () => {
   expect(cacheEntriesExclusion).toBe<BrowserExclusionReason>(
     "invalid_protocol_value",
   );
+});
+
+it("reports an unavailable cache list on the entry section", async () => {
+  const { value, cacheEntriesExclusion } = await captureWithEntries(
+    true,
+    [[CACHE_ENTRY]],
+    UNSUPPORTED_CACHE_NAMES,
+  );
+  expect(cacheEntriesExclusion).toBe("provider_unavailable");
+  expect(value.cache_entries).toEqual([]);
+});
+
+it("reports a cache list that dropped rows on the entry section", async () => {
+  const { value, cacheEntriesExclusion } = await captureWithEntries(
+    true,
+    [[CACHE_ENTRY]],
+    ["not-a-record"],
+  );
+  expect(cacheEntriesExclusion).toBe("invalid_protocol_value");
+  expect(value.cache_entries).toEqual([]);
 });
 
 it("refuses a capture recorded before the entry inventory existed", () => {
