@@ -319,6 +319,27 @@ it("bounds the synchronous WebAssembly section walk", () => {
   );
 });
 
+it.each([
+  ["a truncated size", Buffer.from([0x00, 0x80]), "truncated", "section size"],
+  [
+    "an overflowing size",
+    Buffer.from([0x00, 0xff, 0xff, 0xff, 0xff, 0x1f]),
+    "malformed",
+    "section size",
+  ],
+  ["missing contents", Buffer.from([0x00, 0x01]), "truncated", "section"],
+] as const)(
+  "reports %s at the WebAssembly section limit",
+  (_name, tail, kind, field) => {
+    const bytes = Buffer.concat([createWasmSectionFlood(65_536), tail]);
+    expect(() => readRustBinaryImage(bytes)).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({ kind, format: "wasm", field }),
+      }),
+    );
+  },
+);
+
 it("preserves the arm64_32 Mach-O CPU family when dependency metadata is absent", () => {
   const bytes = createRustImage({
     format: "macho",

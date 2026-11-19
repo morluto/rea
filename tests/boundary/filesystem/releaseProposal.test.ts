@@ -46,6 +46,18 @@ it("reports an HTTP status when a release proposal error has no message", () => 
   expect(describeReleaseProposalError(new Error("broken"))).toBe("broken");
 });
 
+it("reports a gateway error without logging the HTML response page", () => {
+  const failure = Object.assign(
+    new Error("<!DOCTYPE html>\n<html><title>Unicorn!</title></html>"),
+    {
+      status: 504,
+    },
+  );
+  expect(describeReleaseProposalError(failure)).toBe(
+    "GitHub returned an HTML error response (HTTP 504)",
+  );
+});
+
 beforeAll(async () => {
   upstream = await import("release-please");
   githubRuntime = require("release-please/build/src/github.js");
@@ -303,6 +315,7 @@ type HistoryFailure = {
   cursor?: string;
   errors: { message: string; type?: string }[];
   status?: number;
+  html?: string;
 };
 const internalError = {
   message:
@@ -482,6 +495,11 @@ async function releaseFixture({
         const failure = failures[0];
         if (failure && failure.cursor === query.variables.cursor) {
           failures.shift();
+          if (failure.html !== undefined)
+            return new Response(failure.html, {
+              status: failure.status ?? 504,
+              headers: { "content-type": "text/html; charset=utf-8" },
+            });
           return respond(
             {
               ...historyPage(commits, query.variables, pullRequest),
@@ -998,9 +1016,15 @@ it.each([
     status: 200,
   },
   { name: "HTTP 502 error", error: internalError, status: 502 },
+  {
+    name: "HTTP 504 HTML error",
+    error: internalError,
+    status: 504,
+    html: "<!DOCTYPE html><html><title>Unicorn!</title></html>",
+  },
 ])(
   "retries the same history cursor after $name and discards partial data",
-  async ({ error, status }) => {
+  async ({ error, status, html }) => {
     const sleep = vi
       .spyOn(githubRuntime, "sleepInMs")
       .mockResolvedValue(undefined);
@@ -1012,7 +1036,14 @@ it.each([
     commits.push({ sha: baseline, message: "chore: release 6.7.0", files: [] });
     const fixture = await releaseFixture({
       commits,
-      historyFailures: [{ cursor: "10", errors: [error], status }],
+      historyFailures: [
+        {
+          cursor: "10",
+          errors: [error],
+          status,
+          ...(html === undefined ? {} : { html }),
+        },
+      ],
     });
     const candidates = await fixture.manifest.buildPullRequests();
     const body = candidates[0]?.body.toString();
@@ -1187,7 +1218,7 @@ const releasePatchFixture = async (outsideProject = false) => {
     project,
     source,
   );
-  for (const dependency of ["semver", "zod"])
+  for (const dependency of ["markdown-it", "semver", "zod"])
     await symlink(
       dirname(require.resolve(`${dependency}/package.json`)),
       join(dependencies, dependency),

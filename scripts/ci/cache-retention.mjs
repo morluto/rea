@@ -141,12 +141,15 @@ export function selectPrefixDeletions(
       throw new Error(
         `Refusing to evaluate a cache outside ${prefix}: ${entry.key}`,
       );
-  const protectedIds = new Set(
-    [...entries]
-      .sort(byNewest)
-      .slice(0, keepGenerations)
-      .map((entry) => entry.id),
-  );
+  // A newer snapshot on a different ref is unavailable to this ref.
+  const newestByRef = new Map();
+  for (const entry of entries.toSorted(byNewest)) {
+    const newest = newestByRef.get(entry.ref) ?? [];
+    if (newest.length >= keepGenerations) continue;
+    newest.push(entry.id);
+    newestByRef.set(entry.ref, newest);
+  }
+  const protectedIds = new Set([...newestByRef.values()].flat());
   if (keepKey !== undefined)
     for (const entry of entries)
       if (entry.key === keepKey) protectedIds.add(entry.id);

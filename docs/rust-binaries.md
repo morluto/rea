@@ -232,11 +232,11 @@ to retain a larger prefix; no restart is required. The complete-report byte
 allowance still applies. Optional compiler paths are shortened before they can
 displace independently observed dependency facts.
 
-WebAssembly section framing is walked synchronously, and the format sets no
-section count, so a module with more than 65,536 sections is refused with a
-`cpu` resource constraint whose `reported_limits` name the `max_wasm_sections`
-boundary and its maximum. This allowance is fixed; `producer_limits` does not
-raise it. Producer output holds a few dozen sections.
+The synchronous WebAssembly section walk admits at most 65,536 section
+payloads. A further section with a valid length and file extent triggers a
+`cpu` resource constraint whose `reported_limits` name `max_wasm_sections`.
+Invalid lengths and truncated extents retain their format diagnosis at the
+limit. This allowance is fixed, so `producer_limits` does not raise it.
 
 Reader architecture names remain verbatim in the report. Evidence subjects use
 the recognized canonical family: `386` maps to `x86`, `amd64` to `x86_64`, and
