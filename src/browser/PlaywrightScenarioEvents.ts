@@ -26,7 +26,11 @@ import type {
 } from "../domain/browserNetworkEvidence.js";
 import type { BrowserScenarioCaptureLimits } from "../domain/browserScenarioCaptureLimits.js";
 import { DEFAULT_BROWSER_SCENARIO_CAPTURE_LIMITS } from "../domain/browserScenarioCaptureLimits.js";
-import { captureNetworkBody } from "./network/PlaywrightNetworkContent.js";
+import {
+  captureNetworkBody,
+  networkBodyMediaType,
+  type NetworkReadOptions,
+} from "./network/PlaywrightNetworkContent.js";
 import { PlaywrightScenarioNetwork } from "./network/PlaywrightScenarioNetwork.js";
 
 type EventName =
@@ -515,31 +519,25 @@ export class PlaywrightScenarioEvents {
         };
       if (body.state === "captured") {
         const prior = body;
-        const source = {
-          headers: (): Record<string, string> =>
-            prior.media_type === null
-              ? {}
-              : { "content-type": prior.media_type },
-          headersArray: async () => [],
+        const readOptions: NetworkReadOptions = {
+          redactionScope: "response",
+          timeoutMs: 5000,
+          maxBodyBytes: this.limits.max_network_body_bytes,
+          maxBodyAllocationBytes: Math.min(
+            this.limits.max_network_body_allocation_bytes,
+            available,
+          ),
+          maxHeaderAllocationBytes:
+            this.limits.max_network_header_allocation_bytes,
+          maxMetadataAllocationBytes:
+            this.limits.max_network_metadata_allocation_bytes,
         };
         const protectedBody = await captureNetworkBody(
           async () => Buffer.from(prior.content, "base64"),
           event.phase,
-          source,
+          () => networkBodyMediaType(prior.media_type),
           this.secrets,
-          {
-            redactionScope: "response",
-            timeoutMs: 5000,
-            maxBodyBytes: this.limits.max_network_body_bytes,
-            maxBodyAllocationBytes: Math.min(
-              this.limits.max_network_body_allocation_bytes,
-              available,
-            ),
-            maxHeaderAllocationBytes:
-              this.limits.max_network_header_allocation_bytes,
-            maxMetadataAllocationBytes:
-              this.limits.max_network_metadata_allocation_bytes,
-          },
+          readOptions,
         );
         body =
           protectedBody.state === "omitted"
@@ -667,6 +665,7 @@ export class PlaywrightScenarioEvents {
             bytes: input.observedBytes,
             sha256: "0".repeat(64),
             media_type: null,
+            media_type_source: "content-type-header",
             redacted: false,
           },
         },

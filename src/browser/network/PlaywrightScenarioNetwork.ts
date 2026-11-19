@@ -647,11 +647,14 @@ export class PlaywrightScenarioNetwork {
       const readOptions = privacyOnly
         ? { ...this.readOptions, maxBodyBytes: MAX_SAVED_RESPONSE_BYTES }
         : this.readOptions;
-      let headers: Promise<BrowserNetworkHeaders> | undefined;
-      const getHeaders = (): Promise<BrowserNetworkHeaders> =>
-        (headers ??= includeHeaders
-          ? captureNetworkHeaders(source, this.options.secrets, readOptions)
-          : Promise.resolve({ state: "not_requested" }));
+      let headers: ReturnType<typeof captureNetworkHeaders> | undefined;
+      const getHeaders = () =>
+        (headers ??= captureNetworkHeaders(
+          source,
+          includeHeaders,
+          this.options.secrets,
+          readOptions,
+        ));
       // Existing reads keep their order. Marked responses establish secret
       // spellings before either their headers or their body can be retained.
       if (!protectedResponse && includeHeaders) await getHeaders();
@@ -673,7 +676,7 @@ export class PlaywrightScenarioNetwork {
                 return bounded.value;
               },
               phase,
-              source,
+              async () => (await getHeaders()).mediaType,
               this.options.secrets,
               readOptions,
               async (body) =>
@@ -681,7 +684,7 @@ export class PlaywrightScenarioNetwork {
                   transactionId: transaction.id,
                   sourceEventSequence: sequence,
                   phase,
-                  headers: await getHeaders(),
+                  headers: (await getHeaders()).headers,
                   observedBytes: body.observedBytes,
                   allocationBytes: body.allocationBytes,
                   mediaType: body.mediaType,
@@ -708,7 +711,9 @@ export class PlaywrightScenarioNetwork {
               message:
                 "Response header values were withheld because marked source values could not be read safely.",
             }
-          : await getHeaders();
+          : includeHeaders
+            ? (await getHeaders()).headers
+            : { state: "not_requested" };
       const retainedBody = includeBody
         ? observedBody
         : { state: "not_requested" as const };
