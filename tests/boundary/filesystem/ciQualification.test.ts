@@ -55,7 +55,9 @@ function run(overrides: Record<string, unknown> = {}) {
 }
 
 async function admissionFixture(
-  candidate: Record<string, unknown> | Array<Record<string, unknown>> = artifact(),
+  candidate:
+    | Record<string, unknown>
+    | Array<Record<string, unknown>> = artifact(),
   candidateRun: Record<string, unknown> = run(),
   options: { apiError?: boolean; malformed?: boolean; force?: boolean } = {},
 ) {
