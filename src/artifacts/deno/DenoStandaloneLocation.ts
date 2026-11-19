@@ -26,9 +26,12 @@ import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclaration
 import { readElfFixedHeader } from "../../domain/elfFixedHeader.js";
 import { MAX_INSPECT_ELF_NOTE_ENTRIES } from "../../domain/native/elfNotes.js";
 import {
+  ELF_NOTE_HEADER_BYTES,
   elfNoteAlignment,
-  elfNoteLayout,
-  readElfNoteHeader,
+  elfNoteSectionStorage,
+  isElfNotePadding,
+  readElfNoteFrame,
+  type ElfNoteAlignment,
 } from "../../domain/native/elfNoteLayout.js";
 import {
   MAX_INSPECT_PE_DIRECTORY_ENTRIES,
@@ -55,7 +58,6 @@ const ELF64_PROGRAM_HEADER_BYTES = 56;
 const ELF32_PROGRAM_HEADER_BYTES = 32;
 const ELF64_SECTION_HEADER_BYTES = 64;
 const ELF32_SECTION_HEADER_BYTES = 40;
-const SHT_NOTE = 7;
 const RT_RCDATA = 10;
 const RESOURCE_NAME = "D3N0L4ND";
 const SECTION_NAME = "d3n0l4nd";
@@ -536,7 +538,7 @@ const locateIntelTrailers = async (
 interface ElfNoteTable {
   offset: number;
   length: number;
-  alignment: number;
+  alignment: ElfNoteAlignment;
   copies: number;
 }
 
@@ -661,8 +663,9 @@ const locateElfNotes = async (carrier: Carrier): Promise<SectionRange[]> => {
         damaged(parsed.error.message);
         continue;
       }
-      if (parsed.value.type !== SHT_NOTE) continue;
-      if (parsed.value.compressed) {
+      const storage = elfNoteSectionStorage(parsed.value);
+      if (storage === "not-note") continue;
+      if (storage === "compressed") {
         damaged("compressed ELF note sections are unsupported");
         continue;
       }
@@ -727,46 +730,53 @@ const scanElfNoteTable = async (
   };
   let cursor = 0;
   let notes = 0;
-  while (cursor + 12 <= table.length) {
+  while (cursor + ELF_NOTE_HEADER_BYTES <= table.length) {
     abortIfNeeded(carrier.signal);
     notes += 1;
     if (examined + notes * table.copies > MAX_INSPECT_ELF_NOTE_ENTRIES) {
       walk.damage ??= denoElfNoteLimit();
       return notes;
     }
-    const header = await readExact(carrier, table.offset + cursor, 12);
+    const header = await readExact(
+      carrier,
+      table.offset + cursor,
+      ELF_NOTE_HEADER_BYTES,
+    );
     if (header === undefined)
       return stop("ELF note header is truncated", notes);
-    const parsed = readElfNoteHeader(header, little);
+    const parsed = readElfNoteFrame(
+      header,
+      little,
+      table.alignment,
+      table.length - cursor,
+    );
     if (!parsed.ok) return stop(parsed.error.message, notes);
-    const { namesz, descsz, type } = parsed.value;
-    const layout = elfNoteLayout(namesz, descsz, table.alignment);
+    const { namesz, descsz, type, descriptor, next, framing } = parsed.value;
     const sui = namesz === ELF_NOTE_OWNER.length && type === ELF_NOTE_TYPE;
-    if (
-      !Number.isSafeInteger(layout.descriptor) ||
-      !Number.isSafeInteger(layout.next) ||
-      layout.next < 12 ||
-      layout.next > table.length - cursor
-    ) {
+    if (framing !== "complete") {
       // The owner and descriptor name are read within the table, apart from
       // the claimed extent, so a confirmed Deno note still fails closed.
-      if (sui && (await confirmsSuiNote(carrier, table, cursor, layout)))
+      if (sui && (await confirmsSuiNote(carrier, table, cursor, descriptor)))
         throw denoCarrierFailure("ELF SUI note entry exceeds its table");
       return stop("ELF note entry exceeds its table", notes);
     }
     if (sui) {
-      const name = await readExact(carrier, table.offset + cursor + 12, namesz);
+      const name = await readExact(
+        carrier,
+        table.offset + cursor + ELF_NOTE_HEADER_BYTES,
+        namesz,
+      );
       if (name === undefined) return stop("ELF note name is truncated", notes);
       if (name.equals(ELF_NOTE_OWNER)) {
         const payload = await readSuiRange(
           carrier,
-          table.offset + cursor + layout.descriptor,
+          table.offset + cursor + descriptor,
           descsz,
         );
         if (payload !== undefined) walk.found.push(payload);
       }
     }
-    cursor += layout.next;
+    cursor += next;
   }
   if (cursor >= table.length) return notes;
   // A table too short for any note still costs one read of its tail.
@@ -796,7 +806,7 @@ const noteTableTailIssue = async (
   );
   if (tail === undefined)
     return denoCarrierFailure("ELF note table is truncated");
-  if (tail.some((byte) => byte !== 0))
+  if (!isElfNotePadding(tail))
     return denoCarrierFailure("ELF note table has trailing non-zero bytes");
   return undefined;
 };
@@ -806,17 +816,20 @@ const confirmsSuiNote = async (
   carrier: Carrier,
   table: ElfNoteTable,
   cursor: number,
-  layout: { readonly descriptor: number },
+  descriptor: number,
 ): Promise<boolean> => {
-  const wanted = layout.descriptor + 2 + SECTION_NAME_BYTES.length;
-  if (!Number.isSafeInteger(wanted) || wanted > table.length - cursor)
-    return false;
+  const wanted = descriptor + 2 + SECTION_NAME_BYTES.length;
+  if (wanted > table.length - cursor) return false;
   const at = table.offset + cursor;
-  const name = await readExact(carrier, at + 12, ELF_NOTE_OWNER.length);
+  const name = await readExact(
+    carrier,
+    at + ELF_NOTE_HEADER_BYTES,
+    ELF_NOTE_OWNER.length,
+  );
   if (name === undefined || !name.equals(ELF_NOTE_OWNER)) return false;
   const prefix = await readExact(
     carrier,
-    at + layout.descriptor,
+    at + descriptor,
     2 + SECTION_NAME_BYTES.length,
   );
   return (

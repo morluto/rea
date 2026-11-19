@@ -469,6 +469,48 @@ it("trusts the PT_NOTE blob over a stale SHT_NOTE entry", async () => {
   expect(inventory.manifest.root_format).toBe("node-sea");
 });
 
+it.each([
+  ["section", "elf"],
+  ["both", "node-sea"],
+] as const)(
+  "does not locate raw SEA bytes in compressed note storage (%s)",
+  async (ownership, expected) => {
+    const bytes = nodeSeaElf({ ...populated, ownership });
+    // Flag the note section as compressed, leaving its raw descriptor bytes intact.
+    const sectionOffset = Number(bytes.readBigUInt64LE(0x28)) + 64;
+    bytes.writeBigUInt64LE(0x800n, sectionOffset + 8);
+    const inventory = await scanCanonicalArtifactInventory(
+      await writeCarrier("compressed-note-section", bytes),
+    );
+    expect(inventory.manifest.root_format).toBe(expected);
+  },
+);
+
+it.each([0, 1])(
+  "only accepts padding bytes after a SEA note (%i)",
+  async (tail) => {
+    const bytes = elfNoteFixture({
+      notes: Buffer.concat([
+        elfNote("NODE_SEA_BLOB", 0, buildNodeSeaBlob(populated)),
+        Buffer.from([tail]),
+      ]),
+      ownership: "section",
+      type: 2,
+    });
+    const inventory = scanCanonicalArtifactInventory(
+      await writeCarrier("note-table-tail", bytes),
+    );
+    if (tail === 0)
+      await expect(inventory).resolves.toMatchObject({
+        manifest: { root_format: "node-sea" },
+      });
+    else
+      await expect(inventory).rejects.toMatchObject({
+        message: expect.stringContaining("trailing non-zero bytes"),
+      });
+  },
+);
+
 it("leaves a non-SEA PE with a cyclic resource tree to native classification", async () => {
   const fixture = peResourceFixture(true);
   fixture.bytes.writeUInt32LE(0x80000000, (fixture.entryOffsets[0] ?? 0) + 4);

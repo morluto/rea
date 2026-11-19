@@ -41,7 +41,10 @@ import {
   MAX_BINARY_HARDENING_SYMBOL_SCAN_BYTES,
   MAX_BINARY_HARDENING_TABLE_ENTRIES,
 } from "../../domain/native/binaryHardening.js";
-import { elfNoteAlignment } from "../../domain/native/elfNoteLayout.js";
+import {
+  elfNoteAlignment,
+  elfNoteSectionStorage,
+} from "../../domain/native/elfNoteLayout.js";
 import { MAX_INSPECT_ELF_NOTE_ENTRIES } from "../../domain/native/elfNotes.js";
 import {
   elfStringTableText,
@@ -73,7 +76,6 @@ const ET_EXEC = 2;
 const ET_DYN = 3;
 const SHT_SYMTAB = 2;
 const SHT_STRTAB = 3;
-const SHT_NOTE = 7;
 const SHT_DYNSYM = 11;
 const DT_BIND_NOW = 24n;
 const DF_BIND_NOW = 0x8n;
@@ -899,13 +901,13 @@ const readFeatureNotes = (
   const otherSpans: NoteSpan[] = [];
   let incomplete: string | null = null;
   for (const section of sections) {
-    if (section.type !== SHT_NOTE) continue;
+    const storage = elfNoteSectionStorage(section);
+    if (storage === "not-note") continue;
     // An empty note section owns no bytes, so it has nothing to walk.
     if (section.size === 0n) continue;
-    if (section.compressed)
+    if (storage === "compressed") {
       incomplete ??=
         "A compressed SHT_NOTE section may hold GNU property notes, and its descriptors were not read.";
-    if (section.compressed) {
       if (!section.file_backed) continue;
       otherSpans.push({
         offset: exact(section.offset, "SHT_NOTE offset"),

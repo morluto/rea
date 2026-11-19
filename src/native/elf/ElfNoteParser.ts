@@ -15,9 +15,12 @@ import {
   type ElfFixedHeader,
 } from "../../domain/elfFixedHeader.js";
 import {
+  ELF_NOTE_HEADER_BYTES,
   elfNoteAlignment as noteAlignment,
-  elfNoteLayout,
-  readElfNoteHeader,
+  elfNoteSectionStorage,
+  isElfNotePadding,
+  readElfNoteFrame,
+  type ElfNoteAlignment,
 } from "../../domain/native/elfNoteLayout.js";
 import type {
   ElfNotes,
@@ -39,7 +42,6 @@ import {
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const PT_NOTE = 4;
-const SHT_NOTE = 7;
 const SHT_STRTAB = 3;
 const HEX_DESCRIPTOR_LIMIT = 64;
 
@@ -266,7 +268,7 @@ const parseNoteStream = (
   reader: ElfReader,
   offset: number,
   size: number,
-  alignment: number,
+  alignment: ElfNoteAlignment,
   maxEntries: number,
   examined: { count: number },
   text: TextBudget,
@@ -278,7 +280,7 @@ const parseNoteStream = (
   reader.require(offset, size);
   const notes: ParsedNote[] = [];
   let at = 0;
-  while (at + 12 <= size) {
+  while (at + ELF_NOTE_HEADER_BYTES <= size) {
     assertArtifactReadActive(signal);
     examined.count += 1;
     if (examined.count > maxEntries)
@@ -288,31 +290,29 @@ const parseNoteStream = (
         { name: "max_entries", maximum: maxEntries, required: examined.count },
       );
     const header = offset + at;
-    const parsedHeader = readElfNoteHeader(
-      reader.slice(header, 12),
+    const frame = readElfNoteFrame(
+      reader.slice(header, ELF_NOTE_HEADER_BYTES),
       reader.little,
+      alignment,
+      size - at,
     );
-    if (!parsedHeader.ok) return fail(parsedHeader.error.message);
-    const { namesz, descsz, type } = parsedHeader.value;
-    // Align offsets from the start of this note. Independently rounding
-    // namesz/descsz disagrees with binutils when alignment is 8 because the
-    // 12-byte note header is not 8-aligned (GNU property namesz=4 then starts
-    // its descriptor at 16, not 20).
-    const { descriptor: descRel, next: nextRel } = elfNoteLayout(
+    if (!frame.ok) return fail(frame.error.message);
+    const {
       namesz,
       descsz,
-      alignment,
-    );
-    const next = at + nextRel;
-    if (next > size) fail("ELF note entry exceeds its table.");
-    if (next <= at) fail("ELF note alignment did not advance.");
-    const nameBytes = reader.slice(header + 12, namesz);
+      type,
+      descriptor: descRel,
+      next,
+      framing,
+    } = frame.value;
+    if (framing !== "complete") fail("ELF note entry exceeds its table.");
+    const nameBytes = reader.slice(header + ELF_NOTE_HEADER_BYTES, namesz);
     const descriptor = reader.slice(header + descRel, descsz);
     const ownerEnd = nameBytes.indexOf(0);
     const ownerBytes = ownerEnd < 0 ? namesz : ownerEnd;
     chargeText(text, ownerBytes + namesz * 2);
     notes.push({
-      location: { offset: header, bytes: next - at },
+      location: { offset: header, bytes: next },
       namesz,
       descsz,
       type,
@@ -324,12 +324,9 @@ const parseNoteStream = (
       descriptor,
       descriptor_offset: header + descRel,
     });
-    at = next;
+    at += next;
   }
-  if (
-    at < size &&
-    reader.slice(offset + at, size - at).some((byte) => byte !== 0)
-  )
+  if (at < size && !isElfNotePadding(reader.slice(offset + at, size - at)))
     fail("ELF note table has trailing non-zero bytes.");
   return notes;
 };
@@ -959,7 +956,8 @@ export const parseElfNotes = (
       );
       if (!parsedSection.ok) return fail(parsedSection.error.message);
       const section = parsedSection.value;
-      if (section.type !== SHT_NOTE) continue;
+      const storage = elfNoteSectionStorage(section);
+      if (storage === "not-note") continue;
       const nameOffset = section.nameOffset;
       if (
         section.offset > BigInt(Number.MAX_SAFE_INTEGER) ||
@@ -969,7 +967,7 @@ export const parseElfNotes = (
       const fileOffset = Number(section.offset);
       const fileSize = Number(section.size);
       reader.require(fileOffset, fileSize);
-      if (section.compressed)
+      if (storage === "compressed")
         throw new BinaryFormatFailure(
           "unsupported",
           "Compressed ELF note sections are unsupported; descriptor file offsets require uncompressed note storage.",
