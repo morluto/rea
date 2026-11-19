@@ -230,13 +230,20 @@ type ReadMember = (budget: number) => Promise<MemberRead>;
 interface SourceMapReference {
   readonly location: string;
   readonly kind: "javascript-source-map" | "possible-linker-map";
+  readonly genericName?: boolean;
+  readonly occurrence?: object;
 }
 
 const namedMapReference = (
   logical: string,
   location: string,
+  occurrence?: object,
 ): SourceMapReference => ({
   location,
+  genericName:
+    logical.toLowerCase().endsWith(".map") &&
+    !isJavaScriptSourceMapName(logical),
+  ...(occurrence === undefined ? {} : { occurrence }),
   kind: isJavaScriptSourceMapName(logical)
     ? "javascript-source-map"
     : "possible-linker-map",
@@ -712,6 +719,17 @@ const assembleScan = (
     const sha256 = state.nativeDigests.get(path);
     return { path, format, ...(sha256 === undefined ? {} : { sha256 }) };
   });
+  let skippedCompanions = state.skippedCompanions;
+  for (const [key, paths] of state.uncertainLinkerMaps) {
+    for (const [spelling, occurrences] of paths) {
+      const named =
+        state.mapTargets.get(key)?.has(spelling) ||
+        state.scriptTargets.get(key)?.has(spelling);
+      const examined = state.examinedMembers.get(key)?.get(spelling)?.size;
+      if (!state.mapTargetsDiscarded && named && examined === 1) continue;
+      skippedCompanions += occurrences.size;
+    }
+  }
   const scan = {
     target: {
       selected_path: input.path,
@@ -756,7 +774,7 @@ const assembleScan = (
         ...state.companionPaths,
         ...[...state.linkerMapGuesses.values()].flatMap((paths) => [...paths]),
       ],
-      skipped: state.skippedCompanions,
+      skipped: skippedCompanions,
     },
     pdb: {
       examined: state.pdbExamined,
@@ -781,7 +799,7 @@ const assembleScan = (
               subject: "source maps",
               count: state.skippedMaps,
               reason:
-                "A source map exceeded the map count or byte allowance, could not be read, was a link that is not followed, was past the package entry cap or the HTML inline script limit, was declared but not found, or sat in a script an HTML file loads that was not examined as one; inline CSS source-map directives are not inspected.",
+                "A source map exceeded the map count or byte allowance, could not be read, was a link that is not followed, was past the package entry cap or the HTML inline script limit, was declared but not found, or sat in a script that could not be fully decoded or examined as one; inline CSS source-map directives are not inspected.",
             },
           ]
         : []),
@@ -791,15 +809,15 @@ const assembleScan = (
               subject: "text members",
               count: state.skippedText,
               reason:
-                "A text member exceeded the text byte allowance, could not be read, or was past the package entry cap.",
+                "A text member exceeded the text byte allowance, could not be read or fully decoded, or was past the package entry cap.",
             },
           ]
         : []),
-      ...(state.skippedCompanions > 0
+      ...(skippedCompanions > 0
         ? [
             {
               subject: "debug companions",
-              count: state.skippedCompanions,
+              count: skippedCompanions,
               reason:
                 "A .map file without a JavaScript name could not be classified, or the listing beside the selected file was incomplete.",
             },
@@ -860,6 +878,8 @@ interface ScanState {
    * retracts the guess.
    */
   linkerMapGuesses: Map<string, Set<string>>;
+  /** Undecodable generic map occurrences remain uncertain until their exact role is declared. */
+  uncertainLinkerMaps: Map<string, Map<string, Set<object>>>;
   skippedCompanions: number;
   pdbExamined: number;
   pdbPaths: string[];
@@ -937,6 +957,7 @@ const createState = (
   memberSamples: [],
   companionPaths: new Set(),
   linkerMapGuesses: new Map(),
+  uncertainLinkerMaps: new Map(),
   skippedCompanions: 0,
   pdbExamined: 0,
   pdbPaths: [],
@@ -1195,25 +1216,27 @@ const noteUnreadMember = (state: ScanState, member: MemberView): void => {
     asNativeFormat(member.format) === null
   ) {
     if (isDeclaredMap(state, member))
-      noteUnreadMap(
-        state,
-        namedMapReference(member.logical, member.location),
-        null,
-      );
+      noteUnreadMap(state, memberMapReference(member), null);
     noteUnreadBinary(state, member);
     return;
   }
   if (asNativeFormat(member.format) !== null) noteUnreadBinary(state, member);
   else if (isDeclaredMap(state, member)) {
-    noteUnreadMap(
-      state,
-      namedMapReference(member.logical, member.location),
-      null,
-    );
+    noteUnreadMap(state, memberMapReference(member), null);
     state.skippedText += 1;
   } else if (isText(member.logical, member.kind)) state.skippedText += 1;
   else noteUnreadBinary(state, member);
 };
+
+/** A package owner's explicit source-map role takes precedence over its name. */
+const memberMapReference = (member: MemberView): SourceMapReference =>
+  member.kindStated && member.kind === "source-map"
+    ? {
+        location: member.location,
+        kind: "javascript-source-map",
+        occurrence: member.completion,
+      }
+    : namedMapReference(member.logical, member.location, member.completion);
 
 /**
  * A member whose bytes were not read. A native one may carry a package that
@@ -1263,12 +1286,21 @@ const examineMapMember = async (
   // whatever it is called. Only an undeclared `.map` may be a linker map.
   // Another spelling of a declared target is undeclared until the scan ends.
   const undeclared =
+    !(member.kindStated && member.kind === "source-map") &&
     member.logical.toLowerCase().endsWith(".map") &&
     !claimMapTarget(state, member.location);
   const declared: SourceMapReference & Pick<MemberView, "read"> = {
     ...(undeclared
-      ? namedMapReference(member.logical, member.location)
-      : { location: member.location, kind: "javascript-source-map" as const }),
+      ? memberMapReference(member)
+      : {
+          location: member.location,
+          kind: "javascript-source-map" as const,
+          genericName:
+            !(member.kindStated && member.kind === "source-map") &&
+            member.logical.toLowerCase().endsWith(".map") &&
+            !isJavaScriptSourceMapName(member.logical),
+          occurrence: member.completion,
+        }),
     read: member.read,
   };
   const bytesReadBefore = state.memberBytesRead;
@@ -1449,6 +1481,7 @@ const noteUnreadMap = (
 ): void => {
   if (map.kind === "javascript-source-map") {
     state.skippedMaps += 1;
+    if (map.genericName === true) noteUncertainLinkerMap(state, map);
     return;
   }
   if (prefix !== null && !mayHaveSourceMapPrefix(prefix)) {
@@ -1456,7 +1489,7 @@ const noteUnreadMap = (
     return;
   }
   state.skippedMaps += 1;
-  state.skippedCompanions += 1;
+  noteUncertainLinkerMap(state, map);
 };
 
 /**
@@ -1464,21 +1497,48 @@ const noteUnreadMap = (
  * reader does not decode, which leaves the map unresolved. Unmarked bytes are
  * read as UTF-8, as a source map is.
  */
-const mapText = (bytes: Buffer): string | null => {
+const mapText = (bytes: Buffer): MemberText | null => {
   const encoding = byteOrderMarkEncoding(bytes);
-  if (encoding === null) return bytes.toString("utf8");
+  if (encoding === null)
+    return { text: bytes.toString("utf8"), complete: isUtf8(bytes) };
   if (encoding === "utf-32") return null;
-  return new TextDecoder(encoding).decode(bytes);
+  return decodeDeclaredText(bytes, encoding);
 };
 
 const mayHaveSourceMapPrefix = (prefix: Buffer): boolean => {
-  const text = mapText(prefix);
-  return text === null || mayHaveSourceMapText(text);
+  const encoding = byteOrderMarkEncoding(prefix);
+  if (encoding === "utf-32") return true;
+  try {
+    const text = new TextDecoder(encoding ?? "utf-8", { fatal: true }).decode(
+      prefix,
+      { stream: true },
+    );
+    return mayHaveSourceMapText(text);
+  } catch (cause) {
+    if (!(cause instanceof TypeError)) throw cause;
+    return !hasVisibleNonMapPrefix(
+      new TextDecoder(encoding ?? "utf-8").decode(prefix),
+    );
+  }
 };
 
 const mayHaveSourceMapText = (decoded: string): boolean => {
   const text = sourceMapJsonText(decoded).trimStart();
   return text.length === 0 || text.startsWith("{");
+};
+
+/** A visible ASCII non-JSON prefix remains evidence even if later text is lossy. */
+const hasVisibleNonMapPrefix = (text: string): boolean => {
+  const envelope = text.startsWith(")]}'");
+  if (envelope && !/[\r\n]/u.test(text)) return false;
+  const first = sourceMapJsonText(text).trimStart().charCodeAt(0);
+  // A leading ')' without a complete envelope may still begin one.
+  return (
+    first >= 0x21 &&
+    first <= 0x7e &&
+    first !== 0x7b &&
+    (envelope || first !== 0x29)
+  );
 };
 
 const readSourceMap = (
@@ -1488,11 +1548,13 @@ const readSourceMap = (
 ): void => {
   const text = mapText(bytes);
   if (text !== null) {
-    readSourceMapText(state, map, text);
+    readSourceMapText(state, map, text.text, text.complete);
     return;
   }
   pushSample(state.mapSamples, map.location);
   state.unparsedMaps += 1;
+  if (map.kind === "possible-linker-map" || map.genericName === true)
+    noteUncertainLinkerMap(state, map);
 };
 
 /** Read map text already decoded by the member's owner, such as a UTF-16 script. */
@@ -1500,13 +1562,19 @@ const readSourceMapText = (
   state: ScanState,
   map: SourceMapReference,
   text: string,
+  complete: boolean,
 ): void => {
-  const inspected = inspectSourceMapSourceContent(text);
+  const inspected = inspectSourceMapSourceContent(
+    text,
+    complete
+      ? {}
+      : { hasObservedContent: (content) => /[^\ufffd]/u.test(content) },
+  );
   if (inspected.embedded) {
     state.embedded += 1;
     pushSample(state.embeddedPaths, map.location);
   }
-  if (inspected.complete) {
+  if (complete && inspected.complete) {
     pushSample(state.mapSamples, map.location);
     if (!inspected.embedded) {
       state.withoutSources += 1;
@@ -1516,10 +1584,19 @@ const readSourceMapText = (
   }
   // Linker maps share the suffix but are not JavaScript source maps.
   // JSON-looking maps remain unresolved when decoding fails or hits a limit.
-  if (map.kind === "possible-linker-map" && !mayHaveSourceMapText(text)) {
+  if (
+    map.kind === "possible-linker-map" &&
+    !mayHaveSourceMapText(text) &&
+    (complete || hasVisibleNonMapPrefix(text))
+  ) {
     noteLinkerMapGuess(state, map.location);
     return;
   }
+  if (
+    !complete &&
+    (map.kind === "possible-linker-map" || map.genericName === true)
+  )
+    noteUncertainLinkerMap(state, map);
   pushSample(state.mapSamples, map.location);
   state.unparsedMaps += 1;
 };
@@ -1562,14 +1639,19 @@ const readScriptAsMap = (
   state: ScanState,
   member: MemberView,
   bytes: Buffer,
-  text: string,
+  text: MemberText,
 ): void => {
   const { hasSlot } = chargeMapRead(state);
   if (hasSlot && bytes.length <= MAX_RELEASE_EXPOSURE_SOURCE_MAP_BYTES)
     readSourceMapText(
       state,
-      { location: member.location, kind: "javascript-source-map" },
-      text,
+      {
+        location: member.location,
+        kind: "javascript-source-map",
+        occurrence: member.completion,
+      },
+      text.text,
+      text.complete,
     );
   else state.skippedMaps += 1;
 };
@@ -1658,13 +1740,22 @@ const examineLoadedText = (
     if (holdsScripts(member)) {
       if (text === null) state.skippedMaps += 1;
       else if (scriptHoldsMap(state, member, text.text))
-        readScriptAsMap(state, member, loaded.bytes, text.text);
+        readScriptAsMap(state, member, loaded.bytes, text);
       else {
+        const skippedBefore = state.skippedMaps;
         if (isJavaScriptMember(member))
-          examineInlineMaps(state, member, text.text, member.logical);
+          examineInlineMaps(
+            state,
+            member,
+            text.text,
+            member.logical,
+            text.complete,
+          );
         // A page another page loads as a script still ships as a page.
         if (isScriptPageMember(member))
-          examineHtmlScripts(state, member, text.text);
+          examineHtmlScripts(state, member, text.text, text.complete);
+        if (!text.complete && state.skippedMaps === skippedBefore)
+          state.skippedMaps += 1;
       }
     } else if (!isCssMember(member) && nodeShebang(loaded.bytes) === undefined)
       // A program named by an unresolved variable may be Node, so the
@@ -1947,18 +2038,28 @@ const examineHtmlScripts = (
   state: ScanState,
   member: MemberView,
   source: string,
+  complete: boolean,
 ): void => {
   const { baseHref, scripts, inlineScripts, inlineScriptCount } =
     htmlArtifactReferences(source);
-  for (const { scriptPath, scriptType } of scripts)
-    if (scriptType !== null)
-      noteScriptReference(state, member, scriptPath, baseHref);
+  for (const { scriptPath, scriptType } of scripts) {
+    if (scriptType === null) continue;
+    if (
+      !complete &&
+      (scriptPath.includes("\ufffd") || baseHref?.includes("\ufffd"))
+    ) {
+      state.skippedMaps += 1;
+      continue;
+    }
+    noteScriptReference(state, member, scriptPath, baseHref);
+  }
   for (const script of inlineScripts)
     examineInlineMaps(
       state,
       member,
       script.text,
       script.scriptType === "module" ? "inline.mjs" : "inline.js",
+      complete,
     );
   state.skippedMaps += inlineScriptCount - inlineScripts.length;
 };
@@ -2024,6 +2125,7 @@ const examineInlineMaps = (
   member: MemberView,
   source: string,
   sourcePath: string,
+  complete: boolean,
 ): void => {
   const parsed = parseJavaScriptSource(source, sourcePath);
   if (parsed === null) {
@@ -2033,6 +2135,10 @@ const examineInlineMaps = (
   const directives = createJavaScriptAnalysisAccumulator(source.length);
   addSourceMapDirectives(source, parsed.comments ?? [], directives);
   for (const { declared_url: url } of directives.sourceMaps) {
+    if (!complete && url.includes("\ufffd")) {
+      state.skippedMaps += 1;
+      continue;
+    }
     // URL schemes are case-insensitive (RFC 3986 section 3.1).
     if (!/^data:/iu.test(url)) {
       noteLocalMapReference(state, member, url);
@@ -2205,6 +2311,20 @@ const noteLinkerMapGuess = (state: ScanState, location: string): void => {
   state.linkerMapGuesses.set(key, paths.add(location));
 };
 
+/** Retain each unresolved occurrence until declarations and all members are known. */
+const noteUncertainLinkerMap = (
+  state: ScanState,
+  map: SourceMapReference,
+): void => {
+  const key = memberLocationKey(state, map.location);
+  const spelling = anchoredLocation(state, map.location);
+  const paths =
+    state.uncertainLinkerMaps.get(key) ?? new Map<string, Set<object>>();
+  const occurrences = paths.get(spelling) ?? new Set<object>();
+  paths.set(spelling, occurrences.add(map.occurrence ?? map));
+  state.uncertainLinkerMaps.set(key, paths);
+};
+
 /**
  * An owner's stated role or a declaration outranks the member's name, and an
  * inventory path role is only that name: a `.map` that an owner marks as
@@ -2314,6 +2434,19 @@ const decodeBinaryPlistMember = (bytes: Buffer): MemberText => {
 const declaresTextEncoding = (bytes: Buffer): boolean =>
   byteOrderMarkEncoding(bytes) !== null || hasBinaryPlistSignature(bytes);
 
+/** Retain visible text after a decoding error without calling the read complete. */
+const decodeDeclaredText = (bytes: Buffer, encoding: string): MemberText => {
+  try {
+    return {
+      text: new TextDecoder(encoding, { fatal: true }).decode(bytes),
+      complete: true,
+    };
+  } catch (cause) {
+    if (!(cause instanceof TypeError)) throw cause;
+    return { text: new TextDecoder(encoding).decode(bytes), complete: false };
+  }
+};
+
 /**
  * The text a member's bytes encode, or null when they cannot be read as text.
  * A member's kind says nothing about its encoding: wide text has no byte order
@@ -2324,11 +2457,10 @@ const declaresTextEncoding = (bytes: Buffer): boolean =>
 const decodeMemberText = (bytes: Buffer): MemberText | null => {
   const encoding = byteOrderMarkEncoding(bytes);
   if (encoding === "utf-32") return null;
-  if (encoding !== null)
-    return { text: new TextDecoder(encoding).decode(bytes), complete: true };
+  if (encoding !== null) return decodeDeclaredText(bytes, encoding);
   if (hasBinaryPlistSignature(bytes)) return decodeBinaryPlistMember(bytes);
   if (hasNonUtf8Nul(bytes)) return null;
-  return { text: bytes.toString("utf8"), complete: true };
+  return { text: bytes.toString("utf8"), complete: isUtf8(bytes) };
 };
 
 const scanText = (
@@ -3462,9 +3594,9 @@ const classifySiblingMap = async (
 
 const parsesAsSourceMap = (bytes: Buffer): boolean => {
   const text = mapText(bytes);
-  if (text === null) return false;
+  if (text === null || !text.complete) return false;
   try {
-    inspectSourceMap(text);
+    inspectSourceMap(text.text);
     return true;
   } catch {
     return false;
