@@ -3,27 +3,20 @@ import { extname, join, sep } from "node:path";
 
 import { z } from "zod";
 
-import {
-  isPlistDecodeBudgetFailure,
-  preflightPropertyListDecode,
-} from "../domain/apple/propertyListDecodeBudget.js";
-import { decodeBinaryPropertyList } from "../domain/apple/binaryPlistMaterializer.js";
+import { isPlistDecodeBudgetFailure } from "../domain/apple/propertyListDecodeBudget.js";
+import { decodeInfoPlistValue } from "../domain/apple/infoPlist.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import { isPathWithinRoot } from "../domain/localPath.js";
-import { parseXmlPropertyList } from "../domain/propertyListKeys.js";
-import { startsOpenStepPropertyList } from "../domain/propertyListOpenStep.js";
-import { decodeXmlPlistText } from "../domain/propertyListXmlText.js";
-import { hasBinaryPlistSignature } from "../domain/apple/appleArchiveFormat.js";
 import type {
   BundleResourceRoot,
   ResolvedAppBundleResourceRoot,
 } from "../domain/apple/bundleResourceRoot.js";
-import { openableAppleBundleExtension } from "../domain/apple/appleBundleTypes.js";
+import {
+  INFO_PLIST_DECODE_MIB,
+  openableAppleBundleExtension,
+} from "../domain/apple/appleBundleTypes.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
-
-/** Decoded representation bound for one binary Info.plist. */
-const BINARY_PLIST_DECODE_BYTES = 16 * 1024 * 1024;
 
 /** Where one app bundle layout keeps its Info.plist and program file. */
 interface BundleLayout {
@@ -452,7 +445,7 @@ const resolveLayoutExecutable = async (
       return err(
         new BinaryTargetError(
           plistPath,
-          `${noun} Info.plist decoded representation exceeds the 16 MiB property list decode budget: ${plistPath} (${cause.message}). Shrink the Info.plist and retry.`,
+          `${noun} Info.plist decoded representation exceeds the ${INFO_PLIST_DECODE_MIB} MiB property list decode budget: ${plistPath} (${cause.message}). Shrink the Info.plist and retry.`,
           {
             cause,
             constraint: "bundle_info_plist_decode_budget_exceeded",
@@ -534,46 +527,6 @@ const resolveLayoutExecutable = async (
       ),
     );
   }
-};
-
-/** Apply the same decode budget the binary branch enforces before parsing XML. */
-const decodeXmlInfoPlist = (plist: Buffer) => {
-  const xmlText = decodeXmlPlistText(plist);
-  // OpenStep text is not XML: quoted markup inside it is string data, so
-  // the XML entity-expansion preflight must not run on it.
-  if (!startsOpenStepPropertyList(xmlText))
-    preflightPropertyListDecode(plist, BINARY_PLIST_DECODE_BYTES, xmlText);
-  return parseXmlPropertyList(xmlText);
-};
-
-/**
- * Decode one Info.plist's top-level value in-process, binary or XML, so no
- * host plist tool is required. Values are read with format-aware parsers, not
- * patterns; an unrelated `__proto__` entry must not make the bundle unreadable.
- *
- * `keys` are the entries the caller reads. A plist that may declare one of
- * them more than once is refused: the decoder keeps the last declaration and
- * the system's bundle readers are not shown to agree. A repeat is attributed
- * to a key by name only, so a repeat inside a nested dictionary, or one whose
- * name was not retained, also refuses.
- */
-export const decodeInfoPlistValue = (
-  plist: Buffer,
-  keys: readonly string[],
-): unknown => {
-  const decoded = hasBinaryPlistSignature(plist)
-    ? decodeBinaryPropertyList(
-        plist,
-        preflightPropertyListDecode(plist, BINARY_PLIST_DECODE_BYTES),
-      )
-    : decodeXmlInfoPlist(plist);
-  const { names, namesOmitted } = decoded.duplicateKeys;
-  const repeated = keys.filter((key) => namesOmitted || names.includes(key));
-  if (repeated.length > 0)
-    throw new TypeError(
-      `Info.plist may declare ${repeated.join(", ")} more than once; which declaration applies is ambiguous`,
-    );
-  return decoded.value;
 };
 
 /** The Info.plist decoded but declares no string CFBundleExecutable. */
