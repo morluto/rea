@@ -477,6 +477,13 @@ const signalInstaller = (child, signal) => {
 };
 
 /**
+ * Same capacity ownStdioStartupInput uses via
+ * `@modelcontextprotocol/server`'s STDIO_DEFAULT_MAX_BUFFER_SIZE. The launcher
+ * cannot import that package before the published install finishes.
+ */
+const STDIO_DEFAULT_MAX_BUFFER_SIZE = 10 * 1024 * 1024;
+
+/**
  * Observe signals and MCP stdin during acquisition. A data listener keeps the
  * stream flowing so end/close fire on disconnect (paused pipes alone do not),
  * while retained chunks are unshifted back for the in-process runtime handoff —
@@ -486,16 +493,34 @@ const observeAcquisitionCancel = (onCancel) => {
   const signalExitCodes = SIGNAL_EXIT_CODES;
   /** @type {Buffer[]} */
   const chunks = [];
+  let retainedBytes = 0;
   let cancelled;
   let released = false;
-  const requestCancel = (signal) => {
+  const requestCancel = (signal, capacityExceeded = false) => {
     if (cancelled !== undefined) return;
-    cancelled = { signal };
+    cancelled = { signal, capacityExceeded };
     onCancel(cancelled);
   };
   const onSignal = (signal) => requestCancel(signal);
   const onInputEnd = () => requestCancel(undefined);
+  const detachInput = () => {
+    process.stdin.pause();
+    process.stdin.off("data", onData);
+    process.stdin.off("end", onInputEnd);
+    process.stdin.off("close", onInputEnd);
+  };
   const onData = (chunk) => {
+    const incomingBytes = Buffer.isBuffer(chunk)
+      ? chunk.byteLength
+      : Buffer.byteLength(chunk);
+    // Match ownStdioStartupInput: stop reading and cancel before retaining an
+    // overflowing chunk so acquisition cannot grow without bound.
+    if (retainedBytes + incomingBytes > STDIO_DEFAULT_MAX_BUFFER_SIZE) {
+      detachInput();
+      requestCancel(undefined, true);
+      return;
+    }
+    retainedBytes += incomingBytes;
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   };
   for (const signal of Object.keys(signalExitCodes))
@@ -517,17 +542,16 @@ const observeAcquisitionCancel = (onCancel) => {
       released = true;
       for (const signal of Object.keys(signalExitCodes))
         process.off(signal, onSignal);
-      process.stdin.pause();
-      process.stdin.off("data", onData);
-      process.stdin.off("end", onInputEnd);
-      process.stdin.off("close", onInputEnd);
+      detachInput();
       // Preserve buffered protocol input for the runtime when acquisition
-      // succeeds; discard only when the client already disconnected.
+      // succeeds; discard only when the client already disconnected or the
+      // stdio capacity refused further retention.
       if (cancelled === undefined) {
         for (let index = chunks.length - 1; index >= 0; index -= 1)
           process.stdin.unshift(chunks[index]);
       }
       chunks.length = 0;
+      retainedBytes = 0;
     },
   };
 };
@@ -594,6 +618,7 @@ const runOwnedInstaller = (invocation) => {
         resolve({
           cancelled: true,
           signal: shutdown.signal,
+          capacityExceeded: shutdown.capacityExceeded === true,
           status,
           childSignal: signal,
         });
@@ -617,7 +642,11 @@ const waitForReadyOrLock = async (prefix, lockPath) => {
   try {
     for (;;) {
       if (cancel.cancelled !== undefined)
-        return { cancelled: true, signal: cancel.cancelled.signal };
+        return {
+          cancelled: true,
+          signal: cancel.cancelled.signal,
+          capacityExceeded: cancel.cancelled.capacityExceeded === true,
+        };
       try {
         return { cancelled: false, entry: inspectReadyCache(prefix) };
       } catch (cause) {
@@ -635,7 +664,11 @@ const waitForReadyOrLock = async (prefix, lockPath) => {
         // observer that cannot see an already-consumed signal.
         if (cancel.cancelled !== undefined) {
           releaseInstallLock(lockPath, lock.server);
-          return { cancelled: true, signal: cancel.cancelled.signal };
+          return {
+            cancelled: true,
+            signal: cancel.cancelled.signal,
+            capacityExceeded: cancel.cancelled.capacityExceeded === true,
+          };
         }
         return { cancelled: false, acquired: true, server: lock.server };
       }
@@ -657,6 +690,18 @@ const waitForReadyOrLock = async (prefix, lockPath) => {
 
 const cancelExitCode = (signal) =>
   signal === undefined ? 0 : (SIGNAL_EXIT_CODES[signal] ?? 1);
+
+/** Fail like ownStdioStartupInput when acquisition stdin exceeds stdio capacity. */
+const applyAcquisitionCancel = (cancelled) => {
+  if (cancelled.capacityExceeded) {
+    process.stderr.write(
+      "MCP input exceeded the stdio buffer capacity before startup completed.\n",
+    );
+    process.exitCode = 1;
+    return;
+  }
+  process.exitCode = cancelExitCode(cancelled.signal);
+};
 
 if (process.exitCode === 1) {
   // Argument validation already failed.
@@ -707,7 +752,7 @@ if (process.exitCode === 1) {
       try {
         const waited = await waitForReadyOrLock(prefix, lockPath);
         if (waited.cancelled) {
-          process.exitCode = cancelExitCode(waited.signal);
+          applyAcquisitionCancel(waited);
         } else if (waited.entry !== undefined) {
           entry = waited.entry;
         } else {
@@ -786,7 +831,7 @@ if (process.exitCode === 1) {
         if (process.exitCode !== 1) {
           const install = await runOwnedInstaller(invocation);
           if (install.cancelled) {
-            process.exitCode = cancelExitCode(install.signal);
+            applyAcquisitionCancel(install);
           } else if (install.status !== 0) {
             process.stderr.write(
               `REA plugin failed to install ${PACKAGE}@${version}.\n`,

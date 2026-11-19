@@ -14,6 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { describe, expect, it, onTestFinished } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -1043,6 +1044,88 @@ for (;;) {
   expect(waiterResult.code).toBe(0);
   expect(waiterResult.stdout).toBe("");
   // Holder is still installing; stdin-close must not wait on that work.
+  expect(holder.child.exitCode).toBeNull();
+  await writeFile(releasePath, "go", { mode: 0o600 });
+  holder.child.stdin.end();
+  const holderResult = await holder.closed;
+  expect(holderResult.code).toBe(0);
+});
+
+it("cancels a cold-start lock wait when MCP stdin exceeds the stdio buffer capacity", async () => {
+  // Keep the launcher's bootstrap copy aligned with ownStdioStartupInput.
+  expect(STDIO_DEFAULT_MAX_BUFFER_SIZE).toBe(10 * 1024 * 1024);
+  expect(await readFile(launcher, "utf8")).toMatch(
+    /STDIO_DEFAULT_MAX_BUFFER_SIZE\s*=\s*10\s*\*\s*1024\s*\*\s*1024/u,
+  );
+  const version = "6.8.0-published-stdin-capacity";
+  const temp = await createLauncherTemp();
+  const prefix = installPrefix(version, temp.temporaryRoot);
+  const lockPath = lockPathFor(version, temp.temporaryRoot);
+  await rm(prefix, { recursive: true, force: true });
+  await rm(lockPath, { recursive: true, force: true });
+  const workspace = await createTestTempDirectory(
+    "rea-published-stdin-capacity-",
+  );
+  const bin = join(workspace, "bin");
+  await mkdir(bin);
+  const npmEntry = join(bin, "npm-cli.cjs");
+  const startedPath = join(workspace, "started");
+  const releasePath = join(workspace, "release");
+  await writeFile(
+    npmEntry,
+    `#!/usr/bin/env node
+const { mkdirSync, readFileSync, writeFileSync } = require("node:fs");
+const { dirname, join } = require("node:path");
+const startedPath = ${JSON.stringify(startedPath)};
+const releasePath = ${JSON.stringify(releasePath)};
+const sleep = (ms) =>
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+writeFileSync(startedPath, "go");
+const prefix = process.argv[process.argv.indexOf("--prefix") + 1];
+const entry = join(prefix, "node_modules", "rea-agents", "scripts", "rea.mjs");
+mkdirSync(dirname(entry), { recursive: true, mode: 0o700 });
+writeFileSync(entry, "process.exitCode = 0;", { mode: 0o600 });
+for (;;) {
+  try {
+    readFileSync(releasePath);
+    break;
+  } catch {
+    sleep(50);
+  }
+}
+`,
+  );
+  const launchEnv = {
+    ...process.env,
+    ...temp.env,
+    PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+    npm_execpath: npmEntry,
+  };
+  const holder = start([version], launchEnv);
+  onTestFinished(async () => {
+    await writeFile(releasePath, "go", { mode: 0o600 }).catch(() => undefined);
+    holder.child.kill("SIGKILL");
+    await holder.closed.catch(() => undefined);
+  });
+  await waitForFile(startedPath);
+  const waiter = start([version], launchEnv);
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  const oversized = Buffer.alloc(STDIO_DEFAULT_MAX_BUFFER_SIZE + 1, 0x61);
+  for (let offset = 0; offset < oversized.byteLength;) {
+    const chunk = oversized.subarray(offset, offset + 64 * 1024);
+    offset += chunk.byteLength;
+    const stdin = waiter.child.stdin;
+    if (!stdin.write(chunk))
+      await new Promise<void>((resolve) => stdin.once("drain", resolve));
+  }
+  if (waiter.child.pid !== undefined)
+    await waitForProcessExit(waiter.child.pid, "capacity-limited waiter");
+  const waiterResult = await waiter.closed;
+  expect(waiterResult.code).toBe(1);
+  expect(waiterResult.stdout).toBe("");
+  expect(waiterResult.stderr).toContain(
+    "MCP input exceeded the stdio buffer capacity before startup completed.",
+  );
   expect(holder.child.exitCode).toBeNull();
   await writeFile(releasePath, "go", { mode: 0o600 });
   holder.child.stdin.end();
