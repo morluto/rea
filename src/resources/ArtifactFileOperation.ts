@@ -248,8 +248,9 @@ export const assertArtifactReadActive = (
 /**
  * Project a failure raised by a domain byte parser over artifact bytes onto the
  * reader's reasons: the caller's cancellation (`signal.reason`) becomes
- * `cancelled`, parser failure kinds stay distinct, and a decode budget is
- * bounded by `limitBoundary`. Every other cause passes through unchanged.
+ * `cancelled`, parser failure kinds and limit facts survive, and
+ * `limitBoundary` describes what a decode budget constrains. Every other cause
+ * passes through unchanged.
  */
 export const artifactParseFailure = (
   cause: unknown,
@@ -266,6 +267,7 @@ export const artifactParseFailure = (
     const boundary = limitBoundary?.(failure.limit);
     return new ArtifactReaderFailure("limit", cause.message, {
       cause,
+      parserLimit: failure.limit,
       ...(boundary === undefined ? {} : { boundary }),
     });
   }

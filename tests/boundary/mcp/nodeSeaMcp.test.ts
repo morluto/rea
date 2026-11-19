@@ -7,6 +7,7 @@ import {
   nodeSeaPe,
   buildNodeSeaBlob,
 } from "../../../src/artifacts/nodeSea/NodeSea.fixture.js";
+import { peResourceFixture } from "../../../src/domain/pe/peResources.fixture.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { artifactExtractionResultSchema } from "../../../src/domain/artifactGraph.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
@@ -173,3 +174,47 @@ it.each(["compact"] as const)(
     }
   },
 );
+
+it("reports the PE parser budget when Node SEA inventory exhausts it", async () => {
+  const root = await createTestTempDirectory("rea-sea-pe-budget-");
+  const path = join(root, "application.exe");
+  // Long sibling resource names expand into both source text and hex metadata.
+  const longName = "a".repeat(16 * 1024);
+  const { bytes } = peResourceFixture(
+    true,
+    [
+      {
+        type: 10,
+        name: "NODE_SEA_BLOB",
+        language: 1033,
+        payload: buildNodeSeaBlob(),
+      },
+      ...Array.from({ length: 96 }, (_, index) => ({
+        type: 11,
+        name: longName + String(index),
+        language: 1033,
+        payload: Buffer.from("inert"),
+      })),
+    ],
+    4 * 1024 * 1024,
+  );
+  await writeFile(path, bytes);
+  const { call } = await connectLocalToolsMcp();
+  const opened = await call("open_binary", { path });
+  expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
+  const reply = await call("inspect_artifact", {});
+  expect(parseMcpToolError(reply).error).toMatchObject({
+    code: "truncated",
+    retryable: false,
+    details: {
+      operation: "inspect_artifact",
+      reason: "limit",
+      boundary: "memory",
+      truncated: true,
+      reported_limits: {
+        boundary: "pe_resource_metadata_bytes",
+        maximum: 8 * 1024 * 1024,
+      },
+    },
+  });
+});
