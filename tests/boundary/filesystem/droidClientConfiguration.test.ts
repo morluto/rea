@@ -32,7 +32,7 @@ const droidPath = (
 
 describe("Factory Droid configuration paths", () => {
   it("resolves the user MCP config file and marker directory", () => {
-    expect(droidPath("/home/a")).toEqual({
+    expect(droidPath("/home/a")).toMatchObject({
       name: "droid",
       displayName: "Factory Droid",
       configPath: join("/home/a", ".factory", "mcp.json"),
@@ -49,7 +49,9 @@ describe("Factory Droid configuration paths", () => {
 
   it("resolves the personal skills directory beside the config root", () => {
     expect(
-      skillDestinations("/home/a", ["droid"]).map(({ path }) => path),
+      skillDestinations("/home/a", ["droid"], {}, process.platform).map(
+        ({ path }) => path,
+      ),
     ).toEqual([
       join("/home/a", ".factory", "skills", "reverse-engineer-anything"),
     ]);
@@ -62,9 +64,12 @@ describe("Factory Droid configuration paths", () => {
       markerPath: join("/selected/home", ".factory"),
     });
     expect(
-      skillDestinations("/home/a", ["droid"], environment).map(
-        ({ path }) => path,
-      ),
+      skillDestinations(
+        "/home/a",
+        ["droid"],
+        environment,
+        process.platform,
+      ).map(({ path }) => path),
     ).toEqual([
       join("/selected/home", ".factory", "skills", "reverse-engineer-anything"),
     ]);

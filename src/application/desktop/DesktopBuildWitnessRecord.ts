@@ -1,9 +1,10 @@
-import { createHash } from "node:crypto";
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { DesktopTask } from "../../domain/desktop/appTask.js";
+import { isScreenTask } from "../../domain/desktop/appTaskScreen.js";
 import type {
   WitnessStage,
   WitnessStageRecord,
@@ -15,7 +16,7 @@ import type {
   AgentEnvComputer,
   RecordingManifest,
 } from "../../desktop/AgentEnvComputer.js";
-import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
 import {
   LOGGED_ACTIONS,
   LOGGED_BYTES,
@@ -24,12 +25,14 @@ import {
   type BuildComputerAction,
   type ReadonlyActionLog,
 } from "./DesktopBuildActionLog.js";
-import { errorText } from "./DesktopBuildCommands.js";
 import { DESKTOP_PROVIDER } from "./DesktopCaptureRefusals.js";
 import {
+  planOutputTree,
   writeOutputTree,
-  writtenWithOpenHandles,
+  desktopOutputFailure,
 } from "./DesktopOutputTree.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const CHECK = "check_build_task";
 const RECORD = "witness.json";
@@ -80,9 +83,6 @@ export interface EndedWitness {
   readonly stages: WitnessStageRecord[];
 }
 
-const sha256 = (bytes: Buffer) =>
-  createHash("sha256").update(bytes).digest("hex");
-
 /** A recording fetch that can resume after the manifest is known. */
 type RecordingFetch =
   | {
@@ -111,7 +111,7 @@ const fetchRecording = async (
   try {
     manifest ??= await computer.endRecording(recordingId, signal);
   } catch (cause: unknown) {
-    return { ok: false, error: errorText(cause) };
+    return { ok: false, error: errorMessage(cause) };
   }
   try {
     const segments = await computer.recordingSegments(manifest, signal);
@@ -126,12 +126,12 @@ const fetchRecording = async (
             segment.path.split("/").at(-1) ?? segment.path,
           ),
           bytes: segment.bytes.length,
-          sha256: sha256(segment.bytes),
+          sha256: sha256Hex(segment.bytes),
         })),
       },
     };
   } catch (cause: unknown) {
-    return { ok: false, error: errorText(cause), manifest };
+    return { ok: false, error: errorMessage(cause), manifest };
   }
 };
 
@@ -147,39 +147,38 @@ const writeRecordFolder = async (
   | {
       readonly published: true;
       readonly error: AnalysisError;
-      readonly release: () => Promise<void>;
+      readonly release: (() => Promise<void>) | undefined;
     }
 > => {
   try {
-    const unclosed = await writeOutputTree(
-      directory,
+    const completion = await writeOutputTree(
+      await planOutputTree(directory, { operation: CHECK, field: "directory" }),
       async (tree) => {
         for (const file of files)
           await tree.write(
             file.path,
             Readable.from([file.bytes]),
-            { bytes: file.bytes.length, sha256: sha256(file.bytes) },
+            { bytes: file.bytes.length, sha256: sha256Hex(file.bytes) },
             signal,
           );
       },
       { operation: CHECK, field: "directory" },
       signal,
     );
-    return unclosed === undefined
+    const error = desktopOutputFailure(
+      { provider: AGENTENV_PROVIDER, operation: CHECK, what: "witness record" },
+      directory,
+      completion,
+      evidence,
+    );
+    const release = completion.release;
+    return error === undefined
       ? undefined
       : {
           published: true,
-          error: writtenWithOpenHandles(
-            {
-              provider: AGENTENV_PROVIDER,
-              operation: CHECK,
-              what: "witness record",
-            },
-            directory,
-            unclosed,
-            evidence,
-          ),
-          release: () => unclosed.lease.release(),
+          error,
+          release:
+            release === undefined ? undefined : () => release.lease.release(),
         };
   } catch (cause: unknown) {
     return {
@@ -188,7 +187,7 @@ const writeRecordFolder = async (
         cause instanceof AnalysisError
           ? cause
           : new ProviderAdapterError(AGENTENV_PROVIDER, CHECK, {
-              userMessage: `The witness record could not be written: ${errorText(cause)}`,
+              userMessage: `The witness record could not be written: ${errorMessage(cause)}`,
               cause,
               partialObservation: evidence,
             }),
@@ -236,7 +235,16 @@ const unsettledLimitation = (
   ];
 };
 
-/** How a witness write ended: saved, retryable, or published with cleanup still open. */
+/** How the witness reached its check results, by the kind of task. */
+const howChecked = (task: DesktopTask): string => {
+  if (isScreenTask(task))
+    return "Checks took a screenshot of the computer and ran the bundle's own verifier as its judge, with the agentenv runner's Python and model endpoint, three votes a question; the judge sent each screenshot and the build's two examples to that model.";
+  return task.readers === undefined
+    ? "Checks read the app's data/get views with REA's evaluator, as the exported verifier does; the verifier itself did not run."
+    : "Checks read the app's data/get views and the task's readers' views, the readers run in the computer through computer-exec/v1, with REA's evaluator, as the exported verifier does; the verifier itself did not run.";
+};
+
+/** How a witness write ended: saved, retryable, or published with a failure and optional cleanup ownership. */
 export type WitnessWrite =
   | { readonly kind: "saved"; readonly record: WitnessRecord }
   | {
@@ -248,7 +256,7 @@ export type WitnessWrite =
       readonly kind: "published";
       readonly record: WitnessRecord;
       readonly error: AnalysisError;
-      readonly release: () => Promise<void>;
+      readonly release: (() => Promise<void>) | undefined;
     };
 
 /**
@@ -262,8 +270,16 @@ export const writeWitnessRecord = async (
   computer: RecordedComputer,
   witness: EndedWitness,
   log: Pick<ReadonlyActionLog, "entries" | "dropped">,
-  signal: AbortSignal,
-  pendingManifest?: RecordingManifest,
+  {
+    signal,
+    redact = (value) => value,
+    pendingManifest,
+  }: {
+    readonly signal: AbortSignal;
+    /** Puts each known secret's handle in place of its value in what the record holds. */
+    readonly redact?: (value: JsonValue) => JsonValue;
+    readonly pendingManifest?: RecordingManifest | undefined;
+  },
 ): Promise<WitnessWrite> => {
   const actions = log.entries.map(
     ({ truncated_arguments: cut, ...entry }): RecordedAction =>
@@ -287,7 +303,7 @@ export const writeWitnessRecord = async (
     };
   const { recording, segments } = fetched;
   const failed = witness.stages.find((stage) => !stage.held);
-  const result = {
+  const recorded = {
     verdict: failed === undefined ? ("held" as const) : ("failed" as const),
     failed_stage: failed?.stage ?? null,
     task: { name: witness.task.name, sha256: witness.digest },
@@ -296,22 +312,30 @@ export const writeWitnessRecord = async (
     actions_dropped: dropped,
     recording,
   };
-  const evidence = createEvidence(undefined, DESKTOP_PROVIDER, {
-    predicateType: "rea.desktop-build-witness",
-    operation: CHECK,
-    parameters: { task: witness.task.name, stages: witness.stages.length },
-    result: result as unknown as JsonValue,
-    confidence: "observed",
-    authority: "controlled-replay",
-    limitations: [
-      "Checks read the app's data/get views with REA's evaluator, as the exported verifier does; the verifier itself did not run.",
-      ...("error" in recording
-        ? [`The recording is missing: ${recording.error}`]
-        : []),
-      ...logLimitations(actions, dropped),
-      ...unsettledLimitation(witness.stages),
-    ],
-  });
+  // Redacting keeps every string a string, so the record keeps its shape.
+  const result = redact(
+    recorded as unknown as JsonValue,
+  ) as unknown as typeof recorded;
+  const evidence = createEvidence(
+    unknownTarget("not-observed"),
+    DESKTOP_PROVIDER,
+    {
+      predicateType: "rea.desktop-build-witness",
+      operation: CHECK,
+      parameters: { task: result.task.name, stages: witness.stages.length },
+      result: result as unknown as JsonValue,
+      confidence: "observed",
+      authority: "controlled-replay",
+      limitations: [
+        howChecked(witness.task),
+        ...("error" in recording
+          ? [`The recording is missing: ${recording.error}`]
+          : []),
+        ...logLimitations(actions, dropped),
+        ...unsettledLimitation(result.stages),
+      ],
+    },
+  );
   const files = [
     ...("segments" in recording
       ? recording.segments.flatMap((target, index) => {

@@ -1,18 +1,20 @@
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { cancelledBy } from "../../domain/analysisErrorCore.js";
 import {
   desktopApplicationCaptureSchema,
   desktopCaptureProgressSchema,
   type DesktopApplicationCapture,
 } from "../../domain/desktop/desktopCapture.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
-import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
-import type { ControlledComputer } from "../../desktop/BuildComputerController.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
+import type {
+  BuildControllerAnswer,
+  ControlledComputer,
+} from "../../ports/BuildComputerControl.js";
 import {
   adapterError,
   readOutput,
   reportedFailure,
-  type Answer,
 } from "./DesktopBuildCommands.js";
 
 /** The most lines, and characters, a message quotes from the end of the app's stderr. */
@@ -66,15 +68,22 @@ const lastProgress = (progress: string | undefined): string | undefined => {
   return lines.at(-1);
 };
 
+/** Text with each declared secret replaced before a quote cuts it. */
+type Redact = (text: string) => string;
+const unredacted: Redact = (text) => text;
+
 /** Why the capture is not answering, from what the controller saw instead of the event; its output stays out of the message. */
 export const notAnswered = (
   operation: string,
-  answer: Answer,
+  answer: BuildControllerAnswer,
+  redact: Redact = unredacted,
 ): AnalysisError => {
   if (answer.error !== undefined) return adapterError(operation, answer.error);
   const last = lastProgress(answer.progress);
   const progress =
-    last === undefined ? "" : ` Its last progress: ${ending(last, LINE_QUOTE)}`;
+    last === undefined
+      ? ""
+      : ` Its last progress: ${ending(redact(last), LINE_QUOTE)}`;
   return adapterError(
     operation,
     answer.exited === undefined
@@ -97,6 +106,7 @@ const appExited = (
   step: CaptureStep,
   recorded: DesktopApplicationCapture,
   exitStatus: number,
+  redact: Redact,
 ): AnalysisError | undefined => {
   const { application, session } = recorded;
   if (session.end_reason !== "application_exited") return undefined;
@@ -112,9 +122,9 @@ const appExited = (
   const stderr =
     session.stderr.trim() === ""
       ? "it wrote nothing to stderr"
-      : `its stderr ends: ${stderrEnding(session.stderr)}`;
+      : `its stderr ends: ${stderrEnding(redact(session.stderr))}`;
   return new ProviderAdapterError(AGENTENV_PROVIDER, step.operation, {
-    userMessage: `${ending(application.argv[0] ?? "The app", LINE_QUOTE)} ${ended} after ${String(session.duration_ms)} ms${window}; ${stderr}`,
+    userMessage: `${ending(redact(application.argv[0] ?? "The app"), LINE_QUOTE)} ${ended} after ${String(session.duration_ms)} ms${window}; ${stderr}`,
     remediationAction: step.afterAppExit,
     diagnostics: {
       capture_exit_status: exitStatus,
@@ -140,12 +150,13 @@ const appExited = (
  */
 export const endedCapture = async (
   computer: ControlledComputer,
-  step: CaptureStep & { readonly folder: string },
-  answer: Answer,
+  step: CaptureStep & { readonly folder: string; readonly redact?: Redact },
+  answer: BuildControllerAnswer,
   signal: AbortSignal,
 ): Promise<AnalysisError> => {
+  const { redact = unredacted } = step;
   if (answer.exited === undefined || answer.output_bytes === undefined)
-    return notAnswered(step.operation, answer);
+    return notAnswered(step.operation, answer, redact);
   try {
     const output = await readOutput(
       computer,
@@ -162,15 +173,12 @@ export const endedCapture = async (
     const recorded = desktopApplicationCaptureSchema.safeParse(output.result);
     return (
       (recorded.success
-        ? appExited(step, recorded.data, answer.exited)
-        : undefined) ?? notAnswered(step.operation, answer)
+        ? appExited(step, recorded.data, answer.exited, redact)
+        : undefined) ?? notAnswered(step.operation, answer, redact)
     );
   } catch (cause: unknown) {
     if (cause instanceof AnalysisError) return cause;
-    if (signal.aborted)
-      return new AnalysisCancelledError(step.operation, {
-        cause: signal.reason,
-      });
-    return notAnswered(step.operation, answer);
+    if (signal.aborted) return cancelledBy(step.operation, signal);
+    return notAnswered(step.operation, answer, redact);
   }
 };

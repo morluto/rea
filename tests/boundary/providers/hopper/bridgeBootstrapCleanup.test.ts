@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { expect, it, onTestFinished, vi } from "vitest";
 
-import { HopperCancelledError } from "../../../../src/domain/hopperErrors.js";
+import { HopperCancelledError } from "../../../../src/hopper/HopperErrors.js";
 import { HopperApplicationLauncher } from "../../../../src/hopper/BridgeLauncher.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";

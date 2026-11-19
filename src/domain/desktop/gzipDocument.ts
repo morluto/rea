@@ -2,9 +2,12 @@ import { gunzipSync, gzipSync, inflateRawSync, type Zlib } from "node:zlib";
 
 import { err, ok, type Result } from "../result.js";
 import { detectStateFormat, type DesktopStateFormat } from "./stateFormats.js";
-import { MAX_ZIP_ENTRY_BYTES, MAX_ZIP_RATIO } from "./zipView.js";
+import {
+  DESKTOP_VIEW_DEFAULTS,
+  desktopViewByteDisplay,
+  type DesktopViewPolicy,
+} from "./desktopViewPolicy.js";
 
-const MIB = 1024 * 1024;
 /** RFC 1952's operating system byte for an unknown one, so a recompressed file is the same whichever host made it. */
 const UNKNOWN_OS = 0xff;
 /** RFC 1952's header flags for a header CRC, an extra field, a file name and a comment. */
@@ -72,8 +75,10 @@ export const hasExtraField = (bytes: Uint8Array): boolean => {
 };
 
 /** The most a gzip file of `size` bytes may expand to for its view to read it: an archive entry's size and ratio limits. */
-const readLimit = (size: number): number =>
-  Math.min(MAX_ZIP_ENTRY_BYTES, MAX_ZIP_RATIO * size);
+const readLimit = (
+  size: number,
+  policy: DesktopViewPolicy = DESKTOP_VIEW_DEFAULTS,
+): number => Math.min(policy.zip_entry_bytes, policy.zip_ratio * size);
 
 /** Bytes gzip-compressed at `level` alike on every host: no file name, comment or extra field, modification time 0 and the operating system unknown. */
 const gzipAt = (bytes: Uint8Array, level: number): Buffer => {
@@ -90,7 +95,7 @@ const gzipAt = (bytes: Uint8Array, level: number): Buffer => {
 export const gzipDeterministic = (document: Uint8Array): Buffer => {
   const deflated = gzipAt(document, 1);
   return document.length > readLimit(deflated.length) &&
-    document.length <= MAX_ZIP_ENTRY_BYTES
+    document.length <= DESKTOP_VIEW_DEFAULTS.zip_entry_bytes
     ? gzipAt(document, 0)
     : deflated;
 };
@@ -109,10 +114,10 @@ export type StateDocument =
     };
 
 /** Why a gzip file whose document passes an archive entry's limits is not read. */
-const tooLarge = (size: number): string =>
-  MAX_ZIP_RATIO * size < MAX_ZIP_ENTRY_BYTES
-    ? `expands more than ${String(MAX_ZIP_RATIO)} times, so it is not read`
-    : `larger than the ${String(MAX_ZIP_ENTRY_BYTES / MIB)} MiB a compressed document's view reads`;
+const tooLarge = (size: number, policy: DesktopViewPolicy): string =>
+  policy.zip_ratio * size < policy.zip_entry_bytes
+    ? `expands more than ${String(policy.zip_ratio)} times, so it is not read`
+    : `larger than the ${desktopViewByteDisplay(policy.zip_entry_bytes)} a compressed document's view reads`;
 
 /**
  * The document a file's view reads: its own bytes, or a gzip file's
@@ -122,17 +127,21 @@ const tooLarge = (size: number): string =>
 export const openStateDocument = (
   path: string,
   bytes: Uint8Array,
+  policy: DesktopViewPolicy = DESKTOP_VIEW_DEFAULTS,
 ): StateDocument => {
-  if (!isGzip(bytes)) return { format: detectStateFormat(path, bytes), bytes };
-  const inner = gunzip(bytes, readLimit(bytes.length));
+  if (!isGzip(bytes))
+    return { format: detectStateFormat(path, bytes, policy), bytes };
+  const inner = gunzip(bytes, readLimit(bytes.length, policy));
   if (!inner.ok)
     return {
       format: null,
       compression: "gzip",
       error:
-        inner.error === "too_large" ? tooLarge(bytes.length) : UNREADABLE_GZIP,
+        inner.error === "too_large"
+          ? tooLarge(bytes.length, policy)
+          : UNREADABLE_GZIP,
     };
-  const format = detectStateFormat(path, inner.value);
+  const format = detectStateFormat(path, inner.value, policy);
   const inside = NOT_READ_INSIDE[format];
   return inside === undefined
     ? { format, bytes: inner.value, compression: "gzip" }

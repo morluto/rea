@@ -10,6 +10,7 @@ import {
 } from "./browserDeadline.js";
 import { jsonObjectSchema } from "./jsonValue.js";
 import { cdpResourceColumnSchema } from "./cdpObservationSchemas.js";
+import { webTextFacts } from "./webContentArtifact.js";
 
 // CDP positions are zero-based and relative to the resource named by url.
 // With a script ID that is the script's enclosing resource: the script file,
@@ -59,13 +60,28 @@ export const webRuntimeSourceSchema = z.object({
     })
     .nullable(),
   source: z.discriminatedUnion("state", [
-    z.object({
-      state: z.literal("captured"),
-      text: z.string(),
-      sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-      utf8_bytes: z.int().min(0),
-      utf16_units: z.int().min(0),
-    }),
+    z
+      .object({
+        state: z.literal("captured"),
+        text: z.string(),
+        sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+        utf8_bytes: z.int().min(0),
+        utf16_units: z.int().min(0),
+      })
+      .superRefine((source, context) => {
+        const facts = webTextFacts(source.text);
+        for (const [field, expected] of [
+          ["sha256", facts.sha256],
+          ["utf8_bytes", facts.utf8Bytes],
+          ["utf16_units", facts.utf16Units],
+        ] as const)
+          if (source[field] !== expected)
+            context.addIssue({
+              code: "custom",
+              path: [field],
+              message: `${field} does not match captured source text.`,
+            });
+      }),
     z.object({
       state: z.enum(["unavailable", "excluded"]),
       reason: z.string().min(1),

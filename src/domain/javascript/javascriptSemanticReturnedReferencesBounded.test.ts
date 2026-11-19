@@ -1,7 +1,7 @@
 import * as t from "@babel/types";
 import { expect, it, vi } from "vitest";
 
-import { indexJavaScriptBindingsSteps } from "./javascriptSemanticAnalysis.js";
+import { indexJavaScriptBindingsSteps } from "../../../tests/fixtures/javascriptSemanticIndex.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 
@@ -155,3 +155,31 @@ it.each([
     }
   },
 );
+
+it("discloses getter-result widening when selecting returned callable targets", () => {
+  const parsed = parseJavaScriptSource(
+    "const box={get item(){return {make:()=>result}}};box.item.make();",
+  );
+  if (parsed === null) throw new Error("Expected getter fixture");
+  const steps = indexJavaScriptBindingsSteps(parsed.program, {
+    getter_expansions: 1,
+  });
+  let step = steps.next();
+  while (!step.done) step = steps.next();
+  let call: t.CallExpression | undefined;
+  t.traverseFast(parsed.program, (node) => {
+    if (t.isCallExpression(node)) call = node;
+  });
+  if (call === undefined)
+    throw new Error("Expected getter-produced callable invocation");
+  const result = createSemanticReturnedReferences(step.value)(
+    call.callee,
+    call,
+  );
+  expect(result.precision).toBe("widened");
+  expect(result.references).toContainEqual({
+    node: expect.objectContaining({ type: "Identifier", name: "result" }),
+    projection: [],
+  });
+  expect(step.value.returnedReferenceWidenings.has(call.callee)).toBe(true);
+});

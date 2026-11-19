@@ -1,6 +1,6 @@
 import pino from "pino";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
-import { registerErlangTools } from "../../../src/server/registerErlangTools.js";
+import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { BeamService } from "../../../src/application/erlang/BeamService.js";
 import { BeamProvider } from "../../../src/erlang/BeamProvider.js";
@@ -92,16 +92,18 @@ mcpTest(
     const { client, session } = await connect(mcp);
     const root = await createTestTempDirectory("rea-beam-capacity-");
     try {
-      for (const [label, bytes, settings, remediation] of [
+      for (const [label, bytes, settings, budget, remediation] of [
         [
           "atoms",
           erlangBeamFixture(),
+          { max_atoms: 1 },
           { max_atoms: 1 },
           "Raise max_atoms above 1",
         ],
         [
           "chunks",
           erlangBeamFixture(),
+          { max_chunks: 1 },
           { max_chunks: 1 },
           "Raise max_chunks above 1",
         ],
@@ -111,6 +113,7 @@ mcpTest(
             ["ExpT", MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS + 1],
           ]),
           {},
+          { max_table_rows: MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS },
           `${String(MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS)}-row ceiling`,
         ],
       ] as const) {
@@ -126,6 +129,7 @@ mcpTest(
           code: "resource_constraint",
           retryable: false,
           remediation: { action: expect.stringContaining(remediation) },
+          details: { reported_limits: budget },
         });
       }
     } finally {
@@ -145,7 +149,11 @@ mcpTest(
       undefined,
       createToolResultDelivery(2 * 1024 * 1024),
     );
-    registerErlangTools(server, service, pino({ enabled: false }));
+    registerServiceTools(
+      server,
+      { erlangBeam: service },
+      { logger: pino({ enabled: false }) },
+    );
     const client = await mcp.connect(server);
     try {
       for (const delivery of [
@@ -206,5 +214,4 @@ mcpTest(
       await session.close();
     }
   },
-  60_000,
 );

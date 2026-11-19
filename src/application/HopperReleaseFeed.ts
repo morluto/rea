@@ -123,6 +123,8 @@ export class HopperReleaseError extends Error {
       | "release_metadata"
       | "download"
       | "integrity"
+      /** The authenticated package's launcher differs from the feed's main_exe_hash. */
+      | "launcher_digest_mismatch"
       | "publisher_verification_failed"
       | "verification_unavailable"
       | "unsupported_hopper_build"

@@ -1,6 +1,27 @@
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
+import { isParseLimit } from "../../domain/parseFailureAnalysisError.js";
+import {
+  assertArtifactReadActive,
+  ArtifactReaderFailure,
+} from "../../resources/index.js";
+import {
+  firstKeyed,
+  keyedBy,
+  uniqueKeyed,
+} from "../../domain/keyedCollection.js";
+import {
+  DT_FLAGS,
+  DT_FLAGS_1,
+  DT_GNU_HASH,
+  DT_HASH,
+  DT_RPATH,
+  DT_RUNPATH,
+  DT_STRTAB,
+  DT_STRSZ,
+  DT_SYMENT,
+  DT_SYMTAB,
+  elfDynamicEntryWidth,
+  walkElfDynamicTable,
+} from "../../domain/elfDynamicEntry.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
 import { admitElfLoadSegment } from "../../domain/elfProgramHeader.js";
 import { readElfSymbol } from "../../domain/elfSymbol.js";
@@ -20,7 +41,10 @@ import {
   MAX_BINARY_HARDENING_SYMBOL_SCAN_BYTES,
   MAX_BINARY_HARDENING_TABLE_ENTRIES,
 } from "../../domain/native/binaryHardening.js";
-import { elfNoteAlignment } from "../../domain/native/elfNoteLayout.js";
+import {
+  elfNoteAlignment,
+  elfNoteSectionStorage,
+} from "../../domain/native/elfNoteLayout.js";
 import { MAX_INSPECT_ELF_NOTE_ENTRIES } from "../../domain/native/elfNotes.js";
 import {
   elfStringTableText,
@@ -35,7 +59,7 @@ import {
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
-} from "../metadata/BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 import {
   ELF_PT_GNU_PROPERTY,
   ELF_PT_GNU_RELRO,
@@ -46,24 +70,13 @@ import {
   readElfDirectoryFromBuffer,
   type ElfProgramDeclaration,
   type NativeSection,
-} from "../metadata/NativeSectionDirectory.js";
+} from "../../domain/native/nativeSectionDirectory.js";
 
 const ET_EXEC = 2;
 const ET_DYN = 3;
 const SHT_SYMTAB = 2;
-const SHT_NOTE = 7;
+const SHT_STRTAB = 3;
 const SHT_DYNSYM = 11;
-const DT_NULL = 0n;
-const DT_HASH = 4n;
-const DT_STRTAB = 5n;
-const DT_SYMTAB = 6n;
-const DT_STRSZ = 10n;
-const DT_SYMENT = 11n;
-const DT_RPATH = 15n;
-const DT_RUNPATH = 29n;
-const DT_FLAGS = 30n;
-const DT_GNU_HASH = 0x6ffffef5n;
-const DT_FLAGS_1 = 0x6ffffffbn;
 const DT_BIND_NOW = 24n;
 const DF_BIND_NOW = 0x8n;
 const DF_1_NOW = 0x1n;
@@ -71,7 +84,6 @@ const DF_1_PIE = 0x08000000n;
 const PF_X = 1;
 const GNU_PROPERTY_AARCH64_FEATURE_1_AND = 0xc0000000;
 const GNU_PROPERTY_X86_FEATURE_1_AND = 0xc0000002;
-const SHF_COMPRESSED = 0x800n;
 /** Tags hardening reads as a single value. Repeating tags such as DT_NEEDED stay. */
 const SINGULAR_DYNAMIC_TAGS = new Set<bigint>([
   DT_HASH,
@@ -117,6 +129,8 @@ const budgetFailure = (count: number, label: string): BinaryResourceFailure =>
     "structure",
     MAX_BINARY_HARDENING_TABLE_ENTRIES,
     `${label} has ${String(count)} entries, above the ${String(MAX_BINARY_HARDENING_TABLE_ENTRIES)}-entry structural budget. This release has no runtime override.`,
+    "structure",
+    "entries",
   );
 
 const budget = (count: number, label: string): void => {
@@ -175,8 +189,6 @@ export const readElfHardening = (
   assertElfDeclaredRangesFromBuffer(bytes);
   const { bits, little, machine, programs, sections } = directory;
   const headerWidth = bits === 64 ? 56 : 32;
-  const symbolWidth = bits === 64 ? 24 : 16;
-  const dynamicWidth = bits === 64 ? 16 : 8;
   const propertyAlign = bits === 64 ? 8 : 4;
   const loads = programs.filter(isSpan).filter((program) => program.type === 1);
   for (const load of loads) {
@@ -212,14 +224,7 @@ export const readElfHardening = (
   const dynamic =
     dynamicPrograms[0] === undefined
       ? null
-      : readDynamic(
-          bytes,
-          dynamicPrograms[0],
-          bits,
-          little,
-          dynamicWidth,
-          mapVa,
-        );
+      : readDynamic(bytes, dynamicPrograms[0], bits, little, mapVa);
   let symbols: SymbolScan;
   try {
     symbols = readSymbols(
@@ -280,6 +285,7 @@ export const readElfHardening = (
       symbols,
       (name) =>
         name === "__fortify_fail" ||
+        name === "__chk_fail" ||
         (name.startsWith("__") && name.endsWith("_chk")),
       "No fortify symbol was found in the dynamic symbol table. A static or stripped image can omit those imports while still using FORTIFY.",
       "The dynamic symbol table is absent, so FORTIFY use is unknown.",
@@ -401,9 +407,9 @@ const readDynamic = (
   program: Extract<ElfProgramDeclaration, { type: 2 }>,
   bits: 32 | 64,
   little: boolean,
-  width: number,
   mapVa: MapVa,
 ): DynamicTable => {
+  const width = elfDynamicEntryWidth(bits);
   const offset = exact(program.offset, "PT_DYNAMIC offset");
   const size = exact(program.size, "PT_DYNAMIC size");
   if (size % width !== 0)
@@ -413,29 +419,23 @@ const readDynamic = (
   if (size > bytes.length - offset)
     malformed("ELF PT_DYNAMIC extends outside the file");
   const entries = new Map<bigint, DynamicEntry>();
-  let terminated = false;
-  for (let index = 0; index < count; index += 1) {
-    const at = offset + index * width;
-    const parsed = readElfDynamicEntry(
-      bytes.subarray(at, at + width),
-      bits,
-      little,
+  const walked = walkElfDynamicTable<never>(
+    bytes.subarray(offset, offset + size),
+    { bits, littleEndian: little },
+    SINGULAR_DYNAMIC_TAGS,
+    ({ tag, value, offset: entryOffset, singleton }) => {
+      if (singleton)
+        entries.set(tag, { value, offset: offset + entryOffset, bytes: width });
+    },
+  );
+  if (!walked.ok)
+    return malformed(
+      walked.error.kind === "duplicate-singleton"
+        ? `ELF dynamic tag ${walked.error.tag.toString()} is duplicated`
+        : walked.error.error,
     );
-    if (!parsed.ok) malformed(parsed.error.message);
-    if (parsed.value.tag === DT_NULL) {
-      terminated = true;
-      break;
-    }
-    if (!SINGULAR_DYNAMIC_TAGS.has(parsed.value.tag)) continue;
-    if (entries.has(parsed.value.tag))
-      malformed(`ELF dynamic tag ${parsed.value.tag.toString()} is duplicated`);
-    entries.set(parsed.value.tag, {
-      value: parsed.value.value,
-      offset: at,
-      bytes: width,
-    });
-  }
-  if (!terminated) malformed("ELF dynamic table has no DT_NULL terminator");
+  if (walked.value.terminatorOffset === null)
+    malformed("ELF dynamic table has no DT_NULL terminator");
   const strtab = entries.get(DT_STRTAB);
   const strsz = entries.get(DT_STRSZ);
   if ((strtab === undefined) !== (strsz === undefined))
@@ -489,9 +489,12 @@ const readSymbols = (
   bits: 32 | 64,
   signal?: AbortSignal,
 ): SymbolScan => {
-  const dynsym = sections.filter((section) => section.type === SHT_DYNSYM);
-  if (dynsym.length > 1) malformed("ELF image has more than one SHT_DYNSYM");
-  const section = dynsym[0];
+  const dynsym = uniqueKeyed(
+    keyedBy(sections, ({ type }) => type),
+    SHT_DYNSYM,
+  );
+  if (!dynsym.ok) malformed("ELF image has more than one SHT_DYNSYM");
+  const section = dynsym.value;
   const symtab = dynamic?.entries.get(DT_SYMTAB);
   if (dynamic === null || symtab === undefined)
     return section === undefined
@@ -546,10 +549,14 @@ const agreeingSectionCount = (
   if (dynsym === undefined) return null;
   const strings = sections[dynsym.link];
   if (
+    dynsym.compressed ||
+    strings === undefined ||
+    strings.compressed ||
+    strings.type !== SHT_STRTAB ||
     dynsym.address !== symtab.value ||
-    strings?.address !== dynamic.entries.get(DT_STRTAB)?.value ||
-    strings?.size !== dynamic.entries.get(DT_STRSZ)?.value ||
-    strings?.offset !== BigInt(dynamic.stringFileOffset ?? -1)
+    strings.address !== dynamic.entries.get(DT_STRTAB)?.value ||
+    strings.size !== dynamic.entries.get(DT_STRSZ)?.value ||
+    strings.offset !== BigInt(dynamic.stringFileOffset ?? -1)
   )
     return null;
   const entry = dynsym.entry_size === 0n ? BigInt(width) : dynsym.entry_size;
@@ -894,14 +901,13 @@ const readFeatureNotes = (
   const otherSpans: NoteSpan[] = [];
   let incomplete: string | null = null;
   for (const section of sections) {
-    if (section.type !== SHT_NOTE) continue;
+    const storage = elfNoteSectionStorage(section);
+    if (storage === "not-note") continue;
     // An empty note section owns no bytes, so it has nothing to walk.
     if (section.size === 0n) continue;
-    const compressed = (section.flags & SHF_COMPRESSED) !== 0n;
-    if (compressed)
+    if (storage === "compressed") {
       incomplete ??=
         "A compressed SHT_NOTE section may hold GNU property notes, and its descriptors were not read.";
-    if (compressed) {
       if (!section.file_backed) continue;
       otherSpans.push({
         offset: exact(section.offset, "SHT_NOTE offset"),
@@ -979,12 +985,11 @@ const readFeatureNotes = (
       incomplete,
     };
   } catch (cause) {
+    // A parser budget keeps confirmed PIE/NX/RELRO while note features stay unknown.
+    if (isParseLimit(cause, "elf-notes"))
+      return { words: new Map(), searched, incomplete: cause.message };
     if (!(cause instanceof ArtifactReaderFailure)) throw cause;
     if (cause.reason === "cancelled") throw cause;
-    // A note budget must not drop PIE, NX, or RELRO. The walker names the
-    // budget it hit, entry or text, and the feature rows stay unknown.
-    if (cause.reason === "limit")
-      return { words: new Map(), searched, incomplete: cause.message };
     throw new BinaryFormatFailure("malformed", cause.message);
   }
 };
@@ -1259,7 +1264,11 @@ const strippedRow = (
       basis: "Section headers are absent, so SHT_SYMTAB presence is unknown.",
       note: "A missing section header table does not establish that the image was stripped.",
     });
-  const symtab = sections.find((section) => section.type === SHT_SYMTAB);
+  const symtab = firstKeyed(
+    keyedBy(sections, ({ type }) => type),
+    SHT_SYMTAB,
+    "Any SHT_SYMTAB shows the image is not stripped; the first locates it.",
+  );
   if (symtab === undefined)
     return row({
       property: "stripped",

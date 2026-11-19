@@ -4,13 +4,20 @@ import {
 } from "../../domain/apktool/apktoolResourceAnalysis.js";
 import type { ToolContract } from "../toolContractTypes.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
-import { toolContractMetadata } from "../toolEffects.js";
+import { toolContractMetadata, toolEffects } from "../toolEffects.js";
 
 /** Apktool resource decoding served by a caller-supplied launcher. */
 export const APKTOOL_TOOL_CONTRACTS = [
   {
     name: "inspect_apktool_client",
-    ...toolContractMetadata("inspect_apktool_client"),
+    cli: true,
+    ...toolContractMetadata(
+      "inspect_apktool_client",
+      toolEffects({
+        mutatesSession: true,
+        launchesProcess: true,
+      }),
+    ),
     description:
       "Inspect the caller-selected apktool launcher: resolved command, selection source, and version. Decodes nothing. REA never installs Apktool or Java; select a launcher with REA_APKTOOL_COMMAND (absolute) or apktool on PATH.",
     kind: "apktool-provider",
@@ -20,9 +27,17 @@ export const APKTOOL_TOOL_CONTRACTS = [
   },
   {
     name: "decode_android_resources",
-    ...toolContractMetadata("decode_android_resources"),
+    cli: true,
+    ...toolContractMetadata(
+      "decode_android_resources",
+      toolEffects({
+        mutatesSession: true,
+        launchesProcess: true,
+        writesFilesystem: true,
+      }),
+    ),
     description:
-      "Decode one local APK's resources with `apktool d --no-src` in a provider-owned workspace that is removed after projection: the readable AndroidManifest.xml, apktool.yml version and SDK facts, the app's string resources (default or selected locales, bounded to 2000 entries per table), selectable string locales, and the decoded file count. The target APK is digest with SHA-256 before decoding; smali is skipped because Java-source recovery belongs to the JADX family. Optional decode_timeout_ms is the decode wall clock in milliseconds (default 600000, range 1..2147483647); omitted means 600000 and the value applies on the next decode. It does not raise the fixed output capture allowance or the version probe.",
+      "Decode APK resources with apktool d --no-src: readable manifest, version/SDK facts, string resources/locales and decoded file count. Uses a temporary workspace removed after projection; smali/source recovery belongs to JADX. Strings default to 2000 valid entries per table; use string_offset/string_limit and table.page.next_offset for later pages, checking target.sha256 across calls. Per-call string budgets can be raised without restart. decode_timeout_ms controls decoding (default 600000 ms), independently of output capture and version probes.",
     kind: "apktool-provider",
     inputSchema: apktoolInputSchemas.decode_android_resources,
     outputSchema: evidenceResultOf(
@@ -42,6 +57,15 @@ export const APKTOOL_TOOL_CONTRACTS = [
         input: {
           path: "/targets/Example.apk",
           locales: ["de", "fr"],
+          string_tables_only: true,
+        },
+      },
+      {
+        title: "Retrieve strings after the default first page",
+        input: {
+          path: "/targets/Example.apk",
+          string_offset: 2000,
+          string_limit: 100,
           string_tables_only: true,
         },
       },

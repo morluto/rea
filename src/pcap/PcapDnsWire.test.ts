@@ -37,6 +37,152 @@ it("preserves real TShark display collisions with distinct wire label identities
     });
 });
 
+it("does not attribute addresses on NXDOMAIN (nonzero RCODE)", () => {
+  const query = label("612e62", "6578616d706c65");
+  const answer = rr(query, 1, address);
+  const bytes = Buffer.concat([
+    word(1),
+    word(0x8183), // QR=1, RCODE=3 (NXDOMAIN)
+    word(1),
+    word(1),
+    word(0),
+    word(0),
+    query,
+    word(1),
+    word(1),
+    answer,
+  ]);
+  const facts = parse(bytes);
+  expect(facts).toMatchObject({
+    assigned: [],
+    unattributed: ["192.0.2.9"],
+    incomplete: true,
+  });
+  expect(facts.incomplete_reasons).toContainEqual(
+    expect.stringContaining("RCODE"),
+  );
+});
+
+it("does not attribute addresses on non-QUERY opcode", () => {
+  const query = label("612e62", "6578616d706c65");
+  const answer = rr(query, 1, address);
+  const bytes = Buffer.concat([
+    word(1),
+    word(0x9180), // QR=1, OPCODE=2 (STATUS)
+    word(1),
+    word(1),
+    word(0),
+    word(0),
+    query,
+    word(1),
+    word(1),
+    answer,
+  ]);
+  const facts = parse(bytes);
+  expect(facts).toMatchObject({
+    assigned: [],
+    unattributed: ["192.0.2.9"],
+    incomplete: true,
+  });
+});
+
+it("does not attribute addresses when EDNS OPT extended RCODE is nonzero (BADVERS)", () => {
+  const query = label("612e62", "6578616d706c65");
+  const answer = rr(query, 1, address);
+  const optTtl = Buffer.alloc(4);
+  optTtl.writeUInt32BE(1 << 24); // extended RCODE = 1 -> full RCODE = 16 (BADVERS)
+  const opt = Buffer.concat([
+    Buffer.from([0]),
+    word(41),
+    word(4096),
+    optTtl,
+    word(0),
+  ]);
+  const bytes = Buffer.concat([
+    word(1),
+    word(0x8180), // QR=1, RD=1, header RCODE=0
+    word(1),
+    word(1),
+    word(0),
+    word(1),
+    query,
+    word(1),
+    word(1),
+    answer,
+    opt,
+  ]);
+  const facts = parse(bytes);
+  expect(facts).toMatchObject({
+    assigned: [],
+    unattributed: ["192.0.2.9"],
+    incomplete: true,
+    incomplete_reasons: [expect.stringContaining("RCODE is nonzero (16)")],
+  });
+});
+
+it("does not let a second OPT record clear an earlier extended RCODE", () => {
+  const query = label("612e62", "6578616d706c65");
+  const answer = rr(query, 1, address);
+  const opt = (extended: number) => {
+    const ttl = Buffer.alloc(4);
+    ttl.writeUInt32BE(extended << 24);
+    return Buffer.concat([
+      Buffer.from([0]),
+      word(41),
+      word(4096),
+      ttl,
+      word(0),
+    ]);
+  };
+  const bytes = Buffer.concat([
+    word(1),
+    word(0x8180), // QR=1, RD=1, header RCODE=0
+    word(1),
+    word(1),
+    word(0),
+    word(2),
+    query,
+    word(1),
+    word(1),
+    answer,
+    opt(1),
+    opt(0),
+  ]);
+  // RFC 6891 makes more than one OPT record a format error.
+  expect(parse(bytes)).toMatchObject({
+    assigned: [],
+    unattributed: ["192.0.2.9"],
+    incomplete: true,
+  });
+});
+
+it("preserves both nonzero RCODE rejection and TC truncation reasons", () => {
+  const query = label("612e62", "6578616d706c65");
+  const answer = rr(query, 1, address);
+  const bytes = Buffer.concat([
+    word(1),
+    word(0x8383), // QR=1, TC=1, RD=1, RCODE=3 (NXDOMAIN)
+    word(1),
+    word(1),
+    word(0),
+    word(0),
+    query,
+    word(1),
+    word(1),
+    answer,
+  ]);
+  const facts = parse(bytes);
+  expect(facts).toMatchObject({
+    assigned: [],
+    unattributed: ["192.0.2.9"],
+    incomplete: true,
+  });
+  expect(facts.incomplete_reasons).toEqual([
+    expect.stringContaining("RCODE is nonzero (3)"),
+    "DNS message declares truncation (TC); captured records are incomplete",
+  ]);
+});
+
 const label = (...labels: readonly string[]): Buffer =>
   Buffer.concat([
     ...labels.map((hex) => {
@@ -82,14 +228,68 @@ const parse = (
   bytes: Buffer,
   queries: readonly string[] = ["source display"],
   addresses: readonly string[] = ["192.0.2.9"],
+  family: "dns" | "mdns" | "llmnr" = "dns",
 ) =>
-  parseDnsMessageRaw([bytes.toString("hex"), 42, bytes.length, 0, 1], {
-    "dns.id_raw": ["0001", 42, 2, 0, 5],
-    Queries: { "dns.qry.name": queries },
-    Answers: { "dns.a": addresses },
-  });
+  parseDnsMessageRaw(
+    [bytes.toString("hex"), 42, bytes.length, 0, 1],
+    {
+      "dns.id_raw": ["0001", 42, 2, 0, 5],
+      Queries: { "dns.qry.name": queries },
+      Answers: { "dns.a": addresses },
+    },
+    family,
+  );
 const pointer = Buffer.from([0xc0, 0x0c]);
 const address = Buffer.from([192, 0, 2, 9]);
+
+it.each([
+  { family: "dns", hasAnswers: false },
+  { family: "dns", hasAnswers: true },
+  { family: "llmnr", hasAnswers: false },
+  { family: "llmnr", hasAnswers: true },
+] as const)(
+  "retains observed records but marks conventional TC responses incomplete: %j",
+  ({ family, hasAnswers }) => {
+    const bytes = packet(
+      label("61"),
+      hasAnswers ? [rr(pointer, 1, address)] : [],
+    );
+    bytes.writeUInt16BE(0x8380, 2);
+    const facts = parse(bytes, ["a"], hasAnswers ? ["192.0.2.9"] : [], family);
+    expect(facts.questions).toEqual([{ query: "a", labels_hex: ["61"] }]);
+    expect(facts.assigned).toEqual(hasAnswers ? [[0, "192.0.2.9"]] : []);
+    expect(facts.unattributed).toEqual([]);
+    expect(facts.incomplete).toBe(true);
+    expect(facts.incomplete_reasons).toContain(
+      "DNS message declares truncation (TC); captured records are incomplete",
+    );
+  },
+);
+
+it.each([false, true])(
+  "does not infer conventional truncation from multicast DNS TC (has answers: %s)",
+  (hasAnswers) => {
+    const bytes = packet(
+      label("61"),
+      hasAnswers ? [rr(pointer, 1, address)] : [],
+    );
+    bytes.writeUInt16BE(0x8400, 2);
+    const addresses = hasAnswers ? ["192.0.2.9"] : [];
+    const complete = parse(bytes, ["a"], addresses, "mdns");
+    expect(complete.incomplete).toBe(false);
+    bytes.writeUInt16BE(0x8600, 2);
+    expect(parse(bytes, ["a"], addresses, "mdns")).toEqual(complete);
+  },
+);
+
+it("preserves ownership limitations alongside declared DNS truncation", () => {
+  const bytes = packet(label("61"), [], [rr(pointer, 1, address)]);
+  bytes.writeUInt16BE(0x8380, 2);
+  const facts = parse(bytes);
+  expect(facts.assigned).toEqual([]);
+  expect(facts.unattributed).toEqual(["192.0.2.9"]);
+  expect(facts.incomplete_reasons).toHaveLength(2);
+});
 
 it("joins compressed CNAMEs using ASCII-folded bytes while retaining original labels", () => {
   const query = label("414243", "6578616d706c65");

@@ -9,6 +9,7 @@ import {
 import { ProviderCleanupError } from "../../../../src/domain/providerCleanupError.js";
 import { err, ok, type Result } from "../../../../src/domain/result.js";
 import type { AnalysisError } from "../../../../src/domain/analysisErrorBase.js";
+import { releaseOwnedCleanup } from "../../../support/cleanupRelease.js";
 
 // These controls exercise shared wait semantics without executing commands or opening files.
 const fixture = () => {
@@ -121,7 +122,7 @@ it.each(["physical", "cancel-with-cleanup"] as const)(
     expect(result.error.capturedOutput).toEqual(output);
     if (kind === "cancel-with-cleanup") {
       expect(result.error.cleanupIncomplete).toBe(true);
-      primary.resolveCleanup();
+      releaseOwnedCleanup(primary);
       expect(result.error.cleanupIncomplete).toBe(false);
     }
   },

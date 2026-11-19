@@ -1,35 +1,17 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { describe, expect, it } from "vitest";
 
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
-import {
-  GUEST_FILE_ANSWER_SOURCE,
-  guestFileAnswerCeiling,
-} from "../../desktop/AgentEnvComputer.js";
+import { redactSecrets } from "../../domain/desktop/buildSecrets.js";
+import { createEvidence } from "../../domain/evidence.js";
+import { guestFileAnswerCeiling } from "../../desktop/AgentEnvComputer.js";
 import { readOutput } from "./DesktopBuildCommands.js";
 import { endedCapture } from "./DesktopBuildCaptureFailure.js";
-
-describe("endedCapture", () => {
-  it("returns the size refusal instead of a generic exit when the capture output is too large", async () => {
-    const error = await endedCapture(
-      {
-        homeFiles: () => Promise.resolve(new Map()),
-        redacted: (text) => text,
-        exec: () => Promise.reject(new Error("unused")),
-      },
-      {
-        operation: "desktop.capture",
-        when: "before checkpoint seed",
-        afterAppExit: "unused",
-        folder: "/tmp/capture",
-      },
-      { exited: 0, output_bytes: Number.MAX_SAFE_INTEGER },
-      new AbortController().signal,
-    );
-
-    expect(error).toBeInstanceOf(AnalysisResourceConstraintError);
-    expect(error.message).toContain("max-old-space-size");
-  });
-});
+import {
+  DESKTOP_OPERATION,
+  DESKTOP_PROVIDER,
+} from "./DesktopCaptureRefusals.js";
+import { seedEndCapture } from "./desktopCapture.fixture.js";
 
 describe("readOutput", () => {
   it("does not fetch a command output whose reported size exceeds the host answer ceiling", async () => {
@@ -54,13 +36,44 @@ describe("readOutput", () => {
       guest_file_bytes: Number.MAX_SAFE_INTEGER,
       file_count: 1,
       answer_ceiling_bytes: guestFileAnswerCeiling(),
-      ceiling_source: GUEST_FILE_ANSWER_SOURCE,
+      ceiling_source: "v8.heap_size_limit/4",
     });
   });
 
+  it.each([
+    [
+      "invalid UTF-8",
+      Buffer.concat([
+        Buffer.from('{"code":"busy","message":"'),
+        Buffer.from([0xff]),
+        Buffer.from('"}'),
+      ]),
+    ],
+    ["invalid JSON", Buffer.from("incomplete output")],
+  ] as const)(
+    "refuses %s in guest command output without quoting the bytes",
+    async (_name, body) => {
+      const computer = {
+        homeFiles: () => Promise.resolve(new Map([["out.json", body]])),
+        redacted: (text: string) => text,
+        exec: () => Promise.reject(new Error("unused")),
+      };
+      await expect(
+        readOutput(
+          computer,
+          "out.json",
+          body.length,
+          new AbortController().signal,
+        ),
+      ).rejects.toThrow(
+        /^The build computer's REA output is not valid UTF-8 JSON\.$/u,
+      );
+    },
+  );
+
   it("reads a reported failure that fits the ceiling", async () => {
     const body = Buffer.from(
-      JSON.stringify({ code: "busy", message: "the app is busy" }),
+      JSON.stringify({ code: "busy", message: "the app is busy — 正在运行" }),
     );
     let reported = 0;
     const output = await readOutput(
@@ -81,7 +94,7 @@ describe("readOutput", () => {
     if (output.kind !== "failure") return;
     expect(output.failure).toMatchObject({
       code: "busy",
-      message: "the app is busy",
+      message: "the app is busy — 正在运行",
     });
   });
 });
@@ -117,7 +130,64 @@ describe("endedCapture", () => {
       guest_file_bytes: Number.MAX_SAFE_INTEGER,
       file_count: 1,
       answer_ceiling_bytes: guestFileAnswerCeiling(),
-      ceiling_source: GUEST_FILE_ANSWER_SOURCE,
+      ceiling_source: "v8.heap_size_limit/4",
     });
+  });
+
+  it("hides a typed secret before it quotes the end of the app's stderr or the capture's progress", async () => {
+    // A made-up secret, which the quotes' front cuts would leave the end of.
+    const secret = "e-Plum7-Kite-Throwaway-42";
+    const redact = (text: string) =>
+      redactSecrets(text, [{ handle: "master", value: secret }]);
+    const base = seedEndCapture();
+    const recorded = {
+      ...base,
+      session: {
+        ...base.session,
+        end_reason: "application_exited" as const,
+        exit: { code: 1, signal: null },
+        stderr: `${secret}${"y".repeat(790)}`,
+      },
+    };
+    const body = Buffer.from(
+      JSON.stringify(
+        createEvidence(unknownTarget("not-observed"), DESKTOP_PROVIDER, {
+          predicateType: "rea.desktop-application-capture",
+          operation: DESKTOP_OPERATION,
+          parameters: {},
+          result: recorded,
+          confidence: "observed",
+          authority: "controlled-replay",
+        }),
+      ),
+    );
+    const computer = {
+      homeFiles: () =>
+        Promise.resolve(new Map([["capture/capture.out", body]])),
+      redacted: (text: string) => text,
+      exec: () => Promise.reject(new Error("unused")),
+    };
+    const step = {
+      operation: "desktop_build_capture_start",
+      when: "before checkpoint seed",
+      afterAppExit: "Start the capture again.",
+      folder: "capture",
+    };
+    const exited = await endedCapture(
+      computer,
+      { ...step, redact },
+      { exited: 0, output_bytes: body.length },
+      new AbortController().signal,
+    );
+    const progressed = await endedCapture(
+      computer,
+      { ...step, redact },
+      { exited: 1, progress: `${secret}${"z".repeat(290)}` },
+      new AbortController().signal,
+    );
+    for (const failure of [exited, progressed]) {
+      expect(failure.userMessage).toContain("…");
+      expect(failure.userMessage).not.toContain(secret.slice(-10));
+    }
   });
 });

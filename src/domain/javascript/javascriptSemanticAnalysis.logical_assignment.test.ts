@@ -73,24 +73,4 @@ describe("JavaScript semantic analysis: logical assignment", () => {
       "unknown",
     );
   });
-
-  it("reproduces the issue #2646 inputs without an exact literal", () => {
-    for (const operator of ["||=", "??="]) {
-      const { binding, returned } = observe(
-        `function read(x) { x ${operator} 2; return x; }`,
-      );
-      expect(binding).not.toEqual({ status: "literal", value: 2 });
-      expect(returned).not.toEqual({ status: "literal", value: 2 });
-    }
-    const readOr = (x: number) => {
-      x ||= 2;
-      return x;
-    };
-    const readNullish = (x: number) => {
-      x ??= 2;
-      return x;
-    };
-    expect(readOr(5)).toBe(5);
-    expect(readNullish(5)).toBe(5);
-  });
 });

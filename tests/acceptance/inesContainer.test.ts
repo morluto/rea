@@ -7,7 +7,7 @@ import {
   artifactInventoryResultSchema,
   artifactExtractionResultSchema,
 } from "../../src/domain/artifactGraph.js";
-import { analysisViewResultSchema } from "../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -86,8 +86,7 @@ cliTest(
 const inventoryFrom = (input: unknown) => {
   const evidence = parseEvidence(input);
   expect(evidence.subject).toMatchObject({
-    format: "ines",
-    architecture: null,
+    identity: { format: "ines", architecture: null },
   });
   const inspection = artifactInspectionResultSchema.parse(
     evidence.normalized_result,

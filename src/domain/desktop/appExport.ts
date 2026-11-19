@@ -1,17 +1,37 @@
+import type { DownloadInstall } from "./appDownloadInstall.js";
+import {
+  desktopViewPolicy,
+  type DesktopViewPolicyInput,
+} from "./desktopViewPolicy.js";
 import {
   INSTALL_SCRIPT,
   type ExportAptSource,
   type ExportPackageFile,
 } from "./appExportInstall.js";
 import {
+  downloadDeclarations,
+  downloadKind,
+  installName,
+  installNotes,
+  installs,
+} from "./appExportInstallText.js";
+import {
   PYTHON_DATA_HOOKS,
-  PYTHON_HELPERS,
+  renderPythonHelpers,
   PYTHON_IMPORTS,
   PYTHON_MODULE_NAMES,
   PYTHON_READY_CHECK,
+  PYTHON_WITHHELD_DATA_HOOKS,
+  ownlessBody,
 } from "./appExportPython.js";
 import {
-  isLockFile,
+  withheldNotes,
+  withheldSettingsClass,
+  withheldToml,
+} from "./appExportWithheld.js";
+import type { WithheldFile } from "./appWithheld.js";
+import {
+  leftOutFiles,
   unownedReadmeNotes,
   type RuntimeSeeds,
 } from "./appExportUnowned.js";
@@ -20,15 +40,21 @@ import type { DesktopApplicationState } from "./desktopState.js";
 import { isWithinAny } from "./desktopStateDiff.js";
 import { SQLITE_SIDECARS } from "./stateFormats.js";
 import { SEED_HOME } from "./hostIdentity.js";
-import { capturedFileUrl, type LaunchDocument } from "./seedDocument.js";
+import {
+  capturedFileUrl,
+  type LaunchDocument,
+  type TraversingSeedPath,
+} from "./seedDocument.js";
 import { posix } from "node:path";
 import { roleFacts, stateDirectoryOf } from "./stateRoles.js";
+import { shellQuote } from "./shellQuote.js";
 
-/** agentenv-framework release the exported class was checked against. */
-export const DESKTOP_EXPORT_FRAMEWORK_VERSION = "0.9.1431";
+/** agentenv-framework release targeted by the exported class. */
+export const DESKTOP_EXPORT_FRAMEWORK_VERSION = "0.9.1485";
 
 /** Everything the export renders, decided from a capture and its state view. */
 export interface DesktopAppExportPlan {
+  readonly viewPolicy?: DesktopViewPolicyInput | undefined;
   /** Environment and folder name. */
   readonly name: string;
   readonly className: string;
@@ -45,8 +71,12 @@ export interface DesktopAppExportPlan {
   readonly architectures: readonly string[];
   /** The package file downloaded and installed in place of the app's apt package; null when apt installs it. */
   readonly packageFile: ExportPackageFile | null;
+  /** The AppImage or tarball downloaded and unpacked in place of a package; absent for a package. */
+  readonly download?: DownloadInstall;
   /** The package of the program the desktop entry runs, installed by name after the app's; absent when the app's package owns it. */
   readonly executablePackage?: string;
+  /** Packages installed beside the app because the export was asked for them; absent when none. */
+  readonly extraPackages?: readonly string[];
   /** Whether the app is Electron, whose launch then runs without Chromium's sandbox. */
   readonly electron: boolean;
   readonly command: readonly string[];
@@ -55,6 +85,8 @@ export interface DesktopAppExportPlan {
   readonly windowClass: string;
   /** Home-relative paths the app owns for data add, get and reset. */
   readonly paths: readonly string[];
+  /** Relaunch an ownless app for a screen-judged task. */
+  readonly relaunchOnReset?: boolean;
   readonly capturedHome: string;
   /** The checkpoint whose state the seed holds. */
   readonly seedCheckpoint: string;
@@ -64,10 +96,17 @@ export interface DesktopAppExportPlan {
   readonly seedFiles: readonly string[];
   /** Seed files read as text, which get the seed's home path respelled. */
   readonly textSeeds: readonly string[];
+  /** Seed files' permission bits at the seed where the capture recorded them and they are not the 0644 a written file gets. */
+  readonly seedModes: Readonly<Record<string, number>>;
   /** Home-relative selected aliases that resolve to an app state path. */
   readonly stateAliases?: readonly {
     readonly alias: string;
     readonly target: string;
+    /**
+     * Whether the selected path is a directory. Captures written before kind
+     * was recorded leave this unknown; the helper must not invent a directory.
+     */
+    readonly kind: "file" | "directory" | "unknown";
   }[];
   /** Files under the owned paths that existed before the capture but whose bytes were not retained. */
   readonly unseededFiles: readonly string[];
@@ -80,18 +119,29 @@ export interface DesktopAppExportPlan {
   /** `dconf dump` key file of the application's groups at the seed, or empty. */
   readonly dconf: string;
   readonly captureEvidenceId: string;
+  /** Files withheld from the seed as sign-in or licence state, each a secret setting a deploy takes from the environment. */
+  readonly withheld?: readonly WithheldFile[];
+  /** Withheld files seeded all the same, with the person's consent. */
+  readonly consentedFiles?: readonly string[];
 }
 
-/** A lowercase environment name from a desktop entry id or program, prefixed `app-` when the name check refuses it. */
+/** A reverse-DNS id, such as `org.xfce.mousepad`, whose last part names the app. */
+const REVERSE_DNS = /^[a-z][\w-]*(?:\.[a-z][\w-]*)+\.([^.]+)$/iu;
+/** A version at the end of another id, such as `-3.0` in `glabels-3.0`. */
+const TRAILING_VERSION = /(?<=.)[-_]\d+(?:\.\d+)*$/u;
+
+/**
+ * A lowercase environment name from a desktop entry id or program: a
+ * reverse-DNS id's last part, or else the whole id without a trailing
+ * version; prefixed `app-` when the name check refuses it.
+ */
 export const environmentName = (
   source: string,
   accepted: (name: string) => boolean,
 ): string => {
   const name =
-    source
-      .split(".")
-      .at(-1)
-      ?.toLowerCase()
+    (REVERSE_DNS.exec(source)?.[1] ?? source.replace(TRAILING_VERSION, ""))
+      .toLowerCase()
       .replace(/[^a-z0-9]+/gu, "-")
       .replace(/^-+/u, "")
       .slice(0, 48)
@@ -156,30 +206,55 @@ export const ownedPaths = (
   );
 };
 
-/** A captured path's home-relative path, in the innermost walked state directory's own spelling unless that leaves the home. */
-const capturedHomePlan = (capture: DesktopApplicationCapture) => {
+/** Omit portable no-op components without interpreting traversal through links. */
+const replaySegments = (path: string): string[] =>
+  path.split("/").filter((part) => part !== "" && part !== ".");
+
+const portableRelative = (path: string): string | null => {
+  const parts = replaySegments(path);
+  return parts.includes("..") ? null : parts.join("/");
+};
+
+/** Keep source spellings and projected replay names separate. */
+export const capturedHomePlan = (capture: DesktopApplicationCapture) => {
   const { home } = capture.host;
   const relative = (path: string) =>
-    path.startsWith(`${home}/`) ? path.slice(home.length + 1) : null;
+    path === home
+      ? ""
+      : path.startsWith(`${home}/`)
+        ? path.slice(home.length + 1)
+        : null;
+  const portable = (path: string) => {
+    const name = relative(path);
+    return name === null ? null : portableRelative(name);
+  };
+  const replayName = (logical: string, physical: string) =>
+    portable(logical) ??
+    (relative(logical) === null ? null : portable(physical));
   const logical = capture.application.state_directories;
   const walked = capture.state.state_directories ?? [];
   // The capture records one walked spelling per state directory, in order; lists of other lengths cannot be paired.
-  const renamed = (walked.length === logical.length ? walked : [])
-    .flatMap((physical, index) => {
+  const renamed = (walked.length === logical.length ? walked : []).flatMap(
+    (physical, index) => {
       const path = logical[index]?.path;
-      return path === undefined ? [] : [{ physical, logical: path }];
-    })
-    .sort((left, right) => right.physical.length - left.physical.length);
+      return path === undefined
+        ? []
+        : [{ physical, logical: path, target: replayName(path, physical) }];
+    },
+  );
   const selections = [...(capture.state.selected_paths ?? [])];
-  const stateAliases = capturedStateAliases(capture);
+  const stateTargets = new Map<string, string>();
+  for (const { physical, target } of renamed)
+    if (target !== null && !stateTargets.has(physical))
+      stateTargets.set(physical, target);
+  const stateAliases = capturedStateAliases(selections, stateTargets, portable);
   const aliasPaths = [...stateAliases].sort(
     (left, right) => right.alias.length - left.alias.length,
   );
   const selectedSpelling = (path: string) => {
     for (const { alias, target } of aliasPaths) {
-      const prefix = `${home}/${alias}`;
-      if (isWithinAny(path, [prefix]))
-        return `${home}/${target}${path.slice(prefix.length)}`;
+      if (isWithinAny(path, [alias]))
+        return `${target}${path.slice(alias.length)}`;
     }
     return path;
   };
@@ -216,18 +291,26 @@ const capturedHomePlan = (capture: DesktopApplicationCapture) => {
   // ~/.config/notes when that folder was walked at ~/settings/notes.
   const spellings = [
     ...renamed,
-    ...selections.map(({ physical, path }) => ({
-      physical,
-      logical: selectedSpelling(path),
-    })),
+    ...selections.map(({ physical, path }) => {
+      const target = replayName(path, physical);
+      return {
+        physical,
+        logical: path,
+        target: target === null ? null : selectedSpelling(target),
+      };
+    }),
   ].sort((left, right) => right.physical.length - left.physical.length);
   const spell = (path: string) => {
-    for (const { physical, logical } of spellings) {
-      if (!isWithinAny(path, [physical])) continue;
-      const spelled = relative(`${logical}${path.slice(physical.length)}`);
-      if (spelled !== null) return { spelled, specificity: physical.length };
+    for (const { physical, target } of spellings) {
+      if (target === null || !isWithinAny(path, [physical])) continue;
+      const suffix = portableRelative(path.slice(physical.length));
+      if (suffix !== null)
+        return {
+          spelled: [target, suffix].filter(Boolean).join("/"),
+          specificity: physical.length,
+        };
     }
-    const plain = relative(path);
+    const plain = portable(path);
     return plain === null ? undefined : { spelled: plain, specificity: 0 };
   };
   const homePath = (path: string) => {
@@ -253,33 +336,123 @@ const capturedHomePlan = (capture: DesktopApplicationCapture) => {
     }
     return own?.spelled ?? null;
   };
-  return { homePath, stateAliases };
+  const traversed = spellings.flatMap(({ logical, physical, target }) => {
+    const parts = replaySegments(logical);
+    // An unresolved walk retains its parent traversal in the recorded path.
+    // It contributes no evidence about a replay destination.
+    return parts.includes("..") && portableRelative(physical) !== null
+      ? [{ logical: parts.join("/"), physical, portable: target !== null }]
+      : [];
+  });
+  // A directory keeps the relative names the application will look up below
+  // it. The retained layout can include more-specific selections than this
+  // state root, so verify those names against the same map that seeds them.
+  const replayTree = (
+    physical: string,
+    retained: ReadonlyMap<string, string>,
+  ): string | null => {
+    const mapped = homePath(physical);
+    if (mapped === null) return null;
+    for (const [file, seed] of retained) {
+      if (!isWithinAny(file, [physical])) continue;
+      const suffix = portableRelative(file.slice(physical.length));
+      if (
+        suffix === null ||
+        selectedSpelling([mapped, suffix].filter(Boolean).join("/")) !== seed
+      )
+        return null;
+    }
+    return mapped;
+  };
+  const agree = (
+    paths: ReadonlySet<string | null>,
+  ): string | null | undefined =>
+    paths.size === 0
+      ? undefined
+      : paths.size === 1
+        ? (paths.values().next().value ?? null)
+        : null;
+  /**
+   * Replay a path with parent traversal only when the capture establishes a
+   * portable destination. Inferred arguments must name observed state before
+   * its replay can fail. Undefined means no traversal match, while null means
+   * the matched paths cannot share a replay location.
+   */
+  const launchPath = (
+    absolute: string,
+    retained: ReadonlyMap<string, string>,
+    inferredPathObserved?: (physical: string) => boolean,
+  ): TraversingSeedPath | null | undefined => {
+    if (traversed.length === 0) return undefined;
+    const parts = replaySegments(absolute);
+    if (!parts.includes("..")) return undefined;
+    const source = parts.join("/");
+    const direct = new Set<string | null>();
+    const parents = new Set<string | null>();
+    let specificity = 0;
+    for (const { logical, physical, portable } of traversed) {
+      if (isWithinAny(source, [logical])) {
+        const suffix = portableRelative(source.slice(logical.length));
+        if (suffix === null || logical.length < specificity) continue;
+        if (logical.length > specificity) direct.clear();
+        specificity = logical.length;
+        const file = suffix === "" ? physical : `${physical}/${suffix}`;
+        if (
+          inferredPathObserved !== undefined &&
+          !inferredPathObserved(file) &&
+          !recorded.some((path) => isWithinAny(path, [file]))
+        )
+          continue;
+        direct.add(portable ? replayTree(file, retained) : null);
+      } else if (isWithinAny(logical, [source])) {
+        // For a launch root above the observed state files, retain their
+        // relative names. Every paired path must imply the same replay base.
+        const suffix = logical.slice(source.length + 1);
+        const target = portable ? replayTree(physical, retained) : null;
+        parents.add(
+          suffix === target
+            ? ""
+            : target?.endsWith(`/${suffix}`) === true
+              ? target.slice(0, -(suffix.length + 1))
+              : null,
+        );
+      }
+    }
+    if (specificity > 0 && direct.size === 0) return { kind: "unobserved" };
+    const path = agree(specificity > 0 ? direct : parents);
+    return typeof path === "string" ? { kind: "mapped", path } : path;
+  };
+  return { homePath, launchPath, stateAliases };
 };
 
-/** A captured path's home-relative spelling in the shared export plan. */
-export const capturedHomePath = (capture: DesktopApplicationCapture) =>
-  capturedHomePlan(capture).homePath;
-
 /** Selected links to an app state root must keep both the app's name and the selected name. */
-const capturedStateAliases = (capture: DesktopApplicationCapture) => {
-  const { home } = capture.host;
-  const walked = capture.state.state_directories ?? [];
-  const roots = capture.application.state_directories;
-  if (walked.length !== roots.length) return [];
-  const relative = (path: string) =>
-    path.startsWith(`${home}/`) ? path.slice(home.length + 1) : null;
-  const aliases = (capture.state.selected_paths ?? []).flatMap(
-    ({ path, physical }) => {
-      const index = walked.indexOf(physical);
-      const state = index < 0 ? undefined : roots[index]?.path;
-      const alias = relative(path);
-      const target = state === undefined ? null : relative(state);
-      return alias === null || target === null || alias === target
-        ? []
-        : [{ alias, target }];
-    },
-  );
-  const retained: typeof aliases = [];
+const capturedStateAliases = (
+  selections: NonNullable<DesktopApplicationCapture["state"]["selected_paths"]>,
+  stateTargets: ReadonlyMap<string, string>,
+  portable: (path: string) => string | null,
+): {
+  readonly alias: string;
+  readonly target: string;
+  readonly kind: "file" | "directory" | "unknown";
+}[] => {
+  const aliases = selections.flatMap(({ path, physical, kind }) => {
+    const alias = portable(path);
+    const target = stateTargets.get(physical) ?? null;
+    const recorded: "file" | "directory" | "unknown" =
+      kind === "directory" ? "directory" : kind === "file" ? "file" : "unknown";
+    return alias === null ||
+      alias === "" ||
+      target === null ||
+      target === "" ||
+      alias === target
+      ? []
+      : [{ alias, target, kind: recorded }];
+  });
+  const retained: {
+    alias: string;
+    target: string;
+    kind: "file" | "directory" | "unknown";
+  }[] = [];
   for (const entry of aliases.toSorted(
     (left, right) => left.alias.length - right.alias.length,
   )) {
@@ -343,14 +516,16 @@ export const stateFilesByHomePath = (
 /**
  * The state view's files and dconf databases by home path, the paths the app
  * owns, and which home files the seed leaves out as locks the app holds, as
- * the export decides them. A document or a path the caller selected is never
- * left out, whatever its name.
+ * the export decides them. A document or a file under a selected path is
+ * seeded, except a lock beside its file, which stays out unless that lock
+ * was the selected path.
  */
 export const exportedStateFiles = (
   capture: DesktopApplicationCapture,
   state: DesktopApplicationState,
 ) => {
-  const { homePath, stateAliases } = capturedHomePlan(capture);
+  const replay = capturedHomePlan(capture);
+  const { homePath } = replay;
   const homePaths = (paths: readonly string[]) =>
     paths.map(homePath).filter((path): path is string => path !== null);
   const { files, dconf, collisions } = stateFilesByHomePath(
@@ -363,34 +538,33 @@ export const exportedStateFiles = (
     ...capture.application.state_directories.map((entry) => entry.path),
     ...(capture.state.state_directories ?? []),
   ]);
+  const selected = homePaths(roleFacts(capture).selectedRoots);
+  const isLeftOut = leftOutFiles(files, stateDirectories, selected);
+  // A lock directly in the home or a shared folder must not own that path, as Poedit's `~/poedit.lock` would. One inside the app's own folder still marks the folder, so settings beside the lock stay seeded.
+  const marksFolder = (home: string) => {
+    const folder = home.split("/").slice(0, -1).join("/");
+    return !SHARED_FOLDERS.has(folder);
+  };
   const paths = ownedPaths(
-    withRole("application_state"),
+    withRole("application_state").filter(
+      (home) => !isLeftOut(home) || marksFolder(home),
+    ),
     withRole("document"),
     stateDirectories,
   );
-  const usersOwn = new Set([
-    ...withRole("document"),
-    ...homePaths(roleFacts(capture).selectedRoots),
-  ]);
-  const isLeftOutLock = (home: string) =>
-    !usersOwn.has(home) && isLockFile(home, stateDirectories);
   return {
-    homePath,
-    stateAliases,
+    ...replay,
     files,
     dconf,
     collisions,
     paths,
-    isLeftOutLock,
+    selected,
+    isLeftOut,
   };
 };
 
 /** Text safe inside a Python triple-quoted docstring. */
 const docText = (value: string): string => value.replace(/["\\]/gu, "'");
-
-/** A value as one single-quoted shell word. */
-export const shellQuote = (value: string): string =>
-  `'${value.replaceAll("'", `'"'"'`)}'`;
 
 /**
  * The launch command for the computer, through `sh -c` since the declared
@@ -399,12 +573,14 @@ export const shellQuote = (value: string): string =>
  * folder, where an open or save dialog would show build files. That
  * directory, arguments that are or start with a path under the captured home,
  * and `<option>=<path>` values that do, are respelled under the computer
- * user's `$HOME`.
+ * user's `$HOME`. An explicit env working directory inside that home must
+ * exist even when it has no seed files.
  */
 export const launchCommand = (
   argv: readonly string[],
   capturedHome: string,
   workingDirectory: string,
+  envWorkingDirectory?: string,
 ): readonly string[] => {
   const homeUrl = (value: string): string | undefined => {
     const parsed = capturedFileUrl(value);
@@ -451,8 +627,17 @@ export const launchCommand = (
   const respelled = argv.map(respell);
   const command = `exec ${argv.map((argument, index) => respelled[index] ?? shellQuote(argument)).join(" ")}`;
   const directory = underHome(workingDirectory) ?? shellQuote(workingDirectory);
-  // A missing working directory must not stop the boot.
-  return ["sh", "-c", `cd ${directory} 2>/dev/null; ${command}`];
+  const requiredDirectory =
+    envWorkingDirectory !== undefined &&
+    isWithinAny(posix.normalize(envWorkingDirectory), [capturedHome])
+      ? underHome(envWorkingDirectory)
+      : undefined;
+  const prepare =
+    requiredDirectory === undefined
+      ? ""
+      : `mkdir -p -- ${requiredDirectory} && `;
+  // The desktop entry's initial directory is best-effort.
+  return ["sh", "-c", `cd ${directory} 2>/dev/null; ${prepare}${command}`];
 };
 
 /** A Python string literal; JSON escapes are valid Python escapes. */
@@ -460,21 +645,23 @@ export const py = (value: string): string => JSON.stringify(value);
 export const pyList = (values: readonly string[]): string =>
   `[${values.map(py).join(", ")}]`;
 
-/** The bundle's env.toml: a computer app deployed alone on the X11 base. */
+/** The bundle's env.toml: a computer app deployed alone on the X11 base, each withheld file's setting a reference to its environment variable. */
 export const renderEnvToml = (
-  plan: Pick<DesktopAppExportPlan, "name" | "className">,
+  plan: Pick<DesktopAppExportPlan, "name" | "className" | "withheld">,
 ): string =>
   [
     `type = "computer_app"`,
     `module = ${py(`${appModuleFile(plan.name)}:${plan.className}`)}`,
     `computer = "ubuntu-24.04"`,
     `driver = "reference"`,
+    ...withheldToml(plan.withheld ?? []),
     "",
   ].join("\n");
 
 /** The class body: data hooks only for owned paths, and captured settings either way. */
 const classBody = (plan: DesktopAppExportPlan): string => {
   const title = docText(plan.title);
+  const withheld = plan.withheld ?? [];
   if (plan.paths.length > 0)
     return `    """${title}, launched at boot with the captured state in its home.
 
@@ -482,35 +669,29 @@ const classBody = (plan: DesktopAppExportPlan): string => {
     the initial state, reset restores it, add writes files under PATHS, and get returns those files plus a typed JSON
     view of each.
     """
-
+${withheldSettingsClass(withheld)}
     def __init__(self) -> None:
         super().__init__()
         if not INITIAL.exists():
             _seed_home(Path.home())
-            _load_dconf(Path.home())
+            _load_dconf(Path.home())${withheld.length === 0 ? "" : "\n            _write_withheld(Path.home(), self.settings, WITHHELD)"}
         _ensure_state_aliases(Path.home())
         keep_initial(self.paths)
-${PYTHON_DATA_HOOKS}${PYTHON_READY_CHECK}`;
-  if (plan.dconf.length > 0)
-    return `    """${title}, launched at boot with its captured settings. It owns no files, so it serves no data operations."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        _load_dconf(Path.home())
-${PYTHON_READY_CHECK}`;
-  return `    """${title}, launched at boot. No state was observed, so it serves no data operations."""\n${PYTHON_READY_CHECK}`;
+${withheld.length === 0 ? PYTHON_DATA_HOOKS : PYTHON_WITHHELD_DATA_HOOKS}${PYTHON_READY_CHECK}`;
+  return ownlessBody(
+    title,
+    plan.dconf.length > 0,
+    plan.relaunchOnReset === true,
+    (plan.stateAliases ?? []).length > 0,
+  );
 };
 
-/** The package as apt takes it: `name`, or `name/release` for a vendor release. */
-const installName = (plan: DesktopAppExportPlan): string =>
-  plan.aptRelease === null
-    ? plan.aptPackage
-    : `${plan.aptPackage}/${plan.aptRelease}`;
-
-/** The app's package, or a package file's dependencies, then its program's package, its library packages and dconf-cli when settings are loaded. */
+/** The app's package, or a package file's dependencies, then the extra packages, its program's package, its library packages and dconf-cli when settings are loaded. */
 const aptPackages = (plan: DesktopAppExportPlan): readonly string[] => [
   ...new Set([
-    ...(plan.packageFile?.dependencies ?? [installName(plan)]),
+    ...(plan.packageFile?.dependencies ??
+      (plan.download === undefined ? [installName(plan)] : [])),
+    ...(plan.extraPackages ?? []),
     ...(plan.executablePackage === undefined ? [] : [plan.executablePackage]),
     ...plan.libraryPackages,
     ...(plan.dconf.length === 0 ? [] : ["dconf-cli"]),
@@ -547,7 +728,7 @@ export const renderInstallScript = (file: ExportPackageFile): string =>
   ].join("\n");
 
 /** How the class and README say where the seed came from: made for the task, or the user's own data, kept local. */
-export const seedWording = ({
+const seedWording = ({
   name,
   seedCheckpoint,
   syntheticSeed,
@@ -570,23 +751,27 @@ export const renderAppClass = (plan: DesktopAppExportPlan): string => {
   const hooks = classBody(plan);
   return `"""${docText(plan.title)} as an agentenv computer app, exported by REA from a desktop application capture.
 
-Package: ${plan.aptPackage}${plan.packageVersion === null ? "" : ` (captured at ${plan.packageVersion})`}. Capture Evidence: ${plan.captureEvidenceId}.
+${plan.download === undefined ? `Package: ${plan.aptPackage}${plan.packageVersion === null ? "" : ` (captured at ${plan.packageVersion})`}` : `Downloaded: ${docText(plan.download.url)}`}. Capture Evidence: ${plan.captureEvidenceId}.
 ${seedWording(plan).docstring}
 """
 
-${PYTHON_IMPORTS}
+${PYTHON_IMPORTS}${(plan.withheld ?? []).length === 0 ? "" : "from pydantic import SecretStr, create_model\n"}
 HERE = Path(__file__).resolve().parent
 SEED_HOME = ${py(SEED_HOME)}
 PATHS = ${pyList(plan.paths)}
 DCONF = ${py(plan.dconf)}
 TEXT_SEEDS = frozenset(${pyList(plan.textSeeds)})
-STATE_ALIASES = [${(plan.stateAliases ?? []).map(({ alias, target }) => `(${py(alias)}, ${py(target)})`).join(", ")}]
+SEED_MODES = {${Object.entries(plan.seedModes)
+    .map(([home, mode]) => `${py(home)}: 0o${mode.toString(8)}`)
+    .join(", ")}}
+STATE_ALIASES = [${(plan.stateAliases ?? []).map(({ alias, target, kind }) => `(${py(alias)}, ${py(target)}, ${py(kind)})`).join(", ")}]
 WINDOW_CLASS = ${py(plan.windowClass)}
-${PYTHON_HELPERS}
+WITHHELD = {${(plan.withheld ?? []).map(({ setting, file }) => `${py(setting)}: ${py(file)}`).join(", ")}}
+${renderPythonHelpers(desktopViewPolicy(plan.viewPolicy))}
 
 @computer_app(supports=[{"os": {"type": "linux", "display": ["x11"]}, "arch": ${pyList(plan.architectures)}}])
 @linux(
-    packages=Packages(apt=${pyList(aptPackages(plan))}),${aptSources(plan)}${packageFileInstall(plan)}
+    packages=Packages(apt=${pyList(aptPackages(plan))}),${aptSources(plan)}${packageFileInstall(plan)}${downloadDeclarations(plan)}
     launch=Launch(at="boot", command=${pyList(plan.command)}, window={"class": ${py(plan.windowClass)}}, ready=Ready(window=True)),
     paths=PATHS,
     skill="SKILL.md",
@@ -613,57 +798,8 @@ window and dialogs; the result is read from those files.
 `
 }`;
 
-const installedFrom = (plan: DesktopAppExportPlan): string =>
-  plan.aptSources.length === 0
-    ? "the distribution archive"
-    : plan.aptSources
-        .map(
-          (source) =>
-            `the apt repository \`${source.uri}\` (suite \`${source.suite}\`${source.components.length === 0 ? "" : `, components \`${source.components.join(" ")}\``}), trusting \`${source.keyFile}\`, the key that verified its release on the capture host`,
-        )
-        .join(" and ");
-
-/** What the computer installs, and from where. */
-const installs = (plan: DesktopAppExportPlan): string =>
-  plan.packageFile === null
-    ? `\`${installName(plan)}\` from ${installedFrom(plan)}`
-    : `\`${plan.aptPackage}\`${plan.packageVersion === null ? "" : ` ${plan.packageVersion}`} from its package file, downloaded from
-  \`${plan.packageFile.url}\` when the bundle is put and refused unless its SHA-256 is \`${plan.packageFile.sha256}\``;
-
-const packageFileNotes = ({ packageFile: file }: DesktopAppExportPlan) =>
-  file === null
-    ? []
-    : [
-        `- The bundle does not contain the package: \`${INSTALL_SCRIPT}\` installs \`${file.path}\` with dpkg once the apt packages
-  it depends on are in${file.dependencies.length === 0 ? "" : ` (${file.dependencies.map((name) => `\`${name}\``).join(", ")})`}, so the computer runs exactly the captured version, on \`${file.architecture}\` only.`,
-        "- Vendor sites may refuse automated downloads, so the URL must point at a copy of the file the operator may use.\n  The package's licence, such as a trial's terms, is the operator's to check.",
-      ];
-
-const installNotes = (plan: DesktopAppExportPlan): string =>
-  [
-    ...packageFileNotes(plan),
-    ...(plan.executablePackage === undefined
-      ? []
-      : [
-          `- \`${plan.executablePackage}\`, which owns the program the desktop entry runs, is installed with it.`,
-        ]),
-    ...(plan.libraryPackages.length === 0
-      ? []
-      : [
-          `- Library packages, which own the shared libraries the executable loaded on the capture host, are installed with it:
-  ${plan.libraryPackages.map((name) => `\`${name}\``).join(", ")}.`,
-        ]),
-    ...(plan.electron
-      ? [
-          "- Chromium's sandbox is off (`--no-sandbox`): it needs user namespaces the computer's container does not grant,\n  and Electron exits without them.",
-        ]
-      : []),
-  ]
-    .map((line) => `\n${line}`)
-    .join("");
-
 /** The start of the limitation of a launch that opens no document; its reason follows. */
-export const NO_LAUNCH_DOCUMENT = "The app opens no document at launch";
+const NO_LAUNCH_DOCUMENT = "The app opens no document at launch";
 
 /** The limitation of a launch that opens no document; none when it opens one. */
 export const launchDocumentLimitation = (
@@ -674,7 +810,7 @@ export const launchDocumentLimitation = (
     : undefined;
 
 /** The README line on what the launch opens; none when the captured command names its own file. */
-export const launchDocumentNote = ({
+const launchDocumentNote = ({
   opens,
 }: Pick<DesktopAppExportPlan, "opens">): string =>
   opens.kind === "seed"
@@ -685,13 +821,16 @@ export const launchDocumentNote = ({
 
 /**
  * Bundle files: seeds the export rewrote to remove the capture host's
- * identity, gzip seeds it compressed again only to clear their headers, and
- * files that still hold the identity.
+ * identity, gzip seeds it compressed again only to clear their headers,
+ * files that still hold the identity, and seeds it left LibreOffice's
+ * recovery list out of.
  */
 export interface SeedScrubReport {
   readonly scrubbed: readonly string[];
   readonly recompressed: readonly string[];
   readonly unscrubbed: readonly string[];
+  /** Seeds whose LibreOffice recovery list was left out, as `~/<path>`. */
+  readonly recovered?: readonly string[];
 }
 
 const homeList = (paths: readonly string[]) =>
@@ -704,6 +843,7 @@ const scrubNotes = ({
   scrubbed,
   recompressed,
   unscrubbed,
+  recovered = [],
 }: SeedScrubReport): string =>
   [
     ...(scrubbed.length === 0
@@ -713,6 +853,12 @@ const scrubNotes = ({
       ? []
       : [
           `\n  ${String(recompressed.length)} gzip file(s) were compressed again only to clear their headers, their content unchanged.`,
+        ]),
+    ...(recovered.length === 0
+      ? []
+      : [
+          `\n- LibreOffice's list of the documents it had open, which would start it into document recovery instead of
+  its window, is left out of ${bundleList(recovered)}.`,
         ]),
     ...(unscrubbed.length === 0
       ? []
@@ -730,8 +876,8 @@ export const renderReadme = (
 ): string =>
   `# ${plan.title} computer app
 
-Exported by REA's \`export-desktop-application\` from a capture of the \`${plan.aptPackage}\` package
-(capture Evidence \`${plan.captureEvidenceId}\`). It was checked against agentenv-framework
+Exported by REA's \`export-desktop-application\` from a capture of the \`${plan.aptPackage}\` ${plan.download === undefined ? "package" : downloadKind(plan.download)}
+(capture Evidence \`${plan.captureEvidenceId}\`). It targets agentenv-framework
 ${DESKTOP_EXPORT_FRAMEWORK_VERSION}.
 
 - \`envs/${plan.name}/\` is a computer app on the \`ubuntu-24.04\` base with the \`reference\` driver, for
@@ -747,7 +893,7 @@ ${DESKTOP_EXPORT_FRAMEWORK_VERSION}.
       : `
 - Not seeded, because the capture did not retain their bytes at the seed: ${homeList(plan.unseededFiles)}.
   Capture again with \`--state-path\` naming them, or a larger \`--max-file-bytes\`, to include them.`
-  }${unownedReadmeNotes(plan.unownedFolders, plan.runtimeSeeds, plan.leftOutLocks)}
+  }${withheldNotes(plan)}${unownedReadmeNotes(plan.unownedFolders, plan.runtimeSeeds, plan.leftOutLocks)}
 - \`tasks/smoke.json\` deploys the app.
 
 ${taskSection.length === 0 ? "Run it with `agent-env run <this folder>`." : "Run the task with `agent-env run <this folder>`, or only the deploy with `--task smoke`."}

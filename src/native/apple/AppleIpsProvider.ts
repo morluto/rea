@@ -1,34 +1,21 @@
-import { completedStableArtifactObservation } from "../../artifacts/StableArtifactObservation.js";
-import { FieldReader } from "./AppleIpsFieldReader.js";
-import type { AppleIps } from "../../domain/native/appleIps.js";
-import type { StableArtifactSnapshot } from "../../artifacts/readStableArtifact.js";
 import {
+  completedStableArtifactObservation,
+  type StableArtifactSnapshot,
+  projectOwnedArtifactIdentityFailure,
+  projectSelectedArtifactFileFailure,
   projectStableArtifactFailure,
-  stableArtifactInputRecovery,
+  stableArtifactInputFailure,
   projectArtifactCloseFailure,
-} from "../../artifacts/StableArtifactFailure.js";
-import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
-import {
+  ArtifactReaderFailure,
+  readStableArtifact,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   assertArtifactReadActive,
-  artifactFileCancellationCause,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { AppleIpsPort } from "../../application/binaryDiagnostics/AppleIpsPort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
-import { AnalysisError } from "../../domain/analysisErrorBase.js";
+  ArtifactResourceScope,
+} from "../../resources/index.js";
+import { FieldReader } from "./AppleIpsFieldReader.js";
 import {
-  AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
-} from "../../domain/analysisErrorCore.js";
-import {
+  type AppleIps,
   MAX_INSPECT_APPLE_IPS_FILE_BYTES,
   MAX_INSPECT_APPLE_IPS_JOIN_BYTES,
   MAX_INSPECT_APPLE_IPS_FRAMES,
@@ -39,17 +26,28 @@ import {
   MAX_INSPECT_APPLE_IPS_THREADS,
   type InspectAppleIpsInput,
 } from "../../domain/native/appleIps.js";
+import type { AppleIpsPort } from "../../ports/binaryDiagnostics/AppleIpsPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import {
+  isParseLimit,
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../../domain/parseFailureAnalysisError.js";
+import type { LimitRef } from "../../domain/parseFailure.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok } from "../../domain/result.js";
 import { APPLE_IPS_PROVIDER } from "../../domain/investigationProviders.js";
 import {
-  AppleIpsFormatFailure,
-  AppleIpsResourceFailure,
+  APPLE_IPS_FORMAT,
+  type AppleIpsFixedBoundary,
   type AppleIpsSelectedBoundary,
 } from "./AppleIps.errors.js";
 import { parseAppleIps } from "./AppleIpsParser.js";
 import { resolveAppleIpsJoin } from "./AppleIpsMachOJoin.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_apple_ips";
 
@@ -112,7 +110,7 @@ export class AppleIpsProvider implements AppleIpsPort {
         );
         completedSnapshot = joinArtifact;
         assertArtifactReadActive(options?.signal);
-        return ok({
+        completedReport = {
           ...report,
           join: await resolveAppleIpsJoin(
             report,
@@ -123,7 +121,9 @@ export class AppleIpsProvider implements AppleIpsPort {
             },
             read,
           ),
-        });
+        };
+        assertArtifactReadActive(options?.signal);
+        return ok(completedReport);
       });
     } catch (cause) {
       const primary = appleIpsFailurePrimary(
@@ -216,16 +216,15 @@ const SELECTED_BUDGETS = {
 >;
 
 const isSelectedBoundary = (
-  boundary: AppleIpsResourceFailure["boundary"],
+  boundary: string,
 ): boundary is AppleIpsSelectedBoundary =>
   Object.hasOwn(SELECTED_BUDGETS, boundary);
 
 const budgetRemediation = (
-  input: InspectAppleIpsInput,
   boundary: AppleIpsSelectedBoundary,
+  selected: number,
 ): string => {
   const { argument, maximum, unit } = SELECTED_BUDGETS[boundary];
-  const selected = input[argument];
   const recovery =
     selected >= maximum
       ? `This release has no override above the ${String(maximum)} ${unit} ceiling; select a smaller report.`
@@ -237,72 +236,59 @@ const budgetRemediation = (
   return `Effective ${argument} is ${String(selected)} ${unit}. ${recovery}${explanation}`;
 };
 
-const resourceRecovery = (
-  input: InspectAppleIpsInput,
-  cause: AppleIpsResourceFailure,
-) => {
-  const { boundary } = cause;
-  return isSelectedBoundary(boundary)
+/** The unit each fixed IPS format ceiling counts. */
+const FIXED_BOUNDARY_UNITS: Readonly<Record<AppleIpsFixedBoundary, string>> = {
+  termination_reasons: "termination reasons",
+  unlisted_keys: "keys",
+  nesting: "levels",
+};
+
+const isFixedBoundary = (name: string): name is AppleIpsFixedBoundary =>
+  Object.hasOwn(FIXED_BOUNDARY_UNITS, name);
+
+const resourceRecovery = ({ name, maximum }: LimitRef) =>
+  isSelectedBoundary(name)
     ? {
         retryable: false,
-        remediationAction: budgetRemediation(input, boundary),
+        remediationAction: budgetRemediation(name, maximum),
       }
     : fixedAllowanceOptions(
-        `The IPS ${boundary.replaceAll("_", " ")} allowance of ${String(cause.maximum)}`,
+        `The IPS ${name.replaceAll("_", " ")} allowance`,
         "parser",
+        {
+          limit: maximum,
+          ...(isFixedBoundary(name)
+            ? { unit: FIXED_BOUNDARY_UNITS[name] }
+            : {}),
+        },
       );
-};
 
 const appleIpsFailurePrimary = (
   facts: ArtifactFilePrimaryFacts,
   input: InspectAppleIpsInput,
-  field: "path" | "join_path" = "path",
+  field: "path" | "join_path",
 ): AnalysisError => {
   const { cause, origin } = facts;
   if (origin === "owned-or-classified" && cause instanceof AnalysisError)
     return cause;
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "integrity"
-  )
-    return new AnalysisArtifactChangedError(
-      OPERATION,
-      input.path,
-      cause.message,
-      { cause },
-    );
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "cancelled"
-  )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
+  const identityFailure = projectOwnedArtifactIdentityFailure(
+    facts,
+    OPERATION,
+    input.path,
+  );
+  if (identityFailure !== undefined) return identityFailure;
+  if (isParseLimit(cause, APPLE_IPS_FORMAT))
+    return parseLimitConstraint(OPERATION, "capacity", cause, {
+      ...resourceRecovery(cause.failure.limit),
+      path: input.path,
     });
-  if (cause instanceof AppleIpsResourceFailure)
-    return new AnalysisResourceConstraintError(
-      OPERATION,
-      "capacity",
-      `Selected artifact ${input.path}: ${cause.message}`,
-      { boundary: cause.boundary, maximum: cause.maximum },
-      { cause, ...resourceRecovery(input, cause) },
-    );
-  if (cause instanceof AppleIpsFormatFailure)
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(
-          OPERATION,
-          input.path,
-          cause.message,
-          { cause },
-        )
-      : new AnalysisInputError(OPERATION, { cause }, [
-          {
-            path: [field],
-            reason: "invalid_format",
-            message: `Selected artifact ${input.path}: ${cause.message}`,
-          },
-        ]);
+  const formatFailure = parseFailureAnalysisError(
+    OPERATION,
+    input.path,
+    cause,
+    field,
+  );
+  if (formatFailure !== undefined) return formatFailure;
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure
@@ -324,31 +310,21 @@ const appleIpsFailurePrimary = (
         },
       );
     if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(
-        OPERATION,
-        { cause, ...stableArtifactInputRecovery(cause) },
-        [{ path: [field], reason: "invalid_format", message: cause.message }],
-      );
+      return stableArtifactInputFailure(cause, OPERATION, field);
   }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, input.path, cause.code, {
-        cause,
-      });
-    if (isSelectedRegularFileError(cause))
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: [field],
-          reason: "invalid_value",
-          message: `Selected report could not be read (${String(cause.code)}): ${input.path}.`,
-        },
-      ]);
-  }
+  const fileFailure = projectSelectedArtifactFileFailure(
+    cause,
+    OPERATION,
+    input.path,
+    "report",
+    field,
+  );
+  if (fileFailure !== undefined) return fileFailure;
   return new ProviderAdapterError(APPLE_IPS_PROVIDER.id, OPERATION, {
     cause,
     diagnostics: {
       path: input.path,
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
   });
 };

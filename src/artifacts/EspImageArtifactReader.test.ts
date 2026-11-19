@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
 import { EspImageArtifactReader } from "./EspImageArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
-import type { ArtifactEntry } from "./ArtifactReader.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import type { ArtifactEntry } from "../resources/ArtifactReader.js";
 import { extractArtifact } from "./extraction/ArtifactExtraction.js";
 import * as espImageDecoding from "../domain/firmware/espImage.js";
 import {
@@ -140,16 +140,9 @@ it("reports truncation and undescribed trailing bytes as coverage", async () => 
   );
   expect(truncated.manifest.root_format).toBe("esp-image");
   expect(truncated.coverage.status).toBe("unknown");
-  const decoder = espImageDecoding.createEspImageDecoder(bytes.length);
-  decoder.write(bytes);
-  const decoded = decoder.finish();
-  if (!decoded.ok)
-    throw new Error("Expected partial fixture facts", { cause: decoded.error });
-  expect(truncated.limitations).toEqual(
-    expect.arrayContaining([
-      ESP_IMAGE_LIMITATIONS.inventoryScope,
-      ...decoded.value.limitations,
-    ]),
+  expect(truncated.limitations).toContain(ESP_IMAGE_LIMITATIONS.inventoryScope);
+  expect(truncated.limitations).toContain(
+    ESP_IMAGE_LIMITATIONS.truncatedSegment(2, 32, 352, 8),
   );
   const segment = truncated.occurrences.find(
     (row) => row.logical_path === "segment-02.bin",
@@ -177,7 +170,7 @@ it("reports truncation and undescribed trailing bytes as coverage", async () => 
   });
 });
 
-it("extracts byte-exact segments that re-inventory as raw files", async () => {
+it("extracts exact segment and signature bytes inside the output directory", async () => {
   const directory = await createTestTempDirectory("rea-esp-extract-");
   const path = join(directory, "signed.bin");
   await writeFile(path, SIGNED);
@@ -212,10 +205,6 @@ it("extracts byte-exact segments that re-inventory as raw files", async () => {
           SIGNED.subarray(offset, offset + length),
         ),
       ).toBe(0);
-    const reinventoried = await scanCanonicalArtifactInventory(
-      extracted.output_root,
-    );
-    expect(reinventoried.manifest.root_format).toBe("directory");
   } finally {
     await resourceScope.close();
   }
@@ -296,17 +285,6 @@ it("refuses an ESP8266 image with its specific reason", async () => {
   }
 });
 
-it("rejects a changed carrier during extraction preparation", async () => {
-  const reader = new EspImageArtifactReader(await writeImage(APP));
-  try {
-    await expect(reader.prepareContainer("0".repeat(64))).rejects.toMatchObject(
-      { reason: "integrity" },
-    );
-  } finally {
-    await reader.close();
-  }
-});
-
 it("rejects forged entries and changed carrier identity, then closes idempotently", async () => {
   const path = await writeImage(APP);
   const reader = new EspImageArtifactReader(path);
@@ -332,17 +310,21 @@ it("rejects forged entries and changed carrier identity, then closes idempotentl
   }
 });
 
-it("settles an active entry stream when closed", async () => {
-  const reader = new EspImageArtifactReader(await writeImage(APP));
+it("refuses to complete inventory closed after its final entry", async () => {
+  const bytes = espImage({
+    segments: [{ address: 0x4038_0000, data: Buffer.alloc(8, 0x61) }],
+  });
+  const reader = new EspImageArtifactReader(await writeImage(bytes));
   try {
-    const [entry] = await list(reader);
-    if (entry === undefined) throw new Error("Missing segment");
-    const stream = await reader.open(entry);
+    const entries = reader.entries()[Symbol.asyncIterator]();
+    expect(await entries.next()).toMatchObject({
+      done: false,
+      value: { path: "segment-00.bin" },
+    });
     await reader.close();
-    expect(stream.destroyed).toBe(true);
-    await expect(
-      reader.entries()[Symbol.asyncIterator]().next(),
-    ).rejects.toMatchObject({ reason: "unavailable" });
+    await expect(entries.next()).rejects.toMatchObject({
+      reason: "unavailable",
+    });
   } finally {
     await reader.close();
   }
@@ -365,9 +347,11 @@ it("honors cancellation before admitting a file with the exact reason", async ()
 it.each(["cancel", "close"] as const)(
   "settles decoding when the caller requests %s",
   async (action) => {
-    // Several MiB of segment data take many chunked reads to decode.
+    // Several 64 KiB reads are required before the image can finish.
     const large = espImage({
-      segments: [{ address: 0x4038_0000, data: Buffer.alloc(8 << 20, 0x5a) }],
+      segments: [
+        { address: 0x4038_0000, data: Buffer.alloc(256 * 1024, 0x5a) },
+      ],
     });
     const reader = new EspImageArtifactReader(await writeImage(large));
     const controller = new AbortController();

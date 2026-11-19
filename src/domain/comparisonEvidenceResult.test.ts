@@ -106,3 +106,12 @@ describe("same-evidence comparison admission", () => {
     ).toBe(false);
   });
 });
+
+it("locates a comparison payload failure within its Evidence record", () => {
+  const parsed = readComparisonResult(
+    evidence({ ...baseline(), status: "changed" }),
+    "compare_functions",
+  );
+  if (parsed.ok) throw new Error("Expected a status contradiction");
+  expect(parsed.error.issuePath).toEqual(["normalized_result", "status"]);
+});

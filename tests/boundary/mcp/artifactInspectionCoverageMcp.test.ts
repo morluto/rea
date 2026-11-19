@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { execFileSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -10,7 +11,7 @@ import type { OnTestFinishedHandler } from "vitest";
 
 import { machoImage } from "../../../src/artifacts/apple/MachoImage.fixture.js";
 import { createArtifactBinarySession } from "../../../src/composition/binary.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { artifactInspectionResultSchema } from "../../../src/domain/artifactInspection.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createServer } from "../../../src/server/createServer.js";
@@ -50,8 +51,10 @@ const connect = async (
   const definition = (await client.listTools()).tools.find(
     (tool) => tool.name === "inspect_analysis_view",
   );
-  expect(definition?.outputSchema).toBeDefined();
-  const outputSchema: Record<string, unknown> = definition!.outputSchema!;
+  expect(definition).toBeDefined();
+  const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+    definition!.name,
+  );
   return { client, outputSchema };
 };
 
@@ -71,7 +74,6 @@ describe.skipIf(process.platform === "win32")(
       },
     ] as const)(
       "derives inspection and summary coverage from inventory traversal (FIFO: $withFifo)",
-      { timeout: 30_000 },
       async ({ withFifo, status, sourceCoverage }, { mcp, onTestFinished }) => {
         const path = await writeBundle(withFifo);
         const { client, outputSchema } = await connect(mcp, onTestFinished);

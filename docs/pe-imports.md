@@ -33,7 +33,9 @@ Evidence file-offset range.
 If the first descriptor cannot be examined, the directory declaration remains
 present with no consumed `locations`, and coverage is partial. Descriptors,
 thunks and NUL-terminated names stay within PE's 32-bit RVA space, including
-PE32+ images; earlier valid rows survive an overflowing descriptor walk.
+PE32+ images. Descriptor walks also stay inside each data directory's declared
+byte size; an unterminated or partially covered final slot is reported as a
+malformed entry, while earlier valid rows survive.
 
 `machine` retains the original unsigned COFF value. `architecture` decodes
 known machines, including ReadyToRun OS overrides when a CLI directory is
@@ -69,8 +71,9 @@ with no runtime override; `max_file_bytes`, `max_dlls` and `max_functions` do
 not raise it. Resource failures report the exhausted allowance as `limit`
 (`dlls`, `functions` or `retained_text`) with matching recovery.
 
-Unreadable DLL names, hint/name entries, or thunks are reported as partial
-coverage with `issues`. A descriptor whose required table RVA is zero (a
+Unreadable DLL names, hint/name entries, thunks, or descriptor slots outside
+the declared directory size are reported as partial coverage with `issues`. A
+descriptor whose required table RVA is zero (a
 standard `FirstThunk`, or a delay-load import address or name table) is
 reported as `malformed_entry` with no functions, never as a complete empty
 inventory. Delay-load descriptors that store virtual addresses rather than RVAs

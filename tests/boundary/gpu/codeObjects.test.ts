@@ -35,7 +35,7 @@ const inspect = async (
   onTestFinished(() => provider.close());
   return provider.inspect({ path, analysis: "kernels", ...options });
 };
-it.each(["none", "zstd"] as const)(
+it.each(["none", "zstd", "lz4"] as const)(
   "reads selected CUDA metadata and PTX with %s compression",
   async (compression) => {
     const result = await inspect(cudaFixture(compression));
@@ -69,6 +69,96 @@ it.each(["none", "zstd"] as const)(
     ]);
   },
 );
+it("decodes a CUDA 0x2000 LZ4 entry to the exact declared payload", async () => {
+  const ptx = Buffer.from(ptxFixture),
+    bytes = cudaFixture("lz4", [{ kind: 1, target: 80, bytes: ptx }]),
+    // The first fatbinary header is 16 bytes, so the first entry starts there.
+    entry = 16;
+  // The fixture must really encode: a stored-profile fallback would leave the
+  // LZ4 selection path unexercised while this control still passed.
+  expect(bytes.readBigUInt64LE(entry + 40)).toBe(0x2011n);
+  const result = await inspect(bytes);
+  if (!result.ok) throw result.error;
+  expect(result.value.objects[0]).toMatchObject({
+    kind: "ptx",
+    compression: "lz4",
+    compression_id: "cuda-flags:0x2011",
+    decoded_size: ptx.length,
+    inspection: "complete",
+    sha256: createHash("sha256").update(ptx).digest("hex"),
+  });
+  expect(result.value.coverage.payloads).toBe("complete");
+  expect(result.value.ptx_artifacts.map((row) => row.text)).toEqual([
+    ptxFixture,
+  ]);
+});
+it("rejects a CUDA LZ4 entry whose declared decoded length disagrees", async () => {
+  const bytes = cudaFixture("lz4", [
+      { kind: 1, target: 80, bytes: Buffer.from(ptxFixture) },
+    ]),
+    entry = 16;
+  // Grow only the declared output length; the encoded literals cannot reach it.
+  bytes.writeBigUInt64LE(
+    BigInt(Buffer.byteLength(ptxFixture) + 16),
+    entry + 56,
+  );
+  const result = await inspect(bytes);
+  if (!result.ok) throw result.error;
+  expect(result.value.objects[0]).toMatchObject({
+    compression: "lz4",
+    inspection: "malformed",
+    sha256: null,
+  });
+  expect(result.value.coverage.payloads).toBe("partial");
+  expect(result.value.ptx_artifacts).toEqual([]);
+});
+it("preserves CUDA inventory and selection across an oversized declared decoded length", async () => {
+  const bytes = cudaFixture("zstd", [
+    { kind: 2, target: 90, bytes: cubinFixture({ architecture: 90 }) },
+    { kind: 1, target: 80, bytes: Buffer.from(ptxFixture) },
+  ]);
+  const firstEntry = 16;
+  const declared = 1n << 53n;
+  const encoded = bytes.readUInt32LE(firstEntry + 16);
+  bytes.writeBigUInt64LE(declared, firstEntry + 56);
+  const inventory = await inspect(bytes, { analysis: "inventory" });
+  if (!inventory.ok) throw inventory.error;
+  expect(inventory.value.artifact).toMatchObject({
+    path: expect.stringContaining("no-format-extension"),
+    file_size: bytes.length,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  });
+  expect(inventory.value.objects).toMatchObject([
+    {
+      target: "sm_90",
+      inspection: "inventory",
+      encoded_size: encoded,
+      decoded_size: null,
+      location: { offset: firstEntry + 64, size: encoded },
+      limitations: [expect.stringContaining(String(declared))],
+    },
+    { target: "sm_80", inspection: "inventory" },
+  ]);
+  for (const [targets, inspection] of [
+    [undefined, "capacity"],
+    [["sm_80"], "not-selected"],
+  ] as const) {
+    const result = await inspect(
+      bytes,
+      targets ? { targets: [...targets] } : {},
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value.objects).toMatchObject([
+      { id: inventory.value.objects[0]!.id, target: "sm_90", inspection },
+      {
+        id: inventory.value.objects[1]!.id,
+        target: "sm_80",
+        inspection: "complete",
+      },
+    ]);
+    expect(result.value.kernels.map(({ name }) => name)).toEqual(["add_one"]);
+  }
+});
 it("retains the unsupported legacy CUDA compression declaration and extents", async () => {
   const result = await inspect(
     cudaFixture("legacy", [
@@ -804,7 +894,43 @@ it.each([".align 8 .b8", ".b8 .align 8"])(
     });
   },
 );
-it.each([".b8 .align 3", ".align 8 .b8 .align 8"])(
+it.each(["9007199254740991", "0x1fffffffffffff"])(
+  "retains PTX parameter facts when aligning an extent of %s exceeds the exact range",
+  async (extent) => {
+    const result = await inspect(
+      Buffer.from(
+        `.version 8.0
+.target sm_80
+.entry wide(.param .b8 payload[${extent}], .param .u32 count, .param .u8 tail) { ret; }
+.entry later(.param .u32 value) { ret; }`,
+      ),
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value.coverage.payloads).toBe("partial");
+    expect(result.value.kernels).toMatchObject([
+      {
+        name: "wide",
+        parameter_bytes: null,
+        parameters: [
+          { name: "payload", offset: 0, size: 9007199254740991 },
+          { name: "count", offset: null, size: 4 },
+          { name: "tail", offset: null, size: 1 },
+        ],
+      },
+      {
+        name: "later",
+        parameter_bytes: 4,
+        parameters: [{ name: "value", offset: 0, size: 4 }],
+      },
+    ]);
+  },
+);
+
+it.each([
+  ".b8 .align 3",
+  ".b8 .align 4503599627370495",
+  ".align 8 .b8 .align 8",
+])(
   "retains PTX names and partial layout for unsupported alignment %s",
   async (type) => {
     const bytes = Buffer.from(
@@ -963,6 +1089,16 @@ it.each(["section-names", "symbols"] as const)(
     );
   },
 );
+it("preserves non-UTF-8 CUBIN symbol bytes in the kernel name", async () => {
+  const bytes = cubinFixture();
+  const symbolName = bytes.indexOf(Buffer.from("\0add_one\0"));
+  expect(symbolName).toBeGreaterThanOrEqual(0);
+  bytes[symbolName + 1] = 0xff;
+  const result = await inspect(bytes);
+  if (!result.ok) throw result.error;
+  expect(result.value.kernels[0]?.name).toBe("ÿdd_one");
+});
+
 it.each([9, 10])(
   "preserves parameters and register coverage for text count %d",
   async (textRegisters) => {
@@ -1018,7 +1154,10 @@ it("rejects out-of-range bundle entries without guessing a payload", async () =>
   const result = await inspect(bytes);
   expect(result).toMatchObject({
     ok: false,
-    error: { _tag: "BinaryTargetError" },
+    error: {
+      _tag: "AnalysisInputError",
+      issues: [{ path: ["path"], reason: "invalid_format" }],
+    },
   });
 });
 
@@ -1209,6 +1348,43 @@ it("continues at the declared CCOB boundary after an unsupported codec", async (
   expect(result.value.coverage.discovery).toBe("partial");
 });
 
+it.each([
+  { label: "exact JSON integer", decoded: 1n << 28n, projected: 1 << 28 },
+  {
+    label: "outside exact JSON integer range",
+    decoded: 1n << 53n,
+    projected: null,
+  },
+])(
+  "keeps later CCOB v3 bundles after a decoded size $label exceeds capacity",
+  async ({ decoded, projected }) => {
+    const first = ccobFixture(3, "zlib");
+    first.writeBigUInt64LE(decoded, 16);
+    const result = await inspect(
+      Buffer.concat([first, ccobFixture(3, "zlib")]),
+    );
+    if (!result.ok) throw result.error;
+    const wrappers = result.value.objects.filter(
+      ({ kind }) => kind === "hip-bundle",
+    );
+    expect(wrappers).toMatchObject([
+      {
+        inspection: "capacity",
+        encoded_size: first.length - 32,
+        decoded_size: projected,
+        location: { offset: 32, size: first.length - 32 },
+      },
+      { inspection: "complete", metadata_location: { offset: first.length } },
+    ]);
+    if (projected === null)
+      expect(wrappers[0]?.limitations).toContain(
+        `Declared decoded size is ${String(decoded)} bytes, outside the exact integer range of decoded_size`,
+      );
+    expect(result.value.coverage.discovery).toBe("partial");
+    expect(result.value.kernels.map(({ name }) => name)).toEqual(["add_one"]);
+  },
+);
+
 it("refuses escaped PTX report expansion while preserving bounded interrupted facts", async () => {
   const text = ptxFixture + "\n//" + "\u0001".repeat(3 * 1024 * 1024);
   const result = await inspect(Buffer.from(text));
@@ -1237,7 +1413,10 @@ it("distinguishes impossible Clang bundle counts from a framed over-capacity dir
     bytes.writeBigUInt64LE(count, 24);
     const result = await inspect(bytes, { analysis: "inventory" });
     if (result.ok) throw new Error("Expected malformed directory");
-    expect(result.error._tag).toBe("BinaryTargetError");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [{ path: ["path"], reason: "invalid_format" }],
+    });
   }
   const framed = Buffer.alloc(32 + 65537 * 25);
   Buffer.from("__CLANG_OFFLOAD_BUNDLE__").copy(framed);
@@ -1251,4 +1430,32 @@ it("distinguishes impossible Clang bundle counts from a framed over-capacity dir
   const result = await inspect(framed, { analysis: "inventory" });
   if (result.ok) throw new Error("Expected directory capacity failure");
   expect(result.error._tag).toBe("AnalysisResourceConstraintError");
+});
+
+it("checks Clang bundle ID bounds before the retained directory allowance", async () => {
+  const name = "host-" + "x".repeat(65_537 - 5);
+  const header = Buffer.alloc(56);
+  header.write("__CLANG_OFFLOAD_BUNDLE__");
+  header.writeBigUInt64LE(1n, 24);
+  header.writeBigUInt64LE(BigInt(header.length + name.length), 32);
+  header.writeBigUInt64LE(1n, 40);
+  header.writeBigUInt64LE(BigInt(name.length), 48);
+  const framed = Buffer.concat([header, Buffer.from(name), Buffer.alloc(1)]);
+  const limited = await inspect(framed, { analysis: "inventory" });
+  if (limited.ok) throw new Error("Expected a directory capacity failure");
+  expect(limited.error._tag).toBe("AnalysisResourceConstraintError");
+
+  const short = Buffer.from(header);
+  short.writeBigUInt64LE(BigInt(short.length), 32);
+  short.writeBigUInt64LE(0n, 40);
+  const overlaps = Buffer.from(framed);
+  overlaps.writeBigUInt64LE(BigInt(header.length + 1), 32);
+  for (const bytes of [short, overlaps]) {
+    const result = await inspect(bytes, { analysis: "inventory" });
+    if (result.ok) throw new Error("Expected a malformed bundle directory");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [{ path: ["path"], reason: "invalid_format" }],
+    });
+  }
 });

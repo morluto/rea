@@ -1,20 +1,27 @@
-import { Readable, Transform, pipeline } from "node:stream";
+import { ArtifactPreparation } from "./ArtifactPreparation.js";
+import { Readable, Transform } from "node:stream";
 import { setImmediate } from "node:timers/promises";
 
 import type { FitMetadata } from "../domain/artifactFormatMetadata.js";
+import { BinaryFormatFailure } from "../domain/binaryContainer.js";
+import {
+  FDT_MAX_HEADER_BYTES,
+  readDevicetreeHeader,
+} from "../domain/firmware/devicetreeHeader.js";
 import { MAX_DEVICETREE_FILE_BYTES } from "../domain/firmware/devicetree.js";
 import {
   ArtifactReaderFailure,
   copyArtifactEntry,
-  sameArtifactEntry,
+  assertProducedEntry,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactReaderTraversal,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
+  ArtifactResourceScope,
+  assertArtifactReadActive,
+  ArtifactFileSource,
+} from "../resources/index.js";
+import { ownArtifactStream } from "./OwnedArtifactStream.js";
 import {
   createFitDigest,
   readFitStructure,
@@ -24,17 +31,15 @@ import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 
-const FDT_HEADER_BYTES = 40;
-
 /** Inventory U-Boot FIT /images nodes as stored byte ranges without loading them. */
 export class FitArtifactReader implements ArtifactReader {
   readonly format = "fit" as const;
   readonly #scope = new ArtifactResourceScope();
-  readonly #entries = new Map<string, ArtifactEntry>();
+  #entries = new Map<string, ArtifactEntry>();
   readonly #streams = new Set<Readable>();
   readonly #path: string;
   readonly #source: ArtifactFileSource;
-  #prepared: Promise<void> | undefined;
+  readonly #preparation = new ArtifactPreparation();
   #metadata: FitMetadata | undefined;
   #coverage: ArtifactReaderTraversal | undefined;
   #closing = false;
@@ -66,8 +71,11 @@ export class FitArtifactReader implements ArtifactReader {
   ): AsyncIterable<ArtifactEntry> {
     await this.#scope.run(async () => {
       this.#assertOpen(signal);
-      this.#prepared ??= this.#prepare(signal);
-      await this.#prepared;
+      await this.#preparation.run(
+        signal,
+        () => this.#prepare(signal),
+        () => this.#assertOpen(signal),
+      );
       await this.#source.read(signal);
     });
     if (this.#coverage !== undefined)
@@ -89,11 +97,11 @@ export class FitArtifactReader implements ArtifactReader {
     return this.#scope.run(async () => {
       this.#assertOpen(signal);
       const stored = this.#entries.get(entry.adapterKey);
-      if (stored === undefined || !sameArtifactEntry(entry, stored))
-        throw new ArtifactReaderFailure(
-          "integrity",
-          "FIT entry does not match its owning inventory",
-        );
+      assertProducedEntry(
+        entry,
+        stored,
+        "FIT entry does not match its owning inventory",
+      );
       const { handle } = await this.#source.read(signal);
       this.#assertOpen(signal);
       if (stored.byteOffset === null || stored.declaredSize === null)
@@ -111,45 +119,13 @@ export class FitArtifactReader implements ArtifactReader {
               cancellationFailure,
             });
       const output = this.#imageStream(stored, signal);
-      output.on("error", () => undefined);
-      this.#streams.add(output);
-      let producerComplete = false;
-      const onAbort = (): void => {
-        // Active I/O and final validation own failure precedence. Buffered
-        // readable bytes still belong to the caller after they finish.
-        if (!producerComplete || output.destroyed) return;
-        output.destroy(cancellationFailure(signal?.reason));
-      };
-      const retired = new Promise<void>((resolve) => {
-        output.once("close", () => {
-          this.#streams.delete(output);
-          signal?.removeEventListener("abort", onAbort);
-          resolve();
-        });
+      ownArtifactStream(source, output, {
+        scope: this.#scope,
+        streams: this.#streams,
+        signal,
+        cancellationFailure,
+        label: "FIT",
       });
-      signal?.addEventListener("abort", onAbort, { once: true });
-      if (signal?.aborted) onAbort();
-      void this.#scope
-        .run(async () => {
-          // Retain both producer work and the unconsumed readable stream.
-          await Promise.all([
-            new Promise<void>((resolve) =>
-              pipeline(source, output, () => {
-                producerComplete = true;
-                if (signal?.aborted) onAbort();
-                resolve();
-              }),
-            ),
-            retired,
-          ]);
-        })
-        .catch((cause: unknown) =>
-          output.destroy(
-            cause instanceof Error
-              ? cause
-              : new Error("FIT stream ownership failed", { cause }),
-          ),
-        );
       return output;
     });
   }
@@ -178,18 +154,23 @@ export class FitArtifactReader implements ArtifactReader {
   async #prepare(signal?: AbortSignal): Promise<void> {
     const { handle, initial } = await this.#source.read(signal);
     const assertActive = (): void => this.#assertOpen(signal);
-    const header = await readFileHandleRange(
+    const prefix = await readFileHandleRange(
       handle,
       0,
-      FDT_HEADER_BYTES,
+      FDT_MAX_HEADER_BYTES,
       assertActive,
     );
-    if (header.length < FDT_HEADER_BYTES)
-      throw new ArtifactReaderFailure(
-        "format",
-        "FIT devicetree header is truncated",
-      );
-    const totalsize = header.readUInt32BE(4);
+    let totalsize: number;
+    try {
+      ({ totalsize } = readDevicetreeHeader(prefix).header);
+    } catch (cause) {
+      if (cause instanceof BinaryFormatFailure)
+        throw new ArtifactReaderFailure(
+          "format",
+          `FIT devicetree header: ${cause.message}`,
+        );
+      throw cause;
+    }
     if (totalsize > initial.size)
       throw new ArtifactReaderFailure(
         "format",
@@ -207,6 +188,7 @@ export class FitArtifactReader implements ArtifactReader {
       this.#path,
       initial.size,
     );
+    const entries = new Map<string, ArtifactEntry>();
     let index = 0;
     for (const image of structure.images) {
       if (index % 256 === 0) await setImmediate();
@@ -228,15 +210,16 @@ export class FitArtifactReader implements ArtifactReader {
         adapterKey: `fit:${String(image.index)}`,
         formatMetadata: image.metadata,
       } satisfies ArtifactEntry;
-      this.#entries.set(entry.adapterKey, entry);
+      entries.set(entry.adapterKey, entry);
     }
-    this.#metadata = structure.metadata;
-    if (structure.limitations.length > 0)
-      this.#coverage = {
-        status: "complete",
-        limitations: structure.limitations,
-      };
     await this.#source.read(signal);
+    this.#assertOpen(signal);
+    this.#entries = entries;
+    this.#metadata = structure.metadata;
+    this.#coverage = {
+      status: "complete",
+      limitations: structure.limitations,
+    };
   }
 
   /** One streamed pass per image feeds every supported digest. */
@@ -266,6 +249,7 @@ export class FitArtifactReader implements ArtifactReader {
         throw new ArtifactReaderFailure(
           "integrity",
           `FIT image ${image.name} ${hash.node} ${hash.algo} does not match: declared ${hash.value.toString("hex")}, computed ${computed.toString("hex")}`,
+          { integrityCheck: "declared-digest" },
         );
     }
   }

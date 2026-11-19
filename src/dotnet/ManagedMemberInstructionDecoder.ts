@@ -1,14 +1,14 @@
 import {
   metadataTokenFact,
   type MetadataTokenFact,
-} from "./ManagedMetadataHeaps.js";
-import type { ManagedDecodeBudget } from "./ManagedDecodeBudget.js";
-import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
+} from "../domain/managed/managedMetadataHeaps.js";
+import type { ManagedDecodeBudget } from "../domain/managed/managedDecodeBudget.js";
+import { ManagedReaderFailure } from "../domain/managed/managedReaderFailure.js";
 import type {
   ManagedExceptionRegion,
   ManagedInstructionAnchor,
   ParsedInstruction,
-} from "./ManagedMemberInspectorCore.js";
+} from "../domain/managed/managedMemberInspectorCore.js";
 
 const PREFIX_OPCODES = new Set([
   "unaligned.",

@@ -5,13 +5,13 @@ export const SHELL_LINK_CLSID = Buffer.from([
   0x00, 0x00, 0x46,
 ]);
 
-export const MY_COMPUTER_CLSID = Buffer.from([
+const MY_COMPUTER_CLSID = Buffer.from([
   0xe0, 0x4f, 0xd0, 0x20, 0xea, 0x3a, 0x69, 0x10, 0xa2, 0xd8, 0x08, 0x00, 0x2b,
   0x30, 0x30, 0x9d,
 ]);
 
 /** 2024-01-15T12:00:00.000Z as FILETIME 100-nanosecond intervals. */
-export const FIXTURE_FILETIME = 133497936000000000n;
+const FIXTURE_FILETIME = 133497936000000000n;
 
 export const LINK_FLAG = {
   HasLinkTargetIDList: 0x00000001,
@@ -26,7 +26,7 @@ export const LINK_FLAG = {
   HasExpIcon: 0x00004000,
 } as const;
 
-export const EXTRA_SIGNATURE = {
+const EXTRA_SIGNATURE = {
   EnvironmentVariable: 0xa0000001,
   Tracker: 0xa0000003,
   ConsoleFE: 0xa0000004,
@@ -40,7 +40,7 @@ export const TRACKER_MAC = Buffer.from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
 /** UUID timestamp 100ns since 1582-10-15 matching 2024-01-15T12:00:00.000Z. */
 export const TRACKER_UUID_TIMESTAMP = 139289664000000000n;
 
-export type FixtureIdListItem =
+type FixtureIdListItem =
   | {
       readonly kind: "root";
       readonly sortIndex?: number;
@@ -67,6 +67,13 @@ export type FixtureLinkInfo = {
   readonly deviceName?: string;
   readonly networkProviderType?: number;
   readonly networkFlags?: number;
+  /**
+   * Write LinkInfo's Unicode fields: header 0x24, Unicode volume label and
+   * network names. Defaults to the link's IsUnicode.
+   */
+  readonly unicode?: boolean;
+  /** Write Unicode network names; defaults to `unicode`. */
+  readonly networkUnicode?: boolean;
 };
 
 export type FixtureExtraBlock =
@@ -278,7 +285,9 @@ const linkInfoBytes = (info: FixtureLinkInfo, unicode: boolean): Buffer => {
       ? ansiZ(info.localBasePath ?? "C:\\target.exe")
       : Buffer.alloc(0);
   const network =
-    flags & 0x2 ? networkLinkBytes(info, unicode) : Buffer.alloc(0);
+    flags & 0x2
+      ? networkLinkBytes(info, info.networkUnicode ?? unicode)
+      : Buffer.alloc(0);
   const suffixAnsi = ansiZ(info.commonPathSuffix ?? "");
   const localWide =
     unicode && flags & 0x1
@@ -512,7 +521,7 @@ export const windowsShortcutBytes = (
   if (flags & LINK_FLAG.HasLinkTargetIDList && idList !== null)
     parts.push(idListBytes(idList));
   if (flags & LINK_FLAG.HasLinkInfo && linkInfo !== null)
-    parts.push(linkInfoBytes(linkInfo, unicode));
+    parts.push(linkInfoBytes(linkInfo, linkInfo.unicode ?? unicode));
   const strings: Buffer[] = [];
   if (flags & LINK_FLAG.HasName) strings.push(stringDataField(name, unicode));
   if (flags & LINK_FLAG.HasRelativePath)
@@ -559,11 +568,6 @@ export const networkShareShortcut = (): Buffer =>
       commonPathSuffix: "report.docx",
     },
     extraData: [],
-  });
-
-export const trackerV1Shortcut = (): Buffer =>
-  windowsShortcutBytes({
-    extraData: [{ kind: "tracker" }],
   });
 
 export const ansiShortcut = (): Buffer =>

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   isAppImageHeader,
+  ownershipCandidates,
   packageFromPath,
   parseAptPolicyOrigins,
   parseAptPolicyPackageSources,
@@ -11,17 +12,65 @@ import {
 } from "./linuxPackages.js";
 
 describe("dpkg output", () => {
-  it("reads every owner of a path and skips diversions", () => {
+  it("adds merged-/usr ownership candidates only for merged system directories", () => {
+    const paths = [
+      "/usr/bin/editor",
+      "/sbin/helper",
+      "/usr/lib/x86_64-linux-gnu/libexample.so",
+      "/lib64/ld-linux-x86-64.so.2",
+      "/usr/lib32/libexample.so",
+      "/libx32/libexample.so",
+      "/usr/libo32/libexample.so",
+      "/opt/vendor/app",
+      "/home/ada/bin/app",
+      "/usr/share/applications/app.desktop",
+      "/usr/local/bin/app",
+    ];
+    expect(ownershipCandidates(paths)).toEqual([
+      "/usr/bin/editor",
+      "/bin/editor",
+      "/sbin/helper",
+      "/usr/sbin/helper",
+      "/usr/lib/x86_64-linux-gnu/libexample.so",
+      "/lib/x86_64-linux-gnu/libexample.so",
+      "/lib64/ld-linux-x86-64.so.2",
+      "/usr/lib64/ld-linux-x86-64.so.2",
+      "/usr/lib32/libexample.so",
+      "/lib32/libexample.so",
+      "/libx32/libexample.so",
+      "/usr/libx32/libexample.so",
+      "/usr/libo32/libexample.so",
+      "/libo32/libexample.so",
+      "/opt/vendor/app",
+      "/home/ada/bin/app",
+      "/usr/share/applications/app.desktop",
+      "/usr/local/bin/app",
+    ]);
+  });
+
+  it("reads full owner rows and exact paths, and skips both kinds of diversion", () => {
+    const editor = "/usr/bin/editor";
+    const nested = "/opt/catalog: /usr/bin/editor";
+    const missing = "/usr/bin/absent";
     expect(
       parseDpkgOwners(
         [
-          "diversion by foo from: /usr/bin/editor",
+          "local diversion from: /usr/bin/editor",
+          "local diversion to: /usr/bin/editor.old",
+          "diversion by other from: /usr/bin/editor",
           "editor-common, editor:amd64: /usr/bin/editor",
-          "other: /usr/bin/editor-extra",
+          "other: /opt/catalog: /usr/bin/editor",
         ].join("\n"),
-        "/usr/bin/editor",
+        [editor, nested, missing],
       ),
-    ).toEqual(["editor-common", "editor:amd64"]);
+    ).toEqual({
+      complete: true,
+      owners: new Map([
+        [editor, ["editor-common", "editor:amd64"]],
+        [nested, ["other"]],
+        [missing, []],
+      ]),
+    });
   });
 
   it("reads one status line", () => {
@@ -125,45 +174,53 @@ describe("parseAptPolicyOrigins", () => {
 });
 
 describe("parseAptPolicyPackageSources", () => {
-  it("lists every version's sources of each package, as Ubuntu 24.04 prints several at once", () => {
-    const updates =
-      "http://ports.ubuntu.com/ubuntu-ports noble-updates/main arm64 Packages";
-    const security =
-      "http://ports.ubuntu.com/ubuntu-ports noble-security/main arm64 Packages";
-    const noble =
-      "http://ports.ubuntu.com/ubuntu-ports noble/main arm64 Packages";
-    const typora = "https://downloads.typora.io/linux ./ Packages";
-    // `apt-cache policy libnss3 typora nosuchpkg`; apt prints nothing for an unknown name.
-    const output = [
-      "libnss3:",
-      "  Installed: 2:3.98-1ubuntu0.3",
-      "  Candidate: 2:3.98-1ubuntu0.3",
-      "  Version table:",
-      " *** 2:3.98-1ubuntu0.3 500",
-      `        500 ${updates}`,
-      `        500 ${security}`,
-      "        100 /var/lib/dpkg/status",
-      "     2:3.98-1build1 500",
-      `        500 ${noble}`,
-      "typora:",
-      "  Installed: 1.14.9-1",
-      "  Candidate: 1.14.9-1",
-      "  Version table:",
-      " *** 1.14.9-1 500",
-      `        500 ${typora}`,
-      "        100 /var/lib/dpkg/status",
-      "     1.14.8-1 500",
-      `        500 ${typora}`,
-      "",
-    ].join("\n");
+  it.each([
+    "/var/lib/dpkg/status",
+    "/custom/installed status",
+    "/custom/installed status ",
+    "/custom/installed\nstatus",
+  ])(
+    "lists every version's sources of each package, excluding status database %j",
+    (statusFile) => {
+      const updates =
+        "http://ports.ubuntu.com/ubuntu-ports noble-updates/main arm64 Packages";
+      const security =
+        "http://ports.ubuntu.com/ubuntu-ports noble-security/main arm64 Packages";
+      const noble =
+        "http://ports.ubuntu.com/ubuntu-ports noble/main arm64 Packages";
+      const typora = "https://downloads.typora.io/linux ./ Packages";
+      // `apt-cache policy libnss3 typora nosuchpkg`; apt prints nothing for an unknown name.
+      const output = [
+        "libnss3:",
+        "  Installed: 2:3.98-1ubuntu0.3",
+        "  Candidate: 2:3.98-1ubuntu0.3",
+        "  Version table:",
+        " *** 2:3.98-1ubuntu0.3 500",
+        `        500 ${updates}`,
+        `        500 ${security}`,
+        `        100 ${statusFile}`,
+        "     2:3.98-1build1 500",
+        `        500 ${noble}`,
+        "typora:",
+        "  Installed: 1.14.9-1",
+        "  Candidate: 1.14.9-1",
+        "  Version table:",
+        " *** 1.14.9-1 500",
+        `        500 ${typora}`,
+        `        100 ${statusFile}`,
+        "     1.14.8-1 500",
+        `        500 ${typora}`,
+        "",
+      ].join("\n");
 
-    expect(parseAptPolicyPackageSources(output)).toEqual(
-      new Map([
-        ["libnss3", [updates, security, noble]],
-        ["typora", [typora]],
-      ]),
-    );
-  });
+      expect(parseAptPolicyPackageSources(output, statusFile)).toEqual(
+        new Map([
+          ["libnss3", [updates, security, noble]],
+          ["typora", [typora]],
+        ]),
+      );
+    },
+  );
 });
 
 describe("packageFromPath", () => {

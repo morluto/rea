@@ -5,10 +5,12 @@ import {
   centralDirectoryV1SignatureEntries,
   detectV1Signature,
   localEntryData,
-  MAX_DUPLICATE_NAME_SAMPLE,
-  MAX_V1_SIGNATURE_ENTRIES,
   type ApkV1Entry,
 } from "./apkV1Signature.js";
+
+// Fixed examples keep the entry and output-sample limits independently checked.
+const MAX_V1_SIGNATURE_ENTRIES = 4096;
+const MAX_DUPLICATE_NAME_SAMPLE = 5;
 
 /** A central-directory entry with no stored data. */
 const entry = (name: string): ApkV1Entry => ({

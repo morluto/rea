@@ -9,9 +9,11 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  AnalysisUnsupportedTargetError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { Il2cppMetadataProvider } from "../../../src/il2cpp/Il2cppMetadataProvider.js";
+import { inspectIl2cppMetadataV108 } from "../../../src/il2cpp/Il2cppMetadataV108.js";
 import { Il2cppGhidraSeedWriter } from "../../../src/il2cpp/Il2cppGhidraSeedWriter.js";
 import { Il2cppMetadataService } from "../../../src/application/il2cpp/Il2cppMetadataService.js";
 import { il2cppMetadataSchema } from "../../../src/domain/il2cpp/il2cppMetadata.js";
@@ -25,7 +27,7 @@ import {
   createLinkedIl2cppMetadataFixture,
 } from "../../fixtures/il2cpp/metadata.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -40,6 +42,208 @@ const inspectMetadata = async (path: string, limit?: number) => {
     await provider.close();
   }
 };
+
+it("identifies which selected IL2CPP file is missing", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-missing-");
+  const path = join(root, "global-metadata.dat");
+  const binaryPath = join(root, "missing-binary");
+  const provider = new Il2cppMetadataProvider();
+  try {
+    const missingMetadata = await provider.inspect({ path });
+    if (missingMetadata.ok)
+      throw new Error("Expected missing metadata failure");
+    expect(missingMetadata.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [{ path: ["path"], reason: "invalid_value" }],
+    });
+
+    await writeFile(path, createIl2cppMetadataFixture({ version: 31 }).bytes);
+    const missingBinary = await provider.inspect({
+      path,
+      binary_path: binaryPath,
+    });
+    if (missingBinary.ok) throw new Error("Expected missing binary failure");
+    expect(missingBinary.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [{ path: ["binary_path"], reason: "invalid_value" }],
+    });
+  } finally {
+    await provider.close();
+  }
+});
+
+/** Synthetic v108 header: checks bounded observations, not record-layout compatibility. */
+const version108Header = (stringBytes: Buffer) => {
+  const header = Buffer.alloc(500);
+  header.writeUInt32LE(0xfab11baf, 0);
+  header.writeInt32LE(108, 4);
+  let cursor = header.length;
+  for (let index = 0; index < 41; index++) {
+    const size = index === 2 ? stringBytes.length : 0;
+    header.writeInt32LE(cursor, 8 + index * 12);
+    header.writeInt32LE(size, 12 + index * 12);
+    header.writeInt32LE(size, 16 + index * 12);
+    cursor += size;
+  }
+  return Buffer.concat([header, stringBytes]);
+};
+
+it("retains a bounded v108 header and string observation without claiming decoded rows", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-v108-");
+  const path = join(root, "global-metadata.dat");
+  await writeFile(path, version108Header(Buffer.from("Alpha\0Beta\0")));
+  const result = await inspectMetadata(path);
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error.partialObservation).toMatchObject({
+    normalized_result: {
+      inventory_status: "not-returned-as-complete",
+      version_108_partial_inventory: {
+        metadata_version: 108,
+        header_bytes: 500,
+        coverage: "header-and-bounded-string-sample-only",
+        sections: expect.arrayContaining([
+          { name: "stringLiterals", offset: 500, size: 0, count: 0 },
+          { name: "stringLiteralData", offset: 500, size: 0, count: 0 },
+          { name: "strings", offset: 500, size: 11, count: 11 },
+        ]),
+        strings: {
+          terminated_count: 2,
+          unterminated_tail_bytes: 0,
+          sample: [
+            { offset: 0, value: "Alpha", truncated: false },
+            { offset: 6, value: "Beta", truncated: false },
+          ],
+        },
+      },
+    },
+  });
+  expect(JSON.stringify(result.error.partialObservation)).not.toContain(
+    '"images":[]',
+  );
+});
+
+it("accepts padding after the assumed v108 header", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-v108-padding-");
+  const path = join(root, "global-metadata.dat");
+  const bytes = version108Header(Buffer.from("Name\0"));
+  const padded = Buffer.concat([
+    bytes.subarray(0, 500),
+    Buffer.alloc(16),
+    bytes.subarray(500),
+  ]);
+  for (let index = 0; index < 41; index++) {
+    padded.writeInt32LE(bytes.readInt32LE(8 + index * 12) + 16, 8 + index * 12);
+  }
+  await writeFile(path, padded);
+  const result = await inspectMetadata(path);
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error).toBeInstanceOf(AnalysisUnsupportedTargetError);
+  expect(result.error.partialObservation).toMatchObject({
+    normalized_result: {
+      version_108_partial_inventory: {
+        strings: { sample: [{ value: "Name" }] },
+      },
+    },
+  });
+});
+
+it.each([
+  [
+    "extends past the file",
+    (bytes: Buffer) => {
+      bytes.writeInt32LE(bytes.length + 1, 12 + 2 * 12);
+    },
+    /assumed section strings .* is invalid/,
+  ],
+  [
+    "starts inside the header",
+    (bytes: Buffer) => {
+      bytes.writeInt32LE(499, 8 + 2 * 12);
+    },
+    /assumed section strings .* is invalid/,
+  ],
+  [
+    "overlaps another section",
+    (bytes: Buffer) => {
+      bytes.writeInt32LE(501, 8 + 3 * 12);
+      bytes.writeInt32LE(1, 12 + 3 * 12);
+    },
+    /assumed sections strings and events overlap at 501/,
+  ],
+])(
+  "retains source evidence when a v108 section %s",
+  async (_name, mutate, reason) => {
+    const root = await createTestTempDirectory("rea-il2cpp-v108-invalid-");
+    const path = join(root, "global-metadata.dat");
+    const bytes = version108Header(Buffer.from("Name\0"));
+    mutate(bytes);
+    await expect(inspectIl2cppMetadataV108(bytes)).rejects.toMatchObject({
+      reason: "unsupported-version",
+      message: expect.stringMatching(reason),
+    });
+    await writeFile(path, bytes);
+    const result = await inspectMetadata(path);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBeInstanceOf(AnalysisUnsupportedTargetError);
+    expect(result.error.partialObservation).toMatchObject({
+      normalized_result: { artifact: { path, bytes: bytes.length } },
+    });
+    expect(JSON.stringify(result.error.partialObservation)).not.toContain(
+      "version_108_partial_inventory",
+    );
+  },
+);
+
+it("bounds v108 string samples and preserves undecodable bytes and leading BOMs", async () => {
+  const repeated = await inspectIl2cppMetadataV108(
+    version108Header(Buffer.from("x\0".repeat(20))),
+  );
+  expect(repeated?.strings.terminated_count).toBe(20);
+  expect(repeated?.strings.sample).toHaveLength(16);
+  const invalid = await inspectIl2cppMetadataV108(
+    version108Header(Buffer.from([0xff, 0])),
+  );
+  expect(invalid?.strings.sample).toEqual([
+    { offset: 0, value: null, value_base64: "/w==", truncated: false },
+  ]);
+  const bom = await inspectIl2cppMetadataV108(
+    version108Header(Buffer.from([0xef, 0xbb, 0xbf, 0x41, 0])),
+  );
+  expect(bom?.strings.sample).toEqual([
+    { offset: 0, value: "\uFEFFA", value_base64: null, truncated: false },
+  ]);
+});
+
+it("yields during a large v108 string scan and honors cancellation before evidence", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-v108-cancel-");
+  const path = join(root, "global-metadata.dat");
+  await writeFile(path, version108Header(Buffer.alloc(128 * 1024, 65)));
+  const controller = new AbortController();
+  let batches = 0;
+  const provider = new Il2cppMetadataProvider(undefined, async () => {
+    batches++;
+    controller.abort("cancel v108 scan");
+    await setImmediate();
+  });
+  try {
+    const result = await provider.inspect(
+      { path },
+      { signal: controller.signal },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(batches).toBe(1);
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(JSON.stringify(result.error.partialObservation)).not.toContain(
+      "version_108_partial_inventory",
+    );
+  } finally {
+    await provider.close();
+  }
+});
 
 /** Version 29 file whose methods all share one long name. */
 const sharedNameMetadata = (
@@ -311,23 +515,15 @@ it("bounds concurrent snapshots and retains active decoding until close complete
   const root = await createTestTempDirectory("rea-il2cpp-provider-close-");
   const path = join(root, "global-metadata.dat");
   await writeFile(path, createIl2cppMetadataFixture().bytes);
-  let markEntered!: () => void;
-  const entered = new Promise<void>((resolve) => {
-    markEntered = resolve;
-  });
-  let resume!: () => void;
-  const release = new Promise<void>((resolve) => {
-    resume = resolve;
-  });
+  const decoding = phaseGate();
   const provider = new Il2cppMetadataProvider(undefined, () => {
-    markEntered();
-    return release;
+    return decoding.hold();
   });
   const active = provider.inspect({ path });
   let closed = false;
   let closing: Promise<void> | undefined;
   await withVerifierCleanup(async () => {
-    await awaitAcknowledgement(entered, active, "metadata decoding");
+    await decoding.reached(active, "metadata decoding");
     closing = provider.close().then(() => {
       closed = true;
     });
@@ -346,7 +542,7 @@ it("bounds concurrent snapshots and retains active decoding until close complete
     }
     await setImmediate();
     expect(closed).toBe(false);
-    resume();
+    decoding.release();
     await closing;
     expect((await active).ok).toBe(true);
     expect(closed).toBe(true);
@@ -359,7 +555,7 @@ it("bounds concurrent snapshots and retains active decoding until close complete
       expect(projectAnalysisError(afterClose.error).retryable).toBe(false);
     }
   }, [
-    resume,
+    decoding.release,
     async () => {
       await closing;
     },
@@ -376,21 +572,13 @@ it("keeps occupied capacity retryable while the reader remains open", async () =
   const root = await createTestTempDirectory("rea-il2cpp-provider-occupied-");
   const path = join(root, "global-metadata.dat");
   await writeFile(path, createIl2cppMetadataFixture().bytes);
-  let markEntered!: () => void;
-  const entered = new Promise<void>((resolve) => {
-    markEntered = resolve;
-  });
-  let resume!: () => void;
-  const release = new Promise<void>((resolve) => {
-    resume = resolve;
-  });
+  const decoding = phaseGate();
   const provider = new Il2cppMetadataProvider(undefined, () => {
-    markEntered();
-    return release;
+    return decoding.hold();
   });
   const active = provider.inspect({ path });
   await withVerifierCleanup(async () => {
-    await awaitAcknowledgement(entered, active, "metadata decoding");
+    await decoding.reached(active, "metadata decoding");
     const refused = await provider.inspect({ path });
     expect(refused.ok).toBe(false);
     if (!refused.ok) {
@@ -407,7 +595,7 @@ it("keeps occupied capacity retryable while the reader remains open", async () =
       });
     }
   }, [
-    resume,
+    decoding.release,
     async () => {
       await active;
     },
@@ -874,6 +1062,44 @@ it("refuses generic rows that exceed the report budget and keeps the requested p
       operation: "observe_il2cpp_metadata_source",
       parameters: { binary_path, generic_instances: true },
       normalized_result: { selected_binary: { path: binary_path } },
+    });
+  } finally {
+    await provider.close();
+  }
+});
+
+it("reports the exceeded native-link maximum in the public refusal", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-link-limit-");
+  const path = join(root, "global-metadata.dat");
+  const binaryPath = join(root, "GameAssembly.dylib");
+  await writeFile(path, createLinkedIl2cppMetadataFixture().bytes);
+  // 80 copies of the two-slot module array exceed the 64 candidate arrays
+  // the fallback search compares; x86-64 makes that fallback run.
+  const base = createIl2cppBinaryFixture({
+    codeRegistration: false,
+    codeReference: true,
+  });
+  const crafted = Buffer.concat([
+    base,
+    ...Array.from({ length: 80 }, () => base.subarray(0x500, 0x510)),
+  ]);
+  crafted.writeBigUInt64LE(BigInt(crafted.length), 64);
+  crafted.writeBigUInt64LE(BigInt(crafted.length), 80);
+  crafted.writeUInt32LE(0x01000007, 4);
+  crafted.writeUInt32LE(3, 8);
+  await writeFile(binaryPath, crafted);
+  const provider = new Il2cppMetadataProvider();
+  try {
+    const result = await provider.inspect({ path, binary_path: binaryPath });
+    if (result.ok) throw new Error("Expected the link budget refusal");
+    expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
+    expect(result.error).toMatchObject({
+      resource: "capacity",
+      reportedLimits: {
+        boundary: "native-index-capacity",
+        maximum: 64,
+      },
+      fixedAllowance: { limit: 64, unit: "entries" },
     });
   } finally {
     await provider.close();

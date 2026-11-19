@@ -14,25 +14,30 @@ import {
   type AptSourceStanza,
 } from "../domain/desktop/aptRepositories.js";
 import type { AptRepository } from "../domain/desktop/desktopCapture.js";
+import { DEFAULT_DPKG_STATUS_SOURCE } from "../domain/desktop/linuxPackages.js";
+import { isStrictUtf8 } from "../domain/strictUtf8.js";
 import {
   withGpgvKeyCheck,
   type HeldKey,
   type VerifiedKey,
 } from "./GpgvKeyCheck.js";
-import { isHostFile, readHostFile } from "./HostFileRead.js";
+import { hostFileKind, readHostFile } from "./HostFileRead.js";
 import { succeeded, type QueryRunner } from "./HostQuery.js";
 
-/** Where apt keeps its trusted keys and downloaded lists. */
+/** Where apt keeps trusted keys, downloaded lists and installed state. */
 export interface AptLocations {
   readonly trustedParts: string;
   readonly trusted: string;
   readonly lists: string;
+  /** Omitted by injected hosts that use APT's default installed database. */
+  readonly status?: string;
 }
 
 export const APT_LOCATIONS: AptLocations = {
   trustedParts: "/etc/apt/trusted.gpg.d",
   trusted: "/etc/apt/trusted.gpg",
   lists: "/var/lib/apt/lists",
+  status: DEFAULT_DPKG_STATUS_SOURCE,
 };
 
 /**
@@ -57,6 +62,8 @@ export const resolveAptLocations = async (
         "Dir::Etc::TrustedParts/d",
         "TRUSTED",
         "Dir::Etc::Trusted/f",
+        "STATUS",
+        "Dir::State::status/f",
       ],
       signal,
     ),
@@ -70,6 +77,7 @@ export const resolveAptLocations = async (
     lists: value("LISTS") ?? fallback.lists,
     trustedParts: value("PARTS") ?? fallback.trustedParts,
     trusted: value("TRUSTED") ?? fallback.trusted,
+    status: value("STATUS") ?? fallback.status ?? DEFAULT_DPKG_STATUS_SOURCE,
   };
 };
 
@@ -84,7 +92,7 @@ export interface AptRepositoryFacts {
   readonly repositories: readonly AptRepository[];
   readonly keys: ReadonlyMap<string, Buffer>;
   /** The Packages indexes apt lists; empty when it was not asked or could not list them. */
-  readonly indexTargets: readonly AptIndexTarget[];
+  readonly indexTargets: ReadonlyMap<string, AptIndexTarget>;
   readonly limitations: readonly string[];
 }
 
@@ -97,37 +105,53 @@ const UBUNTU_PRO =
 const indexTargets = async (
   runQuery: QueryRunner,
   signal: AbortSignal | undefined,
-): Promise<ReadonlyMap<string, AptIndexTarget> | undefined> => {
-  const output = succeeded(
-    await runQuery("apt-get", ["indextargets", "Created-By: Packages"], signal),
+): Promise<
+  | {
+      readonly entries: ReadonlyMap<string, AptIndexTarget>;
+      readonly incomplete: boolean;
+    }
+  | undefined
+> => {
+  const query = await runQuery(
+    "apt-get",
+    ["indextargets", "Created-By: Packages"],
+    signal,
+    { preserveStdoutBytes: true },
   );
-  if (output === undefined) return undefined;
+  if (typeof query !== "object" || query.exitCode !== 0) return undefined;
+  const output = query.stdoutBuffer ?? query.stdout;
   const targets = new Map<string, AptIndexTarget>();
   for (const target of parseAptIndexTargets(output))
     if (!targets.has(target.description))
       targets.set(target.description, target);
-  return targets;
+  return {
+    entries: targets,
+    incomplete: typeof output !== "string" && !isStrictUtf8(output),
+  };
 };
 
 /** The stanzas of each sources file apt names, read once; files that could not be read are kept for the limitations. */
 const sourcesFiles = (signal: AbortSignal | undefined) => {
   const parsed = new Map<string, readonly AptSourceStanza[]>();
   const unreadable: string[] = [];
+  const incomplete: string[] = [];
   const read = async (file: string): Promise<readonly AptSourceStanza[]> => {
     const cached = parsed.get(file);
     if (cached !== undefined) return cached;
     const bytes = await readHostFile(file, FILE_MAX_BYTES, signal);
     if (bytes === "unreadable") unreadable.push(file);
+    if (typeof bytes !== "string" && !isStrictUtf8(bytes))
+      incomplete.push(file);
     const stanzas =
       typeof bytes === "string"
         ? []
         : (file.endsWith(".sources")
             ? parseDeb822Sources
-            : parseOneLineSources)(bytes.toString("utf8"), file);
+            : parseOneLineSources)(bytes, file);
     parsed.set(file, stanzas);
     return stanzas;
   };
-  return { read, unreadable };
+  return { read, unreadable, incomplete };
 };
 
 const fileNames = async (directory: string): Promise<readonly string[]> =>
@@ -138,8 +162,7 @@ const candidateKeys = async (
   entry: AptSourceEntry,
   apt: AptLocations,
 ): Promise<readonly string[]> => {
-  const signedBy = entry.signedBy.filter((value) => value.startsWith("/"));
-  if (signedBy.length > 0) return signedBy;
+  if (entry.signedBy.length > 0) return entry.signedBy;
   return [
     ...(await fileNames(apt.trustedParts))
       .filter((name) => name.endsWith(".gpg") || name.endsWith(".asc"))
@@ -148,19 +171,34 @@ const candidateKeys = async (
   ];
 };
 
-/** The index's signed release beside it in apt's lists folder: InRelease, or Release.gpg with the Release it signs. */
+/**
+ * The index's signed release beside it in apt's lists folder: InRelease, or
+ * Release.gpg with the Release it signs; null when no release representation
+ * could be established because a check could not tell.
+ */
 const signedRelease = async (
   target: AptIndexTarget,
-): Promise<readonly string[] | undefined> => {
+): Promise<readonly string[] | null | undefined> => {
   const prefix = join(
     dirname(target.filename),
     aptListFileName(target.baseUri),
   );
-  if (await isHostFile(`${prefix}InRelease`)) return [`${prefix}InRelease`];
-  return (await isHostFile(`${prefix}Release.gpg`)) &&
-    (await isHostFile(`${prefix}Release`))
-    ? [`${prefix}Release.gpg`, `${prefix}Release`]
-    : undefined;
+  const inRelease = await hostFileKind(`${prefix}InRelease`);
+  if (inRelease) return [`${prefix}InRelease`];
+  // An InRelease that could not be probed does not rule out the detached pair,
+  // so keep looking rather than losing a signature apt still holds. It also
+  // rules out absence: only an InRelease known to be missing lets a missing
+  // detached pair settle that apt holds no signed release here.
+  const noSignedRelease = (): null | undefined =>
+    inRelease === false ? undefined : null;
+  const signed = await hostFileKind(`${prefix}Release.gpg`);
+  if (!signed && signed !== null) return noSignedRelease();
+  const release = await hostFileKind(`${prefix}Release`);
+  // A detached release needs both members, so a Release known to be absent
+  // settles the pair even when Release.gpg could not be probed.
+  if (release === false) return noSignedRelease();
+  if (signed === null || release === null) return null;
+  return [`${prefix}Release.gpg`, `${prefix}Release`];
 };
 
 /** The keys gpgv checks a release with: candidate key files, or the one key the sources entry holds. */
@@ -168,7 +206,7 @@ type KeyCandidates = readonly string[] | HeldKey;
 
 interface RepositoryContext {
   readonly apt: AptLocations;
-  readonly targets: ReadonlyMap<string, AptIndexTarget> | undefined;
+  readonly targets: Awaited<ReturnType<typeof indexTargets>>;
   readonly sources: (file: string) => Promise<readonly AptSourceStanza[]>;
   readonly verify: (
     candidates: KeyCandidates,
@@ -193,13 +231,24 @@ const keyCheck = async (
       reason:
         context.targets === undefined
           ? "apt-get indextargets did not list apt's indexes"
-          : "apt-get indextargets lists no index with this source",
+          : context.targets.incomplete
+            ? "apt-get indextargets contained unreadable UTF-8 and did not establish an index for this source"
+            : "apt-get indextargets lists no index with this source",
     };
   if (entry === undefined)
     return {
       reason: `no sources entry at ${target.sourcesFile}:${String(target.position)} configures it`,
     };
+  const selectors = entry.signedBy.filter((value) => !value.startsWith("/"));
+  if (selectors.length > 0)
+    return {
+      reason: `Signed-By selectors ${selectors.map((value) => JSON.stringify(value)).join(", ")} are not supported; REA cannot verify this repository's fingerprint restrictions, so no signing key is retained`,
+    };
   const release = await signedRelease(target);
+  if (release === null)
+    return {
+      reason: `apt's release files for it in ${dirname(target.filename)} could not be checked`,
+    };
   if (release === undefined)
     return {
       reason: `apt holds no signed release file for it in ${dirname(target.filename)}`,
@@ -221,35 +270,30 @@ const repositoryBase = (
   source: string,
   target: AptIndexTarget | undefined,
   entry: AptSourceEntry | undefined,
-): Omit<AptRepository, "signing_key" | "signing_key_reason"> =>
-  entry === undefined
-    ? {
-        source,
-        sources_file: null,
-        uri: null,
-        uri_credentials_removed: false,
-        suite: null,
-        components: [],
-        architectures: [],
-        release: target?.suite ?? target?.codename ?? null,
-      }
-    : {
-        source,
-        sources_file: entry.file,
-        uri: entry.uri,
-        uri_credentials_removed: entry.credentials,
-        suite: entry.suite,
-        components: [...entry.components],
-        architectures: [...entry.architectures],
-        release: target?.suite ?? target?.codename ?? null,
-      };
+): Omit<AptRepository, "signing_key" | "signing_key_reason"> => ({
+  source,
+  sources_file: entry?.file ?? null,
+  // When APT decoded credentials that the authored token did not delimit,
+  // retaining that token could retain the encoded credentials.
+  uri:
+    target?.repoUriCredentialsRemoved === true && entry?.credentials !== true
+      ? null
+      : (entry?.uri ?? null),
+  ...(target === undefined ? {} : { repo_uri: target.repoUri }),
+  uri_credentials_removed:
+    entry?.credentials === true || target?.repoUriCredentialsRemoved === true,
+  suite: entry?.suite ?? null,
+  components: [...(entry?.components ?? [])],
+  architectures: [...(entry?.architectures ?? [])],
+  release: target?.suite ?? target?.codename ?? null,
+});
 
 /** One vendor source with the entry apt read it from and the key gpgv verified its release with. */
 const repositoryFacts = async (
   vendor: { readonly source: string; readonly origin: string | null },
   context: RepositoryContext,
 ): Promise<{ repository: AptRepository; key: VerifiedKey | undefined }> => {
-  const target = context.targets?.get(vendor.source);
+  const target = context.targets?.entries.get(vendor.source);
   const entry =
     target === undefined
       ? undefined
@@ -260,7 +304,7 @@ const repositoryFacts = async (
     key: undefined,
   });
   const origin = vendor.origin ?? target?.origin ?? null;
-  if (isUbuntuProRepository(origin, base.uri ?? target?.repoUri ?? null))
+  if (isUbuntuProRepository(origin, base.repo_uri ?? base.uri))
     return unverified(UBUNTU_PRO);
   const check = await keyCheck(target, entry, context);
   if ("reason" in check) return unverified(check.reason);
@@ -296,7 +340,7 @@ export const inspectAptRepositories = async (
     return {
       repositories: [],
       keys: new Map(),
-      indexTargets: [],
+      indexTargets: new Map(),
       limitations: [],
     };
   const targets = await indexTargets(host.runQuery, signal);
@@ -321,11 +365,22 @@ export const inspectAptRepositories = async (
     return {
       repositories,
       keys,
-      indexTargets: [...(targets?.values() ?? [])],
-      limitations: files.unreadable.map(
-        (file) =>
-          `The apt sources file ${file} could not be read, so repositories it lists are not matched.`,
-      ),
+      indexTargets: targets?.entries ?? new Map(),
+      limitations: [
+        ...files.unreadable.map(
+          (file) =>
+            `The apt sources file ${file} could not be read, so repositories it lists are not matched.`,
+        ),
+        ...files.incomplete.map(
+          (file) =>
+            `The apt sources file ${file} contains unreadable UTF-8. Any affected source entries were withheld.`,
+        ),
+        ...(targets?.incomplete !== true
+          ? []
+          : [
+              "apt-get indextargets contained unreadable UTF-8. Any affected index paragraphs were withheld.",
+            ]),
+      ],
     };
   });
 };

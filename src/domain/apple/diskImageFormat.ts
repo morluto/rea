@@ -1,7 +1,10 @@
+import { BinaryReader } from "../binaryContainer.js";
 import type { PositionalRead } from "../zipPackageFormat.js";
 
 const UDIF_TRAILER_BYTES = 512;
 const UDIF_TRAILER_SIGNATURE = Buffer.from("koly");
+const GPT_BLOCK_BYTES = 512;
+const GPT_MIN_HEADER_BYTES = 92;
 const GPT_HEADER_SIGNATURE = Buffer.from("EFI PART");
 const GPT_REVISION_1_0 = 0x0001_0000;
 const HFS_PLUS_HEADER_END = 1028;
@@ -43,13 +46,16 @@ const hasRawDiskImageSignature = (prefix: Buffer): boolean =>
 
 /** GUID partition table header at LBA 1 of a 512-byte-sector device. */
 const hasGptHeader = (prefix: Buffer): boolean => {
-  if (prefix.length < 528) return false;
-  if (!prefix.subarray(512, 520).equals(GPT_HEADER_SIGNATURE)) return false;
-  const headerSize = prefix.readUInt32LE(524);
+  const header = prefix.subarray(GPT_BLOCK_BYTES);
+  if (header.length < GPT_MIN_HEADER_BYTES) return false;
+  if (!header.subarray(0, 8).equals(GPT_HEADER_SIGNATURE)) return false;
+  const reader = new BinaryReader(header, true, "GPT");
+  const headerSize = reader.u32(12);
   return (
-    prefix.readUInt32LE(520) === GPT_REVISION_1_0 &&
-    headerSize >= 92 &&
-    headerSize <= 512
+    reader.u32(8) === GPT_REVISION_1_0 &&
+    headerSize >= GPT_MIN_HEADER_BYTES &&
+    headerSize <= GPT_BLOCK_BYTES &&
+    headerSize <= header.length
   );
 };
 
@@ -65,11 +71,12 @@ const hasApplePartitionMap = (prefix: Buffer): boolean =>
 const hasMbrPartitionTable = (prefix: Buffer): boolean => {
   if (prefix.length < 512 || prefix[510] !== 0x55 || prefix[511] !== 0xaa)
     return false;
+  const reader = new BinaryReader(prefix, true, "MBR");
   let used = false;
   for (let entry = 446; entry < 510; entry += 16) {
     const status = prefix[entry];
     if (status !== 0x00 && status !== 0x80) return false;
-    used ||= prefix[entry + 4] !== 0 && prefix.readUInt32LE(entry + 12) !== 0;
+    used ||= prefix[entry + 4] !== 0 && reader.u32(entry + 12) !== 0;
   }
   return used;
 };
@@ -78,7 +85,7 @@ const hasMbrPartitionTable = (prefix: Buffer): boolean => {
 const hasHfsPlusVolumeHeader = (prefix: Buffer): boolean => {
   if (prefix.length < HFS_PLUS_HEADER_END || prefix[1024] !== 0x48)
     return false;
-  const version = prefix.readUInt16BE(1026);
+  const version = new BinaryReader(prefix, false, "HFS").u16(1026);
   return (
     (prefix[1025] === 0x2b && version === 4) ||
     (prefix[1025] === 0x58 && version === 5)

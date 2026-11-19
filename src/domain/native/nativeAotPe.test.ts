@@ -81,6 +81,32 @@ describe("NativeAOT indexed MethodTable closure", () => {
   });
 });
 
+describe("NativeAOT RTR directory regions", () => {
+  it("reads neither of two FROZEN_OBJECT_REGION sections and reports partial", () => {
+    const bytes = nativeAotPeFixture();
+    const header = 0x600;
+    // Declare a third RTR row repeating the frozen region row.
+    bytes.writeUInt16LE(3, header + 12);
+    bytes.copy(bytes, header + 64, header + 40, header + 64);
+    const parsed = parseNativeAotPe(
+      bytes,
+      nativeAotPeDigest(bytes),
+      SUMMARY_BUDGET,
+    );
+    expect(parsed.summary).toMatchObject({
+      status: "partial",
+      reason: { code: "ambiguous_frozen_object_region" },
+      truncated: false,
+      method_tables: 3,
+      frozen_strings: [],
+      coverage: { frozen_string_candidates: 0 },
+    });
+    expect(parsed.summary.limitations).toContain(
+      "The RTR directory declares 2 FROZEN_OBJECT_REGION sections, so none was read.",
+    );
+  });
+});
+
 describe("read-only NativeAOT PE parser", () => {
   it("recovers a bounded RTR9.1 type graph and frozen literal from captured bytes", () => {
     const bytes = nativeAotPeFixture();

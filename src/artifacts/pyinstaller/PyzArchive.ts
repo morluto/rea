@@ -1,12 +1,14 @@
 import type { FileHandle } from "node:fs/promises";
 import { hashReadable } from "../ArtifactHash.js";
-import { readArtifactFileChunks } from "../readArtifactFileChunks.js";
+import { readArtifactFileChunks } from "../../resources/index.js";
 import { readPyInstallerBytes } from "./PyInstallerBytes.js";
 
+import { BinaryReader } from "../../domain/binaryContainer.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { readMarshalSubset, type MarshalValue } from "./MarshalSubset.js";
 import {
   pyInstallerFailure,
+  pyInstallerLayoutFailure,
   type PyInstallerFailure,
 } from "./PyInstallerFailure.js";
 import { pythonVersionForMagic } from "./PythonBytecode.js";
@@ -44,7 +46,7 @@ export type PyzArchive =
     };
 
 /** Bound the transient marshal table allocation independently of image expansion. */
-export const MAX_PYZ_TABLE_BYTES = 16 * 1024 * 1024;
+const MAX_PYZ_TABLE_BYTES = 16 * 1024 * 1024;
 
 interface PyzHeaderFacts {
   readonly signatureMatches: boolean;
@@ -58,7 +60,7 @@ interface PyzHeaderFacts {
 /** Called only after the exact fixed-header read has succeeded. */
 const readPyzHeaderFacts = (header: Buffer, size: number): PyzHeaderFacts => {
   const pythonMagic = Buffer.from(header.subarray(4, 8));
-  const tocOffset = header.readUInt32BE(8);
+  const tocOffset = new BinaryReader(header, false, "pyz").u32(8);
   return {
     signatureMatches: header.subarray(0, 4).equals(PYZ_MAGIC),
     pythonMagic,
@@ -180,8 +182,9 @@ const parsePyzParts = (
 
 /**
  * Marshal back-references let one stored row appear many times, so a small
- * table can name far more bytes than it holds. Each genuine entry stores its
- * own name inline, so the expanded names can never exceed the table itself.
+ * table can name far more bytes than it holds. Inline one-byte Unicode names
+ * can double in UTF-8; UTF-8 marshal names do not expand. Allow that decoding
+ * expansion while bounding the total names repeated by back-references.
  */
 const pyzEntries = (
   value: MarshalValue,
@@ -193,16 +196,17 @@ const pyzEntries = (
       pyInstallerFailure("format", "PYZ table of contents is not a list"),
     );
   const entries: PyzEntry[] = [];
+  const nameByteBudget = tableBytes * 2;
   let nameBytes = 0;
   for (const item of value) {
     const entry = onePyzEntry(item, payloadEnd, entries.length);
     if (!entry.ok) return entry;
     nameBytes += Buffer.byteLength(entry.value.name, "utf8");
-    if (nameBytes > tableBytes)
+    if (nameBytes > nameByteBudget)
       return err(
         pyInstallerFailure(
           "limit",
-          `PYZ table entry names expand past the ${String(tableBytes)}-byte table that stores them`,
+          `PYZ table entry names expand past the ${String(nameByteBudget)}-byte decoded-name budget`,
         ),
       );
     entries.push(entry.value);
@@ -269,8 +273,7 @@ const onePyzEntry = (
     (length > 0 && offset < PYZ_HEADER_BYTES)
   )
     return err(
-      pyInstallerFailure(
-        "integrity",
+      pyInstallerLayoutFailure(
         `PYZ entry at table index ${String(index)} extends outside the archive payload region`,
       ),
     );

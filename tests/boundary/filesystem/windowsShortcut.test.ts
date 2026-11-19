@@ -7,7 +7,7 @@ import {
   powershellHiddenIconSpoofShortcut,
   windowsShortcutBytes,
 } from "../../fixtures/binaryDiagnostics/windowsShortcut.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const { realpathCalls, lstatCalls, lstatGate } = vi.hoisted(() => ({
@@ -15,9 +15,7 @@ const { realpathCalls, lstatCalls, lstatGate } = vi.hoisted(() => ({
   lstatCalls: vi.fn(),
   // When set, the next lstat reports its path and waits for the gate.
   lstatGate: {} as {
-    hold?:
-      | { entered: (path: string) => void; release: Promise<void> }
-      | undefined;
+    hold?: ((path: string) => Promise<void>) | undefined;
   },
 }));
 
@@ -34,8 +32,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       const hold = lstatGate.hold;
       if (hold !== undefined) {
         lstatGate.hold = undefined;
-        hold.entered(String(args[0]));
-        await hold.release;
+        await hold(String(args[0]));
       }
       return actual.lstat(...args);
     }) as typeof actual.lstat,
@@ -206,6 +203,57 @@ describe("Windows shortcut stable filesystem boundary", () => {
   });
 });
 
+it.each([false, true])(
+  "reports an out-of-spec StringData count but retains following fields (Unicode: %s)",
+  async (unicode) => {
+    const root = await createTestTempDirectory("rea-shortcut-string-data-");
+    const arguments_ = "a".repeat(400);
+    const service = createWindowsShortcutService();
+    for (const count of [260, 261]) {
+      const path = join(root, `${count}.lnk`);
+      const name = "n".repeat(count);
+      const bytes = windowsShortcutBytes({
+        unicode,
+        idList: null,
+        linkInfo: null,
+        extraData: [],
+        name,
+        arguments: arguments_,
+        iconLocation: "fixture.ico",
+      });
+      await writeFile(path, bytes);
+      const result = await service.inspect({ path });
+      if (!result.ok) throw result.error;
+      expect(result.value.normalized_result).toMatchObject({
+        coverage: {
+          status: count === 260 ? "complete" : "partial",
+          failing_offset: count === 260 ? null : 76,
+        },
+        issues:
+          count === 260
+            ? []
+            : [
+                {
+                  code: "malformed_structure",
+                  offset: 76,
+                  message: expect.stringContaining("NAME_STRING"),
+                },
+              ],
+        string_data: {
+          name: {
+            value: name,
+            count_characters: count,
+            byte_length: count * (unicode ? 2 : 1),
+          },
+          arguments: { value: arguments_, count_characters: 400 },
+          icon_location: { value: "fixture.ico" },
+        },
+        extra_data: { terminal_offset: bytes.length - 4 },
+      });
+    }
+  },
+);
+
 describe("Windows shortcut parent directory links", () => {
   it.skipIf(process.platform === "win32")(
     "rejects a parent directory link before reading through it",
@@ -252,24 +300,13 @@ describe("Windows shortcut parent directory links", () => {
       const path = join(root, "shortcut.lnk");
       await writeFile(path, powershellHiddenIconSpoofShortcut());
       const provider = new WindowsShortcutProvider("win32");
-      let release!: () => void;
-      const entered = new Promise<string>((resolve) => {
-        lstatGate.hold = {
-          entered: resolve,
-          release: new Promise<void>((done) => {
-            release = done;
-          }),
-        };
-      });
+      const parentWalk = phaseGate<string>();
+      lstatGate.hold = (selected) => parentWalk.hold(selected);
 
       const inspecting = provider.inspect(providerInput(path));
       let closing: Promise<void> | undefined;
       try {
-        await awaitAcknowledgement(
-          entered.then(() => undefined),
-          inspecting,
-          "parent walk lstat",
-        );
+        await parentWalk.reached(inspecting, "parent walk lstat");
         let closed = false;
         closing = provider.close().then(() => {
           closed = true;
@@ -278,7 +315,7 @@ describe("Windows shortcut parent directory links", () => {
         expect(closed).toBe(false);
       } finally {
         lstatGate.hold = undefined;
-        release();
+        parentWalk.release();
         await inspecting;
         await closing;
       }
@@ -296,7 +333,7 @@ describe("Windows shortcut parent directory links", () => {
     const path = join(root, "shortcut.lnk");
     await writeFile(path, powershellHiddenIconSpoofShortcut());
     const entered = vi.fn();
-    lstatGate.hold = { entered, release: Promise.resolve() };
+    lstatGate.hold = async (selected) => entered(selected);
 
     const result = await new WindowsShortcutProvider("win32").inspect(
       providerInput(path),
@@ -353,7 +390,7 @@ describe("Windows shortcut parent directory links", () => {
       ["..\\real\\a.lnk", ".."],
     ] as const) {
       const entered = vi.fn();
-      lstatGate.hold = { entered, release: Promise.resolve() };
+      lstatGate.hold = async (selected) => entered(selected);
       await provider.inspect(providerInput(path));
       lstatGate.hold = undefined;
       expect(entered).toHaveBeenCalledWith(first);

@@ -1,5 +1,6 @@
 import type { JavaScriptSemanticPropertyPath } from "./javascriptSemanticPropertyPaths.js";
-import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
+import { JAVASCRIPT_SEMANTIC_PRECISION_DEFAULTS } from "./javascriptSemanticPrecision.js";
+import { Budget } from "../budget.js";
 
 type PropertyKey = JavaScriptSemanticPropertyPath[number];
 
@@ -73,10 +74,15 @@ const joinSelections = (
 /** Preserve correlated selector alternatives while coalescing complete grids. */
 export class SemanticAliasSelections {
   #paths = new WeakMap<object, Map<number, SemanticAliasSelectionPath[]>>();
-  #calls = 0;
+  readonly #calls: Budget;
   #limited = false;
 
-  constructor(readonly onLimit: () => void) {}
+  constructor(
+    readonly onLimit: () => void,
+    readonly maxSelections: number = JAVASCRIPT_SEMANTIC_PRECISION_DEFAULTS.alias_selections,
+  ) {
+    this.#calls = new Budget(maxSelections);
+  }
 
   get limited(): boolean {
     return this.#limited;
@@ -95,10 +101,7 @@ export class SemanticAliasSelections {
     );
     const covered = paths.find((prior) => pathCovers(prior, candidate));
     if (covered !== undefined) return covered;
-    if (
-      existing !== undefined &&
-      ++this.#calls > SEMANTIC_ALIAS_SELECTION_LIMIT
-    ) {
+    if (existing !== undefined && !this.#calls.tryCharge(1)) {
       this.#limited = true;
       this.#paths = new WeakMap();
       this.onLimit();

@@ -49,8 +49,10 @@ as the 4.3 and 4.4.1 exporters do, so the declared MD5 does not depend on the
 encryption IV. Encrypted members whose declared MD5s differ therefore also
 compare `unknown` in `metadata` and `availability`: the MD5s declare
 different scripts, but REA cannot verify them, and equal MD5s add nothing for
-the same reason. An encrypted member with an MD5 on only one side stays
-`unknown`.
+the same reason. An encrypted member with an MD5 on only one side, including
+an all-zero MD5 that records no claim, stays `unknown` in `metadata` and
+`availability`: the claim's presence differs, and one claim does not prove
+the script changed.
 
 ## CLI
 
@@ -144,9 +146,34 @@ keys, decode Godot resources, decompile GDScript bytecode, analyze signals,
 apply patch/removal entries or execute targets.
 
 Readable logical member bytes, including repeated physical ranges, share the ZIP
-archive expansion policy: at most the larger of 256 MiB or 500 times the PCK's
+archive expansion policy by default: at most the larger of 256 MiB or 500 times the PCK's
 encoded byte span. Embedded carrier bytes do not enlarge that budget. The full
 directory is checked before any member is yielded, hashed or extracted. Encrypted
 members are not read and do not consume this plaintext-work allowance. Small
 bounded aliases remain valid. This is a processing/output resource bound, separate
 from the directory metadata retention budget and format validity.
+
+Directory retention defaults to 64 MiB of encoded metadata. Select
+`artifact_limits.godot.directory_bytes` to change it; path/source facts reserve
+worst-case JSON expansion before declared path bytes are read, and the reader
+then charges actual retained metadata. A preallocation `required_value` is the
+allowance needed by that admission check, not a measurement of final output size.
+Select `artifact_limits.expanded_bytes` independently to change aggregate
+plaintext work, including repeated readable logical occurrences. Both controls
+apply to inspection and extraction, before any member is yielded.
+
+For example:
+
+```sh
+rea inspect-artifact ./game.pck --artifact-limits '{"godot":{"directory_bytes":134217728},"expanded_bytes":1073741824}' --json
+```
+
+MCP uses the same object under `artifact_limits` on `inspect_artifact` or
+`extract_artifact`. A refusal reports the exact `reader_limit` parameter,
+effective value, unit, supported range and required value when known. Raise the
+named admission and retry the same complete PCK on the next call; no REA restart
+is needed. Summary or page size does not change producer admission. Omitted
+policy selections stay omitted in Evidence parameters; a selected object records
+the accepted selection and `effective_limits`, conditional on which readers are
+encountered. Raising these policies does not admit malformed offsets, unsupported
+flags, unsafe extraction paths or unavailable encrypted contents.

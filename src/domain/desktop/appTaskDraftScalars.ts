@@ -1,4 +1,4 @@
-import type { JsonValue } from "../jsonValue.js";
+import { equalJsonValues, type JsonValue } from "../jsonValue.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
 import { numberOf } from "./appTaskChecks.js";
 
@@ -13,10 +13,22 @@ export const decimalOf = (value: JsonValue | undefined): number | undefined => {
   return Number.isFinite(number) ? number : undefined;
 };
 
-/** Whether a decimal's number is within the tolerance of a baseline value, read as the evaluators read a number, so a check by number would pass there too. */
+/** Whether a decimal's number is within the tolerance of a baseline value, read as the evaluators read a number, `"10"` and `"1e1"` included, so a check by number would pass there too. */
 const nearBaseline = (number: number, before: JsonValue | undefined) => {
   const old = before === undefined ? undefined : numberOf(before);
   return old !== undefined && Math.abs(old - number) <= DECIMAL_TOLERANCE;
+};
+
+/** Whether a `value_equals` passes on a value, as the evaluator decides it: by number within its tolerance, or as JSON. */
+export const passesOn = (
+  check: DesktopTaskCheckInput,
+  value: JsonValue | undefined,
+): boolean => {
+  if (check.kind !== "value_equals" || value === undefined) return false;
+  const number = numberOf(value);
+  return check.tolerance !== undefined && typeof check.value === "number"
+    ? number !== undefined && Math.abs(number - check.value) <= check.tolerance
+    : equalJsonValues(value, check.value);
 };
 
 /**

@@ -36,7 +36,7 @@ def location(value, scheme=None):
     state = {"response": {"headers": [[b"Location", value]]}}
     if scheme is not None:
         state["request"] = {"scheme": scheme}
-    record = capture.project_record(state, [])
+    record = capture.project_record(state, [], 64)
     sidecar = next(
         field for field in record["binary_fields"] if field["pointer"] == "/response/headers/0/1"
     )
@@ -75,11 +75,11 @@ class TransportUserinfoTests(unittest.TestCase):
     def test_native_request_paths_preserve_origin_form_and_redact_absolute_form(self):
         for value in [b"/\\invoice@customer", b"//invoice@customer", b"\\\\invoice@customer"]:
             with self.subTest(value=value):
-                record = capture.project_record({"request": {"path": value}}, [])
+                record = capture.project_record({"request": {"path": value}}, [], 64)
                 self.assertEqual(record["reported"]["request"]["path"], value.decode("ascii"))
                 self.assertEqual(record["binary_fields"][0]["state"], "retained")
                 self.assertEqual(record["redactions"], [])
-        record = capture.project_record({"request": {"path": b"https://user:pass@host/x"}}, [])
+        record = capture.project_record({"request": {"path": b"https://user:pass@host/x"}}, [], 64)
         self.assertEqual(record["reported"]["request"]["path"], "https://host/x")
         self.assertEqual(record["binary_fields"][0]["state"], "redacted")
 
@@ -110,7 +110,7 @@ class TransportUserinfoTests(unittest.TestCase):
                 "request": {"scheme": b"https"},
                 "response": {"headers": [[b"Location", b"https:invoice@customer"]]},
             },
-        }, [])
+        }, [], 64)
         self.assertEqual(record["reported"]["backup"]["response"]["headers"][0][1], "https:invoice@customer")
         self.assertEqual(record["redactions"], [])
 

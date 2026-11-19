@@ -1,3 +1,4 @@
+import { unknownTarget } from "./targetIdentity.js";
 import { describe, expect, it } from "vitest";
 
 import { AnalysisInputError } from "./analysisErrorCore.js";
@@ -82,7 +83,7 @@ const source = (
           sha256: digit.repeat(64),
           format: "file",
         }
-      : undefined,
+      : unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture function analysis", version: "1" },
     {
       operation: "analyze_function",
@@ -141,20 +142,24 @@ const comparison = (
     ...dimension,
     evidence_links: links,
   }));
-  return createEvidence(identity.target, identity.provider ?? provider, {
-    predicateType: "rea.function-comparison",
-    operation: "compare_functions",
-    parameters,
-    result: jsonValueSchema.parse({
-      ...resultInput,
-      dimensions,
-      changes: dimensions.filter(({ status }) => status !== "unchanged"),
-    }),
-    confidence: "derived",
-    authority: "analyst-inference",
-    evidenceLinks: links,
-    ...observation,
-  });
+  return createEvidence(
+    identity.target ?? unknownTarget("derived-from-linked-evidence"),
+    identity.provider ?? provider,
+    {
+      predicateType: "rea.function-comparison",
+      operation: "compare_functions",
+      parameters,
+      result: jsonValueSchema.parse({
+        ...resultInput,
+        dimensions,
+        changes: dimensions.filter(({ status }) => status !== "unchanged"),
+      }),
+      confidence: "derived",
+      authority: "analyst-inference",
+      evidenceLinks: links,
+      ...observation,
+    },
+  );
 };
 
 const specification = (evidence: Evidence, dimension = "pseudocode") => ({
@@ -847,7 +852,7 @@ describe("function reconstruction evidence integrity", () => {
 
   it("retains active source unknowns as a gating result", () => {
     const evidence = comparison(singular);
-    const mutation = createEvidence(undefined, provider, {
+    const mutation = createEvidence(unknownTarget("not-observed"), provider, {
       predicateType: "rea.residual-unknown-mutation",
       operation: "record_unknown",
       parameters: {},

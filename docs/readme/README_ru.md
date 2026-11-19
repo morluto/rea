@@ -82,11 +82,11 @@ npx rea-agents setup
 
 Настройка поддерживает Claude Code, Codex, Cursor, Gemini CLI, Grok Build и [других агентов](../getting-started/installation.md#supported-agents). Настройка провайдеров и ручная регистрация MCP описаны в разделе [установка и настройка](../getting-started/installation.md).
 
-MCP по умолчанию использует компактные входные схемы. Для полного описания полей и вложенной валидации задайте `REA_MCP_INPUT_SCHEMA_PROFILE=full` в регистрации MCP. Оба профиля сохраняют все инструменты и одинаковую каноническую проверку на сервере; см. руководство по контрактам MCP.
+MCP по умолчанию использует компактные входные схемы. Указания, которые компактная схема опускает, следуют за описанием инструмента. Все инструменты и каноническая проверка на сервере не меняются; см. руководство по контрактам MCP.
 
 Настройка напрямую регистрирует выбранную среду выполнения и входной скрипт REA. При использовании средства запуска пакетов сохраняйте его запись в кэше и среду выполнения; получайте пакет из доверенного каталога вне целевого проекта. См. руководство по установке.
 
-Полные схемы вывода объявляются по умолчанию. Если клиент ограничивает `tools/list`, задайте `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` или `off` в регистрации MCP. Проверка на сервере и структурированные результаты остаются полными. См. раздел «Output schemas» в руководстве по контрактам MCP.
+По умолчанию схемы вывода не включаются в `tools/list`: ни один API моделей их не читает, а REA сам проверяет каждый результат. Задайте `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` в регистрации MCP, чтобы объявлять каждую схему вывода в пределах 4096 байт. При любой настройке проверка на сервере и структурированные результаты остаются полными. См. раздел «Output schemas» в руководстве по контрактам MCP.
 
 ### Задайте вопрос агенту
 
@@ -165,6 +165,8 @@ REA требует Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) или 26+ (>=26.1
 | PE imports                          | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                                                 | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                                           |
 | Windows shortcuts                   | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts                                               | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                                               |
 | ELF notes                           | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                                            | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                                            |
+| DWARF compile units                 | Compile-unit name, directory, producer, language, and dwo_name                                                             | Built-in static ELF, Mach-O, and PE inspection; [DWARF compile units](../guides/native/dwarf-units.md)                                                                  |
+| ELF dependencies                    | DT_NEEDED, SONAME, RPATH/RUNPATH, GNU versions, and undefined imports                                                      | Built-in static ELF inspection; [ELF dependencies](../elf-dependencies.md)                                                                                              |
 | Binary hardening                    | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                                                        | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                                           |
 | Linux kernel modules                | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                                                | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                                  |
 | Erlang BEAM                         | IFF chunks, atoms, exports, and tables                                                                                     | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                                       |
@@ -182,7 +184,7 @@ REA требует Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) или 26+ (>=26.1
 | Приложения Flutter                  | Хеш снапшота Dart, дайджесты библиотек по ABI и происхождение сборки движка                                                | Не требуется (статический разбор APK); [руководство по Flutter](../guides/android/flutter-analysis.md)                                                                  |
 | Прошивки                            | Области, результаты извлечения и передача в нативный анализ                                                                | Binwalk / Unblob в Linux; [руководство по прошивкам](../guides/firmware/firmware-analysis.md)                                                                           |
 | Записанные пакеты                   | Выбранные поля, повторяющиеся значения, фильтры и правила декодирования                                                    | Linux: TShark 4.x + prlimit; [руководство по захватам](../guides/data/packet-captures.md)                                                                               |
-| Захват пакетов                      | Конечные точки, DNS, TLS SNI, распределение протоколов и HTTP-запросы                                                      | Предоставленные вызывающей стороной tshark и capinfos; [руководство по pcap](../guides/data/pcap-analysis.md)                                                           |
+| Захват пакетов                      | Конечные точки, DNS, TLS SNI, распределение протоколов и HTTP-запросы                                                      | Предоставленные вызывающей стороной tshark и capinfos (проверено в Linux); [руководство по pcap](../guides/data/pcap-analysis.md)                                       |
 | Записанные логические сигналы       | Аннотации декодера, диапазоны отсчётов и диагностика                                                                       | Linux: sigrok-cli 0.7.2 + prlimit; [руководство по сигналам](../guides/signals/signal-recordings.md)                                                                    |
 | Пакеты и ресурсы                    | Списки файлов, хеши, plist, структура пакетов Apple и извлечённые ресурсы                                                  | [Руководство по артефактам и JavaScript](../guides/javascript/javascript-artifact-reconstruction.md), [приложения Apple](../guides/apple/apple-application-analysis.md) |
 | Поведение процессов                 | Вывод терминала, взаимодействия, наблюдения за завершением и файловой системой, сравнения запусков                         | Linux/macOS с нативным PTY; [захват процессов](../guides/runtime/process-capture.md)                                                                                    |
@@ -194,6 +196,7 @@ REA требует Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) или 26+ (>=26.1
 | Файлы моделей                       | Метаданные GGUF / safetensors, объявления тензоров и вычисленные итоги                                                     | Анализ заголовков; полный хеш файла по выбору; [GGUF / safetensors](../model-artifacts.md)                                                                              |
 | Метаданные IL2CPP                   | Образы сборок Unity global-metadata.dat, имена типов/методов и диапазоны индексов                                          | Статическое декодирование версий 24, 27, 29, 31, 39; Unity не нужен                                                                                                     |
 | Godot PCK                           | Список и извлечение файлов, исходные заголовки/каталоги и идентификаторы выбранного содержимого                            | Статические форматы 2, 3, 4; Godot не нужен                                                                                                                             |
+| Пакеты NuGet                        | Идентичность пакета, группы зависимостей, лицензия, репозиторий и содержимое ZIP                                           | Встроенная статическая проверка .nupkg; [Пакеты NuGet](../guides/managed/nuget-nupkg.md)                                                                                |
 | Артефакты WASM                      | Валидация, секции, точные WAT-формы импорта/экспорта и декодированный WAT                                                  | Предоставляется пользователем WABT 1.0.42; `inspect_wasm_artifact`                                                                                                      |
 | Подписи APK                         | Подписанты v1/v2/v3/v3.1, отпечатки сертификатов, ротация ключей и внутренняя согласованность хешей                        | Встроенный статический анализ; `inspect_apk_signature`                                                                                                                  |
 
@@ -278,6 +281,12 @@ REA экспортирует готовое к запуску окружение
 [Руководство по созданию окружения](https://rea.tools/guides/rl-environments/) ·
 [Справочник окружений](../agent-environments.md) ·
 [Смотреть демо в X](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### Окружения десктопных приложений
+
+REA также может создать окружение десктопного приложения для Linux, которым агент пользуется через снимки экрана, мышь и клавиатуру. По запросу в одну строку, например «Создай окружение Gnote, где агент добавляет оливковое масло в заметку со списком покупок», ваш агент устанавливает приложение на локальный компьютер сборки, пишет задание, экспортирует окружение и проверяет задание на новом компьютере. Машине, которая его собирает, нужны Linux на amd64 или arm64, Docker и версия фреймворка agentenv, указанная в руководстве.
+
+[Настройка окружений десктопных приложений](../desktop-build-computer.md)
 
 ## Частые вопросы
 

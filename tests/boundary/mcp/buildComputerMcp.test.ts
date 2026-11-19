@@ -7,15 +7,14 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 
 import type { Client } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
-import { expect, it, vi } from "vitest";
+import { expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
 
-import { seededLockStartNotice } from "../../../src/application/desktop/DesktopBuildComputers.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { createDeferred } from "../../fixtures/binarySession.js";
 import {
   buildComputerFakes as fakes,
   bundleFolder,
@@ -24,12 +23,17 @@ import {
   expectNoToken,
   startBuildComputer,
 } from "../../fixtures/buildComputerMcp.js";
+import { COMPUTER_START_TIMING } from "../../../src/desktop/AgentEnvComputer.js";
 import {
+  awaitFakeDeployWait,
   FAKE_FRAME_PNG,
+  startFakeComputer,
   type FakeApp,
   type FakeComputer,
 } from "../../fixtures/fakeAgentEnvComputer.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { waitFor } from "../../support/testWait.js";
 
 const images = (result: CallToolResult) =>
   result.content.filter((block) => block.type === "image");
@@ -150,18 +154,27 @@ it("renders a build bundle from a request with REA's payload and starts it", asy
       source: {
         kind: "request",
         desktop_entry: "org.xfce.mousepad",
-        install: { kind: "archive", package: "mousepad" },
+        install: {
+          kind: "archive",
+          package: "mousepad",
+          extra_packages: ["librsvg2-common"],
+        },
       },
     },
   });
   expect(started.isError, JSON.stringify(started)).not.toBe(true);
-  expect(started.structuredContent).toMatchObject({ environment: "mousepad" });
+  expect(started.structuredContent).toMatchObject({
+    environment: "mousepad",
+    extra_packages: ["librsvg2-common"],
+  });
   const env = join(runner.state, "bundle", "envs", "mousepad");
   expect(await readFile(join(env, "rea-payload.tar"), "utf8")).toBe(
     "a packed REA build",
   );
-  expect(await readFile(join(env, "mousepad_app.py"), "utf8")).toContain(
-    'Launch(at="demand"',
+  const module = await readFile(join(env, "mousepad_app.py"), "utf8");
+  expect(module).toContain('Launch(at="demand"');
+  expect(module).toContain(
+    'packages=Packages(apt=["mousepad", "librsvg2-common", "libgtk-3-bin", "dconf-cli"])',
   );
   const { computer_id: computerId } = toolContract(
     "start_build_computer",
@@ -174,6 +187,36 @@ it("renders a build bundle from a request with REA's payload and starts it", asy
     "computer_screenshot",
   ]);
 });
+
+it.each([
+  ["glabels-3.0", "glabels"],
+  ["com.github.xournalpp.xournalpp", "xournalpp"],
+  ["mousepad", "mousepad"],
+])(
+  "names the environment of desktop entry %s %s",
+  async (entry, environment) => {
+    const { runner } = await fakes();
+    const payload = join(runner.state, "rea-prod.tar.xz");
+    await writeFile(payload, "a packed REA build");
+    const client = await connect({
+      ...runner.environment,
+      REA_BUILD_COMPUTER_REA_ARCHIVE: payload,
+    });
+
+    const started = await callOk(client, "start_build_computer", {
+      source: {
+        kind: "request",
+        desktop_entry: entry,
+        install: { kind: "archive", package: environment },
+      },
+    });
+
+    expect(started.structuredContent).toMatchObject({ environment });
+    expect(await readdir(join(runner.state, "bundle", "envs"))).toEqual([
+      environment,
+    ]);
+  },
+);
 
 it("names what a request needs when REA's payload is not configured", async () => {
   const { runner } = await fakes();
@@ -193,6 +236,51 @@ it("names what a request needs when REA's payload is not configured", async () =
   );
   expect(await runner.notes("runs.jsonl")).toEqual([]);
 });
+
+it.each([
+  [
+    ["Java17"],
+    {
+      path: ["source", "install", "extra_packages", 0],
+      reason: "invalid_format",
+    },
+  ],
+  [
+    Array.from({ length: 17 }, (_, index) => `lib${String(index)}`),
+    {
+      path: ["source", "install", "extra_packages"],
+      reason: "out_of_range",
+      maximum: 16,
+    },
+  ],
+])(
+  "refuses extra packages %j before rendering a bundle",
+  async (extra, issue) => {
+    const { runner } = await fakes();
+    const client = await connect(runner.environment);
+    const refused = parseMcpToolError(
+      await client.callTool({
+        name: "start_build_computer",
+        arguments: {
+          source: {
+            kind: "request",
+            desktop_entry: "freeplane",
+            install: {
+              kind: "archive",
+              package: "freeplane",
+              extra_packages: extra,
+            },
+          },
+        },
+      }),
+    );
+    expect(refused.error.code).toBe("invalid_request");
+    expect(refused.error.details?.issues).toEqual([
+      expect.objectContaining(issue),
+    ]);
+    expect(await runner.notes("runs.jsonl")).toEqual([]);
+  },
+);
 
 it("reports the runner's failure with its output and leaves no helper behind", async () => {
   const { runner } = await fakes();
@@ -230,6 +318,9 @@ it("points a bundle's start that never got ready at the lock files its seed hold
   await writeFile(join(seed, ".config/libreoffice/4/.lock"), "[Lockdata]\n");
   await writeFile(join(seed, "Documents/.~lock.q1.ods#"), ",user,localhost;\n");
   await writeFile(join(seed, "Documents/q1.ods"), "PK");
+  // A lock named for the file beside it, as GnuCash's <book>.LCK; a lone one is no lock.
+  await writeFile(join(seed, "Documents/q1.ods.LCK"), "");
+  await writeFile(join(seed, "Documents/notes.lck"), "");
   const notReady =
     "envs/calc: container/amd64: failed at probe: it didn't boot: the computer wasn't ready within 180 s (not ready: app calc: no window with class 'libreoffice-calc')";
 
@@ -243,10 +334,17 @@ it("points a bundle's start that never got ready at the lock files its seed hold
   const locks = [
     "envs/calc/seed/.config/libreoffice/4/.lock",
     "envs/calc/seed/Documents/.~lock.q1.ods#",
+    "envs/calc/seed/Documents/q1.ods.LCK",
   ];
   expect(pointed).toContain(notReady);
-  expect(pointed).toContain(seededLockStartNotice(locks));
+  expect(pointed).toContain(
+    "The bundle's seed holds lock files, which can keep the app from starting",
+  );
+  expect(pointed).toContain(
+    "Delete them from the bundle, or export it again, which leaves them out, and start again.",
+  );
   for (const lock of locks) expect(pointed).toContain(lock);
+  expect(pointed).not.toContain("Documents/notes.lck");
   expect(unlocked).not.toContain(locks[0]);
   expect(otherFailure).not.toContain(locks[0]);
 });
@@ -356,14 +454,17 @@ it("waits for the desktop to draw before it returns the first screenshot", async
 });
 
 it("returns the latest frame when a retried screenshot outlasts the wait for the desktop, sending progress meanwhile", async () => {
-  // The third screenshot would answer a minute later, well past the 10 s wait.
+  // The third screenshot would answer only after the test deadline, so the
+  // call returns only if the shortened drawn wait abandons it.
   const { computer, runner } = await fakes({
     blankFrames: 10_000,
-    screenshotDelaysMs: [0, 0, 60_000],
+    screenshotDelaysMs: [0, 0, 3_600_000],
   });
-  const client = await connect(runner.environment);
+  const client = await connect(runner.environment, undefined, undefined, {
+    drawnWaitMs: 2_000,
+    progressMs: 250,
+  });
   const progress: { message?: string | undefined }[] = [];
-  const startedAt = Date.now();
   const started = await client.callTool(
     {
       name: "start_build_computer",
@@ -373,13 +474,12 @@ it("returns the latest frame when a retried screenshot outlasts the wait for the
   );
 
   expect(started.isError, JSON.stringify(started)).not.toBe(true);
-  expect(Date.now() - startedAt).toBeLessThan(20_000);
   expect(computer.calls).toHaveLength(3);
   expect(images(started)).toHaveLength(1);
   expect(progress.map(({ message }) => message)).toContainEqual(
     expect.stringContaining("waiting for the desktop to draw"),
   );
-}, 40_000);
+});
 
 it("leaves the bundle folder's files as they were when it starts a computer from it", async () => {
   const { runner } = await fakes();
@@ -494,7 +594,7 @@ it("stops the helper when the caller cancels a start", async () => {
   const { runner } = await fakes();
   const client = await connect({
     ...runner.environment,
-    FAKE_DEPLOY_SECONDS: "30",
+    FAKE_HOLD_DEPLOY: "1",
   });
   const controller = new AbortController();
   const call = client.callTool(
@@ -504,14 +604,15 @@ it("stops the helper when the caller cancels a start", async () => {
     },
     { signal: controller.signal },
   );
-  while ((await runner.notes("runs.jsonl")).length === 0) await delay(50);
-  controller.abort();
-  await expect(call).rejects.toThrow();
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if ((await runner.notes("interrupted.jsonl")).length > 0) break;
-    await delay(50);
+  try {
+    const helper = await awaitFakeDeployWait(runner, call);
+    controller.abort();
+    await expect(call).rejects.toThrow();
+    await expect.poll(() => runner.notes("interrupted.jsonl")).toEqual(helper);
+  } finally {
+    controller.abort();
+    await Promise.allSettled([call]);
   }
-  expect(await runner.notes("interrupted.jsonl")).toHaveLength(1);
 });
 
 /** An app whose reset keeps the computer unready for `polls` readiness polls, 500 ms apart. */
@@ -567,62 +668,72 @@ it.each([
   },
 );
 
-it("runs one computer's calls in the order they arrive and another computer's beside them", async () => {
-  const app = slowApp(4);
-  const { runner } = await fakes({ app });
-  const other = await fakes();
-  const client = await connect(runner.environment);
+it("reports progress for a queued action while another computer can act independently", async () => {
+  const app = slowApp(Number.POSITIVE_INFINITY);
+  const { computer, runner } = await fakes({ app });
+  const other = await startFakeComputer();
+  onTestFinished(() => other.close());
+  const client = await connect(runner.environment, undefined, undefined, {
+    ...COMPUTER_START_TIMING,
+    progressMs: 100,
+  });
   const first = await startBuildComputer(client, {
     kind: "bundle",
     path: await bundleFolder(),
   });
   const second = await startBuildComputer(client, {
     kind: "bundle",
-    path: await bundleFolder(other.computer),
+    path: await bundleFolder(other),
   });
+  const initialCalls = computer.calls.length;
   const act = (id: string, action: string) =>
     callOk(client, "act_on_build_computer", { computer_id: id, action });
   const order: string[] = [];
   const reset = act(first, "reset").then(() => order.push("reset"));
-  await vi.waitFor(() => expect(app.methods).toEqual(["data/reset"]));
-  const behind = act(first, "screenshot").then(() =>
-    order.push("screenshot behind the reset"),
-  );
-  await act(second, "screenshot");
-  order.push("other computer's screenshot");
-  await Promise.all([reset, behind]);
-  expect(order).toEqual([
-    "other computer's screenshot",
-    "reset",
-    "screenshot behind the reset",
-  ]);
-}, 30_000);
-
-it("sends progress while an action waits for the call before it on its computer", async () => {
-  const app = slowApp(14);
-  const { runner } = await fakes({ app });
-  const client = await connect(runner.environment);
-  const id = await startBuildComputer(client, {
-    kind: "bundle",
-    path: await bundleFolder(),
-  });
-  const reset = callOk(client, "act_on_build_computer", {
-    computer_id: id,
-    action: "reset",
-  });
-  await vi.waitFor(() => expect(app.methods).toEqual(["data/reset"]));
-  const progress: unknown[] = [];
-  const waited = await client.callTool(
-    {
-      name: "act_on_build_computer",
-      arguments: { computer_id: id, action: "screenshot" },
-    },
-    { onprogress: (update) => progress.push(update) },
-  );
-  expect(waited.isError, JSON.stringify(waited)).not.toBe(true);
-  expect(progress.length).toBeGreaterThan(0);
+  const launched: Promise<unknown>[] = [reset];
+  let queued: ReturnType<Client["callTool"]>;
+  try {
+    await awaitAcknowledgement(
+      waitFor(() => expect(app.methods).toEqual(["data/reset"])),
+      reset,
+      "app reset",
+    );
+    const progress = createDeferred<void>();
+    queued = client
+      .callTool(
+        {
+          name: "act_on_build_computer",
+          arguments: { computer_id: first, action: "screenshot" },
+        },
+        { onprogress: () => progress.resolve() },
+      )
+      .then((result) => {
+        order.push("queued screenshot");
+        return result;
+      });
+    launched.push(queued);
+    const independent = act(second, "screenshot").then(() =>
+      order.push("independent screenshot"),
+    );
+    launched.push(independent);
+    await awaitAcknowledgement(
+      Promise.all([progress.promise, independent]),
+      Promise.race([reset, queued]),
+      "queued progress and independent screenshot",
+    );
+    expect(computer.calls.slice(initialCalls)).toEqual([]);
+  } finally {
+    app.unready = 0;
+    await Promise.allSettled(launched);
+  }
+  expect((await queued).isError).not.toBe(true);
   await reset;
-}, 30_000);
+  expect(order).toEqual([
+    "independent screenshot",
+    "reset",
+    "queued screenshot",
+  ]);
+});
 
 it("cancels a computer's call in progress on close and refuses the calls waiting behind it", async () => {
   const app = slowApp(600);
@@ -636,7 +747,7 @@ it("cancels a computer's call in progress on close and refuses the calls waiting
   const call = (name: string, fields: Record<string, unknown> = {}) =>
     client.callTool({ name, arguments: { computer_id: id, ...fields } });
   const reset = call("act_on_build_computer", { action: "reset" });
-  await vi.waitFor(() => expect(app.methods).toEqual(["data/reset"]));
+  await waitFor(() => expect(app.methods).toEqual(["data/reset"]));
   const waiting = [
     call("act_on_build_computer", { action: "screenshot" }),
     call("stop_build_capture"),

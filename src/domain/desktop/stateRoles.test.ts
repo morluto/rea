@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 import type { DesktopApplicationCapture } from "./desktopCapture.js";
 import {
   isApplicationDconfGroup,
+  namedInTitles,
   roleFacts,
-  sqliteSidecarRoots,
   stateReasons,
   stateRole,
   type DesktopRoleFacts,
@@ -63,6 +63,20 @@ describe("stateRole", () => {
     expect(stateRole(["selected_path"], "Documents/lockfile")).toBe(
       "application_state",
     );
+    // A sibling-lock name stays a document. A lone notes.lck is opened; one
+    // beside its file is left out of the seed by isLockFile.
+    expect(stateRole(["selected_path"], "Documents/.household.gsb.lock")).toBe(
+      "document",
+    );
+    expect(stateRole(["selected_path"], "Documents/plan.vym.lock")).toBe(
+      "document",
+    );
+    expect(
+      stateRole(["selected_path"], "Documents/household.gnucash.LCK"),
+    ).toBe("document");
+    expect(stateRole(["selected_path"], "Documents/notes.lck")).toBe(
+      "document",
+    );
     expect(
       stateRole(
         ["selected_path", "named_in_window_title"],
@@ -80,6 +94,25 @@ describe("stateRole", () => {
         "desktop_trash",
       ]),
     ).toBe("shared_desktop");
+  });
+});
+
+describe("roleFacts", () => {
+  it("keeps a log the caller selected even when that path is also a state directory", () => {
+    const home = "/home/ada";
+    const log = `${home}/.notes.log`;
+    const facts = roleFacts({
+      host: { home },
+      application: { state_directories: [{ path: log }] },
+      state: {
+        content_roots: [log],
+        state_directories: [log],
+        selected_paths: [{ path: log, physical: log }],
+      },
+      session: { windows: [], opened_files: [] },
+    } as unknown as DesktopApplicationCapture);
+
+    expect(facts.selectedRoots).toEqual([log]);
   });
 });
 
@@ -104,6 +137,34 @@ describe("stateReasons", () => {
     ]);
     expect(reasons("/home/ada/Documents/day.txt")).toEqual([]);
     expect(reasons("/home/ada/Documents/today.tx")).toEqual([]);
+  });
+
+  it("names a file by its whole name or path, never by a folder segment, a cache or a dconf database", () => {
+    // CherryTree shows the document's folder, whose path holds the segment "user".
+    const cherry = [
+      "home-notebook.ctd - /home/user/Documents - CherryTree 1.1.2",
+    ];
+    const named = (path: string, titles: readonly string[]) =>
+      namedInTitles(path, "/home/user", titles);
+
+    expect(named("/home/user/Documents/home-notebook.ctd", cherry)).toBe(true);
+    expect(named("/home/user/.cache/dconf/user", cherry)).toBe(false);
+    expect(named("/home/user/.config/dconf/user", cherry)).toBe(false);
+    expect(named("/home/user/Notes/Documents", cherry)).toBe(false);
+    expect(named("/home/user/.cache/app/home-notebook.ctd", cherry)).toBe(
+      false,
+    );
+    // A name without an extension still matches standing alone, or by its path.
+    expect(named("/home/user/src/Makefile", ["Makefile - Editor"])).toBe(true);
+    expect(named("/home/user/src/Makefile", ["~/src/Makefile - Editor"])).toBe(
+      true,
+    );
+    expect(named("/home/user/Makefile", ["/srv/Makefile - Editor"])).toBe(
+      false,
+    );
+    expect(
+      named("/home/user/Documents/plan.md", ["/home/user/Documents/plan.md"]),
+    ).toBe(true);
   });
 
   it("matches the selected symlink spelling when the window names it", () => {
@@ -179,10 +240,43 @@ describe("sqliteSidecarRoots", () => {
     const database = "/home/ada/Documents/books.db";
     const wal = `${database}-wal`;
     const journal = `${database}-journal`;
-    expect(sqliteSidecarRoots([database, wal, journal])).toEqual(
-      new Set([wal, journal]),
-    );
-    expect(sqliteSidecarRoots([wal])).toEqual(new Set());
+    const sidecars = (roots: string[]) =>
+      roleFacts({
+        host: { home: "/home/ada" },
+        application: { state_directories: [] },
+        state: { content_roots: roots, selected_paths: [] },
+        session: { windows: [], opened_files: [] },
+      } as unknown as DesktopApplicationCapture).sqliteSidecars;
+    expect(sidecars([database, wal, journal])).toEqual(new Set([wal, journal]));
+    expect(sidecars([wal])).toEqual(new Set());
+  });
+
+  it("keeps a separately selected journal-named document alongside automatic sidecars", () => {
+    const home = "/home/ada";
+    const report = `${home}/Documents/report`;
+    const journal = `${report}-journal`;
+    const database = `${home}/Documents/books.db`;
+    const facts = roleFacts({
+      host: { home },
+      application: { state_directories: [] },
+      state: {
+        content_roots: [report, journal, database, `${database}-journal`],
+        selected_paths: [report, journal, database].map((path) => ({
+          path,
+          physical: path,
+          kind: "file",
+        })),
+      },
+      session: { windows: [], opened_files: [] },
+    } as unknown as DesktopApplicationCapture);
+    expect(facts.sqliteSidecars).toEqual(new Set([`${database}-journal`]));
+    expect(facts.selectedRoots).toContain(journal);
+    expect(
+      stateRole(
+        stateReasons(facts, journal, [], false),
+        "Documents/report-journal",
+      ),
+    ).toBe("document");
   });
 
   it("keeps a selected folder whose name ends in -journal", () => {
@@ -225,5 +319,29 @@ describe("isApplicationDconfGroup", () => {
       isApplicationDconfGroup("org/gtk/settings/file-chooser", names),
     ).toBe(false);
     expect(isApplicationDconfGroup("org/mousepadx", names)).toBe(false);
+  });
+});
+
+describe("stateReasons for a state directory the app names with its version", () => {
+  it("counts TreeLine's ~/.treeline-3.1 beside ~/.treeline, and a numbered folder alike, never another app's longer name", () => {
+    const facts: DesktopRoleFacts = {
+      home: "/home/ada",
+      stateDirectories: ["/home/ada/.treeline"],
+      stateTails: [".treeline"],
+      selectedRoots: [],
+      selections: [],
+      titles: [],
+      openedFiles: new Set(),
+    };
+    const reasons = (path: string) => stateReasons(facts, path, [], false);
+
+    expect(reasons("/home/ada/.treeline-3.1/settings.ini")).toEqual([
+      "state_directory",
+    ]);
+    expect(reasons("/home/ada/.treeline3/settings.ini")).toEqual([
+      "state_directory",
+    ]);
+    expect(reasons("/home/ada/.treelines/settings.ini")).toEqual([]);
+    expect(reasons("/home/ada/.treeline-beta/settings.ini")).toEqual([]);
   });
 });

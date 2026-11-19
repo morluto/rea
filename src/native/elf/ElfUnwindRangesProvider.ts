@@ -1,28 +1,24 @@
 import {
-  projectStableArtifactFailure,
-  stableArtifactInputRecovery,
-  projectArtifactCloseFailure,
-} from "../../artifacts/StableArtifactFailure.js";
-import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
+  isParseLimit,
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../../domain/parseFailureAnalysisError.js";
 import {
+  projectOwnedArtifactIdentityFailure,
+  projectSelectedArtifactFileFailure,
+  projectStableArtifactFailure,
+  stableArtifactInputFailure,
+  projectArtifactCloseFailure,
+  ArtifactReaderFailure,
+  readStableArtifact,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
-  artifactFileCancellationCause,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { ElfUnwindRangesPort } from "../../application/binaryDiagnostics/ElfUnwindRangesPort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+  ArtifactResourceScope,
+} from "../../resources/index.js";
+import type { ElfUnwindRangesPort } from "../../ports/binaryDiagnostics/ElfUnwindRangesPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
-import {
-  AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
   MAX_INSPECT_ELF_UNWIND_FILE_BYTES,
@@ -32,11 +28,12 @@ import {
 import { err, ok } from "../../domain/result.js";
 import { ELF_UNWIND_RANGES_PROVIDER } from "../../domain/investigationProviders.js";
 import {
-  BinaryFormatFailure,
   BinaryResourceFailure,
-} from "../metadata/BinaryContainer.js";
+  binaryResourceCeiling,
+} from "../../domain/binaryContainer.js";
 import {
-  ElfUnwindSymbolTextFailure,
+  ELF_UNWIND_FORMAT,
+  ELF_UNWIND_RECORD_LIMIT,
   parseElfUnwindRanges,
 } from "./ElfUnwindTables.js";
 
@@ -91,93 +88,67 @@ export class ElfUnwindRangesProvider implements ElfUnwindRangesPort {
   }
 }
 
-const inputBudgetRemediation = (
-  boundary: "file-size" | "capacity",
-  input: InspectElfUnwindRangesInput,
-): string =>
-  boundary === "file-size"
-    ? input.max_file_bytes >= MAX_INSPECT_ELF_UNWIND_FILE_BYTES
-      ? `The image exceeds the ${String(MAX_INSPECT_ELF_UNWIND_FILE_BYTES)}-byte input ceiling this operation accepts; select a smaller artifact.`
-      : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`
-    : input.max_ranges >= MAX_INSPECT_ELF_UNWIND_RANGES
-      ? `The image exceeds the ${String(MAX_INSPECT_ELF_UNWIND_RANGES)}-record unwind ceiling this operation accepts; select a smaller artifact.`
-      : `Raise max_ranges above ${String(input.max_ranges)} or select a smaller artifact; the limit is the caller-selected unwind record budget.`;
+const fileBudgetRemediation = (maximum: number): string =>
+  maximum >= MAX_INSPECT_ELF_UNWIND_FILE_BYTES
+    ? `The image exceeds the ${String(MAX_INSPECT_ELF_UNWIND_FILE_BYTES)}-byte input ceiling this operation accepts; select a smaller artifact.`
+    : `Raise max_file_bytes above ${String(maximum)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`;
+
+const recordBudgetRemediation = (maximum: number): string =>
+  maximum >= MAX_INSPECT_ELF_UNWIND_RANGES
+    ? `The image exceeds the ${String(MAX_INSPECT_ELF_UNWIND_RANGES)}-record unwind ceiling this operation accepts; select a smaller artifact.`
+    : `Raise max_ranges above ${String(maximum)} or select a smaller artifact; the limit is the caller-selected unwind record budget.`;
 
 const elfUnwindFailurePrimary = (
   facts: ArtifactFilePrimaryFacts,
   input: InspectElfUnwindRangesInput,
 ) => {
   const { cause, origin } = facts;
-  // The page's symbol-name text allowance is fixed; only a smaller page avoids it.
-  if (cause instanceof ElfUnwindSymbolTextFailure)
+  if (isParseLimit(cause, ELF_UNWIND_FORMAT)) {
+    const { detail, limit } = cause.failure;
+    const records = limit.name === ELF_UNWIND_RECORD_LIMIT;
     return new AnalysisResourceConstraintError(
       OPERATION,
       "capacity",
-      cause.message,
-      { limit: input.limit, maximum_bytes: cause.maximumBytes },
+      detail,
+      records
+        ? { max_file_bytes: input.max_file_bytes, max_ranges: limit.maximum }
+        : { limit: input.limit, maximum_bytes: limit.maximum },
       {
         cause,
         retryable: false,
-        remediationAction: `Request a smaller limit than ${String(input.limit)}, or page with offset; the ${String(cause.maximumBytes)}-byte symbol-name text allowance is fixed, and max_ranges and max_file_bytes do not raise it.`,
+        remediationAction: records
+          ? recordBudgetRemediation(limit.maximum)
+          : `Request a smaller limit than ${String(input.limit)}, or page with offset; the ${String(limit.maximum)}-byte symbol-name text allowance is fixed, and max_ranges and max_file_bytes do not raise it.`,
       },
     );
+  }
   if (cause instanceof BinaryResourceFailure)
-    return new AnalysisResourceConstraintError(
+    return parseLimitConstraint(
       OPERATION,
       "memory",
-      cause.message,
-      { max_file_bytes: input.max_file_bytes },
-      {
-        cause,
-        ...fixedAllowanceOptions(
-          "The 16 MiB ELF structural decoding budget",
-          "parser",
-        ),
-      },
+      cause,
+      fixedAllowanceOptions(
+        "The ELF structural decoding allowance",
+        "parser",
+        binaryResourceCeiling(cause),
+      ),
     );
-  if (cause instanceof BinaryFormatFailure)
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(
-          OPERATION,
-          input.path,
-          cause.message,
-          { cause },
-        )
-      : new AnalysisInputError(OPERATION, { cause }, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: cause.message,
-          },
-        ]);
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "integrity"
-  )
-    return new AnalysisArtifactChangedError(
-      OPERATION,
-      input.path,
-      cause.message,
-      { cause },
-    );
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "cancelled"
-  )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
+  const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
+  if (formatFailure !== undefined) return formatFailure;
+  const identityFailure = projectOwnedArtifactIdentityFailure(
+    facts,
+    OPERATION,
+    input.path,
+  );
+  if (identityFailure !== undefined) return identityFailure;
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure
   ) {
-    if (cause.reason === "limit") {
-      const structural = cause.boundary === "memory";
+    if (cause.reason === "limit" && cause.boundary === "file-size")
       return new AnalysisResourceConstraintError(
         OPERATION,
-        cause.boundary ?? "memory",
+        "file-size",
         cause.message,
         {
           max_file_bytes: input.max_file_bytes,
@@ -185,50 +156,20 @@ const elfUnwindFailurePrimary = (
         },
         {
           cause,
-          ...(cause.boundary === undefined
-            ? {}
-            : structural
-              ? fixedAllowanceOptions(
-                  "The ELF unwind structural decoding budget",
-                  "parser",
-                )
-              : {
-                  retryable: false as const,
-                  remediationAction: inputBudgetRemediation(
-                    cause.boundary,
-                    input,
-                  ),
-                }),
+          retryable: false,
+          remediationAction: fileBudgetRemediation(input.max_file_bytes),
         },
       );
-    }
     if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(
-        OPERATION,
-        { cause, ...stableArtifactInputRecovery(cause) },
-        [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: cause.message,
-          },
-        ],
-      );
+      return stableArtifactInputFailure(cause, OPERATION);
   }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, input.path, cause.code, {
-        cause,
-      });
-    if (isSelectedRegularFileError(cause))
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected ELF image could not be read (${String(cause.code)}): ${input.path}.`,
-        },
-      ]);
-  }
+  const fileFailure = projectSelectedArtifactFileFailure(
+    cause,
+    OPERATION,
+    input.path,
+    "ELF image",
+  );
+  if (fileFailure !== undefined) return fileFailure;
   return new ArtifactOperationError(
     OPERATION,
     origin === "owned-or-classified" && cause instanceof ArtifactReaderFailure

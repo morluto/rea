@@ -1,19 +1,19 @@
 import { createHash } from "node:crypto";
 import { apkSignatureAdmission } from "./ApkSignatureAdmission.js";
 
-import { createAnalysisExecution } from "../application/AnalysisProvider.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type {
   ApkSignatureExecution,
   ApkSignaturePort,
-} from "../application/apkSignature/ApkSignaturePort.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+} from "../ports/apkSignature/ApkSignaturePort.js";
 import {
+  readStableArtifact,
+  ArtifactReaderFailure,
   assertArtifactReadActive,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+  ArtifactResourceScope,
+} from "../resources/index.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
@@ -415,11 +415,11 @@ export class ApkSignatureProvider implements ApkSignaturePort {
     const { v1, decoded: v1Decoded, duplicates } = v1Read.value;
 
     const v2 = decodeScheme(block.value, APK_BLOCK_ID.signatureV2, "v2");
-    if (!v2.ok) return err(v2.error);
+    if (!v2.ok) return v2;
     const v3 = decodeScheme(block.value, APK_BLOCK_ID.signatureV3, "v3");
-    if (!v3.ok) return err(v3.error);
+    if (!v3.ok) return v3;
     const v31 = decodeScheme(block.value, APK_BLOCK_ID.signatureV31, "v3.1");
-    if (!v31.ok) return err(v31.error);
+    if (!v31.ok) return v31;
 
     // Account for representation expansion before allocating the report.
     const projected = projectedOutputBytes(

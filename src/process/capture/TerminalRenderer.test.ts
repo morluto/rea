@@ -204,10 +204,13 @@ it.each(["write", "resize"] as const)(
       );
       await expect(renderer.frames()).rejects.toBe(failure);
     } finally {
-      await scope.close();
-      terminalDispose.mockRestore();
-      addonDispose.mockRestore();
-      await rm(temporaryRoot, { recursive: true, force: true });
+      try {
+        await scope.close();
+      } finally {
+        terminalDispose.mockRestore();
+        addonDispose.mockRestore();
+        await rm(temporaryRoot, { recursive: true, force: true });
+      }
     }
   },
 );
@@ -244,9 +247,12 @@ it("retains disposal failures for a later cleanup retry", async () => {
     );
     expect(terminalDispose).toHaveBeenCalledTimes(2);
   } finally {
-    await scope.close();
-    terminalDispose.mockRestore();
-    await rm(temporaryRoot, { recursive: true, force: true });
+    try {
+      await scope.close();
+    } finally {
+      terminalDispose.mockRestore();
+      await rm(temporaryRoot, { recursive: true, force: true });
+    }
   }
 });
 
@@ -327,8 +333,11 @@ it("renders retained chunks once after late PID knowledge, preserving event time
       expect(frame.serialized_state).toContain("child=selected");
     }
   } finally {
-    await renderer.dispose();
-    write.mockRestore();
+    try {
+      await renderer.dispose();
+    } finally {
+      write.mockRestore();
+    }
   }
 });
 

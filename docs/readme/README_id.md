@@ -82,11 +82,11 @@ Pilih agen yang ingin digunakan, tinjau perubahan yang diusulkan, lalu setujui p
 
 Penyiapan mendukung Claude Code, Codex, Cursor, Gemini CLI, Grok Build, dan [agen lainnya](../getting-started/installation.md#supported-agents). Lihat [instalasi dan penyiapan](../getting-started/installation.md) untuk konfigurasi penyedia dan pendaftaran MCP secara manual.
 
-MCP menggunakan skema input ringkas secara default. Untuk petunjuk bidang lengkap dan validasi bertingkat, atur `REA_MCP_INPUT_SCHEMA_PROFILE=full` pada pendaftaran MCP. Kedua profil mempertahankan semua alat dan validasi server kanonis yang sama; lihat panduan kontrak MCP.
+MCP menggunakan skema input ringkas secara default. Petunjuk yang dihilangkan skema ringkas mengikuti deskripsi alat. Semua alat dan validasi server kanonis tidak berubah; lihat panduan kontrak MCP.
 
 Setup mencatat runtime yang dipilih dan skrip masuk REA secara langsung. Jika memakai package runner, pertahankan entri cache dan runtime tersebut; unduh paket dari direktori tepercaya di luar proyek target. Lihat panduan instalasi.
 
-Skema keluaran lengkap diumumkan secara default. Jika klien membatasi `tools/list`, atur `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` atau `off` dalam registrasi MCP. Validasi server dan hasil terstruktur tetap lengkap. Lihat «Output schemas» di panduan kontrak MCP.
+Skema keluaran tidak disertakan dalam `tools/list` secara default: tidak ada API model yang membacanya, dan REA memvalidasi setiap hasil sendiri. Atur `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` dalam registrasi MCP untuk mengumumkan setiap skema keluaran dalam batas 4096 byte. Di semua pengaturan, validasi server dan hasil terstruktur tetap lengkap. Lihat «Output schemas» di panduan kontrak MCP.
 
 ### Minta agen Anda
 
@@ -164,10 +164,13 @@ Alat tambahan dan dukungan sistem host bergantung pada target yang dianalisis:
 | PE certificates            | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                          | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                                       |
 | PE imports                 | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                            | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                                 |
 | Windows shortcuts          | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts                          | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                                     |
+| Paket NuGet                | Identitas paket, grup dependensi, lisensi, repositori, dan isi ZIP                                    | Inspeksi statis .nupkg bawaan; [Paket NuGet](../guides/managed/nuget-nupkg.md)                                                                                |
 | Artefak WASM               | Validasi, bagian, bentuk WAT import/ekspor yang tepat, dan WAT yang didekode                          | WABT 1.0.42 yang disediakan pemanggil; `inspect_wasm_artifact`                                                                                                |
 | Bytecode EVM               | Selector dispatch, offset byte, argumen yang disimpulkan, dan sifat mutabilitas                       | Pembawa data raw/hex lokal di Linux x64; [panduan EVM offline](../guides/evm/evm-bytecode.md)                                                                 |
 | Rust binaries              | Embedded cargo-auditable dependency list                                                              | [Rust binaries](../rust-binaries.md)                                                                                                                          |
 | ELF notes                  | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                       | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                                  |
+| DWARF compile units        | Compile-unit name, directory, producer, language, and dwo_name                                        | Built-in static ELF, Mach-O, and PE inspection; [DWARF compile units](../guides/native/dwarf-units.md)                                                        |
+| ELF dependencies           | DT_NEEDED, SONAME, RPATH/RUNPATH, GNU versions, and undefined imports                                 | Built-in static ELF inspection; [ELF dependencies](../elf-dependencies.md)                                                                                    |
 | Binary hardening           | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                                   | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                                 |
 | Apple IPS crashes          | .ips metadata, threads, images, registers and crash classes                                           | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                                                 |
 | Linux kernel modules       | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                           | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                        |
@@ -177,7 +180,7 @@ Alat tambahan dan dukungan sistem host bergantung pada target yang dianalisis:
 | JavaScript / Electron      | Modul, impor, source map, rute, IPC, dan hubungan add-on native                                       | Node.js dan npm; [analisis aplikasi](../guides/javascript/javascript-application-workflows.md); Linux: procps `ps`                                            |
 | Situs web                  | Struktur halaman, skrip, pengamatan jaringan, dan tangkapan layar yang diminta                        | Peramban berbasis Chrome; [analisis peramban](../guides/web/browser-observation.md)                                                                           |
 | Rekaman jaringan tersimpan | Permintaan, respons, payload yang terekspos, dan lokasi sumber                                        | HAR / Fiddler Everywhere SAZ; mitmdump di Linux untuk rekaman native mitmproxy; [panduan rekaman](../guides/web/web-network-captures.md)                      |
-| Capturan paket             | Endpoint, DNS, TLS SNI, distribusi protokol, dan permintaan HTTP                                      | tshark dan capinfos buatan pemanggil; [panduan pcap](../guides/data/pcap-analysis.md)                                                                         |
+| Capturan paket             | Endpoint, DNS, TLS SNI, distribusi protokol, dan permintaan HTTP                                      | tshark dan capinfos buatan pemanggil (diverifikasi di Linux); [panduan pcap](../guides/data/pcap-analysis.md)                                                 |
 | Assembly .NET              | Metadata, instruksi CIL, dependensi native yang dideklarasikan, dan perbandingan build                | Tidak ada (hanya analisis statis); [panduan kode terkelola](../guides/managed/managed-code-analysis.md)                                                       |
 | PyInstaller                | CArchive, PYZ, Python bytecode                                                                        | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                         |
 | Deno compile binaries      | Virtual files, entry point, recorded options, npm snapshot length                                     | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                          |
@@ -286,6 +289,12 @@ REA mengekspor lingkungan yang dapat dijalankan dengan uji dasar untuk memeriksa
 [Panduan membangun lingkungan](https://rea.tools/guides/rl-environments/) ·
 [Referensi lingkungan](../agent-environments.md) ·
 [Tonton demo di X](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### Lingkungan aplikasi desktop
+
+REA juga dapat membuat lingkungan untuk aplikasi desktop Linux yang digunakan agen melalui tangkapan layar, mouse, dan keyboard. Dari permintaan satu baris, seperti "Buatkan lingkungan Gnote tempat agen menambahkan minyak zaitun ke catatan daftar belanja", agen Anda memasang aplikasi di komputer build lokal, menulis tugas, mengekspor lingkungan, dan memeriksa tugas di komputer baru. Mesin yang membuatnya memerlukan Linux di amd64 atau arm64, Docker, dan versi framework agentenv yang ditetapkan panduan.
+
+[Siapkan lingkungan aplikasi desktop](../desktop-build-computer.md)
 
 ## FAQ
 

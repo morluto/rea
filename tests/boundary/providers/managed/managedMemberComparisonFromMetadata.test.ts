@@ -1,8 +1,8 @@
-import { readManagedPeLayout } from "../../../../src/dotnet/ManagedPeReader.js";
+import { readManagedPeLayout } from "../../../../src/domain/managed/managedPeReader.js";
 import {
   metadataRowOffset,
   readManagedMetadataLayout,
-} from "../../../../src/dotnet/ManagedMetadataLayout.js";
+} from "../../../../src/domain/managed/managedMetadataLayout.js";
 import {
   buildManagedNestedTypeFixture,
   buildManagedPeFixture,
@@ -93,7 +93,9 @@ describe("managed comparison selected nominal membership", () => {
       ...source,
       result: partial,
     });
-    expect(comparison.coverage.status).toBe("partial");
+    // The partial side cannot establish its selected scope, so scope
+    // agreement and the comparison's coverage are unknown.
+    expect(comparison.coverage.status).toBe("unknown");
     expect(comparison.summary).toEqual({
       added: 0,
       removed: 0,
@@ -109,8 +111,8 @@ describe("managed comparison selected nominal membership", () => {
     ).toBe(true);
   });
 
-  it.each(["current", "historical"])(
-    "does not recover missing %s selected identity from display names",
+  it.each(["complete", "incomplete"])(
+    "does not recover missing selected identity from display names with %s nesting",
     (kind) => {
       const source = inspect(
         distinctSelectedNestedOwners().left,
@@ -122,7 +124,7 @@ describe("managed comparison selected nominal membership", () => {
         ...type,
         name_sha256: null,
       }));
-      if (kind === "historical") unknown.nesting_read = null;
+      if (kind === "incomplete") unknown.nesting_read = false;
       const comparison = compareManagedMembers(source, {
         ...source,
         result: unknown,
@@ -135,7 +137,7 @@ describe("managed comparison selected nominal membership", () => {
         unchanged: 0,
       });
       expect(comparison.matching.unmatched).toBe(4);
-      expect(comparison.coverage.status).toBe("partial");
+      expect(comparison.coverage.status).toBe("unknown");
     },
   );
 
@@ -255,7 +257,9 @@ describe("managed comparison selected scope agreement", () => {
         ...source,
         result: limited,
       });
-      expect(comparison.coverage.status).toBe("partial");
+      // Scope agreement that cannot be established makes the comparison
+      // unknown, not a known partial gap.
+      expect(comparison.coverage.status).toBe("unknown");
       expect(comparison.limitations).toContainEqual(
         expect.stringContaining(
           "Selected declaring-type scope agreement is unknown",
@@ -266,6 +270,27 @@ describe("managed comparison selected scope agreement", () => {
       );
     },
   );
+
+  it("reports a whole-assembly comparison unknown when one side examined no metadata", () => {
+    const source = inspect(buildManagedPeFixture(), "/fixture/whole.dll");
+    const unavailable = structuredClone(source.result);
+    unavailable.metadata.status = "malformed";
+    unavailable.coverage.state = "unavailable";
+    unavailable.types = [];
+    unavailable.methods = [];
+    unavailable.fields = [];
+    unavailable.method_rows = null;
+    const sides = [source, { ...source, result: unavailable }] as const;
+    // Both selections are whole-assembly, so only the unavailable side, not
+    // scope agreement, makes the result unknown; it wins beside the partial
+    // method-row inventory, and in either order.
+    for (const [left, right] of [sides, [sides[1], sides[0]]] as const)
+      expect(compareManagedMembers(left, right).coverage).toEqual({
+        status: "unknown",
+        left_status: left === source ? "complete" : "unavailable",
+        right_status: right === source ? "complete" : "unavailable",
+      });
+  });
 
   it("recognizes complete empty selected scopes despite different unmatched requests", () => {
     const bytes = buildManagedPeFixture();
@@ -350,14 +375,14 @@ describe("managed comparison method row coverage", () => {
       }),
     };
     expect(compareManagedMembers(full, selected).summary.removed).toBe(0);
-    const historical = {
+    const unscoped = {
       ...full,
       result: managedMemberInspectionSchema.parse({
         ...full.result,
-        method_rows: undefined,
+        method_rows: null,
       }),
     };
-    expect(compareManagedMembers(historical, middle).summary.removed).toBe(0);
+    expect(compareManagedMembers(unscoped, middle).summary.removed).toBe(0);
   });
 });
 
@@ -513,13 +538,14 @@ describe("managed edge identity resolution", () => {
       });
   });
 
-  it("retains unknown identity for cyclic scope, TypeSpec and historical edges", () => {
+  it("compares resolved TypeSpec rows locally and keeps cyclic scopes and unresolved edges unknown", () => {
     const cyclic = observeEdgeTarget({
       typeReferences: [
         { namespace: "Fixture", name: "Outer", enclosingRow: 3 },
         { namespace: "", name: "Inner", enclosingRow: 2 },
       ],
     });
+    expect(cyclic.result.call_edges[0]?.target_row_resolved).toBe(false);
     expect(compareManagedMembers(cyclic, cyclic).methods[0]?.status).toBe(
       "unknown",
     );
@@ -527,24 +553,23 @@ describe("managed edge identity resolution", () => {
       memberRefParentRaw: 12,
       typeSpecSignatures: [Buffer.from([0x15, 0x12, 9, 1, 8])],
     });
+    expect(spec.result.call_edges[0]?.target_row_resolved).toBe(true);
     expect(compareManagedMembers(spec, spec).methods[0]?.status).toBe(
-      "unknown",
+      "unchanged",
     );
     const source = observeEdgeTarget();
-    const historical = {
+    const unresolved = {
       ...source,
       result: managedMemberInspectionSchema.parse({
         ...source.result,
-        call_edges: source.result.call_edges.map(
-          ({
-            il_offset: _offset,
-            target_identity_sha256: _identity,
-            ...edge
-          }) => edge,
-        ),
+        call_edges: source.result.call_edges.map((edge) => ({
+          ...edge,
+          il_offset: null,
+          target_identity_sha256: null,
+        })),
       }),
     };
-    expect(compareManagedMembers(source, historical).methods[0]?.status).toBe(
+    expect(compareManagedMembers(source, unresolved).methods[0]?.status).toBe(
       "unknown",
     );
   });
@@ -1079,7 +1104,9 @@ describe("managed LocalVarSig comparison", () => {
       status: "changed",
       dimensions: ["metadata"],
       match: { basis: "exact-il-signature" },
-      limitations: [expect.stringContaining("encoding difference")],
+      limitations: [
+        expect.objectContaining({ code: "local-signature-bytes-changed" }),
+      ],
     });
   });
 
@@ -1102,9 +1129,7 @@ describe("managed LocalVarSig comparison", () => {
         status: "changed",
         dimensions: ["metadata", "availability"],
         limitations: [
-          expect.stringContaining(
-            "Local variable signature identity is unknown",
-          ),
+          expect.objectContaining({ code: "local-signature-unknown" }),
         ],
       });
       const sameHeader = observe(
@@ -1122,7 +1147,7 @@ describe("managed LocalVarSig comparison", () => {
     },
   );
 
-  it("preserves historical locals uncertainty across artifacts and byte identity within one artifact", () => {
+  it("preserves absent locals uncertainty across artifacts and byte identity within one artifact", () => {
     const left = observe(
       Buffer.from([0x07, 0x01, 0x08]),
       "/fixture/locals-current.dll",
@@ -1131,25 +1156,23 @@ describe("managed LocalVarSig comparison", () => {
       Buffer.from([0x07, 0x01, 0x0a]),
       "/fixture/locals-old.dll",
     );
-    const historical = (side: typeof left) => ({
+    const absent = (side: typeof left) => ({
       ...side,
       result: managedMemberInspectionSchema.parse({
         ...side.result,
         methods: side.result.methods.map((method) => ({
           ...method,
-          body: { ...method.body, local_var_signature: undefined },
+          body: { ...method.body, local_var_signature: null },
         })),
       }),
     });
     expect(
-      compareManagedMembers(left, historical(currentRight)).methods[0],
+      compareManagedMembers(left, absent(currentRight)).methods[0],
     ).toMatchObject({
       status: "unknown",
       dimensions: ["availability"],
     });
-    expect(
-      compareManagedMembers(left, historical(left)).methods[0],
-    ).toMatchObject({
+    expect(compareManagedMembers(left, absent(left)).methods[0]).toMatchObject({
       status: "unchanged",
       dimensions: [],
     });
@@ -1266,6 +1289,10 @@ describe("managed member comparison", () => {
       status: "changed",
       match: { status: "matched", basis: "exact-signature" },
       dimensions: ["cil", "availability"],
+      limitations: [
+        expect.objectContaining({ code: "call-target-unavailable" }),
+        expect.objectContaining({ code: "field-target-unavailable" }),
+      ],
     });
   });
 
@@ -1299,6 +1326,40 @@ describe("managed member comparison", () => {
             },
           },
         ],
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("managed member comparison limitation reasons", () => {
+  it("states each limitation as a code with its explanation and refuses bare text", () => {
+    const left = inspect(buildManagedPeFixture(), "/tmp/left.dll");
+    const right = inspect(
+      buildManagedPeFixture({
+        ilBody: Buffer.from([
+          0x32, 0x02, 0x7b, 0x02, 0x00, 0x00, 0x04, 0x28, 0x02, 0x00, 0x00,
+          0x0a, 0x2a,
+        ]),
+      }),
+      "/tmp/right.dll",
+    );
+    const result = compareManagedMembers(
+      { evidenceId: left.evidenceId, result: left.result },
+      { evidenceId: right.evidenceId, result: right.result },
+    );
+    expect(managedMemberComparisonResultSchema.parse(result)).toEqual(result);
+    expect(result.methods[0]?.limitations).toEqual([
+      { code: "call-target-unavailable", message: expect.any(String) },
+      { code: "field-target-unavailable", message: expect.any(String) },
+    ]);
+    // A limitation recorded as bare text has no reason and is refused.
+    expect(
+      managedMemberComparisonResultSchema.safeParse({
+        ...result,
+        methods: result.methods.map((item) => ({
+          ...item,
+          limitations: item.limitations.map(({ message }) => message),
+        })),
       }).success,
     ).toBe(false);
   });
@@ -1496,7 +1557,10 @@ describe("managed member comparison uncertainty", () => {
       left: { token: "0x06000001" },
       right: null,
       limitations: [
-        expect.stringContaining("unknown-within-incomplete-metadata"),
+        expect.objectContaining({
+          code: "unknown-within-incomplete-metadata",
+          side: "right",
+        }),
       ],
     });
     expect(result.fields[0]).toMatchObject({
@@ -1504,7 +1568,10 @@ describe("managed member comparison uncertainty", () => {
       left: null,
       right: { token: "0x04000001" },
       limitations: [
-        expect.stringContaining("unknown-within-incomplete-metadata"),
+        expect.objectContaining({
+          code: "unknown-within-incomplete-metadata",
+          side: "left",
+        }),
       ],
     });
     expect(result.coverage).toEqual({
@@ -1562,9 +1629,7 @@ describe("managed member comparison uncertainty", () => {
           candidate_left_tokens: ["0x04000001", "0x04000002"],
           candidate_right_tokens: ["0x04000001", "0x04000002"],
         }),
-        limitations: [
-          "Multiple managed fields share the same signature; REA did not guess a token remap.",
-        ],
+        limitations: [expect.objectContaining({ code: "ambiguous-signature" })],
       }),
     ]);
   });
@@ -1614,30 +1679,21 @@ it.each([
     expect(side.result.fields[0]?.signature.parse_status).toBe("malformed");
     expect(side.result.coverage.state).toBe("partial");
 
-    for (const signature_resolution of [
-      side.result.signature_resolution,
-      null,
-    ]) {
-      const observation = {
-        ...side,
-        result: { ...side.result, signature_resolution },
-      };
-      const comparison = compareManagedMembers(observation, observation);
-      expect(comparison.coverage.status).toBe("partial");
-      expect(comparison.summary).toMatchObject({
-        unchanged: 0,
-        changed: 0,
-        added: 0,
-        removed: 0,
-        unknown: 2,
+    const comparison = compareManagedMembers(side, side);
+    expect(comparison.coverage.status).toBe("partial");
+    expect(comparison.summary).toMatchObject({
+      unchanged: 0,
+      changed: 0,
+      added: 0,
+      removed: 0,
+      unknown: 2,
+    });
+    for (const item of [...comparison.methods, ...comparison.fields])
+      expect(item).toMatchObject({
+        status: "unknown",
+        match: { status: "matched", confidence: "exact" },
+        limitations: [expect.objectContaining({ code: "signature-malformed" })],
       });
-      for (const item of [...comparison.methods, ...comparison.fields])
-        expect(item).toMatchObject({
-          status: "unknown",
-          match: { status: "matched", confidence: "exact" },
-          limitations: [expect.stringMatching(/^signature-malformed:/)],
-        });
-    }
   },
 );
 
@@ -1753,7 +1809,9 @@ describe("managed member comparison of undecoded signatures", () => {
       expect(item).toMatchObject({
         status: "unknown",
         match: { status: "unmatched" },
-        limitations: [expect.stringContaining("signature-not-decoded")],
+        limitations: [
+          expect.objectContaining({ code: "signature-not-decoded" }),
+        ],
       });
   });
 
@@ -1777,10 +1835,10 @@ describe("managed member comparison of undecoded signatures", () => {
         status: "unknown",
         match: { status: "unmatched" },
         limitations: [
-          expect.stringMatching(
+          expect.objectContaining(
             item.left === null
-              ? /^signature-not-decoded:/
-              : /^counterpart-signature-not-decoded: The right (method|field) inventory/,
+              ? { code: "signature-not-decoded" }
+              : { code: "counterpart-signature-not-decoded", side: "right" },
           ),
         ],
       });
@@ -1829,16 +1887,17 @@ describe("managed member comparison of ambiguous undecoded signatures", () => {
             basis: "exact-il-signature",
           }),
           limitations: [
-            "Multiple managed methods share the same CIL and signature; REA did not guess a token remap.",
+            expect.objectContaining({ code: "ambiguous-il-signature" }),
           ],
         }),
         expect.objectContaining({
           status: "unknown",
           left: expect.objectContaining({ token: "0x06000002" }),
           limitations: [
-            expect.stringMatching(
-              /^counterpart-signature-not-decoded: The right method inventory has an unpaired member/u,
-            ),
+            expect.objectContaining({
+              code: "counterpart-signature-not-decoded",
+              side: "right",
+            }),
           ],
         }),
       ]),
@@ -2141,7 +2200,7 @@ describe("managed member comparison remaps around kept identities", () => {
           basis: "structural-method-shape",
         }),
         limitations: [
-          "Multiple managed methods share the same structural shape; REA did not guess a token remap.",
+          expect.objectContaining({ code: "ambiguous-method-shape" }),
         ],
       }),
     ]);
@@ -2280,13 +2339,32 @@ describe("managed member comparison of raw-signature contention", () => {
       ...base,
       result: { ...base.result, methods: [], fields: [field] },
     };
-    for (const result of [
-      compareManagedMembers(withOwnerless, resolvedOnly),
-      compareManagedMembers(resolvedOnly, withOwnerless),
-    ])
+    for (const [result, leftTokens, rightTokens] of [
+      [
+        compareManagedMembers(withOwnerless, resolvedOnly),
+        [field.token, "0x04000002"],
+        [field.token],
+      ],
+      [
+        compareManagedMembers(resolvedOnly, withOwnerless),
+        [field.token],
+        [field.token, "0x04000002"],
+      ],
+    ] as const) {
       expect(
         result.fields.filter(({ match }) => match.status === "matched"),
       ).toEqual([]);
+      expect(result.fields.length).toBeGreaterThan(0);
+      expect(comparedTokens(result, "fields", "left")).toEqual(
+        [...leftTokens].sort(),
+      );
+      expect(comparedTokens(result, "fields", "right")).toEqual(
+        [...rightTokens].sort(),
+      );
+      expect(result.fields.every((item) => item.status === "unknown")).toBe(
+        true,
+      );
+    }
   });
 });
 
@@ -2529,7 +2607,7 @@ it("keeps a lone ownerless member unknown despite an identical payload", () => {
       candidate_right_tokens: [ownerless.token],
     },
     limitations: [
-      expect.stringContaining("Declared type identity remains unresolved"),
+      expect.objectContaining({ code: "declaring-type-name-not-resolved" }),
     ],
   });
   expect(result.summary).toMatchObject({
@@ -2668,6 +2746,9 @@ describe("managed member comparison of unresolved owners", () => {
       },
     });
     const result = compareManagedMembers(side("Main"), side("Renamed"));
+    expect(result.methods.length).toBeGreaterThan(0);
+    expect(comparedTokens(result, "methods", "left")).toEqual([method.token]);
+    expect(comparedTokens(result, "methods", "right")).toEqual([method.token]);
 
     for (const item of result.methods)
       expect(item.match.status).not.toBe("matched");
@@ -2786,12 +2867,16 @@ describe("managed member comparison of unresolved owners", () => {
       },
     };
 
-    for (const result of [
-      compareManagedMembers(left, right),
-      compareManagedMembers(right, left),
-    ])
+    for (const [result, leftToken, rightToken] of [
+      [compareManagedMembers(left, right), method.token, "0x06000002"],
+      [compareManagedMembers(right, left), "0x06000002", method.token],
+    ] as const) {
+      expect(result.methods.length).toBeGreaterThan(0);
+      expect(comparedTokens(result, "methods", "left")).toEqual([leftToken]);
+      expect(comparedTokens(result, "methods", "right")).toEqual([rightToken]);
       for (const item of result.methods)
         expect(item.match.status).not.toBe("matched");
+    }
   });
 });
 
@@ -3013,53 +3098,17 @@ describe("managed member comparison of resolved signatures", () => {
     ).toEqual([]);
   });
 
-  it("compares raw signatures against Evidence recorded before resolution", () => {
-    // Both signatures name Program, TypeDef row 1, in the same build.
-    const build = () =>
-      buildManagedPeFixture({
-        fieldSignature: Buffer.from([0x06, 0x12, leftTypes.program]),
-        methodSignature: Buffer.from([
-          0x00,
-          0x01,
-          0x01,
-          0x12,
-          leftTypes.program,
-        ]),
-      });
-    const left = inspect(build(), "/tmp/left-recorded.dll");
-    const right = inspect(build(), "/tmp/right-current.dll");
-    const withoutResolution = <Member extends { signature: object }>(
-      members: readonly Member[],
-    ) =>
-      members.map((member) => {
-        const { resolved_sha256: _omitted, ...recorded } = member.signature as {
-          resolved_sha256: unknown;
-        };
-        return { ...member, signature: recorded };
-      });
-    const recorded = managedMemberInspectionSchema.parse({
-      ...left.result,
-      signature_resolution: undefined,
-      methods: withoutResolution(left.result.methods),
-      fields: withoutResolution(left.result.fields),
-      member_refs: withoutResolution(left.result.member_refs),
-    });
-    expect(recorded.methods[0]?.signature.resolved_sha256).toBeNull();
-
-    const result = compareManagedMembers(
-      { evidenceId: left.evidenceId, result: recorded },
-      { evidenceId: right.evidenceId, result: right.result },
+  it("refuses members beside a null signature resolution", () => {
+    const side = inspect(
+      buildManagedPeFixture(),
+      "/tmp/unattested-resolution.dll",
     );
-
-    expect(result.methods).toEqual([
-      expect.objectContaining({ status: "unchanged" }),
-    ]);
-    expect(result.fields).toEqual([
-      expect.objectContaining({ status: "unchanged" }),
-    ]);
-    expect(result.limitations).toContainEqual(
-      expect.stringMatching(/signature type.name resolution.*raw bytes/iu),
-    );
+    expect(side.result.methods.length).toBeGreaterThan(0);
+    expect(
+      managedMemberInspectionSchema
+        .safeParse({ ...side.result, signature_resolution: null })
+        .error?.issues.map(({ path }) => path),
+    ).toEqual(expect.arrayContaining([["methods"], ["fields"]]));
   });
 });
 
@@ -3172,16 +3221,18 @@ describe("managed member comparison of unresolved signatures", () => {
     methodSignature: Buffer.from([0x00, 0x00, 0x12, leftTypes.program]),
   };
   const methodLimitations = (result: ReturnType<typeof compareBuilds>) =>
-    result.methods.map(({ status, limitations }) => [status, limitations]);
+    result.methods.map(({ status, limitations }) => [
+      status,
+      limitations.map(({ code, side }) => ({ code, side })),
+    ]);
+  const notResolved = [{ code: "signature-not-resolved" }];
 
   it("does not establish unchanged signatures from identical unresolved row bytes", () => {
     const result = compareBuilds(unresolvedAt(1), {
       ...unresolvedAt(1),
       typeSpecSignatures: [...typeSpecs].reverse(),
     });
-    expect(methodLimitations(result)).toEqual([
-      ["unknown", [expect.stringMatching(/^signature-not-resolved:/u)]],
-    ]);
+    expect(methodLimitations(result)).toEqual([["unknown", notResolved]]);
   });
 
   it("retains a known CIL change beside an unresolved signature", () => {
@@ -3189,9 +3240,7 @@ describe("managed member comparison of unresolved signatures", () => {
       ...unresolvedAt(1),
       ilBody: Buffer.from([0x0a, 0x17, 0x2a]),
     });
-    expect(methodLimitations(result)).toEqual([
-      ["changed", [expect.stringMatching(/^signature-not-resolved:/u)]],
-    ]);
+    expect(methodLimitations(result)).toEqual([["changed", notResolved]]);
     expect(result.methods[0]?.dimensions).toContain("cil");
   });
 
@@ -3204,7 +3253,9 @@ describe("managed member comparison of unresolved signatures", () => {
     expect(result.fields).toEqual([
       expect.objectContaining({
         status: "unknown",
-        limitations: [expect.stringMatching(/^signature-not-resolved:/u)],
+        limitations: [
+          expect.objectContaining({ code: "signature-not-resolved" }),
+        ],
       }),
     ]);
   });
@@ -3218,13 +3269,6 @@ describe("managed member comparison of unresolved signatures", () => {
     expect(
       [...result.methods, ...result.fields].map(({ status }) => status),
     ).toEqual(["unknown", "unknown", "unknown", "unknown"]);
-    expect(result.limitations).not.toEqual(
-      expect.arrayContaining([
-        expect.stringContaining(
-          "does not attest signature type-name resolution",
-        ),
-      ]),
-    );
   });
 
   it("keeps an unmatched unresolved method unknown in a resolved comparison", () => {
@@ -3233,8 +3277,8 @@ describe("managed member comparison of unresolved signatures", () => {
       compareBuilds(unresolvedAt(2), unresolvedAt(1)),
     ])
       expect(methodLimitations(result)).toEqual([
-        ["unknown", [expect.stringMatching(/^signature-not-resolved:/u)]],
-        ["unknown", [expect.stringMatching(/^signature-not-resolved:/u)]],
+        ["unknown", notResolved],
+        ["unknown", notResolved],
       ]);
   });
 
@@ -3251,45 +3295,24 @@ describe("managed member comparison of unresolved signatures", () => {
           (leftItem === null) === (unresolvedSide === "left")
             ? "resolved"
             : "unresolved",
-          limitations,
+          limitations.map(({ code, side }) => ({ code, side })),
         ]),
       ).toEqual(
         expect.arrayContaining([
-          [
-            "unknown",
-            "unresolved",
-            [expect.stringMatching(/^signature-not-resolved:/u)],
-          ],
+          ["unknown", "unresolved", notResolved],
           [
             "unknown",
             "resolved",
             [
-              expect.stringMatching(
-                new RegExp(
-                  `^counterpart-signature-not-resolved: The ${unresolvedSide} method inventory`,
-                  "u",
-                ),
-              ),
+              {
+                code: "counterpart-signature-not-resolved",
+                side: unresolvedSide,
+              },
             ],
           ],
         ]),
       );
     }
-  });
-});
-
-describe("managed member comparison limitations for resolved signatures", () => {
-  it("does not report missing resolved digests for observations without signatures", () => {
-    const base = inspect(buildManagedPeFixture(), "/tmp/no-members.dll");
-    const empty = {
-      ...base,
-      result: { ...base.result, methods: [], fields: [] },
-    };
-    const result = compareManagedMembers(empty, empty);
-
-    expect(result.limitations).not.toContainEqual(
-      expect.stringMatching(/does not attest signature type.name resolution/iu),
-    );
   });
 });
 
@@ -3446,6 +3469,25 @@ const withTwin = (
     },
   };
 };
+
+/** Every retained source token, including unresolved candidates with no selected identity. */
+const comparedTokens = (
+  result: ReturnType<typeof compareManagedMembers>,
+  kind: "methods" | "fields",
+  side: "left" | "right",
+) =>
+  [
+    ...new Set(
+      result[kind]
+        .flatMap((item) => [
+          item[side]?.token,
+          ...(side === "left"
+            ? item.match.candidate_left_tokens
+            : item.match.candidate_right_tokens),
+        ])
+        .filter((token) => token !== undefined),
+    ),
+  ].sort();
 
 const inspect = (bytes: Buffer, path: string, typeNames?: string[]) => {
   const target = managedPeFixtureTarget(bytes, path);

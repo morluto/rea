@@ -5,6 +5,8 @@ import {
 } from "../../domain/investigationProviders.js";
 import {
   isImmutableEvidence,
+  evidenceFileTarget,
+  evidenceSubjectDisplay,
   evidenceSubjectTarget,
   type Evidence,
   type EvidenceSubjectTarget,
@@ -56,14 +58,13 @@ export const applicationGraphSubjectTarget = (
           ({ evidence }) => evidence.extractor.operation === "inventory-root",
         ),
     );
-  return evidenceSubjectTarget(
-    staticRootObserved ||
-      (source.kind === "managed-application" &&
-        subject?.format === "pe" &&
-        subject.digest.sha256 === source.rootArtifactSha256)
-      ? subject
-      : null,
-  );
+  const file = evidenceFileTarget({ subject });
+  return staticRootObserved ||
+    (source.kind === "managed-application" &&
+      file?.format === "pe" &&
+      file.sha256 === source.rootArtifactSha256)
+    ? evidenceSubjectTarget(subject)
+    : undefined;
 };
 
 /** Caller-owned Evidence failed validation at the application graph boundary. */
@@ -296,11 +297,12 @@ const assertApplicationSubject = (
   result: JavaScriptApplicationAnalysisResult,
   path: readonly (string | number)[],
 ): void => {
+  const target = evidenceFileTarget(evidence);
   if (
-    evidence.subject === null ||
-    evidence.subject.digest.sha256 !== result.root_artifact_sha256 ||
-    evidence.subject.format !== result.format ||
-    evidence.subject.local_path !== result.input_path
+    target === undefined ||
+    target.sha256 !== result.root_artifact_sha256 ||
+    target.format !== result.format ||
+    evidenceSubjectDisplay(evidence)?.local_path !== result.input_path
   )
     throw invalidEvidence(
       path,
@@ -361,7 +363,9 @@ export const parseNativeApplicationEvidence = (
 > =>
   captureInputValidation(() => {
     const parsed = inputs.map((input) => parseEvidenceInput(input));
-    const withoutSubject = parsed.findIndex(({ subject }) => subject === null);
+    const withoutSubject = parsed.findIndex(
+      (evidence) => evidenceFileTarget(evidence) === undefined,
+    );
     if (withoutSubject !== -1)
       throw invalidEvidence(
         [...path, withoutSubject],

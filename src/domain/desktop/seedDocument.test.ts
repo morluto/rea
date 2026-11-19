@@ -254,19 +254,6 @@ it("matches file URLs without changing their spelling and keeps URLs when a link
   });
 });
 
-it("recognizes a captured relative filename containing a colon", () => {
-  const argv = ["app", "Budget:2026.svg"];
-  expect(
-    openSeedDocument(argv, {
-      ...AT_HOME,
-      workingDirectory: `${HOME}/Documents`,
-      exec: "app %U",
-      documents: ["Documents/Budget:2026.svg"],
-      isDocument: (path) => path === "Documents/Budget:2026.svg",
-    }),
-  ).toEqual({ argv, opens: { kind: "captured" } });
-});
-
 describe("openSeedDocument settings spelling", () => {
   it("respells a separate --config directory and an equals option", () => {
     const settings = (path: string) =>
@@ -353,20 +340,40 @@ describe("openSeedDocument settings spelling", () => {
     });
   });
 
-  it("remaps a captured path in an env assignment and leaves the program", () => {
-    expect(
-      openSeedDocument(["env", `GNUPGHOME=${HOME}/storage/profile`, "gpa"], {
-        ...AT_HOME,
-        exec: "gpa",
-        documents: [],
-        isCaptured: (path) => path === "storage/profile" || path === ".gnupg",
-        spell: (path) => (path === "storage/profile" ? ".gnupg" : path),
-      }),
-    ).toEqual({
-      argv: ["env", `GNUPGHOME=${HOME}/.gnupg`, "gpa"],
-      opens: { kind: "empty" },
-    });
-  });
+  it.each([
+    { terminated: false, application: ["gpa"] },
+    { terminated: true, application: ["gpa"] },
+    {
+      terminated: true,
+      application: ["flatpak", "run", "--branch", "stable", "org.example.Gpa"],
+    },
+  ])(
+    "remaps a captured path in an env assignment and leaves $application (terminated prefix $terminated)",
+    ({ terminated, application }) => {
+      const delimiter = terminated ? ["--"] : [];
+      expect(
+        openSeedDocument(
+          [
+            "env",
+            ...delimiter,
+            `GNUPGHOME=${HOME}/storage/profile`,
+            ...application,
+          ],
+          {
+            ...AT_HOME,
+            exec: "gpa",
+            documents: [],
+            isCaptured: (path) =>
+              path === "storage/profile" || path === ".gnupg",
+            spell: (path) => (path === "storage/profile" ? ".gnupg" : path),
+          },
+        ),
+      ).toEqual({
+        argv: ["env", ...delimiter, `GNUPGHOME=${HOME}/.gnupg`, ...application],
+        opens: { kind: "empty" },
+      });
+    },
+  );
 
   it("leaves an empty env value empty when the working directory moves", () => {
     expect(

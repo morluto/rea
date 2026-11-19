@@ -20,7 +20,7 @@ import {
   type ServerResponse,
 } from "node:http";
 import type { AddressInfo } from "node:net";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import {
@@ -32,8 +32,12 @@ import { z } from "zod";
 
 import { onTestFinished } from "vitest";
 
+import { readHostFile } from "../../src/desktop/HostFileRead.js";
 import { DesktopBuildComputers } from "../../src/application/desktop/DesktopBuildComputers.js";
+import type { BuildComputerDefaults } from "../../src/desktop/BuildComputerEnvironment.js";
+import { awaitAcknowledgement } from "./lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "./temporaryDirectory.js";
+import { waitFor } from "../support/testWait.js";
 
 /** A 2x1 PNG of a black and a white pixel, the fake driver's drawn desktop. */
 export const FAKE_FRAME_PNG =
@@ -61,6 +65,8 @@ export interface FakeComputerOptions {
   readonly blankFrames?: number;
   /** How long each screenshot, in order, waits before its reply, unless its request is cancelled. */
   readonly screenshotDelaysMs?: readonly number[];
+  /** Encoded image data in response to JPEG screenshot requests, in order. */
+  readonly jpegScreenshotData?: readonly string[];
   /** Bytes data/get appends to each segment beyond its manifest size. */
   readonly segmentPadding?: number;
   /** Recording starts, in order, whose recording begins but whose reply is lost. */
@@ -149,6 +155,7 @@ const startFakeDriver = async (
       : "A".repeat(options.frameCharacters);
   let blankFrames = options.blankFrames ?? 0;
   let screenshots = 0;
+  let jpegScreenshots = 0;
   const mcp = new McpServer({ name: "fake-reference-driver", version: "1" });
   for (const name of COMPUTER_TOOLS)
     mcp.registerTool(
@@ -173,12 +180,16 @@ const startFakeDriver = async (
         const frame = { frame_id: `f${String(calls.length)}`, width: 1280 };
         const blank = name === "computer_screenshot" && blankFrames > 0;
         if (blank) blankFrames -= 1;
+        const jpegData =
+          name === "computer_screenshot" && args.format === "jpeg"
+            ? options.jpegScreenshotData?.[jpegScreenshots++]
+            : undefined;
         const image =
           name === "computer_screenshot" || args.screenshot === true
             ? [
                 {
                   type: "image" as const,
-                  data: blank ? FAKE_BLANK_PNG : frameData,
+                  data: blank ? FAKE_BLANK_PNG : (jpegData ?? frameData),
                   mimeType: "image/png",
                 },
               ]
@@ -399,7 +410,7 @@ const execRoute = async (
   const [command, operation] = requested?.split(":") ?? [];
   if (
     command !== argv[4] ||
-    (operation !== undefined && !argv[5]?.includes(`\"${operation}\"`))
+    (operation !== undefined && !argv[5]?.includes(`"${operation}"`))
   )
     return answer;
   if (dropReplies === undefined) return answer;
@@ -420,7 +431,13 @@ const buildRoute = async (
     id?: number;
     method?: string;
     argv?: string[];
-    params?: { paths?: string[] };
+    params?: {
+      paths?: string[];
+      parts?: {
+        file: { bytes: string };
+        metadata: Record<string, { path: string }>;
+      }[];
+    };
   };
   if (path === "/.well-known/agent-env.json")
     return {
@@ -436,6 +453,19 @@ const buildRoute = async (
   if (exec === undefined) return undefined;
   if (path === "/agentenv/ext/computer-exec/run")
     return execRoute(exec, token, request.argv ?? [], sessions);
+  // data/add writes each file part under the home, at the path its marker names.
+  if (path === "/agentenv" && request.method === "data/add") {
+    for (const part of request.params?.parts ?? []) {
+      const [marker] = Object.values(part.metadata);
+      if (marker === undefined) continue;
+      await mkdir(dirname(join(exec.home, marker.path)), { recursive: true });
+      await writeFile(
+        join(exec.home, marker.path),
+        Buffer.from(part.file.bytes, "base64"),
+      );
+    }
+    return { jsonrpc: "2.0", id: request.id, result: {} };
+  }
   const paths = request.params?.paths ?? [];
   // Recordings keep the canned segment; other paths are the home's files.
   if (
@@ -631,13 +661,13 @@ export const startFakeComputer = async (
  */
 const FAKE_BUNDLE_MODULE = String.raw`
 import glob
+import hashlib
 import json
 import os
 import shutil
 import signal
 import subprocess
 import sys
-import time
 import types
 
 STATE = os.environ["FAKE_STATE"]
@@ -675,13 +705,18 @@ def run_bundle(root, *, tasks=(), keep=False, emulate=True, sandbox=None, on_pro
     previous = signal.signal(signal.SIGTERM, _interrupted)
     _note("runs.jsonl", {"root": str(root), "tasks": list(tasks), "keep": keep, "emulate": emulate,
                          "sandbox": sandbox})
+    _note("settings.jsonl", {name: hashlib.sha256(value.encode()).hexdigest() for name, value in os.environ.items()
+                             if name.startswith("REA_") and not name.startswith(("REA_AGENT_ENV", "REA_DOCKER",
+                                                                                 "REA_BUILD_COMPUTER"))})
     for path in glob.glob(os.path.join(root, "envs", "*", "*.py")):
         subprocess.run([sys.executable, "-c", DECLARE, os.path.dirname(path), os.path.basename(path)], check=True)
     shutil.copytree(root, os.path.join(STATE, "bundle"), dirs_exist_ok=True)
     os.system("echo a build writing to stdout")
     print("agentenv writing to stdout")
     on_progress("deploying the computer")
-    time.sleep(float(os.environ.get("FAKE_DEPLOY_SECONDS", "0")))
+    if os.environ.get("FAKE_HOLD_DEPLOY"):
+        _note("deploying.jsonl", {"pid": os.getpid()})
+        signal.pause()
     signal.signal(signal.SIGTERM, previous)
     chatter = int(os.environ.get("FAKE_CHATTER_BYTES", "0"))
     for line in range(chatter // 80):
@@ -708,15 +743,70 @@ export interface FakeAgentEnvRunner {
   notes(name: string): Promise<unknown[]>;
 }
 
-export const fakeAgentEnvRunner = async (
-  computer: Pick<FakeComputer, "url" | "token">,
-): Promise<FakeAgentEnvRunner> => {
-  const state = await createTestTempDirectory("fake-agentenv-");
-  const python = execFileSync(
+/** Observe the exact helper waiting at the cancellable deployment phase. */
+export const awaitFakeDeployWait = async (
+  runner: FakeAgentEnvRunner,
+  operation: Promise<unknown>,
+): Promise<{ pid: number }[]> => {
+  let observing = true;
+  const acknowledgement = waitFor(async () => {
+    if (!observing) return [];
+    return z
+      .tuple([z.object({ pid: z.int().positive() })])
+      .parse(await runner.notes("deploying.jsonl"));
+  });
+  try {
+    await awaitAcknowledgement(
+      acknowledgement,
+      operation,
+      "fake deployment wait",
+    );
+    return await acknowledgement;
+  } finally {
+    observing = false;
+    await Promise.allSettled([acknowledgement]);
+  }
+};
+
+/**
+ * JSONL notes from the fake build computer. A trailing fragment without a
+ * newline is still being appended. Every newline-terminated line is a record
+ * and must parse.
+ */
+export const parseAgentEnvNotes = (text: string): unknown[] => {
+  if (text.length === 0) return [];
+  const terminated = text.endsWith("\n");
+  const lines = text.split("\n");
+  if (terminated) lines.pop();
+  const records: unknown[] = [];
+  for (const [index, line] of lines.entries()) {
+    try {
+      records.push(JSON.parse(line) as unknown);
+    } catch (error) {
+      if (!terminated && index === lines.length - 1) break;
+      throw error;
+    }
+  }
+  return records;
+};
+
+let cachedPython3Executable: string | undefined;
+
+/** Resolve the host's python3 interpreter once per test worker. */
+export const resolvePython3Executable = (): string => {
+  cachedPython3Executable ??= execFileSync(
     "python3",
     ["-c", "import sys; print(sys.executable)"],
     { encoding: "utf8" },
   ).trim();
+  return cachedPython3Executable;
+};
+
+export const fakeAgentEnvRunner = async (
+  computer: Pick<FakeComputer, "url" | "token">,
+): Promise<FakeAgentEnvRunner> => {
+  const state = await createTestTempDirectory("fake-agentenv-");
+  const python = resolvePython3Executable();
   await mkdir(join(state, "site", "agent_env"), { recursive: true });
   const runner = join(state, "agent-env");
   await writeFile(
@@ -745,10 +835,7 @@ export const fakeAgentEnvRunner = async (
       } catch {
         return [];
       }
-      return (await readFile(path, "utf8"))
-        .trim()
-        .split("\n")
-        .map((line) => JSON.parse(line) as unknown);
+      return parseAgentEnvNotes(await readFile(path, "utf8"));
     },
   };
 };
@@ -757,6 +844,13 @@ export const fakeAgentEnvRunner = async (
  * A build computer owner over REA's real helper, a fake runner and a fake
  * driver, and a bundle-folder start; the test closes what it starts.
  */
+/** Build-setting defaults that find nothing: an empty archive folder and PATH, never the host's own. */
+export const isolatedBuildDefaults =
+  async (): Promise<BuildComputerDefaults> => {
+    const empty = await createTestTempDirectory("build-defaults-");
+    return { archiveDirectory: empty, searchPath: empty };
+  };
+
 export const fakeBuildComputers = async (
   options: FakeComputerOptions = {},
   environment: Readonly<Record<string, string>> = {},
@@ -764,11 +858,12 @@ export const fakeBuildComputers = async (
   const computer = await startFakeComputer(options);
   onTestFinished(() => computer.close());
   const runner = await fakeAgentEnvRunner(computer);
-  const computers = new DesktopBuildComputers({
-    ...process.env,
-    ...runner.environment,
-    ...environment,
-  });
+  const computers = new DesktopBuildComputers(
+    { ...process.env, ...runner.environment, ...environment },
+    readHostFile,
+    undefined,
+    await isolatedBuildDefaults(),
+  );
   const bundle = await createTestTempDirectory("exported-bundle-");
   await mkdir(join(bundle, "tasks"));
   await writeFile(join(bundle, "tasks", "smoke.json"), "[]\n");

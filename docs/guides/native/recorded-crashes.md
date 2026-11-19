@@ -105,8 +105,14 @@ Initial Linux x64 limits: 32 MiB input, 64 MiB decoder reply, 1 MiB diagnostics 
 stage, 30 seconds owned wall deadline per stage, 3 GiB address-space soft ceiling
 and 30 seconds CPU soft ceiling. `REA_PWNTOOLS_MAX_INPUT_BYTES` raises the input
 bound alone, up to 1 GiB, and returns `provider_unavailable` when it is not a
-decimal integer in range; the reply, diagnostic and deadline bounds stay fixed, so a
-large core that outruns them still fails explicitly instead of partially. Tighter
+decimal integer in range. Per-call `producer_limits` selects input/output/diagnostic,
+file/address-space bytes and CPU seconds; positive safe integers apply on the
+next call without restart. `input_bytes` overrides the launch default, and the
+file allowance follows selected output unless `file_bytes` is explicit. Both
+Python decoder and optional core-only debugger consume the same accepted policy.
+Use CLI `--producer-limits '{"cpu_seconds":60,"output_bytes":134217728}'`.
+`pwntools_timeout_ms` is the independent per-stage wall deadline. A large core
+that still exceeds the selected complete-reply allowance fails explicitly. Tighter
 inherited soft/hard limits are retained; hard limits are not raised. Complete
 oversized results fail explicitly. These process limits do not constitute a sandbox
 for caller-supplied engine code.

@@ -1,4 +1,6 @@
+import { isStrictUtf8 } from "../strictUtf8.js";
 import { withoutCredentialsIn } from "./aptRepositories.js";
+import { DEBIAN_PACKAGE_NAME } from "./debianPackageFile.js";
 
 /** Facts `dpkg-query -W` reports for one installed package. */
 export interface DebianPackageStatus {
@@ -12,28 +14,86 @@ export interface DebianPackageStatus {
 export const DPKG_STATUS_FORMAT =
   "${Package}\\t${Version}\\t${Architecture}\\t${db:Status-Status}\\n";
 
-/** Package names that own a path, from `dpkg-query -S` output. */
-export const parseDpkgOwners = (
-  output: string,
-  path: string,
-): readonly string[] => {
-  const owners = new Set<string>();
-  for (const line of output.split("\n")) {
-    if (line.startsWith("diversion ") || !line.endsWith(`: ${path}`)) continue;
-    for (const name of line.slice(0, -(path.length + 2)).split(","))
-      if (name.trim().length > 0) owners.add(name.trim());
+/** `-S` otherwise interprets patterns, and cannot frame a path containing a line break. */
+export const literalDpkgOwnershipPath = (path: string): boolean =>
+  path.startsWith("/") && !/[\0\n*?[\\]/u.test(path);
+
+/** Decode each ownership row separately so malformed bytes cannot hide valid siblings. */
+function* dpkgOwnershipRows(
+  output: string | Buffer,
+): Generator<string | undefined> {
+  if (typeof output === "string") {
+    yield* output.split("\n");
+    return;
   }
-  return [...owners];
+  for (let start = 0; start < output.length;) {
+    const end = output.indexOf(0x0a, start);
+    const row = output.subarray(start, end < 0 ? output.length : end);
+    yield isStrictUtf8(row) ? row.toString("utf8") : undefined;
+    if (end < 0) break;
+    start = end + 1;
+  }
+}
+
+const dpkgOwnerName = (owner: string): boolean => {
+  const colon = owner.indexOf(":");
+  return colon < 0
+    ? DEBIAN_PACKAGE_NAME.test(owner)
+    : DEBIAN_PACKAGE_NAME.test(owner.slice(0, colon)) &&
+        /^[a-z0-9][a-z0-9-]*$/u.test(owner.slice(colon + 1));
 };
 
-/** `/bin/x` and `/usr/bin/x` name the same file on merged-/usr systems, and dpkg may know either. */
+/** One interpretation of `dpkg-query -S` output for the whole literal batch. */
+export const parseDpkgOwners = (
+  output: string | Buffer,
+  paths: readonly string[],
+): {
+  readonly owners: ReadonlyMap<string, readonly string[]>;
+  readonly complete: boolean;
+} => {
+  const requested = new Set(paths);
+  const matched = new Map<string, Set<string>>();
+  let complete = true;
+  for (const row of dpkgOwnershipRows(output)) {
+    if (row === undefined) {
+      complete = false;
+      continue;
+    }
+    if (row === "" || /^(?:local )?diversion /u.test(row)) continue;
+    // An architecture qualifier contains no space; a literal pathname can
+    // contain further occurrences of the ownership separator.
+    const separator = row.indexOf(": ");
+    const path = row.slice(separator + 2);
+    const names = row.slice(0, separator).split(", ");
+    if (separator < 0 || !path.startsWith("/") || !names.every(dpkgOwnerName)) {
+      complete = false;
+      continue;
+    }
+    if (!requested.has(path)) continue;
+    const owners = matched.get(path) ?? new Set<string>();
+    matched.set(path, owners);
+    for (const name of names) owners.add(name);
+  }
+  const owners = new Map<string, readonly string[]>();
+  for (const path of requested) {
+    const found = matched.get(path);
+    if (found !== undefined || complete) owners.set(path, [...(found ?? [])]);
+  }
+  return { owners, complete };
+};
+
+/** Only merged system directories have alternate `/usr` spellings; application, home and shared-data paths retain their own identity. */
 export const ownershipCandidates = (
   paths: readonly string[],
 ): readonly string[] => [
   ...new Set(
-    paths.flatMap((path) =>
-      path.startsWith("/usr/") ? [path, path.slice(4)] : [path, `/usr${path}`],
-    ),
+    paths.flatMap((path) => {
+      if (!/^\/(?:usr\/)?(?:bin|sbin|lib(?:32|64|o32|x32)?)\//u.test(path))
+        return [path];
+      return path.startsWith("/usr/")
+        ? [path, path.slice(4)]
+        : [path, `/usr${path}`];
+    }),
   ),
 ];
 
@@ -57,7 +117,30 @@ export const parseDpkgStatus = (
 
 const POLICY_VERSION = /^ (?:\*\*\*| {3}) (?<version>\S+) -?\d+$/u;
 const POLICY_SOURCE = /^ {8}-?\d+ (?<source>.+)$/u;
-const DPKG_STATUS_SOURCE = "/var/lib/dpkg/status";
+/** Default only: apt-config can select a different installed-package database. */
+export const DEFAULT_DPKG_STATUS_SOURCE = "/var/lib/dpkg/status";
+
+/** Skip the known status row before line framing can split its filesystem path. */
+function* policyLines(output: string, statusFile: string): Generator<string> {
+  let start = 0;
+  while (start < output.length) {
+    const end = output.indexOf("\n", start);
+    const line = output.slice(start, end < 0 ? undefined : end);
+    const prefix = /^ {8}-?\d+ /u.exec(line)?.[0];
+    const sourceStart = start + (prefix?.length ?? 0);
+    const sourceEnd = sourceStart + statusFile.length;
+    if (
+      prefix !== undefined &&
+      output.startsWith(statusFile, sourceStart) &&
+      (sourceEnd === output.length || output[sourceEnd] === "\n")
+    ) {
+      start = sourceEnd + 1;
+      continue;
+    }
+    yield line;
+    start = end < 0 ? output.length : end + 1;
+  }
+}
 
 /** The source a policy line names, without any user name or password in its URI. */
 const policySource = (pattern: RegExp, line: string): string | undefined => {
@@ -69,18 +152,20 @@ const policySource = (pattern: RegExp, line: string): string | undefined => {
  * The package sources `apt-cache policy` lists for the installed version,
  * excluding the dpkg status database every installed version carries.
  */
-export const parseAptPolicySources = (output: string): readonly string[] => {
+export const parseAptPolicySources = (
+  output: string,
+  statusFile = DEFAULT_DPKG_STATUS_SOURCE,
+): readonly string[] => {
   const sources: string[] = [];
   let installed = false;
-  for (const line of output.split("\n")) {
+  for (const line of policyLines(output, statusFile)) {
     const version = POLICY_VERSION.exec(line);
     if (version !== null) {
       installed = line.startsWith(" ***");
       continue;
     }
     const source = policySource(POLICY_SOURCE, line);
-    if (installed && source !== undefined && source !== DPKG_STATUS_SOURCE)
-      sources.push(source);
+    if (installed && source !== undefined) sources.push(source);
   }
   return sources;
 };
@@ -94,10 +179,11 @@ const POLICY_PACKAGE = /^(?<name>\S+):$/u;
  */
 export const parseAptPolicyPackageSources = (
   output: string,
+  statusFile = DEFAULT_DPKG_STATUS_SOURCE,
 ): ReadonlyMap<string, readonly string[]> => {
   const packages = new Map<string, string[]>();
   let current: string[] | undefined;
-  for (const line of output.split("\n")) {
+  for (const line of policyLines(output, statusFile)) {
     const name = POLICY_PACKAGE.exec(line)?.groups?.name;
     if (name !== undefined) {
       current = [];
@@ -108,7 +194,6 @@ export const parseAptPolicyPackageSources = (
     if (
       current !== undefined &&
       source !== undefined &&
-      source !== DPKG_STATUS_SOURCE &&
       !current.includes(source)
     )
       current.push(source);

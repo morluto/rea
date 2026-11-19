@@ -1,24 +1,27 @@
 import { describe, expect, it } from "vitest";
 
 import type { DesktopApplicationCapture } from "./desktopCapture.js";
+import type { DesktopApplicationState } from "./desktopState.js";
 
 import {
-  capturedHomePath,
+  capturedHomePlan,
+  exportedStateFiles,
   appModuleFile,
   className,
   environmentName,
   launchCommand,
   launchDocumentLimitation,
-  launchDocumentNote,
   ownedPaths,
   renderAppClass,
   renderEnvToml,
   renderInstallScript,
   renderReadme,
-  seedWording,
   type DesktopAppExportPlan,
 } from "./appExport.js";
 import type { LaunchDocument } from "./seedDocument.js";
+
+const capturedHomePath = (capture: DesktopApplicationCapture) =>
+  capturedHomePlan(capture).homePath;
 
 const plan: DesktopAppExportPlan = {
   name: "mousepad",
@@ -42,6 +45,7 @@ const plan: DesktopAppExportPlan = {
   seedFiles: ["Documents/todo.txt"],
   textSeeds: ["Documents/todo.txt"],
   unseededFiles: [],
+  seedModes: {},
   leftOutLocks: [],
   unownedFolders: [],
   runtimeSeeds: [],
@@ -59,6 +63,26 @@ describe("names", () => {
     expect(className("7zip")).toBe("App7zip");
     expect(className("none")).toBe("NoneApp");
     expect(className("true")).toBe("TrueApp");
+  });
+
+  it("names the app by a reverse-DNS id's last part, and by any other id without its trailing version", () => {
+    const names = [
+      "org.gnumeric.gnumeric",
+      "com.github.xournalpp.xournalpp",
+      "glabels-3.0",
+      "gimp-2.10",
+      "display-im6.q16",
+      "mousepad",
+    ].map((id) => environmentName(id, notNumeric));
+
+    expect(names).toEqual([
+      "gnumeric",
+      "xournalpp",
+      "glabels",
+      "gimp",
+      "display-im6-q16",
+      "mousepad",
+    ]);
   });
 
   it("ends a shortened name without a hyphen and prefixes one the name check refuses", () => {
@@ -100,6 +124,11 @@ describe("ownedPaths", () => {
     expect(
       ownedPaths([".config/GIMPshop/2.10/sessionrc"], [], [".config/gimp"]),
     ).toEqual([".config/GIMPshop/2.10"]);
+  });
+
+  it("owns the folder a log sits in, and a lock in the home as itself", () => {
+    expect(ownedPaths([".qet/20261106.log"], [], [])).toEqual([".qet"]);
+    expect(ownedPaths(["poedit.lock"], [], [])).toEqual(["poedit.lock"]);
   });
 
   it("owns a file directly in the home or a shared folder as itself", () => {
@@ -187,6 +216,17 @@ describe("renderers", () => {
   it("declares data hooks only when the app owns paths", () => {
     expect(renderAppClass(plan)).toContain("keep_initial(self.paths)");
     expect(renderAppClass({ ...plan, paths: [] })).not.toContain("@get_data");
+  });
+
+  it("gives an app without owned paths a reset that only relaunches it when its task judges the screen", () => {
+    const relaunched = renderAppClass({
+      ...plan,
+      paths: [],
+      relaunchOnReset: true,
+    });
+    expect(relaunched).toContain("@reset_data\n    async def relaunch(self)");
+    expect(relaunched).not.toContain("@get_data");
+    expect(renderAppClass({ ...plan, paths: [] })).not.toContain("@reset_data");
   });
 
   it("loads captured dconf settings even without owned paths", () => {
@@ -340,16 +380,19 @@ describe("README and class wording", () => {
 
     expect(command.join(" ")).toContain(`"$HOME"/'Documents/todo.txt'`);
     expect(bare).toContain(`\`${command.join(" ")}\``);
-    for (const opens of [seed, none]) {
-      const note = launchDocumentNote({ opens });
-      expect(note).not.toBe("");
-      expect(readme(opens).replace(note, "")).toBe(bare);
-    }
+    const seedNote =
+      "\n- At launch the app opens `~/Documents/todo.txt`, the seed's one document.";
+    const noneNote =
+      "\n- The app opens no document at launch, since the test gives this reason.";
+    expect(readme(seed)).toContain(seedNote);
+    expect(readme(none)).toContain(noneNote);
+    expect(readme(seed).replace(seedNote, "")).toBe(bare);
+    expect(readme(none).replace(noneNote, "")).toBe(bare);
     expect(readme(seed)).toContain("`~/Documents/todo.txt`");
     expect(bare).not.toContain("~/Documents/todo.txt");
     const limitation = launchDocumentLimitation(none);
     expect(limitation).toContain(none.reason);
-    expect(launchDocumentNote({ opens: none })).toContain(limitation);
+    expect(readme(none)).toContain(limitation);
     expect(readme({ kind: "captured" })).toBe(bare);
     for (const opens of [
       seed,
@@ -362,7 +405,22 @@ describe("README and class wording", () => {
   it("says the seed is the user's own data to keep local, unless it was made for the task", () => {
     const own = { ...plan, seedCheckpoint: "drafted" };
     const made = { ...own, syntheticSeed: true };
-    const wording = { own: seedWording(own), made: seedWording(made) };
+    const wording = {
+      own: {
+        origin: "from the user's home at checkpoint `drafted`",
+        notice:
+          "The seed is the user's real data. Keep this bundle local; do not publish it.",
+        docstring:
+          "The seed is the user's state at checkpoint drafted: keep this bundle local.",
+      },
+      made: {
+        origin: "made for the task, as saved at checkpoint `drafted`",
+        notice:
+          "The seed was made for this task, not taken from a user's own data; read `envs/mousepad/seed/` before publishing the bundle.",
+        docstring:
+          "The seed was made for the task, as saved at checkpoint drafted.",
+      },
+    };
     // The README's seed line and closing notice, and the class's docstring.
     const renderedIn = {
       origin: renderReadme,
@@ -390,6 +448,39 @@ describe("README and class wording", () => {
     expect(renderReadme(own)).not.toContain("`envs/mousepad/seed/`");
   });
 });
+
+it.each(["directory", "file", undefined] as const)(
+  "preserves a selected state alias's recorded kind (%s)",
+  (kind) => {
+    const home = "/home/ada";
+    const target = `${home}/.config/notes`;
+    const selection = {
+      path: `${home}/settings`,
+      physical: target,
+      ...(kind === undefined ? {} : { kind }),
+    };
+    const files = exportedStateFiles(
+      {
+        host: { home },
+        application: { state_directories: [{ path: target }] },
+        session: { windows: [], opened_files: [] },
+        state: {
+          state_directories: [target],
+          content_roots: [],
+          selected_paths: [selection],
+        },
+      } as unknown as DesktopApplicationCapture,
+      { paths: [] } as unknown as DesktopApplicationState,
+    );
+    expect(files.stateAliases).toEqual([
+      {
+        alias: "settings",
+        target: ".config/notes",
+        kind: kind ?? "unknown",
+      },
+    ]);
+  },
+);
 
 it("keeps a nested selection under the state path of a selected alias", () => {
   const home = "/home/ada";

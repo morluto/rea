@@ -82,11 +82,11 @@ npx rea-agents setup
 
 설정은 Claude Code, Codex, Cursor, Gemini CLI, Grok Build 및 [다른 에이전트](../getting-started/installation.md#supported-agents)를 지원합니다. 제공자 설정과 수동 MCP 등록은 [설치 및 설정](../getting-started/installation.md)을 참고하세요.
 
-MCP는 기본적으로 간결한 입력 스키마를 사용합니다. 전체 필드 안내와 중첩 검증 정보가 필요하면 MCP 등록에서 `REA_MCP_INPUT_SCHEMA_PROFILE=full`을 설정하세요. 두 프로필 모두 전체 도구와 동일한 정규 서버 검증을 유지합니다. MCP 계약 가이드를 참고하세요.
+MCP는 기본적으로 간결한 입력 스키마를 사용합니다. 간결한 스키마가 생략한 안내는 도구 설명 뒤에 이어집니다. 전체 도구와 정규 서버 검증은 그대로 유지됩니다. MCP 계약 가이드를 참고하세요.
 
 설정은 선택한 런타임과 REA 진입 스크립트를 직접 등록합니다. 패키지 실행기를 사용한다면 해당 캐시 항목과 런타임을 유지하고, 대상 프로젝트 밖의 신뢰할 수 있는 디렉터리에서 패키지를 받으세요. 설치 가이드를 참고하세요.
 
-기본적으로 완전한 출력 스키마가 제공됩니다. 클라이언트가 `tools/list` 크기를 제한한다면 MCP 등록에서 `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` 또는 `off`로 설정하세요. 서버 검증과 구조화된 결과는 완전하게 유지됩니다. MCP 계약 가이드의 «Output schemas»를 참고하세요.
+기본적으로 출력 스키마는 `tools/list`에서 생략됩니다. 모델 API는 출력 스키마를 읽지 않으며 REA가 모든 결과를 직접 검증합니다. MCP 등록에서 `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact`로 설정하면 각 출력 스키마를 4096바이트 이내로 제공합니다. 어떤 설정에서도 서버 검증과 구조화된 결과는 완전하게 유지됩니다. MCP 계약 가이드의 «Output schemas»를 참고하세요.
 
 ### 에이전트에게 요청
 
@@ -160,15 +160,18 @@ REA에는 Node.js 22.x(>=22.23.4), 24.x(>=24.22.1) 또는 26+ (>=26.12.1)와 npm
 | 네이티브 바이너리      | 의사 코드, 어셈블리, 문자열, 심볼, 호출, 참조                                 | Hopper, Ghidra, IDA 또는 Kuna; [네이티브 분석](../guides/native/native-investigation.md)                                                                         |
 | 오프라인 ELF 레이아웃  | 섹션, 세그먼트, 원본 심볼/재배치 정보, 정적 분석으로 얻은 보안 완화 기법 후보 | Linux x64에서 호출자가 제공하는 pwntools; [바이너리 진단](../guides/native/binary-diagnostics.md)                                                                |
 | Go 바이너리            | 내장된 컴파일러 버전, 모듈, `replace` 지시어, 빌드 설정                       | REA 내장 ELF/PE/thin Mach-O 정적 검사; Go 설치 불필요                                                                                                            |
-| Rust 바이너리          | cargo-auditable이 내장한 크레이트 이름, 버전, 소스, 의존성 관계               | REA 내장 ELF/PE/thin Mach-O 정적 검사; [Rust 바이너리](../rust-binaries.md)                                                                                      |
+| Rust 바이너리          | cargo-auditable이 내장한 크레이트 이름, 버전, 소스, 의존성 관계               | REA 내장 ELF/PE/thin Mach-O/WebAssembly 정적 검사; [Rust 바이너리](../rust-binaries.md)                                                                          |
 | PE certificates        | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields  | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                                          |
 | PE imports             | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash    | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                                    |
 | Windows shortcuts      | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts  | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                                        |
 | ELF notes              | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields               | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                                     |
+| DWARF compile units    | Compile-unit name, directory, producer, language, and dwo_name                | Built-in static ELF, Mach-O, and PE inspection; [DWARF compile units](../guides/native/dwarf-units.md)                                                           |
+| ELF dependencies       | DT_NEEDED, SONAME, RPATH/RUNPATH, GNU versions, and undefined imports         | Built-in static ELF inspection; [ELF dependencies](../elf-dependencies.md)                                                                                       |
 | Binary hardening       | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O           | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                                    |
 | Apple IPS crashes      | .ips metadata, threads, images, registers and crash classes                   | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                                                    |
 | Linux kernel modules   | .modinfo keys, __versions CRCs, this_module presence, and signature trailer   | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                           |
 | Erlang BEAM            | IFF chunks, atoms, exports, and tables                                        | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                                |
+| NuGet 패키지           | 패키지 ID, 종속성 그룹, 라이선스, 리포지토리, ZIP 내용                        | 내장 정적 .nupkg 검사; [NuGet 패키지](../guides/managed/nuget-nupkg.md)                                                                                          |
 | WASM 아티팩트          | 유효성 검사, 섹션, import/export의 정확한 WAT 형식, 디코딩된 WAT              | 호출자 제공 WABT 1.0.42; `inspect_wasm_artifact`                                                                                                                 |
 | EVM 바이트코드         | 디스패치 선택자, 바이트 오프셋, 추론한 인자와 상태 변경 가능 여부             | Linux x64의 로컬 원시 바이트/16진수 입력 파일; [오프라인 EVM 가이드](../guides/evm/evm-bytecode.md)                                                              |
 | SQLite 데이터베이스    | 테이블, 열, 인덱스, 뷰, 트리거, 선택한 일반 테이블의 행                       | 로컬 데이터베이스/WAL 스냅샷; Node.js 24.15 이상의 24.x 또는 26 이상(네이티브 SQLite 한도 적용)                                                                  |
@@ -278,6 +281,12 @@ REA는 실행 가능한 환경과 시작 및 응답 여부를 확인하는 기�
 [환경 만들기 가이드](https://rea.tools/guides/rl-environments/) ·
 [환경 참조 문서](../agent-environments.md) ·
 [X에서 데모 보기](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### 데스크톱 앱 환경
+
+REA는 에이전트가 스크린샷, 마우스, 키보드로 사용하는 Linux 데스크톱 앱의 환경도 만들 수 있습니다. "에이전트가 장보기 목록 메모에 올리브유를 추가하는 Gnote 환경을 만들어 줘" 같은 한 줄 요청에서 에이전트가 로컬 빌드 컴퓨터에 앱을 설치하고, 작업을 작성하고, 환경을 내보낸 뒤 새 컴퓨터에서 작업을 확인합니다. 환경을 만드는 머신에는 amd64 또는 arm64의 Linux, Docker, 가이드가 지정한 버전의 agentenv 프레임워크가 필요합니다.
+
+[데스크톱 앱 환경 설정하기](../desktop-build-computer.md)
 
 ## 자주 묻는 질문
 

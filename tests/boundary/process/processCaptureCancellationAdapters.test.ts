@@ -17,6 +17,7 @@ import {
 } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { itWithCaptureCapability } from "./processCaptureCapability.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const fixture = fileURLToPath(
   new URL("../../fixtures/processCaptureCancellation.mjs", import.meta.url),
@@ -59,9 +60,7 @@ const isRunning = async (pid: number): Promise<boolean> => {
 };
 
 const waitForExit = async (pid: number): Promise<void> => {
-  await expect
-    .poll(() => isRunning(pid), { timeout: 3_000, interval: 25 })
-    .toBe(false);
+  await expect.poll(() => isRunning(pid), { interval: 25 }).toBe(false);
 };
 
 const cleanupFixture = async (marker: Marker | undefined): Promise<void> => {
@@ -270,10 +269,13 @@ itWithCaptureCapability(
       },
     );
     const server = createServer({ kind: "session", session }, { logger });
-    const client = new Client({
-      name: "process-settlement-cancellation",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "process-settlement-cancellation",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     let marker: Marker | undefined;
     onTestFinished(async () => {
       await finishCleanup([

@@ -318,21 +318,16 @@ const verifyConnectedStorage = async (endpoint, targetId, origin) => {
 
 const assertStorageKeyPartition = async (connection, origin) => {
   const attachedSessions = new Set();
-  const unsubscribe = connection.onEvent((event) => {
-    if (
-      event.method === "Target.attachedToTarget" &&
-      typeof event.params === "object" &&
-      event.params !== null &&
-      "sessionId" in event.params &&
-      typeof event.params.sessionId === "string" &&
-      "targetInfo" in event.params &&
-      typeof event.params.targetInfo === "object" &&
-      event.params.targetInfo !== null &&
-      "type" in event.params.targetInfo &&
-      event.params.targetInfo.type === "iframe"
-    )
-      attachedSessions.add(event.params.sessionId);
-  });
+  const unsubscribe = connection.onRegisteredEvent(
+    "Target.attachedToTarget",
+    (registered) => {
+      if (
+        registered.payload.sessionId !== undefined &&
+        registered.payload.targetType === "iframe"
+      )
+        attachedSessions.add(registered.payload.sessionId);
+    },
+  );
   await connection.send("Page.enable");
   await connection.send("Target.setAutoAttach", {
     autoAttach: true,
@@ -360,14 +355,15 @@ const assertStorageKeyPartition = async (connection, origin) => {
             {},
             sessionId,
           );
-          const frame = tree.frameTree?.frame;
+          const frame = tree.root;
           if (
-            typeof frame?.id === "string" &&
-            frame.url ===
+            typeof frame.facts.frameId === "string" &&
+            frame.url.kind === "observed" &&
+            frame.url.url ===
               `${origin.replace("127.0.0.1", "localhost")}/storage-frame`
           ) {
             childSession = sessionId;
-            childFrameId = frame.id;
+            childFrameId = frame.facts.frameId;
             break;
           }
         } catch {
@@ -387,7 +383,7 @@ const assertStorageKeyPartition = async (connection, origin) => {
     );
     const rootTree = await connection.send("Page.getFrameTree");
     const beforeRoot = await connection.send("Storage.getStorageKey", {
-      frameId: rootTree.frameTree.frame.id,
+      frameId: rootTree.root.facts.frameId,
     });
     await connection.send("Page.navigate", {
       url: `${origin.replace("127.0.0.1", "localhost")}/storage-top`,
@@ -395,7 +391,7 @@ const assertStorageKeyPartition = async (connection, origin) => {
     await waitForPagePath(connection, "/storage-top", start.result.value);
     const afterTree = await connection.send("Page.getFrameTree");
     const topLevel = await connection.send("Storage.getStorageKey", {
-      frameId: afterTree.frameTree.frame.id,
+      frameId: afterTree.root.facts.frameId,
     });
     assert.notEqual(
       child.storageKey,
@@ -442,55 +438,41 @@ const verifyCallerDebuggerPause = async (caller, origin, scenario) => {
       resolve(callFrameId);
     };
   });
-  const unsubscribe = caller.onEvent((event) => {
-    if (event.method === "Debugger.scriptParsed") {
-      const params = event.params;
-      if (
-        typeof params === "object" &&
-        params !== null &&
-        "scriptId" in params &&
-        typeof params.scriptId === "string" &&
-        "url" in params &&
-        typeof params.url === "string"
-      )
-        scripts.set(params.scriptId, params.url);
-      if (
-        typeof params === "object" &&
-        params !== null &&
-        "url" in params &&
-        typeof params.url === "string" &&
-        params.url.includes("storage")
-      )
-        protocolTrace.push({ method: event.method, url: params.url });
-    } else if (event.method === "Debugger.paused") {
-      const params = event.params;
-      const callFrames =
-        typeof params === "object" && params !== null && "callFrames" in params
-          ? params.callFrames
-          : undefined;
-      const frame = Array.isArray(callFrames) ? callFrames[0] : undefined;
-      const scriptId =
-        typeof frame === "object" && frame !== null && "location" in frame
-          ? frame.location?.scriptId
-          : undefined;
+  // CdpConnection refuses an unregistered event name at subscription and
+  // hands each listener only the registered parse of its event.
+  const unsubscribeParsed = caller.onRegisteredEvent(
+    "Debugger.scriptParsed",
+    (registered) => {
+      const { scriptId, url } = registered.payload.facts;
+      if (scriptId !== undefined && url !== undefined)
+        scripts.set(scriptId, url);
+      if (url?.includes("storage") === true)
+        protocolTrace.push({ method: registered.method, url });
+    },
+  );
+  const unsubscribePaused = caller.onRegisteredEvent(
+    "Debugger.paused",
+    (registered) => {
+      const frame = registered.payload.success
+        ? registered.payload.data.callFrames[0]
+        : undefined;
+      const scriptId = frame?.location.scriptId;
       protocolTrace.push({
-        method: event.method,
-        url: typeof scriptId === "string" ? scripts.get(scriptId) : undefined,
-        reason:
-          typeof params === "object" && params !== null && "reason" in params
-            ? params.reason
-            : undefined,
+        method: registered.method,
+        url: scriptId === undefined ? undefined : scripts.get(scriptId),
+        malformed: !registered.payload.success,
       });
       if (
-        typeof frame === "object" &&
-        frame !== null &&
-        typeof frame.callFrameId === "string" &&
-        typeof scriptId === "string" &&
-        scripts.get(scriptId) === debuggerUrl
+        frame !== undefined &&
+        scripts.get(frame.location.scriptId) === debuggerUrl
       )
         resolvePaused(frame.callFrameId);
-    }
-  });
+    },
+  );
+  const unsubscribe = () => {
+    unsubscribeParsed();
+    unsubscribePaused();
+  };
   const debuggerScenario = browserScenarioSchema.parse({
     ...scenario,
     start_url: { url: debuggerUrl },
@@ -681,16 +663,18 @@ const restoreTarget = async (connection, url) => {
   const load = new Promise((resolve) => {
     resolveLoaded = resolve;
   });
-  const unsubscribe = connection.onEvent((event) => {
-    if (
-      event.method !== "Page.lifecycleEvent" ||
-      event.params?.name !== "load" ||
-      typeof event.params.loaderId !== "string"
-    )
-      return;
-    loaded.add(event.params.loaderId);
-    if (event.params.loaderId === loaderId) resolveLoaded();
-  });
+  const unsubscribe = connection.onRegisteredEvent(
+    "Page.lifecycleEvent",
+    (registered) => {
+      if (
+        registered.payload.name !== "load" ||
+        registered.payload.loaderId === undefined
+      )
+        return;
+      loaded.add(registered.payload.loaderId);
+      if (registered.payload.loaderId === loaderId) resolveLoaded();
+    },
+  );
   try {
     await connection.send("Page.setLifecycleEventsEnabled", { enabled: true });
     const navigation = await connection.send("Page.navigate", { url });

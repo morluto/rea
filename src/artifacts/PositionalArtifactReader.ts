@@ -1,23 +1,24 @@
-import { Readable, Transform, pipeline } from "node:stream";
+import { ArtifactPreparation } from "./ArtifactPreparation.js";
+import { Readable, Transform } from "node:stream";
 import { setImmediate } from "node:timers/promises";
 
 import {
   ArtifactReaderFailure,
   copyArtifactEntry,
-  sameArtifactEntry,
+  assertProducedEntry,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactReaderTraversal,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
-import {
-  artifactReadCancelledBy,
+  ArtifactResourceScope,
   assertArtifactReadActive,
-} from "./ArtifactFileOperation.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
+  ArtifactFileSource,
+} from "../resources/index.js";
+import { ownArtifactStream } from "./OwnedArtifactStream.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
+import type { ArtifactFormatMetadata } from "../domain/artifactFormatMetadata.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 
 /** An entry whose bytes are one range of the carrier. */
 export type PositionalArtifactEntry = ArtifactEntry & {
@@ -26,10 +27,11 @@ export type PositionalArtifactEntry = ArtifactEntry & {
 };
 
 /** The entries one preparation established and the coverage to report. */
-export interface PositionalArtifactEntries {
+export interface PositionalArtifactEntries<Metadata = never> {
   readonly entries: readonly PositionalArtifactEntry[];
-  /** Undefined when coverage is complete without limitations. */
-  readonly coverage: ArtifactReaderTraversal | undefined;
+  /** The coverage the preparation established, including complete coverage. */
+  readonly coverage: ArtifactReaderTraversal;
+  readonly formatMetadata?: Metadata;
 }
 
 /**
@@ -38,20 +40,22 @@ export interface PositionalArtifactEntries {
  * carrier's identity, and close retires open streams before the carrier.
  * Encrypted entries are listed but never opened.
  */
-export abstract class PositionalArtifactReader implements ArtifactReader {
+export abstract class PositionalArtifactReader<
+  Metadata extends ArtifactFormatMetadata = never,
+> implements ArtifactReader {
   abstract readonly format: ArtifactReader["format"];
   readonly #scope = new ArtifactResourceScope();
-  readonly #entries = new Map<string, PositionalArtifactEntry>();
   readonly #streams = new Set<Readable>();
   readonly #label: string;
   readonly #source: ArtifactFileSource;
+  readonly #preparation = new ArtifactPreparation();
   #prepared:
     | {
-        readonly signal: AbortSignal | undefined;
-        readonly promise: Promise<void>;
+        readonly entries: ReadonlyMap<string, PositionalArtifactEntry>;
+        readonly coverage: ArtifactReaderTraversal;
+        readonly formatMetadata: Metadata | undefined;
       }
     | undefined;
-  #coverage: ArtifactReaderTraversal | undefined;
   #closing = false;
 
   constructor(
@@ -66,7 +70,12 @@ export abstract class PositionalArtifactReader implements ArtifactReader {
   /** Read the carrier once and describe its entries. */
   protected abstract prepareEntries(
     signal?: AbortSignal,
-  ): Promise<PositionalArtifactEntries>;
+  ): Promise<PositionalArtifactEntries<Metadata>>;
+
+  /** Metadata from the same validated preparation that established entries and coverage. */
+  protected get preparedFormatMetadata(): Metadata | undefined {
+    return this.#prepared?.formatMetadata;
+  }
 
   async prepareContainer(
     expectedSha256: string,
@@ -84,37 +93,27 @@ export abstract class PositionalArtifactReader implements ArtifactReader {
   ): AsyncIterable<ArtifactEntry> {
     await this.#scope.run(async () => {
       this.assertOpen(signal);
-      for (;;) {
-        const pending = (this.#prepared ??= {
-          signal,
-          promise: this.#prepare(signal),
-        });
-        try {
-          await pending.promise;
-          break;
-        } catch (cause: unknown) {
-          if (this.#prepared === pending) this.#prepared = undefined;
-          if (
-            pending.signal !== signal &&
-            signal?.aborted !== true &&
-            artifactReadCancelledBy(cause, pending.signal)
-          ) {
-            this.assertOpen(signal);
-            continue;
-          }
-          throw cause;
-        }
-      }
-      await this.#source.read(signal);
+      // The first preparation validates before publishing; cached traversals
+      // still need their own freshness admission.
+      if (this.#prepared !== undefined) await this.#source.read(signal);
+      await this.#preparation.run(
+        signal,
+        () => this.#prepare(signal),
+        () => this.assertOpen(signal),
+      );
     });
     this.assertOpen(signal);
-    if (this.#coverage !== undefined)
-      options?.onCoverage?.({
-        ...this.#coverage,
-        limitations: [...this.#coverage.limitations],
-      });
+    const prepared = this.#prepared;
+    if (prepared === undefined)
+      throw invariantViolation(
+        "Positional artifact preparation did not complete",
+      );
+    options?.onCoverage?.({
+      ...prepared.coverage,
+      limitations: [...prepared.coverage.limitations],
+    });
     let index = 0;
-    for (const entry of this.#entries.values()) {
+    for (const entry of prepared.entries.values()) {
       // Yield between batches so a large inventory does not hold the loop.
       if (index++ % 256 === 0) await setImmediate();
       this.assertOpen(signal);
@@ -126,12 +125,12 @@ export abstract class PositionalArtifactReader implements ArtifactReader {
   async open(entry: ArtifactEntry, signal?: AbortSignal): Promise<Readable> {
     return this.#scope.run(async () => {
       this.assertOpen(signal);
-      const stored = this.#entries.get(entry.adapterKey);
-      if (stored === undefined || !sameArtifactEntry(entry, stored))
-        throw new ArtifactReaderFailure(
-          "integrity",
-          `${this.#label} entry does not match its owning inventory`,
-        );
+      const stored = this.#prepared?.entries.get(entry.adapterKey);
+      assertProducedEntry(
+        entry,
+        stored,
+        `${this.#label} entry does not match its owning inventory`,
+      );
       if (stored.encrypted)
         throw new ArtifactReaderFailure(
           "unavailable",
@@ -139,6 +138,14 @@ export abstract class PositionalArtifactReader implements ArtifactReader {
         );
       const { handle } = await this.#source.read(signal);
       this.assertOpen(signal);
+      const cancellationFailure = (reason: unknown): ArtifactReaderFailure =>
+        new ArtifactReaderFailure(
+          "cancelled",
+          `${this.#label} read cancelled`,
+          {
+            cause: reason,
+          },
+        );
       const source =
         stored.declaredSize === 0
           ? Readable.from([])
@@ -146,63 +153,17 @@ export abstract class PositionalArtifactReader implements ArtifactReader {
               start: stored.byteOffset,
               end: stored.byteOffset + stored.declaredSize - 1,
               signal,
-              cancellationFailure: (reason) =>
-                new ArtifactReaderFailure(
-                  "cancelled",
-                  `${this.#label} read cancelled`,
-                  { cause: reason },
-                ),
+              cancellationFailure,
             });
       const output = this.#entryStream(stored, signal);
       // Retirement can destroy the stream before its consumer listens.
-      output.on("error", () => undefined);
-      this.#streams.add(output);
-      let producerComplete = false;
-      const onAbort = (): void => {
-        // Preserve active read/validation errors; after production, the caller
-        // still owns buffered bytes and cancellation must retire that result.
-        if (!producerComplete || output.destroyed) return;
-        output.destroy(
-          new ArtifactReaderFailure(
-            "cancelled",
-            `${this.#label} read cancelled`,
-            { cause: signal?.reason },
-          ),
-        );
-      };
-      // Writable completion can leave unread bytes buffered on the readable
-      // side, so the stream stays owned until that side closes too.
-      const retired = new Promise<void>((resolve) => {
-        output.once("close", () => {
-          this.#streams.delete(output);
-          signal?.removeEventListener("abort", onAbort);
-          resolve();
-        });
+      ownArtifactStream(source, output, {
+        scope: this.#scope,
+        streams: this.#streams,
+        signal,
+        cancellationFailure,
+        label: this.#label,
       });
-      signal?.addEventListener("abort", onAbort, { once: true });
-      if (signal?.aborted) onAbort();
-      void this.#scope
-        .run(async () => {
-          await Promise.all([
-            new Promise<void>((resolve) => {
-              pipeline(source, output, () => {
-                producerComplete = true;
-                if (signal?.aborted) onAbort();
-                resolve();
-              });
-            }),
-            retired,
-          ]);
-        })
-        .catch((cause: unknown) =>
-          output.destroy(
-            cause instanceof Error
-              ? cause
-              : new Error(`${this.#label} stream ownership failed`, {
-                  cause,
-                }),
-          ),
-        );
       return output;
     });
   }
@@ -218,7 +179,8 @@ export abstract class PositionalArtifactReader implements ArtifactReader {
       );
     await this.#scope.close();
     await this.#source.close();
-    this.#entries.clear();
+    this.#prepared = undefined;
+    this.#preparation.clear();
   }
 
   provenance(): readonly [] {
@@ -243,9 +205,17 @@ export abstract class PositionalArtifactReader implements ArtifactReader {
   }
 
   async #prepare(signal?: AbortSignal): Promise<void> {
-    const { entries, coverage } = await this.prepareEntries(signal);
-    for (const entry of entries) this.#entries.set(entry.adapterKey, entry);
-    this.#coverage = coverage;
+    const prepared = await this.prepareEntries(signal);
+    const entries = new Map(
+      prepared.entries.map((entry) => [entry.adapterKey, entry] as const),
+    );
+    await this.#source.read(signal);
+    this.assertOpen(signal);
+    this.#prepared = {
+      entries,
+      coverage: prepared.coverage,
+      formatMetadata: prepared.formatMetadata,
+    };
   }
 
   #entryStream(
@@ -259,6 +229,7 @@ export abstract class PositionalArtifactReader implements ArtifactReader {
         throw new ArtifactReaderFailure(
           "integrity",
           `${label} entry ended early: ${entry.path}`,
+          { integrityCheck: "declared-size" },
         );
       await this.#source.read(signal);
     };

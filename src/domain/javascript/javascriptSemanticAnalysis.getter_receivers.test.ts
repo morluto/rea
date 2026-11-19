@@ -186,6 +186,71 @@ describe("getter receiver mutation aliases (#1665, #2654)", () => {
   ])("preserves a known literal for %s", (_shape, body) => {
     expect(resultValue(body)).toMatchObject({ status: "literal", value: 1 });
   });
+  it.each([
+    ["class computed method key", "class { [(this.x = 2, 'k')]() {} }"],
+    ["class computed field key", "class { [(this.x = 2, 'k')] = 0; }"],
+    ["superclass expression", "class extends (this.x = 2, Object) {}"],
+    [
+      "nested class key",
+      "class extends (class { [(this.x = 2, 'k')]() {} }) {}",
+    ],
+    ["object method computed key", "({ [(this.x = 2, 'k')]() {} })"],
+  ])("invalidates the receiver after a %s write", (_label, result) => {
+    expect(
+      resultValue(
+        `const box = { x: 1, get trigger() { return ${result}; } }; box.trigger; return box.x;`,
+      ),
+    ).toMatchObject({ status: "unknown" });
+  });
+
+  it.each([
+    ["class computed method key", "class { [this]() {} }"],
+    ["class computed field key", "class { [this] = 0; }"],
+    ["object method computed key", "({ [this]() {} })"],
+  ])("invalidates the receiver when a %s converts it", (_label, result) => {
+    expect(
+      resultValue(
+        `const box = { x: 1, toString() { this.x = 2; return 'k'; }, get trigger() { return ${result}; } }; box.trigger; return box.x;`,
+      ),
+    ).toMatchObject({ status: "unknown" });
+  });
+
+  it.each([
+    ["uninvoked class method", "class { method() { this.x = 2; } }"],
+    [
+      "uninvoked computed class method",
+      "class { [(0, 'k')]() { this.x = 2; } }",
+    ],
+    ["uninvoked computed object method", "({ [(0, 'k')]() { this.x = 2; } })"],
+    ["instance field initializer", "class { f = (this.x = 2); }"],
+    ["static field receiver", "class { static s = (this.x = 2); }"],
+    ["static block receiver", "class { static { this.x = 2; } }"],
+  ])("keeps the receiver value through a %s", (_label, result) => {
+    expect(
+      resultValue(
+        `const box = { x: 1, get trigger() { return ${result}; } }; box.trigger; return box.x;`,
+      ),
+    ).toMatchObject({ status: "literal", value: 1 });
+  });
+
+  it.each([
+    ["static block", "class { static { self.x = 2; } }"],
+    ["static field value", "class { static s = (self.x = 2); }"],
+    [
+      "static block of a nested heritage class",
+      "class extends (class { static { self.x = 2; } }) {}",
+    ],
+  ])(
+    "invalidates the receiver after a %s writes through a captured alias",
+    (_label, result) => {
+      expect(
+        resultValue(
+          `const box = { x: 1, get trigger() { const self = this; return ${result}; } }; box.trigger; return box.x;`,
+        ),
+      ).toMatchObject({ status: "unknown" });
+    },
+  );
+
   it("terminates recursive receiver getters", () => {
     expect(
       resultValue(

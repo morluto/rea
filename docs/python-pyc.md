@@ -80,15 +80,14 @@ The inline Evidence result contains the artifact path, SHA-256, and byte length.
 `header` contains:
 
 - `magic`, the 16-bit little-endian field;
-- `python_version` and `code_layout`, mapped from the pinned CPython 3.7–3.13
-  marshal table (`py37`, `py38`, or `py311`); 3.11 alpha magics before 3494 used
-  other code layouts and are unsupported. The 3.7.0a1/a2 magics 3390/3391
-  used 12-byte headers and are outside this reader's supported format. The
-  identity table also recognizes 3.14 (3627) and 3.15 (3666): those magics
-  carry the same packed 16-byte header, so the typed refusal names the observed
-  version and flags, and says that no marshal code layout is pinned for it.
-  Without a pinned layout the code objects cannot be decoded, so a recognized
-  version is still not a successful decode;
+- `python_version` and `code_layout`, mapped from the pinned CPython marshal
+  table (`py37`, `py38`, or `py311`): 3.7–3.13, plus the 3.14 magic 3627 and
+  the 3.15 magic 3666, each checked against a real interpreter (CPython 3.14.6
+  and 3.15.0b3). Other 3.14 and 3.15 pre-release magics are not pinned and are
+  unsupported. 3.11 alpha
+  magics before 3494 used other code layouts and are unsupported. The
+  3.7.0a1/a2 magics 3390/3391 used 12-byte headers and are outside this
+  reader's supported format;
 - `flags`, `hash_based`, and `check_source` from PEP 552;
 - `source_hash_hex` for hash-based pycs, or `source_mtime` and `source_size`
   for timestamp pycs.
@@ -107,6 +106,12 @@ Each object reports name, optional qualname,
 filename, the signed 32-bit `co_firstlineno` value, argument counts, flags,
 names, locals (or `localsplusnames` on 3.11+), const
 summaries, and bytecode length plus SHA-256.
+
+CPython 3.14 marshals folded slice subscripts such as `a[1:10:2]` as slice
+constants. They are summarized as `slice`, walked for nested code like other
+containers, and compare as CPython slices do: through their start, stop, and
+step, never equal to a tuple. A slice tag in a pyc older than magic 3608 is
+malformed, as it is for CPython.
 
 Code-object equality used by sets and dictionaries follows the selected CPython format:
 3.7–3.10 derive `CO_NOFREE` from the free/cell tables for equality, while
@@ -142,7 +147,13 @@ and a null dictionary value ends the dict without that entry.
 
 The selected file is limited to 16 MiB by default (64 MiB maximum). Marshal
 object count, nesting depth, and per-string size are bounded; exceeding a
-budget fails without partial success. Decode-limit failures are deterministic:
+budget fails without partial success. Parser refusals name the exhausted
+allowance and its effective bound in `details.reported_limits.boundary` and
+`details.reported_limits.maximum`. A derived budget reports its own name and
+maximum. For example, `nested_code_steps` reports the product of
+`max_objects` and `max_depth`, and recovery names both caller controls.
+
+Decode-limit failures are deterministic:
 the recovery action names the selected field and CLI option, its effective
 value, and its accepted maximum. Raise that field on the next call when the
 maximum permits it; waiting for another analysis or increasing host memory does
@@ -187,9 +198,9 @@ against that same object budget. Integer digits and expanded
 set or dictionary keys, including a shared tuple repeated at each level, count
 against the string budget. Magics outside the pinned identity table, truncated
 headers, trailing marshal bytes, and a non-code top-level object are typed
-failures. A recognized 3.14/3.15 magic is a typed unsupported failure too: the
-header is qualified from its packed 16-byte fields, but no marshal code layout is
-pinned, so no code object is reported and the result is never partial success.
+failures. A recognized magic with no pinned marshal code layout is a typed
+unsupported failure too: the header is qualified from its packed 16-byte
+fields, but no code object is reported and the result is never partial success.
 
 A decoded header does not prove the matching `.py` is present. `python_version`
 is the magic table, not a running interpreter. This workflow does not recover

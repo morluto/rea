@@ -24,7 +24,7 @@ const BUDGET = "Documents/Budget.gnumeric";
 const HOSTNAME = "e81232be457d";
 const SEED = "envs/notes/seed/Documents/Budget.gnumeric";
 const CELLS =
-  "/root/children/[name=gnm:Sheets]/children/[name=gnm:Sheet]/children/[name=gnm:Cells]/children";
+  "/root/children/[name=gnm:Sheets]/children/[name=gnm:Sheet][>gnm:Name=Budget]/children/[name=gnm:Cells]/children";
 
 /** A Gnumeric workbook's XML with its rent, author and any comment as given. */
 const workbook = (
@@ -197,7 +197,7 @@ describe("documents saved gzip-compressed", () => {
     expect(result.normalized_result).toMatchObject({
       scrubbed_files: [SEED],
       unscrubbed_files: [],
-      task: { failing_on_seed: ["rent"] },
+      tasks: [{ failing_on_seed: ["rent"] }],
     });
     const shipped = await readFile(join(directory, SEED));
     expect([...shipped.subarray(0, 4)]).toEqual([0x1f, 0x8b, 8, 0]);
@@ -243,6 +243,49 @@ describe("documents saved gzip-compressed", () => {
       ).toBe(`<template name="${path.slice("envs/notes/seed/".length)}"/>`);
   });
 
+  it("lists a gzip seed recompressed, and a LibreOffice registry both scrubbed and left without its recovery list, each in its own list", async () => {
+    const template = ".local/share/notes/templates/blank.xml.gz";
+    const registry = ".config/notes/registrymodifications.xcu";
+    const kept = {
+      [template]: gzipSync('<template name="blank"/>'),
+      [registry]: Buffer.from(
+        [
+          '<?xml version="1.0" encoding="UTF-8"?>',
+          '<oor:items xmlns:oor="http://openoffice.org/2001/registry">',
+          `<item oor:path="/org.openoffice.UserProfile/Data"><prop oor:name="o" oor:op="fuse"><value>ada@${HOSTNAME}</value></prop></item>`,
+          `<item oor:path="/org.openoffice.Office.Recovery/RecoveryList"><node oor:name="recovery_item_1" oor:op="replace"><prop oor:name="OriginalURL" oor:op="fuse"><value>file://${HOME}/${BUDGET}</value></prop></node></item>`,
+          "</oor:items>",
+          "",
+        ].join("\n"),
+      ),
+    };
+
+    const { result, directory } = await exportBudget(
+      await budgetCapture(gzipped, "", kept),
+    );
+
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      scrubbed_files: [`envs/notes/seed/${registry}`, SEED],
+      recompressed_files: [`envs/notes/seed/${template}`],
+      unscrubbed_files: [],
+    });
+    const shipped = await readFile(
+      join(directory, "envs/notes/seed", registry),
+      "utf8",
+    );
+    expect(shipped).not.toContain("RecoveryList");
+    expect(shipped).toContain("<value>user@localhost</value>");
+    expect(
+      result.limitations.filter((line) => line.includes(`~/${registry}`)),
+    ).toHaveLength(1);
+    const readme = await readFile(join(directory, "README.md"), "utf8");
+    expect(readme).toMatch(/\b1 gzip file\(s\)/u);
+    expect(readme).toContain(`\`~/${registry}\``);
+  });
+});
+
+describe("gzip seeds as shipped", () => {
   it("checks a recompressed formerly unreadable seed as shipped and scrubs its document", async () => {
     const save = (text: string) =>
       gzipSync(text, { level: text.includes(">1200<") ? 9 : 0 });
@@ -256,7 +299,7 @@ describe("documents saved gzip-compressed", () => {
     const { result, directory } = await exportBudget(folder);
     if (result instanceof Error) throw result;
     expect(result.normalized_result).toMatchObject({
-      task: { failing_on_seed: ["rent"] },
+      tasks: [{ failing_on_seed: ["rent"] }],
       scrubbed_files: [SEED],
     });
     const shipped = await readFile(join(directory, SEED));
@@ -279,7 +322,7 @@ describe("documents saved gzip-compressed", () => {
 
     if (result instanceof Error) throw result;
     expect(result.normalized_result).toMatchObject({
-      task: { failing_on_seed: ["rent"] },
+      tasks: [{ failing_on_seed: ["rent"] }],
     });
     const shipped = await readFile(join(directory, SEED));
     expect(openStateDocument(BUDGET, shipped)).toMatchObject({

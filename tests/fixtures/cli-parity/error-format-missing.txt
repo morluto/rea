@@ -1,0 +1,7 @@
+$ rea inspect-byte-entropy <workspace>/sample.bin --format
+exit: 1
+--- stdout
+{"ok":false,"error":{"code":"MISSING_OUTPUT_VALUE","message":"--format requires a value, as in --format <value> or --format=<value>."}}
+<end>
+--- stderr
+<end>

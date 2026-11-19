@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { FIXTURE_TOOLS, fixtureCommand } from "./fixture-toolchain.mjs";
 
 const execute = promisify(execFile);
 
@@ -328,7 +329,7 @@ export function parseRiscvCallSites(listing) {
 
 /** Disassemble the typed fixture's caller with an independent LLVM tool. */
 export async function inspectRiscvCallSites(path) {
-  const command = process.env.REA_RISCV_OBJDUMP ?? "llvm-objdump";
+  const command = fixtureCommand(FIXTURE_TOOLS.riscvObjdump);
   const options = {
     env: { ...process.env, LC_ALL: "C" },
     timeout: 10000,

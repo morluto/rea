@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { boundedList } from "../boundedList.js";
 
 import { changedStateFiles, type TaskDraftFile } from "./appTaskDraft.js";
 import { FILE_NOTE_CODES, type FileNote } from "./appTaskDraftFileNotes.js";
@@ -34,7 +35,7 @@ export const draftNoteSchema = z.strictObject({
     .string()
     .optional()
     .describe(
-      "by_position, view_state_only, long_text, cut_view, unreadable_view: the drafted file the note is about.",
+      "by_position, view_state_only, long_text, cut_view, unreadable_view, volatile_lines: the drafted file the note is about.",
     ),
   files: z
     .array(z.strictObject({ file: z.string(), role: z.string() }))
@@ -226,8 +227,10 @@ export const draftNotes = (
       message: `File identities changed or could not be compared between ${seed} and ${end}, but the captured values do not yield a draftable change. Inspect the files and write an appropriate check.`,
     });
   if (changed.length > 0) {
-    const listed = changed.slice(0, MAX_NOTED_FILES);
-    const more = changed.length - listed.length;
+    const { items: listed, omitted: more } = boundedList(
+      changed,
+      MAX_NOTED_FILES,
+    );
     notes.push({
       code: "unowned_changes",
       message: `${String(changed.length)} file(s) changed between ${seed} and ${end}, none under the paths the export owns (${homeList(facts.owned) || "none"}), so data/get serves none of them: ${listed.map(({ file, role }) => `~/${file} (${role})`).join(", ")}${more === 0 ? "" : `, and ${String(more)} more`}. If one is the app's document or data, capture again naming it with ${STATE_PATH_INPUTS}.`,

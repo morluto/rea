@@ -1,10 +1,111 @@
-import {
-  il2cppMetadataSectionNames,
-  type IL2cppMetadataSectionName,
-} from "../../../src/domain/il2cpp/il2cppMetadata.js";
+import type { IL2cppMetadataSectionName } from "../../../src/domain/il2cpp/il2cppMetadata.js";
 
 type SectionName = IL2cppMetadataSectionName;
 type Width = 1 | 2 | 4;
+
+/** Authored serialized header slots; never derive fixture bytes from the decoder catalog. */
+const V24_HEADER = [
+  "stringLiterals",
+  "stringLiteralData",
+  "strings",
+  "events",
+  "properties",
+  "methods",
+  "parameterDefaultValues",
+  "fieldDefaultValues",
+  "fieldAndParameterDefaultValueData",
+  "fieldMarshaledSizes",
+  "parameters",
+  "fields",
+  "genericParameters",
+  "genericParameterConstraints",
+  "genericContainers",
+  "nestedTypes",
+  "interfaces",
+  "vtableMethods",
+  "interfaceOffsets",
+  "typeDefinitions",
+  "images",
+  "assemblies",
+  "metadataUsageLists",
+  "metadataUsagePairs",
+  "fieldRefs",
+  "referencedAssemblies",
+  "attributesInfo",
+  "attributeTypes",
+  "unresolvedVirtualCallParameterTypes",
+  "unresolvedVirtualCallParameterRanges",
+  "windowsRuntimeTypeNames",
+  "exportedTypeDefinitions",
+] as const satisfies readonly SectionName[];
+
+const V27_HEADER = [
+  "stringLiterals",
+  "stringLiteralData",
+  "strings",
+  "events",
+  "properties",
+  "methods",
+  "parameterDefaultValues",
+  "fieldDefaultValues",
+  "fieldAndParameterDefaultValueData",
+  "fieldMarshaledSizes",
+  "parameters",
+  "fields",
+  "genericParameters",
+  "genericParameterConstraints",
+  "genericContainers",
+  "nestedTypes",
+  "interfaces",
+  "vtableMethods",
+  "interfaceOffsets",
+  "typeDefinitions",
+  "images",
+  "assemblies",
+  "fieldRefs",
+  "referencedAssemblies",
+  "attributesInfo",
+  "attributeTypes",
+  "unresolvedVirtualCallParameterTypes",
+  "unresolvedVirtualCallParameterRanges",
+  "windowsRuntimeTypeNames",
+  "windowsRuntimeStrings",
+  "exportedTypeDefinitions",
+] as const satisfies readonly SectionName[];
+
+const MODERN_HEADER = [
+  "stringLiterals",
+  "stringLiteralData",
+  "strings",
+  "events",
+  "properties",
+  "methods",
+  "parameterDefaultValues",
+  "fieldDefaultValues",
+  "fieldAndParameterDefaultValueData",
+  "fieldMarshaledSizes",
+  "parameters",
+  "fields",
+  "genericParameters",
+  "genericParameterConstraints",
+  "genericContainers",
+  "nestedTypes",
+  "interfaces",
+  "vtableMethods",
+  "interfaceOffsets",
+  "typeDefinitions",
+  "images",
+  "assemblies",
+  "fieldRefs",
+  "referencedAssemblies",
+  "attributeData",
+  "attributeDataRanges",
+  "unresolvedIndirectCallParameterTypes",
+  "unresolvedIndirectCallParameterRanges",
+  "windowsRuntimeTypeNames",
+  "windowsRuntimeStrings",
+  "exportedTypeDefinitions",
+] as const satisfies readonly SectionName[];
 
 /** Synthetic version 39 metadata small enough to read in a hex dump. */
 interface Il2cppMetadataFixtureOptions {
@@ -180,7 +281,8 @@ const assembleFile = (
 ) => {
   const fixed = version !== 39;
   const entryBytes = fixed ? 8 : 12;
-  const names = il2cppMetadataSectionNames(version);
+  const names: readonly SectionName[] =
+    version === 24 ? V24_HEADER : version === 27 ? V27_HEADER : MODERN_HEADER;
   const headerBytes = 8 + names.length * entryBytes;
   const header = Buffer.alloc(headerBytes);
   header.writeUInt32LE(0xfab11baf, 0);
@@ -382,16 +484,6 @@ export const fixtureRows = (options: Il2cppMetadataFixtureOptions = {}) => {
   ];
   return { types, methods };
 };
-
-/** A zero-filled section of `count` records, or none when `count` is 0. */
-const zeroFilledSection = (
-  name: SectionName,
-  count: number,
-  recordBytes: number,
-): [SectionName, SectionContent][] =>
-  count === 0
-    ? []
-    : [[name, { bytes: Buffer.alloc(count * recordBytes), count }]];
 
 /** Real rows followed by zero-filled rows that no owner claims. */
 const paddedRows = (

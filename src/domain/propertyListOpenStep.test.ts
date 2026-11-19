@@ -3,8 +3,8 @@ import { parseOpenStep } from "plist";
 
 import {
   decodeOpenStepPropertyList,
-  OpenStepPropertyListError,
   startsOpenStepPropertyList,
+  type OpenStepPropertyListCode,
 } from "./propertyListOpenStep.js";
 
 it.each([
@@ -30,7 +30,7 @@ const syntaxFailure = (read: () => unknown): Error => {
 };
 
 const containerRefusal = (
-  code: OpenStepPropertyListError["code"],
+  code: OpenStepPropertyListCode,
   position: number,
 ) => ({ code, position });
 
@@ -56,11 +56,11 @@ it.each(containerRefusals)(
   "reports %s before and after a deep suffix",
   (text, diagnosis, deep = diagnosis) => {
     expect(syntaxFailure(() => decodeOpenStepPropertyList(text))).toMatchObject(
-      { _tag: "OpenStepPropertyListError", ...diagnosis },
+      { name: "OpenStepPropertyListError", ...diagnosis },
     );
     expect(
       syntaxFailure(() => decodeOpenStepPropertyList(text + "(".repeat(130))),
-    ).toMatchObject({ _tag: "OpenStepPropertyListError", ...deep });
+    ).toMatchObject({ name: "OpenStepPropertyListError", ...deep });
   },
 );
 
@@ -75,7 +75,7 @@ it.each([
     for (const text of [prefix, prefix + "(".repeat(130)]) {
       const pinned = syntaxFailure(() => parseOpenStep(text));
       const owned = syntaxFailure(() => decodeOpenStepPropertyList(text));
-      expect(owned).not.toBeInstanceOf(OpenStepPropertyListError);
+      expect(owned).not.toHaveProperty("name", "OpenStepPropertyListError");
       expect(owned.constructor).toBe(pinned.constructor);
       expect(owned.message).toBe(pinned.message);
     }
@@ -118,7 +118,7 @@ it.each([
   ["{ key =", "unexpected_end", 7],
 ] as const)("reports incomplete %s as %s at %s", (text, code, position) => {
   expect(syntaxFailure(() => decodeOpenStepPropertyList(text))).toMatchObject({
-    _tag: "OpenStepPropertyListError",
+    name: "OpenStepPropertyListError",
     code,
     position,
   });
@@ -156,8 +156,10 @@ it("does not treat nonterminating whitespace or quoted comment text as line ends
   const error = syntaxFailure(() =>
     decodeOpenStepPropertyList("// comment without a line end"),
   );
-  expect(error).toBeInstanceOf(OpenStepPropertyListError);
-  expect(error).toMatchObject({ code: "unexpected_end" });
+  expect(error).toMatchObject({
+    name: "OpenStepPropertyListError",
+    code: "unexpected_end",
+  });
 });
 
 it.each([

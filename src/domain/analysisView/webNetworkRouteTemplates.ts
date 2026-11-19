@@ -148,7 +148,6 @@ export const readRecordedRequestLine = (
     return excluded("method-unavailable");
   if (parsed.path === null) return excluded("url-unparseable");
   const response = readRecordedResponseDeclaration(reported);
-  const status = response?.status;
   const mime = response?.content?.mimeType;
   const rawMime = typeof mime === "string" ? mime : "";
   if (!temporary(textBytes(rawMime.length))) return null;
@@ -158,7 +157,7 @@ export const readRecordedRequestLine = (
     origin: parsed.origin,
     path: parsed.path,
     query: parsed.query,
-    status: typeof status === "number" && status !== 0 ? status : null,
+    status: response?.status ?? null,
     rawMime,
   };
 };

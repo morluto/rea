@@ -8,6 +8,9 @@ layout and is unsupported until independently verified.
 Inspection retains the header facts: format version, player and engine version
 strings, declared size, dataflags, blocks-and-directory table bounds, the
 producer's 16-byte data hash as declared, and the resolved data-area offset.
+Desktop application inspection uses the same header bounds. When the initial
+file probe stops before both version strings and the fixed fields are read,
+its normal probe budget applies to the additional bytes.
 Members (`CAB-*` SerializedFiles, `.resS` resource streams, shared assets)
 retain declared source paths, virtual stream offsets, sizes and raw node flags.
 The directory flag identifies directories. `compare_artifacts` compares each
@@ -28,8 +31,11 @@ but report unknown directory coverage; no decryption is attempted. The reused
 0x200 encryption/padding flag is interpreted by producer revision. Ambiguous
 revisions retain unknown layout coverage. Unread block counts and data offsets
 are null, never invented zeroes. A declared
-size that exceeds the input file, node paths outside the block stream, and
-counts that cannot fit their table are malformed-input errors.
+size that exceeds the input file or excludes its header, directory or data
+blocks is a malformed-input error, as are node paths outside the block stream
+and counts that cannot fit their table. Directory and data ranges use the
+declared bundle extent; appended carrier bytes do not replace an end-positioned
+directory or become bundle members.
 
 ## Resource bounds
 
@@ -39,7 +45,7 @@ path projections share a conservative 64 MiB admission budget, reserved before
 allocation. Each LZ4 decode allows at most 64 MiB of output and its bounded
 encoded representation; plain blocks stream without this allocation. A reader
 admits four active member streams. The shared archive plaintext-work ceiling
-is the larger of 256 MiB and 500 times carrier size: declared stream bytes,
+is the larger of 256 MiB and 500 times declared bundle size: declared stream bytes,
 readable logical occurrences (including aliases), and cumulative block-decode
 attempts are each charged against that ceiling. Empty-output blocks retain
 their source count and offsets but are removed from member read plans. A separate

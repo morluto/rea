@@ -1,0 +1,36 @@
+$ rea environment-build --help
+exit: 0
+--- stdout
+rea environment-build — Build an agent environment bundle from a recorded capture in one offline step: inspect a HAR (or read capture Evidence), project the environment manifest, derive the state, report which tools the environment answers from state, which replay and why each write is withheld, then write the bundle environment-export writes
+
+Usage: rea environment-build <capture> [directory] [options]
+
+Arguments:
+  capture    A .har file, or capture Evidence JSON from inspect-web-network-capture (HAR) or capture-browser-scenario
+  directory  Bundle directory to create; must be absent or empty, nothing is overwritten; omit only with --dry-run
+
+Options:
+  --name <string>               Env folder and env id (kebab-case); default the manifest's name, or the capture file's name when the origin is a loopback or IP address
+  --template-rule <array>       Opt-in template rule; repeat to select several. Replaces the default after-uid-literal, opaque-token, sibling-variance and prefix-variance
+  --format-rules-only           Apply only the four format rules, the views' own default
+  --package-tarball <string>    Packed rea-agents tarball (npm pack) copied into the env folder and installed by the Dockerfile instead of the registry package pinned to this version
+  --dry-run                     Run every stage and report, but write nothing
+  --capture-timeout-ms <value>  Capture wall-clock deadline in milliseconds (default 30000), from decoder start through process exit. Omitted means 30000 and applies on the next capture. deadlineExpired returns no partial capture. Does not raise the separately selected max_input_bytes, max_reply_bytes or max_nesting_depth budgets.
+
+Custom Global Options:
+  --timings  Write measured command timing to stderr.
+
+Global Options:
+  --filter-output <keys>                      Filter output by key paths (e.g. foo,bar.baz,a[0,3])
+  --format <toon|json|yaml|md|jsonl|csv|tsv>  Output format
+  --full-output                               Show full output envelope
+  --help                                      Show help
+  --json                                      Shorthand for --format json
+  --llms, --llms-full                         Print LLM-readable manifest
+  --schema                                    Show JSON Schema for command
+  --token-count                               Print token count of output (instead of output)
+  --token-limit <n>                           Limit output to n tokens
+  --token-offset <n>                          Skip first n tokens of output
+<end>
+--- stderr
+<end>

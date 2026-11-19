@@ -1,71 +1,11 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { legacyMachoPlatform } from "../domain/apple/machoPlatform.js";
 import {
-  legacyMachoPlatform,
-  type MachoVersionMinPlatform,
-} from "../domain/apple/machoPlatform.js";
-import type { MachoCommandNames } from "./MachoCommandNames.js";
+  LC,
+  machoLoadCommandName,
+} from "../domain/apple/machoLoadCommandCodes.js";
+import type { MachoCommandNames } from "../domain/apple/machoCommandNames.js";
 
-/** The binary is the sole owner of command framing and decoded facts. */
-const COMMAND_NAMES = new Map<number, string>([
-  [1, "LC_SEGMENT"],
-  [2, "LC_SYMTAB"],
-  [3, "LC_SYMSEG"],
-  [4, "LC_THREAD"],
-  [5, "LC_UNIXTHREAD"],
-  [6, "LC_LOADFVMLIB"],
-  [7, "LC_IDFVMLIB"],
-  [8, "LC_IDENT"],
-  [9, "LC_FVMFILE"],
-  [0xa, "LC_PREPAGE"],
-  [0xb, "LC_DYSYMTAB"],
-  [0xc, "LC_LOAD_DYLIB"],
-  [0xd, "LC_ID_DYLIB"],
-  [0xe, "LC_LOAD_DYLINKER"],
-  [0xf, "LC_ID_DYLINKER"],
-  [0x10, "LC_PREBOUND_DYLIB"],
-  [0x11, "LC_ROUTINES"],
-  [0x12, "LC_SUB_FRAMEWORK"],
-  [0x13, "LC_SUB_UMBRELLA"],
-  [0x14, "LC_SUB_CLIENT"],
-  [0x15, "LC_SUB_LIBRARY"],
-  [0x16, "LC_TWOLEVEL_HINTS"],
-  [0x17, "LC_PREBIND_CKSUM"],
-  [0x80000018, "LC_LOAD_WEAK_DYLIB"],
-  [0x19, "LC_SEGMENT_64"],
-  [0x1a, "LC_ROUTINES_64"],
-  [0x1b, "LC_UUID"],
-  [0x8000001c, "LC_RPATH"],
-  [0x1d, "LC_CODE_SIGNATURE"],
-  [0x1e, "LC_SEGMENT_SPLIT_INFO"],
-  [0x8000001f, "LC_REEXPORT_DYLIB"],
-  [0x20, "LC_LAZY_LOAD_DYLIB"],
-  [0x21, "LC_ENCRYPTION_INFO"],
-  [0x22, "LC_DYLD_INFO"],
-  [0x80000022, "LC_DYLD_INFO_ONLY"],
-  [0x80000023, "LC_LOAD_UPWARD_DYLIB"],
-  [0x24, "LC_VERSION_MIN_MACOSX"],
-  [0x25, "LC_VERSION_MIN_IPHONEOS"],
-  [0x26, "LC_FUNCTION_STARTS"],
-  [0x27, "LC_DYLD_ENVIRONMENT"],
-  [0x80000028, "LC_MAIN"],
-  [0x29, "LC_DATA_IN_CODE"],
-  [0x2a, "LC_SOURCE_VERSION"],
-  [0x2b, "LC_DYLIB_CODE_SIGN_DRS"],
-  [0x2c, "LC_ENCRYPTION_INFO_64"],
-  [0x2d, "LC_LINKER_OPTION"],
-  [0x2e, "LC_LINKER_OPTIMIZATION_HINT"],
-  [0x2f, "LC_VERSION_MIN_TVOS"],
-  [0x30, "LC_VERSION_MIN_WATCHOS"],
-  [0x31, "LC_NOTE"],
-  [0x32, "LC_BUILD_VERSION"],
-  [0x80000033, "LC_DYLD_EXPORTS_TRIE"],
-  [0x80000034, "LC_DYLD_CHAINED_FIXUPS"],
-  [0x80000035, "LC_FILESET_ENTRY"],
-  [0x36, "LC_ATOM_INFO"],
-  [0x37, "LC_FUNCTION_VARIANTS"],
-  [0x38, "LC_FUNCTION_VARIANT_FIXUPS"],
-  [0x39, "LC_TARGET_TRIPLE"],
-  [0x3a, "LC_LAZY_LOAD_DYLIB_INFO"],
-]);
 const PLATFORM_NAMES = new Map<number, string>([
   [1, "MACOS"],
   [2, "IOS"],
@@ -114,36 +54,42 @@ const DYLIBS = new Set([
   "LC_LOADFVMLIB",
   "LC_PREBOUND_DYLIB",
 ]);
+// Fixed-VM and prebound library commands carry fields after the name that this
+// projection does not decode.
+const UNDECODED_STRING_COMMANDS = new Set<number>([
+  LC.LOADFVMLIB,
+  LC.IDFVMLIB,
+  LC.FVMFILE,
+  LC.PREBOUND_DYLIB,
+]);
 const STRING_FIELDS = new Map<number, string>([
-  [0x6, "name"],
-  [0x7, "name"],
-  [0x9, "name"],
-  [0x10, "name"],
-  [0xc, "name"],
-  [0xd, "name"],
-  [0x80000018, "name"],
-  [0x8000001f, "name"],
-  [0x20, "name"],
-  [0x80000023, "name"],
-  [0xe, "name"],
-  [0xf, "name"],
-  [0x12, "umbrella"],
-  [0x13, "sub_umbrella"],
-  [0x14, "client"],
-  [0x15, "sub_library"],
-  [0x8000001c, "path"],
-  [0x27, "name"],
-  [0x39, "triple"],
+  [LC.LOADFVMLIB, "name"],
+  [LC.IDFVMLIB, "name"],
+  [LC.FVMFILE, "name"],
+  [LC.PREBOUND_DYLIB, "name"],
+  [LC.LOAD_DYLIB, "name"],
+  [LC.ID_DYLIB, "name"],
+  [LC.LOAD_WEAK_DYLIB, "name"],
+  [LC.REEXPORT_DYLIB, "name"],
+  [LC.LAZY_LOAD_DYLIB, "name"],
+  [LC.LOAD_UPWARD_DYLIB, "name"],
+  [LC.LOAD_DYLINKER, "name"],
+  [LC.ID_DYLINKER, "name"],
+  [LC.SUB_FRAMEWORK, "umbrella"],
+  [LC.SUB_UMBRELLA, "sub_umbrella"],
+  [LC.SUB_CLIENT, "client"],
+  [LC.SUB_LIBRARY, "sub_library"],
+  [LC.RPATH, "path"],
+  [LC.DYLD_ENVIRONMENT, "name"],
+  [LC.TARGET_TRIPLE, "triple"],
 ]);
 
-const bytesText = (input: Uint8Array, fixed = false) => {
+const bytesText = (input: Uint8Array, fixed: boolean) => {
   const end = fixed ? input.indexOf(0) : -1;
   const bytes = end < 0 ? input : input.subarray(0, end);
   try {
     return {
-      text: new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-        bytes,
-      ),
+      text: decodeStrictUtf8(bytes, "preserve"),
       bytesHex: null,
     };
   } catch {
@@ -261,7 +207,7 @@ export const projectMachoBinary = (
   };
   for (const row of binary.commands) {
     const kind =
-      COMMAND_NAMES.get(row.command) ??
+      machoLoadCommandName(row.command) ??
       `LC_UNKNOWN_0x${row.command.toString(16)}`;
     const fields: Record<string, string | number | null> = {
       cmd: kind,
@@ -405,7 +351,7 @@ export const projectMachoBinary = (
       });
     }
     if (row.commandString !== undefined) {
-      decoded = ![0x6, 0x7, 0x9, 0x10].includes(row.command);
+      decoded = !UNDECODED_STRING_COMMANDS.has(row.command);
       const name = textFact(row.commandString, false, commandLimitations);
       const field = STRING_FIELDS.get(row.command) ?? "name";
       fields[field] =
@@ -502,8 +448,7 @@ export const projectMachoBinary = (
       decoded = true;
       fields.version = version(row.legacyBuild.version);
       fields.sdk = version(row.legacyBuild.sdk);
-      const platform = ([0x24, 0x25, 0x2f, 0x30].indexOf(row.command) +
-        1) as MachoVersionMinPlatform;
+      const platform = row.legacyBuild.platform;
       const effective = legacyMachoPlatform(platform, binary.header.cpuType);
       builds.push({
         platform:
@@ -530,6 +475,9 @@ export const projectMachoBinary = (
       decoded = true;
       const owner = textFact(row.note.owner, true, commandLimitations);
       fields.data_owner = owner.text;
+      fields.data_owner_storage_hex = Buffer.from(row.note.owner).toString(
+        "hex",
+      );
       if (owner.bytesHex !== null) fields.data_owner_bytes_hex = owner.bytesHex;
       fields.offset = rawNumber(row.note.offset, 16);
       fields.size = rawNumber(row.note.size, 16);
@@ -543,14 +491,18 @@ export const projectMachoBinary = (
       if (id.bytesHex !== null) fields.entry_id_bytes_hex = id.bytesHex;
       fields.reserved = row.fileset.reserved;
     }
-    if (!row.fullyDecoded || !decoded || !COMMAND_NAMES.has(row.command)) {
+    if (
+      !row.fullyDecoded ||
+      !decoded ||
+      machoLoadCommandName(row.command) === undefined
+    ) {
       fields.command_code = row.command;
       fields.command_offset = (binary.header.wide ? 32 : 28) + row.offset;
       fields.command_sha256 = row.rawSha256;
       commandLimitations.add(
         "Some load-command payload fields are not decoded; command codes, positions and sizes remain observed, but the payload bytes are not retained. A whole-command SHA-256 is included when it fit the read allowance.",
       );
-      if (!COMMAND_NAMES.has(row.command)) {
+      if (machoLoadCommandName(row.command) === undefined) {
         dependencyLimitations.add(
           "An unknown load command may contain dependency facts that were not decoded.",
         );

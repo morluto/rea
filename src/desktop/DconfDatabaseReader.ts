@@ -4,7 +4,13 @@ import { dirname, join } from "node:path";
 import {
   execFileOutput,
   execFileOutputFailure,
+  ExecFileOutputCancelledError,
 } from "../process/ExecFileOutput.js";
+
+import {
+  assertArtifactReadActive,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 
 const DCONF_TIMEOUT_MS = 30_000;
 const DCONF_MAX_BUFFER = 16 * 1024 * 1024;
@@ -24,6 +30,7 @@ export const dumpDconfDatabase = async (
   environment: NodeJS.ProcessEnv,
   signal?: AbortSignal,
 ): Promise<DconfDump> => {
+  assertArtifactReadActive(signal);
   try {
     const profile = join(dirname(database), "profile");
     await writeFile(profile, `file-db:${database}\n`, {
@@ -39,7 +46,11 @@ export const dumpDconfDatabase = async (
     });
     return { ok: true, text: stdout };
   } catch (cause: unknown) {
-    signal?.throwIfAborted();
+    if (cause instanceof ExecFileOutputCancelledError)
+      throw new ArtifactReaderFailure("cancelled", "dconf dump was cancelled", {
+        cause: cause.cause,
+        cancellation: { reason: cause.cause },
+      });
     const failure = execFileOutputFailure(cause);
     if (failure?.code === "ENOENT")
       return {
@@ -48,7 +59,7 @@ export const dumpDconfDatabase = async (
       };
     return {
       ok: false,
-      error: failure === undefined ? String(cause) : failure.stderr.trim(),
+      error: failure?.stderr.trim() || String(cause),
     };
   }
 };

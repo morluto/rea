@@ -27,6 +27,11 @@ POLL_S = 0.2
 TAIL_BYTES = 4096
 
 
+def _poll_sleep(attempt: int, cap: float = POLL_S) -> float:
+    """Back off from 5 ms to `cap` so fast fake/local operations settle without fixed 200 ms stalls."""
+    return min(cap, 0.005 * (2 ** min(attempt, 6)))
+
+
 def _say(value: dict) -> int:
     print(json.dumps(value), flush=True)
     return 0
@@ -122,6 +127,7 @@ def _wait(capture: str, offset: int, kinds: set, name, timeout: float) -> dict:
     """Wait for the capture's event, or for it to exit, or for time to run out."""
     log = os.path.join(capture, "progress.log")
     deadline = time.monotonic() + timeout
+    attempt = 0
     while True:
         line = _event_line(log, offset, kinds, name)
         if line is not None:
@@ -131,7 +137,8 @@ def _wait(capture: str, offset: int, kinds: set, name, timeout: float) -> dict:
             return _ended(capture, code)
         if time.monotonic() > deadline:
             return {"timed_out": True, "progress": _tail(log)}
-        time.sleep(POLL_S)
+        time.sleep(_poll_sleep(attempt))
+        attempt += 1
 
 
 def _within(path: str, folder: str) -> bool:
@@ -190,16 +197,32 @@ def start(arguments: dict) -> int:
         argv += ["--package-file", arguments["package_file"]]
     # Reading and writing, so the capture never reads the end of its input between requests.
     reader = os.open(control, os.O_RDWR)
+    process = None
     try:
-        with open(os.path.join(capture, "capture.out"), "wb") as out, \
-                open(os.path.join(capture, "progress.log"), "wb") as progress:
-            process = subprocess.Popen(
-                ["sh", "-c", 'done=$1; shift; "$@"; code=$?; printf "%s" "$code" > "$done.tmp" && mv "$done.tmp" "$done"',
-                 "sh", os.path.join(capture, "exit"), *argv],
-                cwd=os.path.expanduser("~"), env=_environment(work), stdin=reader, stdout=out, stderr=progress,
-                start_new_session=True)
+        try:
+            with open(os.path.join(capture, "capture.out"), "wb") as out, \
+                    open(os.path.join(capture, "progress.log"), "wb") as progress:
+                process = subprocess.Popen(
+                    ["sh", "-c", 'done=$1; shift; "$@"; code=$?; printf "%s" "$code" > "$done.tmp" && mv "$done.tmp" "$done"',
+                     "sh", os.path.join(capture, "exit"), *argv],
+                    cwd=os.path.expanduser("~"), env=_environment(work), stdin=reader, stdout=out, stderr=progress,
+                    start_new_session=True)
+        except Exception as cause:
+            # Nothing will write exit. Record one and drop the FIFO, so stop does not wait on it.
+            try:
+                with open(os.path.join(capture, "exit"), "w", encoding="utf-8") as handle:
+                    handle.write("1")
+            except OSError:
+                pass
+            try:
+                os.unlink(control)
+            except OSError:
+                pass
+            return _say({"error": f"the capture did not start: {cause}"})
     finally:
         os.close(reader)
+    if process is None:
+        return _say({"error": "the capture did not start"})
     waited = _wait(capture, 0, {"window_open"}, None, arguments.get("timeout_s", 120))
     return _say({"pid": process.pid, "apt": apt, **waited})
 
@@ -244,8 +267,10 @@ def stop(arguments: dict) -> int:
     if _exit_code(capture) is None:
         _request(capture, "stop")
     deadline = time.monotonic() + arguments.get("timeout_s", 600)
+    attempt = 0
     while (code := _exit_code(capture)) is None and time.monotonic() < deadline:
-        time.sleep(POLL_S)
+        time.sleep(_poll_sleep(attempt))
+        attempt += 1
     log = os.path.join(capture, "progress.log")
     if code is None:
         return _say({"timed_out": True, "progress": _tail(log)})
@@ -272,6 +297,381 @@ def run(arguments: dict) -> int:
             return _say({"timed_out": True})
     return _say({"exit_code": done.returncode, "stdout_bytes": os.path.getsize(arguments["stdout"]),
                  "stderr": done.stderr[-TAIL_BYTES:].decode("utf-8", "replace")})
+
+
+# The controller is sent with python -c, so a detached supervisor needs its
+# own source. It alone holds the child process handle. One SIGINT is not
+# enough: a leader can ignore it, and a child in the same session can outlive
+# the leader and keep stderr open. Signals go only to processes still in that
+# session. A descendant that called setsid is reported, not signaled, and is
+# not treated as exited.
+LONG_RUN = r'''
+import json, os, signal, subprocess, sys, threading, time
+job = sys.argv[1]
+result = {}
+child = None
+pgid = None
+drainer = None
+request = {}
+stderr_tail, stderr_errors = bytearray(), []
+deadline = None
+timed_out = False
+interrupted = False
+force_stop = False
+output_incomplete = False
+leader_unsettled = False
+stop_step = 0
+stop_next = None
+GRACE_S = 2.0
+STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGKILL)
+
+def drain(stream):
+    try:
+        while chunk := stream.read1(65536):
+            stderr_tail.extend(chunk)
+            del stderr_tail[:-4096]
+    except OSError as error:
+        stderr_errors.append(str(error))
+    finally:
+        try:
+            stream.close()
+        except OSError as error:
+            stderr_errors.append(str(error))
+
+def mark_timed_out():
+    global timed_out
+    if timed_out:
+        return
+    timed_out = True
+    try:
+        open(os.path.join(job, "timed_out"), "x").close()
+    except FileExistsError:
+        pass
+
+def stop_requested():
+    global interrupted
+    if deadline is not None and time.monotonic() >= deadline:
+        mark_timed_out()
+    cancelled = os.path.exists(os.path.join(job, "cancel"))
+    if cancelled:
+        interrupted = True
+    return force_stop or timed_out or cancelled
+
+def proc_identity(pid):
+    """Return state, process group, and session from /proc, or None.
+
+    The command name is inside parentheses and can itself contain parentheses,
+    so the fields after the last closing parenthesis are the ones that count.
+    """
+    try:
+        with open(f"/proc/{pid}/stat", "rb") as handle:
+            data = handle.read()
+    except OSError:
+        return None
+    end = data.rfind(b")")
+    if end < 0:
+        return None
+    fields = data[end + 2:].split()
+    if len(fields) < 4:
+        return None
+    try:
+        return fields[0].decode("ascii", "replace"), int(fields[2]), int(fields[3])
+    except ValueError:
+        return None
+
+def live_owned_members():
+    """Pids whose process group and session are still the leader's session.
+
+    The leader's pid is that session id because it was started in a new
+    session. A zombie is not a member: it cannot hold stderr. After the leader
+    is reaped, the numeric id can be reused, so this never uses killpg.
+    """
+    if pgid is None or child is None:
+        return []
+    found = []
+    try:
+        names = os.listdir("/proc")
+    except OSError:
+        names = []
+    for name in names:
+        if not name.isdigit():
+            continue
+        pid = int(name)
+        identity = proc_identity(pid)
+        if identity is None:
+            continue
+        state, group, session = identity
+        if group == pgid and session == pgid and state not in ("Z", "X"):
+            found.append(pid)
+    if child.poll() is None and child.pid not in found:
+        found.append(child.pid)
+    return found
+
+def signal_owned(sig):
+    """Signal current session members.
+
+    An unreaped leader is still the process this supervisor started. Every
+    other pid is read from /proc again immediately before the signal.
+    """
+    leader = child.pid if child is not None else None
+    for pid in live_owned_members():
+        if leader is not None and pid == leader and child.poll() is None:
+            try:
+                os.kill(pid, sig)
+            except OSError:
+                pass
+            continue
+        identity = proc_identity(pid)
+        if (
+            identity is None
+            or identity[0] in ("Z", "X")
+            or identity[1] != pgid
+            or identity[2] != pgid
+        ):
+            continue
+        try:
+            os.kill(pid, sig)
+        except OSError:
+            pass
+
+def escalate():
+    """Send SIGINT, then SIGTERM, then SIGKILL, each once, with GRACE_S between them.
+
+    Returns true only after the last grace. The leader exiting does not end
+    the sequence while a same-session child is still alive.
+    """
+    global interrupted, stop_step, stop_next
+    forced = force_stop
+    if not stop_requested() or child is None:
+        return False
+    if child.poll() is not None and not live_owned_members():
+        return False
+    if not forced:
+        interrupted = True
+    now = time.monotonic()
+    if stop_step < len(STOP_SIGNALS) and (stop_next is None or now >= stop_next):
+        signal_owned(STOP_SIGNALS[stop_step])
+        stop_step += 1
+        stop_next = now + GRACE_S
+    return stop_step >= len(STOP_SIGNALS) and stop_next is not None and now >= stop_next
+
+def stop_owned():
+    """Finish the signal sequence for the leader and same-session children."""
+    global leader_unsettled
+    wait_attempt = 0
+    while child is not None and child.poll() is None:
+        if escalate():
+            if child.poll() is None or live_owned_members():
+                leader_unsettled = True
+            return
+        if stop_requested():
+            time.sleep(min(0.2, 0.005 * (2 ** min(wait_attempt, 6))))
+            wait_attempt += 1
+        else:
+            try:
+                child.wait(timeout=0.05)
+            except subprocess.TimeoutExpired:
+                pass
+    wait_attempt = 0
+    while stop_requested() and live_owned_members():
+        if escalate():
+            if live_owned_members():
+                leader_unsettled = True
+            return
+        time.sleep(min(0.2, 0.005 * (2 ** min(wait_attempt, 6))))
+        wait_attempt += 1
+
+def abandon_drain():
+    """Wait out stderr, and keep stopping same-session children after it closes.
+
+    A descendant outside the session is not signaled. If it still holds stderr
+    after one grace, the result says the output is incomplete.
+    """
+    global output_incomplete, leader_unsettled
+    if drainer is None:
+        return
+    grace_end = None
+    while drainer.is_alive() or (stop_requested() and live_owned_members()):
+        if stop_requested() and live_owned_members():
+            grace_end = None
+            if escalate() and live_owned_members():
+                leader_unsettled = True
+                if drainer.is_alive():
+                    output_incomplete = True
+                return
+        elif stop_requested() and drainer.is_alive():
+            if grace_end is None:
+                grace_end = time.monotonic() + GRACE_S
+            elif time.monotonic() >= grace_end:
+                output_incomplete = True
+                return
+        elif not drainer.is_alive():
+            return
+        else:
+            grace_end = None
+        if drainer.is_alive():
+            drainer.join(0.2)
+        else:
+            time.sleep(0.2)
+
+def finish_stop():
+    stop_owned()
+    if leader_unsettled and drainer is not None and drainer.is_alive():
+        output_incomplete = True
+    elif not leader_unsettled:
+        abandon_drain()
+
+def write_result():
+    if result.get("absent") is True:
+        result["settled"] = True
+    else:
+        if child is not None:
+            result.setdefault("exit_code", child.returncode)
+            result.setdefault("stderr", bytes(stderr_tail).decode("utf-8", "replace"))
+            stdout = request.get("stdout")
+            if isinstance(stdout, str):
+                try:
+                    result.setdefault("stdout_bytes", os.path.getsize(stdout))
+                except OSError:
+                    pass
+        result.setdefault("timed_out", timed_out)
+        result.setdefault("cancelled", interrupted and not timed_out)
+        if stderr_errors and "error" not in result:
+            result["error"] = f"The REA command's stderr could not be read: {stderr_errors[0]}"
+        if leader_unsettled:
+            result["settled"] = False
+            result.setdefault("error", "The REA command did not exit after SIGINT, SIGTERM, and SIGKILL.")
+        elif output_incomplete:
+            result["settled"] = False
+            result.setdefault(
+                "error",
+                "A process outside the supervised group still holds the command's stderr, so its output is incomplete.",
+            )
+        elif child is None or child.poll() is not None:
+            result["settled"] = True
+        else:
+            result["settled"] = False
+            result.setdefault("error", "The REA command supervisor lost the command before it exited.")
+    temporary = os.path.join(job, "result.tmp")
+    with open(temporary, "w", encoding="utf-8") as out:
+        json.dump(result, out)
+    os.replace(temporary, os.path.join(job, "result.json"))
+
+try:
+    request = json.loads("".join(sys.argv[2:]))
+    if os.path.exists(os.path.join(job, "cancel")):
+        result = {"absent": True}
+    else:
+        with open(request["stdout"], "wb") as out:
+            child = subprocess.Popen(request["argv"], cwd=request["home"], stdin=subprocess.DEVNULL,
+                                     stdout=out, stderr=subprocess.PIPE, start_new_session=True)
+            pgid = child.pid
+            drainer = threading.Thread(target=drain, args=(child.stderr,), daemon=True)
+            drainer.start()
+            deadline = time.monotonic() + request["timeout_s"]
+            finish_stop()
+            result = {"exit_code": child.returncode, "stdout_bytes": os.path.getsize(request["stdout"]),
+                      "timed_out": timed_out, "cancelled": interrupted and not timed_out,
+                      "stderr": bytes(stderr_tail).decode("utf-8", "replace")}
+            if stderr_errors:
+                result["error"] = f"The REA command's stderr could not be read: {stderr_errors[0]}"
+except Exception as error:
+    result["error"] = f"The REA command supervisor failed: {error}"
+    # The supervisor can no longer report a normal exit, so stop processes it still owns.
+    force_stop = True
+    finish_stop()
+write_result()
+'''
+
+
+def run_begin(arguments: dict) -> int:
+    """Start one long REA command in its own capture-owned job folder."""
+    rea = shutil.which("rea")
+    if rea is None:
+        return _say({"error": "REA is not installed in this computer"})
+    job = os.path.abspath(arguments["job"])
+    os.makedirs(os.path.dirname(job), exist_ok=True)
+    try:
+        os.mkdir(job, 0o700)
+    except FileExistsError:
+        return _say({"refused": "the command job folder is already used"})
+    process = None
+    try:
+        with open(os.path.join(job, "owner"), "x", encoding="ascii") as out:
+            out.write(arguments["token"])
+        for path, text in arguments.get("files", {}).items():
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(text)
+        os.makedirs(os.path.dirname(arguments["stdout"]), exist_ok=True)
+        request = json.dumps({"argv": [rea, *arguments["argv"]], "stdout": arguments["stdout"],
+                              "home": os.path.expanduser("~"), "timeout_s": arguments["timeout_s"]})
+        chunks = [request[i:i + 60000] for i in range(0, len(request), 60000)]
+        with open(os.path.join(job, "supervisor.log"), "wb") as log:
+            process = subprocess.Popen([sys.executable, "-I", "-c", LONG_RUN, job, *chunks], cwd=os.path.expanduser("~"),
+                                       env=_environment(os.path.abspath(arguments["work"])), stdin=subprocess.DEVNULL,
+                                       stdout=log, stderr=log, start_new_session=True)
+    except (OSError, ValueError) as error:
+        stage = "did not start" if process is None else "started but its setup did not finish"
+        result = {"error": f"The REA command supervisor {stage}: {error}"}
+        if process is None:
+            temporary = os.path.join(job, "result.tmp")
+            with open(temporary, "w", encoding="utf-8") as out:
+                json.dump(result, out)
+            os.replace(temporary, os.path.join(job, "result.json"))
+        return _say(result)
+    return _say({"started": True})
+
+
+def _run_result(job: str):
+    try:
+        with open(os.path.join(job, "result.json"), encoding="utf-8") as source:
+            return json.load(source)
+    except FileNotFoundError:
+        return None
+
+
+def _owns_run(job: str, token: str) -> bool:
+    try:
+        with open(os.path.join(job, "owner"), encoding="ascii") as owner:
+            return owner.read() == token
+    except OSError:
+        return False
+
+
+def run_poll(arguments: dict) -> int:
+    job = os.path.abspath(arguments["job"])
+    if not _owns_run(job, arguments["token"]):
+        return _say({"error": "the command job ownership is not confirmed"})
+    deadline = time.monotonic() + arguments.get("timeout_s", 30)
+    attempt = 0
+    while (result := _run_result(job)) is None and time.monotonic() < deadline:
+        time.sleep(_poll_sleep(attempt))
+        attempt += 1
+    if result is None:
+        pending = {"pending": True, "timed_out": os.path.exists(os.path.join(job, "timed_out"))}
+        progress = _tail(os.path.join(job, "supervisor.log"))
+        return _say({**pending, **({"progress": progress} if progress else {})})
+    return _say({"finished": True, **result})
+
+
+def run_cancel(arguments: dict) -> int:
+    job = os.path.abspath(arguments["job"])
+    os.makedirs(os.path.dirname(job), exist_ok=True)
+    try:
+        os.mkdir(job, 0o700)
+    except FileExistsError:
+        pass
+    else:
+        # A late begin cannot launch into a folder cancellation claimed.
+        with open(os.path.join(job, "owner"), "x", encoding="ascii") as owner:
+            owner.write(arguments["token"])
+        return _say({"absent": True})
+    if not _owns_run(job, arguments["token"]):
+        return _say({"error": "the command job ownership is not confirmed"})
+    with open(os.path.join(job, "cancel"), "a", encoding="utf-8"):
+        pass
+    return run_poll(arguments)
 
 
 def listing(arguments: dict) -> int:
@@ -312,7 +712,8 @@ def listing(arguments: dict) -> int:
     return _say({"listing_bytes": os.path.getsize(output)})
 
 
-COMMANDS = {"start": start, "mark": mark, "stop": stop, "run": run, "list": listing}
+COMMANDS = {"start": start, "mark": mark, "stop": stop, "run": run, "list": listing,
+            "run-begin": run_begin, "run-poll": run_poll, "run-cancel": run_cancel}
 
 if __name__ == "__main__":
     sys.exit(COMMANDS[sys.argv[1]](json.loads("".join(sys.argv[2:]))))

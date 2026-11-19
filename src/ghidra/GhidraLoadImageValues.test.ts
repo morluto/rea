@@ -12,10 +12,7 @@ import {
 } from "../domain/native/nativeLoadImage.js";
 import type { NativeLoadImageObservation } from "../domain/native/nativeLoadImage.js";
 import { parseGhidraInventoryResult } from "./GhidraInventoryValues.js";
-import {
-  GHIDRA_DOS_LOAD_VERIFICATION_LIMITATION,
-  prepareGhidraDosLoadImage,
-} from "./GhidraLoadImageValues.js";
+import { prepareGhidraDosLoadImage } from "./GhidraLoadImageValues.js";
 
 it("retains the provider symbol without claiming DOS verification of it", () => {
   const fixture = fixtureDosLoadImage();
@@ -31,7 +28,7 @@ it("retains the provider symbol without claiming DOS verification of it", () => 
     "provider_name",
   );
   expect(result.value.limitations).toContain(
-    GHIDRA_DOS_LOAD_VERIFICATION_LIMITATION,
+    "Verification covers original/modified FileBytes, every initialized target-backed header/module mapping, relocation records and the external entry point. Ghidra relocation symbol names are retained observations, not independently verified. Mapping ends are inclusive.",
   );
 });
 
@@ -42,6 +39,7 @@ it("preserves Ghidra relocation symbol values at the inventory boundary", () => 
     const parsed = parseGhidraInventoryResult(
       "inspect_native_load_image",
       jsonValueSchema.parse(observation),
+      null,
     );
     expect(parsed).toMatchObject({
       ok: true,
@@ -115,13 +113,13 @@ const damage: ReadonlyArray<
   [
     "modified source",
     (x) => {
-      x.source_files[0] && (x.source_files[0].modified_sha256 = "f".repeat(64));
+      x.source_files[0]!.modified_sha256 = "f".repeat(64);
     },
   ],
   [
     "original source",
     (x) => {
-      x.source_files[0] && (x.source_files[0].original_sha256 = "f".repeat(64));
+      x.source_files[0]!.original_sha256 = "f".repeat(64);
     },
   ],
   [
@@ -348,6 +346,7 @@ it.each(malformedCoordinates)(
       provider: parseGhidraInventoryResult(
         "inspect_native_load_image",
         jsonValueSchema.parse(observation),
+        null,
       ).ok,
     }).toEqual({ shared: false, provider: false });
   },
@@ -366,6 +365,7 @@ it("preserves zero-padded, qualified, and large observation addresses", () => {
   const parsed = parseGhidraInventoryResult(
     "inspect_native_load_image",
     jsonValueSchema.parse(observation),
+    null,
   );
   if (!parsed.ok) throw parsed.error;
   expect(parsed.value.value).toEqual(observation);
