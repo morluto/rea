@@ -142,9 +142,14 @@ it.each([true, false])(
   },
 );
 
-it.each([false, true])(
-  "retains the Info.plist descriptor through binary target cleanup (cancelled=%s)",
-  async (cancel) => {
+it.each([
+  { closeMode: "clean", cancel: true },
+  { closeMode: "retry", cancel: true },
+  { closeMode: "retained", cancel: true },
+  { closeMode: "retained", cancel: false },
+])(
+  "preserves the Info.plist descriptor outcome (close=$closeMode, cancelled=$cancel)",
+  async ({ closeMode, cancel }) => {
     const root = await createTestTempDirectory("rea-bundle-plist-close-");
     const bundle = join(root, "Fixture.app");
     const contents = join(bundle, "Contents");
@@ -161,15 +166,19 @@ it.each([false, true])(
     const controller = new AbortController();
     const reason = { caller: "cancel during bundle metadata close" };
     const nativeClose = OwnedFileHandle.prototype.close;
-    let denied = true;
     const owners: OwnedFileHandle[] = [];
+    let exerciseClose = true;
     const close = vi
       .spyOn(OwnedFileHandle.prototype, "close")
       .mockImplementation(async function (this: OwnedFileHandle) {
-        if (denied) {
+        if (exerciseClose) {
           owners.push(this);
           if (cancel) controller.abort(reason);
-          throw new Error("controlled Info.plist close denial");
+          if (
+            closeMode === "retained" ||
+            (closeMode === "retry" && owners.length === 1)
+          )
+            throw new Error("controlled Info.plist close denial");
         }
         await nativeClose.call(this);
       });
@@ -179,22 +188,31 @@ it.each([false, true])(
         signal: controller.signal,
       });
       if (result.ok)
-        throw new Error("Expected retained bundle metadata cleanup");
-      expect(result.error.cleanupIncomplete).toBe(true);
+        throw new Error("Expected bundle metadata finalization failure");
+      const retainedClose = closeMode === "retained";
+      expect(result.error.cleanupIncomplete).toBe(retainedClose);
       const selectedPlist = await realpath(plist);
-      expect(result.error.cleanup?.resources).toEqual([selectedPlist]);
-      expect(resources.cleanupResources).toEqual([selectedPlist]);
-      expect(owners).toHaveLength(2);
-      expect(owners[1]).toBe(owners[0]);
-      if (cancel) expect(result.error.cleanupPrimary?.cause).toBe(reason);
-
-      denied = false;
+      expect(resources.cleanupResources).toEqual(
+        retainedClose ? [selectedPlist] : [],
+      );
+      expect(owners).toHaveLength(closeMode === "clean" ? 1 : 2);
+      expect(owners.every((owner) => owner === owners[0])).toBe(true);
+      if (cancel) {
+        const primary = result.error.cleanupPrimary ?? result.error;
+        expect(primary._tag).toBe("AnalysisCancelledError");
+        expect(primary.cause).toBe(reason);
+      }
+      if (retainedClose) {
+        expect(result.error.cleanup?.resources).toEqual([selectedPlist]);
+        expect(owners[0]?.handle.fd).toBeGreaterThanOrEqual(0);
+      }
+      exerciseClose = false;
       await resources.retryCleanup();
-      expect(owners[0]!.handle.fd).toBe(-1);
+      expect(owners[0]?.handle.fd).toBe(-1);
       expect(result.error.cleanupIncomplete).toBe(false);
       expect((await parseBinaryTarget(bundle, { resources })).ok).toBe(true);
     } finally {
-      denied = false;
+      exerciseClose = false;
       await resources.close();
       await Promise.all(owners.map((owner) => owner.close()));
       close.mockRestore();
