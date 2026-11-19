@@ -60,7 +60,7 @@ export const readGoBinaryImage = (
   options?: ReadGoBinaryImageOptions,
 ): GoBinaryImage => {
   const budgets = goAnalysisBudgets(options?.budgets);
-  const container = readBinaryContainer(bytes);
+  const container = readBinaryContainer(bytes, "inspect_go_binary");
   const { format, architecture, bits, byte_order } = container;
   const stringLiterals =
     options?.includeStringLiterals === true

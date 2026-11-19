@@ -673,7 +673,7 @@ function* parseElfExports(
   bytes: Buffer,
   artifact: Artifact,
 ): Generator<void, NativeExports> {
-  const directory = readElfDirectoryFromBuffer(bytes);
+  const directory = readElfDirectoryFromBuffer(bytes, "inspect_native_exports");
   const reader = new BinaryReader(bytes, directory.little, "elf");
   const result = {
     artifact,

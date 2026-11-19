@@ -165,6 +165,16 @@ it("lists zstd.max_frames for every operation that enforces the cap", () => {
     "inspect_gpu_code_objects",
     "inspect_dwarf_units",
     "inspect_elf_notes",
+    "inspect_binary_hardening",
+    "inspect_elf_unwind_ranges",
+    "inspect_native_exports",
+    "inspect_native_initializers",
+    "inspect_kernel_module",
+    "inspect_elf_debug_link",
+    "inspect_go_binary",
+    "inspect_rust_binary",
+    "inspect_il2cpp_metadata",
+    "inspect_android_jni_bindings",
   ])
     expect(
       store.inspect({ operation }).settings.map(({ setting }) => setting),
@@ -173,6 +183,12 @@ it("lists zstd.max_frames for every operation that enforces the cap", () => {
     "gpu-code-objects",
     "rea-dwarf-units",
     "rea-elf-notes",
+    "rea-binary-hardening",
+    "rea-elf-unwind-ranges",
+    "rea-native-exports",
+    "rea-native-initializers",
+    "rea-kernel-module",
+    "rea-elf-debug-link",
   ])
     expect(
       store.inspect({ provider }).settings.map(({ setting }) => setting),

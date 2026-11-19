@@ -432,8 +432,12 @@ const locateElf = async (
 ): Promise<ImageIdentity> => {
   const directory =
     pause === undefined
-      ? readElfDirectoryFromBuffer(bytes)
-      : await readElfDirectoryFromBufferCooperative(bytes, pause);
+      ? readElfDirectoryFromBuffer(bytes, "inspect_dwarf_units")
+      : await readElfDirectoryFromBufferCooperative(
+          bytes,
+          pause,
+          "inspect_dwarf_units",
+        );
   if (directory.section_names_limitation !== undefined)
     throw new BinaryFormatFailure(
       "unsupported",

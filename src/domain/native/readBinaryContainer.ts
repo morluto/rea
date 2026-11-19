@@ -13,9 +13,12 @@ import { readPeImage } from "./peImage.js";
 import { readMachoImage } from "../apple/machoImage.js";
 
 /** Identify an ELF, PE, or thin Mach-O image and its file sections. */
-export const readBinaryContainer = (bytes: Buffer): BinaryContainer => {
+export const readBinaryContainer = (
+  bytes: Buffer,
+  operation: string,
+): BinaryContainer => {
   if (bytes.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])))
-    return readElfImage(bytes);
+    return readElfImage(bytes, operation);
   if (bytes.subarray(0, 2).equals(Buffer.from("MZ"))) return readPeImage(bytes);
   if (bytes.length >= 4) {
     const fatPrefix = readFatHeaderPrefix(bytes);

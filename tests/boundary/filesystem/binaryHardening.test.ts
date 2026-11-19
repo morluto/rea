@@ -1,8 +1,14 @@
 import { readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { runWithAnalysisOperationSnapshot } from "../../../src/domain/analysisOperationSnapshot.js";
+import {
+  MAXIMUM_ZSTD_MAX_FRAMES,
+  MINIMUM_ZSTD_MAX_FRAMES,
+} from "../../../src/domain/analysisResourceLimits.js";
 import { createBinaryHardeningService } from "../../../src/composition/binaryDiagnostics.js";
 import { elfHardeningFixture } from "../../../src/native/hardening/BinaryHardening.fixture.js";
+import { compressedElfNoteFixture } from "../../../src/native/elf/ElfNotes.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("binary hardening stable filesystem boundary", () => {
@@ -92,6 +98,48 @@ describe("binary hardening stable filesystem boundary", () => {
       expect(result.error).toMatchObject({
         _tag: "AnalysisResourceConstraintError",
         fixedAllowance: { limit: 65_536, unit: "entries" },
+      });
+    } finally {
+      await service.close();
+    }
+  });
+
+  it("projects a section-name frame cap as an adjustable zstd.max_frames limit", async () => {
+    const root = await createTestTempDirectory("rea-binary-hardening-zstd-");
+    const path = join(root, "app");
+    const frame = Buffer.from([
+      0x28, 0xb5, 0x2f, 0xfd, 0x20, 0x01, 0x09, 0x00, 0x00, 0x61,
+    ]);
+    await writeFile(
+      path,
+      compressedElfNoteFixture(
+        64,
+        true,
+        2,
+        ".note.gnu.build-id",
+        Buffer.concat([frame, frame]),
+      ),
+    );
+    const service = createBinaryHardeningService();
+    try {
+      const result = await runWithAnalysisOperationSnapshot(
+        { revision: 1, overrides: { "zstd.max_frames": 1 } },
+        () => service.inspect({ path }),
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisResourceConstraintError",
+        operation: "inspect_binary_hardening",
+        resource: "cpu",
+        limit: {
+          setting: "zstd.max_frames",
+          effective_value: 1,
+          source: "runtime",
+          minimum: MINIMUM_ZSTD_MAX_FRAMES,
+          maximum: MAXIMUM_ZSTD_MAX_FRAMES,
+          unit: "count",
+        },
       });
     } finally {
       await service.close();

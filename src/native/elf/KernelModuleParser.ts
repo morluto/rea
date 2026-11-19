@@ -512,7 +512,7 @@ export const parseKernelModule = (
   const compression = compressionCodec(bytes);
   if (compression !== null)
     return unsupportedCompression(artifact, compression);
-  const image = readElfImage(bytes);
+  const image = readElfImage(bytes, "inspect_kernel_module");
   const facts = headerFacts(image);
   if (facts.type !== 1) return notApplicable(artifact, facts);
   const sections = image.sections.filter(

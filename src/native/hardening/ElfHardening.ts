@@ -184,7 +184,10 @@ export const readElfHardening = (
   signal?: AbortSignal,
 ): BinaryHardeningImage => {
   assertArtifactReadActive(signal);
-  const directory = readElfDirectoryFromBuffer(bytes);
+  const directory = readElfDirectoryFromBuffer(
+    bytes,
+    "inspect_binary_hardening",
+  );
   // A report needs every declared payload, not only the tables that name them.
   assertElfDeclaredRangesFromBuffer(bytes);
   const { bits, little, machine, programs, sections } = directory;

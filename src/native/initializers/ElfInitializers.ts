@@ -978,8 +978,11 @@ export const readElfInitializers = async (
   signal?: AbortSignal,
 ): Promise<NativeInitializerInspection> => {
   assertArtifactReadActive(signal);
-  const image = readElfImage(bytes);
-  const directory = readElfDirectoryFromBuffer(bytes);
+  const image = readElfImage(bytes, "inspect_native_initializers");
+  const directory = readElfDirectoryFromBuffer(
+    bytes,
+    "inspect_native_initializers",
+  );
   const scan: ElfScan = {
     bytes,
     bits: image.bits,

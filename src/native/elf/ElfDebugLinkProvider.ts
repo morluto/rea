@@ -4,6 +4,7 @@ import {
   parseLimitConstraint,
 } from "../../domain/parseFailureAnalysisError.js";
 import { decodeLimit } from "../../domain/parseFailure.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   projectArtifactCloseFailure,
   projectOwnedArtifactIdentityFailure,
@@ -256,6 +257,8 @@ const elfDebugLinkFailurePrimary = (
   field: SelectedField,
 ) => {
   const { cause, origin } = facts;
+  if (origin === "owned-or-classified" && cause instanceof AnalysisError)
+    return cause;
   const path = selectedPath(input, field);
   const sectionNameBudget = elfNoteSectionNameBudget(cause);
   if (isParseLimit(cause, "elf") && sectionNameBudget !== undefined)

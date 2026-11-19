@@ -18,6 +18,7 @@ import {
 import type { ElfUnwindRangesPort } from "../../ports/binaryDiagnostics/ElfUnwindRangesPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
@@ -103,6 +104,8 @@ const elfUnwindFailurePrimary = (
   input: InspectElfUnwindRangesInput,
 ) => {
   const { cause, origin } = facts;
+  if (origin === "owned-or-classified" && cause instanceof AnalysisError)
+    return cause;
   if (isParseLimit(cause, ELF_UNWIND_FORMAT)) {
     const { detail, limit } = cause.failure;
     const records = limit.name === ELF_UNWIND_RECORD_LIMIT;

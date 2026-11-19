@@ -102,8 +102,11 @@ export const inspectAndroidJniLibrary = async (
         kind: "unsupported",
         message: "JNI library inspection requires an ELF image",
       });
-    const directory = readElfDirectoryFromBuffer(bytes);
-    const image = readElfImage(bytes);
+    const directory = readElfDirectoryFromBuffer(
+      bytes,
+      "inspect_android_jni_bindings",
+    );
+    const image = readElfImage(bytes, "inspect_android_jni_bindings");
     const mappings = createFileMappingIndex(image.mappings, image.zero_fills);
     if (image.executable_mappings === undefined)
       return err({

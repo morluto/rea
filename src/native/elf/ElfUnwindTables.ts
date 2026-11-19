@@ -255,7 +255,10 @@ export const parseElfUnwindRanges = (
   signal?: AbortSignal,
 ): ElfUnwindRanges => {
   assertArtifactReadActive(signal);
-  const directory = readElfDirectoryFromBuffer(bytes);
+  const directory = readElfDirectoryFromBuffer(
+    bytes,
+    "inspect_elf_unwind_ranges",
+  );
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const little = directory.little;
   const bits = directory.bits;

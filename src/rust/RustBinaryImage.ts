@@ -86,7 +86,7 @@ export const readRustBinaryImage = (
 };
 
 const nativeLayout = (bytes: Buffer): RustImageLayout => {
-  const container = readBinaryContainer(bytes);
+  const container = readBinaryContainer(bytes, "inspect_rust_binary");
   const section_name = rustDependencySectionName(container.format);
   const dependency = dependencySection(section_name, container.sections);
   return {

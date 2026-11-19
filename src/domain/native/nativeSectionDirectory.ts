@@ -34,7 +34,10 @@ import {
 } from "./elfSectionNameTable.js";
 import type { ElfCompressedSectionResult } from "./elfCompressedSection.js";
 import type { ZstandardFramePause } from "../compression/zstandardExactFrame.js";
-import { ZstandardFrameAllowanceError } from "../compression/zstandardFrameAllowance.js";
+import {
+  projectZstandardFrameAllowance,
+  ZstandardFrameAllowanceError,
+} from "../compression/zstandardFrameAllowance.js";
 
 /** A borrowed positional source. Drivers own admission, cancellation and file identity. */
 export interface NativeReadRequest {
@@ -549,20 +552,46 @@ const driveElfDirectoryCooperative = async (
   return next.value;
 };
 
-/** Borrow ELF bytes; file drivers satisfy the identical requests without loading payloads. */
+const projectDirectoryFrameAllowance = (
+  operation: string,
+  cause: unknown,
+): never => {
+  if (cause instanceof ZstandardFrameAllowanceError)
+    throw projectZstandardFrameAllowance(operation, cause);
+  throw cause;
+};
+
+/**
+ * Borrow ELF bytes. `operation` names the public refusal when a compressed
+ * section-name table exceeds `zstd.max_frames`, so every caller projects that
+ * adjustable limit instead of an I/O or adapter failure.
+ */
 export const readElfDirectoryFromBuffer = (
   bytes: Buffer,
-): ElfSectionDirectory =>
-  driveFromBuffer(bytes, readElfSectionDirectory(bytes.length));
+  operation: string,
+): ElfSectionDirectory => {
+  try {
+    return driveFromBuffer(bytes, readElfSectionDirectory(bytes.length));
+  } catch (cause) {
+    return projectDirectoryFrameAllowance(operation, cause);
+  }
+};
 
 /**
  * Same directory as {@link readElfDirectoryFromBuffer}. Compressed section
  * names yield through `pause` so the caller's abort signal can land.
  */
-export const readElfDirectoryFromBufferCooperative = (
+export const readElfDirectoryFromBufferCooperative = async (
   bytes: Buffer,
   pause: ZstandardFramePause,
-): Promise<ElfSectionDirectory> => driveElfDirectoryCooperative(bytes, pause);
+  operation: string,
+): Promise<ElfSectionDirectory> => {
+  try {
+    return await driveElfDirectoryCooperative(bytes, pause);
+  } catch (cause) {
+    return projectDirectoryFrameAllowance(operation, cause);
+  }
+};
 
 /** Resolve ELF table declarations, including extended counts in section zero, from these bytes. */
 export const readElfTableDeclarationsFromBuffer = (bytes: Buffer) =>

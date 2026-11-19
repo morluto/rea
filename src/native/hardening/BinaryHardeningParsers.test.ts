@@ -1098,7 +1098,7 @@ it("skips an empty SHT_NOTE section instead of rejecting the image", () => {
   }
   expect(sectionAt).toBeGreaterThan(0);
   bytes.writeBigUInt64LE(0n, sectionAt + 32);
-  expect(() => readElfImage(bytes)).not.toThrow();
+  expect(() => readElfImage(bytes, "elf-directory")).not.toThrow();
   const image = readElfHardening(bytes);
   expect(image.status).toBe("parsed");
   expect(findRow(image.rows, "nx").state).toBe("enabled");
@@ -1701,7 +1701,7 @@ it("rejects p_filesz one above p_memsz like the ELF image reader", () => {
   const load = elfProgramAt(bytes, PT_LOAD);
   bytes.writeBigUInt64LE(bytes.readBigUInt64LE(load + 32) - 1n, load + 40);
   const message = "ELF load segment sizes or addresses are invalid";
-  expect(() => readElfImage(bytes)).toThrow(message);
+  expect(() => readElfImage(bytes, "elf-directory")).toThrow(message);
   expect(() => readElfHardening(bytes)).toThrow(
     expect.objectContaining({ kind: "malformed", message }),
   );

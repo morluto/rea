@@ -85,7 +85,7 @@ export interface NativeImage {
 export function* openImageSteps(image: Buffer): Generator<void, NativeImage> {
   let container: BinaryContainer;
   try {
-    container = readBinaryContainer(image);
+    container = readBinaryContainer(image, "inspect_il2cpp_metadata");
   } catch (cause) {
     if (cause instanceof BinaryResourceFailure)
       throw new Il2cppBinaryFormatFailure(
