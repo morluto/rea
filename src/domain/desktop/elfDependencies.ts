@@ -17,6 +17,7 @@ import {
 } from "../elfFixedHeader.js";
 import {
   admitElfLoadSegment,
+  elfLoadSpans,
   readElfProgramHeader,
   type ElfProgramHeader,
 } from "../elfProgramHeader.js";
@@ -24,7 +25,11 @@ import { observeElfStringTableEntry } from "../elfStringTable.js";
 import { allKeyed, keyedBy, uniqueKeyed } from "../keyedCollection.js";
 import { err, ok, type Result } from "../result.js";
 import { decodeStrictUtf8 } from "../strictUtf8.js";
-import { resolveMappedFileOffset } from "../virtualFileMapping.js";
+import {
+  resolveMappedFileOffset,
+  type FileMapping,
+  type ZeroFillMapping,
+} from "../virtualFileMapping.js";
 
 /** Read up to `length` bytes at `offset`; fewer at the end of the file. */
 export type ReadAt = (offset: number, length: number) => Promise<Uint8Array>;
@@ -344,24 +349,18 @@ const readDependencyTables = async (
     return err("ELF dynamic string table is not mapped from the file");
   if (strsz > BigInt(size))
     return err("ELF dynamic string table is not mapped from the file");
-  // PT_LOAD repeats by design; every segment maps file bytes.
-  const loads = allKeyed(programs, PT_LOAD);
+  const fileBacked: FileMapping[] = [];
+  const zeroFills: ZeroFillMapping[] = [];
+  for (const load of allKeyed(programs, PT_LOAD)) {
+    const span = elfLoadSpans(load);
+    if (span.fileBacked !== undefined) fileBacked.push(span.fileBacked);
+    if (span.zeroFill !== undefined) zeroFills.push(span.zeroFill);
+  }
   const stringsAt = resolveMappedFileOffset(
-    loads
-      .filter((segment) => segment.fileSize > 0n)
-      .map((segment) => ({
-        address: segment.virtualAddress,
-        offset: Number(segment.offset),
-        size: Number(segment.fileSize),
-      })),
+    fileBacked,
     strtab,
     Number(strsz),
-    loads
-      .filter((segment) => segment.memorySize > segment.fileSize)
-      .map((segment) => ({
-        address: segment.virtualAddress + segment.fileSize,
-        size: segment.memorySize - segment.fileSize,
-      })),
+    zeroFills,
   );
   if (!stringsAt.ok)
     return err(

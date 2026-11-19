@@ -44,6 +44,67 @@ const parse = (
 
 const defaultNeeded = ["libstdc++.so.6", "libm.so.6", "libc.so.6"];
 
+it.each([true, false])(
+  "leaves dynamic strings unknown when a zero-filled PT_LOAD overlaps the table (stripped: %s)",
+  (stripped) => {
+    const original = elfDependencyFixture({ bits: 64, little: true, stripped });
+    const phoff = Number(original.readBigUInt64LE(32));
+    const phentsize = original.readUInt16LE(54);
+    const phnum = original.readUInt16LE(56);
+    const programHeaders = Array.from(
+      { length: phnum },
+      (_, index) => phoff + index * phentsize,
+    );
+    const dynamic = programHeaders.find(
+      (offset) => original.readUInt32LE(offset) === 2,
+    );
+    if (dynamic === undefined) throw new Error("Expected PT_DYNAMIC");
+    const start = Number(original.readBigUInt64LE(dynamic + 8));
+    const count = Number(original.readBigUInt64LE(dynamic + 32)) / 16;
+    const tags = new Map(
+      Array.from({ length: count }, (_, index) => {
+        const offset = start + index * 16;
+        return [
+          original.readBigInt64LE(offset),
+          original.readBigUInt64LE(offset + 8),
+        ];
+      }),
+    );
+    const stringAddress = tags.get(5n);
+    const stringSize = tags.get(10n);
+    if (stringAddress === undefined || stringSize === undefined)
+      throw new Error("Expected DT_STRTAB and DT_STRSZ");
+
+    const bytes = Buffer.concat([
+      original,
+      Buffer.alloc((phnum + 1) * phentsize),
+    ]);
+    original.copy(bytes, original.length, phoff, phoff + phnum * phentsize);
+    bytes.writeBigUInt64LE(BigInt(original.length), 32);
+    bytes.writeUInt16LE(phnum + 1, 56);
+    const alias = original.length + phnum * phentsize;
+    bytes.writeUInt32LE(1, alias);
+    bytes.writeUInt32LE(4, alias + 4);
+    bytes.writeBigUInt64LE(1n, alias + 40);
+    bytes.writeBigUInt64LE(1n, alias + 48);
+
+    bytes.writeBigUInt64LE(stringAddress + stringSize, alias + 16);
+    expect(parse(bytes).needed.map(({ name }) => name)).toEqual(defaultNeeded);
+
+    // The initial NUL byte still maps uniquely; a later string byte does not.
+    bytes.writeBigUInt64LE(stringAddress + 1n, alias + 16);
+    const report = parse(bytes);
+    expect(report.needed.map(({ name }) => name)).toEqual([null, null, null]);
+    expect(report.coverage.status).toBe("partial");
+    expect(report.issues).toContainEqual(
+      expect.objectContaining({
+        code: "table_unavailable",
+        message: "ELF dynamic string table has ambiguous file mappings",
+      }),
+    );
+  },
+);
+
 /** The version_unresolved issue a GNU version table reports at its own offset. */
 const versionTableIssue = (table: {
   readonly location: { readonly offset: number } | null;

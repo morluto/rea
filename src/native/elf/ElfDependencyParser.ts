@@ -17,7 +17,12 @@ import {
 } from "../../domain/elfDynamicEntry.js";
 import { validateElfSectionTablePresence } from "../../domain/elfDeclaredRanges.js";
 import { readElfFixedHeader } from "../../domain/elfFixedHeader.js";
-import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
+import {
+  admitElfLoadSegment,
+  elfLoadSpans,
+  readElfProgramHeader,
+  type ElfLoadMappings,
+} from "../../domain/elfProgramHeader.js";
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
 import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
 import {
@@ -57,7 +62,11 @@ import {
   createFileMappingIndex,
   mappedFileOffset,
 } from "../../domain/binaryContainer.js";
-import type { FileMapping } from "../../domain/virtualFileMapping.js";
+import {
+  resolveMappedFileOffset,
+  type FileMapping,
+  type ZeroFillMapping,
+} from "../../domain/virtualFileMapping.js";
 import { architectureForElfMachine } from "../../domain/native/elfImage.js";
 import { Budget } from "../../domain/budget.js";
 
@@ -366,12 +375,17 @@ const searchPath = (
 };
 
 const mapAddress = (
-  mappings: readonly FileMapping[],
+  mappings: ElfLoadMappings,
   address: bigint,
   size: number,
 ): number | null => {
   try {
-    return mappedFileOffset(mappings, address, size);
+    return mappedFileOffset(
+      mappings.fileBacked,
+      address,
+      size,
+      mappings.zeroFills,
+    );
   } catch (cause) {
     if (cause instanceof BinaryMappingFailure) return null;
     throw cause;
@@ -380,16 +394,19 @@ const mapAddress = (
 
 /** File-offset end of the PT_LOAD mapping that contains a virtual address. */
 const mappedExtentEnd = (
-  mappings: readonly FileMapping[],
+  mappings: ElfLoadMappings,
   address: bigint,
 ): number | null => {
-  for (const mapping of mappings)
-    if (
-      address >= mapping.address &&
-      address < mapping.address + BigInt(mapping.size)
-    )
-      return mapping.offset + mapping.size;
-  return null;
+  const mapping = mappings.fileBacked.find(
+    (range) =>
+      address >= range.address && address < range.address + BigInt(range.size),
+  );
+  if (mapping === undefined) return null;
+  let end = mapping.address + BigInt(mapping.size);
+  for (const zeroFill of mappings.zeroFills)
+    if (zeroFill.address > address && zeroFill.address < end)
+      end = zeroFill.address;
+  return mapping.offset + Number(end - mapping.address);
 };
 
 /**
@@ -400,7 +417,7 @@ const mappedExtentEnd = (
 const agreedSection = (
   section: SectionFacts | undefined,
   declared: bigint | undefined,
-  mappings: readonly FileMapping[],
+  mappings: ElfLoadMappings,
   label: string,
   issues: ElfDependencyIssue[],
   sizeAgrees: (section: SectionFacts) => boolean = () => true,
@@ -449,7 +466,7 @@ const tableFromSection = (
 };
 
 const tableFromVirtual = (
-  mappings: readonly FileMapping[],
+  mappings: ElfLoadMappings,
   address: bigint | undefined,
   size: number,
 ): LocatedTable | null => {
@@ -493,10 +510,10 @@ const sysvSymbolCountAt = (
  */
 const mappedHashWords = (
   reader: BinaryReader,
-  mappings: readonly FileMapping[],
+  mappings: ElfLoadMappings,
   address: bigint,
 ): ElfHashWordReader => {
-  const index = createFileMappingIndex(mappings);
+  const index = createFileMappingIndex(mappings.fileBacked, mappings.zeroFills);
   return (offset) => {
     if (offset < 0) return err("precedes its table");
     let at: number;
@@ -515,7 +532,7 @@ const mappedHashWords = (
 
 const sysvSymbolCount = (
   reader: BinaryReader,
-  mappings: readonly FileMapping[],
+  mappings: ElfLoadMappings,
   address: bigint,
 ): number | null => {
   const count = readElfHashSymbolCount(
@@ -551,7 +568,7 @@ const gnuSymbolCount = function* (
 };
 
 const locateVersionTable = (
-  mappings: readonly FileMapping[],
+  mappings: ElfLoadMappings,
   fileBytes: number,
   section: SectionFacts | undefined,
   address: bigint | undefined,
@@ -666,7 +683,9 @@ export const readElfDependenciesSteps = function* (
   if (phentsize < (bits === 64 ? 56 : 32))
     fail("ELF program header width is invalid.");
   reader.range(phoff, phnum * phentsize, "ELF program headers");
-  const mappings: FileMapping[] = [];
+  const fileBacked: FileMapping[] = [];
+  const zeroFills: ZeroFillMapping[] = [];
+  const mappings: ElfLoadMappings = { fileBacked, zeroFills };
   let interp: Range | null = null;
   let dynamic: Range | null = null;
   for (let index = 0; index < phnum; index += 1) {
@@ -691,14 +710,13 @@ export const readElfDependenciesSteps = function* (
       continue;
     }
     if (program.type !== PT_LOAD) continue;
+    const admitted = admitElfLoadSegment(program, bits);
+    if (!admitted.ok) return fail(admitted.error.message);
     const range = fileRange(program.offset, program.fileSize, "PT_LOAD");
-    if (range.bytes === 0) continue;
-    reader.range(range.offset, range.bytes, "PT_LOAD");
-    mappings.push({
-      address: program.virtualAddress,
-      offset: range.offset,
-      size: range.bytes,
-    });
+    if (range.bytes > 0) reader.range(range.offset, range.bytes, "PT_LOAD");
+    const spans = elfLoadSpans(program);
+    if (spans.fileBacked !== undefined) fileBacked.push(spans.fileBacked);
+    if (spans.zeroFill !== undefined) zeroFills.push(spans.zeroFill);
   }
   const issues: ElfDependencyIssue[] = [];
   const interpreter = parseInterpreter(reader, interp, issues);
@@ -800,18 +818,45 @@ export const readElfDependenciesSteps = function* (
   const verdefSection = sectionOf(SHT_GNU_VERDEF, DT_VERDEF, ".gnu.version_d");
   const hashSection = sectionOf(5, DT_HASH, ".hash");
   const gnuHashSection = sectionOf(SHT_GNU_HASH, DT_GNU_HASH, ".gnu.hash");
-  const dynstrTable =
-    tableFromSection(dynstrSection, bytes.length, "Dynamic string", issues) ??
-    tableFromVirtual(mappings, addresses.get(DT_STRTAB), strsz ?? 0);
+  const strtab = addresses.get(DT_STRTAB);
+  const mappedStrings =
+    strtab === undefined
+      ? undefined
+      : resolveMappedFileOffset(
+          fileBacked,
+          strtab,
+          Math.max(1, strsz ?? dynstrSection?.size ?? 0),
+          zeroFills,
+        );
+  const ambiguousStrings =
+    mappedStrings?.ok === false && mappedStrings.error.reason === "ambiguous";
+  // A section cannot resolve a conflicting load mapping. An unmapped tail
+  // still allows the section to describe a readable prefix as before.
+  const dynstrTable = ambiguousStrings
+    ? null
+    : (tableFromSection(
+        dynstrSection,
+        bytes.length,
+        "Dynamic string",
+        issues,
+      ) ??
+      (mappedStrings?.ok === true
+        ? {
+            offset: mappedStrings.value,
+            size: strsz ?? 0,
+            location: { offset: mappedStrings.value, bytes: strsz ?? 0 },
+          }
+        : null));
   if (
     dynstrTable === null &&
-    (neededOffsets.length > 0 || unique.has(DT_SONAME))
+    (ambiguousStrings || neededOffsets.length > 0 || unique.has(DT_SONAME))
   )
     issues.push({
       code: "table_unavailable",
       location: hex(dynamic.offset),
-      message:
-        "Dynamic string table could not be located from section headers or DT_STRTAB",
+      message: ambiguousStrings
+        ? "ELF dynamic string table has ambiguous file mappings"
+        : "Dynamic string table could not be located from section headers or DT_STRTAB",
     });
   const dynstr = new DynamicStrings(
     dynstrTable === null
@@ -1139,7 +1184,7 @@ const readSections = (
 
 const locateSymbolCount = function* (
   reader: BinaryReader,
-  mappings: readonly FileMapping[],
+  mappings: ElfLoadMappings,
   dynsym: SectionFacts | undefined,
   hash: SectionFacts | undefined,
   gnuHash: SectionFacts | undefined,
@@ -1213,7 +1258,7 @@ const followVersionLink = (
 const parseVerneed = (
   reader: BinaryReader,
   bytes: Buffer,
-  mappings: readonly FileMapping[],
+  mappings: ElfLoadMappings,
   dynstr: DynamicStrings,
   section: SectionFacts | undefined,
   address: bigint | undefined,
@@ -1358,7 +1403,7 @@ const parseVerneed = (
 const parseVerdef = (
   reader: BinaryReader,
   bytes: Buffer,
-  mappings: readonly FileMapping[],
+  mappings: ElfLoadMappings,
   dynstr: DynamicStrings,
   section: SectionFacts | undefined,
   address: bigint | undefined,
