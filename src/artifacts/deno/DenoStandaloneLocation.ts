@@ -856,7 +856,9 @@ const locatePeResources = async (carrier: Carrier): Promise<SectionRange[]> => {
       MAX_INSPECT_PE_DIRECTORY_ENTRIES,
     );
   } catch (cause) {
-    throw artifactParseFailure(cause, carrier.signal);
+    // Range reads tag cancellation at its origin. Coincidence with the
+    // caller's abort reason cannot turn a physical read failure into cancellation.
+    throw artifactParseFailure(cause, undefined);
   }
   return payloads.map(({ offset, bytes }) => {
     if (bytes > MAX_INSPECT_PE_FILE_BYTES) throw denoPeLimit();

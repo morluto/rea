@@ -13,7 +13,7 @@ import { inspectDesktopFile } from "../../../src/artifacts/DesktopFileInspection
 import type { DesktopFile } from "../../../src/domain/desktopApplication.js";
 import { readManagedPeLayout } from "../../../src/domain/managed/managedPeReader.js";
 import { buildManagedPeFixture } from "../../../src/dotnet/ManagedPe.fixture.js";
-import { readPeHeaders } from "../../../src/domain/pe/peResourceLayout.js";
+import { readPeImageHeaders } from "../../../src/domain/pe/peImageHeaders.js";
 import { peResourceFixture } from "../../../src/domain/pe/peResources.fixture.js";
 import { ElectronFuseService } from "../../../src/application/electron/ElectronFuseService.js";
 import { ElectronFuseProvider } from "../../../src/electron/ElectronFuseProvider.js";
@@ -45,7 +45,7 @@ it("keeps relocation-owned DOS bytes out of managed PE layout", () => {
 
 it("keeps relocation-owned DOS bytes out of PE resource/certificate header admission", () => {
   const bytes = relocationOwnedPointer(peResourceFixture().bytes);
-  expect(() => readPeHeaders(bytes)).toThrow(/PE/u);
+  expect(() => readPeImageHeaders(bytes)).toThrow(/PE/u);
 });
 
 it("keeps relocation-owned DOS bytes out of NativeAOT metadata recovery", () => {
@@ -139,7 +139,7 @@ it("preserves recognized PE records after short DOS headers in complete-byte rea
     readManagedPeLayout(shortDosHeader(buildManagedPeFixture())),
   ).not.toThrow();
   expect(() =>
-    readPeHeaders(shortDosHeader(peResourceFixture().bytes)),
+    readPeImageHeaders(shortDosHeader(peResourceFixture().bytes)),
   ).not.toThrow();
   const bytes = shortDosHeader(nativeAotPeFixture());
   expect(
@@ -213,8 +213,8 @@ it("keeps a PE signature outside an inspected prefix unresolved until its requir
     state: "signature-needed",
     offset: 128,
   });
-  expect(() => readPeHeaders(bytes)).not.toThrow();
-  expect(() => readPeHeaders(prefix, bytes.length)).toThrow(
+  expect(() => readPeImageHeaders(bytes)).not.toThrow();
+  expect(() => readPeImageHeaders(prefix, bytes.length)).toThrow(
     "PE range 128 + 24 leaves the artifact.",
   );
 });

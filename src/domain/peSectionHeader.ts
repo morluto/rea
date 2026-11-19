@@ -2,6 +2,16 @@ import { err, ok } from "./result.js";
 
 export const PE_SECTION_HEADER_BYTES = 40;
 
+/** Locate the COFF section table from the declared optional-header span. */
+export const peSectionTableExtent = (
+  optionalHeaderOffset: number,
+  optionalHeaderSize: number,
+  sectionCount: number,
+) => ({
+  sectionTableOffset: optionalHeaderOffset + optionalHeaderSize,
+  sectionTableBytes: sectionCount * PE_SECTION_HEADER_BYTES,
+});
+
 /** Observe the declared combined header extent separately from the available prefix. */
 export const observePeHeaderExtent = ({
   optionalHeaderOffset,
@@ -17,8 +27,11 @@ export const observePeHeaderExtent = ({
   readonly fileSize: number;
 }) => {
   // These offsets and counts come from the fixed-width PE and COFF readers.
-  const sectionTableOffset = optionalHeaderOffset + optionalHeaderSize;
-  const sectionTableBytes = sectionCount * PE_SECTION_HEADER_BYTES;
+  const { sectionTableOffset, sectionTableBytes } = peSectionTableExtent(
+    optionalHeaderOffset,
+    optionalHeaderSize,
+    sectionCount,
+  );
   const sizeOfHeadersState =
     sizeOfHeaders < sectionTableOffset + sectionTableBytes
       ? "before-section-table-end"

@@ -10,7 +10,11 @@ import {
 import { readElfSectionHeader } from "../elfSectionHeader.js";
 import { readElfProgramHeader } from "../elfProgramHeader.js";
 import { readPeCoffHeader } from "../peCoffHeader.js";
-import { readPeSectionHeader } from "../peSectionHeader.js";
+import {
+  PE_SECTION_HEADER_BYTES,
+  peSectionTableExtent,
+  readPeSectionHeader,
+} from "../peSectionHeader.js";
 import {
   readElfTableDeclarations,
   validateElfDeclaredRanges,
@@ -403,12 +407,21 @@ export function* readPeSectionDirectory(
     }
   }
   const { bits } = optional.value;
-  const start = pe + 24 + optionalSize;
-  const table = yield request(fileSize, BigInt(start), BigInt(count) * 40n);
+  const { sectionTableOffset, sectionTableBytes } = peSectionTableExtent(
+    pe + 24,
+    optionalSize,
+    count,
+  );
+  const table = yield request(
+    fileSize,
+    BigInt(sectionTableOffset),
+    BigInt(sectionTableBytes),
+  );
   const sections: NativeSection[] = [];
   for (let index = 0; index < count; index++) {
+    const at = index * PE_SECTION_HEADER_BYTES;
     const parsed = readPeSectionHeader(
-      table.subarray(index * 40, (index + 1) * 40),
+      table.subarray(at, at + PE_SECTION_HEADER_BYTES),
     );
     if (!parsed.ok) return reject(parsed.error.message);
     const row = parsed.value;
@@ -416,7 +429,7 @@ export function* readPeSectionDirectory(
       index,
       name: row.name,
       name_state: "known",
-      header_offset: start + index * 40,
+      header_offset: sectionTableOffset + at,
       offset: BigInt(row.offset),
       size: BigInt(row.size),
       address: BigInt(row.virtual_address),
