@@ -10,7 +10,8 @@ import {
 } from "./javascriptSemanticEffectLog.js";
 import { semanticBindingPrecedesCapture } from "./javascriptSemanticMutationInitializers.js";
 import { semanticArrayIndex } from "./javascriptSemanticPropertyPaths.js";
-import { semanticNativeArrayIterationValueAt } from "./javascriptSemanticReferenceSources.js";
+import { semanticKnownArrayIteration } from "./javascriptSemanticReferenceSources.js";
+import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 
 /** Prove a direct data slot in its source at the time of the read. */
@@ -44,8 +45,17 @@ export const createSemanticReadPresenceQuery = (
     const value = unwrapJavaScriptExpression(initializer.node).node;
     if (source === "array-iteration") {
       if (!t.isArrayExpression(value)) return undefined;
-      const array = semanticNativeArrayIterationValueAt(capture, state);
-      if (array === undefined || array.unknownItems) return undefined;
+      const array = evaluateSemanticExpression(
+        capture,
+        state,
+        capture,
+        "query",
+      );
+      if (
+        !semanticKnownArrayIteration(array, state, capture) ||
+        array.unknownItems
+      )
+        return undefined;
       return (path: readonly string[]): boolean => {
         const [key] = path;
         if (key === undefined || path.length !== 1) return false;
