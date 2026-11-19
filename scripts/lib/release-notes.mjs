@@ -1,7 +1,7 @@
 import { createRequire } from "node:module";
 import { valid } from "semver";
 import { z } from "zod";
-import { releaseSection } from "./release-markdown.mjs";
+import { releaseBullets, releaseSection } from "./release-markdown.mjs";
 
 const sha = z.string().regex(/^[a-f0-9]{40}$/u);
 const actor = z.object({
@@ -185,23 +185,42 @@ function readReleaseSection(text, version) {
   return section;
 }
 
-function bulletPrs(bullet, repository) {
-  // Resolve explicit links first so cross-repository numbers cannot acquire local credit.
-  const local = [];
-  const withoutLinks = bullet.replace(
-    /\[([^\]]*)\]\(https:\/\/github\.com\/([^/]+\/[^/]+)\/(?:pull|issues)\/(\d+)\)/gu,
-    (_match, _label, repo, number) => {
-      if (repo.toLowerCase() === repository.toLowerCase())
-        local.push(Number(number));
-      return "";
-    },
+function bulletCredits(parts, repository) {
+  const references = new Set();
+  const links = [];
+  let prose = "";
+  let localProse = "";
+  for (const { text, href } of parts) {
+    prose += text;
+    if (href) links.push(href);
+    const reference =
+      /^https:\/\/github\.com\/([^/]+\/[^/]+)\/(?:pull|issues)\/(\d+)$/u.exec(
+        href ?? "",
+      );
+    if (reference) {
+      // Use the destination's repository and number instead of its display label.
+      if (reference[1].toLowerCase() === repository.toLowerCase())
+        references.add(Number(reference[2]));
+      localProse += " ";
+    } else {
+      localProse += text;
+    }
+  }
+  for (const match of localProse.matchAll(/(?<![\w/])#(\d+)\b/gu))
+    references.add(Number(match[1]));
+  const start = prose.indexOf("Thanks ");
+  const thanked = new Set(
+    Array.from(
+      prose
+        .slice(start < 0 ? prose.length : start)
+        .matchAll(/@([A-Za-z0-9-]+(?:\[bot\])?)/gu),
+      (match) => match[1].toLowerCase(),
+    ),
   );
-  for (const match of withoutLinks.matchAll(/(?<![\w/])#(\d+)\b/gu))
-    local.push(Number(match[1]));
-  return new Set(local);
+  return { references, links, prose, thanked };
 }
 
-function requiredCredits(inventory, bullet, references) {
+function requiredCredits(inventory, { references, links, prose }) {
   const required = [];
   for (const pr of inventory.pullRequests.filter((item) =>
     references.has(item.number),
@@ -214,7 +233,7 @@ function requiredCredits(inventory, bullet, references) {
       (issue.repository.nameWithOwner.toLowerCase() ===
         inventory.repository.toLowerCase() &&
         references.has(issue.number)) ||
-      bullet.includes(`](${issue.url})`);
+      links.includes(issue.url);
     const handle = human(issue.author);
     if (mentioned && handle)
       required.push({
@@ -222,9 +241,11 @@ function requiredCredits(inventory, bullet, references) {
         context: `issue ${issue.repository.nameWithOwner}#${issue.number}`,
       });
   }
-  for (const match of bullet.matchAll(
-    /https:\/\/github\.com\/([^/]+\/[^/]+)\/commit\/([a-f0-9]{7,40})\b/gu,
-  )) {
+  for (const match of [prose, ...links]
+    .join(" ")
+    .matchAll(
+      /https:\/\/github\.com\/([^/]+\/[^/]+)\/commit\/([a-f0-9]{7,40})\b/gu,
+    )) {
     if (match[1].toLowerCase() !== inventory.repository.toLowerCase()) continue;
     const matches = inventory.commits.filter((item) =>
       item.sha.startsWith(match[2]),
@@ -241,7 +262,7 @@ function requiredCredits(inventory, bullet, references) {
   return required;
 }
 
-function verifyEditorialCredits(inventory, prose) {
+function verifyEditorialCredits(inventory, bullets) {
   const known = new Set(inventory.pullRequests.map((pr) => pr.number));
   const issues = new Set(
     inventory.pullRequests.flatMap((pr) =>
@@ -265,25 +286,13 @@ function verifyEditorialCredits(inventory, prose) {
   const errors = [];
   const requiredByContext = new Map();
   const thankedByContext = new Map();
-  for (const bullet of prose) {
-    if (!/^[-*] /u.test(bullet)) continue;
-    const references = bulletPrs(bullet, inventory.repository);
-    const start = bullet.indexOf("Thanks ");
-    const thanked = new Set(
-      [
-        ...bullet
-          .slice(start < 0 ? bullet.length : start)
-          .matchAll(/@([A-Za-z0-9-]+(?:\[bot\])?)/gu),
-      ].map((match) => match[1].toLowerCase()),
-    );
+  for (const parts of bullets) {
+    const bullet = bulletCredits(parts, inventory.repository);
+    const { references, thanked } = bullet;
     for (const number of references)
       if (!known.has(number) && !issues.has(number))
         errors.push(`Unknown release reference #${number}`);
-    for (const { handle, context } of requiredCredits(
-      inventory,
-      bullet,
-      references,
-    )) {
+    for (const { handle, context } of requiredCredits(inventory, bullet)) {
       const required = requiredByContext.get(context) ?? new Set();
       required.add(handle);
       requiredByContext.set(context, required);
@@ -302,26 +311,28 @@ function verifyEditorialCredits(inventory, prose) {
   return errors;
 }
 
-function editorialReleaseLines(notes, lines, inventory) {
+function editorialReleaseBlocks(notes, blocks, inventory) {
   const record = contributionRecord(inventory).trim();
   const summary = contributionSummary(inventory).trim();
   const summaryOffset = notes.length - summary.length;
   const expected = notes.endsWith(summary) ? summary : record;
   const contributionStart =
     expected === summary
-      ? lines.find(({ offset }) => offset === summaryOffset)
-      : lines.find(({ line }) => line === "### Complete contribution record");
+      ? blocks.find(({ offset }) => offset === summaryOffset)
+      : blocks.find(
+          ({ heading }) => heading === "### Complete contribution record",
+        );
   const start = contributionStart?.offset;
   if (start === undefined || notes.slice(start).trim() !== expected)
     throw new Error(
       "Contribution record differs from inventory; regenerate it with release-notes record",
     );
-  return lines.filter(({ offset }) => offset < start).map(({ line }) => line);
+  return blocks.filter(({ offset }) => offset < start);
 }
 
 export function verifyReleaseNotes(raw, text, body) {
   const inventory = releaseInventorySchema.parse(raw);
-  const { source, lines } = readReleaseSection(text, inventory.version);
+  const { source, blocks } = readReleaseSection(text, inventory.version);
   const notes = source.trim();
   // Release Please's inline issue/PR body limit (pull-request-overflow-handler).
   if (notes.length > 65_536 || (body !== undefined && body.length > 65_536))
@@ -332,10 +343,10 @@ export function verifyReleaseNotes(raw, text, body) {
     throw new Error(
       "Release notes exceed GitHub's body budget; shorten prose without dropping credit",
     );
-  const prose = editorialReleaseLines(notes, lines, inventory);
-  const errors = verifyEditorialCredits(inventory, prose);
+  const editorial = editorialReleaseBlocks(notes, blocks, inventory);
+  const errors = verifyEditorialCredits(inventory, releaseBullets(editorial));
   for (const heading of ["Highlights", "Changes", "Fixes"])
-    if (!prose.includes(`### ${heading}`))
+    if (!editorial.some((block) => block.heading === `### ${heading}`))
       errors.push(`Missing ${heading} section`);
   if (body !== undefined) {
     // Use the publisher's parser: finding a heading alone does not establish

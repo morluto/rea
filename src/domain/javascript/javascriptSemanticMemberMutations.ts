@@ -37,9 +37,15 @@ import {
   evaluateSemanticBinding,
   evaluateSemanticExpression,
   evaluateSemanticExpressionProvenance,
+  semanticSelectedBranchNodesAt,
 } from "./javascriptSemanticValues.js";
+import {
+  bindingHasMemberWrites,
+  bindingProjectedContentsMayChangeAt,
+} from "./javascriptSemanticEffectLog.js";
 import { semanticContainer } from "./javascriptSemanticSlots.js";
 import {
+  hasFreshProjectedReceiver,
   semanticProjectedSourceFactsAtRead,
   semanticCapturedSelectionsAfterPropertyRead,
   semanticShiftCapturedSelections,
@@ -70,6 +76,8 @@ import {
   semanticMutationInitializers,
   semanticBindingAtRead,
   semanticCaptureOrderingIdentity,
+  semanticArrayPatternCloseScope,
+  semanticArrayPatternAcquisitionEffect,
   semanticScopeExitEffect,
 } from "./javascriptSemanticMutationInitializers.js";
 import {
@@ -79,6 +87,7 @@ import {
   type JavaScriptExecution,
 } from "./javascriptSemanticExecutionPoints.js";
 import {
+  semanticArrayPatternCloseSelection,
   semanticKnownArrayIteration,
   semanticReferenceSourcesInactive,
   semanticSelectedReferenceSlot,
@@ -102,6 +111,7 @@ import {
 } from "./javascriptSemanticTraversal.js";
 import {
   semanticStaticPropertyKey,
+  semanticMemberChain,
   semanticWriteTargets,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
@@ -872,6 +882,7 @@ export function* collectSemanticMemberMutationsSteps(
       reference.memberReadAt?.end,
       capturedSelectionKey(reference.capturedSelections),
       reference.iterationOnly,
+      reference.arrayPattern?.start,
       reference.widenedGetterResult === true,
       reference.definiteReceiver === true,
       reference.assignedSources?.[0]?.target?.start,
@@ -932,6 +943,7 @@ export function* collectSemanticMemberMutationsSteps(
           readonly value: JoinedProjection;
         };
       };
+    const patternClose = semanticArrayPatternCloseScope(mutation);
     const pending: PendingValue[] = [];
     const schedule = (value: PendingValue): void => {
       work.charge();
@@ -1046,7 +1058,8 @@ export function* collectSemanticMemberMutationsSteps(
       bindings,
       originAt,
       definiteReceiver,
-      memberReadAt: selection?.memberReadAt ?? mutation ?? originAt,
+      memberReadAt:
+        selection?.memberReadAt ?? patternClose ?? mutation ?? originAt,
       capturedSelections: selection?.capturedSelections,
       ...(ownerInitializer === undefined ? {} : { ownerInitializer }),
     });
@@ -1369,7 +1382,7 @@ export function* collectSemanticMemberMutationsSteps(
             ...origins.initializers,
             ...origins.referenceInitializers,
           ];
-          const receiver =
+          const storedReceiverPath =
             effect === "write" &&
             current.path.length > 1 &&
             binding.memberWrites.some(
@@ -1377,16 +1390,24 @@ export function* collectSemanticMemberMutationsSteps(
                 write.assignedSources !== undefined &&
                 write.path.length < current.path.length,
             )
-              ? semanticProjectedSourceFactsAtRead(
+              ? current.path.slice(0, -1)
+              : patternClose !== undefined &&
+                  current.path.length > 0 &&
+                  bindingHasMemberWrites(binding)
+                ? current.path
+                : undefined;
+          const receiver =
+            storedReceiverPath === undefined
+              ? undefined
+              : semanticProjectedSourceFactsAtRead(
                   binding,
                   current.node,
-                  current.path.slice(0, -1),
+                  storedReceiverPath,
                   state,
                   false,
                   current.memberReadAt ?? current.originAt ?? current.node,
                   current.capturedSelections,
-                )
-              : undefined;
+                );
           // Stored receiver projections preserve their raw capture authority.
           // Initializer origins retain the normalized mutation traversal below.
           retainsInitializers = receiver?.retainsOrigin !== false;
@@ -1420,15 +1441,21 @@ export function* collectSemanticMemberMutationsSteps(
             for (const source of receiver.storedSources)
               enqueue({
                 node: source.node,
-                path: [...source.path, current.path.at(-1)!],
+                path:
+                  patternClose === undefined
+                    ? [...source.path, current.path.at(-1)!]
+                    : source.path,
                 bindings: nested,
                 definiteReceiver: false,
                 originAt: source.node,
-                memberReadAt: current.memberReadAt,
+                memberReadAt:
+                  patternClose === undefined
+                    ? current.memberReadAt
+                    : source.node,
                 capturedSelections: semanticNormalizeCapturedSelections([
                   ...(semanticShiftCapturedSelections(
                     current.capturedSelections,
-                    source.path.length - (current.path.length - 1),
+                    source.path.length - storedReceiverPath!.length,
                   ) ?? []),
                   ...(source.capturedSelections ?? []),
                 ]),
@@ -1898,6 +1925,9 @@ export function* collectSemanticMemberMutationsSteps(
           effect: "escape",
           originAt: source.mutation,
           iterationOnly: source.kind === "iteration",
+          ...(source.arrayPattern === undefined
+            ? {}
+            : { arrayPattern: source.arrayPattern }),
         });
       }
       for (const source of semanticPropertyReadSources(node, parent, state)) {
@@ -1985,6 +2015,104 @@ export function* collectSemanticMemberMutationsSteps(
   // A value thrown out of its function or the program reaches handlers the
   // throw-to-catch index does not link to it.
   for (const node of state.escapingThrows) markEscaped(node.argument, node);
+  const markAcquiredNestedIterator = (
+    reference: IterableReference,
+  ): boolean => {
+    const { arrayPattern: pattern, mutation, node, projection } = reference;
+    if (pattern === undefined || projection.length === 0) return false;
+    const receiver = semanticMemberChain(node);
+    if (receiver === undefined || !t.isIdentifier(receiver.root)) return false;
+    const binding = resolveBinding(receiver.root, receiver.root.name);
+    if (binding === undefined || !bindingHasMemberWrites(binding)) return false;
+    const path = [...receiver.members, ...projection];
+    // The RHS captures the parent, while the nested pattern selects the
+    // iterable later, after any preceding defaults or assignments.
+    const receiverCaptures = semanticNormalizeCapturedSelections([
+      ...(semanticShiftCapturedSelections(
+        reference.capturedSelections,
+        receiver.members.length,
+      ) ?? []),
+      ...(receiver.members.length === 0
+        ? []
+        : [{ at: node, depth: receiver.members.length }]),
+    ]);
+    const captured = semanticProjectedSourceFactsAtRead(
+      binding,
+      receiver.root,
+      path,
+      state,
+      true,
+      pattern,
+      receiverCaptures,
+    );
+    // A later-only write can invalidate the merged lattice without changing
+    // this acquisition. Leave the original capture on its established route.
+    if (captured === undefined || captured.storedSources.length === 0)
+      return false;
+    const contentsMayChange = bindingProjectedContentsMayChangeAt(
+      state,
+      binding,
+      path,
+      pattern,
+    );
+    for (const source of captured.sources) {
+      const pending = [source.node];
+      while (pending.length > 0) {
+        work.charge();
+        const alternative = unwrapJavaScriptExpression(pending.pop()!).node;
+        if (
+          t.isConditionalExpression(alternative) ||
+          t.isLogicalExpression(alternative)
+        ) {
+          for (const branch of semanticSelectedBranchNodesAt(
+            alternative,
+            state,
+            source.node,
+          ))
+            pending.push(branch);
+          continue;
+        }
+        const value = semanticSelectedReferenceSlot(
+          { node: alternative, projection: source.path },
+          state,
+          source.node,
+        )?.value;
+        const native =
+          !contentsMayChange &&
+          semanticKnownArrayIteration(value, state, pattern) &&
+          hasFreshProjectedReceiver(alternative, source.path, state);
+        const selection = native
+          ? semanticArrayPatternCloseSelection(pattern, mutation, value, state)
+          : undefined;
+        if (!native || selection !== undefined)
+          markValue(
+            alternative,
+            selection === undefined ? source.path : [...source.path, selection],
+            reference.bindings,
+            "escape",
+            native
+              ? semanticScopeExitEffect(pattern, mutation)
+              : semanticArrayPatternAcquisitionEffect(pattern, mutation),
+            alternative,
+            undefined,
+            false,
+            undefined,
+            false,
+            {
+              memberReadAt: source.node,
+              capturedSelections: semanticNormalizeCapturedSelections([
+                ...(semanticShiftCapturedSelections(
+                  reference.capturedSelections,
+                  source.path.length - projection.length,
+                ) ?? []),
+                ...(source.capturedSelections ?? []),
+              ]),
+            },
+          );
+      }
+    }
+    return true;
+  };
   // A later effect can make a previously defined destructuring source uncertain.
   // Reconsider defaults and iterable origins until their effects are stable.
   while (
@@ -2074,11 +2202,52 @@ export function* collectSemanticMemberMutationsSteps(
           continue;
         }
       }
-      const slot = semanticSelectedReferenceSlot(reference, state);
+      const { mutation, node, projection } = reference;
+      // A root array pattern acquires its iterator from the completed RHS.
+      // A nested iterator can run after earlier pattern reads and defaults.
+      const capturesRootPattern =
+        reference.iterationOnly &&
+        projection.length === 0 &&
+        ((t.isVariableDeclarator(mutation) && mutation.init === node) ||
+          (t.isAssignmentExpression(mutation) && mutation.right === node));
+      const slot = semanticSelectedReferenceSlot(
+        reference,
+        state,
+        capturesRootPattern ? node : undefined,
+      );
+      // A slot's value lattice loses identities invalidated by writes. Recover
+      // stored alternatives at the nested receiver's actual acquisition.
+      if (slot?.presence !== "present" && markAcquiredNestedIterator(reference))
+        continue;
       // Custom iteration can yield the iterable itself as well as any child.
       // Treat its root as escaped, including writes through yielded references.
-      const knownArray = semanticKnownArrayIteration(slot?.value, state);
-      if (knownArray && reference.iterationOnly) continue;
+      const knownArray = semanticKnownArrayIteration(
+        slot?.value,
+        state,
+        reference.node,
+      );
+      if (knownArray && reference.iterationOnly) {
+        const pattern = reference.arrayPattern;
+        const selection =
+          pattern === undefined
+            ? undefined
+            : semanticArrayPatternCloseSelection(
+                pattern,
+                mutation,
+                slot.value,
+                state,
+              );
+        if (pattern !== undefined && selection !== undefined)
+          markValue(
+            node,
+            [...projection, selection],
+            reference.bindings,
+            "escape",
+            semanticScopeExitEffect(pattern, mutation),
+            reference.originAt,
+          );
+        continue;
+      }
       markValue(
         reference.node,
         knownArray ? reference.path : reference.fallbackPath,
@@ -2127,6 +2296,7 @@ interface IterableReference extends ReferencedValue, MutationSelectionContext {
   readonly mutation?: t.Node;
   readonly originAt: t.Node | undefined;
   readonly iterationOnly?: boolean;
+  readonly arrayPattern?: t.ArrayPattern;
   readonly definiteReceiver?: boolean;
   readonly assignedSources?: readonly SemanticIterationSource[];
   readonly requiredSources?: NonNullable<

@@ -309,6 +309,37 @@ it("fails on malformed pages or a failed GitHub API request", async () => {
   await expect(runReporter(failedApi)).rejects.toThrow();
 });
 
+it.each([
+  [
+    "incomplete jobs",
+    "total_count does not match",
+    [{ total_count: 2, jobs: [{ id: 1, name: "test", status: "completed" }] }],
+  ],
+  [
+    "duplicate jobs",
+    "duplicate job IDs",
+    [
+      { total_count: 2, jobs: [{ id: 1, name: "test", status: "completed" }] },
+      { total_count: 2, jobs: [{ id: 1, name: "test", status: "completed" }] },
+    ],
+  ],
+])("keeps raw timing evidence and refuses %s", async (_label, error, pages) => {
+  const fixture = await createFixture(pages);
+  await mkdir(fixture.outputDirectory, { recursive: true });
+  const report = join(fixture.outputDirectory, "report.json");
+  await writeFile(report, '{"prior":true}');
+  await expect(runReporter(fixture)).rejects.toMatchObject({
+    code: 1,
+    stderr: expect.stringContaining(error),
+  });
+  await expect(readFile(report, "utf8")).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+  await expect(
+    readFile(join(fixture.outputDirectory, "jobs.json"), "utf8"),
+  ).resolves.toBe(fixture.raw);
+});
+
 async function createFixture(
   pages: unknown[],
   { exitCode = 0 }: { exitCode?: number } = {},

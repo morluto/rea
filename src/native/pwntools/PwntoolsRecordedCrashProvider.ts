@@ -4,6 +4,7 @@ import {
   cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { BinaryReader } from "../../domain/binaryContainer.js";
 import {
   recordedCrashPayloadSchema,
   recordedCrashSchema,
@@ -107,7 +108,11 @@ export class PwntoolsRecordedCrashProvider
             for (const register of thread.registers) {
               const start = Number(BigInt(register.location.offset));
               if (
-                snapshot.bytes.readBigUInt64LE(start) !== BigInt(register.value)
+                new BinaryReader(
+                  snapshot.bytes,
+                  true,
+                  "pwntools-recorded-crash",
+                ).word(start, 64) !== BigInt(register.value)
               )
                 throw new AnalysisOutputError(
                   "inspect_recorded_crash",

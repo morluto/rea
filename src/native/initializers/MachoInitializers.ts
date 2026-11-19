@@ -2,6 +2,7 @@ import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
 import { setImmediate as immediate } from "node:timers/promises";
 import { assertArtifactReadActive } from "../../resources/index.js";
 import {
+  admitMachoSymtabRanges,
   MachoLoadCommandCursor,
   readMachoLoadCommandTableHeader,
   readMachoSymtabCommand,
@@ -211,7 +212,7 @@ interface SymbolTable {
   readonly symoff: number;
   readonly nsyms: number;
   readonly strings: Buffer;
-  readonly wide: boolean;
+  readonly width: 12 | 16;
   readonly little: boolean;
 }
 
@@ -271,7 +272,6 @@ const readSymbols = (
   const header = readMachoLoadCommandTableHeader(scan.bytes, scan.bytes.length);
   if (!header.ok || header.value === null) return done();
   const cursor = new MachoLoadCommandCursor(header.value);
-  const width = wide ? 16 : 12;
   // One budget across every LC_SYMTAB, so repeated commands cannot multiply the work.
   let budget = SYMBOL_SCAN;
   const seen = new Set<string>();
@@ -286,17 +286,12 @@ const readSymbols = (
       note(scan, "LC_SYMTAB is truncated.", "unknown");
       return done();
     }
-    const stringsEnd = table.stroff + table.strsize;
-    if (
-      table.symoff < 0 ||
-      table.stroff < 0 ||
-      table.strsize < 0 ||
-      stringsEnd > scan.bytes.length ||
-      table.nsyms > (scan.bytes.length - table.symoff) / width
-    ) {
+    const ranges = admitMachoSymtabRanges(table, wide, scan.bytes.length);
+    if (ranges === null) {
       note(scan, "LC_SYMTAB points outside the Mach-O image.", "unknown");
       return done();
     }
+    const { width, stringsEnd } = ranges;
     const range = `${String(table.symoff)}:${String(table.nsyms)}:${String(table.stroff)}:${String(table.strsize)}`;
     if (seen.has(range)) {
       // Nothing is lost by skipping an identical copy, so coverage stays as it was.
@@ -311,7 +306,7 @@ const readSymbols = (
       symoff: table.symoff,
       nsyms: table.nsyms,
       strings,
-      wide,
+      width,
       little,
     };
     const count = Math.min(table.nsyms, budget);
@@ -628,19 +623,22 @@ const objectSymbol = (
 ): SlotRelocation => {
   const table = walk.symbols.table;
   if (table === null || index >= table.nsyms) return UNRESOLVED;
-  const width = table.wide ? 16 : 12;
+  const { width } = table;
   const at = table.symoff + index * width;
   const bytes = walk.scan.bytes;
   if (at + width > bytes.length) return UNRESOLVED;
   const strx = table.little ? bytes.readUInt32LE(at) : bytes.readUInt32BE(at);
   const type = bytes[at + 4] ?? 0;
-  const value = table.wide
-    ? table.little
-      ? bytes.readBigUInt64LE(at + 8)
-      : bytes.readBigUInt64BE(at + 8)
-    : BigInt(
-        table.little ? bytes.readUInt32LE(at + 8) : bytes.readUInt32BE(at + 8),
-      );
+  const value =
+    width === 16
+      ? table.little
+        ? bytes.readBigUInt64LE(at + 8)
+        : bytes.readBigUInt64BE(at + 8)
+      : BigInt(
+          table.little
+            ? bytes.readUInt32LE(at + 8)
+            : bytes.readUInt32BE(at + 8),
+        );
   // Debugger stabs never name a relocation target.
   if ((type & 0xe0) !== 0) return UNRESOLVED;
   const ownName = () => nameAt(walk.scan, table.strings, strx);

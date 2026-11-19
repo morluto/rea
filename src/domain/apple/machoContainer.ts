@@ -1,4 +1,7 @@
-import { isJvmClassFile } from "./jvmClassFile.js";
+import {
+  isJvmClassFile,
+  JVM_CLASS_IDENTITY_LIMIT_REASON,
+} from "./jvmClassFile.js";
 
 /** loader.h: load commands are 8-byte aligned in 64-bit images, 4 in 32-bit. */
 export const machoLoadCommandAlignment = (wide: boolean): 4 | 8 =>
@@ -156,7 +159,7 @@ export type FatHeaderPrefix =
       ));
 
 /** Interpret a raw FAT magic without asserting container identity or header readiness. */
-export const readFatMagicFormat = (magic: number): FatHeaderFormat | null => {
+const readFatMagicFormat = (magic: number): FatHeaderFormat | null => {
   if (![FAT_MAGIC, FAT_MAGIC_64, FAT_CIGAM, FAT_CIGAM_64].includes(magic))
     return null;
   return {
@@ -164,6 +167,15 @@ export const readFatMagicFormat = (magic: number): FatHeaderFormat | null => {
     wide: magic === FAT_MAGIC_64 || magic === FAT_CIGAM_64,
     littleEndian: magic === FAT_CIGAM || magic === FAT_CIGAM_64,
   };
+};
+
+/** Classify a Mach-O signature without admitting a thin header or FAT table. */
+export const machoContainerKindFromMagic = (
+  magic: number,
+): "thin" | "fat32" | "fat64" | null => {
+  if (thinMachoFormat(magic) !== null) return "thin";
+  const fat = readFatMagicFormat(magic);
+  return fat === null ? null : fat.wide ? "fat64" : "fat32";
 };
 
 /** Observe the fixed FAT header without table, count-limit or container-identity admission. */
@@ -319,6 +331,36 @@ export const classifyFatContainerEvidence = (
       prefix.subarray(offset, offset + available),
     ).magic;
   });
+
+/**
+ * A malformed table is conclusive after a capped JVM scan only if one
+ * range-valid slice owns a complete, matching thin header. A sibling's range
+ * failure still belongs to that sibling.
+ */
+export const readFatJvmIdentityLimitIssue = async (
+  header: Extract<FatContainerHeader, { readonly state: "parsed" }>,
+  identity: FatContainerIdentity,
+  readAt: (offset: number, length: number) => Promise<Uint8Array>,
+): Promise<string | null> => {
+  if (identity.state !== "malformed") return null;
+  for (const [index, slice] of header.slices.entries()) {
+    // A 28-byte header is the smallest complete thin header. Never read
+    // outside the slice, even when the enclosing file has more bytes.
+    if (header.rangeIssues[index] !== null || slice.size < 28) continue;
+    const requested = Math.min(32, slice.size);
+    const observed = await readAt(slice.offset, requested);
+    const { format, identity: embedded } = readMachoHeaderPrefixFacts(observed);
+    if (
+      format !== null &&
+      embedded !== null &&
+      format.headerSize <= requested &&
+      format.headerSize <= observed.byteLength &&
+      validateFatSliceIdentity(slice, embedded) === null
+    )
+      return null;
+  }
+  return JVM_CLASS_IDENTITY_LIMIT_REASON;
+};
 
 /** Decode FAT table entries once so artifact and native readers share identity facts. */
 export const readFatSliceDeclarations = (

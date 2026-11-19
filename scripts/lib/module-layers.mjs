@@ -91,6 +91,7 @@ export const UNIT_LAYERS = Object.freeze(
       "rust",
       "signals",
       "sqlite",
+      "uefi",
       "v8",
       "wasm",
     ]),
@@ -286,6 +287,11 @@ export const ENTRY_FILES = Object.freeze(
       electron: ["ElectronFuseProvider.ts", "ElectronFuseProviderIdentity.ts"],
       erlang: ["BeamProvider.ts", "ErlangBeamProviderIdentity.ts"],
       evm: ["EvmoleInterfaceProvider.ts", "EvmoleProviderIdentity.ts"],
+      uefi: [
+        "UefiAnalysisProvider.ts",
+        "UefiProviderIdentity.ts",
+        "UefiFormatProbe.ts",
+      ],
       firmware: [
         "FirmwareCommand.ts",
         "FirmwareProvider.ts",
@@ -419,6 +425,13 @@ const isEntryFile = (unit, target) =>
  * still is. Keep the list short and say why.
  */
 export const PROVIDER_DEPENDENCIES = Object.freeze([
+  Object.freeze({
+    from: "artifacts",
+    to: "uefi",
+    files: Object.freeze(["UefiArtifactReader.ts", "UefiFormatProbe.ts"]),
+    reason:
+      "artifact inventory uses the UEFI provider's format admission and FV/FFS reader",
+  }),
   Object.freeze({
     from: "inspector",
     to: "browser",

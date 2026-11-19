@@ -553,6 +553,7 @@ export const createSemanticReturnedReferences = (
                     source.capturedSelectionAt,
                   )?.value,
                   state,
+                  source.capturedSelectionAt,
                 )
               )
                 projection = [null, ...source.path.slice(1)];

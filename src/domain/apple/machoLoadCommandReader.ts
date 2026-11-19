@@ -12,6 +12,7 @@ import { readMachoSegmentHeader } from "./machoSegmentHeader.js";
 import {
   MachoLoadCommandCursor,
   machoCommandTableIssue,
+  machoWordReader,
   readMachoHeaderDeclarations,
   readMachoCommandStringBytes,
   readMachoLinkeditDataCommand,
@@ -20,7 +21,6 @@ import {
 import {
   hasJvmClassHeader,
   MAX_JVM_CLASS_IDENTITY_BYTES,
-  JVM_CLASS_IDENTITY_LIMIT_REASON,
 } from "./jvmClassFile.js";
 import type {
   MachoDependency,
@@ -38,6 +38,7 @@ import {
   findOverlappingFatSlices,
   hasMachoMagic,
   readFatContainerHeader,
+  readFatJvmIdentityLimitIssue,
   readFatSliceDeclarations,
   readMachoHeaderPrefixFacts,
   validateFatSlice,
@@ -191,22 +192,15 @@ export const readMachoContainer = async (
       identity.state === "needs-slice-header"
     )
       return { kind: "not-mach-o" };
-    // A large CAFEBABE input whose bounded prefix resembles an invalid
-    // known-CPU FAT table remains unknown until its JVM identity can be
-    // checked; do not turn the resource limit into a malformed claim. A slice
-    // with a valid range that starts with a Mach-O header settles identity,
-    // and its siblings' range faults then stay their own.
-    if (
-      identity.state === "malformed" &&
-      mayBeJvmClass &&
-      size > MAX_JVM_CLASS_IDENTITY_BYTES &&
-      !(await observesMachoSlice(readAt, header))
-    )
-      return {
-        kind: "issue",
-        status: "unsupported",
-        reason: JVM_CLASS_IDENTITY_LIMIT_REASON,
-      };
+    if (mayBeJvmClass && size > MAX_JVM_CLASS_IDENTITY_BYTES) {
+      const limitIssue = await readFatJvmIdentityLimitIssue(
+        header,
+        identity,
+        readAt,
+      );
+      if (limitIssue !== null)
+        return { kind: "issue", status: "unsupported", reason: limitIssue };
+    }
     // Aliased declarations are rejected at the declaration owner before any
     // slice payload is parsed. A declaration whose own range is already
     // defective keeps that fault; it does not turn its neighbours into aliases.
@@ -243,19 +237,6 @@ const readSliceMagic = async (
 ): Promise<number | null> => {
   const bytes = await readAt(offset, 4);
   return bytes.byteLength < 4 ? null : viewOf(bytes).getUint32(0, false);
-};
-
-const observesMachoSlice = async (
-  readAt: ReadAt,
-  header: ParsedFatContainerHeader,
-): Promise<boolean> => {
-  for (const [index, slice] of header.slices.entries())
-    if (
-      header.rangeIssues[index] === null &&
-      readMachoHeaderPrefixFacts(await readAt(slice.offset, 4)).format !== null
-    )
-      return true;
-  return false;
 };
 
 /** Decode every slice's dylib-loading load commands without reading code. */
@@ -813,14 +794,17 @@ const decodeLazyLoadDylibInfoCommand = (
   body: Uint8Array,
   index: number,
 ): LazyLoadDylibInfoCommand => {
-  if (body.byteLength < 16)
+  const data = readMachoLinkeditDataCommand(
+    LC.LAZY_LOAD_DYLIB_INFO,
+    body,
+    true,
+  );
+  if (data === null)
     throw machoIssue(
       "malformed",
       `load command ${index} is too short for LC_LAZY_LOAD_DYLIB_INFO`,
     );
-  const view = viewOf(body);
-  const dataOffset = view.getUint32(8, true);
-  const dataSize = view.getUint32(12, true);
+  const { dataOffset, dataSize } = data;
   if (dataSize < LAZY_INFO_HEADER_BYTES)
     throw machoIssue(
       "malformed",
@@ -904,13 +888,13 @@ const decodeLazyLoadDylibInfoPayload = (
   maxVmOffset: bigint,
   work: LazyPayloadWork,
 ): MachoDependency => {
-  const view = viewOf(payload);
-  const pathOffset = view.getUint32(0, true);
-  const flagImageOffset = view.getUint32(4, true);
-  const flags = view.getUint16(8, true);
-  const chainStartImageOffset = view.getUint32(12, true);
-  const symbolCount = view.getUint32(16, true);
-  const symbolArrayOffset = view.getUint32(20, true);
+  const reader = machoWordReader(payload, true);
+  const pathOffset = reader.u32(0);
+  const flagImageOffset = reader.u32(4);
+  const flags = reader.u16(8);
+  const chainStartImageOffset = reader.u32(12);
+  const symbolCount = reader.u32(16);
+  const symbolArrayOffset = reader.u32(20);
   if (BigInt(flagImageOffset) > maxVmOffset)
     throw machoIssue(
       "malformed",
@@ -951,7 +935,7 @@ const decodeLazyLoadDylibInfoPayload = (
     );
   work.symbolReferences = symbolReferences;
   for (let symbol = 0; symbol < symbolCount; symbol += 1) {
-    const offset = view.getUint32(symbolArrayOffset + symbol * 4, true);
+    const offset = reader.u32(symbolArrayOffset + symbol * 4);
     payloadString(
       payload,
       offset,

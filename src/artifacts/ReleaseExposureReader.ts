@@ -107,6 +107,7 @@ import {
   MAX_RELEASE_EXPOSURE_SOURCE_MAPS,
   MAX_RELEASE_EXPOSURE_TEXT_BYTES,
   MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES,
+  type ReleaseExposurePdbPathBytes,
   type ReleaseExposureScan,
 } from "../domain/releaseExposure.js";
 import { OwnedDirectoryHandle } from "../filesystem/OwnedDirectoryHandle.js";
@@ -784,6 +785,7 @@ const assembleScan = (
       examined: state.pdbExamined,
       paths: [...state.pdbPaths],
       image_paths: [...state.pdbImagePaths],
+      path_bytes: [...state.pdbPathBytes],
       failed: state.pdbFailed,
     },
     text_members: {
@@ -888,6 +890,7 @@ interface ScanState {
   pdbExamined: number;
   pdbPaths: string[];
   pdbImagePaths: string[];
+  pdbPathBytes: ReleaseExposurePdbPathBytes[];
   pdbFailed: number;
   coverageUnknown: boolean;
   pdbAttempts: number;
@@ -966,6 +969,7 @@ const createState = (
   pdbExamined: 0,
   pdbPaths: [],
   pdbImagePaths: [],
+  pdbPathBytes: [],
   pdbFailed: 0,
   coverageUnknown: false,
   pdbAttempts: 0,
@@ -2655,9 +2659,18 @@ const readPdb = (state: ScanState, bytes: Buffer, imagePath: string): void => {
     if (!parsed.ok) {
       state.pdbFailed += 1;
       pushLimitation(state, `${imagePath}: ${parsed.error.message}`);
-    } else if (parsed.value !== undefined && parsed.value.pdbPath.length > 0) {
+    } else if (parsed.value !== undefined) {
       const record = parsed.value;
-      pushSample(state.pdbPaths, record.pdbPath);
+      if (record.pdbPath !== null) pushSample(state.pdbPaths, record.pdbPath);
+      else if (
+        state.pdbPathBytes.length < MAX_RELEASE_EXPOSURE_SAMPLES &&
+        !state.pdbPathBytes.some(({ image_path }) => image_path === imagePath)
+      )
+        state.pdbPathBytes.push({
+          image_path: imagePath,
+          bytes_hex: record.pdbPathBytesHex,
+          encoding: "unknown",
+        });
       pushSample(state.pdbImagePaths, imagePath);
     }
   } catch {

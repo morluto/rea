@@ -1082,9 +1082,7 @@ const machoSymbolPayload = (
           : options.stackChk === false
             ? 1
             : 0)) + (options.trailingBrokenStrx === true ? 1 : 0);
-  const storedSymbols =
-    options.nsyms !== undefined && options.nsyms > 4096 ? 0 : declaredSymbols;
-  const symbolBytes = Buffer.alloc(Math.max(storedSymbols, 0) * nlistWidth);
+  const symbolBytes = Buffer.alloc(declaredSymbols * nlistWidth);
   const symbolType = options.definedSymbol === true ? 0x0f : 0x01;
   const writeSymbol = (index: number, nameOffset: number): void => {
     const at = index * nlistWidth;
@@ -1094,7 +1092,7 @@ const machoSymbolPayload = (
       symbolBytes.writeUInt32LE(options.commonSize, at + 8);
   };
   if (options.symbolScanBudget === true) {
-    for (let index = 0; index < storedSymbols; index += 1)
+    for (let index = 0; index < declaredSymbols; index += 1)
       writeSymbol(index, 1);
   } else if (options.brokenStrx === true && symbolBytes.length >= 4)
     writeSymbol(0, 50);
@@ -1104,7 +1102,7 @@ const machoSymbolPayload = (
   )
     writeSymbol(0, 1);
   if (options.trailingBrokenStrx === true)
-    writeSymbol(storedSymbols - 1, strings.length + 50);
+    writeSymbol(declaredSymbols - 1, strings.length + 50);
   return { wantSymtab, strings, declaredSymbols, symbolBytes };
 };
 
