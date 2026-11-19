@@ -28,11 +28,28 @@ export type EnvRule =
       readonly pattern: string;
     }
   | {
-      readonly kind: "chdir";
+      readonly kind: "chdir" | "unset";
       readonly pattern: string;
       readonly operand?: number;
       readonly clear?: number;
     };
+
+/** Unsetting a variable accepts any nonempty name without NUL or equals. */
+export const ENV_UNSET_NAME = String.raw`[^=\x00]+`;
+
+const envOperandRules = (
+  kind: "chdir" | "unset",
+  shortOption: "C" | "u",
+): readonly EnvRule[] => [
+  { kind, pattern: `--${kind}` },
+  { kind, pattern: String.raw`--${kind}=([\s\S]*)`, operand: 1 },
+  {
+    kind,
+    pattern: String.raw`-(i*)${shortOption}([\s\S]+)?`,
+    operand: 2,
+    clear: 1,
+  },
+];
 
 /** An env launcher may be bare or identified by a path ending in /env. */
 export const ENV_WRAPPER = String.raw`(?:[\s\S]*/)?env`;
@@ -46,14 +63,8 @@ export const ENV_PREFIX: readonly {
     repeat: true,
     rules: [
       { kind: "clear", pattern: "-i+|--ignore-environment" },
-      { kind: "chdir", pattern: "--chdir" },
-      { kind: "chdir", pattern: String.raw`--chdir=([\s\S]*)`, operand: 1 },
-      {
-        kind: "chdir",
-        pattern: String.raw`-(i*)C([\s\S]+)?`,
-        operand: 2,
-        clear: 1,
-      },
+      ...envOperandRules("chdir", "C"),
+      ...envOperandRules("unset", "u"),
     ],
   },
   { repeat: false, rules: [{ kind: "separator", pattern: "--" }] },

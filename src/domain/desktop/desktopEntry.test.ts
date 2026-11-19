@@ -187,6 +187,7 @@ describe("unwrapDesktopCommand", () => {
       decodedProgram,
       environment,
       clear,
+      unsets,
       chdir,
     }) => {
       const parsed = parseDesktopEntry(
@@ -202,6 +203,8 @@ describe("unwrapDesktopCommand", () => {
       expect(command.argumentIndex).toBe(command.index + 1);
       expect(command.environment).toEqual(environment);
       expect(command.clearEnvironment).toBe(clear);
+      expect(command.unsetEnvironment).toEqual(unsets);
+      expect(command.invalidUnset).toBeUndefined();
       expect(command.chdir).toEqual(chdir);
     },
   );

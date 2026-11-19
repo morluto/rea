@@ -7,6 +7,7 @@ export const DESKTOP_LAUNCH_CASES: readonly {
   decodedProgram: string;
   environment: Readonly<Record<string, string>>;
   clear?: true;
+  unsets?: readonly string[];
   chdir?: {
     path: string;
     start: number;
@@ -49,6 +50,40 @@ export const DESKTOP_LAUNCH_CASES: readonly {
     environment: {},
     clear: true,
     chdir: { path: "/tmp", start: 1, end: 2, includesClearEnvironment: true },
+  },
+  {
+    name: "combined clean and unset with a path-taking option",
+    prefix: 'env -iiu GTK_THEME -iC "/tmp/work folder" -- GTK_THEME=new ',
+    program: "drawio",
+    suffix: " --unset=argument %U",
+    decodedProgram: "drawio",
+    environment: { GTK_THEME: "new" },
+    clear: true,
+    unsets: ["GTK_THEME"],
+    chdir: {
+      path: "/tmp/work folder",
+      start: 3,
+      end: 5,
+      includesClearEnvironment: true,
+    },
+  },
+  {
+    name: "attached short and separate or attached long unset operands",
+    prefix: "env -uPATH --unset XDG_CACHE_HOME --unset=XDG_CONFIG_HOME ",
+    program: "drawio",
+    suffix: " %U",
+    decodedProgram: "drawio",
+    environment: {},
+    unsets: ["PATH", "XDG_CACHE_HOME", "XDG_CONFIG_HOME"],
+  },
+  {
+    name: "short unset consumes the rest of its option as its name",
+    prefix: "env -ui NAME=value ",
+    program: "drawio",
+    suffix: " %U",
+    decodedProgram: "drawio",
+    environment: { NAME: "value" },
+    unsets: ["i"],
   },
   {
     name: "long clean option",

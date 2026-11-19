@@ -5,6 +5,7 @@ import {
   DESKTOP_VALUE_ESCAPE,
   DESKTOP_VALUE_ESCAPES,
   ENV_PREFIX,
+  ENV_UNSET_NAME,
   ENV_WRAPPER,
   EXEC_LEXEME,
   QUOTABLE,
@@ -275,6 +276,10 @@ export type DesktopCommandWrapper = {
   readonly environment: Readonly<Record<string, string>>;
   /** Present when the env wrapper discards all inherited variables. */
   readonly clearEnvironment?: true;
+  /** Variables env removes from the inherited environment before assignments. */
+  readonly unsetEnvironment?: readonly string[];
+  /** A malformed unset name is ignored by GNU env only for a clean launch. */
+  readonly invalidUnset?: true;
   /** The last env chdir option and the argv span that carries its operand. */
   readonly chdir?: {
     readonly path: string;
@@ -361,6 +366,7 @@ const flatpakApplication = (argv: readonly string[], start: number) => {
   return { application_id: null, argumentIndex: argv.length };
 };
 
+const envUnsetName = new RegExp(`^(?:${ENV_UNSET_NAME})$`, "u");
 const envWrapper = new RegExp(`^${ENV_WRAPPER}$`, "u");
 const envPhases = ENV_PREFIX.map(({ repeat, rules }) => ({
   repeat,
@@ -382,6 +388,7 @@ const desktopEnvironment = (argv: readonly string[]) => {
   let index = 1;
   let clearEnvironment = false;
   let chdir: DesktopCommandWrapper["chdir"];
+  const unsetEnvironment: string[] = [];
   // No prototype, so an assignment such as `__proto__=x` stays a variable.
   const environment: Record<string, string> = Object.create(null);
   for (const phase of envPhases) {
@@ -397,46 +404,53 @@ const desktopEnvironment = (argv: readonly string[]) => {
         const split = token.indexOf("=");
         environment[token.slice(0, split)] = token.slice(split + 1);
       }
-      if (rule.kind === "chdir") {
+      if (rule.kind === "chdir" || rule.kind === "unset") {
         const attached =
           rule.operand === undefined ? undefined : captures[rule.operand];
         const separate = attached === undefined;
-        const path = separate ? (argv[index] ?? "") : attached;
+        const value = separate ? (argv[index] ?? "") : attached;
         if (separate) index += 1;
         const combined =
           rule.clear !== undefined && Boolean(captures[rule.clear]);
         clearEnvironment ||= combined;
-        chdir = {
-          path,
-          start,
-          end: index,
-          ...(combined ? { includesClearEnvironment: true as const } : {}),
-        };
+        if (rule.kind === "unset") unsetEnvironment.push(value);
+        else
+          chdir = {
+            path: value,
+            start,
+            end: index,
+            ...(combined ? { includesClearEnvironment: true as const } : {}),
+          };
       }
       if (!phase.repeat) break;
     }
   }
-  return { index, chdir, clearEnvironment, environment };
+  return { index, chdir, clearEnvironment, environment, unsetEnvironment };
 };
 
 /** Apply env prefixes and recognise flatpak run launchers. */
 export const unwrapDesktopCommand = (
   argv: readonly string[],
 ): DesktopCommandWrapper => {
-  const { index, chdir, clearEnvironment, environment } = envWrapper.test(
-    argv[0] ?? "",
-  )
-    ? desktopEnvironment(argv)
-    : {
-        index: 0,
-        chdir: undefined,
-        clearEnvironment: false,
-        environment: Object.create(null) as Record<string, string>,
-      };
+  const { index, chdir, clearEnvironment, environment, unsetEnvironment } =
+    envWrapper.test(argv[0] ?? "")
+      ? desktopEnvironment(argv)
+      : {
+          index: 0,
+          chdir: undefined,
+          clearEnvironment: false,
+          unsetEnvironment: [],
+          environment: Object.create(null) as Record<string, string>,
+        };
   const program = argv[index] ?? "";
   const wrapperOptions = {
     ...(chdir === undefined ? {} : { chdir }),
     ...(clearEnvironment ? { clearEnvironment: true as const } : {}),
+    ...(unsetEnvironment.length === 0 ? {} : { unsetEnvironment }),
+    ...(!clearEnvironment &&
+    unsetEnvironment.some((name) => !envUnsetName.test(name))
+      ? { invalidUnset: true as const }
+      : {}),
   };
   if (program.split("/").at(-1) === "flatpak" && argv[index + 1] === "run")
     return {

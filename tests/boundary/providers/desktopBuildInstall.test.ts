@@ -257,6 +257,7 @@ it.each([
   ['env "drawio %U', "unterminated quote"],
   ["env -i", "missing program"],
   ["env --chdir= drawio %U", "missing env chdir directory"],
+  ["env --unset= drawio %U", "invalid env unset name"],
 ])("rejects a malformed AppImage Exec value %s", async (exec, reason) => {
   const root = await stage("rea-appimage-invalid-exec-");
   const image = join(root, "env/vendor/app.AppImage");

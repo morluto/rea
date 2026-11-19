@@ -251,14 +251,15 @@ const launchEnvironment = (
   wrapper: ReturnType<typeof unwrapDesktopCommand>,
   inherited: LinuxApplicationRequest["environment"],
 ) => {
-  if (!wrapper.clearEnvironment) {
-    const environment = { ...inherited, ...wrapper.environment };
-    return { environment, lookupEnvironment: environment };
-  }
-  const environment = wrapper.environment;
-  // GNU env's execvp searches the Linux system path when PATH is absent.
+  const inheritedEnvironment = wrapper.clearEnvironment ? {} : { ...inherited };
+  for (const name of wrapper.unsetEnvironment ?? [])
+    delete inheritedEnvironment[name];
+  const environment = { ...inheritedEnvironment, ...wrapper.environment };
+  // GNU env's execvp searches the Linux system path when the prefix removes PATH.
+  const pathRemoved =
+    wrapper.clearEnvironment || wrapper.unsetEnvironment?.includes("PATH");
   const lookupEnvironment =
-    environment.PATH === undefined
+    pathRemoved && environment.PATH === undefined
       ? { ...environment, PATH: "/bin:/usr/bin" }
       : environment;
   return { environment, lookupEnvironment };
@@ -447,6 +448,11 @@ export const inspectLinuxApplication = async (
   if (!command.ok) return command;
   const { argv, workingDirectory, entry } = command.value;
   const wrapper = unwrapDesktopCommand(argv);
+  if (wrapper.invalidUnset)
+    return err({
+      reason: "desktop_entry_invalid",
+      detail: "env unset does not name a variable",
+    });
   const directory = await envApplicationDirectory(
     wrapper.chdir?.path,
     workingDirectory,
