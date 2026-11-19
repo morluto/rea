@@ -227,6 +227,39 @@ it("accepts an image that ends at its last declared byte", () => {
   }
 });
 
+it.each([
+  { version: 1, page: 2048 },
+  { version: 2, page: 2048 },
+  { version: 3, page: 4096 },
+  { version: 4, page: 4096 },
+] as const)(
+  "rejects a v$version boot header that cannot fit its first page",
+  ({ version, page }) => {
+    const valid = buildBootImage({ version, headerSize: page });
+    expect(parsed(valid).headerSize).toBe(page);
+    const impossible = buildBootImage({ version, headerSize: 1024 * 1024 + 1 });
+    expect(failed(impossible)).toMatchObject({
+      kind: "malformed",
+      message: expect.stringContaining(`through ${page}`),
+    });
+  },
+);
+
+it("distinguishes an oversized vendor header from a truncated one", () => {
+  const headerSize = 1024 * 1024 + 1;
+  const image = buildVendorBootImage({ version: 4, headerSize });
+  expect(failed(image.subarray(0, headerSize))).toMatchObject({
+    kind: "limit",
+    failure: {
+      limit: { name: "Android boot image header_size", maximum: 1024 * 1024 },
+    },
+  });
+  expect(failed(image.subarray(0, headerSize - 1))).toMatchObject({
+    kind: "truncated",
+    failure: { offset: headerSize - 1 },
+  });
+});
+
 it("aligns a kernel larger than 2^31 without allocating the image", () => {
   const header = Buffer.alloc(1632);
   header.write("ANDROID!", 0, "ascii");

@@ -38,7 +38,7 @@ const VENDOR_V4_SIZE = 2128;
 const VENDOR_RAMDISK_ENTRY_SIZE = 108;
 const MAX_VENDOR_RAMDISKS = 4096;
 const MAX_RAMDISK_ENTRY_SIZE = 4096;
-const MAX_HEADER_SIZE = 1024 * 1024;
+const MAX_VENDOR_HEADER_SIZE = 1024 * 1024;
 const PAGE_MIN = 2048;
 const PAGE_MAX = 65536;
 const NAME_SIZE = 16;
@@ -152,7 +152,7 @@ const capacityError = (message: string, limit: LimitRef): never => {
 
 const HEADER_SIZE_LIMIT = {
   name: "Android boot image header_size",
-  maximum: MAX_HEADER_SIZE,
+  maximum: MAX_VENDOR_HEADER_SIZE,
   unit: "bytes",
 };
 const VENDOR_RAMDISK_COUNT_LIMIT = {
@@ -257,16 +257,17 @@ const requirePageSize = (value: number): number => {
 const requireHeaderSize = (
   value: number,
   minimum: number,
-  maximum: number,
+  maximum?: number,
 ): number => {
-  if (value > MAX_HEADER_SIZE)
-    capacityError(
-      `header_size ${value} exceeds the ${MAX_HEADER_SIZE} byte header bound`,
-      HEADER_SIZE_LIMIT,
-    );
-  if (!Number.isInteger(value) || value < minimum || value > maximum)
+  if (
+    !Number.isInteger(value) ||
+    value < minimum ||
+    (maximum !== undefined && value > maximum)
+  )
     formatError(
-      `header_size ${value} is outside the supported range ${minimum} through ${maximum}`,
+      maximum === undefined
+        ? `header_size ${value} is smaller than the ${minimum}-byte structure`
+        : `header_size ${value} is outside the supported range ${minimum} through ${maximum}`,
     );
   return value;
 };
@@ -837,11 +838,14 @@ const parseVendorHeader = (
   const vendorRamdiskSize = u32(prefix, 24);
   const tagsAddr = u32(prefix, 2076);
   const name = decodeField(prefix.subarray(2080, 2080 + NAME_SIZE));
-  const headerSize = requireHeaderSize(
-    u32(prefix, 2096),
-    structSize,
-    MAX_HEADER_SIZE,
-  );
+  const headerSize = requireHeaderSize(u32(prefix, 2096), structSize);
+  if (headerSize > MAX_VENDOR_HEADER_SIZE) {
+    requireFileCovers(fileSize, headerSize, []);
+    capacityError(
+      `header_size ${headerSize} exceeds the ${MAX_VENDOR_HEADER_SIZE} byte header bound`,
+      HEADER_SIZE_LIMIT,
+    );
+  }
   const dtbSize = u32(prefix, 2100);
   const dtbAddr = u64(prefix, 2104, "dtb address");
   const table = headerVersion === 4 ? parseVendorTableHeader(prefix) : null;
