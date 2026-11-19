@@ -1787,20 +1787,22 @@ it("reports the owned-process prerequisite as Apktool unavailability, not a prob
 
 it("matches the launcher variable by the selected host's environment rules", async () => {
   const stub = await writeApktoolStub(() => VERSION_BLOCK);
+  // A double leading slash gives Win32 a UNC root and still opens the POSIX fixture.
+  const command = `/${stub.command}`;
   // Windows environment names are case-insensitive; POSIX names are exact.
-  const environment = { rea_apktool_command: stub.command, PATH: "" };
+  const environment = { rea_apktool_command: command, PATH: "" };
   const windows = new ApktoolProvider({ environment, platform: "win32" });
   onTestFinished(() => windows.close());
   expect(await windows.inspectAvailability()).toMatchObject({
     status: "available",
     diagnostics: {
-      selected_command: stub.command,
+      selected_command: command,
       command_source: "environment",
     },
   });
   const posix = new ApktoolProvider({ environment, platform: "linux" });
   onTestFinished(() => posix.close());
   expect(await posix.inspectAvailability()).not.toMatchObject({
-    diagnostics: { selected_command: stub.command },
+    diagnostics: { selected_command: command },
   });
 });

@@ -1,5 +1,9 @@
 import { failedInspectionDescriptor } from "../../tests/fixtures/processInspectionCleanup.js";
 import { ghidraFailureOutput } from "./GhidraDiagnostics.js";
+import {
+  ghidraKnownProviderDefectLimitations,
+  unverifiedGhidraBuildLimitation,
+} from "./GhidraReleasePolicy.js";
 import { ghidraProducerIdentity } from "./GhidraProducerIdentity.js";
 import {
   ProcessOwnershipInspectionCancelled,
@@ -61,6 +65,8 @@ import {
 import * as nativeLoader from "../windows/WindowsNativeLoader.js";
 import {
   fixtureDosLoadImage,
+  fixtureDosComLoadImage,
+  fixtureDosComLoaderLoadImage,
   compareDosClientFixture,
 } from "./GhidraLoadImage.fixture.js";
 import { fixtureRawBinaryLoadImage } from "./GhidraRawBinaryLoadImage.fixture.js";
@@ -136,22 +142,22 @@ const GHIDRA_ANNOTATIONS_RETAINED =
   "The active analysis session and annotations remain available.";
 const GHIDRA_PROJECT_PROFILE_MISMATCH =
   "Selected Ghidra project content no longer matches the profile committed by open_binary; when it changed is not established";
-const INSTALL = "/opt/ghidra_12.1.4_PUBLIC";
+const INSTALL = "/opt/ghidra_12.2_PUBLIC";
 afterEach(() => vi.restoreAllMocks());
 const installationHost = (
   platform: NodeJS.Platform = "linux",
 ): GhidraInstallationHost => ({
   platform,
   architecture: "x64",
-  readText: () => "application.version=12.1.4\napplication.java.min=21\n",
+  readText: () => "application.version=12.2\napplication.java.min=25\n",
   executable: () => true,
   probeJava: () =>
     javaProbeOk<GhidraJavaObservation>({
       osArch: "amd64",
       osName: platform === "win32" ? "Windows 11" : "Linux",
-      version: "21.0.11",
-      major: 21,
-      home: "/usr/lib/jvm/jdk-21",
+      version: "25.0.1",
+      major: 25,
+      home: "/usr/lib/jvm/jdk-25",
       bits: 64,
       runtime: "jdk",
       vmName: "OpenJDK 64-Bit Server VM",
@@ -227,7 +233,7 @@ it.each(["mixed-inspection", "held-inspection", "ordinary-launch"] as const)(
       {
         ...installationHost(),
         readText: () =>
-          "application.version=12.1.4\napplication.release.name=PUBLIC\napplication.java.min=21\n",
+          "application.version=12.2\napplication.release.name=PUBLIC\napplication.java.min=21\n",
       },
       (options) => {
         if (!(options.launcher instanceof GhidraHeadlessLauncher))
@@ -447,7 +453,7 @@ it("carries the inspected release identity into the production launcher", async 
     {
       ...installationHost(),
       readText: () =>
-        "application.version=12.1.4\napplication.release.name=PUBLIC\napplication.java.min=21\n",
+        "application.version=12.2\napplication.release.name=PUBLIC\napplication.java.min=21\n",
     },
     (options) => {
       launchers.push(options.launcher as GhidraHeadlessLauncher);
@@ -462,7 +468,7 @@ it("carries the inspected release identity into the production launcher", async 
   expect(launchers).toHaveLength(0);
   expect((await client.execute("health", {})).ok).toBe(true);
   expect(launchers[0]?.options).toMatchObject({
-    configurationDirectoryName: "ghidra_12.1.4_PUBLIC",
+    configurationDirectoryName: "ghidra_12.2_PUBLIC",
   });
   await client.close();
 });
@@ -534,9 +540,9 @@ describe("Ghidra provider", () => {
         return javaProbeOk<GhidraJavaObservation>({
           osArch: "amd64",
           osName: "Linux",
-          version: "21.0.11",
-          major: 21,
-          home: "/usr/lib/jvm/jdk-21",
+          version: "25.0.1",
+          major: 25,
+          home: "/usr/lib/jvm/jdk-25",
           bits: 64,
           runtime: "jdk",
         });
@@ -568,8 +574,8 @@ describe("Ghidra provider", () => {
       status: "available",
       diagnostics: {
         install_dir: INSTALL,
-        provider_version: "12.1.4",
-        java_version: "21.0.11",
+        provider_version: "12.2",
+        java_version: "25.0.1",
       },
     });
     expect(await ghidra.inspectAvailability()).toMatchObject({
@@ -911,7 +917,7 @@ describe("Ghidra platform support", () => {
     expect(
       existingGhidraAnalysisProfile(
         peTarget("x86_64"),
-        { id: "ghidra", name: "Ghidra", version: "12.1.4" },
+        { id: "ghidra", name: "Ghidra", version: "12.2" },
         { project_name: "fixture" },
       ).parameters.loader_relocation_semantics,
     ).toBe("read-only-relocation-limitations");
@@ -1505,7 +1511,7 @@ describe("Ghidra client projection", () => {
     if (resolved.value.profile === null)
       throw new Error("Expected a bound Ghidra profile");
     expect(resolved.value.profile).toMatchObject({
-      provider: { id: "ghidra", name: "Ghidra", version: "12.1.4" },
+      provider: { id: "ghidra", name: "Ghidra", version: "12.2" },
       parameters: {
         import_mode: "ephemeral-source-immutable",
         annotation_policy: "atomic-function-entry-metadata",
@@ -1548,7 +1554,7 @@ describe("Ghidra client projection", () => {
         provider: {
           id: "ghidra",
           name: "Ghidra",
-          version: "12.1.4",
+          version: "12.2",
         },
         analysisProfile: resolved.value.profile,
         result: [{ address: "0x1000", value: "fixture_main" }],
@@ -1558,6 +1564,9 @@ describe("Ghidra client projection", () => {
     if (!result.ok) throw result.error;
     expect(result.value.limitations).not.toContainEqual(
       expect.stringContaining("The bridge is verified against"),
+    );
+    expect(result.value.limitations).toEqual(
+      expect.arrayContaining([...ghidraKnownProviderDefectLimitations("12.2")]),
     );
     expect(startCount).toBe(1);
   });
@@ -2724,6 +2733,66 @@ describe("Ghidra measured raw load-image projection", () => {
   );
 });
 
+it("compares measured COM import evidence against the loader committed at admission", async () => {
+  const { bytes, sha256 } = fixtureDosComLoaderLoadImage();
+  const { observation } = fixtureDosComLoadImage(bytes);
+  observation.source_files[0]!.name = "fixture.bin";
+  const root = await mkdtemp(join(tmpdir(), "rea-ghidra-com-selection-"));
+  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const path = join(root, "fixture.com");
+  await writeFile(path, bytes);
+  const ghidra = provider(installationHost(), () => ({
+    start: async () => ok(sessionInfo()),
+    callTool: async () => ok(jsonValueSchema.parse(observation)),
+    readTargetSnapshot: async () => ok({ kind: "captured", bytes }),
+    close: async () => ok(null),
+  }));
+  onTestFinished(async () => {
+    await ghidra.closeOwnedResources();
+  });
+  const target: BinaryTarget = {
+    path,
+    sha256,
+    kind: "executable",
+    format: "dos-com",
+    architecture: "x86",
+    availableArchitectures: ["x86"],
+  };
+  const profile = await ghidra.resolveAnalysisProfile(target);
+  if (!profile.ok) throw profile.error;
+  if (profile.value.profile === null)
+    throw new Error("Expected a DOS COM profile");
+  expect(profile.value.profile.parameters.loader).toBe("ComLoader");
+  const client = ghidra.createClient(target, profile.value.profile);
+  try {
+    const result = await client.execute("inspect_native_load_image", {});
+    if (!result.ok) throw result.error;
+    expect(result.value.result).toMatchObject({
+      status: "mismatch",
+      loader: "BinaryLoader",
+      load_address: "1000:0100",
+      observations: observation,
+      checks: expect.arrayContaining([
+        expect.objectContaining({
+          name: "loader",
+          expected: "ComLoader",
+          observed: "BinaryLoader",
+          matched: false,
+        }),
+        expect.objectContaining({
+          name: "load_address",
+          expected: "0000:0100",
+          observed: "1000:0100",
+          matched: false,
+        }),
+      ]),
+    });
+    expect(result.value.result).not.toHaveProperty("loader_fallback");
+  } finally {
+    await client.close();
+  }
+});
+
 describe("Ghidra measured DOS load-image projection", () => {
   it.each([
     "verified",
@@ -3761,7 +3830,7 @@ const sessionInfo = () => ({
   name: "REA Ghidra bridge" as const,
   run_id: "11111111-1111-4111-8111-111111111111",
   profile_digest: "a".repeat(64),
-  provider: { id: "ghidra" as const, version: "12.1.4" },
+  provider: { id: "ghidra" as const, version: "12.2" },
   read_only: false as const,
   analysis_complete: true,
   analysis_timed_out: false,
@@ -4512,7 +4581,7 @@ describe("compatible Ghidra builds", () => {
       {
         ...installationHost(),
         readText: () =>
-          "application.version=12.1.2\napplication.java.min=21\napplication.java.max=\n",
+          "application.version=12.3\napplication.java.min=25\napplication.java.max=\n",
         probeJava: () =>
           javaProbeOk<GhidraJavaObservation>({
             osArch: "amd64",
@@ -4529,7 +4598,7 @@ describe("compatible Ghidra builds", () => {
           Promise.resolve(
             ok({
               ...sessionInfo(),
-              provider: { id: "ghidra", version: "12.1.2" },
+              provider: { id: "ghidra", version: "12.3" },
             }),
           ),
         callTool: () =>
@@ -4562,19 +4631,23 @@ describe("compatible Ghidra builds", () => {
     const procedures = await client.execute("list_procedures", {});
     expect(await ghidra.inspectAvailability()).toMatchObject({
       status: "available",
-      diagnostics: { provider_version: "12.1.2", java_version: "27" },
+      diagnostics: { provider_version: "12.3", java_version: "27" },
     });
-    expect(health.ok && health.value.provider.version).toBe("12.1.2");
-    const unverified = expect.stringMatching(
-      /\b12\.1\.2\b.*\bverified\b.*\b12\.1\.4\b/u,
-    );
+    expect(health.ok && health.value.provider.version).toBe("12.3");
+    const unverified = unverifiedGhidraBuildLimitation("12.3");
+    const openDefects = ghidraKnownProviderDefectLimitations("12.3");
+    expect(unverified).toBeTypeOf("string");
+    expect(openDefects).toHaveLength(1);
     expect(health.ok && health.value.limitations).toEqual(
-      expect.arrayContaining([unverified]),
+      expect.arrayContaining([unverified, ...openDefects]),
+    );
+    expect(health.ok && health.value.limitations?.join("\n")).not.toContain(
+      "ghidra-9996",
     );
     expect(procedures.ok && procedures.value.limitations).toEqual(
-      expect.arrayContaining([unverified]),
+      expect.arrayContaining([unverified, ...openDefects]),
     );
-    expect(procedures.ok && procedures.value.provider.version).toBe("12.1.2");
+    expect(procedures.ok && procedures.value.provider.version).toBe("12.3");
   });
 });
 
@@ -5096,7 +5169,7 @@ describe("Ghidra missing project program", () => {
 
   it("reports a denied java_home.save with its path and restricted-host remediation", async () => {
     const path =
-      "C:\\Users\\a\\AppData\\Local\\Temp\\rea-provider-1\\config\\ghidra\\ghidra_12.1.4_PUBLIC\\java_home.save";
+      "C:\\Users\\a\\AppData\\Local\\Temp\\rea-provider-1\\config\\ghidra\\ghidra_12.2_PUBLIC\\java_home.save";
     const projected = await startFailure(
       "",
       {},
@@ -6560,7 +6633,7 @@ describe("Ghidra SIGKILL projection", () => {
 
 it("reuses readiness only inside its active task and provider lifetime", async () => {
   let probes = 0;
-  let version = "21.0.11";
+  let version = "25.0.1";
   const base = installationHost();
   const ghidra = provider({
     ...base,
@@ -6585,14 +6658,14 @@ it("reuses readiness only inside its active task and provider lifetime", async (
       ).ok,
     ).toBe(true);
     expect(probes).toBe(1);
-    version = "21.0.12";
+    version = "25.0.2";
     expect(await ghidra.closeOwnedResources()).toMatchObject({ ok: true });
     expect(
       (await ghidra.inspectAvailability({ scope })).diagnostics.java_version,
     ).toBe(version);
     expect(probes).toBe(2);
     scope.close();
-    version = "21.0.13";
+    version = "25.0.3";
     expect(
       (await ghidra.inspectAvailability({ scope })).diagnostics.java_version,
     ).toBe(version);
@@ -6705,7 +6778,7 @@ it.each(["retry", "physical", "cleanup", "close"] as const)(
 );
 
 it("refuses a changed installation before creating a target-bound native client", async () => {
-  let release = "12.1.4",
+  let release = "12.2",
     nativeCreates = 0;
   const ghidra = provider(
     {
@@ -6723,15 +6796,15 @@ it("refuses a changed installation before creating a target-bound native client"
   if (!resolved.ok || resolved.value.profile === null)
     throw new Error("Expected initial profile");
   const client = ghidra.createClient(target, resolved.value.profile);
-  release = "12.1.5";
+  release = "12.3";
   try {
     const result = await client.execute("analyze_function", {});
     if (result.ok) throw new Error("Changed installation was admitted");
     expect(result.error).toMatchObject({
       operation: "analyze_function",
       diagnostics: {
-        selected_provider_version: "12.1.4",
-        current_installation: { provider_version: "12.1.5" },
+        selected_provider_version: "12.2",
+        current_installation: { provider_version: "12.3" },
       },
     });
     // The actionable reason reaches the caller, not only details.

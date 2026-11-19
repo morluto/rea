@@ -227,6 +227,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         sessionDefaultAddressSpace =
             currentProgram.getAddressFactory().getDefaultAddressSpace();
+        if (currentProgram.getExecutableFormat().equals("Old-style DOS Executable (COM)") &&
+            !currentProgram.getOptions(ghidra.program.model.listing.Program.PROGRAM_INFO)
+                .getBoolean("REA DOS COM prepared", false)) {
+            throw new IllegalStateException("REA DOS COM entry/context preparation failed");
+        }
         if (currentProgram.getExecutableFormat().equals("Raw Binary")) {
             boolean dosCom = currentProgram.getLanguageID().getIdAsString()
                 .equals("x86:LE:16:Real Mode");
@@ -1165,6 +1170,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
             return existing.getAddress().equals(start) && existing.getLength() >= length
                 ? existing
                 : null;
+        // A range iterator only sees instructions whose start lies in the range.
+        if (listing.getInstructionContaining(start) != null) return null;
         Address end = start.add(length - 1);
         if (listing.getInstructions(new ghidra.program.model.address.AddressSet(start, end), true)
                 .hasNext())
