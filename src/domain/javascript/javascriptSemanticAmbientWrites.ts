@@ -12,11 +12,13 @@ import {
 import {
   collectJavaScriptIdentityWritesSteps,
   electronMemberPath,
+  type JavaScriptIntrinsicInvocation,
 } from "./javascriptElectronMemberWrites.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import {
   ambientEffectCovers,
   ambientPathMayObserveAt,
+  opaqueCodeMayChangeGlobalRead,
   semanticEffectMayFollow,
   semanticEffectMayPrecede,
 } from "./javascriptSemanticEffectLog.js";
@@ -119,6 +121,23 @@ const canonicalAmbientPath = (
 
 const arrayIteratorMethods = new Set(["entries", "keys", "values"]);
 
+const intrinsicPrototypeRead = (
+  invocation: JavaScriptIntrinsicInvocation | undefined,
+) => {
+  if (invocation?.kind !== "known" || invocation.path.length !== 3)
+    return undefined;
+  const [, owner, method] = invocation.path;
+  if (
+    (owner !== "Object" && owner !== "Reflect") ||
+    method !== "getPrototypeOf"
+  )
+    return undefined;
+  const target = invocation.arguments?.[0];
+  return t.isNode(target) && !t.isSpreadElement(target)
+    ? { target, owner }
+    : undefined;
+};
+
 type AmbientPath = readonly (string | null)[];
 
 const retainedAmbientEffects = new WeakMap<
@@ -207,6 +226,7 @@ interface AmbientResolution {
   readonly callerPaths: readonly AmbientPath[];
   readonly ownership: "local" | "ambient" | "unknown";
   readonly unknownReasons: readonly AmbientIdentityUnknownReason[];
+  readonly possibleArrayReceiver?: true;
 }
 
 interface AmbientReferenceFacts {
@@ -218,9 +238,10 @@ interface AmbientReferenceFacts {
     node: t.CallExpression | t.OptionalCallExpression,
   ) =>
     | { readonly kind: "prototype"; readonly target: t.Node }
-    | { readonly kind: "array-iterator" }
+    | { readonly kind: "array-iterator"; readonly receiver?: t.Node }
     | undefined;
   readonly freshObject: (node: t.Node) => boolean;
+  readonly arrayIteratorReceiver: (node: t.Node) => boolean;
 }
 
 /**
@@ -241,12 +262,13 @@ export const createAmbientPathResolver = (
     ReturnType<typeof electronMemberPath>
   >();
   const returnedReferences = createSemanticReturnedReferences(state);
-  return (
+  const resolve = (
     node: t.Node,
     capture?: t.Node,
     escapedContents = false,
     projection: AmbientProjection = [],
     receiver?: (node: t.Node, path: AmbientProjection) => void,
+    observes?: "array-receiver" | "prototype-inspection",
   ): AmbientResolution => {
     const prior = possibleWrites ? undefined : cached.get(node);
     if (prior !== undefined) return prior;
@@ -408,6 +430,18 @@ export const createAmbientPathResolver = (
                   ],
             );
         };
+        if (
+          observes === "array-receiver" &&
+          (suffix === undefined || suffix.length === 0) &&
+          facts?.arrayIteratorReceiver(root)
+        )
+          return {
+            paths: [],
+            callerPaths: [],
+            ownership: "local",
+            unknownReasons: [],
+            possibleArrayReceiver: true,
+          };
         if (!t.isIdentifier(root) && facts?.freshObject(root)) {
           receiver?.(root, suffix);
           // The allocation owns itself; a projected child needs its own proof.
@@ -416,6 +450,12 @@ export const createAmbientPathResolver = (
             resolvedIdentity = true;
           }
           for (const [source, path] of facts?.stores.get(root) ?? []) {
+            if (
+              observes === "array-receiver" &&
+              capture !== undefined &&
+              !semanticEffectMayPrecede(state, capture, source.mutation)
+            )
+              continue;
             const stored = storedValueProjection(
               suffix,
               source,
@@ -569,10 +609,23 @@ export const createAmbientPathResolver = (
         // shared prototype through a prototype projection. Its ordinary
         // return alternatives still pass through the same alias walk.
         if (
+          observes !== "array-receiver" &&
           callResult?.kind === "array-iterator" &&
           (suffix === undefined ||
             suffix[0] === null ||
-            suffix[0] === "__proto__")
+            suffix[0] === "__proto__" ||
+            (escapedContents &&
+              suffix.length === 0 &&
+              observes !== "prototype-inspection")) &&
+          (callResult.receiver === undefined ||
+            resolve(
+              callResult.receiver,
+              callResult.receiver,
+              false,
+              [],
+              undefined,
+              "array-receiver",
+            ).possibleArrayReceiver === true)
         ) {
           retain([
             ...semanticArrayIteratorPrototypePath,
@@ -738,6 +791,7 @@ export const createAmbientPathResolver = (
     if (!possibleWrites) cached.set(node, resolution);
     return resolution;
   };
+  return resolve;
 };
 
 /**
@@ -764,6 +818,9 @@ export function* indexJavaScriptAmbientWritesSteps(
     browserReceiver: boolean;
     projection?: AmbientProjection;
   }[] = [];
+  const prototypeInspections: ((typeof escapes)[number] & {
+    readonly owner: string;
+  })[] = [];
   // Object/Reflect static calls, settled once every ambient write is known.
   const staticReceivers: {
     node: t.Node;
@@ -785,19 +842,16 @@ export function* indexJavaScriptAmbientWritesSteps(
   const ambientWrites = createAmbientPathResolver(state, true, {
     stores,
     freshObject: interop.isFreshObject,
+    arrayIteratorReceiver: (node) =>
+      t.isArrayExpression(node) ||
+      (t.isNewExpression(node) &&
+        (isIntrinsicGlobalReference(node.callee, state, "Array") ||
+          isIntrinsicTypedArrayConstruction(node, state))),
     callResult: (node) => {
       const invocation = interop.intrinsicInvocation(node);
-      if (
-        invocation?.kind === "known" &&
-        invocation.path.length === 3 &&
-        ["Object", "Reflect"].includes(invocation.path[1] ?? "") &&
-        invocation.path[2] === "getPrototypeOf"
-      ) {
-        const target = invocation.arguments?.[0];
-        return t.isNode(target) && !t.isSpreadElement(target)
-          ? { kind: "prototype", target }
-          : undefined;
-      }
+      const prototype = intrinsicPrototypeRead(invocation);
+      if (prototype !== undefined)
+        return { kind: "prototype", target: prototype.target };
       if (
         invocation?.path.length === 4 &&
         invocation.path[1] === "Array" &&
@@ -822,13 +876,7 @@ export function* indexJavaScriptAmbientWritesSteps(
         )
       )
         return undefined;
-      const receiver = interop.localValueRoot(callee.object);
-      return t.isArrayExpression(receiver) ||
-        (t.isNewExpression(receiver) &&
-          (isIntrinsicGlobalReference(receiver.callee, state, "Array") ||
-            isIntrinsicTypedArrayConstruction(receiver, state)))
-        ? { kind: "array-iterator" }
-        : undefined;
+      return { kind: "array-iterator", receiver: callee.object };
     },
   });
   yield* collectJavaScriptIdentityWritesSteps(
@@ -868,6 +916,7 @@ export function* indexJavaScriptAmbientWritesSteps(
       const retainEscape = (target: t.Node, browserReceiver = false) => {
         escapes.push({ target, node, browserReceiver });
       };
+      const prototypeInspection = intrinsicPrototypeRead(invocation);
       for (const [index, argument] of (t.isTaggedTemplateExpression(node)
         ? node.quasi.expressions
         : node.arguments
@@ -875,10 +924,19 @@ export function* indexJavaScriptAmbientWritesSteps(
         if (
           t.isNode(argument) &&
           !semanticArgumentStaysInSource(node, index, state)
-        )
-          retainEscape(
-            t.isSpreadElement(argument) ? argument.argument : argument,
-          );
+        ) {
+          if (argument === prototypeInspection?.target)
+            prototypeInspections.push({
+              target: argument,
+              node,
+              browserReceiver: false,
+              owner: prototypeInspection.owner,
+            });
+          else
+            retainEscape(
+              t.isSpreadElement(argument) ? argument.argument : argument,
+            );
+        }
       const callee = unwrapJavaScriptExpression(
         t.isTaggedTemplateExpression(node) ? node.tag : node.callee,
       ).node;
@@ -1060,13 +1118,35 @@ export function* indexJavaScriptAmbientWritesSteps(
     if (ambientPathMayObserveAt(state, node, ["global", ...method], "contents"))
       retainEscapeEffect({ node, target, browserReceiver: false });
     else state.retainedGlobalCallReceivers.add(target);
-  function retainEscapeEffect({
-    node,
-    target,
-    browserReceiver,
-    projection,
-  }: (typeof escapes)[number]): void {
-    const resolved = ambientWrites(target, node, true, projection);
+  // A native prototype read does not expose the iterator to caller code.
+  // Keep the ordinary ambient alternatives and account for an opaque or
+  // source-visible replacement once the other effects have been indexed.
+  for (const effect of prototypeInspections) {
+    const { node, owner } = effect;
+    const nativeInspection =
+      !ambientPathMayObserveAt(
+        state,
+        node,
+        ["global", owner, "getPrototypeOf"],
+        "contents",
+      ) && !opaqueCodeMayChangeGlobalRead(node, state, owner);
+    retainEscapeEffect(
+      effect,
+      nativeInspection ? "prototype-inspection" : undefined,
+    );
+  }
+  function retainEscapeEffect(
+    { node, target, browserReceiver, projection }: (typeof escapes)[number],
+    observes?: "prototype-inspection",
+  ): void {
+    const resolved = ambientWrites(
+      target,
+      node,
+      true,
+      projection,
+      undefined,
+      observes,
+    );
     if (
       browserReceiver &&
       resolved.ownership === "ambient" &&

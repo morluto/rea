@@ -219,6 +219,47 @@ it.each([
     "Object.getPrototypeOf(new Map().values()).next = replacement;",
     "resolved",
   ],
+  ["whole iterator escape", "consume([].values());", "candidate"],
+  [
+    "iterator nested in an escaping container",
+    "const box = { iterator: [].entries() }; consume(box);",
+    "candidate",
+  ],
+  [
+    "array receiver in a stored property",
+    "const box = { items: [] }; Object.getPrototypeOf(box.items.values()).next = replacement;",
+    "candidate",
+  ],
+  [
+    "typed array receiver through aliased properties",
+    "const box = { items: new Uint8Array() }; const alias = box; Object.getPrototypeOf(alias.items.values()).next = replacement;",
+    "candidate",
+  ],
+  [
+    "array receiver through a member assignment",
+    "const box = {}; box.items = []; Object.getPrototypeOf(box.items.values()).next = replacement;",
+    "candidate",
+  ],
+  [
+    "member assignment after the iterator was obtained",
+    "const box = { items: new Map() }; const iterator = box.items.values(); box.items = []; Object.getPrototypeOf(iterator).next = replacement;",
+    "resolved",
+  ],
+  [
+    "replaced prototype inspector receives the iterator",
+    "Reflect.getPrototypeOf = opaque; Reflect.getPrototypeOf([].values());",
+    "candidate",
+  ],
+  [
+    "object property with unrelated iterator",
+    "const box = { items: new Map() }; Object.getPrototypeOf(box.items.values()).next = replacement;",
+    "resolved",
+  ],
+  [
+    "read-only alias to getPrototypeOf",
+    "const inspect = Reflect.getPrototypeOf; const iterator = [].values(); inspect(iterator);",
+    "resolved",
+  ],
   [
     "prototype escape",
     "consume(Object.getPrototypeOf([].entries()));",

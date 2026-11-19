@@ -28,7 +28,8 @@ cliTest(
     const { b: scalar = 0 } = nested;
     const before = ["first"];
     const [ordinary] = before;
-    const iterator = [].values();
+    const box = { items: [] };
+    const iterator = box.items.values();
     const prototype = Reflect.getPrototypeOf(iterator);
     Object.defineProperty(prototype, "next", {
       value: () => ({ value: "other", done: false }),
