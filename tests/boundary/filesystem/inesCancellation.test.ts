@@ -47,6 +47,9 @@ it.each(["close", "cancel"] as const)(
       await expect(entries.next()).rejects.toMatchObject({
         reason: interruption === "close" ? "unavailable" : "cancelled",
       });
+      // Close leaves the borrowed inventory descriptor with its owner.
+      if (interruption === "close")
+        await expect(handle.stat()).resolves.toBeDefined();
     } finally {
       await reader.close();
       await handle.close();
@@ -781,30 +784,6 @@ it.each(["unread", "buffered"] as const)(
     }
   },
 );
-
-it("refuses to complete a paused iNES inventory after reader close", async () => {
-  const root = await createTestTempDirectory("rea-ines-close-iteration-");
-  const path = join(root, "source.nes");
-  await writeFile(path, inesFixture());
-  const handle = await open(path, "r");
-  const reader = new InesArtifactReader(path, {
-    handle,
-    initial: await handle.stat(),
-  });
-  const iterator = reader.entries()[Symbol.asyncIterator]();
-  try {
-    expect((await iterator.next()).done).toBe(false);
-    await reader.close();
-    await expect(iterator.next()).rejects.toMatchObject({
-      reason: "unavailable",
-    });
-    await expect(handle.stat()).resolves.toBeDefined();
-  } finally {
-    await iterator.return?.();
-    await reader.close();
-    await handle.close();
-  }
-});
 
 it.each(["close", "cancel"] as const)(
   "refuses a region when %s follows completed source validation",
