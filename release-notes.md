@@ -1054,6 +1054,7 @@
 * **macho:** report inspection limits from LimitRef ([#12205](https://github.com/morluto/rea/issues/12205)) ([0e07437](https://github.com/morluto/rea/commit/0e07437bc77a68aacb9c9bd54e4809f177317e03))
 * **macho:** select slices through one owner with typed refusals ([#10874](https://github.com/morluto/rea/issues/10874)) ([557bf41](https://github.com/morluto/rea/commit/557bf41c2c7971242ed013fddf12d8f7c6117612))
 * **macho:** share checked segment and section framing ([#12366](https://github.com/morluto/rea/issues/12366)) ([5f25808](https://github.com/morluto/rea/commit/5f258086b031b18b4cd65b9c35c63d0c726bfad0))
+* **macho:** share encryption command word reads ([#12543](https://github.com/morluto/rea/issues/12543)) ([4892615](https://github.com/morluto/rea/commit/4892615ecbe53ffa5a4696f781f869154ddb8e98))
 * **managed:** read CLI header fields through BinaryReader ([#12503](https://github.com/morluto/rea/issues/12503)) ([6cbd9cf](https://github.com/morluto/rea/commit/6cbd9cf99401167d8dbbf3947ed449cc3a2887b1))
 * **managed:** read inspection coverage through the managed inspection state owner ([#11311](https://github.com/morluto/rea/issues/11311)) ([ae634eb](https://github.com/morluto/rea/commit/ae634eb5f6aa30c9adaac5ba7bf9066bff335f94))
 * **managed:** read metadata pointer rows through BinaryReader ([#12483](https://github.com/morluto/rea/issues/12483)) ([3d0fa7d](https://github.com/morluto/rea/commit/3d0fa7dae2cd960c077aa63e8a80a2195a846a10))
