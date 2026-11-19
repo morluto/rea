@@ -1,23 +1,21 @@
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { FIXTURE_TOOLS, fixtureCommand } from "./fixture-toolchain.mjs";
 
-const execute = promisify(execFile);
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
-/**
- * Link one source-owned C file and probe; never execute the target code.
- * `run` is the owned-command runner. The 32-bit lane still uses the module
- * launcher; PPC64 must pass the verifier's command owner.
- */
+/** Link one source-owned C file and probe; never execute the target code. */
 async function buildFixture(
   directory,
-  { target, options, entry, sources, run = execute },
+  commands,
+  { target, options, entry, sources },
 ) {
+  if (typeof commands?.exec !== "function")
+    throw new TypeError(
+      "PowerPC fixture builds require an owned command runner",
+    );
   const compiler = fixtureCommand(FIXTURE_TOOLS.ppcClang);
   const [source, probe] = sources.map((relative) =>
     fileURLToPath(new URL(relative, import.meta.url)),
@@ -39,8 +37,10 @@ async function buildFixture(
     "-o",
     path,
   ];
-  const version = await run(compiler, ["--version"], { timeout: 10000 });
-  await run(compiler, args, { timeout: 60000 });
+  const version = await commands.exec(compiler, ["--version"], {
+    timeout: 10000,
+  });
+  await commands.exec(compiler, args, { timeout: 60000 });
   const bytes = await readFile(path);
   return {
     bytes,
@@ -56,8 +56,8 @@ async function buildFixture(
 }
 
 /** Build a source-owned freestanding ELF; never execute its target code. */
-export async function buildPowerPcFixture(directory) {
-  const { bytes, fixture } = await buildFixture(directory, {
+export async function buildPowerPcFixture(directory, commands) {
+  const { bytes, fixture } = await buildFixture(directory, commands, {
     target: "powerpc-unknown-linux-gnu",
     // A 750-family core with the classic FPU, unlike the e500 SPE variant.
     options: ["-mcpu=750"],
@@ -84,10 +84,8 @@ export async function buildPowerPcFixture(directory) {
  * big-endian Linux default is ELFv1, so the ABI is requested explicitly.
  */
 export async function buildPowerPc64Fixture(directory, byteOrder, commands) {
-  if (typeof commands?.exec !== "function")
-    throw new TypeError("PPC64 fixture builds require an owned command runner");
   const little = byteOrder === "little";
-  const { bytes, fixture } = await buildFixture(directory, {
+  const { bytes, fixture } = await buildFixture(directory, commands, {
     target: little
       ? "powerpc64le-unknown-linux-gnu"
       : "powerpc64-unknown-linux-gnu",
@@ -95,7 +93,6 @@ export async function buildPowerPc64Fixture(directory, byteOrder, commands) {
     options: ["-mcpu=power9", "-mabi=elfv2"],
     entry: "rea_ppc64_entry",
     sources: ["../c/ppc64.c", "./ppc64-probe.S"],
-    run: (command, args, options) => commands.exec(command, args, options),
   });
   const u16 = (offset) =>
     little ? bytes.readUInt16LE(offset) : bytes.readUInt16BE(offset);

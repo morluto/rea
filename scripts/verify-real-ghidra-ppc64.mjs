@@ -83,7 +83,7 @@ const sha256 = async (path) =>
   createHash("sha256")
     .update(await readFile(path))
     .digest("hex");
-// Compiler and CLI launches share one command owner. Its process group is what
+// Compiler, reader and CLI launches share one command owner. Its process group is what
 // a timeout stops, including a linker that would otherwise outlive Clang.
 const commands = await createVerifierCommands();
 
@@ -153,6 +153,7 @@ try {
         commands,
       );
       const independent = await inspectPowerPc64Readelf(
+        commands,
         fixture.path,
         byteOrder,
       );

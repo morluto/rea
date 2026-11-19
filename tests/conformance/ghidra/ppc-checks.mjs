@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { FIXTURE_TOOLS, fixtureCommand } from "./fixture-toolchain.mjs";
 
-const execute = promisify(execFile);
 // The lane binds this language; Ghidra's ELF loader alone selects e500.
 const LANGUAGE = "PowerPC:BE:32:default";
 // The 64-bit lane binds Ghidra's Power ISA 3.0 languages; its G2-era 64-bit
@@ -134,20 +131,24 @@ export function parsePowerPc64Readelf(text, byteOrder) {
   };
 }
 
-const readelfReport = async (path) => {
+const readelfReport = async (commands, path) => {
   const command = fixtureCommand(FIXTURE_TOOLS.ppcReadelf);
   const options = {
     env: { ...process.env, LC_ALL: "C" },
     timeout: 10000,
     maxBuffer: 1024 * 1024,
   };
-  const version = await execute(command, ["--version"], options);
+  const version = await commands.exec(command, ["--version"], options);
   assert.match(
     version.stdout,
     /^GNU readelf\b/u,
     "This lane requires GNU readelf",
   );
-  const result = await execute(command, ["-h", "-s", "-W", path], options);
+  const result = await commands.exec(
+    command,
+    ["-h", "-s", "-W", path],
+    options,
+  );
   assert.equal(
     result.stderr.trim(),
     "",
@@ -161,14 +162,14 @@ const readelfReport = async (path) => {
 };
 
 /** Independent reader is a bounded test prerequisite, never an REA provider. */
-export async function inspectPowerPcReadelf(path) {
-  const report = await readelfReport(path);
+export async function inspectPowerPcReadelf(commands, path) {
+  const report = await readelfReport(commands, path);
   return { ...parsePowerPcReadelf(report.raw), ...report };
 }
 
 /** The same independent reader for one 64-bit fixture. */
-export async function inspectPowerPc64Readelf(path, byteOrder) {
-  const report = await readelfReport(path);
+export async function inspectPowerPc64Readelf(commands, path, byteOrder) {
+  const report = await readelfReport(commands, path);
   return { ...parsePowerPc64Readelf(report.raw, byteOrder), ...report };
 }
 

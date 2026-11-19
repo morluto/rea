@@ -48,7 +48,7 @@ The 32-bit big-endian lane remains the first milestone of
    report the `powerpc` family unsupported. Windows Ghidra P0 stays PE
    x86/x86-64 only.
 7. Real-provider acceptance is `npm run verify:ghidra:ppc64` on a
-   caller-supplied Linux or macOS Ghidra host. Clang and the one-shot CLI run
+   caller-supplied Linux or macOS Ghidra host. Clang, GNU readelf and the one-shot CLI run
    through the shared command owner, including the runner passed into the
    shared fixture builder. That owner is closed before the process-lineage
    check. A failed close stays registered for retry and the diagnostic
@@ -66,7 +66,7 @@ The 32-bit big-endian lane remains the first milestone of
   thunk fields are covered without a Ghidra-derived oracle.
 - The real-provider verifier checks the observed language, the lane id, the
   thunk pair, and an `ET_DYN` refusal before provider startup, then confirms an
-  empty process lineage. Compiler and CLI process groups are owned by the
+  empty process lineage. Compiler, reader and CLI process groups are owned by the
   shared command runner.
 
 ## Non-goals

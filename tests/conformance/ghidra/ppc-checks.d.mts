@@ -1,5 +1,7 @@
 import type { ElfFamilyMetadata } from "../../../src/domain/binaryTargetTypes.js";
 
+import type { VerifierCommands } from "../../../scripts/lib/verifier-command-owner.mjs";
+
 type ByteOrder = ElfFamilyMetadata["byteOrder"];
 interface ReadelfReport {
   command: string;
@@ -37,9 +39,11 @@ export function parsePowerPc64Readelf(
   byteOrder: ByteOrder,
 ): PowerPc64ReadelfFacts;
 export function inspectPowerPcReadelf(
+  commands: VerifierCommands,
   path: string,
 ): Promise<PowerPcReadelfFacts & ReadelfReport>;
 export function inspectPowerPc64Readelf(
+  commands: VerifierCommands,
   path: string,
   byteOrder: ByteOrder,
 ): Promise<PowerPc64ReadelfFacts & ReadelfReport>;

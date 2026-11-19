@@ -14,3 +14,8 @@
 - [x] Add `verify:ghidra:ppc64`, and run its compiler and CLI through the shared
       command owner, closed before the process-lineage check.
 - [x] Update the PowerPC guide and index this feature record.
+- [x] Record the contributor's Ghidra 12.2 Linux x86-64 runs of the PPC32 and
+      PPC64 verifiers in [the pull request](https://github.com/morluto/rea/pull/12517).
+      Those runs preceded the verifier ownership changes.
+- [ ] Rerun both verifiers on a real Ghidra installation after the ownership
+      changes. A macOS real-provider run is also unrecorded.

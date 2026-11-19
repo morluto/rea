@@ -11,7 +11,7 @@ functions. Callers keep the selected inputs. No CLI or MCP schema changes.
 
 The optional verifier `scripts/verify-real-ghidra-ppc64.mjs` obtains its
 runner from `createVerifierCommands`. Clang launches, including those inside
-`buildPowerPc64Fixture`, and the one-shot CLI use that runner. The verifier
+`buildPowerPc64Fixture`, GNU readelf and the one-shot CLI use that runner. The verifier
 closes the owner before `completeVerifierRun`. A failed close stays registered
 on the fixture for retry, and the diagnostic workspace is retained.
 
@@ -27,7 +27,7 @@ on the fixture for retry, and the diagnostic workspace is retained.
 4. Extend the independent readelf and probe checks for the 64-bit fixture,
    including a VSX word that is not in the listing and the global-entry thunk
    fields.
-5. Add `verify:ghidra:ppc64`. Own its compiler and CLI processes with the
+5. Add `verify:ghidra:ppc64`. Own its compiler, reader and CLI processes with the
    shared command runner, and describe the lane in the PowerPC guide.
 
 ## Effects and compatibility
