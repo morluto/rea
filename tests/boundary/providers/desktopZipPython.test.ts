@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { crc32 } from "node:zlib";
@@ -18,6 +19,11 @@ import {
   type ZipMember,
 } from "../../../src/domain/desktop/zipArchive.fixture.js";
 import { zipEntryRefusal } from "../../../src/domain/desktop/zipView.js";
+import {
+  desktopViewPolicy,
+  pythonDesktopViewPolicy,
+} from "../../../src/domain/desktop/desktopViewPolicy.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   expectSameCheckResults,
   expectSameFileViews,
@@ -427,6 +433,71 @@ describe("zip directories in the exported module", () => {
         entry_count: 2,
       });
   });
+
+  it("retains the selected ZIP count at and beyond the classic sentinel", async () => {
+    const path = join(
+      await createTestTempDirectory("rea-zip64-count-"),
+      "many.zip",
+    );
+    // An independent writer emits an original Zip64 archive, not a decoder-copy fixture.
+    execFileSync("python3", [
+      "-I",
+      "-B",
+      "-c",
+      `import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], "w") as archive:
+    for index in range(65536):
+        archive.writestr(f"entry-{index:05d}.bin", b"ab")
+with zipfile.ZipFile(sys.argv[1]) as archive:
+    assert len(archive.infolist()) == 65536`,
+      path,
+    ]);
+    const bytes = await readFile(path);
+    for (const keep of [65_535, 65_536]) {
+      const policy = desktopViewPolicy({
+        zip_entries: keep,
+        zip_entry_bytes: 1,
+      });
+      const result = await readZipView(bytes, undefined, policy);
+      const host = result.ok
+        ? (result.value as {
+            entries: { name: string }[];
+            entry_count: number;
+            truncated: boolean;
+          })
+        : null;
+      const python: unknown = JSON.parse(
+        exportedPython(
+          `${pythonDesktopViewPolicy(policy)}
+result = _view(Path(json.load(sys.stdin)))
+view = result.get("view")
+print(json.dumps(None if view is None else {
+    "listed": len(view["entries"]), "count": view["entry_count"],
+    "truncated": view["truncated"], "last": view["entries"][-1]["name"]
+}))`,
+          path,
+        ),
+      );
+      expect([
+        host === null
+          ? null
+          : {
+              listed: host.entries.length,
+              count: host.entry_count,
+              truncated: host.truncated,
+              last: host.entries.at(-1)?.name,
+            },
+        python,
+      ]).toEqual(
+        Array.from({ length: 2 }, () => ({
+          listed: keep,
+          count: 65_536,
+          truncated: keep < 65_536,
+          last: `entry-${String(keep - 1).padStart(5, "0")}.bin`,
+        })),
+      );
+    }
+  }, 15_000);
 
   it("refuses archives whose selected directory or Zip64 locator names another volume", async () => {
     const classic = zipArchive([{ name: "settings.json", data: '{"zoom":2}' }]);

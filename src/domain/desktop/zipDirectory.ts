@@ -2,6 +2,7 @@ import { crc32 } from "node:zlib";
 
 import { BinaryReader } from "../binaryContainer.js";
 import {
+  ZIP_CLASSIC_DIRECTORY_LIMITS,
   ZIP_EOCD_BYTES,
   ZIP_MAX_COMMENT_BYTES,
   zip64EndUsesSingleVolume,
@@ -203,24 +204,49 @@ export const boundedDirectoryTail = (directory: ZipDirectory): Uint8Array => {
     (total, record) => total + record.length,
     0,
   );
-  const tail = new Uint8Array(size + ZIP_EOCD_BYTES);
+  const {
+    count: maxCount,
+    size: maxSize,
+    offset: maxOffset,
+  } = ZIP_CLASSIC_DIRECTORY_LIMITS;
+  const count = directory.records.length;
+  // A declared offset past 32 bits cannot be right for a view-sized archive.
+  const offset =
+    directory.declaredOffset <= maxOffset
+      ? directory.declaredOffset
+      : directory.start;
+  const wide = count >= maxCount || size >= maxSize || offset >= maxOffset;
+  const wideBytes = wide ? ZIP64_END_BYTES + ZIP64_LOCATOR_BYTES : 0;
+  const tail = new Uint8Array(size + wideBytes + ZIP_EOCD_BYTES);
   let at = 0;
   for (const record of directory.records) {
     tail.set(record, at);
     at += record.length;
   }
-  const end = new DataView(tail.buffer, size);
+  if (wide) {
+    const record = new DataView(tail.buffer, size, ZIP64_END_BYTES);
+    record.setUint32(0, ZIP64_END, true);
+    record.setBigUint64(4, BigInt(ZIP64_END_BYTES - 12), true);
+    record.setUint16(12, 45, true);
+    record.setUint16(14, 45, true);
+    record.setBigUint64(24, BigInt(count), true);
+    record.setBigUint64(32, BigInt(count), true);
+    record.setBigUint64(40, BigInt(size), true);
+    record.setBigUint64(48, BigInt(offset), true);
+    const locator = new DataView(
+      tail.buffer,
+      size + ZIP64_END_BYTES,
+      ZIP64_LOCATOR_BYTES,
+    );
+    locator.setUint32(0, ZIP64_LOCATOR, true);
+    locator.setBigUint64(8, BigInt(offset) + BigInt(size), true);
+    locator.setUint32(16, 1, true);
+  }
+  const end = new DataView(tail.buffer, size + wideBytes, ZIP_EOCD_BYTES);
   end.setUint32(0, 0x06054b50, true);
-  end.setUint16(8, directory.records.length, true);
-  end.setUint16(10, directory.records.length, true);
-  end.setUint32(12, size, true);
-  // A declared offset past 32 bits cannot be right for a view-sized archive; the start stands in for it.
-  end.setUint32(
-    16,
-    directory.declaredOffset <= 0xffffffff
-      ? directory.declaredOffset
-      : directory.start,
-    true,
-  );
+  end.setUint16(8, Math.min(count, maxCount), true);
+  end.setUint16(10, Math.min(count, maxCount), true);
+  end.setUint32(12, Math.min(size, maxSize), true);
+  end.setUint32(16, Math.min(offset, maxOffset), true);
   return tail;
 };

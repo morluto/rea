@@ -4,6 +4,13 @@ import { BinaryReader } from "./binaryContainer.js";
 export const ZIP_EOCD_BYTES = 22;
 export const ZIP_MAX_COMMENT_BYTES = 0xffff;
 
+/** Saturated classic directory fields defer to the Zip64 end record. */
+export const ZIP_CLASSIC_DIRECTORY_LIMITS = {
+  count: 0xffff,
+  size: 0xffffffff,
+  offset: 0xffffffff,
+} as const;
+
 const EOCD_SIGNATURE = Buffer.from([0x50, 0x4b, 0x05, 0x06]);
 
 export const ZIP_CLASSIC_DISK_OFFSETS = { disk: 4, directoryDisk: 6 } as const;

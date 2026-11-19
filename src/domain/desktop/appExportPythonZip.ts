@@ -1,4 +1,5 @@
 import {
+  ZIP_CLASSIC_DIRECTORY_LIMITS,
   ZIP_CLASSIC_DISK_OFFSETS,
   ZIP_SINGLE_VOLUME,
 } from "../zipEndOfCentralDirectory.js";
@@ -18,6 +19,7 @@ ZIP_END = b"PK\x05\x06"
 ZIP_CENTRAL = b"PK\x01\x02"
 ZIP64_LOCATOR = b"PK\x06\x07"
 ZIP64_END = b"PK\x06\x06"
+ZIP_CLASSIC_DIRECTORY_LIMITS = ${JSON.stringify(ZIP_CLASSIC_DIRECTORY_LIMITS)}
 ZIP_CLASSIC_DISK_OFFSETS = ${JSON.stringify(Object.values(ZIP_CLASSIC_DISK_OFFSETS))}
 ZIP_SINGLE_VOLUME = ${JSON.stringify(ZIP_SINGLE_VOLUME)}
 ZIP_EXTRA_FIELD = ${JSON.stringify(ZIP_EXTRA_FIELD)}
@@ -249,14 +251,17 @@ def _zip(file, size: int) -> dict:
         if directory is None:
             raise zipfile.BadZipFile("no readable central directory")
         start, declared, records, count, names = directory
-        kept = b"".join(records)
-        offset = declared if declared <= 0xFFFFFFFF else start
-        # zipfile follows a Zip64 locator signature wherever one sits before the end record, and the kept records
-        # may end in those bytes, so a real Zip64 end record and locator for them come first.
+        kept, retained = b"".join(records), len(records)
+        limit = ZIP_CLASSIC_DIRECTORY_LIMITS
+        offset = declared if declared <= limit["offset"] else start
+        classic_count = min(retained, limit["count"])
+        # zipfile follows a Zip64 locator signature wherever one sits before the end record, including in
+        # a kept record's comment. Give it real Zip64 records with the exact selected directory facts.
         tail = (kept
-                + struct.pack("<4sQ2H2I4Q", ZIP64_END, 44, 45, 45, 0, 0, len(records), len(records), len(kept), offset)
+                + struct.pack("<4sQ2H2I4Q", ZIP64_END, 44, 45, 45, 0, 0, retained, retained, len(kept), offset)
                 + struct.pack("<4sIQI", ZIP64_LOCATOR, 0, offset + len(kept), 1)
-                + struct.pack("<4s4H2IH", ZIP_END, 0, 0, len(records), len(records), len(kept), offset, 0))
+                + struct.pack("<4s4H2IH", ZIP_END, 0, 0, classic_count, classic_count,
+                              min(len(kept), limit["size"]), min(offset, limit["offset"]), 0))
         with zipfile.ZipFile(_BoundedArchive(file, start, tail)) as archive:
             infos = archive.infolist()
             if len(infos) != len(names):

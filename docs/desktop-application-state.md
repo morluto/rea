@@ -29,6 +29,9 @@ A path absent from the capture is an input error.
 `sqlite_tables`, `sqlite_rows`, `sqlite_view_bytes`, `text_lines`, `xml_nodes`, `xml_depth`,
 `parsed_bytes`, `json_depth`, `zip_entries`, `zip_entry_bytes`, `zip_bytes`,
 and `zip_ratio`. Unspecified controls keep the defaults described below.
+A request that raises `zip_entries` past the classic ZIP count range still uses
+the selected entry limit. The host and exported readers encode the retained
+directory's exact count with Zip64 fields when the classic fields are full.
 `xml_depth` admits at most 494 and `json_depth` at most 991: these bounds
 follow the fixed Evidence JSON nesting limit, including the captured-version
 and ZIP-member wrappers and XML's element/children representation. A request
