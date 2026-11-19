@@ -73,7 +73,7 @@ if (values["compare-ghidra"]) {
   );
   assert.ok(
     process.env.GHIDRA_INSTALL_DIR,
-    "Ghidra comparison prerequisite missing: GHIDRA_INSTALL_DIR (bring your own Ghidra 12.1.4 and JDK 21)",
+    "Ghidra comparison prerequisite missing: GHIDRA_INSTALL_DIR (bring your own Ghidra 12.2 and JDK 25)",
   );
 }
 const run = createVerifierRun();
@@ -514,7 +514,7 @@ const verifyKuna = async (
       const pseudocode = await cold.call("procedure_pseudo_code", {
         procedure: address,
       });
-      assert.equal(pseudocode.structured.subject.digest.sha256, sha256);
+      assert.equal(pseudocode.structured.subject.identity.sha256, sha256);
       assert.equal(pseudocode.structured.provider.id, "kuna");
       const source = pseudocode.structured.raw_result?.source?.kind;
       // A fast export can finish before the first request reaches the

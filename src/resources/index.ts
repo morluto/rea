@@ -5,6 +5,18 @@
  * here when a new outside use needs it.
  */
 export {
+  admitAsarHeader,
+  asarHeaderAdmissionFailure,
+  asarHeaderAdmissionRecovery,
+  createAsarHeaderSignatureProbe,
+  readAsarHeader,
+  resolveAsarHeaderAdmission,
+} from "./AsarHeader.js";
+export type {
+  AsarHeaderExtents,
+  FinalAsarHeaderProbeObservation,
+} from "./AsarHeader.js";
+export {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
 } from "./AnalysisCleanupLease.js";
@@ -13,6 +25,7 @@ export {
   ArtifactFileSource,
   assertArtifactFileSelectedSource,
 } from "./ArtifactFileSource.js";
+export { translateArtifactFailure } from "./ArtifactOperationFailure.js";
 export {
   ArtifactFileCancelled,
   ArtifactFileCleanupFailure,
@@ -20,6 +33,7 @@ export {
   artifactFileCompletion,
   artifactFilePrimaryFacts,
   artifactOperationCause,
+  artifactParseFailure,
   artifactReadCancelledBy,
   artifactSelectedPathErrno,
   assertArtifactReadActive,
@@ -42,14 +56,26 @@ export {
 export { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
 export type {
   ArtifactEntry,
+  ArtifactFixedLimit,
   ArtifactReader,
-  ArtifactReaderFailureOptions,
   ArtifactReaderTraversal,
   ArtifactTraversalOmission,
   ArtifactTraversalOptions,
   ArtifactTraversalSink,
   CleanupFailedRead,
 } from "./ArtifactReader.js";
+export {
+  assertArtifactSelectedSource,
+  resolveArtifactSourcePath,
+} from "./ArtifactSelectedSource.js";
+export {
+  DirectoryArtifactEntryAccessDenied,
+  DirectoryArtifactReader,
+  DirectoryArtifactRootFailure,
+  DirectoryArtifactTraversalLimit,
+} from "./DirectoryArtifactReader.js";
+export type { DirectoryArtifactEntry } from "./DirectoryArtifactReader.js";
+export { hostExecutableMarking } from "./hostExecutableMarking.js";
 export {
   ArtifactResourceRetryFailure,
   ArtifactResourceScope,
@@ -62,14 +88,15 @@ export {
   imageFileSizeRemediation,
   projectArtifactCloseFailure,
   projectOwnedArtifactIdentityFailure,
+  projectOwnedArtifactInputFailure,
   projectSelectedArtifactFileFailure,
   projectStableArtifactFailure,
   readerIntegrityFailure,
-  regularFileSymlinkRecovery,
   stableArtifactInputFailure,
   stableArtifactInputRecovery,
 } from "./StableArtifactFailure.js";
 export type { RequestField } from "./StableArtifactFailure.js";
+export { selectedFileTargetError } from "./RegularFileErrorProjection.js";
 export { completedStableArtifactObservation } from "./StableArtifactObservation.js";
 export {
   fileAccessFailureReason,
@@ -79,11 +106,14 @@ export {
 export {
   assertStableArtifactState,
   completedStableArtifact,
+  completedStableArtifactStream,
   readStableArtifact,
+  streamStableArtifact,
 } from "./readStableArtifact.js";
 export type {
   StableArtifactFileSystem,
   StableArtifactSnapshot,
+  StableArtifactStream,
 } from "./readStableArtifact.js";
 export {
   ArtifactPathRegistry,
@@ -102,7 +132,7 @@ export { SafeOutputTreeCreationFailure } from "./SafeOutputTreeCreationFailure.j
 export { streamChunkToBuffer } from "./StreamBytes.js";
 export { readArtifactFileChunks } from "./readArtifactFileChunks.js";
 export { abortIfNeeded, digestReadableToCompletion } from "./StreamDigest.js";
-export type { StreamDigest, StreamDigestObserver } from "./StreamDigest.js";
+export type { StreamDigest } from "./StreamDigest.js";
 export {
   hashStableRootArtifact,
   hashStableRootArtifactHandle,
@@ -113,3 +143,12 @@ export {
   targetDigestChangedFailure,
   withArtifactTargetIdentity,
 } from "./withArtifactTargetIdentity.js";
+export {
+  ZIP_READER_OPTIONS,
+  ZipArtifactReader,
+  decodeZipEntryText,
+  zipEntryNameLimitations,
+  zipEntryPath,
+  zipListingCoverage,
+  typedZipFailure,
+} from "./ZipArtifactReader.js";

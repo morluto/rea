@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { createHash } from "node:crypto";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -91,6 +92,7 @@ ${body}
           references: [
             {
               value: "./selected.wasm",
+              association: "local-path-candidate",
               candidate_paths: [selected],
             },
           ],
@@ -186,7 +188,7 @@ cliTest(
       );
       const valid = withEvidenceCallerInputPath(
         createEvidence(
-          undefined,
+          unknownTarget("not-observed"),
           { id: "fixture-wabt", name: "fixture", version: "1" },
           {
             operation: "inspect_wasm_artifact",

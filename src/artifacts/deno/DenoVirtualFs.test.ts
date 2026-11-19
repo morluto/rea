@@ -180,7 +180,15 @@ it("refuses an entry count above the named allowance", () => {
     walkDenoVirtualFs(entries, 0);
   } catch (cause) {
     failure = cause;
-    expect(cause).toMatchObject({ reason: "limit" });
+    expect(cause).toMatchObject({
+      reason: "limit",
+      fixedAllowance: {
+        name: "The Deno compile virtual filesystem entry allowance",
+        kind: "count",
+        limit: MAX_DENO_VFS_ENTRIES,
+        unit: "entries",
+      },
+    });
   }
   expect(failure).toBeInstanceOf(ArtifactReaderFailure);
 });
@@ -255,7 +263,12 @@ it("refuses nesting past the depth allowance with a tagged limit", () => {
     expect(cause).toBeInstanceOf(ArtifactReaderFailure);
     expect(cause).toMatchObject({
       reason: "limit",
-      message: expect.stringContaining("MAX_DENO_VFS_DEPTH"),
+      fixedAllowance: {
+        name: "The Deno compile virtual filesystem depth allowance",
+        kind: "count",
+        limit: MAX_DENO_VFS_DEPTH,
+        unit: "levels",
+      },
     });
   }
   expect(failure).toBeInstanceOf(ArtifactReaderFailure);
@@ -363,7 +376,11 @@ it("charges directory paths against the retained allowance", () => {
   ).toThrow(
     expect.objectContaining({
       reason: "limit",
-      message: expect.stringContaining("MAX_DENO_VFS_RETAINED_UNITS"),
+      fixedAllowance: expect.objectContaining({
+        name: "The Deno compile virtual filesystem retained name allowance",
+        kind: "bytes",
+        unit: "UTF-16 code units",
+      }),
     }),
   );
 });

@@ -16,8 +16,8 @@ import { parseEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 
-// Two command families share --evidence_output publication; the same real
-// staged write is driven across its commit point through the compiled CLI.
+// Both commands reach the same staged writer. Select rows for distinct
+// publication outcomes and exercise each compiled command.
 const families = [
   {
     command: "inspect-model-artifact",
@@ -47,6 +47,7 @@ const families = [
   },
 ] as const;
 
+const [model, desktop] = families;
 type Family = (typeof families)[number];
 
 const publish = async (
@@ -99,13 +100,11 @@ const committedParent = async (destination: string) => {
 const signalDelivery =
   process.platform === "win32" ? ("event" as const) : ("os" as const);
 
-cliTest.for(
-  families.flatMap((family) => [
-    { family, detail: "summary" as const, signal: "SIGINT" as const },
-    { family, detail: "summary" as const, signal: "SIGTERM" as const },
-    { family, detail: "complete" as const, signal: "SIGINT" as const },
-  ]),
-)(
+cliTest.for([
+  { family: model, detail: "summary", signal: "SIGINT" },
+  { family: desktop, detail: "summary", signal: "SIGTERM" },
+  { family: desktop, detail: "complete", signal: "SIGINT" },
+] as const)(
   "$family.command keeps the committed $detail receipt when $signal arrives during final cleanup",
   async ({ family, detail, signal }, { cli }) => {
     const { reply, destination, marker, staging } = await publish(
@@ -138,7 +137,7 @@ cliTest.for(
   },
 );
 
-cliTest.for(families)(
+cliTest.for([model])(
   "$command creates no output or receipt when SIGINT arrives before commit",
   async (family, { cli }) => {
     const { reply, destination, marker, staging } = await publish(
@@ -167,15 +166,18 @@ cliTest.for(families)(
   },
 );
 
-cliTest.for(families)(
+cliTest.for([desktop])(
   "$command delivers the receipt once a failed staging cleanup is confirmed by retry",
   async (family, { cli }) => {
-    const { reply, destination, staging } = await publish(
+    const { reply, destination, marker, staging } = await publish(
       cli,
       family,
       "summary",
       { cleanup_failures: 1 },
     );
+    expect(JSON.parse(await readFile(marker, "utf8"))).toEqual({
+      cleanup_failure: "EBUSY",
+    });
     expect(reply.exitCode).toBe(0);
     const { bytes, parent } = await committedParent(destination);
     expect(reply.json).toMatchObject({
@@ -188,15 +190,18 @@ cliTest.for(families)(
   },
 );
 
-cliTest.for(families)(
+cliTest.for([model])(
   "$command reports the committed receipt when staging cleanup stays incomplete",
   async (family, { cli }) => {
-    const { reply, destination, staging } = await publish(
+    const { reply, destination, marker, staging } = await publish(
       cli,
       family,
       "summary",
       { cleanup_failures: 1_000 },
     );
+    expect(JSON.parse(await readFile(marker, "utf8"))).toEqual({
+      cleanup_failure: "EBUSY",
+    });
     expect(reply.exitCode).not.toBe(0);
     const error = cliError(reply.json);
     expect(error.code).toBe("cleanup_incomplete");

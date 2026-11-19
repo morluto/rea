@@ -1,4 +1,5 @@
 import { strictUtf8Decoder } from "../domain/strictUtf8.js";
+import { parseJsonWithDuplicatePolicy } from "../domain/jsonDuplicateMember.js";
 import {
   NATIVE_CALL_CAPTURE_DEFAULTS,
   type NativeCallCaptureLimits,
@@ -10,6 +11,7 @@ import type { Result } from "../domain/result.js";
 
 import { nativeCallEventSchema } from "../domain/native/nativeCallObservation.js";
 import type { NativeCallPartialObservation } from "../domain/native/nativeCallPartialObservation.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 export interface ParsedLldbJournal {
   readonly events: ReturnType<typeof nativeCallEventSchema.parse>[];
@@ -125,13 +127,19 @@ const parseLldbObservationJournal = (bytes: Uint8Array): ParsedLldbJournal => {
       malformedCount += 1;
       firstMalformedRow ??= rowNumber;
     };
-    let row: unknown;
+    let text: string;
     try {
-      row = JSON.parse(decoder.decode(line));
+      text = decoder.decode(line);
     } catch {
       markMalformed();
       continue;
     }
+    const parsed = parseJsonWithDuplicatePolicy(text, "reject");
+    if (!parsed.ok) {
+      markMalformed();
+      continue;
+    }
+    const row = parsed.value;
     if (
       typeof row !== "object" ||
       row === null ||
@@ -238,7 +246,7 @@ export const readLldbObservationJournal = (
           : []),
         ...(read.status === "read-failure"
           ? [
-              `The observation journal read failed after ${String(bytesRead)} bytes: ${errorReason(read.cause)}`,
+              `The observation journal read failed after ${String(bytesRead)} bytes: ${errorMessage(read.cause)}`,
             ]
           : []),
       ],
@@ -275,7 +283,7 @@ export const readPartialCapture = (
           : []),
         ...(read.status === "read-failure"
           ? [
-              `A target output capture read failed after ${String(bytesRead)} bytes: ${errorReason(read.cause)}`,
+              `A target output capture read failed after ${String(bytesRead)} bytes: ${errorMessage(read.cause)}`,
             ]
           : []),
       ],
@@ -284,6 +292,3 @@ export const readPartialCapture = (
       ? { ...value, status: read.status, readFailure: read.cause }
       : { ...value, status: read.status };
   });
-
-const errorReason = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);

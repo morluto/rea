@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import {
   canonicalOutputSchema,
   withCanonicalOutputSchema,
@@ -285,7 +286,7 @@ it.each(["compact"] as const)(
 
 it("recovers the complete parent when a single reference exceeds the page budget", async () => {
   const oversized = { ...row, type: "x".repeat(1024 * 1024) };
-  const parent = createEvidence(undefined, provider, {
+  const parent = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "inspect_native_instruction",
     parameters: { address: "0x1000" },
     result: { ...instruction("rows"), incoming_references: [row, oversized] },
@@ -297,10 +298,13 @@ it("recovers the complete parent when a single reference exceeds the page budget
   const retained = session.recordEvidence(parent);
   if (!retained.ok) throw retained.error;
   const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "oversized-instruction-reference",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "oversized-instruction-reference",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {

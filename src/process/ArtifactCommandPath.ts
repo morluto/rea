@@ -10,6 +10,7 @@ import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
 } from "../domain/analysisErrorCore.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** The selected launch spelling and the physical file whose bytes are fingerprinted. */
 export interface ArtifactCommandPath {
@@ -71,7 +72,7 @@ export const assertArtifactCommandPath = async (
       ...failureOptions,
       diagnostics: {
         path: selected.invocationPath,
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
         system_code: systemCode ?? null,
       },
     });

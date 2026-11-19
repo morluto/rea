@@ -1,4 +1,11 @@
+/** @typedef {() => unknown} VerifierCleanupTask */
+
+/**
+ * @param {Iterable<VerifierCleanupTask>} tasks
+ * @returns {Promise<unknown[]>}
+ */
 async function collectCleanupFailures(tasks) {
+  /** @type {unknown[]} */
   const failures = [];
   for (const task of tasks) {
     try {
@@ -11,14 +18,23 @@ async function collectCleanupFailures(tasks) {
   return failures;
 }
 
-/** Attempt every independent cleanup and preserve each failure. */
+/**
+ * Attempt every independent cleanup and preserve each failure.
+ * @param {Iterable<VerifierCleanupTask>} tasks
+ */
 export async function closeVerifierResources(tasks) {
   const failures = await collectCleanupFailures(tasks);
   if (failures.length > 0)
     throw new AggregateError(failures, "Verifier cleanup failed");
 }
 
-/** Finish one operation and its cleanup without losing either failure. */
+/**
+ * Finish one operation and its cleanup without losing either failure.
+ * @template T
+ * @param {() => T | Promise<T>} operation
+ * @param {Iterable<VerifierCleanupTask>} cleanupTasks
+ * @returns {Promise<T>}
+ */
 export async function withVerifierCleanup(operation, cleanupTasks) {
   let value;
   try {
@@ -42,6 +58,8 @@ export async function withVerifierCleanup(operation, cleanupTasks) {
  * fixtures it releases nest `AggregateError`s (verification failure, cleanup
  * failure, retained root), so a reporter that unwraps one level shows only
  * "Verifier cleanup failed" instead of why.
+ * @param {unknown} cause
+ * @returns {string[]}
  */
 export function verifierFailureReasons(cause) {
   if (cause instanceof AggregateError)

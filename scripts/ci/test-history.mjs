@@ -86,9 +86,16 @@ function findTimingRun({
       .slice(0, MAX_CANDIDATES);
 
     for (const artifact of candidates) {
-      const run = normalizeWorkflowRun(
-        api(`repos/${repository}/actions/runs/${artifact.workflow_run.id}`),
-      );
+      let run;
+      try {
+        run = normalizeWorkflowRun(
+          api(`repos/${repository}/actions/runs/${artifact.workflow_run.id}`),
+        );
+      } catch {
+        // A listed artifact can outlive its run or race a deletion. Its
+        // lineage remains unverified, but the next candidate may still work.
+        continue;
+      }
       const runAge = now - Date.parse(run?.created_at);
       if (
         typeof run?.created_at === "string" &&

@@ -2,6 +2,7 @@ import { plistUidValue } from "./plistUid.js";
 import { z } from "zod";
 
 import { jsonObjectSchema, jsonValueSchema } from "../jsonValue.js";
+import { parseJsonWithDuplicatePolicy } from "../jsonDuplicateMember.js";
 import { malformedInput } from "../parseFailure.js";
 
 const objectNode = z.strictObject({
@@ -648,7 +649,9 @@ const jsonSafeRecord = (value: Record<string, unknown>) =>
       try {
         const serialized = JSON.stringify(item);
         if (serialized === undefined) return [];
-        const parsed = jsonValueSchema.safeParse(JSON.parse(serialized));
+        const decoded = parseJsonWithDuplicatePolicy(serialized, "reject");
+        if (!decoded.ok) return [];
+        const parsed = jsonValueSchema.safeParse(decoded.value);
         return parsed.success ? [[key, parsed.data]] : [];
       } catch (cause: unknown) {
         // Unserializable entries are omitted from the record.

@@ -1,9 +1,11 @@
+import { deadlineParameterLimit } from "./analysisResourceLimits.js";
 import { createHash } from "node:crypto";
 import { canonicalBase64Schema } from "./stringPatterns.js";
 import { z } from "zod";
 import { knownCoverageStatusSchema } from "./coverage.js";
 import {
   browserDeadlineIncrease,
+  type BrowserDeadlineRecovery,
   browserDeadlineRetry,
   optionalBrowserDeadlineMs,
   selectedBrowserDeadlineMs,
@@ -112,9 +114,14 @@ export const selectedWebNetworkCaptureTimeoutMs = (
 /** Caller-visible capture deadline; byte/depth budgets have separate per-call controls. */
 export const webNetworkCaptureTimeoutRecovery = (
   timeoutMs: number,
-): { readonly userMessage: string; readonly remediationAction: string } => ({
+): BrowserDeadlineRecovery => ({
   userMessage: `inspect_web_network_capture reached its ${String(timeoutMs)} ms capture deadline (deadlineExpired) for capture_timeout_ms. No partial capture is returned. This is not the MCP client deadline.`,
-  remediationAction: `${browserDeadlineIncrease("capture_timeout_ms", timeoutMs, DEFAULT_WEB_NETWORK_CAPTURE_TIMEOUT_MS, "--capture-timeout-ms")} ${browserDeadlineRetry} The separate max_input_bytes, max_reply_bytes and max_nesting_depth controls apply to the next call without restarting REA; capture_timeout_ms does not raise them.`,
+  limit: deadlineParameterLimit(
+    "capture_timeout_ms",
+    timeoutMs,
+    DEFAULT_WEB_NETWORK_CAPTURE_TIMEOUT_MS,
+  ),
+  remediationAction: `${browserDeadlineIncrease("capture_timeout_ms", timeoutMs, DEFAULT_WEB_NETWORK_CAPTURE_TIMEOUT_MS)} ${browserDeadlineRetry} The separate max_input_bytes, max_reply_bytes and max_nesting_depth controls apply to the next call without restarting REA; capture_timeout_ms does not raise them.`,
 });
 
 export const WEB_NETWORK_CAPTURE_FORMATS = [

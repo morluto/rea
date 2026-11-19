@@ -13,8 +13,9 @@ evaluators, REA's and the exported verifier's, agree.
 
 ## Requirements
 
-- Format: a file starting with a zip local file header (`PK\x03\x04`) is
-  `zip`, whatever its name. Its view is
+- Format: a file starting with a zip local file header (`PK\x03\x04`), or
+  a classic/Zip64 empty-archive signature with at least 22 bytes, is `zip`,
+  whatever its name. A signature is not proof of directory validity. Its view is
   `{entries, entry_count, truncated}`: the file entries in archive order,
   directories left out, each `{name, size, sha256, format, view, view_error}`.
 - Reading: from the retained bytes already checked against their digest, in

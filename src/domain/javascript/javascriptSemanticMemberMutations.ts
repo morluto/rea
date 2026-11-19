@@ -1,3 +1,4 @@
+import { builtinResourceReleases } from "./javascriptBuiltinResourceMethods.js";
 import * as t from "@babel/types";
 import { semanticKnownSymbolKey } from "./javascriptSemanticPropertyKeys.js";
 import {
@@ -15,7 +16,7 @@ import {
 import {
   semanticGlobalProcessOrigin,
   semanticGlobalProcessPathOrigin,
-  semanticOriginalGlobalProcessAt,
+  semanticEffectMayReachOriginalGlobalProcess,
   semanticMutableBuiltinOrigin,
   semanticRequireExportsIdentity,
   semanticRequireOriginCandidate,
@@ -35,6 +36,7 @@ import {
   clearSemanticValueCaches,
   evaluateSemanticBinding,
   evaluateSemanticExpression,
+  evaluateSemanticExpressionProvenance,
 } from "./javascriptSemanticValues.js";
 import { semanticContainer } from "./javascriptSemanticSlots.js";
 import {
@@ -82,6 +84,10 @@ import {
   semanticSelectedReferenceSlot,
 } from "./javascriptSemanticReferenceSources.js";
 import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReferencePaths.js";
+import {
+  semanticArgumentStaysInSource,
+  semanticDirectInvocationArgument,
+} from "./javascriptSemanticDirectInvocations.js";
 import {
   semanticArrayIndex,
   joinSemanticPropertyPaths,
@@ -761,7 +767,7 @@ export function* collectSemanticMemberMutationsSteps(
       path[1] === "process" &&
       path.length > 2 &&
       node !== undefined &&
-      semanticOriginalGlobalProcessAt(node, state)
+      semanticEffectMayReachOriginalGlobalProcess(node, state)
     )
       recordRequiredEffect("node:process", path.slice(2), "write", node);
   const selections = new Map<string, readonly string[]>();
@@ -1068,7 +1074,11 @@ export function* collectSemanticMemberMutationsSteps(
         );
         continue;
       }
-      const globalProcess = semanticGlobalProcessPathOrigin(expression, state);
+      const globalProcess = semanticGlobalProcessPathOrigin(
+        expression,
+        state,
+        "effect",
+      );
       if (globalProcess !== undefined) {
         recordRequiredEffect(
           globalProcess.specifier,
@@ -1097,7 +1107,11 @@ export function* collectSemanticMemberMutationsSteps(
               recordedEffectCount += 1;
               clearSemanticValueCaches(state);
             }
-          const processOrigin = semanticGlobalProcessOrigin(expression, state);
+          const processOrigin = semanticGlobalProcessOrigin(
+            expression,
+            state,
+            "effect",
+          );
           if (processOrigin !== undefined)
             recordRequiredEffect(
               processOrigin.specifier,
@@ -1376,14 +1390,18 @@ export function* collectSemanticMemberMutationsSteps(
           // Stored receiver projections preserve their raw capture authority.
           // Initializer origins retain the normalized mutation traversal below.
           retainsInitializers = receiver?.retainsOrigin !== false;
+          // A direct receiver keeps its alias capture. Projected receivers
+          // select their child at the member read, after capturing the root.
+          const receiverAt =
+            current.path.length > 1
+              ? (current.memberReadAt ?? current.originAt)
+              : current.originAt;
           if (effect === "escape")
             recordBindingEffect(binding.escapedPaths, {
               path,
               node: mutation,
               receiverInitializers,
-              ...(current.originAt === undefined
-                ? {}
-                : { receiverAt: current.memberReadAt ?? current.originAt }),
+              ...(receiverAt === undefined ? {} : { receiverAt }),
             });
           else
             recordBindingEffect(binding.memberWrites, {
@@ -1391,9 +1409,7 @@ export function* collectSemanticMemberMutationsSteps(
               path,
               node: mutation,
               receiverInitializers,
-              ...(current.originAt === undefined
-                ? {}
-                : { receiverAt: current.memberReadAt ?? current.originAt }),
+              ...(receiverAt === undefined ? {} : { receiverAt }),
               ...(assignedSources === undefined ? {} : { assignedSources }),
             });
           clearSemanticValueCaches(state);
@@ -1418,6 +1434,23 @@ export function* collectSemanticMemberMutationsSteps(
                 ]),
               });
           }
+          // A directly invoked function's parameter starts as its argument,
+          // which therefore did not escape at the call.
+          const argument = semanticDirectInvocationArgument(
+            expression,
+            binding,
+            state,
+          );
+          if (argument !== undefined)
+            enqueue({
+              node: argument,
+              path,
+              bindings: nested,
+              definiteReceiver: false,
+              originAt: argument,
+              memberReadAt: current.memberReadAt,
+              capturedSelections: current.capturedSelections,
+            });
           for (const initializer of retainsInitializers
             ? origins.initializers
             : [])
@@ -1800,8 +1833,11 @@ export function* collectSemanticMemberMutationsSteps(
   ): void => {
     for (const source of returnedReferences(node.callee).references)
       markEscaped(source.node, node, source.projection);
-    for (const argument of node.arguments)
-      if (t.isSpreadElement(argument))
+    for (const [index, argument] of node.arguments.entries())
+      // A directly invoked source function receives it through a parameter,
+      // which `markValue` follows back to the argument.
+      if (semanticArgumentStaysInSource(node, index, state)) continue;
+      else if (t.isSpreadElement(argument))
         deferIterable({
           node: argument.argument,
           projection: [],
@@ -1946,6 +1982,9 @@ export function* collectSemanticMemberMutationsSteps(
         }
     },
   });
+  // A value thrown out of its function or the program reaches handlers the
+  // throw-to-catch index does not link to it.
+  for (const node of state.escapingThrows) markEscaped(node.argument, node);
   // A later effect can make a previously defined destructuring source uncertain.
   // Reconsider defaults and iterable origins until their effects are stable.
   while (
@@ -2385,6 +2424,34 @@ const observableMutationPaths = (
         const selected = pendingExpressions.pop();
         if (selected === undefined) break;
         const { expression, observer } = selected;
+        if (
+          t.isCallExpression(expression) ||
+          t.isOptionalCallExpression(expression)
+        ) {
+          // Retain possible resource slots from provenance alone. Final built-in
+          // admission depends on the mutations this pass is still collecting.
+          if (
+            evaluateSemanticExpressionProvenance(
+              expression.callee,
+              state,
+            ).origins.some(({ specifier, importedPath }) => {
+              const identity = semanticRequireExportsIdentity(
+                specifier,
+                importedPath[0] === "default"
+                  ? importedPath.slice(1)
+                  : importedPath,
+              );
+              return (
+                identity.path.length === 1 &&
+                builtinResourceReleases(
+                  identity.specifier,
+                  identity.path[0]!,
+                ) !== undefined
+              );
+            })
+          )
+            (observer.origins ??= new Set()).add("opaque");
+        }
         if (t.isFunction(expression))
           // Keep own-member writes precise without replacing the existing
           // links to references handed to a function's eventual caller.

@@ -82,7 +82,7 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisUnsupportedTargetError,
-  AnalysisResourceConstraintError,
+  type AnalysisResourceConstraintError,
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
@@ -127,7 +127,7 @@ import {
   type NativeCommandCleanupFailure,
   type NativeCommandCapture,
   type NativeCommandRunner,
-} from "./CommandRunner.js";
+} from "../providers/NativeCommandRunner.js";
 import {
   withSignatureTarget,
   verifySignatureTarget,
@@ -145,6 +145,7 @@ import {
   type ParsedPlist,
 } from "./parsers/plist.js";
 import { XmlPlistTextDecodeError } from "../domain/propertyListXmlText.js";
+import { ParseFailureError } from "../domain/parseFailure.js";
 import {
   architectureLocations,
   inspectNativeMacho,
@@ -159,11 +160,12 @@ import {
   withNativeMachoSource,
   NativeMachoSourceVerificationFailure,
 } from "./NativeMachoSource.js";
-import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 import {
-  MachoCommandNamesLimitError,
-  readMachoCommandNames,
-} from "../domain/apple/machoCommandNames.js";
+  isParseLimit,
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../domain/parseFailureAnalysisError.js";
+import { readMachoCommandNames } from "../domain/apple/machoCommandNames.js";
 import {
   assertSelectedMachoSlice,
   resolveSelectedMachoSlice,
@@ -176,6 +178,7 @@ import { NativeUiInterruptionControl } from "./NativeUiInterruptionControl.js";
 import type { ResolvedAppBundleResourceRoot } from "../domain/apple/bundleResourceRoot.js";
 import { UnsupportedBinaryPlistUidError } from "../domain/apple/plistScalars.js";
 import { NATIVE_COMMAND_OUTPUT_BUDGET_BYTES } from "../domain/native/nativeCommandOutput.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 type SignatureRuntimeRootFactory = () => Promise<
   Pick<PrivateRuntimeRoot, "path" | "close">
@@ -957,11 +960,26 @@ class NativeMacOSClient implements AnalysisClient {
       limitations.push(
         "The entitlements for the requested architecture are unavailable because codesign reported it unsigned.",
       );
+    const states = { checked: [] as string[], unsigned: [] as string[] };
+    // A thin file's admitted architecture is a CPU family (arm64 for arm64e);
+    // codesign's display names the slice it described.
+    const described =
+      this.target.format === "mach-o-universal"
+        ? selectedArchitecture
+        : (/^Mach-O thin \(([^)\r\n]+)\)$/u.exec(parsed.format ?? "")?.[1] ??
+          null);
     const observation = () =>
       inspectSignatureSchema.parse({
         ...parsed,
         designated_requirement: requirementText,
         entitlements: entitlementValue.value,
+        slices: {
+          described,
+          architectures,
+          unmapped: unknownSlices,
+          checked: [...states.checked],
+          unsigned: [...states.unsigned],
+        },
         provenance: captures.map((capture) =>
           invocation(capture, binding.snapshotPath),
         ),
@@ -972,7 +990,7 @@ class NativeMacOSClient implements AnalysisClient {
         binding,
         architectures,
         executablePaths,
-        { captures, limitations },
+        { captures, limitations, states },
         signal,
         timeoutMs,
       );
@@ -993,12 +1011,16 @@ class NativeMacOSClient implements AnalysisClient {
     binding: SignatureTargetBinding,
     architectures: readonly string[],
     executablePaths: readonly string[],
-    observation: { captures: NativeCommandCapture[]; limitations: string[] },
+    observation: {
+      captures: NativeCommandCapture[];
+      limitations: string[];
+      /** Slices checked so far and those reported unsigned, kept when a later slice fails. */
+      states: { checked: string[]; unsigned: string[] };
+    },
     signal: AbortSignal | undefined,
     timeoutMs: number,
   ): Promise<Result<void, AnalysisError>> {
-    const { captures, limitations } = observation;
-    const unsigned: string[] = [];
+    const { captures, limitations, states } = observation;
     let unsignedNote: number | undefined;
     for (const architecture of architectures) {
       const slice = await this.#captureSignature(
@@ -1009,7 +1031,10 @@ class NativeMacOSClient implements AnalysisClient {
       );
       if (!slice.ok) return slice;
       captures.push(slice.value);
-      if (slice.value.exitCode === 0) continue;
+      if (slice.value.exitCode === 0) {
+        states.checked.push(architecture);
+        continue;
+      }
       const failure = codeSignCaptureFailure(
         this.#signatureResources,
         slice.value,
@@ -1017,13 +1042,14 @@ class NativeMacOSClient implements AnalysisClient {
         executablePaths,
       );
       if (failure !== null) return err(failure);
-      unsigned.push(architecture);
+      states.checked.push(architecture);
+      states.unsigned.push(architecture);
       if (unsignedNote === undefined) {
         unsignedNote = limitations.length;
         limitations.push("");
       }
       limitations[unsignedNote] =
-        `Unsigned Mach-O slices: ${unsigned.join(", ")}.`;
+        `Unsigned Mach-O slices: ${states.unsigned.join(", ")}.`;
     }
     return ok(undefined);
   }
@@ -1055,7 +1081,7 @@ class NativeMacOSClient implements AnalysisClient {
           diagnostics: {
             phase: "codesign-capture",
             path: this.target.path,
-            reason: cause instanceof Error ? cause.message : String(cause),
+            reason: errorMessage(cause),
           },
         }),
       );
@@ -1264,6 +1290,14 @@ class NativeMacOSClient implements AnalysisClient {
         parsed.error.reason === "unsupported-encoding"
       )
         return undefined;
+      const refusal = parsed.ok ? undefined : xmlSyntaxRefusal(parsed.error);
+      if (refusal !== undefined)
+        return await this.#inspectConvertedPlist(
+          fileInput,
+          classified,
+          format,
+          refusal,
+        );
     } else {
       const json = readPlistJsonSource(source.value);
       if (
@@ -1300,6 +1334,7 @@ class NativeMacOSClient implements AnalysisClient {
     fileInput: NativePlistReadContext,
     classified: NativeCommandCapture,
     format: z.infer<typeof inspectPlistSchema>["format"],
+    sourceRefusal?: string,
   ): Promise<Result<NativeObservation, AnalysisError>> {
     const { path } = fileInput.selection;
     const { signal, timeoutMs } = fileInput;
@@ -1349,7 +1384,16 @@ class NativeMacOSClient implements AnalysisClient {
     ].map((item) => invocation(item, path, "$PLIST"));
     return ok(
       nativePlistObservation({
-        parsed: parsed.value,
+        parsed:
+          sourceRefusal === undefined
+            ? parsed.value
+            : {
+                ...parsed.value,
+                limitations: [
+                  `REA's XML reader refused the source (${sourceRefusal}), but plutil read it, so the value comes from plutil's conversion rather than the original text.`,
+                  ...parsed.value.limitations,
+                ],
+              },
         format,
         path,
         resourceRoot: this.bundleResourceRoot,
@@ -1742,15 +1786,10 @@ const nativeMachoSourcePrimary = (
   operation: "inspect_macho" | "list_architectures",
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
-  if (cause instanceof MachoCommandNamesLimitError)
-    return new AnalysisResourceConstraintError(
-      operation,
-      "memory",
-      cause.message,
-      { maximum: cause.maximum, unit: cause.unit },
-      { cause, retryable: false },
-    );
-  // The selected Mach-O's own bytes failed to parse; a limit falls through.
+  if (isParseLimit(cause, "macho"))
+    return parseLimitConstraint(operation, "memory", cause, {
+      retryable: false,
+    });
   const formatFailure = parseFailureAnalysisError(operation, path, cause);
   if (formatFailure !== undefined) return formatFailure;
   const completed =
@@ -2222,6 +2261,20 @@ const nativePlistDecodeFailure = (
       },
     },
   );
+};
+
+/**
+ * The reason REA's XML reader refused a plist's syntax. CoreFoundation accepts
+ * some documents that strict XML rejects (#12234), so plutil decides those.
+ * Plist structure errors and refused document types are not syntax refusals.
+ */
+const xmlSyntaxRefusal = (error: unknown): string | undefined => {
+  const cause = error instanceof AnalysisOutputError ? error.cause : undefined;
+  return cause instanceof ParseFailureError &&
+    cause.failure.format === "xml" &&
+    cause.kind === "malformed"
+    ? cause.message
+    : undefined;
 };
 
 const plutilDiagnostic = (

@@ -1,7 +1,7 @@
-import { execFileSync } from "node:child_process";
 import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { resolvePython3Executable } from "./fakeAgentEnvComputer.js";
 import { createTestTempDirectory } from "./temporaryDirectory.js";
 
 /**
@@ -211,11 +211,7 @@ export const fakeBuildComputerRea = async (
   const bin = join(root, "bin");
   const notes = join(root, "notes");
   await Promise.all([home, bin, notes].map((path) => mkdir(path)));
-  const python = execFileSync(
-    "python3",
-    ["-c", "import sys; print(sys.executable)"],
-    { encoding: "utf8" },
-  ).trim();
+  const python = resolvePython3Executable();
   for (const [name, source] of [
     ["rea", FAKE_REA],
     ["apt-get", FAKE_APT_GET],

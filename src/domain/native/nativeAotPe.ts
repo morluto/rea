@@ -1,9 +1,12 @@
 import { Budget } from "../budget.js";
 import { observeMzWindowsHeader } from "../dosMz.js";
-import { createHash } from "node:crypto";
 import { readPeOptionalHeaderFixedFields } from "../peOptionalHeader.js";
 import { readPeCoffHeader } from "../peCoffHeader.js";
-import { readPeSectionHeader } from "../peSectionHeader.js";
+import {
+  observePeHeaderExtent,
+  PE_SECTION_HEADER_BYTES,
+  readPeSectionHeader,
+} from "../peSectionHeader.js";
 import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
@@ -20,6 +23,7 @@ import {
   type NativeAotReason,
   type NativeAotTruncationReason,
 } from "./nativeAotReason.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const RTR_SIGNATURE = 0x00525452;
 const RTR_ROW_SIZE = 24;
@@ -669,17 +673,25 @@ class PeImage {
       throw new NativeAotAdmissionError({ code: "unsupported_image_extent" });
     if (this.imageBase + BigInt(this.sizeOfImage) > 1n << 64n)
       throw new NativeAotAdmissionError({ code: "address_domain" });
-    const sectionOffset = optional + optionalSize;
-    this.#range(sectionOffset, count * 40);
+    const { sectionTableOffset, sectionTableBytes, sizeOfHeadersState } =
+      observePeHeaderExtent({
+        optionalHeaderOffset: optional,
+        optionalHeaderSize: optionalSize,
+        sectionCount: count,
+        sizeOfHeaders: this.#sizeOfHeaders,
+        fileSize: bytes.length,
+      });
+    this.#range(sectionTableOffset, sectionTableBytes);
     if (
-      this.#sizeOfHeaders < sectionOffset + count * 40 ||
-      this.#sizeOfHeaders > this.#bytes.length ||
+      sizeOfHeadersState !== "valid" ||
       this.#sizeOfHeaders > this.sizeOfImage
     )
       throw new NativeAotAdmissionError({ code: "headers_do_not_fit" });
     this.sections = Array.from({ length: count }, (_, index) => {
-      const p = sectionOffset + index * 40;
-      const parsed = readPeSectionHeader(bytes.subarray(p, p + 40));
+      const p = sectionTableOffset + index * PE_SECTION_HEADER_BYTES;
+      const parsed = readPeSectionHeader(
+        bytes.subarray(p, p + PE_SECTION_HEADER_BYTES),
+      );
       if (!parsed.ok)
         throw new NativeAotAdmissionError({ code: "section_header_truncated" });
       const section = parsed.value;
@@ -1290,7 +1302,7 @@ const hydrate = (
     throw cause;
   }
   const hydrated = output.subarray(0, outputLength);
-  const sha256 = createHash("sha256").update(hydrated).digest("hex");
+  const sha256 = sha256Hex(hydrated);
   image.addOverlay({ base, sizeBytes: outputLength, sha256, bytes: hydrated });
   return { base, sizeBytes: outputLength, sha256 };
 };
@@ -1484,7 +1496,7 @@ export const parseNativeAotPe = (
       ),
       maximumSummaryBytes,
     );
-  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const sha256 = sha256Hex(bytes);
   if (sha256 !== expectedSha256)
     throw new NativeAotSnapshotIdentityError(expectedSha256, sha256);
   let image: PeImage;
@@ -2061,7 +2073,7 @@ export const parseNativeAotPe = (
       if (raw !== null) {
         metadata.derived_memory = {
           ...descriptor,
-          sha256: createHash("sha256").update(raw).digest("hex"),
+          sha256: sha256Hex(raw),
         };
         remaining -= descriptorBytes;
       }

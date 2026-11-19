@@ -7,6 +7,7 @@ import {
   AnalysisCleanupLease,
 } from "../resources/index.js";
 import { PrivateRuntimeRootUnavailableError } from "../domain/privateRuntimeRootUnavailableError.js";
+import { RuntimeControlUnavailableError } from "../domain/runtimeControlUnavailableError.js";
 
 import {
   requireWindowsNativeAuthority,
@@ -14,6 +15,7 @@ import {
   windowsHandleSchema,
   type WindowsNativeAuthority,
 } from "./WindowsNativeLoader.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const runtimeSchema = windowsFileIdentitySchema.extend({
   path: z.string(),
@@ -53,6 +55,23 @@ export class WindowsSnapshotCancelledError extends Error {
   ) {
     super("Windows snapshot cancelled", { cause });
     this.name = "WindowsSnapshotCancelledError";
+  }
+}
+
+/** A staged file must not fall back to an immutable lease or path-based write. */
+export class WindowsRuntimeWriteTransientUnavailableError extends RuntimeControlUnavailableError {
+  readonly code = "windows-native-control-unavailable";
+  readonly control = "runtime-write-transient";
+
+  constructor() {
+    super(
+      "The Windows native artifact does not support transient private-runtime writes required by this source checkout.",
+      {
+        remediationAction:
+          "Matching package version alone is insufficient for a source checkout. Build the Windows native artifact from this exact source checkout using native/windows/README.md, or use the matching published release's source and artifact together. Repeating this request with the unchanged artifact will not succeed.",
+      },
+    );
+    this.name = "WindowsRuntimeWriteTransientUnavailableError";
   }
 }
 
@@ -126,6 +145,8 @@ export class WindowsPrivateRuntime {
    */
   writeTransientFile(relativePath: string, content: string): void {
     this.#assertOpen();
+    if (this.authority.inspection.runtimeWriteTransient !== true)
+      throw new WindowsRuntimeWriteTransientUnavailableError();
     this.authority.call("runtime_write_transient", [
       this.observation.handle,
       relativePath,
@@ -225,10 +246,7 @@ export class WindowsPrivateRuntime {
       throw ArtifactReaderFailure.withCleanup(
         primary === undefined ? closeFailure.cause : primary.cause,
         {
-          reason:
-            closeFailure.cause instanceof Error
-              ? closeFailure.cause.message
-              : String(closeFailure.cause),
+          reason: errorMessage(closeFailure.cause),
           resources: [file.requestedPath],
         },
         undefined,

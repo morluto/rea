@@ -1,6 +1,6 @@
 import { readFieldDefinitionRow } from "./ManagedFieldDefinitionRows.js";
 import { createManagedFieldConstantReader } from "./ManagedFieldConstants.js";
-import { readMemberReferenceRowFacts } from "./ManagedMemberReferenceRows.js";
+import { readMemberReferenceRowFacts } from "../domain/managed/managedMemberReferenceRows.js";
 import { readMethodDefinitionRow } from "./ManagedMethodDefinitionRows.js";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
 import { isManagedMemberReferenceInstruction } from "../domain/managed/managedMemberInstructionFacts.js";
@@ -8,13 +8,13 @@ import {
   admitManagedProjection,
   managedDecodeBudget,
   type ManagedDecodeBudget,
-} from "./ManagedDecodeBudget.js";
-import type { ManagedPeLayout } from "./ManagedPeReader.js";
+} from "../domain/managed/managedDecodeBudget.js";
+import type { ManagedPeLayout } from "../domain/managed/managedPeReader.js";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
 import {
   MANAGED_CODED_INDEXES,
   type ManagedMetadataLayout,
-} from "./ManagedMetadataLayout.js";
+} from "../domain/managed/managedMetadataLayout.js";
 import {
   metadataSignature,
   memberTargetIdentity,
@@ -31,22 +31,23 @@ import {
   type SignatureDisplayTypeName,
   type DeclarationTypeName,
   type TypeRange,
-} from "./ManagedMemberInspectorCore.js";
+} from "../domain/managed/managedMemberInspectorCore.js";
 import {
   metadataToken,
   type MetadataTokenFact,
   metadataRowCursor,
   decodeMetadataCodedIndex,
   readMetadataBlob,
+  metadataBlobOffset,
   readMetadataString,
-} from "./ManagedMetadataHeaps.js";
+} from "../domain/managed/managedMetadataHeaps.js";
 import {
   appendManagedParseIssues,
   readManagedValue,
-} from "./ManagedReaderFailure.js";
+} from "../domain/managed/managedReaderFailure.js";
 import { methodBody } from "./ManagedMethodBodyReader.js";
-import { memberDeclaringTypeRowLookup } from "./ManagedMemberOwnership.js";
-import type { TypeMemberListFacts } from "./ManagedTypeMemberLists.js";
+import { memberDeclaringTypeRowLookup } from "../domain/managed/managedMemberOwnership.js";
+import type { TypeMemberListFacts } from "../domain/managed/managedTypeMemberLists.js";
 
 /**
  * Declaring-type tokens whose members are decoded in full; null selects every
@@ -109,12 +110,7 @@ export const parseFields = (
     readManagedValue(() => {
       const { token, rowOffset, flags, nameIndex, signatureIndex } =
         readFieldDefinitionRow(bytes, layout, row);
-      const name = readMetadataString(
-        bytes,
-        layout,
-        nameIndex,
-        layout.strings.size,
-      );
+      const name = readMetadataString(bytes, layout, nameIndex);
       const owned = owner ?? 0;
       core.set(token, {
         token,
@@ -123,12 +119,7 @@ export const parseFields = (
         kind: "field",
       });
       if (!isSelected(selected, declared)) return;
-      const sig = readMetadataBlob(
-        bytes,
-        layout,
-        signatureIndex,
-        layout.blob?.size ?? 0,
-      );
+      const sig = readMetadataBlob(bytes, layout, signatureIndex);
       const decoded = budgetedSignature(
         sig,
         layout,
@@ -180,19 +171,17 @@ export const parseExportedTypes = (
   for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
     readManagedValue(() => {
       const cursor = metadataRowCursor(bytes, layout, 39, row);
-      const flags = cursor.readUInt32();
-      const typeDefId = cursor.readUInt32();
+      const flags = cursor.u32();
+      const typeDefId = cursor.u32();
       const name = readMetadataString(
         bytes,
         layout,
         cursor.readIndex(layout.stringIndexSize),
-        layout.strings.size,
       );
       const namespace = readMetadataString(
         bytes,
         layout,
         cursor.readIndex(layout.stringIndexSize),
-        layout.strings.size,
       );
       const implementationOffset = cursor.offset;
       const implementationRaw = cursor.readIndex(
@@ -264,18 +253,8 @@ export const parseMemberRefs = (
     readManagedValue(() => {
       const { token, rowOffset, parentRaw, parent, nameIndex, signatureIndex } =
         readMemberReferenceRowFacts(bytes, layout, row);
-      const name = readMetadataString(
-        bytes,
-        layout,
-        nameIndex,
-        layout.strings.size,
-      );
-      const sig = readMetadataBlob(
-        bytes,
-        layout,
-        signatureIndex,
-        layout.blob?.size ?? 0,
-      );
+      const name = readMetadataString(bytes, layout, nameIndex);
+      const sig = readMetadataBlob(bytes, layout, signatureIndex);
       if (parent.kind !== "valid")
         issues.push({
           code: "invalid-row",
@@ -416,12 +395,7 @@ export const parseMethods = ({
         signatureIndex,
         implementation,
       } = readMethodDefinitionRow(bytes, layout, row);
-      const name = readMetadataString(
-        bytes,
-        layout,
-        nameIndex,
-        layout.strings.size,
-      );
+      const name = readMetadataString(bytes, layout, nameIndex);
       const member = {
         token,
         name,
@@ -431,12 +405,7 @@ export const parseMethods = ({
       core.set(token, member);
       if (!inPage) return;
       if (!isSelected(selected, declared)) return;
-      const sig = readMetadataBlob(
-        bytes,
-        layout,
-        signatureIndex,
-        layout.blob?.size ?? 0,
-      );
+      const sig = readMetadataBlob(bytes, layout, signatureIndex);
       const decoded = budgetedSignature(
         sig,
         layout,
@@ -537,12 +506,7 @@ export const readReferencedMemberCores = (
         table === 4
           ? readFieldDefinitionRow(bytes, layout, row)
           : readMethodDefinitionRow(bytes, layout, row);
-      const name = readMetadataString(
-        bytes,
-        layout,
-        nameIndex,
-        layout.strings.size,
-      );
+      const name = readMetadataString(bytes, layout, nameIndex);
       core.set(token, {
         token,
         name,
@@ -690,10 +654,7 @@ const budgetedSignature = (
   },
 ): ReturnType<typeof metadataSignature> => {
   const budget = managedDecodeBudget(layout);
-  budget.admitTransient(
-    bytes.length * 256,
-    layout.blob?.offset ?? layout.rootOffset,
-  );
+  budget.admitTransient(bytes.length * 256, metadataBlobOffset(layout));
   try {
     return admitManagedProjection(
       metadataSignature(bytes, {
@@ -704,7 +665,7 @@ const budgetedSignature = (
           if (name !== null)
             budget.admitTransient(
               (name.length * 6 + 2) * copies,
-              layout.blob?.offset ?? layout.rootOffset,
+              metadataBlobOffset(layout),
             );
           return name;
         },

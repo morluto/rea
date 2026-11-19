@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { isAborted } from "../domain/analysisErrorCore.js";
 import fs from "node:fs";
 import { join } from "node:path";
@@ -19,8 +20,9 @@ import {
   RegularFileReadFailure,
   retryRegularFileCleanup,
 } from "../process/RegularFileRead.js";
-import { referenceSourceResourceFailure } from "../reference/ReferenceSourceReaderErrors.js";
 import type { ReferenceSourceReaderError } from "../reference/ReferenceSourceReaderTypes.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { referenceSourceResourceFailure } from "../reference/ReferenceSourceFailureBuilders.js";
 
 export type ReferenceSourceVcsInfo =
   | {
@@ -141,7 +143,7 @@ const resolveSourceVcs = async (
     }
   };
   const readMetadataText = async (path: string): Promise<string> =>
-    (await readMetadataBytes(path)).toString("utf8");
+    decodeStrictUtf8(await readMetadataBytes(path), "preserve");
   const throwCleanupFailures = (primary: unknown): never => {
     const observations = cleanupFailures.flatMap((failure) =>
       failure.cleanup === undefined ? [] : [failure.cleanup],
@@ -282,6 +284,3 @@ const errorCode = (cause: unknown): string | undefined =>
   typeof cause === "object" && cause !== null && "code" in cause
     ? String(cause.code)
     : undefined;
-
-const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);

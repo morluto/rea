@@ -158,7 +158,9 @@ const summarizeDossier = (dossier: FunctionDossier) => {
     },
     value_flow: {
       available: flow !== undefined,
-      truncated: flow?.truncated ?? false,
+      // Unavailable value-flow examined nothing: whether it would be
+      // truncated is unknown, not false.
+      truncated: flow === undefined ? null : flow.truncated,
     },
     facet_availability: dossier.facet_availability ?? null,
     counts: {
@@ -184,6 +186,11 @@ const summarizeDossier = (dossier: FunctionDossier) => {
       swift_string_literals: recorded(dossier.swift_string_literals),
       swift_string_literal_omissions: recorded(
         dossier.swift_string_literal_omissions,
+      ),
+      prototype_conflicts: recorded(
+        dossier.native_api?.available
+          ? dossier.native_api.prototype_conflicts
+          : undefined,
       ),
       // Value-flow rows are unknown, not zero, when value flow was not recorded
       // or the provider declared it unavailable; parentFields names which.

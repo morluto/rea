@@ -1,3 +1,5 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import {
   canonicalOutputSchema,
   withCanonicalOutputSchema,
@@ -43,6 +45,7 @@ import {
   createJadxProtocolFixture,
   verifyJadxFixtureCleanup,
 } from "../../fixtures/android/jadx.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 async function assertAndroidPackageSelectedFacetContract(options: {
   client: Pick<Client, "callTool">;
@@ -338,7 +341,7 @@ it.skipIf(process.platform === "win32")(
     );
     expect(parent.operation).toBe("inspect_android_package");
     expect(parent.parameters).toEqual({ path: apk });
-    expect(view.artifact.sha256).toBe(parent.subject?.digest.sha256);
+    expect(view.artifact.sha256).toBe(fileIdentity(parent.subject).sha256);
     expect(view.artifact.sha256).not.toBe(report.engine.artifact_sha256);
     expect(receipt.evidence_id).not.toBe(parent.evidence_id);
     expect(receipt.evidence_links).toEqual([parent.evidence_id]);
@@ -450,7 +453,7 @@ it("preserves partial manifest text and Unicode while rejecting missing APK iden
     createEvidence(
       hasSubject
         ? { path: "/original.apk", sha256: "a".repeat(64), format: "apk" }
-        : undefined,
+        : unknownTarget("not-observed"),
       { id: "jadx", name: "JADX", version: "0.7.1" },
       {
         operation: "inspect_android_package",
@@ -565,7 +568,10 @@ it("rejects unavailable retention, invalid selectors and cancellation before pro
     { kind: "fixed", analysis: session },
     { androidAnalysis: provider },
   );
-  const client = new Client({ name: "android-fixed-summary", version: "1" });
+  const client = new Client(
+    { name: "android-fixed-summary", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();

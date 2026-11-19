@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { getHeapStatistics } from "node:v8";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { createServer } from "../../src/server/createServer.js";
@@ -9,15 +10,13 @@ import {
   createEvidence,
   isImmutableEvidence,
   parseEvidence,
+  evidenceSubjectInput,
 } from "../../src/domain/evidence.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import {
-  createImmutableEvidenceBundle,
-  safeParseImmutableEvidenceBundle,
-} from "../../src/domain/evidenceBundle.js";
+import { createImmutableEvidenceBundle } from "../../src/domain/evidenceBundle.js";
 import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { inspectAnalysisView } from "../../src/application/analysisView/AnalysisViewService.js";
 import { readImmutableEvidenceBundle } from "../../src/application/EvidenceBundleFiles.js";
@@ -25,10 +24,10 @@ import { requireAuthenticationHeadroom } from "../../src/application/JsonAuthent
 import { SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE } from "../../src/contracts/javascript/javascriptApplicationWorkflowExamples.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { holdFirstFileRead } from "../support/holdFirstFileRead.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 vi.mock("../../src/application/JsonAuthenticationHeadroom.js", { spy: true });
 vi.mock("node:v8", { spy: true });
-vi.mock("../../src/domain/evidenceBundle.js", { spy: true });
 afterEach(() => vi.restoreAllMocks());
 
 it.each(["compare_bundles", "match_native_functions"])(
@@ -71,10 +70,13 @@ it.each(["compare_bundles", "match_native_functions"])(
           throw new Error("Comparison must not open a target");
         });
         const server = createServer({ kind: "session", session });
-        const client = new Client({
-          name: "bundle-operation-refusal",
-          version: "1",
-        });
+        const client = new Client(
+          {
+            name: "bundle-operation-refusal",
+            version: "1",
+          },
+          { jsonSchemaValidator: createMcpSchemaValidation() },
+        );
         const [clientTransport, serverTransport] =
           InMemoryTransport.createLinkedPair();
         try {
@@ -121,7 +123,7 @@ it("keeps the owning operation when native matching reloads a needed earlier bun
   const path = join(root, "parent.json"),
     empty = join(root, "empty.json");
   const parent = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     { operation: "list_procedures", parameters: {}, result: {} },
   );
@@ -133,12 +135,14 @@ it("keeps the owning operation when native matching reloads a needed earlier bun
   const actual = await vi.importActual<
     typeof import("../../src/application/JsonAuthenticationHeadroom.js")
   >("../../src/application/JsonAuthenticationHeadroom.js");
-  let reads = 0;
+  let parentReads = 0;
   vi.mocked(requireAuthenticationHeadroom).mockImplementation(
     (value, options) =>
       actual.requireAuthenticationHeadroom(
         value,
-        ++reads === 3 ? { ...options, availableBytes: 0 } : options,
+        options.path === path && ++parentReads > 1
+          ? { ...options, availableBytes: 0 }
+          : options,
       ),
   );
   const resources = new ArtifactResourceScope();
@@ -157,8 +161,8 @@ it("keeps the owning operation when native matching reloads a needed earlier bun
     ).rejects.toMatchObject({
       _tag: "AnalysisResourceConstraintError",
       operation: "match_native_functions",
+      reportedLimits: { input_path: path },
     });
-    expect(reads).toBe(3);
   } finally {
     vi.mocked(requireAuthenticationHeadroom).mockImplementation(
       actual.requireAuthenticationHeadroom,
@@ -168,8 +172,16 @@ it("keeps the owning operation when native matching reloads a needed earlier bun
   expect(resources.hasPending).toBe(false);
 });
 
-it("admits bundle authentication before cloning and hashing retained records", async () => {
-  const { path } = await savedParent();
+it("reports bundle headroom before an integrity failure for the same file", async () => {
+  const { path, parent } = await savedParent();
+  const bundle = createImmutableEvidenceBundle([parent]);
+  await writeFile(
+    path,
+    JSON.stringify({
+      ...bundle,
+      records: [{ ...parent, normalized_result: "tampered" }],
+    }),
+  );
   const actual = await vi.importActual<
     typeof import("../../src/application/JsonAuthenticationHeadroom.js")
   >("../../src/application/JsonAuthenticationHeadroom.js");
@@ -177,19 +189,34 @@ it("admits bundle authentication before cloning and hashing retained records", a
     (value, options) =>
       actual.requireAuthenticationHeadroom(value, {
         ...options,
-        availableBytes: 0,
+        availableBytes: 1024,
       }),
   );
-  vi.mocked(safeParseImmutableEvidenceBundle).mockClear();
   const resources = new ArtifactResourceScope();
   try {
     expect(
       await readImmutableEvidenceBundle(path, undefined, resources),
     ).toMatchObject({
       ok: false,
-      error: { _tag: "AnalysisResourceConstraintError", resource: "memory" },
+      error: {
+        _tag: "AnalysisResourceConstraintError",
+        resource: "memory",
+        operation: "import_evidence_bundle",
+        reportedLimits: {
+          input_path: path,
+          available_heap_bytes: 1024,
+        },
+      },
     });
-    expect(safeParseImmutableEvidenceBundle).not.toHaveBeenCalled();
+    expect(
+      await readImmutableEvidenceBundle(path, undefined, resources),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "EvidenceIntegrityError",
+        userMessage: expect.stringContaining("at records.0.evidence_id"),
+      },
+    });
   } finally {
     await resources.close();
   }
@@ -289,13 +316,17 @@ it("authenticates escaped payloads without serializing either complete bundle", 
   const path = join(root, "parent.json");
   const escaped = '\u0000\u0001\\"😀\ud800'.repeat(20000);
   const example = SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE.application;
-  const parent = createEvidence(undefined, example.provider, {
-    predicateType: example.predicate_type,
-    operation: example.operation,
-    parameters: example.parameters,
-    result: example.normalized_result,
-    rawResult: { escaped },
-  });
+  const parent = createEvidence(
+    evidenceSubjectInput(example.subject),
+    example.provider,
+    {
+      predicateType: example.predicate_type,
+      operation: example.operation,
+      parameters: example.parameters,
+      result: example.normalized_result,
+      rawResult: { escaped },
+    },
+  );
   await writeFile(
     path,
     JSON.stringify(createImmutableEvidenceBundle([parent])),
@@ -341,7 +372,11 @@ it("seals a fresh object-heavy Evidence tree without retaining a set of complete
     parameters: {},
     result,
   };
-  const complete = createEvidence(undefined, provider, observation);
+  const complete = createEvidence(
+    unknownTarget("not-observed"),
+    provider,
+    observation,
+  );
   const add = Set.prototype.add;
   const guarded = vi.spyOn(Set.prototype, "add").mockImplementation(function (
     this: Set<unknown>,
@@ -360,9 +395,14 @@ it("seals a fresh object-heavy Evidence tree without retaining a set of complete
   });
   let sealed;
   try {
-    sealed = createEvidence(undefined, provider, observation, {
-      immutable: true,
-    });
+    sealed = createEvidence(
+      unknownTarget("not-observed"),
+      provider,
+      observation,
+      {
+        immutable: true,
+      },
+    );
   } finally {
     guarded.mockRestore();
   }

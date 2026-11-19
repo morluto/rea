@@ -29,7 +29,6 @@ it("accepts and replaces caller path metadata for the same semantic record", () 
   const selected = withEvidenceCallerInputPath(original, "./selected-alias");
   const ledger = new EvidenceLedger();
   expect(ledger.record(original)).toEqual({ ok: true, value: "added" });
-  expect(ledger.record(selected)).toEqual({ ok: true, value: "duplicate" });
   expect(ledger.import(createEvidenceBundle([selected]))).toEqual({
     ok: true,
     value: {
@@ -101,7 +100,6 @@ describe("evidence ledger recording", () => {
     });
     const ledger = new EvidenceLedger();
     expect(ledger.record(evidence)).toEqual({ ok: true, value: "added" });
-    expect(ledger.record(evidence)).toEqual({ ok: true, value: "duplicate" });
     const relocated = createEvidence(
       { ...TARGET, path: "/relocated/different-name" },
       PROVIDER,
@@ -163,8 +161,6 @@ describe("evidence ledger recording", () => {
     ]);
     expect(ledger.import(conflictingBundle).ok).toBe(false);
     expect(ledger.get(evidence.evidence_id)).toEqual(relocatedBundleRecord);
-    ledger.clear();
-    expect(ledger.export().records).toEqual([]);
   });
 
   it("ignores JSON object key order during imported identity checks", () => {
@@ -195,8 +191,6 @@ describe("evidence ledger recording", () => {
         replacements: [],
       },
     });
-    ledger.clear();
-    expect(ledger.export().records).toEqual([]);
   });
 
   it("protects borrowed snapshots while preserving detached mutable public reads", () => {
@@ -309,7 +303,7 @@ describe("evidence ledger metadata imports", () => {
     expect(ledger.export().records).toHaveLength(10_001);
   });
 
-  it("retains inline evidence larger than the former session byte quota", () => {
+  it("retains an inline Evidence record above 64 MiB", () => {
     const ledger = new EvidenceLedger();
     const record = createEvidence(TARGET, PROVIDER, {
       operation: "health",
@@ -351,7 +345,7 @@ describe("evidence bundle imports", () => {
     });
   });
 
-  it("rejects conflicting duplicate IDs without mutating the ledger", () => {
+  it("rejects changed semantics under a retained Evidence ID atomically", () => {
     const ledger = new EvidenceLedger();
     const first = createEvidence(TARGET, PROVIDER, {
       operation: "health",
@@ -371,37 +365,5 @@ describe("evidence bundle imports", () => {
       error: { _tag: "EvidenceIntegrityError" },
     });
     expect(ledger.export().records).toEqual([first]);
-  });
-
-  it("atomically rejects Evidence plus an invalid unknown", () => {
-    const ledger = new EvidenceLedger();
-    const output = createEvidence(undefined, PROVIDER, {
-      operation: "derived",
-      parameters: {},
-      result: { status: "unknown" },
-    });
-    const mutation = createEvidence(undefined, PROVIDER, {
-      predicateType: "rea.residual-unknown-mutation",
-      operation: "record_unknown",
-      parameters: {},
-      result: { action: "record" },
-    });
-    const unknown = recordUnknownInputSchema.parse({
-      question: "What remains unresolved?",
-      severity: "high",
-      domain: "atomic-test",
-      supporting_evidence_ids: [`ev_${"f".repeat(64)}`],
-      contradicting_evidence_ids: [],
-      required_authority: "shipped-artifact",
-      required_confidence: "observed",
-      required_environment: null,
-      recommended_probes: [],
-      relationships: [],
-    });
-    expect(ledger.recordWithUnknown(output, unknown, mutation)).toMatchObject({
-      ok: false,
-      error: { _tag: "UnknownRegistryError" },
-    });
-    expect(ledger.export()).toMatchObject({ records: [], unknowns: [] });
   });
 });

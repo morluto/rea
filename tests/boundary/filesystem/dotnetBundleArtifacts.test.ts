@@ -6,7 +6,6 @@ import { deflateRawSync } from "node:zlib";
 import { expect, it, vi } from "vitest";
 
 import { DEFAULT_DOTNET_BUNDLE_READER_LIMITS } from "../../../src/domain/artifactReaderLimits.js";
-import { artifactFixedLimitFailure } from "../../../src/resources/ArtifactReader.js";
 import { DotnetBundleArtifactReader } from "../../../src/artifacts/DotnetBundleArtifactReader.js";
 import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { extractArtifact } from "../../../src/artifacts/extraction/ArtifactExtraction.js";
@@ -24,6 +23,37 @@ import {
 } from "../../../src/artifacts/dotnet/DotnetBundle.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { writeMinimalElfHeader } from "../../fixtures/nativeHeaders.js";
+
+it.each([
+  {
+    length: [0x80, 0x80, 0x80, 0x80, 0x08],
+    message: "Invalid .NET bundle string length",
+  },
+  {
+    length: [0xff, 0xff, 0xff, 0xff, 0x07],
+    message: "Truncated .NET bundle manifest",
+  },
+])(
+  "reports malformed bundle ID length $length as a format failure",
+  async ({ length, message }) => {
+    const root = await createTestTempDirectory("rea-dotnet-invalid-string-");
+    const path = join(root, "host.exe");
+    const fixture = dotnetBundleFixture([
+      { path: "member", bytes: Buffer.from("x") },
+    ]);
+    // The fixed manifest prefix contains two version fields and a file count.
+    fixture.bytes.set(length, fixture.headerOffset + 12);
+    await writeFile(path, fixture.bytes);
+    const handle = await open(path, "r");
+    try {
+      await expect(
+        readDotnetBundle(handle, fixture.bytes.length, fixture.headerOffset),
+      ).rejects.toMatchObject({ reason: "format", message });
+    } finally {
+      await handle.close();
+    }
+  },
+);
 
 it.each(["close", "cancel"] as const)(
   "does not complete a .NET bundle inventory after %s at the last entry",
@@ -129,17 +159,17 @@ it("retains the exact integer representation ceiling independently of reader bud
   await writeFile(path, fixture.bytes);
   const handle = await open(path, "r");
   try {
-    const expected = artifactFixedLimitFailure(
-      ".NET bundle exact integer range",
-      9_007_199_254_740_991,
-      "integer units",
-    );
     await expect(
       readDotnetBundle(handle, fixture.bytes.length, fixture.headerOffset),
     ).rejects.toMatchObject({
       reason: "limit",
       boundary: "capacity",
-      message: expected.message,
+      fixedAllowance: {
+        name: "The .NET bundle exact integer range",
+        kind: "parser",
+        limit: 9_007_199_254_740_991,
+        unit: "integer units",
+      },
     });
   } finally {
     await handle.close();
@@ -367,12 +397,34 @@ it.each([
     "unavailable",
   ],
   [
+    "entry count with no room for its manifest rows",
+    () => {
+      const fixture = dotnetBundleFixture();
+      fixture.bytes.writeInt32LE(0x7fff_ffff, fixture.fields.entryCount);
+      return fixture.bytes;
+    },
+    "format",
+  ],
+  [
+    "uncompressed member crossing the manifest above the member allowance",
+    () =>
+      dotnetBundleFixture([
+        {
+          path: "large",
+          bytes: Buffer.from("x"),
+          declaredSize: 600 * 1024 * 1024,
+        },
+      ]).bytes,
+    "format",
+  ],
+  [
     "expanded budget",
     () =>
       dotnetBundleFixture([
         {
           path: "large",
           bytes: Buffer.from("x"),
+          compressed: true,
           declaredSize: 600 * 1024 * 1024,
         },
       ]).bytes,
@@ -483,7 +535,16 @@ it("rejects replacement, forged entry metadata and cancellation without losing c
     const entry = entries[0]!;
     await expect(
       reader.open({ ...entry, declaredSize: 1 }),
-    ).rejects.toMatchObject({ reason: "integrity" });
+    ).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "entry-metadata",
+    });
+    await expect(
+      reader.open({ ...entry, adapterKey: "foreign" }),
+    ).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "foreign-entry",
+    });
     const controller = new AbortController();
     controller.abort();
     await expect(reader.open(entry, controller.signal)).rejects.toMatchObject({

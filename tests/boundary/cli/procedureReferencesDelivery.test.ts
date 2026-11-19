@@ -1,6 +1,7 @@
+import { createCommandCli } from "../../support/cli/commandCli.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Cli } from "incur";
 import pino from "pino";
 import { expect, it } from "vitest";
 import {
@@ -49,7 +50,7 @@ it.each([false, true])(
     const path = join(root, "fixture.hop"),
       output = join(root, "evidence.json");
     await writeFile(path, "synthetic analysis database");
-    const history = createEvidence(undefined, identity, {
+    const history = createEvidence(unknownTarget("not-observed"), identity, {
       operation: "health",
       parameters: {},
       result: "project history",
@@ -89,7 +90,7 @@ it.each([false, true])(
       createNativeBinarySession: createSession,
       createManagedBinarySession: createSession,
     };
-    const cli = Cli.create("procedure-references", { sync: false });
+    const cli = createCommandCli();
     registerCoreNativeCommands(
       cli,
       pino({ enabled: false }),

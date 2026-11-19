@@ -130,8 +130,10 @@ import {
 } from "./javascriptSemanticCoverage.js";
 import { semanticResourceLimitReason } from "./javascriptSemanticResourceLimits.js";
 import {
-  javaScriptProgramStrictness,
+  javaScriptSourceLoaderCondition,
+  javaScriptStrictnessAt,
   parseJavaScriptSource,
+  recoveredJavaScriptSyntaxErrorCount,
   type ParsedJavaScriptSource,
 } from "./javascriptSourceParser.js";
 
@@ -310,7 +312,7 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
   });
   yield;
   const references = yield* collectSemanticReferencesSteps(file.program, state);
-  const parserPartial = file.errors.length > 0;
+  const parserPartial = recoveredJavaScriptSyntaxErrorCount(file.errors) > 0;
   const bindings = immutableSemanticBindings(state);
   yield;
   const callables = collectSemanticReturns(state, parserPartial);
@@ -328,8 +330,9 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
     parserPartial,
     expressionNodeBudget,
   );
+  const loaderCondition = javaScriptSourceLoaderCondition(file.program);
   const coverage = semanticCoverage(
-    parserPartial,
+    parserPartial || loaderCondition !== undefined,
     [
       ...new Set([...state.valueResourceLimits, ...state.getterResourceLimits]),
     ].sort(),
@@ -347,7 +350,9 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
     coverage: derived.expressionFlowsTruncated
       ? { ...coverage, status: "partial", omittedCount: null }
       : coverage,
+    ...(loaderCondition === undefined ? {} : { loaderCondition }),
     limitations: [
+      ...(loaderCondition === undefined ? [] : [loaderCondition]),
       ...(derived.expressionFlowsTruncated
         ? [
             "The offered semantic node capacity bounded expression dependencies; omitted influence remains unknown.",
@@ -1107,6 +1112,7 @@ const createState = (
     ambientWrites: new SemanticPropertyPathCoverage(),
     escapingReferenceStores: new WeakSet(),
     retainedGlobalCallReceivers: new WeakSet(),
+    escapingThrows: [],
     ambientEscapes: new SemanticPropertyPathCoverage(),
     ambientEscapeEffects: [],
     ambientWriteEffects: [],
@@ -1370,6 +1376,10 @@ function* collectDefinitionsSteps(
     }
   }
   for (const { node, ancestors } of thrownValues) {
+    // A value not caught in its own function or class body reaches a
+    // caller's handler, and one thrown uncaught at the top level reaches the
+    // host's uncaught-exception handlers; neither is linked to the throw.
+    let caught = false;
     let child: t.Node = node;
     for (let index = ancestors.length - 1; index >= 0; index--) {
       const parent = ancestors[index]!;
@@ -1399,16 +1409,20 @@ function* collectDefinitionsSteps(
             referenceOnly: true,
             entryBody: parent.handler.body,
           });
+        caught = true;
         break;
       }
       child = parent;
     }
+    if (!caught) state.escapingThrows.push(node);
   }
   for (const { node, scope } of legacyBlockFunctions) {
     if (
       node.id == null ||
-      semanticStrictnessAt(state.parentsByNode.get(node) ?? node, state) ===
-        "strict"
+      javaScriptStrictnessAt(
+        state.parentsByNode.get(node) ?? node,
+        state.parentsByNode,
+      ) === "strict"
     )
       continue;
     let outer =
@@ -1957,29 +1971,8 @@ const mappedArgumentsOwner = (
   return {
     scope,
     parameters: mapped,
-    strictness: semanticStrictnessAt(owner, state),
+    strictness: javaScriptStrictnessAt(owner, state.parentsByNode),
   };
-};
-
-const semanticStrictnessAt = (
-  owner: t.Node,
-  state: JavaScriptSemanticAnalysisState,
-): MappedArgumentsOwner["strictness"] => {
-  for (
-    let current: t.Node | undefined = owner;
-    current !== undefined;
-    current = state.parentsByNode.get(current)
-  ) {
-    if (t.isClass(current)) return "strict";
-    if (
-      t.isFunction(current) &&
-      t.isBlockStatement(current.body) &&
-      current.body.directives.some(({ value }) => value.value === "use strict")
-    )
-      return "strict";
-    if (t.isProgram(current)) return javaScriptProgramStrictness(current);
-  }
-  return "unknown";
 };
 
 /** A mapped arguments property write is another write to its formal binding. */

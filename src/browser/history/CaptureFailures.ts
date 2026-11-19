@@ -1,4 +1,6 @@
+import { capturedProviderOutput } from "../../process/capturedProviderOutput.js";
 import { javaScriptWorkerMemoryLimitBytes } from "../../process/JavaScriptWorkerMemoryLimit.js";
+import { isAbortOf } from "../../process/SignalAbort.js";
 import { captureBudgets } from "./CaptureBudgets.js";
 import { analysisSettingLimit } from "../../domain/analysisSettingDefinitions.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
@@ -54,6 +56,7 @@ import {
   CAPTURE_LIMITS,
   type CaptureFormatError,
 } from "./CaptureFormatError.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 const OPERATION = "inspect_web_network_capture";
 
 /** A refused protobuf body decode; a limit names the budget that owns it. */
@@ -300,12 +303,7 @@ export const historicalCaptureFailure = (
     // Bare syscall rejections remain physical even when they equal the abort reason.
     phase === "decoder" &&
     origin === "owned-or-classified" &&
-    options?.signal?.aborted === true &&
-    (cause === options.signal.reason ||
-      (cause instanceof Error &&
-        cause.name === "AbortError" &&
-        "code" in cause &&
-        cause.code === "ABORT_ERR"))
+    isAbortOf(cause, options?.signal)
   )
     return cancelledBy(OPERATION, options.signal);
   return new ProviderAdapterError(input.format, OPERATION, {
@@ -316,7 +314,7 @@ export const historicalCaptureFailure = (
       ...(descriptorRead
         ? { source_path: sourcePath, input_path: inputPath }
         : {}),
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
       ...(origin === "owned-or-classified" &&
       cause instanceof ArtifactReaderFailure
         ? { failure_kind: cause.reason }
@@ -325,10 +323,7 @@ export const historicalCaptureFailure = (
       cause instanceof OwnedCommandFailure &&
       cause.snapshot !== null
         ? {
-            exit_code: cause.snapshot.exitCode ?? null,
-            signal: cause.snapshot.signal ?? null,
-            stdout: cause.snapshot.stdout.text,
-            stderr: cause.snapshot.stderr.text,
+            ...capturedProviderOutput(cause.snapshot),
             diagnostic_truncated: cause.snapshot.diagnosticTruncated ?? false,
           }
         : {}),
@@ -408,11 +403,7 @@ export const captureMemoryFailure = (
           }),
       ...(cause instanceof OwnedCommandFailure && cause.snapshot !== null
         ? {
-            capturedOutput: {
-              stdout: cause.snapshot.stdout.text,
-              stderr: cause.snapshot.stderr.text,
-              truncated: cause.snapshot.diagnosticTruncated ?? false,
-            },
+            capturedOutput: capturedProviderOutput(cause.snapshot),
           }
         : {}),
     },

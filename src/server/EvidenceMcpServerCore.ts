@@ -1,3 +1,4 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
 import type { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { DEFAULT_MCP_MAX_INPUT_ELEMENTS } from "../config/mcpInputBudget.js";
@@ -74,7 +75,7 @@ import {
 
 const currentRequestSignal = new AsyncLocalStorage<AbortSignal>();
 
-/** Capture structured issues from the canonical validation the SDK already performs. */
+/** Capture caller selections and issues at the canonical SDK validation boundary. */
 const captureInputValidation = <Schema extends StandardSchemaWithJSON>(
   tool: string,
   schema: Schema,
@@ -95,6 +96,8 @@ const captureInputValidation = <Schema extends StandardSchemaWithJSON>(
               issues: result.issues as readonly z.core.$ZodIssue[],
               input: value,
             };
+          if (result.issues === undefined)
+            context?.captureCallerParameters(tool, value, result.value);
           return result;
         };
         const result = standard.validate(value);
@@ -273,7 +276,7 @@ export const forgetPendingMcpRequest = (
   pendingCompletions.delete(id);
 };
 import type { PromptCompletionSource } from "./promptCompletion.js";
-import { isRecord } from "../domain/isRecord.js";
+import { isRecord } from "../kernel/isRecord.js";
 import {
   advertisedToolPresentation,
   resolveMcpOutputSchemaProfile,
@@ -938,7 +941,7 @@ class ErrorEvidenceTransport implements Transport {
     // The SDK error contains its rendered issue, not a separate argument bag;
     // transport authentication and caller arguments are never added here.
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("unsupported-subject"),
       { id: "rea-mcp", name: "REA MCP delivery", version: "1" },
       {
         operation: "mcp_tool_error",

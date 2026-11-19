@@ -15,10 +15,11 @@ import {
 } from "../process/ProviderProcess.js";
 import { SolveSandboxRoot } from "./SolveSandboxRoot.js";
 import {
-  AGENTENV_PROVIDER,
   agentEnvInterpreter,
   removeSandbox,
 } from "./AgentEnvComputerHelper.js";
+import { AGENTENV_PROVIDER } from "./AgentEnvProviderIdentity.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const HELPER = fileURLToPath(
   new URL("../../bridge/agentenv/solve.py", import.meta.url),
@@ -189,7 +190,7 @@ export const runSolveHelper = async (options: {
         [`sandbox root ${sandboxRoot.path}`],
         {
           reason: cleanup.reason,
-          spawn_error: cause instanceof Error ? cause.message : String(cause),
+          spawn_error: errorMessage(cause),
         },
         options.operation,
       );
@@ -235,7 +236,10 @@ export const runSolveHelper = async (options: {
       report ??= line.ok
         ? parseReport(line.value)
         : {
-            error: "REA's solve helper's report is too long",
+            error:
+              line.error._tag === "ControlLineMalformedUtf8"
+                ? "REA's solve helper's report is not valid UTF-8"
+                : "REA's solve helper's report is too long",
             cleanup: { unknown: true, sandboxes: [] },
           };
   })().catch(() => undefined);

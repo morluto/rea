@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import {
   canonicalOutputSchema,
   withCanonicalOutputSchema,
@@ -17,6 +18,7 @@ import {
   evidenceResultOf,
   expandToolAvailability,
 } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { GoBinaryProvider } from "../../../src/go/GoBinaryProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
@@ -113,7 +115,7 @@ mcpTest(
       const evidence = evidenceResultOf(goBinarySchema).parse(
         inspected.structuredContent,
       );
-      expect(evidence.subject?.architecture).toBe("mips");
+      expect(fileIdentity(evidence.subject).architecture).toBe("mips");
       expect(evidence.normalized_result).toMatchObject({
         architecture: "mips",
         bits: 32,
@@ -377,3 +379,36 @@ goMcpTest(
     });
   },
 );
+
+goMcpTest("projects retained Go Evidence as CycloneDX", async ({ go }) => {
+  const root = await createTestTempDirectory("rea-go-mcp-cyclonedx-");
+  const path = join(root, "application");
+  await writeFile(path, createGoBinaryFixture().bytes);
+  const inspected = await go.client.callTool({
+    name: "inspect_go_binary",
+    arguments: { path },
+  });
+  expect(inspected.isError, JSON.stringify(inspected.content)).not.toBe(true);
+  const parent = parseEvidence(inspected.structuredContent);
+  const viewed = await go.client.callTool({
+    name: "inspect_analysis_view",
+    arguments: {
+      source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
+      view: { kind: "cyclonedx" },
+    },
+  });
+  expect(viewed.isError, JSON.stringify(viewed.content)).not.toBe(true);
+  const result = analysisViewResultSchema.parse(
+    parseEvidence(viewed.structuredContent).normalized_result,
+  );
+  if (result.kind !== "cyclonedx") throw new Error("Expected a CycloneDX view");
+  const document = result.document;
+  expect(document).toMatchObject({
+    bomFormat: "CycloneDX",
+    specVersion: "1.6",
+    compositions: [{ aggregate: "unknown" }],
+  });
+  expect(JSON.stringify(document)).toContain(
+    "pkg:golang/example.com/tool@%28devel%29",
+  );
+});

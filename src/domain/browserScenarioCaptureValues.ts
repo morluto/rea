@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import { z } from "zod";
 import { utcDateTimeSchema } from "./offsetDateTime.js";
 
@@ -11,6 +9,7 @@ import {
 import { sanitizedBrowserUrlSchema } from "./browserObservation.js";
 import { webScreenshotArtifactSchema } from "./webScreenshot.js";
 import { digestSchema } from "./../domain/digests.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const textArtifactSchema = z
   .strictObject({
@@ -20,7 +19,7 @@ const textArtifactSchema = z
   })
   .superRefine((artifact, context) => {
     const bytes = Buffer.from(artifact.text);
-    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const sha256 = sha256Hex(bytes);
     if (bytes.byteLength !== artifact.bytes || sha256 !== artifact.sha256)
       context.addIssue({
         code: "custom",

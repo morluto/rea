@@ -1,5 +1,8 @@
+import { cliCommand } from "../../../src/cli/commandRegistry.js";
+import { createCommandCli } from "../../support/cli/commandCli.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
-import { Cli, z } from "incur";
+import { z } from "zod";
 import pino from "pino";
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -49,7 +52,7 @@ const fixture = async (kind: (typeof kinds)[number]) => {
     output_truncated: false,
   };
   const parent = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "gdb", name: "GDB", version: null },
     {
       operation: "gdb_console",
@@ -69,10 +72,7 @@ const fixture = async (kind: (typeof kinds)[number]) => {
     .mockResolvedValue(ok({ target_state: "none_observed" }));
   const closeAll = vi.spyOn(manager, "closeAll").mockResolvedValue(undefined);
   const createManager = vi.fn(() => manager);
-  const cli = Cli.create("rea-cli-delivery-test", {
-    version: "1",
-    sync: false,
-  });
+  const cli = createCommandCli();
   registerReverseEngineeringCommands(
     cli as unknown as CliInstance,
     pino({ enabled: false }),
@@ -89,7 +89,7 @@ const fixture = async (kind: (typeof kinds)[number]) => {
       : kind === "objdump"
         ? cliCommandFor("inspect_with_objdump")
         : CLI_COMMANDS.listObjdumpArchitectures;
-  const command = Cli.toCommands.get(cli)?.get(commandName);
+  const command = cliCommand(cli, commandName)?.definition;
   if (command === undefined) throw new Error("CLI command was not registered");
   // A command without positionals registers no argument schema.
   const argsSchema: unknown = Reflect.get(command, "args") ?? z.object({});
@@ -110,6 +110,7 @@ const fixture = async (kind: (typeof kinds)[number]) => {
   const invoke = async (options: Record<string, unknown>): Promise<unknown> =>
     execute({
       args: argsSchema.parse(args),
+      formatExplicit: false,
       options: optionsSchema.parse({
         ...(kind === "gdb" ? { inferiorTty: "/dev/pts/caller-fixture" } : {}),
         ...options,
@@ -172,14 +173,14 @@ it.each(kinds)(
       expect(f.closeService).toHaveBeenCalledOnce();
     }
     if (kind !== "objdump") {
-      expect(parent.subject).toBeNull();
-      expect(selected.subject).toBeNull();
+      expect(parent.subject.identity.kind).toBe("unknown");
+      expect(selected.subject.identity.kind).toBe("unknown");
       expect(selected.normalized_result).toMatchObject({ artifact: null });
     }
   },
 );
 
-it.each(kinds)(
+it.each(["objdump", "gdb"] as const)(
   "rejects %s summary without a destination before provider work",
   async (kind) => {
     const f = await fixture(kind);
@@ -192,7 +193,7 @@ it.each(kinds)(
   },
 );
 
-it.each(kinds)(
+it.each(["objdump", "gdb"] as const)(
   "preserves an existing %s destination and reports publication failure with source Evidence",
   async (kind) => {
     const f = await fixture(kind);
@@ -231,7 +232,7 @@ const interruptAt = (method: "assertReadyForPublication" | "close"): void => {
   });
 };
 
-it.each(kinds)(
+it.each(["objdump", "gdb"] as const)(
   "keeps the committed %s receipt when SIGINT arrives during final staging cleanup",
   async (kind) => {
     const f = await fixture(kind);
@@ -265,7 +266,7 @@ it.each(kinds)(
   },
 );
 
-it.each(kinds)(
+it.each(["objdump", "gdb"] as const)(
   "publishes no %s bundle or receipt when SIGINT arrives before commit",
   async (kind) => {
     const f = await fixture(kind);

@@ -114,7 +114,7 @@ export async function verifyBrowserModules(
     const mcpResult = assertTrace(mcpEvidence, oracle, site, scriptIndex);
     assert.deepEqual(mcpResult, cliResult, "CLI and MCP module traces differ");
     assert.equal(
-      cliEvidence.subject.digest.sha256,
+      cliEvidence.subject.identity.sha256,
       createHash("sha256").update(site.main).digest("hex"),
     );
     const mapBytes = await readFile(mapPath);

@@ -1,3 +1,4 @@
+import { managedModuleRow } from "./managedModuleIdentity.js";
 import { joinCoverageStatus, type CoverageStatus } from "../coverage.js";
 import type {
   ManagedMemberComparisonResult,
@@ -131,22 +132,35 @@ export type ManagedComparisonScope = ReturnType<typeof managedComparisonScope>;
 const resourceLimits = (
   result: ManagedMemberInspection,
 ): NonNullable<ManagedMemberComparisonResult["left"]["resource_limits"]> =>
-  result.coverage.issues.flatMap(({ code, scope, detail, offset }) =>
-    code === "resource-limit" ? [{ code, scope, detail, offset }] : [],
+  result.coverage.issues.flatMap(({ code, scope, detail, offset, limit }) =>
+    code === "resource-limit"
+      ? [
+          {
+            code,
+            scope,
+            detail,
+            offset,
+            ...(limit === undefined ? {} : { limit }),
+          },
+        ]
+      : [],
   );
 
 export const sideManifest = (
   side: ManagedMemberComparisonSide,
-): ManagedMemberComparisonResult["left"] => ({
-  evidence_id: side.evidenceId,
-  artifact_sha256: side.result.artifact.sha256,
-  mvid: side.result.module?.mvid ?? null,
-  module_name: side.result.module?.name ?? null,
-  metadata_status: side.result.metadata.status,
-  methods_total: side.result.methods.length,
-  fields_total: side.result.fields.length,
-  resource_limits: resourceLimits(side.result),
-});
+): ManagedMemberComparisonResult["left"] => {
+  const module = managedModuleRow(side.result);
+  return {
+    evidence_id: side.evidenceId,
+    artifact_sha256: side.result.artifact.sha256,
+    mvid: module?.mvid ?? null,
+    module_name: module?.name ?? null,
+    metadata_status: side.result.metadata.status,
+    methods_total: side.result.methods.length,
+    fields_total: side.result.fields.length,
+    resource_limits: resourceLimits(side.result),
+  };
+};
 
 export const buildComparisonSummary = (
   items: readonly (
@@ -268,7 +282,9 @@ export const comparisonLimitations = (
       "At least one managed member observation did not examine ExportedType rows; its exported and forwarded types are unknown.",
     );
   if (
+    // optional-fact-default: null rows are reported as unknown by the limitation above.
     (left.exported_types?.length ?? 0) > 0 ||
+    // optional-fact-default: null rows are reported as unknown by the limitation above.
     (right.exported_types?.length ?? 0) > 0
   )
     limitations.push(

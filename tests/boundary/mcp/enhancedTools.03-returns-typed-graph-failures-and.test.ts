@@ -20,8 +20,9 @@ describe("enhanced MCP tools", () => {
       execute: () => Promise.resolve(ok(inventory({}))),
     });
 
-    const unresolved = await tools.execute("find_xrefs_to_name", {
-      name: "missing",
+    const unresolved = await tools.executeValidated({
+      name: "find_xrefs_to_name",
+      input: { name: "missing" },
     });
 
     expect(unresolved).toEqual({
@@ -65,9 +66,8 @@ describe("enhanced MCP tools", () => {
       },
     };
 
-    const result = await new EnhancedTools(analysis).execute(
-      "analyze_swift_types",
-      {},
+    const result = await new EnhancedTools(analysis).executeValidated(
+      { name: "analyze_swift_types", input: {} },
       controller.signal,
     );
 

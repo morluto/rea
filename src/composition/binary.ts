@@ -10,18 +10,20 @@ import { createIdaMcpConnection } from "../ida/IdaMcpConnection.js";
 import { IdaProvider } from "../ida/IdaProvider.js";
 import { KunaProvider } from "../kuna/KunaProvider.js";
 import type { Logger } from "pino";
-import { auxiliaryAnalysisProviderDeclarations } from "./auxiliaryAnalysisProviders.js";
+import {
+  auxiliaryAnalysisProviderDeclarations,
+  managedStaticProviderDeclaration,
+} from "./auxiliaryAnalysisProviders.js";
 import { AnalysisProviderRegistry } from "../application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../application/binary/BinarySessionComposition.js";
 import { LINUX_HOPPER_LAUNCHER_VERIFICATION } from "../application/LinuxHopper.js";
 import { LazyAnalysisProvider } from "../application/binary/LazyAnalysisProvider.js";
-import { ManagedStaticProvider } from "../dotnet/ManagedStaticProvider.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { combineBundleResourceClients } from "../application/binary/BundleResourceSession.js";
 import {
   BUNDLE_ARTIFACT_RESOURCE_OPERATIONS,
   BUNDLE_NATIVE_RESOURCE_OPERATIONS,
-  combineBundleResourceClients,
-} from "../application/binary/BundleResourceSession.js";
+} from "../ports/BundleResourceOperations.js";
 
 /**
  * Compose the target-switching runtime shared directly by CLI and MCP adapters.
@@ -147,7 +149,7 @@ const createBundleResourceFactory = (
 /** Compose an execution-free managed session without native provider selection. */
 export const createManagedBinarySession = (): BinarySession =>
   composeBinarySession(new AnalysisProviderRegistry([]), [
-    new ManagedStaticProvider(),
+    new LazyAnalysisProvider(managedStaticProviderDeclaration()),
   ]);
 
 /** Compose the artifact operations without candidates for deep analysis engines. */

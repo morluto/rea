@@ -26,11 +26,8 @@ import { createFunctionCoordinateContext } from "../domain/native/functionCoordi
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import {
   isMachOFormat,
-  isElfMetadataArchitecture,
   type BinaryArchitecture,
   type BinaryTarget,
-  type ElfMetadataArchitecture,
-  type HeaderArchitecture,
 } from "../domain/binaryTargetTypes.js";
 import {
   AnalysisCapabilityUnavailableError,
@@ -55,6 +52,7 @@ import {
   type HopperMachOImage,
 } from "./HopperMachOImage.js";
 import { hopperProducerIdentity } from "./HopperBridgeSources.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 interface HopperProfileOptions {
   readonly launcherPath: string;
@@ -206,20 +204,34 @@ const resolveHopperAnalysisProfileInScope = async (
   });
 };
 
-/** Families with no verified Hopper lane, declined before any loader selection. */
-export type HopperDeclinedArchitecture =
-  | ElfMetadataArchitecture
-  | "hexagon"
-  | "xtensa"
-  | "arm64_32";
+// Raw-only families keep the existing format refusal before loader selection.
+const HOPPER_ARCHITECTURE_FLAGS = {
+  x86: "--intel-32",
+  x86_64: "--intel-64",
+  arm: "--armv7",
+  arm64: "--aarch64",
+  arm64_32: null,
+  mips: null,
+  "6502": "raw-only",
+  riscv: null,
+  powerpc: null,
+  m68k: "raw-only",
+  hexagon: null,
+  xtensa: null,
+} as const satisfies Record<BinaryArchitecture, string | null>;
+
+type HopperDeclinedArchitecture = {
+  [
+    Architecture in BinaryArchitecture
+  ]: (typeof HOPPER_ARCHITECTURE_FLAGS)[Architecture] extends null
+    ? Architecture
+    : never;
+}[BinaryArchitecture];
 
 export const isHopperDeclinedArchitecture = (
   architecture: BinaryArchitecture,
 ): architecture is HopperDeclinedArchitecture =>
-  isElfMetadataArchitecture(architecture) ||
-  architecture === "hexagon" ||
-  architecture === "xtensa" ||
-  architecture === "arm64_32";
+  HOPPER_ARCHITECTURE_FLAGS[architecture] === null;
 
 /**
  * Hopper states only what it owns: it does not admit the family. It routes the
@@ -255,7 +267,7 @@ export const hopperLoaderArgsForTarget = (
         hopperDeclinedArchitectureReason(architecture),
       ),
     );
-  const flag = hopperArchitectureFlag(architecture);
+  const flag = HOPPER_ARCHITECTURE_FLAGS[architecture];
   if (isMachOFormat(target.format)) {
     if (machoContainer === undefined)
       return err(
@@ -282,19 +294,6 @@ export const hopperLoaderArgsForTarget = (
       return err(
         new ProviderAdapterError("hopper", "resolve_analysis_profile"),
       );
-  }
-};
-
-const hopperArchitectureFlag = (architecture: HeaderArchitecture): string => {
-  switch (architecture) {
-    case "x86":
-      return "--intel-32";
-    case "x86_64":
-      return "--intel-64";
-    case "arm":
-      return "--armv7";
-    case "arm64":
-      return "--aarch64";
   }
 };
 
@@ -380,10 +379,7 @@ const readHopperProfileFile = async <Value>(
     const cleanup =
       cause instanceof RegularFileCleanupFailure
         ? {
-            reason:
-              cause.cleanupCause instanceof Error
-                ? cause.cleanupCause.message
-                : String(cause.cleanupCause),
+            reason: errorMessage(cause.cleanupCause),
             resources: [path],
           }
         : undefined;
@@ -406,13 +402,13 @@ const readHopperProfileFile = async <Value>(
           : kind === "header"
             ? new BinaryTargetError(
                 path,
-                `Cannot read the Mach-O container header: ${physical instanceof Error ? physical.message : String(physical)}`,
+                `Cannot read the Mach-O container header: ${errorMessage(physical)}`,
                 { cause: physical, cleanup },
               )
             : new ProviderAdapterError("hopper", "resolve_analysis_profile", {
                 cause: physical,
                 cleanup,
-                userMessage: `Cannot fingerprint the selected Hopper launcher ${path}: ${physical instanceof Error ? physical.message : String(physical)}`,
+                userMessage: `Cannot fingerprint the selected Hopper launcher ${path}: ${errorMessage(physical)}`,
                 remediationAction:
                   "Select a readable regular Hopper launcher, then retry provider selection.",
                 diagnostics: {

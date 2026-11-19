@@ -1,3 +1,4 @@
+import { UNKNOWN_EVIDENCE_SUBJECT } from "../../tests/fixtures/evidenceSubject.js";
 import { projectAnalysisView } from "./analysisView/analysisView.js";
 import { analysisViewRequestSchema } from "./analysisView/analysisViewRequest.js";
 import { describe, expect, it } from "vitest";
@@ -14,7 +15,34 @@ import { createWebTextArtifact } from "./webContentArtifact.js";
 
 const origin = "https://app.example.test";
 
-it("shares runtime module declarations with source analysis while retaining inline type side effects", () => {
+it("uses JavaScript grammar for scripts identified by the capture", () => {
+  const source = [
+    "const pick=n===0?H=>({start:H.startY}):H=>({start:H.startX});",
+    'import("./after.js");',
+  ].join("\n");
+  const result = analyzeWebBundleFixture(inspection(source));
+  expect(result.completeness).toMatchObject({
+    parsed_scripts: 1,
+    parse_failures: 0,
+  });
+  expect(result.observations.chunks.edges).toMatchObject([
+    {
+      kind: "dynamic_import",
+      specifier: "./after.js",
+    },
+  ]);
+});
+
+it("keeps JavaScript comparisons from becoming generic endpoint calls", () => {
+  const result = analyzeWebBundleFixture(
+    inspection('const value = fetch<limit>("/comparison"); fetch("/actual");'),
+  );
+  expect(result.observations.endpoints.map(({ value }) => value)).toEqual([
+    "/actual",
+  ]);
+});
+
+it("recovers runtime imports and inline type side effects when capture language is unknown", () => {
   const source = `
     import type {T} from "./erased-import";
     export type {T} from "./erased-export";
@@ -26,7 +54,7 @@ it("shares runtime module declarations with source analysis while retaining inli
     export const local = 1;
   `;
   const expected = ["./inline-import", "./inline-export", "", "./runtime"];
-  const result = analyzeWebBundleFixture(inspection(source));
+  const result = analyzeWebBundleFixture(inspection(source, null));
   expect(result.completeness.parse_failures).toBe(0);
   expect(
     result.observations.chunks.edges.map(({ specifier }) => specifier),
@@ -50,6 +78,65 @@ it("retains standalone GraphQL Source operations in captured scripts", () => {
   expect(result.observations.endpoints).toEqual([
     expect.objectContaining({ value: "GetUser", mechanism: "graphql:query" }),
   ]);
+});
+
+it("reports a browser request whose URL is not a literal as an unknown endpoint at its call site", () => {
+  const scriptKey = `scr_${"1".repeat(64)}`;
+  const result = analyzeWebBundleFixture(
+    inspection(
+      [
+        "fetch(flag ? '/a' : '/b');",
+        "new WebSocket(base + '/socket');",
+        "fetch('/literal');",
+        "const lookup = new Map(); lookup.get(key);",
+      ].join("\n"),
+    ),
+  );
+  expect(result.observations.endpoints.map(({ value }) => value)).toEqual([
+    "/literal",
+  ]);
+  expect(result.unknowns).toContainEqual({
+    dimension: "endpoints",
+    reason:
+      "A browser request's URL argument is not a string literal, so the endpoint it reaches is unknown.",
+    affected_script_keys: [scriptKey],
+    call_sites: [
+      {
+        mechanism: "call:fetch",
+        location: { script_key: scriptKey, line: 1, column: 0 },
+      },
+      {
+        mechanism: "call:WebSocket",
+        location: { script_key: scriptKey, line: 2, column: 0 },
+      },
+    ],
+  });
+});
+
+it("reads an XMLHttpRequest URL from open's second argument on an inline receiver", () => {
+  const scriptKey = `scr_${"1".repeat(64)}`;
+  const result = analyzeWebBundleFixture(
+    inspection(
+      [
+        "new XMLHttpRequest().open('GET', url);",
+        "new XMLHttpRequest().open('POST', '/inline-xhr');",
+      ].join("\n"),
+    ),
+  );
+  expect(result.observations.endpoints).toContainEqual(
+    expect.objectContaining({ value: "/inline-xhr" }),
+  );
+  expect(result.unknowns).toContainEqual(
+    expect.objectContaining({
+      dimension: "endpoints",
+      call_sites: [
+        {
+          mechanism: "call:open",
+          location: { script_key: scriptKey, line: 1, column: 0 },
+        },
+      ],
+    }),
+  );
 });
 
 it.each([
@@ -484,7 +571,7 @@ describe("web bundle analyzer", () => {
     expect(analyzed.completeness.status).toBe("complete");
   });
 
-  it("analyzes AST nodes after the former fixed node ceiling", () => {
+  it("analyzes every AST node of a bundle with more than 250,000 nodes", () => {
     const source = `${";".repeat(250_001)}fetch('/last');`;
     const result = analyzeWebBundleFixture(inspection(source));
 
@@ -1209,7 +1296,7 @@ describe("deep captured web bundle syntax", () => {
   });
 });
 
-const inspection = (source: string) =>
+const inspection = (source: string, language: string | null = "JavaScript") =>
   createWebPageInspection([
     {
       source,
@@ -1217,6 +1304,7 @@ const inspection = (source: string) =>
       url: `${origin}/assets/app.js`,
       origin,
       cdpHash: "hash",
+      language,
     },
   ]);
 
@@ -1675,6 +1763,38 @@ it("retains each literal importScripts argument in source order", () => {
   ).toEqual(["first.js", "second.js"]);
 });
 
+it("requires an ambient worker importScripts call for worker chunk edges", () => {
+  const result = analyzeWebBundleFixture(
+    inspection(`
+      importScripts("direct.js");
+      self.importScripts("self.js");
+      globalThis["importScripts"]("global.js");
+      const vendor = { importScripts() {} };
+      vendor.importScripts("vendor.js");
+      function load(importScripts) { importScripts("local.js"); }
+      function loadFrom(self) { self.importScripts("shadowed.js"); }
+      window.importScripts("window.js");
+      new importScripts("constructor.js");
+    `),
+  );
+  expect(
+    result.observations.chunks.edges
+      .filter(({ kind }) => kind === "worker_import")
+      .map(({ specifier }) => specifier),
+  ).toEqual(["direct.js", "self.js", "global.js"]);
+});
+
+it("omits worker chunk edges when a captured script replaces importScripts", () => {
+  const result = analyzeWebBundleFixture(
+    inspection(`
+      self.importScripts = function record() {};
+      importScripts("local.js");
+      globalThis.importScripts("global.js");
+    `),
+  );
+  expect(result.observations.chunks.edges).toEqual([]);
+});
+
 describe("web metadata key semantics", () => {
   it("keeps computed metadata keys and overwrite order conservative", () => {
     const result = analyzeWebBundleFixture(
@@ -2091,7 +2211,7 @@ it("keeps known capture omissions in compact route summaries and queryable gap f
       operation: "analyze_web_bundle",
       normalizedResult: report,
       limitations: report.limitations,
-      subject: null,
+      subject: UNKNOWN_EVIDENCE_SUBJECT,
     };
   const summary = projectAnalysisView(
     parent,

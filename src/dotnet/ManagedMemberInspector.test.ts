@@ -5,16 +5,19 @@ import { InternalInvariantError } from "../domain/internalInvariant.js";
 import {
   ManagedDecodeBudget,
   managedDecodeBudget,
-} from "./ManagedDecodeBudget.js";
-import { metadataRowCursor, readMetadataBlob } from "./ManagedMetadataHeaps.js";
+} from "../domain/managed/managedDecodeBudget.js";
+import {
+  metadataRowCursor,
+  readMetadataBlob,
+} from "../domain/managed/managedMetadataHeaps.js";
 import {
   metadataRowOffset,
   readManagedMetadataLayout,
   type ManagedMetadataLayout,
-} from "./ManagedMetadataLayout.js";
-import { readManagedPeLayout } from "./ManagedPeReader.js";
+} from "../domain/managed/managedMetadataLayout.js";
+import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
 import { managedMemberListStartsFixture } from "../../tests/fixtures/managedMemberListStarts.js";
-import { memberListIndexSize } from "./ManagedMemberPointers.js";
+import { memberListIndexSize } from "../domain/managed/managedMemberPointers.js";
 import { edges } from "./ManagedMemberRows.js";
 import { parseUserStrings } from "./ManagedUserStrings.js";
 import {
@@ -22,11 +25,11 @@ import {
   isParsedTokenInstruction,
   type DecodedMethod,
   type ManagedMethod,
-} from "./ManagedMemberInspectorCore.js";
+} from "../domain/managed/managedMemberInspectorCore.js";
 import { signature } from "../../tests/fixtures/managedSignature.js";
 import { decodeInstructions } from "./ManagedMemberInstructionDecoder.js";
-import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
-import { managedTypeReferences } from "./ManagedTypeReferences.js";
+import { ManagedReaderFailure } from "../domain/managed/managedReaderFailure.js";
+import { managedTypeReferences } from "../domain/managed/managedTypeReferences.js";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
 import { managedMemberInspectionSchema } from "../domain/managed/managedArtifact.js";
 import { comparisonLimitations } from "../domain/managed/managedMemberComparisonCoverage.js";
@@ -400,7 +403,6 @@ it.each([
       bytes,
       layout,
       row.readIndex(layout.blobIndexSize),
-      layout.blob?.size ?? 0,
     );
     const blobOffset = blob.byteOffset - bytes.byteOffset;
     const result = inspectManagedMembersBytes(
@@ -426,6 +428,43 @@ it.each([
   },
 );
 
+it("reports typed row bounds at the selected row and retained carrier", () => {
+  const bytes = buildManagedPeFixture();
+  const pe = readManagedPeLayout(bytes);
+  if (pe.cli === null) throw new Error("fixture has no CLI header");
+  const layout = readManagedMetadataLayout(
+    bytes,
+    pe.rvaToOffset(pe.cli.metadata.rva, pe.cli.metadata.size, "metadata"),
+    pe.cli.metadata.size,
+  );
+  const table = layout.table(4);
+  if (table === undefined) throw new Error("fixture has no Field rows");
+  const row = metadataRowCursor(bytes, layout, 4, 1);
+  row.readIndex(2);
+  row.readIndex(layout.stringIndexSize);
+  row.readIndex(layout.blobIndexSize);
+  const truncated = metadataRowCursor(
+    bytes.subarray(0, table.offset + 1),
+    layout,
+    4,
+    1,
+  );
+  for (const [cursor, offset] of [
+    [row, table.offset + table.rowSize],
+    [truncated, table.offset],
+  ] as const) {
+    expect(() => cursor.readIndex(2)).toThrowError(
+      expect.objectContaining({
+        issue: expect.objectContaining({
+          code: "invalid-row",
+          scope: "metadata.Field",
+          offset,
+        }),
+      }),
+    );
+  }
+});
+
 /** Artifact offset of row 1's signature blob, read with the production heap reader. */
 const memberSignatureBlobOffset = (
   bytes: Buffer,
@@ -441,11 +480,11 @@ const memberSignatureBlobOffset = (
   const row = metadataRowCursor(bytes, layout, table, 1);
   // ECMA-335 II.22.15 Field, II.22.26 MethodDef and II.22.25 MemberRef
   // columns before Name.
-  if (table === 4) row.readUInt16();
+  if (table === 4) row.u16();
   if (table === 6) {
-    row.readUInt32();
-    row.readUInt16();
-    row.readUInt16();
+    row.u32();
+    row.u16();
+    row.u16();
   }
   if (table === 10) row.readIndex(layout.codedIndexSize("MemberRefParent"));
   row.readIndex(layout.stringIndexSize);
@@ -453,7 +492,6 @@ const memberSignatureBlobOffset = (
     bytes,
     layout,
     row.readIndex(layout.blobIndexSize),
-    layout.blob?.size ?? 0,
   );
   return blob.byteOffset - bytes.byteOffset;
 };
@@ -1772,7 +1810,11 @@ describe("managed user string issues", () => {
       ...Array.from({ length: 64 }, () => Buffer.from([0x80, 0x00])),
     ]);
     const layout = {
-      userStrings: { name: "#US", offset: 0, size: heap.length },
+      userStrings: {
+        kind: "available",
+        stream: { name: "#US", offset: 0, size: heap.length },
+        issue: null,
+      },
     } as unknown as ManagedMetadataLayout;
     // Leave 24 KiB: enough for the failures, not for 512 bytes leaked each.
     managedDecodeBudget(layout).reserve(64 * 1024 * 1024 - 24 * 1024, null);
@@ -1923,7 +1965,11 @@ describe("managed user string scan completeness", () => {
 
   it("marks user strings partial when selected type identity is unreadable", () => {
     const layout = {
-      userStrings: { name: "#US", offset: 0, size: 1 },
+      userStrings: {
+        kind: "available",
+        stream: { name: "#US", offset: 0, size: 1 },
+        issue: null,
+      },
     } as unknown as ManagedMetadataLayout;
     expect(
       parseUserStrings(Buffer.from([0]), layout, {
@@ -1936,7 +1982,11 @@ describe("managed user string scan completeness", () => {
 
   it("marks user strings partial when an inspected method row was not read", () => {
     const layout = {
-      userStrings: { name: "#US", offset: 0, size: 1 },
+      userStrings: {
+        kind: "available",
+        stream: { name: "#US", offset: 0, size: 1 },
+        issue: null,
+      },
     } as unknown as ManagedMetadataLayout;
     // The omitted row's body, and any ldstr in it, was never scanned.
     expect(

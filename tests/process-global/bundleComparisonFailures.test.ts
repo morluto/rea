@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -26,6 +27,7 @@ import * as evidenceDomain from "../../src/domain/evidence.js";
 import { createServer } from "../../src/server/createServer.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 const unexpectedBundleFailures = [
   new TypeError("bundle authentication TypeError"),
@@ -186,7 +188,10 @@ it.each(unexpectedBundleFailures)(
       throw new Error("Evidence import must not launch a provider");
     });
     const server = createServer({ kind: "session", session });
-    const client = new Client({ name: "bundle-import-failure", version: "1" });
+    const client = new Client(
+      { name: "bundle-import-failure", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     spyOnBundleParse(failure);
@@ -222,7 +227,7 @@ it.each(unexpectedBundleFailures)(
     );
     const { bundle } = await validBundleFile(directory);
     const existing = evidenceDomain.createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "observe",

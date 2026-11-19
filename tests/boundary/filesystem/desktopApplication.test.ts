@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import {
   mkdir,
   writeFile,
@@ -25,9 +26,9 @@ import {
   buildManagedPeFixture,
   buildNativePeFixture,
 } from "../../../src/dotnet/ManagedPe.fixture.js";
-import { readManagedMetadataLayout } from "../../../src/dotnet/ManagedMetadataLayout.js";
-import { readManagedPeLayout } from "../../../src/dotnet/ManagedPeReader.js";
-import { readAssemblyReference } from "../../../src/dotnet/ManagedMetadataInventoryRows.js";
+import { readManagedMetadataLayout } from "../../../src/domain/managed/managedMetadataLayout.js";
+import { readManagedPeLayout } from "../../../src/domain/managed/managedPeReader.js";
+import { readAssemblyReference } from "../../../src/domain/managed/managedMetadataInventoryRows.js";
 import {
   CPU,
   FILE_TYPE,
@@ -35,12 +36,12 @@ import {
   machoImage,
 } from "../../../src/artifacts/apple/MachoImage.fixture.js";
 import { locateGodotPck } from "../../../src/artifacts/GodotPckLocation.js";
-import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
 import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
 import { artifactFilePrimaryFacts } from "../../../src/resources/ArtifactFileOperation.js";
 import { DesktopApplicationReader } from "../../../src/artifacts/DesktopApplicationReader.js";
 import { inspectDesktopFile } from "../../../src/artifacts/DesktopFileInspection.js";
 import { DesktopApplicationService } from "../../../src/application/artifacts/DesktopApplicationService.js";
+import { DirectoryArtifactReader } from "../../../src/resources/index.js";
 
 const inspect = async (path: string, extra: Record<string, number> = {}) => {
   const service = createDesktopApplicationService();
@@ -500,6 +501,30 @@ it.each(["Game_Data/Managed", "Contents/Resources/Data/Managed"])(
     ).toBe(true);
   },
 );
+
+it("retains PE/CLI evidence without inferring Unity from competing managed table streams", async () => {
+  const root = await createTestTempDirectory("rea-desktop-table-conflict-");
+  const managedPath = "Game_Data/Managed/Assembly-CSharp.dll";
+  await put(
+    root,
+    managedPath,
+    buildManagedPeFixture({
+      references: ["UnityEngine.CoreModule"],
+      competingTableStream: "distinct",
+    }),
+  );
+  const { report } = await inspect(root);
+  expect(report.coverage.status).toBe("partial");
+  expect(report.candidates.map(({ family }) => family)).toEqual(["dotnet"]);
+  const file = report.files.find(({ path }) => path === managedPath);
+  expect(file?.facts.map(({ kind }) => kind)).toContain("pe-cli-directory");
+  expect(file?.facts.map(({ kind }) => kind)).not.toContain(
+    "unity-assembly-reference",
+  );
+  expect(file?.issues).toContainEqual(
+    expect.stringContaining("Metadata row layout is unknown."),
+  );
+});
 
 it("orders member probes for Unity predefined script assemblies before every managed artifact probe", async () => {
   const root = await createTestTempDirectory("rea-desktop-mono-members-");
@@ -1379,16 +1404,13 @@ it.each([
       metadataOffset,
       image.length - metadataOffset,
     );
-    if (layout.blob === null)
-      throw new Error("Fixture requires a #Blob stream");
-    const blobSize = layout.blob.size;
     const reference = layout.table(35)!;
     // ECMA-335 AssemblyRef: 8 version bytes, 4 flag bytes, then PublicKeyOrToken.
     // Keep its name valid while making that unrelated blob index invalid.
     if (layout.blobIndexSize === 2)
       image.writeUInt16LE(0xffff, reference.offset + 12);
     else image.writeUInt32LE(0xffff_ffff, reference.offset + 12);
-    expect(() => readAssemblyReference(image, layout, 1, blobSize)).toThrow();
+    expect(() => readAssemblyReference(image, layout, 1)).toThrow();
     await put(root, `${managedDirectory}/Assembly-CSharp.dll`, image);
     const { report } = await inspect(root);
     expect(report.candidates.map((candidate) => candidate.family)).toEqual([
@@ -1776,8 +1798,8 @@ it("keeps snapshot identity stable across limits that preserve source observatio
   expect(first.report.root.snapshot_sha256).toBe(
     second.report.root.snapshot_sha256,
   );
-  expect(first.evidence.subject?.digest.sha256).toBe(
-    second.evidence.subject?.digest.sha256,
+  expect(fileIdentity(first.evidence.subject).sha256).toBe(
+    fileIdentity(second.evidence.subject).sha256,
   );
   expect(first.evidence.evidence_id).not.toBe(second.evidence.evidence_id);
   expect(first.evidence.parameters).toMatchObject({

@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { ProcessCaptureResourceScope } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
@@ -45,6 +46,7 @@ import {
   createSessionMcpHarness,
   snapshotAndRecordUnknown,
 } from "./sessionMcpHarness.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const SNAPSHOT_PROFILE = createAnalysisProfile(
   { id: "fixture", name: "Fixture analysis provider", version: "1" },
@@ -196,10 +198,13 @@ describe("public provider availability", () => {
       { kind: "session", session },
       { adbDeviceAnalysis, apktoolAnalysis, logger: silentLogger },
     );
-    const mcp = new Client({
-      name: "provider-host-readiness",
-      version: "1.0.0",
-    });
+    const mcp = new Client(
+      {
+        name: "provider-host-readiness",
+        version: "1.0.0",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     resources.push(mcp, server);
@@ -264,7 +269,10 @@ describe("owned-process prerequisite during status discovery", () => {
         { kind: "session", session },
         { adbDeviceAnalysis, apktoolAnalysis, logger: silentLogger },
       );
-      const mcp = new Client({ name: "ps-prerequisite", version: "1.0.0" });
+      const mcp = new Client(
+        { name: "ps-prerequisite", version: "1.0.0" },
+        { jsonSchemaValidator: createMcpSchemaValidation() },
+      );
       const [clientTransport, serverTransport] =
         InMemoryTransport.createLinkedPair();
       resources.push(mcp, server, apktoolAnalysis);
@@ -347,7 +355,10 @@ describe("target-free MCP lifecycle", () => {
         logger: silentLogger,
       },
     );
-    const mcp = new Client({ name: "status-readiness", version: "1.0.0" });
+    const mcp = new Client(
+      { name: "status-readiness", version: "1.0.0" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     resources.push(mcp, server);
@@ -391,7 +402,10 @@ describe("target-free MCP lifecycle", () => {
       { kind: "session", session },
       { logger: silentLogger },
     );
-    const mcp = new Client({ name: "replaced-target", version: "1.0.0" });
+    const mcp = new Client(
+      { name: "replaced-target", version: "1.0.0" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     resources.push(mcp, server);
@@ -450,7 +464,7 @@ describe("snapshot receipt after MCP cleanup", () => {
         "rea-mcp-snapshot-process-cleanup-",
       );
       const cleanupObservation = createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         { id: "fixture", name: "Fixture", version: "1" },
         { operation: "health", parameters: {}, result: "cleanup facts" },
       );

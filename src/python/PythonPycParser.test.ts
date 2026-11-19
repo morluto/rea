@@ -10,9 +10,21 @@ import {
   pythonPycFixture,
   pythonPycHeader,
 } from "./PythonPyc.fixture.js";
-import { parsePythonPyc } from "./PythonPycParser.js";
-import { PythonPycResourceFailure } from "./PythonPyc.errors.js";
+import {
+  emptyPythonPycWork,
+  parsePythonPyc,
+  type PythonPycWork,
+} from "./PythonPycParser.js";
 import { ParseFailureError } from "../domain/parseFailure.js";
+
+const parserLimit = (name: string) =>
+  expect.objectContaining({
+    failure: expect.objectContaining({
+      kind: "limit",
+      format: "python-pyc",
+      limit: expect.objectContaining({ name }),
+    }),
+  });
 
 const defaults = inspectPythonPycInputSchema.parse({
   path: "/artifacts/sample.pyc",
@@ -24,7 +36,7 @@ const root = (report: PythonPyc) => {
   return code;
 };
 
-const parse = (bytes: Buffer) =>
+const parse = (bytes: Buffer, work?: PythonPycWork) =>
   parsePythonPyc(
     bytes,
     {
@@ -33,7 +45,14 @@ const parse = (bytes: Buffer) =>
       bytes: bytes.length,
     },
     defaults,
+    work,
   );
+
+/** The report and the work the parser counted while building it. */
+const measure = (bytes: Buffer) => {
+  const work = emptyPythonPycWork();
+  return { report: parse(bytes, work), work };
+};
 
 it("reads 3.7, 3.10 and 3.12 layouts including nested code", () => {
   const py37 = parse(pythonPycFixture("py37"));
@@ -410,9 +429,10 @@ it("lists a code object shared through TYPE_REF once and refers to it by index",
   ]);
   expect(small.coverage.code_objects).toBe(4);
   expect(pythonPycSchema.safeParse(small).success).toBe(true);
-  const started = Date.now();
-  const deep = parse(sharedChain(25));
-  expect(Date.now() - started).toBeLessThan(1000);
+  const { report: deep, work } = measure(sharedChain(25));
+  // Each level references its child three times; every step stays one per level.
+  expect(work.codeVisits).toBe(26);
+  expect(work.constSummaries).toBe(26);
   expect(deep.coverage.code_objects).toBe(26);
   expect(JSON.stringify(deep).length).toBeLessThan(64 * 1024);
 });
@@ -440,7 +460,7 @@ it("bounds names repeated through TYPE_REF by what the report carries", () => {
       },
       { ...defaults, max_file_bytes: bytes.length },
     ),
-  ).toThrow(PythonPycResourceFailure);
+  ).toThrow(parserLimit("reported_string_bytes"));
 });
 
 it("charges shared empty name tables against the object budget", () => {
@@ -491,7 +511,7 @@ it("charges shared empty name tables against the object budget", () => {
 it("charges long digits to the string budget and keeps large previews bounded", () => {
   expect(() =>
     parse(withConsts([Buffer.concat([Buffer.from([0x6c]), i32(600_000)])])),
-  ).toThrow(PythonPycResourceFailure);
+  ).toThrow(parserLimit("max_string_bytes"));
   const report = parse(
     withConsts([
       marshalLong([1, 2]),
@@ -633,9 +653,9 @@ it("hashes one shared byte string no matter how many times it is referenced", ()
       ]),
     }),
   ]);
-  const started = Date.now();
-  const report = parse(bytes);
-  expect(Date.now() - started).toBeLessThan(1000);
+  const { report, work } = measure(bytes);
+  expect(work.constSummaries).toBe(1);
+  expect(work.digestedBytes).toBeLessThan(2 * payload.length);
   expect(root(report).consts).toHaveLength(refs + 1);
   expect(root(report).consts[refs]).toEqual(root(report).consts[0]);
   expect(root(report).consts[0]).toMatchObject({
@@ -780,7 +800,7 @@ it("charges every reported code-constant name against the file budget", () => {
   });
   expect(pythonPycSchema.safeParse(once).success).toBe(true);
   expect(() => parseLimited(file(30), 20_000)).toThrow(
-    PythonPycResourceFailure,
+    parserLimit("reported_string_bytes"),
   );
 });
 
@@ -803,9 +823,9 @@ it("reuses a shared integer's bit length instead of converting every reference",
       ]),
     }),
   ]);
-  const started = Date.now();
-  const report = parse(bytes);
-  expect(Date.now() - started).toBeLessThan(1000);
+  const { report, work } = measure(bytes);
+  // One summary carries the bit length for the integer and all its references.
+  expect(work.constSummaries).toBe(1);
   expect(root(report).consts[0]).toEqual({
     kind: "int",
     bits: digits.length * 15,
@@ -1036,9 +1056,11 @@ it("rejects a shared tuple key before its expansion doubles without bound", () =
   const bytes = withConsts([
     Buffer.concat([Buffer.from([0x3c]), u32(1), body]),
   ]);
-  const started = Date.now();
-  expect(() => parse(bytes)).toThrow(PythonPycResourceFailure);
-  expect(Date.now() - started).toBeLessThan(1000);
+  const work = emptyPythonPycWork();
+  expect(() => parse(bytes, work)).toThrow(parserLimit("max_string_bytes"));
+  // Refused while the walk and its keys are still linear in the depth.
+  expect(work.keySteps).toBeLessThanOrEqual(depth * 4);
+  expect(work.keyBytes).toBeLessThanOrEqual(depth * 8);
   let shallow = Buffer.concat([Buffer.from([0xe9]), i32(1)]);
   for (let index = 7; index >= 0; index -= 1)
     shallow = Buffer.concat([
@@ -1070,9 +1092,10 @@ it("lists a shared container's code objects once per owner and charges each copy
       consts: [container, ...Array.from({ length: 7 }, () => marshalRef(0))],
     }),
   ]);
-  const started = Date.now();
-  const shared = parse(repeated);
-  expect(Date.now() - started).toBeLessThan(1000);
+  const { report: shared, work } = measure(repeated);
+  // Eight owners share one walk of the container and its children.
+  expect(work.listedChildren).toBe(copies);
+  expect(work.nestedSteps).toBe(copies + 1);
   expect(shared.code_objects.map((code) => code.name)).toEqual([
     "<module>",
     "child",
@@ -1132,7 +1155,7 @@ it("lists a shared container's code objects once per owner and charges each copy
   };
   expect(() =>
     parsePythonPyc(bytes, artifact, { ...defaults, max_objects: constants }),
-  ).toThrow(PythonPycResourceFailure);
+  ).toThrow(parserLimit("reported_rows"));
   expect(
     parsePythonPyc(bytes, artifact, {
       ...defaults,
@@ -1299,10 +1322,10 @@ it("walks a wide dictionary once per child instead of copying it each step", () 
     );
   pieces.push(Buffer.from([0x30]));
   const bytes = withConsts([Buffer.concat(pieces)]);
-  const started = Date.now();
-  const report = parse(bytes);
-  // Rebuilding the child list on every key took about 700ms for 8,000 entries.
-  expect(Date.now() - started).toBeLessThan(250);
+  const { report, work } = measure(bytes);
+  // The dictionary's key and value slots are listed once, not once per step.
+  expect(work.listedChildren).toBe(2 * keys);
+  expect(work.nestedSteps).toBe(2 * keys + 1);
   expect(root(report).consts[0]).toEqual({ kind: "dict", length: keys });
   expect(root(report).nested_code).toEqual([1]);
   expect(report.code_objects[1]?.name).toBe("inside");
@@ -1340,7 +1363,10 @@ it("preflights expanded shared code-name keys before building their hex table", 
 
   expect(() => parseWith(bytes, { max_string_bytes: 4096 })).toThrow(
     expect.objectContaining({
-      boundary: "string",
+      failure: expect.objectContaining({
+        kind: "limit",
+        limit: { name: "max_string_bytes", maximum: 4096 },
+      }),
       message: expect.stringContaining("max_string_bytes 4096"),
     }),
   );
@@ -1509,9 +1535,9 @@ it("follows a long TYPE_REF chain without a recursive walk", () => {
     pythonPycHeader(3531),
     marshalCode("py311", { constsObject: Buffer.concat(pieces) }),
   ]);
-  const started = Date.now();
-  const report = parse(bytes);
-  expect(Date.now() - started).toBeLessThan(1000);
+  const { report, work } = measure(bytes);
+  expect(work.listedChildren).toBe(links);
+  expect(work.nestedSteps).toBe(2 * links);
   expect(report.code_objects.map((code) => code.name)).toEqual([
     "<module>",
     "hidden",
@@ -1652,9 +1678,9 @@ it("hashes a long TYPE_REF tuple chain without recursing", () => {
     marshalCode("py311", { constsObject: Buffer.concat(pieces) }),
   ]);
   expect(bytes.length).toBeLessThan(64_000);
-  const started = Date.now();
-  const report = parse(bytes);
-  expect(Date.now() - started).toBeLessThan(1000);
+  const { report, work } = measure(bytes);
+  // Two key steps per link: each tuple and its reference to the previous one.
+  expect(work.keySteps).toBe(2 * links + 1);
   expect(root(report).consts[0]).toEqual({ kind: "tuple", length: links + 1 });
   expect(root(report).consts[1]).toEqual({ kind: "set", length: 1 });
   expect(report.coverage.status).toBe("complete");

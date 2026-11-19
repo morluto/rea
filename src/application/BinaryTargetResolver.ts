@@ -1,3 +1,7 @@
+import {
+  BINARY_TARGET_FORMAT_KINDS,
+  type TargetFormatHint,
+} from "../domain/targetFormats.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   artifactNameForClassification,
@@ -29,6 +33,10 @@ import { extname } from "node:path";
 
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import {
+  classifyTargetFilesystemFailure,
+  type TargetFilesystemStage,
+} from "../domain/binaryTargetFilesystemFailure.js";
+import {
   assertStableRegularFileIdentity,
   RegularFileChangedError,
   type StableRegularFileDescriptor,
@@ -39,12 +47,11 @@ import {
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
-import {
-  BINARY_TARGET_FORMAT_KINDS,
-  type BinaryTarget,
-  type BinaryArchitecture,
-  type PeCodeViewRecord,
-  type UniversalMachOSlice,
+import type {
+  BinaryTarget,
+  BinaryArchitecture,
+  PeCodeViewRecord,
+  UniversalMachOSlice,
 } from "../domain/binaryTargetTypes.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { readMipsElfMetadata } from "./MipsElfMetadata.js";
@@ -62,10 +69,7 @@ import {
   isUnopenedAppleBundleExtension,
   openableAppleBundleExtension,
 } from "../domain/apple/appleBundleTypes.js";
-import {
-  validateDosComLength,
-  type ExecutableFormatHint,
-} from "../domain/dosCom.js";
+import { validateDosComLength } from "../domain/dosCom.js";
 import {
   admitRawBinary,
   rawBinarySelectionError,
@@ -93,7 +97,7 @@ import {
 } from "../domain/firmware/espFlashLocation.js";
 import { espFlashSelectionError } from "../domain/firmware/espFlashSelection.js";
 import {
-  locateTrailingZipArchive,
+  hasTrailingZipArchive,
   zipRootPackageFormat,
 } from "../domain/zipPackageFormat.js";
 
@@ -128,6 +132,7 @@ import {
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const XML_PLIST_PROBE_CHUNK_BYTES = 64 * 1024;
 
@@ -136,7 +141,7 @@ export interface BinaryTargetResolverOptions {
   readonly cwd?: string;
   readonly hostArchitecture?: NodeJS.Architecture;
   readonly targetKind?: BinaryTarget["kind"];
-  readonly formatHint?: ExecutableFormatHint;
+  readonly formatHint?: TargetFormatHint;
   readonly architecture?: BinaryArchitecture;
   readonly entryPoint?: string;
   /** Inputs for format=esp-flash-image; rejected with any other format. */
@@ -208,6 +213,7 @@ export const parseBinaryTarget = async (
             {
               path,
               sourcePath,
+              callerInputPath: admitted.data,
               selectedPath: candidate,
               classifiedAs,
               ...bundle,
@@ -288,6 +294,7 @@ const readOpenedBinaryTarget = async (
   selected: {
     readonly path: string;
     readonly sourcePath: string;
+    readonly callerInputPath: string;
     readonly selectedPath: string;
     /** Spelling whose name supplies format hints: the selected file, or a bundle's executable. */
     readonly classifiedAs: string;
@@ -296,13 +303,20 @@ const readOpenedBinaryTarget = async (
   options: BinaryTargetResolverOptions,
 ): Promise<TargetResolution> => {
   const { handle, initial: metadata } = source;
-  const { path, sourcePath, selectedPath, classifiedAs, bundleInfoPlist } =
-    selected;
+  const {
+    path,
+    sourcePath,
+    callerInputPath,
+    selectedPath,
+    classifiedAs,
+    bundleInfoPlist,
+  } = selected;
   const bundle = bundleInfoPlist === undefined ? {} : { bundleInfoPlist };
   // Every admitted target shares one identity; routes add their own facts.
   const identity = async () => ({
     path,
     sourcePath,
+    ...(callerInputPath === path ? {} : { callerInputPath }),
     ...bundle,
     sha256: await sha256Handle(source, path, signal),
   });
@@ -514,9 +528,9 @@ const readOpenedBinaryTarget = async (
     // executable with an appended archive keeps its executable route.
     if (
       !(await claimsLeadingExecutableHeader(handle, metadata.size, signal)) &&
-      (await locateTrailingZipArchive(metadata.size, (position, length) =>
+      (await hasTrailingZipArchive(metadata.size, (position, length) =>
         readHandleRange(handle, position, length, signal),
-      )) !== undefined
+      ))
     )
       return ok({
         ...(await artifactIdentity()),
@@ -603,10 +617,7 @@ const targetFileCleanupError = (
       cause: failure,
       cleanupPrimary: primary,
       cleanup: {
-        reason:
-          failure.cleanupCause instanceof Error
-            ? failure.cleanupCause.message
-            : String(failure.cleanupCause),
+        reason: errorMessage(failure.cleanupCause),
         resources: [failure.path],
       },
       ...childFailureDiagnostics(
@@ -652,68 +663,6 @@ const targetResolutionFailure = (
   const failure = classifyTargetFilesystemFailure(candidate, physical, stage);
   if (failure === undefined) throw physical;
   return err(failure);
-};
-
-/**
- * `resolve` covers the caller-selected path before canonicalization; `read`
- * covers a canonical path opened with symbolic links rejected.
- */
-type TargetFilesystemStage = "resolve" | "read";
-
-/** Classify a filesystem failure while reading a previously selected target. */
-export const classifyBinaryTargetFilesystemFailure = (
-  path: string,
-  cause: unknown,
-): BinaryTargetError | undefined =>
-  classifyTargetFilesystemFailure(path, cause, "read");
-
-const classifyTargetFilesystemFailure = (
-  path: string,
-  cause: unknown,
-  stage: TargetFilesystemStage,
-): BinaryTargetError | undefined => {
-  if (!(cause instanceof Error)) return undefined;
-  const code = filesystemErrorCode(cause);
-  return code === undefined
-    ? undefined
-    : new BinaryTargetError(
-        path,
-        targetFailureReason(code, cause.message, stage),
-        { cause },
-      );
-};
-
-const filesystemErrorCode = (cause: Error): string | undefined => {
-  const code: unknown = Reflect.get(cause, "code");
-  return typeof code === "string" ? code : undefined;
-};
-
-const targetFailureReason = (
-  code: string,
-  detail: string,
-  stage: TargetFilesystemStage,
-): string => {
-  switch (code) {
-    case "ENOENT":
-    case "ENOTDIR":
-      return `target does not exist or a path component is not a directory: ${detail}`;
-    case "EACCES":
-    case "EPERM":
-      return `permission denied while reading target: ${detail}`;
-    case "EISDIR":
-      return `target is a directory, not a readable file: ${detail}`;
-    case "ENOTFILE":
-      return "target is not a regular file";
-    case "ELOOP":
-      // A canonical path has no symbolic links left, so a link rejected while
-      // reading it appeared after resolution. Before that, ELOOP is a loop or
-      // an over-deep link chain in the selected path itself.
-      return stage === "resolve"
-        ? `target path could not be resolved: too many symbolic links or a symbolic link loop: ${detail}`
-        : `target changed while being opened: ${detail}`;
-    default:
-      return `target could not be read (${code}): ${detail}`;
-  }
 };
 
 const throwIfTargetResolutionCancelled = (signal?: AbortSignal): void => {
@@ -1139,6 +1088,7 @@ const readElfMetadata = async (
       ...parsed.value,
       riscv: {
         ...parsed.value.riscv,
+        ...(ranges.value.hasInterpreter ? { hasInterpreter: true } : {}),
         isa: await readElfDeclarations(
           handle,
           bytes,
@@ -1161,6 +1111,7 @@ const readElfMetadata = async (
       ...parsed.value.mips,
       abiFlags: declarations.value.abiFlags,
       gnuAttributes: declarations.value.gnuAttributes,
+      ...(ranges.value.hasInterpreter ? { hasInterpreter: true } : {}),
       ...(declarations.value.sharedLoad === undefined
         ? {}
         : { sharedLoad: declarations.value.sharedLoad }),

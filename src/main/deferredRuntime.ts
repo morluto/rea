@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import {
   STDIO_DEFAULT_MAX_BUFFER_SIZE,
@@ -19,14 +18,13 @@ import { SERVER_START_FAILED } from "./messages.js";
 import { reportMcpTransportError } from "./reportMcpTransportError.js";
 import { OwnedMcpServers } from "./OwnedMcpServers.js";
 import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "../contracts/mcpSchemaPresentation.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 /** Verify the build-owned artifact before trusting its exact typed projection. */
 const readCatalog = (): RecordedMcpCatalog => {
   const bytes = readFileSync(new URL("../mcp-catalog.json", import.meta.url));
-  if (
-    createHash("sha256").update(bytes).digest("hex") !==
-    RECORDED_MCP_CATALOG_SHA256
-  )
+  if (sha256Hex(bytes) !== RECORDED_MCP_CATALOG_SHA256)
     throw new Error(SERVER_START_FAILED);
   // The digest binds these bytes to the same compiled producer and SDK converter.
   const catalog: unknown = JSON.parse(bytes.toString("utf8"));
@@ -131,6 +129,10 @@ export const runDeferred = async (
   // `main.ts` defers only the default output profile, which omits output
   // schemas from listings; the recorded catalog keeps them for validation.
   let firstCatalog: RecordedMcpCatalog | undefined = readCatalog();
+  const toolFamilies =
+    config.mcpToolFamilies === undefined
+      ? undefined
+      : new Set(config.mcpToolFamilies);
   const servers = new OwnedMcpServers<DeferredEvidenceMcpServer>();
   let handle: McpServerHandle | undefined;
   let attempt: Promise<void> | undefined;
@@ -212,6 +214,7 @@ export const runDeferred = async (
               {
                 maximumInputElements: config.mcpMaxInputElements,
                 compactPresentation: COMPACT_INPUT_SCHEMA_PRESENTATION,
+                toolFamilies,
                 identity: {
                   ...catalog.identity,
                   digests:
@@ -245,10 +248,7 @@ export const runDeferred = async (
     }
   } catch (cause) {
     finishServing();
-    serverLogger.error(
-      { error: cause instanceof Error ? cause.message : String(cause) },
-      SERVER_START_FAILED,
-    );
+    serverLogger.error({ error: errorMessage(cause) }, SERVER_START_FAILED);
     try {
       await close();
     } catch (cleanupCause) {

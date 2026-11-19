@@ -1,3 +1,4 @@
+import { fileSubjectTarget } from "../../fixtures/evidenceSubject.js";
 import { parseEvidence, createEvidence } from "../../../src/domain/evidence.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -26,6 +27,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import type { RelationshipCoverage } from "../../../src/domain/relationshipCoverage.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("aggregates comparison Evidence and records an approved runtime gap", async () => {
   const { session, server, client } = await connected();
@@ -133,7 +135,10 @@ it("keeps call-path publication ahead of close_binary record draining", async ()
     close: () => Promise.resolve(resultOk(null)),
   }));
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "investigation-close-race", version: "1" });
+  const client = new Client(
+    { name: "investigation-close-race", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   const callPathPreparation = phaseGate();
@@ -219,41 +224,29 @@ it("keeps call-path publication ahead of close_binary record draining", async ()
 
 const dossierWithCallees = (addresses: readonly string[]) => {
   const base = FUNCTION_COMPARISON_EXAMPLE.left;
-  if (base.subject === null) throw new Error("missing dossier subject");
-  return createEvidence(
-    {
-      path: base.subject.local_path,
-      sha256: base.subject.digest.sha256,
-      format: base.subject.format,
-      ...(base.subject.architecture === null
-        ? {}
-        : { architecture: base.subject.architecture }),
+  return createEvidence(fileSubjectTarget(base.subject), base.provider, {
+    predicateType: base.predicate_type,
+    operation: base.operation,
+    parameters: base.parameters,
+    result: {
+      ...jsonObjectSchema.parse(base.normalized_result),
+      callees: addresses.map((address) => ({
+        address,
+        name: "next",
+        classification: null,
+        body: {
+          available: false,
+          reason: "The fixture has no callee body-extent observation.",
+        },
+      })),
     },
-    base.provider,
-    {
-      predicateType: base.predicate_type,
-      operation: base.operation,
-      parameters: base.parameters,
-      result: {
-        ...jsonObjectSchema.parse(base.normalized_result),
-        callees: addresses.map((address) => ({
-          address,
-          name: "next",
-          classification: null,
-          body: {
-            available: false,
-            reason: "The fixture has no callee body-extent observation.",
-          },
-        })),
-      },
-      rawResult: base.raw_result,
-      confidence: base.confidence,
-      authority: base.authority,
-      limitations: base.limitations,
-      locations: base.locations,
-      evidenceLinks: base.evidence_links,
-    },
-  );
+    rawResult: base.raw_result,
+    confidence: base.confidence,
+    authority: base.authority,
+    limitations: base.limitations,
+    locations: base.locations,
+    evidenceLinks: base.evidence_links,
+  });
 };
 
 it.each([
@@ -336,7 +329,8 @@ it.each([
   "preserves $label coverage through public analyze_function then build_call_path",
   async (scenario) => {
     const base = FUNCTION_COMPARISON_EXAMPLE.left;
-    if (base.subject === null) throw new Error("missing fixture subject");
+    if (base.subject.identity.kind !== "file")
+      throw new Error("missing fixture subject");
     const provider = {
       id: "fixture",
       name: "Fixture analysis provider",
@@ -387,8 +381,10 @@ it.each([
         provider,
         subject: {
           local_path: path,
-          digest: { sha256: session.activeTarget()?.sha256 },
-          format: session.activeTarget()?.format,
+          identity: {
+            sha256: session.activeTarget()?.sha256,
+            format: session.activeTarget()?.format,
+          },
         },
         raw_result: rawResult,
         limitations: scenario.providerLimitations,
@@ -624,7 +620,10 @@ const connected = async (analysis?: AnalysisOperationPort) => {
     close: () => Promise.resolve(resultOk(null)),
   }));
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "investigation-test", version: "1" });
+  const client = new Client(
+    { name: "investigation-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
@@ -651,11 +650,7 @@ it("keeps an aggregate function reconstruction unknown while a constituent dimen
       callees: { status: "complete" },
     } as const;
     const left = createEvidence(
-      {
-        path: fixture.subject!.local_path,
-        sha256: fixture.subject!.digest.sha256,
-        format: fixture.subject!.format,
-      },
+      fileSubjectTarget(fixture.subject),
       fixture.provider,
       {
         operation: fixture.operation,

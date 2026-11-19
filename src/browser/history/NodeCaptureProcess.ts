@@ -52,6 +52,12 @@ const main = async (): Promise<void> => {
               reason: cause.replyReason,
               message: cause.message,
               pointer: cause.pointer,
+              ...(cause.ceiling === undefined
+                ? {}
+                : {
+                    ceiling: cause.ceiling.fixedAllowance,
+                    boundary: cause.ceiling.boundary,
+                  }),
             }
           : {
               ok: false,

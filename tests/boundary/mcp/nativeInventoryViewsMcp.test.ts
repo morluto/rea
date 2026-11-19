@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import {
   canonicalOutputSchema,
   withCanonicalOutputSchema,
@@ -16,6 +17,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { connectGhidraMcp } from "./ghidraMcpHarness.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const procedureRows = [
   {
@@ -276,10 +278,13 @@ it("refuses summary before provider work when no retaining session is configured
       },
     },
   });
-  const client = new Client({
-    name: "unretained-native-summary",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "unretained-native-summary",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -312,7 +317,7 @@ it("projects imported inventories with an unknown artifact without inventing a p
     throw new Error("Retained views must not open a provider");
   });
   const source = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "borrowed.native", name: "Borrowed engine", version: "1" },
     {
       operation: "list_procedures",
@@ -326,7 +331,10 @@ it("projects imported inventories with an unknown artifact without inventing a p
   const recorded = session.recordEvidence(source);
   if (!recorded.ok) throw recorded.error;
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "unbound-native-views", version: "1" });
+  const client = new Client(
+    { name: "unbound-native-views", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -351,7 +359,9 @@ it("projects imported inventories with an unknown artifact without inventing a p
     if (reply.isError) throw new Error(JSON.stringify(reply));
     const evidence = parseEvidence(reply.structuredContent);
     expect(evidence).toMatchObject({
-      subject: null,
+      subject: {
+        identity: { kind: "unknown", reason: "derived-from-linked-evidence" },
+      },
       locations: [],
       evidence_links: [source.evidence_id],
       normalized_result: {
