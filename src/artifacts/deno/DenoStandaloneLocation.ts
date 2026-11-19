@@ -23,6 +23,7 @@ import {
 import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
 import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
+import { validateElfSectionTableFields } from "../../domain/elfDeclaredRanges.js";
 import { readElfFixedHeader } from "../../domain/elfFixedHeader.js";
 import { MAX_INSPECT_ELF_NOTE_ENTRIES } from "../../domain/native/elfNotes.js";
 import {
@@ -553,8 +554,10 @@ const locateElfNotes = async (carrier: Carrier): Promise<SectionRange[]> => {
   const { programs, sections } = raw.value;
   if (programs.count === PN_XNUM)
     damaged("ELF extended program numbering is unsupported");
+  const sectionTable = validateElfSectionTableFields(raw.value);
+  if (!sectionTable.ok) damaged(sectionTable.error);
   // A zero e_shnum with a section table moves the count into section zero.
-  if (sections.count === 0 && sections.offset !== 0n)
+  else if (sections.count === 0 && sections.offset !== 0n)
     damaged("ELF extended section numbering is unsupported");
   const programHeaders =
     programs.count === PN_XNUM
@@ -566,13 +569,15 @@ const locateElfNotes = async (carrier: Carrier): Promise<SectionRange[]> => {
           wide ? ELF64_PROGRAM_HEADER_BYTES : ELF32_PROGRAM_HEADER_BYTES,
           "program header table",
         );
-  const sectionHeaders = await readElfHeaderTable(
-    carrier,
-    walk,
-    sections,
-    wide ? ELF64_SECTION_HEADER_BYTES : ELF32_SECTION_HEADER_BYTES,
-    "section header table",
-  );
+  const sectionHeaders = sectionTable.ok
+    ? await readElfHeaderTable(
+        carrier,
+        walk,
+        sections,
+        wide ? ELF64_SECTION_HEADER_BYTES : ELF32_SECTION_HEADER_BYTES,
+        "section header table",
+      )
+    : undefined;
   const tables = new Map<string, ElfNoteTable>();
   const addTable = (offset: bigint, length: bigint, align: bigint): void => {
     if (

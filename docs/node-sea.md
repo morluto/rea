@@ -28,8 +28,9 @@ The container format is `node-sea`. REA locates Mach-O sections named
 locations come from the shared PE resource parser. ELF program-header
 `PT_NOTE` segments are authoritative, as at runtime; `SHT_NOTE` sections are
 read only when no program-header table is readable, because injectors can
-leave stale section entries. A compressed section does not establish a raw
-blob offset. A short remainder after the last ELF note must be zero padding.
+leave stale section entries. The section fallback requires a valid direct
+`e_shnum` count and an uncompressed note section to establish a raw blob
+offset. A short remainder after the last ELF note must be zero padding.
 A PE without a `NODE_SEA_BLOB` resource name is
 left to native classification. Universal Mach-O carriers
 with different slice blobs are rejected as ambiguous; identical blobs are

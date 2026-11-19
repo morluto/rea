@@ -31,7 +31,11 @@ import {
   nodeSeaPe,
   nodeSeaUniversal,
 } from "./nodeSea/NodeSea.fixture.js";
-import { elfNote, elfNoteFixture } from "../native/elf/ElfNotes.fixture.js";
+import {
+  elfNote,
+  elfNoteFixture,
+  withElf64DirectSectionCount,
+} from "../native/elf/ElfNotes.fixture.js";
 import { peResourceFixture } from "../domain/pe/peResources.fixture.js";
 import { locateNodeSea } from "./nodeSea/NodeSeaLocation.js";
 import { MAX_INSPECT_PE_FILE_BYTES } from "../domain/native/peResources.js";
@@ -517,6 +521,27 @@ it("trusts the PT_NOTE blob over a stale SHT_NOTE entry", async () => {
   );
   expect(inventory.manifest.root_format).toBe("node-sea");
 });
+
+it.each(["section", "both"] as const)(
+  "only trusts an independently readable SEA program note beside a reserved section count (%s)",
+  async (ownership) => {
+    const bytes = withElf64DirectSectionCount(
+      nodeSeaElf({ ...populated, ownership }),
+      0xff00,
+    );
+    const handle = await open(
+      await writeCarrier("reserved-sections", bytes),
+      "r",
+    );
+    try {
+      const location = await locateNodeSea(handle, bytes.length);
+      if (ownership === "section") expect(location).toBeUndefined();
+      else expect(location).toMatchObject({ carrier: "elf" });
+    } finally {
+      await handle.close();
+    }
+  },
+);
 
 it.each([
   ["section", "elf"],
