@@ -82,7 +82,6 @@
   "src/native/initializers/MachoInitializers.ts": 22,
   "src/native/initializers/NativeInitializersProvider.ts": 1,
   "src/native/pe/PeCertificateAsn1.ts": 2,
-  "src/native/pe/PeCertificateParser.ts": 3,
   "src/native/pe/PeLoadConfigParser.ts": 7,
   "src/native/pwndbg/CoreFileMappingAuthority.ts": 1,
   "src/native/pwntools/PwntoolsRecordedCrashProvider.ts": 1,
