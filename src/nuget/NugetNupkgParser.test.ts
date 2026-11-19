@@ -723,3 +723,21 @@ it("keeps one member when every manifest target resolves to it", () => {
   expect(distinctTargetMatches(targets, match)).toEqual([member]);
   expect(match).toHaveBeenCalledTimes(1_000);
 });
+
+it("keeps a foreign group from suppressing ungrouped NuGet dependencies", async () => {
+  const bytes = await nugetNupkgFixture({
+    nuspec: `<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd" xmlns:ext="urn:example">
+      <metadata>
+        <id>Demo.Package</id><version>1.0.0</version>
+        <dependencies>
+          <ext:group targetFramework="net8.0"><ext:dependency id="Extension" /></ext:group>
+          <dependency id="Declared" version="1.0" />
+        </dependencies>
+      </metadata>
+    </package>`,
+  });
+  const result = await parseNugetNupkg(bytes, artifactOf(bytes), defaults);
+  expect(result.dependency_groups).toMatchObject([
+    { target_framework: null, dependencies: [{ id: "Declared" }] },
+  ]);
+});

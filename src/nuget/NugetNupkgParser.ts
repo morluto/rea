@@ -289,12 +289,17 @@ const parseDependencies = (
 ): NugetNupkg["dependency_groups"] => {
   // NuspecReader walks every <dependencies> element, with one decision about
   // groups across all of them.
-  const containers = childrenNamed(metadata, "dependencies");
+  const namespace = metadata.lookupNamespaceURI("") ?? "";
+  const dependencyChildren = (parent: Element, local: string) =>
+    childrenNamed(parent, local).filter(
+      (child) => (child.namespaceURI ?? "") === namespace,
+    );
+  const containers = dependencyChildren(metadata, "dependencies");
   const groups = containers.flatMap((container) =>
-    childrenNamed(container, "group"),
+    dependencyChildren(container, "group"),
   );
   const ungrouped = containers.flatMap((container) =>
-    childrenNamed(container, "dependency"),
+    dependencyChildren(container, "dependency"),
   );
   const readDependency = (
     element: Element,
@@ -311,7 +316,7 @@ const parseDependencies = (
     element: Element,
   ): NugetNupkg["dependency_groups"][number] => ({
     target_framework: attribute(element, "targetFramework"),
-    dependencies: childrenNamed(element, "dependency").map(readDependency),
+    dependencies: dependencyChildren(element, "dependency").map(readDependency),
   });
   // NuGet's NuspecReader reads ungrouped dependencies only when no group is
   // present, so those beside groups never reach restore.
