@@ -31,10 +31,12 @@ import {
 } from "../../domain/apple/machoLoadCommands.js";
 import {
   machoSectionBacking,
+  machoSectionHeaderSize,
   readMachoSectionHeader,
 } from "../../domain/apple/machoSectionHeader.js";
 import {
   admitMachoSegmentCommand,
+  machoSegmentSectionTableFits,
   readMachoSegmentHeader,
 } from "../../domain/apple/machoSegmentHeader.js";
 import type { FileHandle } from "node:fs/promises";
@@ -62,8 +64,6 @@ export const BUN_RECORD_BYTES_1_3_3 = 36;
 export const BUN_RECORD_BYTES_1_3_9 = 52;
 
 const MAX_PE_SECTIONS = 96;
-const SECTION_64_BYTES = 80;
-const SECTION_32_BYTES = 68;
 
 export const BUN_LAYOUT_REVISIONS = ["bun-1.3.3", "bun-1.3.9"] as const;
 export type BunLayoutRevision = (typeof BUN_LAYOUT_REVISIONS)[number];
@@ -644,8 +644,8 @@ const segmentClaims = (
   if (!parsedSegment.ok) return [];
   const segment = parsedSegment.value;
   const { headerSize, sectionCount } = segment;
-  const sectionBytes = wide ? SECTION_64_BYTES : SECTION_32_BYTES;
-  if (headerSize + sectionCount * sectionBytes > command.length) return [];
+  const sectionBytes = machoSectionHeaderSize(wide);
+  if (!machoSegmentSectionTableFits(segment, command.length, wide)) return [];
   const admission = admitMachoSegmentCommand(
     segment,
     command.length,
