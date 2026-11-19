@@ -438,6 +438,7 @@
 * **native:** retain the dispatch reader failure when the symbol fallback fails ([3a1db29](https://github.com/morluto/rea/commit/3a1db29166ec459b0172028d1ed4c63f61a436af)), closes [#8036](https://github.com/morluto/rea/issues/8036)
 * **native:** scale the NativeAOT work budget with the admitted image ([c8d5413](https://github.com/morluto/rea/commit/c8d5413d0fe54c5f8236e1cb8f61ad462d08fd1d)), closes [#4445](https://github.com/morluto/rea/issues/4445) [#4559](https://github.com/morluto/rea/issues/4559)
 * **native:** select same-family universal slices by subtype name ([d5dd0b6](https://github.com/morluto/rea/commit/d5dd0b6fd9849aad7ac3349f2b783661e0a40e9c))
+* **native:** share ELF, PE, and Mach-O framing across artifact readers ([#12156](https://github.com/morluto/rea/issues/12156)) ([0b19b06](https://github.com/morluto/rea/commit/0b19b06bf60a920eae6e7f1765b22e61f4ff5a3d))
 * **navigation:** offer available instruction observations ([#10307](https://github.com/morluto/rea/issues/10307)) ([15a2de7](https://github.com/morluto/rea/commit/15a2de737c3401f9ef1e22290fa1b8a1ac3fead9))
 * **ntfs:** reject invalid FILE_NAME namespaces ([#11986](https://github.com/morluto/rea/issues/11986)) ([f52229a](https://github.com/morluto/rea/commit/f52229a4a64235a72e9ddf8a744907ea77616911))
 * **ntfs:** reject unaligned USN v4 extents ([#11969](https://github.com/morluto/rea/issues/11969)) ([7c25842](https://github.com/morluto/rea/commit/7c25842bae6906de375406b99717e20807ec0ca4))
