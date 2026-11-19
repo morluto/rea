@@ -14,6 +14,42 @@ import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 cliTest(
+  "admits zero alignment padding and rejects nonzero padding through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-dtb-structure-padding-");
+    const path = join(root, "board.dtb");
+    const bytes = devicetreeFixture({
+      name: "",
+      properties: { model: Buffer.from([0x78, 0]) },
+    });
+    const inspect = () =>
+      cli.run({ arguments: ["inspect-devicetree", path, "--json"] });
+    await writeFile(path, bytes);
+    const valid = await inspect();
+    expect(valid.exitCode, valid.stderr).toBe(0);
+    expect(valid.json).toMatchObject({
+      normalized_result: { summary: { model: "x" } },
+    });
+
+    const { call } = await connectLocalToolsMcp();
+    const structOffset = bytes.readUInt32BE(8);
+    for (const paddingOffset of [5, 22]) {
+      const corrupted = Buffer.from(bytes);
+      corrupted[structOffset + paddingOffset] = 1;
+      await writeFile(path, corrupted);
+      const invalid = await inspect();
+      expect(invalid.exitCode).toBe(1);
+      expect(invalid.json).toMatchObject({ code: "invalid_request" });
+      const refusal = await call("inspect_devicetree", { path });
+      expect(refusal.isError).toBe(true);
+      expect(JSON.stringify(refusal.content)).toContain(
+        "Nonzero FDT structure padding",
+      );
+    }
+  },
+);
+
+cliTest(
   "rejects ambiguous Devicetree node paths in correctly hashed Evidence",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-dtb-duplicate-path-");

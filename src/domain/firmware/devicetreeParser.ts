@@ -213,6 +213,7 @@ export const parseDevicetree = (
         nameoff = u32(cursor + 4);
       cursor += 8;
       need(length);
+      const next = afterPadding(cursor + length);
       if (++properties > input.max_properties)
         throw devicetreeLimitFailure("max_properties", input.max_properties);
       if (nameoff >= header.size_dt_strings)
@@ -280,7 +281,7 @@ export const parseDevicetree = (
       };
       owner.node.properties.push(property);
       propertyMap?.set(name, property);
-      cursor = afterPadding(cursor + length);
+      cursor = next;
     } else if (token === 9) {
       if (stack.length || nodes.length === 0) malformed("Premature FDT_END");
       if (header.size_dt_struct !== null && cursor !== structEnd)
