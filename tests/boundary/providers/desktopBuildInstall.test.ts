@@ -17,8 +17,8 @@ import {
   expandDesktopExec,
   parseDesktopEntry,
   tokenizeDesktopExec,
-  unwrapDesktopCommand,
 } from "../../../src/domain/desktop/desktopEntry.js";
+import { DESKTOP_LAUNCH_CASES } from "../../../src/domain/desktop/desktopLaunchSyntax.fixture.js";
 import {
   BUILD_NODE_VERSION,
   renderBuildBundle,
@@ -140,24 +140,16 @@ describe("download install scripts", () => {
     expect(failed?.stderr).toContain("drawio.desktop");
   });
 
-  it.each([
-    "",
-    "-- ",
-    "-C /opt --chdir=/tmp -- ",
-    "-iC/tmp -- ",
-    "--ignore-environment ",
-    "-- - ",
-    "--chdir= -C /tmp -- ",
-  ])(
-    "keeps an env %sprefix and its assignments when it points the AppImage's entry at AppRun",
-    async (delimiter) => {
+  it.each(DESKTOP_LAUNCH_CASES)(
+    "replaces only the executable in an AppImage entry with $name",
+    async ({ prefix, program, suffix }) => {
       const root = await stage("rea-appimage-env-");
       const image = join(root, "env/vendor/app.AppImage");
       await writeFile(
         image,
         STUB_APPIMAGE.replace(
           "'Exec=drawio %U'",
-          `'Exec=env ${delimiter}QT_QPA_PLATFORM=xcb "GTK_THEME=Adwaita dark" drawio %U'`,
+          () => `'Exec=${prefix}${program}${suffix}'`,
         ),
       );
       await chmod(image, 0o755);
@@ -172,38 +164,9 @@ describe("download install scripts", () => {
           join(root, "local-share/applications/drawio.desktop"),
           "utf8",
         ),
-      ).toContain(
-        `\nExec=env ${delimiter}QT_QPA_PLATFORM=xcb "GTK_THEME=Adwaita dark" ${appRun} %U\n`,
-      );
+      ).toContain(`\nExec=${prefix}${appRun}${suffix}\n`);
     },
   );
-
-  it("points an Exec spaced around its = at AppRun and drops a spaced TryExec, as the desktop entry parser reads them", async () => {
-    const root = await stage("rea-appimage-spaced-");
-    const image = join(root, "env/vendor/app.AppImage");
-    await writeFile(
-      image,
-      STUB_APPIMAGE.replace(
-        "'Exec=drawio %U' 'TryExec=drawio'",
-        "'Exec = drawio %U' '  TryExec =drawio'",
-      ),
-    );
-    await chmod(image, 0o755);
-    await runDownloadInstall(
-      renderBuildBundle(appImageRequest("drawio"), localPayload),
-      root,
-    );
-
-    const appRun = join(root, "opt/rea-apps/drawio/squashfs-root/AppRun");
-    expect(
-      await readFile(
-        join(root, "local-share/applications/drawio.desktop"),
-        "utf8",
-      ),
-    ).toBe(
-      `[Desktop Entry]\nName=draw.io\nExec=${appRun} %U\nIcon=drawio\n\n[Desktop Action New]\nExec=${appRun} --new-window\n`,
-    );
-  });
 
   it("unpacks a tarball without xz under its folder and installs the entry REA wrote for its program", async () => {
     const root = await stage("rea-tarball-install-");
@@ -254,6 +217,55 @@ describe("download install scripts", () => {
     expect(failed?.stderr).toContain("notes-2.0/notes");
     expect(failed?.stderr).toContain("notes-2.0");
   });
+});
+
+it("preserves Exec key spacing and line endings while removing TryExec", async () => {
+  const root = await stage("rea-appimage-spaced-");
+  const image = join(root, "env/vendor/app.AppImage");
+  const source = join(root, "source.desktop");
+  await writeFile(
+    source,
+    '[Desktop Entry]\r\nExec = drawio %U\r\n  TryExec =drawio\r\n\r\n[Desktop Action New]\r\nExec="drawio" --new-window',
+  );
+  await writeFile(
+    image,
+    STUB_APPIMAGE + `cp -- "${source}" squashfs-root/drawio.desktop\n`,
+  );
+  await chmod(image, 0o755);
+  await runDownloadInstall(
+    renderBuildBundle(appImageRequest("drawio"), localPayload),
+    root,
+  );
+
+  const appRun = join(root, "opt/rea-apps/drawio/squashfs-root/AppRun");
+  expect(
+    await readFile(
+      join(root, "local-share/applications/drawio.desktop"),
+      "utf8",
+    ),
+  ).toBe(
+    `[Desktop Entry]\r\nExec = ${appRun} %U\r\n\r\n[Desktop Action New]\r\nExec=${appRun} --new-window`,
+  );
+});
+
+it.each([
+  ['env "drawio %U', "unterminated quote"],
+  ["env -i", "missing program"],
+  ["env --chdir= drawio %U", "missing env chdir directory"],
+])("rejects a malformed AppImage Exec value %s", async (exec, reason) => {
+  const root = await stage("rea-appimage-invalid-exec-");
+  const image = join(root, "env/vendor/app.AppImage");
+  await writeFile(
+    image,
+    STUB_APPIMAGE.replace("'Exec=drawio %U'", () => `'Exec=${exec}'`),
+  );
+  await chmod(image, 0o755);
+  await expect(
+    runDownloadInstall(
+      renderBuildBundle(appImageRequest("drawio"), localPayload),
+      root,
+    ),
+  ).rejects.toMatchObject({ stderr: expect.stringContaining(reason) });
 });
 
 describe("download install scripts and archive links", () => {
@@ -449,39 +461,4 @@ describe("installed launch paths", () => {
       );
     },
   );
-});
-
-it("preserves a quoted env executable when rewriting an AppImage entry", async () => {
-  const root = await stage("rea-appimage-quoted-env-");
-  const image = join(root, "env/vendor/app.AppImage");
-  await writeFile(
-    image,
-    STUB_APPIMAGE.replace(
-      "'Exec=drawio %U'",
-      "'Exec=\"/usr/bin/env\" QT_QPA_PLATFORM=xcb drawio %U'",
-    ),
-  );
-  await chmod(image, 0o755);
-  await runDownloadInstall(
-    renderBuildBundle(appImageRequest("drawio"), localPayload),
-    root,
-  );
-  const text = await readFile(
-    join(root, "local-share/applications/drawio.desktop"),
-    "utf8",
-  );
-  expect(text).toContain(
-    `Exec="/usr/bin/env" QT_QPA_PLATFORM=xcb ${join(root, "opt/rea-apps/drawio/squashfs-root/AppRun")} %U`,
-  );
-  const parsed = parseDesktopEntry(text);
-  expect(parsed.ok).toBe(true);
-  if (!parsed.ok) throw new Error("invalid desktop entry");
-  const tokens = tokenizeDesktopExec(parsed.value.exec ?? "");
-  expect(tokens.ok).toBe(true);
-  if (!tokens.ok) throw new Error("invalid Exec");
-  expect(unwrapDesktopCommand(tokens.value)).toMatchObject({
-    kind: "direct",
-    environment: { QT_QPA_PLATFORM: "xcb" },
-    program: join(root, "opt/rea-apps/drawio/squashfs-root/AppRun"),
-  });
 });
