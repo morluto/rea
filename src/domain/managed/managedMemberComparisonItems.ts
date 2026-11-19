@@ -484,6 +484,7 @@ const methodOnlyItem = (
       ),
       unpaired: undecoded,
       ownIdentityUnavailable: identityUnavailable,
+      ownNameUnavailable: context.scope.left.emptyMethodNames.has(member.left),
       opposite: "right",
       inventory: "method",
     });
@@ -507,6 +508,7 @@ const methodOnlyItem = (
     ),
     unpaired: undecoded,
     ownIdentityUnavailable: identityUnavailable,
+    ownNameUnavailable: context.scope.right.emptyMethodNames.has(member.right),
     opposite: "left",
     inventory: "method",
   });
@@ -538,20 +540,29 @@ const absenceLimitations = (
   opposite: {
     readonly oppositeComplete: boolean;
     readonly ownIdentityUnavailable: boolean;
+    readonly ownNameUnavailable?: boolean;
     readonly unpaired: UndecodedOneSidedNames;
     readonly opposite: "left" | "right";
     readonly inventory: "method" | "field";
   },
 ): Limitation[] => [
-  ...(opposite.ownIdentityUnavailable
+  ...(opposite.ownNameUnavailable
     ? [
         limitation(
-          "declaring-type-name-not-resolved",
-          "Declared type identity could not be resolved; a bare display name cannot establish a counterpart or absence.",
+          "unknown-within-incomplete-metadata",
+          "The recorded MethodDef name is empty, so its nominal identity is unavailable.",
         ),
       ]
-    : []),
-  ...(opposite.unpaired.unknownOwners[opposite.opposite].has(member.name)
+    : opposite.ownIdentityUnavailable
+      ? [
+          limitation(
+            "declaring-type-name-not-resolved",
+            "Declared type identity could not be resolved; a bare display name cannot establish a counterpart or absence.",
+          ),
+        ]
+      : []),
+  ...(!opposite.ownNameUnavailable &&
+  opposite.unpaired.unknownOwners[opposite.opposite].has(member.name)
     ? [
         limitation(
           "counterpart-declaring-type-name-not-resolved",
