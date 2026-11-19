@@ -69,17 +69,19 @@ interface MetadataStream {
   readonly size: number;
 }
 
-interface GuidHeapDeclaration extends MetadataStream {
+interface StreamDeclaration extends MetadataStream {
   readonly headerOffset: number;
 }
 
-type GuidHeap =
+type MetadataHeap =
   | {
       readonly kind: "available";
       readonly stream: MetadataStream;
       readonly issue: ManagedParseIssue | null;
     }
   | { readonly kind: "ambiguous"; readonly issue: ManagedParseIssue };
+
+type TrackedHeapName = "#GUID" | "#US";
 
 export interface MetadataTableLayout {
   readonly index: number;
@@ -95,11 +97,11 @@ export interface ManagedMetadataLayout {
   readonly version: string;
   readonly streamNames: readonly string[];
   readonly strings: MetadataStream;
-  readonly guid: GuidHeap;
+  readonly guid: MetadataHeap;
   /** Empty blob heaps may omit the stream; index zero remains the empty blob. */
   readonly blob: MetadataStream | null;
   /** Optional: assemblies without `ldstr` literals may omit #US. */
-  readonly userStrings: MetadataStream | null;
+  readonly userStrings: MetadataHeap | null;
   readonly tables: ReadonlyMap<number, MetadataTableLayout>;
   readonly rowCounts: readonly number[];
   readonly stringIndexSize: 2 | 4;
@@ -192,17 +194,6 @@ const readStreamName = (
   };
 };
 
-const streamByName = (
-  streams: ReadonlyMap<string, MetadataStream>,
-  names: readonly string[],
-): MetadataStream | undefined => {
-  for (const name of names) {
-    const stream = streams.get(name);
-    if (stream !== undefined) return stream;
-  }
-  return undefined;
-};
-
 const requireStream = (
   streams: ReadonlyMap<string, MetadataStream>,
   name: string,
@@ -234,11 +225,10 @@ const tableSize = (index: number, rows: readonly number[]): 2 | 4 =>
   (rows[index] ?? 0) < 0x1_0000 ? 2 : 4;
 
 interface ParsedStreams {
-  readonly streams: ReadonlyMap<string, MetadataStream>;
+  readonly streams: ReadonlyMap<string, StreamDeclaration>;
   readonly streamNames: readonly string[];
-  readonly guidDeclarations: readonly GuidHeapDeclaration[];
+  readonly heapDeclarations: Record<TrackedHeapName, StreamDeclaration[]>;
   readonly version: string;
-  readonly minimalDeltaOffset: number | null;
 }
 
 const readMetadataStreams = (
@@ -279,21 +269,26 @@ const readMetadataStreams = (
       rootOffset + cursor + 2,
     );
   cursor += 4;
-  const streams = new Map<string, MetadataStream>();
+  const streams = new Map<string, StreamDeclaration>();
   const streamNames = new Set<string>();
-  const guidDeclarations: GuidHeapDeclaration[] = [];
-  let minimalDeltaOffset: number | null = null;
+  const heapDeclarations: ParsedStreams["heapDeclarations"] = {
+    "#GUID": [],
+    "#US": [],
+  };
   for (let index = 0; index < streamCount; index += 1) {
     requireRange(bytes, rootOffset, cursor, 8, "metadata.stream-header");
+    const headerOffset = rootOffset + cursor;
     const relativeOffset = bytes.readUInt32LE(cursor);
     const streamSize = bytes.readUInt32LE(cursor + 4);
     const named = readStreamName(bytes, rootOffset, cursor + 8);
-    if (named.name !== "#GUID" && streamNames.has(named.name))
+    const trackedHeap =
+      named.name === "#GUID" || named.name === "#US" ? named.name : null;
+    if (trackedHeap === null && streamNames.has(named.name))
       throw managedFailure(
         "invalid-stream",
         "metadata.stream-header",
         `Duplicate metadata stream ${named.name}`,
-        rootOffset + cursor,
+        headerOffset,
       );
     requireRange(
       bytes,
@@ -302,60 +297,61 @@ const readMetadataStreams = (
       streamSize,
       `metadata.${named.name}`,
     );
-    const stream = {
+    const stream: StreamDeclaration = {
       name: named.name,
       offset: rootOffset + relativeOffset,
       size: streamSize,
+      headerOffset,
     };
     streamNames.add(named.name);
-    if (named.name === "#GUID") {
-      guidDeclarations.push({ ...stream, headerOffset: rootOffset + cursor });
+    if (trackedHeap !== null) {
+      heapDeclarations[trackedHeap].push(stream);
     } else {
       streams.set(named.name, stream);
     }
-    if (named.name === "#JTD") minimalDeltaOffset = rootOffset + cursor;
     cursor = named.next;
   }
   return {
     streams,
     streamNames: [...streamNames],
-    guidDeclarations,
+    heapDeclarations,
     version,
-    minimalDeltaOffset,
   };
 };
 
-const readGuidHeap = (
-  declarations: readonly GuidHeapDeclaration[],
-): GuidHeap => {
+const describeStreamCoordinates = ({
+  headerOffset,
+  offset,
+  size,
+}: StreamDeclaration): string =>
+  `header ${headerOffset} (offset ${offset}, size ${size})`;
+
+const resolveHeap = (
+  name: TrackedHeapName,
+  declarations: readonly StreamDeclaration[],
+): MetadataHeap | null => {
   const [first, second] = declarations;
-  if (first === undefined)
-    throw managedFailure(
-      "missing-stream",
-      "metadata.#GUID",
-      "Required metadata stream #GUID is absent",
-    );
+  if (first === undefined) return null;
   if (second === undefined)
     return { kind: "available", stream: first, issue: null };
 
-  // Exact aliases share source coordinates. Distinct spans can describe
-  // different identities depending on how a runtime loads metadata.
+  // An exact alias preserves source identity. Distinct byte ranges do not
+  // establish which heap supplies an identity or value for a given index.
   const sameRange = declarations.every(
     ({ offset, size }) => offset === first.offset && size === first.size,
   );
-  const coordinates = declarations
-    .map(
-      ({ headerOffset, offset, size }) =>
-        `header ${headerOffset} (offset ${offset}, size ${size})`,
-    )
-    .join(", ");
+  const coordinates = declarations.map(describeStreamCoordinates).join(", ");
+  const conflict =
+    name === "#GUID"
+      ? "Nonzero GUID indices are unresolved."
+      : "User-string literals are unresolved.";
   const issue: ManagedParseIssue = {
     code: "invalid-stream",
-    scope: "metadata.#GUID",
+    scope: `metadata.${name}`,
     offset: second.headerOffset,
     detail: sameRange
-      ? `Duplicate #GUID declarations describe the same byte range (${coordinates}).`
-      : `Duplicate #GUID declarations describe distinct byte ranges (${coordinates}). Nonzero GUID indices are unresolved.`,
+      ? `Duplicate ${name} declarations describe the same byte range (${coordinates}).`
+      : `Duplicate ${name} declarations describe distinct byte ranges (${coordinates}). ${conflict}`,
   };
   return sameRange
     ? { kind: "available", stream: first, issue }
@@ -375,17 +371,38 @@ interface ParsedTablesHeader {
   readonly valid: bigint;
 }
 
-const readTablesHeader = (
-  bytes: Buffer,
-  streams: ReadonlyMap<string, MetadataStream>,
-): ParsedTablesHeader => {
-  const tablesStream = streamByName(streams, ["#~", "#-"]);
-  if (tablesStream === undefined)
+const selectTableStream = ({
+  streams,
+  streamNames,
+  version,
+}: ParsedStreams): MetadataStream => {
+  const compressed = streams.get("#~");
+  const uncompressed = streams.get("#-");
+  if (compressed !== undefined && uncompressed !== undefined)
+    throw new ManagedReaderFailure(
+      {
+        code: "unsupported-metadata",
+        scope: "metadata.tables",
+        detail: `Conflicting table stream declarations: #~ at ${describeStreamCoordinates(compressed)} and #- at ${describeStreamCoordinates(uncompressed)}. Metadata row layout is unknown.`,
+        offset: Math.max(compressed.headerOffset, uncompressed.headerOffset),
+      },
+      { metadataHeader: { version, streamNames } },
+    );
+
+  const stream = compressed ?? uncompressed;
+  if (stream === undefined)
     throw managedFailure(
       "missing-stream",
       "metadata.tables",
       "Required metadata table stream #~ or #- is absent",
     );
+  return stream;
+};
+
+const readTablesHeader = (
+  bytes: Buffer,
+  tablesStream: MetadataStream,
+): ParsedTablesHeader => {
   const tableBytes = bytes.subarray(
     tablesStream.offset,
     tablesStream.offset + tablesStream.size,
@@ -527,30 +544,27 @@ export const readManagedMetadataLayout = (
     );
   const bytes = artifact.subarray(rootOffset, rootOffset + size);
   const budget = new ManagedDecodeBudget(maxRepresentationBytes);
-  const {
-    streams,
-    streamNames,
-    guidDeclarations,
-    version,
-    minimalDeltaOffset,
-  } = readMetadataStreams(bytes, rootOffset, budget);
+  const parsed = readMetadataStreams(bytes, rootOffset, budget);
+  const { streams, streamNames, heapDeclarations, version } = parsed;
+  const minimalDelta = streams.get("#JTD");
+
   // Runtime v9.0.0 MetadataReader recognizes #JTD before sizing references.
   // Minimal deltas also use baseline coordinates and cumulative heap handles;
   // widening local rows alone cannot establish standalone member identities.
-  if (minimalDeltaOffset !== null)
+  if (minimalDelta !== undefined)
     throw new ManagedReaderFailure(
       {
         code: "unsupported-metadata",
         scope: "metadata.#JTD",
         detail:
           "Minimal Edit-and-Continue metadata (#JTD) requires its baseline and prior generations; standalone metadata identities and inventories are unknown.",
-        offset: minimalDeltaOffset,
+        offset: minimalDelta.headerOffset,
       },
       { metadataHeader: { version, streamNames } },
     );
   const { tableBytes, tablesOffset, heaps, valid } = readTablesHeader(
     artifact,
-    streams,
+    selectTableStream(parsed),
   );
   const rowCounts = readRowCounts(tableBytes, tablesOffset, valid);
   const tables = buildMetadataTables({
@@ -560,15 +574,23 @@ export const readManagedMetadataLayout = (
     valid,
     tablesOffset,
   });
+  const strings = requireStream(streams, "#Strings");
+  const guid = resolveHeap("#GUID", heapDeclarations["#GUID"]);
+  if (guid === null)
+    throw managedFailure(
+      "missing-stream",
+      "metadata.#GUID",
+      "Required metadata stream #GUID is absent",
+    );
   const layout: ManagedMetadataLayout = {
     rootOffset,
     size,
     version,
     streamNames: [...streamNames].sort(),
-    strings: requireStream(streams, "#Strings"),
-    guid: readGuidHeap(guidDeclarations),
+    strings,
+    guid,
     blob: streams.get("#Blob") ?? null,
-    userStrings: streams.get("#US") ?? null,
+    userStrings: resolveHeap("#US", heapDeclarations["#US"]),
     tables,
     rowCounts,
     stringIndexSize: heaps.string,

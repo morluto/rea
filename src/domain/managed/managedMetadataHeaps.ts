@@ -8,7 +8,10 @@ import {
   metadataRowOffset,
   type ManagedMetadataLayout,
 } from "./managedMetadataLayout.js";
-import { managedFailure } from "./managedReaderFailure.js";
+import {
+  managedFailure,
+  ManagedReaderFailure,
+} from "./managedReaderFailure.js";
 
 /** Cursor for checked fixed-width metadata row decoding. */
 export class MetadataRowCursor {
@@ -240,14 +243,17 @@ export const readMetadataUserString = (
   readonly issues: readonly ManagedParseIssue[];
 } => {
   const { token, row: index } = reference;
-  const heap = layout.userStrings;
+  const declaration = layout.userStrings;
   const scope = `metadata.#US:${token}`;
-  if (heap === null)
+  if (declaration === null)
     throw managedFailure(
       "missing-stream",
       scope,
       "ldstr references #US, but the metadata has no #US stream",
     );
+  if (declaration.kind === "ambiguous")
+    throw new ManagedReaderFailure(declaration.issue);
+  const heap = declaration.stream;
   if (index >= heap.size)
     throw managedFailure(
       "invalid-heap-index",
