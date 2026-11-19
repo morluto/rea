@@ -23,7 +23,10 @@ before it, and a terminating entry within `0xC00` bytes. ESP-IDF accepts a
 table with no partition entries, but REA requires one, so that neither
 erased flash nor a lone MD5 entry is read as a table. A table whose MD5 does not match, or that has a second MD5 entry, is
 still read, with `md5.status` `invalid` and a limitation, because the
-bootloader would refuse it. The table is located in this order:
+bootloader would refuse it. Partition entries after the MD5 record are
+kept. The digest covers only the entries before it, and
+`entries_after_checksum` counts the later ones. The table is located in
+this order:
 
 1. at the caller's `partition_table_offset`, when given; no scan follows;
 2. at the default `0x8000`;
@@ -89,7 +92,11 @@ The root `format_metadata` (`esp-flash-image`) records:
   table, with its ESP image facts;
 - `partition_table`: its flash address, the `method` that found it
   (`default`, `caller` or `scan`), the partition count and the MD5 `status`
-  (`valid`, `invalid` or `absent`) with the stored and computed digests;
+  (`valid`, `invalid` or `absent`) with the stored and computed digests.
+  `entries_after_checksum` is how many partition entries follow the MD5
+  record and sit outside its digest: 0 when the record is absent or every
+  partition entry precedes it. When it is greater than zero, a limitation
+  names that count and the MD5 entry's offset from the start of the table;
 - `apps`: ESP image facts for each app partition the dump holds; app
   partitions declared over the same bytes share one decode;
 - `otadata`: the otadata partition's records, or null without one;

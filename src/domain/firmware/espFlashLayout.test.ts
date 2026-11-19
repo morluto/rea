@@ -48,6 +48,7 @@ describe("ESP partition tables", () => {
     );
     expect(decoded.md5.status).toBe("valid");
     expect(decoded.md5.entryOffset).toBe(7 * 32);
+    expect(decoded.md5.entriesAfterChecksum).toBe(0);
     expect(decoded.length).toBe(9 * 32);
     expect(decoded.limitations).toEqual([]);
     expect(decoded.partitions.map(({ label }) => label)).toEqual([
@@ -79,6 +80,7 @@ describe("ESP partition tables", () => {
     expect(decoded.md5).toEqual({
       status: "absent",
       entryOffset: null,
+      entriesAfterChecksum: 0,
       stored: null,
       computed: null,
     });
@@ -90,6 +92,7 @@ describe("ESP partition tables", () => {
       partitionTable(TWO_OTA_PARTITIONS, { md5: "corrupt" }),
     );
     expect(decoded.md5.status).toBe("invalid");
+    expect(decoded.md5.entriesAfterChecksum).toBe(0);
     expect(decoded.partitions).toHaveLength(6);
     expect(decoded.limitations).toEqual([
       expect.stringMatching(/MD5.*0xc0.*does not match.*bootloader rejects/iu),
@@ -503,15 +506,15 @@ it("keeps and discloses partitions after a matching prefix MD5", () => {
       prefix.subarray(64),
     ]),
   );
-  expect(decoded.md5).toMatchObject({ status: "valid", entryOffset: 32 });
+  expect(decoded.md5).toMatchObject({
+    status: "valid",
+    entryOffset: 32,
+    entriesAfterChecksum: 2,
+  });
+  expect(decoded.md5.stored).toBe(decoded.md5.computed);
   expect(decoded.partitions.map(({ label }) => label)).toEqual([
     first?.label,
     second?.label,
     third?.label,
-  ]);
-  expect(decoded.limitations).toEqual([
-    expect.stringContaining(
-      "2 partition entries after the MD5 record at table-relative offset 0x20 are outside its checksum coverage",
-    ),
   ]);
 });
