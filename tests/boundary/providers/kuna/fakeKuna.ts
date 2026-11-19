@@ -53,6 +53,8 @@ export interface FakeKunaBehavior {
   readonly asmPadding?: number;
   /** Extra C comment bytes inside each exported body, for buffered-read capacity. */
   readonly cPadding?: number;
+  /** Exact bytes inside the first exported C body, for text-admission tests. */
+  readonly cBodyComment?: readonly number[];
   readonly decompile?: "ok" | "hang";
   readonly standaloneFunctions?: readonly FakeKunaFunction[];
   /** Hold successful work until releaseFakeKunaCommand acknowledges the test phase. */
@@ -212,7 +214,15 @@ if (args[0] === "--version") {
         ? "// Function: " + fn.name + " @ " + fn.addr + "\nint " + fn.name + "(void)\n{\n  return " + index + ";\n" + (behavior.cPadding ? "  /*" + "x".repeat(behavior.cPadding) + "*/\n" : "") + "}\n\n"
         : "// Function: " + fn.name + " @ " + fn.addr + "  (error: " + fn.error + ")\n\n";
     });
-    fs.writeFileSync(path.join(output, stem + ".c"), c);
+    if (behavior.cBodyComment === undefined) fs.writeFileSync(path.join(output, stem + ".c"), c);
+    else {
+      const comment = c.indexOf("  return 0;");
+      if (comment === -1) throw new Error("fixture requires a successful first C body");
+      fs.writeFileSync(path.join(output, stem + ".c"), Buffer.concat([
+        Buffer.from(c.slice(0, comment) + "  /*"), Buffer.from(behavior.cBodyComment),
+        Buffer.from("*/\n" + c.slice(comment)),
+      ]));
+    }
     fs.writeFileSync(path.join(output, stem + ".h"), "#pragma once\n");
     let asm = "; kuna decompile-project — " + stem + "\n\n; --- code section 0x1000..0x2000 ---\n\n";
     functions.forEach((fn) => { asm += fn.name + ":  ; " + fn.addr + "\n  " + fn.addr.slice(2).padStart(8, "0") + ": c3     RET\n\n"; });

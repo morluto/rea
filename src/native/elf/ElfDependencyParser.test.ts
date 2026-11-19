@@ -44,6 +44,133 @@ const parse = (
 
 const defaultNeeded = ["libstdc++.so.6", "libm.so.6", "libc.so.6"];
 
+const elf64ProgramHeaders = (original: Buffer) => {
+  const phoff = Number(original.readBigUInt64LE(32));
+  const phentsize = original.readUInt16LE(54);
+  const phnum = original.readUInt16LE(56);
+  const programHeaders = Array.from(
+    { length: phnum },
+    (_, index) => phoff + index * phentsize,
+  );
+  return { phoff, phentsize, phnum, programHeaders };
+};
+
+const elf64DynamicTags = (original: Buffer, headers: readonly number[]) => {
+  const dynamic = headers.find((offset) => original.readUInt32LE(offset) === 2);
+  if (dynamic === undefined) throw new Error("Expected PT_DYNAMIC");
+  const start = Number(original.readBigUInt64LE(dynamic + 8));
+  const count = Number(original.readBigUInt64LE(dynamic + 32)) / 16;
+  return new Map(
+    Array.from({ length: count }, (_, index) => {
+      const offset = start + index * 16;
+      return [
+        original.readBigInt64LE(offset),
+        original.readBigUInt64LE(offset + 8),
+      ];
+    }),
+  );
+};
+
+const shortenElf64IdentityLoad = (
+  original: Buffer,
+  bytes: Buffer,
+  { phoff, programHeaders }: ReturnType<typeof elf64ProgramHeaders>,
+  end: bigint,
+) => {
+  const load = programHeaders.find(
+    (offset) => original.readUInt32LE(offset) === 1,
+  );
+  if (load === undefined) throw new Error("Expected PT_LOAD");
+  const movedLoad = original.length + load - phoff;
+  bytes.writeBigUInt64LE(end, movedLoad + 32);
+  bytes.writeBigUInt64LE(end, movedLoad + 40);
+};
+
+const appendElf64ZeroFill = (
+  original: Buffer,
+  { phoff, phentsize, phnum }: ReturnType<typeof elf64ProgramHeaders>,
+) => {
+  const bytes = Buffer.concat([
+    original,
+    Buffer.alloc((phnum + 1) * phentsize),
+  ]);
+  original.copy(bytes, original.length, phoff, phoff + phnum * phentsize);
+  bytes.writeBigUInt64LE(BigInt(original.length), 32);
+  bytes.writeUInt16LE(phnum + 1, 56);
+  const alias = original.length + phnum * phentsize;
+  bytes.writeUInt32LE(1, alias);
+  bytes.writeUInt32LE(4, alias + 4);
+  bytes.writeBigUInt64LE(1n, alias + 40);
+  bytes.writeBigUInt64LE(1n, alias + 48);
+  return { bytes, alias };
+};
+
+it.each([
+  { stripped: true, unmappedTail: false },
+  { stripped: false, unmappedTail: false },
+  { stripped: false, unmappedTail: true },
+])(
+  "leaves dynamic strings unknown on a zero-fill overlap (stripped: $stripped, unmapped tail: $unmappedTail)",
+  ({ stripped, unmappedTail }) => {
+    const original = elfDependencyFixture({ bits: 64, little: true, stripped });
+    const headers = elf64ProgramHeaders(original);
+    const tags = elf64DynamicTags(original, headers.programHeaders);
+    const stringAddress = tags.get(5n);
+    const stringSize = tags.get(10n);
+    if (stringAddress === undefined || stringSize === undefined)
+      throw new Error("Expected DT_STRTAB and DT_STRSZ");
+    const { bytes, alias } = appendElf64ZeroFill(original, headers);
+    if (unmappedTail)
+      // The table starts in the identity mapping, but its section alone describes the tail.
+      shortenElf64IdentityLoad(original, bytes, headers, stringAddress + 2n);
+    bytes.writeBigUInt64LE(stringAddress + stringSize, alias + 16);
+    expect(parse(bytes).needed.map(({ name }) => name)).toEqual(defaultNeeded);
+
+    // The initial NUL byte still maps uniquely; a later string byte does not.
+    bytes.writeBigUInt64LE(stringAddress + 1n, alias + 16);
+    const report = parse(bytes);
+    expect(report.needed.map(({ name }) => name)).toEqual([null, null, null]);
+    expect(report.coverage.status).toBe("partial");
+    expect(report.issues).toContainEqual(
+      expect.objectContaining({
+        code: "table_unavailable",
+        message: "ELF dynamic string table has ambiguous file mappings",
+      }),
+    );
+  },
+);
+
+it.each([false, true])(
+  "keeps independent dependency names when dynamic symbol bytes disagree (string table gap: %s)",
+  (stringGap) => {
+    const original = elfDependencyFixture();
+    const headers = elf64ProgramHeaders(original);
+    const tags = elf64DynamicTags(original, headers.programHeaders);
+    const symtab = tags.get(6n);
+    const strtab = tags.get(5n);
+    if (symtab === undefined || strtab === undefined)
+      throw new Error("Expected DT_SYMTAB and DT_STRTAB");
+    const { bytes, alias } = appendElf64ZeroFill(original, headers);
+    if (stringGap)
+      shortenElf64IdentityLoad(original, bytes, headers, strtab + 2n);
+    bytes.writeBigUInt64LE(BigInt(original.length), alias + 16);
+    expect(parse(bytes).imports.map(({ name }) => name)).toEqual([
+      "printf",
+      "memcpy",
+      "_ZSt4cout",
+      "abort",
+      "_exit",
+    ]);
+
+    // The symbol table start stays mapped; a later symbol occupies both kinds of storage.
+    bytes.writeBigUInt64LE(symtab + 24n, alias + 16);
+    const report = parse(bytes);
+    expect(report.needed.map(({ name }) => name)).toEqual(defaultNeeded);
+    expect(report.imports).toEqual([]);
+    expect(report.coverage.status).toBe("partial");
+  },
+);
+
 /** The version_unresolved issue a GNU version table reports at its own offset. */
 const versionTableIssue = (table: {
   readonly location: { readonly offset: number } | null;

@@ -16,13 +16,14 @@ import {
   type Devicetree,
 } from "../../domain/firmware/devicetree.js";
 import {
-  devicetreeLimitOf,
+  DEVICETREE_FORMAT,
   parseDevicetree,
 } from "../../domain/firmware/devicetreeParser.js";
 import {
   BinaryFormatFailure,
   BinaryReader,
 } from "../../domain/binaryContainer.js";
+import { isParseLimit } from "../../domain/parseFailureAnalysisError.js";
 import { ArtifactReaderFailure } from "../../resources/index.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
@@ -556,7 +557,7 @@ const fitConfigurations = (
   return { default_configuration: defaultConfiguration, configurations };
 };
 
-const parseFit = (fdt: Buffer, path: string): Devicetree => {
+const parseFit = (fdt: Buffer, path: string) => {
   try {
     // The artifact field is only echoed back; the reader binds the carrier hash.
     return parseDevicetree(
@@ -573,16 +574,17 @@ const parseFit = (fdt: Buffer, path: string): Devicetree => {
   } catch (cause) {
     if (cause instanceof BinaryFormatFailure)
       throw formatFailure(cause.message);
-    const limit = devicetreeLimitOf(cause);
-    if (limit !== undefined)
+    if (isParseLimit(cause, DEVICETREE_FORMAT)) {
+      const { name } = cause.failure.limit;
       throw new ArtifactReaderFailure(
         "limit",
-        `FIT devicetree exceeds the fixed ${limit.limit} allowance`,
+        `FIT devicetree exceeds the fixed ${name} allowance`,
         {
-          boundary: limit.limit === "decoded_bytes" ? "memory" : "capacity",
+          boundary: name === "decoded_bytes" ? "memory" : "capacity",
           cause,
         },
       );
+    }
     throw cause;
   }
 };
@@ -593,7 +595,7 @@ export const readFitStructure = (
   path: string,
   fileSize: number,
 ): FitStructure => {
-  const tree = parseFit(fdt, path);
+  const { report: tree, structureLimitations } = parseFit(fdt, path);
   const byPath = new Map(tree.nodes.map((node) => [node.path, node]));
   const children = new Map<string, FitNode[]>();
   for (const node of tree.nodes) {
@@ -625,7 +627,7 @@ export const readFitStructure = (
       `FIT images declare ${String(declared)} bytes, exceeding this file's ${String(budget)}-byte expansion budget`,
       { boundary: "memory" },
     );
-  const facts: FitFacts = { fdt, limitations: [] };
+  const facts: FitFacts = { fdt, limitations: [...structureLimitations] };
   return {
     images,
     limitations: facts.limitations,

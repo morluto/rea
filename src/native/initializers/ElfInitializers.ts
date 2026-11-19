@@ -736,7 +736,7 @@ const fromDynamicWrite = (
       importName: null,
       definedName: null,
     };
-  const relative = elfRelativeRelocationType(scan.machine);
+  const relative = elfRelativeRelocationType(scan.machine, scan.bits);
   if (write.value !== null && write.source.kind === relative)
     return {
       method: "relative_addend",

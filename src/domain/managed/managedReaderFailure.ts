@@ -22,6 +22,9 @@ export class ManagedReaderFailure extends Error {
   }
 }
 
+/** Refuse a heap-dependent row whose shared stream issue is reported by layout inventory. */
+export class ManagedHeapAmbiguityFailure extends ManagedReaderFailure {}
+
 /** A resource or unsupported layout leaves metadata unknown, not malformed. */
 export const managedMetadataFailureStatus = (
   issue: ManagedParseIssue,
@@ -70,7 +73,8 @@ export const readManagedValue = <Value>(
       managedMetadataFailureStatus(cause.issue) === "partial"
     )
       throw cause;
-    issues.push(cause.issue);
+    if (!(cause instanceof ManagedHeapAmbiguityFailure))
+      issues.push(cause.issue);
     return undefined;
   }
 };

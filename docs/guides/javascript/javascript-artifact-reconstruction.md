@@ -376,7 +376,11 @@ ES module import. Direct execution and require can reject the same source.
 A plain hashbang stays valid.
 
 Plain `.ts` artifact sources use TypeScript syntax without JSX, including
-angle-bracket type assertions. `.tsx` and `.jsx` retain JSX parsing.
+angle-bracket type assertions. Application analysis and reference imports share
+the syntax rules for `.cts` and `.mts`. Ambiguous generic arrows such as
+`<T>(value: T) => value` produce a diagnostic while recovered declarations
+remain available. Angle-bracket assertions are accepted in both suffixes.
+`.tsx` and `.jsx` retain JSX parsing.
 JavaScript sources use JavaScript grammar with JSX, never TypeScript syntax,
 so valid JavaScript that TypeScript reads differently keeps its JavaScript
 meaning.
@@ -603,7 +607,11 @@ unmodified global or proven Node `url.URL` constructor and `import.meta.url`.
 Native constructor aliases retain that identity; their local spelling does not
 determine URL semantics, and replaced exports or local constructors remain unknown.
 Relative results of native path operations retain filesystem-expression context;
-their spelling does not turn them into module specifiers. Other calls preserve
+their spelling does not turn them into module specifiers. A source-directory
+substitution also needs a proven base after composition. For example,
+`path.join("prefix", __dirname, "preload.cjs")` and repeated directory anchors
+retain their expressions as unknown instead of associating a preload or utility
+process with a file whose path dropped the directory text. Other calls preserve
 their expressions. A property named `preload` outside a proven BrowserWindow
 configuration does not establish a script entrypoint. Renderer recovery currently
 covers direct BrowserWindow instances, stable local aliases, and their

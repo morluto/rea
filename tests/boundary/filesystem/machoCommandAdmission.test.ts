@@ -2,7 +2,10 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 
-import { BinaryResourceFailure } from "../../../src/domain/binaryContainer.js";
+import {
+  BinaryFormatFailure,
+  BinaryResourceFailure,
+} from "../../../src/domain/binaryContainer.js";
 import { readMachoLoadCommandTableHeader } from "../../../src/domain/apple/machoLoadCommands.js";
 import { readBinaryContainer } from "../../../src/domain/native/readBinaryContainer.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
@@ -161,13 +164,29 @@ it.each([null, 0, 1])(
   },
 );
 
-it("preserves native capacity priority when the command table also exceeds the file", () => {
+const OVERSIZED_COMMAND_BYTES = 16 * 1024 * 1024 + 8;
+
+it("reports truncation when an oversized command table cannot fit the file", () => {
   const bytes = commandImage(true, true, [16]);
-  bytes.writeUInt32LE(16 * 1024 * 1024 + 1, 20);
-  expect(() => readBinaryContainer(bytes)).toThrow(BinaryResourceFailure);
-  const bounded = readMachoLoadCommandTableHeader(bytes, bytes.length);
-  expect(bounded).toMatchObject({
+  bytes.writeUInt32LE(OVERSIZED_COMMAND_BYTES, 20);
+  expect(() => readBinaryContainer(bytes)).toThrow(BinaryFormatFailure);
+  expect(() => readBinaryContainer(bytes)).toThrow(
+    expect.objectContaining({
+      kind: "truncated",
+      failure: expect.objectContaining({ field: "Mach-O load commands" }),
+    }),
+  );
+  expect(readMachoLoadCommandTableHeader(bytes, bytes.length)).toMatchObject({
     ok: false,
     error: expect.stringContaining("truncated Mach-O load commands"),
   });
+});
+
+it("retains the native capacity result for a backed oversized command table", () => {
+  const bytes = commandImage(true, true, [OVERSIZED_COMMAND_BYTES]);
+  expect(readMachoLoadCommandTableHeader(bytes, bytes.length)).toMatchObject({
+    ok: true,
+    value: { commandBytes: OVERSIZED_COMMAND_BYTES },
+  });
+  expect(() => readBinaryContainer(bytes)).toThrow(BinaryResourceFailure);
 });

@@ -369,6 +369,11 @@ export const documentationSections = [
     text: "Development and verification",
     items: [
       {
+        text: "Documentation ownership and authoring",
+        source: "development/documentation.md",
+        route: "/development/documentation",
+      },
+      {
         text: "Settings and recovery",
         source: "design/limits-and-recovery.md",
         route: "/design/limits-and-recovery",

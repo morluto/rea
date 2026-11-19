@@ -34,6 +34,24 @@ Select an exact name or address from the returned inventory, then use it with
 that every target names its entry function `entry`. MCP uses `open_binary` and
 focused tools such as `list_procedures` and `analyze_function` on the same session.
 
+For analysis-inferred x86-32 Ghidra signatures, `native_api.prototype_conflicts` can
+identify a direct `EBP`-framed stack argument read beyond a zero-parameter
+inference, or an immediate `RET` cleanup (including zero) that disagrees with an
+inferred `stdcall` prototype whose parameters are simple four-byte stack slots.
+Each
+diagnostic retains the inferred claim, decoded instruction address/text,
+observed offset or cleanup size, and unresolved assumptions. It does **not**
+change the inferred signature or establish source-level parameters. The default
+`analyze_function` summary reports the diagnostic count; request the complete
+dossier, `inspect_native_api`, or a retained `native_api` view for the records.
+An omitted conflict list means this check was not recorded (including other
+providers and architectures); an empty list does not prove a correct prototype.
+The `EBP` read check requires an explicit `PUSH EBP; MOV EBP, ESP` entry frame,
+a reachable direct `[EBP + displacement]` operand on a path that has not
+overwritten `EBP`, and no inferred parameters. Return
+cleanup covers immediate `RET` instructions in the owned body or a direct,
+one-hop shared epilogue without expanding body ownership.
+
 | Question                                                     | Section                                                                                |
 | ------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
 | Which instructions, calls, references, or types are present? | [Native primitives](#native-instruction-call-and-type-primitives)                      |
@@ -667,12 +685,13 @@ Native target admission checks Mach-O slice headers before assigning FAT
 identity. A shared `CAFEBABE` prefix whose declarations do not identify Mach-O
 images receives the generic unsupported-format refusal, including JVM class
 files larger than the bounded admission probe. This does not identify a partial
-prefix as a validated JVM class. For files sharing `CAFEBABE`, target admission
-checks complete JVM framing within the same 16 MiB class identity bound as the
-Mach-O image reader. A complete class remains unsupported even if its constant
-pool resembles a known FAT CPU declaration. Above that bound, an ambiguous
-malformed FAT interpretation remains unresolved. Malformed recognized FAT
-declarations retain their format-specific reasons.
+prefix as a validated JVM class. When the shared header fields form a plausible
+JVM version, target admission and the Mach-O image reader check complete JVM
+framing up to 16 MiB. A complete class remains
+unsupported even if its constant pool resembles a known FAT CPU declaration.
+Above that bound, a malformed FAT interpretation remains unresolved if the
+prefix could still belong to a JVM class. A header that rules out a JVM class
+allows the reader to report a recognized FAT range error directly.
 
 `inspect_artifact` and `extract_artifact` retain universal Mach-O slices under
 their exact `lipo` names, including 32-bit ARM implementations such as `armv7`,
@@ -705,7 +724,11 @@ directly when their number facts need no further classification; explicitly
 identified JSON sources can have scalar roots. Unidentified primitive text keeps
 its existing conversion route, so OpenStep `123` remains a string. OpenStep,
 unsupported XML encodings such as UTF-32 and declared legacy encodings, and JSON
-numbers requiring XML type facts retain the `plutil` route. Invalid UTF-8 and
+numbers requiring XML type facts retain the `plutil` route. So does XML that
+REA's XML reader rejects as not well-formed, which CoreFoundation can still
+accept: a limitation names REA's reason, and a document `plutil` also rejects
+stays refused with its diagnostic. Plist structure errors in well-formed XML
+remain refusals without conversion. Invalid UTF-8 and
 encoding-declaration mismatches remain explicit failures. Direct-source
 provenance records `file` without claiming conversion; conversion limitations
 and invocations appear only when conversion actually ran.
@@ -796,13 +819,20 @@ segments do not produce file ranges. When the selected slice's container offset
 is unknown, those mapped locations are omitted with an explicit limitation;
 architecture inventory locations remain available.
 
+If a load-command or FAT table allowance stops inspection, the refusal reports
+the producer's budget name in `details.reported_limits.boundary` and its
+effective maximum in `details.reported_limits.maximum`. For example,
+`macho_load_command_projected_bytes` names the retained-output allowance and
+`macho_fat_slice_records` names the selected-slice table allowance. The native
+command timeout does not raise these budgets.
+
 `inspect_macho.encryption` reports the `LC_ENCRYPTION_INFO(_64)` state of every
 slice, not only the selected one. It decodes only the FAT table, slice headers
-and load commands. Like every Mach-O container read, a `0xcafebabe` input of at
-most 16 MiB is first read whole to rule out a JVM class file, so that read
-includes code bytes; larger inputs and thin images read only the structures
-above. A slice is `encrypted` when its single encryption command has a nonzero
-`cryptid`, `not-encrypted` when `cryptid` is zero, and `absent` only when every
+and load commands. A `0xcafebabe` input of at most 16 MiB with a plausible JVM
+version is first read whole to resolve its identity. That read can include code
+bytes. Other inputs read only the structures above. A slice is `encrypted`
+when its single encryption command has a nonzero `cryptid`, `not-encrypted`
+when `cryptid` is zero, and `absent` only when every
 load command was read and none was an encryption command. A command whose width
 or `cmdsize` contradicts the image, more than one such command, or a range past
 the slice is `malformed`; a slice whose commands could not be fully read is
@@ -898,6 +928,8 @@ complete observation.
   shared/cyclic references, class descriptors, raw serialized fields and
   malformed/unresolved/nil references. Missing fields stay absent; unknown
   classes are preserved. Select `root`, `offset` and `limit` explicitly.
+  Named parser limits report the exhausted bound and its maximum in
+  `details.reported_limits` on a `truncated` error.
   Binary references retain their serialized type-8 UID identity; ordinary
   dictionaries with `UID` or `CF$UID` keys remain authored data. XML uses
   Foundation's single numeric `CF$UID` dictionary convention for references;
@@ -952,6 +984,10 @@ complete observation.
   a source-owned AppKit XIB with `ibtool`. Storyboards require an installed
   iOS platform; unsupported archive forms remain explicit.
   XML plist archives accept UTF-8 and BOM-marked UTF-16 in either byte order.
+  Bundle executable resolution and Hopper's minimum-version check admit
+  `Info.plist` only when its opened descriptor is a regular file of at most
+  64 MiB. A symlink at the selected path can resolve to that regular file.
+  The separate 16 MiB budget applies to the decoded representation.
   App bundle `Info.plist` executable resolution uses the same decoder as keyed
   archives and Interface Builder. The decoder consumes an initial
   BOM and rejects malformed byte sequences, unsupported encoding declarations,

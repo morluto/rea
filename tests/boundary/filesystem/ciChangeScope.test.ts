@@ -950,12 +950,20 @@ it("retains native Inspector verification on every documented package host", asy
       { os: "macos-15-intel", platform: "darwin", architecture: "x64" },
     ],
   });
-  const windowsInspector = stepSchema.parse(
-    workflow.jobs["windows-curated"].steps.find(
-      (step) => step.run === "npm run verify:inspector",
-    ),
+  const windowsSteps = workflow.jobs["windows-curated"].steps;
+  const windowsBuild = windowsSteps.findIndex(
+    (step) => step.run === "npm run build:cached",
   );
-  expect(windowsInspector.if).toBeUndefined();
+  expect(windowsBuild).toBeGreaterThanOrEqual(0);
+  expect(windowsSteps[windowsBuild]?.if).toBeUndefined();
+  for (const verifier of [
+    "node scripts/verify/inspector/runtime-observation.mjs",
+    "node scripts/verify-windows-package.mjs",
+  ]) {
+    const step = windowsSteps.findIndex(({ run }) => run === verifier);
+    expect(step).toBeGreaterThan(windowsBuild);
+    expect(windowsSteps[step]?.if).toBeUndefined();
+  }
 });
 
 it.each([
@@ -1039,6 +1047,8 @@ it.each([
     { code: false, website: true, package: false },
   ],
   ["scripts/website_i18n.py", { code: false, website: true, package: false }],
+  ["scripts/read-authored-skill-manifest.mjs", { website: true }],
+  ["src/domain/skillManifest.ts", { website: true }],
   [
     "docs/readme/README_ja.md",
     { code: false, docs: true, website: true, package: false },
@@ -1063,6 +1073,7 @@ it.each([
     {
       code: true,
       runtime: true,
+      website: true,
       package: true,
       evm: false,
       browser: false,
@@ -1102,6 +1113,10 @@ it.each([
     { code: true, ghidra_bridge: true, runtime: false, package: false },
   ],
   [
+    "scripts/verify-ghidra-prototype-conflicts.mjs",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
     "tests/conformance/ghidra/ReaLoaderRelocationProbe.java",
     { code: true, ghidra_bridge: true, runtime: false, package: false },
   ],
@@ -1135,6 +1150,10 @@ it.each([
   ],
   [
     "tests/conformance/ghidra/ReaDecodeProbe.java",
+    { ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "tests/conformance/ghidra/ReaPrototypeConflictProbe.java",
     { ghidra_bridge: true, runtime: false, package: false },
   ],
   [
@@ -2256,3 +2275,21 @@ it.each([
     });
   },
 );
+
+it("reads a Git blob whose path contains a line break alongside an ordinary blob", async ({
+  skip,
+}) => {
+  skip(
+    process.platform === "win32",
+    "Windows paths cannot contain line breaks",
+  );
+  const { directory } = await fixture();
+  const path = "src/two\nlines.test.ts";
+  const head = await change(directory, [path], "multiline path\n");
+  expect(gitRepository(directory).readFiles(head, [path, "README.md"])).toEqual(
+    new Map([
+      [path, "multiline path\n"],
+      ["README.md", "Initial fixture content\n"],
+    ]),
+  );
+});

@@ -1,5 +1,9 @@
 import { BinaryReader } from "../binaryContainer.js";
 import {
+  ZIP_LOCAL_HEADER_BYTES,
+  zipLocalDataOffset,
+} from "./zipLocalHeader.js";
+import {
   apkSigningPairEnd,
   APK_SIGNING_BLOCK_MAX_PAIRS,
 } from "../apkSignature/apkSigningBlock.js";
@@ -28,8 +32,6 @@ export interface ZipMemberRegionAccount {
   readonly unverifiedExtents: number;
 }
 
-const LOCAL_HEADER_BYTES = 30;
-const LOCAL_HEADER_SIGNATURE = 0x04034b50;
 const DATA_DESCRIPTOR_SIGNATURE = 0x08074b50;
 const DATA_DESCRIPTOR_FLAG = 0x8;
 const ZIP64_EXTRA = 0x1;
@@ -112,17 +114,16 @@ export const accountZipMemberRegion = async (
     firstUnaccountedOffset ??= cursor;
   };
   for (const record of [...records].sort((a, b) => a.offset - b.offset)) {
-    if (record.offset + LOCAL_HEADER_BYTES > directoryOffset) {
+    if (record.offset + ZIP_LOCAL_HEADER_BYTES > directoryOffset) {
       unlocatedHeaders += 1;
       continue;
     }
-    const header = await view(record.offset, LOCAL_HEADER_BYTES);
-    if (header.u32(0) !== LOCAL_HEADER_SIGNATURE) {
+    const header = await view(record.offset, ZIP_LOCAL_HEADER_BYTES);
+    const dataOffset = zipLocalDataOffset(header, record.offset);
+    if (dataOffset === undefined) {
       unlocatedHeaders += 1;
       continue;
     }
-    const dataOffset =
-      record.offset + LOCAL_HEADER_BYTES + header.u16(26) + header.u16(28);
     const end = dataOffset + record.compressedSize;
     const deferred = (header.u16(6) & DATA_DESCRIPTOR_FLAG) !== 0;
     // A directory/encrypted entry may never be opened. Do not let an unchecked

@@ -4,6 +4,11 @@ Use the [documentation directory](../README.md) to find existing material before
 adding another guide. Preserve one canonical owner for each contract or workflow;
 link to that owner instead of copying its claims into several guides.
 
+When a contract changes, update its owning page with the implementation. Check
+the examples and recovery steps in related guides against the supported CLI
+and MCP entry points. Link guides to the section that owns the shared behavior
+so readers can reach it from the task they are performing.
+
 ## Choose a destination
 
 | Document                                                 | Destination                            |

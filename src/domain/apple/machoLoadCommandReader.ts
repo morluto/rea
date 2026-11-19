@@ -17,6 +17,7 @@ import {
   type MachoCommandStringFailure,
 } from "./machoLoadCommands.js";
 import {
+  hasJvmClassHeader,
   MAX_JVM_CLASS_IDENTITY_BYTES,
   JVM_CLASS_IDENTITY_LIMIT_REASON,
 } from "./jvmClassFile.js";
@@ -36,7 +37,6 @@ import {
   findOverlappingFatSlices,
   hasMachoMagic,
   readFatContainerHeader,
-  readFatHeaderPrefix,
   readFatSliceDeclarations,
   readMachoHeaderPrefixFacts,
   validateFatSlice,
@@ -151,9 +151,7 @@ export const readMachoContainer = async (
           reason: "Mach-O header is truncated",
         }
       : { kind: "not-mach-o" };
-  const fatPrefix = readFatHeaderPrefix(head);
-  const mayBeJvmClass =
-    fatPrefix.state === "parsed" && !fatPrefix.wide && !fatPrefix.littleEndian;
+  const mayBeJvmClass = hasJvmClassHeader(head);
   let header: FatContainerHeader;
   if (mayBeJvmClass && size <= MAX_JVM_CLASS_IDENTITY_BYTES) {
     const complete = await readAt(0, size);

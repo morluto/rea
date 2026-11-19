@@ -1189,7 +1189,9 @@ chooses its own), and a request with no recorded
 answer is made, since it may have changed the application, but not compared: each probe lists them under `unobserved` with the reason, and the summary counts them. A live
 body the probe did not record compares by status only and is counted as `unobserved_bodies`, unless the answer never
 carries one (204, 205, 304, `HEAD`). A browser probe captured without `capture.network.response_body` is refused, as
-is one that makes POST, PUT or PATCH calls without `capture.network.request_body`.
+is one that makes POST, PUT or PATCH calls, or calls a served tool with a body argument (including a state-backed
+bulk DELETE), without `capture.network.request_body`. A DELETE whose served tool has no body argument does not
+require that selection.
 
 Agreement covers only the calls the probes make, after the mapping the answers allow. Clocks compared by format
 and fields normalized under explicit generation rules can still differ in content, and an equal answer after a write shows the state matched for that

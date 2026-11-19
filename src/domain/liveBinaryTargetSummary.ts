@@ -11,7 +11,7 @@ import {
   binaryArchitectureSchema,
   rawBinaryEntryPointSchema,
 } from "./rawBinary.js";
-import { ZIP_PACKAGE_FORMATS } from "./zipPackageFormat.js";
+import { targetFormatsOfKind } from "./targetFormats.js";
 
 const architectureSchema = z.enum(BINARY_ARCHITECTURES);
 const headerArchitectureSchema = architectureSchema.exclude(
@@ -73,26 +73,11 @@ export const liveBinaryTargetSummaryVariants = [
   z.object({
     ...identity,
     kind: z.literal("archive"),
-    format: z.enum([
-      ...ZIP_PACKAGE_FORMATS,
-      "asar",
-      "ines",
-      "godot-pck",
-      "unityfs",
-      "wxapkg",
-      "uimage",
-      "android-boot-image",
-      "android-ota-payload",
-      "dmg",
-      "pkg",
-      "intel-hex",
-      "srec",
-      "esp-image",
-      "uf2",
-      "dfuse",
-      "fit",
-      "ntfs-mft",
-    ]),
+    format: z.enum(
+      targetFormatsOfKind("archive").filter(
+        (format) => format !== "esp-flash-image",
+      ),
+    ),
     architecture: z.null(),
   }),
   z.object({
@@ -122,7 +107,7 @@ export const liveBinaryTargetSummaryVariants = [
   z.object({
     ...identity,
     kind: z.literal("artifact"),
-    format: z.enum(["plist", "javascript", "source-map"]),
+    format: z.enum(targetFormatsOfKind("artifact")),
     architecture: z.null(),
   }),
 ] as const;

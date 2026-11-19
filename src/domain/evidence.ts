@@ -245,8 +245,13 @@ export interface EvidenceSubjectTarget {
   readonly sha256: string;
   readonly format: z.infer<typeof subjectIdentitySchema>["format"];
   readonly architecture?: BinaryArchitecture;
-  /** What the observation selected inside the bytes; absent selects nothing. */
-  readonly selection?: FileTargetSelection;
+  /**
+   * What the observation selected inside the bytes. Null selects nothing: the
+   * observation covers the whole file even when a session opened one slice of
+   * it. Absent also selects nothing, except that a session binds a subject
+   * naming its open target's bytes to that target's selection.
+   */
+  readonly selection?: FileTargetSelection | null;
   /** Preserve an existing Evidence subject's display name when deriving observations. */
   readonly name?: string;
 }

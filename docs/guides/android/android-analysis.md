@@ -43,7 +43,11 @@ unverified.
 `inspect_android_package` also returns a static inventory of declared
 activities, aliases, services, receivers and providers from the decoded
 manifest. The binary XML decoder preserves component class spelling, including
-`$` in nested classes, without applying JADX class aliases. `declared_name`
+`$` in nested classes, without applying JADX class aliases. The component
+inventory and [Apktool metadata](apktool-resource-analysis.md) read the same
+decoded manifest structure. The document root must be `<manifest>` in no
+namespace, and the package comes from its unqualified `package` attribute.
+A missing or empty attribute leaves the package unknown. `declared_name`
 preserves the decoded source attribute; `name` resolves a
 relative name only when the manifest package is known and the resolved copy
 fits the UTF-8 byte budget. An unresolved package or exhausted name budget
@@ -63,8 +67,7 @@ references are not expanded at this parser boundary. Repeated inherited
 values share one inventory-wide byte budget.
 Provider `android:readPermission` and `android:writePermission` overrides are
 not projected as separate fields; their presence marks the inventory partial
-and is called out in `limitations`. Relative component names are not resolved
-against a manifest package with surrounding whitespace.
+and is called out in `limitations`.
 Class-name segments follow DEX `SimpleName` characters, including a leading
 digit or hyphen, rather than Java source identifier rules. Relative-name
 expansion does not prove class existence, DEX-version compatibility or runtime
@@ -348,7 +351,9 @@ fails explicitly instead of silently truncating facts. MCP refusal includes
 the retained parent ID. Select complete detail, or inspect one method rather
 than a whole class, when the requested summary does not fit.
 
-The mapping path must be absolute. Selectors still take the observed names, such as
+The mapping path must be absolute. Mapping records accept optional spacing
+around `->` and spaces or tabs between a member type and its name.
+Selectors still take the observed names, such as
 `a.b`, and observed rows are unchanged. The result adds one `mapping` block with
 the file's path, SHA-256 and size, the header values the file reports
 (`compiler`, `compiler_version`, `min_api`, `map_version`, `pg_map_id`,

@@ -2,7 +2,11 @@ import { Budget } from "../budget.js";
 import { observeMzWindowsHeader } from "../dosMz.js";
 import { readPeOptionalHeaderFixedFields } from "../peOptionalHeader.js";
 import { readPeCoffHeader } from "../peCoffHeader.js";
-import { readPeSectionHeader } from "../peSectionHeader.js";
+import {
+  observePeHeaderExtent,
+  PE_SECTION_HEADER_BYTES,
+  readPeSectionHeader,
+} from "../peSectionHeader.js";
 import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
@@ -669,17 +673,25 @@ class PeImage {
       throw new NativeAotAdmissionError({ code: "unsupported_image_extent" });
     if (this.imageBase + BigInt(this.sizeOfImage) > 1n << 64n)
       throw new NativeAotAdmissionError({ code: "address_domain" });
-    const sectionOffset = optional + optionalSize;
-    this.#range(sectionOffset, count * 40);
+    const { sectionTableOffset, sectionTableBytes, sizeOfHeadersState } =
+      observePeHeaderExtent({
+        optionalHeaderOffset: optional,
+        optionalHeaderSize: optionalSize,
+        sectionCount: count,
+        sizeOfHeaders: this.#sizeOfHeaders,
+        fileSize: bytes.length,
+      });
+    this.#range(sectionTableOffset, sectionTableBytes);
     if (
-      this.#sizeOfHeaders < sectionOffset + count * 40 ||
-      this.#sizeOfHeaders > this.#bytes.length ||
+      sizeOfHeadersState !== "valid" ||
       this.#sizeOfHeaders > this.sizeOfImage
     )
       throw new NativeAotAdmissionError({ code: "headers_do_not_fit" });
     this.sections = Array.from({ length: count }, (_, index) => {
-      const p = sectionOffset + index * 40;
-      const parsed = readPeSectionHeader(bytes.subarray(p, p + 40));
+      const p = sectionTableOffset + index * PE_SECTION_HEADER_BYTES;
+      const parsed = readPeSectionHeader(
+        bytes.subarray(p, p + PE_SECTION_HEADER_BYTES),
+      );
       if (!parsed.ok)
         throw new NativeAotAdmissionError({ code: "section_header_truncated" });
       const section = parsed.value;

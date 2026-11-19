@@ -234,7 +234,8 @@ export const bindExecutionTarget = (
   const provided = result.value.subject;
   if (provided === undefined) return ok({ ...result.value, subject });
   // A provider subject naming the target's own bytes and format is the
-  // target, so it makes the target's selection.
+  // target, so it makes the target's selection, unless the provider stated
+  // one; a null selection is an observation of the whole file.
   return provided !== null &&
     provided.selection === undefined &&
     selection !== null &&

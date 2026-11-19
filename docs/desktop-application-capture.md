@@ -41,15 +41,35 @@ requires, so a relative value leaves the home default in use instead of
 naming a folder under the working directory. The entry's `Exec` line is
 expanded with no files;
 `--argument` values are appended in its place, and the application runs in the
-entry's `Path` or the home directory. When the line starts with
+entry's `Path` or the home directory. An `env -C` or `env --chdir` prefix
+selects the directory for executable lookup and relative arguments. Capture
+retains the original argv and launch directory, with the resolved application
+directory recorded as `application_working_directory`. Export maps that
+directory into the seed before replay. When the line starts with
 `env NAME=value` or `env -- NAME=value`, the program is found on the `PATH` those assignments set,
 with an empty or relative entry read from the folder the application runs
-in, and their XDG folders name the state directories. Otherwise the program is
+in. Explicit XDG folders take precedence for state discovery. For a direct
+application outside a managed sandbox, an absolute `HOME` assignment selects
+the default XDG roots and app-named dotfiles. Desktop entry lookup continues
+to use the host home. Otherwise the program is
 looked up on the host's `PATH` in the order the launch searches it, and one
 found only through a relative or empty entry is refused, since the exported
 computer would not have that entry. An `--executable` runs from
 the current directory, as it would from a shell, and a relative path to it is
 resolved there.
+
+An `env -i`, `env --ignore-environment` or `env -` prefix drops the
+inherited environment. Use `env -u NAME` or `env --unset=NAME` to remove
+individual variables. Assignments in the command are applied afterward.
+The short options can be combined, as in `env -iC /path/to/work app`.
+Inventory uses the resulting XDG roots and the Linux system search path
+when the prefix leaves `PATH` unset. For a direct launch that removes
+the inherited `HOME`, REA uses an absolute replacement if provided.
+Otherwise it reports that the application's default home paths are
+unknown and still discovers state in explicitly set absolute XDG roots.
+Use `--state-path` to include other known paths. During capture, REA
+passes its run token after the prefix's assignments so it can still
+identify the app's processes after the launcher exits.
 
 A nested desktop file uses a dashed ID: `vendor/app.desktop` has ID
 `vendor-app`. REA checks path spellings that can encode that ID within each
@@ -491,9 +511,11 @@ DT_RUNPATH and DT_RPATH offsets per kind; `string_bytes: 4096` includes the NUL
 terminator of each decoded string; `table_bytes: 1048576` bounds each program
 header or dynamic table. Values must be positive safe integers. A budget refusal
 names the field that needs headroom; partial package facts and unresolved
-coverage remain visible. The policy applies during this capture's admission,
-without restarting REA, and explicit selections are retained in Evidence. Raising
-content retention or a worker heap does not raise these inventory budgets.
+coverage remain visible. A table whose declared range extends past the file
+is reported as truncated before the table budget is applied. The policy applies
+during this capture's admission, without restarting REA, and explicit selections
+are retained in Evidence. Raising content retention or a worker heap does not
+raise these inventory budgets.
 Choosing a new capture still launches the selected application; changing these
 read budgets does not add execution authority or recover an earlier capture's
 omitted inventory.

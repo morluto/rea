@@ -26,6 +26,7 @@ import type {
   AnalysisPartialObservation,
 } from "../domain/analysisErrorBase.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import type { LimitRef } from "../domain/parseFailure.js";
 
 export interface ArtifactReaderFailureOptions extends ErrorOptions {
   /** Recovery guidance established by the producing adapter, separate from diagnostics. */
@@ -42,6 +43,7 @@ export interface ArtifactReaderFailureOptions extends ErrorOptions {
   /** Named admission whose recovery must not be inferred from other limit text. */
   readonly admission?: ArtifactAdmissionLimit;
   readonly readerLimit?: ArtifactReaderLimitFact;
+  readonly parserLimit?: LimitRef;
   /** For a `limit` failure, the release-fixed allowance that refused the input. */
   readonly fixedAllowance?: ArtifactFixedLimit;
   /** For an `integrity` failure, the check that failed, when the reader names it. */
@@ -288,6 +290,7 @@ export class ArtifactReaderFailure extends Error {
   /** Named admission for a limit whose public recovery is owned by the producer. */
   readonly admission: ArtifactAdmissionLimit | undefined;
   readonly readerLimit: ArtifactReaderLimitFact | undefined;
+  readonly parserLimit: LimitRef | undefined;
   readonly fixedAllowance: ArtifactFixedLimit | undefined;
   readonly integrityCheck: ArtifactIntegrityCheck | undefined;
 
@@ -339,6 +342,7 @@ export class ArtifactReaderFailure extends Error {
     this.boundary = options?.boundary;
     this.admission = options?.admission;
     this.readerLimit = options?.readerLimit;
+    this.parserLimit = options?.parserLimit;
     this.fixedAllowance = options?.fixedAllowance;
     this.integrityCheck = options?.integrityCheck;
   }
@@ -354,6 +358,7 @@ export class ArtifactReaderFailure extends Error {
     | "boundary"
     | "admission"
     | "readerLimit"
+    | "parserLimit"
     | "fixedAllowance"
   > & { readonly integrityCheck: ArtifactIntegrityCheck | undefined } {
     return {
@@ -368,6 +373,9 @@ export class ArtifactReaderFailure extends Error {
       ...(this.readerLimit === undefined
         ? {}
         : { readerLimit: this.readerLimit }),
+      ...(this.parserLimit === undefined
+        ? {}
+        : { parserLimit: this.parserLimit }),
       ...(this.fixedAllowance === undefined
         ? {}
         : { fixedAllowance: this.fixedAllowance }),

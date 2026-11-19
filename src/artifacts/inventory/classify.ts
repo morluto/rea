@@ -53,7 +53,7 @@ import { createArtifactClassificationProbe } from "../ArtifactClassificationProb
 import type { ArtifactOccurrence } from "../../domain/artifactGraph.js";
 import {
   hasZipSignature,
-  locateTrailingZipArchive,
+  hasTrailingZipArchive,
   zipRootPackageFormat,
 } from "../../domain/zipPackageFormat.js";
 import { artifactFormatDescriptor } from "../artifactFormats.js";
@@ -436,7 +436,7 @@ const classifyRootFormat = async (
   if (
     (format === "file" || format === "unknown") &&
     !claimsExecutableHeader(evidence.prefix, archiveBytes) &&
-    (await locateTrailingZipArchive(archiveBytes, read)) !== undefined
+    (await hasTrailingZipArchive(archiveBytes, read))
   )
     return zipRootPackageFormat(lower);
   if (["elf", "pe", "mach-o", "mach-o-universal"].includes(format)) {

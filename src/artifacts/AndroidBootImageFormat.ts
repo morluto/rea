@@ -1187,6 +1187,10 @@ const readAvbFooter = (input: {
     input.headerOccupied,
     input.components,
   );
+  // vbmeta is appended after the original image, including any padding
+  // within that image. Existing component checks name specific collisions.
+  if (vbmetaSize > 0 && vbmetaOffset < originalImageSize)
+    formatError("AVB vbmeta overlaps the original boot image");
   return {
     present: true,
     footerSize: AVB_FOOTER_SIZE,

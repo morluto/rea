@@ -23,7 +23,9 @@ and tallies per-row reasons, so the limitations list stays bounded.
   declaration order with a shared slot budget, and resolves each slot. Dynamic
   relocation writes come from the owner,
   `readElfRelocationWritesSteps` in `ElfPointerRelocations.ts`; the RELATIVE
-  type per machine comes from the same owner's `elfRelativeRelocationType`.
+  type per machine and ELF class comes from the same owner's
+  `elfRelativeRelocationType`. That owner also distinguishes RISC-V TLS from
+  other architectures' GLOB_DAT and records full COPY/TLS descriptor extents.
   Section names and fallback file offsets come from an `addressRangeIndex`
   built once over the section headers and searched by address.
 - `ElfInitializerSymbols.ts` loads symbol tables under one total symbol

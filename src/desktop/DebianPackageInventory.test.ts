@@ -382,6 +382,58 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
+it.skipIf(process.platform === "win32")(
+  "does not join a lossy installed source to a different index with a literal replacement character",
+  async () => {
+    const uri = "https://vendor.invalid/a\ufffdb";
+    const source = `${uri} ./ Packages`;
+    const repository = {
+      ...TYPORA,
+      source,
+      line: () => "deb https://vendor.invalid/a%EF%BF%BDb ./\n",
+      indexTarget: TYPORA.indexTarget.replaceAll(
+        "https://downloads.typora.io/linux",
+        uri,
+      ),
+    };
+    const { inspect, runQuery } = await vendorFixture({ repository });
+    const result = await inspect(async (command, argv, signal, options) => {
+      if (
+        command !== "apt-cache" ||
+        argv.length !== 2 ||
+        argv[1] !== "typora:arm64"
+      )
+        return runQuery(command, argv, signal, options);
+      const outcome = await runQuery(command, argv, signal, options);
+      if (typeof outcome !== "object")
+        throw new Error("Fixture did not return APT policy");
+      const malformed = Buffer.from(
+        outcome.stdout.replace("\ufffd", "ÿ"),
+        "latin1",
+      );
+      return runHostQuery(
+        process.execPath,
+        [
+          "-e",
+          'process.stdout.write(Buffer.from(process.argv[1], "base64"))',
+          malformed.toString("base64"),
+        ],
+        signal,
+        options,
+      );
+    });
+    if (!result.ok) throw new Error(result.error.reason);
+    expect(result.value.inventory.package).toMatchObject({
+      name: "typora",
+      sources: [],
+    });
+    expect(result.value.inventory.package.apt_repositories).toEqual([]);
+    expect(result.value.limitations).toContain(
+      "apt-cache policy contained unreadable UTF-8, so the installed version's repository sources are unknown.",
+    );
+  },
+);
+
 describe.skipIf(process.platform === "win32")("vendor repositories", () => {
   it("records the repository apt names with the key gpgv verified, though another signature fails gpgv", async () => {
     const {

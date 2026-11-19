@@ -33,6 +33,7 @@ import {
   type MetadataTokenFact,
   metadataToken,
   readMetadataString,
+  metadataBlobOffset,
 } from "./managedMetadataHeaps.js";
 import { memberListTable } from "./managedMemberPointers.js";
 import type {
@@ -188,12 +189,11 @@ const readTypeDefinition = (
   const { nameIndex, namespaceIndex } = source;
   // Keep both independent name failures, but decode each heap coordinate once.
   const namespace = readManagedValue(
-    () =>
-      readMetadataString(bytes, layout, namespaceIndex, layout.strings.size),
+    () => readMetadataString(bytes, layout, namespaceIndex),
     issues,
   );
   const name = readManagedValue(
-    () => readMetadataString(bytes, layout, nameIndex, layout.strings.size),
+    () => readMetadataString(bytes, layout, nameIndex),
     issues,
   );
   return {
@@ -1098,10 +1098,7 @@ export const methodGenericArity = (
   blob: Buffer,
 ): number | null => {
   const budget = managedDecodeBudget(layout);
-  budget.admitTransient(
-    blob.length * 256,
-    layout.blob?.offset ?? layout.rootOffset,
-  );
+  budget.admitTransient(blob.length * 256, metadataBlobOffset(layout));
   try {
     return signatureGenericArity(decodeSignature(blob));
   } finally {

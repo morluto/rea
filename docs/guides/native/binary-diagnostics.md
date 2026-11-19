@@ -249,7 +249,8 @@ count and SHA-256. Resources retain separate type, name and language identities:
 numeric IDs are distinct from UTF-16 names, whose original bytes are also
 reported. Directory headers, entries, data entries and payloads retain original
 file offsets and lengths. Each opaque payload has its own SHA-256; code page and
-reserved data-entry fields are preserved.
+reserved data-entry fields are preserved. The complete inventory requires
+numeric IDs to appear in ascending order within each directory.
 
 Every `directories[]` row retains its identity `path` and the matching incoming
 `entry_locations`: both are empty for the root, then contain the type and
@@ -277,6 +278,8 @@ and language. Other resource payload formats remain opaque.
 16384, the largest stock Windows resource image measured with headroom
 (maximum 65536). CLI options are `--max-file-bytes` and `--max-entries`.
 Metadata is bounded to 8 MiB; exceeding any budget fails without truncation.
+Parser refusals report the exhausted limit and enforced maximum in
+`details.reported_limits`.
 Large Evidence envelopes may require a caller-configured MCP transport receive
 buffer because envelope copies add overhead. Requests honor cancellation during
 snapshot reading, directory traversal and payload hashing. The operation reads
