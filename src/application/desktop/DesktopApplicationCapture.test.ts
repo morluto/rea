@@ -1,5 +1,7 @@
+import * as linuxSampling from "../../process/capture/LinuxProcessSampling.js";
 import {
   samplingInspectionFailures,
+  samplingObservation,
   settleSamplingReads,
   SamplingReadBatchFailure,
 } from "../../process/capture/ProcessSamplingObservation.js";
@@ -1215,6 +1217,20 @@ it.for([
       state: "listed",
       windows: [],
     });
+    // The test owns the Linux identity sample. The file descriptor failure
+    // still traverses the real optional run-token and capture cleanup path.
+    vi.spyOn(linuxSampling, "readLinuxProcessStat").mockImplementation(
+      async (pid) =>
+        samplingObservation({
+          pid,
+          parent_pid: process.ppid,
+          process_group_id: pid,
+          session_id: pid,
+          command: "",
+          startTime: "1",
+          lifecycle: "non-zombie",
+        }),
+    );
     const environmentRead = vi
       .spyOn(systemProcessOwnershipHost, "environment")
       .mockRejectedValue(descriptor.failure);
