@@ -38,6 +38,17 @@ export const readGodotPckHeaderFacts = (
   };
 };
 
+/** End of a supported pack header, including its 16 reserved words. */
+export const godotPckHeaderEnd = (start: number, version: number): number =>
+  start + (version === 1 ? 84 : version === 2 ? 96 : 104);
+
+/** Directory bytes and nonempty member data may begin at this boundary. */
+export const godotPckDataStartsAfterHeader = (
+  packStart: number,
+  formatVersion: number,
+  offset: number,
+): boolean => offset >= godotPckHeaderEnd(packStart, formatVersion);
+
 /** A terminal marker declares an extent; the located header still needs confirmation. */
 export type GodotPckTrailerFacts =
   | { readonly state: "absent" }
