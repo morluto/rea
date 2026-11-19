@@ -235,6 +235,7 @@ export interface ArtifactReader {
     | "wxapkg"
     | "uimage"
     | "android-boot-image"
+    | "android-ota-payload"
     | "pyinstaller"
     | "dotnet-bundle"
     | "bun-standalone"

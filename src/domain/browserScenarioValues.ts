@@ -342,7 +342,12 @@ const locatorSchema = z.discriminatedUnion("kind", [
       "tab",
       "textbox",
     ]),
-    name: z.string().min(1),
+    name: z
+      .string()
+      .min(1)
+      .describe(
+        "The exact full accessible name of the element with this role.",
+      ),
   }),
   z.strictObject({
     kind: z.literal("css"),

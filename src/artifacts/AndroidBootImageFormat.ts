@@ -4,7 +4,6 @@ import { err, ok, type Result } from "../domain/result.js";
 import {
   ANDROID_BOOT_MAGIC,
   VENDOR_BOOT_MAGIC,
-  hasAndroidBootImageMagic,
 } from "../domain/androidBootImageFormat.js";
 import {
   decodeLimit,
@@ -15,8 +14,6 @@ import {
   type LimitRef,
 } from "../domain/parseFailure.js";
 import { BinaryReader } from "../domain/binaryContainer.js";
-
-export { hasAndroidBootImageMagic };
 
 /**
  * Android boot (`ANDROID!`, versions 0-4) and vendor boot (`VNDRBOOT`,
@@ -111,6 +108,9 @@ export interface AndroidBootParse {
   readonly vendorRamdiskTableEntrySize: number | null;
   readonly bootconfigSize: number | null;
   readonly components: readonly AndroidBootComponentPlan[];
+  /** End of the last declared header or component byte. */
+  readonly dataEnd: number;
+  /** Page-aligned end after the last component; trailing padding may be absent. */
   readonly imageEnd: number;
   readonly limitations: readonly string[];
   readonly tableRange: {
@@ -271,15 +271,36 @@ const requireHeaderSize = (
   return value;
 };
 
-const requireFileCovers = (fileSize: number, imageEnd: number): void => {
+/**
+ * Require the file to hold every declared header and component byte, and
+ * return where those bytes end. Producers pad each component to the next
+ * page, but the padding after the final one carries no data, so a file that
+ * stops at the last declared byte is complete.
+ */
+const requireFileCovers = (
+  fileSize: number,
+  headerSize: number,
+  ranges: readonly ({
+    readonly offset: number;
+    readonly size: number;
+  } | null)[],
+): number => {
   if (!Number.isSafeInteger(fileSize) || fileSize < 0)
     formatError("file size is not a safe nonnegative integer");
-  if (imageEnd > fileSize)
+  const dataEnd = ranges.reduce(
+    (end, range) =>
+      range === null || range.size === 0
+        ? end
+        : Math.max(end, endOf(range.offset, range.size)),
+    headerSize,
+  );
+  if (dataEnd > fileSize)
     throw truncatedInput(
       ANDROID_BOOT_FORMAT,
-      `image is truncated: components end at byte ${imageEnd} but the file is ${fileSize} bytes`,
+      `image is truncated: components end at byte ${dataEnd} but the file is ${fileSize} bytes`,
       { offset: fileSize, field: "components" },
     );
+  return dataEnd;
 };
 
 const untilNul = (bytes: Buffer): Buffer => {
@@ -425,6 +446,7 @@ const bootParse = (
     | "headerOccupied"
     | "cmdlineBytesHex"
     | "components"
+    | "dataEnd"
     | "imageEnd"
     | "limitations"
   > &
@@ -636,7 +658,7 @@ const parseLegacyBoot = (
     components,
     limitations,
   );
-  requireFileCovers(fileSize, tail.cursor);
+  const dataEnd = requireFileCovers(fileSize, headerSize, components);
   return bootParse({
     imageKind: "boot",
     magic: ANDROID_BOOT_MAGIC,
@@ -663,6 +685,7 @@ const parseLegacyBoot = (
     recoveryDtboOffset: tail.recoveryDtboOffset,
     dtbSize: tail.dtbSize,
     components,
+    dataEnd,
     imageEnd: tail.cursor,
     limitations,
   });
@@ -721,7 +744,7 @@ const parseModernBoot = (
       ? null
       : component("signature", "signature", cursor, signatureSize, null),
   );
-  requireFileCovers(fileSize, cursor);
+  const dataEnd = requireFileCovers(fileSize, headerSize, components);
   return bootParse({
     imageKind: "boot",
     magic: ANDROID_BOOT_MAGIC,
@@ -737,6 +760,7 @@ const parseModernBoot = (
     ramdiskSize,
     signatureSize,
     components,
+    dataEnd,
     imageEnd: cursor,
     limitations,
   });
@@ -851,7 +875,9 @@ const parseVendorHeader = (
     limitations.push(
       "Vendor ramdisk section bytes outside the ramdisk table were not exposed as entries.",
     );
-  requireFileCovers(fileSize, cursor);
+  const section = { offset: sectionOffset, size: vendorRamdiskSize };
+  const declared = [...components, section, tableRange];
+  const dataEnd = requireFileCovers(fileSize, headerSize, declared);
   return bootParse({
     imageKind: "vendor-boot",
     magic: VENDOR_BOOT_MAGIC,
@@ -872,10 +898,11 @@ const parseVendorHeader = (
     vendorRamdiskTableEntrySize: table?.entrySize ?? null,
     bootconfigSize,
     components,
+    dataEnd,
     imageEnd: cursor,
     limitations,
     tableRange,
-    vendorRamdiskSection: { offset: sectionOffset, size: vendorRamdiskSize },
+    vendorRamdiskSection: section,
   });
 };
 
@@ -1104,8 +1131,18 @@ const rejectVbmetaOverlap = (
       );
 };
 
+/** The partition-tail footer can start anywhere after the declared boot bytes. */
+export const avbFooterOffset = (
+  fileSize: number,
+  dataEnd: number,
+): number | null => {
+  const offset = fileSize - AVB_FOOTER_SIZE;
+  return offset >= dataEnd ? offset : null;
+};
+
 const readAvbFooter = (input: {
   readonly fileSize: number;
+  readonly dataEnd: number;
   readonly imageEnd: number;
   readonly headerOccupied: number;
   readonly components: readonly {
@@ -1114,31 +1151,31 @@ const readAvbFooter = (input: {
   }[];
   readonly tail: Buffer | null;
 }): AvbFooterFacts => {
-  if (input.fileSize < input.imageEnd)
+  if (input.fileSize < input.dataEnd)
     throw truncatedInput(
       ANDROID_BOOT_FORMAT,
-      `image is truncated: components end at byte ${input.imageEnd} but the file is ${input.fileSize} bytes`,
+      `image is truncated: components end at byte ${input.dataEnd} but the file is ${input.fileSize} bytes`,
       { offset: input.fileSize, field: "components" },
     );
-  const trailing = input.fileSize - input.imageEnd;
-  if (trailing === 0) return absentFooter();
-  if (trailing < AVB_FOOTER_SIZE)
-    return absentFooter([
-      `${trailing} trailing bytes follow the boot image and are shorter than a 64-byte AVB footer.`,
-    ]);
-  const tail = input.tail;
-  if (tail === null || tail.length !== AVB_FOOTER_SIZE)
+  const { tail } = input;
+  const offset = avbFooterOffset(input.fileSize, input.dataEnd);
+  if (offset !== null && (tail === null || tail.length !== AVB_FOOTER_SIZE))
     return formatError("AVB footer bytes were not supplied");
-  if (!tail.subarray(0, 4).equals(AVB_FOOTER_MAGIC_BYTES))
+  if (offset === null || !tail?.subarray(0, 4).equals(AVB_FOOTER_MAGIC_BYTES)) {
+    const trailing = input.fileSize - input.imageEnd;
+    if (trailing <= 0) return absentFooter();
     return absentFooter([
-      `${trailing} trailing bytes follow the boot image and were not decoded as an AVB footer.`,
+      trailing < AVB_FOOTER_SIZE
+        ? `${trailing} trailing bytes follow the boot image and are shorter than a 64-byte AVB footer.`
+        : `${trailing} trailing bytes follow the boot image and were not decoded as an AVB footer.`,
     ]);
+  }
   const originalImageSize = u64be(tail, 12, "AVB original image size");
   const vbmetaOffset = u64be(tail, 20, "AVB vbmeta offset");
   const vbmetaSize = u64be(tail, 28, "AVB vbmeta size");
-  if (originalImageSize < input.imageEnd)
+  if (originalImageSize < input.dataEnd)
     formatError(
-      `AVB original image size ${originalImageSize} ends before boot image components at ${input.imageEnd}`,
+      `AVB original image size ${originalImageSize} ends before boot image components at ${input.dataEnd}`,
     );
   if (originalImageSize > input.fileSize - AVB_FOOTER_SIZE)
     formatError(
@@ -1164,10 +1201,11 @@ const readAvbFooter = (input: {
 
 /**
  * Report an AVB footer when the last 64 bytes start with AVBf and sit past
- * the page-aligned image. Sizes are recorded; the footer is not verified.
+ * the actual boot components. Sizes are recorded; the footer is not verified.
  */
 export const inspectAvbFooter = (input: {
   readonly fileSize: number;
+  readonly dataEnd: number;
   readonly imageEnd: number;
   readonly headerOccupied: number;
   readonly components: readonly {

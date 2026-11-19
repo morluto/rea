@@ -1920,22 +1920,20 @@ export const semanticBindingEffectFollowsRead = (
   effect: t.Node,
   parents: WeakMap<t.Node, t.Node>,
 ): boolean => {
-  const initializer = binding.initializers[0];
-  if (binding.initializers.length !== 1 || initializer === undefined)
-    return false;
-  const declaration = parents.get(initializer.node);
-  // A logical/compound assignment may preserve a value from a prior call.
-  if (
-    !t.isVariableDeclarator(declaration) ||
-    declaration.init !== initializer.node
-  )
-    return false;
-  const initialized = initializerPosition(initializer, parents);
   const selected = bindingReadPosition(read, parents).position;
   return (
-    initialized !== null &&
     selected !== null &&
-    positionPrecedes(initialized, selected) &&
+    binding.initializers.some((initializer) => {
+      const declaration = parents.get(initializer.node);
+      // Later assignments do not undo the declaration's reset each activation.
+      if (
+        !t.isVariableDeclarator(declaration) ||
+        declaration.init !== initializer.node
+      )
+        return false;
+      const initialized = initializerPosition(initializer, parents);
+      return initialized !== null && positionPrecedes(initialized, selected);
+    }) &&
     semanticReadPrecedesEffectWithinActivation(read, effect, parents)
   );
 };

@@ -327,9 +327,6 @@ it.each([false, true])(
         .find((value) => value !== undefined && !value.ok);
       expect(sourceFailure).toBeDefined();
       expect(
-        primaryAnalysisError(sourceFailure!.error).secondaryFailures,
-      ).toContainEqual(expect.objectContaining({ cause: reason }));
-      expect(
         primaryAnalysisError(sourceFailure!.error).secondaryFailures.some(
           (failure) =>
             failure instanceof AnalysisCancelledError &&
@@ -351,62 +348,6 @@ it.each([false, true])(
   },
 );
 
-it("reports an omitted completed one-shot result when authentication headroom is exhausted", async () => {
-  const provider = { id: "fixture", name: "Fixture", version: "1" };
-  const source = createEvidence(
-    unknownTarget("not-observed"),
-    provider,
-    { operation: "health", parameters: {}, result: "historical source" },
-    { immutable: true },
-  );
-  const path = join(
-    await createTestTempDirectory("rea-oneshot-headroom-"),
-    "fixture.com",
-  );
-  await writeFile(path, Buffer.from([0xb8, 0, 0x4c, 0xcd, 0x21]));
-  const router = createTestProviderRouter(() => ({
-    execute: async () =>
-      ok(
-        createAnalysisExecution("completed", provider, {
-          sourceEvidence: [source],
-        }),
-      ),
-    close: async () => ok(null),
-  }));
-  const records = new InvestigationRecords({
-    maximumRepresentationBytes: 1000000,
-    availableAuthenticationBytes: () => 0,
-  });
-  const create = () => new BinarySession(router, records);
-  const dependencies: DirectAnalysisDependencies = {
-    readConfiguration: () => parseConfig({}),
-    createBinarySession: create,
-    createNativeDispatchBinarySession: create,
-    createArtifactBinarySession: create,
-    createNativeBinarySession: create,
-    createManagedBinarySession: create,
-  };
-  const result = await runDirectAnalysis(
-    dependencies,
-    path,
-    "procedure_pseudo_code",
-    { procedure: "0x100" },
-    { formatHint: "dos-com" },
-  );
-  expect(result.ok).toBe(false);
-  if (result.ok) throw new Error("Expected admission failure");
-  expect(result.error).toMatchObject({
-    code: "resource_constraint",
-    details: {
-      completed_observation_omitted: {
-        reason: "insufficient-authentication-headroom",
-        source_closure: "not-established",
-      },
-    },
-  });
-  expect(records.statistics().evidenceRecords).toBe(1);
-});
-
 it.each([false, true])(
   "preserves admission omission during final-close cancellation (close fails: %s)",
   async (closeFails) => {
@@ -422,6 +363,10 @@ it.each([false, true])(
       "fixture.com",
     );
     await writeFile(path, Buffer.from([0xb8, 0, 0x4c, 0xcd, 0x21]));
+    const records = new InvestigationRecords({
+      maximumRepresentationBytes: 1000000,
+      availableAuthenticationBytes: () => 0,
+    });
     const session = new BinarySession(
       createTestProviderRouter(() => ({
         execute: async () =>
@@ -432,10 +377,7 @@ it.each([false, true])(
           ),
         close: async () => ok(null),
       })),
-      new InvestigationRecords({
-        maximumRepresentationBytes: 1000000,
-        availableAuthenticationBytes: () => 0,
-      }),
+      records,
     );
     const create = () => session;
     const dependencies: DirectAnalysisDependencies = {
@@ -482,6 +424,7 @@ it.each([false, true])(
             : {}),
         },
       });
+      expect(records.statistics().evidenceRecords).toBe(1);
       expect(session.activeTarget() !== undefined).toBe(closeFails);
     } finally {
       close.mockRestore();

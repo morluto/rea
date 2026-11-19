@@ -1460,6 +1460,20 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     ),
     typedFailures("tests/boundary/filesystem/kernelModule.test.ts"),
   ),
+  "rea-maven-gradle-metadata": inProcess(
+    covered(
+      test(
+        "tests/boundary/mcp/mavenGradleMetadataMcp.test.ts",
+        "advertises inspect_maven_gradle_metadata and reports a real POM",
+      ),
+    ),
+    covered(
+      test(
+        "src/application/java/MavenGradleMetadataService.test.ts",
+        "retains completed Evidence and selected parameters on late cancellation",
+      ),
+    ),
+  ),
   "rea-native-exports": inProcess(
     covered(
       test(
@@ -1534,7 +1548,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
         ),
         test(
           "src/browser/PlaywrightScenarioBrowser.test.ts",
-          "passes the selected environment to the actual browser launch boundary",
+          "passes the selected environment to the $platform browser launch boundary",
         ),
       ),
       handshake: covered(
@@ -1614,6 +1628,20 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     },
   },
+  "rea-nuget-nupkg": inProcess(
+    covered(
+      test(
+        "tests/boundary/mcp/nugetNupkgMcp.test.ts",
+        "advertises inspect_nuget_nupkg and reads package identity",
+      ),
+    ),
+    covered(
+      test(
+        "src/application/nuget/NugetNupkgService.test.ts",
+        "retains completed Evidence and caller selections on late cancellation",
+      ),
+    ),
+  ),
   "rea-python-pyc": inProcess(
     covered(
       test(

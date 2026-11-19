@@ -50,9 +50,9 @@ const inspect = async (payload: Buffer) => {
 it.each([
   {
     name: "depth",
-    payload: () => encapsulated(40),
-    limits: { max_asn1_depth: 32 },
-    ceiling: { limit: 32, unit: "nesting levels per PKCS#7 payload" },
+    payload: () => encapsulated(72),
+    limits: { max_asn1_depth: 64 },
+    ceiling: { limit: 64, unit: "nesting levels per PKCS#7 payload" },
   },
   {
     name: "nodes",
