@@ -98,7 +98,7 @@ it("distinguishes absence from failed or malformed registry responses", async ()
   ).rejects.toThrow();
 });
 
-it("waits only for confirmed propagation absence and does not retry errors", async () => {
+it("waits for confirmed propagation absence and does not retry unclassified errors", async () => {
   const published = await readNpmRelease("6.5.0", async () =>
     Response.json(metadata("6.5.0", "sha512-target", { latest: "6.5.0" })),
   );
@@ -130,6 +130,50 @@ it("waits only for confirmed propagation absence and does not retry errors", asy
   ).rejects.toThrow("unavailable");
   expect(failures).toBe(1);
 });
+
+it("retries transient npm HTTP failures before checking the published release", async () => {
+  const version = "6.5.0";
+  const statuses = [502, 504];
+  let attempts = 0;
+  const pauses: number[] = [];
+  const lookup = () =>
+    readNpmRelease(version, async () => {
+      attempts++;
+      const status = statuses.shift();
+      return status === undefined
+        ? Response.json(metadata(version, "sha512-target", { latest: version }))
+        : new Response(null, { status });
+    });
+  await expect(
+    waitForNpmRelease(version, lookup, async (milliseconds) => {
+      pauses.push(milliseconds);
+    }),
+  ).resolves.toMatchObject({ status: "published", taggedVersion: version });
+  expect(attempts).toBe(3);
+  expect(pauses).toEqual([15_000, 15_000]);
+});
+
+it.each([
+  [503, 3],
+  [403, 1],
+])(
+  "bounds npm HTTP %i lookup failures to %i attempts",
+  async (status, expectedAttempts) => {
+    let attempts = 0;
+    await expect(
+      waitForNpmRelease(
+        "6.5.0",
+        (version) =>
+          readNpmRelease(version, async () => {
+            attempts++;
+            return new Response(null, { status });
+          }),
+        async () => {},
+      ),
+    ).rejects.toThrow(`HTTP ${status}`);
+    expect(attempts).toBe(expectedAttempts);
+  },
+);
 
 it.each([
   {
