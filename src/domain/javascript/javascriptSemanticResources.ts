@@ -931,15 +931,19 @@ const socketOptionReader = (
   specifier: string,
   state: JavaScriptSemanticAnalysisState,
 ): SocketOptionReader | undefined => {
-  if (node.arguments.some((argument) => t.isSpreadElement(argument)))
-    return undefined;
-  const argument = (index: number): t.Node | undefined => {
+  const argument = (index: number): SocketOptionValue => {
     const value = node.arguments[index];
+    if (t.isSpreadElement(value)) return "unknown";
     return value === undefined
       ? undefined
       : unwrapJavaScriptExpression(value as t.Node).node;
   };
+  // Each caller reads a fixed prefix. Net only takes the port or path from
+  // argument 0 and only copies a positional host if it is a string. TLS
+  // can also merge options from argument 1 or 2. A spread beyond the
+  // participating slots cannot change those options.
   const first = argument(0);
+  if (first === "unknown") return undefined;
   const firstKind = socketArgumentKind(first, state);
   if (
     firstKind === "unknown" ||
@@ -954,9 +958,12 @@ const socketOptionReader = (
   let source: t.Node | undefined;
   if (specifier === "tls") {
     const second = argument(1);
+    if (second === "unknown") return undefined;
     const secondKind = socketArgumentKind(second, state);
     if (secondKind === "unknown") return undefined;
-    source = secondKind === "object" ? second : argument(2);
+    const merged = secondKind === "object" ? second : argument(2);
+    if (merged === "unknown") return undefined;
+    source = merged;
   }
   const isNullish = (value: t.Node) => isNullishPlaceholder(value, state);
   // A known source value proves the final option only when target writes are

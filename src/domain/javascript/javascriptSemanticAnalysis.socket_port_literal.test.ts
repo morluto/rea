@@ -66,6 +66,23 @@ it.each([
     `tls.connect(+443, { host: 1 })`,
   ],
   ["an out-of-range numeric net string", `net.connect("65536")`],
+  ["a bad net positional port before a spread", `net.connect(-1, ...[])`],
+  [
+    "a bad createConnection port before a spread",
+    `net.createConnection(65536, ...[])`,
+  ],
+  [
+    "a bad net options port before a spread",
+    `net.connect({ port: -1 }, ...[{ port: 443 }])`,
+  ],
+  [
+    "a bad TLS options port before a spread in an unused slot",
+    `tls.connect(443, { port: -1 }, ...p)`,
+  ],
+  [
+    "a bad TLS options port before a spread after the third argument",
+    `tls.connect(443, undefined, { port: -1 }, ...p)`,
+  ],
 ] as const)(
   "omits the acquisition and linked release for %s",
   (_name, call) => {
@@ -86,6 +103,9 @@ it.each([
   ],
   ["an unreadable positional overload", `tls.connect(p, { port: -1 })`],
   ["an unreadable template overload", "tls.connect(`${p}`, { port: -1 })"],
+  ["a spread in the first net slot", `net.connect(...p, -1)`],
+  ["a spread in the second TLS slot", `tls.connect(-1, ...p)`],
+  ["a spread in the third TLS slot", `tls.connect(-1, undefined, ...p)`],
 ] as const)(
   "retains the acquisition and linked release for %s",
   (_name, call) => {
