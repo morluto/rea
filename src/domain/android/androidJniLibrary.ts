@@ -7,10 +7,13 @@ import type {
   AndroidJniTableEntry,
   AndroidJniTableSlot,
 } from "./androidJniLibraryFacts.js";
-import { parseNativeExportsSteps } from "../native/nativeExportParser.js";
+import { parseElfExportsFromDirectorySteps } from "../native/nativeExportParser.js";
 import type { ZstandardFramePause } from "../compression/zstandardExactFrame.js";
-import { readElfDirectoryFromBufferCooperative } from "../native/nativeSectionDirectory.js";
-import { readElfImageCooperative } from "../native/elfImage.js";
+import {
+  readElfDirectoryFromBuffer,
+  readElfDirectoryFromBufferCooperative,
+} from "../native/nativeSectionDirectory.js";
+import { readElfImageFromDirectory } from "../native/elfImage.js";
 import {
   BinaryFormatFailure,
   BinaryMappingFailure,
@@ -31,6 +34,7 @@ const MAXIMUM_STRING_WORK = 64 * 1024 * 1024;
 const MAXIMUM_RETAINED_BYTES = 16 * 1024 * 1024;
 const MAXIMUM_SCAN_BYTES = 64 * 1024 * 1024;
 const MAXIMUM_TABLE_ENTRIES = 65_536;
+const OPERATION = "inspect_android_jni_bindings";
 const hex = (value: bigint): string => `0x${value.toString(16)}`;
 
 /** Strict Modified UTF-8: no four-byte UTF-8, overlong forms or replacements. */
@@ -100,6 +104,10 @@ export const inspectAndroidJniLibrary = async (
   const active = (): void => {
     if (options.signal?.aborted === true) throw options.signal;
   };
+  const pause = async (): Promise<void> => {
+    await immediate();
+    active();
+  };
   try {
     active();
     if (!bytes.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])))
@@ -107,17 +115,16 @@ export const inspectAndroidJniLibrary = async (
         kind: "unsupported",
         message: "JNI library inspection requires an ELF image",
       });
-    const pause = options.pause ?? (async () => undefined);
-    const directory = await readElfDirectoryFromBufferCooperative(
-      bytes,
-      pause,
-      "inspect_android_jni_bindings",
-    );
-    const image = await readElfImageCooperative(
-      bytes,
-      "inspect_android_jni_bindings",
-      pause,
-    );
+    const directory =
+      options.pause === undefined && options.signal === undefined
+        ? readElfDirectoryFromBuffer(bytes, OPERATION)
+        : await readElfDirectoryFromBufferCooperative(
+            bytes,
+            options.pause ?? pause,
+            OPERATION,
+          );
+    active();
+    const image = readElfImageFromDirectory(bytes, directory);
     const mappings = createFileMappingIndex(image.mappings, image.zero_fills);
     if (image.executable_mappings === undefined)
       return err({
@@ -140,23 +147,22 @@ export const inspectAndroidJniLibrary = async (
           "JNI library facts exceed the 16 MiB retained representation allowance",
         );
     };
-    const exportSteps = parseNativeExportsSteps(bytes, {
-      path: "[admitted immutable ELF bytes]",
-      sha256: sha256Hex(bytes),
-      bytes: bytes.length,
-    });
+    const exportSteps = parseElfExportsFromDirectorySteps(
+      bytes,
+      {
+        path: "[admitted immutable ELF bytes]",
+        sha256: sha256Hex(bytes),
+        bytes: bytes.length,
+      },
+      directory,
+    );
+    await pause();
     let exportStep = exportSteps.next();
     while (!exportStep.done) {
-      await immediate();
-      active();
+      await pause();
       exportStep = exportSteps.next();
     }
     const rawExports = exportStep.value;
-    if (rawExports.format !== "elf")
-      return err({
-        kind: "unsupported",
-        message: "JNI library inspection requires ELF exports",
-      });
     const exportRows: AndroidJniLibraryFacts["exports"] = [];
     let exportsStatus: AndroidJniLibraryFacts["coverage"]["exports_status"] =
       rawExports.coverage.status === "complete"

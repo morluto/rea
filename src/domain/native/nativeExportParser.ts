@@ -674,12 +674,12 @@ function* readVersionNames(
   return namesByIndex;
 }
 
-/** Read defined exported entries of `.dynsym` with their symbol versions. */
-function* parseElfExports(
+/** Read ELF exports and versions from an already-admitted directory for these bytes. */
+export function* parseElfExportsFromDirectorySteps(
   bytes: Buffer,
   artifact: Artifact,
   directory: ReturnType<typeof readElfDirectoryFromBuffer>,
-): Generator<void, NativeExports> {
+): Generator<void, Extract<NativeExports, { format: "elf" }>> {
   const reader = new BinaryReader(bytes, directory.little, "elf");
   const result = {
     artifact,
@@ -937,7 +937,7 @@ export function* parseNativeExportsSteps(
 ): Generator<void, NativeExports> {
   yield;
   if (hasElfMagic(bytes))
-    return yield* parseElfExports(
+    return yield* parseElfExportsFromDirectorySteps(
       bytes,
       artifact,
       readElfDirectoryFromBuffer(bytes, OPERATION),
@@ -956,7 +956,7 @@ export const parseNativeExports = (
   artifact: Artifact,
 ): NativeExports => finishExports(parseNativeExportsSteps(bytes, artifact));
 
-/** Keep the same inventory semantics while letting ELF section names yield. */
+/** Yield during ELF section-name decoding and bounded export inventory work. */
 export const parseNativeExportsCooperative = async (
   bytes: Buffer,
   artifact: Artifact,
@@ -968,7 +968,13 @@ export const parseNativeExportsCooperative = async (
     pause,
     OPERATION,
   );
-  return finishExports(parseElfExports(bytes, artifact, directory));
+  const steps = parseElfExportsFromDirectorySteps(bytes, artifact, directory);
+  let step = steps.next();
+  while (!step.done) {
+    await pause();
+    step = steps.next();
+  }
+  return step.value;
 };
 
 const finishExports = (
