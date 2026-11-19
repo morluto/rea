@@ -284,20 +284,29 @@ it("does not import an install prefix that lacks the ready marker", async () => 
   await writeFile(entry, `process.stdout.write("should-not-run");`, {
     mode: 0o600,
   });
-  const missingBin = await createTestTempDirectory(
-    "rea-published-incomplete-bin-",
+  const bin = await createTestTempDirectory("rea-published-incomplete-npm-");
+  const npmEntry = join(bin, "npm-cli.cjs");
+  await writeFile(
+    npmEntry,
+    `#!/usr/bin/env node
+process.stderr.write("controlled npm install failure\\n");
+process.exit(1);
+`,
   );
-  const env: NodeJS.ProcessEnv = {
+  // Keep stdin open until the install failure settles so this path is not
+  // confused with acquisition EOF cancellation (exit 0).
+  const { closed } = start([version], {
     ...process.env,
     ...temp.env,
-    PATH: missingBin,
-  };
-  delete env.npm_execpath;
-  const { child, closed } = start([version], env);
-  child.stdin.end();
+    PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+    npm_execpath: npmEntry,
+  });
   const result = await closed;
   expect(result.code).toBe(1);
   expect(result.stdout).toBe("");
+  expect(result.stderr).toContain(
+    `REA plugin failed to install rea-agents@${version}.`,
+  );
   expect(result.stderr).not.toContain("should-not-run");
 });
 
