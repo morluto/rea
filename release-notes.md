@@ -503,6 +503,7 @@
 * **reconstruction:** reject inconsistent artifact comparisons ([#10484](https://github.com/morluto/rea/issues/10484)) ([0fa03af](https://github.com/morluto/rea/commit/0fa03afe7d6823d342b7f713ef035a97cb7b55bc))
 * **release-exposure:** count scan limitations past the cap instead of dropping them silently ([#11267](https://github.com/morluto/rea/issues/11267)) ([b41fe5a](https://github.com/morluto/rea/commit/b41fe5a238c1883bfb6b8e5462b8bb9f2e3e07e7))
 * **release:** honor selected npm in update verification ([#10240](https://github.com/morluto/rea/issues/10240)) ([418e3f5](https://github.com/morluto/rea/commit/418e3f5e91f43d05412935aa36db7e4f61b3f6ff))
+* **release:** reject invalid inline source map encodings ([#12183](https://github.com/morluto/rea/issues/12183)) ([c0bdcf7](https://github.com/morluto/rea/commit/c0bdcf7d6c807a357b3949706c7cdc7820b15f4d))
 * **release:** validate notes with the publication parser ([653c494](https://github.com/morluto/rea/commit/653c49419e65515d5567ebf13c0e6dd2ac794f7e))
 * restore PE release scanning and CommonJS test coverage ([#12083](https://github.com/morluto/rea/issues/12083)) ([31aaec6](https://github.com/morluto/rea/commit/31aaec6b4fb5a7a4197a2f3db8e9f606770cb204))
 * **rizin:** abort in-flight debug session starts when the manager closes ([#11020](https://github.com/morluto/rea/issues/11020)) ([e9f9d8b](https://github.com/morluto/rea/commit/e9f9d8b88071c1ba944594b02c0675866e9979fc))
