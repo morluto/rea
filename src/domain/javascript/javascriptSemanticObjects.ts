@@ -126,7 +126,7 @@ const collectMember = (
       provenOwnSlot:
         !write &&
         identity.path !== null &&
-        context.readPresence(identity.bindingId, node)?.(identity.path) !==
+        context.readPresence(identity.bindingId, node)?.read(identity.path) !==
           undefined,
       ownerCallableId,
       objectBindingId: identity.bindingId,
@@ -154,7 +154,7 @@ const collectDestructuring = (
           rootArray ? source.path : undefined,
         )
       : undefined;
-  let ownSlot = sourcePresence;
+  let ownSlot = sourcePresence?.read;
   // An unsupported property still occupies its place in the pattern's
   // evaluation order, even when it cannot produce a graph operation.
   const pending: ({
@@ -194,7 +194,11 @@ const collectDestructuring = (
       : occurrence;
     if (t.isObjectPattern(pattern)) {
       // A nested pattern needs a proved object even if it has no children.
-      if (rootArray && !t.isObjectExpression(selected)) ownSlot = undefined;
+      if (
+        (rootArray && !t.isObjectExpression(selected)) ||
+        (!rootArray && ownSlot !== sourcePresence?.read)
+      )
+        ownSlot = undefined;
       for (const property of pattern.properties.toReversed()) {
         if (!t.isObjectProperty(property)) {
           pending.push(null);
@@ -215,7 +219,19 @@ const collectDestructuring = (
       continue;
     }
     if (t.isArrayPattern(pattern)) {
-      if (pattern !== root) ownSlot = undefined;
+      if (pattern !== root) {
+        ownSlot =
+          !rootArray &&
+          ownSlot !== undefined &&
+          ownSlot === sourcePresence?.read &&
+          t.isArrayExpression(selected) &&
+          propertyPath !== null
+            ? sourcePresence?.readNestedArray?.(propertyPath, path, pattern)
+            : undefined;
+        // IteratorClose can run after these elements and before the next
+        // sibling. Reaching this boundary ends the current presence proof.
+        if (ownSlot !== undefined) pending.push(null);
+      }
       for (let index = pattern.elements.length - 1; index >= 0; index -= 1) {
         const element = pattern.elements[index];
         if (element === undefined || t.isRestElement(element))
@@ -252,7 +268,7 @@ const collectDestructuring = (
           (plainObjectPath &&
             targetBinding !== undefined &&
             propertyPath !== null &&
-            sourcePresence?.(propertyPath, occurrence) !== undefined),
+            sourcePresence?.read(propertyPath, occurrence) !== undefined),
       },
       state,
       output,

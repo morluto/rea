@@ -37,6 +37,7 @@ const expectedDependencies = [
   ["elided", ["1"]],
   ["projected", ["items", "0"]],
   ["arrayObject", ["0", "mode"]],
+  ["nestedElement", ["items", "0"]],
   ["selected", ["0"], "candidate"],
   ["beforeClose", ["label"]],
   ["consumed", ["items", "0", "mode"]],
@@ -89,6 +90,9 @@ cliTest(
     const nestedArray = [{ mode: "read-time" }];
     const [{ mode: arrayObject }] = nestedArray;
     nestedArray[0].mode = "later";
+    const nestedSource = { items: ["nested"] };
+    const { items: [nestedElement] } = nestedSource;
+    nestedSource.items[0] = "later";
     const box = { items: [] };
     const iterator = box.items.values();
     const prototype = Reflect.getPrototypeOf(iterator);
@@ -145,6 +149,7 @@ cliTest(
       "elided",
       "projected",
       "arrayObject",
+      "nestedElement",
       "selected",
       "beforeClose",
       "consumed",
