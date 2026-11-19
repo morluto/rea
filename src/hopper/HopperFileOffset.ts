@@ -1,21 +1,23 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { open, type FileHandle } from "node:fs/promises";
-import { z } from "zod";
 
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
-  AnalysisOutputError,
+  cancelledBy,
+  carriedReason,
+  type CancellationReason,
 } from "../domain/analysisErrorCore.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { RegularFileOperationCancelled } from "../filesystem/RegularFile.js";
+import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
 import {
   RegularFileCancelled,
   RegularFileCleanupFailure,
@@ -27,51 +29,40 @@ import type { FileOffsetPartialObservation } from "../domain/native/fileOffsetPa
 import {
   findOverlappingFatSlices,
   readFatSliceDeclarations,
+  readFatHeaderPrefix,
   readMachoHeaderPrefixFacts,
   type FatSliceDeclaration,
   validateFatSlice,
   validateFatSliceIdentity,
 } from "../domain/apple/machoContainer.js";
 import { err, ok, type Result } from "../domain/result.js";
+import {
+  classifyProviderFailure,
+  type ProviderFailureDialect,
+} from "../providers/classifyProviderFailure.js";
+import type { HopperReply } from "./HopperReplyContracts.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "address_to_file_offset";
 const MAX_FAT_ARCHITECTURES = 128;
 const PREFIX_BYTES = 8 + MAX_FAT_ARCHITECTURES * 32;
-const observationSchema = z.strictObject({
-  address: z.string().regex(/^0x[0-9a-f]+$/u),
-  provider_file_offset: z.int().nonnegative().max(Number.MAX_SAFE_INTEGER),
-  provider_source_path: z.string().nullable(),
-  provider_image_header_hex: z
-    .string()
-    .regex(/^[a-f0-9]{24}$/u)
-    .nullable(),
-});
-type Observation = z.infer<typeof observationSchema>;
+type Observation = HopperReply<"address_to_file_offset">;
 
 /** Exact descriptor owner the caller retries after a rejected source close. */
 export interface HopperFileOffsetOwnership {
   readonly signal?: AbortSignal;
   /** Adopt the handle whose close rejected; the caller owns later retries. */
-  readonly retainFailedClose?: (owner: OwnedFileHandle) => void;
+  readonly retainFailedClose: (owner: OwnedFileHandle) => void;
   /** Bind the typed cleanup marker to that same owner before it is returned. */
-  readonly onCleanupMarker?: (marker: ProviderCleanupError) => void;
+  readonly onCleanupMarker: (marker: ProviderCleanupError) => void;
 }
 
 /** Bind native image-relative offsets to coordinates in the admitted source bytes. */
 export async function mapHopperFileOffset(
   target: BinaryTarget,
-  value: JsonValue,
-  ownership?: HopperFileOffsetOwnership,
+  observation: Observation,
+  ownership: HopperFileOffsetOwnership,
 ): Promise<Result<JsonValue, AnalysisError>> {
-  const parsed = observationSchema.safeParse(value);
-  if (!parsed.success)
-    return err(
-      new AnalysisOutputError(
-        OPERATION,
-        "Hopper's native file mapping observation is malformed",
-      ),
-    );
-  const observation = parsed.data;
   const partial = (reason: string): FileOffsetPartialObservation => ({
     operation: OPERATION,
     ...observation,
@@ -87,10 +78,10 @@ export async function mapHopperFileOffset(
     return unavailable(
       "The selected database digest does not identify its original executable bytes. Open that executable to verify original-file coordinates; read_bytes still exposes the database's native bytes.",
     );
-  const signal = ownership?.signal;
-  if (signal?.aborted) return err(cancelled(partial, signal.reason));
+  const signal = ownership.signal;
+  if (signal?.aborted) return err(cancelled(partial, signal));
   const publish = (marker: ProviderCleanupError): ProviderCleanupError => {
-    ownership?.onCleanupMarker?.(marker);
+    ownership.onCleanupMarker(marker);
     return marker;
   };
   const verification: OffsetVerification = {
@@ -98,20 +89,15 @@ export async function mapHopperFileOffset(
     observation,
     partial,
     unavailable,
-    signal,
     publish,
     withCleanup: (primary, marker) =>
-      analysisErrorWithCleanupFailure(
-        primary,
-        publish(marker),
-        OPERATION,
-      ).bindCleanupDependencies([marker]),
+      analysisErrorWithCleanupDependencies(primary, publish(marker), OPERATION),
   };
   try {
     const captured = await snapshotFromPath(
       target.path,
       signal,
-      ownership?.retainFailedClose,
+      ownership.retainFailedClose,
     );
     return coordinatesForSnapshot(verification, captured).result;
   } catch (cause: unknown) {
@@ -124,9 +110,27 @@ export async function mapHopperFileOffset(
         return err(
           artifactChanged(target.path, captured.error, partial(captured.error)),
         );
-      return err(cancelled(partial, cause.reason));
+      const verified = coordinatesForSnapshot(verification, captured);
+      if (!verified.result.ok)
+        return err(
+          retainSnapshot(
+            verified.result.error,
+            captured.value,
+            verification.observation,
+          ),
+        );
+      return err(
+        retainSnapshot(
+          cancelled(partial, carriedReason(cause.reason)),
+          captured.value,
+          verification.observation,
+          verified.fileOffset,
+        ),
+      );
     }
-    return err(sourceAccessFailure(target.path, cause, partial, signal));
+    return err(
+      classifyProviderFailure(cause, sourceAccessDialect(target.path, partial)),
+    );
   }
 }
 
@@ -141,7 +145,7 @@ async function snapshotFromPath(
     new OwnedFileHandle(handle),
     {
       ...(signal === undefined ? {} : { signal }),
-      ...(retainFailedClose === undefined ? {} : { retainFailedClose }),
+      retainFailedClose,
     },
     async (file) => {
       if (!(await file.stat()).isFile())
@@ -163,10 +167,9 @@ const isSourceRead = (
 
 const cancelled = (
   partial: (reason: string) => FileOffsetPartialObservation,
-  cause?: unknown,
+  reason: CancellationReason,
 ): AnalysisCancelledError =>
-  new AnalysisCancelledError(OPERATION, {
-    ...(cause === undefined ? {} : { cause }),
+  cancelledBy(OPERATION, reason, {
     partialObservation: partial("Source verification was cancelled"),
   });
 
@@ -179,46 +182,42 @@ const artifactChanged = (
     partialObservation,
   });
 
-/** Classify a failed read. A rejected close never reaches this helper. */
-const sourceAccessFailure = (
+/**
+ * How a failed original-source read is reported. A rejected close never
+ * reaches it; every report keeps the coordinate observation made so far.
+ */
+const sourceAccessDialect = (
   path: string,
-  cause: unknown,
   partial: (reason: string) => FileOffsetPartialObservation,
-  signal: AbortSignal | undefined,
-): AnalysisError => {
-  if (
-    signal?.aborted === true ||
+): ProviderFailureDialect => ({
+  providerId: "hopper",
+  operation: OPERATION,
+  recognise: (cause) =>
     cause instanceof RegularFileOperationCancelled
-  )
-    return cancelled(
-      partial,
-      cause instanceof RegularFileOperationCancelled
-        ? cause.reason
-        : signal?.reason,
-    );
-  const reason = `Cannot verify original source bytes: ${cause instanceof Error ? cause.message : String(cause)}`;
-  const code =
-    typeof cause === "object" && cause !== null && "code" in cause
-      ? cause.code
-      : undefined;
-  if (code === "EACCES" || code === "EPERM")
-    return new AnalysisAccessDeniedError(OPERATION, path, code, {
-      cause,
-      partialObservation: partial(reason),
-    });
-  return new BinaryTargetError(path, reason, {
-    cause,
-    partialObservation: partial(reason),
-  });
-};
+      ? cancelled(partial, carriedReason(cause.reason))
+      : undefined,
+  unclassified: (cause) => {
+    const reason = `Cannot verify original source bytes: ${errorMessage(cause)}`;
+    const code =
+      typeof cause === "object" && cause !== null && "code" in cause
+        ? cause.code
+        : undefined;
+    return code === "EACCES" || code === "EPERM"
+      ? new AnalysisAccessDeniedError(OPERATION, path, code, {
+          cause,
+          partialObservation: partial(reason),
+        })
+      : new BinaryTargetError(path, reason, {
+          cause,
+          partialObservation: partial(reason),
+        });
+  },
+});
 
 const descriptorCleanup = (
   failure: RegularFileCleanupFailure<unknown>,
 ): ProviderCleanupError => {
-  const reason =
-    failure.cleanupCause instanceof Error
-      ? failure.cleanupCause.message
-      : String(failure.cleanupCause);
+  const reason = errorMessage(failure.cleanupCause);
   return new ProviderCleanupError(
     "hopper",
     [failure.path],
@@ -232,7 +231,6 @@ interface OffsetVerification {
   readonly observation: Observation;
   readonly partial: (reason: string) => FileOffsetPartialObservation;
   readonly unavailable: (reason: string) => Result<JsonValue, AnalysisError>;
-  readonly signal: AbortSignal | undefined;
   readonly withCleanup: (
     primary: AnalysisError,
     marker: ProviderCleanupError,
@@ -244,16 +242,14 @@ const cleanupAfterSnapshot = (
   verification: OffsetVerification,
   failure: RegularFileCleanupFailure<unknown>,
 ): Result<JsonValue, AnalysisError> => {
-  const { target, partial, signal, withCleanup, publish } = verification;
+  const { target, partial, withCleanup, publish } = verification;
   const marker = descriptorCleanup(failure);
   if (failure.outcome.kind === "failed")
     return err(
       withCleanup(
-        sourceAccessFailure(
-          target.path,
+        classifyProviderFailure(
           failure.outcome.cause,
-          partial,
-          signal,
+          sourceAccessDialect(target.path, partial),
         ),
         marker,
       ),
@@ -267,33 +263,64 @@ const cleanupAfterSnapshot = (
         marker,
       ),
     );
-  if (signal?.aborted === true || failure.completionCancellation !== undefined)
+  const verified = coordinatesForSnapshot(verification, captured);
+  if (!verified.result.ok)
     return err(
       withCleanup(
-        cancelled(
-          partial,
-          failure.completionCancellation?.reason ?? signal?.reason,
+        retainSnapshot(
+          verified.result.error,
+          captured.value,
+          verification.observation,
         ),
         marker,
       ),
     );
-  const verified = coordinatesForSnapshot(verification, captured);
-  if (!verified.result.ok)
-    return err(withCleanup(verified.result.error, marker));
-  const published = publish(marker);
-  published.retainPartialObservation(
-    partial(
-      "Source descriptor close failed after the admitted bytes were read",
-    ),
+  if (failure.completionCancellation !== undefined)
+    return err(
+      withCleanup(
+        retainSnapshot(
+          cancelled(
+            partial,
+            carriedReason(failure.completionCancellation.reason),
+          ),
+          captured.value,
+          verification.observation,
+          verified.fileOffset,
+        ),
+        marker,
+      ),
+    );
+  const published = retainSnapshot(
+    publish(marker),
+    captured.value,
+    verification.observation,
+    verified.fileOffset,
   );
-  published.retainDiagnostics({
-    source_sha256: captured.value.sha256,
-    ...(verified.fileOffset === undefined
-      ? {}
-      : { file_offset: verified.fileOffset }),
-    source_identity: "verified",
-  });
   return err(published);
+};
+
+const retainSnapshot = <Failure extends AnalysisError>(
+  failure: Failure,
+  snapshot: SourceSnapshot,
+  observation: Observation,
+  fileOffset?: number,
+): Failure => {
+  if (fileOffset !== undefined)
+    failure.partialObservation = {
+      operation: OPERATION,
+      ...observation,
+      original_file_offset: {
+        available: true,
+        file_offset: fileOffset,
+        source_sha256: snapshot.sha256,
+      },
+    };
+  return failure.retainDiagnostics({
+    source_sha256: snapshot.sha256,
+    ...(fileOffset === undefined
+      ? {}
+      : { file_offset: fileOffset, source_identity: "verified" }),
+  });
 };
 
 const coordinatesForSnapshot = (
@@ -303,7 +330,7 @@ const coordinatesForSnapshot = (
   readonly result: Result<JsonValue, AnalysisError>;
   readonly fileOffset?: number;
 } => {
-  const { target, observation, partial, unavailable, signal } = verification;
+  const { target, observation, partial, unavailable } = verification;
   if (!captured.ok)
     return {
       result: err(
@@ -311,8 +338,6 @@ const coordinatesForSnapshot = (
       ),
     };
   const snapshot = captured.value;
-  if (signal?.aborted === true)
-    return { result: err(cancelled(partial, signal.reason)) };
   if (snapshot.sha256 !== target.sha256) {
     const reason = `Source ${target.path} differs from the admitted artifact: expected SHA-256 ${target.sha256}, observed ${snapshot.sha256}. Reopen the changed source for a new analysis identity.`;
     return {
@@ -340,16 +365,13 @@ interface FatLayout {
 }
 
 function fatLayout(prefix: Buffer): Result<FatLayout | null, string> {
-  const magic = prefix.length < 4 ? 0 : prefix.readUInt32BE(0);
-  if (![0xcafebabe, 0xbebafeca, 0xcafebabf, 0xbfbafeca].includes(magic))
-    return ok(null);
-  if (prefix.length < 8) return err("The original FAT header is truncated");
-  const littleEndian = magic === 0xbebafeca || magic === 0xbfbafeca;
-  const wide = magic === 0xcafebabf || magic === 0xbfbafeca;
-  const count = littleEndian ? prefix.readUInt32LE(4) : prefix.readUInt32BE(4);
+  const header = readFatHeaderPrefix(prefix);
+  if (header.state === "unknown" || header.state === "not-fat") return ok(null);
+  if (header.state === "incomplete")
+    return err("The original FAT header is truncated");
+  const { littleEndian, wide, count, tableEnd } = header;
   if (count === 0 || count > MAX_FAT_ARCHITECTURES)
     return err("FAT architecture count is outside the supported 1..128 range");
-  const tableEnd = 8 + count * (wide ? 32 : 20);
   const table = prefix.subarray(8, tableEnd);
   const parsed = readFatSliceDeclarations(table, { count, wide, littleEndian });
   if (parsed.status !== "parsed") return err(parsed.reason);
@@ -386,10 +408,9 @@ async function readSourceSnapshot(file: FileHandle, signal?: AbortSignal) {
       );
     }
   };
-  for await (const chunk of file.createReadStream({
-    start: 0,
-    autoClose: false,
-    ...(signal === undefined ? {} : { signal }),
+  for await (const chunk of readFileHandleChunks(file, {
+    signal,
+    cancellationFailure: (reason) => new RegularFileOperationCancelled(reason),
   })) {
     const bytes = Buffer.from(chunk);
     hash.update(bytes);

@@ -97,7 +97,7 @@ export const expectArmSliceExtraction = async (
   for (const slice of fixture.slices) {
     const relativePath = `slices/${slice.name}`;
     const bytes = await readFile(join(extracted.output_root, relativePath));
-    expect(bytes).toEqual(Buffer.from(slice.bytes));
+    expect(Buffer.compare(bytes, Buffer.from(slice.bytes))).toBe(0);
     expect(
       extracted.artifacts.find(
         ({ relative_path }) => relative_path === relativePath,
@@ -107,6 +107,6 @@ export const expectArmSliceExtraction = async (
       bytes_written: slice.bytes.length,
     });
   }
-  expect(await readFile(fixture.path)).toEqual(fixture.bytes);
+  expect(Buffer.compare(await readFile(fixture.path), fixture.bytes)).toBe(0);
   return extracted.manifest;
 };

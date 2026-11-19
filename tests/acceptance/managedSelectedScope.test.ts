@@ -27,7 +27,7 @@ cliTest(
       ["Inner", "Fixture.Inner"],
       ["Fixture.Inner"],
     ]) {
-      const output = await cli.sharedCliRun!({
+      const output = await cli.run({
         arguments: [
           "inspect-managed-members",
           path,
@@ -48,7 +48,7 @@ cliTest(
       expect(report.coverage.state).toBe("complete");
       sources.push(evidence);
     }
-    expect(await readFile(path)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
     await rm(path);
     const call = await cli.sharedMcpCall!();
     for (const [index, right] of sources.slice(1).entries()) {
@@ -70,13 +70,15 @@ cliTest(
       );
       expect(report.summary).toMatchObject({ added: 0, removed: 0 });
       if (index === 0)
-        expect(report.limitations).toContain(
-          "Both observations cover only the selected declaring types (Fixture.Inner, Inner); member totals and statuses describe those types, not the whole assembly.",
+        expect(report.limitations).toContainEqual(
+          expect.stringMatching(
+            /selected declaring types.*Fixture\.Inner.*Inner.*not the whole assembly/iu,
+          ),
         );
       else {
         expect(report.summary.unknown).toBeGreaterThan(0);
-        expect(report.limitations).toContain(
-          "The observations select different declaring types; a member outside the other side's selection is unknown, not added or removed.",
+        expect(report.limitations).toContainEqual(
+          expect.stringMatching(/different declaring types.*unknown/iu),
         );
       }
     }
@@ -97,7 +99,7 @@ cliTest(
       const sha256 = createHash("sha256").update(content).digest("hex");
       await writeFile(path, content);
       for (const isSelected of [true, false]) {
-        const output = await cli.sharedCliRun!({
+        const output = await cli.run({
           arguments: [
             "inspect-managed-members",
             path,
@@ -129,7 +131,7 @@ cliTest(
           whole.push(evidence);
         }
       }
-      expect(await readFile(path)).toEqual(content);
+      expect(Buffer.compare(await readFile(path), content)).toBe(0);
       await rm(path);
     }
     const left = managedMemberInspectionSchema.parse(

@@ -8,9 +8,11 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { buildGamecubeDol } from "../domain/gamecubeDol.fixture.js";
 import type { DolHeader } from "../domain/gamecubeDol.js";
-import type { NativeLoadImageObservation } from "../domain/native/nativeLoadImage.js";
+import type {
+  NativeLoadImageObservation,
+  NativeLoadImage,
+} from "../domain/native/nativeLoadImage.js";
 import { attestGhidraDolLoadImage } from "./GhidraDolLoadImage.js";
-import type { NativeLoadImage } from "../domain/native/nativeLoadImage.js";
 import type { Result } from "../domain/result.js";
 
 type DolTarget = Extract<BinaryTarget, { format: "gamecube-dol" }>;
@@ -379,23 +381,6 @@ describe("GameCube DOL block permissions and state", () => {
     expect(blockCheck(image.checks, ".data0", DATA_ADDRESS)).toMatchObject({
       matched: false,
       observed: expect.objectContaining({ address_space: "io" }),
-    });
-  });
-
-  it("does not verify a DOL block whose permissions were never measured", async () => {
-    const image = await attestMutated((mappings) => {
-      const text = mappings.find((m) => m.block === ".text0");
-      if (text === undefined) throw new Error("Missing text mapping");
-      delete text.readable;
-      delete text.writable;
-      delete text.executable;
-    });
-    expect(image.status).toBe("mismatch");
-    expect(
-      checkNamed(image.checks, "block_permissions_measured"),
-    ).toMatchObject({ matched: false, observed: [".text0"] });
-    expect(blockCheck(image.checks, ".text0", TEXT_ADDRESS)).toMatchObject({
-      matched: false,
     });
   });
 

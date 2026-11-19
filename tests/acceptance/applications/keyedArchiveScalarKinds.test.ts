@@ -133,7 +133,7 @@ cliTest.for(["xml", "binary"] as const)(
       }),
     );
     expect(result.limitations).toContainEqual(
-      expect.stringContaining("1 non-finite real value(s)"),
+      expect.stringMatching(/\b1 non-finite real value.*JSON number/iu),
     );
 
     const page = await run(["--root", "data", "--offset", "1", "--limit", "2"]);
@@ -154,7 +154,7 @@ cliTest.for(["xml", "binary"] as const)(
         status: "resolved",
       }),
     ]);
-    expect(await readFile(path)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
   },
 );
 
@@ -240,10 +240,10 @@ cliTest.for(["xml", "binary"] as const)(
     expect(JSON.stringify(result.objects.map(({ value }) => value))).toBe(
       '["$null",{"$plist_type":"real","value":"-0"},0,1.25]',
     );
-    expect(result.limitations).toContain(
-      '1 negative-zero real value(s) are reported as { "$plist_type": "real", "value": "-0" } because a JSON number cannot carry the sign of zero.',
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(/1 negative.zero.*sign of zero/iu),
     );
-    expect(await readFile(path)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
   },
 );
 
@@ -346,7 +346,7 @@ cliTest("preserves binary IEEE non-finite scalar identity", async ({ cli }) => {
       parseEvidence(mcp.structuredContent).normalized_result,
     ),
   ).toEqual(result);
-  expect(await readFile(path)).toEqual(bytes);
+  expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
 });
 
 cliTest(
@@ -413,12 +413,12 @@ cliTest(
     expect(JSON.stringify(result.objects.map(({ value }) => value))).toBe(
       '["$null",{"$plist_type":"real","value":"+infinity"},{"$plist_type":"real","value":"-infinity"},{"$plist_type":"real","value":"nan"},1.25]',
     );
-    expect(result.limitations).toContain(
-      '3 non-finite real value(s) are reported as { "$plist_type": "real", "value": "<spelling>" } using canonical numeric labels nan, +infinity or -infinity because a JSON number cannot carry them.',
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(/\b3 non-finite real value.*JSON number/iu),
     );
     expect(result.limitations).not.toContainEqual(
       expect.stringContaining('"value": null'),
     );
-    expect(await readFile(path)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
   },
 );

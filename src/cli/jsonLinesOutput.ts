@@ -19,6 +19,9 @@ import {
   writeOutputParts,
   writeOutputText,
 } from "./jsonOutput.js";
+import { retainCliPublicationOnError } from "./cliEvidencePublication.js";
+import type { CliResultControls } from "./cliResultControls.js";
+import type { OutputFilterPath } from "./outputFilter.js";
 
 interface CliJsonLinesInput {
   readonly source: unknown;
@@ -26,9 +29,12 @@ interface CliJsonLinesInput {
   readonly operationFailure: unknown;
   readonly command: string;
   readonly duration: string;
+  /** Flags of the per-call controls the result records, by contract field. */
+  readonly cliControls?: CliResultControls;
   readonly fullOutput: boolean;
   readonly tokenCount: boolean;
   readonly filterOutput: string | undefined;
+  readonly filterPaths: readonly OutputFilterPath[] | undefined;
 }
 
 /** Render one already classified result, sharing a plan for output and counting. */
@@ -38,7 +44,13 @@ export const writeCliJsonLines = async (
 ): Promise<AnalysisErrorProjection | undefined> => {
   const { source, selected, operationFailure } = options;
   let error: AnalysisErrorProjection | undefined;
-  const meta = { command: options.command, duration: options.duration };
+  const meta = {
+    command: options.command,
+    duration: options.duration,
+    ...(options.cliControls === undefined
+      ? {}
+      : { cli_controls: { ...options.cliControls } }),
+  };
   const envelope = (data: unknown) =>
     options.fullOutput ? { ok: true, data, meta } : data;
   let failureRecord =
@@ -57,11 +69,14 @@ export const writeCliJsonLines = async (
           ...(options.filterOutput === undefined
             ? {}
             : { filter: options.filterOutput }),
+          ...(options.filterPaths === undefined
+            ? {}
+            : { filterPaths: options.filterPaths }),
           fullOutput: options.fullOutput,
         })
       : undefined;
   if (plan?.ok === false) {
-    error = projectAnalysisError(plan.error);
+    error = projectAnalysisError(retainCliPublicationOnError(plan.error));
     failureRecord = jsonLinesErrorRecord(
       options.fullOutput ? { ok: false, error, meta } : error,
     );
@@ -76,18 +91,20 @@ export const writeCliJsonLines = async (
         for (const part of jsonLineParts(record)) characters += part.length;
         if (characters > constants.MAX_STRING_LENGTH) {
           error = projectAnalysisError(
-            new AnalysisResourceConstraintError(
-              options.command,
-              "memory",
-              "A JSON Lines record exceeds the token estimator's runtime string limit.",
-              {
-                formatted_characters: characters,
-                max_string_characters: constants.MAX_STRING_LENGTH,
-              },
-              {
-                remediationAction:
-                  "Remove --token-count to stream the records, or select smaller fields with --filter-output.",
-              },
+            retainCliPublicationOnError(
+              new AnalysisResourceConstraintError(
+                options.command,
+                "memory",
+                "A JSON Lines record exceeds the token estimator's runtime string limit.",
+                {
+                  formatted_characters: characters,
+                  max_string_characters: constants.MAX_STRING_LENGTH,
+                },
+                {
+                  remediationAction:
+                    "Remove --token-count to stream the records, or select smaller fields with --filter-output.",
+                },
+              ),
             ),
           );
           break;

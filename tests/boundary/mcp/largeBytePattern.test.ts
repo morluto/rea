@@ -6,7 +6,7 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
 const LARGE_PATTERN_BYTES = 4 * 1024 * 1024;
 
-const inputValidationText = (result: CallToolResult): string => {
+const inputValidationError = (result: CallToolResult) => {
   expect(result.isError).toBe(true);
   const diagnostic = parseMcpToolError(result).error;
   expect(diagnostic).toMatchObject({
@@ -18,7 +18,7 @@ const inputValidationText = (result: CallToolResult): string => {
   });
   const text = JSON.stringify(diagnostic);
   expect(text).not.toMatch(/RangeError|Maximum call stack/i);
-  return text;
+  return diagnostic;
 };
 
 it("validates large search_bytes inputs without breaking stdio MCP", async () => {
@@ -48,18 +48,28 @@ it("validates large search_bytes inputs without breaking stdio MCP", async () =>
   expect(parseMcpToolError(largeSearch).error.code).toBe("target_unavailable");
 
   const malformedPattern = `${largePattern.slice(0, -2)}a?`;
-  const malformed = inputValidationText(
+  const malformed = inputValidationError(
     await call("search_bytes", { pattern: malformedPattern }),
   );
-  expect(malformed).toMatch(/pattern/i);
+  expect(malformed.details).toMatchObject({
+    issues: [{ path: ["pattern"], reason: "invalid_value" }],
+  });
 
-  const oversizedMask = inputValidationText(
+  const oversizedMask = inputValidationError(
     await call("search_bytes", {
       pattern: "aa",
       mask: "ff".repeat(LARGE_PATTERN_BYTES),
     }),
   );
-  expect(oversizedMask).toContain("Mask length must equal pattern length");
+  expect(oversizedMask.details).toMatchObject({
+    issues: [
+      {
+        path: ["mask"],
+        reason: "invalid_value",
+        message: "Mask length must equal pattern length",
+      },
+    ],
+  });
 
   const final = await call("search_bytes", { pattern: "aa" });
   expect(parseMcpToolError(final).error.code).toBe("target_unavailable");

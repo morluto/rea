@@ -5,8 +5,27 @@ import {
   parseJadxJson,
   normalizeJadxText,
   parseJadxFailure,
+  jadxHeapExhausted,
 } from "../../../src/android/JadxProtocol.js";
 import { androidInputSchemas } from "../../../src/domain/android/androidAnalysis.js";
+
+it("recognizes only HotSpot heap-exhaustion OutOfMemoryError reasons", () => {
+  for (const text of [
+    'Exception in thread "main" java.lang.OutOfMemoryError: Java heap space',
+    "java.lang.OutOfMemoryError: GC overhead limit exceeded",
+  ])
+    expect(jadxHeapExhausted(text), text).toBe(true);
+  // Other memory areas are not fixed by the worker heap, and unanchored text
+  // that merely mentions the heap is not a JVM failure.
+  for (const text of [
+    "java.lang.OutOfMemoryError: Metaspace",
+    "java.lang.OutOfMemoryError: Direct buffer memory",
+    "java.lang.OutOfMemoryError: unable to create new native thread",
+    "warning: Java heap space is low",
+    "",
+  ])
+    expect(jadxHeapExhausted(text), text).toBe(false);
+});
 
 it("recognizes named bridge failures without reinterpreting arbitrary engine text", () => {
   const failure = {
@@ -29,6 +48,24 @@ it("recognizes named bridge failures without reinterpreting arbitrary engine tex
     JSON.stringify({ ...failure, arbitrary: true }),
   ])
     expect(parseJadxFailure(value)).toBeUndefined();
+});
+
+it("recognizes only complete external-reference allowance diagnostics", () => {
+  const failure = {
+    kind: "reference-output-limit",
+    stage: "caller_inventory",
+    limit_bytes: 1_048_448,
+  };
+  expect(parseJadxFailure(JSON.stringify(failure))).toEqual(failure);
+  for (const changed of [
+    { stage: "arbitrary" },
+    { limit_bytes: 0 },
+    { limit_bytes: 0.5 },
+    { extra: "unrelated" },
+  ])
+    expect(
+      parseJadxFailure(JSON.stringify({ ...failure, ...changed })),
+    ).toBeUndefined();
 });
 
 it("validates provider text envelopes and rejects unsupported content rather than dropping it", () => {

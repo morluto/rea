@@ -1,16 +1,13 @@
 import { realpath } from "node:fs/promises";
 import { join } from "node:path";
-import { HopperStartError } from "../domain/hopperErrors.js";
+
+import type { ArtifactResourceScope } from "../resources/index.js";
 import {
   acquireOwnedLease,
   type LeaseAcquisition,
   type LeaseFailure,
-  type OwnedLease,
+  type LeaseFailureFactory,
 } from "./OwnedLease.js";
-
-export type HopperTargetLease = OwnedLease;
-
-export type HopperTargetLeaseAcquisition = LeaseAcquisition;
 
 /** Shared private parent of Hopper lease sockets; it outlives individual sessions. */
 export const HOPPER_TARGET_LEASE_DIRECTORY = join(
@@ -18,50 +15,37 @@ export const HOPPER_TARGET_LEASE_DIRECTORY = join(
   `rea-hopper-${process.getuid?.() ?? 0}`,
 );
 
-/** Keep two REA processes from opening duplicate Hopper documents for one target/profile. */
-export const acquireHopperTargetLease = async (input: {
-  readonly targetPath: string;
-  readonly targetKind: "executable" | "database";
-  readonly loaderArgs: readonly string[];
+/**
+ * Reserve one Hopper lease identity in the shared lease directory. The caller
+ * supplies the failure its own layer reports.
+ */
+export const acquireHopperLease = (input: {
+  readonly identity: Readonly<Record<string, unknown>>;
   readonly runId: string;
   readonly directory?: string;
-}): Promise<HopperTargetLeaseAcquisition> => {
-  // Canonicalization is required for lease identity. A lexical fallback could
-  // let two aliases reserve independent sockets for the same Hopper document.
-  let targetPath: string;
-  try {
-    targetPath = await realpath(input.targetPath);
-  } catch (cause: unknown) {
-    throw new HopperStartError({
-      cause,
-      userMessage: `REA could not resolve Hopper target ${JSON.stringify(input.targetPath)} to a canonical path before reserving the document. Confirm that the target exists and its path is accessible.`,
-    });
-  }
-  return acquireLease({
-    ...input,
-    identity: {
-      targetPath,
-      targetKind: input.targetKind,
-      loaderArgs: input.loaderArgs,
-    },
+  readonly resources?: ArtifactResourceScope | undefined;
+  readonly failure: LeaseFailureFactory;
+}): Promise<LeaseAcquisition> =>
+  acquireOwnedLease({
+    identity: input.identity,
+    runId: input.runId,
+    directory: input.directory ?? HOPPER_TARGET_LEASE_DIRECTORY,
+    failure: input.failure,
+    resources: input.resources,
   });
-};
-
-/** Reserve the Linux demo's singleton application before it can forward a target to another owner. */
-export const acquireLinuxHopperApplicationLease = (input: {
-  readonly runId: string;
-  readonly directory?: string;
-}): Promise<HopperTargetLeaseAcquisition> =>
-  acquireLease({ ...input, identity: { application: "linux-hopper-demo" } });
 
 /** Serialize approved publication/repair of one canonical signed-package entry. */
 export const acquireHopperReleaseCacheLease = async (input: {
   readonly cacheDirectory: string;
   readonly launcherSha256: string;
   readonly runId: string;
-}): Promise<HopperTargetLeaseAcquisition> =>
-  acquireLease({
+  readonly resources?: ArtifactResourceScope | undefined;
+  readonly failure: LeaseFailureFactory;
+}): Promise<LeaseAcquisition> =>
+  acquireHopperLease({
     runId: input.runId,
+    resources: input.resources,
+    failure: input.failure,
     identity: {
       cacheDirectory: await realpath(input.cacheDirectory),
       launcherSha256: input.launcherSha256,
@@ -69,28 +53,8 @@ export const acquireHopperReleaseCacheLease = async (input: {
     },
   });
 
-const acquireLease = async (input: {
-  readonly identity: Readonly<Record<string, unknown>>;
-  readonly runId: string;
-  readonly directory?: string;
-}): Promise<HopperTargetLeaseAcquisition> =>
-  acquireOwnedLease({
-    identity: input.identity,
-    runId: input.runId,
-    directory: input.directory ?? HOPPER_TARGET_LEASE_DIRECTORY,
-    failure: hopperLeaseFailure,
-  });
-
-const hopperLeaseFailure = (
-  failure: LeaseFailure,
-  cause?: unknown,
-): HopperStartError =>
-  new HopperStartError({
-    ...(cause === undefined ? {} : { cause }),
-    userMessage: hopperLeaseMessage(failure),
-  });
-
-const hopperLeaseMessage = (failure: LeaseFailure): string => {
+/** What a Hopper lease failure means for the caller, by its kind. */
+export const hopperLeaseMessage = (failure: LeaseFailure): string => {
   switch (failure.kind) {
     case "directory_create":
       return "REA could not create its private Hopper lease directory.";
@@ -100,6 +64,10 @@ const hopperLeaseMessage = (failure: LeaseFailure): string => {
       return "REA's Hopper lease directory permissions could not be secured.";
     case "directory_access_denied":
       return `REA could not access its Hopper lease directory at ${JSON.stringify(failure.directory)}. Check its ownership and parent-directory access. For a directory you own, restore owner-only read, write, and search permissions (0700), then retry.`;
+    case "socket_permissions":
+      return "REA could not secure its lease socket permissions.";
+    case "directory_close":
+      return "REA could not confirm closure of its Hopper lease directory handle.";
     case "directory_inspect":
       return "REA could not inspect its private Hopper lease directory.";
     case "recovery_busy":

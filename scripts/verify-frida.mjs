@@ -2,8 +2,11 @@ import { basename } from "node:path";
 
 import { FridaInstrumentationService } from "../dist/application/frida/FridaInstrumentationService.js";
 import { FridaInstrumentationManager } from "../dist/frida/FridaInstrumentationManager.js";
-import { isValidFridaRemoteAddress } from "../dist/contracts/fridaRemoteAddress.js";
-import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import { isValidFridaRemoteAddress } from "../dist/domain/fridaRemoteAddress.js";
+import {
+  verifierFailureReasons,
+  withVerifierCleanup,
+} from "./lib/verifier-cleanup.mjs";
 
 const options = parseArguments(process.argv.slice(2));
 if (options.help) {
@@ -80,6 +83,10 @@ try {
       !Array.isArray(observed.messages)
     )
       throw new Error("Frida returned no message observation");
+    if (!Number.isSafeInteger(observed.pid) || observed.pid <= 0)
+      throw new Error("Frida returned no valid target PID");
+    if (remote !== undefined && observed.pid !== options.pid)
+      throw new Error("Frida observed a different target PID");
     const messageObserved = observed.messages.some(
       (message) =>
         typeof message === "object" &&
@@ -109,9 +116,8 @@ try {
   process.stdout.write(`${JSON.stringify(report)}\n`);
   if (!report.ok) process.exitCode = 1;
 } catch (cause) {
-  const causes = cause instanceof AggregateError ? cause.errors : [cause];
   process.stderr.write(
-    `Frida real-provider verification failed: ${causes.map((reason) => (reason instanceof Error ? reason.message : String(reason))).join("; ")}\n`,
+    `Frida real-provider verification failed: ${verifierFailureReasons(cause).join("; ")}\n`,
   );
   process.exitCode = 1;
 }

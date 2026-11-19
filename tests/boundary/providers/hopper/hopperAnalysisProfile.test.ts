@@ -11,7 +11,10 @@ import {
   hopperLoaderArgsForTarget,
   resolveHopperAnalysisProfile,
 } from "../../../../src/hopper/HopperAnalysisProfile.js";
-import { HOPPER_PROVIDER_IDENTITY } from "../../../../src/hopper/HopperProviderCapabilities.js";
+import { HOPPER_PROVIDER_IDENTITY } from "../../../../src/hopper/HopperProviderMetadata.js";
+import { hopperProducerIdentity } from "../../../../src/hopper/HopperBridgeSources.js";
+import { packagedSourcesDigest } from "../../../../src/filesystem/ProducerIdentity.js";
+import { PRODUCT_IDENTITY } from "../../../../src/identity.js";
 
 let inspectionResources = createInspectionResources();
 let directory: string | undefined;
@@ -117,8 +120,7 @@ describe("Hopper analysis profiles", () => {
         value: {
           profile: {
             parameters: {
-              function_dossier_coverage:
-                "observed-facets-and-call-relationships-v1",
+              producer: hopperProducerIdentity(),
               loader: {
                 source: scenario.source,
                 arguments: scenario.arguments,
@@ -129,6 +131,29 @@ describe("Hopper analysis profiles", () => {
       });
     },
   );
+
+  it("commits the REA release and packaged bridge script it runs", async () => {
+    directory = await createTestTempDirectory("rea-hopper-profile-producer-");
+    const launcherPath = join(directory, "hopper");
+    await writeFile(launcherPath, "Hopper build");
+    const resolved = await resolveHopperAnalysisProfile(
+      target("elf", "x86_64"),
+      {
+        launcherPath,
+        loaderArgsOverride: [],
+        provider: HOPPER_PROVIDER_IDENTITY,
+        resourceScope: inspectionResources.owner,
+      },
+    );
+    if (!resolved.ok) throw resolved.error;
+    expect(resolved.value.profile?.parameters.producer).toEqual({
+      rea_version: PRODUCT_IDENTITY.packageVersion,
+      sources_sha256: packagedSourcesDigest(
+        new URL("../../../../bridge/", import.meta.url),
+        ["hopper_bridge.py"],
+      ),
+    });
+  });
 
   it("stops launcher hashing when profile resolution is cancelled", async () => {
     directory = await createTestTempDirectory("rea-hopper-profile-cancel-");

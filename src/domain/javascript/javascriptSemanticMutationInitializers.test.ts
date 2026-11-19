@@ -3,11 +3,16 @@ import { describe, expect, it } from "vitest";
 
 import {
   semanticBindingAtRead,
+  semanticEffectTiming,
   semanticMutationInitializers,
   semanticTopLevelEffectFollowsCapture,
 } from "./javascriptSemanticMutationInitializers.js";
 import type { JavaScriptSemanticBindingState } from "./javascriptSemanticState.js";
-import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import { indexJavaScriptBindingsWithReceiversSteps } from "./javascriptSemanticAnalysis.js";
+import {
+  completeSemanticSteps,
+  traverseJavaScriptAst,
+} from "./javascriptSemanticTraversal.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 
 it.each([
@@ -19,6 +24,7 @@ it.each([
   ["accessor value", true, true],
   ["public key", false, true],
   ["accessor key", false, true],
+  ["method key", false, true],
 ] as const)(
   "orders %s reads with static=%s only when evaluated at class definition",
   (kind, isStatic, ordered) => {
@@ -31,7 +37,9 @@ it.each([
       ? t.classPrivateProperty(t.privateName(t.identifier("field")), value)
       : kind.startsWith("accessor")
         ? t.classAccessorProperty(key, value, null, null, inKey)
-        : t.classProperty(key, value, null, null, inKey);
+        : kind.startsWith("method")
+          ? t.classMethod("method", key, [], t.blockStatement([]), inKey)
+          : t.classProperty(key, value, null, null, inKey);
     field.static = isStatic;
     const program = t.program([
       t.variableDeclaration("let", [
@@ -68,6 +76,29 @@ it.each([
     ).toBe(ordered);
   },
 );
+
+it("orders computed method key reads evaluated during object literal definition", () => {
+  const initializer = t.numericLiteral(1);
+  const read = t.identifier("child");
+  const method = t.objectMethod("method", read, [], t.blockStatement([]), true);
+  const program = t.program([
+    t.variableDeclaration("let", [
+      t.variableDeclarator(t.identifier("child"), initializer),
+    ]),
+    t.variableDeclaration("const", [
+      t.variableDeclarator(t.identifier("obj"), t.objectExpression([method])),
+    ]),
+  ]);
+  const parents = new WeakMap<t.Node, t.Node>();
+  traverseJavaScriptAst(program, {
+    enter: (node, parent) => {
+      if (parent !== null) parents.set(node, parent);
+    },
+  });
+  expect(semanticTopLevelEffectFollowsCapture(initializer, read, parents)).toBe(
+    true,
+  );
+});
 
 describe("parameter references copied into function body bindings", () => {
   it.each([
@@ -126,3 +157,51 @@ describe("parameter references copied into function body bindings", () => {
     },
   );
 });
+
+// A literal loop at program level orders its body against program-level code
+// by source position. Code in a function body or an instance field value runs
+// later, on a call or a construction, so source position proves nothing.
+it.each([
+  ["const value = read(); for (const item of [1]) target = item;", "after"],
+  ["for (const item of [1]) target = item; const value = read();", "before"],
+  [
+    "class Box { static value = read(); } for (const item of [1]) target = item;",
+    "after",
+  ],
+  [
+    "class Box { value = read(); } for (const item of [1]) target = item; new Box();",
+    "unknown",
+  ],
+  [
+    "for (const item of [1]) { var Box = class { value = (target = item); }; } const value = read(); new Box();",
+    "unknown",
+  ],
+] as const)(
+  "orders a literal loop write against %s as %s",
+  (source, timing) => {
+    const parsed = parseJavaScriptSource(source);
+    if (parsed === null) throw new Error("Expected a valid fixture");
+    const index = completeSemanticSteps(
+      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+    );
+    let read: t.CallExpression | undefined;
+    let write: t.AssignmentExpression | undefined;
+    traverseJavaScriptAst(parsed.program, {
+      enter: (node) => {
+        if (
+          t.isCallExpression(node) &&
+          t.isIdentifier(node.callee, { name: "read" })
+        )
+          read = node;
+        if (
+          t.isAssignmentExpression(node) &&
+          t.isIdentifier(node.left, { name: "target" })
+        )
+          write = node;
+      },
+    });
+    if (read === undefined || write === undefined)
+      throw new Error("Expected a read and a write");
+    expect(semanticEffectTiming(read, write, index.bindings)).toBe(timing);
+  },
+);

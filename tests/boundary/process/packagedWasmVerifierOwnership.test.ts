@@ -78,8 +78,10 @@ export async function createPackageVerifierCommands(options) {
 packageCommands = await createActualCommands({
   ...options,
   launcher: async (input) => {
+    const nested = input.arguments.includes(nestedVerifier);
+    if (nested) appendFileSync(process.env.OWNERSHIP_EVENTS, JSON.stringify({ kind: "command", runId: input.runId, inheritedRunId: process.env.REA_PROCESS_RUN_ID }) + "\\n");
     const acquired = await spawnOwnedProviderProcess(input);
-    if (!input.arguments.includes(nestedVerifier)) return acquired;
+    if (!nested) return acquired;
     return {
       ...acquired,
       cleanup: async () => {
@@ -192,11 +194,26 @@ if (cleanup !== undefined) {
 }]);
 `;
 
-const expectRootCleanupAfterProcessExit = (
+const expectOwnedCleanup = (
   events: readonly Record<string, unknown>[],
   runtime: string,
   readyPids: readonly number[],
 ): void => {
+  const commands = events.filter(({ kind }) => kind === "command");
+  expect(commands).toHaveLength(1);
+  const command = commands[0]!;
+  expect(command).toMatchObject({
+    runId: expect.any(String),
+    inheritedRunId: expect.any(String),
+  });
+  expect(command.runId).not.toBe("");
+  expect(command.runId).not.toBe(command.inheritedRunId);
+  expect(events.filter(({ kind }) => kind === "ready")).toEqual([
+    expect.objectContaining({
+      runId: command.runId,
+      descendantRunId: command.runId,
+    }),
+  ]);
   expect(events.filter(({ kind }) => kind === "root-close")).toEqual([
     { kind: "root-close", runtime, rootExists: true, readyPids, livePids: [] },
   ]);
@@ -219,12 +236,7 @@ const expectHarnessFailureCleanup = async (
     .map((line) => JSON.parse(line));
   const ready = events.find(({ kind }) => kind === "ready");
   expect(ready).toBeDefined();
-  expect(ready.runId).toMatch(/^rea-package-command-/);
-  expect(ready.descendantRunId).toBe(ready.runId);
-  expectRootCleanupAfterProcessExit(events, ready.runtime, [
-    ready.leader,
-    ready.descendant,
-  ]);
+  expectOwnedCleanup(events, ready.runtime, [ready.leader, ready.descendant]);
 };
 
 // Packaging, installation, and WABT are authored boundaries. The copied verifier,
@@ -242,23 +254,27 @@ it.skipIf(process.platform === "win32").each([
     const allow = workspace.path("allow-cleanup");
     const runtimeParent = await workspace.mkdir("runtime");
     await workspace.mkdir("scripts/lib");
-    await workspace.mkdir("dist/process");
+    // VerifierFixture loads src/process/PrivateRuntimeRoot.ts beside its
+    // copied scripts/lib, so the observer stands in for it there.
+    await workspace.mkdir("src/process");
     await Promise.all([
       workspace.write("package.json", '{"type":"module"}\n'),
       copyFile(
         resolve("scripts/verify-packaged-wasm-artifact.mjs"),
         workspace.path("scripts/verify-packaged-wasm-artifact.mjs"),
       ),
-      copyFile(
-        resolve("scripts/lib/verifier-cleanup.mjs"),
-        workspace.path("scripts/lib/verifier-cleanup.mjs"),
-      ),
+      ...[
+        "scripts/lib/verifier-cleanup.mjs",
+        "scripts/lib/verifier-fixture.mjs",
+        "scripts/lib/canonical-temporary-directory.mjs",
+        "scripts/lib/verifier-source-loader.mjs",
+      ].map((path) => copyFile(resolve(path), workspace.path(path))),
       workspace.write(
         "scripts/lib/wabt-verifier-timeouts.mjs",
         "export const WABT_WORKFLOW_TIMEOUT_MS = 1000;\n",
       ),
       workspace.write(
-        "dist/process/PrivateRuntimeRoot.js",
+        "src/process/PrivateRuntimeRoot.ts",
         PRIVATE_ROOT_OBSERVER,
       ),
       workspace.write("scripts/verify-package-pack.mjs", PACKAGE_PACK_FIXTURE),
@@ -312,12 +328,10 @@ it.skipIf(process.platform === "win32").each([
         await expectHarnessFailureCleanup(supervisor, events);
         return;
       }
-      await waitForProviderProcessReady(child.process, 25_000);
+      await waitForProviderProcessReady(child.process);
       const observed = JSON.parse(await readFile(report, "utf8"));
       expect(observed.reason).toBe("timeout");
       expect(observed.pids).toHaveLength(2);
-      expect(observed.runId).toMatch(/^rea-package-command-/);
-      expect(observed.descendantRunId).toBe(observed.runId);
       expect(observed.rootExists).toBe(denied);
       expect(observed.livePids.sort()).toEqual(
         denied ? [...observed.pids].sort() : [],
@@ -346,11 +360,7 @@ it.skipIf(process.platform === "win32").each([
         }),
       ]);
       expect(recorded.filter(({ kind }) => kind === "install")).toHaveLength(1);
-      expectRootCleanupAfterProcessExit(
-        recorded,
-        observed.runtime,
-        observed.pids,
-      );
+      expectOwnedCleanup(recorded, observed.runtime, observed.pids);
       expect(
         recorded.filter(
           ({ kind, denied: refusal }) =>
@@ -367,5 +377,4 @@ it.skipIf(process.platform === "win32").each([
       await removeTestWorkspace(workspace.root);
     }
   },
-  45_000,
 );

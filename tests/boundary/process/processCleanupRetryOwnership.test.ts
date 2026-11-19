@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setImmediate } from "node:timers/promises";
 import { expect, it } from "vitest";
-import { createDeferred } from "../../fixtures/binarySession.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { ProcessCaptureError } from "../../../src/process/capture/ProcessCaptureError.js";
@@ -168,7 +168,7 @@ it("keeps mixed root errors and retry aggregates bound to only unresolved roots"
     expect(second.cleanupIncomplete).toBe(true);
     expect(bothUnresolved.cleanupIncomplete).toBe(true);
     expect(retryFailure.cleanupIncomplete).toBe(true);
-    expect(retryFailure.cleanupResources).toEqual(["temporary_root"]);
+    expect(retryFailure.cleanupResources).toEqual([roots[1]]);
 
     denied.clear();
     await scope.retryCleanup();
@@ -192,31 +192,33 @@ it("keeps mixed root errors and retry aggregates bound to only unresolved roots"
 it("joins an already-started release when shutdown begins", async () => {
   const scope = new ProcessCaptureResourceScope();
   const root = await createRoot();
-  const entered = createDeferred<void>();
-  const unblock = createDeferred<void>();
+  const resourceRelease = phaseGate();
   let attempts = 0;
   const releasing = scope.release(
     cleanupOptions(root, async (path) => {
       attempts += 1;
-      entered.resolve();
-      await unblock.promise;
+      await resourceRelease.hold();
       await rm(path, { recursive: true });
     }),
   );
-  await entered.promise;
   let closed = false;
-  const closing = scope.close().then(() => {
-    closed = true;
-  });
+  let closing: Promise<void> | undefined;
   try {
+    await resourceRelease.reached(releasing, "resource release");
+    closing = scope.close().then(() => {
+      closed = true;
+    });
     await setImmediate();
     expect(closed).toBe(false);
     await expect(stat(root)).resolves.toBeDefined();
   } finally {
-    unblock.resolve();
-    await Promise.all([releasing, closing]);
+    resourceRelease.release();
+    await Promise.allSettled([releasing, ...(closing ? [closing] : [])]);
+    await scope.close();
     await rm(root, { recursive: true, force: true });
   }
+  await releasing;
+  await closing;
   expect(attempts).toBe(1);
   expect(closed).toBe(true);
   await expect(stat(root)).rejects.toMatchObject({ code: "ENOENT" });
@@ -288,7 +290,7 @@ it("blocks scope admission on owner-bound retry failure and resumes after releas
     if (!(retryFailure instanceof ProcessCaptureError))
       throw new Error("Expected a typed owner-bound retry failure");
     expect(retryFailure.cleanupIncomplete).toBe(true);
-    expect(retryFailure.cleanupResources).toEqual(["temporary_root"]);
+    expect(retryFailure.cleanupResources).toEqual([root]);
     expect(origin.cleanupIncomplete).toBe(true);
 
     denyRemoval = false;

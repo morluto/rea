@@ -1,6 +1,8 @@
 import com.atxx.jhmcp.*;
 import com.android.tools.smali.smali.Smali;
 import com.android.tools.smali.smali.SmaliOptions;
+import com.android.tools.smali.dexlib2.Opcodes;
+import com.android.tools.smali.dexlib2.dexbacked.DexBackedDexFile;
 import com.google.gson.*;
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult;
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent;
@@ -10,6 +12,8 @@ import java.lang.reflect.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.zip.*;
 import kotlin.coroutines.EmptyCoroutineContext;
 import kotlinx.coroutines.BuildersKt;
@@ -41,7 +45,7 @@ public class ReaJadxMetadataRegression {
     return ((TextContent) response.getContent().get(0)).getText();
   }
 
-  private static void verifyManifestSummary() {
+  private static void verifyManifestSummary() throws Exception {
     for (String prefix : List.of("android", "a")) {
       for (String encoded : List.of("one &amp; beta", "one &amp;amp; beta")) {
         String xml = "<manifest xmlns:" + prefix + "=\"http://schemas.android.com/apk/res/android\""
@@ -49,8 +53,14 @@ public class ReaJadxMetadataRegression {
             + prefix + ":versionName=\"" + encoded + "\" " + prefix + ":versionCode=\"7\""
             + " other:versionName=\"decoy\"><uses-sdk " + prefix + ":minSdkVersion=\"23\" "
             + prefix + ":targetSdkVersion=\"35\"/><uses-permission " + prefix
-            + ":name=\"org.example.MARKER\"/><application><uses-permission " + prefix
-            + ":name=\"nested.decoy\"/></application></manifest>";
+            + ":name=\"org.example.MARKER\"/><uses-permission-sdk-23 " + prefix
+            + ":name=\"org.example.SDK23\"/><uses-permission-sdk-m " + prefix
+            + ":name=\"org.example.SDKM\"/><other:uses-permission-sdk-23 " + prefix
+            + ":name=\"foreign.element\"/><uses-permission-sdk-23 other:name=\"foreign.attribute\"/>"
+            + "<uses-permission-sdk-230 " + prefix + ":name=\"unknown.tag\"/>"
+            + "<application><uses-permission " + prefix + ":name=\"nested.decoy\"/>"
+            + "<uses-permission-sdk-23 " + prefix + ":name=\"nested.sdk23\"/>"
+            + "<uses-permission-sdk-m " + prefix + ":name=\"nested.sdkm\"/></application></manifest>";
         Map<String, Object> summary = ReaJadxBridge.manifestSummary(xml);
         require(summary.get("package").equals("org.example.root"), "Wrong manifest package");
         require(summary.get("version_name").equals(
@@ -58,8 +68,9 @@ public class ReaJadxMetadataRegression {
             "Version name lost XML entity identity: " + summary);
         require(summary.get("version_code").equals("7") && summary.get("min_sdk").equals("23")
             && summary.get("target_sdk").equals("35"), "Namespace prefix changed summary values");
-        require(summary.get("permissions").equals(List.of("org.example.MARKER")),
-            "Permission summary included a nested or unrelated declaration");
+        require(summary.get("permissions").equals(
+            List.of("org.example.MARKER", "org.example.SDK23", "org.example.SDKM")),
+            "Permission summary lost SDK-gated declarations or included unrelated declarations");
       }
     }
     for (String xml : List.of("<other/>", "<manifest><application></manifest>",
@@ -69,7 +80,96 @@ public class ReaJadxMetadataRegression {
       catch (IllegalArgumentException expected) { refused = true; }
       require(refused, "Malformed or externally described XML was accepted");
     }
+    verifyManifestSplitFacts();
   }
+
+  private static void verifyManifestSplitFacts() throws Exception {
+    String android = "xmlns:a=\"http://schemas.android.com/apk/res/android\"";
+    Map<String, Object> split = ReaJadxBridge.manifestSplitFacts("<manifest " + android
+        + " a:requiredSplitTypes=\"base__abi, base__density\"><application a:isSplitRequired=\"true\"/>"
+        + "<other a:isSplitRequired=\"true\"/></manifest>");
+    require(split.get("required_split_types").equals(List.of("base__abi", "base__density"))
+        && split.get("split_required").equals(true), "Required split facts were lost: " + split);
+    Map<String, Object> plain = ReaJadxBridge.manifestSplitFacts("<manifest " + android
+        + " requiredSplitTypes=\"unnamespaced\"><application a:isSplitRequired=\"false\"/></manifest>");
+    require(plain.get("required_split_types").equals(List.of())
+        && plain.get("split_required").equals(false),
+        "Split facts came from an unnamespaced or false declaration: " + plain);    boolean refused = false;
+    try {
+      ReaJadxBridge.manifestSplitFacts("<manifest " + android + " a:requiredSplitTypes=\""
+          + String.join(",", Collections.nCopies(65, "s")) + "\"/>");
+    } catch (IllegalArgumentException expected) { refused = true; }
+    require(refused, "An unbounded requiredSplitTypes list was admitted");
+    // The bridge decodes the binary manifest itself, without a session; framework
+    // attribute names must resolve through their resource IDs when names are stripped.
+    for (boolean named : List.of(true, false)) {
+      Path apk = Files.createTempFile("rea-split-manifest-", ".apk");
+      try {
+        try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(apk))) {
+          zip.putNextEntry(new ZipEntry("AndroidManifest.xml"));
+          zip.write(splitManifest(named));
+          zip.closeEntry();
+        }
+        Object facts = ReaJadxBridge.nativeDeclarations(apk).get("manifest_splits");
+        require(facts.equals(Map.of("status", "observed",
+            "required_split_types", List.of("base__abi", "base__density"), "split_required", true)),
+            "Binary manifest split facts were lost (named=" + named + "): " + facts);
+      } finally {
+        Files.deleteIfExists(apk);
+      }
+    }
+  }
+
+  /** A binary manifest: requiredSplitTypes on <manifest>, isSplitRequired on <application>. */
+  private static byte[] splitManifest(boolean namedAttributes) {
+    List<String> strings = List.of("http://schemas.android.com/apk/res/android", "manifest",
+        namedAttributes ? "requiredSplitTypes" : "", "base__abi,base__density", "application",
+        namedAttributes ? "isSplitRequired" : "x");
+    java.io.ByteArrayOutputStream data = new java.io.ByteArrayOutputStream();
+    java.nio.ByteBuffer offsets = littleEndian(4 * strings.size());
+    for (String value : strings) {
+      offsets.putInt(data.size());
+      byte[] utf16 = value.getBytes(StandardCharsets.UTF_16LE);
+      data.writeBytes(littleEndian(2).putShort((short) value.length()).array());
+      data.writeBytes(utf16);
+      data.writeBytes(new byte[2]);
+    }
+    byte[] pool = chunk(0x0001, 28, littleEndian(20 + offsets.capacity() + data.size())
+        .putInt(strings.size()).putInt(0).putInt(0).putInt(28 + offsets.capacity()).putInt(0)
+        .put(offsets.array()).put(data.toByteArray()).array());
+    java.nio.ByteBuffer ids = littleEndian(4 * 6);
+    for (int id : new int[] {0, 0, 0x0101064e, 0, 0, 0x01010591}) ids.putInt(id);
+    byte[] resources = chunk(0x0180, 8, ids.array());
+    byte[] manifest = startElement(1, 2, 3, 0x03, 3);
+    byte[] application = startElement(4, 5, -1, 0x12, -1);
+    java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
+    for (byte[] part : List.of(pool, resources, manifest, application, endElement(4), endElement(1)))
+      body.writeBytes(part);
+    return chunk(0x0003, 8, body.toByteArray());
+  }
+
+  private static java.nio.ByteBuffer littleEndian(int size) {
+    return java.nio.ByteBuffer.allocate(size).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+  }
+
+  private static byte[] chunk(int type, int headerSize, byte[] body) {
+    return littleEndian(8 + body.length).putShort((short) type).putShort((short) headerSize)
+        .putInt(8 + body.length).put(body).array();
+  }
+
+  /** One element with one android-namespaced attribute row. */
+  private static byte[] startElement(int name, int attribute, int raw, int type, int value) {
+    return chunk(0x0102, 16, littleEndian(48).putInt(-1).putInt(-1).putInt(-1).putInt(name)
+        .putShort((short) 20).putShort((short) 20).putShort((short) 1).putShort((short) 0)
+        .putShort((short) 0).putShort((short) 0)
+        .putInt(0).putInt(attribute).putInt(raw).putShort((short) 8).put((byte) 0)
+        .put((byte) type).putInt(value).array());
+  }
+
+  private static byte[] endElement(int name) {
+    return chunk(0x0103, 16, littleEndian(16).putInt(-1).putInt(-1).putInt(-1).putInt(name).array());
+  }
+
 
   private static void verifyRootManifests(SessionHolder holder, SessionConfig config,
       Constructor<?> constructor, Method handle, Path output) throws Exception {
@@ -78,7 +178,9 @@ public class ReaJadxMetadataRegression {
     for (boolean assetFirst : List.of(true, false)) {
       String pkg = assetFirst ? "org.example.first" : "org.example.second";
       String root = "<manifest xmlns:a=\"http://schemas.android.com/apk/res/android\" package=\""
-          + pkg + "\" a:versionName=\"one &amp; beta\" a:versionCode=\"7\"/>";
+          + pkg + "\" a:versionName=\"one &amp; beta\" a:versionCode=\"7\">"
+          + "<uses-permission-sdk-23 a:name=\"org.example.SDK23\"/>"
+          + "<uses-permission-sdk-m a:name=\"org.example.SDKM\"/></manifest>";
       String asset = "<manifest package=\"org.example.asset\"/>";
       Path apk = output.resolve(assetFirst ? "manifest-asset-first.apk" : "manifest-root-first.apk");
       try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(apk))) {
@@ -97,6 +199,9 @@ public class ReaJadxMetadataRegression {
       JsonObject summary = call(handle, bridge, "get_app_info", new JsonObject());
       require(summary.get("package").getAsString().equals(pkg), "Asset or previous session supplied package facts");
       require(summary.get("version_name").getAsString().equals("one & beta"), "Wrong root version value");
+      require(summary.getAsJsonArray("permissions").equals(JsonParser.parseString(
+          "[\"org.example.SDK23\",\"org.example.SDKM\"]")),
+          "Root manifest SDK-gated permissions were omitted");
       String raw = holder.current().getResources().stream()
           .filter(resource -> resource.getOriginalName().equals("AndroidManifest.xml"))
           .findFirst().orElseThrow().loadContent().getText().getCodeStr();
@@ -184,6 +289,76 @@ public class ReaJadxMetadataRegression {
     System.out.println("RAW_CLASS_SELECTOR_REGRESSION_PASS nested=true metadata=true references=true");
   }
 
+  /** Source generation can populate def_pos; it must not change reference identity. */
+  private static JsonObject referenceIdentities(JsonObject references) {
+    JsonObject identity = references.deepCopy();
+    for (JsonElement item : identity.getAsJsonArray("items"))
+      item.getAsJsonObject().remove("def_pos");
+    return identity;
+  }
+
+  private static void verifyDefaultPackageSelectors(Method handle, Object bridge, JadxSession session)
+      throws Exception {
+    JavaClass selected = session.getClasses().stream().filter(cls -> cls.getRawName().equals("sb"))
+        .findFirst().orElseThrow(() -> new AssertionError("Default-package fixture class missing"));
+    String displayed = selected.getFullName();
+    require(!displayed.equals("sb"), "Default-package fixture must exercise a distinct JADX display name");
+    ProcessState state = selected.getClassNode().getState();
+    JsonObject rawClass = arguments("sb");
+    JsonObject displayedClass = arguments(displayed);
+    JsonObject rawMethod = methodArguments("sb", "readNative");
+    JsonObject displayedMethod = methodArguments(displayed, "readNative");
+    JsonObject summary = call(handle, bridge, "get_class_summary", rawClass);
+    require(summary.get("raw_name").getAsString().equals("sb")
+        && summary.get("full_name").getAsString().equals(displayed),
+        "Default-package summary mixed its raw and displayed identities");
+    JsonObject body = call(handle, bridge, "get_method_body", rawMethod);
+    require(body.get("class_name").getAsString().equals(displayed)
+        && body.get("dex_descriptor").getAsString().equals("(I)I")
+        && body.get("body").getAsString().isEmpty()
+        && body.getAsJsonArray("markers").equals(JsonParser.parseString("[\"native_method\"]")),
+        "Default-package native method lost its identity or parsed absence fact");
+    JsonObject classReferences = call(handle, bridge, "get_xrefs_to_class", rawClass);
+    require(classReferences.get("target").getAsString().equals(displayed),
+        "Default-package class references replaced display identity with the raw selector");
+    JsonObject methodReferences = call(handle, bridge, "get_xrefs_to_method", rawMethod);
+    require(methodReferences.get("target").getAsString().equals(displayed + ".readNative")
+        && methodReferences.get("total").getAsInt() == 1
+        && methodReferences.get("count").getAsInt() == 1,
+        "Default-package method reference did not retain its single caller");
+    JsonArray invokes = methodReferences.getAsJsonArray("items").get(0).getAsJsonObject()
+        .getAsJsonArray("direct_invokes");
+    require(invokes.size() == 1
+        && invokes.get(0).getAsJsonObject().get("source_raw_method_id").getAsString()
+            .equals("sb.callNative(I)I"),
+        "Default-package reference lost the caller's raw DEX identity");
+    require(selected.getClassNode().getState() == state,
+        "Default-package metadata or native absence lookup generated source");
+    for (boolean generateNeighbour : List.of(true, false)) {
+      require(summary.equals(call(handle, bridge, "get_class_summary", rawClass))
+          && summary.equals(call(handle, bridge, "get_class_summary", displayedClass)),
+          "Raw and displayed default-package selectors changed frozen class facts");
+      require(body.equals(call(handle, bridge, "get_method_body", rawMethod))
+          && body.equals(call(handle, bridge, "get_method_body", displayedMethod)),
+          "Raw and displayed default-package selectors changed native method facts");
+      require(classReferences.equals(call(handle, bridge, "get_xrefs_to_class", rawClass))
+          && classReferences.equals(call(handle, bridge, "get_xrefs_to_class", displayedClass)),
+          "Raw and displayed default-package selectors changed incoming class references");
+      require(referenceIdentities(methodReferences).equals(
+              referenceIdentities(call(handle, bridge, "get_xrefs_to_method", rawMethod)))
+          && referenceIdentities(methodReferences).equals(
+              referenceIdentities(call(handle, bridge, "get_xrefs_to_method", displayedMethod))),
+          "Raw and displayed default-package selectors changed incoming method identities");
+      if (generateNeighbour) {
+        JsonObject neighbour = call(handle, bridge, "get_method_body", methodArguments("sb", "callNative"));
+        require(neighbour.get("mode").getAsString().equals("java")
+            && neighbour.get("body").getAsString().contains("readNative("),
+            "Default-package neighbour did not generate its own native-calling Java body");
+      }
+    }
+    System.out.println("DEFAULT_PACKAGE_SELECTOR_REGRESSION_PASS raw=true display=true metadata=true method=true references=true frozen=true");
+  }
+
   private static void verifyClassPages(Method handle, Object bridge, List<String> inventory)
       throws Exception {
     int pages = 0;
@@ -233,7 +408,12 @@ public class ReaJadxMetadataRegression {
         Path.of(sources, "MixedInitialization.smali").toString(),
         Path.of(sources, "NativeOverload.smali").toString(),
         Path.of(sources, "AbstractShape.smali").toString(),
-        Path.of(sources, "MergedMethod.smali").toString())), "Initializer fixture assembly failed");
+        Path.of(sources, "MergedMethod.smali").toString(),
+        Path.of(sources, "DefaultPackageSelector.smali").toString(),
+        Path.of(sources, "ConstantFields.smali").toString(),
+        Path.of(sources, "NativeDeclarations.smali").toString(),
+        Path.of(sources, "RenamedMembers.smali").toString(),
+        Path.of(sources, "RenamedMembersInner.smali").toString())), "Initializer fixture assembly failed");
     Path apk = directory.resolve("initializers.apk");
     try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(apk))) {
       zip.putNextEntry(new ZipEntry("classes.dex"));
@@ -322,6 +502,161 @@ public class ReaJadxMetadataRegression {
     return value;
   }
 
+  private static List<String> nativeIdentities(JsonObject result) {
+    List<String> identities = new ArrayList<>();
+    int source = 0;
+    for (JsonElement value : result.getAsJsonArray("methods")) {
+      JsonObject method = value.getAsJsonObject();
+      require(method.get("source_index").getAsInt() == source++, "Native source ordinal changed");
+      require(method.get("class_index").getAsInt() >= 0 && method.get("method_index").getAsInt() >= 0,
+          "Native declaration lost DEX indices");
+      identities.add(method.get("class_name").getAsString() + "."
+          + method.get("method_name").getAsString() + method.get("descriptor").getAsString());
+    }
+    return identities;
+  }
+
+  private static JsonObject nativeArguments(Path apk) {
+    JsonObject args = new JsonObject();
+    args.addProperty("path", apk.toString());
+    return args;
+  }
+
+  private static int replaceFixtureBytes(byte[] bytes, byte[] before, byte[] after) {
+    require(before.length == after.length, "Fixture replacement changes lengths");
+    int replacements = 0;
+    for (int at = 0; at <= bytes.length - before.length; at++) {
+      if (Arrays.equals(bytes, at, at + before.length, before, 0, before.length)) {
+        System.arraycopy(after, 0, bytes, at, after.length);
+        replacements++;
+        at += before.length - 1;
+      }
+    }
+    return replacements;
+  }
+
+  private static void verifyNativeDeclarations(Method handle, Object bridge, JadxSession session, Path apk)
+      throws Exception {
+    JadxDecompiler decompiler = session.getClasses().get(0).getClassNode().root().getDecompiler();
+    IdentityHashMap<ClassNode, ProcessState> states = new IdentityHashMap<>();
+    for (ClassNode cls : decompiler.getRoot().getClasses()) states.put(cls, cls.getState());
+    JsonObject result = call(handle, bridge, "rea_native_declarations", nativeArguments(apk));
+    require(result.get("scope").getAsString().equals("apk-root-dex-declarations"), "Native scope changed");
+    require(result.getAsJsonObject("coverage").get("status").getAsString().equals("complete"),
+        "Source-built native inventory was incomplete: " + result);
+    Set<String> expected = Set.of(
+        "fixture.InitializationPolicy.originalNative()V",
+        "fixture.NativeOverload.zLastNative()V",
+        "fixture.NativeOverload.readBuffer(Ljava/nio/ByteBuffer;I)Ljava/lang/String;",
+        "sb.readNative(I)I",
+        "fixture.Native_原.read_原([B)J",
+        "fixture.Native_原.overloaded(I)I",
+        "fixture.Native_原.overloaded(Ljava/lang/String;)I",
+        "fixture.Native_原.do()V");
+    List<String> actual = nativeIdentities(result);
+    require(actual.size() == expected.size() && new HashSet<>(actual).equals(expected),
+        "Native facts differ from smali declarations: " + actual);
+    for (JsonElement value : result.getAsJsonArray("methods"))
+      require(value.getAsJsonObject().get("dex_entry").getAsString().equals("classes.dex"),
+          "Native DEX origin changed");
+    for (var state : states.entrySet()) require(state.getKey().getState() == state.getValue(),
+        "Native batch generated source: " + state.getKey().getRawName());
+    require(result.equals(call(handle, bridge, "rea_native_declarations", nativeArguments(apk))),
+        "Repeated native batch changed frozen facts");
+
+    byte[] dex;
+    try (ZipFile archive = new ZipFile(apk.toFile())) {
+      try (var input = archive.getInputStream(archive.getEntry("classes.dex"))) {
+        dex = input.readAllBytes();
+      }
+    }
+    Path duplicate = apk.resolveSibling("native-duplicate-classes.apk");
+    try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(duplicate))) {
+      for (String name : List.of("classes.dex", "classes2.dex")) {
+        zip.putNextEntry(new ZipEntry(name)); zip.write(dex); zip.closeEntry();
+      }
+    }
+    Gson json = new Gson();
+    JsonObject duplicated = json.toJsonTree(ReaJadxBridge.nativeDeclarations(duplicate)).getAsJsonObject();
+    require(duplicated.getAsJsonObject("coverage").get("status").getAsString().equals("complete"),
+        "Distinct DEX entries were confused with duplicate ZIP names");
+    List<String> doubled = nativeIdentities(duplicated);
+    require(doubled.size() == expected.size() * 2, "Duplicate DEX classes were selected away");
+    for (String identity : expected) require(Collections.frequency(doubled, identity) == 2,
+        "Duplicate declaration was deduplicated: " + identity);
+    boolean secondOrigin = false;
+    for (JsonElement value : duplicated.getAsJsonArray("methods"))
+      secondOrigin |= value.getAsJsonObject().get("dex_entry").getAsString().equals("classes2.dex");
+    require(secondOrigin, "Second DEX source identity was omitted");
+
+    Path partial = apk.resolveSibling("native-malformed-second-dex.apk");
+    try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(partial))) {
+      zip.putNextEntry(new ZipEntry("classes.dex")); zip.write(dex); zip.closeEntry();
+      zip.putNextEntry(new ZipEntry("classes2.dex")); zip.write(new byte[] { 1, 2, 3 }); zip.closeEntry();
+    }
+    JsonObject malformed = json.toJsonTree(ReaJadxBridge.nativeDeclarations(partial)).getAsJsonObject();
+    require(malformed.getAsJsonObject("coverage").get("status").getAsString().equals("partial")
+        && malformed.getAsJsonObject("coverage").get("examined_dex_entries").getAsInt() == 1
+        && nativeIdentities(malformed).equals(actual) && !malformed.getAsJsonArray("unknowns").isEmpty(),
+        "Malformed later DEX erased facts or claimed complete coverage");
+    Path duplicateName = apk.resolveSibling("native-duplicate-zip-name.apk");
+    try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(duplicateName))) {
+      for (String name : List.of("classes1.dex", "classes2.dex")) {
+        zip.putNextEntry(new ZipEntry(name)); zip.write(dex); zip.closeEntry();
+      }
+    }
+    byte[] duplicateBytes = Files.readAllBytes(duplicateName);
+    require(replaceFixtureBytes(duplicateBytes, "classes2.dex".getBytes(StandardCharsets.UTF_8),
+        "classes1.dex".getBytes(StandardCharsets.UTF_8)) == 2, "ZIP fixture names were not patched exactly");
+    Files.write(duplicateName, duplicateBytes);
+    JsonObject duplicateNames = json.toJsonTree(ReaJadxBridge.nativeDeclarations(duplicateName)).getAsJsonObject();
+    require(duplicateNames.getAsJsonObject("coverage").get("status").getAsString().equals("partial")
+        && duplicateNames.getAsJsonObject("coverage").get("dex_entries").getAsInt() == 2
+        && duplicateNames.getAsJsonArray("methods").isEmpty()
+        && duplicateNames.getAsJsonArray("unknowns").toString().contains("Duplicate root DEX"),
+        "Duplicate ZIP names acquired invented member identities");
+
+    Path wrongCrc = apk.resolveSibling("native-wrong-crc.apk");
+    try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(wrongCrc))) {
+      zip.putNextEntry(new ZipEntry("classes.dex")); zip.write(dex); zip.closeEntry();
+    }
+    byte[] wrongCrcBytes = Files.readAllBytes(wrongCrc);
+    int changedCrc = 0;
+    for (int at = 0; at < wrongCrcBytes.length - 20; at++) {
+      if (wrongCrcBytes[at] == 'P' && wrongCrcBytes[at + 1] == 'K'
+          && wrongCrcBytes[at + 2] == 1 && wrongCrcBytes[at + 3] == 2) {
+        wrongCrcBytes[at + 16] ^= 1; changedCrc++;
+      }
+    }
+    require(changedCrc == 1, "CRC fixture did not alter exactly one central directory record");
+    Files.write(wrongCrc, wrongCrcBytes);
+    JsonObject wrongCrcResult = json.toJsonTree(ReaJadxBridge.nativeDeclarations(wrongCrc)).getAsJsonObject();
+    require(wrongCrcResult.getAsJsonObject("coverage").get("status").getAsString().equals("partial")
+        && wrongCrcResult.getAsJsonArray("methods").isEmpty()
+        && wrongCrcResult.getAsJsonArray("unknowns").toString().contains("CRC32"),
+        "A ZIP CRC mismatch acquired native declaration facts");
+
+    // The bundled decoder would allocate the declared UTF-16 char count first.
+    // Keep this bad declaration small enough for a failing guard regression to
+    // stay bounded; the producing diagnostic proves admission precedes decoding.
+    DexBackedDexFile original = new DexBackedDexFile(Opcodes.getDefault(), dex);
+    String firstClass = original.getClassSection().get(0).getType();
+    int stringIndex = original.getStringSection().indexOf(firstClass);
+    int stringOffset = original.getBuffer().readSmallUint(original.getStringSection().getOffset(stringIndex));
+    byte[] oversized = dex.clone();
+    System.arraycopy(new byte[] { (byte) 0xc0, (byte) 0x84, 0x3d }, 0, oversized, stringOffset, 3); // 1,000,000
+    Path oversizedString = apk.resolveSibling("native-oversized-string.apk");
+    try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(oversizedString))) {
+      zip.putNextEntry(new ZipEntry("classes.dex")); zip.write(oversized); zip.closeEntry();
+    }
+    JsonObject oversizedResult = json.toJsonTree(ReaJadxBridge.nativeDeclarations(oversizedString)).getAsJsonObject();
+    require(oversizedResult.getAsJsonObject("coverage").get("status").getAsString().equals("partial")
+        && oversizedResult.getAsJsonArray("unknowns").toString().contains("native decoding allowance"),
+        "Oversized declared DEX string was not rejected at admission");
+    Files.delete(duplicate); Files.delete(partial); Files.delete(duplicateName); Files.delete(oversizedString); Files.delete(wrongCrc);
+    System.out.println("NATIVE_DECLARATION_REGRESSION_PASS raw=true native_only=true unicode=true overloads=true duplicate_dex=true partial=true no_source=true");
+  }
+
   private static void verifyInitializers(SessionHolder holder, SessionConfig config,
       Constructor<?> constructor, Method handle, Path apk) throws Exception {
     BuildersKt.runBlocking(EmptyCoroutineContext.INSTANCE,
@@ -329,6 +664,8 @@ public class ReaJadxMetadataRegression {
     BuildersKt.runBlocking(EmptyCoroutineContext.INSTANCE,
         (scope, continuation) -> holder.load(apk.toString(), config, continuation));
     Object bridge = constructor.newInstance(holder);
+    verifyNativeDeclarations(handle, bridge, holder.current(), apk);
+    verifyDefaultPackageSelectors(handle, bridge, holder.current());
     String[] classNames = { "fixture.InitializationPolicy", "fixture.MixedInitialization" };
     String[][] witnesses = {
         { "declared-policy", "->singletonList", "->POLICY:Ljava/util/List;" },
@@ -362,7 +699,10 @@ public class ReaJadxMetadataRegression {
     require(ordinary.get("mode").getAsString().equals("java") && ordinary.get("body").getAsString().contains("COUNT"),
         "Ordinary executable method no longer produces Java");
     verifyNoBodyMethods(handle, bridge, holder.current());
+    verifyDisassemblyGenerationFailure(handle, bridge, holder.current());
     verifyMergedMethods(handle, bridge);
+    verifyConstantFields(handle, bridge, holder.current());
+    verifyRawMemberNames(handle, bridge);
 
     SessionConfig bounded = new SessionConfig(96, 0, 90000L, 1, List.of(), List.of(), 64, ResourceMode.FULL);
     BuildersKt.runBlocking(EmptyCoroutineContext.INSTANCE,
@@ -388,6 +728,96 @@ public class ReaJadxMetadataRegression {
         && missing.getAsJsonArray("markers").contains(new JsonPrimitive("java_body_unavailable")),
         "Missing Java was interpreted after applying source limits: " + missing);
     System.out.println("INITIALIZER_REGRESSION_PASS folded=2 bounded=true");
+  }
+
+  private static void verifyConstantFields(Method handle, Object bridge, JadxSession session) throws Exception {
+    Map<String, String> encoded = Map.of(
+        "ENABLED", "{\"type\":\"boolean\",\"value\":true}",
+        "LETTER", "{\"type\":\"char\",\"value\":65}",
+        "MAX_SIZE", "{\"type\":\"int\",\"value\":1024}",
+        "PACKET_FLAG_CONFIG", "{\"type\":\"long\",\"value\":\"-9223372036854775808\"}",
+        "RATIO", "{\"type\":\"double\",\"value\":\"0.5\"}",
+        "SCALE", "{\"type\":\"float\",\"value\":\"1.5\"}",
+        "SMALL", "{\"type\":\"byte\",\"value\":127}",
+        "TAG", "{\"type\":\"string\",\"value\":\"flags\"}",
+        "WIDE", "{\"type\":\"short\",\"value\":32767}");
+    // Null, unencoded, non-final and instance fields have no reportable DEX static value.
+    Set<String> absent = Set.of("NOTHING", "INSTANCE", "COUNTER", "width");
+    JsonObject valuesInput = arguments("fixture.ConstantFields");
+    valuesInput.addProperty("dex_static_values", true);
+    JsonObject summary = call(handle, bridge, "get_class_summary", valuesInput);
+    ClassNode node = session.getClasses().stream()
+        .filter(cls -> cls.getFullName().equals("fixture.ConstantFields"))
+        .findFirst().orElseThrow().getClassNode();
+    require(node.getState() == ProcessState.NOT_LOADED, "Constant field metadata generated source");
+    JsonArray fields = summary.getAsJsonArray("fields");
+    require(fields.size() == encoded.size() + absent.size(), "Constant field inventory changed: " + fields);
+    for (JsonElement entry : fields) {
+      JsonObject field = entry.getAsJsonObject();
+      String name = field.get("name").getAsString();
+      require(encoded.containsKey(name) || absent.contains(name), "Unexpected field: " + name);
+      JsonElement value = field.get("dex_static_value");
+      require(encoded.containsKey(name) ? JsonParser.parseString(encoded.get(name)).equals(value) : value == null,
+          "Wrong DEX static value for " + name + ": " + field);
+    }
+    // Fields assigned only by <clinit> carry a JADX null placeholder, not a DEX value.
+    for (String[] assigned : new String[][] {
+        { "fixture.InitializationPolicy", "POLICY" }, { "fixture.MixedInitialization", "LABEL" } }) {
+      JsonObject assignedInput = arguments(assigned[0]);
+      assignedInput.addProperty("dex_static_values", true);
+      for (JsonElement entry : call(handle, bridge, "get_class_summary", assignedInput)
+          .getAsJsonArray("fields")) {
+        JsonObject field = entry.getAsJsonObject();
+        if (field.get("name").getAsString().equals(assigned[1]))
+          require(!field.has("dex_static_value"), "Initializer-assigned field reported a value: " + field);
+      }
+    }
+    require(summary.equals(call(handle, bridge, "get_class_summary", valuesInput)),
+        "Repeated constant field summary changed");
+    // Method and reference lookups omit the flag and must get the member-only summary.
+    JsonObject members = call(handle, bridge, "get_class_summary", arguments("fixture.ConstantFields"));
+    JsonObject stripped = summary.deepCopy();
+    for (JsonElement entry : stripped.getAsJsonArray("fields")) entry.getAsJsonObject().remove("dex_static_value");
+    require(members.equals(stripped), "Default class summary carried DEX static values: " + members);
+    JsonObject explicitOff = arguments("fixture.ConstantFields");
+    explicitOff.addProperty("dex_static_values", false);
+    require(members.equals(call(handle, bridge, "get_class_summary", explicitOff)),
+        "dex_static_values=false returned DEX static values");
+    JsonObject malformed = arguments("fixture.ConstantFields");
+    malformed.addProperty("dex_static_values", "true");
+    boolean refused = false;
+    try { call(handle, bridge, "get_class_summary", malformed); }
+    catch (AssertionError failure) { refused = failure.getCause() instanceof IllegalArgumentException; }
+    require(refused, "Non-boolean dex_static_values was accepted");
+    System.out.println("CONSTANT_FIELD_REGRESSION_PASS encoded=" + encoded.size() + " absent=" + absent.size()
+        + " opt_in=true");
+  }
+
+  /** Mapping lookups need raw DEX names and types even where JADX displays an alias. */
+  private static void verifyRawMemberNames(Method handle, Object bridge) throws Exception {
+    JsonObject summary = call(handle, bridge, "get_class_summary", arguments("fixture.RenamedMembers"));
+    Map<String, List<JsonObject>> methods = new HashMap<>();
+    for (JsonElement entry : summary.getAsJsonArray("methods")) {
+      JsonObject method = entry.getAsJsonObject();
+      methods.computeIfAbsent(method.get("raw_name").getAsString(), ignored -> new ArrayList<>()).add(method);
+    }
+    List<JsonObject> reserved = methods.getOrDefault("do", List.of());
+    require(reserved.size() == 1 && !reserved.get(0).get("name").getAsString().equals("do")
+        && reserved.get(0).get("dex_descriptor").getAsString().equals("()V"),
+        "Reserved-word method lost its raw DEX name: " + summary);
+    Set<String> overloads = new HashSet<>();
+    for (JsonObject method : methods.getOrDefault("a", List.of()))
+      overloads.add(method.get("dex_descriptor").getAsString());
+    require(overloads.equals(Set.of("(I)V", "(Ljava/lang/String;)V")),
+        "Same-name overloads lost their raw identity: " + summary);
+    JsonArray fields = summary.getAsJsonArray("fields");
+    require(fields.size() == 1, "Renamed field inventory changed: " + fields);
+    JsonObject field = fields.get(0).getAsJsonObject();
+    require(field.get("raw_name").getAsString().equals("if") && !field.get("name").getAsString().equals("if")
+        && field.get("dex_type").getAsString().equals("I"), "Reserved-word field lost its raw DEX identity: " + field);
+    require(summary.getAsJsonArray("inner_class_raw_names").equals(JsonParser.parseString("[\"fixture.RenamedMembers$a\"]"))
+        && summary.getAsJsonArray("inner_classes").size() == 1, "Inner class raw name was not reported: " + summary);
+    System.out.println("RAW_MEMBER_NAME_REGRESSION_PASS reserved=true overloads=2 inner=true");
   }
 
   private static void verifyMergedMethods(Method handle, Object bridge) throws Exception {
@@ -428,17 +858,67 @@ public class ReaJadxMetadataRegression {
         select.invoke(null, new JadxSession.MethodSmali("highlightText", blocks, true, null), "highlightText()V");
         throw new AssertionError("Unproven disassembly identity or completeness was accepted");
       } catch (InvocationTargetException failure) {
-        require(failure.getCause() instanceof IllegalArgumentException,
-            "Disassembly uncertainty lost its failure reason");
+        require(failure.getCause().getClass().getSimpleName().equals("MethodDisassemblyUnavailable")
+            && failure.getCause().getMessage().contains("highlightText()V"),
+            "Disassembly uncertainty lost its method-scoped reason");
       }
     }
-    String reason = "smali generation failed: controlled timeout";
+    for (String reason : Arrays.asList(null, "class has no smali (no code)",
+        "smali generation failed: controlled timeout")) {
+      try {
+        select.invoke(null, new JadxSession.MethodSmali("highlightText", List.of(), false, reason), "highlightText()V");
+        throw new AssertionError("Missing disassembly was accepted as a body");
+      } catch (InvocationTargetException failure) {
+        require(failure.getCause().getClass().getSimpleName().equals("MethodDisassemblyUnavailable")
+            && failure.getCause().getMessage().contains("highlightText()V")
+            && (reason == null || failure.getCause().getMessage().contains(reason)),
+            "Missing disassembly lost its method-scoped reason: " + failure.getCause());
+      }
+    }
+    Thread.currentThread().interrupt();
     try {
-      select.invoke(null, new JadxSession.MethodSmali("highlightText", List.of(), false, reason), "highlightText()V");
-      throw new AssertionError("Disassembly generation failure was accepted");
+      select.invoke(null, new JadxSession.MethodSmali("highlightText", List.of(), false, "smali generation failed: null"),
+          "highlightText()V");
+      throw new AssertionError("Interrupted disassembly returned a body");
     } catch (InvocationTargetException failure) {
-      require(failure.getCause() instanceof IllegalArgumentException
-          && failure.getCause().getMessage().contains(reason), "Original disassembly failure reason was lost");
+      require(failure.getCause().getClass() == IllegalArgumentException.class
+          && Thread.currentThread().isInterrupted(), "Disassembly consumed the caller interruption");
+    } finally {
+      Thread.interrupted();
+    }
+  }
+
+  private static void verifyDisassemblyGenerationFailure(Method handle, Object bridge, JadxSession session)
+      throws Exception {
+    JsonObject input = methodArguments("fixture.MixedInitialization", "<clinit>");
+    JsonObject complete = call(handle, bridge, "get_method_body", input);
+    Field pool = JadxSession.class.getDeclaredField("decompilePool");
+    pool.setAccessible(true);
+    ExecutorService rejected = Executors.newSingleThreadExecutor();
+    rejected.shutdown();
+    Object original = pool.get(session);
+    pool.set(session, rejected);
+    try {
+      JsonObject unavailable = call(handle, bridge, "get_method_body", input);
+      require(unavailable.get("mode").getAsString().equals("unavailable")
+          && !unavailable.has("body") && !unavailable.has("fell_back") && !unavailable.has("markers"),
+          "Rejected disassembly work did not report an unavailable body: " + unavailable);
+      require(unavailable.get("body_unavailable_reason").getAsString().contains("smali generation failed"),
+          "JADX generation failure reason was discarded: " + unavailable);
+      for (String key : List.of("class_name", "method_name", "full_name", "dex_descriptor",
+          "overload_index", "overload_count")) {
+        require(complete.get(key).equals(unavailable.get(key)), "Disassembly failure changed " + key);
+      }
+      try {
+        call(handle, bridge, "get_method_body", methodArguments("fixture.MixedInitialization", "touch"));
+        throw new AssertionError("A Java generation error was classified as unavailable disassembly");
+      } catch (AssertionError failure) {
+        require(failure.getCause() instanceof IllegalArgumentException
+            && failure.getCause().getMessage().startsWith("// ERROR:"),
+            "Java generation did not keep its provider error: " + failure);
+      }
+    } finally {
+      pool.set(session, original);
     }
   }
 
@@ -562,6 +1042,21 @@ public class ReaJadxMetadataRegression {
     SessionConfig config = new SessionConfig(1048576, 0, 90000L, 1, List.of(), List.of(), 64, ResourceMode.FULL);
     SessionHolder holder = new SessionHolder(config);
     try {
+      Class<?> bridgeType = Class.forName("ReaJadxBridge");
+      Constructor<?> constructor = bridgeType.getDeclaredConstructor(SessionHolder.class);
+      constructor.setAccessible(true);
+      Object bridge = constructor.newInstance(holder);
+      Method handle = bridgeType.getDeclaredMethod("handle", String.class, kotlinx.serialization.json.JsonObject.class);
+      handle.setAccessible(true);
+      Path initializerApk = initializerFixture(args[1], args[2]);
+      require(holder.current() == null, "Cold native inventory unexpectedly has a loaded APK");
+      JsonObject coldNative = call(handle, bridge, "rea_native_declarations", nativeArguments(initializerApk));
+      require(holder.current() == null, "Native declaration inventory loaded/decompiled the APK");
+      require(coldNative.getAsJsonObject("coverage").get("status").getAsString().equals("complete")
+          && nativeIdentities(coldNative).size() == 8
+          && nativeIdentities(coldNative).contains("fixture.Native_原.do()V"),
+          "Cold native inventory lost raw source declarations");
+      System.out.println("NATIVE_DECLARATION_COLD_PASS no_apk_load=true raw=true");
       BuildersKt.runBlocking(EmptyCoroutineContext.INSTANCE,
           (scope, continuation) -> holder.load(args[0], config, continuation));
       JadxSession session = holder.current();
@@ -572,12 +1067,6 @@ public class ReaJadxMetadataRegression {
         require(node.getState() == ProcessState.NOT_LOADED, "Fixture unexpectedly generated source");
         states.put(node, node.getState());
       }
-      Class<?> bridgeType = Class.forName("ReaJadxBridge");
-      Constructor<?> constructor = bridgeType.getDeclaredConstructor(SessionHolder.class);
-      constructor.setAccessible(true);
-      Object bridge = constructor.newInstance(holder);
-      Method handle = bridgeType.getDeclaredMethod("handle", String.class, kotlinx.serialization.json.JsonObject.class);
-      handle.setAccessible(true);
       verifyClassPages(handle, bridge, session.getClassFqns());
       verifyRawClassSelectors(handle, bridge, decompiler);
       JsonObject apiArgs = arguments("io.appium.android.apis.ApiDemos");
@@ -640,7 +1129,7 @@ public class ReaJadxMetadataRegression {
       require(apiSummary.equals(call(handle, bridge, "get_class_summary", apiArgs)), "Unrelated frozen summary changed");
       System.out.println("METADATA_REGRESSION_PASS classes=" + states.size() + " overloads=" + signatures.size()
           + " reference_counts=" + referenceCounts);
-      verifyInitializers(holder, config, constructor, handle, initializerFixture(args[1], args[2]));
+      verifyInitializers(holder, config, constructor, handle, initializerApk);
       verifyDirectInvokes(holder, config, constructor, handle,
           Path.of(args[3]), Path.of(args[2]));
       verifyRootManifests(holder, config, constructor, handle, Path.of(args[2]));

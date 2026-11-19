@@ -1,12 +1,19 @@
 import {
+  malformedInput,
+  parseFailureFromCause,
+  truncatedInput,
+  unsupportedInput,
+} from "../domain/parseFailure.js";
+import type { ManagedMethodImplementationFlags } from "./ManagedMethodDefinitionRows.js";
+import {
   admitManagedProjection,
   type ManagedDecodeBudget,
-} from "./ManagedDecodeBudget.js";
-import type { ManagedPeLayout } from "./ManagedPeReader.js";
+} from "../domain/managed/managedDecodeBudget.js";
+import type { ManagedPeLayout } from "../domain/managed/managedPeReader.js";
 import type {
   ManagedMethodBody,
   ParsedTokenInstruction,
-} from "./ManagedMemberInspectorCore.js";
+} from "../domain/managed/managedMemberInspectorCore.js";
 import {
   decodeInstructions,
   parseExceptionRegions,
@@ -17,15 +24,18 @@ import {
   metadataTokenFact,
   type MetadataTokenFact,
   readMetadataBlob,
-  sha256Bytes,
-} from "./ManagedMetadataHeaps.js";
+} from "../domain/managed/managedMetadataHeaps.js";
 import {
-  validateLocalSignature,
+  readLocalSignatureFacts,
   isParsedTokenInstruction,
-} from "./ManagedMemberInspectorCore.js";
-import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
-import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
+} from "../domain/managed/managedMemberInspectorCore.js";
+import {
+  ManagedHeapAmbiguityFailure,
+  ManagedReaderFailure,
+} from "../domain/managed/managedReaderFailure.js";
+import type { ManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const EMPTY_CATCH_TOKENS: ReadonlyMap<number, MetadataTokenFact> = new Map();
 
@@ -33,10 +43,16 @@ const bodyStatus = (
   decodedIssue: string | null,
   truncatedInstructions: number,
   exceptionRegions: ReturnType<typeof parseExceptionRegions> | null,
+  localSigFailure: "malformed" | "partial" | null,
 ): "malformed" | "partial" | "present" => {
-  if (decodedIssue !== null || exceptionRegions?.status === "malformed")
+  if (
+    decodedIssue !== null ||
+    exceptionRegions?.status === "malformed" ||
+    localSigFailure === "malformed"
+  )
     return "malformed";
-  if (truncatedInstructions > 0) return "partial";
+  if (truncatedInstructions > 0 || localSigFailure === "partial")
+    return "partial";
   return "present";
 };
 
@@ -63,16 +79,26 @@ const readMethodBodyHeader = (
       ilSize: first >> 2,
       localSig: 0,
     };
-  if ((first & 3) !== 3) throw new RangeError("Unsupported method body header");
+  if ((first & 3) !== 3)
+    throw unsupportedInput("cil-method-body", "Unsupported method body header");
   if (offset > bytes.length - 12)
-    throw new RangeError("Fat method body header leaves artifact");
+    throw truncatedInput(
+      "cil-method-body",
+      "Fat method body header leaves artifact",
+    );
   const flagsAndSize = bytes.readUInt16LE(offset);
   const headerDwords = flagsAndSize >>> 12;
   if (headerDwords < 3)
-    throw new RangeError("Fat method body header is smaller than 12 bytes");
+    throw malformedInput(
+      "cil-method-body",
+      "Fat method body header is smaller than 12 bytes",
+    );
   const size = headerDwords * 4;
   if (offset > bytes.length - size)
-    throw new RangeError("Method body header leaves artifact");
+    throw truncatedInput(
+      "cil-method-body",
+      "Method body header leaves artifact",
+    );
   return {
     format: "fat",
     size,
@@ -84,10 +110,7 @@ const readMethodBodyHeader = (
 };
 
 export interface MethodBodyContext {
-  readonly implementation: {
-    readonly implFlags: number;
-    readonly flags: number;
-  };
+  readonly implementation: ManagedMethodImplementationFlags;
   readonly budget: ManagedDecodeBudget;
   readonly metadataLayout: ManagedMetadataLayout;
   readonly methodToken: string;
@@ -122,11 +145,13 @@ export const methodBody = (
       issues,
     };
   const native =
-    (context.implementation.implFlags & 7) !== 0 ||
-    (context.implementation.flags & 0x2000) !== 0;
+    context.implementation.codeType !== "il" ||
+    context.implementation.managedKind !== "managed" ||
+    context.implementation.pinvokeFlag ||
+    context.implementation.internalCall;
   if (native) {
     const issue =
-      "CIL decoding is unavailable for native, runtime, unmanaged, or P/Invoke implementations";
+      "CIL decoding is unavailable for native, runtime, InternalCall, unmanaged, or P/Invoke implementations";
     return {
       body: emptyMethodBody(rva, "partial", issue),
       tokenInstructions: [],
@@ -136,17 +161,22 @@ export const methodBody = (
     };
   }
   try {
-    const offset = pe.rvaToOffset(rva, 1, "method.body");
-    const methodExtent = pe.rvaAvailableBytes(rva, "method.body");
+    const { offset, available: methodExtent } = pe.rvaFileRange(
+      rva,
+      "method.body",
+    );
     const header = readMethodBodyHeader(bytes, offset);
     if (
       header.size > methodExtent ||
       header.ilSize > methodExtent - header.size
     )
-      throw new RangeError("Method body leaves file-backed PE section data");
+      throw malformedInput(
+        "cil-method-body",
+        "Method body leaves file-backed PE section data",
+      );
     const ilOffset = offset + header.size;
     if (ilOffset > bytes.length - header.ilSize)
-      throw new RangeError("Method IL bytes leave artifact");
+      throw truncatedInput("cil-method-body", "Method IL bytes leave artifact");
     const il = bytes.subarray(ilOffset, ilOffset + header.ilSize);
     // Bound the actual instruction records before allocating them. One raw
     // byte is only an upper bound on count; wide operands do not create a
@@ -196,6 +226,7 @@ export const methodBody = (
             decoded.instructionStarts,
           )
         : null;
+    let localVarSignature: ManagedMethodBody["local_var_signature"] = null;
     let localSigIssue: string | null = null;
     let localSigFailure: "malformed" | "partial" | null = null;
     const localSignature =
@@ -225,9 +256,8 @@ export const methodBody = (
             bytes,
             context.metadataLayout,
             cursor.readIndex(context.metadataLayout.blobIndexSize),
-            context.metadataLayout.blob?.size ?? 0,
           );
-          const signatureIssue = validateLocalSignature(
+          const signatureFacts = readLocalSignatureFacts(
             context.metadataLayout,
             blob,
             {
@@ -236,7 +266,9 @@ export const methodBody = (
             },
             context.budget,
           );
-          if (signatureIssue !== null) {
+          if (signatureFacts.ok) localVarSignature = signatureFacts.value;
+          else {
+            const signatureIssue = signatureFacts.error;
             localSigIssue = signatureIssue.detail;
             localSigFailure =
               signatureIssue.code === "unsupported-signature"
@@ -252,14 +284,31 @@ export const methodBody = (
             throw cause;
           if (!(cause instanceof ManagedReaderFailure)) throw cause;
           localSigIssue = cause.issue.detail;
-          localSigFailure = "malformed";
-          issues.push({ ...cause.issue, scope: signatureScope });
+          if (cause instanceof ManagedHeapAmbiguityFailure)
+            localSigFailure = "partial";
+          else {
+            localSigFailure = "malformed";
+            issues.push({ ...cause.issue, scope: signatureScope });
+          }
         }
       }
     }
-    const status =
-      localSigFailure ??
-      bodyStatus(decoded.issue, decoded.truncated, exceptionRegions);
+    const status = bodyStatus(
+      decoded.issue,
+      decoded.truncated,
+      exceptionRegions,
+      localSigFailure,
+    );
+    // Independent decoding failures must survive together. Present malformed
+    // instruction/section facts before local-signature limitations.
+    const bodyIssues = [
+      decoded.issue,
+      exceptionRegions?.status === "malformed" ? exceptionRegions.issue : null,
+      localSigIssue,
+      decoded.truncated > 0
+        ? "Instruction decoding stopped before the end of the method body"
+        : null,
+    ].filter((issue): issue is string => issue !== null);
     const body: ManagedMethodBody = {
       status,
       header_format: header.format,
@@ -268,25 +317,17 @@ export const methodBody = (
       max_stack: header.maxStack,
       init_locals: (header.flags & 0x10) !== 0,
       local_var_sig_token: localSignature?.token ?? null,
+      local_var_signature: localVarSignature,
       il_size: header.ilSize,
-      il_sha256: sha256Bytes(il),
-      normalized_il_sha256:
-        status === "present" ? sha256Bytes(normalized) : null,
+      il_sha256: sha256Hex(il),
+      normalized_il_sha256: status === "present" ? sha256Hex(normalized) : null,
       instruction_count: decoded.count,
       decoded_instruction_count: decoded.parsed.length,
       truncated_instructions: decoded.truncated,
       opcode_counts: opcodeCounts,
       anchors,
       exception_regions: exceptionRegions?.regions ?? [],
-      issue:
-        localSigIssue ??
-        decoded.issue ??
-        (exceptionRegions?.status === "malformed"
-          ? exceptionRegions.issue
-          : null) ??
-        (decoded.truncated > 0
-          ? "Instruction decoding stopped before the end of the method body"
-          : null),
+      issue: bodyIssues.length > 0 ? bodyIssues.join("; ") : null,
     };
     const admittedBody = admitManagedProjection(body, context.budget);
     const tokenInstructions: ParsedTokenInstruction[] = [];
@@ -319,7 +360,7 @@ export const methodBody = (
       throw cause;
     if (
       !(cause instanceof ManagedReaderFailure) &&
-      !(cause instanceof RangeError)
+      parseFailureFromCause(cause) === undefined
     )
       throw cause;
     return {
@@ -351,6 +392,7 @@ const emptyMethodBody = (
   max_stack: null,
   init_locals: null,
   local_var_sig_token: null,
+  local_var_signature: null,
   il_size: 0,
   il_sha256: null,
   normalized_il_sha256: null,

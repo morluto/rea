@@ -1,12 +1,14 @@
+import { ResponseBodyCleanup } from "../../providers/ResponseBodyCleanup.js";
 import { fileURLToPath } from "node:url";
 
+import { mediaTypeEssence } from "../../domain/analysisView/recordedMediaType.js";
 import {
   ArtifactResourceRetryFailure,
   type ArtifactResourceScope,
-} from "../../artifacts/ArtifactResourceScope.js";
+} from "../../resources/index.js";
 import { STATE_INTAKE_LIMIT_BYTES } from "../../application/environment/environmentStateDocument.js";
-import { mediaTypeEssence } from "../../domain/analysisView/webNetworkRouteTemplates.js";
 import { isExactJsonNumber } from "../../domain/exactJsonNumber.js";
+import { paddedBase64ByteLength } from "../../domain/paddedBase64.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { safeParseJson } from "../../domain/safeJson.js";
 import {
@@ -17,6 +19,8 @@ import {
   RegularFileCleanupFailure,
   withOwnedRegularFile,
 } from "../../filesystem/OwnedRegularFile.js";
+import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /** Why a named file or download could not be read, or a call was cancelled: a category naming neither the uri nor the content. */
 export type IntakeFailure =
@@ -52,13 +56,13 @@ export const CANCELLED: RpcError = {
 };
 
 /** An https state download must finish within this time. */
-export const STATE_FETCH_TIMEOUT_MS = 30_000;
+const STATE_FETCH_TIMEOUT_MS = 30_000;
 
 /** Fetches one https state document; injectable so tests make no external requests. */
 export type StateFetcher = (url: URL, signal: AbortSignal) => Promise<Response>;
 
 /** Redirects are refused so a download never leaves the https origin the caller named. */
-export const fetchStateDocument: StateFetcher = (url, signal) =>
+const fetchStateDocument: StateFetcher = (url, signal) =>
   fetch(url, { signal, redirect: "error" });
 
 /** How `data/add` reaches documents a uri names; injectable so tests make no external requests and need not wait. */
@@ -73,17 +77,16 @@ export const DEFAULT_STATE_INTAKE: StateIntake = {
   timeoutMs: STATE_FETCH_TIMEOUT_MS,
 };
 
-/** Stands in for a value that JSON parsing would change: a number without an exact native value, or a `__proto__` member. */
+/** Stands in for a number that native JSON parsing or serialization would change. */
 const NOT_EXACT_JSON = Symbol("not exact JSON");
 
 /** Mark values native parsing would change, so validation refuses them rather than storing an altered value. */
 export const exactJsonReviver = (
-  key: string,
+  _key: string,
   value: unknown,
   context?: { readonly source?: string },
 ): unknown =>
-  key === "__proto__" ||
-  (typeof value === "number" && !isExactJsonNumber(value, context?.source))
+  typeof value === "number" && !isExactJsonNumber(value, context?.source)
     ? NOT_EXACT_JSON
     : value;
 
@@ -124,17 +127,15 @@ const fileFailure = (cause: unknown): IntakeFailure =>
     ? FILE_FAILURES.get(String(cause.code))
     : undefined) ?? "read-failed";
 
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-const BASE64 =
-  /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u;
+const MAX_INLINE_BASE64_CHARACTERS =
+  Math.ceil(STATE_INTAKE_LIMIT_BYTES / 3) * 4;
 
 /** Parse loaded bytes as UTF-8 JSON, marking values parsing would change; the content is never echoed. */
 const parseDocumentBytes = (bytes: Uint8Array): Result<unknown, RpcError> => {
   let text: string;
   try {
-    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    // A user-saved JSON document may carry a BOM signature (RFC 8259 8.1).
+    text = decodeStrictUtf8(bytes, "strip-signature");
   } catch {
     return err(invalidParams("the file is not UTF-8 text"));
   }
@@ -175,7 +176,7 @@ const readStateFile = async (
                 handle: owner,
               }),
           },
-          (handle) =>
+          ({ handle }) =>
             readStableFileBytes(handle, path, STATE_INTAKE_LIMIT_BYTES, {
               symlinks: "follow",
             }),
@@ -228,6 +229,7 @@ const downloadBounds = (
 const readCapped = async (
   body: ReadableStream<Uint8Array> | null,
   bounds: DownloadBounds,
+  responses: ResponseBodyCleanup,
 ): Promise<Result<Buffer, RpcError>> => {
   if (body === null) return ok(Buffer.alloc(0));
   const reader = body.getReader();
@@ -240,13 +242,15 @@ const readCapped = async (
       if (done) return ok(Buffer.concat(chunks, total));
       total += value.byteLength;
       if (total > STATE_INTAKE_LIMIT_BYTES) {
-        await reader.cancel().catch(() => undefined);
+        // A tee's sibling can be caller-owned; cancelling this branch must not
+        // delay the refusal until that sibling finishes.
+        responses.cancel(() => reader.cancel());
         return err(TOO_LARGE);
       }
       chunks.push(value);
     }
   } catch {
-    void reader.cancel().catch(() => undefined);
+    responses.cancel(() => reader.cancel());
     return err(fetchFailed(bounds.failure()));
   }
 };
@@ -256,6 +260,7 @@ const downloadState = async (
   url: URL,
   intake: StateIntake,
   cancel: AbortSignal,
+  responses: ResponseBodyCleanup,
 ): Promise<Result<Buffer, RpcError>> => {
   const bounds = downloadBounds(intake.timeoutMs, cancel);
   const fetching = Promise.resolve().then(() =>
@@ -268,7 +273,9 @@ const downloadState = async (
     // A response that arrives after the download ended is released unread.
     void fetching
       .then(
-        (late) => late.body?.cancel(),
+        (late) => {
+          if (late.body !== null) responses.cancel(() => late.body!.cancel());
+        },
         () => undefined,
       )
       .catch(() => undefined);
@@ -276,7 +283,8 @@ const downloadState = async (
   }
   const declared = Number(response.headers.get("content-length") ?? "0");
   if (!response.ok || declared > STATE_INTAKE_LIMIT_BYTES) {
-    await response.body?.cancel().catch(() => undefined);
+    // Cancel this branch without waiting for a potentially independent tee sibling.
+    if (response.body !== null) responses.cancel(() => response.body!.cancel());
     return err(
       response.ok
         ? TOO_LARGE
@@ -286,7 +294,7 @@ const downloadState = async (
           },
     );
   }
-  return readCapped(response.body, bounds);
+  return readCapped(response.body, bounds, responses);
 };
 
 const NETWORK_SHARE = invalidParams(
@@ -315,12 +323,15 @@ const fileBytes = async (
   intake: StateIntake,
   cancel: AbortSignal,
   files: ArtifactResourceScope,
+  responses: ResponseBodyCleanup,
 ): Promise<Result<Uint8Array, RpcError>> => {
   if (typeof file.bytes === "string" && file.uri === undefined) {
-    if (!BASE64.test(file.bytes))
+    if (file.bytes.length > MAX_INLINE_BASE64_CHARACTERS) return err(TOO_LARGE);
+    const byteLength = paddedBase64ByteLength(file.bytes);
+    if (byteLength === undefined)
       return err(invalidParams("the file part's bytes are not base64"));
-    const bytes = Buffer.from(file.bytes, "base64");
-    return bytes.length > STATE_INTAKE_LIMIT_BYTES ? err(TOO_LARGE) : ok(bytes);
+    if (byteLength > STATE_INTAKE_LIMIT_BYTES) return err(TOO_LARGE);
+    return ok(Buffer.from(file.bytes, "base64"));
   }
   if (
     typeof file.uri !== "string" ||
@@ -331,7 +342,8 @@ const fileBytes = async (
       invalidParams("a file part carries exactly one of bytes or a uri"),
     );
   const url = new URL(file.uri);
-  if (url.protocol === "https:") return downloadState(url, intake, cancel);
+  if (url.protocol === "https:")
+    return downloadState(url, intake, cancel, responses);
   if (url.protocol !== "file:")
     return err(invalidParams("a file uri is a file:// or https:// URL"));
   const path = localFilePath(url);
@@ -344,6 +356,7 @@ export const partDocument = async (
   intake: StateIntake,
   cancel: AbortSignal,
   files: ArtifactResourceScope,
+  responses: ResponseBodyCleanup,
 ): Promise<Result<unknown, RpcError>> => {
   if (isRecord(part) && part.kind === "data" && isRecord(part.data))
     return ok(part.data);
@@ -360,6 +373,6 @@ export const partDocument = async (
       mediaTypeEssence(mimeType) !== "application/json")
   )
     return err(invalidParams("a file part's mimeType is application/json"));
-  const bytes = await fileBytes(part.file, intake, cancel, files);
+  const bytes = await fileBytes(part.file, intake, cancel, files, responses);
   return bytes.ok ? parseDocumentBytes(bytes.value) : bytes;
 };

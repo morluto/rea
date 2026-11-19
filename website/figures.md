@@ -57,6 +57,14 @@ The card and `public/assets/favicon.svg` each carry a dark
 browser tab strip. CairoSVG ignores it, so the PNG that link previews fetch
 stays light.
 
+## RL environment workflow
+
+The RL environment guide uses the shared semantic HTML flow: record a test app,
+build tools and local data with REA, then run the exported environment with
+AgentEnv. Labels distinguish environment building from task grading and training.
+The homepage links to the same guide and the announcement video. Source and
+verification scope are in [evidence/rl-environments.md](evidence/rl-environments.md).
+
 ## README showcases
 
 `docs/assets/rea-showcases.svg` and `docs/assets/rea-showcases-dark.svg` redraw

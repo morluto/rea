@@ -5,7 +5,7 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { PROCEDURES, inventory, jsonResult } from "./enhancedToolsHarness.js";
 
-import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../../../src/ports/AnalysisProvider.js";
 import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "../../../src/contracts/managed/managedWorkflowToolContracts.js";
 import { ENHANCED_TOOL_CONTRACTS } from "../../../src/contracts/enhancedToolContracts.js";
 import { SESSION_TOOL_CONTRACTS } from "../../../src/contracts/sessionToolContracts.js";
@@ -13,11 +13,11 @@ import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import type {} from "../../../src/domain/jsonValue.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
-import { ok as resultOk } from "../../../src/domain/result.js";
-import { err } from "../../../src/domain/result.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
+import { ok as resultOk, err } from "../../../src/domain/result.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import { nativeDispatchMetadataResultSchema } from "../../../src/domain/native/objcSwiftMetadata.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const targetObservation = (value: unknown) =>
   resultOk(
@@ -232,7 +232,10 @@ afterEach(async () => {
 
 const connect = async (analysis: AnalysisOperationPort = fixturePort()) => {
   const server = createServer({ kind: "fixed", analysis });
-  const client = new Client({ name: "enhanced-test", version: "1.0.0" });
+  const client = new Client(
+    { name: "enhanced-test", version: "1.0.0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server);
@@ -441,14 +444,14 @@ describe("enhanced MCP tools", () => {
         ]),
       },
     });
+    // A fixed adapter has no session to retain source Evidence for the trace.
     expect(results[13]).toMatchObject({
-      target_sha256: "a".repeat(64),
-      decompilations: 1,
-      unknowns: [
-        expect.objectContaining({
-          reason: "Provider has no native def-use model",
-        }),
-      ],
+      error: {
+        code: "capability_unavailable",
+        details: {
+          operation: "trace_native_values",
+        },
+      },
     });
     expect(results[14]).toMatchObject({
       counts: { selected: 6, written: 6, failed: 0, excluded: 0 },

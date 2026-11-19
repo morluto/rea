@@ -1,13 +1,13 @@
+import { escapeJsonPointerToken } from "../../domain/jsonPointer.js";
 import type { JsonObject } from "../../domain/analysisView/environmentStateRules.js";
+import type { BodyAddress } from "../../domain/analysisView/environmentStateWriteRules.js";
 import { isUuid } from "../../domain/analysisView/environmentStateWriteValues.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import type { ProbeToolCall } from "./environmentCompareMatch.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /** Field names that hold an identifier: `id`, `uuid`, `guid`, or names ending in `id` or `_id`. */
 export const ID_FIELD = /^(id|uuid|guid)$|(_id|Id|ID|_uuid|Uuid)$/u;
-
-const isObject = (value: JsonValue | undefined): value is JsonObject =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const isScalarId = (value: JsonValue | undefined): value is string | number =>
   (typeof value === "string" && value !== "") ||
@@ -177,7 +177,7 @@ const pairing = (
     ),
     by,
   });
-  if (!live.every(isObject) || !env.every(isObject))
+  if (!live.every(isRecord) || !env.every(isRecord))
     return byPosition("position");
   const liveItems = live as readonly JsonObject[];
   const envItems = env as readonly JsonObject[];
@@ -216,7 +216,7 @@ const keyedByIds = (
     ([key, value]) =>
       /^\d+$/u.test(key) ||
       isUuid(key) ||
-      (isObject(value) &&
+      (isRecord(value) &&
         Object.entries(value).some(
           ([field, held]) =>
             IDENTITY_FIELD.test(field) &&
@@ -235,7 +235,7 @@ export const keyedByLearnedIds = (
   if (!entries.some(([key]) => map.hasLive(key))) return false;
   return entries.some(([key]) => Object.hasOwn(env, key))
     ? keyedByIds(entries)
-    : entries.every(([, value]) => isObject(value)) || keyedByIds(entries);
+    : entries.every(([, value]) => isRecord(value)) || keyedByIds(entries);
 };
 
 /**
@@ -256,8 +256,8 @@ const learnKeyedEntries = (
     liveEntries.length === 0 ||
     envEntries.length === 0 ||
     shared === liveEntries.length ||
-    !liveEntries.every(([, value]) => isObject(value)) ||
-    !envEntries.every(([, value]) => isObject(value))
+    !liveEntries.every(([, value]) => isRecord(value)) ||
+    !envEntries.every(([, value]) => isRecord(value))
   )
     return false;
   const paired = pairing(
@@ -314,7 +314,7 @@ const idPair = (
     : undefined;
 
 const childPointer = (at: string, key: string | number): string =>
-  `${at}/${String(key).replaceAll("~", "~0").replaceAll("/", "~1")}`;
+  `${at}/${escapeJsonPointerToken(String(key))}`;
 
 const learnAt = (
   live: JsonValue | undefined,
@@ -338,7 +338,7 @@ const learnAt = (
       });
     return;
   }
-  if (!isObject(live) || !isObject(env)) {
+  if (!isRecord(live) || !isRecord(env)) {
     if (
       context.identity &&
       place.at === context.entityAt &&
@@ -404,19 +404,14 @@ export const learnIds = (
     { at: "", own: false },
   );
 
-/** A value with every string or number equal to a mapped live identifier replaced by the environment's value, in its own type. */
-export const translateValue = (value: JsonValue, map: IdMap): JsonValue => {
-  if (Array.isArray(value))
-    return value.map((item) => translateValue(item, map));
-  if (isObject(value))
-    return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [
-        key,
-        translateValue(item, map),
-      ]),
-    );
+/** A live identifier as the environment's value, in its own type; unchanged when unmapped. */
+const translateScalarId = (
+  value: JsonValue,
+  map: IdMap,
+  scope?: string,
+): JsonValue => {
   if (!isScalarId(value)) return value;
-  const env = map.env(value);
+  const env = map.env(value, scope);
   if (env === undefined) return value;
   return typeof value === "string"
     ? String(env)
@@ -425,17 +420,75 @@ export const translateValue = (value: JsonValue, map: IdMap): JsonValue => {
       : value;
 };
 
-/** The arguments the environment is called with: path values as matched, already in its terms, paging values as sent, and every other value translated. */
+/** A value with every string or number equal to a mapped live identifier replaced by the environment's value, in its own type. */
+export const translateValue = (value: JsonValue, map: IdMap): JsonValue => {
+  if (Array.isArray(value))
+    return value.map((item) => translateValue(item, map));
+  if (isRecord(value))
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [
+        key,
+        translateValue(item, map),
+      ]),
+    );
+  return translateScalarId(value, map);
+};
+
+/** A bulk write's body argument, how it names its entities, and the collection whose own mapping translates those ids. */
+export interface BulkIds {
+  readonly body: string;
+  readonly address: BodyAddress;
+  readonly idField: string;
+  readonly scope: string;
+}
+
+/** A bulk write's body with each id it names translated by its collection's own mapping, and every other value as `translateValue` does. */
+const translateBulkBody = (
+  body: JsonValue,
+  map: IdMap,
+  bulk: BulkIds,
+): JsonValue => {
+  const { address, idField, scope } = bulk;
+  const id = (value: JsonValue): JsonValue =>
+    translateScalarId(value, map, scope);
+  const entries = (value: JsonValue): JsonValue =>
+    Array.isArray(value)
+      ? value.map((entry) =>
+          address.by === "ids"
+            ? id(entry)
+            : isRecord(entry) && Object.hasOwn(entry, idField)
+              ? {
+                  ...(translateValue(entry, map) as JsonObject),
+                  [idField]: id(entry[idField]!),
+                }
+              : translateValue(entry, map),
+        )
+      : translateValue(value, map);
+  if (address.member === null) return entries(body);
+  return isRecord(body)
+    ? Object.fromEntries(
+        Object.entries(body).map(([key, value]) => [
+          key,
+          key === address.member ? entries(value) : translateValue(value, map),
+        ]),
+      )
+    : translateValue(body, map);
+};
+
+/** The arguments the environment is called with: path values as matched, already in its terms, paging values as sent, a bulk body's ids by their collection's mapping, and every other value translated. */
 export const environmentArguments = (
   call: ProbeToolCall,
   map: IdMap,
+  bulk?: BulkIds,
 ): Record<string, JsonValue> =>
   Object.fromEntries(
     Object.entries(call.args).map(([name, value]) => [
       name,
       call.pathArguments.includes(name) || call.pagingArguments.includes(name)
         ? value
-        : translateValue(value, map),
+        : bulk !== undefined && name === bulk.body
+          ? translateBulkBody(value, map, bulk)
+          : translateValue(value, map),
     ]),
   );
 

@@ -29,7 +29,7 @@
 6. Share the fixture pair through `tests/fixtures/environmentServe.ts` and the
    listener spawn through a generalised `startListeningProcess`; add services,
    adapters, mcp-boundary, cli-boundary and process-boundary tests.
-7. Document the command in `docs/cli.md`, add `docs/agent-environments.md` with
+7. Document the command in `docs/getting-started/cli.md`, add `docs/agent-environments.md` with
    its sidebar and index entries, and record the spec.
 
 No new dependency is introduced. REA's tool contracts, catalog digests and the

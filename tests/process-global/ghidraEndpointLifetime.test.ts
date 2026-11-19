@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { phaseGate } from "../support/lifecycleHarness.js";
 
 const fault = vi.hoisted(() => ({
   path: "",
@@ -70,11 +71,11 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import {
   ArtifactFileCleanupFailure,
   artifactFilePrimaryFacts,
-} from "../../src/artifacts/ArtifactFileOperation.js";
+} from "../../src/resources/ArtifactFileOperation.js";
 import { observeGhidraEndpoint } from "../../src/ghidra/GhidraTransport.js";
 import { GhidraClient } from "../../src/ghidra/GhidraClient.js";
 import {
@@ -142,7 +143,8 @@ it.skipIf(process.platform === "win32").each(["valid", "invalid"] as const)(
     const failure = result.error;
     if (kind === "invalid")
       expect(failure.message).toBe("Ghidra TCP endpoint is invalid");
-    expect(fault.handles[0]?.fd).not.toBe(-1);
+    expect(fault.handles).toHaveLength(1);
+    expect(fault.handles[0]?.fd).toBeGreaterThanOrEqual(0);
     expect(resources.hasPending).toBe(true);
     fault.blocked = false;
     await resources.retryCleanup();
@@ -227,22 +229,17 @@ it.skipIf(process.platform === "win32")(
   "keeps endpoint observation admitted until its read and close finish",
   async () => {
     const { endpoint, resources } = await fixture();
-    let entered: (() => void) | undefined;
-    const observed = new Promise<void>((resolve) => {
-      entered = resolve;
-    });
-    const gate = new Promise<void>((resolve) => {
-      releaseRead = resolve;
-    });
+    const endpointRead = phaseGate();
+    // afterEach releases a read a failed test left held.
+    releaseRead = () => endpointRead.release();
     fault.readGate = async () => {
-      entered?.();
-      await gate;
+      await endpointRead.hold();
     };
     const pending = observeGhidraEndpoint(endpoint, {
       resourceScope: resources,
     });
     operations.push(pending);
-    await observed;
+    await endpointRead.reached(pending, "Ghidra endpoint read");
     let closed = false;
     const closing = resources.close().then(() => {
       closed = true;
@@ -250,7 +247,7 @@ it.skipIf(process.platform === "win32")(
     operations.push(closing);
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(closed).toBe(false);
-    releaseRead?.();
+    endpointRead.release();
     await expect(pending).resolves.toMatchObject({ ok: true });
     await closing;
     expect(fault.handles.every((handle) => handle.fd === -1)).toBe(true);

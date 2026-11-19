@@ -1,3 +1,4 @@
+import type { JavaScriptMemberMutationAllowance } from "../domain/javascript/javascriptSemanticWorkAllowance.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import {
   DEFAULT_WEB_BUNDLE_HEAP_MB,
@@ -9,64 +10,114 @@ import {
 } from "../domain/webBundleAnalysis.js";
 import { buildCapturedWebBundleAnalysis } from "../domain/webBundleAnalyzerResult.js";
 import { isIncludedScript } from "../domain/webBundleAnalyzerState.js";
-import type { WebBundleScriptAnalysis } from "../domain/webBundleScriptAnalysis.js";
+import {
+  unavailableWebScriptRecovery,
+  type WebBundleScriptAnalysis,
+} from "../domain/webBundleScriptAnalysis.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCapabilityUnavailableError,
-  AnalysisCancelledError,
   AnalysisTimeoutError,
   AnalysisResourceConstraintError,
   AnalysisOutputError,
+  cancelledBy,
+  OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
-import { WebBundleAnalysisWorker } from "./WebBundleAnalysisWorker.js";
+import {
+  WebBundleAnalysisWorker,
+  WebBundleWorkerCleanup,
+} from "./WebBundleAnalysisWorker.js";
 
-// A process-wide admission, rather than one permit per provider instance, bounds
-// simultaneous web analyzer children and their source/result transfer reservations.
 export type WebBundleAnalysisWorkerPort = Pick<
   WebBundleAnalysisWorker,
   "analyze" | "close"
 >;
 
-let activeAnalyzer: IsolatedWebBundleAnalyzer | undefined;
+/**
+ * One host's web-analyzer permit and failed-cleanup set. Independent
+ * admissions do not share a reservation.
+ */
+export class WebBundleAnalysisAdmission {
+  readonly workers = new WebBundleWorkerCleanup();
+  #active: IsolatedWebBundleAnalyzer | undefined;
+  readonly #pendingCleanup = new Set<IsolatedWebBundleAnalyzer>();
+
+  active(): IsolatedWebBundleAnalyzer | undefined {
+    return this.#active;
+  }
+
+  hold(analyzer: IsolatedWebBundleAnalyzer): void {
+    this.#active = analyzer;
+  }
+
+  release(analyzer: IsolatedWebBundleAnalyzer): void {
+    if (this.#active === analyzer) this.#active = undefined;
+  }
+
+  pending(): readonly IsolatedWebBundleAnalyzer[] {
+    return [...this.#pendingCleanup];
+  }
+
+  retain(analyzer: IsolatedWebBundleAnalyzer): void {
+    this.#pendingCleanup.add(analyzer);
+  }
+
+  forget(analyzer: IsolatedWebBundleAnalyzer): void {
+    this.#pendingCleanup.delete(analyzer);
+  }
+}
 
 /** Own one bundle's sequential analysis and finalization through provider close. */
 export class IsolatedWebBundleAnalyzer {
-  static readonly #pendingCleanup = new Set<IsolatedWebBundleAnalyzer>();
+  readonly #admission: WebBundleAnalysisAdmission;
   #closed = false;
   #running: Promise<Result<WebBundleAnalysis, AnalysisError>> | undefined;
   #controller: AbortController | undefined;
   #worker: WebBundleAnalysisWorkerPort | undefined;
 
+  readonly createWorker: (heapMb: number) => WebBundleAnalysisWorkerPort;
+
   constructor(
-    readonly createWorker: (heapMb: number) => WebBundleAnalysisWorkerPort = (
-      heapMb,
-    ) => new WebBundleAnalysisWorker(heapMb),
-  ) {}
+    createWorker?: (heapMb: number) => WebBundleAnalysisWorkerPort,
+    admission: WebBundleAnalysisAdmission = new WebBundleAnalysisAdmission(),
+  ) {
+    this.#admission = admission;
+    this.createWorker =
+      createWorker ??
+      ((heapMb) =>
+        new WebBundleAnalysisWorker(heapMb, undefined, admission.workers));
+  }
 
   /** Reserve capacity before capture, so concurrent captures cannot retain source inventories. */
   async reserve(): Promise<Result<void, AnalysisError>> {
     if (this.#closed)
-      return err(new AnalysisCancelledError("analyze_web_bundle"));
-    if (activeAnalyzer !== undefined)
+      return err(
+        cancelledBy("analyze_web_bundle", OwnerCancellation.ownerClosed),
+      );
+    if (this.#admission.active() !== undefined)
       return err(
         new AnalysisResourceConstraintError(
           "analyze_web_bundle",
           "capacity",
-          "Another web-bundle capture or analysis owns the process-wide source and result reservation",
+          "Another web-bundle capture or analysis owns this admission's source and result reservation",
           { concurrent_web_bundle_analyses: 1 },
+          { measuredExhaustion: true },
         ),
       );
-    // Retry exact earlier owners before a replacement capture can retain sources.
+    // Claim the slot before awaiting cleanup so another host cannot pass the check.
+    this.#admission.hold(this);
     try {
-      for (const owner of [...IsolatedWebBundleAnalyzer.#pendingCleanup])
+      for (const owner of this.#admission.pending())
         await owner.#releaseWorker();
-      await WebBundleAnalysisWorker.retryPending();
+      await this.#admission.workers.retry();
       await this.#releaseWorker();
     } catch (cause) {
+      this.#admission.release(this);
       return err(
         cause instanceof AnalysisError
           ? cause
@@ -78,23 +129,17 @@ export class IsolatedWebBundleAnalyzer {
             ),
       );
     }
-    if (this.#closed)
-      return err(new AnalysisCancelledError("analyze_web_bundle"));
-    if (activeAnalyzer !== undefined)
+    if (this.#closed) {
+      this.#admission.release(this);
       return err(
-        new AnalysisResourceConstraintError(
-          "analyze_web_bundle",
-          "capacity",
-          "Another web-bundle capture or analysis owns the process-wide source and result reservation",
-          { concurrent_web_bundle_analyses: 1 },
-        ),
+        cancelledBy("analyze_web_bundle", OwnerCancellation.ownerClosed),
       );
-    activeAnalyzer = this;
+    }
     return ok(undefined);
   }
 
   releaseReservation(): void {
-    if (activeAnalyzer === this) activeAnalyzer = undefined;
+    this.#admission.release(this);
   }
 
   analyze(
@@ -102,11 +147,12 @@ export class IsolatedWebBundleAnalyzer {
     sourceMaps: WebBundleAnalysis["observations"]["source_maps"],
     input: AnalyzeWebBundleInput,
     signal?: AbortSignal,
+    memberMutationAllowance?: JavaScriptMemberMutationAllowance,
   ): Promise<Result<WebBundleAnalysis, AnalysisError>> {
     if (this.#closed)
       return Promise.resolve(
         err(
-          new AnalysisCancelledError("analyze_web_bundle", {
+          cancelledBy("analyze_web_bundle", OwnerCancellation.ownerClosed, {
             partialObservation: inspection,
           }),
         ),
@@ -119,6 +165,7 @@ export class IsolatedWebBundleAnalyzer {
             "capacity",
             "This web analyzer already owns an active analysis",
             { concurrent_web_bundle_analyses: 1 },
+            { measuredExhaustion: true },
           ),
         ),
       );
@@ -128,6 +175,7 @@ export class IsolatedWebBundleAnalyzer {
       sourceMaps,
       input,
       signal,
+      memberMutationAllowance,
     ).finally(() => {
       this.#running = undefined;
       this.#controller = undefined;
@@ -141,6 +189,7 @@ export class IsolatedWebBundleAnalyzer {
     sourceMaps: WebBundleAnalysis["observations"]["source_maps"],
     input: AnalyzeWebBundleInput,
     signal?: AbortSignal,
+    memberMutationAllowance?: JavaScriptMemberMutationAllowance,
   ): Promise<Result<WebBundleAnalysis, AnalysisError>> {
     const scripts = inspection.scripts.items.filter(isIncludedScript);
     const results: WebBundleScriptAnalysis[] = [];
@@ -171,7 +220,7 @@ export class IsolatedWebBundleAnalyzer {
         });
     };
     try {
-      await WebBundleAnalysisWorker.retryPending();
+      await this.#admission.workers.retry();
       this.#worker = this.createWorker(
         input.max_heap_mb ?? DEFAULT_WEB_BUNDLE_HEAP_MB,
       );
@@ -181,6 +230,8 @@ export class IsolatedWebBundleAnalyzer {
           script,
           input.analysis_timeout_ms ?? DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS,
           deadline.signal,
+          input.semantic_precision,
+          memberMutationAllowance,
         );
         if (analyzed.ok) results.push(analyzed.value);
         else {
@@ -197,11 +248,7 @@ export class IsolatedWebBundleAnalyzer {
                   : error instanceof AnalysisResourceConstraintError
                     ? "resource_constraint"
                     : "worker_failure",
-              detail:
-                error instanceof AnalysisResourceConstraintError &&
-                error.reportedLimits !== null
-                  ? `${error.userMessage ?? error.reason} Reported limits: ${JSON.stringify(error.reportedLimits)}`
-                  : (error.userMessage ?? error.message),
+              ...unavailableWebScriptRecovery(error),
             },
           );
           if (error.cleanupIncomplete) {
@@ -259,30 +306,26 @@ export class IsolatedWebBundleAnalyzer {
       failure =
         failure === undefined
           ? cleanup
-          : analysisErrorWithCleanupFailure(
+          : analysisErrorWithCleanupDependencies(
               failure,
               cleanup,
               "analyze_web_bundle",
-            ).bindCleanupDependencies([failure, cleanup]);
+            );
     } finally {
       deadline.dispose();
     }
-    if (
-      !hasPrimaryFailure &&
-      caller.aborted &&
-      deadline.interruption !== "timeout"
-    ) {
-      const cancelled = new AnalysisCancelledError("analyze_web_bundle", {
-        cause: caller.reason,
+    if (caller.aborted && deadline.interruption !== "timeout") {
+      const cancelled = cancelledBy("analyze_web_bundle", caller, {
         partialObservation: partial ?? inspection,
       });
-      failure =
-        failure?.cleanupIncomplete === true
-          ? analysisErrorWithCleanupFailure(
+      failure = hasPrimaryFailure
+        ? analysisErrorWithCancellation(failure, cancelled)
+        : failure?.cleanupIncomplete === true
+          ? analysisErrorWithCleanupDependencies(
               cancelled,
               failure,
               "analyze_web_bundle",
-            ).bindCleanupDependencies([cancelled, failure])
+            )
           : cancelled;
     } else if (!hasPrimaryFailure && deadline.interruption === "timeout") {
       const totalTimeoutMs =
@@ -298,11 +341,11 @@ export class IsolatedWebBundleAnalyzer {
       );
       failure =
         failure?.cleanupIncomplete === true
-          ? analysisErrorWithCleanupFailure(
+          ? analysisErrorWithCleanupDependencies(
               timeout,
               failure,
               "analyze_web_bundle",
-            ).bindCleanupDependencies([timeout, failure])
+            )
           : timeout;
     }
     if (failure !== undefined) {
@@ -331,9 +374,9 @@ export class IsolatedWebBundleAnalyzer {
     try {
       await this.#worker?.close();
       this.#worker = undefined;
-      IsolatedWebBundleAnalyzer.#pendingCleanup.delete(this);
+      this.#admission.forget(this);
     } catch (cause) {
-      IsolatedWebBundleAnalyzer.#pendingCleanup.add(this);
+      this.#admission.retain(this);
       throw cause;
     }
   }

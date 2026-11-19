@@ -2,21 +2,17 @@ import { z } from "zod";
 
 import { uniqueSorted } from "../domain/canonicalOrdering.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../ports/AnalysisProvider.js";
 import { parseProcessCaptureEvidence } from "../application/process/ProcessEvidence.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import type { PromptCompletionKind } from "../contracts/promptContracts.js";
-import { addressedValueSchema } from "../domain/native/nativeInventory.js";
+import { listProceduresFact } from "../domain/native/nativeOperationFacts.js";
 import { currentMcpRequestSignal } from "./EvidenceMcpServerCore.js";
 import { parseArtifactInventoryEvidence } from "../domain/artifactInventoryEvidence.js";
 import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import type { Evidence } from "../domain/evidence.js";
-import { investigationEvidenceBundle } from "../application/investigation/InvestigationEvidence.js";
 
 const documentListSchema = z.array(z.string().min(1));
-const procedureInventorySchema = z.array(
-  addressedValueSchema.pick({ address: true, value: true }),
-);
 const providerStatusSchema = z.object({
   analysis_provider_candidates: z.array(
     z.object({ provider: z.object({ id: z.string().min(1) }) }),
@@ -117,7 +113,7 @@ const procedureCandidates = async (
   );
   if (result === undefined) return [];
   if (result.ok) {
-    const parsed = procedureInventorySchema.safeParse(result.value.result);
+    const parsed = listProceduresFact.schema.safeParse(result.value.result);
     if (parsed.success)
       for (const { address, value: name } of parsed.data) {
         addresses.add(address);
@@ -157,7 +153,10 @@ const providerCandidates = async (
   if (session === undefined) return [];
   const signal = currentMcpRequestSignal();
   const parsed = providerStatusSchema.safeParse(
-    await session.status(signal === undefined ? {} : { signal }),
+    await session.status({
+      detail: "summary",
+      ...(signal === undefined ? {} : { signal }),
+    }),
   );
   if (!parsed.success) return [];
   const candidates = parsed.data.analysis_provider_candidates.map(
@@ -172,8 +171,8 @@ const evidenceCandidates = (
 ): readonly string[] => {
   if (session === undefined) return [];
   const candidates: string[] = [];
-  for (const evidence of investigationEvidenceBundle(session).records)
-    candidates.push(...evidenceValues(kind, evidence));
+  for (const evidence of session.immutableEvidenceBundle().records)
+    for (const value of evidenceValues(kind, evidence)) candidates.push(value);
   return candidates;
 };
 

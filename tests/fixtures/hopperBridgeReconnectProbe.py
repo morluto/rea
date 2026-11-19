@@ -26,6 +26,9 @@ def probe(path, socket_path, mode):
                 assert release.wait(2), "Probe never released the blocked reply"
             return health(method, params)
         assert method == "shutdown_document", method
+        if mode == "lost-shutdown-reply" and not entered.is_set():
+            entered.set()
+            assert release.wait(2), "Probe never released shutdown"
         closed = not params.get("unconfirmed", False)
         return {"shutdown": True, "analysis_stopped": True, "document_closed": closed}
 
@@ -75,7 +78,7 @@ def probe(path, socket_path, mode):
 
     def finish(shutdown_count):
         worker.join(2)
-        assert not worker.is_alive(), "Bridge pinned its execution thread"
+        assert not worker.is_alive(), f"{mode}: bridge pinned its execution thread"
         assert not failures, failures
         assert not Path(socket_path).exists(), "Bridge retained its closed listener"
         assert requests.count("shutdown_document") == shutdown_count
@@ -87,10 +90,13 @@ def probe(path, socket_path, mode):
     # bind() creates the socket path before listen() makes it connectable.
     client, file = connect(wait_until_listening=True)
     if mode == "silent-expiry":
-        result = finish(0)
-        file.close()
-        client.close()
-        return result
+        # connect() can finish while the peer is still in the listen backlog.
+        # Observe the bridge expiring the silent connection before waiting
+        # for its separate reconnect grace period to release the listener.
+        with client, file:
+            client.settimeout(5)
+            assert file.read(1) == b"", "Silent bridge connection did not close without a reply"
+            return finish(0)
     send(file, "health", "foreign-token" if mode == "unauthorized" else "owned-token")
     if mode == "lost-reply":
         assert entered.wait(2)
@@ -98,6 +104,19 @@ def probe(path, socket_path, mode):
         assert reply(file)["error"]["type"] == "authorization"
     else:
         assert reply(file)["result"]["run_id"] == "owned-run"
+    if mode == "lost-shutdown-reply":
+        send(file, "shutdown_document")
+        assert entered.wait(2)
+        client.shutdown(socket.SHUT_RDWR)
+        file.close()
+        client.close()
+        release.set()
+        client, file = connect()
+        send(file, "shutdown_document")
+        assert reply(file)["result"]["document_closed"] is True
+        file.close()
+        client.close()
+        return finish(2)
     if mode == "authenticated-idle":
         time.sleep(0.3)
         send(file, "health")
@@ -120,4 +139,4 @@ def probe(path, socket_path, mode):
 
 if __name__ == "__main__":
     print(json.dumps([probe(sys.argv[1], str(Path(sys.argv[2]) / (mode + ".sock")), mode)
-                      for mode in ("unauthorized", "disconnect", "lost-reply", "authenticated-idle", "expiry", "initial-expiry", "silent-expiry")]))
+                      for mode in ("unauthorized", "disconnect", "lost-reply", "lost-shutdown-reply", "authenticated-idle", "expiry", "initial-expiry", "silent-expiry")]))

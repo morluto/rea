@@ -1,5 +1,30 @@
-import { createHash } from "node:crypto";
+import { Budget } from "../budget.js";
+import { BinaryReader } from "../binaryContainer.js";
+import { observeMzWindowsHeader } from "../dosMz.js";
+import { readPeOptionalHeaderFixedFields } from "../peOptionalHeader.js";
+import { readPeCoffHeader } from "../peCoffHeader.js";
+import {
+  observePeHeaderExtent,
+  PE_SECTION_HEADER_BYTES,
+  readPeSectionHeader,
+} from "../peSectionHeader.js";
+import {
+  AnalysisInputError,
+  AnalysisResourceConstraintError,
+} from "../analysisErrorCore.js";
+import { allKeyed, keyedBy, uniqueKeyed } from "../keyedCollection.js";
+import { decodeLimit, ParseFailureError } from "../parseFailure.js";
 import type { NativeMetadataRecovery } from "./nativeMetadataRecovery.js";
+import {
+  NativeAotAdmissionError,
+  nativeAotHydrationFacts,
+  nativeAotHydrationReason,
+  WINDOWS_IMAGE_LOADER_SECTION_LIMIT,
+  type NativeAotHydrationFacts,
+  type NativeAotReason,
+  type NativeAotTruncationReason,
+} from "./nativeAotReason.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const RTR_SIGNATURE = 0x00525452;
 const RTR_ROW_SIZE = 24;
@@ -9,26 +34,40 @@ const FROZEN_OBJECT_REGION = 206;
 export const NATIVE_AOT_MAX_SOURCE_BYTES = 128 * 1024 * 1024;
 /** Bound one parser-produced JSON report independently of any transport. */
 export const NATIVE_AOT_MAX_REPORT_BYTES = 4 * 1024 * 1024;
-export const NATIVE_AOT_MAX_WORK_UNITS = 64 * 1024 * 1024;
+/** Work every image may use, covering headers, directories and sections. */
+export const NATIVE_AOT_BASE_WORK_UNITS = 64 * 1024 * 1024;
+/**
+ * Work added per admitted source byte, so discovery is not starved on larger
+ * images. bflat 8.0.2's 26,180,096-byte win-x64 NativeAOT image completes with
+ * 71,645,819 units (about 2.7 per byte), past the former fixed 64 Mi budget.
+ */
+export const NATIVE_AOT_WORK_UNITS_PER_SOURCE_BYTE = 8;
 export const NATIVE_AOT_MAX_WORKING_MEMORY_BYTES = 64 * 1024 * 1024;
-/** Version of the built-in read-only PE metadata interpretation in profiles. */
-export const NATIVE_AOT_PROFILE_CONTRACT_REVISION =
-  "rtr-9.1-x64-pe-read-only-v7";
 
 export type NativeAotParserLimits = {
   readonly sourceBytes: number;
   readonly workUnits: number;
   readonly workingMemoryBytes: number;
 };
-export const DEFAULT_NATIVE_AOT_PARSER_LIMITS: NativeAotParserLimits = {
+/** Limits for one admitted image; the work budget follows its size. */
+export const nativeAotParserLimitsFor = (
+  sourceBytes: number,
+): NativeAotParserLimits => ({
   sourceBytes: NATIVE_AOT_MAX_SOURCE_BYTES,
-  workUnits: NATIVE_AOT_MAX_WORK_UNITS,
+  workUnits:
+    NATIVE_AOT_BASE_WORK_UNITS +
+    Math.min(Math.max(sourceBytes, 0), NATIVE_AOT_MAX_SOURCE_BYTES) *
+      NATIVE_AOT_WORK_UNITS_PER_SOURCE_BYTE,
   workingMemoryBytes: NATIVE_AOT_MAX_WORKING_MEMORY_BYTES,
-};
+});
+
+/** The scaled limits at the source-byte ceiling. */
+export const DEFAULT_NATIVE_AOT_PARSER_LIMITS: NativeAotParserLimits =
+  nativeAotParserLimitsFor(NATIVE_AOT_MAX_SOURCE_BYTES);
 
 class NativeAotParserBudget {
-  workUnits = 0;
-  workingMemoryBytes = 0;
+  readonly #work: Budget;
+  readonly #workingMemory: Budget;
   workingMemoryBytesPeak = 0;
   truncationReason:
     | "work-unit-budget"
@@ -36,40 +75,41 @@ class NativeAotParserBudget {
     | "response-budget"
     | undefined;
 
-  constructor(readonly limits: NativeAotParserLimits) {}
+  constructor(readonly limits: NativeAotParserLimits) {
+    this.#work = new Budget(limits.workUnits);
+    this.#workingMemory = new Budget(limits.workingMemoryBytes);
+  }
+
+  /** Work units consumed so far. */
+  get workUnits(): number {
+    return this.#work.used;
+  }
+
+  /** Working-memory bytes still available. */
+  get remainingWorkingMemoryBytes(): number {
+    return this.#workingMemory.remaining;
+  }
 
   consumeWork(bytes: number): boolean {
-    if (
-      !Number.isSafeInteger(bytes) ||
-      bytes < 0 ||
-      bytes > this.limits.workUnits - this.workUnits
-    ) {
-      this.truncationReason ??= "work-unit-budget";
-      return false;
-    }
-    this.workUnits += bytes;
-    return true;
+    if (this.#work.tryCharge(bytes)) return true;
+    this.truncationReason ??= "work-unit-budget";
+    return false;
   }
 
   reserveWorkingMemory(bytes: number): boolean {
-    if (
-      !Number.isSafeInteger(bytes) ||
-      bytes < 0 ||
-      bytes > this.limits.workingMemoryBytes - this.workingMemoryBytes
-    ) {
+    if (!this.#workingMemory.tryCharge(bytes)) {
       this.truncationReason ??= "working-memory-budget";
       return false;
     }
-    this.workingMemoryBytes += bytes;
     this.workingMemoryBytesPeak = Math.max(
       this.workingMemoryBytesPeak,
-      this.workingMemoryBytes,
+      this.#workingMemory.used,
     );
     return true;
   }
 
   releaseWorkingMemory(bytes: number): void {
-    this.workingMemoryBytes = Math.max(0, this.workingMemoryBytes - bytes);
+    this.#workingMemory.refund(bytes);
   }
 }
 
@@ -86,36 +126,88 @@ export class NativeAotSnapshotIdentityError extends Error {
   }
 }
 
-/** Hydration stops by throwing; other scans record truncation and continue. */
-class NativeAotParserBudgetError extends Error {
-  constructor(readonly budget: "work" | "working-memory") {
-    super(
-      budget === "work"
-        ? "NativeAOT parser work budget is exhausted"
-        : "NativeAOT working-memory budget is exhausted",
-    );
-    this.name = "NativeAotParserBudgetError";
-  }
-}
+const NATIVE_AOT_FORMAT = "native-aot-pe";
 
+/** Limit names of the two hydration budgets, as `decodeLimit` reports them. */
+const NATIVE_AOT_BUDGET_LIMIT = {
+  work: "work-units",
+  "working-memory": "working-memory-bytes",
+} as const;
+
+/** Hydration stops by throwing; other scans record truncation and continue. */
 const parserBudgetExhausted = (
-  budget: NativeAotParserBudgetError["budget"],
+  budget: NativeAotParserBudget,
+  kind: keyof typeof NATIVE_AOT_BUDGET_LIMIT,
 ): never => {
-  throw new NativeAotParserBudgetError(budget);
+  const maximum =
+    kind === "work"
+      ? budget.limits.workUnits
+      : budget.limits.workingMemoryBytes;
+  throw decodeLimit(
+    NATIVE_AOT_FORMAT,
+    `NativeAOT hydration stopped at its ${String(maximum)} ${kind === "work" ? "work-unit" : "working-memory byte"} budget`,
+    { name: NATIVE_AOT_BUDGET_LIMIT[kind], maximum },
+  );
 };
 
-const NATIVE_AOT_PARSER_BUDGET_RECOVERY =
-  "This release has no runtime override for that NativeAOT parser budget. Repeating the unchanged request fails the same way.";
+/** Which hydration budget a cause reports, if it is one. */
+const exhaustedParserBudget = (
+  cause: unknown,
+): keyof typeof NATIVE_AOT_BUDGET_LIMIT | undefined => {
+  if (
+    !(cause instanceof ParseFailureError) ||
+    cause.failure.kind !== "limit" ||
+    cause.failure.format !== NATIVE_AOT_FORMAT
+  )
+    return undefined;
+  const { name } = cause.failure.limit;
+  if (name === NATIVE_AOT_BUDGET_LIMIT.work) return "work";
+  if (name === NATIVE_AOT_BUDGET_LIMIT["working-memory"])
+    return "working-memory";
+  return undefined;
+};
 
-const nativeAotHydrationFailure = (cause: unknown): string =>
-  cause instanceof NativeAotParserBudgetError
-    ? `${cause.message}. ${NATIVE_AOT_PARSER_BUDGET_RECOVERY}`
-    : cause instanceof Error
-      ? cause.message
-      : "DEHYDRATED_DATA could not be hydrated";
+const nativeAotHydrationFailure = (
+  cause: unknown,
+  budget: NativeAotParserBudget,
+): NativeAotHydrationFacts => {
+  const exhausted = exhaustedParserBudget(cause);
+  if (exhausted !== undefined)
+    return nativeAotHydrationFacts(
+      exhausted === "work" ? "work_budget" : "working_memory_budget",
+    );
+  if (
+    cause instanceof NativeAotAdmissionError &&
+    cause.reason.code === "hydration_failed"
+  ) {
+    // Budgeted image reads return no bytes once their work is exhausted.
+    // That stop cannot establish the physical absence claimed by admission.
+    if (budget.truncationReason === "work-unit-budget")
+      return nativeAotHydrationFacts("work_budget");
+    return nativeAotHydrationFacts(cause.reason.detail, cause.reason.command);
+  }
+  throw cause;
+};
+
+const reportBudgetRefusal = (
+  code:
+    | "report_budget_too_small"
+    | "summary_exceeds_budget"
+    | "summary_exceeded_after_serialization",
+  maximumSummaryBytes: number,
+): AnalysisResourceConstraintError =>
+  new AnalysisResourceConstraintError(
+    "parse_native_aot_pe",
+    "capacity",
+    code,
+    { maximum_summary_bytes: maximumSummaryBytes },
+    {
+      diagnostics: { code },
+      retryable: false,
+    },
+  );
 
 type Section = {
-  readonly name: string;
   readonly rva: number;
   readonly virtualSize: number;
   readonly rawOffset: number;
@@ -142,6 +234,35 @@ type MethodTable = {
   readonly slotsCount: number;
   readonly interfacesCount: number;
 };
+
+const METHOD_TABLE_HEADER_BYTES = 24;
+const METHOD_TABLE_POINTER_BYTES = 8;
+const METHOD_TABLE_FORMAT = "NativeAOT MethodTable";
+const methodTableSlotOffset = (slot: number): number =>
+  METHOD_TABLE_HEADER_BYTES + slot * METHOD_TABLE_POINTER_BYTES;
+const methodTableInterfaceOffset = (
+  slotsCount: number,
+  index: number,
+): number => methodTableSlotOffset(slotsCount + index);
+const methodTableByteLength = (
+  slotsCount: number,
+  interfacesCount: number,
+): number => methodTableInterfaceOffset(slotsCount, interfacesCount);
+const methodTablePointerAddress = (
+  table: MethodTable,
+  offset: number,
+): bigint => table.address + BigInt(offset);
+const readMethodTablePointer = (
+  image: PeImage,
+  address: bigint,
+  budget: NativeAotParserBudget,
+): bigint | null => {
+  const bytes = image.read(address, METHOD_TABLE_POINTER_BYTES, budget);
+  return bytes === null
+    ? null
+    : new BinaryReader(bytes, true, METHOD_TABLE_FORMAT).word(0, 64);
+};
+
 const METHOD_TABLE_RECORD_BYTES = 32;
 class MethodTableIndex {
   #records = Buffer.alloc(0);
@@ -245,12 +366,15 @@ class MethodTableIndex {
           include(child);
         }
         for (let index = 0; index < base.interfacesCount; index += 1) {
-          if (!this.budget.consumeWork(8)) return false;
-          const address = readU64(
-            image.read(
-              base.address + 24n + BigInt((base.slotsCount + index) * 8),
-              8,
+          if (!this.budget.consumeWork(METHOD_TABLE_POINTER_BYTES))
+            return false;
+          const address = readMethodTablePointer(
+            image,
+            methodTablePointerAddress(
+              base,
+              methodTableInterfaceOffset(base.slotsCount, index),
             ),
+            this.budget,
           );
           if (address === null) continue;
           const interfaceIndex = this.find(address, this.budget);
@@ -303,11 +427,11 @@ class MethodTableIndex {
       this.budget.limits.workingMemoryBytes,
       Math.max(requiredBytes, this.#records.byteLength * 2 || 4096),
     );
-    if (
-      capacityBytes < requiredBytes ||
-      !this.budget.reserveWorkingMemory(capacityBytes)
-    )
+    if (capacityBytes < requiredBytes) {
+      this.budget.truncationReason ??= "working-memory-budget";
       return false;
+    }
+    if (!this.budget.reserveWorkingMemory(capacityBytes)) return false;
     const expanded = Buffer.allocUnsafe(capacityBytes);
     this.#records.copy(expanded, 0, 0, this.#count * METHOD_TABLE_RECORD_BYTES);
     this.budget.releaseWorkingMemory(this.#records.byteLength);
@@ -329,63 +453,111 @@ export type NativeAotString = {
   readonly address: string;
   readonly value: string;
 };
-export type NativeAotReport = {
+type NativeAotCoverage = {
+  readonly pointer_candidates_examined: number;
+  readonly pointer_slots_examined?: number;
+  readonly scan_bytes_examined?: number;
+  readonly scan_bytes_omitted?: number;
+  readonly rtr_signature_scan_bytes_examined?: number;
+  readonly rtr_signature_scan_bytes_omitted?: number;
+  readonly method_table_validation_items_examined?: number;
+  readonly work_units_examined?: number;
+  readonly method_tables_recovered: number;
+  readonly frozen_string_candidates: number;
+  readonly frozen_scan_bytes_examined?: number;
+  readonly frozen_scan_bytes_omitted?: number;
+  readonly frozen_string_data_bytes_examined?: number;
+  readonly source_bytes_examined?: number;
+  readonly source_bytes_omitted?: number;
+  readonly work_budget_units?: number;
+  readonly source_byte_budget_bytes?: number;
+  readonly working_memory_budget_bytes?: number;
+  readonly working_memory_bytes_peak?: number;
+  readonly truncation_reason?: NativeAotTruncationReason;
+  readonly basis:
+    | "raw-image-pointer-scan"
+    | "raw-image-and-rehydrated-pointer-scan"
+    | "unsupported-layout"
+    | "no-rtr-header";
+};
+
+type NativeAotReportBase = {
   readonly format: "dotnet-nativeaot";
-  readonly status: "complete" | "partial" | "not_applicable";
-  readonly reason: string | null;
   readonly analysis_artifact_sha256: string;
   readonly analysis_mode: "read-only-derived-overlay";
-  readonly header_address: string | null;
-  readonly discovery: "signature-heuristic" | null;
-  readonly format_major: number | null;
-  readonly format_minor: number | null;
   readonly method_tables: number;
   readonly types: readonly NativeAotType[];
   readonly frozen_strings: readonly NativeAotString[];
-  readonly truncated?: boolean;
-  readonly types_omitted?: number;
-  readonly frozen_strings_omitted?: number;
+  readonly derived_memory: null;
+  readonly coverage: NativeAotCoverage;
+  readonly diagnostics: readonly string[];
+  readonly limitations: readonly string[];
   readonly output_budget_bytes?: number;
+};
+
+type NativeAotLocatedHeader = {
+  readonly header_address: string;
+  readonly discovery: "signature-heuristic";
+  readonly format_major: number;
+  readonly format_minor: number;
   readonly derived_overlay: {
     readonly address: string;
     readonly size_bytes: number;
     readonly sha256: string;
   } | null;
-  readonly derived_memory: null;
-  readonly coverage: {
-    readonly pointer_candidates_examined: number;
-    readonly pointer_slots_examined?: number;
-    readonly scan_bytes_examined?: number;
-    readonly scan_bytes_omitted?: number;
-    readonly rtr_signature_scan_bytes_examined?: number;
-    readonly rtr_signature_scan_bytes_omitted?: number;
-    readonly method_table_validation_items_examined?: number;
-    readonly work_units_examined?: number;
-    readonly method_tables_recovered: number;
-    readonly frozen_string_candidates: number;
-    readonly frozen_scan_bytes_examined?: number;
-    readonly frozen_scan_bytes_omitted?: number;
-    readonly frozen_string_data_bytes_examined?: number;
-    readonly source_bytes_examined?: number;
-    readonly source_bytes_omitted?: number;
-    readonly work_budget_units?: number;
-    readonly source_byte_budget_bytes?: number;
-    readonly working_memory_budget_bytes?: number;
-    readonly working_memory_bytes_peak?: number;
-    readonly truncation_reason?:
-      | "source-byte-budget"
-      | "work-unit-budget"
-      | "working-memory-budget"
-      | "response-budget";
-    readonly basis:
-      | "raw-image-pointer-scan"
-      | "raw-image-and-rehydrated-pointer-scan"
-      | "unsupported-layout"
-      | "no-rtr-header";
-  };
-  readonly diagnostics: readonly string[];
-  readonly limitations: readonly string[];
 };
+
+type NativeAotAbsentHeader = {
+  readonly header_address: null;
+  readonly discovery: null;
+  readonly format_major: null;
+  readonly format_minor: null;
+  readonly derived_overlay: null;
+};
+
+type NativeAotTruncated = {
+  readonly truncated: true;
+  readonly types_omitted: number;
+  readonly frozen_strings_omitted: number;
+  readonly output_budget_bytes: number;
+};
+
+type NativeAotUntruncated = {
+  readonly truncated?: false;
+  readonly types_omitted?: number;
+  readonly frozen_strings_omitted?: number;
+};
+
+type NativeAotNotApplicableReport = NativeAotReportBase &
+  NativeAotAbsentHeader &
+  NativeAotUntruncated & {
+    readonly status: "not_applicable";
+    readonly reason: NativeAotReason;
+  };
+
+/** Complete reports have a header and no reason. Failures carry a reason code. */
+export type NativeAotReport =
+  | (NativeAotReportBase &
+      NativeAotLocatedHeader &
+      NativeAotUntruncated & {
+        readonly status: "complete";
+        readonly reason: null;
+        readonly types_omitted?: 0;
+        readonly frozen_strings_omitted?: 0;
+      })
+  | (NativeAotReportBase &
+      NativeAotLocatedHeader &
+      (NativeAotTruncated | NativeAotUntruncated) & {
+        readonly status: "partial";
+        readonly reason: NativeAotReason;
+      })
+  | (NativeAotReportBase &
+      NativeAotAbsentHeader &
+      NativeAotTruncated & {
+        readonly status: "partial";
+        readonly reason: NativeAotReason;
+      })
+  | NativeAotNotApplicableReport;
 export type NativeAotPeResult = {
   readonly summary: NativeAotReport;
   readonly readTypeDetail: (
@@ -404,7 +576,12 @@ export const nativeAotSnapshotOverCapacity = (
     {
       format: "dotnet-nativeaot",
       status: "partial",
-      reason: `The captured PE exceeds the read-only NativeAOT snapshot byte budget of ${String(limits.sourceBytes)} bytes. This release has no runtime override.`,
+      reason: {
+        code: "source_byte_budget",
+        limit_bytes: limits.sourceBytes,
+        observed_bytes: sourceBytesAtLeast,
+        runtime_override: false,
+      },
       analysis_artifact_sha256: sha256,
       analysis_mode: "read-only-derived-overlay",
       header_address: null,
@@ -439,9 +616,7 @@ export const nativeAotSnapshotOverCapacity = (
         truncation_reason: "source-byte-budget",
         basis: "unsupported-layout",
       },
-      diagnostics: [
-        `The private snapshot was observed to contain at least ${sourceBytesAtLeast} bytes, above the ${limits.sourceBytes} byte NativeAOT source limit; no parser snapshot was admitted.`,
-      ],
+      diagnostics: ["source_byte_budget"],
       limitations: [
         "NativeAOT metadata was not inspected because the captured snapshot exceeded the local source-byte budget.",
         "The artifact digest identifies the selected target; no metadata facts are inferred from the omitted snapshot.",
@@ -460,9 +635,7 @@ const assertNativeAotReportFits = (
     maximumBytes < 0 ||
     Buffer.byteLength(JSON.stringify(report)) > maximumBytes
   )
-    throw new Error(
-      "NativeAOT report-byte budget is too small for the minimum truthful report",
-    );
+    throw reportBudgetRefusal("report_budget_too_small", maximumBytes);
   return report;
 };
 
@@ -482,68 +655,90 @@ class PeImage {
   readonly #sizeOfHeaders: number;
   readonly #machine: number;
   readonly #overlays: ImageOverlay[] = [];
-  #budget: NativeAotParserBudget | undefined;
 
   constructor(bytes: Buffer) {
     this.#bytes = bytes;
     if (bytes.length < 0x40 || bytes.toString("latin1", 0, 2) !== "MZ")
-      throw new Error("Not a PE image");
-    const peOffset = this.#u32(0x3c);
-    if (peOffset < 0x40) throw new Error("PE header overlaps the DOS header");
+      throw new NativeAotAdmissionError({ code: "not_pe_image" });
+    const observed = observeMzWindowsHeader(bytes);
+    if (observed.state !== "declared" || observed.signature !== "PE")
+      throw new NativeAotAdmissionError({ code: "mz_header_not_pe" });
+    const peOffset = observed.offset;
+    if (peOffset < 0x40)
+      throw new NativeAotAdmissionError({ code: "pe_header_overlaps_dos" });
     this.#range(peOffset, 24);
-    if (bytes.toString("latin1", peOffset, peOffset + 4) !== "PE\0\0")
-      throw new Error("Invalid PE signature");
-    this.#machine = this.#u16(peOffset + 4);
-    const count = this.#u16(peOffset + 6);
+    const coff = readPeCoffHeader(bytes.subarray(peOffset + 4, peOffset + 24));
+    if (!coff.ok)
+      throw new NativeAotAdmissionError({ code: "coff_header_truncated" });
+    this.#machine = coff.value.machine;
+    const { sectionCount: count, optionalHeaderSize: optionalSize } =
+      coff.value;
     // Microsoft documents a 96-section Windows image-loader limit. This
     // parser accepts executable PE images, not arbitrary COFF object files.
-    if (count > 96)
-      throw new Error("PE image exceeds the Windows 96-section limit");
-    const optionalSize = this.#u16(peOffset + 20);
+    if (count > WINDOWS_IMAGE_LOADER_SECTION_LIMIT)
+      throw new NativeAotAdmissionError({
+        code: "section_limit",
+        limit: WINDOWS_IMAGE_LOADER_SECTION_LIMIT,
+        observed: count,
+      });
     const optional = peOffset + 24;
     this.#range(optional, optionalSize);
     // Mapping fields through SizeOfHeaders must belong to this header,
     // independently of whether the following file bytes are available.
     if (optionalSize < 64)
-      throw new Error(
-        "PE optional header is too short for image mapping fields",
+      throw new NativeAotAdmissionError({ code: "optional_header_too_short" });
+    const fixed = readPeOptionalHeaderFixedFields(
+      bytes.subarray(optional, optional + optionalSize),
+    );
+    if (!fixed.ok)
+      throw new NativeAotAdmissionError(
+        fixed.error.reason === "unsupported-magic"
+          ? { code: "unsupported_pe32_plus" }
+          : { code: "optional_header_truncated" },
       );
-    const magic = this.#u16(optional);
-    if (magic !== 0x20b || this.#machine !== 0x8664)
-      throw new Error("Only x64 PE32+ is supported");
-    this.imageBase = this.#u64(optional + 24);
-    this.sizeOfImage = this.#u32(optional + 56);
-    this.#sizeOfHeaders = this.#u32(optional + 60);
+    if (fixed.value.magic !== 0x20b || this.#machine !== 0x8664)
+      throw new NativeAotAdmissionError({ code: "unsupported_pe32_plus" });
+    this.imageBase = fixed.value.imageBase;
+    this.sizeOfImage = fixed.value.sizeOfImage;
+    this.#sizeOfHeaders = fixed.value.sizeOfHeaders;
     if (count < 1 || this.sizeOfImage === 0)
-      throw new Error("Unsupported PE image extent");
+      throw new NativeAotAdmissionError({ code: "unsupported_image_extent" });
     if (this.imageBase + BigInt(this.sizeOfImage) > 1n << 64n)
-      throw new Error("PE image exceeds the 64-bit address domain");
-    const sectionOffset = optional + optionalSize;
-    this.#range(sectionOffset, count * 40);
+      throw new NativeAotAdmissionError({ code: "address_domain" });
+    const { sectionTableOffset, sectionTableBytes, sizeOfHeadersState } =
+      observePeHeaderExtent({
+        optionalHeaderOffset: optional,
+        optionalHeaderSize: optionalSize,
+        sectionCount: count,
+        sizeOfHeaders: this.#sizeOfHeaders,
+        fileSize: bytes.length,
+      });
+    this.#range(sectionTableOffset, sectionTableBytes);
     if (
-      this.#sizeOfHeaders < sectionOffset + count * 40 ||
-      this.#sizeOfHeaders > this.#bytes.length ||
+      sizeOfHeadersState !== "valid" ||
       this.#sizeOfHeaders > this.sizeOfImage
     )
-      throw new Error(
-        "PE declared headers do not fit the captured image layout",
-      );
+      throw new NativeAotAdmissionError({ code: "headers_do_not_fit" });
     this.sections = Array.from({ length: count }, (_, index) => {
-      const p = sectionOffset + index * 40;
-      const name = bytes.toString("ascii", p, p + 8).replace(/\0.*$/u, "");
+      const p = sectionTableOffset + index * PE_SECTION_HEADER_BYTES;
+      const parsed = readPeSectionHeader(
+        bytes.subarray(p, p + PE_SECTION_HEADER_BYTES),
+      );
+      if (!parsed.ok)
+        throw new NativeAotAdmissionError({ code: "section_header_truncated" });
+      const section = parsed.value;
       return {
-        name,
-        virtualSize: this.#u32(p + 8),
-        rva: this.#u32(p + 12),
-        rawSize: this.#u32(p + 16),
-        rawOffset: this.#u32(p + 20),
-        characteristics: this.#u32(p + 36),
+        virtualSize: section.virtual_size,
+        rva: section.virtual_address,
+        rawSize: section.raw_size,
+        rawOffset: section.offset,
+        characteristics: section.characteristics,
       };
     });
     for (const section of this.sections) {
       this.#range(section.rawOffset, section.rawSize);
       if (section.rva + virtualExtent(section) > this.sizeOfImage)
-        throw new Error("PE section exceeds the declared image extent");
+        throw new NativeAotAdmissionError({ code: "section_exceeds_image" });
     }
     // Establish one virtual owner before any scan, read, permission query or
     // hydration. Empty sections own no bytes; adjacent intervals remain valid.
@@ -553,18 +748,13 @@ class PeImage {
     let mappedEnd = this.#sizeOfHeaders;
     for (const section of mapped) {
       if (section.rva < mappedEnd)
-        throw new Error(
-          "PE virtual section overlaps headers or another section",
-        );
+        throw new NativeAotAdmissionError({ code: "virtual_section_overlap" });
       mappedEnd = section.rva + virtualExtent(section);
     }
   }
 
   addressForRva(rva: number): bigint {
     return this.imageBase + BigInt(rva);
-  }
-  setBudget(budget: NativeAotParserBudget): void {
-    this.#budget = budget;
   }
   hasImageRange(start: bigint, end: bigint): boolean {
     return (
@@ -573,7 +763,11 @@ class PeImage {
       end - this.imageBase <= BigInt(this.sizeOfImage)
     );
   }
-  read(address: bigint, size: number): Buffer | null {
+  read(
+    address: bigint,
+    size: number,
+    budget: NativeAotParserBudget,
+  ): Buffer | null {
     if (address < this.imageBase || !Number.isSafeInteger(size) || size < 0)
       return null;
     for (const overlay of this.#overlays) {
@@ -595,8 +789,7 @@ class PeImage {
       return this.#bytes.subarray(relative, relative + size);
     }
     for (const section of this.sections) {
-      if (this.#budget !== undefined && !this.#budget.consumeWork(1))
-        return null;
+      if (!budget.consumeWork(1)) return null;
       const extent = virtualExtent(section);
       if (relative < section.rva || relative - section.rva > extent - size)
         continue;
@@ -608,12 +801,11 @@ class PeImage {
     return null;
   }
   // This checks executable section membership, not file-backed instruction bytes.
-  isExecutable(address: bigint): boolean {
+  isExecutable(address: bigint, budget: NativeAotParserBudget): boolean {
     if (address < this.imageBase) return false;
     const rva = address - this.imageBase;
     for (const section of this.sections) {
-      if (this.#budget !== undefined && !this.#budget.consumeWork(1))
-        return false;
+      if (!budget.consumeWork(1)) return false;
       if (
         (section.characteristics & 0x20000000) !== 0 &&
         rva >= BigInt(section.rva) &&
@@ -626,12 +818,15 @@ class PeImage {
   addOverlay(overlay: ImageOverlay): void {
     this.#overlays.push(overlay);
   }
-  virtualBytesRemaining(address: bigint): number {
+  virtualBytesRemaining(
+    address: bigint,
+    budget: NativeAotParserBudget,
+  ): number {
     if (address < this.imageBase) return 0;
     const rva = address - this.imageBase;
     let section: Section | undefined;
     for (const candidate of this.sections) {
-      if (this.#budget !== undefined && !this.#budget.consumeWork(1)) return 0;
+      if (!budget.consumeWork(1)) return 0;
       if (
         rva >= BigInt(candidate.rva) &&
         rva < BigInt(candidate.rva + virtualExtent(candidate))
@@ -652,19 +847,7 @@ class PeImage {
       size < 0 ||
       offset > this.#bytes.length - size
     )
-      throw new Error("PE field leaves the captured file");
-  }
-  #u16(offset: number): number {
-    this.#range(offset, 2);
-    return this.#bytes.readUInt16LE(offset);
-  }
-  #u32(offset: number): number {
-    this.#range(offset, 4);
-    return this.#bytes.readUInt32LE(offset);
-  }
-  #u64(offset: number): bigint {
-    this.#range(offset, 8);
-    return this.#bytes.readBigUInt64LE(offset);
+      throw new NativeAotAdmissionError({ code: "field_outside_file" });
   }
 }
 
@@ -679,9 +862,9 @@ const readU32 = (bytes: Buffer | null, offset = 0): number | null =>
     : bytes.readUInt32LE(offset);
 const notApplicable = (
   sha: string,
-  reason: string,
+  reason: NativeAotReason,
   basis: NativeAotReport["coverage"]["basis"],
-): NativeAotReport => ({
+): NativeAotNotApplicableReport => ({
   format: "dotnet-nativeaot",
   status: "not_applicable",
   reason,
@@ -793,13 +976,18 @@ const findDirectory = (
         if (
           isTypeManagerIndirection &&
           start !== 0n &&
-          image.read(start, 8) === null
+          image.read(start, 8, budget) === null
         ) {
           valid = false;
           break;
         }
         if (isConsumedRange || isTypeManagerIndirection) {
-          if (rows.some((existing) => existing.type === type)) {
+          // A repeated frozen region is kept for the consumer to report as
+          // ambiguous; other repeated rows disqualify the candidate.
+          if (
+            type !== FROZEN_OBJECT_REGION &&
+            rows.some((existing) => existing.type === type)
+          ) {
             valid = false;
             break;
           }
@@ -839,35 +1027,44 @@ const parseMethodTable = (
   budget: NativeAotParserBudget,
   validation: { itemsExamined: number },
 ): MethodTable | null => {
-  const header = image.read(address, 24);
+  const header = image.read(address, METHOD_TABLE_HEADER_BYTES, budget);
   if (header === null) return null;
-  const flags = header.readUInt32LE(0),
-    baseSize = header.readUInt32LE(4),
-    related = header.readBigUInt64LE(8);
+  const fields = new BinaryReader(header, true, METHOD_TABLE_FORMAT);
+  const flags = fields.u32(0),
+    baseSize = fields.u32(4),
+    related = fields.word(8, 64);
   const elementType = (flags & 0x7c000000) >>> 26;
   if (
     (elementType !== 0x14 && elementType !== 0x15) ||
     baseSize < 16 ||
     baseSize > 0x10000000 ||
-    (related !== 0n && image.read(related, 24) === null)
+    (related !== 0n &&
+      image.read(related, METHOD_TABLE_HEADER_BYTES, budget) === null)
   )
     return null;
-  const slotsCount = header.readUInt16LE(16),
-    interfacesCount = header.readUInt16LE(18);
-  const tableBytes = 24 + (slotsCount + interfacesCount) * 8;
-  const table = image.read(address, tableBytes);
-  if (table === null) return null;
+  const slotsCount = fields.u16(16);
+  const interfacesCount = fields.u16(18);
+  const bytes = image.read(
+    address,
+    methodTableByteLength(slotsCount, interfacesCount),
+    budget,
+  );
+  if (bytes === null) return null;
+  const pointers = new BinaryReader(bytes, true, METHOD_TABLE_FORMAT);
   for (let slot = 0; slot < slotsCount; slot++) {
-    if (!budget.consumeWork(8)) return null;
+    if (!budget.consumeWork(METHOD_TABLE_POINTER_BYTES)) return null;
     validation.itemsExamined++;
-    const target = table.readBigUInt64LE(24 + slot * 8);
-    if (target !== 0n && !image.isExecutable(target)) return null;
+    const target = pointers.word(methodTableSlotOffset(slot), 64);
+    if (target !== 0n && !image.isExecutable(target, budget)) return null;
   }
   for (let index = 0; index < interfacesCount; index++) {
-    if (!budget.consumeWork(8)) return null;
+    if (!budget.consumeWork(METHOD_TABLE_POINTER_BYTES)) return null;
     validation.itemsExamined++;
-    const iface = table.readBigUInt64LE(24 + (slotsCount + index) * 8);
-    if (iface !== 0n && image.read(iface, 20) === null) return null;
+    const iface = pointers.word(
+      methodTableInterfaceOffset(slotsCount, index),
+      64,
+    );
+    if (iface !== 0n && image.read(iface, 20, budget) === null) return null;
   }
   return { address, flags, baseSize, related, slotsCount, interfacesCount };
 };
@@ -875,8 +1072,9 @@ const parseMethodTable = (
 const readRelativePointer = (
   image: PeImage,
   address: bigint,
+  budget: NativeAotParserBudget,
 ): bigint | null => {
-  const raw = image.read(address, 4);
+  const raw = image.read(address, 4, budget);
   return raw === null ? null : address + BigInt(raw.readInt32LE(0));
 };
 
@@ -928,27 +1126,40 @@ const hydrate = (
   const length = dehydrated.end - dehydrated.start;
   if (
     length < 5n ||
-    length > BigInt(image.virtualBytesRemaining(dehydrated.start))
+    length > BigInt(image.virtualBytesRemaining(dehydrated.start, budget))
   )
-    throw new Error("DEHYDRATED_DATA length is outside its mapped section");
-  const first = image.read(dehydrated.start, Number(length));
+    throw new NativeAotAdmissionError({
+      code: "hydration_failed",
+      detail: "length_outside_section",
+    });
+  const first = image.read(dehydrated.start, Number(length), budget);
   if (first === null)
-    throw new Error("DEHYDRATED_DATA leaves captured PE sections");
-  const base = readRelativePointer(image, dehydrated.start);
+    throw new NativeAotAdmissionError({
+      code: "hydration_failed",
+      detail: "leaves_captured_sections",
+    });
+  const base = readRelativePointer(image, dehydrated.start, budget);
   if (base === null)
-    throw new Error("DEHYDRATED_DATA has no hydration base pointer");
-  const outputLimit = Math.min(
-    image.virtualBytesRemaining(base),
-    budget.limits.workUnits - budget.workUnits,
-    budget.limits.workingMemoryBytes - budget.workingMemoryBytes,
-  );
+    throw new NativeAotAdmissionError({
+      code: "hydration_failed",
+      detail: "missing_base_pointer",
+    });
+  // Section coverage and parser budgets are independent admission facts.
+  // Work and memory exhaustion must not turn a mapped base into corrupt data.
+  const outputLimit = image.virtualBytesRemaining(base, budget);
   if (outputLimit === 0)
-    throw new Error(
-      "DEHYDRATED_DATA hydration base is outside mapped PE sections",
-    );
-  let output = Buffer.alloc(Math.min(outputLimit, 64 * 1024));
-  if (!budget.reserveWorkingMemory(output.byteLength))
-    parserBudgetExhausted("working-memory");
+    throw new NativeAotAdmissionError({
+      code: "hydration_failed",
+      detail: "base_outside_mapped_sections",
+    });
+  const initialCapacity = Math.min(
+    outputLimit,
+    64 * 1024,
+    budget.remainingWorkingMemoryBytes,
+  );
+  if (!budget.reserveWorkingMemory(initialCapacity))
+    parserBudgetExhausted(budget, "working-memory");
+  let output = Buffer.alloc(initialCapacity);
   let outputLength = 0;
   let cursor = 4;
   /** Reserve the next output bytes and return a view of the retained buffer.
@@ -962,9 +1173,10 @@ const hydrate = (
       length < 0 ||
       length > outputLimit - outputLength
     ) {
-      if (length > budget.limits.workUnits - budget.workUnits)
-        parserBudgetExhausted("work");
-      throw new Error("Hydrated metadata exceeds its mapped PE section");
+      throw new NativeAotAdmissionError({
+        code: "hydration_failed",
+        detail: "exceeds_mapped_section",
+      });
     }
     const start = outputLength;
     const required = start + length;
@@ -977,7 +1189,7 @@ const hydrate = (
         ),
       );
       if (!budget.reserveWorkingMemory(capacity))
-        parserBudgetExhausted("working-memory");
+        parserBudgetExhausted(budget, "working-memory");
       const expanded = Buffer.allocUnsafe(capacity);
       output.copy(expanded, 0, 0, outputLength);
       budget.releaseWorkingMemory(output.byteLength);
@@ -987,34 +1199,48 @@ const hydrate = (
     return output.subarray(start, required);
   };
   const append = (chunk: Buffer): void => {
-    if (!budget.consumeWork(chunk.length)) parserBudgetExhausted("work");
+    if (!budget.consumeWork(chunk.length))
+      parserBudgetExhausted(budget, "work");
     chunk.copy(reserveOutput(chunk.length));
   };
   const appendZero = (length: number): void => {
-    if (!budget.consumeWork(length)) parserBudgetExhausted("work");
+    if (!budget.consumeWork(length)) parserBudgetExhausted(budget, "work");
     reserveOutput(length).fill(0);
   };
   const appendRel = (target: bigint): void => {
-    if (!budget.consumeWork(4)) parserBudgetExhausted("work");
+    if (!budget.consumeWork(4)) parserBudgetExhausted(budget, "work");
     const delta = target - (base + BigInt(outputLength));
     if (delta < -0x80000000n || delta > 0x7fffffffn)
-      throw new Error("Hydrated relative pointer does not fit int32");
+      throw new NativeAotAdmissionError({
+        code: "hydration_failed",
+        detail: "relative_pointer_overflow",
+      });
     reserveOutput(4).writeInt32LE(Number(delta), 0);
   };
   const appendPtr = (target: bigint): void => {
-    if (!budget.consumeWork(8)) parserBudgetExhausted("work");
+    if (!budget.consumeWork(8)) parserBudgetExhausted(budget, "work");
+    // writeBigUInt64LE throws RangeError outside the unsigned 64-bit domain.
+    // That is a malformed fixup, not an unexpected parser failure.
+    if (target < 0n || target > 0xffffffffffffffffn)
+      throw new NativeAotAdmissionError({
+        code: "hydration_failed",
+        detail: "pointer_outside_address_domain",
+      });
     reserveOutput(8).writeBigUInt64LE(target, 0);
   };
   const readFixup = (index: number): bigint => {
     const fixupLocation = dehydrated.end + BigInt(index * 4);
-    const target = readRelativePointer(image, fixupLocation);
+    const target = readRelativePointer(image, fixupLocation, budget);
     if (target === null)
-      throw new Error("DEHYDRATED_DATA fixup leaves captured PE sections");
+      throw new NativeAotAdmissionError({
+        code: "hydration_failed",
+        detail: "fixup_leaves_sections",
+      });
     return target;
   };
   try {
     while (cursor < first.length) {
-      if (!budget.consumeWork(1)) parserBudgetExhausted("work");
+      if (!budget.consumeWork(1)) parserBudgetExhausted(budget, "work");
       const encoded = first[cursor];
       if (encoded === undefined) break;
       cursor++;
@@ -1023,7 +1249,10 @@ const hydrate = (
       const extraBytes = payload - 28;
       if (extraBytes > 0) {
         if (extraBytes > 3 || cursor > first.length - extraBytes)
-          throw new Error("Invalid DEHYDRATED_DATA payload encoding");
+          throw new NativeAotAdmissionError({
+            code: "hydration_failed",
+            detail: "invalid_payload_encoding",
+          });
         payload = 0;
         for (let i = 0; i < extraBytes; i++)
           payload += (first[cursor++] ?? 0) * 2 ** (8 * i);
@@ -1032,7 +1261,10 @@ const hydrate = (
       switch (command) {
         case 0: {
           if (cursor > first.length - payload)
-            throw new Error("DEHYDRATED_DATA COPY leaves its section");
+            throw new NativeAotAdmissionError({
+              code: "hydration_failed",
+              detail: "copy_leaves_section",
+            });
           append(first.subarray(cursor, cursor + payload));
           cursor += payload;
           break;
@@ -1047,42 +1279,63 @@ const hydrate = (
           appendPtr(readFixup(payload));
           break;
         case 4:
-          if (!budget.consumeWork(payload * 4)) parserBudgetExhausted("work");
+          if (!budget.consumeWork(payload * 4))
+            parserBudgetExhausted(budget, "work");
           if (
             payload > Math.floor((first.length - cursor) / 4) ||
             payload > Math.floor((outputLimit - outputLength) / 4)
           )
-            throw new Error("Inline relative fixups leave DEHYDRATED_DATA");
+            throw new NativeAotAdmissionError({
+              code: "hydration_failed",
+              detail: "inline_relative_fixups_leave",
+            });
           for (let i = 0; i < payload; i++) {
             const target = readRelativePointer(
               image,
               dehydrated.start + BigInt(cursor),
+              budget,
             );
             if (target === null)
-              throw new Error("Invalid inline relative pointer");
+              throw new NativeAotAdmissionError({
+                code: "hydration_failed",
+                detail: "invalid_inline_relative_pointer",
+              });
             cursor += 4;
             appendRel(target);
           }
           break;
         case 5:
-          if (!budget.consumeWork(payload * 4)) parserBudgetExhausted("work");
+          if (!budget.consumeWork(payload * 4))
+            parserBudgetExhausted(budget, "work");
           if (
             payload > Math.floor((first.length - cursor) / 4) ||
             payload > Math.floor((outputLimit - outputLength) / 8)
           )
-            throw new Error("Inline pointer fixups leave DEHYDRATED_DATA");
+            throw new NativeAotAdmissionError({
+              code: "hydration_failed",
+              detail: "inline_pointer_fixups_leave",
+            });
           for (let i = 0; i < payload; i++) {
             const target = readRelativePointer(
               image,
               dehydrated.start + BigInt(cursor),
+              budget,
             );
-            if (target === null) throw new Error("Invalid inline pointer");
+            if (target === null)
+              throw new NativeAotAdmissionError({
+                code: "hydration_failed",
+                detail: "invalid_inline_pointer",
+              });
             cursor += 4;
             appendPtr(target);
           }
           break;
         default:
-          throw new Error(`Unsupported DEHYDRATED_DATA command ${command}`);
+          throw new NativeAotAdmissionError({
+            code: "hydration_failed",
+            detail: "unsupported_command",
+            command,
+          });
       }
     }
   } catch (cause: unknown) {
@@ -1090,7 +1343,7 @@ const hydrate = (
     throw cause;
   }
   const hydrated = output.subarray(0, outputLength);
-  const sha256 = createHash("sha256").update(hydrated).digest("hex");
+  const sha256 = sha256Hex(hydrated);
   image.addOverlay({ base, sizeBytes: outputLength, sha256, bytes: hydrated });
   return { base, sizeBytes: outputLength, sha256 };
 };
@@ -1123,21 +1376,21 @@ const discoverTables = (
       });
     }
   }
-  if (hydrated !== null) {
-    const section = image.sections.find(
+  if (
+    hydrated !== null &&
+    image.sections.some(
       (candidate) =>
         (candidate.characteristics & 0x40000000) !== 0 &&
         (candidate.characteristics & 0x20000000) === 0 &&
         hydrated.base >= image.addressForRva(candidate.rva) &&
         hydrated.base + BigInt(hydrated.sizeBytes) <=
           image.addressForRva(candidate.rva + virtualExtent(candidate)),
-    );
-    if (section !== undefined)
-      ranges.push({
-        start: hydrated.base,
-        end: hydrated.base + BigInt(hydrated.sizeBytes),
-      });
-  }
+    )
+  )
+    ranges.push({
+      start: hydrated.base,
+      end: hydrated.base + BigInt(hydrated.sizeBytes),
+    });
   ranges.sort((left, right) => (left.start < right.start ? -1 : 1));
   const merged: { start: bigint; end: bigint }[] = [];
   for (const range of ranges) {
@@ -1165,7 +1418,7 @@ const discoverTables = (
         truncated = true;
         break scan;
       }
-      const value = readU64(image.read(address, 8));
+      const value = readU64(image.read(address, 8, budget));
       if (budget.truncationReason !== undefined) {
         truncated = true;
         break scan;
@@ -1202,17 +1455,31 @@ const discoverTables = (
       candidate.interfacesCount !== 0
     )
       return;
-    if (!budget.consumeWork(32)) {
+    // The root heuristic samples its three declared slots and one following
+    // word. That extra word is outside the declared slot/interface arrays.
+    const sampleBytes = (candidate.slotsCount + 1) * METHOD_TABLE_POINTER_BYTES;
+    if (!budget.consumeWork(sampleBytes)) {
       truncated = true;
       return;
     }
-    const vtable = image.read(candidate.address + 24n, 32);
+    const vtable = image.read(
+      methodTablePointerAddress(candidate, methodTableSlotOffset(0)),
+      sampleBytes,
+      budget,
+    );
+    if (vtable === null) return;
+    const sample = new BinaryReader(vtable, true, METHOD_TABLE_FORMAT);
     if (
-      vtable !== null &&
-      image.isExecutable(vtable.readBigUInt64LE(0)) &&
-      image.isExecutable(vtable.readBigUInt64LE(8)) &&
-      image.isExecutable(vtable.readBigUInt64LE(16)) &&
-      !image.isExecutable(vtable.readBigUInt64LE(24))
+      image.isExecutable(sample.word(0, 64), budget) &&
+      image.isExecutable(sample.word(METHOD_TABLE_POINTER_BYTES, 64), budget) &&
+      image.isExecutable(
+        sample.word(2 * METHOD_TABLE_POINTER_BYTES, 64),
+        budget,
+      ) &&
+      !image.isExecutable(
+        sample.word(3 * METHOD_TABLE_POINTER_BYTES, 64),
+        budget,
+      )
     ) {
       objectRoot = index;
       objectCount++;
@@ -1247,17 +1514,33 @@ export const parseNativeAotPe = (
   expectedSha256: string,
   maximumSummaryBytes: number,
   loadedImageBase?: string,
-  limits = DEFAULT_NATIVE_AOT_PARSER_LIMITS,
+  limits = nativeAotParserLimitsFor(bytes.byteLength),
 ): NativeAotPeResult => {
   if (!Number.isSafeInteger(maximumSummaryBytes) || maximumSummaryBytes < 0)
-    throw new Error(
-      "NativeAOT summary budget must be a non-negative safe integer",
-    );
-  for (const limit of Object.values(limits))
-    if (!Number.isSafeInteger(limit) || limit < 0)
-      throw new Error(
-        "NativeAOT parser limits must be non-negative safe integers",
-      );
+    throw new AnalysisInputError("parse_native_aot_pe", undefined, [
+      {
+        path: ["maximumSummaryBytes"],
+        reason: "out_of_range",
+        minimum: 0,
+        ...(Number.isFinite(maximumSummaryBytes)
+          ? { observed: maximumSummaryBytes }
+          : {}),
+      },
+    ]);
+  const invalidLimit = (
+    Object.entries(limits) as readonly (readonly [string, number])[]
+  ).find(([, limit]) => !Number.isSafeInteger(limit) || limit < 0);
+  if (invalidLimit !== undefined)
+    throw new AnalysisInputError("parse_native_aot_pe", undefined, [
+      {
+        path: ["limits", invalidLimit[0]],
+        reason: "out_of_range",
+        minimum: 0,
+        ...(Number.isFinite(invalidLimit[1])
+          ? { observed: invalidLimit[1] }
+          : {}),
+      },
+    ]);
   if (bytes.byteLength > limits.sourceBytes)
     return parsedSummary(
       nativeAotSnapshotOverCapacity(
@@ -1268,19 +1551,16 @@ export const parseNativeAotPe = (
       ),
       maximumSummaryBytes,
     );
-  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const sha256 = sha256Hex(bytes);
   if (sha256 !== expectedSha256)
     throw new NativeAotSnapshotIdentityError(expectedSha256, sha256);
   let image: PeImage;
   try {
     image = new PeImage(bytes);
   } catch (cause: unknown) {
+    if (!(cause instanceof NativeAotAdmissionError)) throw cause;
     return parsedSummary(
-      notApplicable(
-        sha256,
-        cause instanceof Error ? cause.message : "Unsupported PE image",
-        "unsupported-layout",
-      ),
+      notApplicable(sha256, cause.reason, "unsupported-layout"),
       maximumSummaryBytes,
     );
   }
@@ -1289,26 +1569,23 @@ export const parseNativeAotPe = (
     BigInt(loadedImageBase) !== image.imageBase
   )
     return parsedSummary(
-      notApplicable(
-        sha256,
-        "Ghidra loaded the PE at a base different from its preferred image base; relocation-aware metadata mapping is not implemented.",
-        "unsupported-layout",
-      ),
+      notApplicable(sha256, { code: "rebased_image" }, "unsupported-layout"),
       maximumSummaryBytes,
     );
   const budget = new NativeAotParserBudget(limits);
-  image.setBudget(budget);
   const directorySearch = findDirectory(image, bytes, budget);
   if (directorySearch.truncated)
     return parsedSummary(
       {
         ...notApplicable(
           sha256,
-          "RTR signature scanning reached the NativeAOT parser work budget; a unique ReadyToRun directory was not established.",
+          { code: "rtr_scan_budget", runtime_override: false },
           "no-rtr-header",
         ),
         status: "partial",
         truncated: true,
+        types_omitted: 0,
+        frozen_strings_omitted: 0,
         output_budget_bytes: maximumSummaryBytes,
         coverage: {
           pointer_candidates_examined: 0,
@@ -1329,26 +1606,20 @@ export const parseNativeAotPe = (
             : { truncation_reason: budget.truncationReason }),
           basis: "no-rtr-header",
         },
-        diagnostics: [
-          "No metadata hydration was attempted because signature coverage was incomplete.",
-        ],
+        diagnostics: ["rtr_scan_incomplete"],
       },
       maximumSummaryBytes,
     );
   if (directorySearch.directory === null && directorySearch.matches === 0)
     return parsedSummary(
-      notApplicable(
-        sha256,
-        "No supported ReadyToRun directory signature was found in initialized non-executable PE sections.",
-        "no-rtr-header",
-      ),
+      notApplicable(sha256, { code: "no_rtr_directory" }, "no-rtr-header"),
       maximumSummaryBytes,
     );
   if (directorySearch.matches !== 1 || directorySearch.directory === null)
     return parsedSummary(
       notApplicable(
         sha256,
-        "Multiple plausible ReadyToRun directories were found; metadata identity is ambiguous.",
+        { code: "ambiguous_rtr_directory" },
         "unsupported-layout",
       ),
       maximumSummaryBytes,
@@ -1359,7 +1630,11 @@ export const parseNativeAotPe = (
       {
         ...notApplicable(
           sha256,
-          `RTR ${directory.major}.${directory.minor} is detected but this parser supports only the .NET 8 RTR 9.1 method-table layout.`,
+          {
+            code: "unsupported_rtr_version",
+            format_major: directory.major,
+            format_minor: directory.minor,
+          },
           "unsupported-layout",
         ),
         status: "partial",
@@ -1370,15 +1645,14 @@ export const parseNativeAotPe = (
       },
       maximumSummaryBytes,
     );
-  const dehydrated = directory.sections.filter(
-    (section) => section.type === DEHYDRATED_DATA,
-  );
+  const byType = keyedBy(directory.sections, ({ type }) => type);
+  const dehydrated = allKeyed(byType, DEHYDRATED_DATA);
   if (dehydrated.length !== 1)
     return parsedSummary(
       {
         ...notApplicable(
           sha256,
-          "RTR 9.1 directory does not contain exactly one DEHYDRATED_DATA section; metadata recovery is incomplete.",
+          { code: "dehydrated_section_count" },
           "unsupported-layout",
         ),
         status: "partial",
@@ -1390,18 +1664,17 @@ export const parseNativeAotPe = (
       maximumSummaryBytes,
     );
   let overlay: ReturnType<typeof hydrate> = null;
-  let hydrationError: string | null = null;
-  let hydrationBudgetLimited = false;
+  let hydration: NativeAotHydrationFacts | null = null;
   try {
     overlay = hydrate(image, dehydrated[0] as RtrSection, budget);
   } catch (cause: unknown) {
-    hydrationBudgetLimited = cause instanceof NativeAotParserBudgetError;
-    hydrationError = nativeAotHydrationFailure(cause);
+    hydration = nativeAotHydrationFailure(cause, budget);
   }
   const discovered = discoverTables(image, overlay, budget);
-  const frozen = directory.sections.find(
-    (section) => section.type === FROZEN_OBJECT_REGION,
-  );
+  // Repeated regions are ambiguous: the scan reads neither rather than
+  // choosing one by position, and the report is partial.
+  const frozenRegion = uniqueKeyed(byType, FROZEN_OBJECT_REGION);
+  const frozen = frozenRegion.ok ? frozenRegion.value : undefined;
   const isRecoveredStringTable = (address: bigint): boolean => {
     const index = discovered.tables.find(address, budget);
     if (
@@ -1435,35 +1708,42 @@ export const parseNativeAotPe = (
     frozen === undefined || frozen.end < frozenFirstCandidate + 14n
       ? 0
       : Number((frozen.end - 14n - frozenFirstCandidate) / 8n + 1n);
-  const discoveryReason =
+  const hydrationAttachment = hydration === null ? {} : { hydration };
+  const discoveryReason: NativeAotReason | null =
     discovered.truncated && discovered.tables.includedCount === 0
-      ? "RTR 9.1 was found, but method-table discovery reached its resource budget before determining whether a unique System.Object root exists."
+      ? {
+          code: "system_object_root_unproven",
+          runtime_override: false,
+          ...hydrationAttachment,
+        }
       : discovered.tables.includedCount === 0
-        ? "RTR 9.1 was found, but no unique System.Object method-table root could be recovered from the fully examined image pointers."
-        : hydrationError;
-  const recoveryReason =
-    hydrationBudgetLimited &&
-    hydrationError !== null &&
-    discoveryReason !== hydrationError
-      ? `${discoveryReason} ${hydrationError}`
-      : discoveryReason;
+        ? { code: "no_system_object_root", ...hydrationAttachment }
+        : hydration !== null
+          ? nativeAotHydrationReason(hydration)
+          : frozenRegion.ok
+            ? null
+            : { code: "ambiguous_frozen_object_region" };
   const reportLimitations = [
     "Only x64 PE32+ with RTR 9.1 is supported.",
     "No Ghidra database types, labels, functions, or bytes are created or changed.",
     "Names are address identities; original managed type names are unavailable.",
     "Metadata rows omitted to fit the NativeAOT report-byte budget are counted explicitly.",
     "Parser work, parser-owned typed buffers, NativeAOT report JSON, and MCP delivery have separate byte budgets; incomplete scans report examined and unexamined coverage.",
-    ...(frozen === undefined
-      ? ["The RTR directory has no FROZEN_OBJECT_REGION section."]
-      : []),
+    ...(!frozenRegion.ok
+      ? [
+          `The RTR directory declares ${String(frozenRegion.error.ordinals.length)} FROZEN_OBJECT_REGION sections, so none was read.`,
+        ]
+      : frozen === undefined
+        ? ["The RTR directory has no FROZEN_OBJECT_REGION section."]
+        : []),
   ];
   const reportFacts = {
-    format: "dotnet-nativeaot",
-    reason: recoveryReason,
+    format: "dotnet-nativeaot" as const,
+    reason: discoveryReason,
     analysis_artifact_sha256: sha256,
-    analysis_mode: "read-only-derived-overlay",
+    analysis_mode: "read-only-derived-overlay" as const,
     header_address: hex(directory.address),
-    discovery: "signature-heuristic",
+    discovery: "signature-heuristic" as const,
     format_major: directory.major,
     format_minor: directory.minor,
     method_tables: discovered.tables.includedCount,
@@ -1476,16 +1756,10 @@ export const parseNativeAotPe = (
             size_bytes: overlay.sizeBytes,
             sha256: overlay.sha256,
           },
-    derived_memory: null,
-    diagnostics:
-      hydrationError === null
-        ? []
-        : [`Read-only hydration stopped: ${hydrationError}`],
+    derived_memory: null as null,
+    diagnostics: hydration === null ? [] : [hydration.detail],
     limitations: reportLimitations,
-  } satisfies Omit<
-    NativeAotReport,
-    "status" | "types" | "frozen_strings" | "coverage"
-  >;
+  };
   const coverageFacts = {
     pointer_candidates_examined: discovered.pointerCount,
     pointer_slots_examined: discovered.pointerSlotsExamined,
@@ -1504,8 +1778,16 @@ export const parseNativeAotPe = (
         ? "raw-image-pointer-scan"
         : "raw-image-and-rehydrated-pointer-scan",
   } satisfies Omit<NativeAotReport["coverage"], "frozen_string_candidates">;
-  const budgetSkeleton: NativeAotReport = {
+  const budgetSkeleton = {
     ...reportFacts,
+    // A later truncated report replaces a null discovery reason. Reserve the
+    // longest truncation code so that replacement still fits the same budget.
+    reason:
+      discoveryReason ??
+      ({
+        code: "truncated",
+        truncation_reason: "working-memory-budget",
+      } satisfies NativeAotReason),
     status: "complete",
     types: [],
     frozen_strings: [],
@@ -1518,7 +1800,7 @@ export const parseNativeAotPe = (
       // fields so the summary budget remains valid after frozen-region work.
       work_units_examined: budget.limits.workUnits,
       working_memory_bytes_peak: budget.limits.workingMemoryBytes,
-      truncation_reason: "response-budget",
+      truncation_reason: "working-memory-budget",
       frozen_string_candidates: 0,
       frozen_scan_bytes_examined: frozenCandidateBound * 8,
       frozen_string_data_bytes_examined:
@@ -1529,9 +1811,7 @@ export const parseNativeAotPe = (
   let remainingSummaryBytes =
     maximumSummaryBytes - Buffer.byteLength(JSON.stringify(budgetSkeleton));
   if (remainingSummaryBytes < 0)
-    throw new Error(
-      "NativeAOT metadata summary exceeds its report-byte budget",
-    );
+    throw reportBudgetRefusal("summary_exceeds_budget", maximumSummaryBytes);
   let typesOmitted = 0;
   discovered.tables.forEachIncluded((table) => {
     const row: NativeAotType = { address: hex(table.address), type: null };
@@ -1551,14 +1831,27 @@ export const parseNativeAotPe = (
         frozenScanTruncated = true;
         break;
       }
+      const table = readU64(image.read(address, 8, budget));
+      if (budget.truncationReason !== undefined) {
+        frozenScanTruncated = true;
+        break;
+      }
       frozenScanBytesExamined += 8;
-      const table = readU64(image.read(address, 8));
-      if (table === null || !isRecoveredStringTable(table)) {
+      const recovered = table !== null && isRecoveredStringTable(table);
+      if (budget.truncationReason !== undefined) {
+        frozenScanTruncated = true;
+        break;
+      }
+      if (!recovered) {
         address += 8n;
         continue;
       }
       frozenCandidates++;
-      const length = readU32(image.read(address + 8n, 4));
+      const length = readU32(image.read(address + 8n, 4, budget));
+      if (budget.truncationReason !== undefined) {
+        frozenScanTruncated = true;
+        break;
+      }
       if (length === null || address + 14n + BigInt(length) * 2n > frozen.end) {
         address += 8n;
         continue;
@@ -1568,12 +1861,16 @@ export const parseNativeAotPe = (
         frozenScanTruncated = true;
         break;
       }
-      frozenStringDataBytesExamined += stringBytes;
       // NativeAOT's System.String layout is the object header, 32-bit length,
       // UTF-16 payload, then the terminating code unit. The payload starts at
       // +12, not +16 (the latter silently shifts every decoded string by two
       // characters and includes adjacent object padding).
-      const raw = image.read(address + 12n, stringBytes);
+      const raw = image.read(address + 12n, stringBytes, budget);
+      if (budget.truncationReason !== undefined) {
+        frozenScanTruncated = true;
+        break;
+      }
+      frozenStringDataBytesExamined += stringBytes;
       if (raw === null || raw.readUInt16LE(length * 2) !== 0) {
         address += 8n;
         continue;
@@ -1614,38 +1911,65 @@ export const parseNativeAotPe = (
     (typesOmitted > 0 || frozenStringsOmitted > 0
       ? "response-budget"
       : undefined);
-  const summary: NativeAotReport = {
-    ...reportFacts,
-    status:
-      truncated ||
-      hydrationError !== null ||
-      discovered.tables.includedCount === 0
-        ? "partial"
-        : "complete",
-    types,
-    frozen_strings: frozenStrings,
-    truncated,
-    types_omitted: typesOmitted,
-    frozen_strings_omitted: frozenStringsOmitted,
-    coverage: {
-      ...coverageFacts,
-      work_units_examined: budget.workUnits,
-      working_memory_bytes_peak: budget.workingMemoryBytesPeak,
-      ...(truncationReason === undefined
-        ? {}
-        : { truncation_reason: truncationReason }),
-      frozen_string_candidates: frozenCandidates,
-      frozen_scan_bytes_examined: frozenScanBytesExamined,
-      frozen_string_data_bytes_examined: frozenStringDataBytesExamined,
-      frozen_scan_bytes_omitted: Math.max(
-        0,
-        frozenCandidateBound * 8 - frozenScanBytesExamined,
-      ),
-    },
+  const partial = truncated || discoveryReason !== null;
+  const publishedReason: NativeAotReason = discoveryReason ?? {
+    code: "truncated",
+    truncation_reason: truncationReason ?? "response-budget",
   };
+  const examinedCoverage = {
+    ...coverageFacts,
+    work_units_examined: budget.workUnits,
+    working_memory_bytes_peak: budget.workingMemoryBytesPeak,
+    frozen_string_candidates: frozenCandidates,
+    frozen_scan_bytes_examined: frozenScanBytesExamined,
+    frozen_string_data_bytes_examined: frozenStringDataBytesExamined,
+    frozen_scan_bytes_omitted: Math.max(
+      0,
+      frozenCandidateBound * 8 - frozenScanBytesExamined,
+    ),
+    ...(truncationReason === undefined
+      ? {}
+      : { truncation_reason: truncationReason }),
+  };
+  const summary: NativeAotReport = partial
+    ? truncated
+      ? {
+          ...reportFacts,
+          status: "partial",
+          reason: publishedReason,
+          types,
+          frozen_strings: frozenStrings,
+          truncated: true,
+          types_omitted: typesOmitted,
+          frozen_strings_omitted: frozenStringsOmitted,
+          coverage: examinedCoverage,
+        }
+      : {
+          ...reportFacts,
+          status: "partial",
+          reason: publishedReason,
+          types,
+          frozen_strings: frozenStrings,
+          truncated: false,
+          types_omitted: 0,
+          frozen_strings_omitted: 0,
+          coverage: examinedCoverage,
+        }
+    : {
+        ...reportFacts,
+        status: "complete",
+        reason: null,
+        types,
+        frozen_strings: frozenStrings,
+        truncated: false,
+        types_omitted: 0,
+        frozen_strings_omitted: 0,
+        coverage: examinedCoverage,
+      };
   if (Buffer.byteLength(JSON.stringify(summary)) > maximumSummaryBytes)
-    throw new Error(
-      "NativeAOT metadata summary exceeded its report-byte budget after serialization",
+    throw reportBudgetRefusal(
+      "summary_exceeded_after_serialization",
+      maximumSummaryBytes,
     );
   const readTypeDetail = (
     address: string,
@@ -1697,9 +2021,7 @@ export const parseNativeAotPe = (
     };
     let remaining = maximumBytes - Buffer.byteLength(JSON.stringify(metadata));
     if (remaining < 0) {
-      metadata.diagnostics.push(
-        "The NativeAOT detail report budget is too small for the requested MethodTable summary.",
-      );
+      metadata.diagnostics.push("detail_budget_too_small");
       metadata.truncated = true;
       metadata.status = "partial";
       return Buffer.byteLength(JSON.stringify(metadata)) <= maximumBytes
@@ -1715,7 +2037,7 @@ export const parseNativeAotPe = (
         interfacesOmitted += table.interfacesCount - index;
         break;
       }
-      if (!detailBudget.consumeWork(8)) {
+      if (!detailBudget.consumeWork(METHOD_TABLE_POINTER_BYTES)) {
         interfacesOmitted += table.interfacesCount - index;
         break;
       }
@@ -1723,11 +2045,13 @@ export const parseNativeAotPe = (
         address: hex(table.address),
         type: null,
       };
-      const value = readU64(
-        image.read(
-          table.address + 24n + BigInt((table.slotsCount + index) * 8),
-          8,
+      const value = readMethodTablePointer(
+        image,
+        methodTablePointerAddress(
+          table,
+          methodTableInterfaceOffset(table.slotsCount, index),
         ),
+        detailBudget,
       );
       if (value === null) {
         interfacesOmitted += table.interfacesCount - index;
@@ -1759,20 +2083,22 @@ export const parseNativeAotPe = (
         slotsOmitted += table.slotsCount - slot;
         break;
       }
-      if (!detailBudget.consumeWork(8)) {
+      if (!detailBudget.consumeWork(METHOD_TABLE_POINTER_BYTES)) {
         slotsOmitted += table.slotsCount - slot;
         break;
       }
-      const value = readU64(
-        image.read(table.address + 24n + BigInt(slot * 8), 8),
+      const slotAddress = methodTablePointerAddress(
+        table,
+        methodTableSlotOffset(slot),
       );
+      const value = readMethodTablePointer(image, slotAddress, detailBudget);
       if (value === null) {
         slotsOmitted += table.slotsCount - slot;
         break;
       }
       const row = {
         slot,
-        slot_address: hex(table.address + 24n + BigInt(slot * 8)),
+        slot_address: hex(slotAddress),
         target_address: value === 0n ? null : hex(value),
         procedure_name: null,
         basis: "method-table-pointer" as const,
@@ -1787,7 +2113,10 @@ export const parseNativeAotPe = (
       metadata.virtual_slots.push(row);
       remaining -= rowBytes;
     }
-    const tableBytes = 24 + (table.slotsCount + table.interfacesCount) * 8;
+    const tableBytes = methodTableByteLength(
+      table.slotsCount,
+      table.interfacesCount,
+    );
     // The descriptor size is independent of the source table size. Admit the
     // output representation first, then bound source hashing by parser work.
     const descriptor = {
@@ -1801,24 +2130,22 @@ export const parseNativeAotPe = (
       Buffer.byteLength(JSON.stringify(withDescriptor)) -
       Buffer.byteLength(JSON.stringify(metadata));
     if (descriptorBytes <= remaining && detailBudget.consumeWork(tableBytes)) {
-      const raw = image.read(table.address, tableBytes);
+      const raw = image.read(table.address, tableBytes, detailBudget);
       if (raw !== null) {
         metadata.derived_memory = {
           ...descriptor,
-          sha256: createHash("sha256").update(raw).digest("hex"),
+          sha256: sha256Hex(raw),
         };
         remaining -= descriptorBytes;
       }
     }
     if (detailBudget.truncationReason !== undefined)
-      metadata.diagnostics.push(
-        "MethodTable memory hashing stopped at the parser work budget.",
-      );
+      metadata.diagnostics.push("method_table_hash_work_budget");
     metadata.interfaces_omitted = interfacesOmitted;
     metadata.virtual_slots_omitted = slotsOmitted;
     metadata.truncated =
       discovered.truncated ||
-      hydrationError !== null ||
+      hydration !== null ||
       detailBudget.truncationReason !== undefined ||
       interfacesOmitted > 0 ||
       slotsOmitted > 0 ||
@@ -1830,9 +2157,7 @@ export const parseNativeAotPe = (
       metadata.interfaces.length = 0;
       metadata.virtual_slots_omitted += metadata.virtual_slots.length;
       metadata.virtual_slots.length = 0;
-      metadata.diagnostics.push(
-        "MethodTable detail rows were omitted because the final serialized report exceeded its byte budget.",
-      );
+      metadata.diagnostics.push("detail_rows_omitted");
       metadata.truncated = true;
       metadata.status = "partial";
       if (Buffer.byteLength(JSON.stringify(metadata)) > maximumBytes)

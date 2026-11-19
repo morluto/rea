@@ -1,5 +1,3 @@
-import { json } from "./lib/verify-package-core.mjs";
-
 const REQUIRED_HELP_COMMANDS = [
   "setup",
   "update",
@@ -87,7 +85,7 @@ export async function verifyPackageDiscovery({ commands, cli, environment }) {
     ["doctor", "--json"],
     environment,
   );
-  const doctor = json(doctorExecution.stdout);
+  const doctor = JSON.parse(doctorExecution.stdout);
   const { supportedSetupHost, hopperReadinessRequired, hopperSetupSupported } =
     packageSetupSupport(doctor.checks, {
       platform: process.platform,

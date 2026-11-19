@@ -1,22 +1,24 @@
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import type {
   AnalysisProfileResolution,
   ProviderIdentity,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { createFunctionCoordinateContext } from "../domain/native/functionCoordinateContext.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
-  AnalysisCancelledError,
   AnalysisUnsupportedTargetError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
+import { resolveGhidraComImport } from "./GhidraComImport.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ghidraDisabledAnalyzerPreset } from "./GhidraDisabledAnalyzers.js";
+import { ghidraProducerIdentity } from "./GhidraProducerIdentity.js";
 import type { GhidraInstallationInspection } from "./GhidraInstallation.js";
 import {
   isLegacyMipsAdmission,
@@ -33,6 +35,7 @@ import {
 } from "./GhidraPowerPcProfile.js";
 import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
 import {
+  GHIDRA_GAMECUBE_DOL_LANGUAGE,
   ghidraDolLanguage,
   ghidraDolLanguageUnsupportedReason,
   ghidraDolProfileParameters,
@@ -47,26 +50,23 @@ import {
   NATIVE_AOT_MAX_REPORT_BYTES,
   NATIVE_AOT_MAX_SOURCE_BYTES,
   NATIVE_AOT_MAX_WORKING_MEMORY_BYTES,
-  NATIVE_AOT_MAX_WORK_UNITS,
-  NATIVE_AOT_PROFILE_CONTRACT_REVISION,
+  NATIVE_AOT_BASE_WORK_UNITS,
+  NATIVE_AOT_WORK_UNITS_PER_SOURCE_BYTE,
 } from "../domain/native/nativeAotPe.js";
 
-/** Shared analysis commitments for raw and header-selected imports. */
-const sharedAnalysisSemantics = {
-  annotation_policy: "atomic-function-entry-metadata-v1",
-  load_image_observations: "source-mappings-entry-context-v2",
-  function_body_evidence: "complete-inclusive-ranges-v1",
-  function_references: "complete-body-and-entry-reference-manager-v2",
-  call_relationship_coverage: "function-body-call-coverage-v5",
-  function_dossier_coverage: "observed-facets-and-call-relationships-v1",
-  string_inventory_evidence: "defined-data-coverage-v1",
-  location_resolution: "explicit-address-exact-entry-symbol-first-v3",
-  procedure_file_offset_resolution:
-    "address-first-unique-target-source-mapping-v2",
-  instruction_flow_evidence: "decoded-return-pcode-v1",
-  instruction_references: "exact-address-incoming-without-synthetic-entry-v2",
-  function_boundary_observations: "ghidra-function-boundary-limitations-v4",
-} as const;
+/**
+ * The producer every Ghidra result depends on. Behaviour REA implements (bridge
+ * scripts or TypeScript projection) is covered by the producer identity; the
+ * profile adds only facts selected at runtime, so no revision marker needs a
+ * hand bump when that behaviour changes.
+ */
+const sharedAnalysisSemantics = () => ({
+  producer: ghidraProducerIdentity(),
+  annotation_policy: "atomic-function-entry-metadata",
+});
+const loaderRelocationSemantics = "volatile-unapplied-relocation-destinations";
+// Read-only sessions record relocation limitations without marking blocks volatile.
+const readOnlyLoaderRelocationSemantics = "read-only-relocation-limitations";
 
 /**
  * The processor language REA pins for this target, or undefined when Ghidra may
@@ -111,16 +111,15 @@ const binaryLoaderPolicy = (
   architecture: target.architecture,
   available_architectures: [...target.availableArchitectures].sort(),
   import_mode: "ephemeral-source-immutable",
-  ...sharedAnalysisSemantics,
+  ...sharedAnalysisSemantics(),
   no_return_repair:
     installation.platform === "win32"
       ? "disabled-windows-p0"
-      : "returning-imports-decoded-return-v2",
+      : "returning-imports-decoded-return",
   process_launch:
     installation.platform === "win32"
-      ? "official-headless-script-v1"
-      : "inspected-jvm-launch-support-v1",
-  jump_table_evidence: "typed-case-default-blocks-v1",
+      ? "official-headless-script"
+      : "inspected-jvm-launch-support",
   decompiler_jump_loads: true,
 });
 
@@ -135,9 +134,7 @@ export const resolveGhidraAnalysisProfile = async (
   disabledAnalyzers?: readonly string[],
 ): Promise<Result<AnalysisProfileResolution, AnalysisError>> => {
   if (signal?.aborted === true)
-    return Promise.resolve(
-      err(new AnalysisCancelledError("open_binary", { cause: signal.reason })),
-    );
+    return Promise.resolve(err(cancelledBy("open_binary", signal)));
   if (target.kind !== "executable")
     return Promise.resolve(ok({ profile: null }));
   if (installation.status === "unavailable")
@@ -180,14 +177,16 @@ export const resolveGhidraAnalysisProfile = async (
   if (target.format === "gamecube-dol") {
     // The DOL admission owns the processor family; only a BE32 PowerPC variant may replace the stock language.
     const reason = ghidraDolLanguageUnsupportedReason(languageOverride);
-    if (reason !== null)
+    // The DOL is admitted; only the selected language conflicts with it.
+    if (reason !== null && languageOverride !== undefined)
       return Promise.resolve(
         err(
-          new AnalysisUnsupportedTargetError(
-            "resolve_analysis_profile",
-            target.path,
-            reason,
-          ),
+          languageOverrideConflict(languageOverride, reason, {
+            languageId: GHIDRA_GAMECUBE_DOL_LANGUAGE.languageId,
+            ...(languageOverride.compilerSpecId === undefined
+              ? {}
+              : { compilerSpecId: languageOverride.compilerSpecId }),
+          }),
         ),
       );
     const language = ghidraDolLanguage(languageOverride);
@@ -195,16 +194,12 @@ export const resolveGhidraAnalysisProfile = async (
       ok({
         profile: createProfile({
           ...binaryLoaderPolicy(target, installation),
-          load_image_evidence: "independent-dol-section-mapping-v1",
           loader: "BinaryLoader",
           language_id: language.languageId,
           compiler_spec_id: language.compilerSpecId ?? "language-default",
           language_selection:
-            languageOverride === undefined
-              ? "provider-pinned-v1"
-              : "configured-v1",
+            languageOverride === undefined ? "provider-pinned" : "configured",
           entry_point: target.entryPoint,
-          entry_seed: "external-entry-and-function-before-analysis-v1",
           ...ghidraDolProfileParameters(target.dol),
           ...analyzerParameters,
         }),
@@ -226,13 +221,11 @@ export const resolveGhidraAnalysisProfile = async (
       ok({
         profile: createProfile({
           ...binaryLoaderPolicy(target, installation),
-          load_image_evidence: "independent-raw-mapping-context-v4",
           loader: "BinaryLoader",
           language_id: language.languageId,
           compiler_spec_id: language.compilerSpecId,
-          language_selection: "caller-supplied-v1",
+          language_selection: "caller-supplied",
           entry_point: target.entryPoint,
-          entry_seed: "external-entry-and-function-before-analysis-v1",
           ...analyzerParameters,
         }),
       }),
@@ -275,6 +268,13 @@ export const resolveGhidraAnalysisProfile = async (
         ),
       ),
     );
+  // ComLoader's acceptance depends on the provider name and the image bytes.
+  // Read them once here; the launcher uses this committed selection.
+  const comImport = dosCom
+    ? await resolveGhidraComImport(target, resources, signal)
+    : undefined;
+  if (comImport !== undefined && !comImport.ok) return comImport;
+  const com = comImport?.ok === true ? comImport.value : undefined;
   return Promise.resolve(
     ok({
       profile: createProfile({
@@ -285,9 +285,10 @@ export const resolveGhidraAnalysisProfile = async (
               executable_role: target.executableRole ?? null,
               managed: target.managed ?? null,
               native_aot_metadata: {
-                contract_revision: NATIVE_AOT_PROFILE_CONTRACT_REVISION,
                 source_bytes: NATIVE_AOT_MAX_SOURCE_BYTES,
-                work_units: NATIVE_AOT_MAX_WORK_UNITS,
+                base_work_units: NATIVE_AOT_BASE_WORK_UNITS,
+                work_units_per_source_byte:
+                  NATIVE_AOT_WORK_UNITS_PER_SOURCE_BYTE,
                 working_memory_bytes: NATIVE_AOT_MAX_WORKING_MEMORY_BYTES,
                 report_bytes: NATIVE_AOT_MAX_REPORT_BYTES,
               },
@@ -298,42 +299,36 @@ export const resolveGhidraAnalysisProfile = async (
           ...(target.availableArchitectures ?? []),
         ].sort(),
         import_mode: "ephemeral-source-immutable",
-        ...(target.format === "pe"
-          ? { pdb_observations: "program-info-v5" }
-          : {}),
         ...(installation.platform === "win32" &&
         target.format === "pe" &&
         (target.architecture === "arm" || target.architecture === "arm64")
           ? {
               windows_arm_pe_import:
                 selectedLanguage === undefined
-                  ? "loader-selected-language-v1"
-                  : "explicit-language-v1",
+                  ? "loader-selected-language"
+                  : "explicit-language",
               windows_arm_pe_machine: target.peMachine ?? null,
             }
           : {}),
-        ...sharedAnalysisSemantics,
+        ...sharedAnalysisSemantics(),
+        // Windows P0 has no database-mutation authority: limitations only.
+        loader_relocation_semantics:
+          installation.platform === "win32"
+            ? readOnlyLoaderRelocationSemantics
+            : loaderRelocationSemantics,
         no_return_repair:
           installation.platform === "win32"
             ? "disabled-windows-p0"
-            : "returning-imports-decoded-return-v2",
+            : "returning-imports-decoded-return",
         process_launch:
           installation.platform === "win32"
-            ? "official-headless-script-v1"
-            : "inspected-jvm-launch-support-v1",
-        ...(dos
-          ? {
-              load_image_evidence: dosCom
-                ? "independent-com-mapping-context-v1"
-                : "independent-mz-mapping-relocations-v2",
-            }
-          : {}),
-        jump_table_evidence: "typed-case-default-blocks-v1",
+            ? "official-headless-script"
+            : "inspected-jvm-launch-support",
         decompiler_jump_loads: true,
         loader: dosMz
           ? "MzLoader"
-          : dosCom
-            ? "BinaryLoader"
+          : com !== undefined
+            ? com.loader
             : "auto-from-header",
         language_id: dos
           ? "x86:LE:16:Real Mode"
@@ -346,33 +341,36 @@ export const resolveGhidraAnalysisProfile = async (
         ...(languageOverride === undefined
           ? pinnedLanguage === undefined
             ? {}
-            : { language_selection: "provider-pinned-v1" }
-          : { language_selection: "configured-v1" }),
+            : { language_selection: "provider-pinned" }
+          : { language_selection: "configured" }),
         ...(dos
           ? {
-              load_segment: "0x1000",
+              load_segment: com?.loadSegment ?? "0x1000",
               address_coordinates: "linear-byte-offset",
+              ...(com === undefined ? {} : { load_address: com.loadAddress }),
             }
           : {}),
-        ...(dosCom
-          ? {
+        ...(com === undefined
+          ? {}
+          : {
               entry_offset: "0x100",
               register_context: {
-                CS: "0x1000",
-                DS: "0x1000",
-                ES: "0x1000",
-                SS: "0x1000",
+                CS: com.segmentRegister,
+                DS: com.segmentRegister,
+                ES: com.segmentRegister,
+                SS: com.segmentRegister,
               },
-              entry_seed: "external-entry-and-function-before-analysis-v1",
-            }
-          : {}),
+              ...(com.fallback === undefined
+                ? {}
+                : { loader_fallback: com.fallback }),
+            }),
         ...analyzerParameters,
         ...ghidraMipsProfileParameters(target, languageOverride),
         ...ghidraRiscvProfileParameters(target),
         ...ghidraPowerPcProfileParameters(target),
         ...(pspExtension?.ok === true
           ? {
-              mips_support_lane: "psp-elf32-exec-eabi32-allegrex-v2",
+              mips_support_lane: "psp-elf32-exec-eabi32-allegrex",
               loader: "PspElfLoader",
               language_id: "Allegrex:LE:32:default",
               compiler_spec_id: "default",
@@ -389,8 +387,8 @@ export const ghidraProfileLanguageOverride = (
   parameters: Readonly<Record<string, unknown>>,
 ): GhidraLanguageOverride | undefined => {
   if (
-    parameters.language_selection !== "configured-v1" &&
-    parameters.language_selection !== "provider-pinned-v1"
+    parameters.language_selection !== "configured" &&
+    parameters.language_selection !== "provider-pinned"
   )
     return undefined;
   const languageId = parameters.language_id;
@@ -401,6 +399,14 @@ export const ghidraProfileLanguageOverride = (
     ? { languageId }
     : { languageId, compilerSpecId };
 };
+
+/** Read back the language a provider-pinned profile imports with, for any pinned lane. */
+export const ghidraProfilePinnedLanguage = (
+  parameters: Readonly<Record<string, unknown>>,
+): GhidraLanguageOverride | undefined =>
+  parameters.language_selection === "provider-pinned"
+    ? ghidraProfileLanguageOverride(parameters)
+    : undefined;
 
 /** Whether a committed profile and the active configuration select the same language. */
 export const sameGhidraLanguageOverride = (
@@ -455,3 +461,27 @@ const createGhidraProfile = (
         }
       : {}),
   });
+
+/** A caller database supplies analysis state; no import or completion claims are inferred. */
+export const existingGhidraAnalysisProfile = (
+  target: BinaryTarget,
+  provider: Parameters<typeof createAnalysisProfile>[0],
+  project: JsonValue,
+) => {
+  const mipsElf = ghidraMipsProfileParameters(target).mips_elf;
+  return createAnalysisProfile(provider, {
+    target_kind: target.kind,
+    target_format: target.format,
+    architecture: target.architecture ?? null,
+    ...(mipsElf === undefined ? {} : { mips_elf: mipsElf }),
+    import_mode: "existing-project-private-copy",
+    ...sharedAnalysisSemantics(),
+    selected_project_relationship_coverage: "prior-analysis-unknown",
+    annotation_policy: "read-only-existing-project",
+    loader_relocation_semantics: readOnlyLoaderRelocationSemantics,
+    existing_project: project,
+    original_analysis: { completeness: "unknown", settings: "unknown" },
+    no_return_repair: "disabled-existing-project",
+    process_launch: "inspected-jvm-launch-support",
+  });
+};

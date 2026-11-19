@@ -1,11 +1,15 @@
-import { expect, it, vi } from "vitest";
-
-import { AnalysisResourceConstraintError } from "../../../../src/domain/analysisErrorCore.js";
-import { HopperClient } from "../../../../src/hopper/HopperClient.js";
 import {
+  transportReplyContracts,
   HopperFixtureLauncher,
   trackHopperClient,
 } from "./hopperClient.fixture.js";
+import { bridgeMaxRequestBytesRecovery } from "../../../../src/config/bridgeMaxRequestBytes.js";
+import { expect, it, vi } from "vitest";
+
+import { AnalysisResourceConstraintError } from "../../../../src/domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
+import { HopperClient } from "../../../../src/hopper/HopperClient.js";
+import { waitFor } from "../../../support/testWait.js";
 
 const limit = (maximumBytes: number) =>
   ({ maximumBytes, source: "setting" }) as const;
@@ -14,6 +18,7 @@ it("reports a Hopper ceiling mismatch and releases the fixture", async () => {
   const launcher = new HopperFixtureLauncher();
   const client = trackHopperClient(
     new HopperClient({
+      replyContracts: transportReplyContracts,
       launcher,
       startupTimeoutMs: 10_000,
       bridgeMaxRequestBytes: limit(1_048_576),
@@ -24,16 +29,17 @@ it("reports a Hopper ceiling mismatch and releases the fixture", async () => {
   if (started.ok) return;
   expect(started.error).toBeInstanceOf(AnalysisResourceConstraintError);
   if (!(started.error instanceof AnalysisResourceConstraintError)) return;
-  expect(started.error.reason).toContain("REA_BRIDGE_MAX_REQUEST_BYTES");
-  expect(started.error.reason).toContain("1048576");
-  expect(started.error.reason).toContain("16777216");
-  expect(started.error.reason).toContain("source setting");
-  expect(started.error.remediationAction).toContain(
-    "Set REA_BRIDGE_MAX_REQUEST_BYTES",
+  expect(started.error.reportedLimits).toMatchObject({
+    bridge_max_request_bytes: 16777216,
+    client_max_request_bytes: 1048576,
+  });
+  expect(started.error.remediationAction).toBe(
+    bridgeMaxRequestBytesRecovery(limit(1048576), "Hopper"),
   );
-  expect(started.error.reason).not.toContain("no runtime override");
   const process = launcher.processes[0];
-  expect(process?.exitCode !== null || process?.signalCode !== null).toBe(true);
+  if (process === undefined)
+    throw new Error("Expected a launched fixture child");
+  expect(process.exitCode !== null || process.signalCode !== null).toBe(true);
 });
 
 it("refuses an oversized Hopper request before the fixture receives it", async () => {
@@ -47,6 +53,7 @@ it("refuses an oversized Hopper request before the fixture receives it", async (
   );
   const client = trackHopperClient(
     new HopperClient({
+      replyContracts: transportReplyContracts,
       launcher,
       startupTimeoutMs: 10_000,
       bridgeMaxRequestBytes: limit(8192),
@@ -61,9 +68,16 @@ it("refuses an oversized Hopper request before the fixture receives it", async (
   if (refused.ok) return;
   expect(refused.error).toBeInstanceOf(AnalysisResourceConstraintError);
   if (!(refused.error instanceof AnalysisResourceConstraintError)) return;
-  expect(refused.error.reason).toContain("8192");
-  expect(refused.error.reason).toContain("no request was sent");
-  expect(refused.error.reason).toContain("REA_BRIDGE_MAX_REQUEST_BYTES");
+  expect(refused.error.reportedLimits).toMatchObject({
+    max_request_bytes: 8192,
+  });
+  expect(projectAnalysisError(refused.error).details).toMatchObject({
+    resource: "transport",
+    request_sent: false,
+  });
+  expect(refused.error.remediationAction).toBe(
+    bridgeMaxRequestBytesRecovery(limit(8192), "Hopper"),
+  );
   expect(launcher.requests.map(({ method }) => method)).not.toContain(
     "set_address_name",
   );
@@ -80,6 +94,7 @@ it("refuses a Hopper payload whose JSON expansion exceeds the ceiling before ser
   );
   const client = trackHopperClient(
     new HopperClient({
+      replyContracts: transportReplyContracts,
       launcher,
       startupTimeoutMs: 10_000,
       bridgeMaxRequestBytes: limit(8192),
@@ -97,9 +112,12 @@ it("refuses a Hopper payload whose JSON expansion exceeds the ceiling before ser
     if (refused.ok) return;
     expect(refused.error).toBeInstanceOf(AnalysisResourceConstraintError);
     if (!(refused.error instanceof AnalysisResourceConstraintError)) return;
-    expect(refused.error.reason).toContain("8192");
-    expect(refused.error.reason).toContain("no request was sent");
-    expect(refused.error.reason).toContain("REA_BRIDGE_MAX_REQUEST_BYTES");
+    expect(refused.error.reportedLimits).toMatchObject({
+      max_request_bytes: 8192,
+    });
+    expect(refused.error.remediationAction).toBe(
+      bridgeMaxRequestBytesRecovery(limit(8192), "Hopper"),
+    );
     expect(launcher.requests.map(({ method }) => method)).not.toContain(
       "set_address_name",
     );
@@ -147,6 +165,7 @@ it("serializes a queued Hopper request only when it reaches the wire", async () 
   const launcher = new HopperFixtureLauncher();
   const client = trackHopperClient(
     new HopperClient({
+      replyContracts: transportReplyContracts,
       launcher,
       startupTimeoutMs: 10_000,
     }),
@@ -169,12 +188,9 @@ it("serializes a queued Hopper request only when it reaches the wire", async () 
       },
     },
   );
-  await vi.waitFor(
-    () => {
-      if (!queuedNotice) throw new Error("echo is not queued yet");
-    },
-    { timeout: 5_000 },
-  );
+  await waitFor(() => {
+    if (!queuedNotice) throw new Error("echo is not queued yet");
+  });
   expect(serializedPayload(stringify.mock.calls, value)).toBe(false);
   await launcher.release(held);
   await expect(active).resolves.toMatchObject({
@@ -198,6 +214,7 @@ it("sends a Hopper request above 16 MiB when both sides raise the ceiling", asyn
   );
   const client = trackHopperClient(
     new HopperClient({
+      replyContracts: transportReplyContracts,
       launcher,
       startupTimeoutMs: 10_000,
       bridgeMaxRequestBytes: limit(ceiling),

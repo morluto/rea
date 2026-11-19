@@ -1,4 +1,9 @@
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
+import {
+  parseGooseConfigurationYaml,
+  stringifyGooseConfigurationYaml,
+  editGooseConfigurationYaml,
+} from "./GooseConfigurationYaml.js";
 import { isDeepStrictEqual } from "node:util";
 
 import {
@@ -31,8 +36,17 @@ import { PRODUCT_IDENTITY } from "../identity.js";
 import type { SetupClient } from "./SupportedClients.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 
-export type ClientConfigurationFormat = NonNullable<SetupClient["format"]>;
-export type ClientServersKey = "mcp_servers" | "mcpServers" | "mcp" | "servers";
+export type ClientConfigurationFormat =
+  | NonNullable<SetupClient["format"]>
+  | "copilot_cli_project";
+type ClientServersKey =
+  | "mcp_servers"
+  | "mcpServers"
+  | "mcp"
+  | "servers"
+  | "amp.mcpServers"
+  | "context_servers"
+  | "extensions";
 
 /**
  * Registration entry dialect. OpenCode V2 reads V1 `mcp.<name>` entries, but a
@@ -45,16 +59,30 @@ export type ClientRegistrationDialect =
 /** Validated client document and its server table, preserving unrelated settings. */
 export interface ClientConfigurationDocument {
   readonly document: Record<string, unknown>;
+  /** A repairable source syntax is admitted for preservation but must be rewritten
+   * before this client's strict reader can load the published registration. */
+  readonly requiresRewrite?: true;
   /** Server table that registrations are written to. */
   readonly servers: Record<string, unknown>;
   /** Key path of `servers` in `document`. */
   readonly serversPath: readonly string[];
   readonly dialect: ClientRegistrationDialect;
+  /** Member holding explicit environment overrides in a server registration. */
+  readonly environmentKey: "env" | "environment" | "envs";
   /**
    * OpenCode V1 server members beside a native V2 `mcp.servers` table. OpenCode
    * still loads them, and a native entry with the same name takes precedence.
    */
   readonly legacyServers: Record<string, unknown>;
+}
+
+/**
+ * Configuration a client reads from an environment variable instead of a file.
+ * It is the client's highest-precedence layer, and REA never writes it.
+ */
+export interface ClientInlineConfiguration {
+  readonly origin: "KILO_CONFIG_CONTENT";
+  readonly parsed: ClientConfigurationDocument;
 }
 
 /** Admit source mappings without Zod's record clone dropping caller keys. */
@@ -98,7 +126,14 @@ export const clientConfigurationServersKey = (
       return "mcp_servers";
     case "opencode":
     case "zcode":
+    case "kilo":
       return "mcp";
+    case "amp":
+      return "amp.mcpServers";
+    case "zed":
+      return "context_servers";
+    case "goose":
+      return "extensions";
     case "vscode":
       return "servers";
     default:
@@ -141,51 +176,146 @@ const parseClientToml = (text: string): Record<string, unknown> => {
   return parsed;
 };
 
-const parseDocument = (
-  text: string,
-  format: ClientConfigurationFormat,
-): Record<string, unknown> => {
-  if (format === "toml" || format === "grok")
-    return requireObject(parseClientToml(text), "The configuration root");
+/**
+ * How a client's own loader reads its configuration file: the syntax and the
+ * strictness, byte-order-mark and empty-file rules REA must match so it never
+ * accepts or writes a document the client rejects. This is the only owner of
+ * those facts; the registration dialect (server table, entry shape) is separate.
+ */
+type ClientConfigurationReader =
+  | { readonly syntax: "toml" }
+  | {
+      readonly syntax: "yaml";
+      readonly parse?: (text: string) => unknown;
+    }
+  | {
+      readonly syntax: "json";
+      /** What the client's loader accepts: strict `JSON.parse` or JSONC. */
+      readonly native: "json" | "jsonc";
+      /**
+       * REA admits JSONC for a strict client only when it rewrites the whole
+       * file as strict JSON before the client reads it again.
+       */
+      readonly repairsJsonc?: true;
+      /** Whether a leading UTF-8 byte-order mark is accepted. */
+      readonly bom: "accept" | "reject";
+      /** An empty (blank or BOM-only) file holds no settings, or is invalid. */
+      readonly emptyFile: "no-settings" | "reject";
+    };
+
+const JSONC_READER = {
+  syntax: "json",
+  native: "jsonc",
+  bom: "accept",
+  emptyFile: "no-settings",
+} as const satisfies ClientConfigurationReader;
+const STRICT_JSON_REPAIRED_READER = {
+  syntax: "json",
+  native: "json",
+  repairsJsonc: true,
+  bom: "accept",
+  emptyFile: "no-settings",
+} as const satisfies ClientConfigurationReader;
+/** Strict `JSON.parse` without BOM tolerance; an empty file holds no settings. */
+const STRICT_JSON_READER = {
+  syntax: "json",
+  native: "json",
+  bom: "reject",
+  emptyFile: "no-settings",
+} as const satisfies ClientConfigurationReader;
+
+const CLIENT_CONFIGURATION_READERS = {
+  json: JSONC_READER,
+  vscode: JSONC_READER,
+  opencode: JSONC_READER,
+  commandcode: JSONC_READER,
+  omp: JSONC_READER,
+  amp: JSONC_READER,
+  zed: JSONC_READER,
+  kilo: JSONC_READER,
+  // Copilot CLI and fx load strict JSON; admitted JSONC is rewritten.
+  copilot_cli: STRICT_JSON_REPAIRED_READER,
+  copilot_cli_project: STRICT_JSON_REPAIRED_READER,
+  fx: STRICT_JSON_REPAIRED_READER,
+  // Claude Code loads `.claude.json` with strict JSON.parse after a UTF-8 BOM,
+  // so comments and trailing commas it rejects must not be admitted as JSONC.
+  claude_code: { ...STRICT_JSON_READER, bom: "accept" },
+  // Kimi, LM Studio and ZCode read their files with JSON.parse; an empty
+  // file holds nothing to preserve.
+  kimi: STRICT_JSON_READER,
+  lm_studio: STRICT_JSON_READER,
+  zcode: STRICT_JSON_READER,
   // Pi loads `mcp.json` with a strict `JSON.parse` and no BOM tolerance, so
   // comments, trailing commas, a BOM, or an empty existing file must be
   // rejected instead of registering into a document the client cannot load.
-  // Kimi also reads mcp.json with JSON.parse and an empty-file fallback.
-  if (format === "pi" || format === "kimi") {
-    if (format === "kimi" && text.trim().length === 0) return {};
-    return requireObject(JSON.parse(text), "The configuration root");
-  }
+  pi: { ...STRICT_JSON_READER, emptyFile: "reject" },
+  zcode_fallback: { ...STRICT_JSON_READER, emptyFile: "reject" },
+  toml: { syntax: "toml" },
+  grok: { syntax: "toml" },
+  goose: { syntax: "yaml", parse: parseGooseConfigurationYaml },
+  // Hermes stores MCP servers in `mcp_servers` inside a YAML document.
+  hermes: { syntax: "yaml", parse: parseHermesConfigurationYaml },
+  // DeepSeek Harness reads a Cordis patch list; its own parser owns the shape.
+  dsh: { syntax: "yaml" },
+} as const satisfies Record<
+  Exclude<ClientConfigurationFormat, "unsupported">,
+  ClientConfigurationReader
+>;
+
+/** The client loader's reader for one configuration format. */
+const clientConfigurationReader = (
+  format: Exclude<ClientConfigurationFormat, "unsupported">,
+): ClientConfigurationReader => CLIENT_CONFIGURATION_READERS[format];
+
+/** The syntax name REA's reader admits for a format, for diagnostics. */
+export const clientConfigurationSyntaxName = (
+  format: Exclude<ClientConfigurationFormat, "unsupported">,
+): "JSON" | "JSONC" | "TOML" | "YAML" => {
+  const reader = clientConfigurationReader(format);
+  if (reader.syntax === "toml") return "TOML";
+  if (reader.syntax === "yaml") return "YAML";
+  return reader.native === "json" && reader.repairsJsonc !== true
+    ? "JSON"
+    : "JSONC";
+};
+
+const parseDocument = (
+  text: string,
+  format: Exclude<ClientConfigurationFormat, "unsupported">,
+  root = "The configuration root",
+): Record<string, unknown> => {
+  const reader = clientConfigurationReader(format);
+  if (reader.syntax === "toml")
+    return requireObject(parseClientToml(text), root);
   // An empty file, which some clients create before any server is added,
   // holds no settings to preserve.
-  if (isEmptyClientConfigurationText(text)) return {};
-  // Hermes stores MCP servers in `mcp_servers` inside a YAML document.
-  if (format === "hermes")
+  if (
+    (reader.syntax === "yaml" || reader.emptyFile === "no-settings") &&
+    isEmptyClientConfigurationText(text)
+  )
+    return {};
+  if (reader.syntax === "yaml") {
+    if (reader.parse === undefined)
+      throw new TypeError(`${format} configuration has a dedicated parser`);
+    return requireObject(reader.parse(text), root);
+  }
+  if (reader.native === "json" && reader.repairsJsonc !== true)
     return requireObject(
-      parseHermesConfigurationYaml(text),
-      "The configuration root",
-    );
-  // ZCode loads nonempty native files with strict JSON.parse.
-  if (format === "zcode")
-    return requireObject(JSON.parse(text), "The configuration root");
-  // Claude Code loads `.claude.json` with strict JSON.parse after a UTF-8 BOM,
-  // so comments and trailing commas it rejects must not be admitted as JSONC.
-  if (format === "claude_code")
-    return requireObject(
-      JSON.parse(text.replace(/^\uFEFF/, "")),
-      "The configuration root",
+      JSON.parse(reader.bom === "accept" ? text.replace(/^\uFEFF/, "") : text),
+      root,
     );
   const errors: ParseError[] = [];
   // Accept a UTF-8 BOM without shifting diagnostics or editing the original text.
   const jsonText = text.startsWith("\uFEFF") ? ` ${text.slice(1)}` : text;
-  const root = parseTree(jsonText, errors, { allowTrailingComma: true });
+  const tree = parseTree(jsonText, errors, { allowTrailingComma: true });
   const firstError = errors[0];
   if (firstError !== undefined)
     throw new SyntaxError(
       `Invalid JSON/JSONC at offset ${firstError.offset}: ${printParseErrorCode(firstError.error)}`,
     );
   return requireObject(
-    root === undefined ? undefined : getNodeValue(root),
-    "The configuration root",
+    tree === undefined ? undefined : getNodeValue(tree),
+    root,
   );
 };
 
@@ -208,7 +338,7 @@ const requireObject = (
 export const parseZcodeFallbackConfiguration = (
   text: string,
 ): ClientConfigurationDocument => {
-  const document = requireObject(JSON.parse(text), "ZCode fallback root");
+  const document = parseDocument(text, "zcode_fallback", "ZCode fallback root");
   return {
     document,
     servers:
@@ -217,6 +347,7 @@ export const parseZcodeFallbackConfiguration = (
         : requireObject(document.mcpServers, "ZCode fallback mcpServers"),
     serversPath: ["mcpServers"],
     dialect: "zcode_fallback",
+    environmentKey: "env",
     legacyServers: {},
   };
 };
@@ -225,6 +356,27 @@ export const parseZcodeFallbackConfiguration = (
 const OPENCODE_V2_MCP_SETTINGS = new Set(["servers", "timeout"]);
 
 /** Parse a client document and reject malformed roots or MCP server tables. */
+const strictJsonNeedsRewrite = (text: string): boolean => {
+  try {
+    JSON.parse(text);
+    return false;
+  } catch {
+    return true;
+  }
+};
+
+/** Fx's native writer preserves a sole profile table and rejects hidden peers. */
+const fxConfigurationServersKey = (
+  document: Record<string, unknown>,
+): "mcp" | "mcpServers" => {
+  const legacy = Object.hasOwn(document, "mcp");
+  if (legacy && Object.hasOwn(document, "mcpServers"))
+    throw new ClientConfigurationShapeError(
+      'Fx profile contains both "mcp" and "mcpServers". Consolidate these into one server table before registering so existing servers remain visible.',
+    );
+  return legacy ? "mcp" : "mcpServers";
+};
+
 export const parseClientConfiguration = (
   text: string,
   format: ClientConfigurationFormat | undefined,
@@ -235,7 +387,57 @@ export const parseClientConfiguration = (
   if (format === "zcode_fallback") return parseZcodeFallbackConfiguration(text);
   if (format === "dsh") return parseDshCordisDocument(text);
   const document = parseDocument(text, format);
-  const serversKey = clientConfigurationServersKey(format);
+  const reader = clientConfigurationReader(format);
+  const requiresRewrite: true | undefined =
+    reader.syntax === "json" &&
+    reader.repairsJsonc === true &&
+    strictJsonNeedsRewrite(text)
+      ? true
+      : undefined;
+  if (
+    format === "copilot_cli_project" &&
+    !Object.hasOwn(document, "mcpServers")
+  ) {
+    const serverLike = (value: unknown): boolean => {
+      const entry = clientConfigurationRecordSchema.safeParse(value);
+      return (
+        entry.success &&
+        ["command", "url", "type"].some(
+          (key) => typeof entry.data[key] === "string",
+        )
+      );
+    };
+    const wrapper = clientConfigurationRecordSchema.safeParse(document.servers);
+    if (
+      wrapper.success &&
+      !serverLike(wrapper.data) &&
+      Object.values(wrapper.data).some(serverLike)
+    )
+      throw new ClientConfigurationShapeError(
+        'Copilot CLI reads mcpServers or a bare server map, not the VS Code "servers" wrapper. Select --agent vscode for that document.',
+      );
+    const entries = Object.values(document);
+    if (entries.length > 0 && entries.every(serverLike))
+      return {
+        document,
+        ...(requiresRewrite === undefined ? {} : { requiresRewrite }),
+        servers: document,
+        serversPath: [],
+        dialect: format,
+        environmentKey: "env",
+        legacyServers: {},
+      };
+  }
+  const environmentKey =
+    format === "opencode" || format === "fx" || format === "kilo"
+      ? "environment"
+      : format === "goose"
+        ? "envs"
+        : "env";
+  const serversKey =
+    format === "fx"
+      ? fxConfigurationServersKey(document)
+      : clientConfigurationServersKey(format);
   const value = document[serversKey];
   const servers =
     value === undefined ? {} : requireObject(value, `"${serversKey}"`);
@@ -251,6 +453,7 @@ export const parseClientConfiguration = (
           : requireObject(nested, `"${serversKey}.servers"`),
       serversPath: [serversKey, "servers"],
       dialect: format,
+      environmentKey,
       legacyServers: {},
     };
   }
@@ -267,9 +470,11 @@ export const parseClientConfiguration = (
   )
     return {
       document,
+      ...(requiresRewrite === undefined ? {} : { requiresRewrite }),
       servers,
       serversPath: [serversKey],
       dialect: format,
+      environmentKey,
       legacyServers: {},
     };
   return {
@@ -277,6 +482,7 @@ export const parseClientConfiguration = (
     servers: requireObject(native, `"${serversKey}.servers"`),
     serversPath: [serversKey, "servers"],
     dialect: "opencode_v2",
+    environmentKey,
     legacyServers: Object.fromEntries(
       Object.entries(servers).filter(
         ([name]) => !OPENCODE_V2_MCP_SETTINGS.has(name),
@@ -312,25 +518,40 @@ export const effectiveClientServer = (
     : registration;
 };
 
+/** Preserve source policy when editing its native table. A legacy OpenCode
+ * entry moving to the V2 table first uses that owner's activation migration. */
+export const clientServerForEdit = (
+  parsed: ClientConfigurationDocument,
+  name: string,
+): unknown =>
+  Object.hasOwn(parsed.servers, name)
+    ? parsed.servers[name]
+    : parsed.dialect === "opencode_v2"
+      ? effectiveClientServer(parsed, name)
+      : undefined;
+
 /**
  * Return `parsed.document` with `servers` at its server table. A legacy OpenCode
- * V1 member named in `removeLegacy` is removed beside a native V2 table.
+ * V1 member named in `removeLegacy` is removed beside a native V2 table. The
+ * platform names the environment identity a Cordis entry is written with.
  */
 export const withClientServers = (
   parsed: ClientConfigurationDocument,
   servers: Record<string, unknown>,
+  platform: NodeJS.Platform,
   removeLegacy?: string,
 ): Record<string, unknown> => {
   // The Harness patch list upserts or removes by entry id, not by table.
   if (parsed.dialect === "dsh")
     return Object.hasOwn(servers, PRODUCT_IDENTITY.mcpServerKey)
-      ? editDshDocument(
-          parsed,
-          clientConfigurationRecordSchema.parse(
+      ? editDshDocument(parsed, {
+          desired: clientConfigurationRecordSchema.parse(
             servers[PRODUCT_IDENTITY.mcpServerKey],
           ),
-        )
+          platform,
+        })
       : editDshDocument(parsed);
+  if (parsed.serversPath.length === 0) return { ...servers };
   const [key = "", nested] = parsed.serversPath;
   if (nested === undefined) return { ...parsed.document, [key]: servers };
   // A fresh document may not hold the outer table yet (for example a new
@@ -714,7 +935,18 @@ const tomlInlineKey = (key: string): string =>
 const tomlInlineValue = (value: unknown): string => {
   if (typeof value === "string") return tomlBasicString(value);
   if (typeof value === "boolean") return value ? "true" : "false";
-  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (typeof value === "number") {
+    if (Number.isNaN(value)) return "nan";
+    if (value === Infinity) return "inf";
+    if (value === -Infinity) return "-inf";
+    if (Object.is(value, -0)) return "-0.0";
+    // A float outside the safe integer range must not become an Int64 token.
+    return Number.isInteger(value) && !Number.isSafeInteger(value)
+      ? value.toFixed(1)
+      : String(value);
+  }
+  // TomlDate overrides toISOString to retain local date/time and offset kinds.
+  if (value instanceof Date) return value.toISOString();
   if (typeof value === "bigint") return String(value);
   if (Array.isArray(value))
     return `[${value.map((item) => tomlInlineValue(item)).join(", ")}]`;
@@ -726,7 +958,7 @@ const tomlInlineValue = (value: unknown): string => {
       .join(", ");
     return `{ ${body} }`;
   }
-  return '""';
+  throw new TypeError("Unsupported TOML inline value");
 };
 
 interface InlinePair {
@@ -1258,7 +1490,7 @@ const tomlServerEntry = (
 };
 
 /** Whether Grok Build's root disable list names `serverKey`. */
-export const grokServerListedDisabled = (
+const grokServerListedDisabled = (
   document: Record<string, unknown>,
   serverKey: string,
 ): boolean =>
@@ -1272,7 +1504,7 @@ export const grokServerListedDisabled = (
 export const OMP_DISABLED_SERVERS_KEY = "disabledServers";
 
 /** Whether OMP's root `disabledServers` denylist names `serverKey`. */
-export const ompServerListedDisabled = (
+const ompServerListedDisabled = (
   document: Record<string, unknown>,
   serverKey: string,
 ): boolean => {
@@ -1517,11 +1749,11 @@ const applyFormattedJsonEdit = (text: string, edit: Edit): string => {
 };
 
 /** Remove selected member spans and only the separators needed by kept members. */
-const deleteJsonMembers = (
+const jsonChildRemovalEdits = (
   text: string,
   object: Node,
   properties: readonly Node[],
-): string => {
+): Edit[] => {
   const siblings = object.children ?? [];
   const removed = new Set(properties);
   const anyKept = siblings.some((member) => !removed.has(member));
@@ -1541,6 +1773,113 @@ const deleteJsonMembers = (
       next === undefined ? anyKept : earlierKept && !removed.has(next);
     if (separator.kind === JSON_COMMA && !keepSeparator)
       edits.push({ offset: separator.offset, length: 1, content: "" });
+  }
+  return edits;
+};
+
+const deleteJsonMembers = (
+  text: string,
+  object: Node,
+  properties: readonly Node[],
+): string => applyEdits(text, jsonChildRemovalEdits(text, object, properties));
+
+/**
+ * Edit values through their source nodes. Parsed numbers are useful for deciding
+ * whether a field changed, but serializing unchanged values would discard their
+ * original precision and spelling. Only effective object members are updated;
+ * removing a nested field removes every repeat, as replacing its owning object
+ * did, so an earlier field cannot become active.
+ */
+const jsonValueEdits = (text: string, node: Node, value: unknown): Edit[] => {
+  if (node.type === "object") {
+    const record = clientConfigurationRecordSchema.safeParse(value);
+    if (record.success) {
+      const members = node.children ?? [];
+      const removed = members.filter((member) => {
+        const key: unknown = member.children?.[0]?.value;
+        return (
+          typeof key === "string" &&
+          (!Object.hasOwn(record.data, key) || record.data[key] === undefined)
+        );
+      });
+      const edits = jsonChildRemovalEdits(text, node, removed);
+      const added: string[] = [];
+      for (const [key, next] of Object.entries(record.data)) {
+        if (next === undefined) continue;
+        const child = effectiveJsonProperty(node, key)?.children?.[1];
+        if (child === undefined)
+          added.push(`${JSON.stringify(key)}:${JSON.stringify(next)}`);
+        else edits.push(...jsonValueEdits(text, child, next));
+      }
+      if (added.length > 0)
+        edits.push({
+          offset: node.offset + 1,
+          length: 0,
+          content:
+            added.join(",") +
+            (members.some((member) => !removed.includes(member)) ? "," : ""),
+        });
+      return edits;
+    }
+  }
+  if (node.type === "array" && Array.isArray(value)) {
+    const children = node.children ?? [];
+    const edits = jsonChildRemovalEdits(
+      text,
+      node,
+      children.slice(value.length),
+    );
+    for (const [index, child] of children.slice(0, value.length).entries())
+      edits.push(...jsonValueEdits(text, child, value[index] ?? null));
+    if (value.length > children.length) {
+      const previous = children.at(-1);
+      edits.push({
+        offset:
+          previous === undefined
+            ? node.offset + 1
+            : previous.offset + previous.length,
+        length: 0,
+        content:
+          (previous === undefined ? "" : ",") +
+          value
+            .slice(children.length)
+            .map((entry) => JSON.stringify(entry ?? null))
+            .join(","),
+      });
+    }
+    return edits;
+  }
+  return Object.is(node.value, value)
+    ? []
+    : [
+        {
+          offset: node.offset,
+          length: node.length,
+          content: JSON.stringify(value),
+        },
+      ];
+};
+
+// Token codes are checked against jsonc-parser's ambient enum.
+const JSON_CLOSE_BRACE = 2 satisfies SyntaxKind;
+const JSON_CLOSE_BRACKET = 4 satisfies SyntaxKind;
+const JSON_LINE_COMMENT = 12 satisfies SyntaxKind;
+const JSON_BLOCK_COMMENT = 13 satisfies SyntaxKind;
+
+/** Remove JSONC syntax without decoding and re-encoding source value tokens. */
+const strictJsonSyntax = (source: string): string => {
+  const text = source.startsWith("\uFEFF") ? source.slice(1) : source;
+  const scanner = createScanner(text, false);
+  const edits: Edit[] = [];
+  for (let token = scanner.scan(); token !== JSON_EOF; token = scanner.scan()) {
+    const offset = scanner.getTokenOffset();
+    if (token === JSON_LINE_COMMENT || token === JSON_BLOCK_COMMENT)
+      edits.push({ offset, length: scanner.getTokenLength(), content: " " });
+    else if (token === JSON_COMMA) {
+      const next = nextJsoncToken(text, offset + 1);
+      if (next.kind === JSON_CLOSE_BRACE || next.kind === JSON_CLOSE_BRACKET)
+        edits.push({ offset, length: 1, content: "" });
+    }
   }
   return applyEdits(text, edits);
 };
@@ -1596,13 +1935,7 @@ const editJsonMember = (
       continue;
     }
     if (value !== undefined)
-      return ok(
-        applyFormattedJsonEdit(text, {
-          offset: member.offset,
-          length: member.length,
-          content: JSON.stringify(value),
-        }),
-      );
+      return ok(applyEdits(text, jsonValueEdits(text, member, value)));
     if (
       object.children?.some(
         (sibling) => sibling !== property && isJsonMember(sibling, key),
@@ -1653,17 +1986,29 @@ export const serializeClientConfiguration = (
     return ok(serializeGrokConfiguration(document, originalText));
   if (format === "hermes")
     return ok(serializeHermesConfiguration(document, originalText));
+  if (format === "goose") {
+    if (originalText === undefined || editedPaths === undefined)
+      return ok(stringifyGooseConfigurationYaml(document));
+    let text = originalText;
+    for (const path of editedPaths)
+      text = editGooseConfigurationYaml(text, path, valueAt(document, path));
+    return ok(text);
+  }
   if (format === "dsh") return ok(serializeDshDocument(document));
   // An empty original holds no comments or settings to preserve. Writing a
   // fresh document also keeps a lone BOM from shifting past the closing brace.
   if (
     originalText === undefined ||
-    isEmptyClientConfigurationText(originalText) ||
-    editedPaths === undefined
+    isEmptyClientConfigurationText(originalText)
   )
     return ok(`${JSON.stringify(document, null, 2)}\n`);
   let text = originalText;
-  for (const path of editedPaths) {
+  if (editedPaths === undefined) {
+    const root = parseTree(text, [], { allowTrailingComma: true });
+    if (root === undefined) throw new TypeError("JSON document is missing");
+    text = applyEdits(text, jsonValueEdits(text, root, document));
+  }
+  for (const path of editedPaths ?? []) {
     const edited = editJsonMember(
       text,
       path,
@@ -1677,7 +2022,12 @@ export const serializeClientConfiguration = (
     if (!edited.ok) return edited;
     text = edited.value;
   }
-  return ok(text);
+  const reader = clientConfigurationReader(format);
+  return ok(
+    reader.syntax === "json" && reader.repairsJsonc === true
+      ? strictJsonSyntax(text)
+      : text,
+  );
 };
 
 /** Key path of a named registration in the server table. */
@@ -1724,82 +2074,70 @@ const serializeHermesConfiguration = (
 };
 
 /** Build the stdio entry shape expected by one client's configuration dialect. */
+/** Native launcher fields shared by setup and explicit MCP registration. */
+export const clientRegistrationLauncherEntry = (
+  format: ClientRegistrationDialect,
+  command: readonly string[],
+): Record<string, unknown> => {
+  const [executable = "rea", ...args] = command;
+  switch (format) {
+    case "opencode":
+    case "opencode_v2":
+    case "fx":
+    case "kilo":
+      return { type: "local", command: [...command] };
+    case "goose":
+      return { type: "stdio", cmd: executable, args };
+    case "vscode":
+    case "omp":
+    case "pi":
+    case "copilot_cli":
+    case "copilot_cli_project":
+      return { type: "stdio", command: executable, args };
+    case "commandcode":
+      return { transport: "stdio", command: executable, args };
+    default:
+      return { command: executable, args };
+  }
+};
+
+/** Setup defaults and explicit environment extend the same native launcher facts. */
 export const clientRegistrationEntry = (
   format: ClientRegistrationDialect,
   command: readonly string[],
   environment: Readonly<Record<string, string>>,
 ): Record<string, unknown> => {
-  const [executable = "rea", ...args] = command;
-  switch (format) {
-    case "opencode":
-      return {
-        type: "local",
-        command: [...command],
-        enabled: true,
-        ...(Object.keys(environment).length === 0
-          ? {}
-          : { environment: { ...environment } }),
-      };
-    case "kimi":
-      // Kimi infers stdio from command; it uses `transport`, not `type`.
-      return {
-        command: executable,
-        args,
-        ...(Object.keys(environment).length === 0 ? {} : { env: environment }),
-      };
-    case "opencode_v2":
-      // Override lower-priority disabled flags when refreshing a V2 registration.
-      return {
-        type: "local",
-        command: [...command],
-        disabled: false,
-        ...(Object.keys(environment).length === 0
-          ? {}
-          : { environment: { ...environment } }),
-      };
-    case "vscode":
-    case "omp":
-    case "pi":
-      return {
-        type: "stdio",
-        command: executable,
-        args,
-        ...(Object.keys(environment).length === 0 ? {} : { env: environment }),
-      };
-    case "copilot_cli":
-      return {
-        type: "stdio",
-        command: executable,
-        args,
-        tools: ["*"],
-        ...(Object.keys(environment).length === 0 ? {} : { env: environment }),
-      };
-    case "commandcode":
-      return {
-        transport: "stdio",
-        enabled: true,
-        command: executable,
-        args,
-        ...(Object.keys(environment).length === 0 ? {} : { env: environment }),
-      };
-    case "dsh":
-      return dshClientRegistrationEntry(command, environment);
-    case "hermes":
-      // Hermes reads stdio servers from `mcp_servers.<name>` and connects them
-      // unless `enabled` is false, so the entry states it explicitly.
-      return {
-        command: executable,
-        args,
-        ...(Object.keys(environment).length === 0 ? {} : { env: environment }),
-        enabled: true,
-      };
-    default:
-      return {
-        command: executable,
-        args,
-        ...(Object.keys(environment).length === 0 ? {} : { env: environment }),
-      };
-  }
+  if (format === "dsh") return dshClientRegistrationEntry(command, environment);
+  const defaults =
+    format === "opencode_v2"
+      ? { disabled: false }
+      : format === "copilot_cli"
+        ? { tools: ["*"] }
+        : format === "goose"
+          ? {
+              name: PRODUCT_IDENTITY.mcpServerKey,
+              description: "",
+              envs: {},
+              enabled: true,
+              timeout: 300,
+            }
+          : ["opencode", "commandcode", "hermes", "fx", "kilo"].includes(format)
+            ? { enabled: true }
+            : {};
+  const environmentKey = ["opencode", "opencode_v2", "fx", "kilo"].includes(
+    format,
+  )
+    ? "environment"
+    : format === "goose"
+      ? "envs"
+      : "env";
+  return {
+    ...clientRegistrationLauncherEntry(format, command),
+    ...defaults,
+    ...(Object.keys(environment).length === 0
+      ? {}
+      : { [environmentKey]: { ...environment } }),
+  };
 };
 
 /** Parse one Gemini policy at its source boundary before consolidating scopes. */

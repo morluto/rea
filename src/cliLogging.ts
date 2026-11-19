@@ -1,16 +1,12 @@
-import {
-  analysisCliErrorEnvelopeSchema,
-  analysisErrorProjectionSchema,
-} from "./contracts/errorSchemas.js";
+import { analysisCliErrorEnvelopeSchema } from "./contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "./domain/analysisErrorProjectionSchema.js";
 import { AnalysisError } from "./domain/analysisErrorBase.js";
 import {
   projectAnalysisError,
   type AnalysisErrorProjection,
 } from "./domain/analysisErrorProjection.js";
 import type { Logger } from "pino";
-
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+import { isRecord } from "./kernel/isRecord.js";
 
 type CliFailureIdentity = Pick<
   AnalysisErrorProjection,
@@ -100,6 +96,19 @@ export const cliOperationFailureIdentity = (
 ): CliFailureIdentity | undefined =>
   isRecord(value) ? loggedFailures.get(value)?.identity : undefined;
 
+/** Keep failure classification and recovery identity when a CLI wrapper projects an error record. */
+export const rebindLoggedCliFailure = (
+  previous: unknown,
+  next: unknown,
+): void => {
+  if (previous === next || !isRecord(previous) || !isRecord(next)) return;
+  if (!loggedFailures.has(previous)) return;
+  loggedFailures.set(
+    next,
+    inferCliOperationFailure(next) ?? loggedFailures.get(previous),
+  );
+};
+
 /** Log one CLI command with duration and a stable success or failure status. */
 export const logCliCommand = async <Value>(
   logger: Logger,
@@ -125,10 +134,10 @@ export const logCliCommand = async <Value>(
       },
       failed ? "CLI command failed" : "CLI command completed",
     );
-    if (failed) process.exitCode = 1;
+    if (failed) process.exitCode ||= 1;
     return value;
   } catch (cause: unknown) {
-    process.exitCode = 1;
+    process.exitCode ||= 1;
     logger.error(
       {
         command,
@@ -138,7 +147,6 @@ export const logCliCommand = async <Value>(
       "CLI command failed",
     );
     if (cause instanceof AnalysisError) {
-      process.exitCode = 1;
       const projection = projectAnalysisError(cause);
       loggedFailures.set(projection, canonicalFailure(projection));
       return projection;

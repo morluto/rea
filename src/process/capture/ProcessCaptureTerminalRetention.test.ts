@@ -1,15 +1,16 @@
 import { expect, it } from "vitest";
-import type { IPty } from "@lydell/node-pty";
 
 import { processScenarioSchema } from "../../domain/process/processScenario.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
-import { createProcessIdentifierLookup } from "./ProcessNormalization.js";
+import {
+  createProcessIdentifierLookup,
+  createBoundedProcessTextNormalizer,
+} from "./ProcessNormalization.js";
 import type {
   TerminalFrame,
   ProcessSample,
 } from "../../domain/process/processCapture.js";
 import { captureTerminalFrames } from "./ProcessCaptureLifecycle.js";
-import { createBoundedProcessTextNormalizer } from "./ProcessNormalization.js";
 
 it("omits an expanding chunk whole and retains a later smaller normalized chunk", () => {
   let onData: ((data: string) => void) | undefined;
@@ -18,7 +19,7 @@ it("omits an expanding chunk whole and retains a later smaller normalized chunk"
       onData = listener;
       return { dispose: () => undefined };
     },
-  } as unknown as IPty;
+  };
   const scenario = processScenarioSchema.parse({
     executable: "unused",
     limits: { output_bytes: 1_000 },
@@ -38,7 +39,7 @@ it("omits an expanding chunk whole and retains a later smaller normalized chunk"
     frames,
     started: 0,
     onOutput: () => undefined,
-    renderer: { write: (data: string) => renderedChunks.push(data) } as never,
+    renderer: { write: (data: string) => renderedChunks.push(data) },
     normalizeText: createBoundedProcessTextNormalizer(scenario, "/tmp", -1),
     recordEvent: (collection, index) => journal.push([collection, index]),
     identifiers: () => [],
@@ -77,7 +78,7 @@ it.each([false, true])(
         onData = listener;
         return { dispose: () => undefined };
       },
-    } as unknown as IPty;
+    };
     const scenario = processScenarioSchema.parse({
       executable: "unused",
       limits: { output_bytes: overBudget ? 4 : 1000 },
@@ -102,7 +103,7 @@ it.each([false, true])(
       frames,
       started: 0,
       onOutput: () => undefined,
-      renderer: { write: () => undefined } as never,
+      renderer: { write: () => undefined },
       normalizeText: createBoundedProcessTextNormalizer(
         scenario,
         "/tmp",
@@ -146,7 +147,7 @@ it("retains PTY chunk boundaries when two output messages arrive fragmented", ()
       onData = listener;
       return { dispose: () => undefined };
     },
-  } as unknown as IPty;
+  };
   const scenario = processScenarioSchema.parse({
     executable: "unused",
     normalization: { paths: false, pids: false, ports: false },
@@ -158,7 +159,7 @@ it("retains PTY chunk boundaries when two output messages arrive fragmented", ()
     frames,
     started: 0,
     onOutput: () => undefined,
-    renderer: { write: () => undefined } as never,
+    renderer: { write: () => undefined },
     normalizeText: createBoundedProcessTextNormalizer(scenario, "/tmp", -1),
     recordEvent: () => undefined,
     identifiers: () => [],

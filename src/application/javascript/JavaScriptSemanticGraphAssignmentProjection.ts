@@ -1,6 +1,7 @@
 import type { SemanticFlowProjectionContext } from "./JavaScriptSemanticGraphFlowProjection.js";
 import { createSemanticNodeRangeLookup } from "./JavaScriptSemanticGraphProjection.js";
 import { sourceRangesEqual } from "../../domain/javascript/javascriptStaticAnalysisHelpers.js";
+import { javascriptSourceRangeKey } from "../../domain/javascript/javascriptSourceCoordinates.js";
 import {
   addSemanticGraphRelation,
   addSemanticGraphUnknown,
@@ -13,6 +14,11 @@ export function* projectSemanticAssignments(
 ): Generator<void, void> {
   const readsWithin = createSemanticNodeRangeLookup(context.readNodes);
   const writesWithin = createSemanticNodeRangeLookup(context.writeNodes);
+  const expressions = new Set(
+    context.ir.expressionFlows.map((flow) =>
+      javascriptSourceRangeKey(flow.location),
+    ),
+  );
   for (const [index, flow] of context.ir.assignmentFlows.entries()) {
     if (index % 64 === 0) yield;
     const owner =
@@ -22,9 +28,11 @@ export function* projectSemanticAssignments(
     const writes = writesWithin(flow.target).filter((node) =>
       sourceRangesEqual(node.identity.source_range, flow.target),
     );
-    const reads = readsWithin(flow.source).filter(
-      (node) => node.function_node_id === owner,
-    );
+    const reads = expressions.has(javascriptSourceRangeKey(flow.source))
+      ? []
+      : readsWithin(flow.source).filter(
+          (node) => node.function_node_id === owner,
+        );
     // Compound assignments consume the previous value as well as the RHS.
     if (flow.operator !== "=")
       reads.push(

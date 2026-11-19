@@ -1,33 +1,21 @@
-import { z } from "zod";
+import {
+  DEFAULT_CAPTURE_DECODER_OLD_GENERATION_MIB,
+  CAPTURE_DECODER_SEMI_SPACE_MIB,
+  MAXIMUM_CAPTURE_DECODER_OLD_GENERATION_MIB,
+} from "../domain/analysisResourceLimits.js";
+import { positiveDecimalIntegerSchema } from "./positiveDecimalInteger.js";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
+import { currentAnalysisSettingOverride } from "../domain/analysisOperationSnapshot.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 export const CAPTURE_DECODER_OLD_GENERATION_SETTING =
   "REA_CAPTURE_DECODER_OLD_GENERATION_MIB";
 
-/** Old-generation mebibytes used when the setting is unset. Today's constant. */
-export const DEFAULT_CAPTURE_DECODER_OLD_GENERATION_MIB = 192;
-
-/**
- * Semi-space the owned decoder always passes. It is not a setting. An old
- * generation smaller than this semi-space aborts Node during isolate startup
- * instead of enforcing a heap limit, so the setting's floor is this value.
- */
-export const CAPTURE_DECODER_SEMI_SPACE_MIB = 8;
-
-/**
- * Largest old generation one owned decoder may request. 16 GiB is the same
- * ceiling REA already uses for an isolated JavaScript analysis worker. Node
- * will start with a larger flag; this maximum is REA's refusal, so one
- * decoder cannot ask for an unbounded old generation.
- */
-export const MAXIMUM_CAPTURE_DECODER_OLD_GENERATION_MIB = 16_384;
-
 /** Effective HAR/SAZ/qlog old-generation heap and where its value came from. */
 export interface CaptureDecoderHeap {
   readonly oldGenerationMiB: number;
-  readonly source: "default" | "setting";
+  readonly source: "default" | "setting" | "runtime";
 }
 
 export const DEFAULT_CAPTURE_DECODER_HEAP: CaptureDecoderHeap = {
@@ -35,26 +23,15 @@ export const DEFAULT_CAPTURE_DECODER_HEAP: CaptureDecoderHeap = {
   source: "default",
 };
 
-export const captureDecoderHeapConstraint = `${CAPTURE_DECODER_OLD_GENERATION_SETTING} must be a decimal integer from ${String(CAPTURE_DECODER_SEMI_SPACE_MIB)} to ${String(MAXIMUM_CAPTURE_DECODER_OLD_GENERATION_MIB)} MiB; the default is ${String(DEFAULT_CAPTURE_DECODER_OLD_GENERATION_MIB)} MiB. An old generation below the decoder's ${String(CAPTURE_DECODER_SEMI_SPACE_MIB)} MiB semi-space aborts Node during startup instead of enforcing a limit, and a larger value is refused.`;
-
-const decimalInteger = /^[1-9]\d*$/u;
-
-const withinHeapRange = (value: string): boolean => {
-  // The pattern check reports a non-decimal value. Refine only bounds integers.
-  if (!decimalInteger.test(value)) return true;
-  const parsed = BigInt(value);
-  return (
-    parsed >= BigInt(CAPTURE_DECODER_SEMI_SPACE_MIB) &&
-    parsed <= BigInt(MAXIMUM_CAPTURE_DECODER_OLD_GENERATION_MIB)
-  );
-};
+const captureDecoderHeapConstraint = `${CAPTURE_DECODER_OLD_GENERATION_SETTING} must be a decimal integer from ${String(CAPTURE_DECODER_SEMI_SPACE_MIB)} to ${String(MAXIMUM_CAPTURE_DECODER_OLD_GENERATION_MIB)} MiB; the default is ${String(DEFAULT_CAPTURE_DECODER_OLD_GENERATION_MIB)} MiB. An old generation below the decoder's ${String(CAPTURE_DECODER_SEMI_SPACE_MIB)} MiB semi-space aborts Node during startup instead of enforcing a limit, and a larger value is refused.`;
 
 /** Optional decimal mebibyte count for the HAR/SAZ/qlog old-generation heap. */
-export const captureDecoderOldGenerationMiBSchema = z
-  .string()
-  .regex(decimalInteger, { error: captureDecoderHeapConstraint })
-  .refine(withinHeapRange, { error: captureDecoderHeapConstraint })
-  .transform(Number);
+export const captureDecoderOldGenerationMiBSchema =
+  positiveDecimalIntegerSchema(
+    CAPTURE_DECODER_SEMI_SPACE_MIB,
+    MAXIMUM_CAPTURE_DECODER_OLD_GENERATION_MIB,
+    captureDecoderHeapConstraint,
+  );
 
 /** Resolve the effective heap from one environment value. */
 export const parseCaptureDecoderHeap = (
@@ -84,6 +61,11 @@ export const parseCaptureDecoderHeap = (
 export const resolveCaptureDecoderHeap = (
   environment: Readonly<Record<string, string | undefined>>,
 ): CaptureDecoderHeap => {
+  const override = currentAnalysisSettingOverride(
+    "capture.decoder_old_generation_mib",
+  );
+  if (override !== undefined)
+    return { oldGenerationMiB: override, source: "runtime" };
   const parsed = parseCaptureDecoderHeap(
     environment[CAPTURE_DECODER_OLD_GENERATION_SETTING],
   );
@@ -91,11 +73,25 @@ export const resolveCaptureDecoderHeap = (
   return parsed.value;
 };
 
-/** How to read and change the effective HAR/SAZ/qlog old-generation heap. */
-export const captureDecoderHeapRecovery = (heap: CaptureDecoderHeap): string =>
+const captureDecoderHeapFacts = (heap: CaptureDecoderHeap): string =>
   [
     `The effective ${CAPTURE_DECODER_OLD_GENERATION_SETTING} value is ${String(heap.oldGenerationMiB)} MiB (source ${heap.source}; default ${String(DEFAULT_CAPTURE_DECODER_OLD_GENERATION_MIB)} MiB, floor ${String(CAPTURE_DECODER_SEMI_SPACE_MIB)} MiB, maximum ${String(MAXIMUM_CAPTURE_DECODER_OLD_GENERATION_MIB)} MiB).`,
-    `Set ${CAPTURE_DECODER_OLD_GENERATION_SETTING} in the environment that starts REA to a decimal integer from ${String(CAPTURE_DECODER_SEMI_SPACE_MIB)} to ${String(MAXIMUM_CAPTURE_DECODER_OLD_GENERATION_MIB)}, then restart REA.`,
     `On Node.js the decoder passes --max-old-space-size=${String(heap.oldGenerationMiB)} and removes inherited NODE_OPTIONS, so additional host memory and NODE_OPTIONS do not raise this heap. The ${String(CAPTURE_DECODER_SEMI_SPACE_MIB)} MiB semi-space stays fixed.`,
     "On Bun the V8 flags are ignored. Windows limits the decoder's committed memory to this value plus a 512 MiB reserve. Other Bun hosts enforce no decoder heap limit.",
+  ].join(" ");
+
+/** Recovery after this REA process has exited. */
+export const captureDecoderHeapRecovery = (heap: CaptureDecoderHeap): string =>
+  [
+    captureDecoderHeapFacts(heap),
+    `Set ${CAPTURE_DECODER_OLD_GENERATION_SETTING} in the environment that starts the next REA invocation. It must be a decimal integer from ${String(CAPTURE_DECODER_SEMI_SPACE_MIB)} to ${String(MAXIMUM_CAPTURE_DECODER_OLD_GENERATION_MIB)}.`,
+  ].join(" ");
+
+/** Recovery while this session can still call update_analysis_settings. */
+export const captureDecoderHeapContinuingRecovery = (
+  heap: CaptureDecoderHeap,
+): string =>
+  [
+    captureDecoderHeapFacts(heap),
+    `Call update_analysis_settings with setting capture.decoder_old_generation_mib. It applies to the next decoder in this session. The launch seed remains ${CAPTURE_DECODER_OLD_GENERATION_SETTING}.`,
   ].join(" ");

@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 
 // Runtime discovery is generated from the same canonical registrations, after
-// default identity has been recorded and before bundling. Test catalogs stay separate.
+// default identity has been recorded and before bundling.
 const compiled = resolve(dirname(fileURLToPath(import.meta.url)), "../dist");
 const read = (name) => import(pathToFileURL(join(compiled, name)).href);
 const [
@@ -15,18 +15,27 @@ const [
   { parseConfig },
   { silentLogger },
   { PROMPT_CONTRACTS },
+  { TOOL_CONTRACTS },
+  { getEvidenceInputContract },
+  { toolOutputSchemaWithMetadata },
+  { toolFamilyId },
+  { requiredPromptTools },
 ] = await Promise.all([
   read("server/createServer.js"),
   read("composition/binary.js"),
   read("config/parseConfig.js"),
   read("logger.js"),
   read("contracts/promptContracts.js"),
+  read("contracts/toolContracts.js"),
+  read("domain/evidenceInputContract.js"),
+  read("contracts/toolSchemaMetadata.js"),
+  read("contracts/toolFamilies.js"),
+  read("contracts/promptToolFamilyScope.js"),
 ]);
-const recordCatalog = async (profile) => {
+const recordCatalog = async () => {
   // Catalog generation is independent of the host account and user configuration.
   const home = await mkdtemp(join(tmpdir(), "rea-mcp-catalog-"));
   const environment = {
-    REA_MCP_INPUT_SCHEMA_PROFILE: profile,
     HOME: home,
     USERPROFILE: home,
     XDG_CONFIG_HOME: join(home, "config"),
@@ -55,7 +64,18 @@ const recordCatalog = async (profile) => {
       InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
     await client.connect(clientTransport);
-    const tools = (await client.listTools()).tools;
+    const tools = (await client.listTools()).tools.map((tool) => {
+      const contract = TOOL_CONTRACTS.find(({ name }) => name === tool.name);
+      if (contract === undefined) throw new Error(`Missing tool ${tool.name}`);
+      return {
+        ...tool,
+        // Record the pre-codec schema. The SDK owns protocol-specific root
+        // wrapping for both tools/list and tools/call on the deferred server.
+        outputSchema: toolOutputSchemaWithMetadata(contract)[
+          "~standard"
+        ].jsonSchema.output({ target: "draft-2020-12" }),
+      };
+    });
     const prompts = (await client.listPrompts()).prompts.map((prompt) => {
       const contract = PROMPT_CONTRACTS.find(
         (candidate) => candidate.name === prompt.name,
@@ -71,17 +91,30 @@ const recordCatalog = async (profile) => {
       instructions: client.getInstructions(),
       identity: server.catalogIdentity,
       tools,
+      toolFamilies: Object.fromEntries(
+        tools.map(({ name }) => {
+          const family = toolFamilyId(name);
+          if (family === undefined)
+            throw new Error(`Missing family for ${name}`);
+          return [name, family];
+        }),
+      ),
+      promptRequirements: Object.fromEntries(
+        PROMPT_CONTRACTS.map((contract) => [
+          contract.name,
+          requiredPromptTools(contract),
+        ]),
+      ),
+      evidenceReferenceAlternatives: TOOL_CONTRACTS.filter(
+        (contract) =>
+          getEvidenceInputContract(contract.inputSchema)
+            .hasEvidenceReferenceAlternative,
+      ).map((contract) => contract.name),
       prompts,
     };
     const encoded = JSON.stringify(catalog);
     const digest = createHash("sha256").update(encoded).digest("hex");
-    await writeFile(
-      join(
-        compiled,
-        profile === "full" ? "mcp-catalog-full.json" : "mcp-catalog.json",
-      ),
-      encoded,
-    );
+    await writeFile(join(compiled, "mcp-catalog.json"), encoded);
     return digest;
   } catch (cause) {
     producerFailure = { cause };
@@ -110,10 +143,8 @@ const recordCatalog = async (profile) => {
   }
 };
 
-const digests = {};
-for (const profile of ["compact", "full"])
-  digests[profile] = await recordCatalog(profile);
+const digest = await recordCatalog();
 await writeFile(
   join(compiled, "recordedMcpCatalog.js"),
-  `/** Recorded from the compiled runtime; do not edit. */\nexport const RECORDED_MCP_CATALOG_SHA256 = ${JSON.stringify(digests)};\n`,
+  `/** Recorded from the compiled runtime; do not edit. */\nexport const RECORDED_MCP_CATALOG_SHA256 = ${JSON.stringify(digest)};\n`,
 );

@@ -2,8 +2,9 @@
 
 `inspect_rust_binary` / `inspect-rust-binary` answers which crate names,
 versions, sources, and dependency edges are embedded by cargo-auditable in one
-selected local executable or library. It reads the file without running it and
-requires no Rust installation, active binary target, Hopper, Ghidra, or IDA.
+selected local executable, library, or WebAssembly module. It reads the file
+without running it and requires no Rust installation, active binary target,
+Hopper, Ghidra, or IDA.
 
 ```bash
 rea inspect-rust-binary /absolute/path/to/application --json
@@ -68,6 +69,10 @@ to the parent Evidence, selected fields, examined coverage and the next offset.
 Default package fields omit dependency vectors; explicitly select
 `dependencies` to obtain direct references. No dependency path is traversed.
 
+The same parent also projects one CycloneDX 1.6 document with
+`view: { "kind": "cyclonedx" }`. It reads no target bytes. See
+[CycloneDX dependencies](guides/native/cyclonedx-view.md).
+
 The CLI uses the same views and requires an exclusive output bundle for compact
 delivery so the complete Evidence survives process exit:
 
@@ -83,18 +88,24 @@ empty dependency set. Retained views describe the captured artifact digest;
 they do not assert that the current file or running application is unchanged.
 
 ELF section names are resolved through the section-header string table.
-Zlib-compressed name tables are decoded within the native structural budget.
+Zlib- and Zstandard-compressed name tables are decoded within the native structural
+budget. Zstandard decoding also uses a 128 MiB window limit.
 If a name table uses unsupported compression, the result reports that
 limitation and leaves `.dep-v0` presence unknown rather than reporting the
 section absent.
 
 The inline Evidence result contains the artifact path, SHA-256, byte length,
-container format, architecture, word size, and byte order. When a `.dep-v0`
+container format, architecture, word size, and byte order. `bits` is
+`32 | 64 | null`. ELF, PE and Mach-O reports are 32 or 64. WebAssembly is
+null: the container declares no word size, null is not a number, and
+consumers must not coerce it. The summary view uses the same field. When a `.dep-v0`
 section is present, `auditable_metadata` contains:
 
-- `section_name`, `.dep-v0` for ELF and PE or `__DATA,.dep-v0` for Mach-O;
+- `section_name`, `.dep-v0` for ELF, PE, and WebAssembly or `__DATA,.dep-v0`
+  for Mach-O;
 - `file_offset` and `section_bytes`, the exact file range of the dependency
   section in the selected artifact, including accepted PE file-alignment bytes;
+  for WebAssembly, the custom-section payload after its name;
 - `compressed_bytes`, the zlib stream length used for the inflate-ratio limit,
   and `uncompressed_bytes`;
 - `format_version`, the embedded integer, or `null` when the field is omitted;
@@ -117,7 +128,8 @@ removed the field entirely, as recorded in its
 [changelog](https://github.com/rust-secure-code/cargo-auditable/blob/v0.5.0/CHANGELOG.md).
 
 `rustc_commit` is present only when a `/rustc/<40-hex>/` path is found in
-read-only data; its `evidence_kind` is `inferred`. For ELF, read-only
+read-only data, or in the data section of a WebAssembly module; its
+`evidence_kind` is `inferred`. For ELF, read-only
 non-executable `PT_LOAD` file ranges are searched alongside read-only sections,
 so an optional missing section-header
 table does not remove this search source. An empty or unavailable section name
@@ -128,7 +140,31 @@ separately from its type and flags, and
 REA preserves known empty names separately from unavailable names; an unavailable
 name table still leaves `.dep-v0` presence unknown.
 The hash is not a claim that that compiler produced the binary. Several
-distinct hashes leave a single commit unknown.
+distinct hashes leave a single commit unknown. Windows builds join the rest of
+the path with a backslash, as in `/rustc/<40-hex>\library\core`, and that form
+counts too.
+
+## WebAssembly modules
+
+cargo-auditable stores the same zlib-compressed JSON in a WebAssembly custom
+section named `.dep-v0`. For a version 1 core module, such as
+`wasm32-unknown-unknown` or `wasm32-wasip1` output, the reader walks the
+section framing without validating, instantiating, or executing the module.
+The report's `format` and `architecture` are `wasm` and its `byte_order` is
+`little`. `bits` is `null` on the `32 | 64 | null` word size: WebAssembly
+declares no container word size, and memory address types are not inspected.
+JSON output keeps that null. The shared CLI renderer does not substitute a
+number. The Evidence subject format is
+`file`, as for `inspect_wasm_artifact`.
+
+A header, section or section size that ends past the file is truncated. A
+custom-section name or name length that extends past its section, a size that
+does not fit a 32-bit LEB128 integer, a custom-section name that is not UTF-8,
+a second `.dep-v0` section, or a second data section is malformed. Both are
+invalid input. WebAssembly
+components, such as `wasm32-wasip2` output, embed several core modules. They
+are unsupported: no input selects one embedded module the way `architecture`
+selects a universal Mach-O slice.
 
 ## Limits and failures
 
@@ -156,24 +192,67 @@ verified. An omitted revision remains `null` and follows revision 0 semantics.
 Embedded names and versions are file content. They do not authenticate the
 packages or the compiler.
 
-ELF, PE, thin Mach-O and one selected slice of a universal Mach-O are the
-supported containers.
-A universal (FAT) Mach-O needs `architecture` (`x86`, `x86_64`, `arm`
-or `arm64`; CLI `--architecture`). REA reads its own FAT table, without `lipo`,
-and validates the selected slice's range, alignment and Mach-O header CPU
-against the table. The result keeps the universal file as `artifact` (its
-SHA-256 and size), adds `selected_slice` with the slice offset, length, raw CPU
-type/subtype and the FAT table digest, and reports the section and rustc-path offsets as a
-file offset inside that slice. Without `architecture`, or when the file has no
-such slice or several, the request fails on `architecture` and lists the slices
-present. `architecture` on any other image is rejected rather than ignored.
+ELF, PE, thin Mach-O, one selected slice of a universal Mach-O, and
+WebAssembly core modules are the supported containers.
+A universal (FAT) Mach-O needs `architecture` (`x86`, `x86_64`, `arm`, `arm64`
+or `arm64e`; CLI `--architecture`). REA reads its own FAT table, without `lipo`,
+rejects a table whose slices overlap, and validates the selected slice's range,
+alignment and Mach-O header CPU against the table. The result keeps the
+universal file as `artifact` (its SHA-256 and size), adds `selected_slice` with
+the slice offset, length, raw CPU type/subtype and the FAT table digest, and
+reports the section and rustc-path offsets as a file offset inside that slice.
+Without `architecture`, or when the file has no slice of that CPU family, the
+request fails on `architecture` and lists the slices present. A CPU family with
+one slice is selected by its family name, so `arm64` also reads a lone `arm64e`
+slice; `arm64e` reads only an `arm64e` slice. When several slices share the
+family, the value must name the slice's subtype, as `lipo -thin` does: `arm64`
+reads the `arm64` (or `arm64v8`) slice, `arm64e` the `arm64e` (or `arm64e.x1`)
+slice, and `x86_64` the canonical `x86_64` slice. Capability bits are ignored
+when subtypes are compared. REA does not choose a slice by preference. When no
+slice or several slices carry the named subtype, the request fails on
+`architecture` and names any other value that selects exactly one verified
+slice; `arm64e` beside `arm64e.x1`, for example, is refused. Other subtypes,
+such as `x86_64h` and the `x86` (i386) and 32-bit `arm` subtypes, have no value
+of their own; they are read only as the only slice of their family.
+`limitations` lists the same-family slices that were not read and the value, if
+any, that selects each. A slice whose Mach-O header does not match its FAT
+declaration, such as a different CPU subtype, is listed as unverified, and no
+value is offered for it. `architecture` on any other image is rejected rather
+than ignored.
 
 Package and dependency counts are checked against the minimum required JSON
 representation before graph allocation or schema cloning. Oversized graphs
-report the output byte budget; the compiler-path capacity reports
-`maximum_rustc_hashes` in hashes, independently of byte limits.
+report the output byte budget.
+
+The inferred compiler-path facet keeps at most `max_rustc_hashes` distinct
+hashes by default (64). Reaching that selection leaves the dependency report
+available and adds `rustc_commit.coverage` with partial status and the effective
+limit. Increase `max_rustc_hashes` (CLI `--max-rustc-hashes`) on the next call
+to retain a larger prefix; no restart is required. The complete-report byte
+allowance still applies. Optional compiler paths are shortened before they can
+displace independently observed dependency facts.
+
+The synchronous WebAssembly section walk admits at most 65,536 section
+payloads. A further section with a valid length and file extent triggers a
+`cpu` resource constraint whose `reported_limits` name `max_wasm_sections`.
+Invalid lengths and truncated extents retain their format diagnosis at the
+limit. This allowance is fixed, so `producer_limits` does not raise it.
 
 Reader architecture names remain verbatim in the report. Evidence subjects use
 the recognized canonical family: `386` maps to `x86`, `amd64` to `x86_64`, and
 `ppc` to `powerpc`. Unknown families such as `ppc64` remain unknown rather than
 being inferred from a related spelling.
+
+Input and complete-report admission are caller choices through `producer_limits`:
+`input_bytes` defaults to 256 MiB and `output_bytes` to 8 MiB. Both accept positive
+safe integers and apply to the next call without restarting REA. On CLI, use
+`--producer-limits '{"input_bytes":536870912,"output_bytes":16777216}'`.
+Graph expansion and compiler-path retention consume the same selected report
+allowance. The independent compressed dependency limit (1 MiB), inflated JSON
+limits (8 MiB and 64 times the consumed stream), parser nesting and transport
+budgets remain enforced; increasing report admission does not raise those.
+When PE file alignment adds padding, the reader learns the exact consumed
+stream length only after inflation completes. If inflation stops first,
+`reported_limits.maximum_bytes` gives the allocation ceiling in force, the
+smaller of 8 MiB and 64 times the stored extent. If inflation completes, the
+ratio check uses the consumed stream length.

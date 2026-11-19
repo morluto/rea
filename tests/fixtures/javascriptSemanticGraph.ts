@@ -1,6 +1,4 @@
-import { JavaScriptJsonDocuments } from "../../src/application/javascript/JavaScriptJsonDocuments.js";
-import { buildJavaScriptSemanticGraph } from "../../src/application/javascript/JavaScriptSemanticGraphBuilder.js";
-import type { JavaScriptArtifactAnalysis } from "../../src/application/javascript/JavaScriptArtifactAnalysisTypes.js";
+import { createJavaScriptSemanticGraphProjection } from "../../src/application/javascript/JavaScriptSemanticGraphBuilder.js";
 import type { JavaScriptArtifactFile } from "../../src/domain/javascript/javascriptArtifactFiles.js";
 import type { JavaScriptSemanticIr } from "../../src/domain/javascript/javascriptSemanticIr.js";
 import { analyzeJavaScriptSemantics } from "../../src/domain/javascript/javascriptSemanticAnalysis.js";
@@ -22,24 +20,10 @@ export const graphForJavaScript = (
     unpacked: false,
     text: { included: true, value: source },
   };
-  const analysis: JavaScriptArtifactAnalysis = {
-    jsonDocuments: new JavaScriptJsonDocuments(),
-    files: [{ file, javascript: null, semantic: { ir } }],
-    packages: [],
-    json_modules: [],
-    html_scripts: [],
-    html_inline_scripts: [],
-    source_maps: [],
-    visited_ast_nodes: 0,
-    findings: 0,
-    modules: 0,
-    parse_failures: 0,
-    limitations: [],
-  };
-
-  return buildJavaScriptSemanticGraph({
-    rootArtifactSha256: SHA256,
-    applicationGraph: { graph_id: `jag_${"b".repeat(64)}`, nodes: [] },
-    analysis,
+  const projection = createJavaScriptSemanticGraphProjection();
+  projection.projectFile(file, ir);
+  return projection.finish(SHA256, {
+    graph_id: `jag_${"b".repeat(64)}`,
+    nodes: [],
   });
 };

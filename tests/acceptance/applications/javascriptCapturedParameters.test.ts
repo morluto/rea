@@ -23,6 +23,53 @@ export function local() { let value="before"; value="after"; return {value}; }
 `;
 
 cliTest(
+  "retains cyclic member effects and sibling values through CLI and stdio MCP",
+  async ({ cli }) => {
+    const branches = Array.from(
+      { length: 16 },
+      (_, index) => `if (flag === ${index}) node = node.m${index};`,
+    ).join(" else ");
+    await verifyJavaScriptReturnShapes(
+      cli,
+      `export function result() {
+        const seed = { mode: "initial", m15: { value: 1, keep: 3 } };
+        let node = seed;
+        while (node) { ${branches} node.value = 2; }
+        return { changed: seed.m15.value, mode: seed.mode, kept: seed.m15.keep };
+      }
+      export function copied() {
+        const seed = { mode: "initial", keep: 3, m15: { m15: { child: { value: 1 } } } };
+        let node = seed.m15;
+        while (node) {
+          ${branches}
+          const { ignore, ...copy } = node;
+          mutate(copy[key]);
+        }
+        return { changed: seed.m15.m15.child.value, mode: seed.mode, kept: seed.keep };
+      }`,
+      (fields) => {
+        for (const name of ["result", "copied"])
+          expect(fields(name)).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({ path: "/changed", state: "unknown" }),
+              expect.objectContaining({
+                path: "/mode",
+                state: "literal",
+                value: "initial",
+              }),
+              expect.objectContaining({
+                path: "/kept",
+                state: "literal",
+                value: 3,
+              }),
+            ]),
+          );
+      },
+    );
+  },
+);
+
+cliTest(
   "preserves incoming values and proven assignments through CLI and stdio MCP",
   async ({ cli }) => {
     const oracle = await promisify(execFile)(
@@ -85,7 +132,6 @@ console.log(JSON.stringify([captured(5),assigned(5),between(5),intermediate(5),n
       );
     });
   },
-  120_000,
 );
 
 cliTest(
@@ -132,7 +178,6 @@ console.log(JSON.stringify([delayed(),incoming(5),delayedPrivate(),staticField()
         );
     });
   },
-  120_000,
 );
 
 cliTest(
@@ -198,7 +243,6 @@ console.log(JSON.stringify([optionalCall(null),optionalCall(receiver),optionalCa
       "app.ts",
     );
   },
-  120_000,
 );
 
 cliTest(
@@ -262,7 +306,6 @@ console.log(JSON.stringify([objectOrder(),bothSides(),arrayOrder(),computedOrder
       );
     });
   },
-  120_000,
 );
 
 cliTest(
@@ -313,7 +356,6 @@ console.log(JSON.stringify([read(),captured(object=>{object.value=3;})]));`,
       );
     });
   },
-  120_000,
 );
 
 cliTest(
@@ -383,7 +425,6 @@ console.log(JSON.stringify([objectPresent(),objectMissing(),arrayPresent(),array
         );
     });
   },
-  120_000,
 );
 
 cliTest(
@@ -460,5 +501,4 @@ cliTest(
       await harness.close();
     }
   },
-  120_000,
 );

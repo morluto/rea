@@ -16,8 +16,9 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     opendir: async (...args: Parameters<typeof filesystem.opendir>) => {
       const directory = await filesystem.opendir(...args);
       if (String(args[0]) === race.directory) {
-        const close = directory.close.bind(directory);
-        vi.spyOn(directory, "close").mockImplementation(async () => {
+        const closing: { close(): Promise<void> } = directory;
+        const close = closing.close.bind(directory);
+        vi.spyOn(closing, "close").mockImplementation(async () => {
           await close();
           const hook = race.afterDirectoryClose;
           race.afterDirectoryClose = undefined;
@@ -61,7 +62,7 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { importReferenceSource } from "../../src/application/ReferenceSourceImport.js";
 import { readReferenceSource } from "../../src/reference/ReferenceSourceReader.js";
 

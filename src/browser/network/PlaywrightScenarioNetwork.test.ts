@@ -18,6 +18,7 @@ class RequestFixture implements ScenarioNetworkRequest {
   headerReads = 0;
   bodyReads = 0;
   predecessor: ScenarioNetworkRequest | null = null;
+  responseSize = 64;
   constructor(readonly marker: string) {}
   method() {
     return "POST";
@@ -27,6 +28,9 @@ class RequestFixture implements ScenarioNetworkRequest {
   }
   resourceType() {
     return "fetch";
+  }
+  async sizes() {
+    return { responseBodySize: this.responseSize };
   }
   headers(): Record<string, string> {
     return {
@@ -72,7 +76,7 @@ class ResponseFixture implements ScenarioNetworkResponse {
   status() {
     return 200;
   }
-  headers() {
+  headers(): Record<string, string> {
     return {
       "content-type": "application/octet-stream",
       "set-cookie": "session=transport-secret",
@@ -121,7 +125,6 @@ const harness = (
     selection: selected,
     limits: scenario.capture.limits,
     secrets,
-    readTimeoutMs: 50,
     ...(signal === undefined ? {} : { signal }),
     emit: (event) => {
       const sequence = events.length + 1;
@@ -169,6 +172,234 @@ const bodyText = (event: BrowserScenarioEvent) => {
 };
 
 afterEach(() => vi.useRealTimers());
+
+it.each([true, false])(
+  "protects source body and headers before the binding is saved (body selected: %s)",
+  async (responseBody) => {
+    const { collector, events, secrets } = harness({
+      request_body: false,
+      response_body: responseBody,
+      header_values: true,
+    });
+    const request = new RequestFixture("marked");
+    const secret = "source-token-729d";
+    const response = new ResponseFixture(
+      request,
+      JSON.stringify({ token: secret, public: "kept" }),
+    );
+    vi.spyOn(response, "headers").mockReturnValue({
+      "content-type": "application/json",
+      "x-derived-token": secret,
+    });
+    vi.spyOn(response, "headersArray").mockResolvedValue([
+      { name: "X-Derived-Token", value: secret },
+    ]);
+    secrets.responseProtector("login", [
+      { name: "token", json_pointer: "/token", secret: true },
+    ])?.(request);
+    collector.request(request);
+    collector.response(response);
+    collector.finished(request);
+    await collector.finish();
+    const content = events.find(
+      (event) => event.kind === "network-content" && event.phase === "response",
+    );
+    if (content?.kind !== "network-content")
+      throw new Error("Missing response content");
+    expect(JSON.stringify(content.headers)).not.toContain(secret);
+    expect(content.headers.state).toBe("captured");
+    if (responseBody)
+      expect(JSON.parse(bodyText(content))).toEqual({
+        token: "[REDACTED:page:login.token]",
+        public: "kept",
+      });
+    else expect(content.body.state).toBe("not_requested");
+    expect(() => secrets.savedValue("token")).toThrow("No earlier step saved");
+    secrets.save("login.token", "token", secret, true);
+    expect(secrets.redact(secret)).toBe("[REDACTED:page:login.token]");
+    expect(response.bodyReads).toBe(1);
+  },
+);
+
+it.each([
+  ['{"token":"\\u0073ecret-token"}', "/token"],
+  ['{"token":"secret\\/token"}', "/token"],
+  ['{"token":1e3}', "/token"],
+  ['{"token":1000.0}', "/token"],
+  ['{"items":[{"a/b":"\\u0073ecret-token"}]}', "/items/0/a~1b"],
+  ['{"token":"shadowed","token":"\\u0073ecret-token"}', "/token"],
+])(
+  "redacts the selected source JSON token structurally: %s",
+  async (body, pointer) => {
+    const { collector, events, secrets } = harness({
+      request_body: false,
+      response_body: true,
+      header_values: false,
+    });
+    const request = new RequestFixture("marked");
+    request.responseSize = Buffer.byteLength(body);
+    secrets.responseProtector("login", [
+      { name: "token", json_pointer: pointer, secret: true },
+    ])?.(request);
+    collector.request(request);
+    collector.response(new ResponseFixture(request, body));
+    collector.finished(request);
+    await collector.finish();
+    const content = events.find(
+      (event) => event.kind === "network-content" && event.phase === "response",
+    );
+    expect(content).toBeDefined();
+    const text = bodyText(content!);
+    expect(text).not.toMatch(/secret|0073|shadowed|1e3|1000/u);
+    expect(JSON.parse(text)).toBeDefined();
+    expect(text).toContain("[REDACTED:page:login.token]");
+  },
+);
+
+it.each([
+  { size: 20, headers: { "content-encoding": "gzip" } },
+  { size: 0, headers: { "content-length": "24" } },
+  { size: 0, headers: { "content-length": "0024" } },
+  { size: 0, headers: { "content-length": "00000000000000000024" } },
+  {
+    size: 0,
+    headers: { "content-encoding": "gzip", "content-length": "0024" },
+  },
+])(
+  "reads and redacts marked content within its decoded bound: %j",
+  async (bounds) => {
+    const { collector, events, secrets } = harness({
+      request_body: false,
+      response_body: true,
+      header_values: false,
+    });
+    const request = new RequestFixture("marked");
+    const body = '{"token":"secret-token"}';
+    request.responseSize = bounds.size;
+    const response = new ResponseFixture(request, body);
+    vi.spyOn(response, "headers").mockReturnValue({
+      "content-type": "application/json",
+      ...bounds.headers,
+    });
+    secrets.responseProtector("login", [
+      { name: "token", json_pointer: "/token", secret: true },
+    ])?.(request);
+    collector.request(request);
+    collector.response(response);
+    collector.finished(request);
+    await collector.finish();
+    const content = events.find(
+      (event) => event.kind === "network-content" && event.phase === "response",
+    );
+    expect(content).toBeDefined();
+    const text = bodyText(content!);
+    expect(text).not.toContain("secret-token");
+    expect(text).toContain("[REDACTED:page:login.token]");
+    expect(response.bodyReads).toBe(1);
+  },
+);
+
+it("preserves unselected source spellings while redacting escaped aliases", async () => {
+  const { collector, events, secrets } = harness({
+    request_body: false,
+    response_body: true,
+    header_values: false,
+  });
+  const request = new RequestFixture("marked");
+  const body =
+    '{ "token":"secret-token", "mirror":"\\u0073ecret-token", "unknown":1e-400 }';
+  request.responseSize = Buffer.byteLength(body);
+  secrets.responseProtector("login", [
+    { name: "token", json_pointer: "/token", secret: true },
+  ])?.(request);
+  collector.request(request);
+  collector.response(new ResponseFixture(request, body));
+  collector.finished(request);
+  await collector.finish();
+  const content = events.find(
+    (event) => event.kind === "network-content" && event.phase === "response",
+  );
+  const text = bodyText(content!);
+  expect(text).toContain('"unknown":1e-400');
+  expect(text).toContain('{ "token":');
+  expect(text).not.toMatch(/secret|0073/u);
+  expect(JSON.parse(text).mirror).toBe("[REDACTED:page:login.token]");
+});
+
+it("associates sensitive fields by request identity while keeping same-URL unmarked values", async () => {
+  const { collector, events, secrets } = harness({
+    request_body: false,
+    response_body: true,
+    header_values: false,
+  });
+  const marked = new RequestFixture("marked");
+  const unmarked = new RequestFixture("unmarked");
+  secrets.responseProtector("login", [
+    { name: "token", json_pointer: "/token", secret: true },
+  ])?.(marked);
+  for (const [request, token] of [
+    [marked, "private-token-729d"],
+    [unmarked, "public-unmarked-token"],
+  ] as const) {
+    collector.request(request);
+    collector.response(new ResponseFixture(request, JSON.stringify({ token })));
+    collector.finished(request);
+  }
+  await collector.finish();
+  const bodies = events
+    .filter(
+      (event) => event.kind === "network-content" && event.phase === "response",
+    )
+    .map((event) => JSON.parse(bodyText(event)));
+  expect(bodies).toEqual(
+    expect.arrayContaining([
+      { token: "[REDACTED:page:login.token]" },
+      { token: "public-unmarked-token" },
+    ]),
+  );
+});
+
+it.each([
+  { size: 64, headers: { "content-encoding": "br" } },
+  { size: 0, headers: {} },
+  { size: 0, headers: { "content-length": "0000" } },
+  { size: 0, headers: { "content-length": "24, 24" } },
+  { size: 0, headers: { "content-length": "0009007199254740993" } },
+  { size: 0, headers: { "content-length": "00012000001" } },
+])(
+  "withholds marked response content when decoded bounds are unknown or over budget: %j",
+  async (bounds) => {
+    const { collector, events, secrets } = harness();
+    const request = new RequestFixture("marked");
+    request.responseSize = bounds.size;
+    const secret = "private-source-token";
+    const response = new ResponseFixture(
+      request,
+      JSON.stringify({ token: secret }),
+    );
+    vi.spyOn(response, "headers").mockReturnValue({
+      "content-type": "application/json",
+      ...bounds.headers,
+    });
+    secrets.responseProtector("login", [
+      { name: "token", json_pointer: "/token", secret: true },
+    ])?.(request);
+    collector.request(request);
+    collector.response(response);
+    collector.finished(request);
+    await collector.finish();
+    const content = events.find(
+      (event) => event.kind === "network-content" && event.phase === "response",
+    );
+    if (content?.kind !== "network-content")
+      throw new Error("Missing response content");
+    expect(content.body.state).toBe("unavailable");
+    expect(content.headers.state).toBe("unavailable");
+    expect(response.bodyReads).toBe(0);
+    expect(response.headerReads).toBe(0);
+    expect(JSON.stringify(events)).not.toContain(secret);
+  },
+);
 
 it("keeps observed completion independent of rejected completion metadata", async () => {
   const { secrets, limits } = harness();
@@ -336,7 +567,7 @@ it.each([
       response_body: false,
       header_values: false,
     },
-    reads: [1, 0, 0, 0],
+    reads: [1, 1, 0, 0],
     phases: ["request"],
   },
   {
@@ -345,7 +576,7 @@ it.each([
       response_body: true,
       header_values: false,
     },
-    reads: [0, 0, 1, 0],
+    reads: [0, 0, 1, 1],
     phases: ["response"],
   },
   {
@@ -358,7 +589,7 @@ it.each([
     phases: ["request", "response"],
   },
 ])(
-  "reads only the selected content $selection",
+  "reads selected bodies and the headers needed for their type $selection",
   async ({ selection: selected, reads, phases }) => {
     const { collector, events } = harness(selected);
     const request = new RequestFixture("input");
@@ -378,6 +609,12 @@ it.each([
         .filter((event) => event.kind === "network-content")
         .map((event) => event.phase),
     ).toEqual(phases);
+    if (!selected.header_values)
+      expect(
+        events
+          .filter((event) => event.kind === "network-content")
+          .map(({ headers }) => headers),
+      ).toEqual([{ state: "not_requested" }]);
   },
 );
 
@@ -401,13 +638,16 @@ it("preserves duplicate headers and binary bytes, redacting credentials and decl
   );
   if (content?.kind !== "network-content" || content.body.state !== "captured")
     throw new Error("Missing response");
-  expect(Buffer.from(content.body.content, "base64")).toEqual(
-    Buffer.concat([
-      Buffer.from([0xff, 0x00]),
-      Buffer.from("[REDACTED:declared]"),
-      Buffer.from([0xfe]),
-    ]),
-  );
+  expect(
+    Buffer.compare(
+      Buffer.from(content.body.content, "base64"),
+      Buffer.concat([
+        Buffer.from([0xff, 0x00]),
+        Buffer.from("[REDACTED:declared]"),
+        Buffer.from([0xfe]),
+      ]),
+    ),
+  ).toBe(0);
   expect(content.body.redacted).toBe(true);
   expect(content.headers).toEqual({
     state: "captured",
@@ -517,7 +757,7 @@ it("starts each queued body's timeout when its read begins", async () => {
     const response = new ResponseFixture(request, "unused");
     response.read = () =>
       new Promise((resolve) => {
-        setTimeout(() => resolve(Buffer.from("captured")), 40);
+        setTimeout(() => resolve(Buffer.from("captured")), 4_000);
       });
     collector.request(request);
     collector.response(response);
@@ -525,8 +765,8 @@ it("starts each queued body's timeout when its read begins", async () => {
   }
 
   const finishing = collector.finish();
-  await vi.advanceTimersByTimeAsync(40);
-  await vi.advanceTimersByTimeAsync(40);
+  await vi.advanceTimersByTimeAsync(4_000);
+  await vi.advanceTimersByTimeAsync(4_000);
   await finishing;
 
   const content = events.filter(
@@ -601,7 +841,7 @@ it("bounds hung completed-body reads and rejects late mutation after finalizatio
   collector.response(response);
   collector.finished(request);
   const finishing = collector.finish();
-  await vi.advanceTimersByTimeAsync(51);
+  await vi.advanceTimersByTimeAsync(5_001);
   await finishing;
   const frozen = JSON.stringify(events);
   expect(events).toContainEqual(
@@ -643,29 +883,37 @@ it("cancellation settles pending reads and preserves the cancelled reason", asyn
   );
 });
 
-it("records failures without attempting to read the failed body", async () => {
-  const { collector, events } = harness();
-  const request = new RequestFixture("failed");
-  const response = new ResponseFixture(request, "partial");
-  collector.request(request);
-  collector.response(response);
-  collector.failed(request);
-  await collector.finish();
-  expect(response.bodyReads).toBe(0);
-  expect(events).toContainEqual(
-    expect.objectContaining({
-      kind: "request-failed",
-      failure: "connection reset",
-    }),
-  );
-  expect(events).toContainEqual(
-    expect.objectContaining({
-      kind: "network-content",
-      phase: "response",
-      body: expect.objectContaining({ reason: "request-failed" }),
-    }),
-  );
-});
+it.each([false, true])(
+  "records failed requests without hiding header read gaps (headers fail: %s)",
+  async (headersFail) => {
+    const { collector, events } = harness();
+    const request = new RequestFixture("failed");
+    const response = new ResponseFixture(request, "partial");
+    if (headersFail)
+      vi.spyOn(response, "headersArray").mockRejectedValue(
+        new Error("Headers unavailable"),
+      );
+    collector.request(request);
+    collector.response(response);
+    collector.failed(request);
+    await collector.finish();
+    expect(response.bodyReads).toBe(0);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: "request-failed",
+        failure: "connection reset",
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: "network-content",
+        phase: "response",
+        body: expect.objectContaining({ reason: "request-failed" }),
+      }),
+    );
+    expect(collector.limitations()).toHaveLength(headersFail ? 1 : 0);
+  },
+);
 
 it("links observed redirect hops and leaves unseen predecessors unknown", async () => {
   const { collector, events } = harness();
@@ -743,19 +991,20 @@ it("preserves read errors and does not turn unexposed or empty bytes into the sa
   expect(collector.limitations().length).toBeGreaterThan(0);
 });
 
-it("redacts declared encodings in body media metadata", async () => {
+it("keeps a redacted declaration out of body media metadata", async () => {
   const { collector, events } = harness({
     request_body: false,
     response_body: true,
-    header_values: false,
+    header_values: true,
   });
   const request = new RequestFixture("input");
   const response = new ResponseFixture(request, "ordinary-bytes");
-  const headers = response.headers();
-  response.headers = () => ({
-    ...headers,
-    "content-type": `text/plain; fixture=${encodeURIComponent("私密")}`,
-  });
+  response.headersArray = async () => [
+    {
+      name: "Content-Type",
+      value: `text/plain; fixture=${encodeURIComponent("私密")}`,
+    },
+  ];
   collector.request(request);
   collector.response(response);
   collector.finished(request);
@@ -764,13 +1013,93 @@ it("redacts declared encodings in body media metadata", async () => {
     expect.objectContaining({
       kind: "network-content",
       phase: "response",
+      headers: {
+        state: "captured",
+        items: [
+          {
+            name: "Content-Type",
+            value: "text/plain; fixture=[REDACTED:declared]",
+            redacted: true,
+          },
+        ],
+      },
       body: expect.objectContaining({
         state: "captured",
-        media_type: "text/plain; fixture=[REDACTED:declared]",
+        media_type: null,
       }),
     }),
   );
 });
+
+it.each([
+  {
+    declarations: [
+      "application/json; charset=utf-8",
+      "application/octet-stream",
+    ],
+    type: null,
+  },
+  {
+    declarations: [
+      "application/octet-stream",
+      "application/json; charset=utf-8",
+    ],
+    type: null,
+  },
+  {
+    declarations: ["application/json; charset=utf-8, application/octet-stream"],
+    type: null,
+  },
+  {
+    declarations: ["application/json", "application/json"],
+    type: "application/json",
+  },
+  {
+    declarations: ['application/json; note="one,two"'],
+    type: 'application/json; note="one,two"',
+  },
+  { declarations: null, type: null },
+])(
+  "derives body type once from retained declarations $declarations",
+  async ({ declarations, type }) => {
+    const { collector, events } = harness({
+      request_body: false,
+      response_body: true,
+      header_values: false,
+    });
+    const request = new RequestFixture("input");
+    const response = new ResponseFixture(request, '{"value":"\\u79c1\\u5bc6"}');
+    response.headers = () => ({
+      "content-type": declarations?.join(", ") ?? "application/json",
+    });
+    response.headersArray = async () => {
+      response.headerReads += 1;
+      if (declarations === null) throw new Error("Headers unavailable");
+      return declarations.map((value) => ({ name: "Content-Type", value }));
+    };
+    collector.request(request);
+    collector.response(response);
+    collector.finished(request);
+    await collector.finish();
+    const content = events.find(
+      (event) => event.kind === "network-content" && event.phase === "response",
+    );
+    expect(response.headerReads).toBe(1);
+    expect(content).toMatchObject({
+      headers: { state: "not_requested" },
+      body: {
+        state: "captured",
+        media_type: type,
+        media_type_source: "content-type-header",
+      },
+    });
+    if (content?.kind !== "network-content")
+      throw new Error("Missing response content");
+    expect(JSON.parse(bodyText(content))).toEqual({
+      value: "[REDACTED:declared]",
+    });
+  },
+);
 
 it("bounds admitted transactions before invoking content producers", async () => {
   const { collector, events } = harness();
@@ -943,4 +1272,86 @@ it("does not read content when phase metadata was omitted", async () => {
     "max-total-event-allocation-bytes",
   );
   expect(collector.limitations().join(" ")).toContain("incomplete");
+});
+
+it("stamps when each request was observed, and the browser's own start and duration once it ends", async () => {
+  vi.useFakeTimers({ now: Date.parse("2026-10-24T05:00:00.250Z") });
+  const { collector, events } = harness({
+    request_body: false,
+    response_body: false,
+    header_values: false,
+  });
+  class TimedRequest extends RequestFixture {
+    constructor(
+      marker: string,
+      readonly startTime: number,
+      readonly responseEnd: number,
+    ) {
+      super(marker);
+    }
+    timing() {
+      return { startTime: this.startTime, responseEnd: this.responseEnd };
+    }
+  }
+  const finished = new TimedRequest(
+    "timed",
+    Date.parse("2026-10-24T05:00:00.200Z"),
+    12.5,
+  );
+  const failed = new TimedRequest("untimed", 0, -1);
+  collector.request(finished);
+  collector.request(failed);
+  collector.finished(finished);
+  collector.failed(failed);
+  await collector.finish();
+  expect(events.filter(({ kind }) => kind === "request")).toEqual([
+    expect.objectContaining({ observed_at: "2026-10-24T05:00:00.250Z" }),
+    expect.objectContaining({ observed_at: "2026-10-24T05:00:00.250Z" }),
+  ]);
+  expect(events).toContainEqual(
+    expect.objectContaining({
+      kind: "request-finished",
+      started_at: "2026-10-24T05:00:00.200Z",
+      elapsed_ms: 12.5,
+    }),
+  );
+  const failure = events.find(({ kind }) => kind === "request-failed");
+  expect(failure).toBeDefined();
+  expect(failure).not.toHaveProperty("started_at");
+  expect(failure).not.toHaveProperty("elapsed_ms");
+});
+
+it.each([
+  { name: "structural expansion", body: '{"token":1}', limit: 16 },
+  {
+    name: "shadowed container",
+    body: '{"token":{},"token":"source-private"}',
+    limit: 2048,
+  },
+])("withholds marked content for $name", async ({ body, limit }) => {
+  const { collector, events, secrets } = harness(
+    selection,
+    undefined,
+    "declared-private",
+    { max_network_body_bytes: limit },
+  );
+  const request = new RequestFixture("marked");
+  request.responseSize = Buffer.byteLength(body);
+  secrets.responseProtector("login", [
+    { name: "token", json_pointer: "/token", secret: true },
+  ])?.(request);
+  const response = new ResponseFixture(request, body);
+  collector.request(request);
+  collector.response(response);
+  collector.finished(request);
+  await collector.finish();
+  expect(events).toContainEqual(
+    expect.objectContaining({
+      kind: "network-content",
+      phase: "response",
+      body: expect.objectContaining({ state: "unavailable" }),
+      headers: expect.objectContaining({ state: "unavailable" }),
+    }),
+  );
+  expect(response.bodyReads).toBe(1);
 });

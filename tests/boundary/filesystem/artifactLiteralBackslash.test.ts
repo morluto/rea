@@ -10,7 +10,7 @@ import { createPackage } from "@electron/asar";
 import { expect, it } from "vitest";
 
 import { extractArtifact } from "../../../src/artifacts/extraction/ArtifactExtraction.js";
-import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
+import { SafeOutputTree } from "../../../src/resources/SafeOutputTree.js";
 import {
   inventoryArtifact,
   withArtifactResourceScope,
@@ -117,7 +117,9 @@ it.skipIf(process.platform === "win32").each(["directory", "asar"] as const)(
       [...new Set(NAMES.map((name) => name.split("/")[0]))].sort(),
     );
     for (const name of NAMES)
-      expect(await readFile(join(output, name))).toEqual(CONTENT);
+      expect(Buffer.compare(await readFile(join(output, name)), CONTENT)).toBe(
+        0,
+      );
   },
 );
 

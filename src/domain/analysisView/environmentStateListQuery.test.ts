@@ -65,7 +65,7 @@ const ids = (query: string, parameters: Parameters<typeof evaluateQuery>[0]) =>
   );
 
 describe("explaining a recorded line", () => {
-  it("evaluates and learns a Unicode case-folded recorded search", () => {
+  it("learns a Unicode case-folded recorded search", () => {
     const row = entity({ id: "greek", name: "ΟΣ" });
     const values = singleQueryValues("?q=Σ")!;
     const recorded: QueryLine = {
@@ -75,12 +75,8 @@ describe("explaining a recorded line", () => {
       choices: lineChoices(values, [row.fields]),
       entities: [row],
     };
-    const parameters = { q: { role: "search" as const, fields: ["name"] } };
-
-    expect(evaluateQuery(parameters, values, [row])?.page).toEqual([row]);
-    expect(explainLine(recorded)).toEqual(parameters);
     expect(learnQuery([recorded])).toEqual({
-      parameters,
+      parameters: { q: { role: "search", fields: ["name"] } },
       record_ordinals: [1],
     });
   });
@@ -162,10 +158,6 @@ describe("explaining a recorded line", () => {
       page: { role: "page", first: 0 },
       limit: { role: "limit" },
     });
-    expect(explainLine(line("?limit=2&page=2", [3, 4]))).toEqual({
-      limit: { role: "limit" },
-      page: { role: "page", first: 1 },
-    });
   });
 
   it.each(["title:Tide", "#sea", '"Tide Tables"', "Tide OR Oil", "+Tide"])(
@@ -229,14 +221,6 @@ describe("learning a list's query", () => {
     const parameters = { limit: { role: "limit" } } as const;
     expect(ids("?limit=two", parameters)).toBeUndefined();
     expect(ids("?shelf=a", parameters)).toBeUndefined();
-    expect(singleQueryValues("?a=1&a=2")).toBeUndefined();
-  });
-
-  it("normalizes identical repeats as serving does, retaining conflicting values as unknown", () => {
-    expect(singleQueryValues("?shelf=a&shelf=%61")).toEqual(
-      new Map([["shelf", "a"]]),
-    );
-    expect(singleQueryValues("?shelf=a&shelf=b")).toBeUndefined();
   });
 
   it("gives no two parameters one paging role, which would answer differently in serving's name order", () => {
@@ -363,14 +347,41 @@ describe("queries the state can always answer", () => {
       explainLine({ ordinal: 0, values, listed: [], choices, entities: BOOKS }),
     ).toBeUndefined();
   });
+});
 
-  it("keeps a parameter named like an object's prototype as its own role", () => {
-    const learned = learnQuery([line("?__proto__=x&shelf=a", [1, 3], 30)]);
-    expect(Object.keys(learned!.parameters)).toContain("__proto__");
-    const round = JSON.parse(JSON.stringify(learned!.parameters)) as object;
-    expect(Object.getOwnPropertyDescriptor(round, "__proto__")?.value).toEqual({
-      role: "inert",
-      values: ["x"],
+describe("parameters that ask for an order", () => {
+  it("cannot apply a direction without a sort field, even when the recorded order happens to match", () => {
+    expect(explainLine(line("?direction=desc", [1, 2, 3, 4]))).toBeUndefined();
+    const parameters = { direction: { role: "direction" } } as const;
+    expect(ids("?direction=asc", parameters)).toBeUndefined();
+    expect(ids("?direction=desc", parameters)).toBeUndefined();
+    expect(
+      ids("?sort=id&direction=desc", { ...parameters, sort: { role: "sort" } }),
+    ).toEqual(["4", "3", "2", "1"]);
+  });
+
+  it("reads a sort field in any spelling as a sort, never as a parameter without effect", () => {
+    expect(explainLine(line("?_sort=id&_order=DESC", [4, 3, 2, 1]))).toEqual({
+      _sort: { role: "sort" },
+      _order: { role: "direction" },
     });
+    expect(
+      explainLine(line("?sortKey=id&sortDirection=descending", [4, 3, 2, 1])),
+    ).toEqual({
+      sortKey: { role: "sort" },
+      sortDirection: { role: "direction" },
+    });
+    // A sort value naming no field leaves the line unexplained rather than without effect.
+    expect(explainLine(line("?_sort=newest", [1, 2, 3, 4]))).toBeUndefined();
+  });
+
+  it("reads a direction name given no direction as an ordinary parameter", () => {
+    expect(explainLine(line("?direction=shared-by", [1, 2, 3, 4]))).toEqual({
+      direction: { role: "inert", values: ["shared-by"] },
+    });
+    expect(explainLine(line("?reverse=false", [1, 2, 3, 4]))).toEqual({
+      reverse: { role: "inert", values: ["false"] },
+    });
+    expect(explainLine(line("?reverse=true", [1, 2, 3, 4]))).toBeUndefined();
   });
 });

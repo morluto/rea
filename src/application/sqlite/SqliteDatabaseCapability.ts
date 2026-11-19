@@ -1,6 +1,6 @@
 import { satisfies } from "semver";
 import { toolContract } from "../../contracts/toolContracts.js";
-import { SQLITE_PROVIDER_IDENTITY } from "../../domain/sqlite/sqliteDatabase.js";
+import { SQLITE_PROVIDER_IDENTITY } from "../../domain/sqlite/SqliteProviderIdentity.js";
 
 const SQLITE_RUNTIME_REQUIREMENT =
   "SQLite inspection requires Node.js 24.x >=24.15 or 26+ with the native DatabaseSync.limits API. Other REA features retain their published runtime requirements. The inspection worker verifies the API before querying the snapshot.";

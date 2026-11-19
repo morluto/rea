@@ -67,6 +67,18 @@ const admit = async (bytes: Buffer) => {
 };
 
 for (const bits of [32, 64] as const) {
+  it(`admits a padded declared stride for ELF${bits} program and section tables`, async () => {
+    const fixture = image(bits, true);
+    fixture.u16(bits === 64 ? 54 : 42, fixture.programWidth + 4);
+    fixture.u16(bits === 64 ? 58 : 46, fixture.sectionWidth + 4);
+    fixture.bytes.copyWithin(
+      fixture.section + 4,
+      fixture.section,
+      fixture.section + fixture.sectionWidth,
+    );
+    fixture.bytes.fill(0, fixture.section, fixture.section + 4);
+    expect((await admit(fixture.bytes)).ok).toBe(true);
+  });
   for (const little of [true, false]) {
     it(`refuses declared table and payload truncation before provider admission (ELF${bits} ${little ? "LE" : "BE"})`, async () => {
       const fixture = image(bits, little);
@@ -111,6 +123,42 @@ for (const bits of [32, 64] as const) {
       fixture.word(128 + (wide ? 24 : 16), outside); // Inactive section-zero fields.
       fixture.word(128 + (wide ? 32 : 20), outside);
       expect((await admit(fixture.bytes)).ok).toBe(true);
+    });
+
+    it(`rejects a table that starts inside the declared ELF header (ELF${bits} ${little ? "LE" : "BE"})`, async () => {
+      const headerAt = bits === 64 ? 52 : 40;
+      const declared = bits === 64 ? 80 : 64;
+      const programOverlap = image(bits, little);
+      programOverlap.u16(headerAt, declared);
+      const overlappedProgram = await admit(programOverlap.bytes);
+      expect(overlappedProgram).toMatchObject({
+        ok: false,
+        error: {
+          constraint: "file_format_rejected",
+          reason: expect.stringContaining(
+            "ELF program header table overlaps the fixed header",
+          ),
+        },
+      });
+
+      const sectionOverlap = image(bits, little);
+      sectionOverlap.u16(headerAt, 200);
+      sectionOverlap.u16(bits === 64 ? 56 : 44, 0);
+      const overlappedSection = await admit(sectionOverlap.bytes);
+      expect(overlappedSection).toMatchObject({
+        ok: false,
+        error: {
+          constraint: "file_format_rejected",
+          reason: expect.stringContaining(
+            "ELF section header table overlaps the fixed header",
+          ),
+        },
+      });
+
+      const adjacent = image(bits, little);
+      adjacent.u16(headerAt, declared);
+      adjacent.u16(bits === 64 ? 56 : 44, 0);
+      expect((await admit(adjacent.bytes)).ok).toBe(true);
     });
 
     it(`keeps declared offsets exact when their sum exceeds host precision (ELF${bits} ${little ? "LE" : "BE"})`, async () => {
@@ -159,5 +207,43 @@ it.each(["sections", "programs", "section names"] as const)(
     expect(expectBinaryTargetError(truncated).reason).toContain(
       "truncated ELF",
     );
+  },
+);
+
+it("detects PT_INTERP in program headers and records hasInterpreter for RISC-V", async () => {
+  const fixture = image(64, true);
+  fixture.u16(18, 243); // EM_RISCV
+  fixture.u16(16, 3); // ET_DYN
+  const withoutInterp = await admit(fixture.bytes);
+  expect(withoutInterp.ok).toBe(true);
+  if (!withoutInterp.ok) throw withoutInterp.error;
+  expect(withoutInterp.value.architecture).toBe("riscv");
+  if (withoutInterp.value.architecture === "riscv") {
+    expect(withoutInterp.value.riscv.hasInterpreter).toBeUndefined();
+  }
+
+  fixture.u32(fixture.program, 3); // PT_INTERP
+  const withInterp = await admit(fixture.bytes);
+  expect(withInterp.ok).toBe(true);
+  if (!withInterp.ok) throw withInterp.error;
+  expect(withInterp.value.architecture).toBe("riscv");
+  if (withInterp.value.architecture === "riscv") {
+    expect(withInterp.value.riscv.hasInterpreter).toBe(true);
+  }
+});
+
+it.each([0n, 1n])(
+  "refuses an implausibly short PT_INTERP range (%s bytes)",
+  async (size) => {
+    const fixture = image(64, true);
+    fixture.u32(fixture.program, 3);
+    fixture.word(fixture.program + 32, size);
+    expect(await admit(fixture.bytes)).toMatchObject({
+      ok: false,
+      error: {
+        constraint: "file_format_rejected",
+        reason: "invalid ELF PT_INTERP file size",
+      },
+    });
   },
 );

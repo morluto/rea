@@ -1,6 +1,7 @@
+import type { HostPlatform } from "../../platform/HostPlatform.js";
 import {
-  AnalysisCancelledError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
@@ -8,16 +9,18 @@ import {
   recordedCrashSchema,
   type InspectRecordedCrashInput,
   type RecordedCrash,
+  type RecordedCrashPartialObservation,
 } from "../../domain/native/recordedCrash.js";
-import type { RecordedCrashPort } from "../../application/binaryDiagnostics/RecordedCrashPort.js";
+import type { RecordedCrashPort } from "../../ports/binaryDiagnostics/RecordedCrashPort.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import { PwntoolsDecoder, type PwntoolsLauncher } from "./PwntoolsDecoder.js";
-import { PWNTOOLS_PROVIDER_IDENTITY } from "./PwntoolsRelease.js";
+import { PWNTOOLS_PROVIDER_IDENTITY } from "./PwntoolsProviderIdentity.js";
 import { validateCoreFileMappingAuthority } from "../pwndbg/CoreFileMappingAuthority.js";
 import { validateRecordedCrashSources } from "./RecordedCrashSourceBindings.js";
 import { validateRecordedCrashStructure } from "./RecordedCrashStructureBindings.js";
 import {
   inspectPwndbgCore,
+  pwndbgContextFinalizationFailure,
   recordedCrashStageOutput,
 } from "../pwndbg/PwndbgCoreContext.js";
 import type { z } from "zod";
@@ -37,6 +40,7 @@ export class PwntoolsRecordedCrashProvider
     createRuntime: () => Promise<
       Pick<PrivateRuntimeRoot, "path" | "close">
     > = () => PrivateRuntimeRoot.create({ prefix: "rea-recorded-crash-" }),
+    host?: HostPlatform,
   ) {
     super(
       {
@@ -47,17 +51,7 @@ export class PwntoolsRecordedCrashProvider
           import.meta.url,
         ),
         payloadSchema: recordedCrashPayloadSchema,
-        project: async ({
-          input,
-          payload,
-          snapshot,
-          rootPath,
-          resources,
-          diagnostics,
-          options,
-          runCommand,
-          timeoutMs,
-        }) => {
+        project: ({ input, payload, snapshot, diagnostics }): RecordedCrash => {
           const validate = (debuggerContext: RecordedCrash["debugger"]) =>
             recordedCrashSchema.safeParse({
               ...payload,
@@ -121,11 +115,39 @@ export class PwntoolsRecordedCrashProvider
                   { capturedOutput: diagnostics },
                 );
             }
+          return value;
+        },
+        partialObservation: (input, value) =>
+          input.include_debugger_context ? unavailableDebugger(value) : value,
+        enrich: async ({
+          environment,
+          input,
+          report: value,
+          snapshot,
+          rootPath,
+          resources,
+          options,
+          runCommand,
+          timeoutMs,
+          producerLimits,
+        }) => {
           if (!input.include_debugger_context) return value;
+          const diagnostics = value.decoder_diagnostics;
+          const validate = (debuggerContext: RecordedCrash["debugger"]) =>
+            recordedCrashSchema.safeParse({
+              ...value,
+              debugger: debuggerContext,
+              diagnostics:
+                debuggerContext.status === "available"
+                  ? recordedCrashStageOutput(
+                      diagnostics,
+                      debuggerContext.diagnostics,
+                    )
+                  : diagnostics,
+            });
           try {
             if (options?.signal?.aborted)
-              throw new AnalysisCancelledError("inspect_recorded_crash", {
-                cause: options.signal.reason,
+              throw cancelledBy("inspect_recorded_crash", options.signal, {
                 capturedOutput: diagnostics,
               });
             const authority = validateCoreFileMappingAuthority(
@@ -133,7 +155,7 @@ export class PwntoolsRecordedCrashProvider
               snapshot.bytes,
             );
             if (!authority.ok) throw authority.error;
-            const context = await inspectPwndbgCore({
+            const completed = await inspectPwndbgCore({
               environment,
               architecture: value.architecture,
               rootPath,
@@ -142,29 +164,32 @@ export class PwntoolsRecordedCrashProvider
               options,
               runCommand,
               timeoutMs,
+              producerLimits,
             });
+            const context = completed.context;
             const enriched = validate(context);
             if (!enriched.success)
-              throw new AnalysisOutputError(
-                "inspect_recorded_crash",
-                `Recorded debugger context is invalid: ${enriched.error.issues[0]?.message ?? "schema mismatch"}`,
-                {
-                  capturedOutput:
-                    context.status === "available"
-                      ? recordedCrashStageOutput(
-                          diagnostics,
-                          context.diagnostics,
-                        )
-                      : diagnostics,
-                },
+              throw pwndbgContextFinalizationFailure(
+                new AnalysisOutputError(
+                  "inspect_recorded_crash",
+                  `Recorded debugger context is invalid: ${enriched.error.issues[0]?.message ?? "schema mismatch"}`,
+                  {
+                    capturedOutput: recordedCrashStageOutput(
+                      diagnostics,
+                      context.diagnostics,
+                    ),
+                  },
+                ),
+                completed.finalization,
+              );
+            if (completed.finalization !== undefined)
+              throw completed.finalization.retainPartialObservation(
+                enriched.data,
               );
             return enriched.data;
           } catch (cause: unknown) {
             if (cause instanceof AnalysisError)
-              cause.retainPartialObservation({
-                ...value,
-                debugger: { status: "unavailable", requested: true },
-              });
+              cause.retainPartialObservation(unavailableDebugger(value));
             throw cause;
           }
         },
@@ -172,6 +197,14 @@ export class PwntoolsRecordedCrashProvider
       environment,
       launcher,
       createRuntime,
+      host,
     );
   }
 }
+
+const unavailableDebugger = (
+  value: RecordedCrash,
+): RecordedCrashPartialObservation => ({
+  ...value,
+  debugger: { status: "unavailable", requested: true },
+});

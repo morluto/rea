@@ -1,5 +1,5 @@
+import { createVerifierHttpServer } from "../lib/verifier-http-server.mjs";
 import { once } from "node:events";
-import { createServer } from "node:http";
 import { gzipSync } from "node:zlib";
 
 export const networkFixtureSecret = "私密-network-fixture";
@@ -23,7 +23,7 @@ const html = `<!doctype html><meta charset="utf-8"><body><button id="start">Run<
 export async function startBrowserNetworkSite() {
   const counts = new Map();
   const timers = new Set();
-  const server = createServer(async (request, response) => {
+  const handleRequest = async (request, response) => {
     const path = new URL(request.url, "http://fixture.test").pathname;
     counts.set(path, (counts.get(path) ?? 0) + 1);
     if (path === "/same") {
@@ -89,7 +89,8 @@ export async function startBrowserNetworkSite() {
       response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       response.end(html);
     }
-  });
+  };
+  const { server, close } = createVerifierHttpServer(handleRequest);
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   const address = server.address();
@@ -100,10 +101,7 @@ export async function startBrowserNetworkSite() {
     counts,
     async close() {
       for (const timer of timers) clearTimeout(timer);
-      server.closeAllConnections();
-      await new Promise((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve())),
-      );
+      await close();
     },
   };
 }

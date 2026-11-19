@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { deflateSync } from "node:zlib";
 import { randomBytes } from "node:crypto";
-import { expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { withPyInstallerReader } from "../../../tests/fixtures/pyinstallerReader.js";
 import {
   scanCanonicalArtifactInventory,
@@ -19,12 +19,52 @@ import {
 import { readPyzArchive } from "./PyzArchive.js";
 import { marshalCode } from "../../python/PythonPyc.fixture.js";
 import { createEvidence } from "../../domain/evidence.js";
-import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { parseArtifactInventoryEvidence } from "../../domain/artifactInventoryEvidence.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
-} from "../ArtifactReader.js";
+} from "../../resources/ArtifactReader.js";
+
+describe.each(["2.0", "2.1"] as const)(
+  "CArchive names with a %s cookie",
+  (layout) => {
+    const name = "member-é";
+    const nameOffset = 18;
+    const record = Buffer.alloc(32);
+    record.writeUInt32BE(record.length, 0);
+    record[17] = 0x78; // data member
+    const nameEnd = nameOffset + record.write(name, nameOffset, "utf8");
+    const readPaths = async (tocBytes: Buffer) => {
+      const paths: string[] = [];
+      await withPyInstallerReader(
+        cArchiveExecutable({
+          layout,
+          pythonVersion: layout === "2.0" ? 27 : 309,
+          members: [],
+          tocBytes,
+        }),
+        async (reader) => {
+          for await (const entry of reader.entries()) paths.push(entry.path);
+        },
+      );
+      return paths;
+    };
+
+    it("preserves the UTF-8 name with a terminator and zero padding", async () => {
+      await expect(readPaths(record)).resolves.toEqual([name]);
+    });
+    it.each([
+      ["missing terminator", nameEnd],
+      ["nonzero byte after terminator", nameEnd + 1],
+    ] as const)("reports %s at the rejected record", async (_case, fillAt) => {
+      const malformed = Buffer.from(record).fill(0x61, fillAt);
+      await expect(readPaths(malformed)).rejects.toMatchObject({
+        reason: "format",
+        message: expect.stringContaining("table index 0 at TOC offset 0"),
+      });
+    });
+  },
+);
 
 it.each([0, 1, 2])(
   "identifies malformed CArchive compression at table index %i",
@@ -168,11 +208,10 @@ it.each(["unused compressed input", "wrong declared size"])(
         });
         await expect(buffer(await reader.open(module))).rejects.toMatchObject({
           reason: "integrity",
-          message: expect.stringContaining(
+          integrityCheck:
             fault === "unused compressed input"
-              ? "complete declared source span"
-              : "size disagrees",
-          ),
+              ? "read-coverage"
+              : "declared-size",
         });
       },
     );
@@ -365,7 +404,7 @@ it.each([true, false])(
               parameters: { page: index },
               confidence: "observed",
               authority: "shipped-artifact",
-              result: jsonValueSchema.parse({
+              result: {
                 ...inventory,
                 nodes: index === 0 ? inventory.nodes : [],
                 edges: index === 0 ? inventory.edges : [],
@@ -378,7 +417,7 @@ it.each([true, false])(
                         row,
                       ]
                     : [row],
-              }),
+              },
             },
           ),
         );
@@ -464,7 +503,6 @@ it.each(["empty", "span"])(
         : parsed.value.kind === "opaque"
           ? parsed.value.limitation
           : undefined;
-      expect(message).toBeDefined();
       expect(message?.length).toBeLessThan(256);
       expect(message).toContain("table index 0");
     });
@@ -529,7 +567,7 @@ for (const typeCode of ["o", "d"] as const) {
           scanCanonicalArtifactInventory(path),
         ).rejects.toMatchObject({
           reason: "integrity",
-          message: expect.stringContaining("declaration"),
+          integrityCheck: "layout-consistency",
         });
       });
     },
@@ -572,7 +610,9 @@ for (const typeCode of ["o", "d"] as const) {
           path,
           inventory,
         );
-        expect(await readFile(join(output, realPath))).toEqual(payload);
+        expect(
+          Buffer.compare(await readFile(join(output, realPath)), payload),
+        ).toBe(0);
       },
     );
   });
@@ -614,16 +654,18 @@ it("keeps genuine destination collisions on files without annotating same-path m
           note.includes("case-insensitive destination"),
         ),
       ).toBe(false);
+      const files = inventory.occurrences.filter(
+        (row) => row.entry_kind === "file" && row.logical_path !== ".",
+      );
+      expect(files.map((row) => row.logical_path).sort()).toEqual(
+        [logical, logical.toUpperCase()].sort(),
+      );
       expect(
-        inventory.occurrences
-          .filter(
-            (row) => row.entry_kind === "file" && row.logical_path !== ".",
-          )
-          .every((row) =>
-            row.limitations.some((note) =>
-              note.includes("case-insensitive destination"),
-            ),
+        files.every((row) =>
+          row.limitations.some((note) =>
+            note.includes("case-insensitive destination"),
           ),
+        ),
       ).toBe(true);
     },
   );
@@ -795,8 +837,11 @@ it.each(["x", "s", "empty-module"])(
           inventory,
         );
         expect(
-          (await readFile(join(output, "PYZ.pyz/app.pyc"))).subarray(16),
-        ).toEqual(Buffer.from("readable module"));
+          Buffer.compare(
+            (await readFile(join(output, "PYZ.pyz/app.pyc"))).subarray(16),
+            Buffer.from("readable module"),
+          ),
+        ).toBe(0);
       },
     );
   },
@@ -829,9 +874,92 @@ it.each([
   await withPyInstallerReader(image, async (_reader, handle) => {
     await expect(
       readPyzArchive(handle, 0, image.length),
-    ).resolves.toMatchObject({ ok: false, error: { reason: "integrity" } });
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { reason: "integrity", integrityCheck: "layout-consistency" },
+    });
   });
 });
+
+it.each([false, true])(
+  "preserves PYZ role paths, bytecode and encryption with marker %s",
+  async (marker) => {
+    const body = Buffer.from("role payload");
+    await withPyInstallerReader(
+      cArchiveExecutable({
+        layout: "2.1",
+        pythonVersion: 309,
+        members: [
+          ...(marker
+            ? [
+                {
+                  name: "pyimod00_crypto_key",
+                  typeCode: "m",
+                  payload: Buffer.from("key"),
+                  compress: false,
+                },
+              ]
+            : []),
+          {
+            name: "PYZ.pyz",
+            typeCode: "z",
+            compress: false,
+            payload: pyzArchive({
+              magic: PYTHON_39_MAGIC,
+              modules: [
+                { name: "app.mod", typeCode: 0, body },
+                { name: "app.pkg", typeCode: 1, body },
+                { name: "assets/config.json", typeCode: 2, body },
+                { name: "app.ns", typeCode: 3, body: Buffer.alloc(0) },
+              ],
+            }),
+          },
+        ],
+      }),
+      async (reader, _handle, path) => {
+        const entries: ArtifactEntry[] = [];
+        for await (const entry of reader.entries()) entries.push(entry);
+        const inventory = await scanCanonicalArtifactInventory(path);
+        for (const [logicalPath, code, bytecode] of [
+          ["PYZ.pyz/app/mod.pyc", 0, true],
+          ["PYZ.pyz/app/pkg/__init__.pyc", 1, true],
+          ["PYZ.pyz/assets/config.json", 2, false],
+          ["PYZ.pyz/app/ns", 3, false],
+        ] as const) {
+          const entry = entries.find(
+            (candidate) => candidate.path === logicalPath,
+          );
+          expect(entry).toMatchObject({
+            encrypted: code === 3 ? false : marker,
+            formatMetadata: {
+              type_code: code,
+              bytecode_header: bytecode
+                ? marker
+                  ? "unknown"
+                  : "derived"
+                : "not-bytecode",
+            },
+          });
+          expect(
+            inventory.occurrences.find(
+              (row) => row.logical_path === logicalPath,
+            ),
+          ).toMatchObject({
+            entry_kind: code === 3 ? "metadata" : "file",
+            encrypted: code === 3 ? false : marker,
+            format_metadata: { type_code: code },
+          });
+          if (!marker && code !== 3) {
+            const bytes = await buffer(await reader.open(entry!));
+            expect(bytes.subarray(bytecode ? 16 : 0).equals(body)).toBe(true);
+            if (bytecode)
+              expect(bytes.subarray(0, 4).equals(PYTHON_39_MAGIC)).toBe(true);
+          }
+        }
+      },
+    );
+  },
+);
 
 it("retains legacy namespace payload extents without materializing them", async () => {
   const image = pyzArchive({
@@ -1074,7 +1202,7 @@ it.each([1, 2])(
           scanCanonicalArtifactInventory(path),
         ).rejects.toMatchObject({
           reason: "integrity",
-          message: expect.stringContaining("payload region"),
+          integrityCheck: "layout-consistency",
         });
       },
     );
@@ -1204,7 +1332,7 @@ for (const container of ["carchive", "outer-pyz", "inner-pyz"] as const) {
         };
         await expect(consume()).rejects.toMatchObject({
           reason: "integrity",
-          message: expect.stringContaining("complete declared source span"),
+          integrityCheck: "read-coverage",
         });
       });
     },
@@ -1380,7 +1508,9 @@ it.each([true, false])(
           source,
           inventory,
         );
-        expect(await readFile(join(output, path))).toEqual(file.payload);
+        expect(
+          Buffer.compare(await readFile(join(output, path)), file.payload),
+        ).toBe(0);
       },
     );
   },

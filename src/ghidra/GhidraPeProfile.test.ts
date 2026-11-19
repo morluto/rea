@@ -80,7 +80,20 @@ it.each([true, false, null])(
     const caveats = ghidraPePdbLimitations(target, pdb);
     expect(caveats).toEqual(ghidraPdbLimitations(pdb));
     expect(caveats).toHaveLength(1);
-    expect(caveats.join(" ")).not.toContain('PDB "public.pdb"');
+    const warning = caveats[0] ?? "";
+    expect(warning).toContain("public.pdb");
+    expect(warning).toContain("list_procedures");
+    expect(warning).toMatch(/names and types may (?:still )?be missing/i);
+    expect(warning).toMatch(/empty name search does not prove/i);
+    if (loaded === true) {
+      expect(warning).toMatch(/loaded PDB/i);
+      expect(warning).toMatch(/not an independent PDB identity/i);
+    } else if (loaded === false) {
+      expect(warning).toMatch(/not loaded/i);
+    } else {
+      expect(warning).toMatch(/load state unknown/i);
+    }
+    expect(warning).not.toContain('PDB "public.pdb"');
   },
 );
 
@@ -231,8 +244,12 @@ it.each(["signature", "version"] as const)(
 
 it("retains missing-report uncertainty without a declared CodeView record", () => {
   const { codeView: _, ...withoutReference } = target;
-  expect(ghidraPePdbLimitations(withoutReference, undefined)).toEqual(
-    ghidraPdbLimitations(undefined),
+  const caveats = ghidraPePdbLimitations(withoutReference, undefined);
+  expect(caveats).toEqual(ghidraPdbLimitations(undefined));
+  expect(caveats).toContainEqual(
+    expect.stringMatching(
+      /did not report PDB attributes.*coverage is unknown/i,
+    ),
   );
 });
 

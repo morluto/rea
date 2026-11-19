@@ -1,16 +1,17 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { canonicalInputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { expect, it, onTestFinished } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
 
 import type { FlutterBuildAnalysisPort } from "../../../src/application/flutter/FlutterBuildAnalysisPort.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { assertAdvertisedMcpContracts } from "./mcpContractHarness.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { ok } from "../../../src/domain/result.js";
-import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createFlutterBuildAnalysisProvider } from "../../../src/composition/flutter.js";
 import { flutterResultSchemas } from "../../../src/domain/flutter/flutterBuildAnalysis.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
 import { aotFixtureImage } from "../../../src/flutter/FlutterBuild.fixture.js";
 import { createFlutterApk } from "../../fixtures/flutterApk.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
@@ -90,8 +91,10 @@ it.each([
     );
     if (tool === undefined) throw new Error("Missing AOT tool");
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
-    expect(ajv.validateSchema(tool.inputSchema)).toBe(true);
-    expect(ajv.validate(tool.inputSchema, { path, abi: label })).toBe(true);
+    expect(ajv.validateSchema(canonicalInputSchema(tool.name))).toBe(true);
+    expect(
+      ajv.validate(canonicalInputSchema(tool.name), { path, abi: label }),
+    ).toBe(true);
   },
 );
 
@@ -142,6 +145,7 @@ const inspectExecution = () =>
         ],
       },
       string_pool: {
+        policy: {},
         coverage: "complete",
         package_uris: [
           "package:adaptive_breakpoints/src/adaptive_breakpoints.dart",
@@ -210,7 +214,10 @@ const fakeProvider = (): FlutterBuildAnalysisPort => ({
 
 it("advertises and enforces the same Unicode selector grammar through MCP", async () => {
   const harness = await createApplicationMcpHarness({
-    serverOptions: { flutterAnalysis: fakeProvider() },
+    serverOptions: {
+      flutterAnalysis: fakeProvider(),
+      environment: { ...process.env },
+    },
   });
   onTestFinished(harness.close);
   const tool = (await harness.client.listTools()).tools.find(
@@ -218,7 +225,7 @@ it("advertises and enforces the same Unicode selector grammar through MCP", asyn
   );
   if (tool === undefined) throw new Error("Missing AOT tool");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
-  expect(ajv.validateSchema(tool.inputSchema)).toBe(true);
+  expect(ajv.validateSchema(canonicalInputSchema(tool.name))).toBe(true);
   for (const abi of [
     "😀".repeat(1010),
     "l".repeat(1010),
@@ -228,7 +235,9 @@ it("advertises and enforces the same Unicode selector grammar through MCP", asyn
     ),
   ]) {
     const arguments_ = { path: "/fixture.apk", abi };
-    expect(ajv.validate(tool.inputSchema, arguments_)).toBe(true);
+    expect(ajv.validate(canonicalInputSchema(tool.name), arguments_)).toBe(
+      true,
+    );
     expect(
       (
         await harness.client.callTool({
@@ -238,26 +247,37 @@ it("advertises and enforces the same Unicode selector grammar through MCP", asyn
       ).isError,
     ).not.toBe(true);
   }
-  for (const abi of [
-    "",
-    "lib/x86_64",
-    "😀".repeat(1011),
+  for (const [abi, reason] of [
+    ["", "out_of_range"],
+    ["lib/x86_64", "invalid_format"],
+    ["😀".repeat(1011), "invalid_value"],
     ...["\n", "\r", "\u2028", "\u2029"].map(
-      (terminator) => "l".repeat(1010) + terminator,
+      (terminator) => ["l".repeat(1010) + terminator, "invalid_value"] as const,
     ),
-  ]) {
+  ] as const) {
     const arguments_ = { path: "/fixture.apk", abi };
-    expect(ajv.validate(tool.inputSchema, arguments_)).toBe(false);
+    expect(ajv.validate(canonicalInputSchema(tool.name), arguments_)).toBe(
+      false,
+    );
     const refused = await harness.client.callTool({
       name: "inspect_dart_aot",
       arguments: arguments_,
     });
-    expect(refused.isError).toBe(true);
-    expect(refused.content).toContainEqual({
-      type: "text",
-      text: expect.stringContaining(
-        "abi: ABI must be the exact lib/ directory label",
-      ),
+    expect(parseMcpToolError(refused).error).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
+        operation: "inspect_dart_aot",
+        issues: [
+          expect.objectContaining({
+            path: ["abi"],
+            reason,
+            message: expect.stringMatching(
+              /exact lib\/ directory label.*1–1010 Unicode characters.*without '\/'/iu,
+            ),
+          }),
+        ],
+      },
     });
   }
 });
@@ -266,17 +286,11 @@ it("advertises an exact valid Flutter schema and records inline evidence through
   const session = createTestBinarySession(() => {
     throw new Error("deep provider must not start");
   });
-  const server = createServer(
-    { kind: "session", session },
-    { flutterAnalysis: fakeProvider() },
-  );
-  onTestFinished(() => server.close());
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  const client = new Client({ name: "flutter-boundary", version: "0.0.0" });
-  onTestFinished(() => client.close());
-  await client.connect(clientTransport);
+  const { client } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "flutter-boundary", version: "0.0.0" },
+    serverOptions: { flutterAnalysis: fakeProvider() },
+  });
 
   const { tools } = await client.listTools();
   assertAdvertisedMcpContracts(
@@ -312,6 +326,14 @@ it("advertises an exact valid Flutter schema and records inline evidence through
     .map((part) => part.text ?? "")
     .join("");
   const inspectedEvidence = parseEvidence(JSON.parse(inspectedText));
+  const bundle = await client.callTool({
+    name: "get_evidence_bundle",
+    arguments: {},
+  });
+  expect(bundle.isError).not.toBe(true);
+  const records = parseMcpEvidenceBundle(bundle).records;
+  expect(records).toContainEqual(evidence);
+  expect(records).toContainEqual(inspectedEvidence);
   expect(inspectedEvidence.normalized_result).toMatchObject({
     abi: "arm64-v8a",
     libapp: {

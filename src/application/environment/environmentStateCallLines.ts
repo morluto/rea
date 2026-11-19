@@ -1,4 +1,5 @@
 import {
+  ownMember,
   allLines,
   collectionPathOf,
   collectionMatch,
@@ -35,7 +36,7 @@ export const callSegments = (
       segments.push({ text, supplied: false });
       continue;
     }
-    const value = args[names.get(param.name) ?? param.name];
+    const value = ownMember(args, names.get(param.name) ?? param.name);
     if (typeof value !== "string") return undefined;
     segments.push({ text: value, supplied: true });
   }
@@ -74,7 +75,9 @@ export const unfilteredLine = (
   const segments = callSegments(tool, args);
   if (
     segments === undefined ||
-    [...query.values()].some((argument) => args[argument] !== undefined)
+    [...query.values()].some(
+      (argument) => ownMember(args, argument) !== undefined,
+    )
   )
     return undefined;
   const lines = new Map<number, RecordedExchange>();
@@ -98,7 +101,7 @@ export const callQuery = (
   new Map(
     [...environmentToolArguments(tool).query].flatMap(
       ([name, argument]): [string, string][] => {
-        const value = args[argument];
+        const value = ownMember(args, argument);
         return value === undefined ? [] : [[name, String(value)]];
       },
     ),

@@ -77,6 +77,7 @@ it("bounds PID readback while retaining newline-terminated producer fixtures", a
     expect(
       await files.readTargetPid(join(directory, "missing.pid")),
     ).toBeUndefined();
+    expect(requestedLengths.length).toBeGreaterThan(0);
     expect(requestedLengths.every((length) => length <= 19)).toBe(true);
     expect(bytesRead).toBeLessThanOrEqual(19 * values.length);
   } finally {

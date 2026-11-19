@@ -3,7 +3,7 @@ import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 import { exportWebScripts } from "../../../src/application/WebScriptExportService.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { LocalWebScriptArtifacts } from "../../../src/browser/assets/LocalWebScriptArtifacts.js";
 import { LocalWebSourceLocationArtifacts } from "../../../src/browser/assets/WebSourceLocationArtifacts.js";
 import { LocalWebModuleArtifacts } from "../../../src/browser/modules/WebModuleArtifacts.js";
@@ -183,12 +183,14 @@ it("still rejects changed source bytes after resolving the selected manifest's p
   );
 });
 
+const literalSourcePath = "..\\sibling.js";
+
 const literalManifest = async () => {
   const fixture = await materialize();
   const selected = fixture.artifact.manifest.scripts[0];
   if (selected?.content.state !== "exported")
     throw new Error("Expected exported source");
-  selected.content.relative_path = "..\\sibling.js";
+  selected.content.relative_path = literalSourcePath;
   await writeFile(join(fixture.root, "sibling.js"), fixture.artifact.source);
   if (process.platform !== "win32")
     await writeFile(
@@ -206,39 +208,37 @@ it.each(["trace_web_module_imports", "trace_web_source_location"] as const)(
   "refuses Windows backslash source interpretation for %s",
   async (operation) => {
     const fixture = await literalManifest();
-    const originalPlatform = Object.getOwnPropertyDescriptor(
-      process,
-      "platform",
+    // Exercise the Windows admission branch; this is not native Windows IO.
+    const artifacts = new LocalWebScriptArtifacts(
+      operation,
+      undefined,
+      "win32",
     );
-    const artifacts = new LocalWebScriptArtifacts(operation);
     let response;
     try {
-      // Exercise the Windows admission branch; this is not native Windows IO.
-      Object.defineProperty(process, "platform", { value: "win32" });
       response = await artifacts.load({
         manifest_path: fixture.manifestPath,
         script_index: 0,
       });
     } finally {
-      if (originalPlatform !== undefined)
-        Object.defineProperty(process, "platform", originalPlatform);
       await artifacts.close();
     }
     if (response.ok) throw new Error("Expected Windows source path refusal");
-    expect(projectAnalysisError(response.error)).toMatchObject({
-      code: "invalid_request",
+    const error = projectAnalysisError(response.error);
+    expect(error).toMatchObject({
+      code: "artifact_operation_failed",
       details: {
-        issues: [
-          {
-            path: ["script_index"],
-            reason: "invalid_value",
-            message: expect.stringContaining(
-              "Windows source path cannot contain backslashes",
-            ),
-          },
-        ],
+        operation,
+        reason: "path",
+        detail: expect.stringContaining(
+          "Windows source path cannot contain backslashes",
+        ),
       },
     });
+    expect(error).toHaveProperty(
+      "details.detail",
+      expect.stringContaining(JSON.stringify(literalSourcePath)),
+    );
   },
 );
 
@@ -256,7 +256,7 @@ it.skipIf(process.platform === "win32")(
       if (!result.ok) throw result.error;
       expect(result.value.source).toBe(fixture.artifact.source);
       expect(result.value.sourceFile.path).toBe(
-        join(fixture.root, "files", "..\\sibling.js"),
+        join(fixture.root, "files", literalSourcePath),
       );
     } finally {
       await artifacts.close();

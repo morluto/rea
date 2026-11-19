@@ -82,19 +82,15 @@ function findTimingRun({
       .sort(
         (left, right) =>
           Date.parse(right.created_at) - Date.parse(left.created_at),
-      )
-      .slice(0, MAX_CANDIDATES);
-
-    for (const artifact of candidates) {
-      const run = normalizeWorkflowRun(
-        api(`repos/${repository}/actions/runs/${artifact.workflow_run.id}`),
       );
-      const runAge = now - Date.parse(run?.created_at);
-      if (
+
+    const accepts = (run, artifact) => {
+      const age = now - Date.parse(run?.created_at);
+      return (
         typeof run?.created_at === "string" &&
-        Number.isFinite(runAge) &&
-        runAge >= 0 &&
-        runAge < MAX_AGE_MS &&
+        Number.isFinite(age) &&
+        age >= 0 &&
+        age < MAX_AGE_MS &&
         run.id === artifact.workflow_run.id &&
         run.status === "completed" &&
         run.conclusion === "success" &&
@@ -102,8 +98,44 @@ function findTimingRun({
         events.includes(run.event) &&
         run.head_branch === branch &&
         run.head_repository?.full_name === repository
-      )
-        return String(run.id);
+      );
+    };
+    for (const artifact of candidates.slice(0, MAX_CANDIDATES)) {
+      let run;
+      try {
+        run = normalizeWorkflowRun(
+          api(`repos/${repository}/actions/runs/${artifact.workflow_run.id}`),
+        );
+      } catch {
+        // A listed artifact can outlive its run or race a deletion. Its
+        // lineage remains unverified, but the next candidate may still work.
+        continue;
+      }
+      if (accepts(run, artifact)) return String(run.id);
+    }
+    if (candidates.length > MAX_CANDIDATES) {
+      // Failed workflow runs can still publish portable timings. One page of
+      // successes lets older artifacts compete without a request per run.
+      const { workflow_runs: runs } = api(
+        `repos/${repository}/actions/workflows/ci.yml/runs`,
+        "-f",
+        `branch=${branch}`,
+        "-f",
+        "status=success",
+        "-F",
+        "per_page=100",
+      );
+      if (!Array.isArray(runs))
+        throw new Error("Missing successful CI run inventory");
+      const byId = new Map(
+        runs
+          .filter((run) => positiveId(run?.id))
+          .map((run) => [run.id, normalizeWorkflowRun(run)]),
+      );
+      for (const artifact of candidates) {
+        const run = byId.get(artifact.workflow_run.id);
+        if (accepts(run, artifact)) return String(run.id);
+      }
     }
     return "";
   };

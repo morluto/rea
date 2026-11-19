@@ -2,7 +2,7 @@ import {
   admitManagedProjection,
   managedDecodeBudget,
   ManagedRepresentationFailure,
-} from "./ManagedDecodeBudget.js";
+} from "../domain/managed/managedDecodeBudget.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
   managedMemberInspectionSchema,
@@ -11,34 +11,37 @@ import {
 } from "../domain/managed/managedArtifact.js";
 import {
   readManagedPeLayout,
+  type ManagedCliHeader,
   type ManagedPeLayout,
-} from "./ManagedPeReader.js";
+} from "../domain/managed/managedPeReader.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 import {
   readManagedResourceDirectory,
   readManagedMetadataInventory,
   readManagedModuleIdentity,
-} from "./ManagedMetadataInventory.js";
-import { managedMetadataTypeNames } from "./ManagedMetadataInventoryRows.js";
+} from "../domain/managed/managedMetadataInventory.js";
+import { managedMetadataTypeNames } from "../domain/managed/managedMetadataInventoryRows.js";
 import { managedPeInspectionEnvelope } from "./ManagedPeInspectionEnvelope.js";
-import { readManagedMetadataLayout } from "./ManagedMetadataLayout.js";
+import { readManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
 import {
   appendManagedParseIssues,
   ManagedReaderFailure,
+  readManagedValue,
   uniqueManagedParseIssues,
   managedMetadataFailureStatus,
   type ManagedMetadataHeaderFacts,
-} from "./ManagedReaderFailure.js";
+} from "../domain/managed/managedReaderFailure.js";
 import {
   parseTypes,
   readTypeDefinitions,
   type DecodedTypeDefinition,
-} from "./ManagedMemberInspectorCore.js";
-import { edgeTargets } from "./ManagedMethodSpecs.js";
-import { managedTypeNameDigests } from "./ManagedTypeNameDigests.js";
+} from "../domain/managed/managedMemberInspectorCore.js";
+import { edgeTargets, methodSpecMethod } from "./ManagedMethodSpecs.js";
+import { managedSignatureTypeNames } from "../domain/managed/managedSignatureTypeNames.js";
 import { typeNameLookup } from "./ManagedTypeNames.js";
-import { managedTypeReferences } from "./ManagedTypeReferences.js";
+import { managedTypeReferences } from "../domain/managed/managedTypeReferences.js";
 import { parseUserStrings } from "./ManagedUserStrings.js";
-import { readTypeMemberListFacts } from "./ManagedTypeMemberLists.js";
+import { readTypeMemberListFacts } from "../domain/managed/managedTypeMemberLists.js";
 import { prepareManagedMemberRecovery } from "./ManagedMemberRecovery.js";
 import {
   edges,
@@ -46,8 +49,10 @@ import {
   parseFields,
   parseMemberRefs,
   parseMethods,
+  readReferencedMemberCores,
   type SelectedTypeTokens,
 } from "./ManagedMemberRows.js";
+import type { MetadataTokenFact } from "../domain/managed/managedMetadataHeaps.js";
 
 const unavailable = (
   target: BinaryTarget,
@@ -81,7 +86,8 @@ const unavailable = (
         requires_mvid: null,
       },
       types: [],
-      signature_resolution: "type-names-v1",
+      signature_resolution: "type-names-v2",
+      assembly: null,
       nesting_read: false,
       exported_types: null,
       user_strings: null,
@@ -108,10 +114,12 @@ const unavailable = (
     }),
   );
 
-const readMemberLayout = (bytes: Buffer, pe: ManagedPeLayout) => {
-  const cli = pe.cli;
-  if (cli === null)
-    throw new TypeError("Managed inventory requires CLI metadata");
+const readMemberLayout = (
+  bytes: Buffer,
+  pe: ManagedPeLayout,
+  cli: ManagedCliHeader,
+  maxRepresentationBytes?: number,
+) => {
   const rootOffset = pe.rvaToOffset(
     cli.metadata.rva,
     cli.metadata.size,
@@ -121,6 +129,7 @@ const readMemberLayout = (bytes: Buffer, pe: ManagedPeLayout) => {
     bytes,
     rootOffset,
     cli.metadata.size,
+    maxRepresentationBytes,
   );
   const memberLists = readTypeMemberListFacts(bytes, layout);
   return { layout, memberLists };
@@ -156,6 +165,35 @@ const selectTypes = (
 };
 
 /**
+ * Literals sit beside the member inventory with their own coverage, so a
+ * capacity failure while decoding them keeps the member facts and reports the
+ * literals as not examined to completion.
+ */
+const withoutUserStrings = (
+  inspection: ManagedMemberInspection,
+  failure: ManagedRepresentationFailure,
+): ManagedMemberInspection =>
+  // Without the literals the members can still exceed capacity; that report
+  // already explains the shared limit.
+  inspection.coverage.issues.some(
+    ({ code, scope }) =>
+      code === failure.issue.code && scope === failure.issue.scope,
+  )
+    ? inspection
+    : managedMemberInspectionSchema.parse({
+        ...inspection,
+        user_strings: {
+          state: "partial",
+          literals: [],
+          issues: [{ ...failure.issue, scope: "metadata.#US" }],
+        },
+        limitations: [
+          ...inspection.limitations,
+          "User string decoding exceeded max_metadata_representation_bytes after the member facts were decoded; the members are kept and the #US literals are not examined. Select fewer type_names or raise max_metadata_representation_bytes to read them.",
+        ],
+      });
+
+/**
  * Inspect metadata members and method bodies without loading target code.
  * Selected type names restrict full decoding to members of those exact types.
  * A caller that never reads literals, such as member comparison, can skip
@@ -169,12 +207,14 @@ export const inspectManagedMembersBytes = (
     methodOffset = 0,
     methodLimit = Number.MAX_SAFE_INTEGER,
     userStrings: readUserStrings = true,
+    maxRepresentationBytes,
   }: {
     readonly typeNames?: readonly string[];
     /** Zero-based offset into MethodDef rows. */
     readonly methodOffset?: number;
     readonly methodLimit?: number;
     readonly userStrings?: boolean;
+    readonly maxRepresentationBytes?: number;
   } = {},
 ): ManagedMemberInspection => {
   if (
@@ -183,7 +223,7 @@ export const inspectManagedMembersBytes = (
     !Number.isSafeInteger(methodLimit) ||
     methodLimit < 0
   )
-    throw new RangeError(
+    throw invariantViolation(
       "methodOffset and methodLimit must be non-negative safe integers",
     );
   const pe = readManagedPeLayout(bytes);
@@ -191,8 +231,16 @@ export const inspectManagedMembersBytes = (
     return unavailable(target, bytes, typeNames, { issue: pe.cliIssue });
   const issues: ManagedParseIssue[] = [];
   let recover: ReturnType<typeof prepareManagedMemberRecovery> | undefined;
+  // Set once the member facts are decoded and the literals start spending the
+  // shared budget; a capacity failure after that point is retried without them.
+  let decodingUserStrings = false;
   try {
-    const { layout, memberLists } = readMemberLayout(bytes, pe);
+    const { layout, memberLists } = readMemberLayout(
+      bytes,
+      pe,
+      pe.cli,
+      maxRepresentationBytes,
+    );
     const methodTotal = layout.table(6)?.rowCount ?? 0;
     const methodRows = {
       offset: Math.min(methodOffset, methodTotal),
@@ -211,8 +259,11 @@ export const inspectManagedMembersBytes = (
       typeNames === undefined ? 0 : ranges.length - parsedTypes.types.length;
     appendManagedParseIssues(issues, parsedTypes.issues);
     const typeReferences = managedTypeReferences(bytes, layout, issues);
-    const { operand: signatureTypeName, declaration: declarationTypeName } =
-      managedTypeNameDigests(layout, issues, parsedTypes, typeReferences);
+    const {
+      operand: signatureTypeName,
+      declaration: declarationTypeName,
+      displayName: displayTypeName,
+    } = managedSignatureTypeNames(layout, issues, parsedTypes, typeReferences);
     const types = parsedTypes.types
       .filter(({ type }) => selected === null || selected.has(type.token))
       .map(({ row, type }) => {
@@ -226,7 +277,7 @@ export const inspectManagedMembersBytes = (
       target,
       bytes.length,
       layout,
-      identity.module,
+      identity,
       issues,
     );
     const unnamedTypes = types.reduce(
@@ -282,19 +333,23 @@ export const inspectManagedMembersBytes = (
     appendManagedParseIssues(issues, exportedTypes.issues);
     const fields = parseFields(bytes, layout, ranges, memberLists, {
       signatureTypeName,
+      displayTypeName,
       declarationTypeName,
       selected,
     });
-    const resolveTypeName = typeNameLookup(
+    const { name: resolveTypeName, isResolvedTypeSpec } = typeNameLookup(
       bytes,
       layout,
       ranges,
       issues,
       typeReferences,
+      signatureTypeName,
     );
     const memberRefs = parseMemberRefs(bytes, layout, {
       typeName: resolveTypeName,
+      isResolvedTypeSpec,
       signatureTypeName,
+      displayTypeName,
       declarationTypeName,
     });
     appendManagedParseIssues(issues, memberRefs.issues);
@@ -304,6 +359,7 @@ export const inspectManagedMembersBytes = (
       pe,
       ranges,
       signatureTypeName,
+      displayTypeName,
       declarationTypeName,
       memberRefKinds: new Map(
         memberRefs.refs.flatMap((memberRef) =>
@@ -319,6 +375,52 @@ export const inspectManagedMembersBytes = (
       methodLimit,
     });
     appendManagedParseIssues(issues, fields.issues, methods.issues);
+    // Names for edge targets outside the selection come only from the rows
+    // selected method bodies actually reference. Unselected rows were
+    // skipped without reading them, so those names are recovered here
+    // instead of spending the budget on the whole assembly.
+    const referenced = new Map<
+      string,
+      Pick<MetadataTokenFact, "table" | "row" | "token">
+    >();
+    const needsCore = (
+      reference: Pick<MetadataTokenFact, "table" | "token">,
+    ): boolean =>
+      reference.table === 4
+        ? !fields.core.has(reference.token)
+        : reference.table === 6 && !methods.core.has(reference.token);
+    // Unscoped inspection already read every core. Selected members also
+    // retain their cores; only missing edge targets need the recovery pass.
+    if (selected !== null)
+      for (const { tokenInstructions } of methods.methods)
+        for (const { reference } of tokenInstructions) {
+          if (needsCore(reference)) referenced.set(reference.token, reference);
+          else if (
+            reference.table === 0x2b &&
+            reference.row >= 1 &&
+            reference.row <= (layout.table(0x2b)?.rowCount ?? 0)
+          ) {
+            const spec = readManagedValue(
+              () => methodSpecMethod(bytes, layout, reference.row),
+              issues,
+            );
+            const generic = spec?.method;
+            if (
+              generic !== undefined &&
+              generic.kind === "valid" &&
+              needsCore(generic)
+            )
+              referenced.set(generic.token, generic);
+          }
+        }
+    const referencedCores = readReferencedMemberCores(
+      bytes,
+      layout,
+      ranges,
+      memberLists,
+      referenced.values(),
+    );
+    appendManagedParseIssues(issues, referencedCores.issues);
     const resolvedMethods = methods.methods.map(({ method, catchTokens }) => ({
       ...method,
       body: {
@@ -352,6 +454,7 @@ export const inspectManagedMembersBytes = (
     }));
     // #US literals sit beside the member inventory and carry their own
     // coverage, so their issues never make member facts partial.
+    decodingUserStrings = readUserStrings;
     const userStrings = readUserStrings
       ? parseUserStrings(bytes, layout, {
           ...methods,
@@ -362,7 +465,7 @@ export const inspectManagedMembersBytes = (
       bytes,
       layout,
       methods.methods,
-      [fields.core, memberRefs.core, methods.core],
+      [referencedCores.core, fields.core, memberRefs.core, methods.core],
       signatureTypeName,
     );
     appendManagedParseIssues(issues, targets.issues);
@@ -394,7 +497,7 @@ export const inspectManagedMembersBytes = (
           },
           assembly: inventory.assembly,
           types,
-          signature_resolution: "type-names-v1",
+          signature_resolution: "type-names-v2",
           nesting_read: parsedTypes.nesting.complete,
           exported_types: exportedTypes.exportedTypes,
           fields: fields.fields,
@@ -416,9 +519,10 @@ export const inspectManagedMembersBytes = (
             ...typeIdentityLimitations,
             "Metadata tokens are build-local coordinates and are only meaningful with the reported artifact SHA-256 and MVID.",
             "CIL instruction anchors are decoded from file-backed method bodies only; no target assembly is loaded or executed.",
+            "Field constants are file-backed Constant-table declarations, not runtime field values. Parameter and property defaults and enum-name mappings are not decoded.",
             "Exported types are reported from ExportedType rows as declared; forwarded types are not resolved in their implementing assemblies.",
             "User strings are the #US literals loaded by ldstr in the inspected method bodies, with their own coverage; instruction anchors and normalized CIL digests keep their build-local tokens.",
-            "Member signatures decode ECMA-335 primitive, class, valuetype, generic instantiation, generic variable, pointer, byref, single-dimension and general array, function pointer including VARARG sentinels, custom modifier, and typed reference forms; class and valuetype operands keep their encoded TypeDefOrRefOrSpec values.",
+            "Member signatures decode ECMA-335 primitive, class, valuetype, generic instantiation, generic variable, pointer, byref, single-dimension and general array, function pointer including VARARG sentinels, custom modifier, and typed reference forms; type operands keep their encoded TypeDefOrRefOrSpec values and append readable TypeDef/TypeRef names when resolved.",
             ...selectionLimitations,
           ],
         },
@@ -427,6 +531,19 @@ export const inspectManagedMembersBytes = (
     );
   } catch (cause: unknown) {
     if (cause instanceof ManagedReaderFailure) {
+      if (decodingUserStrings && cause instanceof ManagedRepresentationFailure)
+        return withoutUserStrings(
+          inspectManagedMembersBytes(bytes, target, {
+            ...(typeNames === undefined ? {} : { typeNames }),
+            methodOffset,
+            methodLimit,
+            userStrings: false,
+            ...(maxRepresentationBytes === undefined
+              ? {}
+              : { maxRepresentationBytes }),
+          }),
+          cause,
+        );
       if (
         recover !== undefined &&
         cause instanceof ManagedRepresentationFailure

@@ -81,17 +81,20 @@ requiring the reader to understand either language. Show a simple agent prompt
 and the specific facts REA supplies to answer it.
 
 Put compact setup at the beginning of the homepage: a copyable installation
-prompt and the ordinary setup command. Then explain what reverse engineering
+prompt, with the terminal command and platform options in open native disclosures.
+Keep the setup-guide link visible. Then explain what reverse engineering
 means and what it lets someone do, before the worked examples.
 Begin each example with its goal and the reason to inspect that program.
 Name the actual evidence REA returned and what the agent did with it.
 Give long pages a short table of contents with concrete section names. Preserve
 the reading width: the homepage uses the side gutter when it has room,
-and a collapsible sticky menu on smaller screens. Highlight the current
+and a collapsible sticky menu after the opening section on smaller screens. Highlight the current
 section, keep fragment links usable without JavaScript, and leave room above
 the destination for the sticky control. Make Get started the primary opening
-action. Keep short Showcases and Blog descriptions below the opening actions,
-with the original equal-width introduction and setup columns on desktop.
+action. Give RL environments, Showcases and Blog their own row of links and
+short descriptions below the introduction and setup. Use equal columns for
+the introduction and setup on large screens, then stack them before either
+column becomes cramped.
 Use a short introduction and one three-step overview before the examples.
 Let introductory prose wrap naturally across the container, independently of
 the narrower heading width. Add a brief transition before the worked examples.
@@ -102,8 +105,9 @@ Prefer ordinary paragraphs to repeated goal, finding and role panels. Reserve
 bold text and blue highlights for a meaningful code selection or action, not
 every takeaway. Keep source, interpretation and new code attributed to their
 respective roles. On mobile, the demo can precede its supporting code once its
-purpose is clear. Put the detailed manual/agent comparison and verification
-flows in native disclosures so the main reading path stays compact. Retain the
+purpose is clear. Show the full Calculator manual/agent comparison by default,
+using an open native disclosure so readers can collapse it. Keep supporting
+verification flows in closed disclosures. Retain the
 authored examples, source excerpts, investigation steps and useful prompts when
 reordering the page. Opening an investigation should reveal its explanation
 and code without another layer of hidden analysis.
@@ -258,9 +262,12 @@ that differs from the system preference.
 Use the system sans-serif stack for prose and the shared monospace stack for
 code. Korean editions use Noto Sans KR from Google Fonts, with local Korean
 fonts as fallbacks; code retains the shared monospace fonts for Latin glyphs.
-The content container is at most 1080px wide, with article text limited to
-760px. The header has its own 1320px container so navigation and utility controls
-fit together. At 1100px and below, navigation moves to a separate row. Reuse the
+The homepage content container is at most 1200px wide. Other pages use 1080px,
+with article text limited to 760px. The header has its own 1320px container.
+Keep its primary navigation to Get started, Showcases, Blog and Guides, with
+FAQ and Contributors in the footer. Utility controls have quiet borders and
+clear hover and keyboard focus states. At 1100px and below, navigation moves
+to a separate row and the homepage introduction and setup stack. Reuse the
 existing heading sizes, line heights, section spacing and component classes.
 
 Whitespace separates ideas. Thin rules identify sections. Headings establish

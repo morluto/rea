@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 import { mkdtemp, realpath, rm, type FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -7,22 +8,29 @@ import type { Readable } from "node:stream";
 import type { ArtifactCommand } from "../domain/artifactGraph.js";
 import {
   ArtifactReaderFailure,
+  ArtifactResourceScope,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
-import { DirectoryArtifactReader } from "./DirectoryArtifactReader.js";
+  DirectoryArtifactReader,
+} from "../resources/index.js";
+import { declaredArtifactEntries } from "./ArtifactTraversalObservation.js";
 import {
   NonRegularFileReadError,
   RegularFileAdmissionFailure,
   openRegularFile,
 } from "../filesystem/RegularFile.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import { randomUUID } from "node:crypto";
 import {
-  ExecFileOutputCancelledError,
-  execFileOutput,
-  execFileOutputFailure,
-} from "../process/ExecFileOutput.js";
+  OwnedCommandFailure,
+  prepareOwnedCommand,
+  runOwnedCommand,
+} from "../process/OwnedCommand.js";
+import type { ProcessTerminationPolicy } from "../process/ProviderProcess.js";
+import { launcherFailureOf } from "../process/launchFailure.js";
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
+import { retainOwnedCommandCleanup } from "../providers/OwnedCommandCleanup.js";
 import {
   parseNativeDmgAttachOutput,
   parseNativeDmgInfo,
@@ -30,13 +38,36 @@ import {
   type NativeDmgAttachOutput,
   type NativeDmgInfo,
 } from "./NativeDmgOwnership.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+const HDIUTIL = "/usr/bin/hdiutil";
 const HDIUTIL_COMMAND_TIMEOUT_MS = 120_000;
-const VERIFY_SETTLE_DELAYS_MS = [250, 500] as const;
+/**
+ * hdiutil rolls back an attach it started when asked to stop with SIGTERM, so
+ * owned cleanup asks first and kills what remains only after this grace.
+ */
+const HDIUTIL_TERMINATION: ProcessTerminationPolicy = {
+  signal: "SIGTERM",
+  graceMs: 5_000,
+};
+/** Retained bytes per stream; attach and info plists are far smaller. */
+const HDIUTIL_OUTPUT_BYTES = 16 * 1024 * 1024;
+/** Conditional recovery guidance; a path match never grants attachment ownership. */
+const DMG_EXISTING_ATTACHMENT_RECOVERY =
+  "hdiutil refused a private read-only DMG attachment after listing an existing attachment of this image path. If it is still attached, ask its owner to release it when safe, then retry. REA does not borrow or detach existing attachments.";
+const DMG_CHECKSUM_ABSENT_LIMITATION =
+  "hdiutil verify found no stored checksum in this disk image, so its integrity was not verified; the root SHA-256 identifies the inventoried bytes.";
+const VERIFY_TRANSIENT_DELAY_MS = 250;
+const VERIFY_UNKNOWN_SETTLE_DELAYS_MS = [250, 500] as const;
 // APFS ejects and busy reporting can lag a detach attempt.
 const DETACH_SETTLE_DELAYS_MS = [250, 500, 1000] as const;
 const delay = (milliseconds: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
-/** Narrow host seam for tested, shell-free hdiutil lifecycle operations. */
+/**
+ * Narrow host seam for tested, shell-free hdiutil lifecycle operations. `run`
+ * resolves with any ordinary exit and rejects with the command owner's raw
+ * failure, such as an `OwnedCommandFailure` or a launcher's error.
+ */
 export interface NativeDmgHost {
   run(
     arguments_: readonly string[],
@@ -50,6 +81,8 @@ export interface NativeDmgHost {
   }>;
   /** Wait between detach rechecks; tests may resolve immediately. */
   delay?(milliseconds: number): Promise<void>;
+  /** Retry hdiutil processes whose cleanup failed; rejects while any remains. */
+  close?(): Promise<void>;
 }
 
 interface NativeDmgFailureClassification {
@@ -60,12 +93,15 @@ interface NativeDmgFailureClassification {
    * localized text; the cause stays unknown unless the target cannot be opened.
    */
   readonly unrecognizedImage?: boolean;
+  /** hdiutil found no stored checksum, so verification neither passed nor failed. */
+  readonly checksumAbsent?: boolean;
 }
 
 class NativeDmgCommandFailure extends ArtifactReaderFailure {
   readonly processNotStarted: boolean;
   readonly verifyDiagnostic: string | undefined;
   readonly unrecognizedImage: boolean;
+  readonly checksumAbsent: boolean;
   readonly exitCode: number | null;
 
   constructor(
@@ -79,69 +115,89 @@ class NativeDmgCommandFailure extends ArtifactReaderFailure {
       readonly exitCode?: number;
     },
   ) {
-    super(
-      failure.reason,
-      message,
-      options === undefined
-        ? undefined
-        : {
-            ...(options.cause === undefined ? {} : { cause: options.cause }),
-            ...(options.cancellation === undefined
-              ? {}
-              : { cancellation: options.cancellation }),
-          },
-    );
+    super(failure.reason, message, {
+      ...(options?.cause === undefined ? {} : { cause: options.cause }),
+      ...(options?.cancellation === undefined
+        ? {}
+        : { cancellation: options.cancellation }),
+      // Only hdiutil verify classifies a DMG failure as integrity.
+      integrityCheck:
+        failure.reason === "integrity" ? "image-checksum" : undefined,
+    });
     this.processNotStarted = options?.processNotStarted ?? false;
     this.verifyDiagnostic = failure.verifyDiagnostic;
     this.unrecognizedImage = failure.unrecognizedImage ?? false;
+    this.checksumAbsent = failure.checksumAbsent ?? false;
     this.exitCode = options?.exitCode ?? null;
   }
 }
 
 const createSystemHost = (
   environment: Readonly<NodeJS.ProcessEnv>,
-): NativeDmgHost => ({
-  delay,
-  async run(arguments_, signal, options) {
+): NativeDmgHost => {
+  // Owns hdiutil processes whose cleanup failed until the reader closes.
+  const processes = new ArtifactResourceScope();
+  const retained = {
+    retain: (owner: { close(): Promise<void> }, resource: string) => {
+      processes.retain({
+        kind: "lease",
+        resource,
+        lease: { release: () => owner.close() },
+      });
+    },
+    run: <T>(work: () => Promise<T>) => work(),
+  };
+  const runOwned: NativeDmgHost["run"] = async (
+    arguments_,
+    signal,
+    options,
+  ) => {
     try {
-      const { stdout, stderr } = await execFileOutput(
-        "/usr/bin/hdiutil",
-        [...arguments_],
+      await prepareOwnedCommand(signal);
+      const snapshot = await runOwnedCommand(
         {
-          env: environment,
-          stopSignal: "SIGTERM",
-          ...(options === undefined ? {} : { timeout: options.timeoutMs }),
-          ...(signal === undefined ? {} : { signal }),
+          command: HDIUTIL,
+          arguments: [...arguments_],
+          runId: `rea-hdiutil-${randomUUID()}`,
+          hostEnvironment: environment,
         },
+        {
+          timeoutMs: options?.timeoutMs ?? null,
+          diagnosticBytes: {
+            stdout: HDIUTIL_OUTPUT_BYTES,
+            stderr: HDIUTIL_OUTPUT_BYTES,
+          },
+          acceptNonZeroExit: true,
+          termination: HDIUTIL_TERMINATION,
+        },
+        { signal },
       );
-      return { stdout, stderr, exitCode: 0 };
+      // An accepted run exited normally, so it has a numeric status.
+      if (typeof snapshot.exitCode !== "number")
+        throw invariantViolation("hdiutil completed without an exit status");
+      const { stdout, stderr } = capturedProviderOutput(snapshot);
+      return { stdout, stderr, exitCode: snapshot.exitCode };
     } catch (cause: unknown) {
-      const output = execFileOutputFailure(cause);
-      if (cause instanceof ExecFileOutputCancelledError)
-        throw new NativeDmgCommandFailure(
-          { reason: "cancelled" },
-          "DMG operation cancelled",
-          output?.stdout ?? "",
-          { cause, cancellation: { reason: cause.cause } },
-        );
-      const exitCode =
-        typeof output?.code === "number" ? output.code : processExitCode(cause);
-      if (exitCode !== undefined)
-        return {
-          stdout: output?.stdout ?? processOutput(cause, "stdout"),
-          stderr: output?.stderr ?? processOutput(cause, "stderr"),
-          exitCode,
-          cause,
-        };
-      throw new NativeDmgCommandFailure(
-        classifyCommandFailure(cause, arguments_[0]),
-        `hdiutil ${arguments_[0] ?? "operation"} failed: ${describeCommandFailure(cause, arguments_)}`,
-        output?.stdout ?? "",
-        { cause, processNotStarted: processNotStarted(cause) },
+      retainOwnedCommandCleanup(
+        cause,
+        retained,
+        "artifact",
+        `hdiutil ${arguments_[0] ?? "operation"}`,
       );
+      throw cause;
     }
-  },
-});
+  };
+  return {
+    delay,
+    // Admission retries retained cleanup first and stays blocked while it is
+    // unresolved, so no hdiutil starts beside one REA could not stop.
+    run: (arguments_, signal, options) =>
+      processes.run(() => runOwned(arguments_, signal, options)),
+    // The reader releases retained commands before and after its close-time
+    // detach, so this retries them without ending admission.
+    close: () => processes.retryCleanup(),
+  };
+};
 
 /** Read-only macOS DMG adapter that owns attachment and reverse-order detach. */
 export class NativeDmgArtifactReader implements ArtifactReader {
@@ -162,13 +218,15 @@ export class NativeDmgArtifactReader implements ArtifactReader {
   #closePromise: Promise<void> | undefined;
   readonly #activeDirectoryOperations = new Set<Promise<unknown>>();
   #verificationProbeHandle: OwnedFileHandle | undefined;
+  #checksumAbsent = false;
 
   constructor(
     private readonly path: string,
     environment: Readonly<NodeJS.ProcessEnv>,
     host?: NativeDmgHost,
   ) {
-    if (process.platform !== "darwin" && host === undefined)
+    // The system host mounts through this host's hdiutil.
+    if (HOST_PLATFORM.platform !== "darwin" && host === undefined)
       throw new ArtifactReaderFailure(
         "unavailable",
         "Native DMG traversal is available only on macOS",
@@ -184,21 +242,34 @@ export class NativeDmgArtifactReader implements ArtifactReader {
     const directory = this.#directory;
     if (directory === undefined)
       throw new ArtifactReaderFailure("unavailable", "DMG is not attached");
+    if (this.#checksumAbsent)
+      options?.onCoverage?.({
+        status: "complete",
+        limitations: [DMG_CHECKSUM_ABSENT_LIMITATION],
+      });
     const prefix = basename(this.path);
-    const entries = directory
-      .entries(signal, {
-        onOmission: (omission) =>
-          options?.onOmission?.({
-            ...omission,
-            path: `${prefix}/${omission.path}`,
-          }),
-      })
-      [Symbol.asyncIterator]();
+    // The attached directory declares its own coverage; silence stays unknown.
+    const entries = declaredArtifactEntries(directory, signal, {
+      onCoverage: (coverage) => options?.onCoverage?.(coverage),
+      onOmission: (omission) =>
+        options?.onOmission?.({
+          ...omission,
+          path: `${prefix}/${omission.path}`,
+        }),
+    })[Symbol.asyncIterator]();
     try {
       for (;;) {
-        if (this.#closed) return;
+        if (this.#closed)
+          throw new ArtifactReaderFailure(
+            "unavailable",
+            "DMG reader is closed",
+          );
         const next = await this.#trackDirectoryOperation(() => entries.next());
-        if (this.#closed) return;
+        if (this.#closed)
+          throw new ArtifactReaderFailure(
+            "unavailable",
+            "DMG reader is closed",
+          );
         if (next.done) return;
         yield { ...next.value, path: `${prefix}/${next.value.path}` };
       }
@@ -235,6 +306,11 @@ export class NativeDmgArtifactReader implements ArtifactReader {
     await Promise.allSettled(this.#activeDirectoryOperations);
     await this.#closeVerificationProbeHandle();
     await this.#closeMountedDirectory();
+    // An hdiutil whose cleanup failed may still change attachments, so it is
+    // released before detaching.
+    const retained = await this.#releaseRetainedCommands();
+    if (retained !== undefined)
+      throw ArtifactReaderFailure.withCleanup(retained.cause, retained.cleanup);
     let detachFailure = await this.#detachOwnedDevices();
     if (
       this.#devices.length === 0 &&
@@ -256,14 +332,21 @@ export class NativeDmgArtifactReader implements ArtifactReader {
           "hdiutil attachment ownership remains unknown",
       );
     }
+    // Detach and inventory commands run during close can be retained too.
+    const retainedDuringClose = await this.#releaseRetainedCommands();
+    if (detachFailure === undefined && retainedDuringClose !== undefined)
+      throw ArtifactReaderFailure.withCleanup(
+        retainedDuringClose.cause,
+        retainedDuringClose.cleanup,
+      );
     if (detachFailure !== undefined)
       throw new ArtifactReaderFailure(
         "unavailable",
-        `DMG detach or mount-root cleanup failed for ${JSON.stringify(this.path)}: ${failureMessage(detachFailure)}`,
+        `DMG detach or mount-root cleanup failed for ${JSON.stringify(this.path)}: ${errorMessage(detachFailure)}`,
         {
           cause: detachFailure,
           cleanup: {
-            reason: failureMessage(detachFailure),
+            reason: errorMessage(detachFailure),
             resources: [
               ...this.#devices.map((device) => `DMG device ${device}`),
               ...(this.#attachMayHaveMounted
@@ -274,10 +357,35 @@ export class NativeDmgArtifactReader implements ArtifactReader {
               ...(this.#mountRoot === undefined
                 ? []
                 : [`DMG mount root ${this.#mountRoot}`]),
+              ...(retainedDuringClose?.cleanup.resources ?? []),
             ],
           },
         },
       );
+  }
+
+  /** Retry hdiutil processes whose cleanup failed; report any that remain. */
+  async #releaseRetainedCommands(): Promise<
+    | {
+        readonly cause: unknown;
+        readonly cleanup: ReturnType<
+          typeof ArtifactReaderFailure.cleanupObservation
+        >;
+      }
+    | undefined
+  > {
+    try {
+      await this.host.close?.();
+      return undefined;
+    } catch (cause: unknown) {
+      return {
+        cause,
+        cleanup: ArtifactReaderFailure.cleanupObservation(
+          cause,
+          "hdiutil process",
+        ),
+      };
+    }
   }
 
   async #closeVerificationProbeHandle(): Promise<void> {
@@ -335,7 +443,7 @@ export class NativeDmgArtifactReader implements ArtifactReader {
       } catch (cause: unknown) {
         const mountRoot = this.#mountRoot ?? this.path;
         throw ArtifactReaderFailure.withCleanup(cause, {
-          reason: `DMG mounted directory remains owned: ${failureMessage(cause)}`,
+          reason: `DMG mounted directory remains owned: ${errorMessage(cause)}`,
           resources: [
             `DMG mounted directory at ${mountRoot}`,
             `DMG mount root ${mountRoot}`,
@@ -365,7 +473,7 @@ export class NativeDmgArtifactReader implements ArtifactReader {
       await this.#resolveAttachOwnership();
       return undefined;
     } catch (cause: unknown) {
-      this.#ownershipUncertainty = failureMessage(cause);
+      this.#ownershipUncertainty = errorMessage(cause);
       return cause;
     }
   }
@@ -480,6 +588,16 @@ export class NativeDmgArtifactReader implements ArtifactReader {
         this.#attachMayHaveMounted = false;
         this.#ownershipUncertainty = undefined;
       }
+      if (
+        cause instanceof NativeDmgCommandFailure &&
+        cause.reason === "unavailable" &&
+        cause.exitCode !== null &&
+        (await existingImagePathListed(this.path, baseline))
+      )
+        throw new ArtifactReaderFailure("unavailable", cause.message, {
+          cause,
+          userMessage: DMG_EXISTING_ATTACHMENT_RECOVERY,
+        });
       throw cause;
     }
   }
@@ -498,6 +616,11 @@ export class NativeDmgArtifactReader implements ArtifactReader {
       } catch (cause: unknown) {
         if (!(cause instanceof NativeDmgCommandFailure)) throw cause;
         this.#provenance.push(command(arguments_, ["read"], cause.exitCode));
+        // No stored checksum (e.g. raw UDRW): attach with integrity unverified.
+        if (cause.checksumAbsent) {
+          this.#checksumAbsent = true;
+          return;
+        }
         if (cause.unrecognizedImage) {
           const unreadable = await this.#isUnreadableTarget(signal, cause);
           this.#throwIfVerificationCancelled(signal);
@@ -514,7 +637,13 @@ export class NativeDmgArtifactReader implements ArtifactReader {
               },
             );
         }
-        const delayMs = VERIFY_SETTLE_DELAYS_MS[attempt];
+        // An explicit resource refusal can outlast the initial settle window
+        // after image creation. Its retries share the existing command deadline;
+        // an ambiguous localized refusal keeps only the short diagnostic probe.
+        const delayMs =
+          cause.verifyDiagnostic === "Resource temporarily unavailable"
+            ? VERIFY_TRANSIENT_DELAY_MS
+            : VERIFY_UNKNOWN_SETTLE_DELAYS_MS[attempt];
         // Retry only the producer's explicit transient diagnostic, or a localized
         // refusal of a readable target that may be the same, before any mount.
         if (
@@ -548,7 +677,9 @@ export class NativeDmgArtifactReader implements ArtifactReader {
   async #resolveAttachOwnership(): Promise<"owned" | "none" | "unknown"> {
     const mountRoot = this.#mountRoot;
     if (mountRoot === undefined)
-      throw new Error("DMG mount root is unavailable for ownership discovery");
+      throw invariantViolation(
+        "DMG mount root is unavailable for ownership discovery",
+      );
     const ownership = resolveNativeDmgOwnership({
       info: await this.#readInfo(),
       ...(this.#attachOutput === undefined
@@ -597,10 +728,10 @@ export class NativeDmgArtifactReader implements ArtifactReader {
   ): Promise<boolean> {
     let handle: FileHandle;
     try {
-      handle = await openRegularFile(this.path, {
+      ({ handle } = await openRegularFile(this.path, {
         symlinks: "follow",
         ...(signal === undefined ? {} : { signal }),
-      });
+      }));
     } catch (cause: unknown) {
       if (cause instanceof RegularFileAdmissionFailure) {
         this.#verificationProbeHandle = cause.owner;
@@ -646,21 +777,66 @@ export class NativeDmgArtifactReader implements ArtifactReader {
   }
 }
 
-const failureMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
+/** A path match supports recovery advice, never attachment ownership or byte identity. */
+const existingImagePathListed = async (
+  path: string,
+  info: NativeDmgInfo,
+): Promise<boolean> => {
+  let target: string;
+  try {
+    target = await realpath(path);
+  } catch {
+    return false;
+  }
+  for (const image of info.images) {
+    if (
+      image["image-path"] === undefined ||
+      image["system-entities"].length === 0
+    )
+      continue;
+    try {
+      if ((await realpath(image["image-path"])) === target) return true;
+    } catch {
+      // An unresolved path does not identify this image; keep checking other entries.
+    }
+  }
+  return false;
+};
 
-const processNotStarted = (cause: unknown): boolean => {
-  if (!(cause instanceof Error)) return false;
-  const syscall = Reflect.get(cause, "syscall");
-  const code = Reflect.get(cause, "code");
-  const errno = Reflect.get(cause, "errno");
-  return (
-    typeof syscall === "string" &&
-    syscall.startsWith("spawn ") &&
-    (typeof code === "string" ||
-      typeof code === "number" ||
-      typeof errno === "number")
-  );
+/**
+ * The facts an interrupted or failed owned command reports, in the shape the
+ * hdiutil classification reads: a deadline is ETIMEDOUT, and the stop signal
+ * and retained output come from the command's snapshot. A command that exited
+ * on its own with complete output keeps its exit status even when its cleanup
+ * failed afterwards, so a verify exit is still classified from its diagnostics.
+ */
+const commandFailureFacts = (cause: unknown): unknown => {
+  if (!(cause instanceof OwnedCommandFailure)) return cause;
+  const output =
+    cause.snapshot === null
+      ? undefined
+      : capturedProviderOutput(cause.snapshot);
+  const exitCode =
+    cause.reason === "process" &&
+    output !== undefined &&
+    !output.truncated &&
+    typeof output.exit_code === "number"
+      ? output.exit_code
+      : undefined;
+  return {
+    ...(exitCode === undefined ? {} : { exitCode }),
+    code:
+      cause.reason === "timeout"
+        ? "ETIMEDOUT"
+        : cause.reason === "output-limit"
+          ? "ENOBUFS"
+          : undefined,
+    ...(output?.signal == null ? {} : { signal: output.signal }),
+    ...(output === undefined
+      ? {}
+      : { stdout: output.stdout, stderr: output.stderr }),
+    message: cause.message,
+  };
 };
 
 const runChecked = async (
@@ -674,22 +850,35 @@ const runChecked = async (
     result = await host.run(arguments_, signal, options);
   } catch (cause: unknown) {
     if (cause instanceof ArtifactReaderFailure) throw cause;
-    if (cause instanceof ExecFileOutputCancelledError)
+    const stdout =
+      cause instanceof OwnedCommandFailure && cause.snapshot !== null
+        ? capturedProviderOutput(cause.snapshot).stdout
+        : "";
+    if (
+      cause instanceof OwnedCommandFailure &&
+      cause.reason === "cancelled" &&
+      cause.cancellation !== undefined
+    )
       throw new NativeDmgCommandFailure(
         { reason: "cancelled" },
         "DMG operation cancelled",
-        execFileOutputFailure(cause)?.stdout ?? "",
-        { cause, cancellation: { reason: cause.cause } },
+        stdout,
+        { cause, cancellation: cause.cancellation },
       );
-    const output = execFileOutputFailure(cause);
+    const facts = commandFailureFacts(cause);
+    const exitCode = processExitCode(facts);
     throw new NativeDmgCommandFailure(
-      classifyCommandFailure(cause, arguments_[0]),
+      classifyCommandFailure(facts, arguments_[0]),
       `hdiutil ${arguments_[0] ?? "operation"} failed: ${describeCommandFailure(
-        cause,
+        facts,
         arguments_,
       )}`,
-      output?.stdout ?? "",
-      { cause, processNotStarted: processNotStarted(cause) },
+      stdout,
+      {
+        cause,
+        processNotStarted: launcherFailureOf(cause) !== undefined,
+        ...(exitCode === undefined ? {} : { exitCode }),
+      },
     );
   }
   if (result.exitCode !== 0) {
@@ -743,8 +932,11 @@ const describeCommandFailure = (
     const code = Reflect.get(cause, "code");
     if (typeof code === "number") fields.exitCode = code;
   }
-  if (cause instanceof ArtifactReaderFailure) fields.message = cause.message;
-  else if (cause instanceof Error) fields.message = cause.message;
+  if (cause instanceof Error) fields.message = cause.message;
+  else if (typeof cause === "object" && cause !== null) {
+    const message = Reflect.get(cause, "message");
+    if (typeof message === "string") fields.message = message;
+  }
   return JSON.stringify(fields);
 };
 
@@ -852,6 +1044,7 @@ const verifyFailureDiagnostic = (
 
 // hdiutil localizes the trailing failure reason but not its own status lines.
 const INVALID_CHECKSUM_LINE = /^hdiutil: verify: checksum of ".*" is INVALID$/u;
+const NO_CHECKSUM_LINE = /^hdiutil: verify: ".*" has no checksum\.$/u;
 const UNRECOGNIZED_IMAGE_LINE =
   /^hdiutil: verify: unable to recognize ".*" as a disk image\./u;
 
@@ -862,6 +1055,8 @@ const untranslatedVerifyFailure = (
   const lines = outputLines(stdout, stderr);
   if (lines.some((line) => INVALID_CHECKSUM_LINE.test(line)))
     return { reason: "integrity" };
+  if (lines.some((line) => NO_CHECKSUM_LINE.test(line)))
+    return { reason: "unavailable", checksumAbsent: true };
   // Malformed, unreadable and transiently busy targets all produce this line;
   // only the localized reason distinguishes them, so the cause stays unknown.
   if (lines.some((line) => UNRECOGNIZED_IMAGE_LINE.test(line)))

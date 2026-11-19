@@ -24,7 +24,7 @@ the line recorded, from the collection's initial entities, explains it:
   nothing else matched); an empty term matches everything, and a term that matched no field leaves the parameter inert
   until another line's term does;
 - `sort` by the field the value names, with `-` or an `asc`/`desc` suffix, and `direction` for a separate `asc`/`desc`
-  parameter: numbers by value, text ignoring case, null last ascending, ties (case-only differences included) in state
+  (or `ascending`/`descending`) parameter: numbers by value, text ignoring case, null last ascending, ties (case-only differences included) in state
   order; an empty selection needs no sort;
 - `limit`, `offset` and `page` (counted from 1 or 0 only when the line distinguishes them) for paging; zero or a negative limit
   lists every match;
@@ -39,8 +39,11 @@ Query totals retain their numeric or canonical decimal-string type. Unknown or d
 `state.source` distinguishes a computed response from recording replay; `replay.exact_match` describes only the
 retained source envelope and can be false for a correctly computed new query.
 
-Parameter names decide which roles are tried (`sort` for `orderBy`, `search` for `q`), and any parameter may be a
-filter or inert. No two parameters of one call take the same `sort`, `direction` or paging role: the answer would
+Parameter names decide which roles are tried (`sort` for `orderBy`, `search` for `q`), and any other parameter may be a
+filter or inert. A name asking for an order in any common spelling (`_sort`, `sort[]`, `sort[0][field]`, `sorters[...]`,
+`sort-column`, `sortKey`, `orderBy`) is only a `sort`; a direction name (`_order`, `sortDirection`, `dir`) given a direction
+is only a `direction`, and given anything else is an ordinary parameter; `reverse` is never inert unless false. The same
+vocabulary decides which lines set a collection's initial order (see the state view). No two parameters of one call take the same `sort`, `direction` or paging role: the answer would
 depend on which applied last, and serving supplies a call's values in name order rather than as recorded, so such a
 combination explains no line and such a call replays its recording. A line with more than 12 query parameters is left
 unexplained, which bounds the search; names such as `__proto__` are kept as the query's own members. The lines' roles
@@ -48,8 +51,9 @@ merge: lines that disagree drop the parameter, inert values gather, search field
 named like its parameter (`shelf`, or `shelf_id`, for `shelf`) can match by coincidence, so it stands only when lines
 giving the parameter two different values agree on it; otherwise the parameter takes no role. The merged query keeps the
 lines it reproduces, envelope and fields included; any other line keeps its recorded members. The view's `query` names
-the roles, those lines, and the envelope members that count every match before paging (`totals`); a `number`-of-items
-member such as `numberOfElements` counts the page.
+the roles, those lines, and the envelope members that count every match before paging (`totals`), top-level or one
+level down in a paging object (`/pageInfo/totalRows`); a `number`-of-items member such as `numberOfElements` counts the
+page.
 
 ## Serving and the write gate
 

@@ -4,12 +4,13 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { FIXTURE_TOOLS, fixtureCommand } from "./fixture-toolchain.mjs";
 
 const execute = promisify(execFile);
 
 /** Build a source-owned freestanding ELF; never execute its target code. */
 export async function buildPowerPcFixture(directory) {
-  const compiler = process.env.REA_PPC_CLANG ?? "clang";
+  const compiler = fixtureCommand(FIXTURE_TOOLS.ppcClang);
   const target = "powerpc-unknown-linux-gnu";
   const source = fileURLToPath(new URL("../c/ppc.c", import.meta.url));
   const probe = fileURLToPath(new URL("./ppc-probe.S", import.meta.url));

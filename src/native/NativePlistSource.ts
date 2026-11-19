@@ -1,31 +1,6 @@
-import { absoluteCallerPath } from "../filesystem/callerPath.js";
-import { stat } from "node:fs/promises";
-import { basename, dirname, isAbsolute, resolve } from "node:path";
-import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
-import type { FileHandle } from "node:fs/promises";
-import type { z } from "zod";
-import type { inspectPlistSchema } from "../domain/native/nativeInspection.js";
-import type { ResolvedAppBundleResourceRoot } from "../application/AppBundleExecutable.js";
-import type {
-  AnalysisError,
-  AnalysisErrorOptions,
-} from "../domain/analysisErrorBase.js";
 import {
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
-  AnalysisCapabilityUnavailableError,
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-} from "../domain/analysisErrorCore.js";
-import { BinaryTargetError } from "../domain/configurationErrors.js";
-import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
-import { err, ok, type Result } from "../domain/result.js";
-import { sameRegularFileState } from "../filesystem/RegularFile.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import {
+  readerIntegrityFailure,
+  ArtifactReaderFailure,
   ArtifactFileCleanupFailure,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
@@ -33,18 +8,49 @@ import {
   bindArtifactFileCleanup,
   assertArtifactReadActive,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { NATIVE_MACOS_PROVIDER_IDENTITY as IDENTITY } from "./NativeMacOSProviderMetadata.js";
+  type ArtifactResourceScope,
+} from "../resources/index.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
+import { stat } from "node:fs/promises";
+import { basename, dirname, isAbsolute, resolve } from "node:path";
+import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
+import type { FileHandle } from "node:fs/promises";
+import type { z } from "zod";
+import type { inspectPlistSchema } from "../domain/native/nativeInspection.js";
+import type { ResolvedAppBundleResourceRoot } from "../domain/apple/bundleResourceRoot.js";
+import type {
+  AnalysisError,
+  AnalysisErrorOptions,
+} from "../domain/analysisErrorBase.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  AnalysisInputError,
+  AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
+} from "../domain/analysisErrorCore.js";
+import { BinaryTargetError } from "../domain/configurationErrors.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { err, ok, type Result } from "../domain/result.js";
+import { sameRegularFileState } from "../filesystem/RegularFile.js";
+import { NATIVE_MACOS_PROVIDER_IDENTITY as IDENTITY } from "./NativeMacosProviderIdentity.js";
 import {
   MAX_NATIVE_PLIST_BYTES,
-  NATIVE_PLIST_INPUT_ALLOWANCE,
+  nativePlistInputAllowance,
 } from "./parsers/plist.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
-/** Resolved lookup identity and selection intent, independent of file readiness. */
+/**
+ * Resolved lookup identity and selection intent, independent of file readiness.
+ * `selected` came from the caller's `path` input, `target` is the session
+ * target itself, and `default` is the bundle's Info.plist.
+ */
 export interface NativePlistSelection {
   readonly path: string;
-  readonly origin: "selected" | "default";
+  readonly origin: "selected" | "target" | "default";
 }
 
 /** Resolve intent once; consumers never infer it from an omitted tool argument. */
@@ -60,7 +66,7 @@ export const resolveNativePlistSelection = async (
       target.kind === "artifact" &&
       target.format === "plist"
     )
-      return ok({ path: target.path, origin: "selected" });
+      return ok({ path: target.path, origin: "target" });
     const source = target.sourcePath ?? target.path;
     const sourceMetadata = await stat(source);
     const root = sourceMetadata.isDirectory()
@@ -105,8 +111,9 @@ const macOSBundleRoot = (path: string): string | undefined => {
 };
 
 /**
- * Report a plist that cannot be decoded as the caller's selection, or as the
- * target's missing default, rather than as a failed tool run.
+ * Report a plist that cannot be decoded against the input that chose it: the
+ * caller's `path` selection, the session target itself, or the target's
+ * missing default, rather than as a failed tool run.
  */
 export const unreadablePlist = (
   selection: NativePlistSelection,
@@ -115,22 +122,37 @@ export const unreadablePlist = (
 ): AnalysisError => {
   const { path } = selection;
   const sentence = reason.endsWith(".") ? reason : `${reason}.`;
-  // Name the default that is missing and the selection that still works.
-  const missingDefault = `The target has no readable default plist at ${path}: ${sentence} Select another plist in the target with the path input (CLI: --relative-path).`;
-  return selection.origin === "default"
-    ? new AnalysisCapabilityUnavailableError(
+  switch (selection.origin) {
+    case "default": {
+      // Name the default that is missing and the selection that still works.
+      const missingDefault = `The target has no readable default plist at ${path}: ${sentence} Select another plist in the target with the path input.`;
+      return new AnalysisCapabilityUnavailableError(
         IDENTITY.id,
         "inspect_plist",
         missingDefault,
-        { ...options, userMessage: missingDefault },
-      )
-    : new AnalysisInputError("inspect_plist", options, [
+        {
+          ...options,
+          userMessage: missingDefault,
+          related: { parameters: ["path"] },
+        },
+      );
+    }
+    case "target":
+      // The caller sent no `path`; the open target is the plist that failed.
+      return new BinaryTargetError(
+        path,
+        `cannot inspect it as a property list: ${sentence}`,
+        options,
+      );
+    case "selected":
+      return new AnalysisInputError("inspect_plist", options, [
         {
           path: ["path"],
           reason: "invalid_value",
           message: `Cannot inspect ${path}: ${sentence}`,
         },
       ]);
+  }
 };
 
 interface PlistFileInput {
@@ -154,9 +176,10 @@ export const nativePlistFailure = (
         ? nativePlistPrimaryFailure(artifactFilePrimaryFacts(cause), selection)
         : physical?.completionCancellation === undefined
           ? undefined
-          : new AnalysisCancelledError("inspect_plist", {
-              cause: physical.completionCancellation.reason,
-            });
+          : cancelledBy(
+              "inspect_plist",
+              carriedReason(physical.completionCancellation.reason),
+            );
     const previousProjection =
       previous === undefined ? null : projectAnalysisError(previous);
     const failure = new ProviderCleanupError(
@@ -184,9 +207,10 @@ const nativePlistPrimaryFailure = (
 ): AnalysisError => {
   if (origin === "owned-or-classified") {
     if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-      return new AnalysisCancelledError("inspect_plist", {
-        cause: artifactFileCancellationCause(cause),
-      });
+      return cancelledBy(
+        "inspect_plist",
+        carriedReason(artifactFileCancellationCause(cause)),
+      );
     if (
       cause instanceof ArtifactReaderFailure &&
       cause.reason === "unavailable"
@@ -202,12 +226,7 @@ const nativePlistPrimaryFailure = (
       cause instanceof ArtifactReaderFailure &&
       cause.reason === "integrity"
     )
-      return new AnalysisArtifactChangedError(
-        "inspect_plist",
-        selection.path,
-        cause.message,
-        { cause },
-      );
+      return readerIntegrityFailure("inspect_plist", selection.path, cause);
     if (cause instanceof ArtifactReaderFailure && cause.reason === "limit") {
       const resource = cause.boundary ?? "memory";
       return resource === "file-size"
@@ -218,7 +237,7 @@ const nativePlistPrimaryFailure = (
             { maximum_input_bytes: MAX_NATIVE_PLIST_BYTES },
             {
               cause,
-              ...fixedAllowanceOptions(NATIVE_PLIST_INPUT_ALLOWANCE, "input"),
+              ...nativePlistInputAllowance(),
             },
           )
         : new AnalysisResourceConstraintError(
@@ -235,7 +254,7 @@ const nativePlistPrimaryFailure = (
       cause,
       diagnostics: {
         phase: "plist-scope",
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       },
     });
   const { path } = selection;
@@ -268,7 +287,7 @@ const nativePlistPrimaryFailure = (
     diagnostics: {
       path,
       phase: "plist-file",
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
   });
 };
@@ -283,7 +302,7 @@ const readPlistFile = async <Value>(
         input.selection.path,
         input.resources,
         input.signal,
-        read,
+        ({ handle }) => read(handle),
         "follow",
       ),
     );
@@ -333,6 +352,7 @@ export const readNativePlistBytes = (
       throw new ArtifactReaderFailure(
         "integrity",
         `Selected plist changed during read: ${input.selection.path}`,
+        { integrityCheck: "container-identity" },
       );
     assertArtifactReadActive(input.signal);
     return bytes;
@@ -356,17 +376,19 @@ export const plistSourceFormat = async (
   if (/\bJSON\b/iu.test(description)) return ok("json");
   if (!/\btext\b/iu.test(description)) return ok("unknown");
   return readPlistFile(input, async (file) => {
-    const head = Buffer.alloc(PLIST_MARKUP_PROBE_BYTES);
-    const { bytesRead } = await file.read(head, 0, head.length, 0);
+    const head = await readFileHandleRange(
+      file,
+      0,
+      PLIST_MARKUP_PROBE_BYTES,
+      () => assertArtifactReadActive(input.signal),
+    );
     const encoding =
       head[0] === 0xff && head[1] === 0xfe
         ? "utf-16le"
         : head[0] === 0xfe && head[1] === 0xff
           ? "utf-16be"
           : "utf-8";
-    const text = new TextDecoder(encoding)
-      .decode(head.subarray(0, bytesRead))
-      .trimStart();
+    const text = new TextDecoder(encoding).decode(head).trimStart();
     return /^<(?:[!?]|(?:plist|dict|array|string|integer|real|data|date|true|false)[\s/>])/u.test(
       text,
     )

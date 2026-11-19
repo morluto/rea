@@ -1,3 +1,4 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
 import {
   reconstructionObligationProofSchema,
   type ReconstructionObligationProof,
@@ -12,7 +13,6 @@ import {
   createEvidenceBundle,
   type EvidenceBundle,
 } from "../domain/evidenceBundle.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
 import {
   reconstructionObligationLedgerSchema,
   type ReconstructionObligationLedgerInput,
@@ -27,7 +27,7 @@ import {
 /** Build controlled fixture Evidence used by reconstruction-ledger scenarios. */
 export const proofEvidence = (id: string) =>
   createEvidence(
-    undefined,
+    unknownTarget("derived-from-linked-evidence"),
     { id: `fixture-${id}`, name: "Fixture verifier", version: "1" },
     {
       predicateType: "rea.fixture-verification",
@@ -43,16 +43,14 @@ export const proofEvidence = (id: string) =>
 export const processEvidence = (
   overrides: Partial<UnverifiedProcessCapture> = {},
 ) =>
-  createEvidence(undefined, PROCESS_PROVIDER, {
+  createEvidence(unknownTarget("not-observed"), PROCESS_PROVIDER, {
     predicateType: "rea.process-capture",
     operation: "capture_process_scenario",
     parameters: {},
-    result: jsonValueSchema.parse(
-      processCaptureSchema.parse({
-        ...EMPTY_PROCESS_CAPTURE_EXAMPLE,
-        ...overrides,
-      }),
-    ),
+    result: processCaptureSchema.parse({
+      ...EMPTY_PROCESS_CAPTURE_EXAMPLE,
+      ...overrides,
+    }),
     confidence: "observed",
     authority: "controlled-replay",
   });
@@ -64,15 +62,13 @@ export const boundProofEvidence = (
   authority: "shipped-artifact" | "controlled-replay" = "controlled-replay",
 ) =>
   createEvidence(
-    undefined,
+    unknownTarget("derived-from-linked-evidence"),
     { id: `proof-${id}`, name: "Reconstruction proof", version: "1" },
     {
       predicateType: "rea.reconstruction-proof",
       operation: "verify_reconstruction_obligations",
       parameters: {},
-      result: jsonValueSchema.parse(
-        reconstructionObligationProofSchema.parse(result),
-      ),
+      result: reconstructionObligationProofSchema.parse(result),
       confidence: "observed",
       authority,
     },
@@ -217,7 +213,7 @@ const authorityEvidence = (
   authority: "shipped-artifact" | "controlled-replay",
 ) =>
   createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       operation: "observe",

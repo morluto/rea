@@ -2,13 +2,14 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished } from "vitest";
 
 import type { ApktoolResourceAnalysisPort } from "../../../src/application/apktool/ApktoolResourceAnalysisPort.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import type { ApktoolRequest } from "../../../src/domain/apktool/apktoolResourceAnalysis.js";
 import { ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { assertAdvertisedMcpContracts } from "./mcpContractHarness.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const identity = { id: "apktool", name: "Apktool", version: "2.7.0-dirty" };
 
@@ -84,13 +85,19 @@ it("advertises exact valid Apktool schemas and records inline evidence through M
   });
   const server = createServer(
     { kind: "session", session },
-    { apktoolAnalysis: provider },
+    {
+      apktoolAnalysis: provider,
+      environment: { ...process.env },
+    },
   );
   onTestFinished(() => server.close());
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
-  const client = new Client({ name: "apktool-boundary", version: "0.0.0" });
+  const client = new Client(
+    { name: "apktool-boundary", version: "0.0.0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(() => client.close());
   await client.connect(clientTransport);
 

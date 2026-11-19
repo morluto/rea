@@ -1,23 +1,22 @@
 import { vi } from "vitest";
 
-import { PRODUCT_IDENTITY } from "../../src/identity.js";
-
-/** The default npx registration command setup writes on POSIX hosts. */
-export const NPX_REGISTRATION_COMMAND = [
-  "npx",
-  "-y",
-  PRODUCT_IDENTITY.registrationPackageSpecifier,
-  "mcp",
-] as const;
-
 /** Environment variables that redirect where supported clients keep config. */
-export const CLIENT_LOCATION_ENVIRONMENT = [
+const CLIENT_LOCATION_ENVIRONMENT = [
+  "HOME",
+  "USERPROFILE",
+  "HOMEDRIVE",
+  "HOMEPATH",
   "APPDATA",
+  "CLINE_MCP_SETTINGS_PATH",
+  "CLINE_DATA_DIR",
+  "CLINE_DIR",
   "CLAUDE_CONFIG_DIR",
   "CODEX_HOME",
   "DSH_HOME",
   "DSH_AGENTS_HOME",
   "COPILOT_HOME",
+  "FACTORY_HOME_OVERRIDE",
+  "FLATPAK_XDG_CONFIG_HOME",
   "GROK_HOME",
   "GEMINI_CLI_HOME",
   "GEMINI_CLI_TRUST_WORKSPACE",
@@ -27,7 +26,20 @@ export const CLIENT_LOCATION_ENVIRONMENT = [
   "GEMINI_CLI_SYSTEM_DEFAULTS_PATH",
   "HERMES_DATA_DIR_SUFFIX",
   "HERMES_HOME",
+  "FX_HOME",
+  "GOOSE_ADDITIONAL_CONFIG_FILES",
+  "GOOSE_PATH_ROOT",
+  "PROGRAMDATA",
+  "JUNIE_HOME",
+  "JUNIE_MCP_DEFAULT_LOCATIONS",
+  "JUNIE_CONFIG_LOCATION",
+  "JUNIE_CONFIG_DEFAULT_LOCATIONS",
+  "KILO_CONFIG",
+  "KILO_CONFIG_CONTENT",
+  "KILO_CONFIG_DIR",
+  "KILO_DISABLE_PROJECT_CONFIG",
   "KIMI_CODE_HOME",
+  "MCPORTER_CONFIG",
   "LOCALAPPDATA",
   "OMP_PROFILE",
   "OPENCODE_CONFIG",
@@ -38,6 +50,9 @@ export const CLIENT_LOCATION_ENVIRONMENT = [
   "QODER_CONFIG_DIR",
   "QWEN_HOME",
   "SAND_DATA_ROOT",
+  "VSCODE_APPDATA",
+  "VSCODE_CWD",
+  "VSCODE_PORTABLE",
   "XDG_CONFIG_HOME",
 ] as const;
 

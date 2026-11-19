@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { CanonicalDigestError } from "./canonicalDigest.js";
 import type { JsonValue } from "./jsonValue.js";
 
 type DigestFrame =
@@ -137,14 +138,12 @@ export function* canonicalJsonDigestSteps(
         stack.push({ kind: "string", value: item, index: 0 });
       } else if (item === null || typeof item !== "object") {
         if (typeof item === "number" && !Number.isFinite(item))
-          throw new Error(
-            Number.isNaN(item)
-              ? "NaN is not allowed"
-              : "Infinity is not allowed",
+          throw new CanonicalDigestError(
+            Number.isNaN(item) ? "nan" : "infinity",
           );
         emit(JSON.stringify(item));
       } else {
-        if (ancestors.has(item)) throw new Error("Circular reference detected");
+        if (ancestors.has(item)) throw new CanonicalDigestError("circular");
         ancestors.add(item);
         if (Array.isArray(item)) {
           emit("[");

@@ -29,7 +29,12 @@ body is parsed only when that string is `"309"`. Other types, including `"288"`
 stackshots, return no crash result.
 
 `process`, `exception`, `termination`, `faulting_thread`, `threads`, and
-`images` reproduce documented body fields when present. Integers keep their
+`images` reproduce documented body fields when present, including each image's
+`name` and each frame's `symbolLocation` (as `symbol_location`, the byte offset
+from the start of `recorded_symbol`). `termination` keeps the terminating
+process as `by_proc` and `by_pid` and its `flags`; `process.parent_pid` keeps
+`parentPid` next to `parent`; and `metadata` keeps `build_version` and
+`platform`. Integers keep their
 decimal literals and a hexadecimal form, including arm64e registers above
 2^53. Frame roles follow the recorded frame index: row zero of the resolved
 faulting thread is `faulting_instruction`, row zero of other threads is
@@ -38,12 +43,31 @@ address uses that row's own image base and offset. The recorded `inline` flag
 does not supply a missing offset or authorize borrowing another row's address.
 When `faultingThread` is missing or does not resolve to a recorded thread
 object, row-zero roles are `unknown`; the recorded lookup remains available.
+A translated process records Rosetta's registers in a nested
+`threadState.rosetta` object; each one is reported as `rosetta.<name>` and
+counts toward the register budget. A [public ReportCrash `.ips` log](https://github.com/Mortennn/Dozer/issues/189)
+shows `rosetta.tmp2`, `tmp1`, and `tmp0` beside ordinary x86 registers. The
+test fixture quotes that register excerpt inside an authored report body; it
+does not generate a new Rosetta crash during the test.
+Observed JSON strings retain `""`; `null` means the field was missing or JSON
+`null`. This includes image paths, frame symbols, process text, and the older
+string `osVersion` form. Unlisted JSON keys and generic register names also
+retain empty spellings. An empty image architecture remains recorded as `""`
+while `uuid_unknown` stays true, since that spelling does not establish an
+architecture. An empty UUID is malformed, so its exact spelling appears in
+`coverage.type_mismatches` and its canonical UUID remains unknown.
 `process.os_version` keeps the producer's dictionary (`train`, `build`,
 `release_type`, `is_embedded`) or the older string form. Image UUIDs are uppercase 8-4-4-4-12; an all-zero UUID
-or a missing `arch` is `uuid_unknown`. Image `source` letters keep their
+or a missing or empty `arch` is `uuid_unknown`. Image `source` letters keep their
 documented meaning (`P` process, `S` shared cache, `C` shared cache library,
 `K` kernel, `U` kernel cache, `T` kernel text exec, `A` absolute). Keys the
 documentation does not list remain in `unlisted_keys` or `unlisted_body_keys`.
+Each examined thread, frame, and image row retains its immediate unknown key
+names in its own `unlisted_keys` array, including empty names. Unknown values
+are syntax-checked and discarded; their nested key names are not collected.
+Older retained reports may omit these row arrays; omission does not mean the
+row was examined and found to have no unknown keys.
+Like metadata and body keys, duplicate key names on these rows are refused.
 
 Each frame's `image_index` refers to its entry in `images`. Image architecture,
 UUID and `uuid_unknown` are retained once on that image. Resolve the reference
@@ -67,9 +91,49 @@ canonical hexadecimal form), `EXC_GUARD` subtypes,
 pointer-authentication suffixes, and dyld missing-library strings. A report
 that matches none of those rules is `unclassified`.
 
-Opened Mach-O and dSYM UUID joins remain unobserved. Symbol names printed
-inside the report are recorded claims and are not verified. Linux ELF cores
-use the separate [recorded crash](recorded-crashes.md) workflow.
+## Joining frames to the crashed Mach-O or dSYM
+
+Pass `join_path` (`--join-path` in the CLI) to select one local Mach-O
+executable or dSYM. UUID bytes in the report and the artifact's `LC_UUID` load
+commands are compared in hexadecimal, so an uppercase `dwarfdump --uuid` value
+and a lowercase report `uuid` match.
+
+```bash
+rea inspect-apple-ips /absolute/path/to/report.ips \
+  --join-path /absolute/path/to/App.app/Contents/MacOS/App --json
+```
+
+Shared-cache image sources `S` and `C` remain unjoined: UUID agreement does not
+establish that a standalone image has the cached layout.
+
+For a FAT container every slice is examined. An image joins only when exactly
+one slice has that UUID **and** an architecture that agrees with the report's
+`arch`; `arm64` and `arm64e` stay distinct, and an all-zero UUID never joins. A
+UUID match with a different architecture, more than one compatible slice, or a
+slice without a readable `__TEXT` segment is reported as a rejected image with
+its reason and stays unjoined rather than being guessed.
+An unknown UUID in another slice prevents a unique join unless its architecture
+rules out a match. Missing or unrecognized architecture and unsupported CPU
+subtypes remain unknown; display-name fallbacks do not establish agreement.
+The parsed slice facts remain available even when no match can be derived.
+
+`join.status` is `selected` with the artifact path, SHA-256, byte length, every
+slice's offset, arch, CPU type and subtype, UUID, and `__TEXT` vmaddr, plus
+`image_matches`, per-frame results, and join-specific limitations. A joined
+frame reports `static_address`, the slice `__TEXT` vmaddr plus the frame's
+recorded `imageOffset`, in decimal and hexadecimal. An unjoined frame reports
+a reason instead; an unknown image UUID, an absent `imageIndex` row, and a
+frame without `imageOffset` all stay unjoined rather than treated as aligned.
+
+An artifact that is not a Mach-O image or FAT container reports
+`join.status: "unreadable"` with a typed reason and leaves every report fact
+intact. Symbol names printed inside the report stay recorded claims. Function
+or symbol lookup at a joined static address, and matching dSYM symbol tables,
+are not performed by this step.
+
+Symbol names printed inside the report are recorded claims and are not
+verified. Linux ELF cores use the separate
+[recorded crash](guides/native/recorded-crashes.md) workflow.
 
 ## Limits and failures
 
@@ -102,4 +166,27 @@ success or truncated integer facts.
 rea inspect-apple-ips /absolute/path/to/report.ips --max-integer-text-bytes 16777216 --json
 ```
 
-This workflow does not execute a target, launch atos, or search for dSYMs.
+`max_join_bytes` (`--max-join-bytes`) independently bounds the join artifact
+read, defaulting to 64 MiB. This workflow does not execute a target, launch
+atos, or search for dSYMs.
+
+## Join admission and failures
+
+The join uses the shared Mach-O container, slice, command-table and segment
+readers. Slice extents and `sizeofcmds` bound every identity observation; duplicate
+UUIDs or malformed commands cannot select the first plausible value. Unreadable
+join results retain the successfully read artifact's path, SHA-256 and byte count.
+
+The integer-text allowance spans the report and join, including repeated integer
+facts and derived static addresses. Reservation precedes derived address
+expansion. If a selected join read, interpretation or allowance fails, the error
+retains the completed IPS report. Join read limits and recovery use
+`max_join_bytes`, even when the report and join paths are identical. Cancellation
+retains the caller's reason independently of those completed facts.
+
+When a failure follows a completed join-file read, `partial_observation` retains
+both the decoded report and a `join_artifact` receipt with the independently
+observed path, SHA-256 and byte count. Frame rejection reasons reference
+`join.limitations`; source-sized architecture diagnostics are retained once per
+image rather than copied into every frame. Universal-image admission includes
+the shared reader's supported hidden ARM64 row and rejects overlapping slices.

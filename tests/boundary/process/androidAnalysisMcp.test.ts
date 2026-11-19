@@ -1,23 +1,25 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { AndroidAnalysisService } from "../../../src/application/android/AndroidAnalysisService.js";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { expect, it as test, onTestFinished } from "vitest";
+import { expect, it as test } from "vitest";
+import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { z } from "zod";
 import { access } from "node:fs/promises";
 import { ANDROID_TOOL_CONTRACTS } from "../../../src/contracts/android/androidToolContracts.js";
-import { JADX_BRIDGE_IDENTITY } from "../../../src/android/JadxRelease.js";
+import { packagedJadxBridgeIdentity } from "../../support/packagedJadxBridge.js";
 import { androidPartialObservationSchema } from "../../../src/domain/android/androidPartialObservation.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { startMcpTransport } from "../../../src/main/transport.js";
 import type { RuntimeDependencies } from "../../../src/main/types.js";
-import type { AndroidAnalysisPort } from "../../../src/application/android/AndroidAnalysisPort.js";
+import type { AndroidAnalysisPort } from "../../../src/ports/android/AndroidAnalysisPort.js";
 import { silentLogger } from "../../../src/logger.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
   createJadxProtocolFixture,
@@ -83,7 +85,7 @@ it("keeps a replacement server usable after the SDK discards its discovery probe
     logger: silentLogger,
     serverLogger: silentLogger,
     environment: runtime.env,
-    delivery: new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
+    delivery: createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
     loadOptionalProviders: async () => ({}),
   });
   if (!transport.ok) throw new Error("Transport failed");
@@ -107,9 +109,14 @@ it("keeps a replacement server usable after the SDK discards its discovery probe
       error: { _tag: "AnalysisCapabilityUnavailableError" },
     });
   } finally {
-    await replacement.close();
-    await transport.closeAndroid();
-    await session.close();
+    await closeVerifierResources([
+      () => replacement.close(),
+      () => transport.closeAndroid(),
+      async () => {
+        const closed = await session.close();
+        if (!closed.ok) throw closed.error;
+      },
+    ]);
   }
 });
 
@@ -118,33 +125,21 @@ it("publishes and executes all APK contracts with inline Evidence and no active 
   const session = createTestBinarySession(() => {
     throw new Error("APK analysis must not acquire a deep binary provider");
   });
-  const server = createServer(
-    { kind: "session", session },
-    { androidAnalysis: provider },
-  );
-  const client = new Client({
-    name: "android-contract-regression",
-    version: "1",
+  const { client, close } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "android-contract-regression", version: "1" },
+    serverOptions: { androidAnalysis: provider },
   });
-  onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await session.close();
-  });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
   const advertised = await client.listTools();
   const wireTools = new Map(advertised.tools.map((tool) => [tool.name, tool]));
   for (const contract of ANDROID_TOOL_CONTRACTS) {
     const wire = wireTools.get(contract.name);
-    if (wire === undefined || wire.outputSchema === undefined)
+    if (wire === undefined || canonicalOutputSchema(wire.name) === undefined)
       throw new Error(`Missing advertised output schema for ${contract.name}`);
     const validateOutput = new Ajv2020({
       strict: false,
       validateFormats: false,
-    }).compile(z.record(z.string(), z.unknown()).parse(wire.outputSchema));
+    }).compile(canonicalOutputSchema(wire.name));
     expect(wire?.annotations).toMatchObject(contract.annotations);
     expect(contract.effects).toMatchObject({
       mutatesTarget: false,
@@ -154,6 +149,10 @@ it("publishes and executes all APK contracts with inline Evidence and no active 
     });
     const input = {
       path: apk,
+      // Inline Evidence opts out of any contract's summary delivery default.
+      ...(Object.hasOwn(contract.inputSchema.shape, "detail")
+        ? { detail: "complete" }
+        : {}),
       ...(contract.name === "search_android_classes"
         ? { query: "Target" }
         : {}),
@@ -178,8 +177,7 @@ it("publishes and executes all APK contracts with inline Evidence and no active 
     expect(evidence.raw_result).not.toBeNull();
   }
   expect(launches).toHaveLength(1);
-  await client.close();
-  await server.close();
+  await close();
   await verifyJadxFixtureCleanup(launches);
 });
 
@@ -189,7 +187,7 @@ test.each([
     mode: "tool-error",
     errorCode: "execution_failure",
     serverName: "rea-jadx-bridge",
-    serverVersion: JADX_BRIDGE_IDENTITY.version,
+    serverVersion: packagedJadxBridgeIdentity().version,
     engineVersion: "0.7.1",
     calls: [
       { operation: "rea_jvm_status" },
@@ -207,7 +205,7 @@ test.each([
     mode: "rpc-disconnect",
     errorCode: "execution_failure",
     serverName: "rea-jadx-bridge",
-    serverVersion: JADX_BRIDGE_IDENTITY.version,
+    serverVersion: packagedJadxBridgeIdentity().version,
     engineVersion: "0.7.1",
     calls: [{ operation: "rea_jvm_status" }, { operation: "load_apk" }],
     containsAmbientEnvironment: true,
@@ -237,23 +235,14 @@ test.each([
     const session = createTestBinarySession(() => {
       throw new Error("Unexpected native provider acquisition");
     });
-    const server = createServer(
-      { kind: "session", session },
-      { androidAnalysis: provider },
-    );
-    const client = new Client({
-      name: "android-partial-observation-regression",
-      version: "1",
+    const { client, close } = await createApplicationMcpHarness({
+      session,
+      clientIdentity: {
+        name: "android-partial-observation-regression",
+        version: "1",
+      },
+      serverOptions: { androidAnalysis: provider },
     });
-    onTestFinished(async () => {
-      await client.close();
-      await server.close();
-      await session.close();
-    });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
 
     const response = await client.callTool({
       name: "inspect_android_package",
@@ -271,7 +260,7 @@ test.each([
       target: { selected_path: apk, path: apk, format: "apk" },
       provider_facts: {
         bridge_name: "rea-jadx-bridge",
-        bridge_version: JADX_BRIDGE_IDENTITY.version,
+        bridge_version: packagedJadxBridgeIdentity().version,
         server_name: serverName,
         server_version: serverVersion,
         engine_version: engineVersion,
@@ -280,8 +269,7 @@ test.each([
     });
     if (!containsAmbientEnvironment)
       expect(JSON.stringify(partial)).not.toContain("JAVA_HOME");
-    await client.close();
-    await server.close();
+    await close();
     await verifyJadxFixtureCleanup(launches);
   },
 );
@@ -315,31 +303,26 @@ it("retains partial JADX replies when owned cleanup also fails", async () => {
 });
 
 it("cleans an active engine when the MCP client disconnects", async () => {
-  const { provider, apk, launches } = await createJadxProtocolFixture("stall");
+  // Without a disconnect-driven stop, the operation deadline would also clean
+  // the stalled engine; keep it beyond any test deadline.
+  const { provider, apk, launches } = await createJadxProtocolFixture(
+    "stall",
+    undefined,
+    undefined,
+    { REA_JADX_OPERATION_TIMEOUT_MS: "2147483647" },
+  );
   const session = createTestBinarySession(() => {
     throw new Error("Unexpected native provider acquisition");
   });
-  const server = createServer(
-    { kind: "session", session },
-    { androidAnalysis: provider },
-  );
-  const client = new Client({
-    name: "android-disconnect-regression",
-    version: "1",
+  const { client, close } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "android-disconnect-regression", version: "1" },
+    serverOptions: { androidAnalysis: provider },
   });
-  onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await session.close();
-  });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
   const pending = client
     .callTool({ name: "inspect_android_package", arguments: { path: apk } })
     .catch(() => undefined);
-  await expect.poll(() => launches.length, { timeout: 10_000 }).toBe(1);
+  await expect.poll(() => launches.length).toBe(1);
   await client.close();
   await pending;
   await expect
@@ -356,5 +339,6 @@ it("cleans an active engine when the MCP client disconnects", async () => {
       }
     })
     .toBe(true);
+  await close();
   await verifyJadxFixtureCleanup(launches);
 });

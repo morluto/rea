@@ -64,6 +64,86 @@ const compare = (...probes: (readonly TimedCaptureRow[])[]) => {
   return report.value;
 };
 
+describe("step difference coverage", () => {
+  it("counts a reorder of a complete duplicate ID list in strict agreement", () => {
+    const capture = timedCaptureEvidence([
+      ["GET", "/api/selection", { ids: [2, 1, 1] }],
+    ]);
+    const served = environmentStateServeFixture(capture);
+    const report = compareEnvironment({
+      source: environmentServeSource(served),
+      captureValue: capture,
+      probes: [
+        {
+          label: "reordered",
+          value: timedCaptureEvidence([
+            ["GET", "/api/selection", { ids: [1, 1, 2] }],
+          ]),
+        },
+      ],
+      operation: "environment-compare",
+    });
+    if (!report.ok) throw report.error;
+    expect(report.value.probes[0]?.results[0]).toMatchObject({
+      equal: false,
+      equal_ignoring_order: true,
+      differences: [{ category: "order", pointer: "/ids" }],
+    });
+    expect(report.value.summary).toMatchObject({
+      agreement: 0,
+      agreement_ignoring_order: 1,
+    });
+  });
+
+  it("keeps categories from differences beyond the returned prefix", () => {
+    const fields = Object.fromEntries(
+      Array.from({ length: 20 }, (_, index) => [`field${String(index)}`, 0]),
+    );
+    const capture = timedCaptureEvidence([["GET", "/api/config", fields]]);
+    const served = environmentStateServeFixture(capture);
+    const report = compareEnvironment({
+      source: environmentServeSource(served),
+      captureValue: capture,
+      probes: [
+        {
+          label: "changed",
+          value: timedCaptureEvidence([
+            [
+              "GET",
+              "/api/config",
+              {
+                ...Object.fromEntries(
+                  Object.keys(fields).map((key) => [key, 1]),
+                ),
+                z_missing: true,
+              },
+            ],
+          ]),
+        },
+      ],
+      operation: "environment-compare",
+    });
+    if (!report.ok) throw report.error;
+    const step = report.value.probes[0]!.results[0]!;
+    expect(step).toMatchObject({
+      equal: false,
+      equal_ignoring_order: false,
+      categories: ["value", "missing-field"],
+      differences_total: 21,
+      differences_omitted: 1,
+      differences_truncated: true,
+    });
+    expect(step.differences).toHaveLength(20);
+    expect(step.differences.every(({ category }) => category === "value")).toBe(
+      true,
+    );
+    expect(report.value.summary.categories).toMatchObject({
+      value: 1,
+      "missing-field": 1,
+    });
+  });
+});
+
 describe("matchProbeRequest", () => {
   it("compares a repeated-query probe against the matching recorded response", () => {
     const recorded = timedCaptureEvidence([
@@ -130,6 +210,26 @@ describe("matchProbeRequest", () => {
     expect(item?.args).toEqual({ id: "%31" });
   });
 
+  it("keeps trailing slashes significant when matching HTTP route templates", () => {
+    const manifest = {
+      ...source.manifest,
+      tools: source.manifest.tools.map((tool) => ({
+        ...tool,
+        path_template: `${tool.path_template}/`,
+      })),
+    };
+    const request = {
+      method: "GET",
+      path: "/api/books/7/",
+      query: null,
+      body: undefined,
+    };
+    expect(matchProbeRequest(manifest, request)?.args).toEqual({ id: "7" });
+    expect(
+      matchProbeRequest(manifest, { ...request, path: "/api/books/7" }),
+    ).toBeUndefined();
+  });
+
   it("keeps every occurrence of a repeated query value", () => {
     const item = matchProbeRequest(environmentServeSource().manifest, {
       method: "GET",
@@ -174,6 +274,31 @@ describe("collections under different parents", () => {
       ),
     ).toBe("/api/orgs/1/users/10");
     expect(map.env(110, "/api/orgs/2/users")).toBe(20);
+  });
+
+  it("uses state collection identity for root and trailing-slash routes", () => {
+    const trailing = {
+      ...nestedUsers,
+      path_template: `${nestedUsers.path_template}/`,
+    };
+    const segments = ["api", "orgs", "%32", "users", "101", ""];
+    expect(collectionScope(trailing, segments)).toBe("/api/orgs/2/users");
+    expect(parameterScopes(trailing, segments)).toEqual(
+      parameterScopes(nestedUsers, segments),
+    );
+    expect(
+      collectionScope({ ...nestedUsers, path_template: "/", params: [] }),
+    ).toBe("/");
+    expect(
+      collectionScope({
+        ...nestedUsers,
+        path_template: "/api//books/",
+        params: [],
+      }),
+    ).toBe("/api//books");
+    expect(
+      collectionScope(trailing, ["api", "orgs", "a%2Fb", "users", "101", ""]),
+    ).toBe("/api/orgs/a%2Fb/users");
   });
 
   it("shares a child map when the same parent is spelled with one encoding", () => {
@@ -465,6 +590,24 @@ const compareRows = (
   return report.value.probes[0]!;
 };
 
+it("learns ids from trailing-slash lists in the collection their item calls name", () => {
+  const item = (id: number, name: string) => ({ id, name });
+  const probe = compareRows(
+    [
+      ["GET", "/api/books", [item(1, "Book")]],
+      ["GET", "/api/books/1", item(1, "Book")],
+      ["GET", "/api/authors/", [item(2, "Ann")]],
+      ["GET", "/api/authors/2/", item(2, "Ann")],
+    ],
+    [
+      ["GET", "/api/books", [item(101, "Book")]],
+      ["GET", "/api/authors/", [item(101, "Ann")]],
+      ["GET", "/api/authors/101/", item(101, "Ann")],
+    ],
+  );
+  expect(probe.results.map((step) => step.equal)).toEqual([true, true, true]);
+});
+
 describe("ids the comparison used to misread", () => {
   it.each([
     ["", "", true],
@@ -683,61 +826,70 @@ const run = (value: unknown) =>
 
 describe("probe request chronology", () => {
   it.each([
+    ["Tue, 20 Oct 2026 09:00:01 GMT", "Tue, 20 Oct 2026 09:00:00 GMT"],
+    [
+      "Tue, 20 Oct 2026 14:30:01 GMT+0530",
+      "Tue, 20 Oct 2026 14:30:00 GMT+0530",
+    ],
     ["2026-10-20T09:00:00.0002Z", "2026-10-20T09:00:00.0001Z"],
     ["2026-10-20T09:00:00.0000000002Z", "2026-10-20T09:00:00.0000000001Z"],
-    ["0001-01-01T00:00:00.0002Z", "0001-01-01T01:00:00.0001+01:00"],
     ["2026-10-20 09:00:00.0002Z", "2026-10-20 09:00:00.0001Z"],
     ["2026-10-20T10:00:00.0002+0100", "2026-10-20T09:00:00.0001Z"],
-    ["2026-10-20 10:00:00.0002+0100", "2026-10-20 09:00:00.0001+0000"],
     ["2026-10-20T09:00:00.0002", "2026-10-20T09:00:00.0001"],
-  ])(
-    "replays an earlier delete before a later submillisecond read (%s)",
-    (later, earlier) => {
-      const report = run(
-        analysisViewCaptureEvidence(
-          environmentManifestCaptureFixture([
-            {
-              ...exchange(1, "GET", "http://app.example/api/books/2", 404),
-              startedDateTime: later,
-              response: {
-                status: 404,
-                content: {
-                  mimeType: "application/json",
-                  text: JSON.stringify(BOOK_NOT_FOUND),
-                },
+    ["2026-10-20T09:00:00.002Z", "2026-10-20T09:00:00.001Z"],
+    ["2026-10-20 09:00:00.0000000002Z", "2026-10-20 09:00:00.0000000001Z"],
+    ["2026-10-20 09:00:00.0000000002", "2026-10-20T10:00:00.0000000001+01:00"],
+    ["2026-10-20 09:01", "2026-10-20T10:00+01:00"],
+  ])("replays an earlier delete before a later read (%s)", (later, earlier) => {
+    const report = run(
+      analysisViewCaptureEvidence(
+        environmentManifestCaptureFixture([
+          {
+            ...exchange(1, "GET", "http://app.example/api/books/2", 404),
+            startedDateTime: later,
+            response: {
+              status: 404,
+              content: {
+                mimeType: "application/json",
+                text: JSON.stringify(BOOK_NOT_FOUND),
               },
             },
-            {
-              ...exchange(0, "DELETE", "http://app.example/api/books/2", 204),
-              startedDateTime: earlier,
-            },
-          ]),
-        ),
-      );
-      if (!report.ok) throw report.error;
-      expect(
-        report.value.probes[0]?.results.map(({ ordinal, env_status }) => [
-          ordinal,
-          env_status,
+          },
+          {
+            ...exchange(0, "DELETE", "http://app.example/api/books/2", 204),
+            startedDateTime: earlier,
+          },
         ]),
-      ).toEqual([
-        [1, 204],
-        [0, 404],
-      ]);
-      expect(report.value.summary).toMatchObject({
-        steps: 2,
-        equal: 2,
-        agreement: 1,
-      });
-    },
-  );
+      ),
+    );
+    if (!report.ok) throw report.error;
+    expect(
+      report.value.probes[0]?.results.map(({ ordinal, env_status }) => [
+        ordinal,
+        env_status,
+      ]),
+    ).toEqual([
+      [1, 204],
+      [0, 404],
+    ]);
+    expect(report.value.summary).toMatchObject({
+      steps: 2,
+      equal: 2,
+      agreement: 1,
+    });
+  });
 
   it.each([
     ["2026-10-20T09:00:00.000100Z", "2026-10-20T10:00:00.0001+01:00"],
     ["2026-10-20T09:00:00.0001Z", "2026-10-20T09:00:00.000100"],
+    ["2026-10-20T10:00+01:00", "2026-10-20 09:00"],
+    [
+      "2026-10-20T10:00:00.0000000001+01:00",
+      "2026-10-20 09:00:00.000000000100",
+    ],
     ["Tue, 20 Oct 2026 09:00:00 GMT", "2026-10-20T09:00:00Z"],
   ])(
-    "keeps ordinal order for equal instants and native-Date spelling compatibility (%s)",
+    "breaks equal recorded instants by ordinal after sorting by time (%s)",
     (left, right) => {
       const capture = environmentManifestCaptureFixture([
         {
@@ -748,10 +900,16 @@ describe("probe request chronology", () => {
           ...exchange(1, "GET", "http://app.example/api/books/2", 200),
           startedDateTime: right,
         },
+        {
+          ...exchange(2, "GET", "http://app.example/api/books/3", 200),
+          startedDateTime: "2026-10-20T08:59:59Z",
+        },
       ]);
       expect(
-        probeRequests(capture.records).steps.map(({ ordinal }) => ordinal),
-      ).toEqual([0, 1]);
+        probeRequests(capture.records.toReversed()).steps.map(
+          ({ ordinal }) => ordinal,
+        ),
+      ).toEqual([2, 0, 1]);
     },
   );
 });
@@ -836,41 +994,26 @@ const registerProbeCoverageCases = () => {
 };
 
 const registerProbeOrderingAndCaptureCases = () => {
-  it("keeps the recorded order when a record has no start time, as state extraction does", () => {
-    const { startedDateTime: _undated, ...read } = {
-      ...exchange(1, "GET", "http://app.example/api/books/2", 404),
-      response: {
-        status: 404,
-        content: {
-          mimeType: "application/json",
-          text: JSON.stringify(BOOK_NOT_FOUND),
-        },
-      },
-    };
-    const report = run(
-      analysisViewCaptureEvidence(
-        environmentManifestCaptureFixture([
-          exchange(0, "DELETE", "http://app.example/api/books/2", 204),
-          read,
-        ]),
-      ),
-    );
-    if (!report.ok) throw report.error;
-    expect(report.value.summary).toMatchObject({ steps: 2, equal: 2 });
-  });
-
-  it.each([
-    ["0002", "0001"],
-    ["002", "001"],
-  ])(
-    "orders probe requests by complete fractional timestamps: %s after %s",
-    (readFraction, writeFraction) => {
+  it.each([undefined, "2026-02-30T09:00:00Z"])(
+    "keeps replay in recorded order when a start is missing or invalid: %s",
+    (startedDateTime) => {
+      const { startedDateTime: _undated, ...remove } = exchange(
+        0,
+        "DELETE",
+        "http://app.example/api/books/2",
+        204,
+      );
       const report = run(
         analysisViewCaptureEvidence(
           environmentManifestCaptureFixture([
             {
-              ...exchange(0, "GET", "http://app.example/api/books/2", 404),
-              startedDateTime: `2026-10-20T09:00:00.${readFraction}Z`,
+              ...remove,
+              ...(startedDateTime === undefined ? {} : { startedDateTime }),
+            },
+            {
+              ...exchange(1, "GET", "http://app.example/api/books/2", 404),
+              // The read leads if dated requests sort first or February 30 rolls into March 2.
+              startedDateTime: "2026-03-01T09:00:00Z",
               response: {
                 status: 404,
                 content: {
@@ -879,10 +1022,6 @@ const registerProbeOrderingAndCaptureCases = () => {
                 },
               },
             },
-            {
-              ...exchange(0, "DELETE", "http://app.example/api/books/2", 204),
-              startedDateTime: `2026-10-20T09:00:00.${writeFraction}Z`,
-            },
           ]),
         ),
       );
@@ -890,7 +1029,7 @@ const registerProbeOrderingAndCaptureCases = () => {
       expect(report.value.summary).toMatchObject({ steps: 2, equal: 2 });
       expect(
         report.value.probes[0]?.results.map(({ ordinal }) => ordinal),
-      ).toEqual([1, 0]);
+      ).toEqual([0, 1]);
     },
   );
 

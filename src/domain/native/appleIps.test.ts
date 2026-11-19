@@ -40,6 +40,8 @@ it("rejects extra caller arguments and admits an empty crash inventory", () => {
       bundle_id: null,
       incident_id: null,
       name: null,
+      build_version: null,
+      platform: null,
       unlisted_keys: [],
     },
     process: {
@@ -47,6 +49,7 @@ it("rejects extra caller arguments and admits an empty crash inventory", () => {
       path: null,
       pid: null,
       parent: null,
+      parent_pid: null,
       cpu_type: null,
       translated: null,
       os_version: null,
@@ -67,7 +70,10 @@ it("rejects extra caller arguments and admits an empty crash inventory", () => {
       type_mismatches: [],
     },
     unlisted_body_keys: [],
-    limitations: ["Opened Mach-O and dSYM UUID joins remain unobserved."],
+    join: null,
+    limitations: [
+      "Frames join a caller-selected Mach-O or dSYM only by matching slice LC_UUID and architecture; function and symbol resolution at a joined static address stays unobserved.",
+    ],
   });
   expect(report.metadata.bug_type).toBe("309");
   expect(report.classification.status).toBe("unclassified");

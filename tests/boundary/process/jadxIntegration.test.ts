@@ -1,6 +1,20 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { SdkErrorCode } from "@modelcontextprotocol/client";
+import { packagedJadxBridgeIdentity } from "../../support/packagedJadxBridge.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { expect, it as test, onTestFinished, vi } from "vitest";
-import { access, readFile, truncate, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  mkdir,
+  readFile,
+  symlink,
+  truncate,
+  writeFile,
+} from "node:fs/promises";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { AndroidAnalysisService } from "../../../src/application/android/AndroidAnalysisService.js";
@@ -20,9 +34,97 @@ import {
   verifyJadxFixtureCleanup as verifyCleanup,
 } from "../../fixtures/android/jadx.js";
 import { writeJadxJarInventory } from "../../fixtures/android/jadxJar.js";
+import { writeOrderedZip } from "../../fixtures/artifactEntryOrder.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const it = test.skipIf(process.platform === "win32");
+
+it.each(["alias/../bin", ""])(
+  "keeps PATH=%j Java tied to each caller directory across private-workspace launches",
+  async (searchPath) => {
+    const root = await createTestTempDirectory("rea-jadx-relative-java-");
+    const apk = join(root, "fixture.apk"),
+      jar = join(root, "fixture.jar");
+    await writeOrderedZip(apk, ["AndroidManifest.xml", "classes.dex"]);
+    await writeJadxJarInventory(jar);
+    const fixture = new URL(
+      "../../fixtures/android/jadx-mcp.mjs",
+      import.meta.url,
+    );
+    const command = [process.execPath, fileURLToPath(fixture)]
+      .map((value) => `'${value.replaceAll("'", `'"'"'`)}'`)
+      .join(" ");
+    const shim = join(root, "java-shim");
+    await writeFile(
+      shim,
+      `#!/bin/sh\nselected="\${0%/*}"\n[ -f "$selected/runtime-marker" ] || exit 19\npwd >> "$selected/java.log"\nif [ "$1" = "--list-modules" ]; then\n  printf 'java.base@21.0.0\\njdk.compiler@21.0.0\\n'\nelse\n  exec ${command}\nfi\n`,
+    );
+    await chmod(shim, 0o755);
+    const directories = [join(root, "first"), join(root, "second")];
+    for (const directory of directories) {
+      await mkdir(join(directory, "real/deep"), { recursive: true });
+      await mkdir(join(directory, "real/bin"));
+      await symlink(join(directory, "real/deep"), join(directory, "alias"));
+      await symlink(shim, join(directory, "real/bin/java"));
+      await writeFile(join(directory, "real/bin/runtime-marker"), directory);
+      await symlink(shim, join(directory, "java"));
+      await writeFile(join(directory, "runtime-marker"), directory);
+    }
+    const logPath = (directory: string) =>
+      join(directory, searchPath === "" ? "java.log" : "real/bin/java.log");
+    const provider = new JadxProvider({
+      ...process.env,
+      JAVA_HOME: undefined,
+      PATH: searchPath,
+      REA_JADX_MCP_JAR: jar,
+      REA_JADX_OPERATION_TIMEOUT_MS: "5000",
+      REA_FAKE_JADX_CLASS_COUNT: "0",
+    });
+    const service = new AndroidAnalysisService(provider);
+    const previousCwd = process.cwd();
+    try {
+      process.chdir(directories[0]!);
+      const availability = await provider.inspectAvailability();
+      expect(availability, JSON.stringify(availability)).toMatchObject({
+        status: "available",
+      });
+      const first = await service.execute("inspect_android_package", {
+        path: apk,
+      });
+      if (!first.ok) throw first.error;
+      const firstStarts = (await readFile(logPath(directories[0]!), "utf8"))
+        .trim()
+        .split("\n");
+      expect(firstStarts).toHaveLength(3);
+      const firstWorkspace = firstStarts.at(-1)!;
+      expect(firstWorkspace).not.toBe(directories[0]);
+      process.chdir(directories[1]!);
+      const second = await service.execute("inspect_android_package", {
+        path: apk,
+      });
+      if (!second.ok) throw second.error;
+      expect(fileIdentity(second.value.subject).sha256).toBe(
+        fileIdentity(first.value.subject).sha256,
+      );
+      const secondStarts = (await readFile(logPath(directories[1]!), "utf8"))
+        .trim()
+        .split("\n");
+      expect(secondStarts).toHaveLength(2);
+      const secondWorkspace = secondStarts.at(-1)!;
+      expect(secondWorkspace).not.toBe(firstWorkspace);
+      await expect(access(firstWorkspace)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await provider.close();
+      await expect(access(secondWorkspace)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    } finally {
+      process.chdir(previousCwd);
+      await provider.close();
+    }
+  },
+);
 
 // Select the provider's source hash after resolver and engine admission complete.
 const failInputHashCloses = (path: string, failures: number) => {
@@ -268,12 +370,15 @@ it("rejects a copied JAR that differs from its admitted session identity", async
         admitted,
         root.path,
         "inspect_android_package",
+        undefined,
+        (_path, owner) => hashOwners.push(owner),
       ),
     ).rejects.toMatchObject({
       _tag: "AnalysisCapabilityUnavailableError",
       reason: expect.stringContaining("bytes changed"),
     });
   } finally {
+    await Promise.all(hashOwners.map((owner) => owner.close()));
     await root.close();
   }
 });
@@ -343,7 +448,11 @@ it("retire sessions when APK bytes, engine bytes or JVM options change", async (
     Buffer.concat([await readFile(apk), Buffer.from("new artifact bytes")]),
   );
   const changed = await inspect();
-  expect(changed.subject?.digest.sha256).not.toBe(first.subject?.digest.sha256);
+  expect(fileIdentity(first.subject).sha256).toEqual(expect.any(String));
+  expect(fileIdentity(changed.subject).sha256).toEqual(expect.any(String));
+  expect(fileIdentity(changed.subject).sha256).not.toBe(
+    fileIdentity(first.subject).sha256,
+  );
   await verifyCleanup(launches.slice(0, 1));
   await writeJadxJarInventory(jar, ["fixture/NewEngineMarker.class"]);
   await inspect();
@@ -360,6 +469,38 @@ it("retire sessions when APK bytes, engine bytes or JVM options change", async (
   expect(launches[3]?.arguments).not.toContain("-XX:ActiveProcessorCount=1");
   await provider.close();
   await verifyCleanup(launches);
+});
+
+it("keeps one operation's JVM environment aligned with its retained session identity", async () => {
+  const { service, apk, launches, provider, environment } = await setup();
+  environment.JAVA_TOOL_OPTIONS = "-Xmx512m";
+  const createRoot = PrivateRuntimeRoot.create.bind(PrivateRuntimeRoot);
+  const allocation = vi
+    .spyOn(PrivateRuntimeRoot, "create")
+    .mockImplementationOnce(async (options) => {
+      // Configuration and the reuse key are already admitted; launch follows
+      // this asynchronous workspace boundary.
+      environment.JAVA_TOOL_OPTIONS = "-Xmx8g";
+      return createRoot(options);
+    });
+  try {
+    const first = await service.execute("inspect_android_package", {
+      path: apk,
+    });
+    if (!first.ok) throw first.error;
+    expect(allocation).toHaveBeenCalledOnce();
+    environment.JAVA_TOOL_OPTIONS = "-Xmx512m";
+    const second = await service.execute("inspect_android_package", {
+      path: apk,
+    });
+    if (!second.ok) throw second.error;
+    expect(launches).toHaveLength(1);
+    expect(launches[0]?.javaToolOptions).toBe("-Xmx512m");
+  } finally {
+    allocation.mockRestore();
+    await provider.close();
+    await verifyCleanup(launches);
+  }
 });
 
 it("retires an idle engine and starts a fresh one for a later request", async () => {
@@ -391,8 +532,41 @@ it("retires an idle engine and starts a fresh one for a later request", async ()
   await verifyCleanup(launches);
 });
 
+it("keeps idle retirement after refusing a mapping for a loaded engine", async () => {
+  const { service, apk, launches, provider } = await setup();
+  const missing = `${await createTestTempDirectory("rea-jadx-mapping-")}/mapping.txt`;
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    const first = await service.execute("inspect_android_package", {
+      path: apk,
+    });
+    if (!first.ok) throw first.error;
+    const refused = await service.execute("inspect_android_class", {
+      path: apk,
+      class_name: "example.Missing",
+      mapping_path: missing,
+    });
+    expect(refused.ok).toBe(false);
+    vi.advanceTimersByTime(60_000);
+  } finally {
+    vi.useRealTimers();
+  }
+  await expect
+    .poll(async () => {
+      try {
+        await verifyCleanup(launches);
+        return true;
+      } catch {
+        return false;
+      }
+    })
+    .toBe(true);
+  expect(launches).toHaveLength(1);
+  await provider.close();
+});
+
 it("completes large class inventories with exact case-sensitive search semantics", async () => {
-  const { service, apk, provider } = await setup("large-inventory");
+  const { service, apk, provider, launches } = await setup("large-inventory");
   const full = await service.execute("search_android_classes", {
     path: apk,
     query: "",
@@ -413,7 +587,22 @@ it("completes large class inventories with exact case-sensitive search semantics
       mixedCase.value.normalized_result,
     ).matches,
   ).toEqual([]);
+  const filtered = await service.execute("search_android_classes", {
+    path: apk,
+    query: "Class",
+  });
+  if (!filtered.ok) throw filtered.error;
+  const matches = androidResultSchemas.search_android_classes.parse(
+    filtered.value.normalized_result,
+  );
+  expect(matches.total_classes).toBe(9001);
+  expect(matches.matches).toHaveLength(9000);
+  expect(matches.matches[0]).toBe("fixture.Class0");
+  expect(matches.matches[4096]).toBe("fixture.Class4096");
+  expect(matches.matches.at(-1)).toBe("fixture.Class8999");
+  expect(launches).toHaveLength(1);
   await provider.close();
+  await verifyCleanup(launches);
 });
 
 it("close cancels active and queued work and prevents later acquisition", async () => {
@@ -475,25 +664,6 @@ it("retains APK identity, original input, raw producer data and normalized obser
   await verifyCleanup(launches);
 });
 
-it("pages matching classes independently of the total APK class count", async () => {
-  const { service, apk, launches, provider } = await setup("large-inventory");
-  const outcome = await service.execute("search_android_classes", {
-    path: apk,
-    query: "Class",
-  });
-  if (!outcome.ok) throw outcome.error;
-  const result = androidResultSchemas.search_android_classes.parse(
-    outcome.value.normalized_result,
-  );
-  expect(result.total_classes).toBe(9001);
-  expect(result.matches).toHaveLength(9000);
-  expect(result.matches[0]).toBe("fixture.Class0");
-  expect(result.matches[4096]).toBe("fixture.Class4096");
-  expect(result.matches.at(-1)).toBe("fixture.Class8999");
-  await provider.close();
-  await verifyCleanup(launches);
-});
-
 it("preserves duplicate class-name rows and occurrence counts", async () => {
   const { service, apk, launches, provider } = await setup(
     "duplicate-class-name",
@@ -548,6 +718,25 @@ it("exposes overload candidates and executes only an explicitly selected ambiguo
       ],
     },
   });
+  if (ambiguous.ok) throw new Error("Expected an ambiguous overload");
+  // A schema-valid ambiguous selector names its candidates, not the schema.
+  const ambiguousProjection = projectAnalysisError(ambiguous.error);
+  expect(ambiguousProjection.recovery).toBeUndefined();
+  expect(ambiguousProjection.remediation.action).toMatch(
+    /^Set overload_index to exactly one of the \d+ candidates/u,
+  );
+  expect(ambiguousProjection.details?.refusal).toMatchObject({
+    kind: "ambiguous_selector",
+    operation: "inspect_android_method",
+    field: ["overload_index"],
+    candidates: expect.arrayContaining([
+      {
+        overload_index: 1,
+        reported_signature: "choose(int): void",
+        dex_descriptor: "(I)V",
+      },
+    ]) as unknown,
+  });
   const selected = await service.execute("inspect_android_method", {
     ...input,
     overload_index: 1,
@@ -561,7 +750,7 @@ it("exposes overload candidates and executes only an explicitly selected ambiguo
     reported_signature: "choose(int): void",
     dex_descriptor: "(I)V",
   });
-  expect(result.source.text).toContain("overload 1");
+  expect(result.source?.text).toContain("overload 1");
   const references = await service.execute("trace_android_references", input);
   expect(references).toMatchObject({
     ok: false,
@@ -657,12 +846,12 @@ it.each(["truncated", "smali"])(
     const result = androidResultSchemas.inspect_android_method.parse(
       outcome.value.normalized_result,
     );
-    expect(result.source.status).toBe(
+    expect(result.source?.status).toBe(
       mode === "truncated" ? "partial" : "complete",
     );
     expect(result.representation).toBe(mode === "smali" ? "smali" : "java");
     if (mode === "truncated")
-      expect(result.source.reported_total_bytes).toBe(100);
+      expect(result.source?.reported_total_bytes).toBe(100);
     else expect(result.fell_back).toBe(true);
     await provider.close();
     await verifyCleanup(launches);
@@ -819,8 +1008,11 @@ it("bounds each upstream call by the selected deadline instead of a fixed limit"
         snapshot: apk,
         jarHash: "0".repeat(64),
         bridgeHash: "0".repeat(64),
+        bridgeIdentity: packagedJadxBridgeIdentity(),
         signal: new AbortController().signal,
         timeoutMs: 300,
+        resources: new ArtifactResourceScope(),
+        deadline: new AbortController().signal,
       }),
     ).rejects.toMatchObject({
       code: SdkErrorCode.RequestTimeout,
@@ -892,11 +1084,25 @@ it.each(["tool-error", "frame-overflow", "body-error", "heap-decoy"])(
                 : "manifest decoder rejected malformed binary XML",
         },
       });
-    else
+    else {
       expect(outcome.error).toMatchObject({
-        _tag: "AnalysisOutputError",
+        _tag: "AnalysisResourceConstraintError",
         reason: expect.stringContaining("MCP frame exceeds"),
       });
+      // The refusal is built after finalization, so it keeps the output
+      // the transport retained.
+      expect(outcome.error).toHaveProperty(
+        "capturedOutput",
+        expect.objectContaining({ truncated: expect.any(Boolean) }),
+      );
+      // A fixed frame ceiling, not an output defect: recovery names it.
+      expect(outcome.error).toHaveProperty("fixedAllowance", {
+        name: "The JADX frame allowance of 8388608 bytes",
+        kind: "bytes",
+        limit: 8 * 1024 * 1024,
+        unit: "bytes",
+      });
+    }
     await provider.close();
     await verifyCleanup(launches);
   },
@@ -1053,9 +1259,7 @@ it("resolves every reported shutdown cleanup failure after ownership recovers", 
     cleanupFails = false;
     // Closing the transport can leave the child between live and exited
     // snapshots. Retry retained ownership until cleanup is actually verified.
-    await expect
-      .poll(() => provider.close(), { timeout: 5_000 })
-      .toBeUndefined();
+    await expect.poll(() => provider.close()).toBeUndefined();
   };
   try {
     const outcome = await service.execute("inspect_android_package", {
@@ -1220,6 +1424,32 @@ it("retains the execution failure while cleanup is pending and resumes after cle
   }
 });
 
+it("does not send a jadx-reported request failure to doctor", async () => {
+  const { service, apk, launches, provider } = await setup("tool-error");
+  try {
+    const outcome = await service.execute("inspect_android_package", {
+      path: apk,
+    });
+    if (outcome.ok) throw new Error("Expected the reported tool error");
+    const projected = projectAnalysisError(outcome.error);
+    expect(projected).toMatchObject({
+      code: "execution_failure",
+      retryable: false,
+      details: {
+        diagnostics: {
+          reason: "manifest decoder rejected malformed binary XML",
+        },
+      },
+    });
+    expect(projected.message).toContain("details.diagnostics.reason");
+    for (const text of [projected.message, projected.remediation.action])
+      expect(text).not.toContain("doctor");
+    await verifyCleanup(launches);
+  } finally {
+    await provider.close();
+  }
+});
+
 it("accepts exact selected-overload smali from the bridge", async () => {
   const { service, apk, launches, provider } = await setup(
     "selected-overload-smali",
@@ -1243,6 +1473,52 @@ it("accepts exact selected-overload smali from the bridge", async () => {
   await verifyCleanup(launches);
 });
 
+it.each(["unavailable-body", "unavailable-wrong-descriptor"] as const)(
+  "preserves verified method identity for %s",
+  async (mode) => {
+    const { service, apk, launches, provider } = await setup(mode);
+    try {
+      const outcome = await service.execute("inspect_android_method", {
+        path: apk,
+        class_name: "fixture.Target",
+        method_name: "choose",
+        overload_index: 1,
+      });
+      if (mode === "unavailable-wrong-descriptor") {
+        expect(outcome).toMatchObject({
+          ok: false,
+          error: { _tag: "AnalysisOutputError" },
+        });
+        return;
+      }
+      if (!outcome.ok) throw outcome.error;
+      expect(outcome.value.normalized_result).toMatchObject({
+        method: { overload_index: 1, dex_descriptor: "(I)V" },
+        overload_count: 2,
+        representation: null,
+        body_status: "not_available",
+        body_unavailable_reason:
+          "Disassembly could not establish one selected method: choose(I)V",
+        markers: ["disassembly_failed"],
+        source: null,
+      });
+      const { assertions } = createMcpSchemaValidation();
+      const advertised = canonicalOutputSchema("inspect_android_method");
+      expect(
+        assertions.validateSchema(advertised),
+        JSON.stringify(assertions.errors),
+      ).toBe(true);
+      expect(
+        assertions.validate(advertised, outcome.value),
+        JSON.stringify(assertions.errors),
+      ).toBe(true);
+    } finally {
+      await provider.close();
+      await verifyCleanup(launches);
+    }
+  },
+);
+
 it("retains parsed native body absence without claiming an empty implementation", async () => {
   const { service, apk, launches, provider } = await setup("native-method");
   const outcome = await service.execute("inspect_android_method", {
@@ -1255,8 +1531,35 @@ it("retains parsed native body absence without claiming an empty implementation"
     outcome.value.normalized_result,
   );
   expect(result.body_status).toBe("not_available");
-  expect(result.source.text).toBe("");
+  expect(result.source?.text).toBe("");
   expect(result.markers).toEqual(["native_method"]);
+  await provider.close();
+  await verifyCleanup(launches);
+});
+
+it("classifies a heap shortage that stops the bridge before the handshake", async () => {
+  const { service, apk, launches, provider } = await setup(
+    "start-heap-exhausted",
+  );
+  const outcome = await service.execute("inspect_android_package", {
+    path: apk,
+  });
+  if (outcome.ok) throw new Error("Expected a heap-exhaustion failure");
+  const projected = projectAnalysisError(outcome.error);
+  expect(projected).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    remediation: { action: expect.stringContaining("REA_JADX_HEAP_MIB") },
+    details: {
+      operation: "inspect_android_package",
+      resource: "memory",
+      // The bridge never answered, so nothing measured this run's heap.
+      reported_limits: { observed_max_heap_bytes: null },
+      captured_output: {
+        stderr: expect.stringContaining("OutOfMemoryError: Java heap space"),
+      },
+    },
+  });
   await provider.close();
   await verifyCleanup(launches);
 });

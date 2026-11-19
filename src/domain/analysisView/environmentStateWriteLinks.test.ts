@@ -1,3 +1,5 @@
+import { StateRecordChronology } from "./StateRecordChronology.js";
+import { parseOffsetDateTimeInstant } from "../offsetDateTime.js";
 import { describe, expect, it } from "vitest";
 
 import type { JsonValue } from "../jsonValue.js";
@@ -15,8 +17,14 @@ const record = (
   path,
   query: undefined,
   status: 200,
-  start,
-  end,
+  timing: {
+    start: {
+      instant: parseOffsetDateTimeInstant(new Date(start).toISOString()),
+      ms: start,
+    },
+    end: parseOffsetDateTimeInstant(new Date(end).toISOString()),
+    endMs: end,
+  },
 });
 
 /** The creation limit of `/api/projects` over list reads and a POST returning `created`, in ordinal order. */
@@ -35,6 +43,10 @@ const projectsLimit = (
   creationLimit(
     [{ record: post, ids: created }],
     {
+      chronology: new StateRecordChronology(
+        [...reads, post],
+        "recorded-start-time",
+      ),
       type: "/api/projects",
       tools: [
         {
@@ -52,6 +64,52 @@ const projectsLimit = (
     undefined,
   );
 
+describe("short-id creation limits", () => {
+  it("does not use an unknown completion as the prior read needed to link a short id", () => {
+    const prior = record(0, "GET", "/api/projects", [0, 5]);
+    const unknown = {
+      ...prior,
+      timing: { ...prior.timing, end: undefined, endMs: undefined },
+    };
+    const post = record(1, "POST", "/api/imports", [10, 11]);
+    const later = record(2, "GET", "/api/projects/7", [20, 21]);
+    const limit = (earlier: StateRecordFacts) =>
+      creationLimit(
+        [{ record: post, ids: ["7"] }],
+        {
+          type: "/api/projects",
+          chronology: new StateRecordChronology(
+            [earlier, post, later],
+            "recorded-start-time",
+          ),
+          tools: [
+            {
+              name: "list",
+              method: "GET",
+              path_template: "/api/projects",
+              record_ordinals: [0],
+            },
+            {
+              name: "item",
+              method: "GET",
+              path_template: "/api/projects/{id}",
+              record_ordinals: [2],
+            },
+          ],
+          records: new Map(
+            [earlier, post, later].map((entry) => [entry.ordinal, entry]),
+          ),
+          position: (entry) => entry.ordinal,
+          withBody: (ordinal, use) => use(ordinal === 0 ? [] : { id: "7" }),
+          retain: () => undefined,
+        },
+        undefined,
+      );
+    expect(limit(unknown)).toBeUndefined();
+    expect(limit(prior)).toBe(post);
+  });
+});
+
 describe("creation limits", () => {
   it("reads the ids of a list body longer than a call's arguments can spread", () => {
     // A million elements overflow the argument limit of a spread, here and in the test workers' larger stack.
@@ -67,6 +125,10 @@ describe("creation limits", () => {
     const limit = creationLimit(
       [{ record: post, ids: ["1003"] }],
       {
+        chronology: new StateRecordChronology(
+          [list, post, later],
+          "recorded-start-time",
+        ),
         type: "/api/metrics",
         tools: [
           {
@@ -107,7 +169,9 @@ describe("creation limits", () => {
       }),
     ).toBeUndefined();
   });
+});
 
+describe("the entity identities creation limits use", () => {
   it("reads a list's ids from a suffix-named field when no identity name identifies its entities", () => {
     const [list, post, later] = [
       record(0, "GET", "/api/projects"),
@@ -163,6 +227,10 @@ describe("creation limits", () => {
     const limit = creationLimit(
       [{ record: post, ids: ["proj-0002"] }],
       {
+        chronology: new StateRecordChronology(
+          [item, post, later],
+          "recorded-start-time",
+        ),
         type: "/api/projects",
         tools: [
           {
@@ -210,49 +278,43 @@ describe("creation limits", () => {
 
 describe("the ids creation limits keep", () => {
   it("keeps and charges only the shown ids a creation returned", () => {
-    let retained = 0;
-    const lists = 50;
-    const reads = Array.from({ length: lists }, (_, index) =>
-      record(index < lists / 2 ? index : index + 1, "GET", "/api/projects"),
-    );
-    const post = record(lists / 2, "POST", "/api/imports");
-    const rows = (extra: number) =>
-      Array.from({ length: 1000 }, (_, row) => ({
-        id: `proj-${String(row + extra).padStart(5, "0")}`,
-      }));
-    const bodies = new Map<number, JsonValue>(
-      reads.map((read) => [
-        read.ordinal,
-        read.ordinal > post.ordinal
-          ? [...rows(0), { id: "proj-made" }]
-          : rows(0),
-      ]),
-    );
-    expect(
-      projectsLimit(reads, post, bodies, {
+    const reads = [
+      record(0, "GET", "/api/projects"),
+      record(2, "GET", "/api/projects"),
+    ];
+    const post = record(1, "POST", "/api/imports");
+    const chargeOf = (after: readonly string[]) => {
+      let retained = 0;
+      const bodies = new Map<number, JsonValue>([
+        [0, [{ id: "proj-existing" }]],
+        [2, after.map((id) => ({ id }))],
+      ]);
+      const limit = projectsLimit(reads, post, bodies, {
         created: ["proj-made"],
         retain: (bytes) => {
           retained += bytes;
         },
-      }),
-    ).toBe(post);
-    // One kept id per later list, not a thousand per list.
-    expect(retained).toBeGreaterThan(0);
-    expect(retained).toBeLessThan(lists * 1000 * 16);
+      });
+      return { limit, retained };
+    };
+    const narrow = chargeOf(["proj-made"]);
+    const broad = chargeOf(["proj-made", "proj-other", "proj-more"]);
+    const missing = chargeOf(["proj-new", "proj-other", "proj-more"]);
+    expect(narrow.limit).toBe(post);
+    expect(broad.limit).toBe(post);
+    expect(missing.limit).toBeUndefined();
+    expect(broad.retained).toBe(narrow.retained);
+    expect(broad.retained).toBeGreaterThan(missing.retained);
   });
 });
 
 describe("the reads creation limits parse", () => {
-  /**
-   * The creation limit of `/api/projects` over list reads, a POST returning `proj-0002` that later
-   * lists show, and the write that ends the initial reads; with the reads parsed, and those whose
-   * body was read after its parse ended.
-   */
-  const parsedLimit = (
-    reads: readonly StateRecordFacts[],
-    post: StateRecordFacts,
-    until: StateRecordFacts,
-  ) => {
+  it("parses only reads before the cutoff and inspects each body while its parse is charged", () => {
+    const reads = [0, 2, 4, 5].map((ordinal) =>
+      record(ordinal, "GET", "/api/projects"),
+    );
+    const post = record(1, "POST", "/api/imports");
+    const until = record(3, "PUT", "/api/projects/proj-0001");
     const parsed: number[] = [];
     const outside = new Set<number>();
     let parsing = false;
@@ -282,6 +344,10 @@ describe("the reads creation limits parse", () => {
     const limit = creationLimit(
       [{ record: post, ids: ["proj-0002"] }],
       {
+        chronology: new StateRecordChronology(
+          [...reads, post, until],
+          "recorded-start-time",
+        ),
         type: "/api/projects",
         tools: [
           {
@@ -298,34 +364,8 @@ describe("the reads creation limits parse", () => {
       },
       until,
     );
-    return { limit, parsed, outside };
-  };
-
-  it("parses no read at or after the write that ends the initial reads, since no id it shows can be fresh", () => {
-    const reads = [0, 2, 4, 5].map((ordinal) =>
-      record(ordinal, "GET", "/api/projects"),
-    );
-    const post = record(1, "POST", "/api/imports");
-    const { limit, parsed } = parsedLimit(
-      reads,
-      post,
-      record(3, "PUT", "/api/projects/proj-0001"),
-    );
     expect(limit).toBe(post);
     expect(parsed).toEqual([0, 2]);
-  });
-
-  it("reads the ids a body shows only while its parse is charged", () => {
-    const reads = [0, 2].map((ordinal) =>
-      record(ordinal, "GET", "/api/projects"),
-    );
-    const post = record(1, "POST", "/api/imports");
-    const { limit, outside } = parsedLimit(
-      reads,
-      post,
-      record(3, "PUT", "/api/projects/proj-0001"),
-    );
-    expect(limit).toBe(post);
     expect([...outside]).toEqual([]);
   });
 });

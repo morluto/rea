@@ -1,9 +1,7 @@
 import { AnalysisUnsupportedTargetError } from "../analysisErrorCore.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import type {
-  BrowserNetworkBody,
-  BrowserNetworkHeaders,
-} from "../browserNetworkEvidence.js";
+import type { BrowserNetworkBody } from "../browserNetworkEvidence.js";
+import { retainedNetworkMediaType } from "../browserNetworkMediaType.js";
 import {
   retainedBrowserScenarioCaptureSchema,
   type RetainedBrowserScenarioCapture,
@@ -17,9 +15,10 @@ import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import type { WebNetworkCaptureRecord } from "../webNetworkCapture.js";
 import { analysisViewResultInputError } from "./analysisViewParent.js";
-import type { AnalysisViewParent } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 import type { WebNetworkProjectionAccumulator } from "./WebNetworkProjectionAccumulator.js";
 import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
+import { strictUtf8Decoder } from "../strictUtf8.js";
 
 type RequestEvent = Extract<BrowserScenarioEvent, { kind: "request" }>;
 type ContentEvent = Extract<BrowserScenarioEvent, { kind: "network-content" }>;
@@ -46,17 +45,6 @@ const onlyContent = (
   return found?.length === 1 ? found[0] : undefined;
 };
 
-const headerValue = (
-  headers: BrowserNetworkHeaders | undefined,
-  name: string,
-): string | undefined => {
-  if (headers?.state !== "captured") return undefined;
-  const item = headers.items.find(
-    (candidate) => candidate.name.toLowerCase() === name,
-  );
-  return item?.value ?? undefined;
-};
-
 const captured = (
   content: ContentEvent | undefined,
 ): CapturedBody | undefined =>
@@ -73,7 +61,7 @@ const retainedBody = (
 /** Strictly decoded text, keeping a byte-order mark; undefined for bytes that are not UTF-8. */
 const utf8Text = (body: CapturedBody): string | undefined => {
   try {
-    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+    return strictUtf8Decoder("preserve").decode(
       Buffer.from(body.content, "base64"),
     );
   } catch {
@@ -81,9 +69,19 @@ const utf8Text = (body: CapturedBody): string | undefined => {
   }
 };
 
-const mediaType = (content: ContentEvent | undefined): string | undefined =>
-  captured(content)?.media_type ??
-  headerValue(content?.headers, "content-type");
+/** Use the retained type fact for the content event. */
+export const scenarioContentMediaType = (
+  content: ContentEvent | undefined,
+): string | undefined =>
+  retainedNetworkMediaType(content?.body, content?.headers);
+
+/** Whether a request sent no body: Playwright exposed none and the request names no Content-Type, which the bodies browsers send carry. */
+const unsentBody = (
+  request: RequestEvent,
+  content: ContentEvent | undefined,
+): boolean =>
+  content?.body.state === "not_exposed" &&
+  !request.header_names.some((name) => name.toLowerCase() === "content-type");
 
 /** The request object HAR readers expect; a redacted URL is withheld so no path is templated from it. */
 const reportedRequest = (
@@ -93,9 +91,16 @@ const reportedRequest = (
 ): { readonly [key: string]: JsonValue } => {
   const body = purpose === "manifest" ? captured(content) : undefined;
   const text = body === undefined ? undefined : utf8Text(body);
-  const mimeType = mediaType(content);
+  const mimeType = scenarioContentMediaType(content);
+  const size =
+    body !== undefined && !body.redacted
+      ? body.bytes
+      : purpose === "manifest" && unsentBody(request, content)
+        ? 0
+        : -1;
   return {
     method: request.method,
+    bodySize: size,
     url: request.url.redacted ? null : request.url.url,
     ...(text === undefined || mimeType === undefined
       ? {}
@@ -103,11 +108,58 @@ const reportedRequest = (
   };
 };
 
+interface BrowserTiming {
+  readonly started_at?: string | undefined;
+  readonly elapsed_ms?: number | undefined;
+}
+
+/** Each transaction's browser-reported start and duration, from its single finished or failed event. */
+const timingByTransaction = (
+  events: RetainedBrowserScenarioCapture["events"]["items"],
+): ReadonlyMap<string, BrowserTiming> => {
+  const timing = new Map<string, BrowserTiming>();
+  for (const event of events) {
+    if (event.kind !== "request-finished" && event.kind !== "request-failed")
+      continue;
+    // A transaction ending twice has no single start or duration.
+    timing.set(
+      event.transaction_id,
+      timing.has(event.transaction_id)
+        ? {}
+        : { started_at: event.started_at, elapsed_ms: event.elapsed_ms },
+    );
+  }
+  return timing;
+};
+
+/**
+ * HAR timing for a record: the browser's start when it reported one, else the
+ * request observation. Preserve duration independently; omission is not zero.
+ */
+const recordTiming = (
+  request: RequestEvent,
+  timing: ReadonlyMap<string, BrowserTiming>,
+):
+  | { readonly startedDateTime?: string; readonly time?: number }
+  | undefined => {
+  const browser = timing.get(request.transaction_id);
+  const started = browser?.started_at ?? request.observed_at;
+  return started === undefined && browser?.elapsed_ms === undefined
+    ? undefined
+    : {
+        ...(started === undefined ? {} : { startedDateTime: started }),
+        ...(browser?.elapsed_ms === undefined
+          ? {}
+          : { time: browser.elapsed_ms }),
+      };
+};
+
 const record = (
   ordinal: number,
   observed: { readonly event: RequestEvent; readonly item: number },
   index: BrowserScenarioTransactionIndex,
   purpose: "manifest" | "replay",
+  timing: ReturnType<typeof recordTiming>,
 ): {
   readonly record: WebNetworkCaptureRecord;
   readonly responseBody: ScenarioResponseBodyRetention;
@@ -141,12 +193,13 @@ const record = (
   const requestContent = onlyContent(index, request.sequence);
   const responseContent = onlyContent(index, response?.sequence);
   const body = retainedBody(responseContent);
-  const mimeType = mediaType(responseContent) ?? "";
+  const mimeType = scenarioContentMediaType(responseContent) ?? "";
   return {
     record: {
       ordinal,
       location,
       reported: {
+        ...timing,
         request: reportedRequest(request, requestContent, purpose),
         ...(response === undefined
           ? {}
@@ -186,11 +239,23 @@ export const scenarioCaptureRecords = (
   purpose: "manifest" | "replay",
 ): ScenarioCaptureRecords => {
   const index = indexBrowserScenarioTransactions(capture.events.items);
+  const timings = timingByTransaction(capture.events.items);
   const records: WebNetworkCaptureRecord[] = [];
   const responseBodies = new Map<number, ScenarioResponseBodyRetention>();
+  let timed = false;
+  let unknownDurations = 0;
   for (const [item, event] of capture.events.items.entries()) {
     if (event.kind !== "request") continue;
-    const projected = record(records.length, { event, item }, index, purpose);
+    const timing = recordTiming(event, timings);
+    if (timing?.time === undefined) unknownDurations += 1;
+    timed ||= timing !== undefined;
+    const projected = record(
+      records.length,
+      { event, item },
+      index,
+      purpose,
+      timing,
+    );
     records.push(projected.record);
     if (purpose === "manifest")
       responseBodies.set(projected.record.ordinal, projected.responseBody);
@@ -201,6 +266,16 @@ export const scenarioCaptureRecords = (
     responseBodies,
     limitations: [
       "Scenario records are the capture's network transactions in request order; each record ordinal is the transaction's zero-based position.",
+      ...(timed
+        ? [
+            "Scenario record start times, when available, are the browser's own from a unique terminal event, or when the provider observed the request where the browser reported none; durations retain only values reported by a unique terminal event.",
+          ]
+        : []),
+      ...(unknownDurations === 0
+        ? []
+        : [
+            `${String(unknownDurations)} scenario request(s) had no unique reported duration; their duration is omitted and does not establish zero-length execution.`,
+          ]),
       ...(capture.events.dropped > 0
         ? [
             `The scenario capture omitted ${String(capture.events.dropped)} events; the manifest covers only retained transactions.`,

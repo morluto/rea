@@ -1,4 +1,5 @@
 import {
+  ownMember,
   renderStateEntity,
   same,
   type JsonObject,
@@ -27,12 +28,14 @@ export type TouchedTargets = Map<string, Map<string, readonly string[] | null>>;
 /** Per target, when the latest modelled write since its last check ended, and each tool's latest call there. */
 export type PendingTargets = Map<
   string,
-  { until: number; readonly at: Map<string, number> }
+  { until: number | undefined; readonly at: Map<string, number> }
 >;
 
 /** Whether a write that ended at `until` was still running when a read began at `start`, so the read may show either state. */
-export const overlapsWrite = (until: number, start: number): boolean =>
-  until > start;
+export const overlapsWrite = (
+  until: number | undefined,
+  start: number | undefined,
+): boolean => until === undefined || start === undefined || until > start;
 
 /** What the gate tracks of the writes since each target's last check, and when each unmodelled write ran. */
 export interface WriteHistory {
@@ -75,8 +78,11 @@ export const interference = (
 export const runningAt = (
   pending: PendingTargets,
   key: string,
-  start: number,
-): boolean => overlapsWrite(pending.get(key)?.until ?? -Infinity, start);
+  start: number | undefined,
+): boolean => {
+  const held = pending.get(key);
+  return held !== undefined && overlapsWrite(held.until, start);
+};
 
 /** The tools whose writes a read exercises: those that changed its targets since they were last checked, less those that borrowed the read to learn their effect. */
 export const exercisedBy = (
@@ -99,13 +105,18 @@ export const touchTarget = (
   write: {
     readonly index: number;
     readonly tool: string;
-    readonly end: number;
+    readonly end: number | undefined;
     readonly fields: readonly string[] | undefined;
   },
 ): void => {
   const held = pending.get(target);
   pending.set(target, {
-    until: Math.max(held?.until ?? -Infinity, write.end),
+    // One unknown completion keeps this target pending until a real check clears it.
+    until:
+      write.end === undefined ||
+      (held !== undefined && held.until === undefined)
+        ? undefined
+        : Math.max(held?.until ?? -Infinity, write.end),
     at: (held?.at ?? new Map()).set(write.tool, write.index),
   });
   const tools = touched.get(target) ?? new Map();
@@ -208,6 +219,11 @@ export class WriteEffects {
       byTool.delete(tool);
       touched.get(collection)?.delete(tool);
     }
+  }
+
+  /** The fields a tool's effect on an entity still holds: null for a create's or delete's whole effect, undefined when none remains. */
+  changedOn(key: string, tool: string): readonly string[] | null | undefined {
+    return this.#changed.get(key)?.get(tool);
   }
 
   /** Whether a read showing `fields` of a target shows anything of a tool's effect there: a create's or delete's always, an update's through a field it changed; unknown claims count as shown. */
@@ -407,7 +423,9 @@ export const writtenFieldChecks = (
     if (fields === null || compared.length === 0) continue;
     outcomes.set(
       tool,
-      compared.every((field) => same(shown[field], observed[field])),
+      compared.every((field) =>
+        same(ownMember(shown, field), ownMember(observed, field)),
+      ),
     );
   }
   return outcomes;

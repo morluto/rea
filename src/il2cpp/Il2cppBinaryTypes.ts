@@ -9,6 +9,16 @@ import type {
   Il2cppMetadataDecoded,
   Il2cppMetadataLinkFacts,
 } from "./Il2cppMetadataFile.js";
+
+/** Il2CppType's type enum: bits 16-23 of the word after its 8-byte data. */
+export const il2cppTypeKind = (attributes: number): number =>
+  (attributes >>> 16) & 0xff;
+/** Largest Il2CppTypeEnum value read as a type kind (IL2CPP_TYPE_MVAR). */
+export const IL2CPP_TYPE_KIND_MAX = 0x1e;
+/** Class and value-type kinds, whose data is a TypeDefinitionIndex. */
+export const isDefinitionTypeKind = (kind: number): boolean =>
+  kind === 0x11 || kind === 0x12;
+
 const PRIMITIVES = new Map([
   [0x01, "void"],
   [0x02, "bool"],
@@ -96,6 +106,8 @@ const createTypeRenderer = (
       throw new Il2cppBinaryFormatFailure(
         "native-type-text-capacity",
         `rendered type text workspace exceeds ${TYPE_TEXT_BYTES} UTF-8 bytes`,
+        TYPE_TEXT_BYTES,
+        "bytes",
       );
     beforeText?.(bytes);
   };
@@ -121,18 +133,20 @@ const createTypeRenderer = (
       throw new Il2cppBinaryFormatFailure(
         "type-nesting-capacity",
         `type rendering exceeds ${TYPE_DEPTH} nested frames`,
+        TYPE_DEPTH,
+        "frames",
       );
     active.add(address);
     try {
       if (tick()) yield;
       const data = pointer(address, "Il2CppType data");
       const bits = u32(address + 8n, "Il2CppType attributes");
-      const kind = (bits >>> 16) & 0xff;
+      const kind = il2cppTypeKind(bits);
       const index = Number(BigInt.asIntN(32, data & 0xffffffffn));
       let result: string;
       const primitive = rules.primitives.get(kind);
       if (primitive !== undefined) result = primitive;
-      else if (kind === 0x11 || kind === 0x12)
+      else if (isDefinitionTypeKind(kind))
         result = yield* rules.definition(index);
       else if (kind === 0x0f || kind === 0x1d)
         result = join([

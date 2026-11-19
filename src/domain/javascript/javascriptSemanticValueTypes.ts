@@ -1,13 +1,21 @@
+import { z } from "zod";
+
 /** Primitive values admitted into the constant lattice. */
 export type JavaScriptSemanticPrimitive = string | number | boolean | null;
 
 /** Resource bound that prevented an exact semantic value. */
-export type JavaScriptSemanticResourceLimit =
-  | "primitive-candidates"
-  | "primitive-bytes"
-  | "expression-depth"
-  | "getter-expansion"
-  | "alias-selections";
+export const javaScriptSemanticResourceLimitSchema = z.enum([
+  "primitive-candidates",
+  "primitive-bytes",
+  "expression-depth",
+  "getter-expansion",
+  "alias-selections",
+]);
+
+/** Resource-limit classifications shared by static facts and semantic values. */
+export type JavaScriptSemanticResourceLimit = z.infer<
+  typeof javaScriptSemanticResourceLimitSchema
+>;
 
 type JavaScriptSemanticObjectValue = {
   readonly status: "object";

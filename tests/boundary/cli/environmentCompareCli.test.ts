@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import { describe, expect } from "vitest";
 
+import type { CompareReport } from "../../../src/application/environment/environmentCompare.js";
 import {
   analysisViewCaptureEvidence,
   environmentManifestCaptureFixture,
@@ -10,6 +11,11 @@ import {
   type TimedCaptureRow,
 } from "../../fixtures/analysisView.js";
 import { environmentStateServeFixture } from "../../fixtures/environmentServe.js";
+import {
+  BOOKMARK_ROWS,
+  bookmark,
+  TAG_ROWS,
+} from "../../fixtures/environmentStateDerivedValues.js";
 import {
   BOOK_NOT_FOUND,
   BOOK_ROWS,
@@ -22,6 +28,140 @@ import {
 } from "../../fixtures/environmentStateWrites.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+
+describe("rea environment-compare difference coverage", () => {
+  cliTest(
+    "discloses the bounded differences in ordinary and full output",
+    async ({ cli }) => {
+      const root = await createTestTempDirectory(
+        "rea-environment-compare-coverage-",
+      );
+      const counts = [0, 19, 20, 21, 25];
+      const originals = new Map<string, string>();
+      for (const [name, value] of [
+        ["capture", 0],
+        ["probe", 1],
+      ] as const) {
+        const entries = counts.map((count, index) => {
+          const text = JSON.stringify(
+            Object.fromEntries(
+              Array.from({ length: count }, (_, field) => [
+                `field${String(field).padStart(2, "0")}`,
+                value,
+              ]),
+            ),
+          );
+          return {
+            startedDateTime: new Date(
+              Date.parse("2026-10-27T20:00:00Z") + index * 1000,
+            ).toISOString(),
+            time: 0,
+            cache: {},
+            timings: { send: 0, wait: 0, receive: 0 },
+            request: {
+              method: "GET",
+              url: `https://app.example/api/config${String(count)}`,
+              httpVersion: "HTTP/1.1",
+              headers: [],
+              queryString: [],
+              cookies: [],
+              headersSize: -1,
+              bodySize: 0,
+            },
+            response: {
+              status: 200,
+              statusText: "OK",
+              httpVersion: "HTTP/1.1",
+              headers: [],
+              cookies: [],
+              redirectURL: "",
+              headersSize: -1,
+              bodySize: -1,
+              content: {
+                mimeType: "application/json",
+                size: Buffer.byteLength(text),
+                text,
+              },
+            },
+          };
+        });
+        const har = join(root, `${name}.har`);
+        const text = JSON.stringify({
+          log: {
+            version: "1.2",
+            creator: { name: "coverage-test", version: "1" },
+            entries,
+          },
+        });
+        await writeFile(har, text);
+        originals.set(har, text);
+        const captured = await cli.run({
+          arguments: ["inspect-web-network-capture", har, "har", "--json"],
+        });
+        expect(captured.exitCode, captured.stderr).toBe(0);
+        const path = join(root, `${name}.json`);
+        const evidence = JSON.stringify(captured.json);
+        await writeFile(path, evidence);
+        originals.set(path, evidence);
+      }
+      const view = join(root, "view.json");
+      await writeFile(
+        view,
+        JSON.stringify({
+          source: {
+            kind: "inline",
+            evidence: JSON.parse(originals.get(join(root, "capture.json"))!),
+          },
+          view: { kind: "environment-manifest" },
+        }),
+      );
+      const projected = await cli.run({
+        arguments: ["inspect-analysis-view", view, "--json"],
+      });
+      expect(projected.exitCode, projected.stderr).toBe(0);
+      const manifest = join(root, "manifest.json");
+      const manifestText = JSON.stringify(projected.json);
+      await writeFile(manifest, manifestText);
+      originals.set(manifest, manifestText);
+      const args = [
+        "environment-compare",
+        manifest,
+        "--evidence",
+        join(root, "capture.json"),
+        "--probe",
+        join(root, "probe.json"),
+        "--json",
+      ];
+      const result = await cli.run({ arguments: args });
+      expect(result.exitCode, result.stderr).toBe(0);
+      const report = result.json as CompareReport;
+      expect(report).toMatchObject({
+        status: "complete",
+        summary: { steps: 5, equal: 1, categories: { value: 4 } },
+      });
+      expect(report.probes[0]!.results).toHaveLength(counts.length);
+      for (const [index, count] of counts.entries()) {
+        const step = report.probes[0]!.results[index]!;
+        expect(step).toMatchObject({
+          equal: count === 0,
+          equal_ignoring_order: count === 0,
+          categories: count === 0 ? [] : ["value"],
+          differences_total: count,
+          differences_omitted: Math.max(0, count - 20),
+          differences_truncated: count > 20,
+        });
+        expect(step.differences).toHaveLength(Math.min(count, 20));
+        if (count >= 20)
+          expect(step.differences.at(-1)?.pointer).toBe("/field19");
+      }
+      const full = await cli.run({ arguments: [...args, "--full-output"] });
+      expect(full.exitCode, full.stderr).toBe(0);
+      expect(full.json).toMatchObject({ data: report });
+      for (const [path, text] of originals)
+        expect(await readFile(path, "utf8")).toBe(text);
+    },
+  );
+});
 
 /** The books environment and a probe of the application re-seeded under other ids, written as Evidence files. */
 const writeCompareFiles = async (root: string) => {
@@ -349,13 +489,64 @@ describe("rea environment-compare value context", () => {
 });
 
 describe("rea environment-compare recorded clock spelling", () => {
-  cliTest(
-    "replays compact-offset submillisecond probe timestamps in exact order",
-    async ({ cli }) => {
+  for (const scenario of [
+    {
+      name: "variable fractional widths under a confirmed trimmed write plan",
+      rows: TAG_ROWS,
+      probe: [
+        [
+          "POST",
+          "/api/tags",
+          {
+            id: numberedUuid(20),
+            name: "Spare",
+            createdAt: "2026-10-20T10:00:00.12345678Z",
+            updatedAt: "2026-10-20T10:00:00.12345678Z",
+          },
+          201,
+          { name: "Spare" },
+        ],
+      ] as const,
+      generated: 0,
+    },
+    {
+      name: "a composed bookmark URL through its creation clock",
+      rows: BOOKMARK_ROWS,
+      probe: [
+        [
+          "POST",
+          "/api/bookmarks",
+          bookmark(
+            20,
+            "https://pier.example.test/inspection",
+            "Pier",
+            "2026-10-20T10:00:00Z",
+          ),
+          201,
+          { url: "https://pier.example.test/inspection", title: "Pier" },
+        ],
+      ] as const,
+      generated: 1,
+    },
+  ]) {
+    cliTest(`accepts ${scenario.name}`, async ({ cli }) => {
       const root = await createTestTempDirectory(
-        "rea-environment-legacy-chronology-",
+        "rea-environment-derived-compare-",
       );
-      const originals = await writeExactClockFiles(root);
+      const capture = timedCaptureEvidence(scenario.rows);
+      const fixture = environmentStateServeFixture(capture);
+      const probe = timedCaptureEvidence(scenario.probe);
+      const originals = new Map<string, string>();
+      for (const [name, value] of [
+        ["manifest.json", fixture.manifest],
+        ["capture.json", capture],
+        ["probe.json", probe],
+      ] as const) {
+        const path = join(root, name);
+        const text = JSON.stringify(value);
+        originals.set(path, text);
+        await writeFile(path, text);
+      }
       const result = await cli.run({
         arguments: [
           "environment-compare",
@@ -363,46 +554,30 @@ describe("rea environment-compare recorded clock spelling", () => {
           "--evidence",
           join(root, "capture.json"),
           "--probe",
-          join(root, "legacy-order.json"),
+          join(root, "probe.json"),
           "--json",
         ],
       });
       expect(result.exitCode, result.stderr).toBe(0);
       expect(result.json).toMatchObject({
         status: "complete",
-        environment: { state: "served" },
-        summary: { probes: 1, steps: 2, equal: 2, agreement: 1 },
+        summary: { probes: 1, steps: 1, equal: 1, agreement: 1 },
         probes: [
           {
-            label: "legacy-order.json",
-            results: [
-              {
-                ordinal: 1,
-                method: "DELETE",
-                live_status: 204,
-                env_status: 204,
-                equal: true,
-              },
-              {
-                ordinal: 0,
-                method: "GET",
-                live_status: 404,
-                env_status: 404,
-                equal: true,
-              },
-            ],
+            normalised: { clocks: 2, generated: scenario.generated },
+            results: [{ method: "POST", equal: true, differences: [] }],
           },
         ],
       });
       for (const [path, text] of originals)
         expect(await readFile(path, "utf8")).toBe(text);
-    },
-  );
+    });
+  }
 });
 
 describe("rea environment-compare replay and chronology", () => {
   cliTest(
-    "preserves exact probe chronology and first-century clock-format differences",
+    "orders precise ISO and compact-offset probes independently and reports first-century clock differences",
     async ({ cli }) => {
       const root = await createTestTempDirectory(
         "rea-environment-exact-clock-",
@@ -417,6 +592,8 @@ describe("rea environment-compare replay and chronology", () => {
           "--probe",
           join(root, "order.json"),
           "--probe",
+          join(root, "legacy-order.json"),
+          "--probe",
           join(root, "clocks.json"),
           "--json",
         ],
@@ -425,10 +602,10 @@ describe("rea environment-compare replay and chronology", () => {
       expect(result.json).toMatchObject({
         status: "complete",
         environment: { state: "served" },
-        summary: { probes: 2, steps: 3, equal: 2 },
+        summary: { probes: 3, steps: 5, equal: 4, agreement: 0.8 },
         probes: [
-          {
-            label: "order.json",
+          ...["order.json", "legacy-order.json"].map((label) => ({
+            label,
             results: [
               {
                 ordinal: 1,
@@ -445,7 +622,7 @@ describe("rea environment-compare replay and chronology", () => {
                 equal: true,
               },
             ],
-          },
+          })),
           {
             label: "clocks.json",
             results: [
@@ -484,7 +661,6 @@ describe("rea environment-compare replay and chronology", () => {
           files.probe,
           "--json",
         ],
-        timeoutMs: 30_000,
       });
       expect(result.exitCode).toBe(0);
       expect(result.json).toMatchObject({
@@ -512,7 +688,6 @@ describe("rea environment-compare replay and chronology", () => {
           files.manifest,
           "--json",
         ],
-        timeoutMs: 30_000,
       });
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({

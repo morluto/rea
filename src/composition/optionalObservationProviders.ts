@@ -1,9 +1,11 @@
+import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import type {
   OptionalObservationProviders,
   OptionalProviderLoadFailure,
   OptionalProviderLoadResult,
-} from "../application/OptionalObservationProviders.js";
+} from "../ports/OptionalObservationProviders.js";
 import {
   CDP_BROWSER_PROVIDER_IDENTITY,
   PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY,
@@ -11,7 +13,10 @@ import {
   PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY,
 } from "../browser/providerIdentities.js";
 import { V8_INSPECTOR_PROVIDER_IDENTITY } from "../inspector/providerIdentity.js";
+import type { V8InspectorAdmission } from "../inspector/V8InspectorProvider.js";
+import type { WebBundleAnalysisAdmission } from "../browser/IsolatedWebBundleAnalyzer.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Precisely typed startup factories for the five existing observation ports. */
 export type OptionalObservationFactories = {
@@ -23,13 +28,26 @@ export type OptionalObservationFactories = {
 /** Bind optional provider construction to one caller-selected process environment. */
 export const createOptionalObservationFactories = (
   selectedEnvironment: Readonly<Record<string, string | undefined>>,
+  settings?: AnalysisSettingsReader,
 ): OptionalObservationFactories => {
-  const environment = snapshotEnvironment(selectedEnvironment);
+  const environment = snapshotEnvironment(
+    selectedEnvironment,
+    HOST_PLATFORM.platform,
+  );
+  let runtimeAdmission: V8InspectorAdmission | undefined;
+  let webBundleAdmission: WebBundleAnalysisAdmission | undefined;
   return {
-    browserObservation: async () =>
-      (
-        await import("./browserObservation.js")
-      ).createBrowserObservationProvider(),
+    browserObservation: async () => {
+      const browser = await import("./browserObservation.js");
+      const { WebBundleAnalysisAdmission: Admission } =
+        await import("../browser/IsolatedWebBundleAnalyzer.js");
+      webBundleAdmission ??= new Admission();
+      return browser.createBrowserObservationProvider(
+        webBundleAdmission,
+        environment,
+        settings,
+      );
+    },
     browserScenarioCapture: async () =>
       (await import("./browserScenario.js")).createBrowserScenarioProvider(
         environment,
@@ -37,15 +55,20 @@ export const createOptionalObservationFactories = (
     electronObservation: async () =>
       (
         await import("./electronObservation.js")
-      ).createElectronObservationProvider(environment),
+      ).createElectronObservationProvider(environment, settings),
     electronActiveObservation: async () =>
       (await import("./electronScenario.js")).createElectronScenarioProvider(
         environment,
       ),
-    javascriptRuntimeObservation: async () =>
-      (
-        await import("./javascriptRuntimeObservation.js")
-      ).createJavaScriptRuntimeObservationProvider(environment),
+    javascriptRuntimeObservation: async () => {
+      const runtime = await import("./javascriptRuntimeObservation.js");
+      runtimeAdmission ??= new runtime.V8InspectorAdmission();
+      return runtime.createJavaScriptRuntimeObservationProvider(
+        environment,
+        settings,
+        runtimeAdmission,
+      );
+    },
   };
 };
 
@@ -58,7 +81,7 @@ const loadPort = async <Port>(
   } catch (cause: unknown) {
     return err({
       providerId,
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     });
   }
 };

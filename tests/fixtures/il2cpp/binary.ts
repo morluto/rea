@@ -1,3 +1,5 @@
+import { aps2Relocations } from "../elfAndroidPacked.js";
+
 /**
  * Synthetic thin arm64 Mach-O holding the IL2CPP registration tables for the
  * metadata fixture: image names, code-generation modules, their method
@@ -29,6 +31,10 @@ export interface Il2cppBinaryFixtureOptions {
   readonly duplicateCodeRegistration?: boolean;
   /** Write a RIP-relative `lea rax, [module array]`, as an inlined build loads it. */
   readonly codeReference?: boolean;
+  /** Write `adrp x8, page; add x8, x8, #pageoff` at each file offset, loading the target offset. */
+  readonly adrpAdd?: readonly (readonly [at: number, target: number])[];
+  /** 4 KiB pages in the Mach-O image; extra pages are zero, past every table. */
+  readonly pages?: number;
   /** Omit the MetadataRegistration type table. */
   readonly metadataRegistration?: boolean;
   /** Write a second distinct MetadataRegistration candidate. */
@@ -131,20 +137,24 @@ const METHOD_SPECS = 0xb80;
 const GENERIC_METHOD_TABLE = 0xbc0;
 const GENERIC_METHOD_POINTERS = 0xd00;
 
+const imageSize = (options: Il2cppBinaryFixtureOptions) =>
+  SIZE * (options.pages ?? 1);
+
 export const createIl2cppBinaryFixture = (
   options: Il2cppBinaryFixtureOptions = {},
 ): Buffer => {
-  const bytes = Buffer.alloc(SIZE);
+  const size = imageSize(options);
+  const bytes = Buffer.alloc(size);
   const address = (offset: number) => FIXTURE_BINARY_BASE + BigInt(offset);
   const chained = options.chainedFixups === true;
   const split = options.splitSegmentAt;
   // LC_SEGMENT_64 records, read-execute; a split gives two adjacent ones.
   const segments: readonly [name: string, start: number, end: number][] =
     split === undefined
-      ? [["__TEXT", 0, SIZE]]
+      ? [["__TEXT", 0, size]]
       : [
           ["__TEXT", 0, split],
-          ["__DATA", split, SIZE],
+          ["__DATA", split, size],
         ];
   const commands = segments.length + (chained ? 1 : 0);
   // Mach-O 64-bit header: arm64 dylib with its load commands.
@@ -213,6 +223,21 @@ export const createIl2cppBinaryFixture = (
     const at = 0xc00;
     bytes.set([0x48, 0x8d, 0x05], at);
     bytes.writeInt32LE(MODULE_ARRAY - (at + 7), at + 3);
+  }
+  for (const [at, target] of options.adrpAdd ?? []) {
+    const pc = address(at),
+      to = address(target);
+    const pages = Number(((to >> 12n) - (pc >> 12n)) & 0x1fffffn);
+    // ADRP x8: immlo in bits 29-30, immhi in bits 5-23.
+    bytes.writeUInt32LE(
+      (0x90000008 | ((pages & 3) << 29) | ((pages >> 2) << 5)) >>> 0,
+      at,
+    );
+    // ADD x8, x8, #pageoff (64-bit, unshifted imm12).
+    bytes.writeUInt32LE(
+      (0x91000108 | (Number(to & 0xfffn) << 10)) >>> 0,
+      at + 4,
+    );
   }
   if (options.codeRegistration !== false) {
     bytes.writeBigUInt64LE(2n, REGISTRATION);
@@ -462,12 +487,58 @@ export const createSplitPointerPeFixture = (zeroTail = true): Buffer => {
   return Buffer.concat([header, payload]);
 };
 
+const packElfFixture = ({
+  file,
+  rela,
+  tags,
+  dynamicOffset,
+  packing,
+}: {
+  readonly file: Buffer;
+  readonly rela: Buffer;
+  readonly tags: readonly (readonly [bigint, bigint])[];
+  readonly dynamicOffset: number;
+  readonly packing: "aps1" | "aps2";
+}): Buffer => {
+  const packed = aps2Relocations(
+    Array.from({ length: rela.length / 24 }, (_, index) => ({
+      offset: rela.readBigUInt64LE(index * 24),
+      info: rela.readBigUInt64LE(index * 24 + 8),
+      addend: rela.readBigInt64LE(index * 24 + 16),
+    })),
+    "rela",
+  );
+  if (packing === "aps1") packed.write("APS1");
+  // Replace the dead RELA bytes in place so file-backed ranges and any BSS
+  // pointers remain identical to the unpacked carrier.
+  if (packed.length > rela.length)
+    throw new Error(
+      "Packed relocations exceed the reserved RELA fixture range",
+    );
+  file.fill(0, SIZE, SIZE + rela.length);
+  packed.copy(file, SIZE);
+  tags.forEach(([tag], index) => {
+    const at = dynamicOffset + index * 16;
+    if (tag === 7n) {
+      file.writeBigUInt64LE(0x60000011n, at);
+    } else if (tag === 8n) {
+      file.writeBigUInt64LE(0x60000012n, at);
+      file.writeBigUInt64LE(BigInt(packed.length), at + 8);
+    } else if (tag === 9n) {
+      // A harmless ignored tag keeps the remaining directory positions stable.
+      file.writeBigUInt64LE(21n, at);
+      file.writeBigUInt64LE(0n, at + 8);
+    }
+  });
+  return file;
+};
+
 /** Android ELF relocation tables appended after the fixture image. */
 export interface ElfFixtureOptions {
   /** e_machine; 183 is AArch64. */
   readonly machine?: number;
-  /** Add DT_ANDROID_RELA, the packed APS2 encoding. */
-  readonly androidPacked?: boolean;
+  /** Replace RELA with a packed table; APS1 deliberately stays unsupported. */
+  readonly androidPacked?: "aps1" | "aps2";
   /** Omit PT_DYNAMIC. */
   readonly dynamic?: boolean;
   /** Give every relocation a symbol index, so none is RELATIVE-only. */
@@ -484,13 +555,95 @@ export interface ElfFixtureOptions {
   readonly relaEntry?: bigint;
   /** Move mscorlib.dll's method pointers into zero-fill past the file end. */
   readonly zeroFilledTable?: boolean;
+  /** Declare DT_SYMTAB / DT_SYMENT with dynamic symbol 1 of this `st_size`, which sizes a COPY. */
+  readonly symbolSize?: bigint;
+  /** A defined ordinary dynamic symbol for static link-image relocation tests. */
+  readonly symbolDefinition?: {
+    readonly value: bigint;
+    readonly type?: number;
+    readonly section?: number;
+  };
 }
+
+/** A valid large RELA image; extra file-backed pointers do not add IL2CPP registrations. */
+export const createLargeElfRelativeFixture = (
+  image: Buffer,
+  extraRecords: number,
+  machine = 183,
+): Buffer => {
+  const original = createElfFixture(image, { machine });
+  const originalDynamic = Number(original.readBigUInt64LE(128));
+  const originalRelaSize = Number(
+    original.readBigUInt64LE(originalDynamic + 24),
+  );
+  const pointersAt = Math.ceil(original.length / 8) * 8;
+  const relaAt = pointersAt + extraRecords * 8;
+  const relaSize = originalRelaSize + extraRecords * 24;
+  const dynamicAt = relaAt + relaSize;
+  const bytes = Buffer.alloc(dynamicAt + 64);
+  original.copy(bytes);
+  original.copy(bytes, relaAt, 0x1000, 0x1000 + originalRelaSize);
+  for (let index = 0; index < extraRecords; index++) {
+    const row = relaAt + originalRelaSize + index * 24;
+    bytes.writeBigUInt64LE(
+      FIXTURE_BINARY_BASE + BigInt(pointersAt + index * 8),
+      row,
+    );
+    bytes.writeBigUInt64LE(machine === 62 ? 8n : 1027n, row + 8);
+    bytes.writeBigUInt64LE(FIXTURE_BINARY_BASE + 0x100n, row + 16);
+  }
+  for (const [index, [tag, value]] of [
+    [7n, FIXTURE_BINARY_BASE + BigInt(relaAt)],
+    [8n, BigInt(relaSize)],
+    [9n, 24n],
+    [0n, 0n],
+  ].entries()) {
+    bytes.writeBigUInt64LE(tag!, dynamicAt + index * 16);
+    bytes.writeBigUInt64LE(value!, dynamicAt + index * 16 + 8);
+  }
+  bytes.writeBigUInt64LE(BigInt(bytes.length), 96);
+  bytes.writeBigUInt64LE(BigInt(bytes.length), 104);
+  bytes.writeBigUInt64LE(BigInt(dynamicAt), 128);
+  bytes.writeBigUInt64LE(FIXTURE_BINARY_BASE + BigInt(dynamicAt), 136);
+  bytes.writeBigUInt64LE(FIXTURE_BINARY_BASE + BigInt(dynamicAt), 144);
+  bytes.writeBigUInt64LE(64n, 152);
+  bytes.writeBigUInt64LE(64n, 160);
+  return bytes;
+};
 
 /**
  * Rewrap a fixture image as a 64-bit ELF shared object loaded at the same
  * base: every pointer slot into the image is zeroed on disk and restored by
  * an R_AARCH64_RELATIVE entry, as a position-independent libil2cpp.so stores it.
  */
+/** The null symbol, then symbol 1 with the requested COPY size or definition. */
+const dynamicSymbols = (
+  size: bigint | undefined,
+  definition: ElfFixtureOptions["symbolDefinition"],
+): Buffer => {
+  if (size === undefined && definition === undefined) return Buffer.alloc(0);
+  const symbols = Buffer.alloc(48);
+  symbols.writeBigUInt64LE(size ?? 0n, 24 + 16);
+  if (definition !== undefined) {
+    symbols[24 + 4] = 0x10 | (definition.type ?? 1);
+    symbols.writeUInt16LE(definition.section ?? 1, 24 + 6);
+    symbols.writeBigUInt64LE(definition.value, 24 + 8);
+  }
+  return symbols;
+};
+
+/** DT_SYMTAB and DT_SYMENT for a symbol table at `address`; none for an empty table. */
+const symbolTableTags = (
+  symbols: Buffer,
+  address: bigint,
+): [bigint, bigint][] =>
+  symbols.length === 0
+    ? []
+    : [
+        [6n, address],
+        [11n, 24n],
+      ];
+
 export const createElfFixture = (
   image: Buffer,
   options: ElfFixtureOptions = {},
@@ -514,11 +667,23 @@ export const createElfFixture = (
       0n,
       relocation.kind,
     ]);
+  const symbols = dynamicSymbols(options.symbolSize, options.symbolDefinition);
+  const hash = Buffer.alloc(options.symbolDefinition === undefined ? 0 : 20);
+  if (hash.length !== 0)
+    [1, 2, 1, 0, 0].forEach((value, index) =>
+      hash.writeUInt32LE(value, index * 4),
+    );
   const tagCount =
     4 +
     (options.duplicateRela === true ? 1 : 0) +
-    (options.androidPacked === true ? 1 : 0);
-  const fileSize = SIZE + relocations.length * 24 + tagCount * 16;
+    symbolTableTags(symbols, 0n).length +
+    (hash.length === 0 ? 0 : 1);
+  const fileSize =
+    SIZE +
+    relocations.length * 24 +
+    tagCount * 16 +
+    symbols.length +
+    hash.length;
   if (options.zeroFilledTable === true) {
     // The second module record's methodPointers field (MODULES + 0x40 + 16).
     const slot = FIXTURE_BINARY_BASE + BigInt(0x400 + 0x40 + 16);
@@ -543,9 +708,18 @@ export const createElfFixture = (
       : []),
     [8n, options.relaSize ?? BigInt(rela.length)],
     [9n, options.relaEntry ?? 24n],
-    ...(options.androidPacked === true
-      ? [[0x60000011n, 0n] as [bigint, bigint]]
-      : []),
+    ...symbolTableTags(
+      symbols,
+      FIXTURE_BINARY_BASE + BigInt(fileSize - symbols.length - hash.length),
+    ),
+    ...(hash.length === 0
+      ? []
+      : [
+          [4n, FIXTURE_BINARY_BASE + BigInt(fileSize - hash.length)] as [
+            bigint,
+            bigint,
+          ],
+        ]),
     [0n, 0n],
   ];
   const dynamic = Buffer.alloc(tags.length * 16);
@@ -553,7 +727,7 @@ export const createElfFixture = (
     dynamic.writeBigInt64LE(tag, index * 16);
     dynamic.writeBigUInt64LE(value, index * 16 + 8);
   });
-  const file = Buffer.concat([body, rela, dynamic]);
+  const file = Buffer.concat([body, rela, dynamic, symbols, hash]);
   if (file.length !== fileSize) throw new Error("ELF fixture size drifted");
   const withDynamic = options.dynamic !== false;
   // ELF64 header: little-endian shared object, no section headers.
@@ -588,7 +762,52 @@ export const createElfFixture = (
     file.writeBigUInt64LE(BigInt(dynamic.length), 152);
     file.writeBigUInt64LE(BigInt(dynamic.length), 160);
   }
-  return file;
+  return options.androidPacked === undefined
+    ? file
+    : packElfFixture({
+        file,
+        rela,
+        tags,
+        dynamicOffset: SIZE + rela.length,
+        packing: options.androidPacked,
+      });
+};
+
+/** A code-loaded type table plus isolated one-entry candidate runs in disjoint ELF mappings. */
+export const createIl2cppTypeScanFixture = (
+  mappingCount: number,
+  bytesPerMapping: number,
+): Buffer => {
+  const image = createIl2cppBinaryFixture({
+    metadataRegistration: false,
+    adrpAdd: [[0xc20, 0x900]],
+  });
+  const original = createElfFixture(image);
+  const candidates = Buffer.alloc(mappingCount * bytesPerMapping);
+  for (let at = 0; at < candidates.length; at += 16)
+    candidates.writeBigUInt64LE(FIXTURE_BINARY_BASE + 0x9b0n, at);
+  // The original dynamic segment and complete payload retain their addresses.
+  // Move only the program header table to the unmapped end of the file.
+  const headers: Buffer[] = [Buffer.from(original.subarray(120, 176))];
+  for (let index = 0; index <= mappingCount; index++) {
+    const offset =
+      index === 0 ? 0 : original.length + (index - 1) * bytesPerMapping;
+    const size = index === 0 ? original.length : bytesPerMapping;
+    const header = Buffer.alloc(56);
+    header.writeUInt32LE(1);
+    header.writeUInt32LE(index === 0 ? 7 : 6, 4);
+    header.writeBigUInt64LE(BigInt(offset), 8);
+    header.writeBigUInt64LE(FIXTURE_BINARY_BASE + BigInt(offset), 16);
+    header.writeBigUInt64LE(FIXTURE_BINARY_BASE + BigInt(offset), 24);
+    header.writeBigUInt64LE(BigInt(size), 32);
+    header.writeBigUInt64LE(BigInt(size), 40);
+    header.writeBigUInt64LE(1n, 48);
+    headers.push(header);
+  }
+  const result = Buffer.concat([original, candidates, ...headers]);
+  result.writeBigUInt64LE(BigInt(original.length + candidates.length), 32);
+  result.writeUInt16LE(headers.length, 56);
+  return result;
 };
 
 export interface GenericRegistrationImageOptions {

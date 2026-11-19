@@ -6,7 +6,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import {
   XcrunCommandRunner,
   type NativeCommandLauncher,
-} from "../../../../src/native/CommandRunner.js";
+} from "../../../../src/providers/NativeCommandRunner.js";
 import { ok } from "../../../../src/domain/result.js";
 import { DarwinProcessOwnershipInspectionError } from "../../../../src/process/DarwinProcessRunTokenReader.js";
 
@@ -76,7 +76,11 @@ it.skipIf(process.platform === "win32")(
       PATH: "/selected-path",
     };
     const runner = new XcrunCommandRunner(environment, async () =>
-      ok({ path: process.execPath, sha256: "a".repeat(64) }),
+      ok({
+        invocationPath: process.execPath,
+        resolvedPath: process.execPath,
+        sha256: "a".repeat(64),
+      }),
     );
     environment.REA_NATIVE_SELECTED = "mutated-after-construction";
     const captured = await runner.run(
@@ -141,7 +145,12 @@ it.skipIf(process.platform === "win32")(
     };
     const runner = new XcrunCommandRunner(
       {},
-      async () => ok({ path: process.execPath, sha256: "a".repeat(64) }),
+      async () =>
+        ok({
+          invocationPath: process.execPath,
+          resolvedPath: process.execPath,
+          sha256: "a".repeat(64),
+        }),
       launcher,
     );
 
@@ -177,6 +186,14 @@ it.skipIf(process.platform === "win32")(
     );
     expect(launches).toBe(2);
 
+    // Stopping one retained supervisor directly completes only its own marker,
+    // before the runner retries anything.
+    const firstOwner = first.error.cleanupOwner;
+    expect(first.error.cleanupMarker?.cleanupIncomplete).toBe(true);
+    expect((await firstOwner?.stop())?.status).not.toBe("incomplete");
+    expect(first.error.cleanupMarker?.cleanupIncomplete).toBe(false);
+    expect(second.error.cleanupMarker?.cleanupIncomplete).toBe(true);
+
     const cleared = await runner.retryCleanup?.();
     expect(cleared).toEqual([]);
     expect(cleanupCalls).toEqual(
@@ -195,7 +212,11 @@ it.skipIf(process.platform === "win32")(
       .update(await readFile(process.execPath))
       .digest("hex");
     const runner = new XcrunCommandRunner({}, async () =>
-      ok({ path: process.execPath, sha256 }),
+      ok({
+        invocationPath: process.execPath,
+        resolvedPath: process.execPath,
+        sha256,
+      }),
     );
     const exited = await runner.run("file", ["-e", "process.exit(1)"], {
       acceptNonZero: true,

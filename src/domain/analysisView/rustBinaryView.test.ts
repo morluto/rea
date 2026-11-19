@@ -1,11 +1,15 @@
 import { expect, it } from "vitest";
+import {
+  changedEvidenceSubject,
+  fileIdentity,
+} from "../../../tests/fixtures/evidenceSubject.js";
+import { metadataReportSubjectFormat } from "../apple/machoTargetSelection.js";
+import { binaryMetadataArchitecture } from "../binaryMetadataArchitecture.js";
 import { createEvidence } from "../evidence.js";
 import { freezeJsonSnapshot } from "../immutableJson.js";
 import type { RustBinary } from "../rust/rustBinary.js";
-import {
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 
 const report: RustBinary = {
   artifact: { path: "/artifacts/rust", sha256: "a".repeat(64), bytes: 512 },
@@ -39,12 +43,13 @@ const report: RustBinary = {
   limitations: [],
 };
 const parent = (value = structuredClone(report)): AnalysisViewParent => {
+  const architecture = binaryMetadataArchitecture(value.architecture);
   const evidence = createEvidence(
     {
       path: value.artifact.path,
       sha256: value.artifact.sha256,
-      format: "elf",
-      architecture: "x86_64",
+      format: metadataReportSubjectFormat(value),
+      ...(architecture === undefined ? {} : { architecture }),
     },
     { id: "rust-auditable", name: "Rust reader", version: "1" },
     {
@@ -54,6 +59,7 @@ const parent = (value = structuredClone(report)): AnalysisViewParent => {
     },
   );
   return {
+    predicateType: evidence.predicate_type,
     evidenceId: evidence.evidence_id,
     operation: evidence.operation,
     subject: evidence.subject,
@@ -111,15 +117,20 @@ it.each([false, true])(
 
 it("checks exact artifact identity and subject architecture for every Rust view", () => {
   for (const changed of [
-    { local_path: "/different" },
     { format: "pe" as const },
     { architecture: "arm64" as const },
-    { digest: { sha256: "b".repeat(64) } },
+    { sha256: "b".repeat(64) },
   ]) {
     const source = parent();
-    if (source.subject == null || source.subject.format !== "elf")
+    if (
+      source.subject === undefined ||
+      fileIdentity(source.subject).format !== "elf"
+    )
       throw new Error("Missing ELF source");
-    const input = { ...source, subject: { ...source.subject, ...changed } };
+    const input = {
+      ...source,
+      subject: changedEvidenceSubject(source.subject, changed),
+    };
     expect(projectAnalysisView(input, { kind: "summary" }).ok).toBe(false);
     expect(
       projectAnalysisView(input, {
@@ -132,12 +143,55 @@ it("checks exact artifact identity and subject architecture for every Rust view"
   }
 });
 
+const withSectionName = (
+  value: RustBinary,
+  section_name: NonNullable<RustBinary["auditable_metadata"]>["section_name"],
+): RustBinary => ({
+  ...value,
+  auditable_metadata:
+    value.auditable_metadata === null
+      ? null
+      : { ...value.auditable_metadata, section_name },
+});
+
+it("refuses imported reports whose container facts contradict their format", () => {
+  const wasm: RustBinary = {
+    ...structuredClone(report),
+    format: "wasm",
+    architecture: "wasm",
+    bits: null,
+    byte_order: "little",
+  };
+  const accepted = projectAnalysisView(parent(wasm), { kind: "summary" });
+  if (!accepted.ok || accepted.value.kind !== "summary")
+    throw new Error("WebAssembly summary failed");
+  expect(accepted.value.summary).toMatchObject({
+    format: "wasm",
+    architecture: "wasm",
+    bits: null,
+    byte_order: "little",
+  });
+  for (const value of [
+    { ...wasm, architecture: "x86_64" },
+    { ...wasm, byte_order: "big" as const },
+    { ...wasm, bits: 32 as const },
+    { ...structuredClone(report), architecture: "wasm" },
+    withSectionName(wasm, "__DATA,.dep-v0"),
+    withSectionName(structuredClone(report), "__DATA,.dep-v0"),
+  ])
+    expect(projectAnalysisView(parent(value), { kind: "summary" }).ok).toBe(
+      false,
+    );
+});
+
 it("bounds inherited warnings and retains cycle counts without walking a cyclic graph", () => {
   const input = { ...parent(), limitations: ["x".repeat(300_000)] };
   const result = projectAnalysisView(input, { kind: "summary" });
   if (!result.ok) throw result.error;
   expect(result.value).toMatchObject({
     summary: {
+      format: "elf",
+      bits: 64,
       auditable_metadata: {
         format_version: null,
         counts: { packages: 1, edges: 1, cyclic_packages: 1 },
@@ -206,3 +260,40 @@ it("pages matching original indices and omits dependency vectors unless selected
     next_offset: null,
   });
 });
+
+it.each(["packages", "edges"] as const)(
+  "distinguishes unavailable Rust %s from decoded empty records",
+  (collection) => {
+    for (const available of [false, true]) {
+      const metadata = report.auditable_metadata!;
+      const result = projectAnalysisView(
+        parent({
+          ...report,
+          auditable_metadata: available
+            ? {
+                ...metadata,
+                packages: [],
+                root_package_index: null,
+                dependency_edges: [],
+                cyclic_dependency_indices: [],
+              }
+            : null,
+        }),
+        { kind: "rust", collection, offset: 3, limit: 1 },
+      );
+      if (!result.ok) throw result.error;
+      expect(result.value.coverage).toEqual({
+        status: available ? "empty" : "unavailable",
+        examined: 0,
+        total: available ? 0 : null,
+        next_offset: null,
+        exhausted: available,
+      });
+      expect(result.value).toMatchObject({
+        source_coverage: {
+          embedded_records: available ? "complete" : "unknown",
+        },
+      });
+    }
+  },
+);

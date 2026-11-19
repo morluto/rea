@@ -6,10 +6,11 @@ import type { CdpConnection } from "./CdpConnection.js";
 import type { CdpEndpointTarget } from "./CdpEndpoint.js";
 import { captureWorkers } from "./CdpPageCaptureWorkers.js";
 import type { CaptureContext } from "./CdpPageCapture.js";
+import { fakeCdpSend } from "../../tests/fixtures/fakeCdpSend.js";
 
 const origin = "http://127.0.0.1:43127";
 
-const capture = async (inventory: unknown) => {
+const capture = async (inventory: unknown, frameIds = new Set<string>()) => {
   const input = inspectWebPageInputSchema.parse({
     cdp_endpoint: origin,
     allowed_origins: [origin],
@@ -18,9 +19,7 @@ const capture = async (inventory: unknown) => {
   const events = new CdpCaptureEvents(input, new Set([origin]));
   const context = {
     connection: {
-      async send() {
-        return inventory;
-      },
+      send: fakeCdpSend(() => inventory),
     } as unknown as CdpConnection,
     sessionId: undefined,
     target: {
@@ -38,12 +37,40 @@ const capture = async (inventory: unknown) => {
       limitations: [],
       events,
     },
-    new Set(),
+    frameIds,
   );
   return { workers, completeness: events.completeness.snapshot() };
 };
 
 describe("web worker target inventory", () => {
+  it.each([
+    ["", "unattributed_origin"],
+    ["https://outside.example/worker.js", "disallowed_origin"],
+    ["file:///fixture/worker.js", "unsupported_url"],
+  ])(
+    "retains selected-worker URL exclusion evidence for %s",
+    async (url, reason) => {
+      const result = await capture({
+        targetInfos: [
+          {
+            targetId: "worker",
+            type: "worker",
+            url,
+            attached: false,
+            openerId: "page",
+          },
+        ],
+      });
+
+      expect(result.workers).toEqual([]);
+      expect(result.completeness.excluded).toContainEqual({
+        section: "workers",
+        reason,
+        count: 1,
+      });
+    },
+  );
+
   it("preserves an explicit empty inventory", async () => {
     const result = await capture({ targetInfos: [] });
 
@@ -171,3 +198,74 @@ it.each([{ openerId: "" }, { parentFrameId: null }])(
     });
   },
 );
+
+it.each([
+  { type: undefined },
+  { type: 7 },
+  { type: "" },
+  { targetId: "" },
+  { url: undefined },
+  { attached: null },
+  { openerId: null },
+  { parentFrameId: "" },
+])(
+  "reports malformed worker facts before ownership and URL policy: %j",
+  async (override) => {
+    const result = await capture({
+      targetInfos: [
+        {
+          targetId: "worker",
+          type: "worker",
+          url: "https://outside.example/worker.js",
+          attached: false,
+          openerId: "foreign-page",
+          ...override,
+        },
+      ],
+    });
+    expect(result.workers).toEqual([]);
+    expect(result.completeness.excluded).toEqual([
+      { section: "workers", reason: "invalid_protocol_value", count: 1 },
+    ]);
+  },
+);
+
+it("uses parsed frame relationships without treating valid non-workers as malformed", async () => {
+  const result = await capture(
+    {
+      targetInfos: [
+        { type: "page" },
+        {
+          targetId: "worker",
+          type: "shared_worker",
+          url: `${origin}/worker.js`,
+          attached: false,
+          openerId: "foreign-page",
+          parentFrameId: "selected-frame",
+        },
+        {
+          targetId: "foreign",
+          type: "worker",
+          url: `${origin}/foreign.js`,
+          attached: true,
+          parentFrameId: "foreign-frame",
+        },
+      ],
+    },
+    new Set(["selected-frame"]),
+  );
+  expect(result.workers).toEqual([
+    {
+      target_id: "worker",
+      type: "shared_worker",
+      url: `${origin}/worker.js`,
+      origin,
+      attached: false,
+      opener_target_id: "foreign-page",
+      parent_frame_id: "selected-frame",
+    },
+  ]);
+  expect(result.completeness.excluded).toEqual([
+    { section: "workers", reason: "out_of_target_scope", count: 1 },
+  ]);
+});

@@ -1,63 +1,37 @@
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptArtifactFiles } from "./JavaScriptArtifactAnalysis.js";
+import { analyzeArtifactFiles } from "../../../tests/fixtures/javascriptArtifactAnalysis.js";
 
-const packageObservation = (text: string) =>
-  analyzeJavaScriptArtifactFiles({
+const packageObservation = async (text: string | null) => {
+  const { analysis } = await analyzeArtifactFiles({
     files: [
       {
         path: "app/package.json",
         container_sha256: "a".repeat(64),
         sha256: "b".repeat(64),
-        bytes: Buffer.byteLength(text),
+        bytes: Buffer.byteLength(text ?? ""),
         inventory_artifact_id: "package-main-fixture",
         kind: "package-json",
         unpacked: false,
-        text: { included: true, value: text },
+        text:
+          text === null
+            ? { included: false, reason: "invalid-utf8" }
+            : { included: true, value: text },
       },
     ],
     unavailable_relevant_files: [],
     containers: [],
-    text_bytes_read: Buffer.byteLength(text),
+    text_bytes_read: Buffer.byteLength(text ?? ""),
     invalid_utf8_files: 0,
-  }).packages[0];
+  });
+  return analysis.packages[0];
+};
 
-it("retains only declared package metadata despite inherited host fields", () => {
-  const inherited = {
-    name: "host-name",
-    version: "host-version",
-    main: "host-entry.cjs",
-    renderer: "host-renderer.cjs",
-    browser: "host-browser.cjs",
-    module: "host-module.mjs",
-  };
-  const previous = Object.fromEntries(
-    Object.keys(inherited).map((key) => [
-      key,
-      Object.getOwnPropertyDescriptor(Object.prototype, key),
-    ]),
+it("retains declared package metadata and normal defaults", async () => {
+  const absent = await packageObservation("{}");
+  const declared = await packageObservation(
+    '{"name":"source-name","version":"1.0.0","main":null,"browser":"source-browser.cjs"}',
   );
-  let absent: ReturnType<typeof packageObservation>;
-  let declared: ReturnType<typeof packageObservation>;
-  try {
-    for (const [key, value] of Object.entries(inherited))
-      Object.defineProperty(Object.prototype, key, {
-        configurable: true,
-        writable: true,
-        value,
-      });
-    absent = packageObservation("{}");
-    declared = packageObservation(
-      '{"name":"source-name","version":"1.0.0","main":null,"browser":"source-browser.cjs"}',
-    );
-  } finally {
-    for (const key of Object.keys(inherited)) {
-      const descriptor = previous[key];
-      if (descriptor === undefined)
-        Reflect.deleteProperty(Object.prototype, key);
-      else Object.defineProperty(Object.prototype, key, descriptor);
-    }
-  }
   expect(absent).toMatchObject({
     status: "included",
     name: null,
@@ -65,7 +39,7 @@ it("retains only declared package metadata despite inherited host fields", () =>
     main: null,
     main_status: "default",
     main_entrypoint: "",
-    renderer: null,
+    renderer_declarations: {},
   });
   expect(declared).toMatchObject({
     status: "included",
@@ -74,14 +48,64 @@ it("retains only declared package metadata despite inherited host fields", () =>
     main: null,
     main_status: "invalid",
     main_entrypoint: "",
-    renderer: "source-browser.cjs",
+    renderer_declarations: { browser: "source-browser.cjs" },
+    renderer_entrypoint: { field: "browser", path: "source-browser.cjs" },
   });
 });
 
+it.each([
+  {
+    fields: {
+      renderer: "renderer.js",
+      browser: "browser.js",
+      module: "module.js",
+    },
+    field: "renderer",
+    path: "renderer.js",
+  },
+  {
+    fields: { renderer: false, browser: "browser.js", module: "module.js" },
+    field: "browser",
+    path: "browser.js",
+  },
+  {
+    fields: { renderer: "", browser: {}, module: "module.js" },
+    field: "module",
+    path: "module.js",
+  },
+])(
+  "keeps simultaneous renderer declarations separate from selected $field provenance",
+  async ({ fields, field, path }) => {
+    const observation = await packageObservation(JSON.stringify(fields));
+    expect(observation).toMatchObject({ renderer_entrypoint: { field, path } });
+    for (const [key, value] of Object.entries(fields))
+      expect(observation).toMatchObject({
+        renderer_declarations: {
+          [key]: typeof value === "string" ? value : { status: "non-string" },
+        },
+      });
+  },
+);
+
+it.each([
+  ["{}", {}],
+  ["{", null],
+  ["null", null],
+  [null, null],
+] as const)(
+  "keeps absent/invalid/unavailable renderer origins distinct for %s",
+  async (text, declarations) => {
+    expect(await packageObservation(text)).toMatchObject({
+      renderer_declarations: declarations,
+      renderer_entrypoint: null,
+    });
+  },
+);
+
 it.each([null, false, 123, {}, []].map((main) => ({ main })))(
   "retains non-string main $main evidence separately from Node index fallback",
-  ({ main }) => {
-    expect(packageObservation(JSON.stringify({ main }))).toMatchObject({
+  async ({ main }) => {
+    expect(await packageObservation(JSON.stringify({ main }))).toMatchObject({
       status: "included",
       main: null,
       main_status: "invalid",
@@ -90,8 +114,8 @@ it.each([null, false, 123, {}, []].map((main) => ({ main })))(
   },
 );
 
-it("keeps valid JSON numeric overflow invalid as a package main", () => {
-  expect(packageObservation('{"main":1e400}')).toMatchObject({
+it("keeps valid JSON numeric overflow invalid as a package main", async () => {
+  expect(await packageObservation('{"main":1e400}')).toMatchObject({
     status: "included",
     main: null,
     main_status: "invalid",
@@ -99,8 +123,8 @@ it("keeps valid JSON numeric overflow invalid as a package main", () => {
   });
 });
 
-it("treats a valid numeric JSON root as a package metadata shape failure", () => {
-  expect(packageObservation("1e400")).toMatchObject({
+it("treats a valid numeric JSON root as a package metadata shape failure", async () => {
+  expect(await packageObservation("1e400")).toMatchObject({
     status: "invalid",
     main: null,
     main_status: "unavailable",
@@ -108,9 +132,9 @@ it("treats a valid numeric JSON root as a package metadata shape failure", () =>
   });
 });
 
-it("retains valid numeric overflow as an ordinary JSON module", () => {
+it("retains valid numeric overflow as an ordinary JSON module", async () => {
   const text = "1e400";
-  const analysis = analyzeJavaScriptArtifactFiles({
+  const { analysis } = await analyzeArtifactFiles({
     files: [
       {
         path: "settings.json",
@@ -142,8 +166,8 @@ it.each([
   ['{"main":"C:main.cjs"}', "declared", "C:main.cjs"],
 ] as const)(
   "preserves package launch declarations from %s",
-  (text, status, entry) => {
-    expect(packageObservation(text)).toMatchObject({
+  async (text, status, entry) => {
+    expect(await packageObservation(text)).toMatchObject({
       status: "included",
       main_status: status,
       main_entrypoint: entry,
@@ -153,8 +177,8 @@ it.each([
 
 it.each(["{", "null", "[]", "[{}]", "123", '"root"', "false"])(
   "keeps malformed package metadata %s out of known launch fallback",
-  (text) => {
-    expect(packageObservation(text)).toMatchObject({
+  async (text) => {
+    expect(await packageObservation(text)).toMatchObject({
       status: "invalid",
       main: null,
       main_status: "unavailable",

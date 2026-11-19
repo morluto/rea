@@ -3,8 +3,9 @@ import { runWithExecutionLimits } from "./PlaywrightElectronExecution.js";
 // `npm run verify:electron`.
 import { afterEach, expect, it, vi } from "vitest";
 import type { ElectronApplication } from "playwright-core";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 
 import {
   electronActiveObservationInputSchema,
@@ -188,9 +189,61 @@ it("preserves local Playwright action diagnostics", async () => {
     status: "failed",
     error: `locator ${selector} failed with token=raw-secret`,
   });
-  expect(result[0]?.error).toContain(selector);
-  expect(result[0]?.error).toContain("raw-secret");
 });
+
+it("keeps a completed action failure primary when cancellation arrives before its result is consumed", async () => {
+  const controller = new AbortController();
+  const primary = new Error("selected locator failed");
+  const page = {
+    locator: () => ({
+      click: () => {
+        const rejected = Promise.reject(primary);
+        void rejected.catch(() =>
+          queueMicrotask(() => controller.abort("late cancellation")),
+        );
+        return rejected;
+      },
+    }),
+  };
+  const result = await runElectronActions(
+    { windows: () => [page], browserWindow: fixtureBrowserWindow } as never,
+    electronActiveObservationInputSchema.parse({
+      executable_path: "/opt/electron",
+      application_path: "/opt/app/main.js",
+      actions: [{ step_id: "failed", kind: "click", selector: "#selected" }],
+    }),
+    { signal: controller.signal },
+    new ArtifactResourceScope(),
+  );
+  expect(controller.signal.aborted).toBe(true);
+  expect(result.actions[0]).toMatchObject({
+    status: "failed",
+    error: primary.message,
+  });
+});
+
+it.each(["raw action failure", ""])(
+  "preserves a non-Error action rejection %j",
+  async (reason) => {
+    const page = {
+      locator: () => ({ click: async () => Promise.reject(reason) }),
+    };
+    const result = await runElectronActions(
+      { windows: () => [page], browserWindow: fixtureBrowserWindow } as never,
+      electronActiveObservationInputSchema.parse({
+        executable_path: "/opt/electron",
+        application_path: "/opt/app/main.js",
+        actions: [{ step_id: "failed", kind: "click", selector: "#selected" }],
+      }),
+      {},
+      new ArtifactResourceScope(),
+    );
+    expect(result.actions[0]).toMatchObject({
+      status: "failed",
+      error: reason,
+    });
+  },
+);
 
 it("retains complete action errors and Electron window text", async () => {
   const longError = `locator failed ${"detail ".repeat(300)}`;
@@ -353,7 +406,7 @@ it("runs an untargeted deep-link without requiring a BrowserWindow", async () =>
   ]);
 });
 
-it("honors caller-selected Electron waits beyond the former action timeout", async () => {
+it("honors a caller-selected Electron wait duration exactly", async () => {
   const input = electronActiveObservationInputSchema.parse({
     executable_path: "/opt/electron",
     application_path: "/opt/app/main.js",
@@ -546,6 +599,7 @@ const finalState = {
     observed_ipc: 0,
     observed_runtime: 0,
     hook_error: false,
+    single_instance_lock_refused: false,
   },
 };
 
@@ -625,9 +679,12 @@ it("observes an operation abandoned by an already-cancelled signal", async () =>
   }
 });
 
-it.each(["click", "renderer-crash"] as const)(
-  "keeps the selected Page's native identity and completed %s through handle cleanup failure",
-  async (kind) => {
+it.each([
+  { kind: "click", rejection: new Error("handle disposal failed") },
+  { kind: "renderer-crash", rejection: "" },
+] as const)(
+  "keeps the selected Page's native identity and completed $kind through handle cleanup failure",
+  async ({ kind, rejection }) => {
     const selectedEffect = vi.fn();
     const page = {
       locator: () => ({
@@ -640,7 +697,7 @@ it.each(["click", "renderer-crash"] as const)(
     const pages = [other, page];
     const dispose = vi
       .fn()
-      .mockRejectedValueOnce(new Error("handle disposal failed"))
+      .mockRejectedValueOnce(rejection)
       .mockResolvedValue(undefined);
     const nativeWindow = {
       id: 99,
@@ -683,6 +740,10 @@ it.each(["click", "renderer-crash"] as const)(
       { target: null, status: "cancelled" },
     ]);
     expect(outcome.cleanupError?.cleanupIncomplete).toBe(true);
+    expect(outcome.cleanupError?.cause).toBe(rejection);
+    expect(outcome.cleanupError?.diagnostics?.reason).toBe(
+      rejection instanceof Error ? rejection.message : rejection,
+    );
     expect(resources.hasPending).toBe(true);
     await resources.close();
     expect(dispose).toHaveBeenCalledTimes(2);
@@ -732,20 +793,33 @@ it.each(["acquisition", "identity"] as const)(
       { signal: controller.signal },
       resources,
     );
-    await started.promise;
-    controller.abort(new Error("stop during selected window read"));
-    await Promise.resolve();
-    finish.resolve();
-    const outcome = await running;
-    expect(outcome.actions[0]).toMatchObject({
-      status: "cancelled",
-      target: null,
-    });
-    expect(page.locator).not.toHaveBeenCalled();
-    expect(dispose).toHaveBeenCalledOnce();
-    expect(resources.hasPending).toBe(false);
-    await resources.close();
-    expect(dispose).toHaveBeenCalledOnce();
+    try {
+      await awaitAcknowledgement(
+        started.promise,
+        running,
+        "selected window read",
+      );
+      controller.abort(new Error("stop during selected window read"));
+      await Promise.resolve();
+      finish.resolve();
+      const outcome = await running;
+      expect(outcome.actions[0]).toMatchObject({
+        status: "cancelled",
+        target: null,
+      });
+      expect(page.locator).not.toHaveBeenCalled();
+      expect(dispose).toHaveBeenCalledOnce();
+      expect(resources.hasPending).toBe(false);
+      await resources.close();
+      expect(dispose).toHaveBeenCalledOnce();
+    } finally {
+      finish.resolve();
+      try {
+        await running;
+      } finally {
+        await resources.close();
+      }
+    }
   },
 );
 

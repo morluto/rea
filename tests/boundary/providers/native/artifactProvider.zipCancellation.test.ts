@@ -6,8 +6,8 @@ import { expect, it, vi } from "vitest";
 
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
 import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
-import { ArtifactReaderFailure } from "../../../../src/artifacts/ArtifactReader.js";
-import { SafeOutputTree } from "../../../../src/artifacts/SafeOutputTree.js";
+import { ArtifactReaderFailure } from "../../../../src/resources/ArtifactReader.js";
+import { SafeOutputTree } from "../../../../src/resources/SafeOutputTree.js";
 import { artifactExtractionResultSchema } from "../../../../src/domain/artifactGraph.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
@@ -102,9 +102,12 @@ it("preserves a real ZIP stream's caller cancellation through extraction rollbac
       containment_verified: true,
       artifacts: [expect.objectContaining({ relative_path: "member.bin" })],
     });
-    expect(await readFile(join(controlOutput, "member.bin"))).toEqual(
-      Buffer.from(bytes),
-    );
+    expect(
+      Buffer.compare(
+        await readFile(join(controlOutput, "member.bin")),
+        Buffer.from(bytes),
+      ),
+    ).toBe(0);
     expect(await client.close()).toMatchObject({ ok: true });
   } finally {
     writeSpy.mockRestore();

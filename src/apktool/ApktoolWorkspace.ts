@@ -1,20 +1,18 @@
-import { readArtifactFileChunks } from "../artifacts/readArtifactFileChunks.js";
 import {
+  readArtifactFileChunks,
   ArtifactReaderFailure,
   type ArtifactTraversalOptions,
-} from "../artifacts/ArtifactReader.js";
-import { createHash } from "node:crypto";
-import { chmod, open } from "node:fs/promises";
-import { join } from "node:path";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { DirectoryArtifactReader } from "../artifacts/DirectoryArtifactReader.js";
-import {
+  ArtifactResourceScope,
   assertArtifactReadActive,
   artifactSelectedPathErrno,
   mapArtifactFileFailure,
   withArtifactFileHandle,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
+  DirectoryArtifactReader,
+} from "../resources/index.js";
+import { createHash } from "node:crypto";
+import { chmod, open } from "node:fs/promises";
+import { join } from "node:path";
 import {
   AnalysisInputError,
   AnalysisAccessDeniedError,
@@ -27,6 +25,7 @@ import {
 } from "../filesystem/RegularFile.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import type { ApktoolCommandCleanup } from "./ApktoolCommandCleanup.js";
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 
 /** One decode's descriptors and root; removal follows confirmed child cleanup. */
 export class ApktoolWorkspace {
@@ -68,9 +67,8 @@ export class ApktoolWorkspace {
         path,
         this.#files,
         signal,
-        async (source) => {
+        async ({ handle: source, initial }) => {
           admitted = true;
-          const initial = await source.stat();
           const output = join(this.path, "input.apk");
           const file = await open(output, "wx", 0o600);
           await withArtifactFileHandle(
@@ -180,10 +178,9 @@ export class ApktoolWorkspace {
         path,
         this.#files,
         signal,
-        async (file) => {
+        async ({ handle: file, initial }) => {
           admitted = true;
-          const initial = await file.stat();
-          const bytes = Buffer.alloc(budget + 1);
+          const bytes = Buffer.alloc(Math.min(initial.size, budget) + 1);
           let length = 0;
           while (length < bytes.length) {
             assertArtifactReadActive(signal);
@@ -205,7 +202,7 @@ export class ApktoolWorkspace {
           const sourceBytes = Math.min(length, budget);
           try {
             return {
-              text: new TextDecoder("utf-8", { fatal: true }).decode(
+              text: strictUtf8Decoder("strip-signature").decode(
                 bytes.subarray(0, sourceBytes),
                 { stream: truncated },
               ),

@@ -16,8 +16,10 @@ import { evidenceSchema, type Evidence } from "./evidence.js";
 import { hasComparisonEvidenceIdentity } from "./comparisonEvidenceIdentity.js";
 import { functionComparisonDimensionNameSchema } from "./functionComparisonSchemas.js";
 import type { JsonValue } from "./jsonValue.js";
-import { comparisonStatusSchema } from "./process/processComparison.js";
-import { PROCESS_COMPARISON_DIMENSIONS } from "./process/processComparison.js";
+import {
+  comparisonStatusSchema,
+  PROCESS_COMPARISON_DIMENSIONS,
+} from "./process/processComparison.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");

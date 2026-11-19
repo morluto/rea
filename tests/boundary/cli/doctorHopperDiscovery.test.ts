@@ -36,7 +36,8 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
         arguments: ["providers", "--json"],
         environment,
       });
-      expect(providers.exitCode).toBe(expectedExit);
+      // Listing providers does not start native analysis or consume its timeout.
+      expect(providers.exitCode).toBe(0);
       const doctor = await cli.run({
         arguments: ["doctor", "--provider", "hopper", "--json"],
         environment,
@@ -177,7 +178,6 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
         REA_HOPPER_TEST_MARKER: launchMarker,
         GHIDRA_INSTALL_DIR: join(home, "missing-ghidra"),
       },
-      timeoutMs: 20_000,
     });
 
     const hopperReady = process.platform === "darwin";

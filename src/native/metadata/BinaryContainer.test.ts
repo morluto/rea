@@ -1,14 +1,170 @@
+import type {
+  FileMapping,
+  ZeroFillMapping,
+} from "../../domain/virtualFileMapping.js";
+import { readBinaryContainer } from "../../domain/native/readBinaryContainer.js";
 import { expect, it } from "vitest";
 import {
   BinaryFormatFailure,
   BinaryMappingFailure,
+  BinaryReader,
+  isBinaryStringReadLimit,
   createFileMappingIndex,
   mappedFileOffset,
   readMappedCString,
   type BinaryContainer,
-  type FileMapping,
-  type ZeroFillMapping,
-} from "./BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
+
+it("preserves representable offsets for invalid file ranges", () => {
+  const reader = new BinaryReader(Buffer.alloc(120), true, "elf");
+  for (const read of [
+    () => reader.range(128, 1, "segment"),
+    () => reader.fileRange(128n, 1n, "segment"),
+  ]) {
+    try {
+      read();
+      throw new Error("Expected malformed range");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BinaryFormatFailure);
+      expect(error).toMatchObject({
+        failure: { kind: "malformed", offset: 128, field: "segment" },
+      });
+    }
+  }
+  expect(() => reader.fileRange(2n ** 60n, 1n, "segment")).toThrow(
+    BinaryFormatFailure,
+  );
+});
+
+it("decodes signed and floating fields in both byte orders", () => {
+  const bytes = Buffer.alloc(18);
+  bytes.writeInt16LE(-2, 0);
+  bytes.writeInt32LE(-3, 2);
+  bytes.writeFloatLE(1.5, 6);
+  bytes.writeBigInt64LE(-4n, 10);
+  const little = new BinaryReader(bytes, true, "zip");
+  expect([little.u8(0), little.i8(0), little.i16(0), little.i32(2)]).toEqual([
+    0xfe, -2, -2, -3,
+  ]);
+  expect([little.f32(6), little.i64(10)]).toEqual([1.5, -4n]);
+  bytes.writeDoubleBE(-0.25, 0);
+  const big = new BinaryReader(bytes, false, "zip");
+  expect([big.f64(0), big.i16(0), big.i32(0)]).toEqual([
+    -0.25,
+    bytes.readInt16BE(0),
+    bytes.readInt32BE(0),
+  ]);
+  expect(() => little.i64(11)).toThrow(BinaryFormatFailure);
+  expect(() => big.f32(15)).toThrow(BinaryFormatFailure);
+});
+
+it("decodes numeric fields at nonzero buffer offsets and preserves malformed and truncated range failures", () => {
+  const backing = Buffer.from([
+    0xff, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0xfe,
+  ]);
+  const window = backing.subarray(1, 9);
+  const little = new BinaryReader(window, true, "zip");
+  const big = new BinaryReader(window, false, "zip");
+
+  expect(little.u16(2)).toBe(0x0403);
+  expect(big.u16(2)).toBe(0x0304);
+  expect(little.u32(2)).toBe(0x06050403);
+  expect(big.u32(2)).toBe(0x03040506);
+  expect(little.word(2, 32)).toBe(0x06050403n);
+  expect(big.word(2, 32)).toBe(0x03040506n);
+  expect(little.word(0, 64)).toBe(0x0807060504030201n);
+  expect(big.word(0, 64)).toBe(0x0102030405060708n);
+
+  const captureFailure = (read: () => unknown): BinaryFormatFailure => {
+    try {
+      read();
+      throw new Error("Expected BinaryFormatFailure");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BinaryFormatFailure);
+      return error as BinaryFormatFailure;
+    }
+  };
+
+  const malformed = captureFailure(() => little.u32(9));
+  expect(malformed.kind).toBe("malformed");
+  expect(malformed.message).toBe(
+    "32-bit field range is truncated or outside the file",
+  );
+  expect(malformed.failure).toEqual({
+    kind: "malformed",
+    format: "zip",
+    detail: "32-bit field range is truncated or outside the file",
+    field: "32-bit field",
+    offset: 9,
+  });
+
+  expect(captureFailure(() => little.u16(-1)).failure).toEqual({
+    kind: "malformed",
+    format: "zip",
+    detail: "16-bit field range is truncated or outside the file",
+    field: "16-bit field",
+    offset: -1,
+  });
+  expect(captureFailure(() => little.u16(Number.NaN)).failure).toEqual({
+    kind: "malformed",
+    format: "zip",
+    detail: "16-bit field range is truncated or outside the file",
+    field: "16-bit field",
+  });
+  expect(captureFailure(() => little.range(0, -1, "span")).kind).toBe(
+    "malformed",
+  );
+  expect(captureFailure(() => little.range(0, 1.5, "span")).kind).toBe(
+    "malformed",
+  );
+
+  const truncated = captureFailure(() => little.u32(6));
+  expect(truncated.kind).toBe("truncated");
+  expect(truncated.message).toBe(
+    "32-bit field range is truncated or outside the file",
+  );
+  expect(truncated.failure).toEqual({
+    kind: "truncated",
+    format: "zip",
+    detail: "32-bit field range is truncated or outside the file",
+    field: "32-bit field",
+    offset: 6,
+  });
+  expect(captureFailure(() => little.u16(7)).failure).toEqual({
+    kind: "truncated",
+    format: "zip",
+    detail: "16-bit field range is truncated or outside the file",
+    field: "16-bit field",
+    offset: 7,
+  });
+  expect(captureFailure(() => little.word(1, 64)).failure).toEqual({
+    kind: "truncated",
+    format: "zip",
+    detail: "64-bit field range is truncated or outside the file",
+    field: "64-bit field",
+    offset: 1,
+  });
+});
+
+it("distinguishes a mapped string read allowance from malformed bytes", () => {
+  const bytes = Buffer.from("long-name\0");
+  const index = createFileMappingIndex([
+    { address: 100n, offset: 0, size: bytes.length },
+  ]);
+  let failure: unknown;
+  try {
+    index.readCString(bytes, 100n, 3);
+  } catch (cause) {
+    failure = cause;
+  }
+  expect(isBinaryStringReadLimit(failure)).toBe(true);
+  expect(failure).toMatchObject({
+    failure: { kind: "limit", limit: { maximum: 3 } },
+  });
+  expect(index.readCString(bytes, 100n, bytes.length).toString()).toBe(
+    "long-name",
+  );
+});
 
 const outcome = (translate: () => number): number | string => {
   try {
@@ -172,3 +328,80 @@ it.each([false, true])(
     );
   },
 );
+
+it.each([
+  { magic: 0xfeedface, bits: 32, headerSize: 28 },
+  { magic: 0xfeedfacf, bits: 64, headerSize: 32 },
+  { magic: 0xcefaedfe, bits: 32, headerSize: 28 },
+  { magic: 0xcffaedfe, bits: 64, headerSize: 32 },
+])(
+  "retains thin-header truncation after recognizing magic $magic",
+  ({ magic, bits, headerSize }) => {
+    const bytes = Buffer.alloc(4);
+    bytes.writeUInt32BE(magic);
+    expect(() => readBinaryContainer(bytes)).toThrow(
+      new BinaryFormatFailure(
+        "malformed",
+        `truncated Mach-O header: a ${bits}-bit header needs ${headerSize} bytes; the file has 4`,
+      ),
+    );
+  },
+);
+
+it("keeps a JVM-sized FAT count unconfirmed while rejecting malformed zero-count FAT", () => {
+  const bytes = Buffer.alloc(8);
+  bytes.writeUInt32BE(0xcafebabe);
+  bytes.writeUInt32BE(0x0000003d, 4); // JVM major version 61; no FAT table follows.
+  expect(() => readBinaryContainer(bytes)).toThrow(
+    new BinaryFormatFailure(
+      "unsupported",
+      "Only ELF, PE, and thin Mach-O native images are supported",
+    ),
+  );
+  bytes.writeUInt32BE(0, 4);
+  expect(() => readBinaryContainer(bytes)).toThrow(
+    new BinaryFormatFailure(
+      "malformed",
+      "FAT header declares no architectures",
+    ),
+  );
+});
+
+/** An x86-64 ELF executable with one PT_LOAD declaring `fileSize` bytes. */
+const elfWithLoadSegment = (fileSize: bigint): Buffer => {
+  const bytes = Buffer.alloc(64 + 56);
+  bytes.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1]);
+  bytes.writeUInt16LE(2, 16); // ET_EXEC
+  bytes.writeUInt16LE(0x3e, 18); // EM_X86_64
+  bytes.writeUInt32LE(1, 20);
+  bytes.writeBigUInt64LE(64n, 32); // e_phoff
+  bytes.writeUInt16LE(64, 52);
+  bytes.writeUInt16LE(56, 54);
+  bytes.writeUInt16LE(1, 56); // e_phnum
+  bytes.writeUInt16LE(64, 58);
+  bytes.writeUInt32LE(1, 64); // PT_LOAD
+  bytes.writeUInt32LE(5, 68);
+  bytes.writeBigUInt64LE(0x400000n, 80);
+  bytes.writeBigUInt64LE(0x400000n, 88);
+  bytes.writeBigUInt64LE(fileSize, 96);
+  bytes.writeBigUInt64LE(fileSize, 104);
+  bytes.writeBigUInt64LE(0x1000n, 112);
+  return bytes;
+};
+
+it("names a load segment that runs past the end of the file as truncated", () => {
+  expect(readBinaryContainer(elfWithLoadSegment(120n)).mappings).toHaveLength(
+    1,
+  );
+  expect(() => readBinaryContainer(elfWithLoadSegment(0x1000n))).toThrow(
+    expect.objectContaining({
+      failure: {
+        kind: "truncated",
+        format: "elf",
+        detail: "ELF load segment range is outside the file",
+        offset: 0,
+        field: "ELF load segment",
+      },
+    }),
+  );
+});

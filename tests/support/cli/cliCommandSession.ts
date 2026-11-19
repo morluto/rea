@@ -124,12 +124,16 @@ const signalChild = (
   }
 };
 
-const stopChild = async (
+/**
+ * Stop an owned test child process via EOF, SIGTERM, and SIGKILL, throwing
+ * when the process still has not exited so the caller retains ownership.
+ */
+export const stopOwnedChildProcess = async (
   child: ChildProcessWithoutNullStreams,
   graceMs: number,
+  label = "shared CLI process",
 ): Promise<void> => {
   if (child.exitCode !== null || child.signalCode !== null) return;
-  // EOF lets the worker await closeCliJavaScriptResources before exiting.
   if (!child.stdin.writableEnded) child.stdin.end();
   if (await waitForExit(child, graceMs)) return;
   signalChild(child, "SIGTERM");
@@ -137,10 +141,13 @@ const stopChild = async (
   if (child.exitCode !== null || child.signalCode !== null) return;
   signalChild(child, "SIGKILL");
   if (await waitForExit(child, graceMs)) return;
-  throw new Error(
-    `shared CLI process ${String(child.pid)} did not exit after SIGKILL`,
-  );
+  throw new Error(`${label} ${String(child.pid)} did not exit after SIGKILL`);
 };
+
+const stopChild = (
+  child: ChildProcessWithoutNullStreams,
+  graceMs: number,
+): Promise<void> => stopOwnedChildProcess(child, graceMs, "shared CLI process");
 
 const commandResult = (message: SessionResponse): CliCommandResult => ({
   exitCode: message.exitCode ?? null,
@@ -403,6 +410,13 @@ class SharedCliProcess implements CliCommandSession {
     started.stdout.on("data", (chunk: Buffer) => {
       try {
         reader(chunk);
+      } catch (error) {
+        this.#failTransport(started, error);
+      }
+    });
+    started.stdout.once("end", () => {
+      try {
+        reader.finish();
       } catch (error) {
         this.#failTransport(started, error);
       }

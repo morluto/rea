@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -27,9 +28,9 @@ it("delivers typed tool failures without violating the advertised success schema
   ];
   for (const request of requests) {
     const tool = tools.find(({ name }) => name === request.name);
-    if (tool?.outputSchema === undefined)
+    if (tool === undefined)
       throw new Error(`${request.name} omitted its output schema`);
-    const reply = await client.callTool(request);
+    const reply = await client.callTool(request, { toolDefinition: tool });
     const diagnostic = parseMcpToolError(reply);
     expect(diagnostic.error.message, request.name).not.toBe("");
     if ("path" in request.arguments || "input_path" in request.arguments)
@@ -40,7 +41,7 @@ it("delivers typed tool failures without violating the advertised success schema
       const validate = new Ajv2020({
         strict: false,
         validateFormats: false,
-      }).compile(z.record(z.string(), z.unknown()).parse(tool.outputSchema));
+      }).compile(canonicalOutputSchema(tool.name));
       if (!validate(reply.structuredContent)) failures.push(request.name);
     }
   }

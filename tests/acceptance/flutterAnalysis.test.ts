@@ -18,9 +18,12 @@ import {
   createFlutterApk,
   createDuplicateFlutterApk,
 } from "../fixtures/flutterApk.js";
-import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
+import { lazyLocalToolsMcp } from "../fixtures/localToolsMcp.js";
+import { expectCliMcpEvidenceParity } from "../fixtures/cliMcpEvidenceParity.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+
+const connectLocalToolsMcp = lazyLocalToolsMcp();
 
 cliTest(
   "CLI and stdio MCP preserve AOT facts and exact artifact identity across ignored DT_BIND_NOW values",
@@ -46,7 +49,7 @@ cliTest(
       );
       const response = await call("inspect_dart_aot", { path, abi: "x86_64" });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
-      expect(parseEvidence(response.structuredContent)).toEqual(evidence);
+      expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
       const digest = createHash("sha256").update(image).digest("hex");
       expect(report).toMatchObject({
         coverage: "complete",
@@ -64,7 +67,7 @@ cliTest(
       expect(report.libapp.sections).toHaveLength(4);
       expect(evidence.subject).toMatchObject({
         local_path: path,
-        digest: { sha256: report.target.sha256 },
+        identity: { sha256: report.target.sha256 },
       });
       reports.push({
         sections: report.libapp.sections,
@@ -134,8 +137,7 @@ cliTest(
       expect(mcp.subject).toEqual(evidence.subject);
       expect(mcp.subject).toMatchObject({
         local_path: path,
-        format: "apk",
-        digest: { sha256: complete.target.sha256 },
+        identity: { format: "apk", sha256: complete.target.sha256 },
       });
       expect(mcp.evidence_id).toBe(evidence.evidence_id);
       if (name === "inspect_dart_aot") {
@@ -156,6 +158,10 @@ cliTest(
           "identify_flutter_build",
         ).outputSchema.parse(result.json).normalized_result;
         expect(identified.coverage).toBe("complete");
+        expect(identified.abis.map(({ abi }) => abi).sort()).toEqual([
+          "arm64-v8a",
+          "x86_64",
+        ]);
         for (const abi of identified.abis) {
           expect(abi.libflutter).toMatchObject({
             build_id: "0123456789abcdef",

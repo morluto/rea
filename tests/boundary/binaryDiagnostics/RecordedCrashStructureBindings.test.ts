@@ -60,7 +60,7 @@ it.each([
         report.decoder_diagnostics,
       ),
     ).not.toThrow();
-    expect(snapshot).toEqual(original);
+    expect(Buffer.compare(snapshot, original)).toBe(0);
     expect(report.note_interpretation_completeness).toBe("unknown");
     expect(report.live_process_identity).toBe("unknown");
   },
@@ -178,6 +178,6 @@ it.each(["/usr/bin/fixture", "../../fixture", "/a/../fixture"])(
     expect(validateCoreFileMappingAuthority(report, snapshot).ok).toBe(
       path === "/usr/bin/fixture",
     );
-    expect(snapshot).toEqual(original);
+    expect(Buffer.compare(snapshot, original)).toBe(0);
   },
 );

@@ -9,12 +9,16 @@ import io
 import json
 import os
 from pathlib import Path
-import resource
 import sys
 
 PROFILE = "pwntools@4.15.0;pyelftools@0.33;unicorn@2.1.2"
 PACKAGES = {"pwntools": "4.15.0", "pyelftools": "0.33", "unicorn": "2.1.2"}
 OUTPUT_BYTES = 64 * 1024 * 1024
+# (e_machine, ELF class bits, byte order) -> architecture pwntools must also report.
+PROFILES = {(62, 64, "little"): "amd64", (183, 64, "little"): "aarch64", (3, 32, "little"): "i386",
+            (40, 32, "little"): "arm", (8, 32, "little"): "mips", (8, 32, "big"): "mips"}
+PROFILE_SCOPE = ("Layout profile requires ELF64 x86-64, ELF64 AArch64 little-endian, ELF32 i386, "
+                 "ELF32 ARM little-endian or ELF32 MIPS little- or big-endian objects.")
 
 
 class LayoutFailure(Exception):
@@ -116,24 +120,41 @@ def inspect_elf(path, cache):
         raise LayoutFailure("format", "Selected object does not contain an ELF header.")
     if len(content) < 16:
         raise LayoutFailure("format", "Selected ELF identification is truncated.")
-    if content[4] != 2 or content[5] != 1:
-        raise LayoutFailure("unsupported-target", "Initial layout profile requires ELF64 little-endian objects.")
-    if len(content) < 64:
-        raise LayoutFailure("format", "Selected ELF64 header is truncated.")
-    if int.from_bytes(content[18:20], "little") != 62:
-        raise LayoutFailure("unsupported-target", "Initial layout profile requires x86-64 ELF objects.")
-    if int.from_bytes(content[16:18], "little") not in (1, 2, 3):
+    if content[4] not in (1, 2) or content[5] not in (1, 2):
+        raise LayoutFailure("unsupported-target", "Selected ELF declares an unknown class or byte order.")
+    bits, header_size = (32, 52) if content[4] == 1 else (64, 64)
+    order = "little" if content[5] == 1 else "big"
+    if len(content) < header_size:
+        raise LayoutFailure("format", f"Selected ELF{bits} header is truncated.")
+    profile = (int.from_bytes(content[18:20], order), bits, order)
+    if profile not in PROFILES:
+        raise LayoutFailure("unsupported-target", PROFILE_SCOPE)
+    if int.from_bytes(content[16:18], order) not in (1, 2, 3):
         raise LayoutFailure("unsupported-target", "Selected ELF type is outside the EXEC/DYN/REL layout profile; recorded core analysis is separate.")
     from pwnlib.context import context
     with context.local(cache_dir=str(cache), log_level="warning"):
         from elftools.common.exceptions import ELFError
+        from elftools.common.utils import struct_parse
         from elftools.elf.elffile import ELFFile
         from pwnlib.elf import ELF
         try:
             headers = ELFFile(io.BytesIO(content))
             section_count = headers.num_sections()
             if section_count:
+                if headers.header.e_shentsize < headers.structs.Elf_Shdr.sizeof():
+                    raise LayoutFailure("format", "ELF section-header entry is shorter than the required structure.")
                 location(headers.header.e_shoff, section_count * headers.header.e_shentsize, len(content))
+            # Upstream symbol, relocation and dynamic access reads stored stream
+            # bytes, while this profile reports logical names and file coordinates.
+            # A string table is read only when it names sections or symbols.
+            raw_headers = []
+            for index in range(section_count):
+                raw_header = struct_parse(headers.structs.Elf_Shdr, headers.stream,
+                                          stream_pos=headers.header.e_shoff + index * headers.header.e_shentsize)
+                raw_headers.append(raw_header)
+                if raw_header.sh_flags & 0x800 and raw_header.sh_type in (
+                        "SHT_SYMTAB", "SHT_DYNSYM", "SHT_REL", "SHT_RELA", "SHT_RELR", "SHT_DYNAMIC"):
+                    raise LayoutFailure("unsupported-target", f"ELF section {index} ({raw_header.sh_type}) is SHF_COMPRESSED; logical metadata and its source coordinates are not decoded by this profile.")
             segment_count = headers.num_segments()
             if segment_count:
                 location(headers.header.e_phoff, segment_count * headers.header.e_phentsize, len(content))
@@ -145,12 +166,22 @@ def inspect_elf(path, cache):
             section_name_index = headers.get_shstrndx()
             if raw_name_index == 0xffff and section_name_index < 0xff00:
                 raise LayoutFailure("format", f"ELF SHN_XINDEX resolves to ordinary index {section_name_index}; the escape requires an index at least SHN_LORESERVE (0xff00).")
+            consumed_strings = set()
             if section_name_index != 0:
                 if section_name_index >= section_count:
                     raise LayoutFailure("format", f"ELF section-name table index {section_name_index} lies outside the declared section count {section_count}.")
                 names_header = headers._get_section_header(section_name_index)
                 if names_header.sh_type != "SHT_STRTAB":
                     raise LayoutFailure("format", f"ELF section-name table {section_name_index} is not SHT_STRTAB.")
+                consumed_strings.add(section_name_index)
+            for header in raw_headers:
+                if header.sh_type in ("SHT_SYMTAB", "SHT_DYNSYM"):
+                    consumed_strings.add(header.sh_link)
+            for index, raw_header in enumerate(raw_headers):
+                if (raw_header.sh_flags & 0x800 and raw_header.sh_type == "SHT_STRTAB"
+                        and index in consumed_strings):
+                    raise LayoutFailure("unsupported-target", f"ELF section {index} (SHT_STRTAB) is SHF_COMPRESSED; logical metadata and its source coordinates are not decoded by this profile.")
+            if section_name_index != 0:
                 location(names_header.sh_offset, names_header.sh_size, len(content))
         except (ELFError, ValueError, OverflowError, AssertionError, IndexError) as error:
             raise LayoutFailure("format", str(error)) from error
@@ -185,8 +216,8 @@ def inspect_elf(path, cache):
                         if type is None or section.header.sh_type == type)
         try:
             image = LayoutELF(str(path), checksec=False)
-            if image.arch != "amd64" or image.bits != 64 or image.endian != "little":
-                raise LayoutFailure("unsupported-target", "Initial layout profile requires x86-64 ELF64 little-endian objects.")
+            if (image.arch, image.bits, image.endian) != (PROFILES[profile], bits, order):
+                raise LayoutFailure("unsupported-target", PROFILE_SCOPE)
             if image.header.e_type not in ("ET_EXEC", "ET_DYN", "ET_REL"):
                 raise LayoutFailure("unsupported-target", "Selected ELF type is outside the EXEC/DYN/REL layout profile; recorded core analysis is separate.")
             length = len(content)
@@ -208,7 +239,7 @@ def inspect_elf(path, cache):
                 })
                 if h.sh_type in ("SHT_SYMTAB", "SHT_DYNSYM"):
                     if h.sh_entsize < image.structs.Elf_Sym.sizeof():
-                        raise LayoutFailure("format", "ELF symbol entry is smaller than the decoded Elf64_Sym structure.")
+                        raise LayoutFailure("format", f"ELF symbol entry is smaller than the decoded Elf{bits}_Sym structure.")
                     if h.sh_link >= len(all_sections) or all_sections[h.sh_link].header.sh_type != "SHT_STRTAB":
                         raise LayoutFailure("format", f"ELF symbol table {index} links to invalid string table {h.sh_link}.")
                     strings = all_sections[h.sh_link]

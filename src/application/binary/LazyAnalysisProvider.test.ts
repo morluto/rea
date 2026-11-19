@@ -1,13 +1,14 @@
 import { expect, it } from "vitest";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { phaseGate } from "../../../tests/support/lifecycleHarness.js";
 
 import { parseBinaryTarget } from "../BinaryTargetResolver.js";
 import type {
   AnalysisProvider,
   ProviderIdentity,
-} from "../AnalysisProvider.js";
-import { createAnalysisExecution } from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../ports/AnalysisProvider.js";
 import { LazyAnalysisProvider } from "./LazyAnalysisProvider.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { ok as resultOk } from "../../domain/result.js";
 
 const identity: ProviderIdentity = {
@@ -60,21 +61,12 @@ it("returns a tagged provider error when lazy loading fails", async () => {
 });
 
 it("joins a cancelled unabortable module load and refuses late client acquisition", async () => {
-  let finishLoading!: (provider: AnalysisProvider) => void;
-  let enter!: () => void;
+  const loading = phaseGate<void, AnalysisProvider>();
   let creates = 0;
-  const entered = new Promise<void>((resolve) => {
-    enter = resolve;
-  });
   const provider = new LazyAnalysisProvider({
     identity,
     capabilities: [],
-    load: () => {
-      enter();
-      return new Promise((resolve) => {
-        finishLoading = resolve;
-      });
-    },
+    load: () => loading.hold(),
   });
   const controller = new AbortController();
   const reason = { request: "cancel during import" };
@@ -86,12 +78,12 @@ it("joins a cancelled unabortable module load and refuses late client acquisitio
       settled = true;
       return value;
     });
-  await entered;
-  controller.abort(reason);
-  try {
+  await withVerifierCleanup(async () => {
+    await loading.reached(pending, "provider module load");
+    controller.abort(reason);
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(settled).toBe(false);
-    finishLoading(
+    loading.release(
       providerWithClient(() => {
         creates++;
       }),
@@ -105,11 +97,17 @@ it("joins a cancelled unabortable module load and refuses late client acquisitio
     expect(result.error.cause).toBe(reason);
     expect(creates).toBe(0);
     expect(await client.close()).toEqual(resultOk(null));
-  } finally {
-    finishLoading(providerWithClient());
-    await pending;
-    await client.close();
-  }
+  }, [
+    () => controller.abort(),
+    () => loading.release(providerWithClient()),
+    async () => {
+      await pending;
+    },
+    async () => {
+      const closed = await client.close();
+      if (!closed.ok) throw closed.error;
+    },
+  ]);
 });
 
 it("reports that a lazy client was closed before its first operation", async () => {

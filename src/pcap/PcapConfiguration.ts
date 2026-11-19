@@ -1,12 +1,20 @@
 import { accessSync, constants, statSync } from "node:fs";
-import { delimiter, isAbsolute, join } from "node:path";
+import { isAbsolute } from "node:path";
 
-import type { ProviderAvailability } from "../application/AnalysisProvider.js";
-import type { ProviderRejectionCode } from "../contracts/providerSelection.js";
+import {
+  posixPathCandidates,
+  windowsPathCandidates,
+} from "../process/executableSearch.js";
+
+import type { ProviderAvailability } from "../ports/AnalysisProvider.js";
+import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import type { AnalysisErrorOptions } from "../domain/analysisErrorBase.js";
-import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  AnalysisArtifactChangedError,
+} from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { AnalysisArtifactChangedError } from "../domain/analysisErrorCore.js";
+import { isQualifiedCallerPath } from "../filesystem/callerPath.js";
 
 export interface WiresharkExecutableIdentity {
   readonly bytes: number;
@@ -43,7 +51,8 @@ export const assertWiresharkExecutableIdentity = (
 export const TSHARK_COMMAND_ENV = "REA_TSHARK_COMMAND";
 export const CAPINFOS_COMMAND_ENV = "REA_CAPINFOS_COMMAND";
 
-const TOOL_REMEDIATION = `Supply Wireshark 4.x tshark and capinfos on PATH or through absolute ${TSHARK_COMMAND_ENV} and ${CAPINFOS_COMMAND_ENV}; REA does not install them.`;
+/** Repair for any unusable caller-selected Wireshark tool; shared by readiness and execution. */
+export const PCAP_TOOL_REMEDIATION = `Supply Wireshark 4.x tshark and capinfos on PATH or through absolute ${TSHARK_COMMAND_ENV} and ${CAPINFOS_COMMAND_ENV}; REA does not install them.`;
 
 /**
  * Host-tool refusals concern the caller's Wireshark installation, not the
@@ -57,7 +66,7 @@ export const pcapToolUnavailable = (
 ): AnalysisCapabilityUnavailableError =>
   new AnalysisCapabilityUnavailableError("pcap", operation, reason, {
     ...options,
-    userMessage: `${/[.!?]$/u.test(reason) ? reason : `${reason}.`} ${TOOL_REMEDIATION}`,
+    userMessage: `${/[.!?]$/u.test(reason) ? reason : `${reason}.`} ${PCAP_TOOL_REMEDIATION}`,
   });
 
 /** How one caller-supplied Wireshark tool was selected. */
@@ -86,12 +95,13 @@ const TOOL_COMMAND_ENV = {
 export const selectWiresharkTool = (
   environment: Readonly<Record<string, string | undefined>>,
   tool: "tshark" | "capinfos",
+  platform?: NodeJS.Platform,
 ): WiresharkToolSelection => {
   const key = TOOL_COMMAND_ENV[tool];
   const configured = environment[key];
   if (configured === undefined || configured.trim() === "")
     return { command: tool, source: "path" };
-  if (!isAbsolute(configured))
+  if (!isQualifiedCallerPath(configured, platform))
     throw new PcapConfigurationFailure(
       `${tool}_not_absolute`,
       `${key} must be an absolute path to the ${tool} binary`,
@@ -100,25 +110,60 @@ export const selectWiresharkTool = (
   return { command: configured, source: "environment" };
 };
 
+const isRegularFile = (path: string): boolean => {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * The first `.com` or `.exe` image Windows' PATH/PATHEXT search would start
+ * for a bare tool name, from absolute PATH entries only, as on POSIX. The
+ * owned Windows launcher starts only absolute paths, so a bare name has to be
+ * resolved here. Undefined when the absolute entries contain no such file.
+ */
+const locateWiresharkToolOnWindowsPath = (
+  tool: string,
+  environment: Readonly<Record<string, string | undefined>>,
+  isFile: (path: string) => boolean,
+): string | undefined => {
+  const candidates = windowsPathCandidates(tool, environment, {
+    relativeEntries: "skip",
+  });
+  if (!candidates.ok)
+    throw new PcapConfigurationFailure(
+      "invalid_pathext",
+      "PATHEXT contains an invalid filename extension. Correct PATHEXT or specify the Wireshark tool by absolute path.",
+      { extension: candidates.error.extension },
+    );
+  for (const { path } of candidates.value) if (isFile(path)) return path;
+  return undefined;
+};
+
 /**
  * Resolve the caller-supplied tshark and capinfos binaries to the executables
- * the packet tools would also select. Windows keeps PATH/PATHEXT resolution in
- * the launcher, which the POSIX locator does not model.
+ * the packet tools would also select. A PATH selection becomes the absolute
+ * file found on PATH (PATH/PATHEXT on Windows), or a `<tool>_missing` failure.
  */
 export const resolvePcapTools = (
   environment: Readonly<Record<string, string | undefined>>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
+  isFile: (path: string) => boolean = isRegularFile,
 ): PcapToolSelection => {
   // Report every configuration error before consulting PATH for either tool.
   const selected = {
-    tshark: selectWiresharkTool(environment, "tshark"),
-    capinfos: selectWiresharkTool(environment, "capinfos"),
+    tshark: selectWiresharkTool(environment, "tshark", platform),
+    capinfos: selectWiresharkTool(environment, "capinfos", platform),
   };
   const locate = (tool: "tshark" | "capinfos"): WiresharkToolSelection => {
     const selection = selected[tool];
-    if (selection.source === "environment" || platform === "win32")
-      return selection;
-    const command = locateWiresharkTool(selection, environment);
+    if (selection.source === "environment") return selection;
+    const command =
+      platform === "win32"
+        ? locateWiresharkToolOnWindowsPath(tool, environment, isFile)
+        : locateWiresharkTool(selection, environment);
     if (command === undefined)
       throw new PcapConfigurationFailure(
         `${tool}_missing`,
@@ -142,9 +187,11 @@ export const locateWiresharkTool = (
 ): string | undefined => {
   if (selection.source === "environment" || isAbsolute(selection.command))
     return selection.command;
-  for (const directory of (environment.PATH ?? "").split(delimiter)) {
-    if (!isAbsolute(directory)) continue;
-    const candidate = join(directory, selection.command);
+  for (const { path: candidate } of posixPathCandidates(
+    selection.command,
+    environment.PATH ?? "",
+    { relativeEntries: "skip" },
+  )) {
     try {
       accessSync(candidate, constants.X_OK);
       if (statSync(candidate).isFile()) return candidate;
@@ -156,6 +203,7 @@ export const locateWiresharkTool = (
 };
 
 export type PcapConfigurationFailureCode =
+  | "invalid_pathext"
   | "tshark_not_absolute"
   | "capinfos_not_absolute"
   | "tshark_missing"
@@ -232,7 +280,7 @@ const rejectionCodeOf = (
     ? "executable_missing"
     : code.includes("unsupported")
       ? "unsupported_version"
-      : code.includes("not_absolute")
+      : code === "invalid_pathext" || code.includes("not_absolute")
         ? "not_configured"
         : "version_unresolved";
 
@@ -242,5 +290,6 @@ export const pcapConfigurationAvailability = (
   status: "unavailable",
   code: rejectionCodeOf(cause.code),
   reason: cause.message,
+  remediation: PCAP_TOOL_REMEDIATION,
   diagnostics: { ...cause.diagnostics },
 });

@@ -1,3 +1,4 @@
+import { javaScriptThisOwner } from "./javascriptSourceParser.js";
 import * as t from "@babel/types";
 
 import {
@@ -5,37 +6,102 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
+  semanticArgumentStaysInSource,
+  semanticDirectInvocationArgument,
+} from "./javascriptSemanticDirectInvocations.js";
+import {
   collectJavaScriptIdentityWritesSteps,
   electronMemberPath,
 } from "./javascriptElectronMemberWrites.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import {
-  isUnshadowedGlobal,
+  ambientEffectCovers,
+  ambientPathMayObserveAt,
+  semanticEffectMayFollow,
+  semanticEffectMayPrecede,
+} from "./javascriptSemanticEffectLog.js";
+import {
   resolveSemanticBindingState,
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
+  type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
-import { isImportMetaUrl } from "./javascriptStaticAnalysisHelpers.js";
-import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
-  semanticIterationSources,
-  type SemanticIterationSource,
-} from "./javascriptSemanticIterationSources.js";
+  isUnshadowedGlobal,
+  semanticBindingAtRead,
+  semanticDefiniteEffectPrecedesReference,
+} from "./javascriptSemanticMutationInitializers.js";
+import { semanticIterationSources } from "./javascriptSemanticIterationSources.js";
+import type { SemanticIterationSource } from "./javascriptSemanticIterationFacts.js";
 import { joinSemanticPropertyPaths } from "./javascriptSemanticPropertyPaths.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 import {
-  semanticCopiedReferencePath,
+  GLOBAL_OBJECT_NAMES,
+  globalObjectName,
+  globalReferenceNamespace,
+} from "./javascriptSemanticGlobalReference.js";
+import { readSemanticRequireLoader } from "./javascriptSemanticRequireOriginSlot.js";
+import {
   semanticReferenceIterationUnknown,
   semanticReferenceSourcesInactive,
 } from "./javascriptSemanticReferenceSources.js";
+import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReferencePaths.js";
 
-const GLOBAL_OBJECT_NAMES = ["globalThis", "global", "window", "self"];
-
-const globalObjectName = (
-  node: t.Node,
-  state: JavaScriptSemanticAnalysisState,
-): string | undefined =>
-  GLOBAL_OBJECT_NAMES.find((name) => isUnshadowedGlobal(node, state, name));
+/**
+ * Own static methods of `Object` and `Reflect` in the language. A native one
+ * ignores its receiver; any other member, including one `Object` inherits
+ * from `Function.prototype`, may be user code that receives the constructor.
+ */
+const NATIVE_STATIC_METHODS: ReadonlyMap<string, ReadonlySet<string>> = new Map(
+  [
+    [
+      "Object",
+      new Set([
+        "assign",
+        "create",
+        "defineProperties",
+        "defineProperty",
+        "entries",
+        "freeze",
+        "fromEntries",
+        "getOwnPropertyDescriptor",
+        "getOwnPropertyDescriptors",
+        "getOwnPropertyNames",
+        "getOwnPropertySymbols",
+        "getPrototypeOf",
+        "groupBy",
+        "hasOwn",
+        "is",
+        "isExtensible",
+        "isFrozen",
+        "isSealed",
+        "keys",
+        "preventExtensions",
+        "seal",
+        "setPrototypeOf",
+        "values",
+      ]),
+    ],
+    [
+      "Reflect",
+      new Set([
+        "apply",
+        "construct",
+        "defineProperty",
+        "deleteProperty",
+        "get",
+        "getOwnPropertyDescriptor",
+        "getPrototypeOf",
+        "has",
+        "isExtensible",
+        "ownKeys",
+        "preventExtensions",
+        "set",
+        "setPrototypeOf",
+      ]),
+    ],
+  ],
+);
 
 /** Global self references retain object identity, rather than adding a property. */
 const canonicalAmbientPath = (
@@ -83,6 +149,40 @@ export const retainSemanticAmbientEffect = (
 /** Undefined means a cyclic or conflicting projection can select any depth. */
 type AmbientProjection = AmbientPath | undefined;
 
+/**
+ * Select the stored value an object's reference store exposes to a projection,
+ * or null when the store cannot reach it. A shorter projection only reaches
+ * stored children when the query covers escaped contents.
+ */
+const storedValueProjection = (
+  suffix: AmbientProjection,
+  source: SemanticIterationSource,
+  path: AmbientProjection,
+  escapedContents: boolean,
+): AmbientProjection | null => {
+  if (
+    suffix !== undefined &&
+    path !== undefined &&
+    (!path.every(
+      (key, index) =>
+        index >= suffix.length ||
+        key === null ||
+        suffix[index] === null ||
+        key === suffix[index],
+    ) ||
+      (suffix.length < path.length && !escapedContents))
+  )
+    return null;
+  return suffix === undefined || path === undefined
+    ? undefined
+    : [
+        ...source.projection.map((key) =>
+          key === null || typeof key === "object" ? null : String(key),
+        ),
+        ...suffix.slice(path.length),
+      ];
+};
+
 const joinAmbientProjection = (
   left: AmbientProjection,
   right: AmbientProjection,
@@ -99,6 +199,7 @@ type AmbientIdentityUnknownReason =
 
 interface AmbientResolution {
   readonly paths: readonly AmbientPath[];
+  readonly callerPaths: readonly AmbientPath[];
   readonly ownership: "local" | "ambient" | "unknown";
   readonly unknownReasons: readonly AmbientIdentityUnknownReason[];
 }
@@ -123,30 +224,87 @@ export const createAmbientPathResolver = (
   facts?: AmbientReferenceFacts,
 ) => {
   const cached = new WeakMap<t.Node, AmbientResolution>();
+  // Member syntax is fixed for this AST across reference-store worklist
+  // rounds. Identity resolution still uses the current store facts.
+  const memberPaths = new WeakMap<
+    t.Node,
+    ReturnType<typeof electronMemberPath>
+  >();
   const returnedReferences = createSemanticReturnedReferences(state);
   return (
     node: t.Node,
     capture?: t.Node,
     escapedContents = false,
     projection: AmbientProjection = [],
-    localIdentity?: (node: t.Node, path: AmbientProjection) => void,
+    receiver?: (node: t.Node, path: AmbientProjection) => void,
   ): AmbientResolution => {
     const prior = possibleWrites ? undefined : cached.get(node);
     if (prior !== undefined) return prior;
     const result = new Map<string, AmbientPath>();
+    const callerPaths = new Map<string, AmbientPath>();
     let hasLocalIdentity = false;
     const unknownReasons = new Set<AmbientIdentityUnknownReason>();
     // The caller's write site selects initializers for the written target.
     // Reads reached through an initializer occur at their own position.
-    const pending: {
+    type Pending = {
       node: t.Node;
       suffix: AmbientProjection;
-      readsAtSelf?: true;
-    }[] = [{ node, suffix: projection }];
+      readsAtSelf: true | undefined;
+    };
+    // A binding read queues its selected initializers for one projection,
+    // taken from the end as if queued one by one. Reads selecting the same
+    // initializers and projection share the remaining items: an item already
+    // taken was expanded with the same projection, so taking it again could
+    // only revisit its expanded root. Requeueing every initializer at each
+    // read reached through an alias cycle grows quadratically per query.
+    interface QueuedInitializers {
+      readonly items: readonly Pending[];
+      remaining: number;
+    }
+    const pending: (Pending | QueuedInitializers)[] = [
+      { node, suffix: projection, readsAtSelf: undefined },
+    ];
+    const queuedInitializers = new Map<
+      JavaScriptSemanticBindingState,
+      Map<string | undefined, QueuedInitializers>
+    >();
+    const take = (): Pending | undefined => {
+      for (;;) {
+        const next = pending.pop();
+        if (next === undefined || !("items" in next)) return next;
+        if (next.remaining === 0) continue;
+        next.remaining -= 1;
+        if (next.remaining > 0) pending.push(next);
+        return next.items[next.remaining];
+      }
+    };
+    // A receiver query reports the objects a write to `node` mutates, as
+    // projections that still end at the written key. Once a step consumes that
+    // key, the item denotes the value read from the written slot. Replacing
+    // the slot does not mutate that value or the containers it was read from.
+    const admitted = (suffix: AmbientProjection): boolean =>
+      receiver === undefined || suffix?.length !== 0;
     // Join projections at their producing expression, rather than enumerating
     // alias histories. Each key can only widen to a wildcard, and conflicting
     // depths widen to unknown, so diamonds and cycles have finite state.
-    const expanded = new WeakMap<t.Node, AmbientProjection>();
+    // Null marks a fully widened root. An absent entry has not been visited.
+    const expanded = new WeakMap<t.Node, AmbientPath | null>();
+    let continued = false;
+    const queue = (
+      node: t.Node,
+      suffix: AmbientProjection,
+      readsAtSelf?: true,
+    ): void => {
+      if (!admitted(suffix)) return;
+      continued = true;
+      // A fully widened root cannot gain a new fact from another widened read.
+      // Keep the continuation for coverage even when no expansion is needed.
+      if (suffix === undefined) {
+        const root = memberPaths.get(node)?.root;
+        if (root !== undefined && expanded.get(root) === null) return;
+      }
+      pending.push({ node, suffix, readsAtSelf });
+    };
     const retain = (path: AmbientPath) => {
       let canonical = canonicalAmbientPath(path);
       for (;;) {
@@ -171,21 +329,26 @@ export const createAmbientPathResolver = (
         canonical = canonicalAmbientPath(["global", ...canonical.slice(2)]);
       }
     };
-    while (pending.length > 0) {
-      const current = pending.pop();
+    for (;;) {
+      const current = take();
       if (current === undefined) break;
-      const queuedBefore = pending.length;
+      continued = false;
       const pathsBefore = result.size;
       let resolvedIdentity = false;
       try {
-        const { root, members } = electronMemberPath(current.node);
+        let memberPath = memberPaths.get(current.node);
+        if (memberPath === undefined) {
+          memberPath = electronMemberPath(current.node);
+          memberPaths.set(current.node, memberPath);
+        }
+        const { root, members } = memberPath;
         let suffix: AmbientProjection =
-          current.suffix === undefined
-            ? undefined
+          current.suffix === undefined || members.length === 0
+            ? current.suffix
             : [...members, ...current.suffix];
-        if (expanded.has(root)) {
-          const previous = expanded.get(root);
-          if (previous === undefined) {
+        const previous = expanded.get(root);
+        if (previous !== undefined) {
+          if (previous === null) {
             resolvedIdentity = true;
             continue;
           }
@@ -200,6 +363,7 @@ export const createAmbientPathResolver = (
           if (!possibleWrites) {
             const unresolved: AmbientResolution = {
               paths: [],
+              callerPaths: [...callerPaths.values()],
               ownership: "unknown",
               unknownReasons: ["widened-projection"],
             };
@@ -207,17 +371,13 @@ export const createAmbientPathResolver = (
             return unresolved;
           }
         }
-        expanded.set(root, suffix);
+        expanded.set(root, suffix ?? null);
         if (suffix === undefined || suffix.includes(null))
           unknownReasons.add("widened-projection");
         // A widened projection is a possible write, never proof of an intrinsic.
         if (suffix === undefined && !possibleWrites) continue;
         const continueWith = (node: t.Node, path: AmbientProjection = suffix) =>
-          pending.push({
-            node,
-            suffix: path,
-            ...(current.readsAtSelf && { readsAtSelf: true }),
-          });
+          queue(node, path, current.readsAtSelf);
         const continueReturned = (callee: t.Node, path: AmbientProjection) => {
           const returned = returnedReferences(callee);
           // Returned references retain possible source-local values, not a
@@ -239,50 +399,21 @@ export const createAmbientPathResolver = (
             );
         };
         if (!t.isIdentifier(root) && facts?.freshObject(root)) {
-          localIdentity?.(root, suffix);
+          receiver?.(root, suffix);
           // The allocation owns itself; a projected child needs its own proof.
           if (suffix?.length === 0) {
             hasLocalIdentity = true;
             resolvedIdentity = true;
           }
           for (const [source, path] of facts?.stores.get(root) ?? []) {
-            const selected =
-              suffix === undefined ||
-              path === undefined ||
-              path.every(
-                (key, index) =>
-                  index >= suffix.length ||
-                  key === null ||
-                  suffix[index] === null ||
-                  key === suffix[index],
-              );
-            if (
-              !selected ||
-              (suffix !== undefined &&
-                path !== undefined &&
-                suffix.length < path.length &&
-                !escapedContents)
-            )
-              continue;
-            const remaining =
-              suffix === undefined || path === undefined
-                ? undefined
-                : suffix.slice(path.length);
-            pending.push({
-              node: source.node,
-              readsAtSelf: true,
-              suffix:
-                remaining === undefined
-                  ? undefined
-                  : [
-                      ...source.projection.map((key) =>
-                        key === null || typeof key === "object"
-                          ? null
-                          : String(key),
-                      ),
-                      ...remaining,
-                    ],
-            });
+            const stored = storedValueProjection(
+              suffix,
+              source,
+              path,
+              escapedContents,
+            );
+            if (stored === null) continue;
+            queue(source.node, stored, true);
           }
         }
         if (
@@ -293,6 +424,22 @@ export const createAmbientPathResolver = (
           retain(["import-meta", ...(suffix ?? [])]);
           resolvedIdentity = true;
           continue;
+        }
+        if (t.isThisExpression(root)) {
+          const owner = javaScriptThisOwner(
+            root,
+            state.program,
+            state.parentsByNode,
+          );
+          if (owner === "global") {
+            retain(["global", ...(suffix ?? [])]);
+            resolvedIdentity = true;
+            continue;
+          }
+          if (owner === "caller" && suffix !== undefined) {
+            const path = canonicalAmbientPath(["global", ...suffix]);
+            callerPaths.set(JSON.stringify(path), path);
+          }
         }
         if (t.isIdentifier(root)) {
           // The wrapper module object is distinct from globalThis.module. Keep
@@ -314,45 +461,72 @@ export const createAmbientPathResolver = (
           }
           const binding = resolveSemanticBindingState(state, root, root.name);
           if (binding === undefined) continue;
-          const stable = possibleWrites
-            ? undefined
-            : semanticStableInitializer(binding, state);
           const readAt = current.readsAtSelf ? root : capture;
           const atRead =
             possibleWrites && readAt !== undefined
-              ? semanticBindingAtRead(binding, readAt, state.parentsByNode)
+              ? semanticBindingAtRead(binding, readAt, state)
               : undefined;
           const selected = atRead?.binding ?? binding;
           if (possibleWrites && atRead?.hasDefiniteInitializer === false)
             unknownReasons.add("unresolved-value");
-          const initializers = possibleWrites
-            ? [...selected.initializers, ...selected.referenceInitializers]
-            : stable === undefined
-              ? []
-              : [stable];
-          for (const initializer of initializers) {
-            if (semanticReferenceSourcesInactive(initializer, state)) continue;
-            // Pattern assignments share the source selection owner with member
-            // effects: copying a container preserves its children, not itself.
-            const path = semanticCopiedReferencePath(
-              initializer,
-              suffix ?? [null],
-              escapedContents ? "escape" : "identity",
-            );
-            if (path === null) continue;
-            pending.push({
-              node: initializer.node,
-              readsAtSelf: true,
-              suffix:
-                suffix === undefined ||
-                semanticReferenceIterationUnknown(initializer, state)
-                  ? undefined
-                  : path.map((key) =>
-                      key === null || typeof key === "object"
-                        ? null
-                        : String(key),
-                    ),
-            });
+          // A directly invoked function's parameter starts as its argument,
+          // which therefore did not escape at the call. It depends on this
+          // read, so it is queued here rather than with the binding's
+          // initializers.
+          const argument = possibleWrites
+            ? semanticDirectInvocationArgument(root, binding, state)
+            : undefined;
+          if (argument !== undefined) queue(argument, suffix, true);
+          const bySuffix =
+            queuedInitializers.get(selected) ??
+            new Map<string | undefined, QueuedInitializers>();
+          queuedInitializers.set(selected, bySuffix);
+          const suffixKey = JSON.stringify(suffix);
+          let queued = bySuffix.get(suffixKey);
+          if (queued === undefined) {
+            const stable = possibleWrites
+              ? undefined
+              : semanticStableInitializer(binding, state);
+            const initializers = possibleWrites
+              ? [...selected.initializers, ...selected.referenceInitializers]
+              : stable === undefined
+                ? []
+                : [stable];
+            const items: Pending[] = [];
+            for (const initializer of initializers) {
+              if (semanticReferenceSourcesInactive(initializer, state))
+                continue;
+              // Pattern assignments share the source selection owner with member
+              // effects: copying a container preserves its children, not itself.
+              const path = semanticCopiedReferencePath(
+                initializer,
+                suffix ?? [null],
+                escapedContents ? "escape" : "identity",
+              );
+              if (path === null) continue;
+              const item: Pending = {
+                node: initializer.node,
+                readsAtSelf: true,
+                suffix:
+                  suffix === undefined ||
+                  semanticReferenceIterationUnknown(initializer, state)
+                    ? undefined
+                    : path.map((key) =>
+                        key === null || typeof key === "object"
+                          ? null
+                          : String(key),
+                      ),
+              };
+              if (admitted(item.suffix)) items.push(item);
+            }
+            queued = { items, remaining: items.length };
+            bySuffix.set(suffixKey, queued);
+          }
+          // Taken items still count as queued for this read: requeued, they
+          // would have been the same no-op revisits.
+          if (queued.items.length > 0) {
+            continued = true;
+            pending.push(queued);
           }
           continue;
         }
@@ -514,11 +688,7 @@ export const createAmbientPathResolver = (
           }
         }
       } finally {
-        if (
-          !resolvedIdentity &&
-          pending.length === queuedBefore &&
-          result.size === pathsBefore
-        )
+        if (!resolvedIdentity && !continued && result.size === pathsBefore)
           unknownReasons.add("unresolved-value");
       }
     }
@@ -527,6 +697,7 @@ export const createAmbientPathResolver = (
       unknownReasons.add("mixed-identities");
     const resolution: AmbientResolution = {
       paths,
+      callerPaths: [...callerPaths.values()],
       ownership:
         unknownReasons.size > 0
           ? "unknown"
@@ -565,6 +736,12 @@ export function* indexJavaScriptAmbientWritesSteps(
     target: t.Node;
     browserReceiver: boolean;
     projection?: AmbientProjection;
+  }[] = [];
+  // Object/Reflect static calls, settled once every ambient write is known.
+  const staticReceivers: {
+    node: t.Node;
+    target: t.Node;
+    method: readonly string[];
   }[] = [];
   const stores = new WeakMap<
     t.Node,
@@ -635,10 +812,14 @@ export function* indexJavaScriptAmbientWritesSteps(
       const retainEscape = (target: t.Node, browserReceiver = false) => {
         escapes.push({ target, node, browserReceiver });
       };
-      for (const argument of t.isTaggedTemplateExpression(node)
+      for (const [index, argument] of (t.isTaggedTemplateExpression(node)
         ? node.quasi.expressions
-        : node.arguments)
-        if (t.isNode(argument))
+        : node.arguments
+      ).entries())
+        if (
+          t.isNode(argument) &&
+          !semanticArgumentStaysInSource(node, index, state)
+        )
           retainEscape(
             t.isSpreadElement(argument) ? argument.argument : argument,
           );
@@ -653,31 +834,40 @@ export function* indexJavaScriptAmbientWritesSteps(
           : undefined;
       if (
         !t.isNewExpression(node) &&
-        (t.isMemberExpression(callee) ||
-          t.isOptionalMemberExpression(callee)) &&
-        !(
-          invocation?.kind === "known" &&
-          ["Object", "Reflect"].includes(invocation.path[1] ?? "")
-        )
+        (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee))
       ) {
-        if (browserMethod !== undefined)
-          browserReceiverMethods.add(browserMethod);
-        retainEscape(callee.object, browserMethod !== undefined);
+        const owner = invocation?.path[1];
+        const method =
+          invocation?.kind === "known" &&
+          invocation.path.length === 3 &&
+          owner !== undefined &&
+          NATIVE_STATIC_METHODS.get(owner)?.has(invocation.path[2] ?? "")
+            ? invocation.path.slice(1)
+            : undefined;
+        if (method !== undefined)
+          staticReceivers.push({ node, target: callee.object, method });
+        else {
+          if (browserMethod !== undefined)
+            browserReceiverMethods.add(browserMethod);
+          retainEscape(callee.object, browserMethod !== undefined);
+        }
       }
     },
   );
   const pendingStores = new Set(storedReferences);
-  const dependents = new WeakMap<t.Node, Set<SemanticIterationSource>>();
+  // Each dependent keeps the joined projection its latest query reached.
+  const dependents = new WeakMap<
+    t.Node,
+    Map<SemanticIterationSource, AmbientProjection>
+  >();
   while (pendingStores.size > 0) {
     const source = pendingStores.values().next().value;
     if (source === undefined) break;
     pendingStores.delete(source);
     if (source.target === undefined) continue;
     const identities = new Map<t.Node, AmbientProjection>();
+    // Record the objects this store mutates, not the values it replaces.
     ambientWrites(source.target, source.mutation, false, [], (node, path) => {
-      const users = dependents.get(node) ?? new Set<SemanticIterationSource>();
-      users.add(source);
-      dependents.set(node, users);
       identities.set(
         node,
         identities.has(node)
@@ -685,6 +875,13 @@ export function* indexJavaScriptAmbientWritesSteps(
           : path,
       );
     });
+    for (const [node, path] of identities) {
+      const users =
+        dependents.get(node) ??
+        new Map<SemanticIterationSource, AmbientProjection>();
+      users.set(source, path);
+      dependents.set(node, users);
+    }
     // Publish only completed queries; each source/root projection can only widen.
     for (const [node, path] of identities) {
       const entries =
@@ -703,11 +900,18 @@ export function* indexJavaScriptAmbientWritesSteps(
         continue;
       entries.set(source, joined);
       stores.set(node, entries);
-      for (const dependent of dependents.get(node) ?? [])
-        pendingStores.add(dependent);
+      // A receiver query drops a value read from its written slot, so only a
+      // nonempty or widened selection can change a dependent's identities.
+      for (const [dependent, reached] of dependents.get(node) ?? []) {
+        const stored = storedValueProjection(reached, source, joined, false);
+        if (stored !== null && stored?.length !== 0)
+          pendingStores.add(dependent);
+      }
     }
     yield;
   }
+  for (const node of state.escapingThrows)
+    escapes.push({ node, target: node.argument, browserReceiver: false });
   for (const source of storedReferences) {
     if (source.target === undefined) continue;
     const receiver = ambientWrites(source.target.object, source.mutation);
@@ -737,7 +941,75 @@ export function* indexJavaScriptAmbientWritesSteps(
       retainSemanticAmbientEffect(state, "write", resolved, node);
     }
   }
-  for (const { node, target, browserReceiver, projection } of escapes) {
+  // Settle other ambient effects first. A syntactic resolver call is safe only
+  // if no write or opaque escape can replace its native member before this
+  // invocation; ambiguous execution order remains conservative.
+  const resolverReceivers: typeof escapes = [];
+  for (const effect of escapes) {
+    const { node, target } = effect;
+    const callee =
+      t.isCallExpression(node) || t.isOptionalCallExpression(node)
+        ? unwrapJavaScriptExpression(node.callee).node
+        : undefined;
+    if (
+      (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
+      callee.object === target &&
+      t.isIdentifier(target, { name: "require" }) &&
+      isUnshadowedGlobal(target, state, "require") &&
+      semanticStaticPropertyKey(callee.property, callee.computed) === "resolve"
+    ) {
+      resolverReceivers.push(effect);
+      continue;
+    }
+    retainEscapeEffect(effect);
+  }
+  for (const effect of resolverReceivers) {
+    const { node } = effect;
+    const selected = ["global", "require", "resolve"];
+    const mayAffectResolver = (
+      effects: typeof state.ambientWriteEffects,
+      covered: boolean,
+    ): boolean => {
+      if (!covered) return false;
+      const matches = effects.filter((entry) =>
+        ambientEffectCovers(entry, selected),
+      );
+      return (
+        matches.length === 0 ||
+        matches.some((entry) =>
+          semanticEffectMayPrecede(state, node, entry.node),
+        )
+      );
+    };
+    if (
+      (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
+      !mayAffectResolver(
+        state.ambientWriteEffects,
+        state.ambientWrites.covers(selected),
+      ) &&
+      !mayAffectResolver(
+        state.ambientEscapeEffects,
+        state.ambientEscapes.covers(selected),
+      ) &&
+      readSemanticRequireLoader(node, state, new Set()) === "commonjs-loader"
+    )
+      continue;
+    retainEscapeEffect(effect);
+  }
+  // A native static method ignores its receiver. A source write or escape
+  // that may replace the method before this call makes it user code, which
+  // receives the constructor. (Its prototype chain is not consulted: the
+  // method is an own property.)
+  for (const { node, target, method } of staticReceivers)
+    if (ambientPathMayObserveAt(state, node, ["global", ...method], "contents"))
+      retainEscapeEffect({ node, target, browserReceiver: false });
+    else state.retainedGlobalCallReceivers.add(target);
+  function retainEscapeEffect({
+    node,
+    target,
+    browserReceiver,
+    projection,
+  }: (typeof escapes)[number]): void {
     const resolved = ambientWrites(target, node, true, projection);
     if (
       browserReceiver &&
@@ -761,36 +1033,158 @@ export function* indexJavaScriptAmbientWritesSteps(
     state.ambientEscapes.retain(["global", null]);
 }
 
-/**
- * Recognize an ambient property path, optionally through a global object, without a visible
- * source-local overwrite. This is a syntax-local identity fact, not proof that
- * the runtime's globals have never been patched by other code.
- */
-export const isUnmodifiedGlobalReference = (
-  callee: t.Node,
+export type GlobalReferenceRead =
+  | { readonly status: "unmodified" | "unrelated" | "unknown" }
+  | { readonly status: "replacement"; readonly value: t.Expression };
+
+/** Reuse retained write provenance and activation ordering at a selected read.
+ * The reader retains only matching effects, refreshing when their owner grows.
+ * Missing timing, possibly repeated activations, conditional replacements and
+ * parent writes stay unknown. */
+export const createGlobalReferenceReader = (
   state: JavaScriptSemanticAnalysisState,
-  name: string | readonly [string, ...string[]],
-): boolean => {
-  const path: readonly [string, ...string[]] =
-    typeof name === "string" ? [name] : name;
-  if (state.ambientWrites.covers(["global", ...path])) return false;
-  const { root, members } = electronMemberPath(callee);
-  const matches = (expected: readonly string[]) =>
-    members.length === expected.length &&
-    members.every((key, index) => key === expected[index]);
-  if (isUnshadowedGlobal(root, state, path[0]) && matches(path.slice(1)))
-    return true;
-  const namespace = globalObjectName(root, state);
-  return (
-    namespace !== undefined &&
-    matches(path) &&
-    !state.ambientWrites.covers(["global", namespace])
-  );
+  path: readonly [string, ...string[]],
+): ((callee: t.Node) => GlobalReferenceRead) => {
+  const read = createGlobalPathRead(state, path);
+  return (callee) => {
+    const namespace = globalReferenceNamespace(callee, state, path);
+    return namespace === undefined
+      ? { status: "unrelated" }
+      : read(callee, namespace);
+  };
 };
 
-/** A module URL base is known only while its property has no visible write. */
-export const isUnmodifiedImportMetaUrl = (
-  node: t.Node | undefined,
+/** Read an implicit intrinsic property at its actual source site, without inventing a callee. */
+export const createGlobalPathReader = (
   state: JavaScriptSemanticAnalysisState,
-): boolean =>
-  isImportMetaUrl(node) && !state.ambientWrites.covers(["import-meta", "url"]);
+  path: readonly [string, ...string[]],
+): ((site: t.Node) => GlobalReferenceRead) => {
+  const read = createGlobalPathRead(state, path);
+  return (site) => read(site, null);
+};
+
+const createGlobalPathRead = (
+  state: JavaScriptSemanticAnalysisState,
+  path: readonly [string, ...string[]],
+): ((site: t.Node, namespace: string | null) => GlobalReferenceRead) => {
+  const selected = ["global", ...path];
+  let writesGeneration = -1;
+  let escapesGeneration = -1;
+  const byNamespace = new Map<
+    string | null,
+    {
+      writes: typeof state.ambientWriteEffects;
+      escapes: typeof state.ambientEscapeEffects;
+    }
+  >();
+  return (site, namespace) => {
+    const covered = (paths: typeof state.ambientWrites): boolean =>
+      paths.covers(selected) ||
+      (namespace !== null && paths.covers(["global", namespace]));
+    const writesCovered = covered(state.ambientWrites);
+    const escapesCovered = covered(state.ambientEscapes);
+    if (!writesCovered && !escapesCovered) return { status: "unmodified" };
+    if (
+      writesGeneration !== state.ambientWriteEffects.length ||
+      escapesGeneration !== state.ambientEscapeEffects.length
+    ) {
+      writesGeneration = state.ambientWriteEffects.length;
+      escapesGeneration = state.ambientEscapeEffects.length;
+      byNamespace.clear();
+    }
+    let effects = byNamespace.get(namespace);
+    if (effects === undefined) {
+      const matches = (
+        effect: (typeof state.ambientWriteEffects)[number],
+      ): boolean =>
+        ambientEffectCovers(effect, selected) ||
+        (namespace !== null &&
+          ambientEffectCovers(effect, ["global", namespace]));
+      effects = {
+        writes: state.ambientWriteEffects.filter(matches),
+        escapes: state.ambientEscapeEffects.filter(matches),
+      };
+      byNamespace.set(namespace, effects);
+    }
+    const escapePrecedesRead = effects.escapes.some(({ node }) => {
+      // Selecting this callee precedes exposing its own receiver. Other reads,
+      // including arguments, need activation-aware ordering across repetitions.
+      if (
+        (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
+        node.callee === site
+      )
+        return false;
+      return semanticEffectMayPrecede(state, site, node);
+    });
+    if (
+      (escapesCovered && effects.escapes.length === 0) ||
+      escapePrecedesRead ||
+      (writesCovered && effects.writes.length === 0)
+    )
+      return { status: "unknown" };
+    const active = effects.writes.filter((effect) =>
+      semanticEffectMayPrecede(state, site, effect.node),
+    );
+    if (active.length === 0) return { status: "unmodified" };
+    if (
+      active.some(
+        (effect) =>
+          effect.path.length !== selected.length ||
+          !effect.path.every((key, index) => key === selected[index]),
+      )
+    )
+      return { status: "unknown" };
+    return globalPathReplacement(state, path, site, active);
+  };
+};
+
+/** Select a definite replacement only when every competing write is proven earlier. */
+const globalPathReplacement = (
+  state: JavaScriptSemanticAnalysisState,
+  path: readonly [string, ...string[]],
+  site: t.Node,
+  effects: typeof state.ambientWriteEffects,
+): GlobalReferenceRead => {
+  let replacement: t.AssignmentExpression | undefined;
+  for (const effect of effects) {
+    const write = effect.node;
+    const writeNamespace = t.isAssignmentExpression(write)
+      ? globalReferenceNamespace(write.left, state, path)
+      : undefined;
+    if (
+      t.isAssignmentExpression(write, { operator: "=" }) &&
+      writeNamespace !== undefined &&
+      (writeNamespace === null ||
+        !state.ambientWrites.covers(["global", writeNamespace])) &&
+      semanticDefiniteEffectPrecedesReference(
+        write,
+        site,
+        state.parentsByNode,
+      ) &&
+      (replacement === undefined ||
+        semanticDefiniteEffectPrecedesReference(
+          replacement,
+          write,
+          state.parentsByNode,
+        ))
+    )
+      replacement = write;
+  }
+  if (replacement === undefined) return { status: "unknown" };
+  const confirmed = replacement;
+  if (
+    effects.some(
+      (effect) =>
+        effect.node !== confirmed &&
+        semanticEffectMayFollow(state, confirmed, effect.node) &&
+        (effect.node === undefined ||
+          !semanticDefiniteEffectPrecedesReference(
+            effect.node,
+            confirmed,
+            state.parentsByNode,
+          )),
+    )
+  )
+    return { status: "unknown" };
+  return { status: "replacement", value: confirmed.right };
+};

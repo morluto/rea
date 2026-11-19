@@ -1,5 +1,12 @@
+import {
+  fileSubjectTarget,
+  changedEvidenceSubject,
+} from "../../tests/fixtures/evidenceSubject.js";
 import { artifactInventoryResultSchema } from "./artifactGraph.js";
-import { artifactManifestId } from "./artifactIdentity.js";
+import {
+  artifactIdForContent,
+  artifactManifestId,
+} from "./artifactIdentity.js";
 import { EvidenceIntegrityError } from "./evidenceErrors.js";
 import { freezeJsonSnapshot } from "./immutableJson.js";
 import { expect, it } from "vitest";
@@ -14,30 +21,51 @@ import {
   parseArtifactInspectionInventoryResult,
 } from "./artifactInventoryEvidence.js";
 import { createEvidence } from "./evidence.js";
-import { jsonValueSchema } from "./jsonValue.js";
 
 const inventoryEvidence = ARTIFACT_COMPARISON_EXAMPLE.left;
 const target = inventoryEvidence.subject;
 if (target === null) throw new Error("Artifact fixture has no target");
 
 const inspectionEvidence = (result: unknown, subject = target) =>
-  createEvidence(
-    {
-      path: subject.local_path,
-      sha256: subject.digest.sha256,
-      format: subject.format,
-    },
+  createEvidence(fileSubjectTarget(subject), inventoryEvidence.provider, {
+    operation: "inspect_artifact",
+    parameters: {},
+    result,
+    confidence: "observed",
+    authority: "shipped-artifact",
+  });
+
+const inspection = createArtifactInspection(inventoryEvidence);
+
+it.each([
+  { occurrence_id: `occ_${"f".repeat(64)}` },
+  { artifact_id: null },
+  { artifact_format: "unknown" },
+  { entry_kind: "directory" },
+  { parent_occurrence_id: `occ_${"f".repeat(64)}` },
+])("rejects an invalid root on an incomplete inventory page: %j", (patch) => {
+  const inventory = artifactInventoryResultSchema.parse(
+    inventoryEvidence.normalized_result,
+  );
+  const carrier = createEvidence(
+    fileSubjectTarget(target),
     inventoryEvidence.provider,
     {
-      operation: "inspect_artifact",
+      operation: "inventory_artifact",
       parameters: {},
-      result: jsonValueSchema.parse(result),
-      confidence: "observed",
+      result: {
+        ...inventory,
+        nodes: [],
+        occurrences: [{ ...inventory.occurrences[0]!, ...patch }],
+      },
+      confidence: "derived",
       authority: "shipped-artifact",
     },
   );
-
-const inspection = createArtifactInspection(inventoryEvidence);
+  expect(() => parseArtifactInventoryEvidence(carrier)).toThrow(
+    EvidenceIntegrityError,
+  );
+});
 
 it("accepts an inspection whose carrier, declaration, and substep identities agree", () => {
   expect(
@@ -46,18 +74,19 @@ it("accepts an inspection whose carrier, declaration, and substep identities agr
 });
 
 it("rejects an inspection carrier whose Evidence subject disagrees with its nested inventory", () => {
-  const carrier = inspectionEvidence(inspection, {
-    ...target,
-    digest: { sha256: "a".repeat(64) },
-  });
+  const carrier = inspectionEvidence(
+    inspection,
+    changedEvidenceSubject(target, { sha256: "a".repeat(64) }),
+  );
   try {
     parseArtifactInventoryEvidence(carrier);
     throw new Error("Expected the mismatched subject to be rejected");
   } catch (cause: unknown) {
     expect(cause).toBeInstanceOf(EvidenceIntegrityError);
     expect(cause).toMatchObject({
-      message:
-        "Artifact inspection Evidence subject does not match its root manifest",
+      message: expect.stringMatching(
+        /Evidence subject.*does not match.*root manifest/i,
+      ),
       cause: expect.any(ArtifactInventoryValidationError),
     });
   }
@@ -140,26 +169,18 @@ it("keeps a commitment failure discovered across individually incomplete pages a
     ),
   };
   const page = (includeNodes: boolean) =>
-    createEvidence(
-      {
-        path: target.local_path,
-        sha256: target.digest.sha256,
-        format: target.format,
+    createEvidence(fileSubjectTarget(target), inventoryEvidence.provider, {
+      operation: "inventory_artifact",
+      parameters: {},
+      confidence: "observed",
+      authority: "shipped-artifact",
+      result: {
+        ...complete,
+        manifest,
+        nodes: includeNodes ? complete.nodes : [],
+        occurrences: includeNodes ? [] : complete.occurrences,
       },
-      inventoryEvidence.provider,
-      {
-        operation: "inventory_artifact",
-        parameters: {},
-        confidence: "observed",
-        authority: "shipped-artifact",
-        result: jsonValueSchema.parse({
-          ...complete,
-          manifest,
-          nodes: includeNodes ? complete.nodes : [],
-          occurrences: includeNodes ? [] : complete.occurrences,
-        }),
-      },
-    );
+    });
   const nodes = page(true);
   const occurrences = page(false);
   expect(parseArtifactInventoryEvidence(nodes).inventory.complete).toBe(false);
@@ -179,3 +200,73 @@ it("reports incompatible independently valid manifests as caller composition", (
     ]),
   ).toThrow(ArtifactInventoryCarrierError);
 });
+
+it.each(
+  (["nodes", "occurrences", "edges"] as const).flatMap((member) =>
+    (["single", "assembled"] as const).map((mode) => ({ member, mode })),
+  ),
+)(
+  "rejects $member exceeding the manifest in $mode pages",
+  ({ member, mode }) => {
+    const inventory = artifactInventoryResultSchema.parse(
+      inventoryEvidence.normalized_result,
+    );
+    const root = inventory.occurrences[0]!;
+    const sha256 = "f".repeat(64);
+    const members = {
+      nodes: [
+        inventory.nodes[0]!,
+        {
+          ...inventory.nodes[0]!,
+          sha256,
+          artifact_id: artifactIdForContent(sha256),
+        },
+      ],
+      occurrences: [
+        root,
+        {
+          ...root,
+          occurrence_id: `occ_${"f".repeat(64)}`,
+          logical_path: "child",
+        },
+      ],
+      edges: ["a", "b"].map((digit) => ({
+        edge_id: `edge_${digit.repeat(64)}`,
+        ordinal: 0,
+        parent_artifact_id: inventory.manifest.root_artifact_id,
+        relation: "contains" as const,
+        occurrence_id: root.occurrence_id,
+        producer: null,
+      })),
+    };
+    const manifest = { ...inventory.manifest, edge_count: 1 };
+    const page = (indices: readonly number[]) =>
+      createEvidence(fileSubjectTarget(target), inventoryEvidence.provider, {
+        operation: "inventory_artifact",
+        parameters: {},
+        confidence: "observed",
+        authority: "shipped-artifact",
+        result: {
+          ...inventory,
+          manifest,
+          nodes: [],
+          occurrences: [],
+          edges: [],
+          [member]: indices.map((index) => members[member][index]!),
+        },
+      });
+    const first = page([0]);
+    const second = page([1]);
+    expect(parseArtifactInventoryEvidence(first).inventory.complete).toBe(
+      false,
+    );
+    expect(parseArtifactInventoryEvidence(second).inventory.complete).toBe(
+      false,
+    );
+    expect(() =>
+      parseArtifactInventoryEvidence(
+        mode === "single" ? page([0, 1]) : [first, second],
+      ),
+    ).toThrow(EvidenceIntegrityError);
+  },
+);

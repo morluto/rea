@@ -1,4 +1,5 @@
-import type { ProviderIdentity } from "../AnalysisProvider.js";
+import { unknownTarget } from "../../domain/targetIdentity.js";
+import type { ProviderIdentity } from "../../ports/AnalysisProvider.js";
 import {
   createEvidence,
   type Evidence,
@@ -10,7 +11,6 @@ import type {
   ListJavaScriptRuntimeTargetsInput,
   ObserveJavaScriptRuntimeInput,
 } from "../../domain/javascript/javascriptRuntimeObservation.js";
-import { jsonValueSchema } from "../../domain/jsonValue.js";
 
 type RuntimeObservationOperation =
   | "list_javascript_runtime_targets"
@@ -23,14 +23,14 @@ export const createJavaScriptRuntimeObservationEvidence = (
   result: JavaScriptRuntimeTargetList | JavaScriptRuntimeObservation,
   provider: ProviderIdentity,
 ): Evidence =>
-  createEvidence(undefined, provider, {
+  createEvidence(unknownTarget("not-observed"), provider, {
     predicateType:
       operation === "list_javascript_runtime_targets"
         ? "rea.javascript-runtime-target-list"
         : "rea.javascript-runtime-observation",
     operation,
     parameters: parameters(input),
-    result: jsonValueSchema.parse(result),
+    result,
     rawResult: null,
     confidence: "observed",
     authority: "external-service",

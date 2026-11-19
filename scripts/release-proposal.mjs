@@ -4,7 +4,8 @@ import { appendFile } from "node:fs/promises";
 import { parseArgs, promisify } from "node:util";
 import {
   applyReleasePleasePatch,
-  releaseProposalSearchDepth,
+  createReleaseProposal,
+  describeReleaseProposalError,
 } from "./lib/release-proposal.mjs";
 
 const execute = promisify(execFile);
@@ -26,33 +27,44 @@ async function main() {
   ) {
     throw new Error("Expected GITHUB_REPOSITORY, GH_TOKEN and --target-branch");
   }
-  const depth = await releaseProposalSearchDepth(
-    async (command, args) =>
-      (await execute(command, args, { encoding: "utf8" })).stdout,
-    values["source-sha"],
-  );
-  // Patch before import: only proposal generation uses this maintained upstream fix.
-  // Publication continues through the pinned release-please action.
-  await applyReleasePleasePatch();
-  const { GitHub, Manifest } = await import("release-please");
   const [owner, repo] = repository.split("/");
   const branch = values["target-branch"];
-  const github = await GitHub.create({
-    owner,
-    repo,
-    token,
-    defaultBranch: branch,
-  });
-  const manifest = await Manifest.fromManifest(
-    github,
-    branch,
-    undefined,
-    undefined,
+  const result = await createReleaseProposal(
+    async (command, args) =>
+      (
+        await execute(command, args, {
+          encoding: "utf8",
+          maxBuffer: 64 * 1024 * 1024,
+        })
+      ).stdout,
     {
-      commitSearchDepth: depth,
+      repository,
+      targetBranch: branch,
+      sourceSha: values["source-sha"],
+      eventName: process.env.GITHUB_EVENT_NAME,
+    },
+    async (depth) => {
+      // Patch before import: publication uses the pinned action separately.
+      await applyReleasePleasePatch();
+      const { GitHub, Manifest } = await import("release-please");
+      const github = await GitHub.create({
+        owner,
+        repo,
+        token,
+        defaultBranch: branch,
+      });
+      return Manifest.fromManifest(github, branch, undefined, undefined, {
+        commitSearchDepth: depth,
+      });
     },
   );
-  const prs = (await manifest.createPullRequests()).filter(Boolean);
+  if (result.kind === "release-merge") {
+    const message = `Release PR #${result.pullRequest} merged at ${values["source-sha"]}; the release workflow owns publication. Proposal generation resumes on the next main push.\n`;
+    process.stdout.write(message);
+    if (process.env.GITHUB_STEP_SUMMARY)
+      await appendFile(process.env.GITHUB_STEP_SUMMARY, message);
+  }
+  const prs = result.kind === "proposal" ? result.pullRequests : [];
   if (process.env.GITHUB_OUTPUT) {
     await appendFile(
       process.env.GITHUB_OUTPUT,
@@ -63,7 +75,7 @@ async function main() {
 
 await main().catch((error) => {
   process.stderr.write(
-    `Release proposal failed: ${error instanceof Error ? error.message : String(error)}\n`,
+    `Release proposal failed: ${describeReleaseProposalError(error)}\n`,
   );
   process.exitCode = 1;
 });

@@ -3,12 +3,14 @@ import { createHash } from "node:crypto";
 import { chmod, open, stat, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisCleanupLease } from "../resources/index.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -23,8 +25,9 @@ import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import {
   RuntimeControlUnavailableError,
   runtimeControlCapabilityError,
-} from "../process/RuntimeControlUnavailableError.js";
+} from "../domain/runtimeControlUnavailableError.js";
 import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_pcap_capture";
 const MAX_CAPTURE_BYTES = 2 * 1024 ** 3;
@@ -32,9 +35,10 @@ const MAX_CAPTURE_BYTES = 2 * 1024 ** 3;
 /** An owned capture copy and every descriptor needed to release it safely. */
 export class PcapSnapshot {
   private readonly handles = new Set<OwnedFileHandle>();
+  /** Descriptors whose failed completion close an error still reports. */
   private readonly completionCleanup = new Map<
     OwnedFileHandle,
-    AnalysisError
+    AnalysisCleanupLease
   >();
   readonly path: string;
   readonly configurationPath: string;
@@ -62,8 +66,13 @@ export class PcapSnapshot {
   private async release(handle: OwnedFileHandle): Promise<void> {
     await handle.close();
     this.handles.delete(handle);
-    this.completionCleanup.get(handle)?.resolveCleanup();
     this.completionCleanup.delete(handle);
+  }
+  /** Retry through a reported descriptor's lease so its error reads the release. */
+  private retryRelease(handle: OwnedFileHandle): Promise<void> {
+    return (
+      this.completionCleanup.get(handle)?.release() ?? this.release(handle)
+    );
   }
   private async releaseCompleted(
     handle: OwnedFileHandle,
@@ -78,10 +87,14 @@ export class PcapSnapshot {
         { reason: "Owned snapshot descriptor close failed" },
         { operation: OPERATION, cause: cleanupCause },
       );
-      this.completionCleanup.set(handle, cleanup);
+      const lease = new AnalysisCleanupLease(
+        () => this.release(handle),
+        [this.path],
+      );
+      lease.bindCleanupError(cleanup);
+      this.completionCleanup.set(handle, lease);
       if (signal?.aborted !== true) throw cleanup;
-      const cancelled = new AnalysisCancelledError(OPERATION, {
-        cause: signal.reason,
+      const cancelled = cancelledBy(OPERATION, signal, {
         cleanup: {
           reason: "Owned snapshot descriptor close could not be confirmed",
           resources: [this.path],
@@ -117,7 +130,7 @@ export class PcapSnapshot {
           {
             path: ["path"],
             reason: "invalid_value",
-            message: `Cannot read selected capture ${path}: ${cause instanceof Error ? cause.message : String(cause)}`,
+            message: `Cannot read selected capture ${path}: ${errorMessage(cause)}`,
           },
         ]);
       }
@@ -127,11 +140,11 @@ export class PcapSnapshot {
       await mkdir(this.configurationPath, { mode: 0o700 });
       const source = await sourceRead(async () => {
         try {
-          return this.own(
-            new OwnedFileHandle(
-              await openRegularFile(path, { symlinks: "follow", signal }),
-            ),
-          );
+          const { handle } = await openRegularFile(path, {
+            symlinks: "follow",
+            signal,
+          });
+          return this.own(new OwnedFileHandle(handle));
         } catch (cause) {
           if (cause instanceof RegularFileAdmissionFailure) {
             this.own(cause.owner);
@@ -152,6 +165,7 @@ export class PcapSnapshot {
           fixedAllowanceOptions(
             "the owned capture snapshot allowance",
             "input",
+            { limit: MAX_CAPTURE_BYTES, unit: "bytes" },
           ),
         );
       const destination = this.own(
@@ -225,9 +239,7 @@ export class PcapSnapshot {
         cause instanceof RegularFileAdmissionFailure ? cause.cause : cause;
       const cancellation = regularFileCancellation(primary);
       if (cancellation !== undefined)
-        throw new AnalysisCancelledError(OPERATION, {
-          cause: cancellation.reason,
-        });
+        throw cancelledBy(OPERATION, carriedReason(cancellation.reason));
       if (cause instanceof AnalysisError) throw cause;
       throw privateWorkspaceFailure("pcap", OPERATION, primary, this.root.path);
     }
@@ -240,11 +252,11 @@ export class PcapSnapshot {
     signal?: AbortSignal,
   ): Promise<void> {
     try {
-      const file = this.own(
-        new OwnedFileHandle(
-          await openRegularFile(this.path, { symlinks: "reject", signal }),
-        ),
-      );
+      const { handle } = await openRegularFile(this.path, {
+        symlinks: "reject",
+        signal,
+      });
+      const file = this.own(new OwnedFileHandle(handle));
       const before = await file.handle.stat({ bigint: true });
       const buffer = Buffer.alloc(64 * 1024);
       const hash = createHash("sha256");
@@ -282,9 +294,7 @@ export class PcapSnapshot {
         cause instanceof RegularFileAdmissionFailure ? cause.cause : cause;
       const cancellation = regularFileCancellation(primary);
       if (cancellation !== undefined)
-        throw new AnalysisCancelledError(OPERATION, {
-          cause: cancellation.reason,
-        });
+        throw cancelledBy(OPERATION, carriedReason(cancellation.reason));
       if (cause instanceof AnalysisError) throw cause;
       throw new AnalysisArtifactChangedError(
         OPERATION,
@@ -297,7 +307,7 @@ export class PcapSnapshot {
 
   async close(): Promise<void> {
     const results = await Promise.allSettled(
-      [...this.handles].map((handle) => this.release(handle)),
+      [...this.handles].map((handle) => this.retryRelease(handle)),
     );
     const failures = results.flatMap((result) =>
       result.status === "rejected" ? [result.reason as unknown] : [],

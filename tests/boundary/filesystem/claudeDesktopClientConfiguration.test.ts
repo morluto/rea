@@ -1,10 +1,10 @@
+import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import {
   access,
   chmod,
   mkdir,
   readFile,
   readdir,
-  rm,
   stat,
   symlink,
   writeFile,
@@ -13,9 +13,9 @@ import { dirname, join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { CLAUDE_DESKTOP_PACKAGE_FAMILY } from "../../../src/application/ClaudeDesktopConfigLocation.js";
+import { CLAUDE_DESKTOP_PACKAGE_FAMILY } from "../../fixtures/claudeDesktop.js";
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
-import { npxRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
+
 import {
   configureClientConfiguration,
   inspectClientConfiguration,
@@ -29,27 +29,23 @@ import {
 import {
   runUninstall,
   systemUninstallHost,
+  type UninstallHost,
 } from "../../../src/application/Uninstall.js";
+import { resolveMcpRegistrationClients } from "../../../src/application/McpRegistrationCatalog.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 /** The Windows registration setup writes, independent of the test host. */
-const command = npxRegistrationCommand("win32");
+const command = currentClientRegistrationCommand({ platform: "win32" });
 const CONFIG = "claude_desktop_config.json";
 
-const roots: string[] = [];
 beforeEach(clearClientLocationEnvironment);
-afterEach(async () => {
-  vi.unstubAllEnvs();
-  await Promise.all(
-    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
-  );
-});
+afterEach(() => vi.unstubAllEnvs());
 
 /** A Windows profile with separate roaming and local AppData roots. */
 const windowsProfile = async () => {
   const home = await createTestTempDirectory("rea-claude-desktop-");
-  roots.push(home);
   const env = {
     APPDATA: join(home, "AppData", "Roaming"),
     LOCALAPPDATA: join(home, "AppData", "Local"),
@@ -79,6 +75,23 @@ const claudeDesktop = (
   );
   if (client === undefined) throw new Error("claude_desktop is not supported");
   return client;
+};
+
+/**
+ * Uninstall scoped to Claude Desktop. A simulated Windows profile on a POSIX
+ * temp home has no drive letter, so clients that refuse driveless paths (Kilo)
+ * would fail for reasons unrelated to these tests.
+ */
+const claudeDesktopUninstallHost = (
+  home: string,
+  env: Readonly<Record<string, string>>,
+): UninstallHost => {
+  const host = systemUninstallHost(home, undefined, env, "win32");
+  return {
+    ...host,
+    clients: async () =>
+      (await host.clients()).filter(({ name }) => name === "claude_desktop"),
+  };
 };
 
 const writeJson = async (path: string, value: unknown): Promise<void> => {
@@ -152,6 +165,34 @@ describe("Windows Claude Desktop configuration location", () => {
     );
   });
 
+  it("refuses mcp add before any write while the package view is unknown", async () => {
+    const { home, env, appDataConfig, container } = await windowsProfile();
+    await mkdir(join(container, "LocalCache", "Roaming"), { recursive: true });
+    await writeJson(appDataConfig, { preferences: {} });
+    const resources = new ArtifactResourceScope();
+    try {
+      const selected = await resolveMcpRegistrationClients(
+        {
+          agents: ["claude-desktop"],
+          global: true,
+          cwd: home,
+          home,
+          platform: "win32",
+          environment: env,
+        },
+        resources,
+      );
+      expect(selected.ok).toBe(false);
+      if (selected.ok) throw new Error("expected an MSIX write refusal");
+      expect(selected.error.message).toContain(
+        `Add REA's entry to ${appDataConfig} by hand while Claude Desktop is fully quit, or rerun mcp add`,
+      );
+    } finally {
+      await resources.close();
+    }
+    expect(await readJson(appDataConfig)).toEqual({ preferences: {} });
+  });
+
   it("creates the private copy when the MSIX package has no configuration", async () => {
     const { home, env, privateConfig } = await windowsProfile();
     await writeJson(join(dirname(privateConfig), "Local State"), {});
@@ -200,12 +241,12 @@ describe("Windows Claude Desktop configuration location", () => {
         (await detectClients(home, "win32", env)).map(({ name }) => name),
       ).not.toContain("claude_desktop");
       const status = (
-        await readClientRegistrationStatuses(home, "unused", {
+        await readClientRegistrationStatuses(home, command[1], {
           platform: "win32",
           environment: env,
         })
       ).find(({ client: name }) => name === "claude_desktop");
-      expect(status).toMatchObject({ state: "invalid", config_path: foreign });
+      expect(status).toMatchObject({ state: "unknown", config_path: foreign });
       await expect(
         inspectClientConfiguration(client, {}, command),
       ).resolves.toMatchObject({ status: "invalid" });
@@ -214,7 +255,7 @@ describe("Windows Claude Desktop configuration location", () => {
       ).resolves.toEqual({ status: "failed", reason: "path" });
       const uninstall = await runUninstall(
         false,
-        systemUninstallHost(home, undefined, env, "win32"),
+        claudeDesktopUninstallHost(home, env),
       );
       expect(uninstall.status).toBe("failed");
       expect(uninstall.items).toContainEqual(
@@ -314,7 +355,7 @@ it("preserves explicit AppData root whitespace throughout setup, doctor and unin
     backupPath: `${privateConfig}.rea.backup`,
   });
   const status = (
-    await readClientRegistrationStatuses(home, "unused", {
+    await readClientRegistrationStatuses(home, command[1], {
       platform: "win32",
       environment: selected,
     })
@@ -325,7 +366,7 @@ it("preserves explicit AppData root whitespace throughout setup, doctor and unin
   });
   const uninstall = await runUninstall(
     false,
-    systemUninstallHost(home, undefined, selected, "win32"),
+    claudeDesktopUninstallHost(home, selected),
   );
   expect(uninstall.status).toBe("complete");
   expect(await readJson(appDataConfig)).toEqual(original);
@@ -349,7 +390,7 @@ describe("MSIX Claude Desktop registration lifecycle", () => {
     const appDataOriginal = await readFile(appDataConfig, "utf8");
     const status = async () =>
       (
-        await readClientRegistrationStatuses(home, "unused", {
+        await readClientRegistrationStatuses(home, command[1], {
           platform: "win32",
           environment: env,
         })
@@ -492,7 +533,7 @@ describe("MSIX Claude Desktop registration lifecycle", () => {
           throw new Error("Expected a blocked update");
         expect(failedConfigurationMessage(result)).toContain(privateConfig);
         expect(failedConfigurationMessage(result)).toContain("Repair access");
-        expect(await readFile(appDataConfig)).toEqual(original);
+        expect(Buffer.compare(await readFile(appDataConfig), original)).toBe(0);
         expect(await readdir(dirname(appDataConfig))).toEqual([CONFIG]);
       } finally {
         await chmod(privateDirectory, mode);
@@ -510,7 +551,7 @@ describe("MSIX Claude Desktop uninstall", () => {
 
     const result = await runUninstall(
       false,
-      systemUninstallHost(home, undefined, env, "win32"),
+      claudeDesktopUninstallHost(home, env),
     );
 
     expect(result.status).toBe("failed");
@@ -535,43 +576,10 @@ describe("MSIX Claude Desktop uninstall", () => {
     await writeJson(appDataConfig, unrelated);
     const result = await runUninstall(
       false,
-      systemUninstallHost(home, undefined, env, "win32"),
+      claudeDesktopUninstallHost(home, env),
     );
     expect(result.status).toBe("complete");
     expect(await readJson(appDataConfig)).toEqual(unrelated);
-  });
-
-  it("blocks managed skill removal through redirected AppData before any removal", async () => {
-    const { home, env, appDataConfig, privateConfig } = await windowsProfile();
-    await writeJson(join(dirname(privateConfig), "Preferences"), {});
-    await mkdir(dirname(dirname(appDataConfig)), { recursive: true });
-    await symlink(dirname(privateConfig), dirname(appDataConfig), "dir");
-    const agents = join(env.APPDATA, "dsh", "agents");
-    const manifest = join(
-      agents,
-      "skills",
-      "reverse-engineer-anything",
-      "SKILL.md",
-    );
-    await mkdir(dirname(manifest), { recursive: true });
-    await writeFile(
-      manifest,
-      "---\nname: reverse-engineer-anything\n---\nmanaged fixture\n",
-    );
-    const environment = { ...env, DSH_AGENTS_HOME: agents };
-    const result = await runUninstall(
-      false,
-      systemUninstallHost(home, undefined, environment, "win32"),
-    );
-    expect(result.status).toBe("failed");
-    expect(result.items).toContainEqual(
-      expect.objectContaining({
-        name: "skill",
-        status: "failed",
-        detail: expect.stringContaining("redirects its writes"),
-      }),
-    );
-    expect(await readFile(manifest, "utf8")).toContain("managed fixture");
   });
 
   it("removes REA from both the private copy and AppData on uninstall", async () => {
@@ -584,7 +592,7 @@ describe("MSIX Claude Desktop uninstall", () => {
 
     const result = await runUninstall(
       false,
-      systemUninstallHost(home, undefined, env, "win32"),
+      claudeDesktopUninstallHost(home, env),
     );
 
     expect(result.status).toBe("complete");

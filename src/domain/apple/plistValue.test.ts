@@ -1,7 +1,8 @@
 import { expect, it } from "vitest";
+import { InternalInvariantError } from "../internalInvariant.js";
 import { parseBinary } from "plist";
 
-import { projectPlistValue } from "./plistValue.js";
+import { PlistNestingLimitError, projectPlistValue } from "./plistValue.js";
 import { UnknownPlistScalar } from "./unknownPlistScalar.js";
 
 // Binary decoders build dates from seconds; beyond the Date range they are invalid.
@@ -49,7 +50,7 @@ it("rejects excessive plist nesting without exhausting the stack", () => {
     cursor.push(next);
     cursor = next;
   }
-  expect(() => projectPlistValue(deep)).toThrow(RangeError);
+  expect(() => projectPlistValue(deep)).toThrow(PlistNestingLimitError);
 });
 
 it("reports only generated scalar wrappers and keeps lookalike dictionaries distinct", () => {
@@ -108,7 +109,7 @@ it("rejects accessors, proxies, holes and symbol keys without invoking user code
     Array(1),
     { [Symbol("key")]: "value" },
   ])
-    expect(() => projectPlistValue(value)).toThrow(TypeError);
+    expect(() => projectPlistValue(value)).toThrow(InternalInvariantError);
   expect(accessed).toBe(0);
 });
 
@@ -236,5 +237,5 @@ it.each([
   expect(projected.nonFiniteRealCount).toBe(4);
   expect(projected.negativeZeroRealCount).toBe(1);
   expect(observed).toHaveLength(5);
-  expect(bytes).toEqual(original);
+  expect(Buffer.compare(bytes, original)).toBe(0);
 });

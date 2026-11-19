@@ -1,14 +1,24 @@
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { expect, onTestFinished } from "vitest";
+import { afterAll, expect, onTestFinished } from "vitest";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+// Compile SDK output validators for the tools a test calls, not the whole catalog.
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 const compareContract = toolContract("compare_application_versions");
 const analyzeContract = toolContract("analyze_javascript_application");
@@ -29,20 +39,36 @@ const runJson = async (
   root: string,
   command: string,
   input: unknown,
+  evidenceBundle?: string,
 ) => {
   const path = join(root, "request.json");
   await writeFile(path, JSON.stringify(input));
-  return cli.run({
-    arguments: [command, path, "--json"],
+  // These JSON commands share no provider state; reuse the fixture-owned CLI
+  // process so the matrix measures validation rather than repeated startup.
+  const run = cli.run.bind(cli);
+  return run({
+    arguments: [
+      command,
+      path,
+      "--json",
+      ...(evidenceBundle === undefined
+        ? []
+        : ["--evidence-bundle", evidenceBundle]),
+    ],
     cwd: root,
-    environment: { REA_LOG_LEVEL: "silent" },
+    environment: {
+      REA_LOG_LEVEL: "silent",
+    },
   });
 };
 const connectMcp = async (root: string) => {
-  const client = new Client({
-    name: "application-input-identities",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "application-input-identities",
+      version: "1",
+    },
+    { jsonSchemaValidator: schemaValidation },
+  );
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [resolve("scripts/rea.mjs"), "mcp"],
@@ -53,6 +79,7 @@ const connectMcp = async (root: string) => {
       XDG_CONFIG_HOME: join(root, "config"),
       XDG_CACHE_HOME: join(root, "cache"),
       REA_LOG_LEVEL: "silent",
+      ...INLINE_EVIDENCE_MCP_ENVIRONMENT,
     },
   });
   onTestFinished(async () => {
@@ -72,7 +99,7 @@ const connectMcp = async (root: string) => {
       throw new Error(`Missing advertised tool ${name}`);
     return client.callTool(
       { name, arguments: arguments_ },
-      { toolDefinition: definition },
+      { toolDefinition: withCanonicalOutputSchema(definition) },
     );
   };
   return { client, tools, call };
@@ -351,10 +378,11 @@ cliTest(
       "trace_application_feature",
     ]) {
       const definition = tools.get(name);
-      if (definition?.outputSchema === undefined)
-        throw new Error("Missing workflow schema");
+      if (definition === undefined) throw new Error("Missing workflow schema");
       expect(ajv.validateSchema(definition.inputSchema)).toBe(true);
-      const { $schema, ...outputKeywords } = definition.outputSchema;
+      const { $schema, ...outputKeywords } = canonicalOutputSchema(
+        definition.name,
+      );
       expect(
         ajv.validateSchema(
           $schema === undefined
@@ -392,6 +420,18 @@ cliTest(
     });
     expect(cliResult.exitCode, cliResult.stdout).toBe(0);
     expect(compareContract.outputSchema.parse(cliResult.json)).toEqual(result);
+    const bundlePath = join(root, "retained-workflow-evidence.json");
+    const exported = await call("export_evidence_bundle", { path: bundlePath });
+    expect(exported.isError).not.toBe(true);
+    const portable = await runJson(
+      cli,
+      root,
+      "compare-application-versions",
+      { left: reference, right: otherReference },
+      bundlePath,
+    );
+    expect(portable.exitCode, portable.stdout).toBe(0);
+    expect(compareContract.outputSchema.parse(portable.json)).toEqual(result);
     expect(
       (
         await call("compare_javascript_export_shapes", {

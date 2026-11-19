@@ -6,13 +6,14 @@ import { z } from "zod";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+import { ToolResultDelivery } from "../../../src/server/ToolResultDelivery.js";
 import { createJadxProtocolFixture } from "../../fixtures/android/jadx.js";
 import {
   createDeferred,
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("retains completed Android Evidence through the MCP cancellation delivery path", async () => {
   const fixture = await createJadxProtocolFixture();
@@ -53,7 +54,10 @@ it("retains completed Android Evidence through the MCP cancellation delivery pat
       },
     },
   );
-  const client = new Client({ name: "android-late-completion", version: "1" });
+  const client = new Client(
+    { name: "android-late-completion", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   onTestFinished(async () => {
@@ -73,12 +77,12 @@ it("retains completed Android Evidence through the MCP cancellation delivery pat
   expect(controlReply.isError).not.toBe(true);
   const control = parseEvidence(controlReply.structuredContent);
   const delivered = createDeferred<CallToolResult>();
-  const deliver = server.delivery.toRecordedPartialErrorToolResult.bind(
+  const deliver = server.delivery.toPartialErrorToolResult.bind(
     server.delivery,
   );
   vi.spyOn(
     ToolResultDelivery.prototype,
-    "toRecordedPartialErrorToolResult",
+    "toPartialErrorToolResult",
   ).mockImplementation((...args) => {
     const result = deliver(...args);
     delivered.resolve(result);

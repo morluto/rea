@@ -4,7 +4,6 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { json } from "./lib/verify-package-core.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 
 /** Exercise the packaged updater with real npm and a local release registry fixture. */
@@ -17,7 +16,7 @@ export async function verifyPackageUpdate({
   commands,
 }) {
   const metadataPath = join(packageRoot, "package.json");
-  const metadata = json(await readFile(metadataPath, "utf8"));
+  const metadata = JSON.parse(await readFile(metadataPath, "utf8"));
   const archive = await readFile(tarball);
   const entry = join(packageRoot, "scripts", "rea.mjs");
   const home = join(workspace, "update-home");
@@ -30,19 +29,36 @@ export async function verifyPackageUpdate({
   const fixture = new AbortController();
   const server = createServer((request, response) => {
     void serveRegistry(request, response).catch((error) => {
-      fixtureFailure ??= { cause: error };
-      fixture.abort(fixtureFailure.cause);
+      // Let npm retry an upstream reset using its registry retry policy.
+      const connectionReset =
+        error instanceof TypeError &&
+        error.cause instanceof Error &&
+        "code" in error.cause &&
+        error.cause.code === "ECONNRESET";
+      if (!connectionReset) {
+        fixtureFailure ??= { cause: error };
+        fixture.abort(fixtureFailure.cause);
+      }
       if (response.headersSent) {
         response.destroy();
         return;
       }
-      response.writeHead(500);
-      response.end(String(error));
+      response.writeHead(connectionReset ? 502 : 500, {
+        "Content-Type": "text/plain; charset=utf-8",
+        "X-Content-Type-Options": "nosniff",
+      });
+      response.end(
+        connectionReset ? "npm registry connection reset" : String(error),
+      );
     });
   });
   let registry;
   async function serveRegistry(request, response) {
-    const pathname = new URL(request.url, registry).pathname;
+    // A leading // belongs to an origin-form HTTP path, not a URL authority.
+    const requested = new URL(
+      request.url.startsWith("/") ? `${registry}${request.url}` : request.url,
+    );
+    const { pathname } = requested;
     if (pathname === "/rea-agents") {
       response.setHeader("Content-Type", "application/json");
       response.end(
@@ -66,7 +82,10 @@ export async function verifyPackageUpdate({
       response.setHeader("Content-Type", "application/json");
       response.end("{}");
     } else {
-      const upstream = await fetch(`https://registry.npmjs.org${request.url}`);
+      const upstreamUrl = new URL("https://registry.npmjs.org");
+      upstreamUrl.pathname = pathname;
+      upstreamUrl.search = requested.search;
+      const upstream = await fetch(upstreamUrl);
       const body = Buffer.from(await upstream.arrayBuffer());
       response.writeHead(upstream.status, {
         "Content-Type":
@@ -144,7 +163,7 @@ process.stdout.write(JSON.stringify(result));
 if (result.status === "failed") process.exitCode = 1;
 `,
       );
-      const result = json(
+      const result = JSON.parse(
         (
           await commands.exec(process.execPath, [harness], {
             env: runtimeEnvironment,

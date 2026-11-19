@@ -1,41 +1,42 @@
-import { addressedValueSchema } from "../domain/native/nativeInventory.js";
+import { permitsCapabilityFallback } from "./CapabilityFallback.js";
+import { listNamesFact } from "../domain/native/nativeOperationFacts.js";
+import { executeFact } from "./AnalysisOperationFacts.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCapabilityUnavailableError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
-import type { AnalysisOperationPort } from "./AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../ports/AnalysisProvider.js";
 import { resolveProcedureAddress } from "./ProcedureAddressResolution.js";
 
-/** Resolve a CLI symbol selector without changing existing address spellings. */
+/** Resolve an exact symbol after the provider rejects the caller address format. */
 export const resolveXrefsAddress = async (
   analysis: AnalysisOperationPort,
   selector: string,
   signal: AbortSignal,
 ): Promise<Result<string, AnalysisError>> => {
-  if (
-    selector.length === 0 ||
-    /^[0-9a-f]+$/iu.test(selector) ||
-    /^0x/iu.test(selector) ||
-    /:0x/iu.test(selector)
-  )
-    return ok(selector);
-
   const named = await resolveXrefsName(analysis, selector, signal);
   if (!named.ok) return named;
   return named.value !== null
     ? ok(named.value)
     : err(
-        new AnalysisInputError("xrefs", undefined, [
+        new AnalysisInputError(
+          "xrefs",
           {
-            path: ["address"],
-            reason: "invalid_value",
-            message: `Unknown analyzed symbol name ${JSON.stringify(selector)}. Use an exact analyzed name or a hexadecimal address.`,
+            conformsToInputContract: true,
+            remediationAction:
+              "For a function, use rea search --kind procedures to find an analyzed address. For exports, inspect-macho (Mach-O) or inspect-native-exports (PE/ELF) may help; exports can omit local symbols and use different address coordinates. Verify the address in the selected provider, then retry xrefs.",
           },
-        ]),
+          [
+            {
+              path: ["address"],
+              reason: "invalid_value",
+              message: `Unknown analyzed symbol name ${JSON.stringify(selector)}. Use an exact analyzed name or a hexadecimal address.`,
+            },
+          ],
+        ),
       );
 };
 
@@ -46,19 +47,18 @@ export const resolveXrefsName = async (
   signal?: AbortSignal,
   operation: "xrefs" | "find_xrefs_to_name" = "xrefs",
 ): Promise<Result<string | null, AnalysisError>> => {
-  if (signal?.aborted)
-    return err(new AnalysisCancelledError(operation, { cause: signal.reason }));
-  const inventory = await analysis.execute(
-    "list_names",
+  if (signal?.aborted) return err(cancelledBy(operation, signal));
+  const inventory = await executeFact(
+    analysis,
+    listNamesFact,
     {},
     signal === undefined ? {} : { signal },
   );
   if (!inventory.ok) {
     if (
       operation === "xrefs" &&
-      inventory.error instanceof AnalysisCapabilityUnavailableError &&
-      inventory.error.operation === "list_names" &&
-      !inventory.error.cleanupIncomplete
+      permitsCapabilityFallback(inventory.error) &&
+      inventory.error.operation === "list_names"
     )
       return resolveProcedureAddress(
         async (operation, parameters, signal) => {
@@ -74,37 +74,36 @@ export const resolveXrefsName = async (
       );
     return inventory;
   }
-  if (signal?.aborted)
-    return err(new AnalysisCancelledError(operation, { cause: signal.reason }));
-  if (!Array.isArray(inventory.value.result))
-    return err(
-      new AnalysisOutputError(
-        "list_names",
-        "Expected a symbol inventory array",
-      ),
-    );
-
+  if (signal?.aborted) return err(cancelledBy(operation, signal));
   const addresses = new Set<string>();
-  for (const [index, item] of inventory.value.result.entries()) {
-    const parsed = addressedValueSchema.safeParse(item);
-    if (!parsed.success || parsed.data.address.length === 0)
+  for (const [index, row] of inventory.value.fact.entries()) {
+    // An empty address cannot be passed back to xrefs.
+    if (row.address.length === 0)
       return err(
         new AnalysisOutputError(
           "list_names",
           `Invalid symbol inventory entry at index ${index}`,
         ),
       );
-    if (parsed.data.value === selector) addresses.add(parsed.data.address);
+    if (row.value === selector) addresses.add(row.address);
   }
   const [address] = addresses;
   if (addresses.size <= 1) return ok(address ?? null);
   return err(
-    new AnalysisInputError(operation, undefined, [
+    new AnalysisInputError(
+      operation,
       {
-        path: [operation === "xrefs" ? "address" : "name"],
-        reason: "invalid_value",
-        message: `Analyzed symbol name ${JSON.stringify(selector)} is ambiguous at ${[...addresses].sort().join(", ")}. Select an exact address.`,
+        conformsToInputContract: true,
+        remediationAction:
+          "Select an exact address from the candidates and call xrefs with that address.",
       },
-    ]),
+      [
+        {
+          path: [operation === "xrefs" ? "address" : "name"],
+          reason: "invalid_value",
+          message: `Analyzed symbol name ${JSON.stringify(selector)} is ambiguous at ${[...addresses].sort().join(", ")}. Select an exact address.`,
+        },
+      ],
+    ),
   );
 };

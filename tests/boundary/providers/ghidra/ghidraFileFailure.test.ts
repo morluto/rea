@@ -1,18 +1,20 @@
+import { unknownTarget } from "../../../../src/domain/targetIdentity.js";
 import { open, writeFile, type FileHandle } from "node:fs/promises";
+import { classifyProviderFailure } from "../../../../src/providers/classifyProviderFailure.js";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 
-import { ghidraFileFailure } from "../../../../src/ghidra/GhidraFileArtifacts.js";
+import { ghidraFileDialect } from "../../../../src/ghidra/GhidraFileArtifacts.js";
 import {
   ArtifactFileCleanupFailure,
   mapArtifactFileFailure,
   withArtifactRegularFile,
-} from "../../../../src/artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
+} from "../../../../src/resources/ArtifactFileOperation.js";
+import { ArtifactResourceScope } from "../../../../src/resources/ArtifactResourceScope.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../../../../src/artifacts/AnalysisCleanupLease.js";
+} from "../../../../src/resources/AnalysisCleanupLease.js";
 import { OwnedRegularFileOperationFailure } from "../../../../src/filesystem/OwnedRegularFile.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import {
@@ -32,16 +34,21 @@ const retainFailedDescriptor = async (path: string, primary: unknown) => {
   let handle: FileHandle | undefined;
   const failure: unknown = await resources
     .run(() =>
-      withArtifactRegularFile(path, resources, undefined, async (file) => {
-        handle = file;
-        const close = file.close.bind(file);
-        file.close = async () => {
-          if (!allowClose)
-            throw new Error("controlled descriptor close refusal");
-          await close();
-        };
-        throw new OwnedRegularFileOperationFailure(primary);
-      }),
+      withArtifactRegularFile(
+        path,
+        resources,
+        undefined,
+        async ({ handle: file }) => {
+          handle = file;
+          const close = file.close.bind(file);
+          file.close = async () => {
+            if (!allowClose)
+              throw new Error("controlled descriptor close refusal");
+            await close();
+          };
+          throw new OwnedRegularFileOperationFailure(primary);
+        },
+      ),
     )
     .catch((cause: unknown) => cause);
   if (!(failure instanceof ArtifactFileCleanupFailure)) {
@@ -67,7 +74,7 @@ const retainForeignFailure = async (path: string) => {
   const owner = new OwnedFileHandle(await open(path, "r"));
   const lease = AnalysisCleanupLease.forCloseOwner(owner, path);
   const partial = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "foreign", name: "foreign", version: null },
     {
       operation: "inspect_artifact",
@@ -121,9 +128,12 @@ it.each(["opaque", "errno", "authored"] as const)(
         kind === "authored"
           ? mapArtifactFileFailure(owned.failure, () => authored)
           : owned.failure;
-      const error = ghidraFileFailure(projected, "resolve_analysis_profile", {
-        path,
-      });
+      const error = classifyProviderFailure(
+        projected,
+        ghidraFileDialect("resolve_analysis_profile", {
+          path,
+        }),
+      );
       const plist = nativePlistFailure(projected, { path, origin: "selected" });
       const dispatch = appleDispatchMetadataFailure(projected, path);
       const errors = [error, plist, dispatch];

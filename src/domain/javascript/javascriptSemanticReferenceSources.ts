@@ -2,17 +2,15 @@ import type * as t from "@babel/types";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 import {
   semanticArrayIndex,
-  semanticPropertyPathKeyMatches,
   type JavaScriptSemanticPropertyPath as PropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
-import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
   evaluateSemanticExpression,
   semanticValueDefinitelyDefined,
 } from "./javascriptSemanticValues.js";
 import { semanticSlotAtPath } from "./javascriptSemanticSlots.js";
 import type { JavaScriptSemanticValue } from "./javascriptSemanticValueTypes.js";
-import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
+import { ambientPathMayObserveAt } from "./javascriptSemanticEffectLog.js";
 
 /**
  * Node's wrapper module inherits require. A copy cannot read that delegate
@@ -21,21 +19,13 @@ import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.j
 export const semanticCommonJsRequireOwnEnumerableAt = (
   capture: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): boolean => {
-  const selected = ["commonjs-module", "require"];
-  const mayAffect = (
-    effect: JavaScriptSemanticAnalysisState["ambientWriteEffects"][number],
-  ) =>
-    effect.path.length <= selected.length &&
-    effect.path.every((key, index) =>
-      semanticPropertyPathKeyMatches(key, selected[index] ?? ""),
-    ) &&
-    semanticEffectTiming(capture, effect.node, state) !== "after";
-  return (
-    state.ambientWriteEffects.some(mayAffect) ||
-    state.ambientEscapeEffects.some(mayAffect)
+): boolean =>
+  ambientPathMayObserveAt(
+    state,
+    capture,
+    ["commonjs-module", "require"],
+    "contents",
   );
-};
 
 interface ReferenceSource {
   readonly node: t.Node;
@@ -146,56 +136,4 @@ export const semanticSelectedReferenceSlot = (
     evaluateSemanticExpression(source.node, state, capturePoint),
     path,
   );
-};
-
-interface CopiedReferenceSource {
-  readonly projection: PropertyPath;
-  readonly copyKind?: "object-rest" | "array-rest";
-  readonly copyProjectionOffset?: number;
-  readonly copyExcludedKeys?: readonly string[];
-  readonly copyStartIndex?: number;
-}
-
-/** Map copied child selections once; the fresh copy itself keeps its own identity. */
-export const semanticCopiedReferencePath = (
-  initializer: CopiedReferenceSource,
-  path: PropertyPath,
-  effect: "write" | "escape" | "identity",
-): PropertyPath | null => {
-  const offset = initializer.copyProjectionOffset;
-  if (offset === undefined) return [...initializer.projection, ...path];
-  const copiedPath = [...initializer.projection.slice(offset + 1), ...path];
-  if (effect === "identity" && copiedPath.length === 0) return null;
-  if (effect === "write" && copiedPath.length < 2) return null;
-  let [key, ...remaining] = copiedPath;
-  if (initializer.copyKind === "array-rest") {
-    const startIndex = initializer.copyStartIndex ?? 0;
-    if (key === undefined || key === null)
-      key = { excludedKeys: [], startIndex };
-    else if (typeof key === "object")
-      key = {
-        excludedKeys: key.excludedKeys.flatMap((name) => {
-          const index = semanticArrayIndex(name);
-          return index === null ? [] : [String(index + startIndex)];
-        }),
-        startIndex: (key.startIndex ?? 0) + startIndex,
-      };
-    else {
-      const index = semanticArrayIndex(key);
-      if (index === null) return null;
-      key = index + startIndex;
-    }
-  } else {
-    const excludedKeys = initializer.copyExcludedKeys ?? [];
-    if (key === undefined || key === null) key = { excludedKeys };
-    else if (typeof key === "object")
-      key = {
-        ...key,
-        excludedKeys: [...new Set([...key.excludedKeys, ...excludedKeys])].sort(
-          compareUnicodeCodePoints,
-        ),
-      };
-    else if (excludedKeys.includes(String(key))) return null;
-  }
-  return [...initializer.projection.slice(0, offset), key, ...remaining];
 };

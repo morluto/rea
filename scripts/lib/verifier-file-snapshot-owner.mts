@@ -1,8 +1,8 @@
 import { lstat, open } from "node:fs/promises";
 
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../src/filesystem/OwnedFileHandle.js";
-import type { PackageVerifierCommands } from "./package-command-owner.mjs";
+import type { VerifierCommands } from "./verifier-command-owner.mjs";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 
 export type VerifierFileSnapshotEntry =
@@ -19,7 +19,7 @@ export type VerifierFileSnapshotEntry =
 
 /** Capture source values while the command owner retains every in-flight file. */
 export async function captureVerifierFileSnapshot(
-  commands: Pick<PackageVerifierCommands, "adopt">,
+  commands: Pick<VerifierCommands, "adopt">,
   paths: readonly string[],
 ): Promise<readonly VerifierFileSnapshotEntry[]> {
   const resources = new ArtifactResourceScope();
@@ -61,7 +61,7 @@ export async function captureVerifierFileSnapshot(
 
 /** Compare the same selected paths against their completed baseline facts. */
 export async function assertVerifierFilesUnchanged(
-  commands: Pick<PackageVerifierCommands, "adopt">,
+  commands: Pick<VerifierCommands, "adopt">,
   snapshot: readonly VerifierFileSnapshotEntry[],
   label: string,
 ): Promise<void> {

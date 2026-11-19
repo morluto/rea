@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { expect, it, onTestFinished } from "vitest";
 
 import { BinarySession } from "../../../src/application/binary/BinarySession.js";
@@ -11,18 +12,23 @@ import {
   createTestProviderRouter,
 } from "../../fixtures/binarySession.js";
 
-const createSession = (
-  records: InvestigationRecords = new InvestigationRecords(),
-) => {
-  const session = new BinarySession(
-    createTestProviderRouter(createCacheProvider([])),
-    records,
-  );
+const ownSession = (session: BinarySession): BinarySession => {
   onTestFinished(async () => {
-    await session.close();
+    const closed = await session.close();
+    if (!closed.ok) throw closed.error;
   });
   return session;
 };
+
+const createSession = (
+  records: InvestigationRecords = new InvestigationRecords(),
+) =>
+  ownSession(
+    new BinarySession(
+      createTestProviderRouter(createCacheProvider([])),
+      records,
+    ),
+  );
 
 it("uses the composed record owner and preserves best-effort post-commit notifications", async () => {
   const records = new InvestigationRecords();
@@ -38,7 +44,7 @@ it("uses the composed record owner and preserves best-effort post-commit notific
     throw new Error("Synthetic async observer failure");
   });
   const evidence = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     { operation: "independent-app", parameters: {}, result: true },
   );
@@ -53,22 +59,22 @@ it("uses the composed record owner and preserves best-effort post-commit notific
   });
   expect(observed).toEqual([1]);
   expect((await session.close()).ok).toBe(true);
-  expect(records.exportEvidenceBundle().records).toEqual([]);
+  expect(records.exportEvidenceBundle().records).toEqual([evidence]);
   expect(session.exportAnalysisSnapshot()).toMatchObject({
     ok: false,
     error: { _tag: "NoBinaryOpenError" },
   });
-  expect(observed).toEqual([1, 0]);
+  expect(observed).toEqual([1, 1]);
+  expect((await session.resetInvestigation()).ok).toBe(true);
+  expect(records.exportEvidenceBundle().records).toEqual([]);
+  expect(observed).toEqual([1, 1, 0]);
   unsubscribe();
   await new Promise<void>((resolve) => setImmediate(resolve));
 });
 
 it("notifies after snapshot and Evidence import both commit, and rejects mismatched targets atomically", async () => {
   const [first, second] = await createBinarySessionTargets();
-  const source = createTestBinarySession(createCacheProvider([]));
-  onTestFinished(async () => {
-    await source.close();
-  });
+  const source = ownSession(createTestBinarySession(createCacheProvider([])));
   expect((await source.open(first)).ok).toBe(true);
   expect(
     (
@@ -138,12 +144,20 @@ it("notifies an Unknown-only bundle change even when no new Evidence is added", 
   });
   expect(recipient.importEvidenceBundle(bundle)).toEqual({
     ok: true,
-    value: 0,
+    value: {
+      recordsAdded: 0,
+      unknownsAdded: 1,
+      totalRecords: bundle.records.length,
+    },
   });
   expect(revisions).toEqual([1]);
   expect(recipient.importEvidenceBundle(bundle)).toEqual({
     ok: true,
-    value: 0,
+    value: {
+      recordsAdded: 0,
+      unknownsAdded: 0,
+      totalRecords: bundle.records.length,
+    },
   });
   expect(revisions).toEqual([1]);
 });

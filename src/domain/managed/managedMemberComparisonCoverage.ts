@@ -1,9 +1,13 @@
+import { managedModuleRow } from "./managedModuleIdentity.js";
+import { joinCoverageStatus, type CoverageStatus } from "../coverage.js";
 import type {
   ManagedMemberComparisonResult,
   ManagedMemberComparisonSide,
 } from "./managedMemberComparison.js";
-import type { ManagedMemberInspection } from "./managedArtifact.js";
-import { hasSignatureResolution } from "./managedMemberSignatureIdentity.js";
+import {
+  managedInspectionCoverage,
+  type ManagedMemberInspection,
+} from "./managedArtifact.js";
 
 interface ComparisonCoverageInput {
   readonly left: ManagedMemberInspection;
@@ -18,20 +22,22 @@ export const buildComparisonCoverage = ({
   right,
   selectionAgreement,
 }: ComparisonCoverageInput): ManagedMemberComparisonResult["coverage"] => {
-  const leftStatus = sideCoverageStatus(left);
-  const rightStatus = sideCoverageStatus(right);
-  const unknownInput =
-    left.coverage.state !== "complete" ||
-    right.coverage.state !== "complete" ||
-    selectionAgreement !== "same" ||
-    !sameMethodRows(left, right);
+  // An unavailable side examined nothing, and an unknown selection agreement
+  // cannot tell whether both sides cover the same types: either makes the
+  // comparison unknown, even beside a known gap.
+  const joined = joinCoverageStatus([
+    managedInspectionCoverage(left.coverage.state),
+    managedInspectionCoverage(right.coverage.state),
+    selectionAgreement === "unknown"
+      ? "unknown"
+      : selectionAgreement === "different" || !sameMethodRows(left, right)
+        ? "partial"
+        : "complete",
+  ]);
   return {
-    status:
-      !unknownInput && leftStatus === "complete" && rightStatus === "complete"
-        ? "complete-within-inputs"
-        : "partial",
-    left_status: leftStatus,
-    right_status: rightStatus,
+    status: joined === "complete" ? "complete-within-inputs" : joined,
+    left_status: left.coverage.state,
+    right_status: right.coverage.state,
   };
 };
 
@@ -122,26 +128,39 @@ export const managedComparisonScope = (
 
 export type ManagedComparisonScope = ReturnType<typeof managedComparisonScope>;
 
-const sideCoverageStatus = (
+/** Copy the source's typed capacity facts without retaining unrelated issue inventories. */
+const resourceLimits = (
   result: ManagedMemberInspection,
-): ManagedMemberComparisonResult["coverage"]["left_status"] =>
-  result.coverage.state === "unavailable"
-    ? "unavailable"
-    : result.coverage.state === "complete"
-      ? "complete"
-      : "partial";
+): NonNullable<ManagedMemberComparisonResult["left"]["resource_limits"]> =>
+  result.coverage.issues.flatMap(({ code, scope, detail, offset, limit }) =>
+    code === "resource-limit"
+      ? [
+          {
+            code,
+            scope,
+            detail,
+            offset,
+            ...(limit === undefined ? {} : { limit }),
+          },
+        ]
+      : [],
+  );
 
 export const sideManifest = (
   side: ManagedMemberComparisonSide,
-): ManagedMemberComparisonResult["left"] => ({
-  evidence_id: side.evidenceId,
-  artifact_sha256: side.result.artifact.sha256,
-  mvid: side.result.module?.mvid ?? null,
-  module_name: side.result.module?.name ?? null,
-  metadata_status: side.result.metadata.status,
-  methods_total: side.result.methods.length,
-  fields_total: side.result.fields.length,
-});
+): ManagedMemberComparisonResult["left"] => {
+  const module = managedModuleRow(side.result);
+  return {
+    evidence_id: side.evidenceId,
+    artifact_sha256: side.result.artifact.sha256,
+    mvid: module?.mvid ?? null,
+    module_name: module?.name ?? null,
+    metadata_status: side.result.metadata.status,
+    methods_total: side.result.methods.length,
+    fields_total: side.result.fields.length,
+    resource_limits: resourceLimits(side.result),
+  };
+};
 
 export const buildComparisonSummary = (
   items: readonly (
@@ -180,6 +199,27 @@ export const buildComparisonMatching = (
   ).length,
 });
 
+/** Carry each side's representation-budget diagnostic and its recovery. */
+const capacityLimitations = (
+  left: ManagedMemberInspection,
+  right: ManagedMemberInspection,
+): string[] => {
+  const exceeded = new Set(
+    (["left", "right"] as const).flatMap((side) =>
+      resourceLimits(side === "left" ? left : right).map(
+        ({ scope, detail }) =>
+          `The ${side} managed member observation exceeded capacity at ${scope}: ${detail}. Its member collections are not examined to completion, so empty or missing members do not establish absence, addition or removal.`,
+      ),
+    ),
+  );
+  return exceeded.size === 0
+    ? []
+    : [
+        ...exceeded,
+        "Compare a smaller selection by inspecting both sides with the same type_names, or by passing --type to CLI compare-managed-members; a single selected type can still exceed capacity.",
+      ];
+};
+
 export const comparisonLimitations = (
   left: ManagedMemberInspection,
   right: ManagedMemberInspection,
@@ -191,6 +231,14 @@ export const comparisonLimitations = (
     "Methods pair within one declared type and name by exact CIL/signature, then signature, then structural shape; only then may exact CIL/signature or structural shape alone remap across declared types or names, never taking a member whose own declared type and name remain unpaired on the other side or whose declaring type is unresolved. Names alone are never a matching basis.",
     "Fields pair by declared type, name, and signature, then remap by exact decoded signature alone under the same rule; an undecoded signature is compared only for an exact signature match, and an unmatched member with one stays unknown.",
   ];
+  if (
+    [left, right].some((report) =>
+      report.fields.some((field) => field.constant != null),
+    )
+  )
+    limitations.push(
+      "Field Constant-table defaults are not compared; field matching and change detection cover names, flags and signatures only.",
+    );
   const namesTypes = (result: ManagedMemberInspection) =>
     result.methods.some(
       ({ signature }) =>
@@ -202,16 +250,13 @@ export const comparisonLimitations = (
         signature.resolved_sha256 !== null &&
         signature.resolved_sha256 !== signature.raw_sha256,
     );
-  if (
-    hasSignatureResolution(left) &&
-    hasSignatureResolution(right) &&
-    (namesTypes(left) || namesTypes(right))
-  )
+  if (namesTypes(left) || namesTypes(right))
     limitations.push(
       "Signature type operands compare by namespace, name, and enclosing names only; defining assemblies and CLR type identity are not established by this comparison.",
     );
   if (left.coverage.state !== "complete" || right.coverage.state !== "complete")
     limitations.push("At least one managed member observation is partial.");
+  limitations.push(...capacityLimitations(left, right));
   if (selectionAgreement === "different")
     limitations.push(
       "The observations select different declaring types; a member outside the other side's selection is unknown, not added or removed.",
@@ -232,20 +277,14 @@ export const comparisonLimitations = (
     limitations.push(
       "At least one observation lacks a complete MethodDef row inventory; paged or unrecorded method scope cannot establish cross-build method absence. Row intervals are reported in method_rows and describe build-local selections.",
     );
-  if (!hasSignatureResolution(left) || !hasSignatureResolution(right))
-    limitations.push(
-      "At least one managed member observation does not attest signature type-name resolution, so signatures compare by raw bytes, which name types by build-local metadata row.",
-    );
-  if (left.nesting_read === null || right.nesting_read === null)
-    limitations.push(
-      "At least one managed member observation predates enclosing-name identity. The legacy bare-name comparison does not establish the enclosing owner of a nested type.",
-    );
   if (left.exported_types === null || right.exported_types === null)
     limitations.push(
       "At least one managed member observation did not examine ExportedType rows; its exported and forwarded types are unknown.",
     );
   if (
+    // optional-fact-default: null rows are reported as unknown by the limitation above.
     (left.exported_types?.length ?? 0) > 0 ||
+    // optional-fact-default: null rows are reported as unknown by the limitation above.
     (right.exported_types?.length ?? 0) > 0
   )
     limitations.push(

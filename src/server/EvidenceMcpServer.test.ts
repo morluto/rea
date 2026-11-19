@@ -12,12 +12,14 @@ import {
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 
+import { CallerAbort, OwnerCancellation } from "../domain/analysisErrorCore.js";
 import { InvestigationRecords } from "../application/investigation/InvestigationRecords.js";
-import {
-  EvidenceMcpServer,
-  forgetPendingMcpRequest,
-} from "./EvidenceMcpServer.js";
-import { ToolResultDelivery } from "./toolResult.js";
+import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
+import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
+import { forgetPendingMcpRequest } from "./EvidenceMcpServerCore.js";
+import { createDeferred } from "../../tests/fixtures/binarySession.js";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
+import { createToolResultDelivery } from "./toolResult.js";
 
 const firstText = (result: {
   readonly content: readonly {
@@ -48,13 +50,17 @@ const expectFittingSdkValidationRecovery = (result: {
       },
       details: {
         operation: "procedure_pseudo_code",
-        issues: [
-          {
-            path: [],
-            reason: "invalid_value",
-            message: expect.stringContaining("required"),
-          },
-        ],
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            path: ["required"],
+            reason: "missing_argument",
+            expected: "string",
+          }),
+          expect.objectContaining({
+            path: ["unexpected"],
+            reason: "unknown_argument",
+          }),
+        ]),
       },
     },
   });
@@ -99,24 +105,194 @@ describe("MCP request bookkeeping", () => {
     const pendingToolLists = new Set([7]);
     const pendingCompletions = new Map([[7, completion]]);
 
+    const cancellation = new CallerAbort("request-cancelled", "user stopped");
+
     forgetPendingMcpRequest(
       pendingTools,
       pendingToolLists,
       pendingCompletions,
       7,
+      cancellation,
     );
 
     expect(pendingTools.has(7)).toBe(false);
     expect(pendingToolLists.has(7)).toBe(false);
-    expect(completion.signal.aborted).toBe(true);
+    expect(completion.signal.reason).toBe(cancellation);
     expect(pendingCompletions.has(7)).toBe(false);
   });
+});
+
+it("passes the owned cancellation signal to a tool without an input schema", async () => {
+  const records = new InvestigationRecords();
+  const server = new EvidenceMcpServer(
+    { name: "no-input-abort-test", version: "1" },
+    { capabilities: {} },
+    (evidence) => records.recordEvidence(evidence),
+    createToolResultDelivery(4096),
+  );
+  const handler = phaseGate();
+  const observed = createDeferred<unknown>();
+  const finished = createDeferred<void>();
+  let started = false;
+  server.registerTool("held", {}, async (context) => {
+    const signal = context.mcpReq.signal;
+    signal.addEventListener("abort", () => observed.resolve(signal.reason), {
+      once: true,
+    });
+    started = true;
+    try {
+      await handler.hold();
+      return { content: [{ type: "text", text: "finished" }] };
+    } finally {
+      finished.resolve();
+    }
+  });
+  const client = new Client(
+    { name: "no-input-abort-client", version: "1" },
+    { versionNegotiation: { mode: { pin: "2026-07-28" } } },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  const serving = serveStdio(() => server, { transport: serverTransport });
+  try {
+    await client.connect(clientTransport);
+    const controller = new AbortController();
+    const pending = client
+      .callTool({ name: "held" }, { signal: controller.signal })
+      .catch(() => undefined);
+    await handler.reached(pending, "held tool handler entry");
+    controller.abort("stop no-input tool");
+    await pending;
+    expect(await observed.promise).toMatchObject({
+      kind: "request-cancelled",
+      clientReason: "stop no-input tool",
+    });
+  } finally {
+    handler.release();
+    if (started) await finished.promise;
+    await Promise.all([client.close(), serving.close()]);
+  }
+});
+
+it("aborts a running tool with a caller abort that keeps the client's reason", async () => {
+  const records = new InvestigationRecords();
+  const server = new EvidenceMcpServer(
+    { name: "caller-abort-test", version: "1" },
+    { capabilities: {} },
+    (evidence) => records.recordEvidence(evidence),
+    createToolResultDelivery(4096),
+  );
+  const handler = phaseGate();
+  const observed = createDeferred<unknown>();
+  const finished = createDeferred<void>();
+  let started = false;
+  server.registerTool(
+    "held",
+    { inputSchema: z.strictObject({}) },
+    async (_input, context) => {
+      const signal = context.mcpReq.signal;
+      signal.addEventListener("abort", () => observed.resolve(signal.reason), {
+        once: true,
+      });
+      started = true;
+      try {
+        await handler.hold();
+        return { content: [{ type: "text", text: "finished" }] };
+      } finally {
+        finished.resolve();
+      }
+    },
+  );
+  const client = new Client(
+    { name: "caller-abort-client", version: "1" },
+    { versionNegotiation: { mode: { pin: "2026-07-28" } } },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  const serving = serveStdio(() => server, { transport: serverTransport });
+  try {
+    await client.connect(clientTransport);
+    const controller = new AbortController();
+    const pending = client.callTool(
+      { name: "held", arguments: {} },
+      { signal: controller.signal },
+    );
+    const rejected = expect(pending).rejects.toBeDefined();
+    await handler.reached(pending, "held tool handler entry");
+    controller.abort("user stopped");
+    await rejected;
+
+    const reason = await observed.promise;
+    expect(reason).toBeInstanceOf(CallerAbort);
+    expect(reason).toMatchObject({
+      kind: "request-cancelled",
+      clientReason: "user stopped",
+      name: "AbortError",
+    });
+  } finally {
+    handler.release();
+    if (started) await finished.promise;
+    await Promise.all([client.close(), serving.close()]);
+  }
+});
+
+it("reports owner shutdown to the handler when transport close invokes onclose", async () => {
+  const records = new InvestigationRecords();
+  const server = new EvidenceMcpServer(
+    { name: "owner-close-test", version: "1" },
+    { capabilities: {} },
+    (evidence) => records.recordEvidence(evidence),
+    createToolResultDelivery(4096),
+  );
+  const handler = phaseGate();
+  const observed = createDeferred<unknown>();
+  const finished = createDeferred<void>();
+  let started = false;
+  server.registerTool(
+    "held",
+    { inputSchema: z.strictObject({}) },
+    async (_input, context) => {
+      context.mcpReq.signal.addEventListener(
+        "abort",
+        () => observed.resolve(context.mcpReq.signal.reason),
+        { once: true },
+      );
+      started = true;
+      try {
+        await handler.hold();
+        return { content: [{ type: "text", text: "finished" }] };
+      } finally {
+        finished.resolve();
+      }
+    },
+  );
+  const client = new Client(
+    { name: "owner-close-client", version: "1" },
+    { versionNegotiation: { mode: { pin: "2026-07-28" } } },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  const serving = serveStdio(() => server, { transport: serverTransport });
+  try {
+    await client.connect(clientTransport);
+    const pending = client
+      .callTool({ name: "held", arguments: {} })
+      .catch(() => undefined);
+    await handler.reached(pending, "held tool handler entry");
+    await server.close();
+    expect(await observed.promise).toBe(OwnerCancellation.ownerClosed);
+    await pending;
+  } finally {
+    handler.release();
+    if (started) await finished.promise;
+    await Promise.all([client.close(), serving.close()]);
+  }
 });
 
 describe("Modern protocol error delivery", () => {
   it("preserves the modern wire envelope when replacing an oversized error", async () => {
     const records = new InvestigationRecords();
-    const delivery = new ToolResultDelivery(16384);
+    const delivery = createToolResultDelivery(16384);
     const info = { name: "wire-error-recovery", version: "1" };
     const handler = createMcpHandler(() => {
       const server = new EvidenceMcpServer(
@@ -226,7 +402,7 @@ describe("SDK validation error delivery", () => {
   it.each(["2025-11-25", "2026-07-28"])(
     "bounds and retains errors through the public stdio entry on %s",
     async (revision) => {
-      const delivery = new ToolResultDelivery(4096);
+      const delivery = createToolResultDelivery(4096);
       const records = new InvestigationRecords();
       const server = new EvidenceMcpServer(
         { name: "sdk-validation-budget-test", version: "1" },
@@ -365,4 +541,138 @@ describe("SDK validation error delivery", () => {
       }
     },
   );
+});
+
+const createGuidanceClientServer = async (
+  toolName: string,
+  inputSchema: z.ZodTypeAny,
+) => {
+  const delivery = createToolResultDelivery(4096);
+  const records = new InvestigationRecords();
+  const server = new EvidenceMcpServer(
+    { name: "sdk-argument-guidance-test", version: "1" },
+    { capabilities: {} },
+    (evidence) => records.recordEvidence(evidence),
+    delivery,
+  );
+  server.registerTool(toolName, { inputSchema }, async () => ({
+    content: [{ type: "text", text: "valid call" }],
+  }));
+  const client = new Client(
+    { name: "sdk-argument-guidance-client", version: "1" },
+    { versionNegotiation: { mode: { pin: "2026-07-28" } } },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  const serving = serveStdio(() => server, { transport: serverTransport });
+  await client.connect(clientTransport);
+  return {
+    client,
+    close: () => Promise.all([client.close(), serving.close()]),
+  };
+};
+
+const officialContract = (
+  name: (typeof OFFICIAL_TOOL_CONTRACTS)[number]["name"],
+) => {
+  const contract = OFFICIAL_TOOL_CONTRACTS.find((c) => c.name === name);
+  if (contract === undefined)
+    throw new Error(`Missing official contract: ${name}`);
+  return contract;
+};
+
+describe("SDK argument name guidance", () => {
+  it("guides procedure_pseudo_code caller from address to procedure without duplicating diagnostic", async () => {
+    const session = await createGuidanceClientServer(
+      "procedure_pseudo_code",
+      officialContract("procedure_pseudo_code").inputSchema,
+    );
+    try {
+      const result = await session.client.callTool({
+        name: "procedure_pseudo_code",
+        arguments: { address: "0x401000" },
+      });
+      expect(result.isError).toBe(true);
+      const payload = JSON.parse(firstText(result) ?? "null");
+      expect(payload.error.code).toBe("invalid_request");
+      expect(payload.error.details.issues).toContainEqual(
+        expect.objectContaining({
+          path: ["address"],
+          reason: "unknown_argument",
+          expected: "procedure",
+          message: expect.stringMatching(/address.*procedure/i),
+        }),
+      );
+      expect(payload.error.remediation.action).toMatch(/procedure.*address/i);
+      expect(payload.error.message).not.toContain("address");
+    } finally {
+      await session.close();
+    }
+  });
+
+  it("guides search_strings caller from query to pattern", async () => {
+    const session = await createGuidanceClientServer(
+      "search_strings",
+      officialContract("search_strings").inputSchema,
+    );
+    try {
+      const result = await session.client.callTool({
+        name: "search_strings",
+        arguments: { query: "admin" },
+      });
+      expect(result.isError).toBe(true);
+      const payload = JSON.parse(firstText(result) ?? "null");
+      expect(payload.error.code).toBe("invalid_request");
+      expect(payload.error.details.issues).toContainEqual(
+        expect.objectContaining({
+          path: ["query"],
+          reason: "unknown_argument",
+          expected: "pattern",
+          message: expect.stringMatching(/query.*pattern/i),
+        }),
+      );
+      expect(payload.error.remediation.action).toMatch(/pattern.*query/i);
+    } finally {
+      await session.close();
+    }
+  });
+
+  it("rejects address with procedure guidance and retains unexplained key count in diagnostics", async () => {
+    const session = await createGuidanceClientServer(
+      "read_function_instructions",
+      officialContract("read_function_instructions").inputSchema,
+    );
+    try {
+      const result = await session.client.callTool({
+        name: "read_function_instructions",
+        arguments: { address: "0x401000", count: 10 },
+      });
+      expect(result.isError).toBe(true);
+      const payload = JSON.parse(firstText(result) ?? "null");
+      expect(payload.error.code).toBe("invalid_request");
+      expect(payload.error.details.issues).toContainEqual(
+        expect.objectContaining({
+          path: ["address"],
+          reason: "unknown_argument",
+          expected: "procedure",
+          message: expect.stringMatching(/address.*procedure/i),
+        }),
+      );
+      expect(payload.error.details.issues).toContainEqual(
+        expect.objectContaining({
+          path: ["count"],
+          reason: "unknown_argument",
+        }),
+      );
+      const countIssue = payload.error.details.issues.find(
+        (issue: { path: string[] }) => issue.path?.[0] === "count",
+      );
+      expect(payload.error.remediation.action).toMatch(/procedure.*address/i);
+      expect(countIssue?.expected).toBeUndefined();
+      expect(countIssue?.message).toBeUndefined();
+      expect(payload.error.message).toContain("count");
+    } finally {
+      await session.close();
+    }
+  });
 });

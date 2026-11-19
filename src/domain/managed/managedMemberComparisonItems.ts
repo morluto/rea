@@ -28,6 +28,15 @@ type UnmatchedComparison = Extract<
   { readonly status: "unmatched" }
 >;
 
+type Limitation = MethodItem["limitations"][number];
+
+const limitation = (
+  code: Limitation["code"],
+  message: string,
+  side?: "left" | "right",
+): Limitation =>
+  side === undefined ? { code, message } : { code, side, message };
+
 type OneSided<Item> =
   | { readonly left: Item; readonly right?: never }
   | { readonly left?: never; readonly right: Item };
@@ -40,8 +49,7 @@ interface ComparisonItemContext {
   readonly leftMethodsComplete: boolean;
   readonly rightMethodsComplete: boolean;
   readonly scope: ManagedComparisonScope;
-  /** Whether matching keyed signatures by resolved digests, not raw bytes. */
-  readonly signatureResolutionExamined: boolean;
+  readonly sameArtifact: boolean;
   readonly leftAssembly: ManagedMemberInspection["assembly"];
   readonly rightAssembly: ManagedMemberInspection["assembly"];
   readonly leftCallEdgesByCaller: CallEdgesByCaller;
@@ -59,11 +67,9 @@ const inventoryCovers = (
 
 /**
  * Declared type and name of each unpaired member, per side, whose signature
- * was not decoded, or was decoded but not resolved while matching keyed
- * resolved signatures.
+ * was not decoded, or was decoded but not resolved.
  */
 interface UndecodedOneSidedNames {
-  readonly resolved: boolean;
   readonly undecoded: Readonly<Record<"left" | "right", ReadonlySet<string>>>;
   readonly unresolved: Readonly<Record<"left" | "right", ReadonlySet<string>>>;
   readonly unknownOwners: Readonly<
@@ -80,6 +86,7 @@ const methodDimensions = (
   rightFieldAccessesByCaller: FieldAccessesByCaller,
   leftAssembly: ManagedMemberInspection["assembly"],
   rightAssembly: ManagedMemberInspection["assembly"],
+  sameArtifact: boolean,
 ): {
   readonly dimensions: MethodItem["dimensions"];
   readonly bodyUnknown: boolean;
@@ -136,6 +143,7 @@ const methodDimensions = (
         right,
         leftCallEdgesByCaller.get(left.token) ?? [],
         rightCallEdgesByCaller.get(right.token) ?? [],
+        sameArtifact,
       )
     : { changed: false, unknown: false };
   const sameFieldShape =
@@ -146,6 +154,7 @@ const methodDimensions = (
         right,
         leftFieldAccessesByCaller.get(left.token) ?? [],
         rightFieldAccessesByCaller.get(right.token) ?? [],
+        sameArtifact,
       )
     : { changed: false, unknown: false };
   const sameExceptionShape =
@@ -280,6 +289,7 @@ const sameAssemblyIdentity = (
   left.public_key.token === right.public_key.token;
 
 interface ReferenceTarget {
+  readonly rowResolved: boolean;
   readonly offset: number | null;
   readonly opcode: string;
   readonly token: string;
@@ -293,6 +303,7 @@ const compareReferenceTargets = (
   kind: "field" | "method",
   leftTargets: readonly ReferenceTarget[],
   rightTargets: readonly ReferenceTarget[],
+  sameArtifact: boolean,
 ): { readonly changed: boolean; readonly unknown: boolean } => {
   const align = (method: Method, targets: readonly ReferenceTarget[]) => {
     const anchors = method.body.anchors.filter(
@@ -327,10 +338,31 @@ const compareReferenceTargets = (
     index < Math.max(a.aligned.length, b.aligned.length);
     index += 1
   ) {
-    const leftIdentity = a.aligned[index]?.identity;
-    const rightIdentity = b.aligned[index]?.identity;
-    if (leftIdentity == null || rightIdentity == null) unknown = true;
-    else if (leftIdentity !== rightIdentity) changed = true;
+    const leftTarget = a.aligned[index];
+    const rightTarget = b.aligned[index];
+    if (leftTarget == null || rightTarget == null) {
+      unknown = true;
+      continue;
+    }
+    if (leftTarget.identity != null && rightTarget.identity != null) {
+      if (leftTarget.identity !== rightTarget.identity) changed = true;
+      continue;
+    }
+    // Same-artifact token equality requires both producers to establish the
+    // referenced row. Missing/historical facts or malformed operands stay unknown.
+    if (
+      sameArtifact &&
+      leftTarget.rowResolved === true &&
+      left.token === right.token &&
+      rightTarget.rowResolved === true &&
+      left.signature.parse_status === "decoded" &&
+      right.signature.parse_status === "decoded" &&
+      leftTarget.identity == null &&
+      rightTarget.identity == null &&
+      leftTarget.token === rightTarget.token
+    )
+      continue;
+    unknown = true;
   }
   return { changed, unknown };
 };
@@ -340,6 +372,7 @@ const compareFieldTargets = (
   right: Method,
   leftAccesses: readonly ManagedMemberInspection["field_accesses"][number][],
   rightAccesses: readonly ManagedMemberInspection["field_accesses"][number][],
+  sameArtifact: boolean,
 ) =>
   compareReferenceTargets(
     left,
@@ -349,14 +382,17 @@ const compareFieldTargets = (
       offset: edge.il_offset,
       opcode: edge.opcode,
       token: edge.field_token,
+      rowResolved: edge.target_row_resolved,
       identity: edge.target_identity_sha256,
     })),
     rightAccesses.map((edge) => ({
       offset: edge.il_offset,
       opcode: edge.opcode,
       token: edge.field_token,
+      rowResolved: edge.target_row_resolved,
       identity: edge.target_identity_sha256,
     })),
+    sameArtifact,
   );
 
 const compareCallTargets = (
@@ -364,6 +400,7 @@ const compareCallTargets = (
   right: Method,
   leftEdges: readonly ManagedMemberInspection["call_edges"][number][],
   rightEdges: readonly ManagedMemberInspection["call_edges"][number][],
+  sameArtifact: boolean,
 ) =>
   compareReferenceTargets(
     left,
@@ -373,14 +410,17 @@ const compareCallTargets = (
       offset: edge.il_offset,
       opcode: edge.opcode,
       token: edge.target_token,
+      rowResolved: edge.target_row_resolved,
       identity: edge.target_identity_sha256,
     })),
     rightEdges.map((edge) => ({
       offset: edge.il_offset,
       opcode: edge.opcode,
       token: edge.target_token,
+      rowResolved: edge.target_row_resolved,
       identity: edge.target_identity_sha256,
     })),
+    sameArtifact,
   );
 
 const callShape = (anchors: Method["body"]["anchors"]): string =>
@@ -502,50 +542,74 @@ const absenceLimitations = (
     readonly opposite: "left" | "right";
     readonly inventory: "method" | "field";
   },
-): string[] => [
+): Limitation[] => [
   ...(opposite.ownIdentityUnavailable
     ? [
-        "declaring-type-name-not-resolved: Declared type identity could not be resolved; a bare display name cannot establish a counterpart or absence.",
+        limitation(
+          "declaring-type-name-not-resolved",
+          "Declared type identity could not be resolved; a bare display name cannot establish a counterpart or absence.",
+        ),
       ]
     : []),
   ...(opposite.unpaired.unknownOwners[opposite.opposite].has(member.name)
     ? [
-        `counterpart-declaring-type-name-not-resolved: The ${opposite.opposite} ${opposite.inventory} inventory has an unpaired same-named member with unresolved enclosing-name identity, so absence was not established.`,
+        limitation(
+          "counterpart-declaring-type-name-not-resolved",
+          `The ${opposite.opposite} ${opposite.inventory} inventory has an unpaired same-named member with unresolved enclosing-name identity, so absence was not established.`,
+          opposite.opposite,
+        ),
       ]
     : []),
   ...(opposite.oppositeComplete
     ? []
     : [
-        `unknown-within-incomplete-metadata: The ${opposite.opposite} ${opposite.inventory} inventory is incomplete, so absence was not observed.`,
+        limitation(
+          "unknown-within-incomplete-metadata",
+          `The ${opposite.opposite} ${opposite.inventory} inventory is incomplete, so absence was not observed.`,
+          opposite.opposite,
+        ),
       ]),
   ...(member.signature.parse_status === "decoded"
     ? []
     : [
-        `signature-not-decoded: The member's ${member.signature.parse_status} signature was compared only by exact declared type, name, and signature bytes, so a changed or renamed counterpart could not be sought.`,
+        limitation(
+          "signature-not-decoded",
+          `The member's ${member.signature.parse_status} signature was compared only by exact declared type, name, and signature bytes, so a changed or renamed counterpart could not be sought.`,
+        ),
       ]),
   ...(member.signature.parse_status === "decoded" &&
   opposite.unpaired.undecoded[opposite.opposite].has(identity)
     ? [
-        `counterpart-signature-not-decoded: The ${opposite.opposite} ${opposite.inventory} inventory has an unpaired member with the same declared type and name whose signature was not decoded, so it may be this member with a changed signature.`,
+        limitation(
+          "counterpart-signature-not-decoded",
+          `The ${opposite.opposite} ${opposite.inventory} inventory has an unpaired member with the same declared type and name whose signature was not decoded, so it may be this member with a changed signature.`,
+          opposite.opposite,
+        ),
       ]
     : []),
-  ...(unresolved(member, opposite.unpaired.resolved)
+  ...(unresolved(member)
     ? [
-        `signature-not-resolved: The member's signature names a type REA could not name, so it was compared by raw bytes, which name types by build-local metadata row; a counterpart whose referenced type moved rows could not be found.`,
+        limitation(
+          "signature-not-resolved",
+          `The member's signature names a type REA could not name, so it was compared by raw bytes, which name types by build-local metadata row; a counterpart whose referenced type moved rows could not be found.`,
+        ),
       ]
     : []),
   ...(member.signature.parse_status === "decoded" &&
-  !unresolved(member, opposite.unpaired.resolved) &&
+  !unresolved(member) &&
   opposite.unpaired.unresolved[opposite.opposite].has(identity)
     ? [
-        `counterpart-signature-not-resolved: The ${opposite.opposite} ${opposite.inventory} inventory has an unpaired member with the same declared type and name whose signature names a type REA could not name, so it may be this member.`,
+        limitation(
+          "counterpart-signature-not-resolved",
+          `The ${opposite.opposite} ${opposite.inventory} inventory has an unpaired member with the same declared type and name whose signature names a type REA could not name, so it may be this member.`,
+          opposite.opposite,
+        ),
       ]
     : []),
 ];
 
 /** A known signature form whose type operands still compare by raw bytes. */
-const unresolved = (member: Method | Field, resolved: boolean): boolean =>
-  resolved &&
+const unresolved = (member: Method | Field): boolean =>
   member.signature.kind !== "unknown" &&
   member.signature.resolved_sha256 === null;
 
@@ -553,18 +617,23 @@ const unresolved = (member: Method | Field, resolved: boolean): boolean =>
 const pairedSignatureLimitations = (
   left: Method | Field,
   right: Method | Field,
-  examined: boolean,
-): string[] => {
+): Limitation[] => {
   if (
     left.signature.parse_status === "malformed" ||
     right.signature.parse_status === "malformed"
   )
     return [
-      "signature-malformed: At least one signature is malformed; equal signature bytes do not establish an unchanged member signature.",
+      limitation(
+        "signature-malformed",
+        "At least one signature is malformed; equal signature bytes do not establish an unchanged member signature.",
+      ),
     ];
-  return unresolved(left, examined) || unresolved(right, examined)
+  return unresolved(left) || unresolved(right)
     ? [
-        "signature-not-resolved: At least one signature names a type REA could not resolve; equal build-local row bytes do not establish equivalent signature types.",
+        limitation(
+          "signature-not-resolved",
+          "At least one signature names a type REA could not resolve; equal build-local row bytes do not establish equivalent signature types.",
+        ),
       ]
     : [];
 };
@@ -579,17 +648,14 @@ interface Unpaired {
   readonly identityUnavailable: boolean;
 }
 
-const undecodedOneSidedNames = (
-  members: {
-    readonly leftOnly: readonly Unpaired[];
-    readonly rightOnly: readonly Unpaired[];
-    readonly ambiguous: readonly {
-      readonly left: readonly Unpaired[];
-      readonly right: readonly Unpaired[];
-    }[];
-  },
-  resolved: boolean,
-): UndecodedOneSidedNames => {
+const undecodedOneSidedNames = (members: {
+  readonly leftOnly: readonly Unpaired[];
+  readonly rightOnly: readonly Unpaired[];
+  readonly ambiguous: readonly {
+    readonly left: readonly Unpaired[];
+    readonly right: readonly Unpaired[];
+  }[];
+}): UndecodedOneSidedNames => {
   const sides = {
     left: [
       ...members.leftOnly,
@@ -609,9 +675,7 @@ const undecodedOneSidedNames = (
     );
   const undecoded = (item: Method | Field) =>
     item.signature.parse_status !== "decoded";
-  const notResolved = (item: Method | Field) => unresolved(item, resolved);
   return {
-    resolved,
     unknownOwners: {
       left: new Set(
         sides.left.filter((x) => x.identityUnavailable).map((x) => x.item.name),
@@ -627,8 +691,8 @@ const undecodedOneSidedNames = (
       right: names(sides.right, undecoded),
     },
     unresolved: {
-      left: names(sides.left, notResolved),
-      right: names(sides.right, notResolved),
+      left: names(sides.left, unresolved),
+      right: names(sides.right, unresolved),
     },
   };
 };
@@ -693,16 +757,55 @@ const ambiguityLimitation = (
   members: "methods" | "fields",
   basis: MethodItem["match"]["basis"],
   identityUnavailable: boolean,
-): string =>
+): Limitation =>
   identityUnavailable
-    ? "declaring-type-name-not-resolved: Declared type identity remains unresolved; REA did not guess a counterpart from display names, signatures or CIL."
+    ? limitation(
+        "declaring-type-name-not-resolved",
+        "Declared type identity remains unresolved; REA did not guess a counterpart from display names, signatures or CIL.",
+      )
     : basis === "exact-signature"
-      ? `Multiple managed ${members} share the same signature; REA did not guess declared ownership or a token remap.`
+      ? limitation(
+          "ambiguous-signature",
+          `Multiple managed ${members} share the same signature; REA did not guess declared ownership or a token remap.`,
+        )
       : basis === "exact-il-signature"
-        ? "Multiple managed methods share the same CIL and signature; REA did not guess a token remap."
+        ? limitation(
+            "ambiguous-il-signature",
+            "Multiple managed methods share the same CIL and signature; REA did not guess a token remap.",
+          )
         : members === "methods"
-          ? "Multiple managed methods share the same structural shape; REA did not guess a token remap."
-          : "Multiple managed fields share the same signature; REA did not guess a token remap.";
+          ? limitation(
+              "ambiguous-method-shape",
+              "Multiple managed methods share the same structural shape; REA did not guess a token remap.",
+            )
+          : limitation(
+              "ambiguous-signature",
+              "Multiple managed fields share the same signature; REA did not guess a token remap.",
+            );
+
+/** Local signature bytes prove identity only without metadata or declaring-context dependencies. */
+const compareLocalSignatures = (
+  left: Method,
+  right: Method,
+  sameArtifact: boolean,
+): { readonly changed: boolean; readonly unknown: boolean } => {
+  const leftPresent = left.body.local_var_sig_token !== null;
+  const rightPresent = right.body.local_var_sig_token !== null;
+  if (!leftPresent || !rightPresent) return { changed: false, unknown: false };
+  // The same method row of the same authenticated artifact names the same source bytes.
+  if (sameArtifact && left.token === right.token)
+    return { changed: false, unknown: false };
+  const a = left.body.local_var_signature;
+  const b = right.body.local_var_signature;
+  if (
+    a === null ||
+    b === null ||
+    a.has_context_dependent_types ||
+    b.has_context_dependent_types
+  )
+    return { changed: false, unknown: true };
+  return { changed: a.raw_sha256 !== b.raw_sha256, unknown: false };
+};
 
 export const buildMethodItems = (
   matches: ManagedMethodMatches,
@@ -713,7 +816,11 @@ export const buildMethodItems = (
     const signatureLimitations = pairedSignatureLimitations(
       pair.left.item,
       pair.right.item,
-      context.signatureResolutionExamined,
+    );
+    const locals = compareLocalSignatures(
+      pair.left.item,
+      pair.right.item,
+      context.sameArtifact,
     );
     const {
       dimensions: observedDimensions,
@@ -730,11 +837,17 @@ export const buildMethodItems = (
       context.rightFieldAccessesByCaller,
       context.leftAssembly,
       context.rightAssembly,
+      context.sameArtifact,
     );
+    if (locals.changed && !observedDimensions.includes("metadata"))
+      observedDimensions.push("metadata");
     const dimensions = [
       ...observedDimensions,
       ...(bodyUnknown ? (["body-coverage"] as const) : []),
-      ...(callTargetUnknown || fieldTargetUnknown || exceptionTargetUnknown
+      ...(callTargetUnknown ||
+      fieldTargetUnknown ||
+      exceptionTargetUnknown ||
+      locals.unknown
         ? (["availability"] as const)
         : []),
     ];
@@ -754,6 +867,7 @@ export const buildMethodItems = (
             callTargetUnknown ||
             fieldTargetUnknown ||
             exceptionTargetUnknown ||
+            locals.unknown ||
             signatureLimitations.length > 0
           ? "unknown"
           : "unchanged",
@@ -770,24 +884,52 @@ export const buildMethodItems = (
       evidence_links: [context.leftEvidenceId, context.rightEvidenceId],
       limitations: [
         ...signatureLimitations,
+        ...(locals.unknown
+          ? [
+              limitation(
+                "local-signature-unknown",
+                "Local variable signature identity is unknown because validated context-free signature facts are unavailable or the signature requires metadata or declaring context; build-local tokens and raw bytes do not establish equivalent local types across artifacts.",
+              ),
+            ]
+          : []),
+        ...(locals.changed
+          ? [
+              limitation(
+                "local-signature-bytes-changed",
+                "The validated context-free LocalVarSig bytes changed; this records an encoding difference without asserting a semantic type change.",
+              ),
+            ]
+          : []),
         ...(bodyUnknown
           ? [
-              "Method body facets are unknown because at least one side has unavailable or partial body data.",
+              limitation(
+                "body-unavailable",
+                "Method body facets are unknown because at least one side has unavailable or partial body data.",
+              ),
             ]
           : []),
         ...(callTargetUnknown
           ? [
-              "One or more call targets are unavailable because the observed method edges do not cover aligned call instructions or lack a resolved nominal target identity or instruction site.",
+              limitation(
+                "call-target-unavailable",
+                "One or more call targets are unavailable because the observed method edges do not cover aligned call instructions or lack a resolved nominal target identity or instruction site.",
+              ),
             ]
           : []),
         ...(fieldTargetUnknown
           ? [
-              "One or more field targets are unavailable because observed field accesses do not cover aligned field instructions or lack a resolved nominal target identity or instruction site.",
+              limitation(
+                "field-target-unavailable",
+                "One or more field targets are unavailable because observed field accesses do not cover aligned field instructions or lack a resolved nominal target identity or instruction site.",
+              ),
             ]
           : []),
         ...(exceptionTargetUnknown
           ? [
-              "One or more catch type identities are unavailable because local tokens or TypeRef resolution scopes do not establish cross-build identity.",
+              limitation(
+                "catch-type-unavailable",
+                "One or more catch type identities are unavailable because local tokens or TypeRef resolution scopes do not establish cross-build identity.",
+              ),
             ]
           : []),
       ],
@@ -825,10 +967,7 @@ export const buildMethodItems = (
       ],
     });
   }
-  const undecoded = undecodedOneSidedNames(
-    matches,
-    context.signatureResolutionExamined,
-  );
+  const undecoded = undecodedOneSidedNames(matches);
   for (const item of matches.leftOnly)
     items.push(
       methodOnlyItem(
@@ -861,7 +1000,6 @@ export const buildFieldItems = (
     const signatureLimitations = pairedSignatureLimitations(
       pair.left.item,
       pair.right.item,
-      context.signatureResolutionExamined,
     );
     const changed =
       signatureIdentity(pair.left.item.signature) !==
@@ -922,10 +1060,7 @@ export const buildFieldItems = (
         ),
       ],
     });
-  const undecoded = undecodedOneSidedNames(
-    matches,
-    context.signatureResolutionExamined,
-  );
+  const undecoded = undecodedOneSidedNames(matches);
   for (const item of matches.leftOnly)
     items.push(
       fieldOnlyItem(

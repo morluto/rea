@@ -10,10 +10,9 @@ import {
   type VerifierTerminalOptions,
   type VerifierTerminalResult,
 } from "../../../scripts/lib/owned-verifier-terminal.mjs";
-import {
-  createPackageVerifierCommands,
-  type PackageCleanupOwner,
-} from "../../../scripts/lib/verify-package-commands.mjs";
+import { createPackageVerifierCommands } from "../../../scripts/lib/verify-package-commands.mjs";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import type { VerifierCleanupOwner } from "../../../scripts/lib/verifier-command-owner.mjs";
 import {
   cleanupOwnedProcessGroup,
   type PersistentOwnedProcessGroup,
@@ -22,6 +21,7 @@ import {
 import { systemProcessOwnershipHost } from "../../../src/process/ProcessOwnershipObservation.js";
 import { liveProcesses } from "../../../src/process/ProcessOwnershipProcessTree.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { phaseArrival, phaseGate } from "../../support/lifecycleHarness.js";
 
 type Outcome<Value> =
   | { readonly ok: true; readonly value: Value }
@@ -32,28 +32,6 @@ const observed = <Value>(promise: Promise<Value>): Promise<Outcome<Value>> =>
     (value) => ({ ok: true, value }),
     (cause: unknown) => ({ ok: false, cause }),
   );
-
-const deferred = () => {
-  let resolve!: () => void;
-  const promise = new Promise<void>((finish) => {
-    resolve = finish;
-  });
-  return { promise, resolve };
-};
-
-const waitForBoundary = (
-  boundary: Promise<void>,
-  running: Promise<Outcome<unknown>>,
-) =>
-  Promise.race([
-    boundary,
-    running.then((outcome) => {
-      throw new Error(
-        "Terminal settled before the authored lifecycle boundary",
-        { cause: outcome },
-      );
-    }),
-  ]);
 
 const terminalFixture = async () => {
   const parent = await createTestTempDirectory("rea-verifier-terminal-");
@@ -78,7 +56,7 @@ const terminalFixture = async () => {
       },
     },
   });
-  const adopted: PackageCleanupOwner[] = [];
+  const adopted: VerifierCleanupOwner[] = [];
   const options: Omit<VerifierTerminalOptions, "args"> = {
     commands: {
       adopt(owner, resource) {
@@ -121,17 +99,17 @@ const expectReleased = (
   expect(fixture.rootsAtRemoval).toEqual([true]);
 };
 
-const observeClose = (owner: PackageCleanupOwner) => {
-  const entered = deferred();
+const observeClose = (owner: VerifierCleanupOwner) => {
+  const entered = phaseArrival();
   const original = owner.close;
   const spy = vi.spyOn(owner, "close").mockImplementation(function (
-    this: PackageCleanupOwner,
+    this: VerifierCleanupOwner,
   ) {
     const closing = original.call(this);
-    entered.resolve();
+    entered.arrive();
     return closing;
   });
-  return { entered: entered.promise, restore: () => spy.mockRestore() };
+  return { entered, restore: () => spy.mockRestore() };
 };
 
 const posix = it.skipIf(process.platform === "win32");
@@ -195,7 +173,7 @@ posix(
   "cancels an acknowledged active terminal and joins it before workspace removal",
   async () => {
     const fixture = await terminalFixture();
-    const ready = deferred();
+    const ready = phaseArrival();
     const source =
       'process.stdout.write("__PID__" + process.pid + "\\n"); setInterval(() => {}, 1000); setTimeout(() => process.exit(0), 10000);';
     const running = observed(
@@ -207,7 +185,7 @@ posix(
             const match = /__PID__(\d+)\r?\n/u.exec(output);
             if (match !== null) {
               fixture.pids.add(Number(match[1]));
-              ready.resolve();
+              ready.arrive();
             }
           },
         },
@@ -216,7 +194,7 @@ posix(
     );
     let outcome: Outcome<VerifierTerminalResult> | undefined;
     try {
-      await waitForBoundary(ready.promise, running);
+      await ready.reached(running, "terminal readiness");
       await fixture.commands.close();
       outcome = await running;
     } finally {
@@ -342,8 +320,7 @@ posix(
   "selects cancellation while completed-child cleanup is pending and joins that same attempt",
   async () => {
     const fixture = await terminalFixture();
-    const cleanupEntered = deferred();
-    const allowCleanup = deferred();
+    const childCleanup = phaseGate();
     let attempts = 0;
     const running = observed(
       runOwnedVerifierTerminal(
@@ -354,8 +331,7 @@ posix(
         {
           cleanupProcessGroup: async (ownership) => {
             attempts += 1;
-            cleanupEntered.resolve();
-            await allowCleanup.promise;
+            await childCleanup.hold();
             return fixture.cleanup(ownership);
           },
         },
@@ -364,22 +340,24 @@ posix(
     let closeObservation: ReturnType<typeof observeClose> | undefined;
     let closing: Promise<Outcome<void>> | undefined;
     let outcome: Outcome<VerifierTerminalResult> | undefined;
-    try {
-      await waitForBoundary(cleanupEntered.promise, running);
+    await withVerifierCleanup(async () => {
+      await childCleanup.reached(running, "completed-child cleanup");
       const owner = fixture.adopted[0];
       if (owner === undefined) throw new Error("Terminal was not adopted");
       closeObservation = observeClose(owner);
       closing = observed(fixture.commands.close());
-      await waitForBoundary(closeObservation.entered, closing);
-      allowCleanup.resolve();
-      await closing;
+      await closeObservation.entered.reached(closing, "owner close");
+      childCleanup.release();
+      expect(await closing).toEqual({ ok: true, value: undefined });
       outcome = await running;
-    } finally {
-      allowCleanup.resolve();
-      await fixture.commands.close();
-      await running;
-      closeObservation?.restore();
-    }
+    }, [
+      () => childCleanup.release(),
+      () => fixture.commands.close(),
+      async () => {
+        await running;
+      },
+      () => closeObservation?.restore(),
+    ]);
 
     expect(outcome).toEqual({
       ok: false,
@@ -395,8 +373,7 @@ posix(
   "joins a delayed native-module load without spawning after cancellation",
   async () => {
     const fixture = await terminalFixture();
-    const loadEntered = deferred();
-    const allowLoad = deferred();
+    const ptyLoad = phaseGate();
     let spawns = 0;
     let cleanups = 0;
     const running = observed(
@@ -408,8 +385,7 @@ posix(
         {
           loadPty: async () => {
             const pty = await import("@lydell/node-pty");
-            loadEntered.resolve();
-            await allowLoad.promise;
+            await ptyLoad.hold();
             return {
               ...pty,
               spawn(...args: Parameters<typeof pty.spawn>) {
@@ -428,22 +404,24 @@ posix(
     let closeObservation: ReturnType<typeof observeClose> | undefined;
     let closing: Promise<Outcome<void>> | undefined;
     let outcome: Outcome<VerifierTerminalResult> | undefined;
-    try {
-      await waitForBoundary(loadEntered.promise, running);
+    await withVerifierCleanup(async () => {
+      await ptyLoad.reached(running, "native-module load");
       const owner = fixture.adopted[0];
       if (owner === undefined) throw new Error("Terminal was not adopted");
       closeObservation = observeClose(owner);
       closing = observed(fixture.commands.close());
-      await waitForBoundary(closeObservation.entered, closing);
-      allowLoad.resolve();
-      await closing;
+      await closeObservation.entered.reached(closing, "owner close");
+      ptyLoad.release();
+      expect(await closing).toEqual({ ok: true, value: undefined });
       outcome = await running;
-    } finally {
-      allowLoad.resolve();
-      await fixture.commands.close();
-      await running;
-      closeObservation?.restore();
-    }
+    }, [
+      () => ptyLoad.release(),
+      () => fixture.commands.close(),
+      async () => {
+        await running;
+      },
+      () => closeObservation?.restore(),
+    ]);
 
     expect(outcome).toEqual({
       ok: false,

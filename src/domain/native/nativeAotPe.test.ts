@@ -33,8 +33,10 @@ const linkedTableFixture = (shape: "deep" | "wide" | "interfaces") => {
           : 0x140002200n;
     bytes.writeBigUInt64LE(parent, offset + 8);
     if (shape === "interfaces" && index < 2) {
+      bytes.writeUInt16LE(1, offset + 16);
       bytes.writeUInt16LE(1, offset + 18);
-      bytes.writeBigUInt64LE(address(2), offset + 24);
+      bytes.writeBigUInt64LE(0x140001040n, offset + 24);
+      bytes.writeBigUInt64LE(address(2), offset + 32);
     }
   }
   return {
@@ -64,7 +66,25 @@ describe("NativeAOT indexed MethodTable closure", () => {
         "0x1400022c0",
         ...expected,
       ]);
-      expect(bytes).toEqual(before);
+      if (shape === "interfaces") {
+        expect(
+          parsed.readTypeDetail("0x140002400", SUMMARY_BUDGET),
+        ).toMatchObject({
+          interfaces: [{ address: "0x140002480", type: null }],
+          virtual_slots: [
+            {
+              slot: 0,
+              slot_address: "0x140002418",
+              target_address: "0x140001040",
+            },
+          ],
+          derived_memory: {
+            size_bytes: 40,
+            sha256: nativeAotPeDigest(bytes.subarray(0xa00, 0xa28)),
+          },
+        });
+      }
+      expect(Buffer.compare(bytes, before)).toBe(0);
     },
   );
 
@@ -77,7 +97,33 @@ describe("NativeAOT indexed MethodTable closure", () => {
       SUMMARY_BUDGET,
     );
     expect(parsed.summary.method_tables).toBe(0);
-    expect(parsed.summary.reason).toContain("unique System.Object");
+    expect(parsed.summary.reason).toEqual({ code: "no_system_object_root" });
+  });
+});
+
+describe("NativeAOT RTR directory regions", () => {
+  it("reads neither of two FROZEN_OBJECT_REGION sections and reports partial", () => {
+    const bytes = nativeAotPeFixture();
+    const header = 0x600;
+    // Declare a third RTR row repeating the frozen region row.
+    bytes.writeUInt16LE(3, header + 12);
+    bytes.copy(bytes, header + 64, header + 40, header + 64);
+    const parsed = parseNativeAotPe(
+      bytes,
+      nativeAotPeDigest(bytes),
+      SUMMARY_BUDGET,
+    );
+    expect(parsed.summary).toMatchObject({
+      status: "partial",
+      reason: { code: "ambiguous_frozen_object_region" },
+      truncated: false,
+      method_tables: 3,
+      frozen_strings: [],
+      coverage: { frozen_string_candidates: 0 },
+    });
+    expect(parsed.summary.limitations).toContain(
+      "The RTR directory declares 2 FROZEN_OBJECT_REGION sections, so none was read.",
+    );
   });
 });
 
@@ -91,7 +137,7 @@ describe("read-only NativeAOT PE parser", () => {
       SUMMARY_BUDGET,
       "0x140000000",
     );
-    expect(bytes).toEqual(before);
+    expect(Buffer.compare(bytes, before)).toBe(0);
     expect(parsed.summary).toMatchObject({
       format: "dotnet-nativeaot",
       status: "complete",
@@ -162,8 +208,7 @@ describe("read-only NativeAOT PE parser", () => {
     );
     expect(parsed.summary).toMatchObject({
       status: "not_applicable",
-      reason:
-        "No supported ReadyToRun directory signature was found in initialized non-executable PE sections.",
+      reason: { code: "no_rtr_directory" },
       method_tables: 0,
     });
   });
@@ -215,7 +260,7 @@ describe("read-only NativeAOT PE parser", () => {
         SUMMARY_BUDGET,
         "0x180000000",
       ).summary.reason,
-    ).toMatch(/preferred image base/iu);
+    ).toEqual({ code: "rebased_image" });
   });
 
   it("reports an unsupported hydration opcode as partial without mutating the snapshot", () => {
@@ -227,22 +272,25 @@ describe("read-only NativeAOT PE parser", () => {
       nativeAotPeDigest(bytes),
       SUMMARY_BUDGET,
     );
-    expect(bytes).toEqual(before);
+    expect(Buffer.compare(bytes, before)).toBe(0);
     expect(parsed.summary).toMatchObject({
       status: "partial",
       derived_overlay: null,
-      diagnostics: [
-        expect.stringContaining("Unsupported DEHYDRATED_DATA command"),
-      ],
+      reason: {
+        code: "hydration_failed",
+        detail: "unsupported_command",
+        command: 6,
+      },
+      diagnostics: ["unsupported_command"],
     });
   });
 });
 
 describe("NativeAOT PE signature admission", () => {
   it.each([
-    ["MZ", "Not a PE image"],
-    ["PE", "Invalid PE signature"],
-  ])(
+    ["MZ", { code: "not_pe_image" }],
+    ["PE", { code: "mz_header_not_pe" }],
+  ] as const)(
     "rejects a high-bit lookalike of the %s signature",
     (signature, reason) => {
       const bytes = nativeAotPeFixture();

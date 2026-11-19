@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { IDisposable, IPty } from "@lydell/node-pty";
 
-import type { RetainedResourceScope } from "../../src/application/AnalysisProvider.js";
-import { AnalysisCleanupLease } from "../../src/artifacts/AnalysisCleanupLease.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import type { RetainedResourceScope } from "../../src/ports/AnalysisProvider.js";
+import { AnalysisCleanupLease } from "../../src/resources/AnalysisCleanupLease.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { err, ok, type Result } from "../../src/domain/result.js";
 import {
   cleanupOwnedProcessGroup,
@@ -19,16 +19,16 @@ import { ProviderStartupDeadline } from "../../src/process/ProviderDeadline.js";
 import { processCaptureOwnershipUnavailableReason } from "../../src/process/capture/ProcessCaptureCapability.js";
 import { retainOwnedCommandCleanup } from "../../src/providers/OwnedCommandCleanup.js";
 import type {
-  PackageCleanupOwner,
-  PackageVerifierCommands,
-} from "./package-command-owner.mjs";
+  VerifierCleanupOwner,
+  VerifierCommands,
+} from "./verifier-command-owner.mjs";
 import {
   closeVerifierResources,
   withVerifierCleanup,
 } from "./verifier-cleanup.mjs";
 
 export interface VerifierTerminalOptions {
-  readonly commands: Pick<PackageVerifierCommands, "adopt">;
+  readonly commands: Pick<VerifierCommands, "adopt">;
   readonly command: string;
   readonly args: readonly string[];
   readonly cwd: string;
@@ -40,7 +40,7 @@ export interface VerifierTerminalOptions {
   readonly signal?: AbortSignal;
 }
 
-export interface VerifierTerminalDependencies {
+interface VerifierTerminalDependencies {
   readonly loadPty?: () => Promise<typeof import("@lydell/node-pty")>;
   readonly cleanupProcessGroup?: typeof cleanupOwnedProcessGroup;
 }
@@ -59,7 +59,7 @@ type TerminalFailureReason =
   | "unsupported_platform";
 
 /** Expected terminal failures retain the decoded output observed at failure. */
-export class VerifierTerminalFailure extends Error {
+class VerifierTerminalFailure extends Error {
   readonly _tag = "VerifierTerminalFailure";
 
   constructor(
@@ -74,12 +74,12 @@ export class VerifierTerminalFailure extends Error {
 }
 
 /** The adopted owner remains the exact authority for retrying this release. */
-export class VerifierTerminalCleanupFailure extends Error {
+class VerifierTerminalCleanupFailure extends Error {
   readonly _tag = "VerifierTerminalCleanupFailure";
   readonly reason = "cleanup_incomplete";
 
   constructor(
-    readonly cleanupOwner: PackageCleanupOwner,
+    readonly cleanupOwner: VerifierCleanupOwner,
     readonly output: string,
     message: string,
     options?: ErrorOptions,
@@ -102,7 +102,7 @@ const decodedPrefix = (text: string, capacity: number): string => {
   return text.slice(0, end);
 };
 
-class VerifierTerminalOwner implements PackageCleanupOwner {
+class VerifierTerminalOwner implements VerifierCleanupOwner {
   readonly #controller = new AbortController();
   readonly #runId = randomUUID();
   readonly #evidence = new ProcessOwnershipEvidenceOwner();
@@ -409,7 +409,7 @@ export async function runOwnedVerifierTerminal(
       "Verifier terminal output capacity must be a non-negative safe integer",
     );
   const owner = new VerifierTerminalOwner(options, dependencies);
-  options.commands.adopt(owner);
+  options.commands.adopt(owner, `verifier terminal ${options.command}`);
   owner.start();
   let release: Promise<void> | undefined;
   const finish = (): Promise<void> => (release ??= owner.release());

@@ -75,3 +75,38 @@ it("documents the supported negative flag in command help", async () => {
   expect(result.exitCode).toBe(0);
   expect(result.stdout).toContain("--no-strings");
 });
+
+it("preserves selected string pages and budgets and rejects an invalid page before decoding", async () => {
+  const result = await invokeApktoolCli([
+    "decode-android-resources",
+    "/targets/app.apk",
+    "--string-offset",
+    "2000",
+    "--string-limit",
+    "100",
+    "--max-total-strings",
+    "200",
+    "--max-string-table-bytes",
+    "12000000",
+    "--max-total-string-table-bytes",
+    "24000000",
+    "--json",
+  ]);
+  expect(result.exitCode).toBe(0);
+  expect(result.requests[0]?.input).toMatchObject({
+    string_offset: 2000,
+    string_limit: 100,
+    max_total_strings: 200,
+    max_string_table_bytes: 12000000,
+    max_total_string_table_bytes: 24000000,
+  });
+  const refused = await invokeApktoolCli([
+    "decode-android-resources",
+    "/targets/app.apk",
+    "--string-limit",
+    "0",
+    "--json",
+  ]);
+  expect(refused.exitCode).not.toBe(0);
+  expect(refused.requests).toEqual([]);
+});

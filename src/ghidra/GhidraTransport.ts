@@ -1,20 +1,21 @@
 import { access, lstat } from "node:fs/promises";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { join } from "node:path";
 import { z } from "zod";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { readWindowsPrivateRuntimeFile } from "../windows/WindowsPrivateRuntime.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
   assertArtifactReadActive,
   artifactFilePrimaryFacts,
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
-import { readArtifactFileChunks } from "../artifacts/readArtifactFileChunks.js";
+  readArtifactFileChunks,
+} from "../resources/index.js";
 import { sameRegularFileState } from "../filesystem/RegularFile.js";
 import {
   GhidraSessionError,
@@ -43,8 +44,9 @@ export const createGhidraEndpoint = async (
     runtimeRoot,
     transport === "unix-socket" ? "bridge.sock" : "bridge-endpoint.json",
   );
-  // sockaddr_un includes a terminating NUL: macOS has 104 bytes, Linux 108.
-  const maximumPathBytes = platform === "darwin" ? 103 : 107;
+  // OpenJDK NIO reserves two bytes of sockaddr_un.sun_path, which has 104
+  // bytes on macOS and 108 on Linux, even for ordinary pathname sockets.
+  const maximumPathBytes = platform === "darwin" ? 102 : 106;
   if (
     transport !== "unix-socket" ||
     Buffer.byteLength(path, "utf8") <= maximumPathBytes
@@ -82,9 +84,12 @@ export const observeGhidraEndpoint = async (
   options: {
     readonly signal?: AbortSignal;
     readonly resourceScope?: ArtifactResourceScope;
+    /** The host whose endpoint file this reads; the running host unless a test selects one. */
+    readonly platform?: NodeJS.Platform;
   } = {},
 ): Promise<Result<GhidraConnectTarget | null, GhidraSessionError>> => {
   const resources = options.resourceScope ?? new ArtifactResourceScope();
+  const platform = options.platform ?? HOST_PLATFORM.platform;
   try {
     const target = await resources.run(async () => {
       assertArtifactReadActive(options.signal);
@@ -93,8 +98,11 @@ export const observeGhidraEndpoint = async (
         assertArtifactReadActive(options.signal);
         return { path: endpoint.path };
       }
-      if (process.platform === "win32") {
-        const encoded = readWindowsPrivateRuntimeFile(endpoint.path);
+      if (platform === "win32") {
+        const encoded = readWindowsPrivateRuntimeFile(
+          endpoint.path,
+          MAX_TCP_ENDPOINT_BYTES,
+        );
         assertArtifactReadActive(options.signal);
         return parseTcpEndpoint(endpoint, encoded);
       }
@@ -102,17 +110,13 @@ export const observeGhidraEndpoint = async (
         endpoint.path,
         resources,
         options.signal,
-        async (file) => {
+        async ({ handle: file }) => {
           const initial = await file.stat({ bigint: true });
           assertArtifactReadActive(options.signal);
           if (initial.size > BigInt(MAX_TCP_ENDPOINT_BYTES))
-            throw endpointFailure(
-              endpoint,
-              "Ghidra TCP endpoint is invalid",
-              new ArtifactReaderFailure(
-                "limit",
-                `Ghidra endpoint record exceeds its compact publication bound (${initial.size} > ${MAX_TCP_ENDPOINT_BYTES} bytes)`,
-              ),
+            throw new ArtifactReaderFailure(
+              "limit",
+              `Ghidra endpoint record exceeds its compact publication bound (${initial.size} > ${MAX_TCP_ENDPOINT_BYTES} bytes)`,
             );
           const input = readArtifactFileChunks(file, {
             end: initial.size,
@@ -153,7 +157,7 @@ export const observeGhidraEndpoint = async (
   } catch (cause: unknown) {
     if (
       isMissing(cause) ||
-      (process.platform === "win32" && isWindowsEndpointWriterBusy(cause))
+      (platform === "win32" && isWindowsEndpointWriterBusy(cause))
     )
       return ok(null);
     return err(observationFailure(endpoint, cause));
@@ -176,6 +180,12 @@ const observationFailure = (
   cause: unknown,
 ): GhidraSessionError => {
   const { cause: primary, origin } = artifactFilePrimaryFacts(cause);
+  // Classify a bounded endpoint record without discarding its owned cleanup.
+  const invalidRecord =
+    endpoint.transport === "authenticated-loopback-tcp" &&
+    origin === "owned-or-classified" &&
+    primary instanceof ArtifactReaderFailure &&
+    primary.reason === "limit";
   let failure =
     origin === "owned-or-classified" && primary instanceof GhidraSessionError
       ? primary
@@ -188,7 +198,9 @@ const observationFailure = (
           })
         : endpointFailure(
             endpoint,
-            "Ghidra endpoint observation failed",
+            invalidRecord
+              ? "Ghidra TCP endpoint is invalid"
+              : "Ghidra endpoint observation failed",
             cause,
           );
   if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {

@@ -8,13 +8,17 @@ import {
   PROCESS_CAPTURE_RECONSTRUCTION,
   PROCESS_COMPARISON_EVIDENCE,
 } from "../../../src/contracts/investigationExamples.js";
-import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
+import {
+  createEvidence,
+  parseEvidence,
+  evidenceSubjectInput,
+} from "../../../src/domain/evidence.js";
 import {
   functionComparisonResultSchema,
   type FunctionComparisonResult,
 } from "../../../src/domain/functionComparisonSchemas.js";
 import { summarize } from "../../../src/domain/functionComparisonResults.js";
-import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
+
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -88,6 +92,7 @@ it.each([
   {
     name: "omitted unknown dimension with known changes retained",
     valid: false,
+    constraint: "changes-cover-dimensions",
     result: (value: FunctionComparisonResult) => {
       const unknown = unknownDimension(value);
       return {
@@ -99,11 +104,13 @@ it.each([
   {
     name: "conflicting dimensions",
     valid: false,
+    constraint: "dimensions-unique",
     result: conflictingDimensions,
   },
   {
     name: "reversed conflicting dimensions",
     valid: false,
+    constraint: "dimensions-unique",
     result: (value: FunctionComparisonResult) => {
       const malformed = conflictingDimensions(value);
       return {
@@ -116,6 +123,7 @@ it.each([
   {
     name: "incorrect summary counts with the correct total",
     valid: false,
+    constraint: "summary-counts-dimensions",
     result: (value: FunctionComparisonResult) => ({
       ...value,
       summary: {
@@ -128,11 +136,13 @@ it.each([
   {
     name: "missing changes",
     valid: false,
+    constraint: "changes-cover-dimensions",
     result: (value: FunctionComparisonResult) => ({ ...value, changes: [] }),
   },
   {
     name: "altered change provenance",
     valid: false,
+    constraint: "changes-cite-dimensions",
     result: (value: FunctionComparisonResult) => ({
       ...value,
       changes: value.changes.map((dimension, index) =>
@@ -151,6 +161,7 @@ it.each([
   {
     name: "duplicate changes",
     valid: false,
+    constraint: "changes-cite-dimensions",
     result: (value: FunctionComparisonResult) => ({
       ...value,
       changes: [...value.changes, ...value.changes],
@@ -161,16 +172,20 @@ it.each([
   async (scenario) => {
     const base = FUNCTION_COMPARISON_EVIDENCE;
     const result = functionComparisonResultSchema.parse(base.normalized_result);
-    const comparison = createEvidence(undefined, base.provider, {
-      predicateType: base.predicate_type,
-      operation: base.operation,
-      parameters: base.parameters,
-      result: jsonValueSchema.parse(scenario.result(result)),
-      confidence: base.confidence,
-      authority: base.authority,
-      limitations: base.limitations,
-      evidenceLinks: base.evidence_links,
-    });
+    const comparison = createEvidence(
+      evidenceSubjectInput(base.subject),
+      base.provider,
+      {
+        predicateType: base.predicate_type,
+        operation: base.operation,
+        parameters: base.parameters,
+        result: scenario.result(result),
+        confidence: base.confidence,
+        authority: base.authority,
+        limitations: base.limitations,
+        evidenceLinks: base.evidence_links,
+      },
+    );
     let providerLaunches = 0;
     const session = createTestBinarySession(() => {
       providerLaunches += 1;
@@ -251,6 +266,7 @@ it.each([
           error: {
             code: "evidence_integrity_mismatch",
             category: "integrity_mismatch",
+            details: { constraint: scenario.constraint },
           },
         });
     }

@@ -18,10 +18,13 @@ it("binds readable certificate fields to the exact carried DER despite embedded 
       createHash("sha256").update(outer).digest("hex"),
     );
     expect(
-      new X509Certificate(
-        `-----BEGIN CERTIFICATE-----\n${Buffer.from(outer).toString("base64")}\n-----END CERTIFICATE-----\n`,
-      ).raw,
-    ).toEqual(Buffer.from(outer));
+      Buffer.compare(
+        new X509Certificate(
+          `-----BEGIN CERTIFICATE-----\n${Buffer.from(outer).toString("base64")}\n-----END CERTIFICATE-----\n`,
+        ).raw,
+        Buffer.from(outer),
+      ),
+    ).toBe(0);
   }
 });
 it.each([

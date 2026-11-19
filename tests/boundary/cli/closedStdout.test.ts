@@ -1,3 +1,4 @@
+import { writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -7,15 +8,19 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import type { TestProcesses } from "../../support/process/processFixture.js";
 
-/** Run the CLI, closing its stdout reader after `bytes` (0: before any write). */
+/**
+ * Run the CLI, closing its stdout reader after `bytes` (0: before any write).
+ * `nodeArguments` precede the entry script.
+ */
 const runWithClosedReader = async (
   processes: TestProcesses,
   arguments_: readonly string[],
   bytes: number,
+  nodeArguments: readonly string[] = [],
 ) => {
   const child = processes.spawn(
     process.execPath,
-    [resolve("scripts/rea.mjs"), ...arguments_],
+    [...nodeArguments, resolve("scripts/rea.mjs"), ...arguments_],
     { env: { PATH: process.env.PATH ?? "", REA_LOG_LEVEL: "silent" } },
   );
   let received = 0;
@@ -48,6 +53,30 @@ describe.skipIf(process.platform === "win32")(
       async ([, arguments_], { processes }) => {
         const result = await runWithClosedReader(processes, arguments_, 0);
         expect(result).toMatchObject({ code: 141, stderr: "" });
+      },
+    );
+
+    // macOS can fail a write to a socket-pair stdout whose reader closed with
+    // ENOTCONN instead of EPIPE; both mean the reader has gone.
+    cliTest(
+      "stops quietly with the SIGPIPE status when stdout reports ENOTCONN",
+      async ({ processes }) => {
+        const directory = await createTestTempDirectory("rea-enotconn-");
+        const preload = join(directory, "stdout-enotconn.mjs");
+        await writeFile(
+          preload,
+          `const disconnected = () => Object.assign(new Error("write ENOTCONN"), { code: "ENOTCONN", errno: -57, syscall: "write" });
+process.stdout._write = (_chunk, _encoding, callback) => callback(disconnected());
+process.stdout._writev = (_chunks, callback) => callback(disconnected());
+`,
+        );
+        const result = await runWithClosedReader(
+          processes,
+          ["capabilities", "--format", "json"],
+          Number.POSITIVE_INFINITY,
+          ["--import", preload],
+        );
+        expect(result).toMatchObject({ code: 141, stderr: "", received: 0 });
       },
     );
 

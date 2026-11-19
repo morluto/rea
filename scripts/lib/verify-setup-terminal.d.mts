@@ -1,7 +1,7 @@
-import type { PackageVerifierCommands } from "./verify-package-commands.mjs";
+import type { VerifierCommands } from "./verifier-command-owner.mjs";
 
 export interface SetupTerminalOptions {
-  readonly commands: Pick<PackageVerifierCommands, "adopt">;
+  readonly commands: Pick<VerifierCommands, "adopt">;
   readonly command: string;
   readonly environment: NodeJS.ProcessEnv;
   readonly root: string;
