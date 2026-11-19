@@ -984,6 +984,47 @@ describe("scalar identifier list ownership and ambiguity", () => {
     ]);
   });
 
+  it.each([{ duplicates: [] }, { duplicates: [42, 42, 42] }])(
+    "reports an inversion when only the reversed pairing can keep both IDs with additional values $duplicates",
+    ({ duplicates }) => {
+      const map = new IdMap();
+      map.learn(1, 2);
+      map.learn(2, 3);
+      const result = compareAnswers(
+        answer({ books: { ids: [1, 2, ...duplicates] } }),
+        answer({ books: { ids: [3, 2, ...duplicates] } }),
+        map,
+        entity,
+      );
+      expect(result.differences).toEqual([
+        { category: "order", pointer: "/books/ids" },
+      ]);
+      expect(result.normalised.ids).toBe(2);
+    },
+  );
+
+  it.each([
+    { live: [1, 2, 3], env: [3, 2], normalized: 1 },
+    { live: [1, 2], env: [3, 2, 1], normalized: 2 },
+  ])(
+    "requires forced matches even when one side has a spare ID",
+    ({ live, env, normalized }) => {
+      const map = new IdMap();
+      map.learn(1, 2);
+      map.learn(2, 3);
+      const result = compareAnswers(
+        answer({ books: { ids: live } }),
+        answer({ books: { ids: env } }),
+        map,
+        entity,
+      );
+      expect(result.differences).toEqual([
+        expect.objectContaining({ category: "length", pointer: "/books/ids" }),
+      ]);
+      expect(result.normalised.ids).toBe(normalized);
+    },
+  );
+
   it("does not report order when a duplicate made survivor identity ambiguous", () => {
     const result = compareAnswers(
       answer({ books: { ids: [101, 102, 101] } }),

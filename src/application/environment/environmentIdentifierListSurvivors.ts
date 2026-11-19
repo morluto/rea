@@ -190,17 +190,18 @@ const fill = (start: Group, blocked: Set<Group>): boolean => {
   return true;
 };
 
-/** Maximize the survivor count with one capacity per distinct identity, then assign original positions. */
-const fillComponent = (
-  component: Component,
+const matchingGroups = (
+  positions: {
+    readonly live: Iterable<number>;
+    readonly env: Iterable<number>;
+  },
   identities: readonly IdentifierListIdentity[],
   envIdentities: readonly EnvironmentListIdentity[],
-  survivors: Map<number, number>,
-  assigned: Set<number>,
-): void => {
+  survivors: ReadonlyMap<number, number>,
+) => {
   const liveGroups = new Map<string, Group>();
   const liveByIndex = new Map<number, Group>();
-  for (const index of component.live) {
+  for (const index of positions.live) {
     const { literal, mapped } = identities[index]!;
     liveByIndex.set(
       index,
@@ -210,7 +211,7 @@ const fillComponent = (
   const envGroups = new Map<string, Group>();
   const envByKey = new Map<string, Group[]>();
   const envByIndex = new Map<number, Group>();
-  for (const index of component.env) {
+  for (const index of positions.env) {
     const identity = envIdentities[index]!;
     const group = groupOf(envGroups, identity.literal, index);
     envByIndex.set(index, group);
@@ -243,6 +244,23 @@ const fillComponent = (
     edge.live.free--;
     edge.env.free--;
   }
+  return { liveGroups, envGroups, matchEdge };
+};
+
+/** Maximize the survivor count with one capacity per distinct identity, then assign original positions. */
+const fillComponent = (
+  component: Component,
+  identities: readonly IdentifierListIdentity[],
+  envIdentities: readonly EnvironmentListIdentity[],
+  survivors: Map<number, number>,
+  assigned: Set<number>,
+): void => {
+  const { liveGroups, matchEdge } = matchingGroups(
+    component,
+    identities,
+    envIdentities,
+    survivors,
+  );
   const blocked = new Set<Group>();
   let changed = false;
   for (const group of liveGroups.values())
@@ -269,6 +287,190 @@ const fillComponent = (
         survivors.set(left, right);
         assigned.add(right);
       }
+};
+
+/** Compact forward and reverse adjacency for iterative strongly connected components. */
+const residualGraph = (vertices: number, edgeLimit: number) => {
+  const forward = new Int32Array(vertices).fill(-1);
+  const reverse = new Int32Array(vertices).fill(-1);
+  const nextForward = new Int32Array(edgeLimit);
+  const nextReverse = new Int32Array(edgeLimit);
+  const origins = new Int32Array(edgeLimit);
+  const destinations = new Int32Array(edgeLimit);
+  let count = 0;
+
+  const components = (): Int32Array => {
+    const visited = new Uint8Array(vertices);
+    const cursor = forward.slice();
+    const finish = new Int32Array(vertices);
+    const pending: number[] = [];
+    let finished = 0;
+    for (let start = 0; start < vertices; start++) {
+      if (visited[start] !== 0) continue;
+      pending.push(start);
+      visited[start] = 1;
+      while (pending.length > 0) {
+        const vertex = pending.at(-1)!;
+        const edge = cursor[vertex]!;
+        if (edge === -1) {
+          finish[finished++] = vertex;
+          pending.pop();
+          continue;
+        }
+        cursor[vertex] = nextForward[edge]!;
+        const neighbor = destinations[edge]!;
+        if (visited[neighbor] !== 0) continue;
+        visited[neighbor] = 1;
+        pending.push(neighbor);
+      }
+    }
+
+    const component = new Int32Array(vertices).fill(-1);
+    for (let index = finished - 1; index >= 0; index--) {
+      const start = finish[index]!;
+      if (component[start] !== -1) continue;
+      pending.push(start);
+      component[start] = start;
+      while (pending.length > 0) {
+        const vertex = pending.pop()!;
+        for (
+          let edge = reverse[vertex]!;
+          edge !== -1;
+          edge = nextReverse[edge]!
+        ) {
+          const neighbor = origins[edge]!;
+          if (component[neighbor] !== -1) continue;
+          component[neighbor] = start;
+          pending.push(neighbor);
+        }
+      }
+    }
+    return component;
+  };
+
+  return {
+    connect(from: number, to: number): void {
+      origins[count] = from;
+      destinations[count] = to;
+      nextForward[count] = forward[from]!;
+      nextReverse[count] = reverse[to]!;
+      forward[from] = count;
+      reverse[to] = count++;
+    },
+    components,
+  };
+};
+
+const source = 0;
+const sink = 1;
+
+/** Use occurrence indices directly when each candidate key has at most two entries. */
+const sparseForcedInversion = (
+  identities: readonly IdentifierListIdentity[],
+  envCount: number,
+  available: Buckets,
+  survivors: ReadonlyMap<number, number>,
+  assigned: ReadonlySet<number>,
+): boolean => {
+  const envStart = identities.length + 2;
+  // Two keys with at most two entries each, plus one terminal arc per item.
+  const graph = residualGraph(
+    envStart + envCount,
+    identities.length * 5 + envCount,
+  );
+  for (const [left, identity] of identities.entries()) {
+    const live = left + 2;
+    const matched = survivors.get(left);
+    if (matched === undefined) graph.connect(source, live);
+    else graph.connect(live, source);
+    for (const key of identifierListKeys(identity))
+      for (const right of available.get(key)?.indices ?? []) {
+        const env = envStart + right;
+        if (right === matched) graph.connect(env, live);
+        else graph.connect(live, env);
+      }
+  }
+  for (let right = 0; right < envCount; right++) {
+    const env = envStart + right;
+    if (assigned.has(right)) graph.connect(sink, env);
+    else graph.connect(env, sink);
+  }
+  const component = graph.components();
+  let last = -1;
+  for (const left of identities.keys()) {
+    const right = survivors.get(left);
+    if (
+      right === undefined ||
+      component[left + 2] === component[envStart + right]
+    )
+      continue;
+    if (right < last) return true;
+    last = right;
+  }
+  return false;
+};
+
+/** An occurrence can establish order only when every maximum matching uses that exact pair. */
+export const hasForcedIdentifierListInversion = (
+  identities: readonly IdentifierListIdentity[],
+  envIdentities: readonly EnvironmentListIdentity[],
+  available: Buckets,
+  survivors: ReadonlyMap<number, number>,
+  assigned: ReadonlySet<number>,
+): boolean => {
+  // Two entries is the natural maximum without excess occurrences: a
+  // learned textual key can admit both a JSON number and a JSON string.
+  if ([...available.values()].every(({ indices }) => indices.length <= 2))
+    return sparseForcedInversion(
+      identities,
+      envIdentities.length,
+      available,
+      survivors,
+      assigned,
+    );
+  const { liveGroups, envGroups, matchEdge } = matchingGroups(
+    { live: identities.keys(), env: envIdentities.keys() },
+    identities,
+    envIdentities,
+    survivors,
+  );
+  const groups = [...liveGroups.values(), ...envGroups.values()];
+  const index = new Map(groups.map((group, position) => [group, position + 2]));
+  // Each group candidate and terminal connection can have two residual directions.
+  let edgeLimit = groups.length * 2;
+  for (const group of liveGroups.values()) edgeLimit += group.edges.length * 2;
+  const graph = residualGraph(groups.length + 2, edgeLimit);
+  for (const group of liveGroups.values()) {
+    const live = index.get(group)!;
+    if (group.free > 0) graph.connect(source, live);
+    if (group.free < group.indices.length) graph.connect(live, source);
+    for (const { env, used } of group.edges) {
+      const right = index.get(env)!;
+      if (used < Math.min(group.indices.length, env.indices.length))
+        graph.connect(live, right);
+      if (used > 0) graph.connect(right, live);
+    }
+  }
+  for (const group of envGroups.values()) {
+    const env = index.get(group)!;
+    if (group.free > 0) graph.connect(env, sink);
+    if (group.free < group.indices.length) graph.connect(sink, env);
+  }
+
+  // Two maximum flows differ by a residual circulation. A used singleton
+  // edge can be removed only when its reverse belongs to a residual cycle.
+  const component = graph.components();
+  let last = -1;
+  for (const left of identities.keys()) {
+    const right = survivors.get(left);
+    if (right === undefined) continue;
+    const { live, env } = matchEdge(left, right);
+    if (live.indices.length !== 1 || env.indices.length !== 1) continue;
+    if (component[index.get(live)!] === component[index.get(env)!]) continue;
+    if (right < last) return true;
+    last = right;
+  }
+  return false;
 };
 
 export const recoverIdentifierListSurvivors = (

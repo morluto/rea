@@ -2,6 +2,7 @@ import type { JsonValue } from "../../domain/jsonValue.js";
 import type { IdMap } from "./environmentCompareIds.js";
 import {
   completePairingByLiteral,
+  hasForcedIdentifierListInversion,
   identifierListKeys as keysOf,
   recoverIdentifierListSurvivors,
   type EnvironmentListIdentity,
@@ -152,6 +153,8 @@ export const compareIdentifierList = (
   const replacements = new Map<number, number>();
   let replacement = 0;
   let last = -1;
+  let furthest = -1;
+  let possibleInversion = false;
   let reordered = false;
   for (const [index, identity] of identities.entries()) {
     const right = survivors.get(index);
@@ -160,8 +163,14 @@ export const compareIdentifierList = (
       if (replacement < env.length) replacements.set(index, replacement++);
       continue;
     }
-    // A duplicate or overlapping literal/mapped choice cannot establish
-    // the relative position of that occurrence.
+    // Identical environment entries can always exchange their positions, so
+    // a reversal between those occurrences cannot require the residual proof.
+    if (available.get(envIdentities[right]!.literal)!.indices.length === 1) {
+      possibleInversion ||= right < furthest;
+      furthest = Math.max(furthest, right);
+    }
+    // With no competing occurrence on either side, the match is forced.
+    // For overlapping choices, the residual graph can prove more.
     if (
       keysOf(identity).some((key) =>
         available.get(key)?.indices.some((candidate) => candidate !== right),
@@ -176,5 +185,13 @@ export const compareIdentifierList = (
     reordered ||= right < last;
     last = right;
   }
+  if (!reordered && possibleInversion)
+    reordered = hasForcedIdentifierListInversion(
+      identities,
+      envIdentities,
+      available,
+      survivors,
+      assigned,
+    );
   return { survivors, replacements, hasMapping, reordered };
 };
