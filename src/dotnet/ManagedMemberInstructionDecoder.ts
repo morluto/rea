@@ -1,3 +1,4 @@
+import { BinaryReader } from "../domain/binaryContainer.js";
 import {
   metadataTokenFact,
   type MetadataTokenFact,
@@ -256,13 +257,12 @@ const tokenKind = (table: number): ManagedInstructionAnchor["operand_kind"] => {
 };
 
 type OperandResult = {
-  readonly next: number;
   readonly anchorKind: ManagedInstructionAnchor["operand_kind"];
   readonly value: string | null;
   readonly reference?: MetadataTokenFact;
 };
 
-type OperandReader = (il: Buffer, offset: number) => OperandResult;
+type OperandReader = (reader: BinaryReader, offset: number) => OperandResult;
 
 // String(-0) loses a CIL constant's sign in both anchors and normalized hashes.
 const floatingPointOperand = (value: number): string =>
@@ -286,82 +286,72 @@ const fixed = (width: number, read: OperandReader): FixedOperand => ({
 const FIXED_OPERAND_READERS = new Map<string, FixedOperand>([
   [
     "none",
-    fixed(0, (_il, offset) => ({
-      next: offset,
+    fixed(0, () => ({
       anchorKind: "none",
       value: null,
     })),
   ],
   [
     "short-var",
-    fixed(1, (il, offset) => ({
-      next: offset + 1,
+    fixed(1, (reader, offset) => ({
       anchorKind: "variable",
-      value: String(il.readUInt8(offset)),
+      value: String(reader.u8(offset)),
     })),
   ],
   [
     "var",
-    fixed(2, (il, offset) => ({
-      next: offset + 2,
+    fixed(2, (reader, offset) => ({
       anchorKind: "variable",
-      value: String(il.readUInt16LE(offset)),
+      value: String(reader.u16(offset)),
     })),
   ],
   [
     "short-i",
-    fixed(1, (il, offset) => ({
-      next: offset + 1,
+    fixed(1, (reader, offset) => ({
       anchorKind: "constant",
-      value: String(il.readInt8(offset)),
+      value: String(reader.i8(offset)),
     })),
   ],
   [
     "i",
-    fixed(4, (il, offset) => ({
-      next: offset + 4,
+    fixed(4, (reader, offset) => ({
       anchorKind: "constant",
-      value: String(il.readInt32LE(offset)),
+      value: String(reader.i32(offset)),
     })),
   ],
   [
     "i8",
-    fixed(8, (il, offset) => ({
-      next: offset + 8,
+    fixed(8, (reader, offset) => ({
       anchorKind: "constant",
-      value: il.readBigInt64LE(offset).toString(),
+      value: reader.i64(offset).toString(),
     })),
   ],
   [
     "r4",
-    fixed(4, (il, offset) => ({
-      next: offset + 4,
+    fixed(4, (reader, offset) => ({
       anchorKind: "constant",
-      value: floatingPointOperand(il.readFloatLE(offset)),
+      value: floatingPointOperand(reader.f32(offset)),
     })),
   ],
   [
     "r8",
-    fixed(8, (il, offset) => ({
-      next: offset + 8,
+    fixed(8, (reader, offset) => ({
       anchorKind: "constant",
-      value: floatingPointOperand(il.readDoubleLE(offset)),
+      value: floatingPointOperand(reader.f64(offset)),
     })),
   ],
   [
     "short-branch",
-    fixed(1, (il, offset) => ({
-      next: offset + 1,
+    fixed(1, (reader, offset) => ({
       anchorKind: "branch",
-      value: String(offset + 1 + il.readInt8(offset)),
+      value: String(offset + 1 + reader.i8(offset)),
     })),
   ],
   [
     "branch",
-    fixed(4, (il, offset) => ({
-      next: offset + 4,
+    fixed(4, (reader, offset) => ({
       anchorKind: "branch",
-      value: String(offset + 4 + il.readInt32LE(offset)),
+      value: String(offset + 4 + reader.i32(offset)),
     })),
   ],
 ]);
@@ -380,54 +370,26 @@ const TOKEN_OPERAND_KINDS = new Map<
 /** Every token operand is a 4-byte metadata token. */
 const TOKEN_OPERAND_WIDTH = 4;
 
-/**
- * Bytes the operand at `offset` occupies, or `null` when the extent itself
- * cannot be read from `il`. This is the single extent authority: `readOperand`
- * must never be called for an operand whose extent it cannot bound, so no
- * operand read can leave the method body.
- */
-const operandExtent = (
-  il: Buffer,
-  offset: number,
-  kind: string,
-): number | null => {
-  const fixedOperand = FIXED_OPERAND_READERS.get(kind);
-  if (fixedOperand !== undefined) return fixedOperand.width;
-  if (kind === "switch") {
-    if (offset > il.length - 4) return null;
-    return 4 + il.readUInt32LE(offset) * 4;
-  }
-  return TOKEN_OPERAND_KINDS.has(kind) || kind === "token"
-    ? TOKEN_OPERAND_WIDTH
-    : 0;
-};
+/** Every switch target and the unsigned target count occupy four bytes. */
+const SWITCH_WORD_BYTES = 4;
 
-/**
- * Read an operand whose extent is already known to fit. `next` is always
- * `offset + operandExtent(il, offset, kind)`; callers bound the read first.
- */
+/** Read an operand whose extent is already known to fit in the method body. */
 const readOperand = (
-  il: Buffer,
+  reader: BinaryReader,
   offset: number,
   kind: string,
+  fixedOperand: FixedOperand | undefined,
+  hasReference: boolean,
+  switchCount: number | undefined,
   memberRefKind?: (token: string) => "field" | "method" | undefined,
 ): OperandResult => {
-  const fixedOperand = FIXED_OPERAND_READERS.get(kind);
-  if (fixedOperand !== undefined) return fixedOperand.read(il, offset);
-  if (kind === "switch") {
-    const count = il.readUInt32LE(offset);
-    return {
-      next: offset + 4 + count * 4,
-      anchorKind: "switch",
-      value: String(count),
-    };
-  }
-  if (!TOKEN_OPERAND_KINDS.has(kind) && kind !== "token")
-    return { next: offset, anchorKind: "unknown", value: null };
-  const reference = metadataTokenFact(il.readUInt32LE(offset));
+  if (fixedOperand !== undefined) return fixedOperand.read(reader, offset);
+  if (switchCount !== undefined)
+    return { anchorKind: "switch", value: String(switchCount) };
+  if (!hasReference) return { anchorKind: "unknown", value: null };
+  const reference = metadataTokenFact(reader.u32(offset));
   const { token } = reference;
   return {
-    next: offset + TOKEN_OPERAND_WIDTH,
     anchorKind:
       TOKEN_OPERAND_KINDS.get(kind) ??
       (kind === "token" ? memberRefKind?.(token) : undefined) ??
@@ -448,6 +410,7 @@ export const decodeInstructions = (
   readonly truncated: number;
   readonly issue: string | null;
 } => {
+  const reader = new BinaryReader(il, true, "cil");
   const parsed: ParsedInstruction[] = [];
   const instructionStarts: number[] = [];
   let offset = 0;
@@ -456,39 +419,48 @@ export const decodeInstructions = (
   try {
     while (offset < il.length) {
       const start = offset;
-      const first = il.readUInt8(offset);
+      const first = reader.u8(offset);
       offset += 1;
       if (first === 0xfe && offset >= il.length) {
         issue = `Two-byte CIL opcode at IL offset ${String(start)} leaves method body`;
         break;
       }
-      const code = first === 0xfe ? 0xfe00 + il.readUInt8(offset++) : first;
+      const code = first === 0xfe ? 0xfe00 + reader.u8(offset++) : first;
       const descriptor = OPCODES.get(code);
       if (descriptor === undefined) {
         issue = `Unsupported CIL opcode 0x${code.toString(16)} at IL offset ${String(start)}`;
         break;
       }
-      // Bound the operand extent before reading its value. Reading first would
-      // throw a raw Buffer RangeError out of a truncated body and replace this
-      // diagnostic with the runtime message, losing the instruction identity.
-      const extent = operandExtent(il, offset, descriptor.operand);
-      if (extent === null || offset + extent > il.length) {
+      const { operand: kind } = descriptor;
+      const fixedOperand = FIXED_OPERAND_READERS.get(kind);
+      const hasReference = TOKEN_OPERAND_KINDS.has(kind) || kind === "token";
+      const switchCount =
+        kind === "switch" && offset <= il.length - SWITCH_WORD_BYTES
+          ? reader.u32(offset)
+          : undefined;
+      // The switch count proves both the table extent and the rendered operand.
+      // Only allocate decoded records after the full encoded operand fits.
+      const extent =
+        kind === "switch"
+          ? switchCount === undefined
+            ? undefined
+            : SWITCH_WORD_BYTES * (1 + switchCount)
+          : (fixedOperand?.width ?? (hasReference ? TOKEN_OPERAND_WIDTH : 0));
+      if (extent === undefined || extent > il.length - offset) {
         issue = `Instruction ${descriptor.name} at IL offset ${String(start)} leaves method body`;
         break;
       }
-      // The extent is admitted; bound transient records before allocating token facts.
-      admitInstruction?.(
-        start,
-        TOKEN_OPERAND_KINDS.has(descriptor.operand) ||
-          descriptor.operand === "token",
-      );
+      admitInstruction?.(start, hasReference);
       const operand = readOperand(
-        il,
+        reader,
         offset,
-        descriptor.operand,
+        kind,
+        fixedOperand,
+        hasReference,
+        switchCount,
         memberRefKind,
       );
-      offset = operand.next;
+      offset += extent;
       if (PREFIX_OPCODES.has(descriptor.name)) {
         prefixStart ??= start;
       } else {
@@ -520,6 +492,7 @@ export const parseExceptionRegions = (
   methodEnd: number,
   budget?: ManagedDecodeBudget,
 ): ExceptionRegionParseResult => {
+  const reader = new BinaryReader(bytes, true, "cil");
   const regions: ManagedExceptionRegion[] = [];
   const catchTokens = new Map<number, MetadataTokenFact>();
   let sectionOffset = offset;
@@ -537,7 +510,8 @@ export const parseExceptionRegions = (
         catchTokens,
       );
 
-    const kind = bytes.readUInt8(sectionOffset);
+    const header = reader.u32(sectionOffset);
+    const kind = header & 0xff;
     if ((kind & 0x3f) !== 1)
       return malformedExceptionRegions(
         `Unsupported method data section kind ${String(kind & 0x3f)}`,
@@ -545,11 +519,7 @@ export const parseExceptionRegions = (
         catchTokens,
       );
     const fat = (kind & 0x40) !== 0;
-    const size = fat
-      ? bytes.readUInt8(sectionOffset + 1) |
-        (bytes.readUInt8(sectionOffset + 2) << 8) |
-        (bytes.readUInt8(sectionOffset + 3) << 16)
-      : bytes.readUInt8(sectionOffset + 1);
+    const size = fat ? header >>> 8 : (header >>> 8) & 0xff;
     const clauseSize = fat ? 24 : 12;
     if (
       size < 4 ||
@@ -594,10 +564,7 @@ export const parseExceptionRegions = (
         regions,
         catchTokens,
       );
-    if (
-      !fat &&
-      (bytes[sectionOffset + 2] !== 0 || bytes[sectionOffset + 3] !== 0)
-    )
+    if (!fat && header >>> 16 !== 0)
       return malformedExceptionRegions(
         "Small exception section reserved bytes are nonzero",
         regions,
@@ -607,7 +574,7 @@ export const parseExceptionRegions = (
     // Accumulates with the method IL bound; the body reserves what it retains.
     budget?.admitTransient(count * 256, sectionOffset);
     for (const region of readExceptionClauses(
-      bytes,
+      reader,
       { start: sectionOffset + 4, count, fat, budget },
       catchTokens,
       regions.length,
@@ -645,7 +612,7 @@ const malformedExceptionRegions = (
 });
 
 const readExceptionClauses = (
-  bytes: Buffer,
+  reader: BinaryReader,
   {
     start,
     count,
@@ -664,25 +631,17 @@ const readExceptionClauses = (
   const clauseSize = fat ? 24 : 12;
   for (let index = 0; index < count; index += 1) {
     const clause = start + index * clauseSize;
-    const flags = fat ? bytes.readUInt32LE(clause) : bytes.readUInt16LE(clause);
-    const extra = bytes.readUInt32LE(clause + (fat ? 20 : 8));
+    const flags = fat ? reader.u32(clause) : reader.u16(clause);
+    const extra = reader.u32(clause + (fat ? 20 : 8));
     if (flags === 0) budget?.admitTransient(256, clause);
     const reference = flags === 0 ? metadataTokenFact(extra) : null;
     if (reference !== null) catchTokens.set(firstOrdinal + index, reference);
     regions.push({
       flags,
-      try_offset: fat
-        ? bytes.readUInt32LE(clause + 4)
-        : bytes.readUInt16LE(clause + 2),
-      try_length: fat
-        ? bytes.readUInt32LE(clause + 8)
-        : bytes.readUInt8(clause + 4),
-      handler_offset: fat
-        ? bytes.readUInt32LE(clause + 12)
-        : bytes.readUInt16LE(clause + 5),
-      handler_length: fat
-        ? bytes.readUInt32LE(clause + 16)
-        : bytes.readUInt8(clause + 7),
+      try_offset: fat ? reader.u32(clause + 4) : reader.u16(clause + 2),
+      try_length: fat ? reader.u32(clause + 8) : reader.u8(clause + 4),
+      handler_offset: fat ? reader.u32(clause + 12) : reader.u16(clause + 5),
+      handler_length: fat ? reader.u32(clause + 16) : reader.u8(clause + 7),
       class_token: reference?.token ?? null,
       class_type: null,
       class_type_name_sha256: null,

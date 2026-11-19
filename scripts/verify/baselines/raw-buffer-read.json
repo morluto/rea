@@ -29,14 +29,13 @@
   "src/domain/managed/managedPeReader.ts": 5,
   "src/domain/native/elfNoteLayout.ts": 3,
   "src/domain/native/elfPointerRelocations.ts": 6,
-  "src/domain/native/nativeAotPe.ts": 37,
+  "src/domain/native/nativeAotPe.ts": 26,
   "src/domain/native/readBinaryContainer.ts": 1,
   "src/domain/pe/peResourceInventory.ts": 7,
   "src/domain/pe/peResourceTreeFacts.ts": 8,
   "src/domain/peSectionHeader.ts": 5,
   "src/domain/pngVisualDiff.ts": 2,
   "src/domain/riscvIsaDeclaration.ts": 1,
-  "src/dotnet/ManagedMemberInstructionDecoder.ts": 30,
   "src/dotnet/ManagedMethodBodyReader.ts": 5,
   "src/flutter/DartElf.ts": 2,
   "src/ghidra/GhidraLoadImageValues.ts": 1,
@@ -67,6 +66,5 @@
   "src/native/pwntools/PwntoolsRecordedCrashProvider.ts": 1,
   "src/native/pwntools/RecordedCrashSourceBindings.ts": 6,
   "src/native/windows/WindowsShortcutParser.ts": 48,
-  "src/pcap/PcapDnsWire.ts": 5,
   "src/v8/V8CodeCacheParser.ts": 1
 }
