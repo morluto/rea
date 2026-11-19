@@ -8,6 +8,7 @@ import {
 import { ConfigurationError } from "../configurationErrors.js";
 import {
   decodeZstandardFrames,
+  decodeZstandardFramesCooperative,
   ownedZstandardBytes,
 } from "./zstandardExactFrame.js";
 import {
@@ -38,6 +39,26 @@ const allowance = (
   maxFrames: number,
   source: "default" | "setting" | "runtime",
 ) => ({ maxFrames, source });
+
+it("yields again after the last frame-by-frame decode before success", async () => {
+  let pauses = 0;
+  const controller = new AbortController();
+  const pending = decodeZstandardFramesCooperative(
+    rawFrame(0x61),
+    {},
+    async () => {
+      pauses += 1;
+      if (pauses === 1) {
+        controller.abort();
+        return;
+      }
+      if (controller.signal.aborted)
+        throw Object.assign(new Error("cancelled"), { reason: "cancelled" });
+    },
+  );
+  await expect(pending).rejects.toMatchObject({ reason: "cancelled" });
+  expect(pauses).toBe(2);
+});
 
 describe("exact Zstandard frames", () => {
   it("accepts concatenated frames and skippable frames", () => {

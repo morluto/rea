@@ -539,8 +539,9 @@ export const decodeZstandardFrames = (
 
 /**
  * The same decode as {@link decodeZstandardFrames}, but the frame-by-frame
- * fallback awaits `pause` before each data frame. A caller that owns a
- * cancellation signal can yield there. The strict sequence uses the async
+ * fallback awaits `pause` before each data frame and once more before
+ * success. A caller that owns a cancellation signal can yield there, including
+ * after the last synchronous frame. The strict sequence uses the async
  * decoder, and `pause` runs again after it so an abort during that decode
  * is visible before success is returned.
  */
@@ -582,5 +583,6 @@ export const decodeZstandardFramesCooperative = async (
     total += step.bytes.length;
     chunks.push(step.bytes);
   }
+  await pause();
   return finishFrames(chunks, prepared.consumed, prepared.frames.length);
 };
