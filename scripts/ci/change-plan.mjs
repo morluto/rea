@@ -304,6 +304,9 @@ export function planChanges(request, repository) {
       .filter(([, { paths }]) => matchesAny(file, paths))
       .map(([owner]) => owner);
     for (const owner of owners) selected[owner] = true;
+    // actionlint resolves local action metadata when validating workflow steps.
+    if (/^\.github\/actions\/.+\/action\.ya?ml$/u.test(file))
+      selected.workflows = true;
     if (
       file.startsWith(".github/workflows/") ||
       file.startsWith(".github/codeql/") ||

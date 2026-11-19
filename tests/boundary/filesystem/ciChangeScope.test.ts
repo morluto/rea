@@ -1793,6 +1793,10 @@ it.each([
   ],
   ["package-lock.json", { code: true, docs: true, runtime: true }],
   [
+    ".github/actions/npm-cache/action.yml",
+    { workflows: true, code: true, runtime: true, package: false },
+  ],
+  [
     "scripts/generate-third-party-inventory.mjs",
     { code: true, docs: true, runtime: false },
   ],
