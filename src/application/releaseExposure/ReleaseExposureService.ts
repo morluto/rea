@@ -76,7 +76,7 @@ export class ReleaseExposureService {
       ["rust binaries", () => this.owners.rustBinaries.close()],
     ] as const;
     const settled = await Promise.allSettled(
-      owners.map(([, close]) => close()),
+      owners.map(async ([, close]) => close()),
     );
     const failures = settled.flatMap((result, index) => {
       const owner = owners[index];
@@ -588,9 +588,13 @@ const ownerCloseFailure = (
       operation: RELEASE_EXPOSURE_OPERATION,
     },
   );
-  const live = typed.filter((cause) => cause.cleanupIncomplete);
-  // An opaque rejection supplies no release authority, so it stays incomplete.
-  if (live.length === failures.length) aggregate.bindCleanupDependencies(live);
+  // An owner that already released still accounts for its rejection. An opaque
+  // rejection supplies no release authority and keeps the aggregate incomplete.
+  if (
+    typed.length === failures.length &&
+    typed.every((cause) => cause.carriesCleanup)
+  )
+    aggregate.bindCleanupDependencies(typed);
   return aggregate;
 };
 
