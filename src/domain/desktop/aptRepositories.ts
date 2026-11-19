@@ -10,10 +10,7 @@ export interface AptSourceStanza {
   readonly file: string;
   /** apt's number for the entry: a one-line entry's line, a deb822 entry's stanza, counted from 1. */
   readonly position: number;
-  /** Without trailing slashes, as `apt-cache policy` prints them, and without a user name or password. */
-  readonly uris: readonly string[];
-  /** The URIs of `uris` whose entry held a user name or password. */
-  readonly credentialed: readonly string[];
+  readonly uris: readonly AptSourceUri[];
   readonly suites: readonly string[];
   readonly components: readonly string[];
   readonly architectures: readonly string[];
@@ -23,10 +20,16 @@ export interface AptSourceStanza {
   readonly inlineKey: string | null;
 }
 
+interface AptSourceUri {
+  /** The authored URI without credentials. */
+  readonly uri: string;
+  readonly credentials: boolean;
+}
+
 /** One `deb` entry of an apt sources file for one URI and suite. */
 export interface AptSourceEntry extends Omit<
   AptSourceStanza,
-  "uris" | "credentialed" | "suites"
+  "uris" | "suites"
 > {
   readonly uri: string;
   /** Whether the entry's URI held a user name or password, which `uri` leaves out. */
@@ -47,8 +50,9 @@ const fieldValues = (value: string | undefined): readonly string[] =>
 const optionValues = (value: string | undefined): readonly string[] =>
   (value ?? "").split(/[\s,]+/u).filter((part) => part.length > 0);
 
-const withoutTrailingSlashes = (uri: string): string =>
-  uri.replace(/\/+$/u, "");
+/** Keep redundant path separators that APT preserves in Repo-URI. */
+const withoutOptionalTrailingSlash = (uri: string): string =>
+  uri.replace(/(?<!\/)\/$/u, "");
 
 /** A URI's user name and password: up to the last `@` before its path, as apt reads them. */
 const USER_INFO = /^(?<scheme>[a-z][a-z0-9+.-]*:\/\/)[^/]*@/iu;
@@ -60,6 +64,24 @@ export const withoutCredentials = (uri: string): string =>
 /** A line of apt's output with every URI in it stripped of a user name and password, whether or not apt printed them. */
 export const withoutCredentialsIn = (text: string): string =>
   text.replace(/(?<scheme>[a-z][a-z0-9+.-]*:\/\/)[^\s/]*@/giu, "$<scheme>");
+
+const withTrailingSlash = (uri: string): string =>
+  uri.endsWith("/") ? uri : `${uri}/`;
+
+const EMPTY_AUTHORITY = /^([a-z][a-z0-9+.-]*:)\/\/(?=\/)/iu;
+const NUMERIC_PORT =
+  /^([a-z][a-z0-9+.-]*:\/\/(?:\[[^\]]+\]|[^/:]+)):([0-9]+)(?=\/|$)/iu;
+
+/** APT fixes up deb822 URIs before emitting Repo-URI, leaving path octets intact. */
+const deb822RepoUri = (uri: string): string =>
+  withTrailingSlash(
+    uri
+      .replace(EMPTY_AUTHORITY, "$1")
+      .replace(NUMERIC_PORT, (_match, authority: string, port: string) => {
+        const digits = port.replace(/^0+/u, "");
+        return digits === "" ? authority : `${authority}:${digits}`;
+      }),
+  );
 
 /**
  * The key block a deb822 Signed-By field holds, as apt writes it to a key
@@ -92,13 +114,12 @@ const stanza = (
 ): AptSourceStanza => {
   const signedBy = fields.options.get("signed-by") ?? "";
   const inlineKey = inlineKeyBlock(signedBy);
-  const uris = fields.uris.map(withoutCredentials);
   return {
     ...at,
-    uris: uris.map(withoutTrailingSlashes),
-    credentialed: uris
-      .filter((uri, index) => uri !== fields.uris[index])
-      .map(withoutTrailingSlashes),
+    uris: fields.uris.map((source) => {
+      const uri = withoutCredentials(source);
+      return { uri, credentials: source !== uri };
+    }),
     suites: fields.suites,
     components: fields.components,
     architectures: optionValues(fields.options.get("arch")),
@@ -267,57 +288,79 @@ export const entryForTarget = (
       candidate.position === target.position,
   );
   if (at === undefined) return undefined;
-  const { uris, credentialed, suites, ...entry } = at;
+  const { uris, suites, ...entry } = at;
   const single = uris.length === 1 && suites.length === 1;
-  const repoUri = withoutTrailingSlashes(target.repoUri);
-  const uri = single ? uris[0] : uris.find((listed) => listed === repoUri);
+  // A one-line entry has one URI and one suite. Only deb822 needs a URI lookup.
+  const matches = single
+    ? uris
+    : uris.filter(({ uri }) => deb822RepoUri(uri) === target.repoUri);
+  const first = matches[0];
+  const uri =
+    first === undefined ? undefined : withoutOptionalTrailingSlash(first.uri);
   const suite = single
     ? suites[0]
     : suites.find((listed) => isRelease(listed, target.release));
-  if (uri === undefined || suite === undefined) return undefined;
+  if (
+    uri === undefined ||
+    suite === undefined ||
+    matches.some((listed) => withoutOptionalTrailingSlash(listed.uri) !== uri)
+  )
+    return undefined;
   return {
     ...entry,
     uri,
-    credentials: credentialed.includes(uri),
+    credentials: matches.some((listed) => listed.credentials),
     suite,
     components: suite.endsWith("/") ? [] : entry.components,
   };
 };
 
+type RepositoryDeclaration = Pick<
+  AptRepository,
+  "source" | "uri" | "suite" | "components"
+>;
+
 /**
  * The package files, as `apt-cache policy` prints them, that apt reads once
  * these repositories are declared: every index of the same URI and suite in
- * one of their components. A declared repository brings each component of
- * its entry, not only the one listing the installed version.
+ * one of their components. Check the source index against the deb822 spelling
+ * used by the exported declaration, since APT reads .list URI tokens differently.
  */
 export const declaredPackageFiles = (
-  repositories: readonly Pick<AptRepository, "uri" | "suite" | "components">[],
-  targets: readonly AptIndexTarget[],
+  repositories: readonly RepositoryDeclaration[],
+  targets: ReadonlyMap<string, AptIndexTarget>,
 ): ReadonlySet<string> => {
-  const declares = (
-    repository: Pick<AptRepository, "uri" | "suite" | "components">,
-    target: AptIndexTarget,
-  ) =>
-    repository.uri === withoutTrailingSlashes(target.repoUri) &&
-    repository.suite !== null &&
-    isRelease(repository.suite, target.release) &&
-    (target.component === null
-      ? repository.components.length === 0
-      : repository.components.includes(target.component));
-  return new Set(
-    targets
-      .filter((target) =>
-        repositories.some((repository) => declares(repository, target)),
+  const declarations = repositories.flatMap((repository) => {
+    const repoUri = targets.get(repository.source)?.repoUri;
+    return repoUri === undefined ||
+      repository.uri === null ||
+      deb822RepoUri(repository.uri) !== repoUri ||
+      repository.suite === null
+      ? []
+      : [{ ...repository, repoUri, suite: repository.suite }];
+  });
+  const files = new Set<string>();
+  for (const target of targets.values()) {
+    if (
+      declarations.some(
+        ({ repoUri, suite, components }) =>
+          repoUri === target.repoUri &&
+          isRelease(suite, target.release) &&
+          (target.component === null
+            ? components.length === 0
+            : components.includes(target.component)),
       )
-      .map((target) => target.description),
-  );
+    )
+      files.add(target.description);
+  }
+  return files;
 };
 
 /** The packages of `supplied` whose declared sources include one of the repository's package files, sorted. */
 export const repositorySupplies = (
-  repository: Pick<AptRepository, "uri" | "suite" | "components">,
+  repository: RepositoryDeclaration,
   supplied: ReadonlyMap<string, readonly string[]>,
-  targets: readonly AptIndexTarget[],
+  targets: ReadonlyMap<string, AptIndexTarget>,
 ): readonly string[] => {
   const files = declaredPackageFiles([repository], targets);
   return [...supplied]
