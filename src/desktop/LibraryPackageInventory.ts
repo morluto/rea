@@ -32,7 +32,7 @@ import { compositeKey } from "../domain/unicodeCodePointOrder.js";
 import { withOwnedRegularFile } from "../filesystem/OwnedRegularFile.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import { hostReadFailure, isRefusedRead } from "./HostFileRead.js";
-import { succeeded, type QueryRunner } from "./HostQuery.js";
+import { queryUtf8Text, succeeded, type QueryRunner } from "./HostQuery.js";
 
 /** The library fields of a Debian package's inventory. */
 export type LibraryPackages = {
@@ -447,16 +447,15 @@ const packageSources = async (
 ): Promise<ReadonlyMap<string, readonly string[]> | undefined> => {
   const sources = new Map<string, readonly string[]>();
   for (let start = 0; start < names.length; start += QUERY_BATCH) {
-    const output = succeeded(
-      await runQuery(
-        "apt-cache",
-        ["policy", ...names.slice(start, start + QUERY_BATCH)],
-        signal,
-      ),
+    const output = await queryUtf8Text(
+      runQuery,
+      "apt-cache",
+      ["policy", ...names.slice(start, start + QUERY_BATCH)],
+      signal,
     );
-    if (output === undefined) return undefined;
+    if (output.kind !== "read") return undefined;
     for (const [name, listed] of parseAptPolicyPackageSources(
-      output,
+      output.text,
       statusFile,
     ))
       sources.set(name, listed);

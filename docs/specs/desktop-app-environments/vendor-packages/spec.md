@@ -15,7 +15,11 @@ that key, with those libraries, and starts it.
   the source as `apt-cache policy` lists it, and the sources file entry
   `apt-get indextargets` names for it (its `Sourcesentry` file and line or
   deb822 stanza; `sources.list`, one-line `*.list` or deb822 `*.sources`) with
-  its URI, suite, components and architecture restriction. Flat repositories
+  its authored URI, suite, components and architecture restriction. The optional
+  `repo_uri` field records the index's sanitized `Repo-URI` independently of
+  the authored URI. Undecodable UTF-8 entries and index paragraphs are withheld
+  without substituting replacement characters. A policy query with undecodable
+  bytes leaves repository attribution unknown. Flat repositories
   (suite `./` or `/`, no components), `[signed-by=…]` and `Signed-By:` options
   and architecture options are read; a deb822 stanza's URIs and suites are
   kept as lists, never expanded into every pair. `release` is the release's
@@ -25,9 +29,11 @@ that key, with those libraries, and starts it.
   `Description`, `Repo-URI` and `Base-URI`, and from the sources
   `apt-cache policy` lists, as they are parsed, so no stanza, entry, record,
   reason or limitation holds it and entries match whether or not apt prints
-  it; `uri_credentials_removed` records that the entry's URI held one.
-  Captures written before `architectures`, `release` and
-  `uri_credentials_removed` were recorded omit them, and still open.
+  it. `uri_credentials_removed` records credentials seen in the entry or
+  index URI. If APT reveals encoded credentials without a safely identifiable
+  boundary in the authored token, the capture omits that token's value.
+  Older captures may omit `architectures`, `release`, `repo_uri` and
+  `uri_credentials_removed`.
 - The repository's key is the candidate that verifies the release beside the
   index in apt's lists folder (`InRelease`, or `Release` with `Release.gpg`,
   named from the target's `Base-URI`) with
@@ -86,7 +92,11 @@ that key, with those libraries, and starts it.
   (`uri_credentials_removed`; a capture written before that field whose
   `uri` still holds them is refused whole, since its library packages counted
   that repository), it is reached over http or https, and its architecture
-  restriction includes the host's. With none usable, the export is refused
+  restriction includes the host's. AgentEnv writes a deb822 source. The
+  exporter and package attribution use the same URI that reproduces the
+  observed index identity. A legacy one-line source with percent escapes
+  needs a new capture with `repo_uri`. A URI that cannot be represented as
+  one deb822 token is withheld with the reason. With none usable, the export is refused
   naming each repository, by its URI without credentials, and its reason; the
   credentials reason names no URI. A capture written before
   restrictions and releases were recorded counts its repositories as
