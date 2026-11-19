@@ -190,6 +190,10 @@ export const parseOneLineSources = (
     ];
   });
 
+// Match the ASCII whitespace recognized by APT's tag reader within a line.
+const trimDeb822Line = (value: string): string =>
+  value.replace(/^[ \t\v\f\r]+|[ \t\v\f\r]+$/gu, "");
+
 /** Fields of each deb822 paragraph by lowercase name; continuation lines keep their line breaks. */
 export const deb822Paragraphs = (
   text: string | Buffer,
@@ -209,21 +213,35 @@ export const deb822Paragraphs = (
   for (const line of sourceLines(text)) {
     if (line === undefined) {
       readable = false;
-    } else if (line.trim().length === 0) {
+      continue;
+    }
+    const content = trimDeb822Line(line);
+    if (content.length === 0) {
       finish();
     } else if (line.startsWith("#")) continue;
-    else if (/^[ \t]/u.test(line) && last !== undefined)
-      current.set(last, `${current.get(last) ?? ""}\n${line.trim()}`);
-    else {
+    else if (/^[ \t]/u.test(line) && last !== undefined) {
+      const previous = current.get(last) ?? "";
+      // APT skips an initial newline only before a space-led continuation.
+      current.set(
+        last,
+        previous === "" && line.startsWith(" ")
+          ? content
+          : `${previous}\n${content}`,
+      );
+    } else {
       const colon = line.indexOf(":");
       if (colon <= 0) continue;
-      last = line.slice(0, colon).trim().toLowerCase();
-      current.set(last, line.slice(colon + 1).trim());
+      last = trimDeb822Line(line.slice(0, colon)).toLowerCase();
+      current.set(last, trimDeb822Line(line.slice(colon + 1)));
     }
   }
   finish();
   return found;
 };
+
+// APT's numeric conversion skips leading ASCII whitespace, including a
+// retained newline before a tab-led continuation. Its word comparison is exact.
+const APT_DISABLED = /^(?:no|false|without|off|disable|\n*[+-]?(?:0+|0x0+))$/u;
 
 /** The `deb` stanzas of a deb822 `.sources` file; disabled paragraphs are skipped but still counted. */
 export const parseDeb822Sources = (
@@ -233,9 +251,7 @@ export const parseDeb822Sources = (
   deb822Paragraphs(text).flatMap((fields, index) => {
     if (
       !fieldValues(fields.get("types")).includes("deb") ||
-      /^(?:no|false|without|off|disable|[+-]?(?:0+|0x0+))$/u.test(
-        fields.get("enabled")?.toLowerCase() ?? "yes",
-      )
+      APT_DISABLED.test(fields.get("enabled")?.toLowerCase() ?? "")
     )
       return [];
     return [

@@ -745,10 +745,24 @@ it("keeps APT's source positions when a false Enabled field disables a stanza", 
     "-0",
     "0x0",
     "-0x0",
+    "\tFaLsE \t",
+    "\n false",
+    "\n\t-0",
   ];
-  const enabled = ["yes", "1", "0x1", "-1", "0.0", "fal\u017fe"];
+  const enabled = [
+    "yes",
+    "1",
+    "0x1",
+    "-1",
+    "0.0",
+    "fal\u017fe",
+    "\u00a0false",
+    "false\u00a0",
+    "\u3000FaLsE\u3000",
+    "\n\tfalse",
+  ];
   const stanzas = parseDeb822Sources(
-    [...disabled, ...enabled].map(source).join("\n"),
+    Buffer.from([...disabled, ...enabled].map(source).join("\n")),
     "example.sources",
   );
   expect(stanzas.map((entry) => entry.position)).toEqual(
