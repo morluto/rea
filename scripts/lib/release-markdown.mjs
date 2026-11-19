@@ -45,3 +45,23 @@ export function releaseSection(markdown, expectedVersion) {
       .map(({ line, offset }) => ({ line, offset: offset - sectionOffset })),
   };
 }
+
+/** Read editorial prose and link destinations without treating code as prose. */
+export function releaseBulletProse(line) {
+  const tokens = parser.parseInline(line, {})[0]?.children ?? [];
+  const prose = [];
+  let link;
+  for (const token of tokens) {
+    if (token.type === "text") {
+      prose.push(token.content);
+    } else if (token.type === "code_inline") {
+      prose.push(" ");
+    } else if (token.type === "link_open") {
+      link = token.attrGet("href");
+      prose.push("[");
+    } else if (token.type === "link_close") {
+      prose.push("](" + link + ")");
+    }
+  }
+  return prose.join("");
+}

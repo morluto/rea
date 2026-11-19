@@ -1,7 +1,7 @@
 import { createRequire } from "node:module";
 import { valid } from "semver";
 import { z } from "zod";
-import { releaseSection } from "./release-markdown.mjs";
+import { releaseBulletProse, releaseSection } from "./release-markdown.mjs";
 
 const sha = z.string().regex(/^[a-f0-9]{40}$/u);
 const actor = z.object({
@@ -265,8 +265,9 @@ function verifyEditorialCredits(inventory, prose) {
   const errors = [];
   const requiredByContext = new Map();
   const thankedByContext = new Map();
-  for (const bullet of prose) {
-    if (!/^[-*] /u.test(bullet)) continue;
+  for (const line of prose) {
+    if (!/^[-*] /u.test(line)) continue;
+    const bullet = releaseBulletProse(line);
     const references = bulletPrs(bullet, inventory.repository);
     const start = bullet.indexOf("Thanks ");
     const thanked = new Set(

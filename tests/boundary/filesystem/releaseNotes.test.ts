@@ -828,6 +828,27 @@ it.each([
   },
 );
 
+it("checks references and contributor thanks from prose outside inline code", async () => {
+  const f = await fixture();
+  const example = "`slot #999`";
+  const notes = f.notes.replace(
+    f.bullet,
+    f.bullet + " The help shows " + example + ".",
+  );
+  const changelog = join(f.directory, "CHANGELOG.md");
+  await writeFile(changelog, notes);
+  await expect(
+    f.invoke(["check", "--manifest", f.manifest]),
+  ).resolves.toBeDefined();
+
+  await writeFile(changelog, notes.replace("@bob", "`@bob`"));
+  await expect(
+    f.invoke(["check", "--manifest", f.manifest]),
+  ).rejects.toMatchObject({
+    stderr: expect.stringContaining("Missing Thanks @bob"),
+  });
+});
+
 it("requires editorial headings in release prose outside code fences", async () => {
   const f = await fixture();
   const notes = f.notes.replace(
