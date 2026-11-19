@@ -2,7 +2,9 @@ import {
   PE_RESOURCE_DATA_ENTRY_BYTES,
   PE_RESOURCE_DIRECTORY_BYTES,
   PE_RESOURCE_ENTRY_BYTES,
+  PE_RESOURCE_ENTRY_LIMIT,
   PE_RESOURCE_NAME_PREFIX_BYTES,
+  peResourceRangeFits,
   readPeResourceDataEntryFacts,
   readPeResourceDirectoryFacts,
   readPeResourceEntryFacts,
@@ -32,8 +34,6 @@ type OccupiedRange = Range & {
 const METADATA_BYTES = 8 * 1024 * 1024;
 /** The fixed allowance for retained resource metadata. */
 const METADATA_LIMIT = "pe_resource_metadata_bytes";
-/** The caller-selected resource directory entry budget. */
-const ENTRY_LIMIT = "max_entries";
 const limit = (message: string, name: string, maximum: number): never => {
   throw decodeLimit("pe", message, { name, maximum });
 };
@@ -44,7 +44,7 @@ export const peResourceLimitBoundary = (
 ): ArtifactLimitBoundary | undefined =>
   limit.name === METADATA_LIMIT
     ? "memory"
-    : limit.name === ENTRY_LIMIT
+    : limit.name === PE_RESOURCE_ENTRY_LIMIT
       ? "capacity"
       : undefined;
 /** Count bytes through the canonical bounded JSON writer. */
@@ -106,7 +106,7 @@ export const parsePeResources = async (
   };
   const root = layout.size === 0 ? 0 : layout.map(layout.rva, layout.size);
   const relative = (at: number, length: number): number => {
-    if (at > layout.size - length || at < 0)
+    if (!peResourceRangeFits(at, length, layout.size))
       peFailure(
         "Resource directory offset leaves the declared resource interval.",
       );
@@ -169,7 +169,7 @@ export const parsePeResources = async (
     if (count > input.max_entries - examined)
       limit(
         "PE resource directory entry budget exceeded; no partial inventory was returned.",
-        ENTRY_LIMIT,
+        PE_RESOURCE_ENTRY_LIMIT,
         input.max_entries,
       );
     examined += count;

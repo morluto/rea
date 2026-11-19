@@ -8,7 +8,7 @@ import {
 import { assertArtifactReadActive } from "../../resources/index.js";
 import { decodeLimit } from "../../domain/parseFailure.js";
 import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
-import { readElfSymbol } from "../../domain/elfSymbol.js";
+import { elfSymbolSize, readElfSymbol } from "../../domain/elfSymbol.js";
 import {
   elfStringTableText,
   observeElfStringTableEntry,
@@ -1805,7 +1805,7 @@ const scanSymbols = (
   const tables = directory.sections.filter(
     (section) => section.type === SHT_SYMTAB || section.type === SHT_DYNSYM,
   );
-  const standard = directory.bits === 64 ? 24 : 16;
+  const standard = elfSymbolSize(directory.bits);
   // First section per index, matching a directory-order find.
   const byIndex = new Map<number, NativeSection>();
   for (const section of directory.sections)

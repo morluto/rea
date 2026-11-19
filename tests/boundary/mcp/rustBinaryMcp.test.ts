@@ -227,7 +227,8 @@ mcpTest(
     try {
       const root = await createTestTempDirectory("rea-rust-mcp-");
       const path = join(root, "many-sections.wasm");
-      await writeFile(path, createWasmSectionFlood(65_537));
+      const complete = createWasmSectionFlood(65_537);
+      await writeFile(path, complete);
       const response = await client.callTool({
         name: "inspect_rust_binary",
         arguments: { path },
@@ -245,6 +246,19 @@ mcpTest(
             limit: 65_536,
             unit: "sections",
           },
+        },
+      });
+
+      await writeFile(path, complete.subarray(0, complete.length - 1));
+      const truncated = await client.callTool({
+        name: "inspect_rust_binary",
+        arguments: { path },
+      });
+      expect(parseMcpToolError(truncated).error).toMatchObject({
+        code: "invalid_request",
+        details: {
+          operation: "inspect_rust_binary",
+          issues: [{ path: ["path"], reason: "invalid_format" }],
         },
       });
     } finally {
