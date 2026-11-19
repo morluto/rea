@@ -1395,6 +1395,7 @@
 * **guards:** run the architecture guards in the pre-push check ([#10948](https://github.com/morluto/rea/issues/10948)) ([ecf5372](https://github.com/morluto/rea/commit/ecf5372627e5ee81259fdae129031e2ae9f4a45c))
 * **hooks:** skip the staged-file autofix on merge commits ([#11530](https://github.com/morluto/rea/issues/11530)) ([9c960b4](https://github.com/morluto/rea/commit/9c960b4b675889536304e32e8603fa7ff9371087))
 * let a lane that names a shared process file select it on the fast tier ([#11523](https://github.com/morluto/rea/issues/11523)) ([3362752](https://github.com/morluto/rea/commit/336275259ce8f026a0af803675c2367162a77ada)), closes [#11404](https://github.com/morluto/rea/issues/11404)
+* **recorded-crash:** bound package acquisition before install ([#12365](https://github.com/morluto/rea/issues/12365)) ([59c7eed](https://github.com/morluto/rea/commit/59c7eed91d52530ab110f9c80bd38419e5b99651))
 * remove merge-queue support from the CI and title workflows ([#11337](https://github.com/morluto/rea/issues/11337)) ([25b1c42](https://github.com/morluto/rea/commit/25b1c42ce45ad29f30fdb096dc444e0ace980723))
 * retire the automated PR readiness check ([#12095](https://github.com/morluto/rea/issues/12095)) ([b60836a](https://github.com/morluto/rea/commit/b60836a157f306eb529f5f934d1fe88163093550))
 * run only the affected portable tests on pull requests ([#11346](https://github.com/morluto/rea/issues/11346)) ([ff6d1d8](https://github.com/morluto/rea/commit/ff6d1d8142efd5fcae8de641c7626a0c104df8be))
