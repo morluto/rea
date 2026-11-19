@@ -156,7 +156,7 @@ export type FatHeaderPrefix =
       ));
 
 /** Interpret a raw FAT magic without asserting container identity or header readiness. */
-export const readFatMagicFormat = (magic: number): FatHeaderFormat | null => {
+const readFatMagicFormat = (magic: number): FatHeaderFormat | null => {
   if (![FAT_MAGIC, FAT_MAGIC_64, FAT_CIGAM, FAT_CIGAM_64].includes(magic))
     return null;
   return {
@@ -164,6 +164,15 @@ export const readFatMagicFormat = (magic: number): FatHeaderFormat | null => {
     wide: magic === FAT_MAGIC_64 || magic === FAT_CIGAM_64,
     littleEndian: magic === FAT_CIGAM || magic === FAT_CIGAM_64,
   };
+};
+
+/** Classify a Mach-O signature without admitting a thin header or FAT table. */
+export const machoContainerKindFromMagic = (
+  magic: number,
+): "thin" | "fat32" | "fat64" | null => {
+  if (thinMachoFormat(magic) !== null) return "thin";
+  const fat = readFatMagicFormat(magic);
+  return fat === null ? null : fat.wide ? "fat64" : "fat32";
 };
 
 /** Observe the fixed FAT header without table, count-limit or container-identity admission. */

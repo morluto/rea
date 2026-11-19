@@ -138,6 +138,18 @@ const gradleArray = (value: unknown, field: string): readonly unknown[] => {
   );
 };
 
+const gradleObject = (
+  value: unknown,
+  field: string,
+): Record<string, unknown> | null => {
+  if (value === undefined) return null;
+  if (isRecord(value)) return value;
+  throw malformedInput(
+    MAVEN_GRADLE_METADATA_FORMAT,
+    `Gradle module metadata ${field} is present but is not a JSON object.`,
+  );
+};
+
 const gradleObjects = (
   value: unknown,
   field: string,
@@ -474,15 +486,26 @@ const parseGradle = (
       "Gradle module metadata root must be a JSON object.",
     );
   const format_version = textOf(parsed.formatVersion);
-  const component = isRecord(parsed.component) ? parsed.component : null;
+  if (format_version === null)
+    throw unsupportedInput(
+      MAVEN_GRADLE_METADATA_FORMAT,
+      "Selected JSON document is not Gradle module metadata (missing a string formatVersion).",
+    );
+  if (json.firstObjectMember !== "formatVersion")
+    throw malformedInput(
+      MAVEN_GRADLE_METADATA_FORMAT,
+      "Gradle module metadata formatVersion must be the first object member.",
+    );
+  const component = gradleObject(parsed.component, "component");
   const variantsValue = parsed.variants;
   if (
-    format_version === null ||
-    (component === null && !Array.isArray(variantsValue))
+    parsed.formatVersion !== "1.1" &&
+    component === null &&
+    !Array.isArray(variantsValue)
   )
     throw unsupportedInput(
       MAVEN_GRADLE_METADATA_FORMAT,
-      "Selected JSON document is not Gradle module metadata (missing formatVersion and component or variants).",
+      "Unrecognized Gradle module metadata formatVersion without component or variants.",
     );
   const limitations: string[] = [
     ...BASE_LIMITATIONS,
@@ -497,9 +520,8 @@ const parseGradle = (
     packaging: null,
   };
   unresolved.coordinates(coordinates, "project", null, false);
-  const createdBy = isRecord(parsed.createdBy) ? parsed.createdBy : null;
-  const createdGradle =
-    createdBy !== null && isRecord(createdBy.gradle) ? createdBy.gradle : null;
+  const createdBy = gradleObject(parsed.createdBy, "createdBy");
+  const createdGradle = gradleObject(createdBy?.gradle, "createdBy.gradle");
   // Count each expanded collection before any report record is built.
   admit(
     "variants",
@@ -532,18 +554,12 @@ const parseGradle = (
   );
   for (const variant of variants) {
     const name = textOf(variant.name);
-    const attributes = isRecord(variant.attributes) ? variant.attributes : {};
-    const category = textOf(attributes["org.gradle.category"]);
-    const usage = textOf(attributes["org.gradle.usage"]);
+    const attributes = gradleObject(variant.attributes, "variant.attributes");
+    const category = textOf(attributes?.["org.gradle.category"]);
+    const usage = textOf(attributes?.["org.gradle.usage"]);
     const platform =
       category === "platform" || category === "enforced-platform";
-    const availableAt: unknown = variant["available-at"];
-    if (availableAt !== undefined && !isRecord(availableAt))
-      throw malformedInput(
-        MAVEN_GRADLE_METADATA_FORMAT,
-        "Gradle module metadata available-at is present but is not a JSON object.",
-      );
-    const available = availableAt === undefined ? null : availableAt;
+    const available = gradleObject(variant["available-at"], "available-at");
     const variantDependencies = gradleArray(
       variant.dependencies,
       "dependencies",

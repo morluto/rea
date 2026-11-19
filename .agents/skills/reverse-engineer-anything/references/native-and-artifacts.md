@@ -738,7 +738,8 @@ for one selected type. For questions about a selected type, select
 names), coverage and per-collection counts. Page rows with
 `view: {kind: "managed-members", collection: "call_edges", offset: 0, limit: 64}`
 over `types`, `exported_types`, `fields`, `methods`, `member_refs`, `call_edges`,
-`field_accesses` or `user_strings`.
+`field_accesses`, `user_strings` or `unresolved_definitions`. The last collection
+pages checked TypeDef and MethodDef coordinates with failed name columns.
 Use exact `names` and `declaring_types` filters before paging supported
 collections. For a compact method lookup, request `fields: ["name",
 "declaring_type", "signature"]`; omit `body` to avoid anchors. Identity tokens,

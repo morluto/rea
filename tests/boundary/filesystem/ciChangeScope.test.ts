@@ -1247,6 +1247,17 @@ it.each([
     { code: true, runtime: true, package: true, binary_layout: true },
   ],
   [
+    ".github/actions/ubuntu-archive/action.yaml",
+    {
+      code: true,
+      runtime: true,
+      package: true,
+      binary_layout: true,
+      signal_recording: true,
+      workflows: true,
+    },
+  ],
+  [
     ".github/actions/host-apt-packages/action.yml",
     {
       code: true,
@@ -1255,6 +1266,19 @@ it.each([
       binary_layout: true,
       signal_recording: true,
       recorded_crash: false,
+      workflows: true,
+    },
+  ],
+  [
+    ".github/actions/host-apt-packages/action.yaml",
+    {
+      code: true,
+      runtime: true,
+      package: true,
+      binary_layout: true,
+      signal_recording: true,
+      recorded_crash: false,
+      workflows: true,
     },
   ],
   ["src/domain/peCoffHeader.ts", { code: true, runtime: true, package: true }],
@@ -1763,6 +1787,22 @@ it.each([
   [
     ".github/workflows/real-termux.yml",
     { workflows: true, code: false, package: false, website: false },
+  ],
+  [
+    ".github/actions/npm-cache/action.yml",
+    { workflows: true, code: true, runtime: true, package: false },
+  ],
+  [
+    ".github/actions/example/nested/action.yaml",
+    { workflows: true, code: true, runtime: true, package: false },
+  ],
+  [
+    ".github/actions/publish-mcp/registry-state.mjs",
+    { workflows: false, code: true, runtime: true, package: true },
+  ],
+  [
+    ".github/actionlint.yml",
+    { workflows: true, code: false, runtime: false, package: false },
   ],
   [
     "src/domain/javascript/example.test.ts",
