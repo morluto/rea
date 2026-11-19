@@ -1141,6 +1141,7 @@ const resolveGotBase = (
     if (start >= 0n && end <= BigInt(bytes.length)) {
       const limit = Number(end);
       const width = directory.bits === 64 ? 16 : 8;
+      let dynamicGot: bigint | null = null;
       for (
         let at = Number(start), index = 0;
         at + width <= limit && index < MAX_DYNAMIC_ENTRIES;
@@ -1152,9 +1153,14 @@ const resolveGotBase = (
           directory.little,
         );
         if (!entry.ok || entry.value.tag === DT_NULL) break;
-        if (entry.value.tag === DT_PLTGOT && entry.value.value !== 0n)
-          return { address: entry.value.value, source: "DT_PLTGOT" };
+        if (entry.value.tag === DT_PLTGOT && entry.value.value !== 0n) {
+          if (dynamicGot !== null && dynamicGot !== entry.value.value)
+            return null;
+          dynamicGot = entry.value.value;
+        }
       }
+      if (dynamicGot !== null)
+        return { address: dynamicGot, source: "DT_PLTGOT" };
     }
   }
   // Only an allocated section has a load address; a repeated allocated GOT

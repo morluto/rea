@@ -866,6 +866,20 @@ it.each([
   },
 );
 
+it("keeps the GOT unknown when one dynamic directory supplies conflicting DT_PLTGOT entries", () => {
+  const bytes = elfUnwindFixture({ header: "match", datarel: "dynamic" });
+  const dynamic = findSection(bytes, ".dynamic");
+  bytes.writeBigUInt64LE(3n, dynamic.offset + 16);
+  bytes.writeBigUInt64LE(BigInt(UNWIND_GOT_VA + 0x100), dynamic.offset + 24);
+
+  const report = parse(bytes);
+  expect(report.ranges.map((range) => range.start)).not.toContain(
+    address(UNWIND_FN_A),
+  );
+  expect(report.coverage.status).toBe("partial");
+  expect(report.limitations).toContain(GOT_UNKNOWN);
+});
+
 it("keeps the GOT unknown when repeated allocated .got.plt sections disagree", () => {
   const report = parse(
     elfUnwindFixture({
