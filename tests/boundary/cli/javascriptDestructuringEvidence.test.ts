@@ -26,6 +26,17 @@ const iteratorCloseSource = `
     const { useCustom = (holder.parent.items = custom), items: [read], next: { mode: projectedAfterAcquisition } } = holder.parent;
   `;
 
+const arrayPrototypeAliasSource = `
+  change();
+  function change() {
+    const proto = Reflect.getPrototypeOf([]);
+    proto[Symbol.iterator] = function* () {};
+  }
+  const pairs = [["first"]];
+  const [[aliasedPrototypeElement]] = pairs;
+  pairs[0][0] = "later";
+  `;
+
 const expectedDependencies = [
   ["declared", ["a"]],
   ["a", ["a"]],
@@ -112,16 +123,7 @@ cliTest(
     await writeFile(join(root, "iterator-close.js"), iteratorCloseSource);
     await writeFile(
       join(root, "array-prototype-alias.js"),
-      `
-      change();
-      function change() {
-        const proto = Reflect.getPrototypeOf([]);
-        proto[Symbol.iterator] = function* () {};
-      }
-      const pairs = [["first"]];
-      const [[aliasedPrototypeElement]] = pairs;
-      pairs[0][0] = "later";
-      `,
+      arrayPrototypeAliasSource,
     );
     const output = await cli.run({
       arguments: ["analyze-javascript-application", root, "--json"],
