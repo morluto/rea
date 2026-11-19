@@ -123,7 +123,10 @@ const parseAtoms = (
   payload: Buffer,
   maxAtoms: number,
   format: "Atom" | "AtU8",
-): ErlangBeam["atoms"] => {
+): {
+  readonly atoms: NonNullable<ErlangBeam["atoms"]>;
+  readonly bytesRead: number;
+} => {
   if (payload.length < 4) fail("BEAM atom table is truncated.");
   // Only AtU8 supports OTP 28+'s negated count and compact name lengths.
   // Historical Atom uses an unsigned count and single-byte lengths.
@@ -156,8 +159,7 @@ const parseAtoms = (
     });
     at += length;
   }
-  if (at > payload.length) fail("BEAM atom table is truncated.");
-  return atoms;
+  return { atoms, bytesRead: at };
 };
 
 const tableCount = (payload: Buffer, width: number, label: string): number => {
@@ -275,10 +277,11 @@ export const parseErlangBeam = (
     atomChunk === undefined ? null : useUtf8Atoms ? "AtU8" : "Atom";
   const atomEncoding =
     atomFormat === null ? null : atomFormat === "AtU8" ? "utf8" : "latin1";
-  const atoms =
+  const atomTable =
     atomChunk === undefined || atomFormat === null
       ? null
       : parseAtoms(atomChunk.payload, input.max_atoms, atomFormat);
+  const atoms = atomTable?.atoms ?? null;
   const exportChunk = payloads.get("ExpT");
   const importChunk = payloads.get("ImpT");
   const lambdaChunk = payloads.get("FunT");
@@ -344,6 +347,24 @@ export const parseErlangBeam = (
   // A conformant FOR1 form sizes itself to the file; any surplus bytes trail an
   // unexamined region. Disclose them instead of reporting complete coverage.
   const trailingBytes = bytes.length - formEnd;
+  const limitations: string[] = [...LIMITATIONS];
+  if (trailingBytes > 0)
+    limitations.push(
+      `The declared FOR1 form ends at offset ${String(formEnd)}; ${String(trailingBytes)} trailing ${trailingBytes === 1 ? "byte was" : "bytes were"} not examined.`,
+    );
+  const tableTails = [
+    [atomFormat, atomChunk?.payload.length ?? 0, atomTable?.bytesRead ?? 0],
+    ["ExpT", exportChunk?.payload.length ?? 0, 4 + exportCount * 12],
+    ["ImpT", importChunk?.payload.length ?? 0, 4 + importCount * 12],
+    ["FunT", lambdaChunk?.payload.length ?? 0, 4 + lambdaCount * 24],
+  ] as const;
+  for (const [name, available, examined] of tableTails) {
+    const extra = available - examined;
+    if (extra > 0)
+      limitations.push(
+        `The selected ${name} table has ${String(extra)} trailing ${extra === 1 ? "byte that was" : "bytes that were"} not examined.`,
+      );
+  }
   return {
     artifact,
     form: { location: { offset: 0, bytes: formEnd }, size: formSize },
@@ -356,17 +377,11 @@ export const parseErlangBeam = (
     code,
     module: atoms?.[0]?.name ?? null,
     coverage: {
-      status: trailingBytes > 0 ? "partial" : "complete",
+      status: limitations.length > LIMITATIONS.length ? "partial" : "complete",
       examined_chunks: chunks.length,
       atoms: atoms?.length ?? 0,
       trailing_bytes: trailingBytes,
     },
-    limitations:
-      trailingBytes > 0
-        ? [
-            ...LIMITATIONS,
-            `The declared FOR1 form ends at offset ${String(formEnd)}; ${String(trailingBytes)} trailing ${trailingBytes === 1 ? "byte was" : "bytes were"} not examined.`,
-          ]
-        : [...LIMITATIONS],
+    limitations,
   };
 };
