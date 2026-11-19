@@ -375,6 +375,53 @@ it.each(["cpu-type", "cpu-subtype"] as const)(
   },
 );
 
+it("reads a 28-byte FAT header without borrowing the following padding", async () => {
+  const thin = Buffer.alloc(28);
+  thin.writeUInt32LE(0xfeedface, 0);
+  thin.writeUInt32LE(2, 12);
+  const good = nodeSeaMachO(populated);
+  const fixture = universalMacho([
+    { bytes: thin, cpuType: 7, cpuSubtype: 3 },
+    { bytes: good, cpuType: CPU_ARM64, cpuSubtype: 0 },
+  ]);
+  const short = fixture.slices[0]!;
+  const sibling = fixture.slices[1]!;
+  fixture.bytes.fill(0xa5, short.offset + short.size, sibling.offset);
+
+  const handle = await open(
+    await writeCarrier("short-fat-header", fixture.bytes),
+    "r",
+  );
+  const read = vi.spyOn(handle, "read");
+  try {
+    expect(await locateNodeSea(handle, fixture.bytes.length)).toMatchObject({
+      carrier: "mach-o",
+      blobOffset: sibling.offset + good.readUInt32LE(32 + 72 + 48),
+    });
+    const beforeSibling = read.mock.calls.flatMap((args) => {
+      const [, , length, offset]: readonly unknown[] = args;
+      return typeof offset === "number" &&
+        typeof length === "number" &&
+        offset >= short.offset &&
+        offset < sibling.offset
+        ? [{ offset, length }]
+        : [];
+    });
+    expect(beforeSibling).toContainEqual({
+      offset: short.offset,
+      length: thin.length,
+    });
+    expect(
+      beforeSibling.every(
+        ({ offset, length }) => offset + length <= short.offset + short.size,
+      ),
+    ).toBe(true);
+  } finally {
+    read.mockRestore();
+    await handle.close();
+  }
+});
+
 it("reads a 32-bit and a big-endian Mach-O section", async () => {
   for (const bytes of [
     nodeSeaMachO({ ...populated, bits: 32 }),

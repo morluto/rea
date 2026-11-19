@@ -313,12 +313,12 @@ const locateThinMachO = async (
     !Number.isSafeInteger(base) ||
     !Number.isSafeInteger(sliceSize) ||
     base < 0 ||
-    sliceSize < 32 ||
+    sliceSize < 4 ||
     base > carrier.fileSize ||
     sliceSize > carrier.fileSize - base
   )
     return EMPTY_MACHO_SLICE;
-  const header = await readExact(carrier, base, 32);
+  const header = await readExact(carrier, base, Math.min(32, sliceSize));
   if (header === undefined) return EMPTY_MACHO_SLICE;
   const framing = readMachoLoadCommandTableHeader(header, sliceSize);
   if (!framing.ok || framing.value === null) return EMPTY_MACHO_SLICE;
