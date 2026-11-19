@@ -1155,3 +1155,33 @@ it.each(["\\\\?\\C:\\Tools\\app.exe.", "C:\\Tools\\%NAME%.exe."] as const)(
     expect(await trimmedExtensionFor(path)).toBeNull();
   },
 );
+
+/**
+ * The extension belongs to the joined target, not to CommonPathSuffix alone:
+ *
+ *   LocalBasePath = \\?\C:\Tools, suffix = app.exe.  -> no extension (a device path keeps the period)
+ *   LocalBasePath = C:\Tools,     suffix = app.exe.  -> .exe
+ *   LocalBasePath = C:\Tools,     suffix = report.   -> null (trimmed to `report`)
+ */
+it("derives the extension from the joined LinkInfo target", async () => {
+  const extensionFor = async (
+    localBasePath: string,
+    commonPathSuffix: string,
+  ) => {
+    const report = await parse(
+      windowsShortcutBytes({
+        linkInfo: { localBasePath, commonPathSuffix },
+        relativePath: "",
+        idList: null,
+        iconLocation: "",
+      }),
+    );
+    const found = report.observations.find(
+      ({ kind }) => kind === "target_extension",
+    );
+    return found?.kind === "target_extension" ? found.extension : undefined;
+  };
+  expect(await extensionFor("\\\\?\\C:\\Tools", "app.exe.")).toBeNull();
+  expect(await extensionFor("C:\\Tools", "app.exe.")).toBe(".exe");
+  expect(await extensionFor("C:\\Tools", "report.")).toBeNull();
+});

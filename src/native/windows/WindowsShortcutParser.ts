@@ -404,8 +404,14 @@ const linkInfoTargets = (
       : recorded(suffixText, info.common_path_suffix_unicode === null);
   // Each part keeps its own encoding, so an ASCII ANSI part never hides a
   // comparable Unicode part.
+  // The extension belongs to the joined target, not to the suffix: pefile-style
+  // trimming depends on the whole path, and `\\?\C:\Tools` + `app.exe.` must keep its
+  // trailing period because a device path skips the trim. A part whose encoding cannot be
+  // compared leaves the extension unknown rather than taking the suffix's.
   const withSuffix = (base: ReturnType<typeof recorded>): RecordedPath => {
     if (suffix === null) return base;
+    // The parts cannot be joined into one comparable string, but the extension still comes
+    // from the final segment, which is the suffix's own name.
     if (base.ansi || suffix.ansi)
       return {
         path: null,
@@ -413,11 +419,12 @@ const linkInfoTargets = (
         unicode: base.unicode || suffix.unicode,
         extension: suffix.extension,
       };
+    const joined = `${base.path.replace(/\\$/u, "")}\\${suffix.path.replace(/^\\/u, "")}`;
     return {
-      path: `${base.path.replace(/\\$/u, "")}\\${suffix.path.replace(/^\\/u, "")}`,
+      path: joined,
       ansi: base.ansi || suffix.ansi,
       unicode: base.unicode || suffix.unicode,
-      extension: suffix.extension,
+      extension: extensionOf(joined, base.ansi || suffix.ansi),
     };
   };
   const values: RecordedPath[] = [];
