@@ -1,10 +1,11 @@
 import { nodeCodecResult } from "../kernel/nodeCodecResult.js";
 import { inflate } from "node:zlib";
+import { scheduler } from "node:timers/promises";
 import { promisify } from "node:util";
 import { assertArtifactReadActive } from "../resources/index.js";
 import { decodeLz4Block } from "../compression/Lz4Block.js";
 import {
-  decodeZstandardFrames,
+  decodeZstandardFramesCooperative,
   ZSTANDARD_WINDOW_LOG_MAX,
 } from "../domain/compression/zstandardExactFrame.js";
 import { ZstandardFrameAllowanceError } from "../domain/compression/zstandardFrameAllowance.js";
@@ -21,11 +22,18 @@ export const decodeGpuPayloadStream = async (
   assertArtifactReadActive(signal);
   const maxOutputLength = Math.max(1, maximumDecodedSize);
   if (compression === "zstd") {
-    const decoded = decodeZstandardFrames(bytes, {
-      maxOutputLength,
-      windowLogMax: ZSTANDARD_WINDOW_LOG_MAX,
-      mode: "prefix",
-    });
+    const decoded = await decodeZstandardFramesCooperative(
+      bytes,
+      {
+        maxOutputLength,
+        windowLogMax: ZSTANDARD_WINDOW_LOG_MAX,
+        mode: "prefix",
+      },
+      async () => {
+        await scheduler.yield();
+        assertArtifactReadActive(signal);
+      },
+    );
     assertArtifactReadActive(signal);
     if (!decoded.ok) {
       if (

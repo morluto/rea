@@ -30,6 +30,18 @@ it.each(["zlib", "zstd"] as const)(
 const zstdByteFrame = (byte: number): Buffer =>
   Buffer.from([0x28, 0xb5, 0x2f, 0xfd, 0x20, 0x01, 0x09, 0x00, 0x00, byte]);
 
+it("stops a many-frame Zstandard payload when the read is cancelled", async () => {
+  const frame = zstdByteFrame(0x61);
+  const count = 32;
+  const bytes = Buffer.alloc(frame.length * count);
+  for (let index = 0; index < count; index += 1)
+    frame.copy(bytes, index * frame.length);
+  const controller = new AbortController();
+  const pending = decodeGpuPayload(bytes, "zstd", count, controller.signal);
+  controller.abort();
+  await expect(pending).rejects.toMatchObject({ reason: "cancelled" });
+});
+
 it("decodes every Zstandard frame before a container suffix", async () => {
   const frames = Buffer.concat([zstdByteFrame(0x61), zstdByteFrame(0x62)]);
   const plain = Buffer.from([0x61, 0x62]);

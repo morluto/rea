@@ -371,6 +371,35 @@ const withinOutput = (
 ): { readonly bytes: Buffer } | ZstandardFrameFailure =>
   bytes.length > remaining ? failure("output_limit", offset) : { bytes };
 
+const decodeDataFrame = (
+  bytes: Uint8Array,
+  frame: FrameSpan,
+  total: number,
+  options: DecompressOptions,
+): { readonly bytes: Buffer } | ZstandardFrameFailure => {
+  const remaining = options.maxOutputLength - total;
+  const decoded = decompress(
+    bytes.subarray(frame.offset, frame.offset + frame.length),
+    frame.offset,
+    { ...options, maxOutputLength: Math.max(1, remaining) },
+  );
+  if (isFrameFailure(decoded)) return decoded;
+  const bounded = withinOutput(decoded.bytes, remaining, frame.offset);
+  if (isFrameFailure(bounded)) return bounded;
+  return { bytes: ownedZstandardBytes(bounded.bytes) };
+};
+
+const finishFrames = (
+  chunks: readonly Buffer[],
+  consumed: number,
+  frames: number,
+): ZstandardFrameSuccess => ({
+  ok: true,
+  bytes: chunks.length === 0 ? Buffer.alloc(0) : Buffer.concat(chunks),
+  consumedBytes: consumed,
+  frames,
+});
+
 const decodeFrames = (
   bytes: Uint8Array,
   frames: readonly FrameSpan[],
@@ -383,33 +412,66 @@ const decodeFrames = (
     const bounded = withinOutput(decoded.bytes, options.maxOutputLength, 0);
     if (isFrameFailure(bounded)) return bounded;
     return {
-      ok: true,
-      bytes: ownedZstandardBytes(bounded.bytes),
-      consumedBytes: consumed,
-      frames: frames.length,
+      ...finishFrames(
+        [ownedZstandardBytes(bounded.bytes)],
+        consumed,
+        frames.length,
+      ),
     };
   }
   const chunks: Buffer[] = [];
   let total = 0;
   for (const frame of frames) {
     if (frame.kind === "skippable") continue;
-    const remaining = options.maxOutputLength - total;
-    const decoded = decompress(
-      bytes.subarray(frame.offset, frame.offset + frame.length),
-      frame.offset,
-      { ...options, maxOutputLength: Math.max(1, remaining) },
-    );
-    if (isFrameFailure(decoded)) return decoded;
-    const bounded = withinOutput(decoded.bytes, remaining, frame.offset);
-    if (isFrameFailure(bounded)) return bounded;
-    total += bounded.bytes.length;
-    chunks.push(ownedZstandardBytes(bounded.bytes));
+    const step = decodeDataFrame(bytes, frame, total, options);
+    if (isFrameFailure(step)) return step;
+    total += step.bytes.length;
+    chunks.push(step.bytes);
   }
+  return finishFrames(chunks, consumed, frames.length);
+};
+
+/**
+ * Decode one Zstandard buffer. Frame boundaries come from the structural
+ * walk. Where Node's public strict decoder accepts a whole sequence, one
+ * call decodes that sequence and checks its checksums. Otherwise each
+ * walked frame is decoded on its own, which is what Node 22 requires.
+ */
+interface PreparedDecode {
+  readonly frames: readonly FrameSpan[];
+  readonly consumed: number;
+  readonly options: DecompressOptions;
+}
+
+const prepareDecode = (
+  bytes: Uint8Array,
+  options: ZstandardDecodeOptions,
+): PreparedDecode | ZstandardFrameFailure => {
+  const resolved =
+    options.allowance === undefined
+      ? currentZstandardFrameAllowance()
+      : { ok: true as const, value: options.allowance };
+  if (!resolved.ok)
+    return {
+      ok: false,
+      reason: "invalid_allowance",
+      offset: 0,
+      configuration: resolved.error,
+    };
+  const mode = options.mode ?? "exact";
+  const walked = walkFrames(bytes, resolved.value, mode);
+  if ("reason" in walked) return walked;
   return {
-    ok: true,
-    bytes: chunks.length === 0 ? Buffer.alloc(0) : Buffer.concat(chunks),
-    consumedBytes: consumed,
-    frames: frames.length,
+    frames: walked.frames,
+    consumed: walked.consumed,
+    options: {
+      maxOutputLength: options.maxOutputLength ?? bufferConstants.MAX_LENGTH,
+      windowLogMax: options.windowLogMax ?? ZSTANDARD_WINDOW_LOG_MAX,
+      ...(options.dictionary === undefined
+        ? {}
+        : { dictionary: options.dictionary }),
+      rejectTrailing: nodeDecodesStrictSequence(),
+    },
   };
 };
 
@@ -423,28 +485,47 @@ export const decodeZstandardFrames = (
   bytes: Uint8Array,
   options: ZstandardDecodeOptions = {},
 ): ZstandardFrameResult => {
-  const resolved =
-    options.allowance === undefined
-      ? currentZstandardFrameAllowance()
-      : { ok: true as const, value: options.allowance };
-  if (!resolved.ok)
-    return {
-      ok: false,
-      reason: "invalid_allowance",
-      offset: 0,
-      configuration: resolved.error,
-    };
-  const allowance = resolved.value;
-  const mode = options.mode ?? "exact";
-  const walked = walkFrames(bytes, allowance, mode);
-  if ("reason" in walked) return walked;
-  const maxOutputLength = options.maxOutputLength ?? bufferConstants.MAX_LENGTH;
-  return decodeFrames(bytes, walked.frames, walked.consumed, {
-    maxOutputLength,
-    windowLogMax: options.windowLogMax ?? ZSTANDARD_WINDOW_LOG_MAX,
-    ...(options.dictionary === undefined
-      ? {}
-      : { dictionary: options.dictionary }),
-    rejectTrailing: nodeDecodesStrictSequence(),
-  });
+  const prepared = prepareDecode(bytes, options);
+  if ("reason" in prepared) return prepared;
+  return decodeFrames(
+    bytes,
+    prepared.frames,
+    prepared.consumed,
+    prepared.options,
+  );
+};
+
+/**
+ * The same decode as {@link decodeZstandardFrames}, but the frame-by-frame
+ * fallback awaits `pause` before each data frame. A caller that owns a
+ * cancellation signal can yield there; the strict one-shot path awaits
+ * `pause` once before that single decode.
+ */
+export const decodeZstandardFramesCooperative = async (
+  bytes: Uint8Array,
+  options: ZstandardDecodeOptions,
+  pause: () => Promise<void>,
+): Promise<ZstandardFrameResult> => {
+  const prepared = prepareDecode(bytes, options);
+  if ("reason" in prepared) return prepared;
+  if (prepared.options.rejectTrailing) {
+    await pause();
+    return decodeFrames(
+      bytes,
+      prepared.frames,
+      prepared.consumed,
+      prepared.options,
+    );
+  }
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for (const frame of prepared.frames) {
+    if (frame.kind === "skippable") continue;
+    await pause();
+    const step = decodeDataFrame(bytes, frame, total, prepared.options);
+    if (isFrameFailure(step)) return step;
+    total += step.bytes.length;
+    chunks.push(step.bytes);
+  }
+  return finishFrames(chunks, prepared.consumed, prepared.frames.length);
 };
