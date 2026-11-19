@@ -820,6 +820,8 @@
 * **native:** report native initializer coverage as partial or unknown instead of incomplete ([#11483](https://github.com/morluto/rea/issues/11483)) ([3fbeacf](https://github.com/morluto/rea/commit/3fbeacf3136d3dfb5952a8a7a2f8185e2b9f78d0))
 * **native:** report partial ELF unwind coverage as partial ([#11463](https://github.com/morluto/rea/issues/11463)) ([5196c90](https://github.com/morluto/rea/commit/5196c90992587c7e7b26d86916074f791929ef5b))
 * **native:** select ELF sections through the keyed owner ([#10780](https://github.com/morluto/rea/issues/10780)) ([5d5ab53](https://github.com/morluto/rea/commit/5d5ab53536d711526c63a1f7b8bb2c54782d67a0))
+* **ntfs:** bound USN record fields with BinaryReader ([1aab66f](https://github.com/morluto/rea/commit/1aab66f12cdc53ef95b8778925933807cccd1353))
+* **ntfs:** decode attributes within their declared values ([#12211](https://github.com/morluto/rea/issues/12211)) ([1aab66f](https://github.com/morluto/rea/commit/1aab66f12cdc53ef95b8778925933807cccd1353))
 * **ntfs:** share FILE record declarations ([5a9b7f2](https://github.com/morluto/rea/commit/5a9b7f2e3ceab82edd5365584c2837f353af511f))
 * **ntfs:** share FILE record header and fixup facts ([#12202](https://github.com/morluto/rea/issues/12202)) ([5a9b7f2](https://github.com/morluto/rea/commit/5a9b7f2e3ceab82edd5365584c2837f353af511f))
 * **parsers:** decode LEB128 through one owner ([#10695](https://github.com/morluto/rea/issues/10695)) ([51e9dc1](https://github.com/morluto/rea/commit/51e9dc156f6ccb584fcce2f4f900b74257d14bdd))
