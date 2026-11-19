@@ -76,22 +76,106 @@ export const withoutCredentialsIn = (text: string): string =>
 const withTrailingSlash = (uri: string): string =>
   uri.endsWith("/") ? uri : `${uri}/`;
 
-const EMPTY_AUTHORITY = /^([a-z][a-z0-9+.-]*:)\/\/(?=\/)/iu;
-// APT's URI parser takes the host's last :suffix with atoi and emits a port
-// only when it is non-zero, so an empty or all-zero port loses its colon.
-const DECIMAL_PORT =
-  /^([a-z][a-z0-9+.-]*:\/\/(?:\[[^\]]+\]|[^/:]+)):([0-9]*)(?=\/|$)/iu;
+const SCHEME_AUTHORITY = /^([a-z][a-z0-9+.-]*):\/\//iu;
+const LONG_MAX = (1n << 63n) - 1n;
+const LONG_MIN = -(1n << 63n);
+
+const isAsciiSpace = (character: string): boolean =>
+  character === " " ||
+  character === "\t" ||
+  character === "\n" ||
+  character === "\v" ||
+  character === "\f" ||
+  character === "\r";
+
+/**
+ * APT assigns `atoi(suffix)` to an unsigned 32-bit port. Trailing junk stops
+ * the conversion, and a zero result is omitted.
+ */
+const aptPort = (suffix: string): number => {
+  let index = 0;
+  while (index < suffix.length && isAsciiSpace(suffix[index] ?? "")) index += 1;
+  const sign = suffix[index];
+  const negative = sign === "-";
+  if (sign === "+" || sign === "-") index += 1;
+  let magnitude = 0n;
+  while (index < suffix.length) {
+    const code = suffix.charCodeAt(index);
+    if (code < 48 || code > 57) break;
+    magnitude = magnitude * 10n + BigInt(code - 48);
+    index += 1;
+  }
+  let value = negative ? -magnitude : magnitude;
+  if (value > LONG_MAX) value = LONG_MAX;
+  else if (value < LONG_MIN) value = LONG_MIN;
+  return Number(BigInt.asUintN(32, BigInt.asIntN(32, value)));
+};
+
+/** The first path slash, ignoring a slash inside an IPv6 bracket. */
+const authorityEnd = (value: string): number => {
+  let inBracket = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (character === "[") inBracket = true;
+    else if (character === "]" && inBracket) inBracket = false;
+    else if (character === "/" && !inBracket) return index;
+  }
+  return value.length;
+};
+
+/**
+ * APT's deb822 Repo-URI host and port. Path octets stay as authored. An
+ * unclosed IPv6 bracket or a port that consumes the host drops the authority.
+ */
+const aptAuthorityUri = (uri: string): string => {
+  const scheme = SCHEME_AUTHORITY.exec(uri);
+  if (scheme === null) return uri;
+  const schemeText = scheme[1] ?? "";
+  const rest = uri.slice(scheme[0].length);
+  const end = authorityEnd(rest);
+  const authority = rest.slice(0, end);
+  const path = rest.slice(end);
+  if (authority.length === 0) return `${schemeText}:${path}`;
+
+  const at = authority.lastIndexOf("@");
+  const userinfo = at === -1 ? "" : authority.slice(0, at + 1);
+  let host = at === -1 ? authority : authority.slice(at + 1);
+  let portEnd = 0;
+  let inBracket = false;
+  let index = 0;
+  while (index < host.length) {
+    const character = host[index];
+    if (character === "[") {
+      inBracket = true;
+      host = `${host.slice(0, index)}${host.slice(index + 1)}`;
+      continue;
+    }
+    if (inBracket && character === "]") {
+      inBracket = false;
+      host = `${host.slice(0, index)}${host.slice(index + 1)}`;
+      portEnd = index;
+      continue;
+    }
+    index += 1;
+  }
+  if (inBracket) return `${schemeText}:${path}`;
+
+  const colon = host.lastIndexOf(":");
+  let port = 0;
+  if (colon !== -1 && colon >= portEnd) {
+    port = aptPort(host.slice(colon + 1));
+    host = host.slice(0, colon);
+  }
+  if (host.length === 0) return `${schemeText}:${path}`;
+  const rendered =
+    host.includes(":") || host.includes("/") ? `[${host}]` : host;
+  const renderedPort = port === 0 ? "" : `:${String(port)}`;
+  return `${schemeText}://${userinfo}${rendered}${renderedPort}${path}`;
+};
 
 /** APT fixes up deb822 URIs before emitting Repo-URI, leaving path octets intact. */
 const deb822RepoUri = (uri: string): string =>
-  withTrailingSlash(
-    uri
-      .replace(EMPTY_AUTHORITY, "$1")
-      .replace(DECIMAL_PORT, (_match, authority: string, port: string) => {
-        const digits = port.replace(/^0+/u, "");
-        return digits === "" ? authority : `${authority}:${digits}`;
-      }),
-  );
+  withTrailingSlash(aptAuthorityUri(uri));
 
 /**
  * The key block a deb822 Signed-By field holds, as apt writes it to a key

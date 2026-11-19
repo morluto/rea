@@ -456,14 +456,55 @@ describe("single-stanza APT source identity", () => {
   it.each([
     ["https://vendor.invalid:/archive", "https://vendor.invalid/archive/"],
     ["https://[2001:db8::11]:/apt", "https://[2001:db8::11]/apt/"],
+    [
+      "https://vendor.invalid:80abc/archive",
+      "https://vendor.invalid:80/archive/",
+    ],
+    ["https://vendor.invalid:https/archive", "https://vendor.invalid/archive/"],
+    [
+      "https://vendor.invalid:0080abc/archive",
+      "https://vendor.invalid:80/archive/",
+    ],
+    [
+      "https://vendor.invalid:+80abc/archive",
+      "https://vendor.invalid:80/archive/",
+    ],
+    [
+      "https://vendor.invalid:-80/archive",
+      "https://vendor.invalid:4294967216/archive/",
+    ],
+    [
+      "https://vendor.invalid:4294967296/archive",
+      "https://vendor.invalid/archive/",
+    ],
+    [
+      "https://vendor.invalid:2147483648abc/archive",
+      "https://vendor.invalid:2147483648/archive/",
+    ],
+    [
+      "https://vendor.invalid:999999999999999999999/archive",
+      "https://vendor.invalid:4294967295/archive/",
+    ],
+    ["https://[2001:db8::11]:80abc/apt", "https://[2001:db8::11]:80/apt/"],
+    ["https://[2001:db8::11]:https/apt", "https://[2001:db8::11]/apt/"],
+    ["https://[::1]:80:abc/apt", "https://[::1:80]/apt/"],
+    [
+      "https://vendor.invalid:foo:80abc/archive",
+      "https://[vendor.invalid:foo]:80/archive/",
+    ],
+    [
+      "https://vendor.invalid/archive:80abc/x",
+      "https://vendor.invalid/archive:80abc/x/",
+    ],
+    ["file://hostname:80abc/path", "file://hostname:80/path/"],
+    ["file:///srv/a%20b", "file:/srv/a%20b/"],
   ])(
-    "matches empty port %s to APT's portless Repo-URI and keeps the authored URI",
+    "matches %s to the Repo-URI APT emits and keeps the authored URI",
     (authored, repoUri) => {
       const stanzas = parseDeb822Sources(
         `Types: deb\nURIs: ${authored}\nSuites: stable\nComponents: main\n`,
         deb822LookupFile,
       );
-      // APT 2.8.3 `indextargets` reports the portless Repo-URI, not the colon.
       expect(entryForTarget(targetFor(repoUri), stanzas)).toEqual({
         file: deb822LookupFile,
         position: 1,
@@ -475,9 +516,9 @@ describe("single-stanza APT source identity", () => {
         signedBy: [],
         inlineKey: null,
       });
-      expect(
-        entryForTarget(targetFor(`${authored}/`), stanzas),
-      ).toBeUndefined();
+      const untouched = authored.endsWith("/") ? authored : `${authored}/`;
+      if (untouched !== repoUri)
+        expect(entryForTarget(targetFor(untouched), stanzas)).toBeUndefined();
     },
   );
 
