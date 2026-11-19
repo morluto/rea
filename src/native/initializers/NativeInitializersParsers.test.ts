@@ -710,7 +710,7 @@ describe("ELF section relocation extents", () => {
 
   it.each([
     { name: "R_X86_64_PLT32", machine: 62, absolute: 1, type: 4 },
-    { name: "R_AARCH64_CALL26", machine: 183, absolute: 257, type: 283 },
+    { name: "R_AARCH64_JUMP26", machine: 183, absolute: 257, type: 282 },
   ])(
     "reports nothing for $name relocating the last four bytes of .text",
     async ({ machine, absolute, type }) => {

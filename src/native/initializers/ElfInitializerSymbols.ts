@@ -696,9 +696,9 @@ export const sectionRelocations = async (
         parsed.value.offset,
         span,
       );
-      // An assumed word proves no overrun: an unknown type that ends its
-      // mapping, such as a call's 32-bit field at the end of .text, is
-      // narrowed to the bytes the mapping holds, whose first is file-backed.
+      // An assumed word proves no overrun. An unknown type that ends its
+      // mapping, such as the 32-bit field of a tail call that ends .text, is
+      // narrowed to the bytes the mapping holds; the first is file-backed.
       while (extent === undefined && writtenFileOffset === null && span > 1) {
         span -= 1;
         writtenFileOffset = recordTarget(
