@@ -535,6 +535,7 @@
 * **macho:** map high-backed segment file bytes at their declared virtual range ([833916b](https://github.com/morluto/rea/commit/833916bb4a29001f6a618d2b12696d614c381d1e))
 * **macho:** prove command table framing before capacity ([#12376](https://github.com/morluto/rea/issues/12376)) ([88983eb](https://github.com/morluto/rea/commit/88983ebac7fff0f70dcef00b1b3b0aaed7e732a2))
 * **macho:** require bounded slice evidence when JVM identity is unresolved ([#12482](https://github.com/morluto/rea/issues/12482)) ([adafb97](https://github.com/morluto/rea/commit/adafb97eb1470227f8defdee1e56bb16b6d4192d))
+* **macho:** share lazy dylib linkedit command facts ([#12541](https://github.com/morluto/rea/issues/12541)) ([3f0f993](https://github.com/morluto/rea/commit/3f0f9932336a3cb29aa69a67d9f5994cb835d5b7))
 * **macho:** share marker-bearing dylib field decoding ([#12400](https://github.com/morluto/rea/issues/12400)) ([e9af636](https://github.com/morluto/rea/commit/e9af636128c56a8f789a989f6a61929f4908f37f))
 * **macho:** validate command counts before record limits ([#12305](https://github.com/morluto/rea/issues/12305)) ([b1479de](https://github.com/morluto/rea/commit/b1479de3dd954ec35657d695c3c47d85cf88aa6d))
 * **macho:** validate hardening symbol extents before capacity ([5a62623](https://github.com/morluto/rea/commit/5a62623cd1bb7e36af03c2ab0fca4516b2b8bd94))
