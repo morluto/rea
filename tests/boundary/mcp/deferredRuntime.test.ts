@@ -21,7 +21,6 @@ import {
 } from "../../support/workspace/workspaceFixture.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { PROMPT_CONTRACTS } from "../../../src/contracts/promptContracts.js";
-import { TOOL_FAMILY_DEFINITIONS } from "../../../src/contracts/toolFamilies.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
@@ -233,6 +232,11 @@ it.each([
 it.each([
   { name: "deferred", environment: {}, eager: false },
   {
+    name: "family-scoped deferred",
+    environment: { REA_MCP_TOOL_FAMILIES: "artifact,session" },
+    eager: false,
+  },
+  {
     name: "hot/cold deferred",
     environment: { REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold" },
     eager: false,
@@ -325,23 +329,27 @@ it.each([
     );
     const { client, stderr } = await connect(mode, environment);
     const before = await client.listTools();
-    // Compare independently composed canonical SDK registrations as well as
-    // recorded artifacts. Listing every explicit family selects eager startup
-    // with the same inventory, without target analysis or provider acquisition.
-    if (mode === "legacy") {
-      const eager = await connect(mode, {
-        REA_MCP_TOOL_FAMILIES: TOOL_FAMILY_DEFINITIONS.map(({ id }) => id).join(
-          ",",
-        ),
-      });
-      expect(before).toEqual(await eager.client.listTools());
-    }
     const withoutOutput = ({
       outputSchema: _output,
       ...tool
     }: {
       outputSchema?: unknown;
     }) => tool;
+    // Compact output schemas select independent eager composition. The rest
+    // of each tool's wire definition must match the deferred catalog.
+    if (mode === "legacy") {
+      const eager = await connect(mode, {
+        REA_MCP_OUTPUT_SCHEMA_PROFILE: "compact",
+      });
+      const canonical = await eager.client.listTools();
+      expect(
+        canonical.tools.every((tool) => tool.outputSchema !== undefined),
+      ).toBe(true);
+      expect(before).toEqual({
+        ...canonical,
+        tools: canonical.tools.map(withoutOutput),
+      });
+    }
     expect(before.tools.map(withoutOutput)).toEqual(
       recorded.tools.map(withoutOutput),
     );
@@ -861,6 +869,8 @@ const RECORDER_RUNTIME_MODULES = [
   "contracts/toolContracts.js",
   "domain/evidenceInputContract.js",
   "contracts/toolSchemaMetadata.js",
+  "contracts/toolFamilies.js",
+  "contracts/promptToolFamilyScope.js",
 ] as const;
 
 // Recorder cleanup tests replace every runtime import through their loader
@@ -975,6 +985,10 @@ it.each([
         "export const getEvidenceInputContract = () => ({ hasEvidenceReferenceAlternative: false });",
       "/dist/contracts/toolSchemaMetadata.js":
         "export const toolOutputSchemaWithMetadata = () => { throw new Error('No fixture tools'); };",
+      "/dist/contracts/toolFamilies.js":
+        "export const toolFamilyId = () => { throw new Error('No fixture tools'); };",
+      "/dist/contracts/promptToolFamilyScope.js":
+        "export const requiredPromptTools = () => { throw new Error('No fixture prompts'); };",
     };
     const clientModule = `data:text/javascript,${encodeURIComponent(`
 export class Client {
