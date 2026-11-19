@@ -1,6 +1,16 @@
 import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
 import { Budget } from "../../domain/budget.js";
 import { declaredFileRange } from "../../domain/binaryContainer.js";
+import { parseMzHeaderEvidence } from "../../domain/dosMz.js";
+import {
+  observePeCoffFrame,
+  PE_COFF_FRAME_BYTES,
+} from "../../domain/peCoffHeader.js";
+import {
+  PE_SECTION_HEADER_BYTES,
+  peSectionTableExtent,
+  readPeSectionHeader,
+} from "../../domain/peSectionHeader.js";
 import { readElfHeaderFacts } from "../../domain/elfFixedHeader.js";
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
 import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
@@ -656,35 +666,65 @@ const peClaims = async (
 ): Promise<readonly SectionWindow[]> => {
   const { handle, fileSize, signal } = source;
   const dos = await tryRead(handle, 0, 64, fileSize, signal);
-  if (dos === null || dos.length < 64 || dos[0] !== 0x4d || dos[1] !== 0x5a)
+  if (dos === null || dos[0] !== 0x4d || dos[1] !== 0x5a) return [];
+  const probe = observePeCoffFrame(
+    dos,
+    fileSize,
+    parseMzHeaderEvidence(dos, fileSize),
+  );
+  let frame = probe.next();
+  while (!frame.done) {
+    const { offset, size } = frame.value;
+    const bytes = await tryRead(handle, offset, size, fileSize, signal);
+    if (bytes === null) return [];
+    frame = probe.next(bytes);
+  }
+  const header = frame.value;
+  if (
+    header.kind !== "pe" ||
+    header.observation.offset < dos.length ||
+    !header.coff.ok
+  )
     return [];
-  const eLfanew = dos.readUInt32LE(0x3c);
-  if (eLfanew < 64 || eLfanew > fileSize - 24) return [];
-  const pe = await tryRead(handle, eLfanew, 24, fileSize, signal);
-  if (pe === null || !pe.subarray(0, 4).equals(Buffer.from("PE\0\0")))
-    return [];
-  const sectionCount = Math.min(pe.readUInt16LE(6), MAX_PE_SECTIONS);
-  const optionalSize = pe.readUInt16LE(20);
-  const tableOffset = eLfanew + 24 + optionalSize;
+
+  const sectionCount = Math.min(
+    header.coff.value.sectionCount,
+    MAX_PE_SECTIONS,
+  );
+  const { sectionTableOffset, sectionTableBytes } = peSectionTableExtent(
+    header.observation.offset + PE_COFF_FRAME_BYTES,
+    header.coff.value.optionalHeaderSize,
+    sectionCount,
+  );
   const table = await tryRead(
     handle,
-    tableOffset,
-    sectionCount * 40,
+    sectionTableOffset,
+    sectionTableBytes,
     fileSize,
     signal,
   );
   if (table === null) return [];
   const claims: SectionWindow[] = [];
   for (let index = 0; index < sectionCount; index += 1) {
-    const start = index * 40;
-    if (start + 40 > table.length) break;
-    if (!exactName(table.subarray(start, start + 8), ".bun")) continue;
-    const virtualSize = table.readUInt32LE(start + 8);
-    const rawSize = table.readUInt32LE(start + 16);
-    const rawPointer = table.readUInt32LE(start + 20);
-    const declared = virtualSize === 0 ? rawSize : virtualSize;
-    const readable = Math.min(declared, rawSize);
-    claims.push(windowFor("pe-section", rawPointer, readable, fileSize));
+    const start = index * PE_SECTION_HEADER_BYTES;
+    const entry = table.subarray(start, start + PE_SECTION_HEADER_BYTES);
+    if (!exactName(entry.subarray(0, 8), ".bun")) continue;
+    const parsed = readPeSectionHeader(entry);
+    if (!parsed.ok) continue;
+    const section = parsed.value;
+    // Virtual size omits alignment padding. Admit the entire raw span before
+    // exposing only the section's initialized content to the graph decoder.
+    const raw = declaredFileRange(
+      fileSize,
+      BigInt(section.offset),
+      BigInt(section.raw_size),
+    );
+    claims.push({
+      carrier: "pe-section",
+      fileOffset: section.offset,
+      available: section.size,
+      truncated: section.raw_size > 0 && !raw.file_backed,
+    });
   }
   return claims;
 };

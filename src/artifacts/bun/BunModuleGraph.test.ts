@@ -381,6 +381,26 @@ it.each([
   },
 );
 
+it("requires PE raw section padding to fit before reading a Bun graph", async () => {
+  const payload = bunPrefixedPayload(
+    bunModuleGraphPayload({ modules: [{ name: "main.js" }] }),
+  );
+  const valid = peBunSection(payload);
+  expect((await probe(valid)).result).toMatchObject({
+    status: "present",
+    claim: { carrier: "pe-section" },
+  });
+  // Only file-alignment padding is missing. The complete virtual section and
+  // the rest of the PE declarations are byte-identical to the valid control.
+  expect((await probe(valid.subarray(0, -1))).result).toMatchObject({
+    status: "present",
+    failure: {
+      reason: "format",
+      message: expect.stringContaining("past the end of the file"),
+    },
+  });
+});
+
 it("reads a shared long ELF section name once without materializing its string table", async () => {
   const shnum = 16_383;
   const stringOffset = 64;
