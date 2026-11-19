@@ -427,6 +427,17 @@ describe("PE forwarder directory bounds", () => {
   );
 });
 
+it("requires the declared section to contain the fixed PE export name ordinal table", () => {
+  const bytes = peExportImage({
+    functions: [{ rva: 0x2000 }],
+    names: [{ name: "One", index: 0 }],
+  });
+  // The ordinal entry at RVA 0x10c0 is two bytes wide. The section declares
+  // only its first byte, though both bytes are physically stored in the file.
+  bytes.writeUInt32LE(0xc1, 152 + 240 + 8);
+  expect(refusal(bytes)).toMatchObject({ reason: "unmapped" });
+});
+
 describe("PE export directories", () => {
   it.each([32, 64] as const)(
     "reports named, aliased, ordinal-only and forwarded PE%d exports",

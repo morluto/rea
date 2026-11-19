@@ -10,9 +10,10 @@ import {
   BinaryResourceFailure,
   createFileMappingIndex,
   imageFileMappings,
+  mappedFileOffset,
 } from "../../domain/binaryContainer.js";
 import {
-  mappedPeDeclaredFileOffset,
+  peDeclaredFileMappings,
   readPeImage,
   type PeImage,
 } from "../../domain/native/peImage.js";
@@ -207,7 +208,12 @@ export const parsePeLoadConfig = async (
     lookup,
     templateFileOffset: (address, size) =>
       optionalFileOffset(() =>
-        mappedPeDeclaredFileOffset(image, address, size),
+        mappedFileOffset(
+          peDeclaredFileMappings(image),
+          address,
+          size,
+          image.zero_fills,
+        ),
       ),
     maxCallbacks: input.max_callbacks,
     signal,
