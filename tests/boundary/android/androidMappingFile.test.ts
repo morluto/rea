@@ -199,7 +199,17 @@ it("refuses expanded shared-name claims from a small mapping with auditable nonr
     retryable: false,
     reportedLimits: {
       limit_bytes: ANDROID_MAPPING_LIMITS.projectionBytes,
-      line: expect.any(Number),
+      line: 8,
+    },
+    cause: {
+      failure: {
+        kind: "limit",
+        format: "proguard-mapping",
+        limit: {
+          name: "projection",
+          maximum: ANDROID_MAPPING_LIMITS.projectionBytes,
+        },
+      },
     },
     diagnostics: { mapping_path: path, mapping_sha256: digest(text) },
     cleanupIncomplete: false,
@@ -209,6 +219,10 @@ it("refuses expanded shared-name claims from a small mapping with auditable nonr
     retryable: false,
     details: {
       resource: "transport",
+      reported_limits: {
+        limit_bytes: ANDROID_MAPPING_LIMITS.projectionBytes,
+        line: 8,
+      },
       diagnostics: { mapping_path: path, mapping_sha256: digest(text) },
     },
   });

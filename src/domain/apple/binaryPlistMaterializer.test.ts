@@ -250,6 +250,44 @@ it("honors a byte order mark in a data object", () => {
   ).toBe(false);
 });
 
+it.each([
+  ["UTF-8 string", Buffer.from([0x72, 0x61, 0xff])],
+  ["UTF-16BE string", Buffer.from([0x62, 0, 0x61, 0xd8, 0])],
+  ["UTF-16 data", Buffer.from([0x45, 0xff, 0xfe, 0x61, 0, 0x62])],
+] as const)("reports partial text beside malformed %s", (_name, malformed) => {
+  const bytes = source([
+    dictionary(1, 2),
+    text("key"),
+    text("kept"),
+    malformed,
+  ]);
+  expect(decodeBinaryPlistText(bytes, budget)).toEqual({
+    text: "key\nkept\na\ufffd",
+    complete: false,
+  });
+});
+
+it.each([
+  ["valid marked UTF-8", [0xef, 0xbb, 0xbf, 0xc3, 0xa9], "\ufeffé", true],
+  [
+    "lossy marked UTF-8",
+    [0xef, 0xbb, 0xbf, 0x61, 0xff],
+    "\ufeffa\ufffd",
+    false,
+  ],
+  ["unmarked raw data", [0x61, 0xff], "a\ufffd", true],
+] as const)(
+  "tracks stored data text coverage for %s",
+  (_name, payload, value, complete) => {
+    const data = Buffer.from([0x40 | payload.length, ...payload]);
+    const bytes = source([dictionary(1, 2), text("key"), data]);
+    expect(decodeBinaryPlistText(bytes, budget)).toEqual({
+      text: `key\n${value}`,
+      complete,
+    });
+  },
+);
+
 it("keeps readable text beside an unreferenced string it cannot read", () => {
   const bytes = source([
     dictionary(1, 2),

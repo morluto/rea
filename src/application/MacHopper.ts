@@ -36,10 +36,8 @@ import {
 } from "./HopperReleaseFeed.js";
 import type { HopperInstallFailureReason } from "./SetupInstallFailure.js";
 import { regularFileCleanupLeases } from "../process/RegularFileRead.js";
-import {
-  decodeInfoPlistValue,
-  readBundleInfoPlist,
-} from "./AppBundleExecutable.js";
+import { readBundleInfoPlist } from "./AppBundleExecutable.js";
+import { decodeInfoPlistValue } from "../domain/apple/infoPlist.js";
 import {
   macosMajorVersion,
   macosVersionMeetsMinimum,

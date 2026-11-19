@@ -47,7 +47,7 @@ import {
 } from "./webBundleAnalyzerAst.js";
 import { createJavaScriptRpcScan } from "./javascript/javascriptRpcEndpoints.js";
 import { semanticStaticModuleSource } from "./javascript/javascriptModuleDeclaration.js";
-import { parseJavaScriptSource } from "./javascript/javascriptSourceParser.js";
+import { parseCapturedJavaScriptSource } from "./javascript/javascriptSourceParser.js";
 import {
   semanticPrecisionControl,
   semanticResourceLimitFacts,
@@ -69,7 +69,10 @@ export const analyzeScript = (
   readonly routeFacts: JavaScriptRouteSourceFacts | null;
   readonly semanticLimits: readonly WebBundleSemanticLimit[];
 } => {
-  const file = parseJavaScriptSource(script.source.artifact.text);
+  const file = parseCapturedJavaScriptSource(
+    script.source.artifact.text,
+    script.language,
+  );
   if (file === null) {
     accumulator.failedScripts.push(script.script_key);
     return { routeFacts: null, semanticLimits: [] };

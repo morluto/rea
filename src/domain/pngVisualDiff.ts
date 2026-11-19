@@ -361,6 +361,7 @@ const inflatePng = (compressed: Buffer, maxOutputLength: number): Buffer => {
       "code" in cause &&
       (cause.code === "Z_DATA_ERROR" ||
         cause.code === "Z_BUF_ERROR" ||
+        cause.code === "Z_NEED_DICT" ||
         cause.code === "ERR_BUFFER_TOO_LARGE")
     )
       throw new TypeError("Invalid PNG image data", { cause });

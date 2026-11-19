@@ -75,6 +75,10 @@ export const readModule = (
 ): ManagedModuleRow | null => {
   const table = layout.table(0);
   if (table === undefined || table.rowCount === 0) return null;
+  const ambiguousNames = layout.strings.kind === "ambiguous";
+  // String index zero establishes a local empty value, but it cannot make
+  // one of several Module rows authoritative for this ambiguous profile.
+  if (ambiguousNames && table.rowCount !== 1) return null;
   const cursor = metadataRowCursor(bytes, layout, 0, 1);
   const generation = cursor.u16();
   const nameIndex = cursor.readIndex(layout.stringIndexSize);
@@ -84,9 +88,7 @@ export const readModule = (
 
   const readGuid = (index: number) =>
     readMetadataGuid(bytes, layout, index) ?? null;
-  if (layout.strings.kind === "ambiguous" && nameIndex !== 0) {
-    // Multiple Module rows cannot establish a new exact token scope.
-    if (table.rowCount !== 1) return null;
+  if (ambiguousNames && nameIndex !== 0) {
     const independentGuid = (index: number) =>
       readManagedValue(() => readGuid(index), issues) ?? null;
     return {

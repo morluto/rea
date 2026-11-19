@@ -627,3 +627,36 @@ describe("Godot PCK logical-byte admission", () => {
     );
   });
 });
+
+it.each([
+  [
+    "before the embedded pack",
+    embedGodotPck(
+      buildGodotPck1([
+        { path: "a.bin", data: "a", offset: 1n, md5: Buffer.alloc(16) },
+      ]),
+    ),
+    "member starts before the pack",
+  ],
+  [
+    "inside the directory",
+    buildGodotPck(3, [
+      { path: "a.bin", data: "a", offset: 4n, md5: Buffer.alloc(16) },
+    ]),
+    "member overlaps the directory",
+  ],
+  [
+    "across the directory boundary",
+    buildGodotPck(4, [
+      { path: "a.bin", data: "a", offset: 2n, size: 4n, md5: Buffer.alloc(16) },
+    ]),
+    "member overlaps the directory",
+  ],
+] as const)("refuses a member %s", async (_label, bytes, message) => {
+  await withReader(bytes, async (reader) => {
+    await expect(list(reader)).rejects.toMatchObject({
+      reason: "format",
+      message: expect.stringContaining(message),
+    });
+  });
+});

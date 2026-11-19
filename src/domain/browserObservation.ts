@@ -15,6 +15,9 @@ import {
   type UrlTargetIdentity,
 } from "./targetIdentity.js";
 
+/** Retain observed three-digit statuses, including nonstandard values above 599. */
+export const browserResponseStatusSchema = z.int().min(100).max(999);
+
 const parseExactOrigin = (value: string): string | undefined => {
   let url: URL;
   try {

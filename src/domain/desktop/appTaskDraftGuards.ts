@@ -2,9 +2,8 @@ import {
   escapeJsonPointerToken,
   unescapeJsonPointerToken,
 } from "../jsonPointer.js";
-import type { JsonValue } from "../jsonValue.js";
+import { equalJsonValues, type JsonValue } from "../jsonValue.js";
 import { collapseWhitespace, type DesktopTaskCheckInput } from "./appTask.js";
-import { sameJson } from "./appTaskChecks.js";
 import { holdsSplitDate, isCoordinates, isStamp } from "./appTaskDraftNoise.js";
 import { holdsNoisyText } from "./appTaskDraftText.js";
 import { decimalOf, valueEqualsCheck } from "./appTaskDraftScalars.js";
@@ -115,7 +114,7 @@ const guardAt = (
       : undefined;
   }
   return typeof before !== "object" &&
-    sameJson(before, after) &&
+    equalJsonValues(before, after) &&
     !isStamp(before) &&
     (typeof before !== "string" || before.length <= context.chars)
     ? valueEqualsCheck(file, pointer, before)

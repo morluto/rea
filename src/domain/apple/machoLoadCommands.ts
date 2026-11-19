@@ -5,6 +5,8 @@ import {
   readMachoHeaderPrefixFacts,
 } from "./machoContainer.js";
 
+const MACHO_LOAD_COMMAND_HEADER_BYTES = 8;
+
 /** Header commitments needed to walk commands without retaining their payloads. */
 export interface MachoLoadCommandTableHeader {
   readonly headerSize: 28 | 32;
@@ -71,10 +73,14 @@ export const readMachoLoadCommandTableHeader = (
 ): Result<MachoHeaderDeclarations | null, string> => {
   const parsed = readMachoLoadCommandDeclarations(bytes, fileSize);
   if (!parsed.ok || parsed.value === null) return parsed;
-  const { commandBytes, headerSize } = parsed.value;
+  const { commandBytes, commandCount, headerSize } = parsed.value;
   if (commandBytes > fileSize - headerSize)
     return err(
       `truncated Mach-O load commands: the header declares ${commandBytes} bytes after its ${headerSize}-byte header; the file has ${fileSize}`,
+    );
+  if (commandCount * MACHO_LOAD_COMMAND_HEADER_BYTES > commandBytes)
+    return err(
+      `Mach-O load command count ${commandCount} cannot fit in its ${commandBytes}-byte command table`,
     );
   return parsed;
 };
@@ -107,12 +113,15 @@ export class MachoLoadCommandCursor {
     string
   > {
     const { commandBytes, littleEndian, wide } = this.table;
-    if (this.#offset + 8 > commandBytes || bytes.byteLength < 8)
+    if (
+      this.#offset + MACHO_LOAD_COMMAND_HEADER_BYTES > commandBytes ||
+      bytes.byteLength < MACHO_LOAD_COMMAND_HEADER_BYTES
+    )
       return err(`load command ${this.#index} starts beyond sizeofcmds`);
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     const size = view.getUint32(4, littleEndian);
     if (
-      size < 8 ||
+      size < MACHO_LOAD_COMMAND_HEADER_BYTES ||
       size % machoLoadCommandAlignment(wide) !== 0 ||
       size > commandBytes - this.#offset
     )

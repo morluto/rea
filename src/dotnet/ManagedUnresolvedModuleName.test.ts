@@ -109,6 +109,37 @@ it("does not derive a token scope from conflicting GUID spans or multiple Module
   }
 });
 
+it.each(["forward", "reverse"] as const)(
+  "withholds Module identity when a nil name bypasses %s string-heap ambiguity but Module rows conflict",
+  (variant) => {
+    const { bytes } = managedStringsAmbiguity(variant, {
+      nilName: true,
+      multipleModules: true,
+    });
+    const target = managedPeFixtureTarget(bytes);
+    const artifact = inspectManagedArtifactBytes(bytes, target);
+    const members = inspectManagedMembersBytes(bytes, target);
+    const boundaries = inspectManagedNativeBoundariesBytes(bytes, target);
+
+    for (const report of [artifact, members, boundaries]) {
+      expect(report.module).toBeNull();
+      expect(report.metadata).toMatchObject({
+        status: "partial",
+        table_row_counts: { Module: 2, TypeDef: 1, MethodDef: 1 },
+      });
+      expect(report.metadata).not.toHaveProperty("unresolved_module_name");
+      expect(report.coverage.issues).toContainEqual(
+        expect.objectContaining({
+          code: "invalid-row",
+          scope: "metadata.Module",
+        }),
+      );
+    }
+    expect(members.identity_scope.requires_mvid).toBeNull();
+    expect(boundaries.identity_scope.requires_mvid).toBeNull();
+  },
+);
+
 it("keeps an independent MVID beside an invalid ENC index", () => {
   const { bytes } = managedStringsAmbiguity("forward", { invalidEnc: true });
   const report = inspectManagedMembersBytes(

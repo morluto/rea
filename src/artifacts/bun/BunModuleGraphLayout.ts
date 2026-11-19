@@ -1,6 +1,16 @@
 import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
 import { Budget } from "../../domain/budget.js";
 import { declaredFileRange } from "../../domain/binaryContainer.js";
+import { parseMzHeaderEvidence } from "../../domain/dosMz.js";
+import {
+  observePeCoffFrame,
+  PE_COFF_FRAME_BYTES,
+} from "../../domain/peCoffHeader.js";
+import {
+  PE_SECTION_HEADER_BYTES,
+  peSectionTableExtent,
+  readPeSectionHeader,
+} from "../../domain/peSectionHeader.js";
 import { readElfHeaderFacts } from "../../domain/elfFixedHeader.js";
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
 import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
@@ -8,6 +18,8 @@ import { observeElfStringTableEntry } from "../../domain/elfStringTable.js";
 import {
   readFatContainerHeader,
   readMachoHeaderPrefixFacts,
+  validateFatSliceIdentity,
+  type FatSliceDeclaration,
 } from "../../domain/apple/machoContainer.js";
 import {
   readMachoLoadCommandTableHeader,
@@ -17,7 +29,10 @@ import {
   machoSectionBacking,
   readMachoSectionHeader,
 } from "../../domain/apple/machoSectionHeader.js";
-import { readMachoSegmentHeader } from "../../domain/apple/machoSegmentHeader.js";
+import {
+  admitMachoSegmentCommand,
+  readMachoSegmentHeader,
+} from "../../domain/apple/machoSegmentHeader.js";
 import type { FileHandle } from "node:fs/promises";
 
 import {
@@ -133,6 +148,15 @@ interface SectionWindow {
 
 type SectionClaim = SectionWindow | { readonly failure: ArtifactReaderFailure };
 
+/** A rejected slice has no authority over any embedded graph at its offsets. */
+interface RejectedFatSlice {
+  readonly rejectedSlice: FatSliceDeclaration;
+  /** Only set when the bounded command metadata actually names a Bun slot. */
+  readonly namedFailure?: ArtifactReaderFailure;
+}
+
+type SectionObservation = SectionClaim | RejectedFatSlice;
+
 /**
  * Locate at most one graph claim with bounded reads of headers, length
  * prefixes, and suffixes. Payload data is not read. Multiple real claims are
@@ -146,7 +170,7 @@ export const probeBunStandaloneGraph = async (
 ): Promise<BunStandaloneProbe> => {
   abortIfNeeded(signal);
   const source = { handle, fileSize, signal, limits };
-  let claims: readonly SectionClaim[];
+  let claims: readonly SectionObservation[];
   try {
     claims = [
       ...(await machOClaims(source, 0, fileSize)),
@@ -159,8 +183,15 @@ export const probeBunStandaloneGraph = async (
     return { status: "limited", failure: cause };
   }
   const real: BunStandaloneProbe[] = [];
+  const rejectedSlices: FatSliceDeclaration[] = [];
+  let fatIdentityFailure: ArtifactReaderFailure | undefined;
   for (const claim of claims) {
     abortIfNeeded(signal);
+    if ("rejectedSlice" in claim) {
+      rejectedSlices.push(claim.rejectedSlice);
+      fatIdentityFailure ??= claim.namedFailure;
+      continue;
+    }
     const evaluated =
       "failure" in claim
         ? presentFailure(claim.failure)
@@ -178,7 +209,10 @@ export const probeBunStandaloneGraph = async (
   }
   const only = real[0];
   if (only !== undefined) return only;
-  return evaluateAppendedTrailer(source);
+  const appended = await evaluateAppendedTrailer(source, rejectedSlices);
+  return appended.status === "absent" && fatIdentityFailure !== undefined
+    ? presentFailure(fatIdentityFailure)
+    : appended;
 };
 
 /** Read a probed payload once and validate its suffix against the claim. */
@@ -410,26 +444,25 @@ const evaluateSection = async (
  */
 const evaluateAppendedTrailer = async (
   source: BunProbeSource,
+  rejectedSlices: readonly FatSliceDeclaration[],
 ): Promise<BunStandaloneProbe> => {
   const { handle, fileSize, signal, limits } = source;
+  const outsideRejectedSlices = (start: number, end: number): boolean =>
+    !rejectedSlices.some(
+      (slice) => start < slice.offset + slice.size && slice.offset < end,
+    );
+  const readTrailer = async (end: number): Promise<Buffer | null> =>
+    outsideRejectedSlices(end - BUN_GRAPH_SUFFIX_BYTES, fileSize)
+      ? readExact(handle, end - BUN_TRAILER_BYTES, BUN_TRAILER_BYTES, signal)
+      : null;
   if (fileSize < BUN_GRAPH_SUFFIX_BYTES) return { status: "absent" };
   let graphEnd = fileSize;
-  let trailer = await readExact(
-    handle,
-    graphEnd - BUN_TRAILER_BYTES,
-    BUN_TRAILER_BYTES,
-    signal,
-  );
-  if (!trailer.equals(BUN_TRAILER)) {
+  let trailer = await readTrailer(graphEnd);
+  if (!trailer?.equals(BUN_TRAILER)) {
     if (fileSize < BUN_GRAPH_SUFFIX_BYTES + 8) return { status: "absent" };
     graphEnd -= 8;
-    trailer = await readExact(
-      handle,
-      graphEnd - BUN_TRAILER_BYTES,
-      BUN_TRAILER_BYTES,
-      signal,
-    );
-    if (!trailer.equals(BUN_TRAILER)) return { status: "absent" };
+    trailer = await readTrailer(graphEnd);
+    if (!trailer?.equals(BUN_TRAILER)) return { status: "absent" };
     const length = await readExact(handle, graphEnd, 8, signal);
     if (length.readBigUInt64LE() !== BigInt(fileSize))
       return presentFailure(
@@ -442,21 +475,26 @@ const evaluateAppendedTrailer = async (
     BUN_OFFSETS_BYTES,
     signal,
   );
-  const byteCount = offsets.readBigUInt64LE(0);
-  if (byteCount + BigInt(BUN_GRAPH_SUFFIX_BYTES) > BigInt(limits.payload_bytes))
-    return presentFailure(
-      bunPayloadBytesLimit(byteCount + BigInt(BUN_GRAPH_SUFFIX_BYTES), limits),
-    );
-  const payloadLength = byteCount + BigInt(BUN_GRAPH_SUFFIX_BYTES);
-  if (payloadLength > BigInt(graphEnd))
+  const payloadLength =
+    offsets.readBigUInt64LE(0) + BigInt(BUN_GRAPH_SUFFIX_BYTES);
+  const payloadStart = BigInt(graphEnd) - payloadLength;
+  if (
+    !outsideRejectedSlices(
+      payloadStart < 0n ? 0 : Number(payloadStart),
+      graphEnd,
+    )
+  )
+    return { status: "absent" };
+  if (payloadLength > BigInt(limits.payload_bytes))
+    return presentFailure(bunPayloadBytesLimit(payloadLength, limits));
+  if (payloadStart < 0n)
     return presentFailure(bunFormatFailure("trailer is truncated"));
-  const length = Number(payloadLength);
   return {
     status: "present",
     claim: {
       carrier: "appended-trailer",
-      payloadOffset: graphEnd - length,
-      payloadLength: length,
+      payloadOffset: Number(payloadStart),
+      payloadLength: Number(payloadLength),
     },
   };
 };
@@ -491,45 +529,54 @@ const machOClaims = async (
   source: BunProbeSource,
   imageOffset: number,
   imageLimit: number,
-): Promise<readonly SectionClaim[]> => {
+  fat?: FatSliceDeclaration,
+): Promise<readonly SectionObservation[]> => {
   const { handle, fileSize, signal, limits } = source;
   if (imageOffset < 0 || imageOffset >= fileSize) return [];
-  const header = await tryRead(handle, imageOffset, 12, fileSize, signal);
+  const imageSize = Math.min(fileSize - imageOffset, imageLimit);
+  const imageEnd = imageOffset + imageSize;
+  const header = await tryRead(handle, imageOffset, 12, imageEnd, signal);
   if (header === null || header.length < 4) return [];
   const facts = readMachoHeaderPrefixFacts(header);
   if (facts.identity === null)
     return imageOffset === 0 ? fatClaims(source, header) : [];
+  const identityIssue =
+    fat === undefined ? null : validateFatSliceIdentity(fat, facts.identity);
+  const rejected: readonly RejectedFatSlice[] =
+    fat !== undefined && identityIssue !== null ? [{ rejectedSlice: fat }] : [];
   const full = await tryRead(
     handle,
     imageOffset,
-    Math.min(32, imageLimit),
-    fileSize,
+    Math.min(32, imageSize),
+    imageEnd,
     signal,
   );
-  if (full === null) return [];
-  const parsed = readMachoLoadCommandTableHeader(full, imageLimit);
-  if (!parsed.ok || parsed.value === null) return [];
+  if (full === null) return rejected;
+  const parsed = readMachoLoadCommandTableHeader(full, imageSize);
+  if (!parsed.ok || parsed.value === null) return rejected;
   const table = parsed.value;
   const {
     littleEndian,
     headerSize: headerBytes,
     commandBytes: sizeofcmds,
   } = table;
-  if (sizeofcmds > limits.recognition_load_command_bytes)
+  if (sizeofcmds > limits.recognition_load_command_bytes) {
+    if (identityIssue !== null) return rejected;
     throw artifactReaderLimitFailure(
       "artifact_limits.bun.recognition_load_command_bytes",
       limits.recognition_load_command_bytes,
       "bytes",
       sizeofcmds,
     );
+  }
   const commands = await tryRead(
     handle,
     imageOffset + headerBytes,
     sizeofcmds,
-    Math.min(fileSize, imageOffset + imageLimit),
+    imageEnd,
     signal,
   );
-  if (commands === null || commands.length !== sizeofcmds) return [];
+  if (commands === null || commands.length !== sizeofcmds) return rejected;
   const claims: SectionClaim[] = [];
   const cursor = new MachoLoadCommandCursor(table);
   let framingFailure: string | undefined;
@@ -547,10 +594,21 @@ const machOClaims = async (
         littleEndian,
         cmd === LC.SEGMENT_64,
         imageOffset,
-        Math.min(fileSize, imageOffset + imageLimit),
-      ))
+        imageSize,
+      )) {
+        // A mismatched slice can identify a named declaration from bounded
+        // metadata, but cannot contribute graph bytes or veto another slice.
+        if (fat !== undefined && identityIssue !== null)
+          return [
+            {
+              rejectedSlice: fat,
+              namedFailure: bunFormatFailure(identityIssue),
+            },
+          ];
         claims.push(claim);
+      }
   }
+  if (rejected.length !== 0) return rejected;
   const complete = cursor.finish();
   if (!complete.ok) framingFailure ??= complete.error;
   return framingFailure === undefined
@@ -567,7 +625,7 @@ const segmentClaims = (
   littleEndian: boolean,
   wide: boolean,
   imageOffset: number,
-  fileSize: number,
+  imageSize: number,
 ): readonly SectionClaim[] => {
   const parsedSegment = readMachoSegmentHeader(command, wide, littleEndian);
   if (!parsedSegment.ok) return [];
@@ -575,6 +633,12 @@ const segmentClaims = (
   const { headerSize, sectionCount } = segment;
   const sectionBytes = wide ? SECTION_64_BYTES : SECTION_32_BYTES;
   if (headerSize + sectionCount * sectionBytes > command.length) return [];
+  const admission = admitMachoSegmentCommand(
+    segment,
+    command.length,
+    wide ? 64 : 32,
+    imageSize,
+  );
   const claims: SectionClaim[] = [];
   for (let index = 0; index < sectionCount; index += 1) {
     const start = headerSize + index * sectionBytes;
@@ -599,14 +663,15 @@ const segmentClaims = (
       });
       continue;
     }
-    claims.push(
-      windowFor(
-        "mach-o-section",
-        imageOffset + section.offset,
-        Number(section.size),
-        fileSize,
-      ),
+    const window = windowFor(
+      "mach-o-section",
+      imageOffset + section.offset,
+      Number(section.size),
+      imageOffset + imageSize,
     );
+    // A named section with a missing tail already carries its own failure.
+    if (admission.ok || window.truncated) claims.push(window);
+    else claims.push({ failure: bunFormatFailure(admission.error.message) });
   }
   return claims;
 };
@@ -614,7 +679,7 @@ const segmentClaims = (
 const fatClaims = async (
   source: BunProbeSource,
   prefix: Buffer,
-): Promise<readonly SectionClaim[]> => {
+): Promise<readonly SectionObservation[]> => {
   const { handle, fileSize, signal } = source;
   let parsed = readFatContainerHeader(prefix, fileSize);
   if (parsed.state === "needs-data") {
@@ -629,11 +694,16 @@ const fatClaims = async (
     parsed = readFatContainerHeader(table, fileSize);
   }
   if (parsed.state !== "parsed") return [];
-  const claims: SectionClaim[] = [];
+  const claims: SectionObservation[] = [];
   for (const slice of parsed.slices) {
     abortIfNeeded(signal);
     if (parsed.rangeIssues[slice.index] !== null) continue;
-    for (const claim of await machOClaims(source, slice.offset, slice.size))
+    for (const claim of await machOClaims(
+      source,
+      slice.offset,
+      slice.size,
+      slice,
+    ))
       claims.push(claim);
   }
   return claims;
@@ -644,35 +714,65 @@ const peClaims = async (
 ): Promise<readonly SectionWindow[]> => {
   const { handle, fileSize, signal } = source;
   const dos = await tryRead(handle, 0, 64, fileSize, signal);
-  if (dos === null || dos.length < 64 || dos[0] !== 0x4d || dos[1] !== 0x5a)
+  if (dos === null || dos[0] !== 0x4d || dos[1] !== 0x5a) return [];
+  const probe = observePeCoffFrame(
+    dos,
+    fileSize,
+    parseMzHeaderEvidence(dos, fileSize),
+  );
+  let frame = probe.next();
+  while (!frame.done) {
+    const { offset, size } = frame.value;
+    const bytes = await tryRead(handle, offset, size, fileSize, signal);
+    if (bytes === null) return [];
+    frame = probe.next(bytes);
+  }
+  const header = frame.value;
+  if (
+    header.kind !== "pe" ||
+    header.observation.offset < dos.length ||
+    !header.coff.ok
+  )
     return [];
-  const eLfanew = dos.readUInt32LE(0x3c);
-  if (eLfanew < 64 || eLfanew > fileSize - 24) return [];
-  const pe = await tryRead(handle, eLfanew, 24, fileSize, signal);
-  if (pe === null || !pe.subarray(0, 4).equals(Buffer.from("PE\0\0")))
-    return [];
-  const sectionCount = Math.min(pe.readUInt16LE(6), MAX_PE_SECTIONS);
-  const optionalSize = pe.readUInt16LE(20);
-  const tableOffset = eLfanew + 24 + optionalSize;
+
+  const sectionCount = Math.min(
+    header.coff.value.sectionCount,
+    MAX_PE_SECTIONS,
+  );
+  const { sectionTableOffset, sectionTableBytes } = peSectionTableExtent(
+    header.observation.offset + PE_COFF_FRAME_BYTES,
+    header.coff.value.optionalHeaderSize,
+    sectionCount,
+  );
   const table = await tryRead(
     handle,
-    tableOffset,
-    sectionCount * 40,
+    sectionTableOffset,
+    sectionTableBytes,
     fileSize,
     signal,
   );
   if (table === null) return [];
   const claims: SectionWindow[] = [];
   for (let index = 0; index < sectionCount; index += 1) {
-    const start = index * 40;
-    if (start + 40 > table.length) break;
-    if (!exactName(table.subarray(start, start + 8), ".bun")) continue;
-    const virtualSize = table.readUInt32LE(start + 8);
-    const rawSize = table.readUInt32LE(start + 16);
-    const rawPointer = table.readUInt32LE(start + 20);
-    const declared = virtualSize === 0 ? rawSize : virtualSize;
-    const readable = Math.min(declared, rawSize);
-    claims.push(windowFor("pe-section", rawPointer, readable, fileSize));
+    const start = index * PE_SECTION_HEADER_BYTES;
+    const entry = table.subarray(start, start + PE_SECTION_HEADER_BYTES);
+    if (!exactName(entry.subarray(0, 8), ".bun")) continue;
+    const parsed = readPeSectionHeader(entry);
+    if (!parsed.ok) continue;
+    const section = parsed.value;
+    // Virtual size omits alignment padding. Admit the entire raw span before
+    // exposing only the section's initialized content to the graph decoder.
+    const raw = declaredFileRange(
+      fileSize,
+      BigInt(section.offset),
+      BigInt(section.raw_size),
+    );
+    claims.push({
+      carrier: "pe-section",
+      fileOffset: section.offset,
+      available: section.size,
+      truncated: section.raw_size > 0 && !raw.file_backed,
+    });
   }
   return claims;
 };

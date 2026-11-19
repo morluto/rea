@@ -447,3 +447,29 @@ it.each([
     }
   },
 );
+
+it.each([
+  ["Atom", Buffer.from([0, 0, 0, 1, 1, 0x61])],
+  ["AtU8", Buffer.from([0, 0, 0, 1, 1, 0x61])],
+  ["AtU8", Buffer.from([0xff, 0xff, 0xff, 0xff, 0x10, 0x61])],
+  ["ExpT", Buffer.alloc(4)],
+  ["ImpT", Buffer.alloc(4)],
+  ["FunT", Buffer.alloc(4)],
+] as const)(
+  "reports unexamined bytes inside a selected %s table",
+  (name, payload) => {
+    const control = parse(erlangBeamChunksFixture([[name, payload]]));
+    const extended = Buffer.concat([payload, Buffer.from([0x61])]);
+    const report = parse(erlangBeamChunksFixture([[name, extended]]));
+    expect(control.coverage.status).toBe("complete");
+    expect(report.coverage).toMatchObject({
+      status: "partial",
+      trailing_bytes: 0,
+    });
+    expect(report.limitations).toContain(
+      `The selected ${name} table has 1 trailing byte that was not examined.`,
+    );
+    for (const field of ["atoms", "exports", "imports", "lambdas"] as const)
+      expect(report[field]).toEqual(control[field]);
+  },
+);

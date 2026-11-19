@@ -70,7 +70,12 @@ const goReport = (
   module: NonNullable<GoBinary["build_info"]>["module"] | null,
 ): GoBinary =>
   goBinarySchema.parse({
-    artifact: { path: "/artifacts/program", sha256: SHA, bytes: 256 },
+    artifact: {
+      path: "/artifacts/program",
+      file_name: "program",
+      sha256: SHA,
+      bytes: 256,
+    },
     format: "elf",
     architecture: "amd64",
     bits: 64,
@@ -110,7 +115,12 @@ const rustMetadata = (
   root: number | null,
 ) =>
   rustBinarySchema.parse({
-    artifact: { path: "/artifacts/rustapp", sha256: SHA, bytes: 512 },
+    artifact: {
+      path: "/artifacts/rustapp",
+      file_name: "rustapp",
+      sha256: SHA,
+      bytes: 512,
+    },
     format: "elf",
     architecture: "amd64",
     bits: 64,
@@ -853,7 +863,12 @@ it("links the binary to its recorded Rust root and leaves a null root unknown", 
 
 it("keeps missing Rust metadata unknown instead of an empty inventory", () => {
   const report = rustBinarySchema.parse({
-    artifact: { path: "/artifacts/rustapp", sha256: SHA, bytes: 512 },
+    artifact: {
+      path: "/artifacts/rustapp",
+      file_name: "rustapp",
+      sha256: SHA,
+      bytes: 512,
+    },
     format: "elf",
     architecture: "amd64",
     bits: 64,
@@ -1166,15 +1181,63 @@ it("keeps a replaced Go module exact when its identity is normalized or malforme
   expect(unknownsNaming(view.unknowns, "example.com/")).toHaveLength(1);
 });
 
-it("names a Windows artifact path the same way on every host", () => {
-  const base = goReport(null);
-  const report = goBinarySchema.parse({
-    ...base,
-    artifact: { ...base.artifact, path: "C:\\a\\b.exe" },
-  });
-  const view = projectGo(report);
-  expect(view.artifact.path).toBe("C:\\a\\b.exe");
-  expect(view.document.metadata.component.name).toBe("b.exe");
+it.each([
+  ["C:\\a\\b.exe", "b.exe"],
+  ["\\\\server\\share\\b.exe", "b.exe"],
+  ["/artifacts/backup\\program.exe", "backup\\program.exe"],
+  ["/artifacts/backup\\program.exe", "program.exe"],
+  ["//server/share/backup\\program.exe", "backup\\program.exe"],
+  ["//server/share/backup\\program.exe", "program.exe"],
+  ["/artifacts/C:\\backup\\program.exe", "C:\\backup\\program.exe"],
+])(
+  "uses the producer's file name for recorded artifact %s (%s)",
+  (path, file_name) => {
+    for (const base of [goReport(null), rustMetadata([], [], [], null)]) {
+      const report = {
+        ...base,
+        artifact: { ...base.artifact, path, file_name },
+      };
+      const result = projectAnalysisView(
+        parentFor(
+          "build_info" in base ? "inspect_go_binary" : "inspect_rust_binary",
+          report,
+        ),
+        VIEW,
+      );
+      if (!result.ok) throw result.error;
+      if (result.value.kind !== "cyclonedx")
+        throw new Error("Expected CycloneDX");
+      expect(result.value.artifact.path).toBe(path);
+      expect(result.value.document.metadata.component.name).toBe(file_name);
+    }
+  },
+);
+
+it("retains the full path and names the missing filename fact in older Evidence", () => {
+  for (const base of [goReport(null), rustMetadata([], [], [], null)]) {
+    const { file_name: _fileName, ...artifact } = base.artifact;
+    const report = {
+      ...base,
+      artifact: { ...artifact, path: "/artifacts/backup\\program.exe" },
+    };
+    const result = projectAnalysisView(
+      parentFor(
+        "build_info" in base ? "inspect_go_binary" : "inspect_rust_binary",
+        report,
+      ),
+      VIEW,
+    );
+    if (!result.ok) throw result.error;
+    if (result.value.kind !== "cyclonedx")
+      throw new Error("Expected CycloneDX");
+    expect(result.value.document.metadata.component.name).toBe(
+      report.artifact.path,
+    );
+    expect(result.value.unknowns).toContainEqual(
+      expect.stringContaining("artifact.file_name"),
+    );
+    expect(result.value.artifact.sha256).toBe(SHA);
+  }
 });
 
 it("keeps a Go dependency whose Package URL matches the main module", () => {
@@ -1280,4 +1343,66 @@ it("names the parent's recorded provider, not the projecting build, as the tool"
   if (!bare.ok || bare.value.kind !== "cyclonedx")
     throw new Error("Expected a CycloneDX view");
   expect(bare.value.document.metadata).not.toHaveProperty("tools");
+});
+
+it("keeps a Go dependency with a backslash out of the Package URL namespace", () => {
+  const path = String.raw`example.com/team\dep`;
+  const view = projectGo(
+    goReport({
+      path: "example.com/tool",
+      main: goModule("example.com/tool", "v1.0.0"),
+      dependencies: [
+        goModule(path, "v1.2.3"),
+        goModule("example.com/team/dep", "v1.2.3"),
+      ],
+      settings: [],
+      unparsed_lines: [],
+      unparsed_line_bytes_base64: [],
+      complete: true,
+    }),
+  );
+  expect(view.document.components[1]).toMatchObject({
+    name: path,
+    "bom-ref": "go-module:1",
+  });
+  expect(view.document.components[1]).not.toHaveProperty("purl");
+  expect(view.document.components[2]?.purl).toBe(
+    "pkg:golang/example.com/team/dep@v1.2.3",
+  );
+  expect(unknownsNaming(view.unknowns, path)).toHaveLength(1);
+});
+
+it("retains a single-segment Go module and its graph without inventing a Package URL", () => {
+  const view = projectGo(
+    goReport({
+      path: "standalone",
+      main: goModule("standalone", "(devel)"),
+      dependencies: [goModule("example.com/dep", "v1.2.3")],
+      settings: [],
+      unparsed_lines: [],
+      unparsed_line_bytes_base64: [],
+      complete: true,
+    }),
+  );
+
+  const dependencyPurl = "pkg:golang/example.com/dep@v1.2.3";
+  expect(view.document.components).toMatchObject([
+    { name: "standalone", version: "(devel)", "bom-ref": "go-module:0" },
+    { name: "example.com/dep", purl: dependencyPurl },
+  ]);
+  expect(view.document.components[0]).not.toHaveProperty("purl");
+  expect(view.document.dependencies).toContainEqual({
+    ref: "go-module:0",
+    dependsOn: [dependencyPurl],
+  });
+  expect(view.document.properties).toContainEqual({
+    name: "rea:go:main",
+    value: "go-module:0",
+  });
+  const gap = "Go module path standalone has no Package URL namespace.";
+  expect(view.unknowns).toContain(gap);
+  expect(view.document.properties).toContainEqual({
+    name: "rea:unknown",
+    value: gap,
+  });
 });

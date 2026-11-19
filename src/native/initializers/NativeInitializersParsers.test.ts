@@ -678,6 +678,77 @@ describe("ELF incomplete inputs", () => {
   });
 });
 
+describe("ELF section relocation extents", () => {
+  /**
+   * The relocatable fixture for `machine`, whose two slot relocations use its
+   * word-sized absolute kind, optionally with one `.rela.text` record of
+   * `type` at `offset` of the 16-byte `.text`.
+   */
+  const object = (
+    machine: number,
+    absolute: number,
+    record?: { readonly type: number; readonly offset: bigint },
+  ): Buffer => {
+    const entry = Buffer.alloc(24);
+    entry.writeBigUInt64LE(record?.offset ?? 0n, 0);
+    entry.writeBigUInt64LE((1n << 32n) | BigInt(record?.type ?? 0), 8);
+    const bytes =
+      record === undefined
+        ? elfRelocatableCtors()
+        : withExtraSections(entry, (at) => [
+            sectionHeader(4, at, 24, 4, 24, 1),
+          ]);
+    bytes.writeUInt16LE(machine, 18);
+    bytes.writeUInt32LE(absolute, 0x308);
+    bytes.writeUInt32LE(absolute, 0x320);
+    return bytes;
+  };
+  const OVERRUN =
+    "A section relocation extends beyond its target mapping; affected slots are unresolved.";
+  const facts = (report: Awaited<ReturnType<typeof read>>) => ({
+    status: report.status,
+    coverage: report.coverage.status,
+    limitations: report.limitations,
+    rows: row(report),
+  });
+
+  it.each([
+    { name: "R_X86_64_PLT32", machine: 62, absolute: 1, type: 4 },
+    { name: "R_AARCH64_JUMP26", machine: 183, absolute: 257, type: 282 },
+  ])(
+    "reports nothing for $name relocating the last four bytes of .text",
+    async ({ machine, absolute, type }) => {
+      const report = await read(
+        object(machine, absolute, { type, offset: 12n }),
+      );
+      expect(report.limitations).not.toContain(OVERRUN);
+      // The object without that record is the working comparison.
+      expect(facts(report)).toEqual(
+        facts(await read(object(machine, absolute))),
+      );
+    },
+  );
+
+  it("keeps an x86-64 object complete beside a call that ends .text", async () => {
+    const report = await read(object(62, 1, { type: 4, offset: 12n }));
+    expect(report.status).toBe("parsed");
+    expect(report.coverage.status).toBe("complete");
+  });
+
+  it.each([
+    // R_X86_64_64 writes eight bytes, four of them beyond .text.
+    { name: "an eight-byte R_X86_64_64 at offset 12", type: 1, offset: 12n },
+    // The four-byte field starts two bytes before the end of .text.
+    { name: "a four-byte R_X86_64_PLT32 at offset 14", type: 4, offset: 14n },
+    // No width is known for kind 99, so the assumed word still counts.
+    { name: "an unlisted kind at offset 12", type: 99, offset: 12n },
+  ])("reports $name as running past its section", async (record) => {
+    const report = await read(object(62, 1, record));
+    expect(report.limitations).toContain(OVERRUN);
+    expect(report.status).toBe("incomplete");
+  });
+});
+
 describe("ELF table budgets", () => {
   it("caps symbols in total across every symbol table, not per table", async () => {
     const perTable = 40_000;
