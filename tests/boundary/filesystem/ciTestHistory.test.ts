@@ -13,6 +13,7 @@ const script = fileURLToPath(
 const repository = "example/rea";
 const repositoryId = 1;
 const now = Date.now();
+const headSha = "a".repeat(40);
 
 function artifact(id: number, overrides: Record<string, unknown> = {}) {
   return {
@@ -25,6 +26,7 @@ function artifact(id: number, overrides: Record<string, unknown> = {}) {
       repository_id: repositoryId,
       head_repository_id: repositoryId,
       head_branch: "main",
+      head_sha: headSha,
     },
     ...overrides,
   };
@@ -40,6 +42,7 @@ function run(id: number, overrides: Record<string, unknown> = {}) {
     created_at: new Date(now - 120_000).toISOString(),
     head_branch: "main",
     head_repository: { full_name: repository },
+    head_sha: headSha,
     ...overrides,
   };
 }
@@ -384,4 +387,16 @@ it("finds an older successful timing artifact beyond five unsuccessful runs", as
   expect(calls.match(/actions\/workflows\/ci\.yml\/runs/gu)).toHaveLength(1);
   expect(calls).toContain("branch=main");
   expect(calls).toContain("status=success");
+});
+
+it("skips timing history whose artifact records a different workflow commit", async () => {
+  const { result } = await invoke(
+    [artifact(51), artifact(50)],
+    { 51: run(51, { head_sha: "b".repeat(40) }), 50: run(50) },
+    { tier: "full" },
+  );
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "50",
+    artifact_name: "test-timings-full",
+  });
 });
