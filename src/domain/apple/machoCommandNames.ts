@@ -524,13 +524,13 @@ export const readMachoCommandNames = async (
         countBytes.byteOffset,
         countBytes.byteLength,
       ).getUint32(0, table.littleEndian);
-      if (count > maximumRecords - records)
-        throw loadCommandLimit(maximumRecords, "records");
       if (count > frame.size - 12)
         throw malformedInput(
           "macho",
           "Mach-O linker option table is truncated",
         );
+      if (count > maximumRecords - records)
+        throw loadCommandLimit(maximumRecords, "records");
       chargeProjection(count, PROJECTED_CHILD_BYTES);
       records += count;
       linkerOptions = [];
