@@ -17,6 +17,29 @@ import {
 } from "./ManagedPe.fixture.js";
 
 describe("managed native boundaries", () => {
+  it("retains P/Invoke and source locations alongside a large diagnostic inventory", () => {
+    const rowCount = 140_000;
+    const bytes = buildManagedPeFixture({
+      pinvoke: {},
+      customAttributeRowCount: rowCount,
+      customAttributeTypeRaw: 0,
+    });
+    const result = inspectManagedNativeBoundariesBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+
+    expect(result.pinvoke_imports).toHaveLength(1);
+    expect(result.coverage.state).toBe("partial");
+    const issues = result.coverage.issues.filter(({ scope }) =>
+      scope.startsWith("metadata.CustomAttribute:"),
+    );
+    expect(issues).toHaveLength(rowCount);
+    expect(new Set(issues.map(({ scope }) => scope)).size).toBe(rowCount);
+    expect(issues.every(({ offset }) => offset !== null)).toBe(true);
+    expect(new Set(issues.map(({ offset }) => offset)).size).toBe(rowCount);
+  });
+
   it("inspects managed/native PInvoke declarations without verifying native exports", () => {
     const bytes = buildManagedPeFixture({
       pinvoke: {

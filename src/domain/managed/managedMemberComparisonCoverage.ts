@@ -256,7 +256,8 @@ export const comparisonLimitations = (
     );
   if (left.coverage.state !== "complete" || right.coverage.state !== "complete")
     limitations.push("At least one managed member observation is partial.");
-  limitations.push(...capacityLimitations(left, right));
+  for (const limitation of capacityLimitations(left, right))
+    limitations.push(limitation);
   if (selectionAgreement === "different")
     limitations.push(
       "The observations select different declaring types; a member outside the other side's selection is unknown, not added or removed.",
