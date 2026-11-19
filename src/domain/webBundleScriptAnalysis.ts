@@ -13,6 +13,7 @@ import { javaScriptRefusedPhaseSchema } from "./javascript/javascriptSemanticWor
 import type { AnalysisError } from "./analysisErrorBase.js";
 import { AnalysisResourceConstraintError } from "./analysisErrorCore.js";
 import { analysisErrorRemediationAction } from "./analysisErrorPresentation.js";
+import { webBundleEndpointLiteralRecordSchema } from "./webBundleEndpointLiteralBudget.js";
 
 const observationsSchema = z.strictObject({
   edges: webBundleAnalysisSchema.shape.observations.shape.chunks.shape.edges,
@@ -53,6 +54,9 @@ export const webBundleScriptAnalysisSchema = z
       route_facts: javaScriptRouteSourceFactsSchema.nullable().optional(),
       observations: observationsSchema,
       inferences: webBundleAnalysisSchema.shape.inferences,
+      /** Present only when this script's literal candidates did not all fit. */
+      endpoint_literal_candidates:
+        webBundleEndpointLiteralRecordSchema.exactOptional(),
     }),
     z.strictObject({
       status: z.literal("unavailable"),

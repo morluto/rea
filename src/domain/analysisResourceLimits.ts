@@ -44,6 +44,17 @@ export const DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES = 524_288;
  */
 export const MAXIMUM_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES = 8_388_608;
 
+/** Literal path/URL endpoint candidates retained per script when unset. */
+export const DEFAULT_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES = 1024;
+/** Zero would retain nothing, so it is not a candidate budget. */
+export const MINIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES = 1;
+/**
+ * Largest configurable inventory. 4096 is a policy ceiling so this optional
+ * list cannot by itself fill the worker result budget. It does not raise that
+ * budget.
+ */
+export const MAXIMUM_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES = 4096;
+
 /** Native function-matching representation admitted when the setting is unset. */
 export const DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES = 96 * 1024 * 1024;
 

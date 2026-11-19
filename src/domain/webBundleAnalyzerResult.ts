@@ -19,6 +19,11 @@ import {
   type WebBundleScriptAnalysis,
 } from "./webBundleScriptAnalysis.js";
 import { appendAll } from "./appendAll.js";
+import {
+  webBundleEndpointLiteralRecordMessage,
+  type WebBundleEndpointLiteralRecord,
+} from "./webBundleEndpointLiteralBudget.js";
+import { isLiteralEndpointCandidate } from "./webBundleEndpointLiterals.js";
 
 export const buildCapturedWebBundleAnalysis = (
   inspection: WebPageInspection,
@@ -97,6 +102,8 @@ export const buildCapturedWebBundleAnalysis = (
       : captureBudgetOmission(inspection, "source_maps");
   const sourceMapIncomplete =
     sourceMaps.status === "partial" || sourceMaps.status === "unavailable";
+  const endpointLiteralCandidates =
+    aggregateEndpointLiteralCandidates(orderedResults);
   const partial =
     semanticUnknowns.length > 0 ||
     accumulator.failedScripts.length > 0 ||
@@ -107,7 +114,8 @@ export const buildCapturedWebBundleAnalysis = (
     sourceMapIncomplete ||
     omittedScripts !== undefined ||
     omittedSourceScripts !== undefined ||
-    omittedSourceMaps !== undefined;
+    omittedSourceMaps !== undefined ||
+    endpointLiteralCandidates !== undefined;
   return webBundleAnalysisSchema.parse({
     route_inventory: completeSemanticSteps(
       buildJavaScriptRouteInventorySteps(
@@ -184,6 +192,9 @@ export const buildCapturedWebBundleAnalysis = (
       source_maps: sourceMaps,
     },
     inferences: accumulator.inferences,
+    ...(endpointLiteralCandidates === undefined
+      ? {}
+      : { endpoint_literal_candidates: endpointLiteralCandidates.record }),
     unknowns: buildUnknowns({
       semanticUnknowns,
       unavailable,
@@ -197,6 +208,7 @@ export const buildCapturedWebBundleAnalysis = (
       omittedScripts,
       omittedSourceScripts,
       omittedSourceMaps,
+      endpointLiteralCandidates,
     }),
     completeness: buildCompleteness({
       partial,
@@ -295,10 +307,31 @@ interface UnknownsInput {
   readonly omittedScripts: number | null | undefined;
   readonly omittedSourceScripts: number | null | undefined;
   readonly omittedSourceMaps: number | null | undefined;
+  readonly endpointLiteralCandidates:
+    | {
+        readonly record: WebBundleEndpointLiteralRecord;
+        readonly scriptKeys: readonly string[];
+      }
+    | undefined;
 }
 
 const buildUnknowns = (input: UnknownsInput): WebBundleAnalysis["unknowns"] => [
   ...input.semanticUnknowns,
+  ...(input.endpointLiteralCandidates === undefined
+    ? []
+    : [
+        {
+          dimension: "endpoint_literal_candidates",
+          reason: webBundleEndpointLiteralRecordMessage(
+            input.endpointLiteralCandidates.record,
+          ),
+          affected_script_keys: [...input.endpointLiteralCandidates.scriptKeys],
+          limit: input.endpointLiteralCandidates.record.limit,
+          remediation: webBundleEndpointLiteralRecordMessage(
+            input.endpointLiteralCandidates.record,
+          ),
+        },
+      ]),
   ...(input.omittedScripts === undefined
     ? []
     : [
@@ -514,8 +547,64 @@ const buildCompleteness = (
 
 const bundleLimitations = (): WebBundleAnalysis["limitations"] => [
   "Static bundle findings are observations or bounded inferences; REA does not execute captured JavaScript.",
-  "Bare string arguments of unbound HTTP-method-named calls are low-confidence endpoint candidates; form, translation, storage and other APIs can use the same syntax. URL-shaped findings still do not prove network execution.",
+  "Bare string arguments of unbound HTTP-method-named calls, wrapper-call arguments, and path- or URL-shaped literals in tables and const initializers are low-confidence endpoint candidates; form, translation, storage and other APIs can use the same syntax. URL-shaped findings still do not prove network execution.",
   'Endpoint candidates are deduplicated by script, value and detector; basis retains only the first matching source coordinate. They are not a complete call-site inventory or a runtime occurrence count. completeness.status="complete" describes examination of captured source, not a call-site census.',
   "String-built routes and endpoints, encrypted configuration, and server-side behavior may remain unknown.",
   "Page-declared WebMCP metadata is untrusted and is never registered or invoked as an REA tool.",
 ];
+
+/**
+ * One unknowns entry for every script whose literal candidates did not all fit.
+ * The counts are summed across scripts so the entry states the inventory the
+ * caller did not receive, not just the first script's share.
+ */
+const aggregateEndpointLiteralCandidates = (
+  results: readonly WebBundleScriptAnalysis[],
+):
+  | {
+      readonly record: WebBundleEndpointLiteralRecord;
+      readonly scriptKeys: readonly string[];
+    }
+  | undefined => {
+  const partials = results.flatMap((result) =>
+    result.status === "analyzed" &&
+    result.endpoint_literal_candidates !== undefined
+      ? [
+          {
+            scriptKey: result.script_key,
+            record: result.endpoint_literal_candidates,
+          },
+        ]
+      : [],
+  );
+  const first = partials[0];
+  if (first === undefined) return undefined;
+  const admitted = results.reduce(
+    (total, result) =>
+      total +
+      (result.status === "analyzed"
+        ? result.inferences.filter((inference) =>
+            isLiteralEndpointCandidate(inference),
+          ).length
+        : 0),
+    0,
+  );
+  const sum = (
+    read: (record: WebBundleEndpointLiteralRecord) => number,
+  ): number => partials.reduce((total, entry) => total + read(entry.record), 0);
+  return {
+    scriptKeys: partials.map(({ scriptKey }) => scriptKey),
+    record: {
+      ...first.record,
+      admitted_count: admitted,
+      omitted_by_count: sum((record) => record.omitted_by_count),
+      omitted_by_count_exact: partials.every(
+        (entry) => entry.record.omitted_by_count_exact,
+      ),
+      omitted_by_result_budget: sum(
+        (record) => record.omitted_by_result_budget,
+      ),
+      omitted_count: sum((record) => record.omitted_count),
+    },
+  };
+};

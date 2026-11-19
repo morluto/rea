@@ -35,11 +35,10 @@ server-identity alignment state in `src/process/ServerIdentity.ts`, not a settin
 Three numeric limits are absent from this tree and are being moved into the
 runtime system on their own PRs. This audit does not change them:
 
-| Name                                         | Tracking |
-| -------------------------------------------- | -------- |
-| `REA_NTFS_MFT_MAX_FILE_BYTES`                | #9868    |
-| `REA_REGF_HIVE_MAX_FILE_BYTES`               | #9865    |
-| `REA_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES` | #9836    |
+| Name                           | Tracking |
+| ------------------------------ | -------- |
+| `REA_NTFS_MFT_MAX_FILE_BYTES`  | #9868    |
+| `REA_REGF_HIVE_MAX_FILE_BYTES` | #9865    |
 
 When those names land in `src`, the static check requires them to be analysis
 settings. They are not on the restart-only list.
@@ -48,10 +47,10 @@ settings. They are not on the restart-only list.
 
 | Category                                                              |                                                                        Count |
 | --------------------------------------------------------------------- | ---------------------------------------------------------------------------: |
-| Runtime analysis settings                                             |                  28 (25 have an `REA_` seed; 3 are per-call parameters only) |
+| Runtime analysis settings                                             |                  29 (26 have an `REA_` seed; 3 are per-call parameters only) |
 | Per-call numeric `REA_` limits still read from the launch environment |                                                                            0 |
 | Restart-only numeric `REA_` limits                                    |                                                                           15 |
-| Numeric `REA_` candidates recognized in TypeScript source             |                                                                           38 |
+| Numeric `REA_` candidates recognized in TypeScript source             |                                                                           39 |
 | Numeric `REA_` controls with external or generated-reader provenance  |                                                                            2 |
 | Non-numeric `REA_` settings kept restart-only                         | 52 caller settings, plus process-protocol names that are not caller settings |
 | Hardcoded ceilings left for follow-up                                 |                        grouped below; none converted in the inventory change |
@@ -83,6 +82,7 @@ override is `source: "runtime"`. The structured field is `update_mode: "runtime"
 | `javascript.max_heap_mb`                     | none (`max_heap_mb`)                             | `src/domain/javascript/javascriptAnalysisResourceControls.ts` | owner default                             |      owner floor |                          owner maximum | next worker           |
 | `wasm.command_timeout_ms`                    | none (`command_timeout_ms`)                      | `src/domain/wasm/wasmArtifact.ts`                             | owner default                             |                1 |                          owner maximum | per operation         |
 | `native.matching_representation_bytes`       | `REA_NATIVE_MATCHING_REPRESENTATION_BYTES`       | `src/domain/analysisResourceLimits.ts`                        | 100663296                                 |                1 |                             1073741824 | per operation         |
+| `web.bundle_endpoint_literal_candidates`     | `REA_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES`     | `src/domain/analysisResourceLimits.ts`                        | 1024                                      |                1 |                                   4096 | per operation         |
 
 An out-of-range `update_analysis_settings` value is rejected by the setting's
 schema. Invalid launch seeds that the global environment parser accepts as

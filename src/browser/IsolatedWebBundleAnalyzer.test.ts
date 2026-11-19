@@ -157,6 +157,55 @@ it("keeps the selected allowance and its recovery for a refused script", async (
   });
 });
 
+it("passes the literal admission to every script analysis", async () => {
+  const captured = inspection([
+    "const routes = ['/api/one', '/api/two'];",
+    "fetch('/kept');",
+  ]);
+  const admission = { maximumCount: 1, source: "runtime" } as const;
+  const received: unknown[] = [];
+  const analyzer = new IsolatedWebBundleAnalyzer(() => ({
+    analyze: async (
+      script,
+      _timeout,
+      _signal,
+      _precision,
+      _allowance,
+      literals,
+    ) => {
+      received.push(literals);
+      return ok(
+        analyzeCapturedWebScript(script, undefined, undefined, literals),
+      );
+    },
+    close: async () => {},
+  }));
+  expect((await analyzer.reserve()).ok).toBe(true);
+  const result = await analyzer.analyze(
+    captured,
+    noSourceMaps,
+    input,
+    undefined,
+    undefined,
+    admission,
+  );
+  analyzer.releaseReservation();
+  if (!result.ok) throw result.error;
+  // The wrapper must forward the admission; dropping it here leaves the worker
+  // on its default ceiling, which no domain test can see.
+  expect(received).toEqual([admission, admission]);
+  expect(
+    result.value.inferences
+      .filter(({ kind }) => kind === "endpoint_candidate")
+      .map(({ value }) => value),
+  ).toEqual(["/api/one"]);
+  expect(result.value.endpoint_literal_candidates).toMatchObject({
+    admitted_count: 1,
+    omitted_by_count: 1,
+    ceiling: "adjustable",
+  });
+});
+
 it("keeps a refused script's parse and text facts beside its refusal", async () => {
   const refused = [
     "/* __webpack_require__ */ function probe(input, env) { var m; if (env.first) m = env.first.info;",

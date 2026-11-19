@@ -53,6 +53,7 @@ import {
   semanticResourceLimitReason,
 } from "./javascript/javascriptSemanticResourceLimits.js";
 import type { WebBundleSemanticLimit } from "./webBundleScriptAnalysis.js";
+import { webBundleEndpointLiteral } from "./webBundleEndpointLiterals.js";
 
 type BundleObservations = WebBundleAnalysis["observations"];
 type ChunkEdge = BundleObservations["chunks"]["edges"][number];
@@ -119,9 +120,12 @@ export const analyzeScript = (
     index,
   );
   traverseJavaScriptAst(file, {
-    enter: (node, parent) => {
+    enter: (node, parent, readAncestors) => {
       accumulator.visitedNodes += 1;
       routeScan.inspect(node, parent);
+      const literalSite = endpointLiteralSite(node, parent, readAncestors);
+      if (literalSite !== undefined)
+        inspectEndpointLiterals(script, node, literalSite, accumulator);
       inspectNode(
         script,
         node,
@@ -280,7 +284,7 @@ const inspectCall = (
     addEndpointCandidate(
       script,
       node,
-      name,
+      `call:${name}:unverified-network-receiver`,
       networkEndpoint.value,
       accumulator,
     );
@@ -355,12 +359,11 @@ interface AddFindingContext {
 const addEndpointCandidate = (
   script: IncludedScript,
   node: t.Node,
-  name: string,
+  detector: string,
   rawValue: string,
   accumulator: AnalysisAccumulator,
 ): void => {
   const value = sanitizeEndpointCandidate(rawValue);
-  const detector = `call:${name}:unverified-network-receiver`;
   const key = compositeKey([
     "endpoint-candidate",
     script.script_key,
@@ -369,14 +372,84 @@ const addEndpointCandidate = (
   ]);
   // This is a per-script candidate inventory, not a callsite list. Keep the
   // first representative source position without multiplying inline records.
-  addUnique(accumulator, key, () =>
-    accumulator.inferences.push({
-      kind: "endpoint_candidate",
-      value,
-      confidence: "low",
-      basis: [{ ...basis(script, detector), ...locationFields(node) }],
-    }),
+  // Deduplicate before charging the ceiling so the omitted count stays unique.
+  if (accumulator.seen.has(key)) return;
+  if (isLiteralDetector(detector)) {
+    if (
+      accumulator.endpointLiteralAdmitted >=
+      accumulator.endpointLiterals.maximumCount
+    ) {
+      accumulator.endpointLiteralOmitted += 1;
+      accumulator.endpointLiteralOmittedExact = false;
+      return;
+    }
+    accumulator.endpointLiteralAdmitted += 1;
+  }
+  accumulator.seen.add(key);
+  accumulator.inferences.push({
+    kind: "endpoint_candidate",
+    value,
+    confidence: "low",
+    basis: [{ ...basis(script, detector), ...locationFields(node) }],
+  });
+};
+
+const isLiteralDetector = (detector: string): boolean =>
+  detector === "literal:path-shaped" || detector === "literal:url-shaped";
+
+/**
+ * Record a path or URL literal where nothing calls it yet: an array element or a
+ * `const` initializer. Bundlers fold request paths into one table, so the
+ * literal never reaches a call the earlier scanners can classify.
+ */
+const inspectEndpointLiterals = (
+  script: IncludedScript,
+  node: t.Node,
+  site: EndpointLiteralSite,
+  accumulator: AnalysisAccumulator,
+): void => {
+  const literal = webBundleEndpointLiteral(node);
+  if (literal === undefined) return;
+  // Only a URL-shaped binding is a base-URL constant; a path-shaped one is too
+  // common outside networking to promote on its own.
+  if (site === "initializer" && literal.detector !== "literal:url-shaped")
+    return;
+  addEndpointCandidate(
+    script,
+    node,
+    literal.detector,
+    literal.value,
+    accumulator,
   );
+};
+
+type EndpointLiteralSite = "array" | "initializer";
+
+/**
+ * Classify the node being entered, not its later siblings, so source-tree order
+ * keeps a nested literal ahead of the same value in a following element. The
+ * ancestor list is read only for a URL-shaped `const` initializer: snapshotting
+ * it for every declaration would cost the whole scan.
+ */
+const endpointLiteralSite = (
+  node: t.Node,
+  parent: t.Node | null,
+  readAncestors: () => readonly t.Node[],
+): EndpointLiteralSite | undefined => {
+  if (t.isArrayExpression(parent)) return "array";
+  if (
+    parent === null ||
+    !t.isVariableDeclarator(parent) ||
+    node !== parent.init
+  )
+    return undefined;
+  if (webBundleEndpointLiteral(node)?.detector !== "literal:url-shaped")
+    return undefined;
+  return t.isVariableDeclaration(readAncestors().at(-2) ?? null, {
+    kind: "const",
+  })
+    ? "initializer"
+    : undefined;
 };
 
 /**

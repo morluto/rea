@@ -50,6 +50,26 @@ selection. `not_present` describes this projection only: it does not validate a
 schema or rule out properties expressed through other schema constructs. Read
 the coverage field rather than inferring completeness from the array.
 
+For `analyze_web_bundle`, `endpoint_candidate` inferences also retain path- or
+URL-shaped literals that no call site reaches: elements of a literal array and a
+`const` URL binding. Bundlers fold request paths into such tables, so the literal
+never appears as a transport argument the request scanners can classify. These
+candidates are a discovery heuristic with `confidence: "low"`; they are never
+`endpoint` observations, and a candidate does not establish that the path is
+reachable, same-origin, or used for networking. `endpoint_literal_candidates`
+reports the inventory only when something was omitted: `admitted_count`,
+`omitted_by_count`, `omitted_by_result_budget`, `omitted_count`, `ceiling`, and
+the structured `limit` that names `web.bundle_endpoint_literal_candidates` and
+its effective count. `REA_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES` seeds that
+setting from the launch environment (default 1024, maximum 4096);
+`update_analysis_settings` changes it for a later operation. `ceiling: "maximal"`
+means the count setting is already at its maximum and cannot be raised further.
+A candidate whose record does not fit the worker result
+budget is dropped after the count ceiling is applied, so
+`omitted_by_result_budget` counts are not a statement about the script's literal
+inventory, and `omitted_by_count_exact: false` means repeated and deduplicated
+sites make `omitted_by_count` not a unique count.
+
 Passive DOM comparison checks complete node inventories and complete frame
 parent/child structure independently. Node value lengths are comparable only
 when both nonempty snapshots declare the same `node_value_length_unit`.
