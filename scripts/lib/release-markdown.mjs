@@ -17,7 +17,9 @@ function inlineFacts(tokens) {
     if (token.type === "link_open") {
       link = { href: token.attrGet("href"), text: "" };
       parts.push(link);
+      wording.push({ kind: "link-open", content: link.href });
     } else if (token.type === "link_close") {
+      wording.push({ kind: "link-close" });
       link = undefined;
     } else {
       const text =
@@ -187,9 +189,14 @@ function normalizeBlockWording(blocks) {
   return normalizeWording(blocks.flatMap(({ wording }) => [...wording, " "]));
 }
 
-/** Match footer prose and exact literal blocks and code spans within the breaking section. */
+function isLinkBoundary(part) {
+  return part.kind === "link-open" || part.kind === "link-close";
+}
+
+/** Match footer prose, link destinations, and literal content in the breaking section. */
 export function releaseMigrationWording(blocks) {
   const observed = normalizeBlockWording(blocks);
+  let observedWithoutLinks;
   return (footer) => {
     const tokens = parser.parse(footer, {});
     const expected = normalizeBlockWording(
@@ -198,11 +205,17 @@ export function releaseMigrationWording(blocks) {
         .filter((facts) => facts !== undefined),
     );
     if (expected.length === 0) return false;
-    // The first and last prose chunks can be part of a longer passage.
-    // Literal wording must match a complete span or block of the same kind.
-    return observed.some((_part, start) =>
+    // A hyperlink added to plain migration prose need not change its wording.
+    // When the footer specifies a link, compare its destination and label span.
+    const candidates = expected.some(isLinkBoundary)
+      ? observed
+      : (observedWithoutLinks ??= normalizeWording(
+          observed.filter((part) => !isLinkBoundary(part)),
+        ));
+    // The first and last prose chunks may be part of a longer passage.
+    return candidates.some((_part, start) =>
       expected.every((part, offset) => {
-        const actual = observed[start + offset];
+        const actual = candidates[start + offset];
         if (typeof part !== "string")
           return actual?.kind === part.kind && actual.content === part.content;
         if (typeof actual !== "string") return false;

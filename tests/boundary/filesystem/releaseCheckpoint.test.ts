@@ -605,6 +605,36 @@ it.each([
     notes: 'Run `rea capture --name "two spaces"` before collecting Evidence.',
     accepted: false,
   },
+  {
+    form: "a migration link with the same destination and formatted label",
+    footer: "Download [the replacement](https://example.com/v2).",
+    notes: "Download [**the replacement**](https://example.com/v2).",
+    accepted: true,
+  },
+  {
+    form: "plain migration prose with a hyperlink added in the notes",
+    footer: "Download the replacement.",
+    notes: "Download [the replacement](https://example.com/v2).",
+    accepted: true,
+  },
+  {
+    form: "a migration link with a different destination",
+    footer: "Download [the replacement](https://example.com/v2).",
+    notes: "Download [the replacement](https://example.com/v1).",
+    accepted: false,
+  },
+  {
+    form: "a migration link reduced to its label",
+    footer: "Download [the replacement](https://example.com/v2).",
+    notes: "Download the replacement.",
+    accepted: false,
+  },
+  {
+    form: "the same destination linked from different words",
+    footer: "Download [the replacement](https://example.com/v2) now.",
+    notes: "Download [the replacement now](https://example.com/v2).",
+    accepted: false,
+  },
 ])(
   "validates migration wording from $form",
   async ({ footer, notes, accepted }) => {
