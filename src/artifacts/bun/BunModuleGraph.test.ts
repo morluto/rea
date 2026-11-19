@@ -8,6 +8,7 @@ import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import {
   CPU_ARM64,
+  CPU_X86_64,
   universalMacho,
 } from "../../../tests/fixtures/universalMacho.js";
 import { probeBunStandaloneGraph } from "./BunModuleGraphLayout.js";
@@ -329,6 +330,142 @@ it.each(["thin", "universal"] as const)(
     });
   },
 );
+
+it.each(["cpu-type", "cpu-subtype"] as const)(
+  "requires a matching FAT %s for a Bun section claim",
+  async (field) => {
+    const thin = (name: string) =>
+      machoBunSection(
+        bunPrefixedPayload(bunModuleGraphPayload({ modules: [{ name }] })),
+      );
+    const candidate = {
+      bytes: thin("candidate.js"),
+      cpuType: CPU_ARM64,
+      cpuSubtype: 0,
+    };
+    const conflicting = {
+      ...candidate,
+      ...(field === "cpu-type"
+        ? { tableCpuType: CPU_X86_64 }
+        : { tableCpuSubtype: 1 }),
+    };
+    const matching = universalMacho([candidate]);
+    expect((await probe(matching.bytes)).result).toMatchObject({
+      status: "present",
+      claim: { carrier: "mach-o-section" },
+    });
+    const wrong = universalMacho([conflicting]);
+    const unpadded = wrong.bytes.subarray(
+      0,
+      wrong.slices[0]!.offset + wrong.slices[0]!.size,
+    );
+    expect((await probe(unpadded)).result).toMatchObject({
+      status: "present",
+      failure: {
+        reason: "format",
+        message: expect.stringContaining("CPU type/subtype disagrees"),
+      },
+    });
+    const unnamed = Buffer.from(conflicting.bytes);
+    unnamed.write("__note", 32 + 72);
+    expect(
+      (await probe(universalMacho([{ ...conflicting, bytes: unnamed }]).bytes))
+        .result,
+    ).toEqual({ status: "absent" });
+    const validSibling = { ...candidate, bytes: thin("independent.js") };
+    const mixed = universalMacho([conflicting, validSibling]);
+    const result = await locate(mixed.bytes);
+    if (result.status !== "present" || !result.graph)
+      throw new Error("Expected the independent Bun graph");
+    expect(
+      (await decodeBunModuleGraph(result.graph)).modules[0]?.nameText.text,
+    ).toBe("independent.js");
+    const oversizedCommands = machoBunSections([
+      bunPrefixedPayload(
+        bunModuleGraphPayload({ modules: [{ name: "first.js" }] }),
+      ),
+      bunPrefixedPayload(
+        bunModuleGraphPayload({ modules: [{ name: "second.js" }] }),
+      ),
+    ]);
+    const limited = universalMacho([
+      { ...conflicting, bytes: oversizedCommands },
+      validSibling,
+    ]);
+    const { result: underBudget } = await probe(limited.bytes, {
+      ...DEFAULT_BUN_READER_LIMITS,
+      recognition_load_command_bytes: validSibling.bytes.readUInt32LE(20),
+    });
+    expect(underBudget).toMatchObject({
+      status: "present",
+      claim: {
+        carrier: "mach-o-section",
+        payloadOffset: limited.slices[1]!.offset + 32 + 72 + 80 + 8,
+      },
+    });
+  },
+);
+
+it("keeps refused FAT bytes outside the appended graph fallback", async () => {
+  const graph = (name: string) =>
+    bunModuleGraphPayload({ modules: [{ name }] });
+  const thin = machoBunSection(bunPrefixedPayload(graph("refused.js")));
+  const fixture = universalMacho([
+    {
+      bytes: thin,
+      cpuType: CPU_ARM64,
+      cpuSubtype: 0,
+      tableCpuType: CPU_X86_64,
+    },
+  ]);
+  const slice = fixture.slices[0]!;
+  const unpadded = fixture.bytes.subarray(0, slice.offset + slice.size);
+  const limits = {
+    ...DEFAULT_BUN_READER_LIMITS,
+    recognition_load_command_bytes: thin.readUInt32LE(20) - 1,
+  };
+  expect((await probe(unpadded, limits)).result).toEqual({ status: "absent" });
+
+  const outside = graph("outside.js");
+  const outer = Buffer.concat([unpadded, outside]);
+  for (const selected of [limits, DEFAULT_BUN_READER_LIMITS]) {
+    expect((await probe(outer, selected)).result).toMatchObject({
+      status: "present",
+      claim: {
+        carrier: "appended-trailer",
+        payloadOffset: unpadded.length,
+        payloadLength: outside.length,
+      },
+    });
+  }
+
+  const legacySize = Buffer.alloc(8);
+  legacySize.writeBigUInt64LE(BigInt(outer.length + legacySize.length));
+  expect(
+    (await probe(Buffer.concat([outer, legacySize]), limits)).result,
+  ).toMatchObject({
+    status: "present",
+    claim: {
+      carrier: "appended-trailer",
+      payloadOffset: unpadded.length,
+      payloadLength: outside.length,
+    },
+  });
+
+  // The footer is outside, but its reported data begins one byte in the
+  // refused slice. Both the footer and the full graph span must be eligible.
+  const overlapping = Buffer.from(outside);
+  const offsets = overlapping.length - BUN_FIXTURE_GRAPH_SUFFIX_BYTES;
+  overlapping.writeBigUInt64LE(
+    overlapping.readBigUInt64LE(offsets) + 1n,
+    offsets,
+  );
+  expect(
+    (await probe(Buffer.concat([unpadded, overlapping]), limits)).result,
+  ).toEqual({
+    status: "absent",
+  });
+});
 
 it("probes a section graph without reading its payload data", async () => {
   const contents = Buffer.alloc(1024 * 1024, 0x61);
