@@ -746,6 +746,7 @@
 * **domain:** remove ad-hoc ellipsis, path-split, and session ConfigurationError catch copies ([#11798](https://github.com/morluto/rea/issues/11798)) ([575c0f1](https://github.com/morluto/rea/commit/575c0f1443b14089a608d2cc33583647a5ea7976))
 * **domain:** remove remaining CLI option text and local completeness enum baselines ([#11788](https://github.com/morluto/rea/issues/11788)) ([1e9df09](https://github.com/morluto/rea/commit/1e9df09f6814c6194b83791620161b1951257042))
 * **domain:** type UTF-8 excerpts apart from identity strings ([#11272](https://github.com/morluto/rea/issues/11272)) ([b6659b7](https://github.com/morluto/rea/commit/b6659b70a3e55f6bc0d1e71cee21a87acd6131b9))
+* **electron:** carry fuse limits from the reader ([#12221](https://github.com/morluto/rea/issues/12221)) ([c34a00c](https://github.com/morluto/rea/commit/c34a00c70a041b88edc2f7d2e10c92392a7c13e1))
 * **errors:** derive parse-limit resource_constraint refusals from LimitRef ([#11775](https://github.com/morluto/rea/issues/11775)) ([ddd0d6d](https://github.com/morluto/rea/commit/ddd0d6d4a4e7a4c967977d6f35e59e81f958b997))
 * **errors:** finish local-limit-error-class and range-error-interpretation guards ([#11784](https://github.com/morluto/rea/issues/11784)) ([08b63cc](https://github.com/morluto/rea/commit/08b63cc8a136b70504bb882a30209981f95278d7))
 * **errors:** give caller aborts a typed reason at the adapters ([#10633](https://github.com/morluto/rea/issues/10633)) ([b655645](https://github.com/morluto/rea/commit/b655645608aeb68cf17a8632927e646b2e52a221))
