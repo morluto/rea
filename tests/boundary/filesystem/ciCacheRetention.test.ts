@@ -54,6 +54,45 @@ describe("Turbo snapshot retention", () => {
     expect(deletions.reduce((sum, entry) => sum + entry.size, 0)).toBe(10);
   });
 
+  it("keeps restorable generations when another ref has newer snapshots", () => {
+    const rows = [
+      cache(1, prefix + "old-main", "2026-10-20T01:00:00Z"),
+      cache(2, prefix + "main-a", "2026-10-20T02:00:00Z"),
+      cache(3, prefix + "main-b", "2026-10-20T03:00:00Z"),
+      cache(
+        4,
+        prefix + "old-feature",
+        "2026-10-20T04:00:00Z",
+        undefined,
+        100,
+        undefined,
+        "refs/heads/feature",
+      ),
+      cache(
+        5,
+        prefix + "feature-a",
+        "2026-10-20T05:00:00Z",
+        undefined,
+        100,
+        undefined,
+        "refs/heads/feature",
+      ),
+      cache(
+        6,
+        prefix + "feature-b",
+        "2026-10-20T06:00:00Z",
+        undefined,
+        100,
+        undefined,
+        "refs/heads/feature",
+      ),
+    ];
+
+    expect(
+      selectPrefixDeletions(rows, { prefix }).map((entry) => entry.id),
+    ).toEqual([1, 4]);
+  });
+
   it("keeps an in-flight generation when the saved key is already newest", () => {
     const keepKey = `${prefix}newest`;
     const deletions = selectPrefixDeletions(

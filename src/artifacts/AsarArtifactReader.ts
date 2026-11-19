@@ -1,4 +1,5 @@
 import { appendCallerPath } from "../filesystem/callerPath.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import type { AsarHeaderAdmission } from "../config/asarHeaderAdmission.js";
 import { artifactIntegrityDetails } from "../domain/artifactIntegrity.js";
 import { constants, createWriteStream, type Stats } from "node:fs";
@@ -497,6 +498,14 @@ export class AsarArtifactReader implements ArtifactReader {
     entry: ArtifactEntry,
     signal?: AbortSignal,
   ): Promise<Readable> {
+    // Header names retain UTF-16 identity; filesystem encoding may replace
+    // unpaired surrogates and select a different companion. Packed members
+    // need no filesystem name and remain readable under their original names.
+    if (!localPathStringSchema.safeParse(entry.adapterKey).success)
+      throw new ArtifactEntryContentUnavailable(
+        `ASAR unpacked member path cannot be represented without replacement: ${JSON.stringify(entry.path)}`,
+        "ASAR unpacked member path cannot be represented without replacement on the local filesystem; companion bytes were not read and no content hash or child artifact was produced.",
+      );
     const unpackedRoot = `${this.options.selectedPath ?? this.path}.unpacked`;
     let handle: SharedAsarFileHandle | undefined;
     try {

@@ -1,3 +1,9 @@
+import {
+  MACHO_DYLIB_FIELDS_OFFSET,
+  MACHO_DYLIB_NAME_MIN,
+  machoDylibFieldsSize,
+  readMachoDylibFields,
+} from "./machoDylibCommand.js";
 import { LC, LC_REQ_DYLD } from "./machoLoadCommandCodes.js";
 import {
   MachoLoadCommandCursor,
@@ -130,14 +136,7 @@ export interface MachoCommandNames {
     }[];
     readonly commandString?: Uint8Array;
     readonly commandStringOffset?: number;
-    readonly dylib?: {
-      readonly nameOffset: number;
-      readonly currentVersion: number;
-      readonly compatibilityVersion: number;
-      readonly encoding:
-        | { readonly kind: "timestamp"; readonly timestamp: number }
-        | { readonly kind: "use"; readonly flags: number };
-    };
+    readonly dylib?: ReturnType<typeof readMachoDylibFields>;
     readonly legacyBuild?: {
       readonly platform: MachoVersionMinPlatform;
       readonly version: number;
@@ -405,7 +404,7 @@ export const readMachoCommandNames = async (
         data.byteLength,
       ).getUint32(0, table.littleEndian);
       const minimum = DYLIB_COMMANDS.has(frame.command)
-        ? 24
+        ? MACHO_DYLIB_NAME_MIN
         : frame.command === LC.LOADFVMLIB ||
             frame.command === LC.IDFVMLIB ||
             frame.command === LC.PREBOUND_DYLIB
@@ -424,42 +423,16 @@ export const readMachoCommandNames = async (
         "Mach-O command string",
       );
       commandStringOffset = offset;
-      if (DYLIB_COMMANDS.has(frame.command)) {
-        const fixed = await exact(at + 12, 12);
-        const view = new DataView(
-          fixed.buffer,
-          fixed.byteOffset,
-          fixed.byteLength,
+      if (DYLIB_COMMANDS.has(frame.command))
+        dylib = readMachoDylibFields(
+          await exact(
+            at + MACHO_DYLIB_FIELDS_OFFSET,
+            machoDylibFieldsSize(frame.command, offset),
+          ),
+          frame.command,
+          offset,
+          table.littleEndian,
         );
-        const marker = view.getUint32(0, table.littleEndian);
-        const useEncoding =
-          (frame.command === LC.LOAD_DYLIB ||
-            frame.command === LC.LOAD_WEAK_DYLIB) &&
-          offset === 28 &&
-          marker === 0x1a741800;
-        if (useEncoding && frame.size < 28)
-          throw malformedInput(
-            "macho",
-            "Mach-O dylib use command is truncated",
-          );
-        const flags = useEncoding ? await exact(at + 24, 4) : undefined;
-        dylib = {
-          nameOffset: offset,
-          currentVersion: view.getUint32(4, table.littleEndian),
-          compatibilityVersion: view.getUint32(8, table.littleEndian),
-          encoding:
-            flags === undefined
-              ? { kind: "timestamp", timestamp: marker }
-              : {
-                  kind: "use",
-                  flags: new DataView(
-                    flags.buffer,
-                    flags.byteOffset,
-                    flags.byteLength,
-                  ).getUint32(0, table.littleEndian),
-                },
-        };
-      }
     }
     let prebound: MachoCommandNames["commands"][number]["prebound"];
     if (frame.command === LC.PREBOUND_DYLIB) {
