@@ -127,6 +127,23 @@ it("checks the declared dictionary before the decoder allocates its window", asy
   });
 });
 
+it("uses the EDK II minimum effective dictionary size for match distances", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-lzma-small-dict-");
+  const plain = Buffer.from(
+    "Static firmware bytes for the dictionary fixture. ".repeat(50),
+  );
+  const input = Buffer.from(lzmaPurescript.compressFile(plain));
+  input.writeUInt32LE(16, 1);
+  const reply = await runLzmaWorker(directory, input, plain.length);
+  expect(reply).toMatchObject({
+    ok: true,
+    input_bytes_consumed: input.length,
+  });
+  expect((await readFile(join(directory, "output.bin"))).equals(plain)).toBe(
+    true,
+  );
+});
+
 it("rejects an incomplete coded body even when its declared output size is plausible", async () => {
   const directory = await createTestTempDirectory("rea-uefi-lzma-eof-");
   const input = Buffer.from(

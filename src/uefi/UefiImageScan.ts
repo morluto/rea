@@ -24,7 +24,7 @@ import {
 } from "./UefiCodeTables.js";
 import type { UefiDecodeFailureReason } from "./UefiLzmaProtocol.js";
 import {
-  checkFfsFileData,
+  checkFfsFileIntegrity,
   readFfsHeader,
   type FfsPaddingRange,
 } from "./FfsFile.js";
@@ -341,12 +341,19 @@ export const scanUefiImage = async (
       );
       return { volumes: localRecords, status: "limited" };
     }
+    const fvImageSection = mode === "fv-image-section";
     const discovered = scanFirmwareVolumes(
       region,
       UEFI_FIRMWARE_LIMITS.scanRecords,
       {
         reserve,
         skipNested: true,
+        // The payload of an FV-image leaf begins with its sole volume header.
+        ...(fvImageSection
+          ? {
+              signatureEnd: region.start + FV_HEADER_LAYOUT.signatureOffset + 4,
+            }
+          : {}),
       },
     );
     for (const rejected of discovered.rejected) {
@@ -467,9 +474,12 @@ export const scanUefiImage = async (
       );
       return { volumes: localRecords, status: "limited" };
     }
-    if (mode === "fv-image-section" && localRecords.length === 0) {
+    if (fvImageSection) {
       noteUnparsedRange(region, mappedThrough, regionEnd, parentLogicalPath, {
-        detail: `FV-image section ${parentLogicalPath} contains no confirmed firmware volume.`,
+        detail:
+          localRecords.length === 0
+            ? `FV-image section ${parentLogicalPath} does not begin with a confirmed firmware volume.`
+            : `FV-image section ${parentLogicalPath} extends beyond its firmware volume.`,
       });
     } else if (mode !== "embedded-probe" || localRecords.length > 0) {
       noteUnparsedRange(region, mappedThrough, regionEnd, parentLogicalPath);
@@ -606,14 +616,14 @@ export const scanUefiImage = async (
           fileArea.sourceStream ?? null,
         );
       }
-      const checksum = checkFfsFileData(fileArea, fileHeader);
+      const checksum = checkFfsFileIntegrity(fileArea, fileHeader);
       if (checksum.verdict === "invalid") {
         noteIntegrity(
           "ffs-file-checksum-mismatch",
           logicalPath,
           checksum.offset,
           checksum.length,
-          "File data checksum differs from the declared IntegrityCheck.File byte.",
+          checksum.detail,
           fileArea.sourceStream ?? null,
         );
       }
@@ -786,9 +796,9 @@ export const scanUefiImage = async (
           logicalPath,
           draft.absoluteBase,
           draft.absoluteBase + draft.observedLength,
-          draft.extendedHeaderIssue === undefined
+          draft.framingIssue === undefined
             ? `Section ${logicalPath} framing is ${draft.malformed ? "malformed" : "truncated"}; declared ${draft.declaredLength} bytes, observed ${draft.observedLength}.`
-            : `Section ${logicalPath} has invalid framing. ${draft.extendedHeaderIssue}`,
+            : `Section ${logicalPath} has invalid framing. ${draft.framingIssue}`,
         );
         continue;
       }
@@ -799,7 +809,8 @@ export const scanUefiImage = async (
           logicalPath,
           payload,
           content.gap,
-          `No decoder is available for ${compression.kind} section ${logicalPath}.`,
+          content.detail ??
+            `No decoder is available for ${compression.kind} section ${logicalPath}.`,
         );
         continue;
       }
@@ -918,7 +929,7 @@ export const scanUefiImage = async (
           record.sub_volumes = nested.volumes.map(
             (entry) => entry.logical_path,
           );
-          if (nested.status === "absent" && !structuralLimitReached) {
+          if (nested.status === "absent") {
             noteUnparsedRange(
               decodedRegion,
               0,

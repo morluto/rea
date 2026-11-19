@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 
 import { describe, expect, it, vi } from "vitest";
+import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 
 import {
@@ -345,6 +346,55 @@ it("retains FFS siblings in inventory after skipping an unrepresentable invalid 
     expect(onCoverage).toHaveBeenCalledWith({
       status: "unknown",
       limitations: [expect.stringContaining("0xffffffffffffffff")],
+    });
+  } finally {
+    await reader.close();
+  }
+});
+
+it("charges unusable FFS headers against the same inventory budget as FV block maps", async () => {
+  const repeatedMaps = 12;
+  const blockMapEntries = 8_000;
+  const prefix = buildFv({ files: [], blockMapEntries }).buffer;
+  const file = buildFfsFile({
+    guid: DRIVER_GUID,
+    typeCode: 1,
+    payload: Buffer.from([0x31]),
+  });
+  const invalid = Buffer.alloc(32, 0xff);
+  invalid[19] = 1;
+  invalid[23] = 0x1f;
+  // Leave five records after charging the volume candidates and their maps.
+  const lastVolume = buildFv({
+    blockMapEntries:
+      UEFI_FIRMWARE_LIMITS.scanRecords -
+      repeatedMaps * (1 + blockMapEntries) -
+      1 -
+      5,
+    fileSystemGuid: FFS3_FILE_SYSTEM_GUID,
+    files: [file, ...Array.from({ length: 8 }, () => invalid), file],
+  });
+  const reader = await openReader(
+    Buffer.concat([
+      ...Array.from({ length: repeatedMaps }, () => prefix),
+      lastVolume.buffer,
+    ]),
+  );
+  const omissions: string[] = [];
+  const onCoverage = vi.fn();
+  try {
+    const entries = await collectEntries(reader, {
+      onCoverage,
+      onOmission: ({ path }) => omissions.push(path),
+    });
+    expect(entries.filter(({ kind }) => kind === "file")).toHaveLength(1);
+    expect(omissions).toHaveLength(5);
+    expect(omissions.at(-1)).toMatch(/\/ffs-scan-limit-0x[0-9a-f]+$/u);
+    expect(onCoverage).toHaveBeenCalledWith({
+      status: "unknown",
+      limitations: expect.arrayContaining([
+        expect.stringMatching(/structural record limit.*FFS/u),
+      ]),
     });
   } finally {
     await reader.close();

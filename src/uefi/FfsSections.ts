@@ -15,6 +15,8 @@ import {
 
 const GUIDED_PROCESSING_REQUIRED = 0x01;
 const GUIDED_AUTH_STATUS_VALID = 0x02;
+const GUIDED_KNOWN_ATTRIBUTES =
+  GUIDED_PROCESSING_REQUIRED | GUIDED_AUTH_STATUS_VALID;
 
 export type UefiDecodeFormat = "lzma" | "lzmaf86" | "zlib";
 
@@ -24,7 +26,11 @@ type SectionContent =
   | { kind: "decode"; format: UefiDecodeFormat }
   | {
       kind: "unsupported";
-      gap: "unknown-guid-handler" | "unsupported-compression";
+      gap:
+        | "unknown-guid-handler"
+        | "unsupported-compression"
+        | "unparsed-region";
+      detail?: string;
     };
 
 /** Raw section observation before nesting resolution. */
@@ -36,7 +42,7 @@ export interface SectionDraft {
   readonly observedLength: number;
   readonly truncated: boolean;
   readonly malformed: boolean;
-  readonly extendedHeaderIssue?: string;
+  readonly framingIssue?: string;
   readonly content: SectionContent;
   readonly typeCode: number;
   readonly compression:
@@ -93,6 +99,56 @@ function hasBoundedFrame(
     header.declaredLength >= header.commonLength &&
     header.declaredLength <= end - start
   );
+}
+
+function guidedSectionContent(
+  reader: BinaryReader,
+  {
+    kind,
+    guid,
+    attributes,
+  }: {
+    kind: (typeof COMPRESSION_GUID_BY_DISPLAY)[string] | "unknown-guid";
+    guid: string | null;
+    attributes: number;
+  },
+  start: number,
+  end: number,
+): SectionContent {
+  const reservedAttributes = attributes & ~GUIDED_KNOWN_ATTRIBUTES;
+  if (reservedAttributes !== 0)
+    return {
+      kind: "unsupported",
+      gap: "unparsed-region",
+      detail: `GUID-defined header uses reserved attribute bits 0x${reservedAttributes.toString(16)}.`,
+    };
+
+  if (kind === "lzma-custom") return { kind: "decode", format: "lzma" };
+  if (kind === "lzmaf86") return { kind: "decode", format: "lzmaf86" };
+  if (kind === "ami-zlib") return { kind: "decode", format: "zlib" };
+
+  if (
+    (attributes & GUIDED_PROCESSING_REQUIRED) === 0 &&
+    (kind === "crc32-guided" ||
+      (kind === "unknown-guid" &&
+        guid !== null &&
+        !OPAQUE_GUIDED_SECTION_GUIDS.has(guid) &&
+        hasBoundedFrame(reader, start, end)))
+  )
+    return {
+      kind: "stored-sections",
+      guidedIntegrityUnchecked:
+        kind === "crc32-guided" ||
+        (attributes & GUIDED_AUTH_STATUS_VALID) !== 0,
+    };
+
+  return {
+    kind: "unsupported",
+    gap:
+      kind === "unknown-guid"
+        ? "unknown-guid-handler"
+        : "unsupported-compression",
+  };
 }
 
 /** Read one PI section chain, with each child aligned relative to its stream. */
@@ -182,47 +238,12 @@ export function walkSections(
         malformed = dataOffset < headerLength || dataOffset > declaredLength;
         if (!malformed) {
           headerLength = dataOffset;
-          if (
-            kind === "lzma-custom" ||
-            kind === "lzmaf86" ||
-            kind === "ami-zlib"
-          ) {
-            content = {
-              kind: "decode",
-              format:
-                kind === "ami-zlib"
-                  ? "zlib"
-                  : kind === "lzma-custom"
-                    ? "lzma"
-                    : "lzmaf86",
-            };
-          } else if (
-            (attributes & GUIDED_PROCESSING_REQUIRED) === 0 &&
-            (kind === "crc32-guided" ||
-              (kind === "unknown-guid" &&
-                guid !== null &&
-                !OPAQUE_GUIDED_SECTION_GUIDS.has(guid) &&
-                hasBoundedFrame(
-                  reader,
-                  cursor + dataOffset,
-                  cursor + observedLength,
-                )))
-          ) {
-            content = {
-              kind: "stored-sections",
-              guidedIntegrityUnchecked:
-                kind === "crc32-guided" ||
-                (attributes & GUIDED_AUTH_STATUS_VALID) !== 0,
-            };
-          } else {
-            content = {
-              kind: "unsupported",
-              gap:
-                kind === "unknown-guid"
-                  ? "unknown-guid-handler"
-                  : "unsupported-compression",
-            };
-          }
+          content = guidedSectionContent(
+            reader,
+            { kind, guid, attributes },
+            cursor + dataOffset,
+            cursor + observedLength,
+          );
         }
       }
     } else if (typeCode === 0x14 || typeCode === 0x18) {
@@ -230,16 +251,16 @@ export function walkSections(
       malformed = declaredLength < headerLength;
     }
 
-    let extendedHeaderIssue: string | undefined;
+    let framingIssue: string | undefined;
+    if (typeCode === 0)
+      framingIssue = "Section type 0x00 is a section retrieval wildcard.";
     if (commonLength === SECTION_LAYOUT.extendedLength) {
       if (declaredLength <= SECTION_LAYOUT.largeSectionMarker)
-        extendedHeaderIssue =
-          "Extended section size fits in the compact PI header.";
+        framingIssue = "Extended section size fits in the compact PI header.";
       else if (!largeFile)
-        extendedHeaderIssue =
-          "Extended section header requires a large FFS file.";
+        framingIssue = "Extended section header requires a large FFS file.";
     }
-    malformed ||= extendedHeaderIssue !== undefined;
+    malformed ||= framingIssue !== undefined;
 
     sections.push({
       absoluteBase: absoluteOffset(region, cursor),
@@ -248,7 +269,7 @@ export function walkSections(
       observedLength,
       truncated,
       malformed,
-      ...(extendedHeaderIssue === undefined ? {} : { extendedHeaderIssue }),
+      ...(framingIssue === undefined ? {} : { framingIssue }),
       content,
       typeCode,
       compression,

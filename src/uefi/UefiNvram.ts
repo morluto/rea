@@ -229,7 +229,7 @@ function collectChain(
   frame: { offset: number; first: FramedNvarRecord; endOffset: number },
   scope: Pick<AmiNvramVariable, "depth" | "parentOffset">,
   out: AmiNvramVariable[],
-): number {
+): { endOffset: number; nextSearchOffset: number } {
   const { reader, reserve, maxDepth, noteOmission } = context;
   let cursor = frame.offset;
   let record: NvarRecord = frame.first;
@@ -238,7 +238,8 @@ function collectChain(
       noteOmission(
         `NVAR record at 0x${cursor.toString(16)} has an incomplete or invalid extent.`,
       );
-      break;
+      // Its extent is unknown, but raw discovery already examined this signature.
+      return { endOffset: cursor, nextSearchOffset: cursor + 1 };
     }
     if (record.kind !== "active") {
       if (record.kind === "malformed")
@@ -254,7 +255,9 @@ function collectChain(
     out.push({ ...entry, ...scope });
     const dataEnd = entry.dataOffset + entry.dataLength;
     const nested = readNvarRecord(reader, entry.dataOffset, dataEnd, reserve);
-    if (nested.kind === "limited") return entry.endOffset;
+    if (nested.kind === "limited") {
+      return { endOffset: entry.endOffset, nextSearchOffset: entry.endOffset };
+    }
     if (nested.kind === "invalid-frame") {
       noteOmission(
         `Possible nested NVAR record at 0x${entry.dataOffset.toString(16)} has an incomplete or invalid extent.`,
@@ -277,7 +280,7 @@ function collectChain(
     cursor = entry.endOffset;
     record = readNvarSuccessor(reader, cursor, frame.endOffset, reserve);
   }
-  return cursor;
+  return { endOffset: cursor, nextSearchOffset: cursor };
 }
 
 /** Scan a raw image for chained AMI NVRAM variable stores. */
@@ -322,7 +325,7 @@ export const scanAmiNvramStores = (
       return { stores, coverage: "partial", limitations };
     }
     const variables: AmiNvramVariable[] = [];
-    const lastEnd = collectChain(
+    const { endOffset, nextSearchOffset } = collectChain(
       context,
       { offset: firstOffset, first, endOffset: image.length },
       { depth: 0, parentOffset: null },
@@ -331,8 +334,8 @@ export const scanAmiNvramStores = (
     let padding = 0;
     while (
       limit.offset === null &&
-      lastEnd + padding < image.length &&
-      image[lastEnd + padding] === 0xff
+      endOffset + padding < image.length &&
+      image[endOffset + padding] === 0xff
     ) {
       if (padding % 65536 === 0) checkpoint();
       padding += 1;
@@ -344,7 +347,7 @@ export const scanAmiNvramStores = (
         variables,
         trailingPadding: padding > 0 ? padding : null,
       });
-    searchFrom = Math.max(firstOffset + 1, lastEnd);
+    searchFrom = nextSearchOffset;
     if (limit.offset !== null) break;
   }
   if (limit.offset !== null) {

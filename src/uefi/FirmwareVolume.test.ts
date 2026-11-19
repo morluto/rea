@@ -131,6 +131,33 @@ it("does not use an FV beyond the signature search boundary to admit the image",
   expect(admitUefiFlashImage(image)).toBe(true);
 });
 
+it.each([false, true])(
+  "keeps candidate bases outside a skipped FV (unsupported filesystem: %s)",
+  (unsupported) => {
+    const first = buildFv(
+      unsupported
+        ? { files: [], fileSystemGuid: "19111111-2222-3333-4444-555555555555" }
+        : { files: [] },
+    ).buffer;
+    const later = buildFv({ files: [] }).buffer;
+    const overlappingBase = first.length - 16;
+    const siblingBase = overlappingBase + later.length;
+    const image = Buffer.alloc(siblingBase + later.length);
+    first.copy(image);
+    later.copy(image, overlappingBase);
+    later.copy(image, siblingBase);
+    const discoveredBases = (buffer: Buffer): number[] =>
+      scanFirmwareVolumes(imageRegion(buffer, 0, buffer.length), 8, {
+        skipNested: !unsupported,
+      }).volumes.map(({ header }) => header.absoluteBase);
+    expect(discoveredBases(image)).toEqual([0, siblingBase]);
+    expect(discoveredBases(Buffer.concat([first, later]))).toEqual([
+      0,
+      first.length,
+    ]);
+  },
+);
+
 it.each([
   { type: 1, mask: 0x80000001, length: 8, needs: "40 bytes" },
   { type: 1, mask: 0x80000001, length: 40, needs: null },

@@ -6,7 +6,7 @@ import { imageRegion } from "./UefiBytes.js";
 import {
   readFfsHeader,
   parseFfsFileHeader,
-  checkFfsFileData,
+  checkFfsFileIntegrity,
 } from "./FfsFile.js";
 
 it("parses a valid FFS2 driver file header", () => {
@@ -75,7 +75,7 @@ it("verifies the optional file-data checksum", () => {
     const header = parseFfsFileHeader(region, 0, true);
     expect(header?.fileChecksumRequired).toBe(true);
     if (header === null) throw new Error("Missing FFS header");
-    expect(checkFfsFileData(region, header).verdict).toBe(
+    expect(checkFfsFileIntegrity(region, header).verdict).toBe(
       image === correct ? "valid" : "invalid",
     );
   }
@@ -176,7 +176,28 @@ it("retains the header-valid FFS extent without validating unwritten data", () =
     },
   });
   if (result.kind !== "file") throw new Error("Expected a bounded file");
-  expect(checkFfsFileData(region, result.header)).toEqual({
+  expect(checkFfsFileIntegrity(region, result.header)).toEqual({
     verdict: "unchecked",
   });
 });
+
+it.each([true, false])(
+  "keeps non-erased bytes with an unset FFS state unparsed (erase polarity %s)",
+  (erasePolarity) => {
+    const file = buildFfsFile({
+      guid: "19111111-2222-3333-4444-555555555555",
+      typeCode: 0x01,
+      payload: Buffer.from("not committed"),
+      erasePolarity,
+    });
+    file[23] = erasePolarity ? 0xff : 0;
+    expect(
+      readFfsHeader(imageRegion(file, 0, file.length), 0, erasePolarity),
+    ).toMatchObject({
+      kind: "unparsed",
+      offset: 0,
+      length: file.length,
+      detail: expect.stringContaining("no recognized state bits"),
+    });
+  },
+);

@@ -17,6 +17,8 @@ import { lzmaRequestSchema, type UefiLzmaReply } from "./UefiLzmaProtocol.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
 
 const LZMA_ALONE_HEADER_BYTES = 13;
+const LZMA_DICTIONARY_OFFSET = 1;
+const LZMA_MIN_DICTIONARY_BYTES = 0x1000;
 const LZMA_RANGE_CODER_INIT_BYTES = 5;
 
 /**
@@ -56,6 +58,54 @@ class BoundedLzmaOutput {
   }
 }
 
+const prepareLzmaInput = (payload: Buffer, maxOutputBytes: number) => {
+  // .lzma (LZMA-Alone) declares the dictionary before any compressed bytes.
+  // The upstream decoder allocates its window before it writes to our sink.
+  if (payload.length < LZMA_ALONE_HEADER_BYTES)
+    throw truncatedInput("LZMA-Alone", "Incomplete LZMA stream header.");
+  const reader = new BinaryReader(payload, true, "LZMA-Alone");
+  const dictionaryBytes = reader.u32(LZMA_DICTIONARY_OFFSET);
+  if (dictionaryBytes > UEFI_FIRMWARE_LIMITS.lzmaOutputBytes) {
+    throw decodeLimit(
+      "LZMA",
+      "LZMA dictionary exceeds the worker memory budget.",
+      {
+        name: "dictionary_bytes",
+        maximum: UEFI_FIRMWARE_LIMITS.lzmaOutputBytes,
+        required: dictionaryBytes,
+      },
+    );
+  }
+  const declaredOutputSize = reader.word(5, 64);
+  const declaredOutput =
+    declaredOutputSize === 0xffffffffffffffffn ? null : declaredOutputSize;
+  if (declaredOutput !== null && declaredOutput > BigInt(maxOutputBytes)) {
+    throw decodeLimit(
+      "LZMA",
+      `Declared LZMA output exceeds ${maxOutputBytes} bytes.`,
+      {
+        name: "output_bytes",
+        maximum: maxOutputBytes,
+        required: declaredOutput,
+      },
+    );
+  }
+  if (payload.length < LZMA_ALONE_HEADER_BYTES + LZMA_RANGE_CODER_INIT_BYTES)
+    throw truncatedInput("LZMA-Alone", "Incomplete LZMA range coder header.");
+  // The EDK II decoder requires zero before the four-byte range coder state.
+  if (reader.u8(LZMA_ALONE_HEADER_BYTES) !== 0)
+    throw malformedInput(
+      "LZMA-Alone",
+      "The initial LZMA range coder byte must be zero.",
+    );
+  // EDK II promotes small dictionary declarations to 4 KiB. lzma-purejs
+  // allocates that much but otherwise checks distances against the raw value.
+  // Normalize the worker's private input buffer before passing it to the codec.
+  if (dictionaryBytes < LZMA_MIN_DICTIONARY_BYTES)
+    payload.writeUInt32LE(LZMA_MIN_DICTIONARY_BYTES, LZMA_DICTIONARY_OFFSET);
+  return { reader, declaredOutput };
+};
+
 const main = async (): Promise<void> => {
   const requestPath = process.argv[2];
   if (requestPath === undefined) {
@@ -77,48 +127,10 @@ const main = async (): Promise<void> => {
       .parse(upstreamMetadata).version;
 
     const payload = await readFile(request.payload_path);
-    // .lzma (LZMA-Alone) declares the dictionary before any compressed bytes.
-    // The upstream decoder allocates its window before it writes to our sink.
-    if (payload.length < LZMA_ALONE_HEADER_BYTES)
-      throw truncatedInput("LZMA-Alone", "Incomplete LZMA stream header.");
-    const reader = new BinaryReader(payload, true, "LZMA-Alone");
-    const dictionaryBytes = reader.u32(1);
-    if (dictionaryBytes > UEFI_FIRMWARE_LIMITS.lzmaOutputBytes) {
-      throw decodeLimit(
-        "LZMA",
-        "LZMA dictionary exceeds the worker memory budget.",
-        {
-          name: "dictionary_bytes",
-          maximum: UEFI_FIRMWARE_LIMITS.lzmaOutputBytes,
-          required: dictionaryBytes,
-        },
-      );
-    }
-    const declaredOutputSize = reader.word(5, 64);
-    const declaredOutput =
-      declaredOutputSize === 0xffffffffffffffffn ? null : declaredOutputSize;
-    if (
-      declaredOutput !== null &&
-      declaredOutput > BigInt(request.max_output_bytes)
-    ) {
-      throw decodeLimit(
-        "LZMA",
-        `Declared LZMA output exceeds ${request.max_output_bytes} bytes.`,
-        {
-          name: "output_bytes",
-          maximum: request.max_output_bytes,
-          required: declaredOutput,
-        },
-      );
-    }
-    if (payload.length < LZMA_ALONE_HEADER_BYTES + LZMA_RANGE_CODER_INIT_BYTES)
-      throw truncatedInput("LZMA-Alone", "Incomplete LZMA range coder header.");
-    // The EDK II decoder requires zero before the four-byte range coder state.
-    if (reader.u8(LZMA_ALONE_HEADER_BYTES) !== 0)
-      throw malformedInput(
-        "LZMA-Alone",
-        "The initial LZMA range coder byte must be zero.",
-      );
+    const { reader, declaredOutput } = prepareLzmaInput(
+      payload,
+      request.max_output_bytes,
+    );
     const output = new BoundedLzmaOutput(request.max_output_bytes);
     let position = 0;
     lzma.decompressFile(

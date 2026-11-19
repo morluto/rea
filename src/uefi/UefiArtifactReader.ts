@@ -147,13 +147,11 @@ export class UefiArtifactReader implements ArtifactReader {
           "Volumes with unsupported file-system GUIDs were retained without FFS entries.",
         );
       } else {
-        for await (const file of this.#volumeFiles(
-          header,
-          image,
-          name,
+        for await (const file of this.#volumeFiles(header, image, name, {
           omit,
-          signal,
-        )) {
+          reserve,
+          checkpoint,
+        })) {
           if (filesMapped >= UEFI_FIRMWARE_LIMITS.maxFiles) {
             fileBudgetExhausted = true;
             break;
@@ -190,8 +188,15 @@ export class UefiArtifactReader implements ArtifactReader {
     header: FirmwareVolumeHeader,
     image: Buffer,
     volumeName: string,
-    omit: (path: string, limitation: string) => void,
-    signal?: AbortSignal,
+    {
+      omit,
+      reserve,
+      checkpoint,
+    }: {
+      omit: (path: string, limitation: string) => void;
+      reserve: () => boolean;
+      checkpoint: () => void;
+    },
   ): AsyncGenerator<ArtifactEntry> {
     const region = imageRegion(
       image,
@@ -206,8 +211,15 @@ export class UefiArtifactReader implements ArtifactReader {
     for (const padding of header.filePrefixPadding) omitPadding(padding);
     let local = header.firstFileLocal;
     while (local < region.end) {
-      assertArtifactReadActive(signal);
-      const read = readFfsHeader(region, local, header.erasePolarity);
+      checkpoint();
+      const read = readFfsHeader(region, local, header.erasePolarity, reserve);
+      if (read.kind === "limited") {
+        omit(
+          `${volumeName}/ffs-scan-limit-${hex(local)}`,
+          `UEFI inventory reached the structural record limit of ${UEFI_FIRMWARE_LIMITS.scanRecords} before the FFS header at ${hex(local)}.`,
+        );
+        break;
+      }
       if (read.kind === "unusable-header") {
         omit(`${volumeName}/ffs-header-${hex(read.offset)}`, read.detail);
         local = read.nextLocal;

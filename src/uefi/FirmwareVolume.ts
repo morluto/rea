@@ -555,8 +555,11 @@ export function scanFirmwareVolumes(
     }
     volumes.push({ header });
     if (options.skipNested || header.fileSystem === "unsupported") {
-      // Only supported volume bodies can supply nested candidates.
-      searchFrom = Math.max(searchFrom, headerLocal + header.declaredLength);
+      // Resume at the signature position of the first possible sibling header.
+      searchFrom = Math.max(
+        searchFrom,
+        headerLocal + header.declaredLength + FV_HEADER_LAYOUT.signatureOffset,
+      );
     }
   }
   return { volumes, rejected, limit };

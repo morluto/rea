@@ -144,7 +144,7 @@ it("reports an undersized extended header and preserves its bounded sibling", ()
     {
       malformed: true,
       payload: null,
-      extendedHeaderIssue: expect.stringContaining("compact PI header"),
+      framingIssue: expect.stringContaining("compact PI header"),
     },
     { malformed: false, absoluteBase: 12, payload: { start: 16, end: 17 } },
   ]);
@@ -157,7 +157,7 @@ it("retains a truncated extended frame but marks its placement in a compact FFS 
     {
       malformed: true,
       truncated: true,
-      extendedHeaderIssue: expect.stringContaining("requires a large FFS file"),
+      framingIssue: expect.stringContaining("requires a large FFS file"),
     },
   ]);
 });
