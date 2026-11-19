@@ -402,6 +402,7 @@ type DynamicTable = {
   readonly stringFileOffset: number | null;
 };
 
+/** Read a PT_DYNAMIC span already admitted by the shared declared-range pass. */
 const readDynamic = (
   bytes: Buffer,
   program: Extract<ElfProgramDeclaration, { type: 2 }>,
@@ -416,8 +417,6 @@ const readDynamic = (
     malformed("ELF PT_DYNAMIC size is not a whole number of entries");
   const count = size / width;
   budget(count, "ELF dynamic table");
-  if (size > bytes.length - offset)
-    malformed("ELF PT_DYNAMIC extends outside the file");
   const entries = new Map<bigint, DynamicEntry>();
   const walked = walkElfDynamicTable<never>(
     bytes.subarray(offset, offset + size),
