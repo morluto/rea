@@ -26,7 +26,6 @@ import {
   artifactFileCompletion,
   bindArtifactFileCleanup,
   assertArtifactReadActive,
-  yieldArtifactRead,
 } from "../resources/index.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
@@ -36,7 +35,6 @@ import { createEvidence } from "../domain/evidence.js";
 import { createIl2cppMetadataAdmission } from "./Il2cppMetadataAdmission.js";
 import {
   hexAddress as hex,
-  openIl2cppImageCooperative,
   requireIl2cppBinaryImage,
 } from "./Il2cppBinaryImage.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
@@ -63,7 +61,7 @@ import {
   type Il2cppMetadataRowCounts,
 } from "./Il2cppMetadataFile.js";
 import {
-  linkIl2cppBinarySteps,
+  linkIl2cppBinaryCooperative,
   type Il2cppBinaryLink,
 } from "./Il2cppBinaryFile.js";
 import { errorMessage } from "../kernel/errorMessage.js";
@@ -565,13 +563,7 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
               input.binary_architecture,
             );
             sliceLimitations = selected.limitations;
-            const opened =
-              options?.signal === undefined
-                ? undefined
-                : await openIl2cppImageCooperative(selected.bytes, () =>
-                    yieldArtifactRead(options.signal),
-                  );
-            const linking = linkIl2cppBinarySteps(
+            const linking = await linkIl2cppBinaryCooperative(
               selected.bytes,
               decoded,
               link,
@@ -579,15 +571,12 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
                 ...admission,
                 genericInstances: input.generic_instances === true,
               },
-              opened,
+              async () => {
+                await this.yieldControl();
+                assertArtifactReadActive(options?.signal);
+              },
             );
-            let linkStep = linking.next();
-            while (!linkStep.done) {
-              await this.yieldControl();
-              assertArtifactReadActive(options?.signal);
-              linkStep = linking.next();
-            }
-            linked = binaryReport(linkStep.value, {
+            linked = binaryReport(linking, {
               path: binaryPath,
               sha256: binary.sha256,
               bytes: binary.bytes.length,
