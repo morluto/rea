@@ -769,6 +769,49 @@ const rejectsSocketLiteralArguments = (
   context: DataEffectTraversalContext,
 ): boolean => {
   const port = node.arguments[0];
+  // Node copies socket options before validating the effective port. A path
+  // (including one supplied by a later TLS option argument) selects a Unix
+  // socket, so the numeric port is irrelevant. Resolve that same effective
+  // object before applying the literal argument checks.
+  if (
+    port !== undefined &&
+    t.isObjectExpression(unwrapJavaScriptExpression(port as t.Node).node)
+  ) {
+    const effective = socketOptionReader(node, specifier, context.state);
+    if (effective !== undefined) {
+      const path = effective("path");
+      if (path === "unknown") return false;
+      if (
+        path !== undefined &&
+        isNullishPlaceholder(path, context.state) === false &&
+        staticJavaScriptTruthiness(path) !== false
+      )
+        return false;
+      if (specifier === "tls") {
+        const socket = effective("socket");
+        if (socket === "unknown") return false;
+        if (
+          socket !== undefined &&
+          isNullishPlaceholder(socket, context.state) === false &&
+          staticJavaScriptTruthiness(socket) !== false
+        )
+          return false;
+      }
+      const effectivePort = effective("port");
+      if (effectivePort === "unknown" || effectivePort === undefined)
+        return false;
+      const resolved = unwrapJavaScriptExpression(effectivePort).node;
+      if (t.isNumericLiteral(resolved))
+        return (
+          !Number.isInteger(resolved.value) ||
+          resolved.value < 0 ||
+          resolved.value > 65535
+        );
+      if (t.isStringLiteral(resolved)) return resolved.value.length === 0;
+      if (t.isNullLiteral(resolved) || t.isBooleanLiteral(resolved)) return true;
+    }
+    return false;
+  }
   if (port === undefined) return specifier === "net";
   if (t.isSpreadElement(port)) return false;
   const value = unwrapJavaScriptExpression(port).node;
