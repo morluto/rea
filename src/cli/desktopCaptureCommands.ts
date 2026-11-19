@@ -29,7 +29,10 @@ import {
   DESKTOP_CAPTURE_DEFAULTS,
   type DesktopCaptureProgress,
 } from "../domain/desktop/desktopCapture.js";
-import { createDesktopCaptureProvider } from "../desktop/DesktopCaptureProvider.js";
+import {
+  createDesktopCaptureProvider,
+  runDesktopTaskReader,
+} from "../desktop/DesktopCaptureProvider.js";
 import { SessionRequestQueue } from "../desktop/DesktopSessionRequests.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { registerCliCommand } from "./commandRegistry.js";
@@ -407,7 +410,7 @@ const registerDesktopExportCommand = (
                     ...withheldRequestOf(options),
                     viewPolicy: options.viewPolicy,
                   },
-                  readers,
+                  { ...readers, taskReader: runDesktopTaskReader },
                   signal,
                 ),
             );

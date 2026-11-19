@@ -601,6 +601,73 @@ describe("exportDesktopApplication with a task's readers", () => {
   });
 });
 
+describe("exportDesktopApplication taskReader port", () => {
+  it("calls the injected taskReader port with the command, timeout, and signal", async () => {
+    const scratch = await createTestTempDirectory("desktop-task-port-");
+    const taskPath = join(scratch, "task.json");
+    const directory = join(scratch, "bundle");
+    const controller = new AbortController();
+    const calls: Array<{
+      readonly argv: readonly string[];
+      readonly timeoutS: number;
+      readonly signal: AbortSignal | undefined;
+    }> = [];
+    await writeFile(
+      taskPath,
+      JSON.stringify(
+        readerTask(["version v2"], {
+          id: "version",
+          file: DATABASE,
+          argv: ["custom-reader", "{file}"],
+          output: "lines",
+          timeout_s: 7,
+        }),
+      ),
+    );
+
+    const result = await exportDesktopApplication(
+      {
+        capture: await writeCaptureFolder(capture()),
+        directory,
+        name: undefined,
+        tasks: [taskPath],
+      },
+      {
+        ...readers,
+        taskReader: async (argv, timeoutS, signal) => {
+          calls.push({ argv, timeoutS, signal });
+          return {
+            exit_code: 0,
+            stdout: `${JSON.stringify({
+              view: {
+                format: "text",
+                view: {
+                  lines: calls.length === 1 ? ["version v2"] : ["version v1"],
+                  line_count: 1,
+                  truncated: false,
+                },
+              },
+            })}\n`,
+            stderr: "",
+            timed_out: false,
+          };
+        },
+      },
+      controller.signal,
+    );
+
+    if (result instanceof Error) throw result;
+    expect(calls).toHaveLength(2);
+    expect(calls.every((call) => call.timeoutS === 37)).toBe(true);
+    expect(calls.every((call) => call.signal === controller.signal)).toBe(true);
+    expect(
+      calls.every((call) =>
+        call.argv.some((part) => part.includes("custom-reader")),
+      ),
+    ).toBe(true);
+  });
+});
+
 /** The notes capture with nothing changed between its checkpoints, as an app that keeps its state on screen leaves it. */
 const screenOnlyCapture = () => {
   const base = capture();

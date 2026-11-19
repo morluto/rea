@@ -25,9 +25,11 @@ import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 import { analysisViewResultSchema } from "../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
-import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
+import { lazyLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { expectCliMcpEvidenceParity } from "../fixtures/cliMcpEvidenceParity.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
+
+const connectLocalToolsMcp = lazyLocalToolsMcp();
 
 cliTest(
   "reads Mach-O inline Go strings beyond a header-only discovery section through CLI and MCP",
@@ -632,6 +634,7 @@ cliTest(
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const evidence = evidenceResultOf(goBinarySchema).parse(result.json);
+    expect(evidence.normalized_result.build_info?.module_text).toBe(moduleText);
     expect(evidence.normalized_result.build_info?.module).toMatchObject({
       path: "example.com/tool/cmd/tool",
       main: null,
@@ -669,11 +672,14 @@ cliTest(
       arguments: ["inspect-analysis-view", requestPath, "--json"],
     });
     expect(viewed.exitCode, viewed.stderr).toBe(0);
-    const result = analysisViewResultSchema.parse(
-      parseEvidence(viewed.json).normalized_result,
-    );
+    const parent = parseEvidence(inspected.json);
+    const projection = parseEvidence(viewed.json);
+    expect(projection.confidence).toBe("derived");
+    const result = analysisViewResultSchema.parse(projection.normalized_result);
     if (result.kind !== "cyclonedx")
       throw new Error("Expected a CycloneDX view");
+    expect(result.parent_evidence_id).toBe(parent.evidence_id);
+    expect(result.parent_operation).toBe("inspect_go_binary");
     const document = result.document;
     expect(document).toMatchObject({
       bomFormat: "CycloneDX",

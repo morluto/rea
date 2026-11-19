@@ -31,8 +31,6 @@ it.each([
 ])(
   "retains above-root traversal before synthetic URL normalization: %s",
   (declaredPath) => {
-    const actual = new URL(declaredPath, "file:///selected-root/app/main.mjs");
-    expect(actual.pathname.startsWith("/selected-root/")).toBe(false);
     expect(
       resolveArtifactPathByContext({
         declaredPath,
@@ -55,8 +53,6 @@ it.each([
 ])(
   "retains an inside-root URL without banning synthetic-looking names: %s",
   (declaredPath, target) => {
-    const actual = new URL(declaredPath, "file:///selected-root/app/main.mjs");
-    expect(actual.pathname).toBe(`/selected-root/${target}`);
     expect(
       resolveArtifactPathByContext({
         declaredPath,

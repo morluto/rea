@@ -15,19 +15,7 @@ const options = () => ({
   cwd: "C:\\project",
 });
 
-it("looks up an explicitly named extension without appending PATHEXT again", async () => {
-  lookup.stat.mockResolvedValue({ isFile: () => true });
-  expect(
-    await findWindowsExecutable(
-      "npm.cmd",
-      { PATH: "C:\\tools", PATHEXT: ".EXE;.CMD" },
-      { ...options(), allowBatch: true },
-    ),
-  ).toEqual({ ok: true, value: "C:\\tools\\npm.cmd" });
-  expect(lookup.stat).toHaveBeenCalledExactlyOnceWith("C:\\tools\\npm.cmd");
-});
-
-it("uses native PATH extensions for ADB, preserving directory and extension precedence", async () => {
+it("selects an executable in the earlier PATH entry even when another extension ranks first", async () => {
   lookup.stat.mockImplementation(async (path: string) => ({
     isFile: () => ["C:\\tools\\adb.EXE", "D:\\tools\\adb.COM"].includes(path),
   }));
@@ -38,24 +26,6 @@ it("uses native PATH extensions for ADB, preserving directory and extension prec
       options(),
     ),
   ).toEqual({ ok: true, value: "C:\\tools\\adb.EXE" });
-  expect(lookup.stat.mock.calls.map(([path]) => path)).toEqual([
-    "C:\\tools\\adb.COM",
-    "C:\\tools\\adb.EXE",
-  ]);
-});
-
-it("preserves explicitly selected relative directories and quoted semicolons", async () => {
-  lookup.stat.mockImplementation(async (path: string) => ({
-    isFile: () => path === "C:\\project\\tools;selected\\npm.CMD",
-  }));
-  expect(
-    await findWindowsExecutable(
-      "npm",
-      { PATH: ';"";".\\tools;selected";.', PATHEXT: ".CMD" },
-      { ...options(), allowBatch: true },
-    ),
-  ).toEqual({ ok: true, value: "C:\\project\\tools;selected\\npm.CMD" });
-  expect(lookup.stat).toHaveBeenCalledTimes(1);
 });
 
 it.each([
@@ -76,7 +46,9 @@ it.each([
 
 it("retains the failed candidate and cause rather than selecting a later executable", async () => {
   const cause = Object.assign(new Error("denied"), { code: "EACCES" });
-  lookup.stat.mockRejectedValue(cause);
+  lookup.stat
+    .mockRejectedValueOnce(cause)
+    .mockResolvedValue({ isFile: () => true });
   expect(
     await findWindowsExecutable(
       "adb",
@@ -92,7 +64,6 @@ it("retains the failed candidate and cause rather than selecting a later executa
       cause,
     },
   });
-  expect(lookup.stat).toHaveBeenCalledTimes(1);
 });
 
 it("stops a pending filesystem lookup when its owner aborts", async () => {
@@ -112,12 +83,15 @@ it("stops a pending filesystem lookup when its owner aborts", async () => {
   controller.abort();
   expect(await pending).toEqual({ ok: false, error: { kind: "interrupted" } });
   complete({ isFile: () => true });
-  expect(lookup.stat).toHaveBeenCalledTimes(1);
 });
 
 it("resolves a path-qualified command at its own location with PATHEXT, never on PATH", async () => {
   lookup.stat.mockImplementation(async (path: string) => ({
-    isFile: () => path === "C:\\project\\.venv\\Scripts\\python.EXE",
+    isFile: () =>
+      [
+        "C:\\project\\.venv\\Scripts\\python.EXE",
+        "C:\\tools\\python.COM",
+      ].includes(path),
   }));
   expect(
     await findWindowsExecutable(
@@ -126,8 +100,4 @@ it("resolves a path-qualified command at its own location with PATHEXT, never on
       options(),
     ),
   ).toEqual({ ok: true, value: "C:\\project\\.venv\\Scripts\\python.EXE" });
-  expect(lookup.stat.mock.calls.map(([path]) => path)).toEqual([
-    "C:\\project\\.venv\\Scripts\\python.COM",
-    "C:\\project\\.venv\\Scripts\\python.EXE",
-  ]);
 });

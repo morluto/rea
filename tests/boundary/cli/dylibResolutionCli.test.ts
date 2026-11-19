@@ -943,6 +943,26 @@ cliTest(
 );
 
 cliTest(
+  "preserves the architecture of a thin trace subject",
+  async ({ cli }) => {
+    const directory = await createTestTempDirectory("rea-dylib-thin-subject-");
+    await writeFiles(directory, {
+      tool: machoImage({ cpu: CPU.arm64 }),
+    });
+    const result = await cli.run({
+      arguments: ["trace-dylib-resolution", join(directory, "tool"), "--json"],
+      environment: ENVIRONMENT,
+    });
+    expect(result.exitCode, JSON.stringify(result.json)).toBe(0);
+    expect(parseEvidence(result.json).subject?.identity).toMatchObject({
+      format: "mach-o",
+      architecture: "arm64",
+      selection: null,
+    });
+  },
+);
+
+cliTest(
   "names a universal image without the opened slice as the trace subject",
   async ({ cli }) => {
     // Opening the file selects one host slice; a trace covers the slices its

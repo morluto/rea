@@ -374,7 +374,6 @@ async function assertProviderCacheCallers(
   for (const name of [
     "sqlite-runtime",
     "nativeaot",
-    "ghidra_bridge",
     "android_metadata",
     "website",
   ])
@@ -432,6 +431,7 @@ it("binds provider build reuse to the current run while keeping standalone dispa
     "packet_capture",
     "signal_recording",
     "go_binary",
+    "ghidra_bridge",
   ];
   const buildTerms = z
     .string()

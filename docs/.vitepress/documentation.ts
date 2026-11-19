@@ -213,6 +213,11 @@ export const documentationSections = [
         source: "guides/managed/managed-code-analysis.md",
         route: "/managed-code-analysis",
       },
+      {
+        text: "NuGet packages",
+        source: "guides/managed/nuget-nupkg.md",
+        route: "/nuget-nupkg",
+      },
     ],
   },
   {
@@ -539,9 +544,19 @@ export const documentationSections = [
         route: "/agent-environments",
       },
       {
+        text: "Android boot and vendor_boot images",
+        source: "android-boot-image.md",
+        route: "/android-boot-image",
+      },
+      {
         text: "APK signature schemes",
         source: "apk-signature.md",
         route: "/apk-signature",
+      },
+      {
+        text: "Android OTA update payloads",
+        source: "guides/firmware/android-ota-payload.md",
+        route: "/android-ota-payload",
       },
       {
         text: "Apple IPS crash reports",
@@ -629,6 +644,11 @@ export const documentationSections = [
         text: "Kuna provider",
         source: "kuna-provider.md",
         route: "/kuna-provider",
+      },
+      {
+        text: "Maven POM and Gradle module metadata",
+        source: "maven-gradle-metadata.md",
+        route: "/maven-gradle-metadata",
       },
       {
         text: "Model file declarations",

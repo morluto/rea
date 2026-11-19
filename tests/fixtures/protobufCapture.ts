@@ -1,6 +1,24 @@
 import { create, toBinary } from "@bufbuild/protobuf";
 import { FileDescriptorSetSchema } from "@bufbuild/protobuf/wkt";
 
+/**
+ * protoc 31.1 --include_imports golden, with two distinct imported filenames:
+ * dep.proto: syntax="proto3"; package plain; message Item { uint32 number=1; }
+ * \uFEFFdep.proto: syntax="proto3"; package marked; message Item { string text=1; }
+ * root.proto imports both and defines capture.Root with plain.Item plain=1
+ * and marked.Item marked=2. U+FEFF is filename data, not a document BOM.
+ */
+export const protobufBomDescriptor = (): Buffer =>
+  Buffer.from(
+    "0a3a0a096465702e70726f746f1205706c61696e221e0a044974656d12160a066e756d6265721801200128" +
+      "0d52066e756d626572620670726f746f330a3a0a0cefbbbf6465702e70726f746f12066d61726b6564221a" +
+      "0a044974656d12120a0474657874180120012809520474657874620670726f746f330a87010a0a726f6f74" +
+      "2e70726f746f1207636170747572651a096465702e70726f746f1a0cefbbbf6465702e70726f746f224f0a" +
+      "04526f6f7412210a05706c61696e18012001280b320b2e706c61696e2e4974656d5205706c61696e12240a" +
+      "066d61726b656418022001280b320c2e6d61726b65642e4974656d52066d61726b6564620670726f746f33",
+    "hex",
+  );
+
 export const protobufFrame = (body: Buffer, flag = 0): Buffer => {
   const header = Buffer.alloc(5);
   header[0] = flag;

@@ -82,6 +82,20 @@ it.each([48, 72])(
   },
 );
 
+it("rejects a FILE_NAME attribute with an undefined namespace", () => {
+  const value = Buffer.alloc(66);
+  value[65] = 4;
+  const result = scan(resident(0x30, value));
+  expect(result).toMatchObject({
+    attributeCoverage: "incomplete",
+    attributeIssue: {
+      kind: "malformed",
+      message: "FILE_NAME namespace is outside the NTFS range",
+    },
+    fileNames: [],
+  });
+});
+
 it("retains fragmented and sparse mapping pairs and lossless nonresident sizes without reading a volume", () => {
   const attribute = nonresident();
   const original = Buffer.from(attribute);

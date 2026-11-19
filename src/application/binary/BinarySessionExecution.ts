@@ -21,7 +21,7 @@ import type {
 import { offeredOperationAlternatives } from "../OperationAlternatives.js";
 import {
   isSnapshotCacheable,
-  requestsFreshIndependentDecompile,
+  requestsStandaloneDecompile,
   requiresNativeSourceAdmissionBeforeReplay,
 } from "./AnalysisSnapshotCache.js";
 import type { SessionProviderRoute } from "./SessionProviderRouter.js";
@@ -142,17 +142,22 @@ export const prepareSessionExecution = (
       ),
     );
   }
-  if (
-    requestsFreshIndependentDecompile(operation, parameters) &&
-    capability.independentDecompile !== true
-  )
-    return err(
-      new AnalysisCapabilityUnavailableError(
-        capability.provider.id,
-        operation,
-        "This provider does not declare fresh independent decompilation.",
-      ),
-    );
+  if (requestsStandaloneDecompile(operation, parameters)) {
+    const callDestination = parameters.analysis === "call_destination";
+    const declared = callDestination
+      ? capability.callDestinationDecompile
+      : capability.independentDecompile;
+    if (declared !== true)
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          capability.provider.id,
+          operation,
+          callDestination
+            ? "This provider does not declare call-destination decompilation."
+            : "This provider does not declare fresh independent decompilation.",
+        ),
+      );
+  }
   const profile =
     active.profile !== null &&
     capability.provider.id === active.profile.provider.id
