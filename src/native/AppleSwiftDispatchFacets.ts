@@ -1,12 +1,15 @@
 import { decodeLimit, parseFailureFromCause } from "../domain/parseFailure.js";
 import {
+  BinaryReader,
+  BinaryFormatFailure,
+} from "../domain/binaryContainer.js";
+import {
   createSwiftContextReader,
   type SwiftContextReader,
 } from "./AppleSwiftNominalTypes.js";
 import type { ObjcSwiftMetadata } from "../domain/native/objcSwiftMetadata.js";
 import type { PointerResolution } from "../domain/apple/appleMachoFixups.js";
 import type { Segment, Section } from "../domain/apple/appleMachoSelection.js";
-import { BinaryFormatFailure } from "../domain/binaryContainer.js";
 import {
   issue,
   type FacetDecodeFacts,
@@ -214,7 +217,13 @@ export const createSwiftRelativeReader = (input: {
     const indirectable = contract.encoding === "indirectable";
     const taggedDirect = contract.encoding === "taggedDirect";
     const nullable = contract.nullability === "nullable";
-    const displacement = bytes.readInt32LE(read.offset(field, 4));
+    // The relative displacement is a signed 32-bit field at a slot the loader already
+    // resolved; the shared reader repeats the range check and names the format.
+    const displacement = new BinaryReader(
+      bytes,
+      true,
+      "macho-swift-dispatch-facets",
+    ).i32(read.offset(field, 4));
     const encodingTag = taggedDirect ? displacement & 3 : undefined;
     if (encodingTag !== undefined && encodingTag !== 0) {
       const reason = `Unsupported Swift type metadata record tag ${encodingTag}`;
