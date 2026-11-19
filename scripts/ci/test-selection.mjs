@@ -64,8 +64,8 @@ const isCheckerInput = (path) =>
   /^tests\/support\/analysis-efficiency\/.+\.py$/u.test(path) ||
   /^scripts\/verify\/baselines\/[^/]+\.json$/u.test(path) ||
   /^scripts\/verify\/advertised-schemas\/tools\/[^/]+\.json$/u.test(path);
-// Non-module fixtures with a single known owning test suite.
-const EXPLICIT_FIXTURE_OWNERS = [
+// Inputs whose owning tests are not reachable through the selection graph.
+const EXPLICIT_TEST_OWNERS = [
   [
     "tests/fixtures/cli-parity/*.txt",
     "tests/boundary/cli/cliParityGoldens.test.ts",
@@ -74,9 +74,13 @@ const EXPLICIT_FIXTURE_OWNERS = [
     "tests/boundary/cli/cliContractSchemaParity.uncomparable.json",
     "tests/boundary/cli/cliContractSchemaParity.test.ts",
   ],
+  [
+    "src/domain/managed/managedMemberPointers.ts",
+    "src/dotnet/ManagedMemberPointers.test.ts",
+  ],
 ];
-const explicitFixtureOwners = (path) =>
-  EXPLICIT_FIXTURE_OWNERS.filter(([pattern]) => matchesGlob(path, pattern)).map(
+const explicitTestOwners = (path) =>
+  EXPLICIT_TEST_OWNERS.filter(([pattern]) => matchesGlob(path, pattern)).map(
     ([, owner]) => owner,
   );
 // Verifier scripts are imported by their tests like source modules.
@@ -134,7 +138,7 @@ const isNonModuleFixture = (path) =>
   !isModule(path) &&
   !isProse(path) &&
   !isCheckerInput(path) &&
-  explicitFixtureOwners(path).length === 0;
+  explicitTestOwners(path).length === 0;
 /** Why a changed path cannot be traced to tests, if it cannot. */
 const untracedInput = (path) =>
   !isTest(path) && SHARED_BOUNDARY.test(path)
@@ -143,7 +147,7 @@ const untracedInput = (path) =>
         !isProse(path) &&
         !isCheckerInput(path) &&
         !isNonModuleFixture(path) &&
-        explicitFixtureOwners(path).length === 0
+        explicitTestOwners(path).length === 0
       ? `Input is not traced to tests: ${path}`
       : undefined;
 
@@ -194,7 +198,7 @@ export function traceAffectedTests({ files, snapshot }) {
   const changedNonModuleFixtures = files.filter(isNonModuleFixture);
   for (const path of files) {
     if (isTest(path)) select(path, "changed");
-    for (const owner of explicitFixtureOwners(path)) {
+    for (const owner of explicitTestOwners(path)) {
       if (!trackedSet.has(owner))
         untraced.push(`Missing test owner ${owner} for ${path}`);
       else select(owner, "owner");

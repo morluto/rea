@@ -148,6 +148,9 @@ PDB identity or complete symbol-coverage attestation, and retains an inline
 coverage caveat. Handshake PDB strings share a 4096 UTF-16-unit serialization
 budget (at most 24 KiB after JSON escaping); whole attributes that do not fit
 are omitted with an explicit resource limitation, rather than truncated.
+When the CodeView path's text encoding is unknown, the caveat identifies that
+uncertainty and retains the original path bytes in hex when they fit the inline
+locator budget. This observation is independent of Ghidra's reported filename.
 
 Original names and types may be missing even when auto-analysis completes.
 An empty name search does not establish that a function is absent; use

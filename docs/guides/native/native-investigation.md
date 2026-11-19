@@ -701,6 +701,10 @@ Available CPU type, subtype/capability bits, byte range, and alignment remain
 checked against the source bytes. Inventory records source ranges and hashes, and
 extraction copies those ranges without running the target. This does not
 expand any analysis provider's supported architectures.
+An unnamed architecture can carry a numeric CPU type and base subtype in
+`lipo`'s label. The `PTR_AUTH_VERSION` line identifies a userspace or kernel
+ABI, while the exact version and full subtype code remain unknown when that
+line is the only capability information.
 Malformed successful `lipo` output reports a format failure with its parse
 diagnostic.
 Apple lipo's hidden ARM64 compatibility row is retained separately from the

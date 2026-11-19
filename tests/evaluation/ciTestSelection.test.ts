@@ -189,6 +189,24 @@ it("selects tests under shared-boundary directories and declared fixture owners,
   });
 });
 
+it("includes the declared integration test for managed pointer row changes", () => {
+  const changed = "src/domain/managed/managedMemberPointers.ts";
+  const direct = "src/dotnet/ManagedMemberPointerBudget.test.ts";
+  const owner = "src/dotnet/ManagedMemberPointers.test.ts";
+  const sources = {
+    [changed]: "",
+    [direct]: 'import "../domain/managed/managedMemberPointers.js";',
+  };
+  expect(selectedFiles(plan([changed], { ...sources, [owner]: "" }))).toEqual([
+    direct,
+    owner,
+  ]);
+  expect(plan([changed], sources)).toMatchObject({
+    mode: "full",
+    reason: `Missing test owner ${owner} for ${changed}`,
+  });
+});
+
 it("traces shared script modules to their tests and falls back for other consumers", () => {
   const sources = {
     "scripts/lib/shared.mjs": "",

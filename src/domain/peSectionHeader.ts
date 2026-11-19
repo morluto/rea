@@ -2,6 +2,12 @@ import { err, ok } from "./result.js";
 
 export const PE_SECTION_HEADER_BYTES = 40;
 
+/** A zero VirtualSize falls back to the section's raw size. */
+export const peSectionVirtualExtent = (
+  virtualSize: number,
+  rawSize: number,
+): number => (virtualSize === 0 ? rawSize : virtualSize);
+
 /** Locate the COFF section table from the declared optional-header span. */
 export const peSectionTableExtent = (
   optionalHeaderOffset: number,
@@ -61,6 +67,6 @@ export const readPeSectionHeader = (bytes: Buffer) => {
     characteristics: bytes.readUInt32LE(36),
     // Content excludes file-alignment padding; raw_size remains available to
     // consumers that validate physical file ranges.
-    size: virtual_size === 0 ? raw_size : Math.min(virtual_size, raw_size),
+    size: Math.min(peSectionVirtualExtent(virtual_size, raw_size), raw_size),
   });
 };

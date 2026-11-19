@@ -59,18 +59,25 @@ for (const bits of [32, 64] as const) {
   );
 
   cliTest(
-    `retains PE${bits} TLS template metadata in virtual zero padding`,
+    `reports PE${bits} TLS template metadata across section extent boundaries`,
     async ({ cli }) => {
       const root = await createTestTempDirectory("rea-pe-config-padding-cli-");
-      for (const range of [
-        [0x2180, 0x2280],
-        [0x2200, 0x2300],
+      for (const [range, virtualSize, fileOffset, section] of [
+        [[0x2010, 0x2020], 0x20, 0x1610, ".text"],
+        [[0x2010, 0x2020], 0, 0x1610, ".text"],
+        [[0x2180, 0x2280], undefined, null, ".text"],
+        [[0x2200, 0x2300], undefined, null, ".text"],
+        [[0x2010, 0x2020], 0x10, null, null],
       ] as const) {
+        const zeroFillCallback = virtualSize === undefined;
         await writeFile(
           join(root, "app.exe"),
           peLoadConfigImage({
             bits,
-            zeroFillCallback: true,
+            zeroFillCallback,
+            ...(virtualSize === undefined
+              ? {}
+              : { textVirtualSize: virtualSize }),
             rawDataRange: range,
           }),
         );
@@ -82,12 +89,17 @@ for (const bits of [32, 64] as const) {
         const evidence = toolContract(
           "inspect_pe_load_config",
         ).outputSchema.parse(result.json);
+        const base = bits === 32 ? 0x10000000n : 0x180000000n;
         expect(evidence.normalized_result.tls).toMatchObject({
-          raw_data_size: 256,
-          raw_data_file_offset: null,
-          raw_data_section: ".text",
+          start_address_of_raw_data: `0x${(base + BigInt(range[0])).toString(16)}`,
+          end_address_of_raw_data: `0x${(base + BigInt(range[1])).toString(16)}`,
+          raw_data_size: range[1] - range[0],
+          raw_data_file_offset: fileOffset,
+          raw_data_section: section,
         });
-        expect(evidence.normalized_result.tls?.callbacks).toHaveLength(1);
+        expect(evidence.normalized_result.tls?.callbacks).toHaveLength(
+          zeroFillCallback ? 1 : 3,
+        );
         expect(evidence.normalized_result.load_config?.guard_flags?.raw).toBe(
           0x500,
         );

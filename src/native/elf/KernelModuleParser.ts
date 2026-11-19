@@ -13,9 +13,10 @@ import {
   type InspectKernelModuleInput,
 } from "../../domain/native/kernelModule.js";
 import type { AnalysisParameterLimit } from "../../domain/analysisSettings.js";
-import type {
-  ImageSection,
-  BinaryContainer,
+import {
+  BinaryReader,
+  type ImageSection,
+  type BinaryContainer,
 } from "../../domain/binaryContainer.js";
 import { readElfImage } from "../../domain/native/elfImage.js";
 import { kernelCompressionCodecAt } from "./KernelCompressionCodec.js";
@@ -438,21 +439,23 @@ const parseSignature = (bytes: Buffer): Report["signature"] => {
       reason: "signature_trailer_truncated",
     };
   const infoOffset = magic.offset - MODULE_SIGNATURE_INFO_BYTES;
+  const footer = new BinaryReader(
+    bytes.subarray(infoOffset, magic.offset),
+    false,
+    "elf",
+  );
   const info = {
     location: { offset: infoOffset, bytes: MODULE_SIGNATURE_INFO_BYTES },
-    algo: bytes[infoOffset] ?? 0,
-    hash: bytes[infoOffset + 1] ?? 0,
-    id_type: bytes[infoOffset + 2] ?? 0,
-    signer_len: bytes[infoOffset + 3] ?? 0,
-    key_id_len: bytes[infoOffset + 4] ?? 0,
-    pad: [
-      bytes[infoOffset + 5] ?? 0,
-      bytes[infoOffset + 6] ?? 0,
-      bytes[infoOffset + 7] ?? 0,
-    ] as [number, number, number],
-    sig_len: bytes.readUInt32BE(infoOffset + 8),
+    algo: footer.u8(0),
+    hash: footer.u8(1),
+    id_type: footer.u8(2),
+    signer_len: footer.u8(3),
+    key_id_len: footer.u8(4),
+    pad: [footer.u8(5), footer.u8(6), footer.u8(7)] as [number, number, number],
+    sig_len: footer.u32(8),
   };
-  if (info.sig_len >= infoOffset)
+  const isPkcs7 = info.id_type === MODULE_SIGNATURE_PKCS7_ID_TYPE;
+  if (info.sig_len >= infoOffset || (isPkcs7 && info.sig_len === 0))
     return {
       status: "malformed",
       magic,
@@ -460,7 +463,7 @@ const parseSignature = (bytes: Buffer): Report["signature"] => {
       pkcs7: null,
       reason: "signature_length_inconsistent",
     };
-  if (info.id_type !== MODULE_SIGNATURE_PKCS7_ID_TYPE)
+  if (!isPkcs7)
     return {
       status: "unsupported",
       magic,
