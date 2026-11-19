@@ -376,7 +376,11 @@ ES module import. Direct execution and require can reject the same source.
 A plain hashbang stays valid.
 
 Plain `.ts` artifact sources use TypeScript syntax without JSX, including
-angle-bracket type assertions. `.tsx` and `.jsx` retain JSX parsing.
+angle-bracket type assertions. Application analysis and reference imports share
+Babel's syntax rules for `.cts` and `.mts`. Ambiguous generic arrows such as
+`<T>(value: T) => value` can produce a diagnostic while recovered declarations
+remain available. These diagnostics reflect REA's parser grammar.
+`.tsx` and `.jsx` retain JSX parsing.
 JavaScript sources use JavaScript grammar with JSX, never TypeScript syntax,
 so valid JavaScript that TypeScript reads differently keeps its JavaScript
 meaning.
