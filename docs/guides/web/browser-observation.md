@@ -24,6 +24,8 @@ authority are validated independently before selection and connection.
 - `list_browser_targets` / `rea list-browser-targets` discovers all eligible page targets at the endpoint by default, with an optional exact-origin filter.
 - `inspect_web_page` / `rea inspect-web-page` captures DOM structure, accessibility nodes, scripts, resources, safe response/DOM metadata, attach-window network and console metadata, WebSocket frame sizes, workers, quota, and optionally selected storage key names, redacted storage-content fingerprints, or script sources.
 - `analyze_web_bundle` / `rea analyze-web-bundle` parses selected script artifacts without execution and derives chunk edges, route and endpoint candidates, vendor fingerprints, static WebMCP declarations, and optionally source-map/original-source evidence.
+  Sources reported as JavaScript use JavaScript grammar even when the script
+  has no URL or its URL ends in a different source extension.
   A `worker_import` chunk edge records a literal argument to an ambient
   `importScripts()` call. The edge describes recovered source syntax. Whether
   the call ran in a classic worker remains a runtime question.

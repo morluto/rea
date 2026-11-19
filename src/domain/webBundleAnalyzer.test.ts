@@ -15,7 +15,34 @@ import { createWebTextArtifact } from "./webContentArtifact.js";
 
 const origin = "https://app.example.test";
 
-it("shares runtime module declarations with source analysis while retaining inline type side effects", () => {
+it("uses JavaScript grammar for scripts identified by the capture", () => {
+  const source = [
+    "const pick=n===0?H=>({start:H.startY}):H=>({start:H.startX});",
+    'import("./after.js");',
+  ].join("\n");
+  const result = analyzeWebBundleFixture(inspection(source));
+  expect(result.completeness).toMatchObject({
+    parsed_scripts: 1,
+    parse_failures: 0,
+  });
+  expect(result.observations.chunks.edges).toMatchObject([
+    {
+      kind: "dynamic_import",
+      specifier: "./after.js",
+    },
+  ]);
+});
+
+it("keeps JavaScript comparisons from becoming generic endpoint calls", () => {
+  const result = analyzeWebBundleFixture(
+    inspection('const value = fetch<limit>("/comparison"); fetch("/actual");'),
+  );
+  expect(result.observations.endpoints.map(({ value }) => value)).toEqual([
+    "/actual",
+  ]);
+});
+
+it("recovers runtime imports and inline type side effects when capture language is unknown", () => {
   const source = `
     import type {T} from "./erased-import";
     export type {T} from "./erased-export";
@@ -27,7 +54,7 @@ it("shares runtime module declarations with source analysis while retaining inli
     export const local = 1;
   `;
   const expected = ["./inline-import", "./inline-export", "", "./runtime"];
-  const result = analyzeWebBundleFixture(inspection(source));
+  const result = analyzeWebBundleFixture(inspection(source, null));
   expect(result.completeness.parse_failures).toBe(0);
   expect(
     result.observations.chunks.edges.map(({ specifier }) => specifier),
@@ -1269,7 +1296,7 @@ describe("deep captured web bundle syntax", () => {
   });
 });
 
-const inspection = (source: string) =>
+const inspection = (source: string, language: string | null = "JavaScript") =>
   createWebPageInspection([
     {
       source,
@@ -1277,6 +1304,7 @@ const inspection = (source: string) =>
       url: `${origin}/assets/app.js`,
       origin,
       cdpHash: "hash",
+      language,
     },
   ]);
 
