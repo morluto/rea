@@ -1,5 +1,11 @@
 import { constants as bufferConstants } from "node:buffer";
-import { constants, zstdCompressSync, zstdDecompressSync } from "node:zlib";
+import { promisify } from "node:util";
+import {
+  constants,
+  zstdCompressSync,
+  zstdDecompress,
+  zstdDecompressSync,
+} from "node:zlib";
 import { nodeCodecResult } from "../../kernel/nodeCodecResult.js";
 import { hostRangeErrorKind } from "../parseFailure.js";
 import type { ConfigurationError } from "../configurationErrors.js";
@@ -323,6 +329,8 @@ const nodeDecodesStrictSequence = (): boolean => {
   return strictSequence;
 };
 
+const unzstd = promisify(zstdDecompress);
+
 const decompress = (
   input: Uint8Array,
   offset: number,
@@ -345,6 +353,32 @@ const decompress = (
     if (result.consumedBytes !== input.length)
       return failure("malformed", offset, "unconsumed_input");
     return { bytes: result.buffer };
+  } catch (cause: unknown) {
+    return decoderFailure(cause, offset);
+  }
+};
+
+/** Async strict decode so a large sequence does not block the event loop. */
+const decompressSequence = async (
+  input: Uint8Array,
+  offset: number,
+  options: DecompressOptions,
+): Promise<{ readonly bytes: Buffer } | ZstandardFrameFailure> => {
+  try {
+    const result = nodeCodecResult(
+      await unzstd(input, {
+        info: true,
+        rejectGarbageAfterEnd: true,
+        maxOutputLength: Math.max(1, options.maxOutputLength),
+        ...(options.dictionary === undefined
+          ? {}
+          : { dictionary: options.dictionary }),
+        params: { [constants.ZSTD_d_windowLogMax]: options.windowLogMax },
+      }),
+    );
+    if (result.consumedBytes !== input.length)
+      return failure("malformed", offset, "unconsumed_input");
+    return { bytes: ownedZstandardBytes(result.buffer) };
   } catch (cause: unknown) {
     return decoderFailure(cause, offset);
   }
@@ -393,12 +427,20 @@ const finishFrames = (
   chunks: readonly Buffer[],
   consumed: number,
   frames: number,
-): ZstandardFrameSuccess => ({
-  ok: true,
-  bytes: chunks.length === 0 ? Buffer.alloc(0) : Buffer.concat(chunks),
-  consumedBytes: consumed,
-  frames,
-});
+): ZstandardFrameSuccess => {
+  const only = chunks.length === 1 ? chunks[0] : undefined;
+  return {
+    ok: true,
+    bytes:
+      only !== undefined
+        ? only
+        : chunks.length === 0
+          ? Buffer.alloc(0)
+          : Buffer.concat(chunks),
+    consumedBytes: consumed,
+    frames,
+  };
+};
 
 const decodeFrames = (
   bytes: Uint8Array,
@@ -498,8 +540,9 @@ export const decodeZstandardFrames = (
 /**
  * The same decode as {@link decodeZstandardFrames}, but the frame-by-frame
  * fallback awaits `pause` before each data frame. A caller that owns a
- * cancellation signal can yield there; the strict one-shot path awaits
- * `pause` once before that single decode.
+ * cancellation signal can yield there. The strict sequence uses the async
+ * decoder, and `pause` runs again after it so an abort during that decode
+ * is visible before success is returned.
  */
 export const decodeZstandardFramesCooperative = async (
   bytes: Uint8Array,
@@ -510,11 +553,23 @@ export const decodeZstandardFramesCooperative = async (
   if ("reason" in prepared) return prepared;
   if (prepared.options.rejectTrailing) {
     await pause();
-    return decodeFrames(
-      bytes,
-      prepared.frames,
-      prepared.consumed,
+    const decoded = await decompressSequence(
+      bytes.subarray(0, prepared.consumed),
+      0,
       prepared.options,
+    );
+    if (isFrameFailure(decoded)) return decoded;
+    const bounded = withinOutput(
+      decoded.bytes,
+      prepared.options.maxOutputLength,
+      0,
+    );
+    if (isFrameFailure(bounded)) return bounded;
+    await pause();
+    return finishFrames(
+      [bounded.bytes],
+      prepared.consumed,
+      prepared.frames.length,
     );
   }
   const chunks: Buffer[] = [];

@@ -616,10 +616,14 @@ export const ANALYSIS_SETTINGS = {
     unit: "count",
     appliesAt: "next_operation",
     provider: "rea-artifact-graph",
+    relatedProviders: ["gpu-code-objects", "rea-dwarf-units", "rea-elf-notes"],
     operations: [
       "inspect_binary_layout",
       "inspect_artifact",
       "extract_artifact",
+      "inspect_gpu_code_objects",
+      "inspect_dwarf_units",
+      "inspect_elf_notes",
     ],
   },
 } as const satisfies Record<AnalysisSettingId, SettingDefinition>;

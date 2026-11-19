@@ -156,6 +156,29 @@ it("keeps accepted operations and their typed provider views stable across concu
   });
 });
 
+it("lists zstd.max_frames for every operation that enforces the cap", () => {
+  const store = new AnalysisSettings({});
+  for (const operation of [
+    "inspect_binary_layout",
+    "inspect_artifact",
+    "extract_artifact",
+    "inspect_gpu_code_objects",
+    "inspect_dwarf_units",
+    "inspect_elf_notes",
+  ])
+    expect(
+      store.inspect({ operation }).settings.map(({ setting }) => setting),
+    ).toContain("zstd.max_frames");
+  for (const provider of [
+    "gpu-code-objects",
+    "rea-dwarf-units",
+    "rea-elf-notes",
+  ])
+    expect(
+      store.inspect({ provider }).settings.map(({ setting }) => setting),
+    ).toContain("zstd.max_frames");
+});
+
 it("exposes shared provider controls and preserves the explicit unbounded decompile value", () => {
   const environment = {
     REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS: "7",
