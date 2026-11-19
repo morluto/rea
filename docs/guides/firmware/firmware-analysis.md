@@ -26,6 +26,95 @@ MCP, summary delivery and selected supporting facts. Its real-data verification
 covers a pair of OpenWrt FIT releases; it does not establish comparison of
 decoded root filesystems or arbitrary firmware formats.
 
+## UEFI flash images and AMI NVRAM
+
+The bundled UEFI tools map PI firmware volumes, FFS files and sections in local
+flash images. They also report plausible AMD PSP directory tables and scan for
+AMI NVAR chains such as `StdDefaults`. They run independently of Binwalk and
+Unblob. FFS file and section discovery applies to FFS2 and FFS3 volumes.
+Volumes with other file-system GUIDs retain their header and extent, with the
+body reported as unparsed. REA checks the volume header and block map against
+the declared volume extent. FFS traversal accounts for volume extensions and
+retains valid files after an unusable file header. A truncated file body
+does not receive a verified checksum verdict.
+
+```sh
+rea inspect-uefi-firmware /path/to/flash.bin --json
+rea inspect-uefi-nvram /path/to/flash.bin --json
+rea extract-uefi-firmware /path/to/flash.bin /path/to/new-output \
+  --volume-offset 4096 --source-stream flash --json
+```
+
+Use `inspect_uefi_firmware` and `inspect_uefi_nvram` from MCP with
+`{"path":"/path/to/flash.bin"}`. To extract a mapped flash-backed volume:
+
+```json
+{
+  "name": "extract_uefi_firmware",
+  "arguments": {
+    "path": "/path/to/flash.bin",
+    "output_directory": "/path/to/new-output",
+    "target": { "kind": "volume", "offset": 4096, "source_stream": null }
+  }
+}
+```
+
+Extraction also accepts `ffs-file`, `section`, and `whole-image` targets.
+Volume, file, and section targets include mapped descendants. Unparsed ranges
+within the selection appear in `extraction_gaps` and make extraction partial.
+The gap names the owning volume, file, or section and its source stream.
+A gap in one volume leaves a fully extracted sibling's coverage complete.
+Erased padding alone does not make a mapped volume partial. A whole-image
+request that maps no volumes reports a gap with no published payloads.
+A decoded record's
+offset starts at zero in the stream named by `source_stream`. Pass that carrier
+logical path when extracting by offset. For the original image, use MCP
+`source_stream: null` or CLI `--source-stream flash` to disambiguate offsets.
+Files carved directly from the image have an `original_file_range`. Decoded
+files have a null original range and retain their byte range in the named
+stream. Read `derivations` to trace each decoded stream back to its carrier.
+
+LZMA-custom, LZMAF86, and AMD-zlib can yield nested volumes or section chains.
+The LZMAF86 worker reverses the x86 branch filter before mapping decoded bytes.
+A decoder limit makes inspection partial and appears as a size gap in
+extraction. When decoded bytes lack confirmed framing, extraction retains the
+decoded stream and reports its unparsed range. When the common section header
+bounds a malformed section, extraction reports that section's range and keeps
+later valid sections selectable. Leaf payload ranges exclude type-specific
+header fields. Nonzero bytes between aligned sections appear as a gap and
+later sections remain selectable.
+Readable guided section streams are mapped directly when the section does
+not require processing. Guided integrity and authentication remain unverified.
+EFI standard compression and unsupported guided handlers make inspection
+partial and produce extraction gaps. Set MCP `include_compressed` to false or pass
+`--no-include-compressed` to omit undecoded carriers. PSP tables require a matching directory checksum. Failed checks stay in
+the candidate list, and entry locations remain unverified declarations. NVAR results report names, data ranges and hashes,
+raw 24-bit record-relative links (with `0xffffff` for terminal links), and
+8-bit attributes. A named record holds either a GUID-table index or an inline
+GUID. Data-only records have neither. Links remain observations and variable
+contents are retained as byte ranges. A nested NVAR chain can begin with a
+framed inactive record. The scan continues past framed inactive entries and
+reports partial coverage for incomplete successors.
+
+UEFI operations accept up to 128 MiB per image, with a shared limit of 100,000
+structural records. Artifact inventory applies the same ceiling to volume
+candidates and their block maps. Inventory reports unknown coverage when
+a volume exceeds the readable range, the file walk meets an unparsed suffix,
+or a scan limit is reached.
+The nesting depth defaults to 3 for firmware and 2 for NVAR. Decoding is limited to 64 MiB per stream and 128 MiB across one operation.
+An admitted operation has a 60-second deadline covering input, parsing,
+decoding, and staging. Owned cleanup can continue past the deadline. Extraction
+defaults to 10,000 files and 256 MiB of published file bytes in a fresh path
+with an existing parent. Review `coverage`, `limitations`, and
+`extraction_gaps` before relying on completeness.
+
+The separate `open_binary` flash admission path requires a signature in the
+first MiB and an aligned, structurally plausible FFS2 or FFS3 volume in the
+bounded scan. Flash admission provides an artifact inventory. For executable
+analysis, pass the returned path of an extracted PE32 payload to
+`open_binary` and choose a provider that supports its format and architecture.
+Runtime addresses remain unknown.
+
 ## Caller-supplied tools
 
 Provide existing tools using absolute executable paths, scoped to your shell:
