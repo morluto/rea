@@ -227,12 +227,9 @@ const captureAuthorizedPage = async (
       "not_approved",
       null,
     );
-  else if (storageCapture.cacheEntriesExclusion !== undefined)
-    state.events.completeness.exclude(
-      "cache_storage_entries",
-      storageCapture.cacheEntriesExclusion,
-      null,
-    );
+  else
+    for (const reason of storageCapture.cacheEntriesExclusions)
+      state.events.completeness.exclude("cache_storage_entries", reason, null);
   await report(context.progress, 3, "Normalizing browser evidence");
   await assertCompletedDocument(state);
   // Body IDs were enumerated before asynchronous CDP reads. Events remain

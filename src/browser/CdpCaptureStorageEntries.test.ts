@@ -1,7 +1,6 @@
 import { expect, it } from "vitest";
 
 import { inspectWebPageInputSchema } from "../domain/browserObservation.js";
-import type { BrowserExclusionReason } from "../domain/browserCompleteness.js";
 import { browserCaptureComparisonInputSchema } from "../domain/browserCaptureComparison.js";
 import { passiveNetworkCapture } from "../../tests/fixtures/passiveNetworkCapture.js";
 import { captureStorage } from "./CdpCaptureStorage.js";
@@ -34,7 +33,7 @@ const captureWithEntries = async (
   caches: unknown[] | typeof UNSUPPORTED_CACHE_NAMES = [
     { cacheName: "fixture-cache", cacheId: "fixture-id" },
   ],
-  returnCount?: number,
+  returnCount?: number | readonly number[],
 ): Promise<
   StorageCapture & {
     readonly requestedMethods: readonly string[];
@@ -81,7 +80,9 @@ const captureWithEntries = async (
           pageCursor += 1;
           return Promise.resolve({
             cacheDataEntries: rows,
-            returnCount: returnCount ?? rows.length,
+            returnCount: Array.isArray(returnCount)
+              ? returnCount[pageCursor - 1]
+              : (returnCount ?? rows.length),
           });
         }
         default:
@@ -107,7 +108,7 @@ const captureWithEntries = async (
 };
 
 it("retains the response metadata that the fingerprint walk discards", async () => {
-  const { value, cacheEntriesExclusion } = await captureWithEntries(true);
+  const { value, cacheEntriesExclusions } = await captureWithEntries(true);
   expect(value.cache_entries).toEqual([
     {
       cache: "fixture-cache",
@@ -122,7 +123,7 @@ it("retains the response metadata that the fingerprint walk discards", async () 
       content_type: "application/javascript",
     },
   ]);
-  expect(cacheEntriesExclusion).toBeUndefined();
+  expect(cacheEntriesExclusions).toEqual([]);
 });
 
 it("keeps header values out of the retained inventory", async () => {
@@ -132,11 +133,11 @@ it("keeps header values out of the retained inventory", async () => {
 });
 
 it("issues no entry command when the inventory is not approved", async () => {
-  const { value, requestedMethods, cacheEntriesExclusion } =
+  const { value, requestedMethods, cacheEntriesExclusions } =
     await captureWithEntries(false);
   expect(value.cache_entries).toEqual([]);
   expect(requestedMethods).not.toContain("CacheStorage.requestEntries");
-  expect(cacheEntriesExclusion).toBeUndefined();
+  expect(cacheEntriesExclusions).toEqual([]);
 });
 
 it("names the cache that each entry came from", async () => {
@@ -159,7 +160,7 @@ it("walks every page of one cache without repeating evidence", async () => {
     ...CACHE_ENTRY,
     requestURL: "https://example.test/second.js",
   };
-  const { value, offsets, cacheEntriesExclusion } = await captureWithEntries(
+  const { value, offsets, cacheEntriesExclusions } = await captureWithEntries(
     true,
     [[CACHE_ENTRY], [second]],
     undefined,
@@ -170,7 +171,7 @@ it("walks every page of one cache without repeating evidence", async () => {
     "https://example.test/app.js",
     "https://example.test/second.js",
   ]);
-  expect(cacheEntriesExclusion).toBeUndefined();
+  expect(cacheEntriesExclusions).toEqual([]);
 });
 
 it("reports an opaque response type as the provider stated it", async () => {
@@ -190,25 +191,115 @@ it.each([
   ["a missing request method", { ...CACHE_ENTRY, requestMethod: null }],
   ["a non-array header list", { ...CACHE_ENTRY, responseHeaders: "nope" }],
 ] as const)("keeps valid peers beside %s", async (_label, malformed) => {
-  const { value, cacheEntriesExclusion } = await captureWithEntries(true, [
+  const { value, cacheEntriesExclusions } = await captureWithEntries(true, [
     [malformed, CACHE_ENTRY],
   ]);
   expect(value.cache_entries).toEqual([
     expect.objectContaining({ request_url: "https://example.test/app.js" }),
   ]);
-  expect(cacheEntriesExclusion).toBe("invalid_protocol_value");
+  expect(cacheEntriesExclusions).toEqual(["invalid_protocol_value"]);
 });
 
+it.each([
+  ["response_status", { responseStatus: Number.MAX_SAFE_INTEGER + 1 }],
+  ["response_status", { responseStatus: -1 }],
+  ["response_status_text", { responseStatusText: 42 }],
+  ["response_type", { responseType: false }],
+  ["response_time", { responseTime: "invalid" }],
+] as const)(
+  "keeps request identity with unknown malformed %s",
+  async (field, malformed) => {
+    const captured = await captureWithEntries(true, [
+      [{ ...CACHE_ENTRY, ...malformed }],
+    ]);
+    expect(captured.value.cache_entries).toEqual([
+      expect.objectContaining({
+        request_url: CACHE_ENTRY.requestURL,
+        [field]: null,
+      }),
+    ]);
+    expect(captured.cacheEntriesExclusions).toEqual(["invalid_protocol_value"]);
+  },
+);
+
+it("distinguishes omitted response metadata from observed zero and empty values", async () => {
+  const { value, cacheEntriesExclusions } = await captureWithEntries(true, [
+    [
+      {
+        ...CACHE_ENTRY,
+        responseStatus: undefined,
+        responseStatusText: undefined,
+        responseType: undefined,
+        responseTime: undefined,
+      },
+      {
+        ...CACHE_ENTRY,
+        responseStatus: 0,
+        responseStatusText: "",
+        responseType: "",
+        responseTime: 0,
+      },
+    ],
+  ]);
+  expect(value.cache_entries).toEqual([
+    expect.objectContaining({
+      response_status: null,
+      response_status_text: null,
+      response_type: null,
+      response_time: null,
+    }),
+    expect.objectContaining({
+      response_status: 0,
+      response_status_text: "",
+      response_type: "",
+      response_time: 0,
+    }),
+  ]);
+  expect(cacheEntriesExclusions).toEqual([]);
+});
+
+it("marks a contradictory page total incomplete without losing readable entries", async () => {
+  const captured = await captureWithEntries(
+    true,
+    [[CACHE_ENTRY]],
+    undefined,
+    0,
+  );
+  expect(captured.value.cache_entries).toHaveLength(1);
+  expect(captured.cacheEntriesExclusions).toEqual(["invalid_protocol_value"]);
+});
+
+it.each([
+  ["shrinks", [3, 2], 2],
+  ["grows", [2, 3, 3], 3],
+] as const)(
+  "marks a page total that %s during the walk incomplete",
+  async (_label, totals, count) => {
+    const pages = Array.from({ length: count }, (_, index) => [
+      {
+        ...CACHE_ENTRY,
+        requestURL: `https://example.test/${index}.js`,
+      },
+    ]);
+    const captured = await captureWithEntries(true, pages, undefined, totals);
+    expect(captured.value.cache_entries).toHaveLength(count);
+    expect(captured.offsets).toEqual(
+      Array.from({ length: count }, (_, index) => index),
+    );
+    expect(captured.cacheEntriesExclusions).toEqual(["invalid_protocol_value"]);
+  },
+);
+
 it("reports an unsupported entry command as provider unavailable", async () => {
-  const { value, requestedMethods, cacheEntriesExclusion } =
+  const { value, requestedMethods, cacheEntriesExclusions } =
     await captureWithEntries(true, UNSUPPORTED_ENTRIES);
   expect(value.cache_entries).toEqual([]);
   expect(requestedMethods).toContain("CacheStorage.requestEntries");
-  expect(cacheEntriesExclusion).toBe("provider_unavailable");
+  expect(cacheEntriesExclusions).toEqual(["provider_unavailable"]);
 });
 
 it("stops on a provider that promises more entries than it delivers", async () => {
-  const { value, offsets, cacheEntriesExclusion } = await captureWithEntries(
+  const { value, offsets, cacheEntriesExclusions } = await captureWithEntries(
     true,
     [[CACHE_ENTRY], []],
     undefined,
@@ -216,7 +307,7 @@ it("stops on a provider that promises more entries than it delivers", async () =
   );
   expect(offsets).toEqual([0, 1]);
   expect(value.cache_entries).toHaveLength(1);
-  expect(cacheEntriesExclusion).toBe("invalid_protocol_value");
+  expect(cacheEntriesExclusions).toEqual(["invalid_protocol_value"]);
 });
 
 it("requires storage key capture before the entry inventory", () => {
@@ -237,7 +328,7 @@ it("requires storage key capture before the entry inventory", () => {
 });
 
 it("keeps a cache without an identifier out of the entry walk", async () => {
-  const { value, requestedMethods, cacheEntriesExclusion } =
+  const { value, requestedMethods, cacheEntriesExclusions } =
     await captureWithEntries(
       true,
       [[CACHE_ENTRY]],
@@ -246,29 +337,101 @@ it("keeps a cache without an identifier out of the entry walk", async () => {
   expect(value.cache_names).toEqual(["nameless"]);
   expect(value.cache_entries).toEqual([]);
   expect(requestedMethods).not.toContain("CacheStorage.requestEntries");
-  expect(cacheEntriesExclusion).toBe<BrowserExclusionReason>(
-    "invalid_protocol_value",
-  );
+  expect(cacheEntriesExclusions).toEqual(["invalid_protocol_value"]);
 });
 
 it("reports an unavailable cache list on the entry section", async () => {
-  const { value, cacheEntriesExclusion } = await captureWithEntries(
+  const { value, cacheEntriesExclusions } = await captureWithEntries(
     true,
     [[CACHE_ENTRY]],
     UNSUPPORTED_CACHE_NAMES,
   );
-  expect(cacheEntriesExclusion).toBe("provider_unavailable");
+  expect(cacheEntriesExclusions).toEqual(["provider_unavailable"]);
   expect(value.cache_entries).toEqual([]);
 });
 
 it("reports a cache list that dropped rows on the entry section", async () => {
-  const { value, cacheEntriesExclusion } = await captureWithEntries(
+  const { value, cacheEntriesExclusions } = await captureWithEntries(
     true,
     [[CACHE_ENTRY]],
     ["not-a-record"],
   );
-  expect(cacheEntriesExclusion).toBe("invalid_protocol_value");
+  expect(cacheEntriesExclusions).toEqual(["invalid_protocol_value"]);
   expect(value.cache_entries).toEqual([]);
+});
+
+it("bounds retained metadata across pages and keeps later small entries", async () => {
+  const large = {
+    ...CACHE_ENTRY,
+    responseStatusText: "\\\u0000界".repeat(420_000),
+  };
+  const last = { ...CACHE_ENTRY, requestURL: "https://example.test/last.js" };
+  const captured = await captureWithEntries(
+    true,
+    [[CACHE_ENTRY, large], [large], [last]],
+    undefined,
+    4,
+  );
+  expect(captured.value.cache_entries).toHaveLength(3);
+  expect(captured.value.cache_entries.at(-1)?.request_url).toBe(
+    last.requestURL,
+  );
+  expect(
+    Buffer.byteLength(JSON.stringify(captured.value.cache_entries)),
+  ).toBeLessThanOrEqual(8 * 1024 * 1024);
+  expect(captured).toMatchObject({
+    cacheEntriesExclusions: ["resource_budget_exhausted"],
+  });
+  expect(captured.offsets).toEqual([0, 2, 3]);
+});
+
+it("accounts for escaped header names before retaining an oversized entry", async () => {
+  const oversized = {
+    ...CACHE_ENTRY,
+    responseHeaders: [
+      { name: "\\\u0000".repeat(1_100_000), value: "discarded" },
+    ],
+  };
+  const captured = await captureWithEntries(true, [[oversized, CACHE_ENTRY]]);
+  expect(captured.value.cache_entries).toEqual([
+    expect.objectContaining({ request_url: CACHE_ENTRY.requestURL }),
+  ]);
+  expect(captured).toMatchObject({
+    cacheEntriesExclusions: ["resource_budget_exhausted"],
+  });
+});
+
+it("keeps cache-list failure separate from exhausted entry retention", async () => {
+  const captured = await captureWithEntries(
+    true,
+    [
+      [
+        CACHE_ENTRY,
+        { ...CACHE_ENTRY, responseStatusText: "x".repeat(8 * 1024 * 1024) },
+      ],
+    ],
+    ["not-a-record", { cacheName: "fixture-cache", cacheId: "fixture-id" }],
+  );
+  expect(captured.value.cache_entries).toHaveLength(1);
+  expect(captured).toMatchObject({
+    cacheEntriesExclusions: [
+      "invalid_protocol_value",
+      "resource_budget_exhausted",
+    ],
+  });
+});
+
+it("does not charge discarded malformed metadata to retained capacity", async () => {
+  const malformed = {
+    ...CACHE_ENTRY,
+    requestHeaders: [{ name: "x".repeat(8 * 1024 * 1024), value: "discarded" }],
+    responseHeaders: "invalid",
+  };
+  const captured = await captureWithEntries(true, [[malformed, CACHE_ENTRY]]);
+  expect(captured.value.cache_entries).toHaveLength(1);
+  expect(captured).toMatchObject({
+    cacheEntriesExclusions: ["invalid_protocol_value"],
+  });
 });
 
 it("refuses a capture recorded before the entry inventory existed", () => {

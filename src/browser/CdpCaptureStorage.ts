@@ -28,7 +28,7 @@ export const captureStorage = async (
 ): Promise<{
   readonly value: WebPageInspection["storage"];
   readonly keysExclusion: BrowserExclusionReason | undefined;
-  readonly cacheEntriesExclusion: BrowserExclusionReason | undefined;
+  readonly cacheEntriesExclusions: readonly BrowserExclusionReason[];
 }> => {
   const origin = new URL(pageUrl).origin;
   const quota = await optionalCdpCommand(
@@ -67,7 +67,7 @@ export const captureStorage = async (
   const caches = capturedCaches(recordsValue(cacheValues ?? []));
   const cacheEntries = context.input.include_cache_storage_entries
     ? await captureCacheStorageEntries(context, caches, limitations)
-    : { entries: [], exclusion: undefined };
+    : { entries: [], exclusions: [] };
   const fingerprints = context.input.include_storage_fingerprints
     ? await captureStorageFingerprints({
         context,
@@ -90,20 +90,15 @@ export const captureStorage = async (
     indexedValues !== undefined &&
     indexed.length === indexedValues.length &&
     cacheListComplete;
-  // The entry walk is only as complete as the cache list it walks, so a list
-  // that failed or dropped rows is reported on the entry section too.
-  const cacheListExclusion: BrowserExclusionReason | undefined =
-    cacheReply === undefined || commandUnavailable(cacheReply)
-      ? "provider_unavailable"
-      : cacheListComplete
-        ? undefined
-        : "invalid_protocol_value";
-  const cacheEntriesExclusion = !context.input.include_cache_storage_entries
-    ? undefined
-    : cacheListExclusion === "provider_unavailable" ||
-        cacheEntries.exclusion === "provider_unavailable"
-      ? "provider_unavailable"
-      : (cacheListExclusion ?? cacheEntries.exclusion);
+  const cacheEntriesExclusions = new Set<BrowserExclusionReason>(
+    cacheEntries.exclusions,
+  );
+  if (context.input.include_cache_storage_entries && !cacheListComplete)
+    cacheEntriesExclusions.add(
+      commandUnavailable(cacheReply)
+        ? "provider_unavailable"
+        : "invalid_protocol_value",
+    );
   const keysExclusion = !context.input.include_storage_keys
     ? undefined
     : local.exclusion === "provider_unavailable" ||
@@ -116,7 +111,7 @@ export const captureStorage = async (
         : undefined;
   return {
     keysExclusion,
-    cacheEntriesExclusion,
+    cacheEntriesExclusions: [...cacheEntriesExclusions].sort(),
     value: {
       origin,
       usage_bytes: quota.ok ? quota.value.usage : null,

@@ -1,4 +1,6 @@
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
+import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
+import { WEB_RUNTIME_LIMITS } from "../domain/webRuntime.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import type { BrowserExclusionReason } from "../domain/browserCompleteness.js";
 import { mediaTypeEssence } from "../domain/analysisView/recordedMediaType.js";
@@ -15,15 +17,7 @@ import {
   numberValue,
 } from "./CdpCaptureValues.js";
 
-type CacheEntry = NonNullable<
-  WebPageInspection["storage"]["cache_entries"]
->[number];
-
-/**
- * Inventory Cache Storage entries without fetching any cached body. This reads
- * the same pages the fingerprint walk reads and keeps the response metadata
- * that walk reduces to a digest.
- */
+type CacheEntry = WebPageInspection["storage"]["cache_entries"][number];
 export const captureCacheStorageEntries = async (
   context: {
     readonly connection: CdpConnection;
@@ -34,15 +28,15 @@ export const captureCacheStorageEntries = async (
   limitations: string[],
 ): Promise<{
   readonly entries: CacheEntry[];
-  readonly exclusion: BrowserExclusionReason | undefined;
+  readonly exclusions: readonly BrowserExclusionReason[];
 }> => {
   const entries: CacheEntry[] = [];
-  let unavailable = false;
-  let malformed = false;
+  const exclusions = new Set<BrowserExclusionReason>();
+  let retainedBytes = 2;
   for (const cache of caches) {
     const cacheId = cache.id;
     if (cacheId === undefined) {
-      malformed = true;
+      exclusions.add("invalid_protocol_value");
       continue;
     }
     let skipCount = 0;
@@ -55,39 +49,63 @@ export const captureCacheStorageEntries = async (
         limitations,
       );
       if (!reply.ok) {
-        if (commandUnavailable(reply)) unavailable = true;
-        else malformed = true;
+        exclusions.add(
+          commandUnavailable(reply)
+            ? "provider_unavailable"
+            : "invalid_protocol_value",
+        );
         break;
       }
       const examinedCount = reply.value.cacheDataEntries.length;
       for (const row of reply.value.cacheDataEntries) {
-        const entry = cacheEntry(cache.name, row);
-        if (entry === undefined) malformed = true;
-        else entries.push(entry);
+        const captured = cacheEntry(cache.name, row);
+        if (captured === undefined) {
+          exclusions.add("invalid_protocol_value");
+          continue;
+        }
+        if (!captured.complete) exclusions.add("invalid_protocol_value");
+        const { entry } = captured;
+        const availableBytes =
+          WEB_RUNTIME_LIMITS.cacheStorageEntryBytes - retainedBytes;
+        const entryBytes =
+          jsonValueByteLength(entry, availableBytes) +
+          (entries.length > 0 ? 1 : 0);
+        if (entryBytes > availableBytes) {
+          exclusions.add("resource_budget_exhausted");
+          continue;
+        }
+        retainedBytes += entryBytes;
+        entries.push(entry);
       }
+      if (returnCount !== undefined && returnCount !== reply.value.returnCount)
+        exclusions.add("invalid_protocol_value");
       returnCount = reply.value.returnCount;
-      if (skipCount + examinedCount >= returnCount) break;
+      if (examinedCount > returnCount - skipCount) {
+        exclusions.add("invalid_protocol_value");
+        break;
+      }
+      if (skipCount + examinedCount === returnCount) break;
       if (
         examinedCount === 0 ||
         skipCount > Number.MAX_SAFE_INTEGER - examinedCount
       ) {
-        malformed = true;
+        exclusions.add("invalid_protocol_value");
         break;
       }
       skipCount += examinedCount;
     }
   }
-  return {
-    entries,
-    exclusion: unavailable
-      ? "provider_unavailable"
-      : malformed
-        ? "invalid_protocol_value"
-        : undefined,
-  };
+  if (exclusions.has("resource_budget_exhausted"))
+    limitations.push(
+      `Cache Storage entry metadata exceeded the ${String(WEB_RUNTIME_LIMITS.cacheStorageEntryBytes)}-byte serialized inventory allowance; oversized entries were omitted and later entries were still examined. The allowance has no runtime override; inspect a smaller cache inventory to reduce omissions. This does not bound transient CDP replies or the whole process heap.`,
+    );
+  return { entries, exclusions: [...exclusions].sort() };
 };
 
-const cacheEntry = (cache: string, value: unknown): CacheEntry | undefined => {
+const cacheEntry = (
+  cache: string,
+  value: unknown,
+): { readonly entry: CacheEntry; readonly complete: boolean } | undefined => {
   const row = recordValue(value);
   if (row === undefined) return undefined;
   const requestUrl = cdpStringValue(row.requestURL);
@@ -101,24 +119,24 @@ const cacheEntry = (cache: string, value: unknown): CacheEntry | undefined => {
   const statusText = optionalString(row.responseStatusText);
   const type = optionalString(row.responseType);
   const time = optionalNumber(row.responseTime);
-  if (
-    status === undefined ||
-    statusText === undefined ||
-    type === undefined ||
-    time === undefined
-  )
-    return undefined;
   return {
-    cache,
-    request_url: sanitizeBrowserUrl(requestUrl).url,
-    request_method: requestMethod,
-    response_status: status,
-    response_status_text: statusText,
-    response_type: type,
-    response_time: time,
-    request_header_names: requestHeaders,
-    response_header_names: responseHeaders,
-    content_type: contentType(row.responseHeaders),
+    complete:
+      status !== undefined &&
+      statusText !== undefined &&
+      type !== undefined &&
+      time !== undefined,
+    entry: {
+      cache,
+      request_url: sanitizeBrowserUrl(requestUrl).url,
+      request_method: requestMethod,
+      response_status: status ?? null,
+      response_status_text: statusText ?? null,
+      response_type: type ?? null,
+      response_time: time ?? null,
+      request_header_names: requestHeaders,
+      response_header_names: responseHeaders,
+      content_type: contentType(row.responseHeaders),
+    },
   };
 };
 
@@ -155,7 +173,7 @@ const optionalNumber = (value: unknown): number | null | undefined =>
 const optionalStatus = (value: unknown): number | null | undefined => {
   if (value === undefined) return null;
   const status = numberValue(value);
-  return status !== undefined && Number.isInteger(status) && status >= 0
+  return status !== undefined && Number.isSafeInteger(status) && status >= 0
     ? status
     : undefined;
 };
