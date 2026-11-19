@@ -1,5 +1,6 @@
 import { gt, major, valid } from "semver";
 import { z } from "zod";
+import { releaseSection } from "./release-markdown.mjs";
 
 const shaSchema = z.string().regex(/^[a-f0-9]{40}$/u);
 const versionSchema = z.object({ version: z.string() });
@@ -139,12 +140,10 @@ function referencesCommit(text, commit) {
 }
 
 function releaseNotes(text, expectedVersion) {
-  const headings = Array.from(text.matchAll(/^## \[([^\]]+)\].*$/gmu));
-  const first = headings[0];
-  if (first?.[1] !== expectedVersion || first.index === undefined) {
+  const section = releaseSection(text, expectedVersion);
+  if (section === undefined)
     throw new Error(`CHANGELOG.md must start with release ${expectedVersion}.`);
-  }
-  return text.slice(first.index, headings[1]?.index ?? text.length);
+  return section.lines.map(({ line }) => line).join("\n");
 }
 
 function breakingSection(notes) {
