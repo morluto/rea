@@ -74,7 +74,7 @@ async function invoke(
       '  node -e \'const fs=require("node:fs"); const x=JSON.parse(fs.readFileSync(process.env.GH_FIXTURE_RESPONSE,"utf8")); process.stdout.write(JSON.stringify({artifacts:x.artifacts}));\'',
       "else",
       '  run_id="${4##*/}"',
-      '  node -e \'const fs=require("node:fs"); const x=JSON.parse(fs.readFileSync(process.env.GH_FIXTURE_RESPONSE,"utf8")); process.stdout.write(JSON.stringify(x.runs[Number(process.argv[1])] ?? {}));\' "$run_id"',
+      '  node -e \'const fs=require("node:fs"); const x=JSON.parse(fs.readFileSync(process.env.GH_FIXTURE_RESPONSE,"utf8")); const run=x.runs[Number(process.argv[1])]; if(run===null){console.error("gh: Not Found (HTTP 404)"); process.exit(1);} process.stdout.write(JSON.stringify(run ?? {}));\' "$run_id"',
       "fi",
       "",
     ].join("\n"),
@@ -324,4 +324,23 @@ it("selects full-tier history without using a newer fast artifact", async () => 
     run_id: "60",
     artifact_name: "test-timings-full",
   });
+});
+
+it("uses the next valid timing run when one listed run disappears", async () => {
+  const { result, calls } = await invoke(
+    [
+      artifact(81, { created_at: new Date(now - 30_000).toISOString() }),
+      artifact(80),
+      artifact(79),
+    ],
+    { 81: null, 80: run(80), 79: run(79) },
+    { tier: "full" },
+  );
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "80",
+    artifact_name: "test-timings-full",
+  });
+  expect(calls).toContain("actions/runs/81");
+  expect(calls).toContain("actions/runs/80");
+  expect(calls).not.toContain("actions/runs/79");
 });
