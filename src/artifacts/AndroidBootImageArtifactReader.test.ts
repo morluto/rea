@@ -382,3 +382,22 @@ it("finds an AVB footer before the final boot page boundary", async () => {
     avb_vbmeta_size: 256,
   });
 });
+
+it.each([1, 32])(
+  "refuses vbmeta starting at original image end minus %i",
+  async (overlap) => {
+    const image = buildBootImage({
+      version: 0,
+      kernel: Buffer.alloc(64),
+      ramdisk: Buffer.alloc(0),
+    });
+    const bytes = appendAvbFooter(image, {
+      vbmeta: Buffer.alloc(16),
+      vbmetaOffset: image.length - overlap,
+    });
+    const path = await writeCarrier("overlapping-original-image.img", bytes);
+    await expect(scanCanonicalArtifactInventory(path)).rejects.toThrow(
+      /AVB vbmeta overlaps the original boot image/u,
+    );
+  },
+);
