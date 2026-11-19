@@ -330,6 +330,7 @@
 * **desktop:** validate guest launcher entry bytes before rewriting ([#12212](https://github.com/morluto/rea/issues/12212)) ([954a251](https://github.com/morluto/rea/commit/954a2511b7e8dafc863c197922baa5f8c51c374a))
 * **desktop:** verify ZIP directory record counts ([#12184](https://github.com/morluto/rea/issues/12184)) ([c61b478](https://github.com/morluto/rea/commit/c61b4789ada804305ba968708885b25937204051))
 * **devicetree:** share structure bounds with FIT recognition ([#12298](https://github.com/morluto/rea/issues/12298)) ([7b85358](https://github.com/morluto/rea/commit/7b85358a504991dfe93309d9026d965e01f3c99b))
+* **dmg:** require the declared GPT header bytes ([#12311](https://github.com/morluto/rea/issues/12311)) ([e9c6723](https://github.com/morluto/rea/commit/e9c6723d8a77aeed611352771735a6ce0a568788))
 * **doctor:** count installations by resolved launcher directory ([5557d9b](https://github.com/morluto/rea/commit/5557d9b3eb2d6b92936289792ea6f0521f68261d)), closes [#8122](https://github.com/morluto/rea/issues/8122)
 * **doctor:** refuse an empty --target like other target inputs ([82f3bfb](https://github.com/morluto/rea/commit/82f3bfb6e8903d8119923970a0950936b0b20d5b)), closes [#7561](https://github.com/morluto/rea/issues/7561)
 * **doctor:** refuse Ghidra on Windows when REA_GHIDRA_PROJECT_PATH selects an existing project ([#10981](https://github.com/morluto/rea/issues/10981)) ([80755a9](https://github.com/morluto/rea/commit/80755a9d162f4aa79ce1c27c229830c8f7c29f75))
