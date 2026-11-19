@@ -1,20 +1,14 @@
 import { isAbsolute } from "node:path";
 import {
   ArtifactReaderFailure,
-  artifactFileCancellationCause,
-  artifactFilePrimaryFacts,
   projectStableArtifactFailure,
   readStableArtifact,
   stableArtifactInputRecovery,
   type ArtifactResourceScope,
 } from "../../resources/index.js";
-import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  carriedReason,
-  cancelledBy,
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
@@ -33,6 +27,7 @@ import {
 import { parseEvtxArchive } from "../../domain/evtxArchive/parseEvtxArchive.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
+import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
@@ -55,63 +50,40 @@ const inputFailure = (message: string, cause?: unknown) =>
     [{ path: ["path"], reason: "invalid_format", message }],
   );
 
-/** Keep the reader's typed reasons instead of flattening every failure into "io". */
-const readFailure = (
-  failure: unknown,
-  input: InspectEvtxArchiveInput,
-): AnalysisError => {
-  const { cause, origin } = artifactFilePrimaryFacts(failure);
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure
-  ) {
-    if (cause.reason === "cancelled")
-      return cancelledBy(
-        operation,
-        carriedReason(artifactFileCancellationCause(cause)),
-      );
-    if (cause.reason === "integrity")
-      return new AnalysisArtifactChangedError(
-        operation,
-        input.path,
-        cause.message,
-        { cause },
-      );
-    if (cause.reason === "limit")
-      return new AnalysisResourceConstraintError(
-        operation,
-        "file-size",
-        cause.message,
-        { max_file_bytes: input.max_file_bytes },
-        {
-          cause,
-          retryable: false,
-          remediationAction:
-            "Select a log within max_file_bytes; reply paging does not change this file admission.",
-        },
-      );
-    if (cause.reason === "path" || cause.reason === "format")
-      return inputFailure(cause.message, cause);
-  }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(operation, input.path, cause.code, {
-        cause,
-      });
-    if (isSelectedRegularFileError(cause))
-      return inputFailure(
-        `Selected event log could not be read (${cause.code}): ${input.path}`,
-        cause,
-      );
-  }
-  return new ArtifactOperationError(
+/**
+ * The shared owner classifies the file read's typed reasons; this dialect only
+ * names the selected event log and what a cause nothing recognised reports.
+ */
+const readFailure = (failure: unknown, input: InspectEvtxArchiveInput) =>
+  classifyProviderFailure(failure, {
+    providerId: EVTX_ARCHIVE_PROVIDER.id,
     operation,
-    "io",
-    undefined,
-    "Event log read failed.",
-    { cause: failure },
-  );
-};
+    file: {
+      path: input.path,
+      description: "event log",
+      fileSize: (limit, details) =>
+        new AnalysisResourceConstraintError(
+          operation,
+          "file-size",
+          limit.message,
+          { max_file_bytes: input.max_file_bytes },
+          {
+            ...details,
+            retryable: false,
+            remediationAction:
+              "Select a log within max_file_bytes; reply paging does not change this file admission.",
+          },
+        ),
+    },
+    unclassified: (unrecognised, details) =>
+      new ArtifactOperationError(
+        operation,
+        "io",
+        undefined,
+        "Event log read failed.",
+        { ...details, cause: unrecognised },
+      ),
+  });
 
 const readArchive = async (
   input: InspectEvtxArchiveInput,
