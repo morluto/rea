@@ -766,6 +766,22 @@ const parseModernBoot = (
   });
 };
 
+const vendorTableByteLength = (
+  entryCount: number,
+  entrySize: number,
+): number => {
+  if (entryCount > 0 && entrySize < VENDOR_RAMDISK_ENTRY_SIZE)
+    formatError(
+      `vendor ramdisk table entry size ${entrySize} is smaller than the ${VENDOR_RAMDISK_ENTRY_SIZE}-byte v4 entry`,
+    );
+  const bytes = entryCount * entrySize;
+  if (!Number.isSafeInteger(bytes))
+    formatError(
+      `vendor ramdisk table dimensions ${entryCount} × ${entrySize} exceed a safe byte length`,
+    );
+  return bytes;
+};
+
 const parseVendorTableHeader = (
   prefix: Buffer,
 ): {
@@ -778,6 +794,17 @@ const parseVendorTableHeader = (
   const entryCount = u32(prefix, VENDOR_V3_SIZE + 4);
   const entrySize = u32(prefix, VENDOR_V3_SIZE + 8);
   const bootconfigSize = u32(prefix, VENDOR_V3_SIZE + 12);
+  if (vendorTableByteLength(entryCount, entrySize) !== tableSize)
+    formatError(
+      `vendor ramdisk table size ${tableSize} does not equal ${entryCount} entries of ${entrySize} bytes`,
+    );
+  return { tableSize, entryCount, entrySize, bootconfigSize };
+};
+
+const requireVendorTableCapacity = (
+  entryCount: number,
+  entrySize: number,
+): void => {
   if (entryCount > MAX_VENDOR_RAMDISKS)
     capacityError(
       `vendor ramdisk table declares more than ${MAX_VENDOR_RAMDISKS} entries`,
@@ -788,16 +815,6 @@ const parseVendorTableHeader = (
       `vendor ramdisk table entry size ${entrySize} exceeds the ${MAX_RAMDISK_ENTRY_SIZE} byte entry bound`,
       VENDOR_RAMDISK_ENTRY_SIZE_LIMIT,
     );
-  if (entryCount > 0 && entrySize < VENDOR_RAMDISK_ENTRY_SIZE)
-    formatError(
-      `vendor ramdisk table entry size ${entrySize} is smaller than the ${VENDOR_RAMDISK_ENTRY_SIZE}-byte v4 entry`,
-    );
-  const product = entryCount * entrySize;
-  if (!Number.isSafeInteger(product) || product !== tableSize)
-    formatError(
-      `vendor ramdisk table size ${tableSize} does not equal ${entryCount} entries of ${entrySize} bytes`,
-    );
-  return { tableSize, entryCount, entrySize, bootconfigSize };
 };
 
 const parseVendorHeader = (
@@ -878,6 +895,8 @@ const parseVendorHeader = (
   const section = { offset: sectionOffset, size: vendorRamdiskSize };
   const declared = [...components, section, tableRange];
   const dataEnd = requireFileCovers(fileSize, headerSize, declared);
+  if (table !== null)
+    requireVendorTableCapacity(table.entryCount, table.entrySize);
   return bootParse({
     imageKind: "vendor-boot",
     magic: VENDOR_BOOT_MAGIC,
@@ -995,11 +1014,7 @@ const readVendorRamdiskTable = (
     readonly sectionSize: number;
   },
 ): VendorRamdiskTableParse => {
-  if (input.entryCount > 0 && input.entrySize < VENDOR_RAMDISK_ENTRY_SIZE)
-    formatError(
-      `vendor ramdisk table entry size ${input.entrySize} is smaller than the ${VENDOR_RAMDISK_ENTRY_SIZE}-byte v4 entry`,
-    );
-  const expected = input.entryCount * input.entrySize;
+  const expected = vendorTableByteLength(input.entryCount, input.entrySize);
   requireBytes(table, expected, "vendor ramdisk table");
   if (table.length > expected)
     formatError(

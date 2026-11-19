@@ -4,7 +4,6 @@ import {
   appendAvbFooter,
   buildBootImage,
   buildVendorBootImage,
-  declareVendorRamdiskCount,
   osVersionRaw,
   truncateImage,
 } from "../../tests/fixtures/androidBootImage.js";
@@ -392,7 +391,7 @@ it("splits a v4 vendor ramdisk table and a v3 section", () => {
   ]);
 });
 
-it("rejects vendor table overlap, overrun, and an excessive entry count", () => {
+it("rejects truncated, overlapping, and out-of-range vendor ramdisk rows", () => {
   const image = buildVendorBootImage({
     version: 4,
     ramdisks: [
@@ -440,20 +439,6 @@ it("rejects vendor table overlap, overrun, and an excessive entry count", () => 
   expect(overran.ok).toBe(false);
   if (overran.ok) return;
   expect(overran.error.message).toContain("overruns the vendor ramdisk");
-  const capacity = failed(
-    declareVendorRamdiskCount(buildVendorBootImage({ version: 4 }), 4097),
-  );
-  expect(capacity).toMatchObject({
-    kind: "limit",
-    failure: {
-      format: "android-boot-image",
-      limit: {
-        name: "Android vendor ramdisk table entry count",
-        maximum: 4096,
-      },
-    },
-  });
-  expect(capacity.message).toContain("4096");
   expect(
     failed(
       buildVendorBootImage({
@@ -463,6 +448,44 @@ it("rejects vendor table overlap, overrun, and an excessive entry count", () => 
       }),
     ).message,
   ).toContain("smaller than the 108-byte");
+});
+
+it("checks vendor ramdisk table dimensions before the entry count allowance", () => {
+  const image = buildVendorBootImage({ version: 4 });
+  image.writeUInt32LE(108, 2112); // Only one row declared by table_size.
+  image.writeUInt32LE(4097, 2116);
+  expect(failed(image)).toMatchObject({
+    kind: "malformed",
+    message:
+      "vendor ramdisk table size 108 does not equal 4097 entries of 108 bytes",
+  });
+
+  image.writeUInt32LE(4097 * 107, 2112);
+  image.writeUInt32LE(107, 2120);
+  expect(failed(image)).toMatchObject({
+    kind: "malformed",
+    message:
+      "vendor ramdisk table entry size 107 is smaller than the 108-byte v4 entry",
+  });
+});
+
+it("applies the vendor ramdisk row-width allowance only to file-backed tables", () => {
+  const image = buildVendorBootImage({
+    version: 4,
+    entrySize: 4097,
+    ramdisks: [{ name: "wide", bytes: Buffer.from("a") }],
+  });
+  const end = 2 * 4096 + 4097;
+  expect(failed(image.subarray(0, end))).toMatchObject({
+    kind: "limit",
+    failure: {
+      limit: { name: "Android vendor ramdisk table entry size", maximum: 4096 },
+    },
+  });
+  expect(failed(image.subarray(0, end - 1))).toMatchObject({
+    kind: "truncated",
+    failure: { field: "components", offset: end - 1 },
+  });
 });
 
 it("names unsafe vendor ramdisk paths and reports an uncovered section", () => {
