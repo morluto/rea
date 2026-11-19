@@ -20,6 +20,7 @@ import {
 import type { ArtifactCommand } from "../domain/artifactGraph.js";
 import {
   RegularFileChangedError,
+  RegularFileOperationCancelled,
   assertStableRegularFileIdentity,
   type StableRegularFileDescriptor,
 } from "../filesystem/RegularFile.js";
@@ -140,7 +141,9 @@ export class InesArtifactReader implements ArtifactReader {
     });
     // Transform destruction can precede an asynchronous final callback. Keep
     // that descriptor validation admitted independently of stream retirement.
-    const verify = () => this.#scope.run(() => this.#verifySource(signal));
+    const verify = () =>
+      this.#scope.run(() => this.#verifySource(active, failure));
+    const assertActive = () => this.#assertOpen(active, failure);
     let bytes = 0;
     const output = new Transform({
       destroy(cause, callback) {
@@ -148,7 +151,7 @@ export class InesArtifactReader implements ArtifactReader {
       },
       transform(raw: unknown, _encoding, callback) {
         try {
-          abortIfNeeded(signal);
+          assertActive();
           const chunk = streamChunkToBuffer(raw);
           bytes += chunk.length;
           callback(null, chunk);
@@ -262,8 +265,11 @@ export class InesArtifactReader implements ArtifactReader {
     await this.ownedSource?.close();
   }
 
-  async #verifySource(signal?: AbortSignal): Promise<void> {
-    this.#assertOpen(signal);
+  async #verifySource(
+    signal?: AbortSignal,
+    interruption?: () => ArtifactReaderFailure,
+  ): Promise<void> {
+    this.#assertOpen(signal, interruption);
     try {
       await assertStableRegularFileIdentity(
         this.source.handle,
@@ -272,6 +278,11 @@ export class InesArtifactReader implements ArtifactReader {
         { symlinks: "reject", ...(signal === undefined ? {} : { signal }) },
       );
     } catch (cause: unknown) {
+      if (
+        interruption !== undefined &&
+        cause instanceof RegularFileOperationCancelled
+      )
+        throw interruption();
       if (cause instanceof RegularFileChangedError)
         throw new ArtifactReaderFailure(
           "integrity",
@@ -281,12 +292,16 @@ export class InesArtifactReader implements ArtifactReader {
       throw artifactOperationCause(cause);
     }
     // State validation is asynchronous even after the final byte was consumed.
-    this.#assertOpen(signal);
+    this.#assertOpen(signal, interruption);
   }
 
-  #assertOpen(signal?: AbortSignal): void {
+  #assertOpen(
+    signal?: AbortSignal,
+    interruption?: () => ArtifactReaderFailure,
+  ): void {
+    if (signal?.aborted === true && interruption !== undefined)
+      throw interruption();
     abortIfNeeded(signal);
-    if (this.#closed)
-      throw new ArtifactReaderFailure("unavailable", "iNES reader is closed");
+    if (this.#closed) throw this.#closedFailure;
   }
 }

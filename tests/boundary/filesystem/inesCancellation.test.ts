@@ -619,8 +619,8 @@ it.each([
   },
 );
 
-it.each(
-  [true, false].flatMap((owned) =>
+it.each([
+  ...[true, false].flatMap((owned) =>
     [false, true].flatMap((failed) =>
       (["read", "validation"] as const).flatMap((phase) =>
         [false, ...(owned && !failed ? [true] : [])].map((consumerEnds) => ({
@@ -628,13 +628,23 @@ it.each(
           failed,
           phase,
           consumerEnds,
+          order: "close only" as const,
         })),
       ),
     ),
   ),
-)(
-  "joins admitted iNES $phase before close (owned=$owned, failed=$failed, consumer ends=$consumerEnds)",
-  async ({ owned, failed, phase, consumerEnds }) => {
+  ...(["read", "validation"] as const).flatMap((phase) =>
+    (["close first", "caller first"] as const).map((order) => ({
+      owned: true,
+      failed: false,
+      phase,
+      consumerEnds: false,
+      order,
+    })),
+  ),
+])(
+  "joins admitted iNES $phase before close (owned=$owned, failed=$failed, consumer ends=$consumerEnds, interruption=$order)",
+  async ({ owned, failed, phase, consumerEnds, order }) => {
     const root = await createTestTempDirectory("rea-ines-close-read-");
     const path = join(root, "source.nes");
     await writeFile(path, inesFixture());
@@ -647,6 +657,8 @@ it.each(
     const physical = Object.assign(new Error("held region read failed"), {
       code: "EIO",
     });
+    const controller = new AbortController();
+    const callerReason = new Error("caller stopped during region shutdown");
     let acknowledge = () => {};
     let release = () => {};
     const reached = new Promise<void>((resolve) => {
@@ -694,7 +706,7 @@ it.each(
         read.mockRestore();
         stat.mockRestore();
       };
-      stream = await reader.open(entries[0]!);
+      stream = await reader.open(entries[0]!, controller.signal);
       completion = finished(stream, { cleanup: true }).then(
         () => ({ kind: "success" }),
         (cause: unknown) => cause,
@@ -704,9 +716,11 @@ it.each(
       await awaitAcknowledgement(reached, completion, `iNES ${phase} boundary`);
       if (consumerEnds) stream.destroy();
       let closed = false;
+      if (order === "caller first") controller.abort(callerReason);
       closing = reader.close().then(() => {
         closed = true;
       });
+      if (order === "close first") controller.abort(callerReason);
       await setImmediate();
       expect(closed).toBe(false);
       await expect(handle.stat()).resolves.toBeDefined();
@@ -717,7 +731,9 @@ it.each(
         expect(outcome).toMatchObject(
           failed
             ? { reason: "io", cause: physical }
-            : { reason: "unavailable" },
+            : order === "caller first"
+              ? { reason: "cancelled", cause: callerReason }
+              : { reason: "unavailable" },
         );
       expect(stream.closed).toBe(true);
       if (owned)
