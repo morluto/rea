@@ -398,6 +398,7 @@
 * **elf:** preserve compiler metadata after an empty kernel builder ([a7398cc](https://github.com/morluto/rea/commit/a7398cc9eb40ee89ae46d0f72b726fbd93fa4ea7)), closes [#9942](https://github.com/morluto/rea/issues/9942) [#9950](https://github.com/morluto/rea/issues/9950)
 * **elf:** preserve compressed note storage through program aliases ([#12390](https://github.com/morluto/rea/issues/12390)) ([cb9fce0](https://github.com/morluto/rea/commit/cb9fce082def7c0003b29c93ed680801b65eef96))
 * **elf:** preserve Unicode separators in kernel config strings ([#11831](https://github.com/morluto/rea/issues/11831)) ([1ab2121](https://github.com/morluto/rea/commit/1ab212164c44b24dd515bc715a90bc052037a18b))
+* **elf:** preserve unprefixed Kconfig hex values ([#12516](https://github.com/morluto/rea/issues/12516)) ([3dfd7c2](https://github.com/morluto/rea/commit/3dfd7c2f0d2230f6ebf886b52894fec204a35f63))
 * **elf:** recover pointers from Android APS2 relocation tables ([#12047](https://github.com/morluto/rea/issues/12047)) ([32b2020](https://github.com/morluto/rea/commit/32b20205715e4af02800ace8ac997895f140c474))
 * **elf:** reject invalid section table and zlib declarations ([#12193](https://github.com/morluto/rea/issues/12193)) ([45768a2](https://github.com/morluto/rea/commit/45768a2e818b25a73996521733c6b78126dbcce5))
 * **elf:** reject undersized interpreter ranges before provider admission ([#12113](https://github.com/morluto/rea/issues/12113)) ([55a50f5](https://github.com/morluto/rea/commit/55a50f53f9621b933b557df9f46b41dcc6c34588))
