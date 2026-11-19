@@ -5,7 +5,7 @@ import {
   snapshotTarget,
 } from "../../domain/analysisSnapshot.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
-import { executableFormatHintSchema } from "../../domain/dosCom.js";
+import { openBinaryInputSchema } from "../../contracts/sessionLifecycleInputs.js";
 import { createEvidence, parseEvidence } from "../../domain/evidence.js";
 import {
   createImmutableEvidenceBundle,
@@ -193,7 +193,7 @@ describe("target format vocabularies", () => {
     },
   );
 
-  it.each(executableFormatHintSchema.options)(
+  it.each(openBinaryInputSchema.shape.format.unwrap().options)(
     "admits the caller-selected %s hint only as its own target format",
     (hint) => {
       // An ESP flash dump is the one caller-selected format read as an archive.
