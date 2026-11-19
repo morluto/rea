@@ -2073,6 +2073,24 @@ it.each([
     ["items", "0"],
     "candidate",
   ],
+  ...[
+    ["null", "null", "candidate"],
+    ["void", "void 0", "candidate"],
+    ["unproved", "unknown()", "candidate"],
+    ["object", "{}", "resolved"],
+    ["array", "[]", "resolved"],
+    ["zero", "0", "resolved"],
+    ["false", "false", "resolved"],
+    ["empty string", '""', "resolved"],
+  ].map(
+    ([label, receiver, resolution]) =>
+      [
+        `second nested iterator after an empty pattern with receiver ${label}`,
+        `const box={first:[0],middle:${receiver},items:["one"]};const {first:[used],middle:{},items:[selected]}=box;box.items[0]="later";`,
+        ["items", "0"],
+        resolution,
+      ] as const,
+  ),
   [
     "second nested iterator after a prior assignment target",
     'const box={first:[0],items:["one"]};let used,selected;({first:[used],items:[selected]}=box);box.items[0]="later";',

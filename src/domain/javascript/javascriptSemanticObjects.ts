@@ -10,6 +10,7 @@ import {
   semanticWriteSiteReadsFirst,
   semanticWriteSiteTarget,
   semanticWriteTargets,
+  staticJavaScriptTruthiness,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
@@ -139,6 +140,13 @@ const collectMember = (
   );
 };
 
+/** An empty object pattern still applies RequireObjectCoercible to its input. */
+const isKnownCoercibleReceiver = (node: t.Node | undefined): boolean =>
+  node !== undefined &&
+  ((t.isLiteral(node) && !t.isNullLiteral(node)) ||
+    t.isObjectMethod(node) ||
+    staticJavaScriptTruthiness(node) === true);
+
 const collectDestructuring = (
   root: t.Node,
   initializer: t.Node | null | undefined,
@@ -202,10 +210,14 @@ const collectDestructuring = (
       ? unwrapJavaScriptExpression(occurrence.left).node
       : occurrence;
     if (t.isObjectPattern(pattern)) {
-      // A nested pattern needs a proved object even if it has no children.
+      // Later siblings require the nested receiver check to complete.
       if (
         ownSlot !== sourcePresence?.read ||
-        (rootArray && !t.isObjectExpression(selected))
+        (pattern !== root &&
+          !t.isObjectExpression(selected) &&
+          (rootArray ||
+            pattern.properties.length !== 0 ||
+            !isKnownCoercibleReceiver(selected)))
       )
         ownSlot = undefined;
       for (const property of pattern.properties.toReversed()) {
