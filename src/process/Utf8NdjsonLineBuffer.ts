@@ -101,7 +101,20 @@ export class Utf8NdjsonLineBuffer {
       if (!line.ok) return;
     }
     const refused = this.#refuseTail(maximumBytes);
-    if (refused !== undefined) yield err(refused);
+    if (refused !== undefined) {
+      yield err(refused);
+      return;
+    }
+    // A short tail is a view into the drained frames. Copy it once after
+    // draining, when doing so releases more bytes than it copies.
+    if (
+      this.#buffer.buffer.byteLength >
+      Math.max(Buffer.poolSize, 2 * this.#buffer.length)
+    ) {
+      const tail = Buffer.allocUnsafeSlow(this.#buffer.length);
+      this.#buffer.copy(tail);
+      this.#buffer = tail;
+    }
   }
 
   /** Validate the unfinished tail at EOF without treating it as a complete response. */
