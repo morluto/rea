@@ -171,6 +171,27 @@ export const reachableAsarPaths = (manifest: Buffer): AsarReachability => {
 
 const sizeBytes = (entry: AsarInventoryEntry): number => entry.size ?? 0;
 
+/**
+ * Ceiling for an aggregate byte total, matching the output schema's `safeCount`
+ * (a non-negative safe integer). Declared member sizes are each bounded only by
+ * that ceiling, so summing several can exceed it — and integer addition above
+ * 2^53 is not exact. An unbounded total would be a number the output schema
+ * rejects, which would discard every retained fact, so the total saturates here
+ * and the over-limit state is disclosed as an explicit lower bound instead.
+ */
+const SAFE_BYTES_CEILING = Number.MAX_SAFE_INTEGER;
+
+/** Add a member size to an aggregate, saturating at the reportable ceiling. */
+const addSaturating = (
+  total: number,
+  size: number,
+): { readonly total: number; readonly capped: boolean } => {
+  const sum = total + size;
+  return sum > SAFE_BYTES_CEILING
+    ? { total: SAFE_BYTES_CEILING, capped: true }
+    : { total: sum, capped: false };
+};
+
 /** Beyond this, a retained entry name is folded to a bounded, ASCII-safe sample. */
 const MAX_ENTRY_NAME_UNITS = 256;
 
@@ -257,11 +278,13 @@ interface InventoryState {
   coreRetained: number;
   overflow: number;
   overflowBytes: number;
+  overflowBytesCapped: boolean;
   readonly overflowDigest: ReturnType<typeof createHash>;
   decoyExamined: number;
   decoyRetained: number;
   decoyOverflow: number;
   decoyBytes: number;
+  decoyBytesCapped: boolean;
   readonly decoyDigest: ReturnType<typeof createHash>;
 }
 
@@ -277,10 +300,57 @@ const retainOrOverflow = (
     return;
   }
   state.overflow += 1;
-  state.overflowBytes += sizeBytes(entry);
+  const added = addSaturating(state.overflowBytes, sizeBytes(entry));
+  state.overflowBytes = added.total;
+  if (added.capped) state.overflowBytesCapped = true;
   state.overflowDigest.update(
     canonicalizeDigest(Buffer.from(entry.path, "utf8")),
   );
+};
+
+/**
+ * Assemble the inventory's limitations: reader-supplied notes, the owning
+ * reader's per-entry notes (unknown sizes, integrity declarations) surfaced
+ * rather than dropped, and an explicit over-limit disclosure when an aggregate
+ * byte total saturated at the reportable ceiling.
+ */
+const collectInventoryLimitations = (
+  entries: readonly AsarInventoryEntry[],
+  context: AsarClassificationContext,
+  state: InventoryState,
+): string[] => {
+  const limitations: string[] = [...(context.extraLimitations ?? [])];
+  if (context.listingTruncated)
+    limitations.push(
+      "The ASAR inventory was truncated by the reader's listing budget; the remaining inventory is unverified.",
+    );
+  const entryLimitations = new Set<string>();
+  let entryLimitationsOverflow = false;
+  for (const entry of entries)
+    for (const limitation of entry.limitations) {
+      if (entryLimitations.size >= MAX_ENTRY_LIMITATIONS) {
+        entryLimitationsOverflow = true;
+        break;
+      }
+      entryLimitations.add(boundLimitation(limitation));
+    }
+  limitations.push(...entryLimitations);
+  if (entryLimitationsOverflow)
+    limitations.push(
+      `Additional per-entry limitations beyond ${String(MAX_ENTRY_LIMITATIONS)} distinct notes were omitted.`,
+    );
+  // Declared member sizes can sum past the output schema's safe-integer ceiling.
+  // Report the saturated total as an explicit lower bound rather than emit a
+  // number the schema rejects, which would discard every retained fact.
+  if (state.overflowBytesCapped)
+    limitations.push(
+      `The collapsed inventory byte total reached this pass's reportable maximum (${String(SAFE_BYTES_CEILING)}); the true aggregate of collapsed member sizes is at least this value.`,
+    );
+  if (state.decoyBytesCapped)
+    limitations.push(
+      `The decoy inventory byte total reached this pass's reportable maximum (${String(SAFE_BYTES_CEILING)}); the true aggregate of decoy member sizes is at least this value.`,
+    );
+  return limitations;
 };
 
 /** Classify validated ASAR entries: reachable first, then path-inflation decoys. */
@@ -295,11 +365,13 @@ export const classifyAsarInventory = (
     coreRetained: 0,
     overflow: 0,
     overflowBytes: 0,
+    overflowBytesCapped: false,
     overflowDigest: createHash("sha256"),
     decoyExamined: 0,
     decoyRetained: 0,
     decoyOverflow: 0,
     decoyBytes: 0,
+    decoyBytesCapped: false,
     decoyDigest: createHash("sha256"),
   };
 
@@ -310,7 +382,9 @@ export const classifyAsarInventory = (
       retainOrOverflow(state, budget, entry, reachableFact(entry, budget));
     } else if (entry.path.length > MAX_PLAUSIBLE_ENTRY_PATH_UNITS) {
       state.decoyExamined += 1;
-      state.decoyBytes += sizeBytes(entry);
+      const addedDecoy = addSaturating(state.decoyBytes, sizeBytes(entry));
+      state.decoyBytes = addedDecoy.total;
+      if (addedDecoy.capped) state.decoyBytesCapped = true;
       if (state.decoyRetained < budget.maxFacts) {
         state.decoyRetained += 1;
         state.collapsed.push(decoyFact(entry, budget));
@@ -350,28 +424,7 @@ export const classifyAsarInventory = (
         "Entries with abnormally long paths were classified as unreferenced path inflation.",
     });
 
-  const limitations: string[] = [...(context.extraLimitations ?? [])];
-  if (context.listingTruncated)
-    limitations.push(
-      "The ASAR inventory was truncated by the reader's listing budget; the remaining inventory is unverified.",
-    );
-  // Surface the owning reader's per-entry limitations (unknown sizes, integrity
-  // declarations) rather than dropping them when mapping to facts.
-  const entryLimitations = new Set<string>();
-  let entryLimitationsOverflow = false;
-  for (const entry of entries)
-    for (const limitation of entry.limitations) {
-      if (entryLimitations.size >= MAX_ENTRY_LIMITATIONS) {
-        entryLimitationsOverflow = true;
-        break;
-      }
-      entryLimitations.add(boundLimitation(limitation));
-    }
-  limitations.push(...entryLimitations);
-  if (entryLimitationsOverflow)
-    limitations.push(
-      `Additional per-entry limitations beyond ${String(MAX_ENTRY_LIMITATIONS)} distinct notes were omitted.`,
-    );
+  const limitations = collectInventoryLimitations(entries, context, state);
 
   const omitted =
     state.overflow > 0 || state.decoyExamined - state.decoyRetained > 0;

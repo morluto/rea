@@ -209,6 +209,53 @@ describe("classifyAsarInventory", () => {
   });
 });
 
+describe("classifyAsarInventory aggregate byte limits", () => {
+  it("saturates an over-limit collapsed byte total and keeps the result schema-valid", () => {
+    // Two overflow members' declared sizes sum past safeCount's ceiling. Without
+    // a cap collapsed_bytes exceeds the output schema and CanonicalizeService
+    // returns AnalysisOutputError, discarding every retained fact. The aggregate
+    // must saturate to the ceiling and disclose the over-limit state instead.
+    const facts = classifyAsarInventory(
+      [
+        entry("a.js", 0),
+        entry("b.js", Number.MAX_SAFE_INTEGER),
+        entry("c.js", 1),
+      ],
+      budget({ maxFacts: 1 }),
+      context({ reachable: new Set(["a.js", "b.js", "c.js"]) }),
+    );
+    const reduction = facts.reductions.find(
+      (candidate) => candidate.collection === "asar-entry",
+    );
+    expect(reduction?.collapsed_bytes).toBe(Number.MAX_SAFE_INTEGER);
+    expect(facts.limitations.join(" ")).toMatch(/reportable maximum/u);
+    expect(() =>
+      canonicalizeArtifactSchema.parse({
+        artifact: { path: "app.asar", sha256: "0".repeat(64), bytes: 1024 },
+        requested_format: "asar",
+        ...facts,
+      }),
+    ).not.toThrow();
+  });
+
+  it("saturates an over-limit decoy byte total and discloses it", () => {
+    // Decoy aggregate sizes sum the same way; the decoy reduction must stay
+    // schema-valid and report the saturated total as an explicit lower bound.
+    const longA = `${"a".repeat(600)}.js`;
+    const longB = `${"b".repeat(600)}.js`;
+    const facts = classifyAsarInventory(
+      [entry(longA, Number.MAX_SAFE_INTEGER), entry(longB, 1)],
+      budget(),
+      context(),
+    );
+    const reduction = facts.reductions.find(
+      (candidate) => candidate.collection === "asar-decoy",
+    );
+    expect(reduction?.collapsed_bytes).toBe(Number.MAX_SAFE_INTEGER);
+    expect(facts.limitations.join(" ")).toMatch(/decoy inventory byte total/u);
+  });
+});
+
 describe("reachableAsarPaths", () => {
   it("resolves main and exports from a package.json member", () => {
     const { reachable, limitation } = reachableAsarPaths(
