@@ -26,9 +26,11 @@ import {
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { readComputerScreenshotBytes } from "../../desktop/ComputerScreenshot.js";
 import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
-import type { AgentEnvComputer } from "../../desktop/AgentEnvComputer.js";
+import {
+  readComputerScreenshotBytes,
+  type AgentEnvComputer,
+} from "../../desktop/AgentEnvComputer.js";
 import { controller } from "../../desktop/BuildComputerController.js";
 import type {
   BuildControllerAnswer,

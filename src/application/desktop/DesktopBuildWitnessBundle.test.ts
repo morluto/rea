@@ -1,4 +1,8 @@
 import { expect, it } from "vitest";
+import {
+  INVALID_BUILD_SCREENSHOTS,
+  VALID_BUILD_SCREENSHOT,
+} from "../../../tests/fixtures/buildScreenshotData.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { judgeScreenTask } from "./DesktopBuildWitnessBundle.js";
@@ -14,14 +18,14 @@ it("preserves earlier judge outcomes when a later check fails cleanup", async ()
     {
       callTool: async () => ({
         isError: false,
-        content: [{ type: "image", data: "aW1hZ2U=" }],
+        content: [{ type: "image", data: VALID_BUILD_SCREENSHOT.data }],
         structured: null,
       }),
     },
     {
       path: "/bundle",
       judge: async (_verifier, check, screen) => {
-        expect(screen).toEqual(Buffer.from("image"));
+        expect(VALID_BUILD_SCREENSHOT.bytes.equals(screen)).toBe(true);
         if (check.id === "second") throw failure;
         return { id: check.id, passed: true, description: "first completed" };
       },
@@ -50,9 +54,9 @@ it("preserves earlier judge outcomes when a later check fails cleanup", async ()
   });
 });
 
-it.each(["aW1hZ2U=!", "aW1hZ2V=", ""])(
-  "refuses malformed screenshot data %j before invoking a screen judge",
-  async (data) => {
+it.each(INVALID_BUILD_SCREENSHOTS)(
+  "refuses an invalid screen judge image ($name) before invoking the judge",
+  async ({ data }) => {
     let judged = false;
     const result = await judgeScreenTask(
       {

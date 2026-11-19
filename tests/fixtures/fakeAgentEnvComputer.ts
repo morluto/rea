@@ -65,6 +65,8 @@ export interface FakeComputerOptions {
   readonly blankFrames?: number;
   /** How long each screenshot, in order, waits before its reply, unless its request is cancelled. */
   readonly screenshotDelaysMs?: readonly number[];
+  /** Encoded image data in response to JPEG screenshot requests, in order. */
+  readonly jpegScreenshotData?: readonly string[];
   /** Bytes data/get appends to each segment beyond its manifest size. */
   readonly segmentPadding?: number;
   /** Recording starts, in order, whose recording begins but whose reply is lost. */
@@ -153,6 +155,7 @@ const startFakeDriver = async (
       : "A".repeat(options.frameCharacters);
   let blankFrames = options.blankFrames ?? 0;
   let screenshots = 0;
+  let jpegScreenshots = 0;
   const mcp = new McpServer({ name: "fake-reference-driver", version: "1" });
   for (const name of COMPUTER_TOOLS)
     mcp.registerTool(
@@ -177,12 +180,16 @@ const startFakeDriver = async (
         const frame = { frame_id: `f${String(calls.length)}`, width: 1280 };
         const blank = name === "computer_screenshot" && blankFrames > 0;
         if (blank) blankFrames -= 1;
+        const jpegData =
+          name === "computer_screenshot" && args.format === "jpeg"
+            ? options.jpegScreenshotData?.[jpegScreenshots++]
+            : undefined;
         const image =
           name === "computer_screenshot" || args.screenshot === true
             ? [
                 {
                   type: "image" as const,
-                  data: blank ? FAKE_BLANK_PNG : frameData,
+                  data: blank ? FAKE_BLANK_PNG : (jpegData ?? frameData),
                   mimeType: "image/png",
                 },
               ]

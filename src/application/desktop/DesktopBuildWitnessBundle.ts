@@ -30,9 +30,9 @@ import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import {
   guestFileAnswerCeiling,
   guestFileAnswerWorkingBytes,
+  readComputerScreenshotBytes,
   type AgentEnvComputer,
 } from "../../desktop/AgentEnvComputer.js";
-import { readComputerScreenshotBytes } from "../../desktop/ComputerScreenshot.js";
 import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
 import type { HostFileReader } from "../../ports/HostFileReader.js";
 import { errorMessage } from "../../kernel/errorMessage.js";
