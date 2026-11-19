@@ -778,8 +778,17 @@ const rejectsSocketArguments = (
   };
   // A supplied TLS socket bypasses transport connection. Otherwise a truthy
   // path selects a pipe and Node requires a string before it reads TCP options.
-  if (specifier === "tls" && truthiness(effective("socket")) !== false)
-    return false;
+  if (specifier === "tls") {
+    const socket = effective("socket");
+    const supplied = truthiness(socket);
+    if (supplied !== false)
+      return (
+        supplied === true &&
+        socket !== undefined &&
+        socket !== "unknown" &&
+        rejectsSuppliedTlsSocket(socket, node, state, inheritable)
+      );
+  }
   const path = effective("path");
   const hasPath = truthiness(path);
   if (hasPath === undefined) return false;
@@ -798,6 +807,38 @@ const rejectsSocketArguments = (
   const host = effective("host");
   // Node falls back to localhost for falsy hosts. An unknown host cannot prove a refusal.
   return truthiness(host) === true && rejectsStringOption(host);
+};
+
+/** Node calls `pause()` when wrapping a supplied stream without a native socket handle. */
+const rejectsSuppliedTlsSocket = (
+  socket: t.Node,
+  call: t.CallExpression | t.OptionalCallExpression,
+  state: JavaScriptSemanticAnalysisState,
+  inheritable: boolean,
+): boolean => {
+  const syntax = unwrapJavaScriptExpression(socket).node;
+  const isNullish = (value: t.Node) => isNullishPlaceholder(value, state);
+  if (t.isObjectExpression(syntax)) {
+    const pause = staticObjectPropertyReader(syntax, isNullish)("pause");
+    if (pause.status === "missing") return !inheritable;
+    return (
+      pause.status === "explicit" &&
+      primitiveOwnKeys(
+        unwrapJavaScriptExpression(pause.value).node,
+        isNullish,
+      ) !== null
+    );
+  }
+  const scalar =
+    primitiveOwnKeys(syntax, isNullish) !== null ||
+    nonFiniteGlobalNumber(syntax, state) !== undefined;
+  return (
+    scalar &&
+    !inheritable &&
+    !["BigInt", "Boolean", "Number", "String"].some((owner) =>
+      prototypeMutationMayPrecede(state, owner, call),
+    )
+  );
 };
 
 /** Validate a TCP port after later options and pipe precedence are resolved. */

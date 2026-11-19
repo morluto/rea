@@ -67,6 +67,21 @@ it.each([
   ],
   ["an out-of-range numeric net string", `net.connect("65536")`],
   ["a numeric TLS path", `tls.connect(-1, { path: 1 })`],
+  ["a true TLS socket", `tls.connect(-1, { socket: true })`],
+  ["a numeric TLS socket", `tls.connect(443, { socket: +1 })`],
+  ["a string TLS socket", `tls.connect({ port: 443, socket: "stream" })`],
+  ["a BigInt TLS socket", `tls.connect(443, { socket: 1n })`],
+  ["an Infinity TLS socket", `tls.connect(443, { socket: Infinity })`],
+  [
+    "a literal without the TLS stream method",
+    `tls.connect(443, { socket: {} })`,
+  ],
+  [
+    "a literal with a non-callable pause method",
+    `tls.connect(443, { socket: { pause: false } })`,
+  ],
+  ["a false TLS socket and bad TCP port", `tls.connect(-1, { socket: false })`],
+  ["a NaN TLS socket and bad TCP port", `tls.connect(-1, { socket: NaN })`],
   ["an object net path", `net.connect({ port: 443, path: {} })`],
   ["a boxed string TLS path", `tls.connect(443, { path: new String("x") })`],
   ["a method supplied as a net path", `net.connect({ port: 443, path() {} })`],
@@ -121,6 +136,25 @@ it.each([
   ["an unreadable positional overload", `tls.connect(p, { port: -1 })`],
   ["an unreadable template overload", "tls.connect(`${p}`, { port: -1 })"],
   ["an unreadable TLS path", `tls.connect(-1, { path: p })`],
+  ["an unreadable TLS socket member", `tls.connect(-1, { socket: p })`],
+  [
+    "an unreadable literal stream method",
+    `tls.connect(-1, { socket: { pause: p } })`,
+  ],
+  [
+    "a stream-like value with a custom prototype",
+    `tls.connect(-1, { socket: { __proto__: p } })`,
+  ],
+  ["an instantiated stream-like value", `tls.connect(-1, { socket: new p() })`],
+  ["a supplied net.Socket", `tls.connect(-1, { socket: new net.Socket() })`],
+  [
+    "a false TLS socket and valid TCP port",
+    `tls.connect(443, { socket: false })`,
+  ],
+  [
+    "a net option with an unused socket member",
+    `net.connect({ port: 443, socket: true })`,
+  ],
   [
     "an unreadable TLS socket with a bad path",
     `tls.connect(-1, { path: 1, socket: p })`,
@@ -138,6 +172,25 @@ it.each([
   (_name, call) => {
     expect(
       socketOperationsFor(`const handle = ${call}; handle.destroy()`),
+    ).toEqual([
+      { kind: "acquire", method: "connect" },
+      { kind: "release", method: "destroy" },
+    ]);
+  },
+);
+
+it.each([
+  ["Object", `{}`],
+  ["String", `"stream"`],
+] as const)(
+  "preserves uncertainty when %s.prototype may supply pause",
+  (owner, value) => {
+    expect(
+      socketOperationsFor(`
+    ${owner}.prototype.pause = p;
+    const handle = tls.connect(-1, { socket: ${value} });
+    handle.destroy();
+  `),
     ).toEqual([
       { kind: "acquire", method: "connect" },
       { kind: "release", method: "destroy" },
