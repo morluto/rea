@@ -11,7 +11,7 @@ import {
   type StableRegularFileDescriptor,
 } from "../filesystem/RegularFile.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
-import { nextFfsFileLocal, readFfsHeader } from "./FfsFile.js";
+import { readFfsHeader, type FfsPaddingRange } from "./FfsFile.js";
 import {
   scanFirmwareVolumes,
   unsupportedVolumeBodyReason,
@@ -179,6 +179,12 @@ export class UefiArtifactReader implements ArtifactReader {
       header.absoluteBase,
       Math.min(header.absoluteBase + header.declaredLength, image.length),
     );
+    const omitPadding = ({ offset, length }: FfsPaddingRange): void =>
+      omit(
+        `${volumeName}/ffs-padding-${hex(offset)}`,
+        `Unexpected FFS alignment bytes at ${hex(offset)}: ${length} bytes.`,
+      );
+    for (const padding of header.filePrefixPadding) omitPadding(padding);
     let local = header.firstFileLocal;
     while (local < region.end) {
       assertArtifactReadActive(signal);
@@ -221,10 +227,8 @@ export class UefiArtifactReader implements ArtifactReader {
           `Incomplete FFS extent at ${hex(fileHeader.absoluteBase)}: declared ${fileHeader.declaredLength} bytes, observed ${fileHeader.observedLength} (${fileHeader.extentIssue}).`,
         );
       yield entry;
-      if (fileHeader.extentIssue === "declared-length-truncates-region") break;
-      const next = nextFfsFileLocal(fileHeader, header.localBase);
-      if (next <= local) break;
-      local = next;
+      if (read.padding !== null) omitPadding(read.padding);
+      local = read.nextLocal;
     }
   }
 

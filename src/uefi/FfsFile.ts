@@ -208,15 +208,25 @@ export function checkFfsFileData(region: ScanRegion, header: FfsFileHeader) {
       } as const);
 }
 
-/** Advance to the next 8-aligned FFS position after the observed extent. */
-export function nextFfsFileLocal(
-  header: FfsFileHeader,
-  volumeBase: number,
-): number {
-  return (
-    volumeBase +
-    alignUp(header.localBase + header.observedLength - volumeBase, 8)
-  );
+export interface FfsPaddingRange {
+  readonly offset: number;
+  readonly length: number;
+}
+
+/** Identify a bounded FFS alignment span whose bytes differ from erase polarity. */
+export function unexpectedFfsPadding(
+  region: ScanRegion,
+  start: number,
+  end: number,
+  erasePolarity: boolean,
+): FfsPaddingRange | null {
+  const boundedEnd = Math.min(end, region.end);
+  if (
+    start >= boundedEnd ||
+    isWindowUniform(region.buffer, start, boundedEnd, erasePolarity ? 0xff : 0)
+  )
+    return null;
+  return { offset: absoluteOffset(region, start), length: boundedEnd - start };
 }
 
 type FfsHeaderRead =
@@ -227,9 +237,14 @@ type FfsHeaderRead =
       readonly offset: number;
       readonly length: number;
     }
-  | { readonly kind: "file"; readonly header: FfsFileHeader };
+  | {
+      readonly kind: "file";
+      readonly header: FfsFileHeader;
+      readonly nextLocal: number;
+      readonly padding: FfsPaddingRange | null;
+    };
 
-/** Distinguish an erased tail from bytes the FFS walk cannot interpret. */
+/** Read a file and its alignment within a region starting at the volume base. */
 export function readFfsHeader(
   region: ScanRegion,
   local: number,
@@ -248,7 +263,19 @@ export function readFfsHeader(
   } else {
     if (!reserve()) return { kind: "limited" };
     const header = parseFfsFileHeader(region, local, erasePolarity);
-    if (header !== null) return { kind: "file", header };
+    if (header !== null) {
+      const end = local + header.observedLength;
+      const nextLocal = Math.min(
+        region.end,
+        region.start + alignUp(end - region.start, 8),
+      );
+      return {
+        kind: "file",
+        header,
+        nextLocal,
+        padding: unexpectedFfsPadding(region, end, nextLocal, erasePolarity),
+      };
+    }
   }
   return {
     kind: "unparsed",
