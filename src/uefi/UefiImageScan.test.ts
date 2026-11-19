@@ -21,7 +21,14 @@ const decodeNestedFv =
   (nestedFv: Buffer): UefiLzmaDecoder =>
   async ({ payload }) =>
     payload.equals(Buffer.from([0xde, 0xad, 0xbe, 0xef]))
-      ? { ok: true, outcome: { bytes: nestedFv, decoderVersion: "test" } }
+      ? {
+          ok: true,
+          outcome: {
+            bytes: nestedFv,
+            decoderVersion: "test",
+            consumedBytes: payload.length,
+          },
+        }
       : { ok: false, reason: "decoder", message: "Unexpected carrier bytes" };
 
 const driverFile = (guid: string, payload: Buffer): Buffer =>

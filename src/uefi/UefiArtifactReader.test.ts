@@ -15,6 +15,7 @@ import type {
   ArtifactEntry,
   ArtifactTraversalOptions,
 } from "../resources/ArtifactReader.js";
+import { FFS3_FILE_SYSTEM_GUID } from "./UefiGuid.js";
 import { UefiArtifactReader } from "./UefiArtifactReader.js";
 
 const DRIVER_GUID = "9e21fd93-9c72-4c15-8c4b-e77f9db8d4d2";
@@ -305,8 +306,45 @@ it("retains a file in the erased tail claimed by the FV extension and reports un
     expect(onCoverage).toHaveBeenCalledWith({
       status: "unknown",
       limitations: [
-        expect.stringMatching(/UsedSize.*non-erased byte at 0x68/u),
+        expect.stringMatching(/UsedSize.*observed FFS file end at 0x81/u),
       ],
+    });
+  } finally {
+    await reader.close();
+  }
+});
+
+it("retains FFS siblings in inventory after skipping an unrepresentable invalid header", async () => {
+  const invalid = Buffer.alloc(32, 0xff);
+  invalid[19] = 1;
+  invalid[23] = 0x1f;
+  const sibling = buildFfsFile({
+    guid: DRIVER_GUID,
+    typeCode: 1,
+    payload: Buffer.from([0x31]),
+  });
+  const reader = await openReader(
+    buildFv({
+      files: [invalid, sibling],
+      fileSystemGuid: FFS3_FILE_SYSTEM_GUID,
+    }).buffer,
+  );
+  const onOmission = vi.fn();
+  const onCoverage = vi.fn();
+  try {
+    const entries = await collectEntries(reader, { onOmission, onCoverage });
+    expect(
+      entries
+        .filter(({ kind }) => kind === "file")
+        .map(({ byteOffset }) => byteOffset),
+    ).toEqual([104]);
+    expect(onOmission).toHaveBeenCalledExactlyOnceWith({
+      kind: "unsupported",
+      path: "firmware-volume-0x0/ffs-header-0x48",
+    });
+    expect(onCoverage).toHaveBeenCalledWith({
+      status: "unknown",
+      limitations: [expect.stringContaining("0xffffffffffffffff")],
     });
   } finally {
     await reader.close();

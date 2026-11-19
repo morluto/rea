@@ -21,6 +21,8 @@ import {
 } from "./FfsFile.js";
 
 const FV_EXTENSION_ENTRY_HEADER_LENGTH = 4;
+const FV_EXT_TYPE_OEM = 0x01;
+const FV_EXT_TYPE_GUID = 0x02;
 const FV_EXT_TYPE_USED_SIZE = 0x03;
 const USED_SIZE_LENGTH = 4;
 
@@ -280,6 +282,7 @@ export function* inspectFirmwareVolumeExtension(
   header: FirmwareVolumeHeader,
   reserve: () => boolean,
   checkpoint: () => void,
+  observedFileEnd?: number,
 ): Iterable<FirmwareVolumeExtensionIssue> {
   const entries = header.extensionEntries;
   if (entries === null || entries.start === entries.end) return;
@@ -326,7 +329,17 @@ export function* inspectFirmwareVolumeExtension(
     const type = reader.u16(local + 2);
     const fieldLocal = local + FV_EXTENSION_ENTRY_HEADER_LENGTH;
     local += size;
-    if (type !== FV_EXT_TYPE_USED_SIZE) continue;
+    if (type !== FV_EXT_TYPE_USED_SIZE) {
+      const minimum = minimumExtensionEntrySize(reader, type, size, fieldLocal);
+      if (size < minimum)
+        yield {
+          kind: "unparsed-region",
+          offset,
+          length: size,
+          detail: `FV extension type 0x${type.toString(16)} at 0x${offset.toString(16)} needs at least ${minimum} bytes; it declares ${size}.`,
+        };
+      continue;
+    }
     if (size !== FV_EXTENSION_ENTRY_HEADER_LENGTH + USED_SIZE_LENGTH) {
       yield {
         kind: "unparsed-region",
@@ -362,6 +375,18 @@ export function* inspectFirmwareVolumeExtension(
   }
 
   if (usedSize === undefined || sizeConflict) return;
+  if (
+    observedFileEnd !== undefined &&
+    observedFileEnd > header.absoluteBase + usedSize.value
+  ) {
+    yield {
+      kind: "unparsed-region",
+      offset: usedSize.offset,
+      length: USED_SIZE_LENGTH,
+      detail: `FV UsedSize ${usedSize.value} at 0x${usedSize.offset.toString(16)} ends before the observed FFS file end at 0x${observedFileEnd.toString(16)}.`,
+    };
+    return;
+  }
   const tailStart = header.localBase + usedSize.value;
   const volumeEnd = Math.min(
     region.end,
@@ -379,6 +404,26 @@ export function* inspectFirmwareVolumeExtension(
     };
     return;
   }
+}
+
+function minimumExtensionEntrySize(
+  reader: BinaryReader,
+  type: number,
+  size: number,
+  fieldLocal: number,
+): number {
+  if (type === FV_EXT_TYPE_GUID)
+    return FV_EXTENSION_ENTRY_HEADER_LENGTH + GUID_LENGTH;
+  if (type !== FV_EXT_TYPE_OEM) return FV_EXTENSION_ENTRY_HEADER_LENGTH;
+
+  // The OEM TypeMask declares one GUID per set bit. Count only after proving
+  // that the entire mask belongs to this entry.
+  const prefixLength = FV_EXTENSION_ENTRY_HEADER_LENGTH + 4;
+  if (size < prefixLength) return prefixLength;
+  let guidCount = 0;
+  for (let bits = reader.u32(fieldLocal); bits !== 0; bits = bits >>> 1)
+    guidCount += bits & 1;
+  return prefixLength + guidCount * GUID_LENGTH;
 }
 
 /** Sum of 16-bit header words must reach zero (mod 2^16). */

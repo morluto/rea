@@ -8,6 +8,7 @@ import {
 } from "../../tests/fixtures/uefiImage.js";
 import { imageRegion } from "./UefiBytes.js";
 import {
+  inspectFirmwareVolumeExtension,
   parseFirmwareVolumeHeader,
   scanFirmwareVolumes,
 } from "./FirmwareVolume.js";
@@ -129,3 +130,45 @@ it("does not use an FV beyond the signature search boundary to admit the image",
   expect(admitUefiFlashImage(image, prefix.length)).toBe(false);
   expect(admitUefiFlashImage(image)).toBe(true);
 });
+
+it.each([
+  { type: 1, mask: 0x80000001, length: 8, needs: "40 bytes" },
+  { type: 1, mask: 0x80000001, length: 40, needs: null },
+  { type: 2, mask: 0, length: 8, needs: "20 bytes" },
+  { type: 2, mask: 0, length: 20, needs: null },
+  { type: 0x8000, mask: 0, length: 8, needs: null },
+])(
+  "validates only the mandatory layout of FV extension type $type with $length bytes",
+  ({ type, mask, length, needs }) => {
+    const { buffer } = buildFv({ files: [], extendedHeader: "standalone" });
+    buffer.writeUInt32LE(20 + length, 88);
+    buffer.writeUInt16LE(length, 92);
+    buffer.writeUInt16LE(type, 94);
+    buffer.writeUInt32LE(mask, 96);
+    const region = imageRegion(buffer, 0, buffer.length);
+    const header = parseFirmwareVolumeHeader(region, 0);
+    if (header === null) throw new Error("Expected an admitted FV");
+    expect(header.implausibilities).toEqual([]);
+
+    const issues = [
+      ...inspectFirmwareVolumeExtension(
+        region,
+        header,
+        () => true,
+        () => {},
+      ),
+    ];
+    expect(issues).toMatchObject(
+      needs === null
+        ? []
+        : [
+            {
+              kind: "unparsed-region",
+              offset: 92,
+              length,
+              detail: expect.stringContaining(needs),
+            },
+          ],
+    );
+  },
+);

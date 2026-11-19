@@ -9,12 +9,12 @@ import {
 import { formatGuidLittleEndian, GUID_LENGTH } from "./UefiGuid.js";
 import {
   COMPRESSION_GUID_BY_DISPLAY,
+  OPAQUE_GUIDED_SECTION_GUIDS,
   SECTION_LAYOUT,
 } from "./UefiCodeTables.js";
 
 const GUIDED_PROCESSING_REQUIRED = 0x01;
 const GUIDED_AUTH_STATUS_VALID = 0x02;
-const SIGNED_SECTION_GUID = "0f9d89e8-9259-4f76-a5af-0c89e34023df";
 
 export type UefiDecodeFormat = "lzma" | "lzmaf86" | "zlib";
 
@@ -36,6 +36,7 @@ export interface SectionDraft {
   readonly observedLength: number;
   readonly truncated: boolean;
   readonly malformed: boolean;
+  readonly extendedHeaderIssue?: string;
   readonly content: SectionContent;
   readonly typeCode: number;
   readonly compression:
@@ -54,7 +55,7 @@ export interface SectionDraft {
         readonly dataOffset: number;
         readonly attributes: number | null;
       };
-  /** Payload window in this region's buffer, or null when malformed. */
+  /** Observed payload window, if the complete header has a valid extent. */
   readonly payload: { readonly start: number; readonly end: number } | null;
 }
 
@@ -98,6 +99,7 @@ function hasBoundedFrame(
 export function walkSections(
   region: ScanRegion,
   reserve: () => boolean = () => true,
+  largeFile = true,
 ): {
   sections: SectionDraft[];
   nonzeroPadding: { start: number; end: number }[];
@@ -108,15 +110,15 @@ export function walkSections(
   const nonzeroPadding: { start: number; end: number }[] = [];
   const { start: localStart, end: localEnd } = region;
   let cursor = localStart;
-  while (cursor + SECTION_LAYOUT.commonLength <= localEnd) {
+  while (cursor < localEnd) {
+    const header = readCommonHeader(reader, cursor, localEnd);
+    if (header === null) break;
     if (!reserve())
       return {
         sections,
         nonzeroPadding,
         remainder: { kind: "limited", start: cursor },
       };
-    const header = readCommonHeader(reader, cursor, localEnd);
-    if (header === null) break;
     const { commonLength, declaredLength, typeCode } = header;
     // Even an undersized declaration has a common header we already observed.
     const observedLength = Math.max(
@@ -136,8 +138,8 @@ export function walkSections(
 
     if (typeCode === 0x01) {
       headerLength += SECTION_LAYOUT.compressionFieldsLength;
-      malformed = observedLength < headerLength;
-      if (!malformed) {
+      malformed = declaredLength < headerLength;
+      if (observedLength >= headerLength) {
         const compressionType = reader.u8(
           fields + SECTION_LAYOUT.compressionTypeFieldOffset,
         );
@@ -160,23 +162,26 @@ export function walkSections(
       }
     } else if (typeCode === 0x02) {
       headerLength += SECTION_LAYOUT.guidedFieldsLength;
-      malformed = observedLength < headerLength;
-      if (!malformed) {
+      malformed = declaredLength < headerLength;
+      if (observedLength >= headerLength) {
         const dataOffset = reader.u16(
           fields + SECTION_LAYOUT.guidDataOffsetFieldOffset,
         );
-        malformed = dataOffset < headerLength || dataOffset > observedLength;
+        const guid = formatGuidLittleEndian(region.buffer, fields);
+        const attributes = reader.u16(
+          fields + SECTION_LAYOUT.guidAttributesFieldOffset,
+        );
+        const kind =
+          guid === null
+            ? "unknown-guid"
+            : (COMPRESSION_GUID_BY_DISPLAY[guid] ?? "unknown-guid");
+        compression = { kind, guid, dataOffset, attributes };
+        if (kind === "crc32-guided") {
+          headerLength += SECTION_LAYOUT.guidedCrc32Length;
+        }
+        malformed = dataOffset < headerLength || dataOffset > declaredLength;
         if (!malformed) {
-          const guid = formatGuidLittleEndian(region.buffer, fields);
           headerLength = dataOffset;
-          const attributes = reader.u16(
-            fields + SECTION_LAYOUT.guidAttributesFieldOffset,
-          );
-          const kind =
-            guid === null
-              ? "unknown-guid"
-              : (COMPRESSION_GUID_BY_DISPLAY[guid] ?? "unknown-guid");
-          compression = { kind, guid, dataOffset, attributes };
           if (
             kind === "lzma-custom" ||
             kind === "lzmaf86" ||
@@ -193,9 +198,10 @@ export function walkSections(
             };
           } else if (
             (attributes & GUIDED_PROCESSING_REQUIRED) === 0 &&
-            guid !== SIGNED_SECTION_GUID &&
             (kind === "crc32-guided" ||
               (kind === "unknown-guid" &&
+                guid !== null &&
+                !OPAQUE_GUIDED_SECTION_GUIDS.has(guid) &&
                 hasBoundedFrame(
                   reader,
                   cursor + dataOffset,
@@ -205,6 +211,7 @@ export function walkSections(
             content = {
               kind: "stored-sections",
               guidedIntegrityUnchecked:
+                kind === "crc32-guided" ||
                 (attributes & GUIDED_AUTH_STATUS_VALID) !== 0,
             };
           } else {
@@ -220,8 +227,19 @@ export function walkSections(
       }
     } else if (typeCode === 0x14 || typeCode === 0x18) {
       headerLength += typeCode === 0x14 ? 2 : GUID_LENGTH;
-      malformed = observedLength < headerLength;
+      malformed = declaredLength < headerLength;
     }
+
+    let extendedHeaderIssue: string | undefined;
+    if (commonLength === SECTION_LAYOUT.extendedLength) {
+      if (declaredLength <= SECTION_LAYOUT.largeSectionMarker)
+        extendedHeaderIssue =
+          "Extended section size fits in the compact PI header.";
+      else if (!largeFile)
+        extendedHeaderIssue =
+          "Extended section header requires a large FFS file.";
+    }
+    malformed ||= extendedHeaderIssue !== undefined;
 
     sections.push({
       absoluteBase: absoluteOffset(region, cursor),
@@ -230,12 +248,14 @@ export function walkSections(
       observedLength,
       truncated,
       malformed,
+      ...(extendedHeaderIssue === undefined ? {} : { extendedHeaderIssue }),
       content,
       typeCode,
       compression,
-      payload: malformed
-        ? null
-        : { start: cursor + headerLength, end: cursor + observedLength },
+      payload:
+        malformed || headerLength > observedLength
+          ? null
+          : { start: cursor + headerLength, end: cursor + observedLength },
     });
     if (truncated) return { sections, nonzeroPadding, remainder: null };
     if (declaredLength < commonLength) {

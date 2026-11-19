@@ -140,35 +140,39 @@ export class UefiArtifactReader implements ArtifactReader {
       };
       this.#entries.set(entry.adapterKey, entry);
       yield entry;
-      for (const issue of inspectFirmwareVolumeExtension(
-        region,
-        header,
-        reserve,
-        checkpoint,
-      )) {
-        omit(`${name}/fv-extension-${hex(issue.offset)}`, issue.detail);
-      }
+      let observedFileEnd: number | undefined;
       if (header.fileSystem === "unsupported") {
         omit(
           name,
           "Volumes with unsupported file-system GUIDs were retained without FFS entries.",
         );
-        continue;
-      }
-      for await (const file of this.#volumeFiles(
-        header,
-        image,
-        name,
-        omit,
-        signal,
-      )) {
-        if (filesMapped >= UEFI_FIRMWARE_LIMITS.maxFiles) {
-          fileBudgetExhausted = true;
-          break;
+      } else {
+        for await (const file of this.#volumeFiles(
+          header,
+          image,
+          name,
+          omit,
+          signal,
+        )) {
+          if (filesMapped >= UEFI_FIRMWARE_LIMITS.maxFiles) {
+            fileBudgetExhausted = true;
+            break;
+          }
+          this.#entries.set(file.adapterKey, file);
+          filesMapped += 1;
+          if (file.byteOffset !== null && file.declaredSize !== null)
+            observedFileEnd = file.byteOffset + file.declaredSize;
+          yield file;
         }
-        this.#entries.set(file.adapterKey, file);
-        filesMapped += 1;
-        yield file;
+      }
+      for (const issue of inspectFirmwareVolumeExtension(
+        region,
+        header,
+        reserve,
+        checkpoint,
+        observedFileEnd,
+      )) {
+        omit(`${name}/fv-extension-${hex(issue.offset)}`, issue.detail);
       }
       if (fileBudgetExhausted) {
         omit(name, "UEFI inventory reached its FFS file limit.");
@@ -204,10 +208,16 @@ export class UefiArtifactReader implements ArtifactReader {
     while (local < region.end) {
       assertArtifactReadActive(signal);
       const read = readFfsHeader(region, local, header.erasePolarity);
+      if (read.kind === "unusable-header") {
+        omit(`${volumeName}/ffs-header-${hex(read.offset)}`, read.detail);
+        local = read.nextLocal;
+        continue;
+      }
       if (read.kind === "unparsed") {
         omit(
           `${volumeName}/ffs-suffix-${hex(read.offset)}`,
-          `Unparsed FFS suffix at ${hex(read.offset)}: ${read.length} bytes.`,
+          read.detail ??
+            `Unparsed FFS suffix at ${hex(read.offset)}: ${read.length} bytes.`,
         );
       }
       if (read.kind !== "file") break;
@@ -240,6 +250,15 @@ export class UefiArtifactReader implements ArtifactReader {
         omit(
           name,
           `Incomplete FFS extent at ${hex(fileHeader.absoluteBase)}: declared ${fileHeader.declaredLength} bytes, observed ${fileHeader.observedLength} (${fileHeader.extentIssue}).`,
+        );
+      if (
+        fileHeader.bodyIssue !== null &&
+        fileHeader.body !== null &&
+        fileHeader.body.start < fileHeader.body.end
+      )
+        omit(
+          name,
+          `FFS file at ${hex(fileHeader.absoluteBase)} has a valid header but its data is not marked valid.`,
         );
       yield entry;
       if (read.padding !== null) omitPadding(read.padding);

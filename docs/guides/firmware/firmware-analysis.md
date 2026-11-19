@@ -38,7 +38,9 @@ the declared volume extent. FFS traversal accounts for volume extensions and
 retains valid files after an unusable file header. Malformed FV extension
 entries and conflicts between `UsedSize` and the claimed erased tail appear as
 volume-scoped gaps. Readable FFS files remain selectable. A truncated file body
-does not receive a verified checksum verdict.
+does not receive a verified checksum verdict. A valid header can identify an
+occupied file range even when the file state says its body is not yet valid.
+Those bodies produce a gap while later files remain selectable.
 
 ```sh
 rea inspect-uefi-firmware /path/to/flash.bin --json
@@ -82,11 +84,16 @@ LZMA-custom, LZMAF86, and AMD-zlib can yield nested volumes or section chains.
 The LZMAF86 worker reverses the x86 branch filter before mapping decoded bytes.
 A decoder limit makes inspection partial and appears as a size gap in
 extraction. When decoded bytes lack confirmed framing, extraction retains the
-decoded stream and reports its unparsed range. When the common section header
+decoded stream and reports its unparsed range. Decode derivations cover the
+input range examined by the decoder. Unread LZMA carrier bytes are reported
+as a gap, including an optional end marker when a known-size stream completes
+without examining it. When the common section header
 bounds a malformed section, extraction reports that section's range and keeps
 later valid sections selectable. Leaf payload ranges exclude type-specific
 header fields. Nonzero bytes between aligned sections appear as a gap and
-later sections remain selectable.
+later sections remain selectable. An FV-image section without a confirmed
+volume reports a gap. Incomplete UI names remain unknown, with their stored
+bytes available for extraction.
 Readable guided section streams are mapped directly when the section does
 not require processing. Guided integrity and authentication remain unverified.
 EFI standard compression and unsupported guided handlers make inspection

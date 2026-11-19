@@ -222,3 +222,50 @@ it("finds the first active child after an inactive prefix without leaving its co
   expect(limited.coverage).toBe("partial");
   expect(limited.limitations.join(" ")).toContain("max_depth 0");
 });
+
+it.each([1, 2, 3])(
+  "reports a %i-byte signature prefix at an established record boundary",
+  (length) => {
+    const first = encodeEntry("First", Buffer.alloc(0), 0);
+    const image = Buffer.concat([first, NVAR_MAGIC.subarray(0, length)]);
+    const scan = scanAmiNvramStores(image, 16, 2);
+    expect(scan.stores[0]?.variables.map(({ name }) => name)).toEqual([
+      "First",
+    ]);
+    expect(scan.coverage).toBe("partial");
+    expect(scan.limitations.join(" ")).toContain(
+      "incomplete or invalid extent",
+    );
+  },
+);
+
+it("marks a complete nested signature with a truncated first record as uncertain", () => {
+  const child = encodeEntry("Child", Buffer.alloc(0), 0);
+  const image = encodeEntry("Outer", child.subarray(0, 7), 0);
+  const scan = scanAmiNvramStores(image, 16, 2);
+  expect(scan.stores[0]?.variables.map(({ name }) => name)).toEqual(["Outer"]);
+  expect(scan.coverage).toBe("partial");
+  expect(scan.limitations.join(" ")).toContain("Possible nested NVAR record");
+});
+
+it("charges malformed discovery candidates against the structural record limit", () => {
+  const first = encodeEntry("First", Buffer.alloc(0), 0);
+  const malformed = Buffer.concat([NVAR_MAGIC, Buffer.alloc(6)]);
+  const malformedCandidates = Buffer.alloc(100_000 * malformed.length);
+  for (
+    let index = 0;
+    index < malformedCandidates.length;
+    index += malformed.length
+  )
+    malformed.copy(malformedCandidates, index);
+  const image = Buffer.concat([
+    first,
+    Buffer.from([0xff]),
+    malformedCandidates,
+    encodeEntry("Later", Buffer.alloc(0), 0),
+  ]);
+  const scan = scanAmiNvramStores(image, 16, 2);
+  expect(scan.coverage).toBe("partial");
+  expect(scan.limitations.at(-1)).toContain("Structural record limit");
+  expect(scan.stores.map(({ name }) => name)).toEqual(["First"]);
+});

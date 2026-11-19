@@ -16,6 +16,9 @@ import { undoUefiX86BranchFilter } from "./UefiX86BranchFilter.js";
 import { lzmaRequestSchema, type UefiLzmaReply } from "./UefiLzmaProtocol.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
 
+const LZMA_ALONE_HEADER_BYTES = 13;
+const LZMA_RANGE_CODER_INIT_BYTES = 5;
+
 /**
  * Output sink that enforces the byte budget while the decoder writes, instead
  * of after the whole stream has expanded in memory. It grows on demand up to
@@ -76,8 +79,8 @@ const main = async (): Promise<void> => {
     const payload = await readFile(request.payload_path);
     // .lzma (LZMA-Alone) declares the dictionary before any compressed bytes.
     // The upstream decoder allocates its window before it writes to our sink.
-    if (payload.length < 13)
-      throw truncatedInput("LZMA-Alone", "Incomplete LZMA stream properties.");
+    if (payload.length < LZMA_ALONE_HEADER_BYTES)
+      throw truncatedInput("LZMA-Alone", "Incomplete LZMA stream header.");
     const reader = new BinaryReader(payload, true, "LZMA-Alone");
     const dictionaryBytes = reader.u32(1);
     if (dictionaryBytes > UEFI_FIRMWARE_LIMITS.lzmaOutputBytes) {
@@ -108,6 +111,14 @@ const main = async (): Promise<void> => {
         },
       );
     }
+    if (payload.length < LZMA_ALONE_HEADER_BYTES + LZMA_RANGE_CODER_INIT_BYTES)
+      throw truncatedInput("LZMA-Alone", "Incomplete LZMA range coder header.");
+    // The EDK II decoder requires zero before the four-byte range coder state.
+    if (reader.u8(LZMA_ALONE_HEADER_BYTES) !== 0)
+      throw malformedInput(
+        "LZMA-Alone",
+        "The initial LZMA range coder byte must be zero.",
+      );
     const output = new BoundedLzmaOutput(request.max_output_bytes);
     let position = 0;
     lzma.decompressFile(
@@ -135,6 +146,7 @@ const main = async (): Promise<void> => {
     reply = {
       ok: true,
       lzma_version: decoderVersion,
+      input_bytes_consumed: position,
       output: {
         sha256: sha256Hex(decoded),
         bytes: decoded.length,

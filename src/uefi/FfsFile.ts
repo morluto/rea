@@ -28,6 +28,7 @@ export interface FfsFileHeader {
   readonly declaredLength: number;
   readonly observedLength: number;
   readonly body: { readonly start: number; readonly end: number } | null;
+  readonly bodyIssue: "data-not-valid" | null;
   readonly extentIssue:
     | "unusable-header-state"
     | "declared-length-below-header"
@@ -46,6 +47,12 @@ export interface FfsFileHeader {
   readonly implausibilities: readonly string[];
 }
 
+interface UnrepresentableFfsExtent {
+  readonly kind: "unrepresentable";
+  readonly size: bigint;
+  readonly unusableState: "header-construction" | "header-invalid" | null;
+}
+
 /**
  * Parse one FFS header at a local position; null when the position cannot
  * hold the minimum header. Checksum findings are observations on the header,
@@ -56,6 +63,15 @@ export function parseFfsFileHeader(
   localBase: number,
   erasePolarity: boolean,
 ): FfsFileHeader | null {
+  const parsed = observeFfsFileHeader(region, localBase, erasePolarity);
+  return parsed !== null && !("kind" in parsed) ? parsed : null;
+}
+
+function observeFfsFileHeader(
+  region: ScanRegion,
+  localBase: number,
+  erasePolarity: boolean,
+): FfsFileHeader | UnrepresentableFfsExtent | null {
   if (
     localBase < region.start ||
     localBase + FFS_HEADER_LAYOUT.length > region.end
@@ -74,6 +90,19 @@ export function parseFfsFileHeader(
   const declaredCompact = sizeB0 | (sizeB1 << 8) | (sizeB2 << 16);
   const largeFile = (attributes & FFS_ATTRIBUTE_MASKS.largeFile) !== 0;
   const implausibilities: string[] = [];
+  const rawState =
+    region.buffer[localBase + FFS_HEADER_LAYOUT.stateOffset] ?? 0;
+  const normalizedState = erasePolarity ? ~rawState & 0x3f : rawState & 0x3f;
+  const stateFlags = STATE_BIT_NAMES.filter(
+    ([bit]) => (normalizedState & bit) !== 0,
+  ).map(([, name]) => name);
+  // PI state is the highest set bit. An incomplete or invalid header supplies
+  // only its fixed extent; the stored size cannot consume the next file.
+  const state = stateFlags.at(-1);
+  const unusableState =
+    state === "header-construction" || state === "header-invalid"
+      ? state
+      : null;
 
   let headerLength: number = FFS_HEADER_LAYOUT.length;
   let declaredLength = declaredCompact;
@@ -85,33 +114,25 @@ export function parseFfsFileHeader(
       localBase + FFS_HEADER_LAYOUT.extendedSizeOffset,
       64,
     );
-    if (size > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+    if (size > BigInt(Number.MAX_SAFE_INTEGER))
+      return { kind: "unrepresentable", size, unusableState };
     declaredLength = Number(size);
     if (declaredCompact !== 0)
       implausibilities.push("large-file-compact-size-is-nonzero");
   }
-  const rawState =
-    region.buffer[localBase + FFS_HEADER_LAYOUT.stateOffset] ?? 0;
-  const normalizedState = erasePolarity ? ~rawState & 0x3f : rawState & 0x3f;
-  const stateFlags = STATE_BIT_NAMES.filter(
-    ([bit]) => (normalizedState & bit) !== 0,
-  ).map(([, name]) => name);
-  // PI state is the highest set bit. An incomplete or invalid header supplies
-  // only its fixed extent; the stored size cannot consume the next file.
-  const state = stateFlags.at(-1);
-  const unusableState =
-    state === "header-construction" || state === "header-invalid";
-  const extentIssue = unusableState
-    ? "unusable-header-state"
-    : declaredLength < headerLength
-      ? "declared-length-below-header"
-      : declaredLength > available
-        ? "declared-length-truncates-region"
-        : null;
+  const extentIssue =
+    unusableState !== null
+      ? "unusable-header-state"
+      : declaredLength < headerLength
+        ? "declared-length-below-header"
+        : declaredLength > available
+          ? "declared-length-truncates-region"
+          : null;
   if (extentIssue !== null) implausibilities.push(extentIssue);
-  const observedLength = unusableState
-    ? headerLength
-    : Math.min(Math.max(declaredLength, headerLength), available);
+  const observedLength =
+    unusableState !== null
+      ? headerLength
+      : Math.min(Math.max(declaredLength, headerLength), available);
 
   const headerChecksumField =
     region.buffer[localBase + FFS_HEADER_LAYOUT.integrityCheckOffset] ?? 0;
@@ -135,6 +156,7 @@ export function parseFfsFileHeader(
       extentIssue === null || extentIssue === "declared-length-truncates-region"
         ? { start: localBase + headerLength, end: localBase + observedLength }
         : null,
+    bodyIssue: state === "header-valid" ? "data-not-valid" : null,
     extentIssue,
     nameGuid: formatGuidLittleEndian(
       region.buffer.subarray(localBase, localBase + 16),
@@ -188,6 +210,7 @@ export function checkFfsFileData(region: ScanRegion, header: FfsFileHeader) {
     return { verdict: "pad-file-unchecked" } as const;
   if (
     header.extentIssue !== null ||
+    header.bodyIssue !== null ||
     !header.fileChecksumRequired ||
     header.body === null
   )
@@ -236,6 +259,14 @@ type FfsHeaderRead =
       readonly kind: "unparsed";
       readonly offset: number;
       readonly length: number;
+      readonly detail?: string;
+    }
+  | {
+      readonly kind: "unusable-header";
+      readonly offset: number;
+      readonly length: number;
+      readonly nextLocal: number;
+      readonly detail: string;
     }
   | {
       readonly kind: "file";
@@ -260,9 +291,22 @@ export function readFfsHeader(
       isWindowUniform(region.buffer, prefixEnd, region.end, erase)
     )
       return { kind: "end" };
-  } else {
+  } else if (!isWindowUniform(region.buffer, local, prefixEnd, erase ^ 0xff)) {
     if (!reserve()) return { kind: "limited" };
-    const header = parseFfsFileHeader(region, local, erasePolarity);
+    const header = observeFfsFileHeader(region, local, erasePolarity);
+    if (header !== null && "kind" in header) {
+      const offset = absoluteOffset(region, local);
+      const detail = `FFS ExtendedSize at 0x${offset.toString(16)} declares 0x${header.size.toString(16)} bytes, exceeding exactly representable lengths.`;
+      if (header.unusableState === null)
+        return { kind: "unparsed", offset, length: region.end - local, detail };
+      return {
+        kind: "unusable-header",
+        offset,
+        length: FFS_HEADER_LAYOUT.extendedLength,
+        nextLocal: local + FFS_HEADER_LAYOUT.extendedLength,
+        detail: `${detail} The ${header.unusableState} state permits advancing by the fixed header extent.`,
+      };
+    }
     if (header !== null) {
       const end = local + header.observedLength;
       const nextLocal = Math.min(

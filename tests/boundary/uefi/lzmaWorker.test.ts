@@ -12,8 +12,11 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 const lzmaPurescript = createRequire(import.meta.url)(
   "lzma-purejs",
 ) as unknown as {
-  compressFile: (buffer: Buffer) => Uint8Array;
-  decompressFile: (buffer: Buffer) => Uint8Array;
+  compressFile: (
+    buffer: Buffer,
+    output?: undefined,
+    options?: { eos: boolean },
+  ) => Uint8Array;
 };
 
 interface UefiLzmaWorkerReply {
@@ -21,6 +24,7 @@ interface UefiLzmaWorkerReply {
   readonly reason?: unknown;
   readonly message?: unknown;
   readonly lzma_version?: unknown;
+  readonly input_bytes_consumed?: unknown;
   readonly output?: { readonly sha256: unknown; readonly bytes: unknown };
 }
 
@@ -134,3 +138,45 @@ it("rejects an incomplete coded body even when its declared output size is plaus
   expect(reply).toMatchObject({ ok: false, reason: "format" });
   await expect(readFile(join(directory, "output.bin"))).rejects.toThrow();
 });
+
+it("rejects a nonzero LZMA range coder lead-in", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-lzma-range-");
+  const input = Buffer.from(
+    lzmaPurescript.compressFile(Buffer.from("static firmware fixture")),
+  );
+  input[13] = 1;
+  const reply = await runLzmaWorker(directory, input, 1024);
+  expect(reply).toMatchObject({
+    ok: false,
+    reason: "format",
+    message: expect.stringContaining("range coder byte must be zero"),
+  });
+  await expect(readFile(join(directory, "output.bin"))).rejects.toThrow();
+});
+
+it.each([false, true])(
+  "accounts for input consumption with an end marker (unknown size %s)",
+  async (unknownSize) => {
+    const plain = Buffer.from("UEFI audit fixture");
+    const markerless = lzmaPurescript.compressFile(plain);
+    const withMarker = Buffer.from(
+      lzmaPurescript.compressFile(plain, undefined, { eos: true }),
+    );
+    expect(withMarker.length).toBeGreaterThan(markerless.length);
+    if (unknownSize) withMarker.writeBigUInt64LE(0xffffffffffffffffn, 5);
+    const input = Buffer.concat([
+      withMarker,
+      Buffer.from("unread fixture bytes"),
+    ]);
+    const directory = await createTestTempDirectory("rea-uefi-lzma-marker-");
+    const reply = await runLzmaWorker(directory, input, 1024);
+    // A declared output size lets the decoder stop before a legal optional marker.
+    expect(reply).toMatchObject({
+      ok: true,
+      input_bytes_consumed: unknownSize ? withMarker.length : markerless.length,
+    });
+    expect((await readFile(join(directory, "output.bin"))).equals(plain)).toBe(
+      true,
+    );
+  },
+);

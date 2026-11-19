@@ -107,4 +107,76 @@ it("recognizes erased header windows per polarity", () => {
   });
   const zeroRegion = imageRegion(Buffer.alloc(64, 0x00), 0, 64);
   expect(readFfsHeader(zeroRegion, 0, false)).toEqual({ kind: "end" });
+  expect(readFfsHeader(zeroRegion, 0, true)).toMatchObject({
+    kind: "unparsed",
+  });
+});
+
+it.each([0x01, 0x20])(
+  "continues after a bounded FFS3 header with state bit %i and an unrepresentable size",
+  (state) => {
+    const unusable = Buffer.alloc(32, 0xff);
+    unusable[19] = 1;
+    unusable[23] = ~state & 0x3f;
+    const sibling = buildFfsFile({
+      guid: "19111111-2222-3333-4444-555555555555",
+      typeCode: 0x01,
+      payload: Buffer.from("body"),
+    });
+    const bytes = Buffer.concat([Buffer.alloc(8, 0xff), unusable, sibling]);
+    const region = imageRegion(bytes, 8, bytes.length);
+    const result = readFfsHeader(region, 8, true);
+    expect(result).toMatchObject({
+      kind: "unusable-header",
+      offset: 8,
+      length: 32,
+      nextLocal: 40,
+      detail: expect.stringContaining("0xffffffffffffffff"),
+    });
+    if (result.kind !== "unusable-header")
+      throw new Error("Expected a bounded unusable header");
+    expect(readFfsHeader(region, result.nextLocal, true)).toMatchObject({
+      kind: "file",
+      header: { localBase: 40, declaredLength: 28 },
+    });
+  },
+);
+
+it("does not infer a fixed-header skip for a data-valid FFS3 declaration", () => {
+  const file = Buffer.alloc(40, 0xff);
+  file[19] = 1;
+  file[23] = 0x38;
+  expect(
+    readFfsHeader(imageRegion(file, 0, file.length), 0, true),
+  ).toMatchObject({
+    kind: "unparsed",
+    offset: 0,
+    length: 40,
+  });
+});
+
+it("retains the header-valid FFS extent without validating unwritten data", () => {
+  const file = buildFfsFile({
+    guid: "19111111-2222-3333-4444-555555555555",
+    typeCode: 0x01,
+    payload: Buffer.alloc(8, 0xff),
+    fileChecksum: "correct",
+  });
+  file[23] = ~0x03 & 0x3f;
+  const region = imageRegion(file, 0, file.length);
+  const result = readFfsHeader(region, 0, true);
+  expect(result).toMatchObject({
+    kind: "file",
+    nextLocal: 32,
+    header: {
+      headerChecksumValid: true,
+      extentIssue: null,
+      body: { start: 24, end: 32 },
+      bodyIssue: "data-not-valid",
+    },
+  });
+  if (result.kind !== "file") throw new Error("Expected a bounded file");
+  expect(checkFfsFileData(region, result.header)).toEqual({
+    verdict: "unchecked",
+  });
 });
