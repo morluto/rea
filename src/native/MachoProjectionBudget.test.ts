@@ -113,6 +113,57 @@ it("reserves the projection envelope for an empty command table", async () => {
   }
 });
 
+it.each([
+  {
+    field: "load command",
+    countAt: 16,
+    valid: 2,
+    invalid: 3,
+    maximumRecords: 1,
+  },
+  {
+    field: "linker option",
+    countAt: 40,
+    valid: 2,
+    invalid: 5,
+    maximumRecords: 2,
+  },
+])(
+  "distinguishes an impossible $field count from a framed over-budget declaration",
+  async ({ field, countAt, valid, invalid, maximumRecords }) => {
+    const bytes = Buffer.alloc(48);
+    bytes.writeUInt32LE(0xfeedfacf, 0);
+    bytes.writeUInt32LE(16, 20);
+    if (field === "linker option") {
+      bytes.writeUInt32LE(1, 16);
+      bytes.writeUInt32LE(0x2d, 32);
+      bytes.writeUInt32LE(16, 36);
+      bytes.write("a\0b\0", 44);
+    } else {
+      // Two header-only commands, each with a complete eight-byte frame.
+      for (const offset of [32, 40]) {
+        bytes.writeUInt32LE(0x0a, offset);
+        bytes.writeUInt32LE(8, offset + 4);
+      }
+    }
+    const inspect = () =>
+      readMachoCommandNames(
+        async (offset, size) => bytes.subarray(offset, offset + size),
+        bytes.length,
+        128,
+        maximumRecords,
+      );
+    bytes.writeUInt32LE(valid, countAt);
+    await expect(inspect()).rejects.toMatchObject({
+      failure: { kind: "limit", limit: { name: "macho_load_command_records" } },
+    });
+    bytes.writeUInt32LE(invalid, countAt);
+    await expect(inspect()).rejects.toMatchObject({
+      failure: { kind: "malformed", detail: expect.stringContaining(field) },
+    });
+  },
+);
+
 it("bounds a growing linker option before reading its remaining payload", async () => {
   const commandSize = 8208;
   const image = Buffer.alloc(32 + commandSize);
