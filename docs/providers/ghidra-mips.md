@@ -170,7 +170,9 @@ inspection must examine the complete dynamic relocation declarations. This
 profile verifies `R_MIPS_NONE`, symbol-index-zero and symbol-bearing
 `R_MIPS_REL32`, and the TLS loader slots `R_MIPS_TLS_DTPMOD32`,
 `R_MIPS_TLS_DTPREL32` and `R_MIPS_TLS_TPREL32`; other relocation types remain
-refused. Images without an ABI flags record remain refused, as in the executable
+refused. Android packed relocation and legacy Android RELR declarations leave
+shared-load coverage unavailable in the MIPS profiles. Images without an ABI
+flags record remain refused, as in the executable
 lane, and so do images ending in an Android prelink trailer, whose base Ghidra
 prefers over the program headers. The support lane is
 `elf32-dyn-o32-arch32r2-standard`; Ghidra selects the language from the

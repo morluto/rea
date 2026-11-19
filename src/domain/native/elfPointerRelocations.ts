@@ -2,6 +2,9 @@ import type { FileMapping, ZeroFillMapping } from "../virtualFileMapping.js";
 import { readElfDynamicEntry } from "../elfDynamicEntry.js";
 import {
   decodeElfRelocationInfo,
+  ELF_ANDROID_PACKED_RELOCATION_TABLES,
+  ELF_ANDROID_PACKED_RELOCATION_TAGS,
+  ELF_RELR_DYNAMIC_TAGS,
   readElfRelocationEntry,
 } from "../elfRelocation.js";
 import { readLeb128, SLEB64 } from "../leb128.js";
@@ -136,32 +139,24 @@ const DT_REL = 17n,
 const DT_PLTRELSZ = 2n,
   DT_PLTREL = 20n,
   DT_JMPREL = 23n;
-const DT_RELRSZ = 35n,
-  DT_RELR = 36n,
-  DT_RELRENT = 37n;
+const {
+  address: DT_RELR,
+  size: DT_RELRSZ,
+  entry: DT_RELRENT,
+} = ELF_RELR_DYNAMIC_TAGS.standard;
 const DT_SYMTAB = 6n,
   DT_SYMENT = 11n,
   DT_HASH = 4n,
   DT_GNU_HASH = 0x6ffffef5n;
-const DT_ANDROID_REL = 0x6000000fn,
-  DT_ANDROID_RELSZ = 0x60000010n,
-  DT_ANDROID_RELA = 0x60000011n,
-  DT_ANDROID_RELASZ = 0x60000012n;
-const PACKED_TAGS = [
-  DT_ANDROID_REL,
-  DT_ANDROID_RELSZ,
-  DT_ANDROID_RELA,
-  DT_ANDROID_RELASZ,
-];
 // Android's pre-standard RELR uses the same address/bitmap encoding. Resolve
 // its dynamic-tag aliases here so every consumer shares validation, duplicate
 // detection and relocation provenance with standard RELR.
-const RELR_TAG_ALIASES = new Map([
-  [0x6fffe000n, DT_RELR],
-  [0x6fffe001n, DT_RELRSZ],
-  [0x6fffe003n, DT_RELRENT],
+const RELR_TAG_ALIASES = new Map<bigint, bigint>([
+  [ELF_RELR_DYNAMIC_TAGS.android.address, DT_RELR],
+  [ELF_RELR_DYNAMIC_TAGS.android.size, DT_RELRSZ],
+  [ELF_RELR_DYNAMIC_TAGS.android.entry, DT_RELRENT],
 ]);
-const RELR_TAGS = new Set([DT_RELR, DT_RELRSZ, DT_RELRENT]);
+const RELR_TAGS = new Set<bigint>([DT_RELR, DT_RELRSZ, DT_RELRENT]);
 const UNIQUE_TAGS = new Set([
   DT_RELA,
   DT_RELASZ,
@@ -173,7 +168,7 @@ const UNIQUE_TAGS = new Set([
   DT_JMPREL,
   DT_PLTRELSZ,
   DT_PLTREL,
-  ...PACKED_TAGS,
+  ...ELF_ANDROID_PACKED_RELOCATION_TAGS,
 ]);
 // Ambiguous symbol declarations leave symbolic writes unknown without
 // rejecting independently decoded relative relocations.
@@ -913,10 +908,11 @@ export function* readElfRelocationWritesSteps(
         `DT_${encoding.toUpperCase()}SZ has no DT_${encoding.toUpperCase()}`,
       );
   }
-  for (const [addressTag, sizeTag, encoding] of [
-    [DT_ANDROID_REL, DT_ANDROID_RELSZ, "rel"],
-    [DT_ANDROID_RELA, DT_ANDROID_RELASZ, "rela"],
-  ] as const) {
+  for (const [
+    addressTag,
+    sizeTag,
+    encoding,
+  ] of ELF_ANDROID_PACKED_RELOCATION_TABLES) {
     const address = tags.get(addressTag),
       size = tags.get(sizeTag);
     if (address === undefined) {

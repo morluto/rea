@@ -28,6 +28,9 @@ export interface ElfFixedHeader extends Omit<ElfHeaderFacts, "version"> {
   readonly architecture: ElfArchitecture | null;
 }
 
+export const elfFixedHeaderWidth = (bits: 32 | 64): 52 | 64 =>
+  bits === 32 ? 52 : 64;
+
 /**
  * Decode common ELF framing and fixed fields; version and declared-size admission belong to consumers.
  *
@@ -50,7 +53,7 @@ export const readElfHeaderFacts = (
   if (bytes[6] !== 1) return err("unsupported ELF identification version");
 
   const elfClass = classByte === 1 ? 32 : 64;
-  const minimumSize = elfClass === 32 ? 52 : 64;
+  const minimumSize = elfFixedHeaderWidth(elfClass);
   if (
     !Number.isSafeInteger(totalBytes) ||
     totalBytes < bytes.length ||
@@ -96,7 +99,7 @@ export const admitElfFixedHeaderFacts = (
   // NVIDIA CUBIN uses ELFOSABI_CUDA and a vendor ABI version in e_version.
   if (facts.version !== 1 && !(facts.machine === 190 && facts.osAbi === 0x33))
     return err("unsupported ELF header version");
-  const minimumSize = facts.elfClass === 32 ? 52 : 64;
+  const minimumSize = elfFixedHeaderWidth(facts.elfClass);
   if (facts.headerSize < minimumSize || facts.headerSize > totalBytes)
     return err("invalid ELF header size");
   return ok({

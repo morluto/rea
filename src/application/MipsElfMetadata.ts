@@ -1,9 +1,14 @@
-import { readElfSectionHeader } from "../domain/elfSectionHeader.js";
 import {
+  elfSectionHeaderWidth,
+  readElfSectionHeader,
+} from "../domain/elfSectionHeader.js";
+import {
+  elfProgramHeaderWidth,
   readElfProgramHeader,
   type ElfProgramHeader,
 } from "../domain/elfProgramHeader.js";
 import { readElfRawTableDeclarations } from "../domain/elfRawTableDeclarations.js";
+import { isElfRelocationSectionType } from "../domain/elfRelocation.js";
 import type { FileHandle } from "node:fs/promises";
 import { BinaryReader } from "../domain/binaryContainer.js";
 import type {
@@ -11,7 +16,10 @@ import type {
   MipsElfMetadata,
   MipsGnuAttributes,
 } from "../domain/binaryTargetTypes.js";
-import { readElfFixedHeader } from "../domain/elfFixedHeader.js";
+import {
+  elfFixedHeaderWidth,
+  readElfFixedHeader,
+} from "../domain/elfFixedHeader.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   readMipsElfSharedLoad,
@@ -94,7 +102,8 @@ export const readMipsElfMetadata = async (
     fixedHeader.value.flags !== metadata.flags
   )
     return err("MIPS ELF header no longer matches the resolved identity");
-  if (fixedHeader.value.headerSize !== 52)
+  const headerWidth = elfFixedHeaderWidth(32);
+  if (fixedHeader.value.headerSize !== headerWidth)
     return err("invalid MIPS ELF32 version or header size");
 
   const raw = readElfRawTableDeclarations(bytes, fixedHeader.value);
@@ -106,7 +115,7 @@ export const readMipsElfMetadata = async (
       offset: Number(programs.offset),
       count: programs.count,
       stride: programs.width,
-      entrySize: 32,
+      entrySize: elfProgramHeaderWidth(32),
       recordType: 0x70000003, // PT_MIPS_ABIFLAGS
       optional: false,
     },
@@ -115,7 +124,7 @@ export const readMipsElfMetadata = async (
       offset: Number(sections.offset),
       count: sections.count,
       stride: sections.width,
-      entrySize: 40,
+      entrySize: elfSectionHeaderWidth(32),
       recordType: 0x7000002a, // SHT_MIPS_ABIFLAGS
       optional: true,
     },
@@ -136,7 +145,7 @@ export const readMipsElfMetadata = async (
         return err(`unsupported extended or inconsistent MIPS ${table.label}`);
       continue;
     }
-    if (table.offset < 52 || table.stride !== table.entrySize)
+    if (table.offset < headerWidth || table.stride !== table.entrySize)
       return err(`invalid MIPS ${table.label} offset or entry size`);
     const count = table.optional
       ? Math.min(
@@ -207,7 +216,7 @@ export const readMipsElfMetadata = async (
       if (
         metadata.type === 3 &&
         "entrySize" in declaration &&
-        (type === 4 || type === 9 || type === 19)
+        isElfRelocationSectionType(type)
       )
         relocationSections.push({
           type,
