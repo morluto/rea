@@ -1,11 +1,15 @@
 import { createHash } from "node:crypto";
-import { symlink, writeFile } from "node:fs/promises";
+import { symlink, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createNativeExportsService } from "../../../src/composition/binaryDiagnostics.js";
 import { analysisErrorRemediationAction } from "../../../src/domain/analysisErrorPresentation.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
-import { nativeExportsSchema } from "../../../src/domain/native/nativeExports.js";
+import {
+  MAX_NATIVE_EXPORT_ROWS,
+  nativeExportsSchema,
+} from "../../../src/domain/native/nativeExports.js";
 import {
   elfExportImage,
   peExportImage,
@@ -276,6 +280,54 @@ describe("native export text capacity", () => {
 });
 
 describe("native export entry allowance", () => {
+  it.each([false, true])(
+    "reports whether an oversized ELF dynamic symbol table is file-backed (%s)",
+    async (stored) => {
+      const bytes = elfExportImage({ symbols: [{ name: "exported" }] });
+      const symbolSection = Number(bytes.readBigUInt64LE(40)) + 64;
+      const size = (MAX_NATIVE_EXPORT_ROWS + 1) * 24;
+      bytes.writeBigUInt64LE(BigInt(bytes.length), symbolSection + 24);
+      bytes.writeBigUInt64LE(BigInt(size), symbolSection + 32);
+      const root = await createTestTempDirectory("rea-native-export-dynsym-");
+      const path = join(root, "rows.so");
+      await writeFile(path, bytes);
+      if (stored) await truncate(path, bytes.length + size);
+      const service = createNativeExportsService();
+      try {
+        const result = await service.inspect({ path });
+        if (result.ok) throw new Error("Expected a symbol-table refusal");
+        const projected = projectAnalysisError(result.error);
+        if (stored)
+          expect(projected).toMatchObject({
+            code: "resource_constraint",
+            details: {
+              reported_limits: {
+                boundary: "rows",
+                maximum: MAX_NATIVE_EXPORT_ROWS,
+              },
+            },
+          });
+        else
+          expect(projected).toMatchObject({
+            code: "invalid_request",
+            details: {
+              issues: [
+                {
+                  path: ["path"],
+                  reason: "invalid_format",
+                  message: expect.stringContaining(
+                    "ELF dynamic symbols range is outside the file",
+                  ),
+                },
+              ],
+            },
+          });
+      } finally {
+        await service.close();
+      }
+    },
+  );
+
   it.each([
     ["stored", () => peStoredExportTableImage(0x40001)],
     [

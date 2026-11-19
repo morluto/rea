@@ -10,6 +10,41 @@ import { inspectLibraryPackages } from "./LibraryPackageInventory.js";
 import { elfImage } from "../domain/desktop/elfImage.fixture.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
+it("reports truncated ELF dependency tables without suggesting more capture headroom", async () => {
+  const root = await createTestTempDirectory("rea-library-table-framing-");
+  const executable = join(root, "app");
+  const needed = Array.from(
+    { length: 8 },
+    (_, index) => `lib${String(index)}.so`,
+  );
+  const image = elfImage({ needed });
+  const policy = desktopLibraryPolicy({ table_bytes: 112 });
+  const inspect = () =>
+    inspectLibraryPackages(
+      executable,
+      "app",
+      async () => {
+        throw new Error(
+          "An unreadable dependency table must stop host queries",
+        );
+      },
+      undefined,
+      policy,
+    );
+  await writeFile(executable, image);
+  expect((await inspect()).library_packages_reason).toContain(
+    "ELF dynamic table reached library-policy.table_bytes=112 bytes",
+  );
+  image.writeBigUInt64LE(BigInt(image.length), 64 + 56 + 8);
+  await writeFile(executable, image);
+  expect(await inspect()).toEqual({
+    library_packages: [],
+    missing_libraries: [],
+    unpackaged_libraries: [],
+    library_packages_reason: `the libraries of ${executable} were not read: ELF dynamic table is truncated`,
+  });
+});
+
 it.skipIf(process.platform === "win32").each(["/", "/.", "/.."])(
   "preserves a dependency's trailing directory requirement: %s",
   async (suffix) => {

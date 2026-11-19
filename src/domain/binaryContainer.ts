@@ -377,6 +377,7 @@ export class BinaryReader {
 
   table(offset: bigint, count: number, width: number, label: string): number {
     const size = BigInt(count) * BigInt(width);
+    const range = this.fileRange(offset, size, label);
     if (size > 16n * 1024n * 1024n)
       throw new BinaryResourceFailure(
         "structure",
@@ -385,7 +386,7 @@ export class BinaryReader {
         "structure",
         "bytes",
       );
-    return this.fileRange(offset, size, label).offset;
+    return range.offset;
   }
 }
 
