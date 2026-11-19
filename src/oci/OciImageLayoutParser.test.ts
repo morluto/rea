@@ -115,6 +115,18 @@ it("inventories a single-platform layout and redacts Env values by default", asy
   expect(hashed.every((blob) => blob.sha256 !== null)).toBe(true);
 });
 
+it("preserves significant whitespace in config string facts", async () => {
+  const root = await createTestTempDirectory("rea-oci-whitespace-");
+  await writeOciImageLayoutFixture(root, {
+    config: { workingDir: "/app ", user: " nobody" },
+  });
+  const report = await inspectLayout(root);
+  expect(report.images[0]).toMatchObject({
+    working_dir: "/app ",
+    user: " nobody",
+  });
+});
+
 it("includes Env values when include_env_values is selected", async () => {
   const root = await createTestTempDirectory("rea-oci-env-");
   await writeOciImageLayoutFixture(root);

@@ -62,11 +62,9 @@ const BASE_LIMITATIONS = [
   OCI_IMAGE_LAYOUT_LIMITATIONS.noLayerContents,
 ] as const;
 
-const nonempty = (value: unknown): string | null => {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed === "" ? null : trimmed;
-};
+/** Present string as written; blank or whitespace-only values count as absent. */
+const nonempty = (value: unknown): string | null =>
+  typeof value === "string" && value.trim() !== "" ? value : null;
 
 const asStringArray = (value: unknown): string[] | null => {
   if (!Array.isArray(value)) return null;
