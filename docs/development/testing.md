@@ -1398,8 +1398,10 @@ baselines (`scripts/verify/baselines/*.json`,
 `scripts/lib/module-layers.baseline.json`), `.git-blame-ignore-revs`, Python
 analysis-efficiency test scripts, and advertised-schema summaries select no
 portable Vitest tests unless named by path, because static, Python, and build
-jobs check them. Non-module CLI parity fixtures with a single known test suite
-are bound in `EXPLICIT_FIXTURE_OWNERS` and fail closed if their owner is missing.
+jobs check them. `EXPLICIT_TEST_OWNERS` binds inputs with a known test suite the
+selector cannot reach by imports or file names. These include non-module CLI
+parity fixtures and the managed pointer rows integration test. Selection falls
+back to the complete suite if a declared owner is missing.
 
 The PR falls back to the complete fast suite when it cannot decide:
 
