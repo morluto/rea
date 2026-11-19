@@ -1218,6 +1218,7 @@
 * **wasm:** leave WABT cancellation to the shared owners ([#10796](https://github.com/morluto/rea/issues/10796)) ([b87b318](https://github.com/morluto/rea/commit/b87b318ae7e0ee69d204d8777b36c152702abbe2))
 * **wasm:** report WABT failure output through the captured-output owner ([#11443](https://github.com/morluto/rea/issues/11443)) ([204bd2b](https://github.com/morluto/rea/commit/204bd2bb49f199763b7b3287f3448f7fda136413))
 * **web:** report source-map output limits from LimitRef ([#12200](https://github.com/morluto/rea/issues/12200)) ([9968f27](https://github.com/morluto/rea/commit/9968f27face8023c7f83787a497ea9325cb7f6e4))
+* **windows:** share Shell Link location field reads ([#12584](https://github.com/morluto/rea/issues/12584)) ([c8a783d](https://github.com/morluto/rea/commit/c8a783d7cfbe97393c2a78ca4611e6298b4e66e4))
 * **zip:** read EOCD and trailing archive fields via BinaryReader ([#11918](https://github.com/morluto/rea/issues/11918)) ([afd277d](https://github.com/morluto/rea/commit/afd277dabc3b0a17eb9042453d8cb12b7d374100))
 
 
