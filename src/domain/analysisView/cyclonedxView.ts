@@ -189,12 +189,14 @@ const uniqueRefs = (refs: readonly (string | undefined)[]): string[] => {
 
 /** An empty, `.` or `..` segment: empty, rooted, relative or trailing-slash paths. */
 const UNUSABLE_GO_SEGMENT = /(?:^|\/)\.{0,2}(?:\/|$)/u;
-/** Windows directory syntax, checked the same way on every host. */
-const WINDOWS_DIRECTORY_PREFIX = /^(?:\.{0,2}\\|[A-Za-z]:)/u;
+/** Windows drive-relative and absolute directory syntax. */
+const WINDOWS_DRIVE_PREFIX = /^[A-Za-z]:/u;
 
-/** A path that can name a Package URL. Every segment must name something. */
+/** A path that can name a Package URL. Go module paths use slash separators. */
 const isGoModulePath = (path: string): boolean =>
-  !UNUSABLE_GO_SEGMENT.test(path) && !WINDOWS_DIRECTORY_PREFIX.test(path);
+  !path.includes("\\") &&
+  !UNUSABLE_GO_SEGMENT.test(path) &&
+  !WINDOWS_DRIVE_PREFIX.test(path);
 
 /**
  * The parsed replacement is the component, including a directory or other

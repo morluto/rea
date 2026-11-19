@@ -1281,3 +1281,30 @@ it("names the parent's recorded provider, not the projecting build, as the tool"
     throw new Error("Expected a CycloneDX view");
   expect(bare.value.document.metadata).not.toHaveProperty("tools");
 });
+
+it("keeps a Go dependency with a backslash out of the Package URL namespace", () => {
+  const path = String.raw`example.com/team\dep`;
+  const view = projectGo(
+    goReport({
+      path: "example.com/tool",
+      main: goModule("example.com/tool", "v1.0.0"),
+      dependencies: [
+        goModule(path, "v1.2.3"),
+        goModule("example.com/team/dep", "v1.2.3"),
+      ],
+      settings: [],
+      unparsed_lines: [],
+      unparsed_line_bytes_base64: [],
+      complete: true,
+    }),
+  );
+  expect(view.document.components[1]).toMatchObject({
+    name: path,
+    "bom-ref": "go-module:1",
+  });
+  expect(view.document.components[1]).not.toHaveProperty("purl");
+  expect(view.document.components[2]?.purl).toBe(
+    "pkg:golang/example.com/team/dep@v1.2.3",
+  );
+  expect(unknownsNaming(view.unknowns, path)).toHaveLength(1);
+});
