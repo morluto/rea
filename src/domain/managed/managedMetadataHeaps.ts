@@ -151,25 +151,23 @@ export const readMetadataString = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
   index: number,
-  heapExtent: number,
 ): string => {
   if (index === 0) return "";
-  if (index < 0 || index >= layout.strings.size)
+  const declaration = layout.strings;
+  if (declaration.kind === "ambiguous")
+    throw new ManagedHeapAmbiguityFailure(declaration.issue);
+  const heap = declaration.stream;
+  if (index < 0 || index >= heap.size)
     throw managedFailure(
       "invalid-heap-index",
       "metadata.#Strings",
       "String heap index is outside #Strings",
-      layout.strings.offset + Math.max(index, 0),
+      heap.offset + Math.max(index, 0),
     );
-  const start = layout.strings.offset + index;
+  const start = heap.offset + index;
   const cached = managedDecodeBudget(layout).cachedString(index);
-  if (cached !== undefined && cached.encodedBytes <= heapExtent) {
-    return cached.value;
-  }
-  const maximum = Math.min(
-    layout.strings.offset + layout.strings.size,
-    start + heapExtent + 1,
-  );
+  if (cached !== undefined) return cached;
+  const maximum = heap.offset + heap.size;
   let end = start;
   while (end < maximum && bytes[end] !== 0) end += 1;
   if (end === maximum)
@@ -182,7 +180,7 @@ export const readMetadataString = (
   managedDecodeBudget(layout).reserveString(end - start, start);
   try {
     const value = decodeStrictUtf8(bytes.subarray(start, end), "preserve");
-    managedDecodeBudget(layout).cacheString(index, value, end - start);
+    managedDecodeBudget(layout).cacheString(index, value);
     return value;
   } catch (cause: unknown) {
     void cause;

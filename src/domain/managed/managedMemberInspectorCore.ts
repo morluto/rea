@@ -189,12 +189,11 @@ const readTypeDefinition = (
   const { nameIndex, namespaceIndex } = source;
   // Keep both independent name failures, but decode each heap coordinate once.
   const namespace = readManagedValue(
-    () =>
-      readMetadataString(bytes, layout, namespaceIndex, layout.strings.size),
+    () => readMetadataString(bytes, layout, namespaceIndex),
     issues,
   );
   const name = readManagedValue(
-    () => readMetadataString(bytes, layout, nameIndex, layout.strings.size),
+    () => readMetadataString(bytes, layout, nameIndex),
     issues,
   );
   return {

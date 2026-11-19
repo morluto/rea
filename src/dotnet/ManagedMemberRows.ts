@@ -110,12 +110,7 @@ export const parseFields = (
     readManagedValue(() => {
       const { token, rowOffset, flags, nameIndex, signatureIndex } =
         readFieldDefinitionRow(bytes, layout, row);
-      const name = readMetadataString(
-        bytes,
-        layout,
-        nameIndex,
-        layout.strings.size,
-      );
+      const name = readMetadataString(bytes, layout, nameIndex);
       const owned = owner ?? 0;
       core.set(token, {
         token,
@@ -182,13 +177,11 @@ export const parseExportedTypes = (
         bytes,
         layout,
         cursor.readIndex(layout.stringIndexSize),
-        layout.strings.size,
       );
       const namespace = readMetadataString(
         bytes,
         layout,
         cursor.readIndex(layout.stringIndexSize),
-        layout.strings.size,
       );
       const implementationOffset = cursor.offset;
       const implementationRaw = cursor.readIndex(
@@ -260,12 +253,7 @@ export const parseMemberRefs = (
     readManagedValue(() => {
       const { token, rowOffset, parentRaw, parent, nameIndex, signatureIndex } =
         readMemberReferenceRowFacts(bytes, layout, row);
-      const name = readMetadataString(
-        bytes,
-        layout,
-        nameIndex,
-        layout.strings.size,
-      );
+      const name = readMetadataString(bytes, layout, nameIndex);
       const sig = readMetadataBlob(bytes, layout, signatureIndex);
       if (parent.kind !== "valid")
         issues.push({
@@ -407,12 +395,7 @@ export const parseMethods = ({
         signatureIndex,
         implementation,
       } = readMethodDefinitionRow(bytes, layout, row);
-      const name = readMetadataString(
-        bytes,
-        layout,
-        nameIndex,
-        layout.strings.size,
-      );
+      const name = readMetadataString(bytes, layout, nameIndex);
       const member = {
         token,
         name,
@@ -523,12 +506,7 @@ export const readReferencedMemberCores = (
         table === 4
           ? readFieldDefinitionRow(bytes, layout, row)
           : readMethodDefinitionRow(bytes, layout, row);
-      const name = readMetadataString(
-        bytes,
-        layout,
-        nameIndex,
-        layout.strings.size,
-      );
+      const name = readMetadataString(bytes, layout, nameIndex);
       core.set(token, {
         token,
         name,
