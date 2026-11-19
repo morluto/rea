@@ -1,5 +1,6 @@
 import { BinaryReader } from "../domain/binaryContainer.js";
 import { Buffer } from "node:buffer";
+import { byteToHex } from "../kernel/byteToHex.js";
 import {
   absoluteOffset,
   alignUp,
@@ -230,7 +231,7 @@ export function checkFfsFileIntegrity(
       verdict: "invalid",
       offset: header.absoluteBase + FFS_HEADER_LAYOUT.integrityCheckOffset + 1,
       length: 1,
-      detail: `FFS IntegrityCheck.File is 0x${header.fileChecksumField.toString(16).padStart(2, "0")}. PI requires 0xaa when the file checksum attribute is clear.`,
+      detail: `FFS IntegrityCheck.File is 0x${byteToHex(header.fileChecksumField)}. PI requires 0xaa when the file checksum attribute is clear.`,
     } as const;
   }
   const { start, end } = header.body;
@@ -321,7 +322,7 @@ export function readFfsHeader(
           kind: "unparsed",
           offset,
           length: region.end - local,
-          detail: `FFS header at 0x${offset.toString(16)} has no recognized state bits (raw State 0x${header.rawState.toString(16)}). Its declared extent is unconfirmed.`,
+          detail: `FFS header at 0x${offset.toString(16)} has no recognized state bits (raw State 0x${byteToHex(header.rawState)}). Its declared extent is unconfirmed.`,
         };
       }
       const detail = `FFS ExtendedSize at 0x${offset.toString(16)} declares 0x${header.size.toString(16)} bytes, exceeding exactly representable lengths.`;
