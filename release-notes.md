@@ -308,6 +308,7 @@
 * **desktop:** admit a build witness folder by the record's own rule ([0ffde0c](https://github.com/morluto/rea/commit/0ffde0cd0923e37901c55a78c8b5fd1f124ae68b))
 * **desktop:** admit build export folders before running the in-computer export ([#11307](https://github.com/morluto/rea/issues/11307)) ([3fb17d7](https://github.com/morluto/rea/commit/3fb17d72a902bfea57cf44a8585f3408504bfc74))
 * **desktop:** align exported task whitespace interpretation ([#11947](https://github.com/morluto/rea/issues/11947)) ([a7c4ee8](https://github.com/morluto/rea/commit/a7c4ee8394c62c67fdd5738c1a3009c1be7319b8))
+* **desktop:** bind dconf profiles to selected database sources ([#11161](https://github.com/morluto/rea/issues/11161)) ([8c3dbd9](https://github.com/morluto/rea/commit/8c3dbd99e1521c0d21d0e54968644f1b6ab04739))
 * **desktop:** bind launcher rewrites to effective entry keys ([#11701](https://github.com/morluto/rea/issues/11701)) ([d785d63](https://github.com/morluto/rea/commit/d785d6326753877273aeecc97ff0c48092e1ff24))
 * **desktop:** bound exported XML selector traversal ([#12105](https://github.com/morluto/rea/issues/12105)) ([c6033aa](https://github.com/morluto/rea/commit/c6033aaaca3be2e0bae086ae42dd4a66a035488c))
 * **desktop:** check retained reader JSON numbers ([#11833](https://github.com/morluto/rea/issues/11833)) ([458f583](https://github.com/morluto/rea/commit/458f583e1496a55f05d00017143364cd33525143))
