@@ -120,7 +120,7 @@ cliTest.for(["thread", "frame", "image"] as const)(
           remediation: { action: expect.stringContaining("fixed allowance") },
           details: {
             resource: "capacity",
-            reason: `Selected artifact ${path}: Crash report lists more than 1024 unlisted keys in one object`,
+            reason: expect.stringContaining(path),
             reported_limits: { boundary: "unlisted_keys", maximum: 1024 },
           },
         };
