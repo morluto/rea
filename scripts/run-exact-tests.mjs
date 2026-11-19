@@ -9,8 +9,11 @@ const args = process.argv.slice(2);
 const ciSelected = args[0] === "ci-selected";
 if (ciSelected) args[0] = "run";
 const { filter, options } = parseCLI(["vitest", ...args]);
-if (ciSelected && options.testNamePattern !== undefined)
-  throw new Error("Selected test groups cannot filter cases by name");
+if (
+  ciSelected &&
+  (options.testNamePattern !== undefined || options.tagsFilter !== undefined)
+)
+  throw new Error("Selected test groups cannot filter cases by name or tag");
 const vitest = await createVitest({ ...options, watch: false });
 const signalExitCodes = { SIGINT: 130, SIGTERM: 143 };
 let shutdownSignal;
