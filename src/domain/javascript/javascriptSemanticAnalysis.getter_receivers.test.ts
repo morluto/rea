@@ -119,6 +119,17 @@ const getterReceivers = [
   ],
 ] as const;
 
+const preservedSpreadReceivers = [
+  [
+    "unrelated array element copied before a getter receiver",
+    "const arr = [...[{ x: 1 }], { x: 1, get self() { return this; } }]; arr[1].self.x = 2; return arr[0].x;",
+  ],
+  [
+    "unrelated field on a copied getter receiver",
+    "const arr = [...[{ x: 1, y: 1, get self() { return this; } }]]; arr[0].self.y = 2; return arr[0].x;",
+  ],
+] as const;
+
 describe("getter receiver mutation aliases (#1665, #2654)", () => {
   it.each(getterReceivers)(
     "does not report a stale literal through %s",
@@ -163,14 +174,7 @@ describe("getter receiver mutation aliases (#1665, #2654)", () => {
       "unrelated array element",
       "const arr = [{ x: 1, get self() { return this; } }, { x: 1 }]; arr[0].self.x = 2; return arr[1].x;",
     ],
-    [
-      "unrelated array element copied before a getter receiver",
-      "const arr = [...[{ x: 1 }], { x: 1, get self() { return this; } }]; arr[1].self.x = 2; return arr[0].x;",
-    ],
-    [
-      "unrelated field on a copied getter receiver",
-      "const arr = [...[{ x: 1, y: 1, get self() { return this; } }]]; arr[0].self.y = 2; return arr[0].x;",
-    ],
+    ...preservedSpreadReceivers,
     [
       "array replacement after a receiver was captured",
       "const original = [{ x: 1, get self() { return this; } }]; const replacement = [{ x: 1 }]; let arr = original; const saved = arr[0].self; arr = replacement; saved.x = 2; return replacement[0].x;",
