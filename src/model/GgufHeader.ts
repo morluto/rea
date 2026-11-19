@@ -38,7 +38,9 @@ const NAMES = [
 const STRING_LENGTH_BYTES = 8;
 const WIDTHS = [1, 1, 2, 2, 4, 4, 4, 1, STRING_LENGTH_BYTES, 12, 8, 8, 8];
 const MIN_METADATA_ROW_BYTES = STRING_LENGTH_BYTES + 4 + 1;
-const MIN_TENSOR_DESCRIPTOR_BYTES = STRING_LENGTH_BYTES + 4 + 4 + 8;
+const TENSOR_STORAGE_FIELDS_BYTES = 4 + 8;
+const MIN_TENSOR_DESCRIPTOR_BYTES =
+  STRING_LENGTH_BYTES + 4 + TENSOR_STORAGE_FIELDS_BYTES;
 
 export interface GgufProgress {
   onHeader(info: {
@@ -382,6 +384,9 @@ export class GgufHeader {
       const dimensions = Number(await this.#unsigned(4));
       if (dimensions > 4)
         rejectModel("GGUF tensor dimension count must be at most 4");
+      this.reader.guarantee(
+        dimensions * 8 + TENSOR_STORAGE_FIELDS_BYTES + remainingDirectoryBytes,
+      );
       const shape: string[] = [];
       let parameters = 1n;
       for (let d = 0; d < dimensions; d++) {

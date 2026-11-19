@@ -1781,6 +1781,31 @@ it("rejects a tensor directory whose old 20-byte estimate fits but fixed fields 
   });
 });
 
+it.each([false, true])(
+  "reserves later GGUF tensor framing before publishing a dimensioned row (big endian: %s)",
+  async (bigEndian) => {
+    const fixture = ggufFixture({
+      bigEndian,
+      metadata: [],
+      tensors: [
+        { name: "first", type: 0, shape: [1n], offset: 0n, bytes: 4 },
+        { name: "next", type: 0, shape: [], offset: 32n, bytes: 4 },
+      ],
+    });
+    // Leave 23 bytes after the first descriptor, one short of the
+    // second descriptor’s minimum framing even with an empty name.
+    const { provider, path } = await providerAt(
+      fixture.header.subarray(0, fixture.header.length - 5),
+    );
+    const result = await provider.inspect({ path, hash: "header" });
+    if (result.ok) throw new Error("Truncated GGUF directory admitted");
+    expect(result.error).toMatchObject(INVALID_FORMAT);
+    expect(
+      parseEvidence(result.error.partialObservation).normalized_result,
+    ).toMatchObject({ declared_tensor_count: 2, tensor_declarations: [] });
+  },
+);
+
 it("retains decoded counts when a physically fitting GGUF header exceeds the header budget", async () => {
   const count = 4_166_667;
   const header = Buffer.alloc(24);
