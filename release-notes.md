@@ -2,7 +2,7 @@
 ---
 
 
-## [6.10.0](https://github.com/morluto/rea/compare/rea-agents-6.9.0...rea-agents-6.10.0) (2026-11-18)
+## [6.10.0](https://github.com/morluto/rea/compare/rea-agents-6.9.0...rea-agents-6.10.0) (2026-11-19)
 
 
 ### ⚠ BREAKING CHANGES
@@ -359,6 +359,7 @@
 * **javascript:** retain wide function fingerprint inventories ([#10355](https://github.com/morluto/rea/issues/10355)) ([5d046b9](https://github.com/morluto/rea/commit/5d046b9ad7e962b3fd4ad3d99ff62aa4c2663552))
 * **javascript:** retain wide runtime load-state inventories ([#10354](https://github.com/morluto/rea/issues/10354)) ([c4cec63](https://github.com/morluto/rea/commit/c4cec6373d1a65679a695cfb8270b43ad15bb325))
 * **javascript:** stop an Electron alias walk at a read before its initializer ([98540f2](https://github.com/morluto/rea/commit/98540f24e0ed3e46139704eb5e1923f628a33aee)), closes [#4490](https://github.com/morluto/rea/issues/4490)
+* **kuna:** recover explicit direct-call destinations ([#12106](https://github.com/morluto/rea/issues/12106)) ([2182996](https://github.com/morluto/rea/commit/21829964ef95818db3b25d8d0e8490295f4d30c9))
 * **kuna:** stop calling executable-segment data sections definite data ([#10686](https://github.com/morluto/rea/issues/10686)) ([1920525](https://github.com/morluto/rea/commit/1920525900519f05553f37b178b788d31c193fb6))
 * **lifecycle:** supervise assetutil, keep cleanup-time interruptions, and cover browser-transport handshakes ([#11502](https://github.com/morluto/rea/issues/11502)) ([035d876](https://github.com/morluto/rea/commit/035d876d1f8ba4c3b6ce449ef5d30bd1fa3da0c4))
 * **managed:** compare verified same-artifact TypeSpec targets ([#11163](https://github.com/morluto/rea/issues/11163)) ([2d4a97b](https://github.com/morluto/rea/commit/2d4a97b405ea2b5845f0c6968551066a93406df8))
