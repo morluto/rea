@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { FIXTURE_TOOLS, fixtureCommand } from "./fixture-toolchain.mjs";
 
 const execute = promisify(execFile);
 
@@ -35,11 +36,11 @@ const readerOptions = {
   maxBuffer: 1024 * 1024,
 };
 
-/** Independent reading of LLVM readelf's `-h -S -s -A` report. */
+/** Independent reading of LLVM readelf's `-h -l -S -s -A` report. */
 const readRiscvElf = async (reader, path, floatAbi) => {
   const { stdout, stderr } = await execute(
     reader,
-    ["-h", "-S", "-s", "-A", "-W", path],
+    ["-h", "-l", "-S", "-s", "-A", "-W", path],
     readerOptions,
   );
   assert.equal(stderr.trim(), "", "Unexpected ELF reader diagnostics");
@@ -91,29 +92,38 @@ const sha256 = async (path) =>
     .digest("hex");
 
 /** Build and independently inspect a source-owned ELF; never execute it. */
-export async function buildRiscvFixture(directory, bits, floatAbi = "double") {
+export async function buildRiscvFixture(directory, bits, buildOptions = {}) {
+  const { floatAbi = "double", pie = false } =
+    typeof buildOptions === "string"
+      ? { floatAbi: buildOptions }
+      : buildOptions;
   assert.ok(bits === 32 || bits === 64);
   const build = BUILDS[floatAbi];
   assert.ok(build !== undefined, `No ${floatAbi}-float RISC-V fixture`);
   assert.ok(floatAbi === "double" || bits === 32);
-  const compiler = process.env.REA_RISCV_CLANG ?? "clang";
-  const linker = process.env.REA_RISCV_LLD ?? "ld.lld";
-  const reader = process.env.REA_RISCV_READELF ?? "llvm-readelf";
+  const compiler = fixtureCommand(FIXTURE_TOOLS.riscvClang);
+  const linker = fixtureCommand(FIXTURE_TOOLS.riscvLinker);
+  const reader = fixtureCommand(FIXTURE_TOOLS.riscvReadelf);
   const sources = build.sources.map((path) =>
     fileURLToPath(new URL(path, import.meta.url)),
   );
   const path = join(
     directory,
-    `rv${bits}${floatAbi === "double" ? "" : `-${floatAbi}`}.elf`,
+    `rv${bits}${floatAbi === "double" ? "" : `-${floatAbi}`}${pie ? "-pie" : ""}.elf`,
   );
+  const interpreter =
+    bits === 32
+      ? "/lib/ld-linux-riscv32-ilp32d.so.1"
+      : "/lib/ld-linux-riscv64-lp64d.so.1";
   const args = [
     `--target=riscv${bits}-unknown-elf`,
     `-march=${build.march(bits)}`,
     `-mabi=${build.mabi(bits)}`,
     `--ld-path=${linker}`,
     "-nostdlib",
-    "-static",
-    "-fno-pic",
+    ...(pie
+      ? ["-fPIE", "-Wl,-pie", `-Wl,--dynamic-linker=${interpreter}`]
+      : ["-static", "-fno-pic"]),
     "-O0",
     "-g",
     "-Wl,-e,rea_riscv_entry",
@@ -130,7 +140,20 @@ export async function buildRiscvFixture(directory, bits, floatAbi = "double") {
   const elf = await readRiscvElf(reader, path, floatAbi);
   assert.equal(elf.class, `ELF${bits}`);
   assert.match(elf.data, /little endian/u);
-  assert.match(elf.type, /^EXEC\b/u);
+  assert.match(elf.type, pie ? /^DYN\b/u : /^EXEC\b/u);
+  if (pie) {
+    assert.match(
+      elf.stdout,
+      /^\s*INTERP\b/mu,
+      "Expected PT_INTERP program header in PIE fixture",
+    );
+  } else {
+    assert.doesNotMatch(
+      elf.stdout,
+      /^\s*INTERP\b/mu,
+      "Unexpected PT_INTERP program header in static ET_EXEC fixture",
+    );
+  }
   assert.match(elf.machine, /^RISC-V\b/u);
   assert.equal(
     elf.flags,
@@ -152,9 +175,10 @@ export async function buildRiscvFixture(directory, bits, floatAbi = "double") {
     riscv: {
       elfClass: bits,
       byteOrder: "little",
-      type: 2,
+      type: pie ? 3 : 2,
       flags: elf.flags,
       isa: elf.isa,
+      ...(pie ? { hasInterpreter: true } : {}),
     },
     symbols,
     sections: elf.sections,

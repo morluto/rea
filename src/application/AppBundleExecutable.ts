@@ -3,20 +3,20 @@ import { extname, join, sep } from "node:path";
 
 import { z } from "zod";
 
-import { preflightPropertyListDecode } from "../artifacts/apple/PropertyListDecodeBudget.js";
-import { decodeBinaryPlistValue } from "../artifacts/apple/BinaryPlistMaterializer.js";
+import { isPlistDecodeBudgetFailure } from "../domain/apple/propertyListDecodeBudget.js";
+import { decodeInfoPlistValue } from "../domain/apple/infoPlist.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import { isPathWithinRoot } from "../domain/localPath.js";
-import { parseXmlPropertyList } from "../domain/propertyListKeys.js";
-import { decodeXmlPlistText } from "../domain/propertyListXmlText.js";
-import { hasBinaryPlistSignature } from "../domain/apple/appleArchiveFormat.js";
-import type { BundleResourceRoot } from "../domain/apple/bundleResourceRoot.js";
-import { openableAppleBundleExtension } from "../domain/apple/appleBundleTypes.js";
+import type {
+  BundleResourceRoot,
+  ResolvedAppBundleResourceRoot,
+} from "../domain/apple/bundleResourceRoot.js";
+import {
+  INFO_PLIST_DECODE_MIB,
+  openableAppleBundleExtension,
+} from "../domain/apple/appleBundleTypes.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
-
-/** Decoded representation bound for one binary Info.plist. */
-const BINARY_PLIST_DECODE_BYTES = 16 * 1024 * 1024;
 
 /** Where one app bundle layout keeps its Info.plist and program file. */
 interface BundleLayout {
@@ -75,23 +75,10 @@ export interface ResolvedAppBundle {
   readonly infoPlist?: string;
 }
 
-/** Resource-only identity for an app directory; it is not a BinaryTarget. */
-export interface ResolvedAppBundleResourceRoot {
-  /** Path selected by the caller, retained even when it is a symlink alias. */
-  readonly callerPath: string;
-  /** Canonical directory whose resources are inspected. */
-  readonly canonicalPath: string;
-  readonly infoPlistPath: string;
-  readonly layout: BundleResourceRoot["layout"];
-  /** No executable was opened or hashed by resource-root discovery. */
-  readonly executableSha256: string | null;
-}
-
 /** Filesystem operations used by the resolver, injectable for boundary tests. */
-export interface AppBundleFileSystem {
+interface AppBundleFileSystem {
   readonly readFile: (path: string) => Promise<Buffer>;
   readonly realpath: (path: string) => Promise<string>;
-  readonly decodeBinaryPlist?: (path: string) => Promise<string>;
 }
 
 const defaultFileSystem: AppBundleFileSystem = { readFile, realpath };
@@ -102,7 +89,7 @@ const defaultFileSystem: AppBundleFileSystem = { readFile, realpath };
  * a wrapper whose `Wrapper` directory holds the iOS bundle; that bundle is
  * found by listing `Wrapper`, never by following the `WrappedBundle` link.
  */
-export const resolveAppBundleExecutable = async (
+const resolveAppBundleExecutable = async (
   path: string,
   fileSystem: AppBundleFileSystem = defaultFileSystem,
 ): Promise<Result<ResolvedAppBundle, BinaryTargetError>> => {
@@ -396,15 +383,6 @@ const codeDescription = (cause: unknown): string => {
     : "";
 };
 
-const isSystemErrorCode = (cause: unknown): boolean => {
-  const code = errorCode(cause);
-  return (
-    typeof code === "string" &&
-    /^[A-Z][A-Z0-9_]+$/u.test(code) &&
-    !code.startsWith("ERR_")
-  );
-};
-
 const isPermissionDenied = (cause: unknown): boolean =>
   errorCode(cause) === "EACCES" || errorCode(cause) === "EPERM";
 
@@ -461,20 +439,24 @@ const resolveLayoutExecutable = async (
 
   let name: string;
   try {
-    name =
-      hasBinaryPlistSignature(plist) &&
-      fileSystem.decodeBinaryPlist !== undefined
-        ? await fileSystem.decodeBinaryPlist(plistPath)
-        : executableName(decodeInfoPlistValue(plist));
+    name = executableName(decodeInfoPlistValue(plist, ["CFBundleExecutable"]));
   } catch (cause: unknown) {
+    if (isPlistDecodeBudgetFailure(cause))
+      return err(
+        new BinaryTargetError(
+          plistPath,
+          `${noun} Info.plist decoded representation exceeds the ${INFO_PLIST_DECODE_MIB} MiB property list decode budget: ${plistPath} (${cause.message}). Shrink the Info.plist and retry.`,
+          {
+            cause,
+            constraint: "bundle_info_plist_decode_budget_exceeded",
+            infoPlist: plistPath,
+          },
+        ),
+      );
     return err(
       new BinaryTargetError(
         plistPath,
-        isPermissionDenied(cause)
-          ? `permission denied decoding ${noun} Info.plist ${plistPath}${codeDescription(cause)}`
-          : isSystemErrorCode(cause)
-            ? `could not decode ${noun} Info.plist ${plistPath}${codeDescription(cause)}`
-            : `${noun} Info.plist is malformed, unsupported, or lacks CFBundleExecutable: ${plistPath}${cause instanceof Error ? ` (${cause.message})` : ""}`,
+        `${noun} Info.plist is malformed, unsupported, or lacks CFBundleExecutable: ${plistPath}${cause instanceof Error ? ` (${cause.message})` : ""}`,
         {
           cause,
           // A bundle without code, such as a resource bundle, declares no
@@ -546,19 +528,6 @@ const resolveLayoutExecutable = async (
     );
   }
 };
-
-/**
- * Decode one Info.plist's top-level value in-process, binary or XML, so no
- * host plist tool is required. Values are read with format-aware parsers, not
- * patterns; an unrelated `__proto__` entry must not make the bundle unreadable.
- */
-export const decodeInfoPlistValue = (plist: Buffer): unknown =>
-  hasBinaryPlistSignature(plist)
-    ? decodeBinaryPlistValue(
-        plist,
-        preflightPropertyListDecode(plist, BINARY_PLIST_DECODE_BYTES),
-      )
-    : parseXmlPropertyList(decodeXmlPlistText(plist)).value;
 
 /** The Info.plist decoded but declares no string CFBundleExecutable. */
 class UndeclaredBundleExecutable extends Error {}

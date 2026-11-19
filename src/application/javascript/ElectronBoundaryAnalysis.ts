@@ -2,10 +2,6 @@ import { isPossibleCachedDataCompilation } from "../../domain/javascript/electro
 import type { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import type { ElectronIpcFinding } from "../../domain/javascript/electronStaticAnalysisTypes.js";
-import {
-  ELECTRON_MODULE,
-  ELECTRON_REFERENCE_KINDS,
-} from "../../domain/javascript/javascriptElectronMemberWrites.js";
 import type { ElectronBoundarySummary } from "../../domain/javascript/javascriptApplicationAnalysis.js";
 import type {
   AnalyzedJavaScriptArtifactFile,
@@ -65,7 +61,7 @@ export interface ElectronIpcContext {
 export const createElectronIpcContext = (
   analysis: JavaScriptArtifactAnalysis,
   applicationOwner: (file: JavaScriptArtifactFile) => string | null,
-  coverageComplete = true,
+  coverageComplete: boolean,
 ): ElectronIpcContext => {
   const records = collectElectronIpcRecords(analysis);
   const owners = new Map(
@@ -139,40 +135,14 @@ export const createElectronIpcContext = (
  * locates the module, a `worker` URL path, and a specifier that is a recovered
  * bundle module key. Reading the owned fact here keeps the boundary summary and
  * the published coverage view from disagreeing.
- *
- * Historical evidence may predate that field, so the retained references answer
- * the same question for those files.
  */
 const electronModuleReferencedBy = ({
   javascript,
-  semantic,
-}: AnalyzedJavaScriptArtifactFile): boolean => {
-  const applicability = javascript?.analysis_coverage?.applicability.electron;
-  if (applicability !== undefined) return applicability === "observed";
-  const links = semantic?.ir.moduleLinks;
-  if (
-    links !== undefined &&
-    links.some(
-      ({ specifier, kind, loaderAuthority }) =>
-        kind !== "type-import" &&
-        loaderAuthority !== "candidate" &&
-        specifier !== null &&
-        ELECTRON_MODULE.test(specifier),
-    )
-  )
-    return true;
-  return (javascript?.references ?? []).some(
-    ({ specifier, kind, operation, loader_authority }) =>
-      operation === "load" &&
-      loader_authority !== "candidate" &&
-      ELECTRON_REFERENCE_KINDS.has(kind) &&
-      specifier !== null &&
-      ELECTRON_MODULE.test(specifier),
-  );
-};
+}: AnalyzedJavaScriptArtifactFile): boolean =>
+  javascript?.analysis_coverage.applicability.electron === "observed";
 
 /** Whether any analyzed source loads an Electron module. */
-export const electronModuleReferenced = (
+const electronModuleReferenced = (
   analysis: JavaScriptArtifactAnalysis,
 ): boolean => analysis.files.some(electronModuleReferencedBy);
 
@@ -242,12 +212,11 @@ const electronExaminationLimited = ({
   javascript,
 }: AnalyzedJavaScriptArtifactFile): boolean => {
   if (javascript === null) return false;
-  const status = javascript.analysis_coverage?.examination.status;
-  const syntax = javascript.analysis_coverage?.syntax.status;
+  const { examination, syntax } = javascript.analysis_coverage;
   return (
     javascript.parse_status !== "complete" ||
-    (syntax !== undefined && syntax !== "complete") ||
-    (status !== undefined && status !== "complete")
+    syntax.status !== "complete" ||
+    examination.status !== "complete"
   );
 };
 

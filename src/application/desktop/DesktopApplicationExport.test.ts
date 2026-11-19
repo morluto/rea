@@ -1,6 +1,13 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, readFile, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  readFile,
+  realpath,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -8,9 +15,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
+import { SafeOutputTree } from "../../resources/SafeOutputTree.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
+import type { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
@@ -29,16 +36,7 @@ import type {
 } from "../../domain/desktop/desktopCapture.js";
 import { renderBuildBundle } from "../../domain/desktop/appBuild.js";
 import { readDownloadInstall } from "./DesktopExportInstall.js";
-import {
-  NO_LAUNCH_DOCUMENT,
-  launchDocumentNote,
-  seedWording,
-} from "../../domain/desktop/appExport.js";
 import { exportDesktopApplication } from "./DesktopApplicationExport.js";
-import {
-  seedLimitation,
-  trashedFilesLimitation,
-} from "./DesktopExportLimitations.js";
 import {
   EDITED_NOTE,
   HOME,
@@ -296,6 +294,268 @@ describe("exportDesktopApplication", () => {
   });
 });
 
+it.skipIf(process.platform === "win32")(
+  "replays a traversing launch root at the same path used for seed files and selected aliases",
+  async () => {
+    const home = await realpath(
+      await createTestTempDirectory("desktop-source-"),
+    );
+    const base = `${home}/profiles//current/..`;
+    const logical = `${base}/./notes`;
+    await mkdir(`${home}/profiles`);
+    await mkdir(`${home}/resolved/profile`, { recursive: true });
+    await mkdir(`${home}/resolved/notes`);
+    await symlink(`${home}/resolved/profile`, `${home}/profiles/current`);
+    const physical = await realpath(logical);
+    const settings = `${physical}/settings.ini`;
+    const text = "[ui]\nwrap=false\n";
+    await writeFile(settings, text);
+    const local = capture();
+    const { result, directory } = await exportCapture({
+      ...local,
+      host: { ...local.host, home },
+      application: {
+        ...local.application,
+        argv: [
+          "env",
+          `XDG_CONFIG_HOME=${base}`,
+          "MODE=dark",
+          "sh",
+          "-c",
+          'test "$MODE" = dark && test "$2" = --theme=dark && test "$3" = --line=10 && cat "$XDG_CONFIG_HOME/notes/settings.ini" "$1" "$4"',
+          "notes",
+          `${logical}/settings.ini`,
+          "--theme=dark",
+          "--line=10",
+          "settings.ini",
+        ],
+        working_directory: logical,
+        state_directories: [{ path: logical, exists_at_start: true }],
+      },
+      state: {
+        ...local.state,
+        roots: [home],
+        content_roots: [physical],
+        state_directories: [physical],
+        selected_paths: [
+          { path: `${home}/settings`, physical, kind: "directory" },
+        ],
+        checkpoints: [
+          checkpoint("baseline", "baseline", [], [retained(settings, text)]),
+        ],
+      },
+    });
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      paths: ["resolved/notes"],
+      seed_files: ["resolved/notes/settings.ini"],
+    });
+
+    const replay = await createTestTempDirectory("desktop-replay-");
+    const { stdout } = await execute("python3", [
+      "-I",
+      "-B",
+      "-c",
+      `import ast, subprocess, sys
+from pathlib import Path
+module = Path(sys.argv[1])
+home = Path(sys.argv[2])
+tree = ast.parse(module.read_text(encoding="utf-8"))
+launch = next(node for node in ast.walk(tree) if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "Launch")
+command = ast.literal_eval(next(key.value for key in launch.keywords if key.arg == "command"))
+tree.body = [node for node in tree.body
+             if not isinstance(node, ast.ClassDef)
+             and (not isinstance(node, ast.ImportFrom) or not node.module.startswith("agentenv_protocol"))]
+scope = {"__file__": str(module)}
+exec(compile(tree, str(module), "exec"), scope)
+scope["_seed_home"](home)
+scope["_ensure_state_aliases"](home)
+assert (home / "settings/settings.ini").read_bytes() == (home / "resolved/notes/settings.ini").read_bytes()
+assert not (home / "profiles").exists()
+subprocess.run(command, env={"HOME": str(home), "PATH": "/usr/bin:/bin"}, check=True)`,
+      join(directory, "envs/notes/notes_app.py"),
+      replay,
+    ]);
+    expect(stdout).toBe(text.repeat(3));
+  },
+);
+
+it.each([
+  { option: "--theme=dark/variant", refused: false },
+  { option: "--settings=dark", refused: true },
+])(
+  "requires observed path evidence before refusing $option",
+  async ({ option, refused }) => {
+    const local = capture();
+    const logical = `${HOME}/profiles/current/../notes`;
+    const physical = `${HOME}/resolved/notes`;
+    const external = "/mnt/shared/themes";
+    const { result, directory } = await exportCapture({
+      ...local,
+      application: {
+        ...local.application,
+        argv: ["notes", option, "settings.ini"],
+        working_directory: logical,
+        state_directories: [
+          { path: logical, exists_at_start: true },
+          { path: `${logical}/dark`, exists_at_start: true },
+        ],
+      },
+      state: {
+        ...local.state,
+        content_roots: [physical, external],
+        state_directories: [physical, external],
+        selected_paths: [],
+        checkpoints: [
+          checkpoint(
+            "baseline",
+            "baseline",
+            [],
+            [retained(`${physical}/settings.ini`, "[ui]\nwrap=false\n")],
+          ),
+        ],
+      },
+    });
+    if (refused) {
+      expect(result).toBeInstanceOf(AnalysisInputError);
+      expect(await exists(directory)).toBe(false);
+      return;
+    }
+    if (result instanceof Error) throw result;
+    const module = await readFile(
+      join(directory, "envs/notes/notes_app.py"),
+      "utf8",
+    );
+    const launch = module
+      .split("\n")
+      .find((line) => line.includes("launch=Launch("));
+    expect(launch).toContain(option);
+    expect(launch).toContain("resolved/notes/settings.ini");
+  },
+);
+
+it("writes portable seed names for state paths with empty or self-directory components", async () => {
+  const local = capture();
+  const physical = `${HOME}/.config/notes`;
+  const { result, directory } = await exportCapture({
+    ...local,
+    application: {
+      ...local.application,
+      state_directories: [
+        { path: `${HOME}/./.config//notes`, exists_at_start: true },
+      ],
+    },
+    state: {
+      ...local.state,
+      content_roots: [physical],
+      state_directories: [physical],
+      checkpoints: [
+        checkpoint(
+          "baseline",
+          "baseline",
+          [],
+          [retained(`${physical}/settings.ini`, "[ui]\nwrap=false\n")],
+        ),
+      ],
+    },
+  });
+  if (result instanceof Error) throw result;
+  expect(result.normalized_result).toMatchObject({
+    seed_files: [".config/notes/settings.ini"],
+  });
+  expect(
+    await readFile(
+      join(directory, "envs/notes/seed/.config/notes/settings.ini"),
+      "utf8",
+    ),
+  ).toBe("[ui]\nwrap=false\n");
+});
+
+it("refuses a traversing launch root with conflicting seed locations", async () => {
+  const local = capture();
+  const base = `${HOME}/profiles/current/..`;
+  const settings = [`${HOME}/first/notes`, `${HOME}/second/notesrc`];
+  const { result, directory } = await exportCapture({
+    ...local,
+    application: {
+      ...local.application,
+      argv: ["env", `XDG_CONFIG_HOME=${base}`, "notes"],
+      state_directories: [
+        { path: `${base}/notes`, exists_at_start: true },
+        { path: `${base}/notesrc`, exists_at_start: true },
+      ],
+    },
+    state: {
+      ...local.state,
+      content_roots: settings,
+      state_directories: settings,
+    },
+  });
+  expect(result).toBeInstanceOf(AnalysisInputError);
+  if (!(result instanceof AnalysisInputError))
+    throw new Error("expected export refusal");
+  expect(result.userMessage).toContain("do not agree on a replay location");
+  expect(await exists(directory)).toBe(false);
+});
+
+it.each(["file", "directory", "ancestor"] as const)(
+  "reconciles a traversing %s launch path with a separately selected seed",
+  async (kind) => {
+    const local = capture();
+    const base = `${HOME}/profiles/current/..`;
+    const logical = `${base}/notes`;
+    const physical = `${HOME}/resolved/notes`;
+    const settings = `${physical}/settings.ini`;
+    const selected = `${HOME}/Documents/settings.ini`;
+    const { result, directory } = await exportCapture({
+      ...local,
+      application: {
+        ...local.application,
+        argv:
+          kind === "file"
+            ? ["notes", `${logical}/settings.ini`]
+            : [
+                "env",
+                `XDG_CONFIG_HOME=${kind === "directory" ? logical : base}`,
+                "notes",
+              ],
+        state_directories: [{ path: logical, exists_at_start: true }],
+      },
+      state: {
+        ...local.state,
+        content_roots: [physical],
+        state_directories: [physical],
+        selected_paths: [{ path: selected, physical: settings, kind: "file" }],
+        checkpoints: [
+          checkpoint(
+            "baseline",
+            "baseline",
+            [],
+            [retained(settings, "[ui]\nwrap=false\n")],
+          ),
+        ],
+      },
+    });
+    if (kind !== "file") {
+      expect(result).toBeInstanceOf(AnalysisInputError);
+      expect(await exists(directory)).toBe(false);
+      return;
+    }
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      seed_files: ["Documents/settings.ini"],
+    });
+    const module = await readFile(
+      join(directory, "envs/notes/notes_app.py"),
+      "utf8",
+    );
+    const launch = module
+      .split("\n")
+      .find((line) => line.includes("launch=Launch("));
+    expect(launch).toContain("Documents/settings.ini");
+  },
+);
+
 it("seeds the app's state at its own path and retains a selected alias", async () => {
   const local = capture();
   const physical = `${HOME}/.config/notes`;
@@ -529,13 +789,9 @@ describe("exportDesktopApplication and the desktop Trash", () => {
         "Documents/today.txt",
       ],
     });
-    const trashPaths = [
-      ".local/share/Trash/files/today.txt",
-      ".local/share/Trash/info/today.txt.trashinfo",
-    ];
-    const notice = trashedFilesLimitation(trashPaths);
-    expect(result.limitations).toContain(notice);
-    for (const path of trashPaths) expect(notice).toContain(`~/${path}`);
+    expect(result.limitations).toContain(
+      "The desktop Trash held 2 file(s) at the seed checkpoint, which are not seeded: ~/.local/share/Trash/files/today.txt, ~/.local/share/Trash/info/today.txt.trashinfo. Restore one the task needs and capture again.",
+    );
   });
 });
 
@@ -1936,7 +2192,9 @@ const exportSeeded = async (
 
 /** The limitations on what the launch opens, found by the lead their formatter gives them. */
 const launchLimitations = (limitations: readonly string[]) =>
-  limitations.filter((line) => line.includes(NO_LAUNCH_DOCUMENT));
+  limitations.filter((line) =>
+    line.includes("The app opens no document at launch"),
+  );
 
 /**
  * The seed-then-end capture of an app whose titles name no file, given the
@@ -2037,9 +2295,7 @@ describe("exportDesktopApplication launch document", () => {
       `command=["sh", "-c", "cd \\"$HOME\\" 2>/dev/null; exec 'notes' \\"$HOME\\"/'Documents/today.txt'"]`,
     );
     expect(readme).toContain(
-      launchDocumentNote({
-        opens: { kind: "seed", document: "Documents/today.txt" },
-      }),
+      "At launch the app opens `~/Documents/today.txt`, the seed's one document.",
     );
     expect(readme).toContain("`~/Documents/today.txt`");
     expect(launchLimitations(result.limitations)).toEqual([]);
@@ -2151,8 +2407,13 @@ describe("exportDesktopApplication launch document", () => {
     const made = await exportSeeded("notes %U", { syntheticSeed: true });
     const captured = await exportSeeded("notes %U");
     const notice = (syntheticSeed: boolean) =>
-      seedWording({ name: "notes", seedCheckpoint: "seed", syntheticSeed })
-        .notice;
+      syntheticSeed
+        ? "The seed was made for this task, not taken from a user's own data; read `envs/notes/seed/` before publishing the bundle."
+        : "The seed is the user's real data. Keep this bundle local; do not publish it.";
+    const limitation = (syntheticSeed: boolean) =>
+      syntheticSeed
+        ? "The seed was made for the task, not taken from a user's own data; read it before publishing the bundle."
+        : "The seed is the user's real state at the seed checkpoint; keep the bundle local.";
 
     expect(made.result.parameters).toMatchObject({ synthetic_seed: true });
     expect(captured.result.parameters).toMatchObject({ synthetic_seed: false });
@@ -2160,10 +2421,8 @@ describe("exportDesktopApplication launch document", () => {
       [made, true],
       [captured, false],
     ] as const) {
-      expect(exported.result.limitations).toContain(seedLimitation(synthetic));
-      expect(exported.result.limitations).not.toContain(
-        seedLimitation(!synthetic),
-      );
+      expect(exported.result.limitations).toContain(limitation(synthetic));
+      expect(exported.result.limitations).not.toContain(limitation(!synthetic));
       expect(exported.readme).toContain(notice(synthetic));
       expect(exported.readme).not.toContain(notice(!synthetic));
     }

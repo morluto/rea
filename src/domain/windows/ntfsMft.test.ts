@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  MFT_DEFAULT_RECORD_BYTES,
-  MFT_MAX_FILE_BYTES,
   createMftDecoder,
+  hasMftFileRecordHeader,
   parseMftIndex,
   selectMftMetadata,
 } from "./ntfsMft.js";
+
+// The fixtures use the documented 1024-byte default, independently of the reader.
+const MFT_DEFAULT_RECORD_BYTES = 1024;
 
 interface RecordOptions {
   readonly sequenceNumber?: number;
@@ -209,12 +211,17 @@ describe("MFT header facts", () => {
     );
   });
 
-  it("verifies the older FILE header without reading its fixup words as a record number", () => {
+  it("recognizes the older FILE header and verifies its fixups without reading them as a record number", () => {
     const oldRecord = recordOf({ usaOffset: 42 });
     const newRecord = recordOf();
     new DataView(newRecord.buffer).setUint32(44, 1, true);
 
-    const parsed = parseMftIndex(streamOf(oldRecord, newRecord));
+    const stream = streamOf(oldRecord, newRecord);
+    const carrier = Buffer.alloc(stream.length + 7, 0xcc);
+    carrier.set(stream, 7);
+    const bytes = carrier.subarray(7);
+    expect(hasMftFileRecordHeader(bytes.subarray(0, 42))).toBe(true);
+    const parsed = parseMftIndex(bytes);
     if (!parsed.ok) throw new Error(parsed.error.message);
     expect(parsed.value.records).toMatchObject([
       {
@@ -526,7 +533,7 @@ describe("parseMftIndex refusals and limits", () => {
   });
 
   it("refuses a file above the fixed ceiling", () => {
-    const decoder = createMftDecoder(MFT_MAX_FILE_BYTES + 1);
+    const decoder = createMftDecoder(512 * 1024 * 1024 + 1);
     expect(decoder.ok).toBe(false);
     if (decoder.ok) return;
     expect(decoder.error).toMatchObject({

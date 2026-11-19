@@ -70,13 +70,12 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { CdpElectronProvider } from "./CdpElectronProvider.js";
 import { V8InspectorProvider } from "../inspector/V8InspectorProvider.js";
 import { observeJavaScriptRuntime } from "../application/javascript/JavaScriptRuntimeObservationService.js";
 import { startFakeV8Inspector } from "../../tests/fixtures/inspector/fakeV8Inspector.js";
-import { prependAsarJsonWhitespace } from "../../tests/fixtures/asarHeader.js";
 import {
   authorizedElectronFile,
   mapElectronFileAuthorizationFailure,
@@ -124,10 +123,8 @@ const asarPage = async (): Promise<string> => {
   return pathToFileURL(join(archive, "index.html")).href;
 };
 
-it("retains Inspector scripts and contexts when final ASAR authorization cannot close its descriptor", async () => {
+it("retains Inspector Evidence and scopes pending ASAR cleanup to the owning provider", async () => {
   const scriptUrl = await asarPage();
-  const archive = handleState.archive;
-  if (archive === undefined) throw new Error("Missing fixture ASAR");
   const inspector = await startFakeV8Inspector({
     targetUrl: "https://example.test/entry.js",
     scriptUrls: [scriptUrl],
@@ -139,13 +136,6 @@ it("retains Inspector scripts and contexts when final ASAR authorization cannot 
     observation_ms: 0,
   };
   try {
-    const control = await observeJavaScriptRuntime(provider, input);
-    if (!control.ok) throw control.error;
-    expect(control.value.normalized_result).toMatchObject({
-      scripts: { observed_total: 1 },
-      execution_contexts: [{ name: "node[fixture]" }],
-    });
-    await prependAsarJsonWhitespace(archive, " ");
     handleState.failCloseCount = 1;
     const result = await observeJavaScriptRuntime(provider, input);
     if (result.ok) throw new Error("Expected descriptor close failure");
@@ -161,8 +151,24 @@ it("retains Inspector scripts and contexts when final ASAR authorization cannot 
         execution_contexts: [{ name: "node[fixture]" }],
       },
     });
+    const unrelated = new V8InspectorProvider();
+    try {
+      const listed = await unrelated.listTargets({
+        inspector_endpoint: input.inspector_endpoint,
+      });
+      expect(listed).toMatchObject({
+        ok: true,
+        value: { targets: [{ target_id: inspector.targetId }] },
+      });
+    } finally {
+      await unrelated.close();
+    }
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(handleState.events).toEqual(["open", "close"]);
+
     await provider.close();
     expect(result.error.cleanupIncomplete).toBe(false);
+    expect(handleState.events).toEqual(["open", "close", "close"]);
   } finally {
     handleState.failCloseCount = 0;
     await provider.close();

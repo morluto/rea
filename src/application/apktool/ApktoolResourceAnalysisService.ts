@@ -1,5 +1,5 @@
 import type { ApktoolResourceAnalysisPort } from "./ApktoolResourceAnalysisPort.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import {
   apktoolRequestSchema,
   type ApktoolOperation,

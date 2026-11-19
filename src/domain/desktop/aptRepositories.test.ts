@@ -14,10 +14,45 @@ import {
   isArmoredKey,
   isUbuntuProRepository,
   parseAptIndexTargets,
+  parseAptConfigShell,
   parseDeb822Sources,
   parseOneLineSources,
   validSignature,
 } from "./aptRepositories.js";
+
+describe("apt-config shell assignments", () => {
+  it.each([
+    "",
+    "/var/lib/apt/lists/",
+    "/tmp/user's lists/",
+    "/tmp/lists\ncustom/",
+    "/tmp/'\nPARTS=literal\n\\tail/",
+  ])("preserves a complete quoted value %j", (value) => {
+    const assignment = `LISTS='${value.replaceAll("'", "'\\''")}'\n`;
+    expect(parseAptConfigShell(assignment)).toEqual(
+      new Map([["LISTS", value]]),
+    );
+  });
+
+  it("keeps multiline values separate from adjacent assignments", () => {
+    const values = new Map([
+      ["LISTS", "/tmp/lists\ncustom/"],
+      ["PARTS", "/tmp/key's\nparts/"],
+      ["TRUSTED", "/tmp/trusted\\keys.gpg"],
+    ]);
+    const output = [...values]
+      .map(([name, value]) => `${name}='${value.replaceAll("'", "'\\''")}'\n`)
+      .join("");
+    expect(parseAptConfigShell(output)).toEqual(values);
+    expect(parseAptConfigShell(output.slice(0, -1))).toEqual(values);
+  });
+
+  it("does not promote an assignment-looking line from an incomplete quoted value", () => {
+    expect(parseAptConfigShell("LISTS='unclosed\nPARTS='decoy'\n")).toEqual(
+      new Map(),
+    );
+  });
+});
 
 /** `/etc/apt/sources.list.d/ubuntu.sources` from Ubuntu 24.04 arm64, its comment block shortened. */
 const UBUNTU_SOURCES = [
@@ -313,6 +348,14 @@ describe("apt index targets", () => {
     uri.username = "user";
     uri.password = "pw";
     expect(aptListFileName(uri.href)).toBe("apt.example.com_a%5fb%7ec_");
+  });
+
+  it.each([
+    ["https://[2001:db8::1]:8443/apt/", "2001:db8::1:8443_apt_InRelease"],
+    ["https://[2001:db8::1]/apt/", "2001:db8::1_apt_InRelease"],
+    ["https://example.invalid/apt[1]/", "example.invalid_apt%5b1%5d_InRelease"],
+  ])("uses apt's release filename spelling for %s", (uri, filename) => {
+    expect(`${aptListFileName(uri)}InRelease`).toBe(filename);
   });
 
   it("finds the sources entry of each target, by position and then URI and suite", () => {

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
@@ -17,7 +18,6 @@ import { javascriptArtifactAnalysisScopes } from "./JavaScriptArtifactAnalysisTy
 import { completeJavaScriptAnalysisSteps } from "./JavaScriptAnalysisControl.js";
 import { buildImmutableJavaScriptArtifactGraphSteps as buildGraph } from "./JavaScriptArtifactGraphBuilder.js";
 import { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
-import { electronModuleReferenced } from "./ElectronBoundaryAnalysis.js";
 
 const SHA256 = "a".repeat(64);
 const PATH = "main.js";
@@ -178,25 +178,14 @@ describe("Electron semantic coverage", () => {
     expect(electronSemantics).toBeUndefined();
   });
 
-  it("does not count a type-only Electron import as boundary coverage", () => {
-    // A `.js` fixture cannot carry `import type`, so the module predicate is
-    // exercised directly here.
-    const analysisWith = (
-      kind: "require" | "type-import",
-    ): JavaScriptArtifactAnalysis =>
-      ({
-        files: [
-          {
-            file: fileFor(""),
-            javascript: null,
-            semantic: {
-              ir: { moduleLinks: [{ kind, specifier: "electron" }] },
-            },
-          },
-        ],
-      }) as unknown as JavaScriptArtifactAnalysis;
-    expect(electronModuleReferenced(analysisWith("require"))).toBe(true);
-    expect(electronModuleReferenced(analysisWith("type-import"))).toBe(false);
+  it("does not count a type-only Electron import as boundary coverage", async () => {
+    const result = await graphFor(
+      'import type { BrowserWindow } from "electron";\nexport type Window = BrowserWindow;\n',
+      undefined,
+      "main.ts",
+    );
+    expect(result.electronSemantics).toBeUndefined();
+    expect(result.limitations).not.toContain(EMPTY_COVERAGE);
   });
 
   it("matches a supported Electron subpath and ignores an unrelated package", async () => {
@@ -278,30 +267,19 @@ it("does not count a whole type-only import when semantics are skipped", async (
   expect(electronSemantics).toBeUndefined();
 });
 
-it("does not treat a worker URL path as an Electron module", async () => {
-  // `new Worker(new URL("electron", import.meta.url))` records a `worker`
-  // reference whose specifier is a path relative to the importing source.
-  const { electronSemantics } = await graphFor(
-    `const worker = new Worker(new URL("electron", import.meta.url));\n`,
-    (entry) => ({ ...entry, semantic: null }),
-  );
-  expect(electronSemantics).toBeUndefined();
-});
-
-it("reports the same Electron applicability as the retained static fact", async () => {
-  // `analysis_coverage.applicability.electron` is the domain owner of the same
-  // question, so a worker URL path must be unknown for both outputs.
-
+it("retains an electron-named worker URL without claiming Electron coverage", async () => {
   const entry = await analyzedEntry(
     `const worker = new Worker(new URL("electron", import.meta.url));\n`,
   );
-  expect(entry.javascript?.analysis_coverage?.applicability.electron).toBe(
+  expect(entry.javascript?.references).toContainEqual(
+    expect.objectContaining({ kind: "worker", specifier: "electron" }),
+  );
+  expect(entry.javascript?.analysis_coverage.applicability.electron).toBe(
     "unknown",
   );
-  const graph = await graphFor(
-    `const worker = new Worker(new URL("electron", import.meta.url));\n`,
-  );
+  const graph = graphForEntries([{ ...entry, semantic: null }]);
   expect(graph.electronSemantics).toBeUndefined();
+  expect(graph.limitations).not.toContain(EMPTY_COVERAGE);
 });
 
 it("does not count a resolve-only Electron reference as coverage", async () => {
@@ -420,7 +398,7 @@ it("reports partial coverage when a successful static pass stopped at a limit", 
     `const electron = require("electron");\nelectron.ipcMain.handle("ping", () => "pong");\n`,
     (entry) => {
       const javascript = entry.javascript!;
-      const coverage = javascript.analysis_coverage!;
+      const coverage = javascript.analysis_coverage;
       return {
         ...entry,
         javascript: {
@@ -443,6 +421,127 @@ it("reports partial coverage when a successful static pass stopped at a limit", 
     expect.stringContaining(
       "Electron boundary facts are partial: 1 Electron-loading source(s)",
     ),
+  );
+});
+
+it("does not treat a CommonJS wrapper redeclaration as another application owner", async () => {
+  const digest = (value: string) =>
+    createHash("sha256").update(value).digest("hex");
+  const textFile = (
+    path: string,
+    source: string,
+    kind: JavaScriptArtifactFile["kind"],
+  ): JavaScriptArtifactFile => ({
+    path,
+    container_sha256: SHA256,
+    sha256: digest(path + source),
+    bytes: source.length,
+    inventory_artifact_id: `art_${digest(path)}`,
+    kind,
+    unpacked: false,
+    text: { included: true, value: source },
+  });
+  const files = [
+    textFile(
+      "a/package.json",
+      JSON.stringify({ main: "main.cjs" }),
+      "package-json",
+    ),
+    textFile(
+      "a/main.cjs",
+      "const require={main:{require(){}}};require.main.require('../shared/window.cjs');",
+      "javascript",
+    ),
+    textFile("b/package.json", '{"main":"main.cjs"}', "package-json"),
+    textFile("b/main.cjs", "require('../shared/window.cjs');", "javascript"),
+    textFile(
+      "shared/window.cjs",
+      "const {BrowserWindow}=require('electron');new BrowserWindow().loadFile('index.html');",
+      "javascript",
+    ),
+    textFile("a/index.html", "possible page", "html"),
+    textFile("b/index.html", "proven page", "html"),
+    textFile("shared/index.html", "source-relative decoy", "html"),
+    textFile("index.html", "artifact-root decoy", "html"),
+  ];
+  const analyzed = await Promise.all(
+    files
+      .filter((file) => file.kind === "javascript")
+      .map((file) =>
+        analyzedEntry(
+          file.text.included ? file.text.value : "",
+          file.path,
+        ).then((entry) => ({ ...entry, file })),
+      ),
+  );
+  const local = analyzed.find((entry) => entry.file.path === "a/main.cjs");
+  expect(local?.javascript).toMatchObject({
+    parse_status: "complete",
+    parse_error_count: 0,
+    references: [],
+    analysis_coverage: {
+      syntax: { status: "complete", error_count: 0 },
+      semantics: { uncertainty: ["commonjs-wrapper-redeclaration"] },
+    },
+  });
+  const packageObservation = (path: string, main: string) => ({
+    path,
+    sha256: digest(path),
+    status: "included" as const,
+    name: null,
+    version: null,
+    main,
+    main_status: "declared" as const,
+    main_entrypoint: main,
+    renderer_declarations: {},
+    renderer_entrypoint: null,
+    limitation: null,
+  });
+  const analysis: JavaScriptArtifactAnalysis = {
+    jsonDocuments: new JavaScriptJsonDocuments(),
+    files: analyzed,
+    packages: [
+      packageObservation("a/package.json", "main.cjs"),
+      packageObservation("b/package.json", "main.cjs"),
+    ],
+    json_modules: [],
+    html_scripts: [],
+    html_inline_scripts: [],
+    source_maps: [],
+    visited_ast_nodes: 0,
+    findings: 0,
+    modules: 0,
+    parse_failures: 0,
+    limitations: [],
+  };
+  const steps = buildGraph(
+    snapshot,
+    {
+      files,
+      unavailable_relevant_files: [],
+      containers: [],
+      text_bytes_read: files.reduce((total, file) => total + file.bytes, 0),
+      invalid_utf8_files: 0,
+    },
+    analysis,
+  );
+  let next = steps.next();
+  while (next.done !== true) next = steps.next();
+  const roles = next.value.graph.nodes.filter(
+    (node) => node.kind === "electron-renderer",
+  );
+  expect(roles).toHaveLength(1);
+  expect(roles[0]?.observations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        properties: expect.objectContaining({
+          declared_path: "index.html",
+          resolution_status: "resolved",
+          resolved_path: "b/index.html",
+          limitations: [],
+        }),
+      }),
+    ]),
   );
 });
 

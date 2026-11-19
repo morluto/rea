@@ -1,15 +1,21 @@
+import {
+  fitsPeRvaSpan as fitsRva,
+  appendPeConsumedSpan as consume,
+  PE_RVA_END,
+} from "./PeRvaSpans.js";
 import { createPefileReadCompatibility } from "./PefileReadCompatibility.js";
 import { setImmediate } from "node:timers/promises";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../../resources/index.js";
 import {
   BinaryFormatFailure,
   BinaryMappingFailure,
   BinaryReader,
   BinaryResourceFailure,
+  isBinaryFormatOrStringLimitFailure,
   createFileMappingIndex,
   imageFileMappings,
-} from "../metadata/BinaryContainer.js";
-import { readPeImage } from "../metadata/PeImage.js";
+} from "../../domain/binaryContainer.js";
+import { readPeImage } from "../../domain/native/peImage.js";
 import {
   MAX_INSPECT_PE_IMPORT_RETAINED_TEXT_BYTES,
   type InspectPeImportsInput,
@@ -35,15 +41,6 @@ const MAXIMUM_NAME_BYTES = 4096;
 const ENTRIES_PER_YIELD = 1024;
 const ORDINAL_FLAG32 = 0x80000000n;
 const ORDINAL_FLAG64 = 0x8000000000000000n;
-const PE_RVA_END = 0x100000000;
-
-/** PE32+ keeps 32-bit RVAs even though preferred virtual addresses are 64-bit. */
-const fitsRva = (rva: number, size: number): boolean =>
-  Number.isSafeInteger(rva) &&
-  rva >= 0 &&
-  Number.isSafeInteger(size) &&
-  size > 0 &&
-  rva <= PE_RVA_END - size;
 
 const requireRva = (rva: number, size: number): void => {
   if (!fitsRva(rva, size))
@@ -58,26 +55,23 @@ const PE_LIMITATIONS = [
   "Bound import snapshots, the import address table as loaded, and export-forward resolution in another DLL remain unobserved.",
 ];
 
-/** The parser-owned allowance an image exhausted. */
-export type PeImportLimit = "dlls" | "functions" | "retained_text";
+/** The parser-owned allowances an image can exhaust. */
+export const PE_IMPORT_LIMITS = ["dlls", "functions", "retained_text"] as const;
+export type PeImportLimit = (typeof PE_IMPORT_LIMITS)[number];
 
-/** Structured parser allowance refusal; consumers branch on `limit`, never on prose. */
-export class PeImportLimitFailure extends BinaryResourceFailure {
-  constructor(
-    readonly limit: PeImportLimit,
-    readonly allowance: number,
-    message: string,
-  ) {
-    super("structure", allowance, message);
-    this.name = "PeImportLimitFailure";
-  }
-}
+/** Consumers read the exhausted allowance with `binaryResourceAllowance`. */
+const peImportLimit = (
+  limit: PeImportLimit,
+  allowance: number,
+  message: string,
+): BinaryResourceFailure =>
+  new BinaryResourceFailure("structure", allowance, message, limit);
 
 const hex = (value: bigint | number): string => `0x${value.toString(16)}`;
 
 const dllBudget = (count: number, max: number): void => {
   if (count > max)
-    throw new PeImportLimitFailure(
+    throw peImportLimit(
       "dlls",
       max,
       `Import inventory declares ${String(count)} descriptors, above the ${String(max)}-entry DLL allowance`,
@@ -86,7 +80,7 @@ const dllBudget = (count: number, max: number): void => {
 
 const functionBudget = (count: number, max: number): void => {
   if (count > max)
-    throw new PeImportLimitFailure(
+    throw peImportLimit(
       "functions",
       max,
       `Import inventory declares ${String(count)} functions, above the ${String(max)}-entry function allowance`,
@@ -98,7 +92,7 @@ const createRetention = () => {
   return (value: string): void => {
     text += value.length;
     if (text > MAX_INSPECT_PE_IMPORT_RETAINED_TEXT_BYTES)
-      throw new PeImportLimitFailure(
+      throw peImportLimit(
         "retained_text",
         MAX_INSPECT_PE_IMPORT_RETAINED_TEXT_BYTES,
         `Import names exceed the fixed ${String(MAX_INSPECT_PE_IMPORT_RETAINED_TEXT_BYTES)}-byte retained-text allowance`,
@@ -107,20 +101,8 @@ const createRetention = () => {
 };
 
 const failureMessage = (cause: unknown): string => {
-  if (cause instanceof BinaryFormatFailure) return cause.message;
+  if (isBinaryFormatOrStringLimitFailure(cause)) return cause.message;
   throw cause;
-};
-
-/** Append one consumed file span, merging it into the previous span when contiguous. */
-const consume = (
-  spans: { offset: number; bytes: number }[],
-  offset: number,
-  bytes: number,
-): void => {
-  const last = spans.at(-1);
-  if (last !== undefined && last.offset + last.bytes === offset)
-    last.bytes += bytes;
-  else spans.push({ offset, bytes });
 };
 
 const coverage = (
@@ -160,7 +142,7 @@ export const parsePeImports = async (
   const image = readPeImage(bytes);
   const bits = image.bits;
   const base = image.image_base;
-  const reader = new BinaryReader(bytes, true);
+  const reader = new BinaryReader(bytes, true, "pe");
   const lookup = createFileMappingIndex(
     imageFileMappings(image),
     image.zero_fills,
@@ -312,7 +294,9 @@ export const parsePeImports = async (
       }
       const hintNameRva = Number(thunk);
       try {
-        const hintAt = map(hintNameRva, 3);
+        // The two-byte hint and the separately mapped name may occupy adjacent
+        // RVA sections with different file translations.
+        const hintAt = map(hintNameRva, 2);
         const hint = reader.u16(hintAt);
         const name = cString(hintNameRva + 2);
         retain(name);

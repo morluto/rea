@@ -9,6 +9,7 @@ import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 cliTest.skipIf(process.platform === "win32")(
   "migrates an owned shebang registration and starts its generated MCP command without a runtime on PATH",
@@ -108,7 +109,10 @@ cliTest.skipIf(process.platform === "win32")(
       env: { ...environment, ...registration.env },
       stderr: "pipe",
     });
-    const client = new Client({ name: "setup-interpreter", version: "1" });
+    const client = new Client(
+      { name: "setup-interpreter", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     try {
       await client.connect(transport);
       expect(
@@ -161,7 +165,6 @@ cliTest.skipIf(process.platform === "win32").for([
           XDG_CONFIG_HOME: join(home, ".config"),
           PATH: process.env.PATH ?? "",
         },
-        timeoutMs: 30_000,
       });
 
     const setup = await run(registered, [
@@ -296,7 +299,6 @@ cliTest.skipIf(process.platform === "win32")(
           XDG_CONFIG_HOME: join(home, ".config"),
           PATH: process.env.PATH ?? "",
         },
-        timeoutMs: 30_000,
       });
     const uninstall = await run(["uninstall", "--json"]);
     expect(uninstall.exitCode, uninstall.stderr).toBe(0);

@@ -301,6 +301,103 @@ describe("JavaScript export return-shape value uncertainty", () => {
   });
 });
 
+describe("JavaScript export comparison source-graph coverage", () => {
+  it.each(["unknown", "unavailable"] as const)(
+    "reports unknown, not partial, when a source graph's coverage is %s",
+    async (status) => {
+      const [left, right] = await analyzeSources({
+        left: 'export default () => ({kind:"result"});',
+        right: 'export default () => ({kind:"result",total:1});',
+      });
+      expect(compare(left, right).coverage.status).toBe(
+        "complete-within-inputs",
+      );
+      const { graph_id: _graphId, ...input } = right.graph;
+      const graph = createJavaScriptApplicationGraph({
+        ...input,
+        coverage: { status, truncated: false, omitted_count: null, limits: [] },
+        limitations: ["Fixture graph coverage cannot be established."],
+      });
+      const result = javaScriptExportShapeComparisonResultSchema.parse(
+        compare(left, { ...right, graph }),
+      );
+      expect(result.coverage).toMatchObject({
+        status: "unknown",
+        right_graph_status: status,
+      });
+      expect(result.limitations).toContain(
+        "At least one source graph's coverage is unknown or unavailable, so the comparison's coverage is unknown.",
+      );
+    },
+  );
+});
+
+describe("JavaScript export comparison mixed source coverage", () => {
+  it("keeps unknown source-graph coverage beside a truncated return-shape projection, with its omission counts", async () => {
+    const [left, right] = await analyzeSources({
+      left: 'export default () => ({kind:"result"});',
+      right: 'export default () => ({kind:"result",total:1});',
+    });
+    // Left: a known projection limit (two omitted fields).
+    const truncatedLeft = createJavaScriptApplicationGraph({
+      schema: "JavaScriptApplicationGraph",
+      root_node_ids: left.graph.root_node_ids,
+      edges: left.graph.edges,
+      coverage: left.graph.coverage,
+      limitations: left.graph.limitations,
+      nodes: left.graph.nodes.map((node) =>
+        createJavaScriptApplicationNode({
+          kind: node.kind,
+          identity: node.identity,
+          observations: node.observations.map(
+            ({ label, properties, evidence }) => ({
+              label,
+              evidence,
+              properties:
+                properties.semantic_role !== "export-return-shapes"
+                  ? properties
+                  : {
+                      ...properties,
+                      return_shape_coverage: {
+                        ...projectedExportReturnShapesSchema.parse(properties)
+                          .return_shape_coverage,
+                        omitted_fields: 2,
+                        projection_complete: false,
+                      },
+                    },
+            }),
+          ),
+        }),
+      ),
+    });
+    expect(
+      compare({ ...left, graph: truncatedLeft }, right).coverage.status,
+    ).toBe("truncated");
+    // Right: a source graph that cannot tell its coverage.
+    const { graph_id: _graphId, ...input } = right.graph;
+    const unknownRight = createJavaScriptApplicationGraph({
+      ...input,
+      coverage: {
+        status: "unknown",
+        truncated: false,
+        omitted_count: null,
+        limits: [],
+      },
+      limitations: ["Fixture graph coverage cannot be established."],
+    });
+    expect(
+      compare(
+        { ...left, graph: truncatedLeft },
+        { ...right, graph: unknownRight },
+      ).coverage,
+    ).toMatchObject({
+      status: "unknown",
+      left_omitted_fields: 2,
+      right_graph_status: "unknown",
+    });
+  });
+});
+
 describe("JavaScript export return-shape pairing limits", () => {
   it("does not pair an inline discriminant with absent or unknown presence", async () => {
     const rows = [
@@ -1148,6 +1245,19 @@ describe("JavaScript export return-shape selection", () => {
         expect.objectContaining({ export_name: "third" }),
       ]),
     });
+    // The missing side recovered no return shapes, so its source omission
+    // counts are unknown, not zero; the selected side keeps its counts.
+    expect(missing.coverage).toMatchObject({
+      left_source_omitted_variants: null,
+      left_omitted_fields: null,
+      left_omitted_property_coverage: null,
+      right_source_omitted_variants: 0,
+      right_omitted_fields: 0,
+      right_omitted_property_coverage: 0,
+    });
+    expect(missing.limitations).toContain(
+      "The left export has no return-shape projection because the export selection is missing, so its source omission counts are null (unknown), not zero.",
+    );
 
     const parsers = await sourceOwnedParsers();
     const variants = compare(parsers[0], parsers[1]);

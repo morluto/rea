@@ -1,6 +1,14 @@
 import { admitElfLoadSegment } from "../../domain/elfProgramHeader.js";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { readLeb128, SLEB64, ULEB64 } from "../../domain/leb128.js";
+import {
+  allKeyed,
+  keyedBy,
+  uniqueKeyed,
+} from "../../domain/keyedCollection.js";
+import {
+  assertArtifactReadActive,
+  ArtifactReaderFailure,
+} from "../../resources/index.js";
 import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
 import { readElfSymbol } from "../../domain/elfSymbol.js";
 import {
@@ -23,7 +31,7 @@ import {
   readElfDirectoryFromBuffer,
   type ElfProgramDeclaration,
   type NativeSection,
-} from "../metadata/NativeSectionDirectory.js";
+} from "../../domain/native/nativeSectionDirectory.js";
 
 const DW_EH_PE_OMIT = 0xff;
 /** CIE augmentation letters, compared as bytes. */
@@ -314,8 +322,9 @@ export const parseElfUnwindRanges = (
   );
   const gnu = gnuHeaders[0];
 
-  const named = (name: string): NativeSection[] =>
-    directory.sections.filter((section) => section.name === name);
+  const byName = keyedBy(directory.sections, ({ name }) => name);
+  const named = (name: string): readonly NativeSection[] =>
+    allKeyed(byName, name);
   const ehSections = named(".eh_frame");
   const hdrSections = named(".eh_frame_hdr");
   const debugSections = named(".debug_frame");
@@ -474,29 +483,8 @@ export const parseElfUnwindRanges = (
     end: number,
     signed: boolean,
   ): { readonly value: bigint; readonly next: number } | null => {
-    let result = 0n;
-    let shift = 0n;
-    let pos = offset;
-    let byte = 0;
-    while (pos < end && pos < bytes.length && shift <= 63n) {
-      byte = bytes[pos] ?? 0;
-      pos += 1;
-      // At bit 63 only one value bit remains; signed padding repeats that bit.
-      const payload = byte & 0x7f;
-      if (
-        shift === 63n &&
-        (signed ? payload !== 0 && payload !== 0x7f : payload > 1)
-      )
-        return null;
-      result |= BigInt(payload) << shift;
-      shift += 7n;
-      if ((byte & 0x80) === 0) {
-        // Ten-byte signed operands have 70 encoded bits, including sign padding.
-        if (signed && (byte & 0x40) !== 0) result |= -1n << shift;
-        return { value: result, next: pos };
-      }
-    }
-    return null;
+    const read = readLeb128(bytes, offset, end, signed ? SLEB64 : ULEB64);
+    return "failure" in read ? null : read;
   };
   const safeInt = (value: bigint): number | null =>
     value >= BigInt(Number.MIN_SAFE_INTEGER) &&
@@ -789,7 +777,7 @@ export const parseElfUnwindRanges = (
   }
 
   // DW_EH_PE_datarel in .eh_frame is GOT-relative (LSB; i386/x86-64 psABI).
-  const gotBase = resolveGotBase(bytes, directory, named);
+  const gotBase = resolveGotBase(bytes, directory);
   datarelMissing = false;
   datarelUsed = false;
 
@@ -1101,7 +1089,7 @@ export const parseElfUnwindRanges = (
           : input.offset + pageRows.length,
     },
     coverage: {
-      status: incomplete ? "incomplete" : "complete",
+      status: incomplete ? "partial" : "complete",
       total_ranges: ranges.length,
       total_cies: cies.length,
       ranges_with_symbols: withSymbols,
@@ -1127,32 +1115,40 @@ const fileRange = (section: NativeSection): FileRange | null => {
 
 /**
  * GOT base for `.eh_frame` DW_EH_PE_datarel values: DT_PLTGOT, then the
- * `.got.plt` address, then the `.got` address. Null when none is declared.
+ * `.got.plt` address, then the `.got` address. Null when none is declared,
+ * or when a repeated PT_DYNAMIC header, SHT_DYNAMIC section or allocated GOT
+ * section leaves the source ambiguous.
  */
 const resolveGotBase = (
   bytes: Buffer,
   directory: ReturnType<typeof readElfDirectoryFromBuffer>,
-  named: (name: string) => NativeSection[],
 ): { readonly address: bigint; readonly source: string } | null => {
-  const dynamicProgram = directory.programs.find(
-    (program) => program.type === 2,
+  // The ELF gABI allows one PT_DYNAMIC and one SHT_DYNAMIC section; with
+  // repeats, read neither rather than choosing one by position or falling
+  // back to another source.
+  const dynamicProgram = uniqueKeyed(
+    keyedBy(directory.programs, ({ type }) => type),
+    2,
   );
-  const dynamic =
-    (dynamicProgram === undefined
-      ? undefined
-      : { offset: dynamicProgram.offset, fileSize: dynamicProgram.size }) ??
-    directory.sections
-      .filter(
-        (section) =>
-          section.type === SHT_DYNAMIC &&
-          section.file_backed &&
-          !section.compressed,
-      )
-      .map((section) => ({
-        offset: section.offset,
-        fileSize: section.size,
-      }))[0];
-  if (dynamic !== undefined) {
+  if (!dynamicProgram.ok) return null;
+  let dynamic: { readonly offset: bigint; readonly fileSize: bigint } | null =
+    null;
+  if (dynamicProgram.value?.type === 2)
+    dynamic = {
+      offset: dynamicProgram.value.offset,
+      fileSize: dynamicProgram.value.size,
+    };
+  else {
+    const dynamicSection = uniqueKeyed(
+      keyedBy(directory.sections, ({ type }) => type),
+      SHT_DYNAMIC,
+    );
+    if (!dynamicSection.ok) return null;
+    const section = dynamicSection.value;
+    if (section?.file_backed === true && !section.compressed)
+      dynamic = { offset: section.offset, fileSize: section.size };
+  }
+  if (dynamic !== null) {
     const start = dynamic.offset;
     const end = dynamic.offset + dynamic.fileSize;
     if (start >= 0n && end <= BigInt(bytes.length)) {
@@ -1174,12 +1170,17 @@ const resolveGotBase = (
       }
     }
   }
+  // Only an allocated section has a load address; a repeated allocated GOT
+  // section has no single base.
+  const allocated = keyedBy(
+    directory.sections.filter(({ flags }) => (flags & SHF_ALLOC) !== 0n),
+    ({ name }) => name,
+  );
   for (const name of [".got.plt", ".got"]) {
-    const section = named(name).find(
-      (candidate) => (candidate.flags & SHF_ALLOC) !== 0n,
-    );
-    if (section !== undefined && section.address !== 0n)
-      return { address: section.address, source: `the ${name} section` };
+    const section = uniqueKeyed(allocated, name);
+    if (!section.ok) return null;
+    if (section.value !== undefined && section.value.address !== 0n)
+      return { address: section.value.address, source: `the ${name} section` };
   }
   return null;
 };

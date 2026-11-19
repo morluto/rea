@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { getHeapStatistics } from "node:v8";
 
@@ -6,25 +6,44 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { z } from "zod";
 
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
+import { Deadline } from "../domain/deadline.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
+import { isCanonicalBase64 } from "../domain/stringPatterns.js";
 import { StructuredContentMcpClient } from "../providers/StructuredContentMcpClient.js";
 import { validateMcpHttpResponse } from "../providers/Utf8McpResponse.js";
+import type { ComputerHelper } from "./AgentEnvComputerHelper.js";
+import type { ComputerRelease } from "../domain/desktop/computerRelease.js";
 import type {
-  ComputerHelper,
-  ComputerRelease,
-} from "./AgentEnvComputerHelper.js";
+  ComputerCommandResult,
+  ControlledComputer,
+} from "../ports/BuildComputerControl.js";
 import {
   DATA_OBJECTS,
   dataGetSchema,
   readHomeFiles,
   writeHomeFiles,
 } from "./ComputerHomeFiles.js";
-import { drawnScreenshot } from "./DrawnScreenshot.js";
+import { DRAWN_WAIT_MS, drawnScreenshot } from "./DrawnScreenshot.js";
 import { awaitHttpReply, type HttpReply } from "./HttpReply.js";
+import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const READY_TIMEOUT_MS = 180_000;
 const REQUEST_TIMEOUT_MS = 120_000;
-const PROGRESS_MS = 5_000;
+
+/** How long a computer's first screenshot waits for the desktop to draw, and how often its start and the tool calls waiting on it report progress. */
+export interface ComputerStartTiming {
+  readonly drawnWaitMs: number;
+  readonly progressMs: number;
+}
+
+/** The shipped start timing; only tests shorten it. */
+export const COMPUTER_START_TIMING: ComputerStartTiming = {
+  drawnWaitMs: DRAWN_WAIT_MS,
+  progressMs: 5_000,
+};
+
 const RECORDINGS = ".agentenv-recordings";
 /** A control route's answer: readiness, or a recording's manifest, near 1.5 MB for a day of 15 s segments. */
 const CONTROL_RESPONSE_BYTES = 4 * 1024 * 1024;
@@ -38,13 +57,13 @@ export const guestFileAnswerBytes = (bytes: number, files: number): number =>
 /** The most REA reads into memory for one answer of unknown size: a quarter of the V8 heap, as for recordings. */
 const heapQuarter = () => Math.floor(getHeapStatistics().heap_size_limit / 4);
 /** Where the data/get answer ceiling comes from. The guest's reported size does not change it. */
-export const GUEST_FILE_ANSWER_SOURCE = "v8.heap_size_limit/4";
+const GUEST_FILE_ANSWER_SOURCE = "v8.heap_size_limit/4";
 /**
  * Copies of one answer held together while it is parsed: the raw chunks, the
  * concatenated buffer, and the text. The decoded files replace the text
  * afterward and are smaller than the base64 body.
  */
-export const GUEST_FILE_ANSWER_COPIES = 3;
+const GUEST_FILE_ANSWER_COPIES = 3;
 
 /** The host ceiling for one data/get answer, including base64 expansion and each file's envelope. */
 export const guestFileAnswerCeiling = (): number => heapQuarter();
@@ -105,7 +124,7 @@ export interface GuestFilePart {
  * The decoded files, or a refusal when they contain more bytes than the
  * computer reported. An underreported size must not admit the larger body.
  */
-export const retainGuestFiles = (
+const retainGuestFiles = (
   parts: readonly GuestFilePart[],
   reportedBytes: number,
   files: number,
@@ -168,15 +187,14 @@ const rpcSchema = z.union([
   z.object({ result: z.looseObject({}) }),
   z.object({ error: z.looseObject({ message: z.string() }) }),
 ]);
-const execSchema = z.object({
+/** `computer-exec/v1`'s answer: a command's outcome, its output without the control token. */
+const execSchema: z.ZodType<ComputerCommandResult> = z.object({
   exit_code: z.int().nullable(),
   stdout: z.string(),
   stderr: z.string(),
   truncated: z.boolean(),
   timed_out: z.boolean(),
 });
-/** A command's outcome through `computer-exec/v1`, its output without the control token. */
-export type ComputerCommandResult = z.infer<typeof execSchema>;
 const cardSchema = z.looseObject({
   children_environments: z
     .array(z.looseObject({ name: z.string(), url: z.string().optional() }))
@@ -196,6 +214,17 @@ export interface DriverResult {
   readonly content: readonly Readonly<Record<string, JsonValue>>[];
   readonly structured: Readonly<Record<string, JsonValue>> | null;
 }
+
+/** Decode the driver's first screenshot only when its encoded bytes are intact. */
+export const readComputerScreenshotBytes = (
+  reply: DriverResult,
+): Buffer | undefined => {
+  if (reply.isError) return undefined;
+  const data = reply.content.find((block) => block.type === "image")?.data;
+  if (typeof data !== "string" || data.length === 0 || !isCanonicalBase64(data))
+    return undefined;
+  return Buffer.from(data, "base64");
+};
 
 /** A response body read only while it stays within `maxBytes`. */
 const readBounded = async (
@@ -251,6 +280,7 @@ const progressHeartbeat = (
   helper: ComputerHelper,
   phase: { readonly name: string },
   progress: ((message: string) => void) | undefined,
+  intervalMs: number,
 ) => {
   if (progress === undefined) return undefined;
   const startedAt = Date.now();
@@ -264,7 +294,7 @@ const progressHeartbeat = (
     progress(
       `${phase.name} (${String(Math.round((Date.now() - startedAt) / 1000))} s)${line === undefined || line === "" ? "" : `: ${line}`}`,
     );
-  }, PROGRESS_MS);
+  }, intervalMs);
 };
 
 const connectDriver = async (
@@ -308,7 +338,7 @@ export class AppDataRefusal extends Error {
   }
 }
 
-export class AgentEnvComputer {
+export class AgentEnvComputer implements ControlledComputer {
   readonly sandboxId: string;
   readonly #baseUrl: string;
   readonly #token: string | null;
@@ -340,14 +370,25 @@ export class AgentEnvComputer {
     helper: ComputerHelper,
     signal: AbortSignal,
     progress?: (message: string) => void,
+    timing: ComputerStartTiming = COMPUTER_START_TIMING,
   ): Promise<{
     readonly computer: AgentEnvComputer;
     readonly frame: DriverResult;
   }> {
     const phase = { name: "agentenv is deploying the computer" };
-    const heartbeat = progressHeartbeat(helper, phase, progress);
+    const heartbeat = progressHeartbeat(
+      helper,
+      phase,
+      progress,
+      timing.progressMs,
+    );
     try {
-      return await AgentEnvComputer.#connect(helper, signal, phase);
+      return await AgentEnvComputer.#connect(
+        helper,
+        signal,
+        phase,
+        timing.drawnWaitMs,
+      );
     } finally {
       clearInterval(heartbeat);
     }
@@ -357,6 +398,7 @@ export class AgentEnvComputer {
     helper: ComputerHelper,
     signal: AbortSignal,
     phase: { name: string },
+    drawnWaitMs: number,
   ): ReturnType<typeof AgentEnvComputer.connect> {
     const handshake = await helper.handshake(signal);
     if (handshake === undefined || "error" in handshake)
@@ -388,6 +430,7 @@ export class AgentEnvComputer {
       const frame = await drawnScreenshot(
         (retry) => computer.callTool("computer_screenshot", {}, retry),
         signal,
+        drawnWaitMs,
       );
       return { computer, frame };
     } catch (cause: unknown) {
@@ -395,7 +438,7 @@ export class AgentEnvComputer {
       if (signal.aborted) throw signal.reason;
       if (cause instanceof ComputerStartFailure) throw cause;
       throw new ComputerStartFailure(
-        `The computer came up but REA could not use it: ${cause instanceof Error ? cause.message : String(cause)}`,
+        `The computer came up but REA could not use it: ${errorMessage(cause)}`,
         undefined,
         { cause, reason: stage === "readiness" ? "not_ready" : "unusable" },
       );
@@ -506,10 +549,7 @@ export class AgentEnvComputer {
     )?.file?.bytes;
     const bytes =
       encoded === undefined ? undefined : Buffer.from(encoded, "base64");
-    if (
-      bytes?.length !== segment.bytes ||
-      createHash("sha256").update(bytes).digest("hex") !== segment.sha256
-    )
+    if (bytes?.length !== segment.bytes || sha256Hex(bytes) !== segment.sha256)
       throw new Error(
         `Recording segment ${segment.path} is missing or differs from its manifest.`,
       );
@@ -640,7 +680,7 @@ export class AgentEnvComputer {
   }
 
   async #waitReady(signal: AbortSignal): Promise<void> {
-    const deadline = Date.now() + READY_TIMEOUT_MS;
+    const deadline = Deadline.after(READY_TIMEOUT_MS);
     for (;;) {
       const status = readinessSchema.parse(
         await this.#request(
@@ -652,7 +692,7 @@ export class AgentEnvComputer {
       if (status.ready) return;
       const waiting = status.checks.filter((check) => !check.ok);
       const failed = waiting.find((check) => check.final === true);
-      if (failed !== undefined || Date.now() > deadline)
+      if (failed !== undefined || deadline.expired())
         throw new ComputerStartFailure(
           this.redacted(
             failed === undefined
@@ -670,7 +710,9 @@ export class AgentEnvComputer {
   redacted(text: string): string {
     return this.#token === null
       ? text
-      : text.replaceAll(this.#token, "[control token]");
+      : redactExplicitText(text, [this.#token], {
+          replacement: "[control token]",
+        });
   }
 
   /** A framework-only route of the computer, with its control token; its answer is read within `bounds.limit`. */

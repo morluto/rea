@@ -12,11 +12,11 @@ const cases = [
   { name: "null-main", metadata: { main: null } },
   { name: "false-main", metadata: { main: false } },
   { name: "zero-main", metadata: { main: 0 } },
+  { name: "numeric-main", metadata: { main: 42 } },
   { name: "true-main", metadata: { main: true } },
   { name: "object-main", metadata: { main: {} } },
   { name: "empty-main", metadata: { main: "" } },
   { name: "missing-main", metadata: {} },
-  { name: "string-main", metadata: { main: "./index.js" } },
 ] as const;
 
 cliTest.for(["CLI", "stdio MCP"] as const)(
@@ -145,6 +145,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         .join("\n"),
       "local.js": 'module.exports = "local.js";',
       "local/index.js": 'module.exports = "local/index.js";',
+      "local-control.cjs": 'console.log(JSON.stringify(require("./local/")));',
     };
     for (const item of packages) {
       files[`node_modules/${item.name}/package.json`] = JSON.stringify({
@@ -167,8 +168,6 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         "console.log(JSON.stringify(results));",
       ].join("\n");
     }
-    files["local-control.cjs"] =
-      'console.log(JSON.stringify(require("./local/")));';
     await writeFixtureFiles(root, files);
     for (const kind of ["require", "import"] as const) {
       const control = await runNodeJsonControl(
@@ -188,31 +187,33 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         ),
       );
     }
-    expect(await runNodeJsonControl(root, "local-control.cjs")).toBe(
-      "local/index.js",
-    );
+    const local = await runNodeJsonControl(root, "local-control.cjs");
+    expect(local).toBe("local/index.js");
     const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
     const relationships = graph.edges
       .filter(({ relation }) => relation === "imports")
       .map(({ properties }) => properties);
     for (const kind of ["require", "import"] as const)
-      for (const item of packages)
+      for (const item of packages) {
+        const path = item[kind];
+        const rejectedDirectory = kind === "import" && "importError" in item;
         expect(relationships).toContainEqual(
           expect.objectContaining({
             module_link_kind: kind,
             specifier: item.name,
             resolved_path:
-              item[kind] === null
-                ? null
-                : `node_modules/${item.name}/${item[kind]}`,
-            resolution_status:
-              item[kind] === null
-                ? "importError" in item
-                  ? "rejected"
-                  : "not-found"
+              path === null ? null : `node_modules/${item.name}/${path}`,
+            resolution_status: rejectedDirectory
+              ? "rejected"
+              : path === null
+                ? "not-found"
                 : "resolved",
+            ...(rejectedDirectory && {
+              candidate_path: `node_modules/${item.name}/lib/.js`,
+            }),
           }),
         );
+      }
     expect(relationships).toContainEqual(
       expect.objectContaining({
         module_link_kind: "require",

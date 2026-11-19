@@ -1,3 +1,5 @@
+import { ParseFailureError } from "../domain/parseFailure.js";
+
 const KUNA_DOCUMENT_CODES = [
   "invalid_address",
   "address_exceeds_u64",
@@ -30,21 +32,50 @@ const KUNA_DOCUMENT_CODES = [
   "xref_function_hex",
   "xref_target",
   "span_short",
-  "command_not_file",
-  "stop_unproven",
+  "invalid_utf8",
 ] as const;
 
 export type KunaDocumentCode = (typeof KUNA_DOCUMENT_CODES)[number];
 
-/** Kuna document or command admission failure. `code` is the stable identity. */
-export class KunaDocumentError extends Error {
-  readonly _tag = "KunaDocumentError";
+const KUNA_FORMAT = "kuna-document";
+
+type KunaDocumentFacts = Readonly<Record<string, string | number>>;
+
+/**
+ * Kuna document failure. `code` is the stable identity. A document larger
+ * than its buffered allowance is a `limit`, a span that reads short is
+ * `truncated`, and every other code is `malformed`.
+ */
+export class KunaDocumentError extends ParseFailureError<
+  "malformed" | "truncated" | "limit"
+> {
+  readonly code: KunaDocumentCode;
+  /** Format-specific facts, such as the field that failed. */
+  readonly facts: KunaDocumentFacts | undefined;
 
   constructor(
-    readonly code: KunaDocumentCode,
-    readonly detail?: Readonly<Record<string, string | number>>,
-  ) {
-    super(code);
+    code: Exclude<KunaDocumentCode, "buffered_capacity">,
+    facts?: KunaDocumentFacts,
+  );
+  constructor(code: "buffered_capacity", facts: { maximum_bytes: number });
+  constructor(code: KunaDocumentCode, facts?: KunaDocumentFacts) {
+    const field =
+      typeof facts?.field === "string" ? { field: facts.field } : {};
+    const maximum = facts?.maximum_bytes;
+    super(
+      code === "buffered_capacity" && typeof maximum === "number"
+        ? {
+            kind: "limit",
+            format: KUNA_FORMAT,
+            detail: code,
+            limit: { name: "kuna-buffered-document-bytes", maximum },
+          }
+        : code === "span_short"
+          ? { kind: "truncated", format: KUNA_FORMAT, detail: code, ...field }
+          : { kind: "malformed", format: KUNA_FORMAT, detail: code, ...field },
+    );
     this.name = "KunaDocumentError";
+    this.code = code;
+    this.facts = facts;
   }
 }

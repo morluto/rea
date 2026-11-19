@@ -1,3 +1,6 @@
+import { z } from "zod";
+import type { AnalysisControlLimit } from "./analysisSettings.js";
+
 /** Numeric admission contracts shared by environment parsing and runtime tools.
  * Timer maxima follow signed 32-bit scheduling. ASAR's 256 MiB maximum and
  * worker 16 GiB maxima are REA policies, not claims about format/host capacity.
@@ -27,6 +30,20 @@ export const MAXIMUM_GHIDRA_VALUE_FLOW_RECORDS = 2_147_483_647;
 /** Ghidra 12.1.4 shifts MiB by 20 into a signed Java int response capacity. */
 export const MAXIMUM_GHIDRA_DECOMPILE_PAYLOAD_MIB = 2_047;
 
+/**
+ * Alias states one JavaScript source's member-mutation phase may schedule by
+ * default. Each state is retained until its query finishes, at roughly
+ * 1–2 KiB, so the default stays well below the default 1 GiB worker heap.
+ * Published bundles up to 395 KB schedule at most about 123,000 states.
+ */
+export const DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES = 524_288;
+
+/**
+ * At about 2 KiB per retained state this is 16 GiB, the largest JavaScript
+ * worker heap `max_heap_mb` admits; a larger allowance could only exhaust it.
+ */
+export const MAXIMUM_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES = 8_388_608;
+
 /** Native function-matching representation admitted when the setting is unset. */
 export const DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES = 96 * 1024 * 1024;
 
@@ -55,10 +72,40 @@ export const DEFAULT_HOPPER_CALLER_SCAN_BUDGET_MS = 2_000;
 export const MINIMUM_HOPPER_CALLER_SCAN_BUDGET_MS = 1;
 
 /**
- * Largest delay Node schedules exactly. Delays above this signed 32-bit
- * boundary become a 1 ms timer, so startup and swiftc timeouts stop here.
+ * Largest delay Node schedules exactly. A `setTimeout` delay above this signed
+ * 32-bit bound is clamped to 1 ms, so a deadline past it would expire
+ * immediately. Every millisecond duration REA hands to a timer stops here;
+ * this is the only declaration of that bound.
  */
 export const MAX_NODE_TIMER_DELAY_MS = 2_147_483_647;
+
+/**
+ * The per-call control of a caller-selectable millisecond deadline, named by
+ * its contract field; each adapter names the option that sets it.
+ */
+export const deadlineParameterLimit = (
+  parameter: string,
+  timeoutMs: number,
+  defaultMs: number,
+): AnalysisControlLimit => ({
+  control_kind: "parameter",
+  parameter,
+  effective_value: timeoutMs,
+  unit: "ms",
+  minimum: 1,
+  maximum: MAX_NODE_TIMER_DELAY_MS,
+  default_value: defaultMs,
+  applies_at: "next_call",
+});
+
+/**
+ * A positive whole-millisecond duration Node can schedule exactly. Zero and
+ * negative values are not a deadline.
+ */
+export const timerDurationMsSchema = z
+  .int()
+  .min(1)
+  .max(MAX_NODE_TIMER_DELAY_MS);
 
 /**
  * Ghidra 12.1.4 converts whole seconds to a signed int millisecond delay.
@@ -70,15 +117,6 @@ export const MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS = Math.floor(
 
 /** Matching deadline used when the setting is unset. Today's fixed constant. */
 export const DEFAULT_REGEX_MATCHING_DEADLINE_MS = 5_000;
-
-/**
- * Largest delay Node schedules exactly. A `setTimeout` delay above this
- * signed 32-bit bound is clamped to 1 ms, so a matching deadline past it
- * would expire immediately. The setting stops here instead of growing
- * without a bound. The floor is 1 ms: zero and negative values are not a
- * deadline.
- */
-export const MAXIMUM_REGEX_MATCHING_DEADLINE_MS = 2_147_483_647;
 
 /** Worker old-generation request used when the setting is unset. Today's constant. */
 export const DEFAULT_REGEX_WORKER_HEAP_REQUEST_MIB = 128;
@@ -127,13 +165,8 @@ export const DEFAULT_JADX_OPERATION_TIMEOUT_MS = 120_000;
  */
 export const DEFAULT_DEBUGGER_COMMAND_DEADLINE_MS = 120_000;
 
-/**
- * Smallest command deadline. Zero is not a deadline. The maximum is the
- * largest delay Node schedules exactly; a `setTimeout` delay above that
- * signed 32-bit bound becomes 1 ms.
- */
+/** Smallest command deadline. Zero is not a deadline; the maximum is MAX_NODE_TIMER_DELAY_MS. */
 export const MINIMUM_DEBUGGER_COMMAND_DEADLINE_MS = 1;
-export const MAXIMUM_DEBUGGER_COMMAND_DEADLINE_MS = 2_147_483_647;
 
 /** Debugger sessions admitted when the setting is unset. Today's constant. */
 export const DEFAULT_DEBUGGER_MAX_SESSIONS = 8;
@@ -197,6 +230,18 @@ export const DEFAULT_BRIDGE_MAX_REQUEST_BYTES = 16 * 1024 * 1024;
 export const MINIMUM_BRIDGE_MAX_REQUEST_BYTES = 7464;
 export const MAXIMUM_BRIDGE_MAX_REQUEST_BYTES = 536_870_888 - 1;
 
+/**
+ * Hopper and Ghidra reply line ceiling, in UTF-8 bytes before the framing LF.
+ * The client refuses a longer line, or an unterminated tail past it, instead
+ * of retaining it. The default is far above the largest reply the packaged
+ * bridge fixtures produce (see `bridgeMaxReplyBytes.ts`). The floor admits the
+ * bridge handshake and a full inventory page. A line decodes to at most as many
+ * UTF-16 code units as it has bytes, so the maximum is Node's string ceiling.
+ */
+export const DEFAULT_BRIDGE_MAX_REPLY_BYTES = 256 * 1024 * 1024;
+export const MINIMUM_BRIDGE_MAX_REPLY_BYTES = 1024 * 1024;
+export const MAXIMUM_BRIDGE_MAX_REPLY_BYTES = NODE_MAX_STRING_LENGTH;
+
 /** MCP client SDK default request timeout. JEB uses it when the setting is unset. */
 export const DEFAULT_JEB_MCP_TIMEOUT_MS = 60_000;
 
@@ -208,6 +253,21 @@ export const DEFAULT_KUNA_FUNCTION_TIMEOUT_MS = 120_000;
 /** Pwntools artifact admission when producer_limits.input_bytes is omitted. */
 export const DEFAULT_PWNTOOLS_MAX_INPUT_BYTES = 32 * 1024 * 1024;
 export const MAXIMUM_PWNTOOLS_MAX_INPUT_BYTES = 1024 * 1024 * 1024;
+
+/**
+ * Packet-capture `tshark -T json` expansion budget: the conservative estimate
+ * of the object graph `JSON.parse` would build, checked before parsing. The
+ * estimate charges at most 130 bytes per UTF-16 code unit (2 for the code unit
+ * plus 128 for a structural character), and the producer text is one Node
+ * string, so no admissible output can be charged more than
+ * `130 * NODE_MAX_STRING_LENGTH` (69,793,215,440 bytes, 65.0 GiB). The default
+ * and maximum sit above that, so the budget refuses only when an operator
+ * lowers it. Representative `-e` field output is charged about 17-28 bytes
+ * per code unit.
+ */
+export const DEFAULT_CAPTURE_PACKET_JSON_EXPANSION_BYTES = 128 * 1024 ** 3;
+export const MINIMUM_CAPTURE_PACKET_JSON_EXPANSION_BYTES = 1024 * 1024;
+export const MAXIMUM_CAPTURE_PACKET_JSON_EXPANSION_BYTES = 128 * 1024 ** 3;
 
 /** Windows ChangeTime settle window, poll, and poll count. */
 export const DEFAULT_WINDOWS_CHANGE_TIME_DRIFT_MS = 2_000;

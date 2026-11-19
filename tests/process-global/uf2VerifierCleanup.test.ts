@@ -73,17 +73,20 @@ it.each([false, true])(
       expect(peer.fd).toBe(-1);
       expect(peerAttempts).toBe(1);
       if (deniedInitially) {
-        expect(failure).toBeInstanceOf(Error);
-        const owned = failure as Error & {
-          cleanupLeases: { release(): Promise<void> }[];
-        };
-        expect(owned.cause).toBeInstanceOf(AggregateError);
-        const original = owned.cause as AggregateError;
+        expect(failure).toBeInstanceOf(AggregateError);
+        const original = failure as AggregateError;
         expect(original.cause).toBe(primary);
         expect(original.errors[0]).toBe(primary);
-        expect(original.errors[1]).toHaveProperty("cause.errors", [
+        const owned = original.errors[1] as AggregateError & {
+          cleanupLeases: { release(): Promise<void> }[];
+        };
+        expect(owned.errors[0]).toHaveProperty("cause.errors", [
           cleanupFailure,
         ]);
+        expect(owned.errors[1]).toHaveProperty(
+          "message",
+          expect.stringContaining(`Retained verifier fixture ${workspace}`),
+        );
         expect(owned.cleanupLeases).toHaveLength(1);
         expect(commands.cleanupResources).toEqual([
           `${workspace}/bootloader.bin`,
@@ -94,7 +97,12 @@ it.each([false, true])(
           (await readFile(`${workspace}/bootloader.bin`)).equals(bytes),
         ).toBe(true);
         await expect(owned.cleanupLeases[0]!.release()).rejects.toMatchObject({
-          cause: expect.objectContaining({ errors: [cleanupFailure] }),
+          errors: [
+            expect.objectContaining({
+              cause: expect.objectContaining({ errors: [cleanupFailure] }),
+            }),
+            expect.any(Error),
+          ],
         });
         await access(workspace);
         expect(retainedAttempts).toBe(2);

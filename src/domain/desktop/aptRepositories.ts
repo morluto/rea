@@ -1,4 +1,5 @@
 import type { AptRepository } from "./desktopCapture.js";
+import { byteToHex } from "../../kernel/byteToHex.js";
 
 /**
  * One `deb` line, or one deb822 stanza, of an apt sources file. A stanza's
@@ -38,7 +39,12 @@ export interface AptSourceEntry extends Omit<
 const ARMOR_BEGIN = "-----BEGIN PGP PUBLIC KEY BLOCK-----";
 const ARMOR_END = "-----END PGP PUBLIC KEY BLOCK-----";
 
-const listValues = (value: string | undefined): readonly string[] =>
+/** Source fields separate words with whitespace; commas remain URI/name data. */
+const fieldValues = (value: string | undefined): readonly string[] =>
+  (value ?? "").split(/\s+/u).filter((part) => part.length > 0);
+
+/** Architecture and Signed-By options also admit comma-separated values. */
+const optionValues = (value: string | undefined): readonly string[] =>
   (value ?? "").split(/[\s,]+/u).filter((part) => part.length > 0);
 
 const withoutTrailingSlashes = (uri: string): string =>
@@ -95,8 +101,8 @@ const stanza = (
       .map(withoutTrailingSlashes),
     suites: fields.suites,
     components: fields.components,
-    architectures: listValues(fields.options.get("arch")),
-    signedBy: inlineKey === null ? listValues(signedBy) : [],
+    architectures: optionValues(fields.options.get("arch")),
+    signedBy: inlineKey === null ? optionValues(signedBy) : [],
     inlineKey,
   };
 };
@@ -126,7 +132,7 @@ export const parseOneLineSources = (
         {
           uris: [groups.uri],
           suites: [groups.suite],
-          components: listValues(groups.components),
+          components: fieldValues(groups.components),
           options,
         },
       ),
@@ -165,7 +171,7 @@ export const parseDeb822Sources = (
 ): readonly AptSourceStanza[] =>
   deb822Paragraphs(text).flatMap((fields, index) => {
     if (
-      !listValues(fields.get("types")).includes("deb") ||
+      !fieldValues(fields.get("types")).includes("deb") ||
       fields.get("enabled")?.toLowerCase() === "no"
     )
       return [];
@@ -173,9 +179,9 @@ export const parseDeb822Sources = (
       stanza(
         { file, position: index + 1 },
         {
-          uris: listValues(fields.get("uris")),
-          suites: listValues(fields.get("suites")),
-          components: listValues(fields.get("components")),
+          uris: fieldValues(fields.get("uris")),
+          suites: fieldValues(fields.get("suites")),
+          components: fieldValues(fields.get("components")),
           options: new Map([
             ["signed-by", fields.get("signed-by") ?? ""],
             ["arch", fields.get("architectures") ?? ""],
@@ -320,19 +326,38 @@ export const repositorySupplies = (
     .sort();
 };
 
-/** The `NAME='value'` lines `apt-config shell` prints, by name; apt writes a quote in a value as `'\''`. */
+/** The `NAME='value'` assignments `apt-config shell` prints; apt writes a quote in a value as `'\''`. */
 export const parseAptConfigShell = (
   output: string,
-): ReadonlyMap<string, string> =>
-  new Map(
-    output.split("\n").flatMap((line) => {
-      const match = /^(?<name>[A-Za-z_]\w*)='(?<value>.*)'$/u.exec(line);
-      const { name, value } = match?.groups ?? {};
-      return name === undefined || value === undefined
-        ? []
-        : [[name, value.replaceAll(`'\\''`, "'")] as const];
-    }),
-  );
+): ReadonlyMap<string, string> => {
+  const values = new Map<string, string>();
+  const prefix = /([A-Za-z_]\w*)='/uy;
+  let offset = 0;
+  while (offset < output.length) {
+    prefix.lastIndex = offset;
+    const match = prefix.exec(output);
+    if (match === null) {
+      const newline = output.indexOf("\n", offset);
+      if (newline < 0) break;
+      offset = newline + 1;
+      continue;
+    }
+    const start = prefix.lastIndex;
+    let end = output.indexOf("'", start);
+    // Only apt's close/escaped-quote/reopen sequence continues the value.
+    // Literal newlines inside the quotes are data, not record boundaries.
+    while (end >= 0 && output.startsWith(`'\\''`, end))
+      end = output.indexOf("'", end + 4);
+    if (end < 0) break;
+    const after = end + 1;
+    if (after === output.length || output[after] === "\n")
+      values.set(match[1]!, output.slice(start, end).replaceAll(`'\\''`, "'"));
+    const newline = output.indexOf("\n", after);
+    if (newline < 0) break;
+    offset = newline + 1;
+  }
+  return values;
+};
 
 const QUOTED = new Set('\\|{}[]<>"^~_=!@#$%^&*');
 
@@ -340,14 +365,16 @@ const QUOTED = new Set('\\|{}[]<>"^~_=!@#$%^&*');
 export const aptListFileName = (uri: string): string => {
   const path = uri
     .replace(/^[a-z][a-z0-9+.-]*:\/\//iu, "")
-    .replace(/^[^/@]*@/u, "");
+    .replace(/^[^/@]*@/u, "")
+    // APT removes authority brackets before encoding the path for the cache.
+    .replace(/^\[([0-9a-f.:]+)\](?=[:/]|$)/iu, "$1");
   let quoted = "";
   for (const character of path) {
     const code = character.codePointAt(0) ?? 0;
     quoted +=
       QUOTED.has(character) || code <= 0x20 || code >= 0x7f
         ? [...Buffer.from(character, "utf8")]
-            .map((byte) => `%${byte.toString(16).padStart(2, "0")}`)
+            .map((byte) => `%${byteToHex(byte)}`)
             .join("")
         : character;
   }
