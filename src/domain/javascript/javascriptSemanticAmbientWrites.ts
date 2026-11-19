@@ -15,7 +15,6 @@ import {
   type JavaScriptIntrinsicInvocation,
 } from "./javascriptElectronMemberWrites.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
-import { javaScriptPackedArgumentOrigin } from "./javascriptIntrinsicInvocation.js";
 import {
   ambientEffectCovers,
   ambientPathMayObserveAt,
@@ -139,10 +138,15 @@ const intrinsicPrototypeRead = (
   )
     return undefined;
   const target = invocation.arguments?.[0];
-  return t.isNode(target) && !t.isSpreadElement(target)
-    ? { target, owner }
-    : undefined;
+  return t.isNode(target) && !t.isSpreadElement(target) ? target : undefined;
 };
+
+/** A normalized native inspection neither retains its target nor uses extra arguments. */
+const isReadOnlyPrototypeInspection = (
+  invocation: JavaScriptIntrinsicInvocation | undefined,
+): boolean =>
+  intrinsicPrototypeRead(invocation) !== undefined &&
+  invocation?.arguments?.every((argument) => t.isExpression(argument)) === true;
 
 type AmbientPath = readonly (string | null)[];
 
@@ -289,7 +293,7 @@ export const createAmbientPathResolver = (
     escapedContents = false,
     projection: AmbientProjection = [],
     receiver?: (node: t.Node, path: AmbientProjection) => void,
-    observes?: "array-receiver" | "prototype-inspection",
+    observes?: "array-receiver",
   ): AmbientResolution => {
     const prior = possibleWrites ? undefined : cached.get(node);
     if (prior !== undefined) return prior;
@@ -715,9 +719,7 @@ export const createAmbientPathResolver = (
           (suffix === undefined ||
             suffix[0] === null ||
             suffix[0] === "__proto__" ||
-            (escapedContents &&
-              suffix.length === 0 &&
-              observes !== "prototype-inspection")) &&
+            (escapedContents && suffix.length === 0)) &&
           (callResult.receiver === undefined ||
             resolve(
               callResult.receiver,
@@ -921,9 +923,7 @@ export function* indexJavaScriptAmbientWritesSteps(
   }[] = [];
   const prototypeInspections: {
     readonly node: t.CallExpression | t.OptionalCallExpression;
-    readonly argument: t.Node;
-    readonly target: t.Node;
-    readonly siblings: readonly t.Node[];
+    readonly arguments: readonly t.Node[];
   }[] = [];
   // Object/Reflect static calls, settled once every ambient write is known.
   const staticReceivers: {
@@ -955,7 +955,7 @@ export function* indexJavaScriptAmbientWritesSteps(
       const invocation = interop.intrinsicInvocation(node);
       const prototype = intrinsicPrototypeRead(invocation);
       if (prototype !== undefined)
-        return { kind: "prototype", target: prototype.target };
+        return { kind: "prototype", target: prototype };
       if (
         invocation?.path.length === 4 &&
         invocation.path[1] === "Array" &&
@@ -1020,33 +1020,26 @@ export function* indexJavaScriptAmbientWritesSteps(
       const retainEscape = (target: t.Node, browserReceiver = false) => {
         escapes.push({ target, node, browserReceiver });
       };
-      const read = intrinsicPrototypeRead(invocation);
       const arguments_ = t.isTaggedTemplateExpression(node)
         ? node.quasi.expressions
         : node.arguments;
-      const packed =
-        read === undefined
-          ? undefined
-          : javaScriptPackedArgumentOrigin(
-              read.target,
-              arguments_,
-              state.parentsByNode,
-            );
+      const inspection =
+        (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
+        isReadOnlyPrototypeInspection(invocation)
+          ? { node, arguments: [] as t.Node[] }
+          : undefined;
       for (const [index, argument] of arguments_.entries())
         if (
           t.isNode(argument) &&
           !semanticArgumentStaysInSource(node, index, state)
         ) {
-          if (
-            argument === packed?.argument &&
-            (t.isCallExpression(node) || t.isOptionalCallExpression(node))
-          )
-            prototypeInspections.push({ ...packed, node });
-          else
-            retainEscape(
-              t.isSpreadElement(argument) ? argument.argument : argument,
-            );
+          const value = t.isSpreadElement(argument)
+            ? argument.argument
+            : argument;
+          if (inspection === undefined) retainEscape(value);
+          else inspection.arguments.push(value);
         }
+      if (inspection !== undefined) prototypeInspections.push(inspection);
       const callee = unwrapJavaScriptExpression(
         t.isTaggedTemplateExpression(node) ? node.tag : node.callee,
       ).node;
@@ -1228,12 +1221,29 @@ export function* indexJavaScriptAmbientWritesSteps(
     if (ambientPathMayObserveAt(state, node, ["global", ...method], "contents"))
       retainEscapeEffect({ node, target, browserReceiver: false });
     else state.retainedGlobalCallReceivers.add(target);
-  // Validate the whole normalized dispatch, including any call/apply
-  // helpers, at the sites that captured those intrinsic functions.
-  for (const { node, argument, target, siblings } of prototypeInspections) {
-    const read = intrinsicPrototypeRead(
-      interop.intrinsicInvocation(
-        node,
+  // Validate the normalized dispatch at its intrinsic captures. A rejected
+  // call can expose a helper used by an earlier textual call in a deferred
+  // activation. Recheck provisional reads once after publishing those escapes.
+  // If that pass adds another relevant effect, conservatively retain the
+  // remaining escapes instead of rescanning the whole source to a fixed point.
+  const firstInspectionPass =
+    retainOpaquePrototypeInspections(prototypeInspections);
+  if (firstInspectionPass.changed) {
+    const secondInspectionPass = retainOpaquePrototypeInspections(
+      firstInspectionPass.provisional,
+    );
+    if (secondInspectionPass.changed)
+      for (const inspection of secondInspectionPass.provisional)
+        retainPrototypeInspectionArguments(inspection);
+  }
+  function retainOpaquePrototypeInspections(
+    inspections: typeof prototypeInspections,
+  ) {
+    const provisional: typeof prototypeInspections = [];
+    let changed = false;
+    for (const inspection of inspections) {
+      const invocation = interop.intrinsicInvocation(
+        inspection.node,
         undefined,
         (capture, path) =>
           ambientPathMayObserveAt(
@@ -1242,35 +1252,29 @@ export function* indexJavaScriptAmbientWritesSteps(
             ["global", ...path.slice(1)],
             "contents",
           ) || opaqueCodeMayChangeGlobalRead(capture, state, path[1] ?? ""),
-      ),
-    );
-    if (read?.target === target) {
-      for (const sibling of siblings)
-        retainEscapeEffect({ node, target: sibling, browserReceiver: false });
-      retainEscapeEffect(
-        { node, target, browserReceiver: false },
-        "prototype-inspection",
       );
-    } else {
-      retainEscapeEffect({
-        node,
-        target: t.isSpreadElement(argument) ? argument.argument : argument,
-        browserReceiver: false,
-      });
+      if (isReadOnlyPrototypeInspection(invocation))
+        provisional.push(inspection);
+      else changed = retainPrototypeInspectionArguments(inspection) || changed;
     }
+    return { provisional, changed };
+  }
+  function retainPrototypeInspectionArguments({
+    node,
+    arguments: argumentValues,
+  }: (typeof prototypeInspections)[number]): boolean {
+    let changed = false;
+    for (const target of argumentValues)
+      changed =
+        retainEscapeEffect({ node, target, browserReceiver: false }, true) ||
+        changed;
+    return changed;
   }
   function retainEscapeEffect(
     { node, target, browserReceiver, projection }: (typeof escapes)[number],
-    observes?: "prototype-inspection",
-  ): void {
-    const resolved = ambientWrites(
-      target,
-      node,
-      true,
-      projection,
-      undefined,
-      observes,
-    );
+    trackPrototypeInspectionEffects = false,
+  ): boolean {
+    const resolved = ambientWrites(target, node, true, projection);
     if (
       browserReceiver &&
       resolved.ownership === "ambient" &&
@@ -1278,11 +1282,24 @@ export function* indexJavaScriptAmbientWritesSteps(
       resolved.paths.every((path) => path.length === 1 && path[0] === "global")
     )
       state.retainedGlobalCallReceivers.add(target);
-    for (const path of resolved.paths)
+    let changed = false;
+    for (const path of resolved.paths) {
       // Only proven browser APIs keep their global receiver from user code.
-      if (!(browserReceiver && path.length === 1 && path[0] === "global")) {
-        retainSemanticAmbientEffect(state, "escape", path, node);
-      }
+      if (browserReceiver && path.length === 1 && path[0] === "global")
+        continue;
+      const retained = retainSemanticAmbientEffect(state, "escape", path, node);
+      changed ||=
+        retained &&
+        trackPrototypeInspectionEffects &&
+        (path[0] === semanticArrayIteratorPrototypePath[0] ||
+          (path[0] === "global" &&
+            (path.length === 1 ||
+              path[1] === null ||
+              ["Array", "Function", "Object", "Reflect"].includes(
+                path[1] ?? "",
+              ))));
+    }
+    return changed;
   }
   // A function may call a browser method replaced later in source order.
   if (

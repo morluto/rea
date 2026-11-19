@@ -30,7 +30,9 @@ cliTest(
     const captured = previous.items;
     previous.items = [];
     Object.getPrototypeOf(captured.values()).next = () => ({ done: true });
-    Reflect.apply(Reflect.getPrototypeOf, null, [[].values()]);
+    Reflect.apply(Reflect.getPrototypeOf, null, [[].values(), [].values()]);
+    const sourcePrototype = Object.getPrototypeOf([].values());
+    Object.getPrototypeOf(sourcePrototype);
     const before = ["first"];
     const [ordinary] = before;
     const box = { items: [] };

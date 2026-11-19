@@ -276,8 +276,83 @@ it.each([
     "resolved",
   ],
   [
-    "packed prototype read with another iterator argument",
+    "packed prototype read with another ignored iterator argument",
     "Reflect.apply(Reflect.getPrototypeOf, null, [[].values(), [].values()]);",
+    "resolved",
+  ],
+  [
+    "ignored iterator passed directly to native inspection",
+    "Reflect.getPrototypeOf({}, [].values());",
+    "resolved",
+  ],
+  [
+    "ignored iterator passed through method apply",
+    "Reflect.getPrototypeOf.apply(null, [{}, [].values()]);",
+    "resolved",
+  ],
+  [
+    "opaque aliased apply pack",
+    "const args = [{}, [].values()]; Reflect.apply(Reflect.getPrototypeOf, null, args);",
+    "candidate",
+  ],
+  [
+    "opaque inspector receives extra iterator",
+    "Reflect.getPrototypeOf = opaque; Reflect.getPrototypeOf({}, [].values());",
+    "candidate",
+  ],
+  [
+    "opaque Reflect.apply receives packed extra iterator",
+    "Reflect.apply = opaque; Reflect.apply(Reflect.getPrototypeOf, null, [{}, [].values()]);",
+    "candidate",
+  ],
+  [
+    "ignored argument evaluation can still expose the iterator",
+    "Reflect.getPrototypeOf({}, consume([].values()));",
+    "candidate",
+  ],
+  [
+    "ignored packaged argument evaluation can change the prototype",
+    "Reflect.apply(Reflect.getPrototypeOf, null, [{}, (Object.getPrototypeOf([].values()).next = replacement)]);",
+    "candidate",
+  ],
+  [
+    "native inspection of the shared prototype",
+    "const p = Object.getPrototypeOf([].values()); Object.getPrototypeOf(p);",
+    "resolved",
+  ],
+  [
+    "nested direct native inspection of the shared prototype",
+    "Object.getPrototypeOf(Object.getPrototypeOf([].values()));",
+    "resolved",
+  ],
+  [
+    "actual shared-prototype exposure",
+    "const p = Object.getPrototypeOf([].values()); consume(p);",
+    "candidate",
+  ],
+  [
+    "overwritten inspector receives the shared prototype",
+    "const p = Object.getPrototypeOf([].values()); Object.getPrototypeOf = opaque; Object.getPrototypeOf(p);",
+    "candidate",
+  ],
+  [
+    "read-only bound inspector",
+    "const inspect = Reflect.getPrototypeOf.bind(null); inspect({}, [].values());",
+    "resolved",
+  ],
+  [
+    "opaque replacement of bind before creating the inspector",
+    "Function.prototype.bind = opaque; const inspect = Reflect.getPrototypeOf.bind(null); inspect({}, [].values());",
+    "candidate",
+  ],
+  [
+    "opaque packed argument exposure precedes an earlier deferred inspection",
+    "const iterator = [].values(); function inspect() { Object.getPrototypeOf({}, iterator); } Reflect.apply = opaque; Reflect.apply(Reflect.getPrototypeOf, null, [{}], Object); inspect();",
+    "candidate",
+  ],
+  [
+    "two helper exposures can invalidate a deferred inspection",
+    "const iterator = [].values(); function inspect() { Reflect.getPrototypeOf({}, iterator); } function expose() { Object.getPrototypeOf({}, Reflect); } Reflect.apply = opaque; Reflect.apply(Reflect.getPrototypeOf, null, [{}], Object); expose(); inspect();",
     "candidate",
   ],
   [
