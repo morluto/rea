@@ -119,11 +119,10 @@ function readCommits(text) {
         /^[a-z]+(?:\([^)]*\))?!: /u.test(title) ||
         /^BREAKING(?: CHANGE|-CHANGE):\s*\S/mu.test(body),
       breakingNotes: Array.from(
-        body
-          .replace(/\r\n/gu, "\n")
-          .matchAll(
-            /^BREAKING(?: CHANGE|-CHANGE):[ \t]*(\S[^\n]*(?:\n(?!\n|[A-Za-z-]+: )[^\n]+)*)/gmu,
-          ),
+        body.replace(/\r\n/gu, "\n").matchAll(
+          // Blank lines are part of a footer value until the next trailer.
+          /^BREAKING(?: CHANGE|-CHANGE):[ \t]*(\S[^\n]*(?:\n(?!(?:BREAKING(?: CHANGE|-CHANGE):|[A-Za-z][A-Za-z0-9-]*(?::[ \t]| #)))[^\n]*)*)/gmu,
+        ),
         (match) => match[1].trim(),
       ),
     });

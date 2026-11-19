@@ -35,6 +35,12 @@ function inlineFacts(tokens) {
   return { parts, wording };
 }
 
+function textBlockFacts(tokens, index) {
+  const { type } = tokens[index];
+  if (type === "paragraph_open" || type === "heading_open")
+    return inlineFacts(tokens[index + 1].children);
+}
+
 function releaseVersion({ type, level, tag }, source) {
   if (type === "heading_open" && level === 0 && tag === "h2")
     return /^## \[([^\]]+)\]/u.exec(source.line)?.[1];
@@ -71,14 +77,14 @@ export function releaseSection(markdown, expectedVersion) {
     } else if (type === "list_item_close" && level === 1) {
       item = undefined;
     }
-    if (type === "paragraph_open" || type === "heading_open") {
-      const inline = tokens[index + 1];
+    const facts = textBlockFacts(tokens, index);
+    if (facts !== undefined) {
       blocks.push({
         offset: source.offset - start,
         heading:
           type === "heading_open" && level === 0 ? source.line : undefined,
         item: type === "paragraph_open" && level === 2 ? item : undefined,
-        ...inlineFacts(inline.children),
+        ...facts,
       });
     }
   }
@@ -120,14 +126,20 @@ function normalizeWording(parts) {
     .filter((part) => part !== "");
 }
 
+function normalizeBlockWording(blocks) {
+  return normalizeWording(blocks.flatMap(({ wording }) => [...wording, " "]));
+}
+
 /** Match footer prose and exact inline code within the breaking section. */
 export function releaseMigrationWording(blocks) {
-  const observed = normalizeWording(
-    blocks.flatMap(({ wording }) => [...wording, " "]),
-  );
+  const observed = normalizeBlockWording(blocks);
   return (footer) => {
-    const [inline] = parser.parseInline(footer, {});
-    const expected = normalizeWording(inlineFacts(inline.children).wording);
+    const tokens = parser.parse(footer, {});
+    const expected = normalizeBlockWording(
+      tokens
+        .map((_token, index) => textBlockFacts(tokens, index))
+        .filter((facts) => facts !== undefined),
+    );
     if (expected.length === 0) return false;
     // The first and last prose chunks can be part of a longer passage. Code is
     // matched only as a complete code span, so examples cannot supply prose.

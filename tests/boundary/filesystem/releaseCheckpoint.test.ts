@@ -447,6 +447,44 @@ it.each([
   },
 );
 
+it.each([
+  { spacing: "adjacent", separator: "\n", includeRestart: true },
+  { spacing: "separated", separator: "\n\n", includeRestart: true },
+  { spacing: "separated", separator: "\n\n", includeRestart: false },
+])(
+  "validates $spacing list migration with restart step $includeRestart",
+  async ({ separator, includeRestart }) => {
+    const steps =
+      "- Set `--new-path` to an absolute path.\n- Restart the client.";
+    const f = await fixture(
+      "fix(contracts)!: change path inputs",
+      "BREAKING CHANGE: Migrate configuration:" +
+        separator +
+        steps +
+        "\n\nReviewed-by: Fixture Reviewer",
+    );
+    const notes = includeRestart ? steps : steps.split("\n")[0];
+    await candidate(
+      f,
+      "6.0.0",
+      "### ⚠ BREAKING CHANGES\n\nMigrate configuration:\n\n" + notes,
+    );
+    const result = verify(f);
+    if (includeRestart) {
+      await expect(result).resolves.toMatchObject({
+        stdout: expect.stringContaining('"expectedVersion": "6.0.0"'),
+      });
+    } else {
+      await expect(result).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining(
+          "migration notes omit unreleased breaking changes",
+        ),
+      });
+    }
+  },
+);
+
 it("rejects a minor when a GitHub merge commit carries its bang marker in the PR title", async () => {
   const f = await fixture("fix(contracts)!: require absolute paths", "", {
     mergePullRequest: true,
