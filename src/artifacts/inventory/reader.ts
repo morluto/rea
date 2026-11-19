@@ -6,6 +6,7 @@ import type {
 import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import { MachOSliceArtifactReader } from "../MachOSliceArtifactReader.js";
 import { NativeDmgArtifactReader } from "../NativeDmgArtifactReader.js";
+import { UefiArtifactReader } from "../UefiArtifactReader.js";
 import { ZipArtifactReader } from "../ZipArtifactReader.js";
 import type {
   ArtifactInventoryCoverage,
@@ -28,6 +29,8 @@ export const createReader = (
   switch (format) {
     case "directory":
       return new DirectoryArtifactReader(path);
+    case "uefi":
+      return new UefiArtifactReader(path, rootSource);
     case "asar":
       return new AsarArtifactReader(path);
     case "mach-o-universal":

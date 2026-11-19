@@ -69,6 +69,7 @@ const formatSchema = z.enum([
   "hap",
   "hsp",
   "app-pack",
+  "uefi",
   "asar",
   "dmg",
   "pkg",

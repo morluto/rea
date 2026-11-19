@@ -237,7 +237,7 @@ export type BinaryTarget =
   | (BinaryTargetIdentity &
       NonExecutableMetadata & {
         readonly kind: "artifact";
-        readonly format: "plist" | "javascript" | "source-map";
+        readonly format: "plist" | "javascript" | "source-map" | "uefi";
       });
 
 /** Whether an executable target contains a thin or universal Mach-O image. */

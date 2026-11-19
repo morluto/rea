@@ -21,6 +21,7 @@ import {
   type ZipPackageFormat,
 } from "../../domain/zipPackageFormat.js";
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import { probeUefiFlashImage } from "../../uefi/UefiFormatProbe.js";
 import type { ArtifactResourceOwner } from "../ArtifactResourceScope.js";
 import type { HashResult } from "../ArtifactHash.js";
 import {
@@ -154,6 +155,9 @@ const classifyRootFormat = async (
   )
     return "pkg";
   if (lower.endsWith(".dmg") && (await hasKolyTrailer(handle))) return "dmg";
+  // Content admission keeps flash images recognizable even under archive-like
+  // suffixes; plain `_FVH` bytes without a plausible header stay inconclusive.
+  if (await probeUefiFlashImage(handle, signal)) return "uefi";
   const xmlProbe = createXmlPlistSignatureProbe();
   xmlProbe.write(prefix);
   const chunks = [prefix];

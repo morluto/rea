@@ -67,6 +67,7 @@ export const targetFormatSchema = z.enum([
   "plist",
   "javascript",
   "source-map",
+  "uefi",
 ]);
 
 export const targetKindSchema = z.enum([

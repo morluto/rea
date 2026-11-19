@@ -91,6 +91,10 @@ import { registerFirmwareTools } from "./registerFirmwareTools.js";
 import { FirmwareAnalysisService } from "../application/firmware/FirmwareAnalysisService.js";
 import type { FirmwareAnalysisPort } from "../application/firmware/FirmwareAnalysisPort.js";
 import { createFirmwareAnalysisProvider } from "../composition/firmware.js";
+import { registerUefiTools } from "./registerUefiTools.js";
+import { UefiAnalysisService } from "../application/uefi/UefiAnalysisService.js";
+import type { UefiAnalysisPort } from "../application/uefi/UefiAnalysisPort.js";
+import { createUefiAnalysisProvider } from "../composition/uefi.js";
 import { registerAndroidTools } from "./registerAndroidTools.js";
 import { registerApktoolTools } from "./registerApktoolTools.js";
 import { registerPcapTools } from "./registerPcapTools.js";
@@ -162,6 +166,7 @@ export interface CreateServerOptions {
   readonly electronFuses?: ElectronFuseService;
   readonly recordedCrash?: RecordedCrashService;
   readonly firmwareAnalysis?: FirmwareAnalysisPort;
+  readonly uefiAnalysis?: UefiAnalysisPort;
   readonly javascriptRecovery?: JavaScriptRecoveryPort;
   readonly webModuleTrace?: WebModuleTraceService;
   readonly webSourceLocation?: WebSourceLocationService;
@@ -323,6 +328,9 @@ export const createServer = (
   const firmwareAnalysis = new FirmwareAnalysisService(
     options.firmwareAnalysis ?? createFirmwareAnalysisProvider(environment),
   );
+  const uefiAnalysis = new UefiAnalysisService(
+    options.uefiAnalysis ?? createUefiAnalysisProvider(),
+  );
   const selectedOptions = {
     ...options,
     environment,
@@ -410,6 +418,7 @@ export const createServer = (
       artifactResources.close(),
       reverseEngineering.close(),
       firmwareAnalysis.close(),
+      uefiAnalysis.close(),
       gdbSessions.closeAll(),
       rizinDebugSessions.closeAll(),
     ])
@@ -546,6 +555,13 @@ export const createServer = (
   registerSignalTools(
     server,
     signalRecording,
+    toolLogger,
+    recordEvidence,
+    analysisAdmission,
+  );
+  registerUefiTools(
+    server,
+    uefiAnalysis,
     toolLogger,
     recordEvidence,
     analysisAdmission,

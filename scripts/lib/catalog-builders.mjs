@@ -54,6 +54,11 @@ export const toolFamilyCatalog = (sources) => {
       contracts: sources.firmwareContracts.FIRMWARE_TOOL_CONTRACTS,
     },
     {
+      id: "uefi",
+      surface: "firmware-provider",
+      contracts: sources.uefiContracts.UEFI_TOOL_CONTRACTS,
+    },
+    {
       id: "android",
       surface: "android-provider",
       contracts: sources.androidContracts.ANDROID_TOOL_CONTRACTS,
@@ -301,6 +306,10 @@ export const providerCatalog = (sources) => {
       contracts: sources.firmwareContracts.FIRMWARE_TOOL_CONTRACTS.filter(
         ({ name }) => name === "extract_firmware",
       ),
+    },
+    {
+      identity: sources.uefiProvider.UEFI_PROVIDER_IDENTITY,
+      contracts: sources.uefiContracts.UEFI_TOOL_CONTRACTS,
     },
     {
       identity: sources.androidProvider.JADX_PROVIDER_IDENTITY,

@@ -54,6 +54,7 @@ import {
 } from "../domain/binaryTarget.js";
 import type { PeCodeViewRecord } from "../domain/binaryTargetTypes.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { probeUefiFlashImage } from "../uefi/UefiFormatProbe.js";
 
 const XML_PLIST_PROBE_CHUNK_BYTES = 64 * 1024;
 
@@ -348,6 +349,10 @@ const detectArtifactFormat = async (
         return "dmg";
     }
   }
+  // Content admission keeps flash images recognizable even under archive-like
+  // suffixes; plain `_FVH` bytes without a plausible header stay inconclusive.
+  throwIfTargetResolutionCancelled(signal);
+  if (await probeUefiFlashImage(handle, signal)) return "uefi";
   // XML property lists can use archive-specific suffixes such as .archive.
   // The named-format check above keeps .js, .map, and .asar classifications.
   const xmlProbe = createXmlPlistSignatureProbe();

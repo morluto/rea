@@ -75,6 +75,8 @@ const SOURCE_PATHS = {
   managedContracts: "dist/contracts/managed/managedToolContracts.js",
   firmwareContracts: "dist/contracts/firmware/firmwareToolContracts.js",
   firmwareProvider: "dist/firmware/FirmwareRelease.js",
+  uefiContracts: "dist/contracts/uefi/uefiToolContracts.js",
+  uefiProvider: "dist/uefi/UefiAnalysisProvider.js",
   androidContracts: "dist/contracts/android/androidToolContracts.js",
   flutterContracts: "dist/contracts/flutter/flutterToolContracts.js",
   flutterProvider: "dist/flutter/FlutterBuildProvider.js",

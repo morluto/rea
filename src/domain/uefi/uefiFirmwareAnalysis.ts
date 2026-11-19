@@ -1,0 +1,431 @@
+import { z } from "zod";
+import { isAbsolute } from "node:path";
+import type { JsonValue } from "../jsonValue.js";
+import { digestSchema } from "../digests.js";
+import { localPathStringSchema } from "../localPath.js";
+import { UEFI_FIRMWARE_LIMITS } from "./uefiLimits.js";
+
+const bytes = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
+const range = z.strictObject({ offset: bytes, length: bytes.positive() });
+const target = {
+  path: localPathStringSchema
+    .refine(isAbsolute, {
+      message:
+        "path must be an absolute local firmware image path (for example /tmp/firmware.bin)",
+    })
+    .describe(
+      "Absolute local UEFI firmware image; never executed. Relative paths are rejected.",
+    ),
+};
+
+/** Canonical display form of a UEFI GUID or the raw parse failure kind. */
+export const guidSchema = z
+  .string()
+  .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u);
+
+/** FFS file type names; the numeric code is retained alongside every name. */
+export const ffsTypeNameSchema = z.enum([
+  "raw",
+  "freeform",
+  "security-core",
+  "pei-core",
+  "dxe-core",
+  "peim",
+  "driver",
+  "combined-peim-driver",
+  "application",
+  "smm",
+  "firmware-volume-image",
+  "combined-smm-dxe",
+  "smm-core",
+  "mm-standalone",
+  "mm-core-standalone",
+  "pad",
+  "unknown",
+]);
+/** FFS file state observations after erase-polarity normalization. */
+export const ffsStateFlagSchema = z.enum([
+  "header-construction",
+  "header-valid",
+  "data-valid",
+  "marked-for-update",
+  "deleted",
+  "header-invalid",
+]);
+/** Declared FFS integrity observations; mismatches are observations, not verdicts. */
+export const ffsChecksumVerdictSchema = z.enum([
+  "valid",
+  "invalid",
+  "pad-file-unchecked",
+  "unchecked",
+]);
+/** FFS file types that carry sections in FFS2 layout. */
+export const sectionedFfsTypeNameSchema = ffsTypeNameSchema.exclude([
+  "raw",
+  "freeform",
+]);
+const alignmentSchema = z.enum([
+  "1",
+  "2",
+  "4",
+  "8",
+  "16",
+  "32",
+  "64",
+  "128",
+  "unknown",
+]);
+
+/** Section type names retained alongside their numeric codes. */
+export const uefiSectionTypeNameSchema = z.enum([
+  "compression",
+  "guid-defined",
+  "disposable",
+  "pe32",
+  "pic",
+  "te",
+  "dxe-depex",
+  "version",
+  "user-interface",
+  "compatibility16",
+  "firmware-volume-image",
+  "freeform-subtype-guid",
+  "raw",
+  "pei-depex",
+  "mm-depex",
+  "unknown",
+]);
+/**
+ * Compression classification for guided or uncompressed sections; kinds that
+ * cannot be decoded are reported as gaps, never silently skipped.
+ */
+export const uefiCompressionSchema = z.union([
+  z.strictObject({ kind: z.literal("none") }),
+  z.strictObject({
+    kind: z.enum([
+      "lzma-custom",
+      "lzmaf86",
+      "ami-zlib",
+      "tiano",
+      "efi-standard",
+      "crc32-guided",
+      "unknown-guid",
+    ]),
+    guid: guidSchema.nullable(),
+    data_offset: bytes,
+    attributes: bytes.nullable(),
+  }),
+]);
+
+/** One flat FFS section record; sub volumes stay linked by logical path. */
+export const uefiSectionRecordSchema = z.strictObject({
+  offset: bytes,
+  header_length: bytes,
+  length: bytes,
+  type_code: bytes,
+  type_name: uefiSectionTypeNameSchema,
+  sha256: digestSchema,
+  compression: uefiCompressionSchema,
+  sub_volumes: z.array(z.string()),
+});
+/** One flat FFS file record inside its owning volume. */
+export const uefiFfsFileRecordSchema = z.strictObject({
+  offset: bytes,
+  header_length: bytes,
+  length: bytes,
+  guid: guidSchema,
+  type_code: bytes,
+  type_name: ffsTypeNameSchema,
+  attributes: bytes,
+  alignment: alignmentSchema,
+  state: bytes,
+  state_flags: z.array(ffsStateFlagSchema),
+  checksum: ffsChecksumVerdictSchema,
+  ui_string: z.string().nullable(),
+  logical_path: z.string(),
+  volume_offset: bytes,
+  sha256: digestSchema,
+  sections: z.array(uefiSectionRecordSchema),
+});
+
+/** Explicit UEFI firmware inspection and extraction intent, engine-independent. */
+export const uefiInputSchemas = {
+  inspect_uefi_firmware: z.strictObject({
+    ...target,
+    max_depth: z
+      .number()
+      .int()
+      .min(1)
+      .max(UEFI_FIRMWARE_LIMITS.maxDepth)
+      .default(UEFI_FIRMWARE_LIMITS.defaultMaxDepth)
+      .describe(
+        "Nesting depth for sections and volumes inside compressed payloads",
+      ),
+    max_volumes: z
+      .number()
+      .int()
+      .min(1)
+      .max(UEFI_FIRMWARE_LIMITS.maxVolumes)
+      .default(UEFI_FIRMWARE_LIMITS.defaultMaxVolumes)
+      .describe("Maximum firmware volumes mapped before partial coverage"),
+    max_files: z
+      .number()
+      .int()
+      .min(1)
+      .max(UEFI_FIRMWARE_LIMITS.maxFiles)
+      .default(UEFI_FIRMWARE_LIMITS.defaultMaxFiles)
+      .describe("Maximum FFS files mapped before partial coverage"),
+  }),
+  extract_uefi_firmware: z.strictObject({
+    ...target,
+    output_directory: localPathStringSchema
+      .refine(isAbsolute, {
+        message: "output_directory must be an absolute local filesystem path",
+      })
+      .describe("Absolute, absent output directory; parent must exist"),
+    target: z
+      .discriminatedUnion("kind", [
+        z.strictObject({ kind: z.literal("whole-image") }),
+        z.strictObject({ kind: z.literal("volume"), offset: bytes }),
+        z.strictObject({ kind: z.literal("ffs-file"), offset: bytes }),
+        z.strictObject({ kind: z.literal("section"), offset: bytes }),
+      ])
+      .default({ kind: "whole-image" }),
+    max_depth: z
+      .number()
+      .int()
+      .min(1)
+      .max(UEFI_FIRMWARE_LIMITS.maxDepth)
+      .default(UEFI_FIRMWARE_LIMITS.defaultMaxDepth)
+      .describe(
+        "Nesting depth for sections and volumes inside compressed payloads",
+      ),
+    max_output_bytes: z
+      .number()
+      .int()
+      .min(1)
+      .max(UEFI_FIRMWARE_LIMITS.maxOutputBytes)
+      .default(UEFI_FIRMWARE_LIMITS.defaultMaxOutputBytes)
+      .describe(
+        "Staging file-byte budget, checked during extraction; transient overshoot is possible",
+      ),
+    max_output_files: z
+      .number()
+      .int()
+      .min(1)
+      .max(UEFI_FIRMWARE_LIMITS.maxOutputFiles)
+      .default(UEFI_FIRMWARE_LIMITS.defaultMaxOutputFiles)
+      .describe("Staging entry budget, including directories"),
+    include_compressed: z
+      .boolean()
+      .default(true)
+      .describe(
+        "Publish recognized-but-undecodable compressed payloads as raw blobs; decoding gaps stay explicit",
+      ),
+  }),
+} as const;
+
+/** Supported UEFI firmware operations. */
+export type UefiOperation = keyof typeof uefiInputSchemas;
+/** Correlated, validated UEFI firmware request. */
+export type UefiRequest = {
+  [Name in UefiOperation]: {
+    operation: Name;
+    input: z.infer<(typeof uefiInputSchemas)[Name]>;
+  };
+}[UefiOperation];
+/** Validate the operation with its exact input contract. */
+export const uefiRequestSchema = z.discriminatedUnion("operation", [
+  z.strictObject({
+    operation: z.literal("inspect_uefi_firmware"),
+    input: uefiInputSchemas.inspect_uefi_firmware,
+  }),
+  z.strictObject({
+    operation: z.literal("extract_uefi_firmware"),
+    input: uefiInputSchemas.extract_uefi_firmware,
+  }),
+]);
+
+const parserSchema = z.strictObject({
+  name: z.literal("rea-uefi"),
+  version: z.string(),
+});
+
+/** Completed UEFI result retained when cleanup cannot be confirmed. */
+export interface UefiPartialObservation {
+  readonly kind: "uefi";
+  readonly result: JsonValue;
+  /** Completed producer data, artifact identity and analysis metadata. */
+  readonly provenance?: JsonValue;
+}
+
+/** How the flash image entry point was established for cartography. */
+const entryBasisSchema = z.enum([
+  "fv-at-zero",
+  "amd-psp-first",
+  "scanned",
+  "unknown",
+]);
+
+/** One mapped firmware volume with its flat FFS file records. */
+export const uefiVolumeRecordSchema = z.strictObject({
+  logical_path: z.string(),
+  offset: bytes,
+  length: z.number().int().positive(),
+  declared_length: bytes,
+  depth: z.number().int().min(0),
+  parent_offset: bytes.nullable(),
+  sha256: digestSchema,
+  file_system_guid: guidSchema.nullable(),
+  signature: z.literal("_FVH"),
+  header_length: bytes,
+  attributes: bytes,
+  revision: z.number().int().min(0).max(255),
+  ext_header_offset: bytes.nullable(),
+  block_map: z.array(z.strictObject({ num_blocks: bytes, length: bytes })),
+  ffs_files: z.array(uefiFfsFileRecordSchema),
+});
+/** One undecoded image region; classification stays an observation. */
+export const uefiUnknownRegionSchema = z.strictObject({
+  offset: bytes,
+  length: z.number().int().positive(),
+  sha256: digestSchema.nullable(),
+  classification: z.enum([
+    "no-fv-magic",
+    "erased-ff",
+    "erased-00",
+    "sparse",
+    "unparsed-table",
+    "truncated",
+  ]),
+  erasure: z.enum(["0xff", "0x00", "none"]),
+});
+/** One integrity observation; mismatches are recorded, never smoothed away. */
+export const uefiIntegrityRecordSchema = z.strictObject({
+  kind: z.enum([
+    "fv-checksum-mismatch",
+    "ffs-header-checksum-mismatch",
+    "ffs-file-checksum-mismatch",
+    "size-truncation",
+    "block-map-truncation",
+    "guid-parse-failure",
+    "declared-length-overflow",
+  ]),
+  logical_path: z.string(),
+  range,
+  detail: z.string(),
+});
+
+/** Portable results retain observed boundaries, unknowns and integrity notes. */
+export const uefiResultSchemas = {
+  inspect_uefi_firmware: z.strictObject({
+    parser: parserSchema,
+    input_size: bytes,
+    flash_image: z.strictObject({
+      sha256: digestSchema,
+      size: bytes,
+      entry_basis: entryBasisSchema,
+    }),
+    firmware_volumes: z.array(uefiVolumeRecordSchema),
+    psp_tables: z.array(
+      z.strictObject({
+        offset: bytes,
+        length: bytes,
+        table_magic: z.enum(["$PSP", "$2B", "unknown"]),
+        total_entries: bytes.nullable(),
+        entries: z.array(
+          z.strictObject({
+            type: bytes.nullable(),
+            declared_location: bytes.nullable(),
+            declared_size: bytes.nullable(),
+            image_offset: bytes.nullable(),
+            sha256: digestSchema.nullable(),
+            location_basis: z.literal("declared-unverified"),
+          }),
+        ),
+        entry_stride_basis: z.enum([
+          "header-declared",
+          "assumed-16",
+          "unknown",
+        ]),
+      }),
+    ),
+    psp_candidates: z.array(
+      z.strictObject({
+        offset: bytes,
+        magic: z.string(),
+        reason: z.string(),
+      }),
+    ),
+    unknown_regions: z.array(uefiUnknownRegionSchema),
+    integrity: z.array(uefiIntegrityRecordSchema),
+    coverage: z.enum(["complete", "partial"]),
+    limitations: z.array(z.string()),
+  }),
+  extract_uefi_firmware: z.strictObject({
+    parser: parserSchema,
+    selection: z.strictObject({
+      ...range.shape,
+      target_kind: z.enum(["whole-image", "volume", "ffs-file", "section"]),
+    }),
+    output_directory: z.string(),
+    coverage: z.enum(["complete", "partial"]),
+    files: z.array(
+      z.strictObject({
+        relative_path: z.string(),
+        path: z.string(),
+        size: bytes,
+        sha256: digestSchema,
+        original_file_range: range,
+        runtime_address: z.null(),
+        media_type: z.string().nullable(),
+        source: z.enum([
+          "raw-section",
+          "decompressed-lzma",
+          "decompressed-zlib",
+          "uncompressed-payload",
+          "compressed-passthrough",
+        ]),
+        parent_logical_path: z.string().nullable(),
+      }),
+    ),
+    derivations: z.array(
+      z.strictObject({
+        parent_path: z.string(),
+        child_path: z.string(),
+        parent_file_range: range.nullable(),
+        handler: z.string(),
+      }),
+    ),
+    extraction_gaps: z.array(
+      z.strictObject({
+        kind: z.enum([
+          "unsupported-compression",
+          "unknown-guid-handler",
+          "depth-limited",
+          "unparsed-region",
+          "size-truncated",
+          "pad-file",
+        ]),
+        logical_path: z.string(),
+        range: range.nullable(),
+        detail: z.string(),
+      }),
+    ),
+    diagnostics: z.string(),
+    published_bytes: bytes,
+  }),
+} as const;
+
+/** Inferred record and result types shared by the engine, provider and contracts. */
+export type UefiVolumeRecord = z.infer<typeof uefiVolumeRecordSchema>;
+export type UefiFfsFileRecord = z.infer<typeof uefiFfsFileRecordSchema>;
+export type UefiSectionRecord = z.infer<typeof uefiSectionRecordSchema>;
+export type UefiUnknownRegion = z.infer<typeof uefiUnknownRegionSchema>;
+export type UefiIntegrityRecord = z.infer<typeof uefiIntegrityRecordSchema>;
+export type UefiInspectResult = z.infer<
+  (typeof uefiResultSchemas)["inspect_uefi_firmware"]
+>;
+export type UefiExtractResult = z.infer<
+  (typeof uefiResultSchemas)["extract_uefi_firmware"]
+>;
