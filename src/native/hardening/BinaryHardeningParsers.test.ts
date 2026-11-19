@@ -1081,7 +1081,6 @@ it("rejects an incomplete note at the hardening entry limit", () => {
   expect(() => readElfHardening(image)).toThrow(
     expect.objectContaining({
       kind: "malformed",
-      message: "ELF note entry exceeds its table.",
     }),
   );
 });

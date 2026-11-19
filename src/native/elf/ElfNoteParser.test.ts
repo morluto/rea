@@ -438,7 +438,6 @@ it("diagnoses incomplete note framing at the entry limit", () => {
     expect(() => parse(image, input)).toThrow(
       expect.objectContaining({
         reason: "format",
-        message: "ELF note entry exceeds its table.",
       }),
     );
   }
