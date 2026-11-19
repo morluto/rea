@@ -26,24 +26,91 @@ def _trim(text: str) -> str:
     return text.strip("\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff")
 
 
+def _json_pieces(root):
+    """JSON display fragments in order, without recursing into nested values."""
+    tasks = [("value", root)]
+    while tasks:
+        kind, value = tasks.pop()
+        if kind == "text":
+            yield value
+        elif kind == "array":
+            iterator, first = value
+            try:
+                child = next(iterator)
+            except StopIteration:
+                yield "]"
+            else:
+                if not first:
+                    yield ","
+                tasks.append(("array", (iterator, False)))
+                tasks.append(("value", child))
+        elif kind == "object":
+            iterator, first = value
+            try:
+                key, child = next(iterator)
+            except StopIteration:
+                yield "}"
+            else:
+                if not first:
+                    yield ","
+                tasks.append(("object", (iterator, False)))
+                tasks.append(("value", child))
+                tasks.append(("text", ":"))
+                tasks.append(("value", key))
+        elif isinstance(value, list):
+            yield "["
+            tasks.append(("array", (iter(value), True)))
+        elif isinstance(value, dict):
+            yield "{"
+            tasks.append(("object", (iter(value.items()), True)))
+        else:
+            yield json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
 def _shown(value) -> str:
-    text = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    parts, size = [], 0
+    for part in _json_pieces(value):
+        take = 201 - size
+        parts.append(part[:take])
+        size += min(len(part), take)
+        if size == 201:
+            break
+    text = "".join(parts)
     return text if len(text) <= 200 else text[:200] + "…"
+
+
+def _object_pairs(actual, expected, missing):
+    for key, value in expected.items():
+        yield actual[key] if key in actual else missing, value
 
 
 def _same(actual, expected) -> bool:
     """JSON equality: numbers by value but never a boolean for a number, objects by their keys, arrays in order."""
-    if isinstance(expected, list):
-        return (isinstance(actual, list) and len(actual) == len(expected)
-                and all(_same(item, wanted) for item, wanted in zip(actual, expected)))
-    if isinstance(expected, dict):
-        return (isinstance(actual, dict) and len(actual) == len(expected)
-                and all(key in actual and _same(actual[key], value) for key, value in expected.items()))
-    if isinstance(expected, bool) or isinstance(actual, bool):
-        return isinstance(expected, bool) and isinstance(actual, bool) and actual == expected
-    if isinstance(expected, (int, float)):
-        return isinstance(actual, (int, float)) and actual == expected
-    return type(actual) is type(expected) and actual == expected
+    end, missing = object(), object()
+    levels = [iter(((actual, expected),))]
+    while levels:
+        pair = next(levels[-1], end)
+        if pair is end:
+            levels.pop()
+            continue
+        actual, expected = pair
+        if isinstance(expected, list):
+            if not isinstance(actual, list) or len(actual) != len(expected):
+                return False
+            levels.append(iter(zip(actual, expected)))
+        elif isinstance(expected, dict):
+            if not isinstance(actual, dict) or len(actual) != len(expected):
+                return False
+            levels.append(_object_pairs(actual, expected, missing))
+        elif isinstance(expected, bool) or isinstance(actual, bool):
+            if not (isinstance(expected, bool) and isinstance(actual, bool) and actual == expected):
+                return False
+        elif isinstance(expected, (int, float)):
+            if not isinstance(actual, (int, float)) or actual != expected:
+                return False
+        elif type(actual) is not type(expected) or actual != expected:
+            return False
+    return True
 
 
 ${PYTHON_POINTER}
@@ -441,6 +508,104 @@ export const pythonLiteral = (value: JsonValue): string => {
     .join(", ")}}`;
 };
 
+// Keep the existing readable literal for ordinary checks. CPython rejects
+// source with roughly 200 nested delimiters, so deeper checks are split into
+// independently compiled fragments with room for their enclosing expression.
+const PYTHON_CHECK_FRAGMENT_DEPTH = 100;
+
+type JsonContainer = JsonValue[] | { [key: string]: JsonValue };
+const jsonContainer = (value: JsonValue): value is JsonContainer =>
+  value !== null && typeof value === "object";
+
+const needsCheckFragments = (root: JsonValue): boolean => {
+  const pending = [{ value: root, depth: 0 }];
+  while (pending.length > 0) {
+    const { value, depth } = pending.pop()!;
+    if (!jsonContainer(value)) continue;
+    if (depth >= PYTHON_CHECK_FRAGMENT_DEPTH) return true;
+    for (const child of Array.isArray(value) ? value : Object.values(value))
+      if (child !== undefined) pending.push({ value: child, depth: depth + 1 });
+  }
+  return false;
+};
+
+type PythonFragmentPart =
+  | { readonly kind: "text"; readonly text: string }
+  | {
+      readonly kind: "value";
+      readonly value: JsonValue;
+      readonly depth: number;
+    };
+
+/** Render a deep check in bounded-depth fragments, children before parents. */
+const pythonCheckFragments = (root: JsonValue, index: number): string => {
+  const fragments: { value: JsonValue; source: string }[] = [
+    { value: root, source: "" },
+  ];
+  for (let fragment = 0; fragment < fragments.length; fragment++) {
+    const parts: string[] = [];
+    const pending: PythonFragmentPart[] = [
+      { kind: "value", value: fragments[fragment]!.value, depth: 0 },
+    ];
+    while (pending.length > 0) {
+      const part = pending.pop()!;
+      if (part.kind === "text") {
+        parts.push(part.text);
+        continue;
+      }
+      const { value, depth } = part;
+      if (!jsonContainer(value)) {
+        parts.push(pythonLiteral(value));
+        continue;
+      }
+      if (depth >= PYTHON_CHECK_FRAGMENT_DEPTH) {
+        const child = fragments.length;
+        fragments.push({ value, source: "" });
+        parts.push(`_rea_check_fragments[${String(child)}]`);
+        continue;
+      }
+      const array = Array.isArray(value);
+      const entries: readonly (readonly [string | number, JsonValue])[] = array
+        ? value.map((item, childIndex) => [childIndex, item] as const)
+        : Object.entries(value).filter(([, item]) => item !== undefined);
+      parts.push(array ? "[" : "{");
+      pending.push({ kind: "text", text: array ? "]" : "}" });
+      for (let entry = entries.length - 1; entry >= 0; entry--) {
+        const [key, child] = entries[entry]!;
+        if (entry < entries.length - 1)
+          pending.push({ kind: "text", text: ", " });
+        pending.push({ kind: "value", value: child, depth: depth + 1 });
+        if (!array)
+          pending.push({ kind: "text", text: `${JSON.stringify(key)}: ` });
+      }
+    }
+    fragments[fragment]!.source = parts.join("");
+  }
+  const lines = [`_rea_check_fragments = [None] * ${String(fragments.length)}`];
+  for (let fragment = fragments.length - 1; fragment >= 0; fragment--)
+    lines.push(
+      `_rea_check_fragments[${String(fragment)}] = ${fragments[fragment]!.source}`,
+    );
+  lines.push(
+    `CHECKS[${String(index)}] = _rea_check_fragments[0]`,
+    "del _rea_check_fragments",
+  );
+  return lines.join("\n");
+};
+
+const pythonChecks = (checks: DesktopTask["checks"]): string => {
+  const values = checks as unknown as readonly JsonValue[];
+  const fragmented = values.map(needsCheckFragments);
+  const rows = values.map(
+    (value, index) =>
+      `    ${fragmented[index] ? "None" : pythonLiteral(value)},`,
+  );
+  const extra = values.flatMap((value, index) =>
+    fragmented[index] ? [pythonCheckFragments(value, index)] : [],
+  );
+  return `CHECKS = [\n${rows.join("\n")}\n]${extra.length > 0 ? `\n${extra.join("\n")}` : ""}`;
+};
+
 /** Seconds, as the verifier's constants spell them. */
 const pythonSeconds = (ms: number): string =>
   Number.isInteger(ms / 1000) ? `${String(ms / 1000)}.0` : String(ms / 1000);
@@ -539,9 +704,7 @@ from agentenv_protocol import client as protocol
 from agentenv_protocol.types import RPC_PATH
 
 APP = ${JSON.stringify(app)}
-CHECKS = [
-${task.checks.map((check) => `    ${pythonLiteral(check as unknown as JsonValue)},`).join("\n")}
-]
+${pythonChecks(task.checks)}
 #: The app's data/get is read this often until its files settle.
 SETTLE_INTERVAL_S = ${pythonSeconds(SETTLE_TIMING.intervalMs)}
 #: How long each file's bytes must hold, from the read that returned them, before the views are graded.
