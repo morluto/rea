@@ -1029,12 +1029,13 @@ it("rejects duplicate raw asset keys", async () => {
   await expect(scanCanonicalArtifactInventory(path)).rejects.toThrow();
 });
 
-it("maps an unsafe main path and opaque asset keys without losing their sources", async () => {
+it("maps an unsafe module path and opaque asset keys without losing their sources", async () => {
   const path = await writeCarrier(
     "opaque-names",
     nodeSeaElf({
       codePath: "/absolute/main.js",
-      main: script,
+      mainCodeFormat: 1,
+      main: "export const answer = 42;\n",
       assets: [
         { name: "", body: "empty" },
         { name: "__node_sea__/snapshot", body: "reserved" },
@@ -1047,6 +1048,11 @@ it("maps an unsafe main path and opaque asset keys without losing their sources"
     }),
   );
   const graph = await scanCanonicalArtifactInventory(path);
+  expect(
+    graph.occurrences.find((row) => row.logical_path === "."),
+  ).toMatchObject({
+    format_metadata: { kind: "node-sea", main_code_format: "module" },
+  });
   const rows = graph.occurrences.filter(
     (row) => row.format_metadata?.kind === "node-sea-entry",
   );
@@ -1061,7 +1067,7 @@ it("maps an unsafe main path and opaque asset keys without losing their sources"
       .sort(),
   ).toEqual(
     [
-      ["__node_sea__/main.cjs", "/absolute/main.js"],
+      ["__node_sea__/main.mjs", "/absolute/main.js"],
       ["__node_sea__/assets/0", ""],
       ["__node_sea__/assets/1", "__node_sea__/snapshot"],
       ["a/café.txt", "a/café.txt"],
