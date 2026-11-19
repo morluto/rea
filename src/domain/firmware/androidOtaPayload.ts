@@ -1,5 +1,7 @@
 import { zstdDecompressSync } from "node:zlib";
 
+import { nodeCodecResult } from "../../kernel/nodeCodecResult.js";
+
 import { BinaryReader, WireType } from "@bufbuild/protobuf/wire";
 
 import { sha256Hex } from "../../kernel/sha256Hex.js";
@@ -1467,7 +1469,16 @@ export const reconstructAndroidOtaPartition = (
           Math.min(dstBytes.value, ANDROID_OTA_MAX_EXTRACT_BYTES),
         );
         try {
-          payload = zstdDecompressSync(raw, { maxOutputLength });
+          const decoded = nodeCodecResult(
+            zstdDecompressSync(raw, { info: true, maxOutputLength }),
+          );
+          if (decoded.consumedBytes !== raw.length)
+            return err(
+              malformed(
+                "REPLACE_ZSTD operation payload has bytes after its Zstandard stream",
+              ),
+            );
+          payload = decoded.buffer;
         } catch (cause: unknown) {
           return err(
             hostRangeErrorKind(cause) === "host-capacity"

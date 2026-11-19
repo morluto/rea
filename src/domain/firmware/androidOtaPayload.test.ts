@@ -224,6 +224,41 @@ it("reconstructs REPLACE_ZSTD payloads", () => {
   ).toBe(true);
 });
 
+it("refuses unread bytes in a REPLACE_ZSTD operation even when its hashes match", () => {
+  const plain = Buffer.from("zstd partition");
+  const data = Buffer.concat([zstdCompressSync(plain), Buffer.of(0)]);
+  const bytes = buildAndroidOtaPayload({
+    partitions: [
+      {
+        name: "vendor",
+        operations: [
+          {
+            type: 14,
+            data,
+            dataHash: createHash("sha256").update(data).digest(),
+          },
+        ],
+      },
+    ],
+  });
+  const parsed = parse(bytes);
+  if (!parsed.ok) throw parsed.error;
+  const blob = bytes.subarray(parsed.value.header.blobOffset);
+  expect(
+    reconstructAndroidOtaPartition(
+      parsed.value.partitions[0]!,
+      parsed.value.blockSize,
+      (offset, length) => blob.subarray(offset, offset + length),
+    ),
+  ).toMatchObject({
+    ok: false,
+    error: {
+      kind: "malformed",
+      message: expect.stringContaining("bytes after its Zstandard stream"),
+    },
+  });
+});
+
 it("refuses REPLACE_ZSTD output past destination extents as a capacity limit", () => {
   const plain = Buffer.alloc(8192, 0x61);
   const bytes = buildAndroidOtaPayload({
