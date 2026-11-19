@@ -8,7 +8,10 @@ import {
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
 } from "./analysisErrorCore.js";
-import { analysisErrorWithCleanupFailure } from "./analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupFailure,
+  withInheritedCleanupOwnership,
+} from "./analysisErrorCleanup.js";
 import {
   projectAnalysisError,
   projectAnalysisErrorWithoutCapturedOutput,
@@ -526,3 +529,39 @@ it.each(["primary", "cleanup", "default", "cleanup-continuing"] as const)(
     expect(projectAnalysisError(composed).code).toBe("cleanup_incomplete");
   },
 );
+
+it("follows an existing owner's release via withInheritedCleanupOwnership", () => {
+  const owner = new ProviderCleanupError("fixture", ["owned-handle"], {});
+  const cleanup = { reason: owner.message, resources: owner.cleanupResources };
+  const wrapper = withInheritedCleanupOwnership(
+    new AnalysisCapabilityUnavailableError("fixture", "open", "wrapped", {
+      cleanup,
+    }),
+    owner,
+  );
+  expect(wrapper.cleanupIncomplete).toBe(true);
+  expect(wrapper.cleanupResources).toEqual(["owned-handle"]);
+
+  releaseOwnedCleanup(owner);
+  expect(wrapper.cleanupIncomplete).toBe(false);
+  expect(wrapper.cleanupResources).toEqual([]);
+
+  const unownedCleanup = new AnalysisCapabilityUnavailableError(
+    "fixture",
+    "open",
+    "wrapped",
+    {
+      cleanup,
+    },
+  );
+  const retainedUnknown = withInheritedCleanupOwnership(unownedCleanup, owner);
+  expect(retainedUnknown.cleanupIncomplete).toBe(true);
+
+  const cleanOwner = new AnalysisInputError("open", undefined, []);
+  const cleanWrapper = withInheritedCleanupOwnership(
+    new AnalysisInputError("open", undefined, []),
+    cleanOwner,
+  );
+  expect(cleanWrapper.hasCleanupOwner).toBe(false);
+  expect(cleanWrapper.cleanupIncomplete).toBe(false);
+});
