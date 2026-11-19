@@ -434,6 +434,45 @@ describe("zip directories in the exported module", () => {
       });
   });
 
+  it.each([false, true])(
+    "follows the Zip64 locator over a fixed-size signature in opaque extension bytes (%s)",
+    async (sentinels) => {
+      const extension = Buffer.alloc(6 + 56);
+      extension.writeUInt16LE(0xfffe, 0);
+      extension.writeUInt32LE(56, 2);
+      extension.writeUInt32LE(0x06064b50, 6);
+      const archive = withZip64End(
+        zipArchive([{ name: "notes.txt", data: "retained" }]),
+        sentinels,
+        extension,
+      );
+      const result = await sameView(archive);
+      expect(result).toMatchObject({
+        entry_count: 1,
+        entries: [{ name: "notes.txt", view: { lines: ["retained"] } }],
+        truncated: false,
+      });
+    },
+  );
+
+  it("retains the fixed Zip64 fallback when a prefix shifts its relative locator", async () => {
+    // Keep a recognized ZIP opening for desktop format detection. Only the
+    // real recorded local entry and central directory contribute to the view.
+    const prefix = Buffer.from("PK\x03\x04inert prefix");
+    const archive = Buffer.concat([
+      prefix,
+      withZip64End(zipArchive([{ name: "notes.txt", data: "retained" }])),
+    ]);
+    const result = await sameView(archive);
+    expect(result).toMatchObject({
+      entry_count: 1,
+      entries: [{ name: "notes.txt", view: { lines: ["retained"] } }],
+      truncated: false,
+    });
+  });
+});
+
+describe("ZIP directory counts and volume admission in the exported module", () => {
   it("retains the selected ZIP count at and beyond the classic sentinel", async () => {
     const path = join(
       await createTestTempDirectory("rea-zip64-count-"),

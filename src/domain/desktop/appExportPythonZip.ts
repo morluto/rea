@@ -2,6 +2,8 @@ import {
   ZIP_CLASSIC_DIRECTORY_LIMITS,
   ZIP_CLASSIC_DISK_OFFSETS,
   ZIP_SINGLE_VOLUME,
+  ZIP64_END,
+  ZIP64_LOCATOR,
 } from "../zipEndOfCentralDirectory.js";
 import { ZIP_EXTRA_FIELD } from "../zip/zipExtraFields.js";
 
@@ -19,6 +21,8 @@ ZIP_END = b"PK\x05\x06"
 ZIP_CENTRAL = b"PK\x01\x02"
 ZIP64_LOCATOR = b"PK\x06\x07"
 ZIP64_END = b"PK\x06\x06"
+ZIP64_END_LAYOUT = ${JSON.stringify(ZIP64_END)}
+ZIP64_LOCATOR_LAYOUT = ${JSON.stringify(ZIP64_LOCATOR)}
 ZIP_CLASSIC_DIRECTORY_LIMITS = ${JSON.stringify(ZIP_CLASSIC_DIRECTORY_LIMITS)}
 ZIP_CLASSIC_DISK_OFFSETS = ${JSON.stringify(Object.values(ZIP_CLASSIC_DISK_OFFSETS))}
 ZIP_SINGLE_VOLUME = ${JSON.stringify(ZIP_SINGLE_VOLUME)}
@@ -85,11 +89,24 @@ def _zip_entry(archive, info, refusal, name):
             "view": view.get("view"), "view_error": view.get("error")}
 
 
+def _zip64_directory_record(file, record: int, locator: int):
+    """Read the fixed fields only, after the entire declared record fits before the locator."""
+    fixed = ZIP64_END_LAYOUT["fixedBytes"]
+    prefix = ZIP64_END_LAYOUT["sizePrefixBytes"]
+    if record < 0 or record + fixed > locator:
+        return None
+    file.seek(record)
+    header = file.read(fixed)
+    if len(header) != fixed or header[:4] != ZIP64_END:
+        return None
+    body = struct.unpack_from("<Q", header, ZIP64_END_LAYOUT["sizeOffset"])[0]
+    if body < fixed - prefix or record + prefix + body != locator:
+        return None
+    return header
+
+
 def _zip_end(file, size: int):
-    """Where an archive's central directory ends, how long it is and the offset it declares, from the last end
-    record whose comment reaches the end of the file and, when a Zip64 locator precedes it whatever that record
-    holds, the Zip64 one just before the locator; None without an end record, or when sentinels defer to a
-    Zip64 record that is missing, or when the selected end records describe more than the supplied volume."""
+    """Read the classic end and any declared Zip64 frame from the single supplied volume."""
     window = min(size, 22 + 0xFFFF)
     file.seek(size - window)
     tail = file.read(window)
@@ -102,25 +119,31 @@ def _zip_end(file, size: int):
     classic_disks = [struct.unpack_from("<H", tail, at + field)[0] for field in ZIP_CLASSIC_DISK_OFFSETS]
     end = size - window + at
     classic = (end, length, offset) if all(disk in ZIP_SINGLE_VOLUME["classic"] for disk in classic_disks) else None
-    record = end - 20 - 56
-    if record < 0:
+    locator_at = end - ZIP64_LOCATOR_LAYOUT["bytes"]
+    if locator_at < 0:
         return classic
-    file.seek(end - 20)
-    locator = file.read(20)
-    if len(locator) != 20 or locator[:4] != ZIP64_LOCATOR:
+    file.seek(locator_at)
+    locator = file.read(ZIP64_LOCATOR_LAYOUT["bytes"])
+    if len(locator) != ZIP64_LOCATOR_LAYOUT["bytes"] or locator[:4] != ZIP64_LOCATOR:
         return classic
-    file.seek(record)
-    zip64 = file.read(56)
-    if len(zip64) == 56 and zip64[:4] == ZIP64_END:
+    declared = struct.unpack_from("<Q", locator, ZIP64_LOCATOR_LAYOUT["recordOffset"])[0]
+    fallback = locator_at - ZIP64_END_LAYOUT["fixedBytes"]
+    # The fixed fallback preserves archives whose offsets omit prepended bytes.
+    for record in (declared, fallback):
+        zip64 = _zip64_directory_record(file, record, locator_at)
+        if zip64 is None:
+            continue
         if (any(disk not in ZIP_SINGLE_VOLUME["zip64Classic"] for disk in classic_disks)
                 or any(struct.unpack_from("<I", locator, field)[0] != value
                        for field, value in ZIP_SINGLE_VOLUME["zip64Locator"])
                 or any(struct.unpack_from("<I", zip64, field)[0] != value
                        for field, value in ZIP_SINGLE_VOLUME["zip64End"])):
             return None
-        length, offset = struct.unpack_from("<QQ", zip64, 40)
+        length = struct.unpack_from("<Q", zip64, ZIP64_END_LAYOUT["directorySizeOffset"])[0]
+        offset = struct.unpack_from("<Q", zip64, ZIP64_END_LAYOUT["directoryOffset"])[0]
         return record, length, offset
-    if total == 0xFFFF or 0xFFFFFFFF in (length, offset):
+    limits = ZIP_CLASSIC_DIRECTORY_LIMITS
+    if total == limits["count"] or length == limits["size"] or offset == limits["offset"]:
         return None
     return classic
 
