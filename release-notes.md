@@ -335,6 +335,7 @@
 * **desktop:** exclude configured APT status from repository sources ([#11932](https://github.com/morluto/rea/issues/11932)) ([e98a767](https://github.com/morluto/rea/commit/e98a767428bf8b5fcdfa5c86d3d2021672334626))
 * **desktop:** expand ELF origin paths as literal directory names ([c19d319](https://github.com/morluto/rea/commit/c19d319929cedb74f9d50138c415919197ef3acd))
 * **desktop:** honor clean env launch prefixes ([#12117](https://github.com/morluto/rea/issues/12117)) ([b1a390f](https://github.com/morluto/rea/commit/b1a390fcee8b0764ca80fe743edb84c561b653bf))
+* **desktop:** honor disabled APT source stanzas ([#12501](https://github.com/morluto/rea/issues/12501)) ([c09f717](https://github.com/morluto/rea/commit/c09f7172cfcdcae9d0f887ea15f2a87e23919e3e))
 * **desktop:** honor env working directories in launch commands ([#12111](https://github.com/morluto/rea/issues/12111)) ([bd5c985](https://github.com/morluto/rea/commit/bd5c985b3fc8b3f26caaa94d88b66a0953dc66a8))
 * **desktop:** ignore relative XDG bases in capture inventory ([4b5d00b](https://github.com/morluto/rea/commit/4b5d00bebd02f1f67e62b9b5cbc4432cce7322c7))
 * **desktop:** install effective AppImage launcher fields ([#12191](https://github.com/morluto/rea/issues/12191)) ([4e4e998](https://github.com/morluto/rea/commit/4e4e99864ecca381db74ff41b51bf1e863777b34))
