@@ -727,6 +727,82 @@ describe.skipIf(process.platform === "win32")(
   },
 );
 
+describe.skipIf(process.platform === "win32")("desktop launch HOME", () => {
+  it("follows a HOME symlink before traversing to its parent", async () => {
+    const installed = await fixture();
+    const { home, environment } = installed;
+    const physical = join(home, "profiles");
+    const throughLink = `${home}/current/..`;
+    await mkdir(join(physical, "child"), { recursive: true });
+    await symlink(join(physical, "child"), join(home, "current"));
+    for (const profile of [home, physical]) {
+      await mkdir(join(profile, ".config/notes-app"), { recursive: true });
+      await writeFile(join(profile, ".notes-app-local"), profile);
+    }
+    const argv = ["/usr/bin/env", `HOME=${throughLink}`, "notes-app"];
+    await writeFile(
+      join(environment.XDG_DATA_DIRS, "applications/org.example.notes.desktop"),
+      `[Desktop Entry]\nType=Application\nName=Notes\nExec=${argv.join(" ")}\n`,
+    );
+
+    const inventory = await inventoryOf("org.example.notes", installed);
+    expect(inventory.argv).toEqual(argv);
+    expect(inventory.state_directories).toEqual(
+      expect.arrayContaining([
+        { path: `${throughLink}/.config/notes-app`, exists_at_start: true },
+        { path: `${throughLink}/.notes-app-local`, exists_at_start: true },
+      ]),
+    );
+    expect(inventory.state_directories.map(({ path }) => path)).not.toContain(
+      join(home, ".config/notes-app"),
+    );
+  });
+
+  it.each([false, true])(
+    "discovers state in the app's HOME with an explicit XDG config root: %s",
+    async (explicitConfig) => {
+      const installed = await fixture();
+      const { home, environment, bin } = installed;
+      const profile = join(home, "isolated-profile");
+      const overrides = join(home, "selected-config");
+      const config = explicitConfig ? overrides : join(profile, ".config");
+      const desktopEntry = join(
+        environment.XDG_DATA_DIRS,
+        "applications/org.example.notes.desktop",
+      );
+      await mkdir(join(config, "notes-app"), { recursive: true });
+      await mkdir(profile, { recursive: true });
+      await mkdir(join(home, ".config/notes-app"), { recursive: true });
+      await writeFile(join(profile, ".notes-app-local"), "app profile");
+      const argv = [
+        "/usr/bin/env",
+        `HOME=${profile}`,
+        ...(explicitConfig ? [`XDG_CONFIG_HOME=${overrides}`] : []),
+        "notes-app",
+      ];
+      await writeFile(
+        desktopEntry,
+        `[Desktop Entry]\nType=Application\nName=Notes\nExec=${argv.join(" ")}\n`,
+      );
+      const inventory = await inventoryOf("org.example.notes", installed);
+      expect(inventory.argv).toEqual(argv);
+      expect(inventory.executable.path).toBe(join(bin, "notes-app"));
+      expect(inventory.state_directories).toEqual(
+        expect.arrayContaining([
+          { path: join(config, "notes-app"), exists_at_start: true },
+          { path: join(profile, ".notes-app-local"), exists_at_start: true },
+        ]),
+      );
+      const paths = inventory.state_directories.map(({ path }) => path);
+      expect(paths).toContain(join(profile, ".local/state/notes-app"));
+      expect(paths).not.toContain(join(home, ".config/notes-app"));
+      expect(paths.includes(join(profile, ".config/notes-app"))).toBe(
+        !explicitConfig,
+      );
+    },
+  );
+});
+
 describe.skipIf(process.platform === "win32")(
   "inspectLinuxApplication state and environment",
   () => {
@@ -1088,5 +1164,144 @@ it.skipIf(process.platform === "win32").each([
       close.mockRestore();
       await retained?.close();
     }
+  },
+);
+
+describe.skipIf(process.platform !== "linux")(
+  "clean env launch inventory",
+  () => {
+    it.each([false, true])(
+      "drops inherited PATH and XDG config before applying replacements: %s",
+      async (explicit) => {
+        const installed = await fixture();
+        const { home, bin, environment } = installed;
+        const ambient = join(home, "ambient");
+        const selected = join(home, "selected");
+        await writeFile(join(bin, "true"), "#!/bin/sh\nexit 2\n", {
+          mode: 0o755,
+        });
+        const prefix = [
+          "/usr/bin/env",
+          "-uPATH",
+          "--unset",
+          "XDG_CONFIG_HOME",
+          "-C",
+          home,
+          ...(explicit ? [`PATH=${bin}`, `XDG_CONFIG_HOME=${selected}`] : []),
+        ];
+        await writeFile(
+          join(
+            environment.XDG_DATA_DIRS,
+            "applications/org.example.notes.desktop",
+          ),
+          `[Desktop Entry]\nType=Application\nName=Notes\nExec=${prefix.join(" ")} true -u argument\n`,
+        );
+        const inventory = await inventoryOf("org.example.notes", {
+          ...installed,
+          environment: { ...environment, XDG_CONFIG_HOME: ambient },
+        });
+        expect(inventory.argv).toEqual([...prefix, "true", "-u", "argument"]);
+        expect(inventory.executable.path).toBe(
+          explicit ? join(bin, "true") : "/bin/true",
+        );
+        expect(inventory.application_working_directory).toBe(home);
+        const paths = inventory.state_directories.map(({ path }) => path);
+        expect(paths).toContain(
+          join(explicit ? selected : join(home, ".config"), "true"),
+        );
+        expect(paths).not.toContain(join(ambient, "true"));
+      },
+    );
+
+    it.each([undefined, "relative-home", "/selected-profile"])(
+      "discovers explicit XDG roots after HOME is unset with replacement %s",
+      async (replacement) => {
+        const { home, bin, environment } = await fixture();
+        const config = join(home, "selected-config");
+        await mkdir(join(config, "notes-app"), { recursive: true });
+        const prefix = [
+          "/usr/bin/env",
+          "-uHOME",
+          `XDG_CONFIG_HOME=${config}`,
+          ...(replacement === undefined ? [] : [`HOME=${replacement}`]),
+        ];
+        await writeFile(
+          join(
+            environment.XDG_DATA_DIRS,
+            "applications/org.example.notes.desktop",
+          ),
+          `[Desktop Entry]\nType=Application\nName=Notes\nExec=${prefix.join(" ")} ${bin}/notes-app\n`,
+        );
+        const inspected = await inspectLinuxApplication({
+          desktopEntry: "org.example.notes",
+          executable: undefined,
+          arguments: [],
+          environment: {
+            ...environment,
+            HOME: home,
+            XDG_DATA_HOME: "relative-data",
+          },
+          home,
+          callerDirectory: home,
+        });
+        if (!inspected.ok) throw new Error(inspected.error.reason);
+        expect(inspected.value.inventory.state_directories).toContainEqual({
+          path: join(config, "notes-app"),
+          exists_at_start: true,
+        });
+        const paths = inspected.value.inventory.state_directories.map(
+          ({ path }) => path,
+        );
+        expect(paths).not.toContain(join(home, ".notes-app"));
+        expect(paths).not.toContain(join(home, ".local/share/notes-app"));
+        const homeUnknown = inspected.value.limitations.some((limitation) =>
+          limitation.includes("default home state paths are unknown"),
+        );
+        expect(homeUnknown).toBe(replacement !== "/selected-profile");
+        if (!homeUnknown)
+          expect(paths).toContain("/selected-profile/.notes-app");
+      },
+    );
+
+    it.each([
+      ["-i", false],
+      ["--ignore-environment", true],
+      ["-- -", false],
+    ])(
+      "models env %s without borrowing PATH or XDG roots from the host",
+      async (flags, explicit) => {
+        const installed = await fixture();
+        const { home, bin, environment } = installed;
+        const ambient = join(home, "ambient");
+        const selected = join(home, "selected");
+        await writeFile(join(bin, "true"), "#!/bin/sh\nexit 2\n");
+        await chmod(join(bin, "true"), 0o755);
+        const prefix = [
+          "/usr/bin/env",
+          ...flags.split(" "),
+          ...(explicit ? [`PATH=${bin}`, `XDG_CONFIG_HOME=${selected}`] : []),
+        ];
+        await writeFile(
+          join(
+            environment.XDG_DATA_DIRS,
+            "applications/org.example.notes.desktop",
+          ),
+          `[Desktop Entry]\nType=Application\nName=Notes\nExec=${prefix.join(" ")} true -- -i\n`,
+        );
+        const inventory = await inventoryOf("org.example.notes", {
+          ...installed,
+          environment: { ...environment, XDG_CONFIG_HOME: ambient },
+        });
+        expect(inventory.argv).toEqual([...prefix, "true", "--", "-i"]);
+        expect(inventory.executable.path).toBe(
+          explicit ? join(bin, "true") : "/bin/true",
+        );
+        const paths = inventory.state_directories.map(({ path }) => path);
+        if (explicit) expect(paths).toContain(join(selected, "true"));
+        else expect(paths).toEqual([]);
+        expect(paths).not.toContain(join(home, ".config/true"));
+        expect(paths).not.toContain(join(ambient, "true"));
+      },
+    );
   },
 );

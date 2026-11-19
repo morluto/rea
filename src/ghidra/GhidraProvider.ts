@@ -50,6 +50,7 @@ import {
 } from "../domain/analysisProfile.js";
 import {
   isMachOFormat,
+  BINARY_ARCHITECTURES,
   RAW_ONLY_ARCHITECTURES,
   type BinaryArchitecture,
   type BinaryTarget,
@@ -100,24 +101,27 @@ import {
 } from "./GhidraAdmission.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
-const SUPPORTED_ARCHITECTURES = new Set<BinaryArchitecture>([
-  "x86",
-  "x86_64",
-  "arm",
-  "arm64",
-  "mips",
-  "6502",
-  "riscv",
-  "powerpc",
-  "m68k",
-  "hexagon",
-  "xtensa",
-]);
+const GHIDRA_ARCHITECTURES = {
+  x86: true,
+  x86_64: true,
+  arm: true,
+  arm64: true,
+  arm64_32: false,
+  mips: true,
+  "6502": true,
+  riscv: true,
+  powerpc: true,
+  m68k: true,
+  hexagon: true,
+  xtensa: true,
+} as const satisfies Record<BinaryArchitecture, boolean>;
 
 /** Names every admitted family, so the refusal cannot drift from the set. */
 const admittedArchitecturesText = (): string => {
   const rawOnly = new Set<BinaryArchitecture>(RAW_ONLY_ARCHITECTURES);
-  const admitted = [...SUPPORTED_ARCHITECTURES];
+  const admitted = BINARY_ARCHITECTURES.filter(
+    (family) => GHIDRA_ARCHITECTURES[family],
+  );
   const detected = admitted.filter((family) => !rawOnly.has(family));
   const raw = admitted.filter((family) => rawOnly.has(family));
   return `Admitted families: ${detected.join(", ")}; raw-binary only: ${raw.join(", ")}.`;
@@ -323,7 +327,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
           "Ghidra v1 cannot enforce the selected architecture when importing a universal Mach-O; analyze a thinned Mach-O slice instead.",
         diagnostics,
       };
-    if (!SUPPORTED_ARCHITECTURES.has(target.architecture))
+    if (!GHIDRA_ARCHITECTURES[target.architecture])
       return {
         status: "unsupported",
         code: "architecture_unsupported",

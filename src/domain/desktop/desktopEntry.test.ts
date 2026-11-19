@@ -9,6 +9,7 @@ import {
   tokenizeDesktopExec,
   unwrapDesktopCommand,
 } from "./desktopEntry.js";
+import { DESKTOP_LAUNCH_CASES } from "./desktopLaunchSyntax.fixture.js";
 
 describe("parseDesktopEntry", () => {
   it("reads the main group and ignores localized keys and other groups", () => {
@@ -177,17 +178,36 @@ describe("expandDesktopExec", () => {
 });
 
 describe("unwrapDesktopCommand", () => {
-  it("keeps an env operand named -- after an assignment distinct from the option terminator", () => {
-    expect(
-      unwrapDesktopCommand(["env", "MODE=selected", "--", "notes"]),
-    ).toEqual({
-      kind: "direct",
-      program: "--",
-      environment: { MODE: "selected" },
-      index: 2,
-      argumentIndex: 3,
-    });
-  });
+  it.each(DESKTOP_LAUNCH_CASES)(
+    "reads $name from an authored Exec value",
+    ({
+      prefix,
+      program,
+      suffix,
+      decodedProgram,
+      environment,
+      clear,
+      unsets,
+      chdir,
+    }) => {
+      const parsed = parseDesktopEntry(
+        `[Desktop Entry]\nExec=${prefix}${program}${suffix}\n`,
+      );
+      if (!parsed.ok) throw new Error(parsed.error);
+      const tokens = tokenizeDesktopExec(parsed.value.exec ?? "");
+      if (!tokens.ok) throw new Error(tokens.error);
+      const command = unwrapDesktopCommand(tokens.value);
+      expect(command.kind).toBe("direct");
+      expect(command.program).toBe(decodedProgram);
+      expect(tokens.value[command.index]).toBe(decodedProgram);
+      expect(command.argumentIndex).toBe(command.index + 1);
+      expect(command.environment).toEqual(environment);
+      expect(command.clearEnvironment).toBe(clear);
+      expect(command.unsetEnvironment).toEqual(unsets);
+      expect(command.invalidUnset).toBeUndefined();
+      expect(command.chdir).toEqual(chdir);
+    },
+  );
   it("keeps env assignments as the program's environment", () => {
     expect(
       unwrapDesktopCommand([
@@ -228,6 +248,7 @@ describe("unwrapDesktopCommand", () => {
     ).toEqual({
       kind: "flatpak",
       program: "/usr/bin/flatpak",
+      index: 0,
       argumentIndex: 5,
       environment: {},
       application_id: "net.cozic.joplin_desktop",

@@ -1,3 +1,4 @@
+import { WEB_SOURCE_MAP_LIMITS } from "../domain/sourceMapLimits.js";
 import { writeMinimalElfHeader } from "../../tests/fixtures/nativeHeaders.js";
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
@@ -645,6 +646,33 @@ describe("ReleaseExposureReader member reads", () => {
       await reader.close();
     }
   });
+});
+
+it("keeps observed embedded sources when generated coordinates exceed their budget", async () => {
+  const root = await createTestTempDirectory("rea-release-exposure-offset-");
+  const map = {
+    version: 3,
+    sections: [
+      {
+        offset: { line: WEB_SOURCE_MAP_LIMITS.decodedRows - 1, column: 0 },
+        map: {
+          version: 3,
+          sources: ["src/app.ts"],
+          sourcesContent: ["export {};"],
+          mappings: ";",
+        },
+      },
+    ],
+  };
+  await writeFile(join(root, "app.js.map"), JSON.stringify(map));
+  const scanned = await inspect(root);
+  expect(scanned.source_maps).toMatchObject({
+    embedded: 1,
+    unparsed: 1,
+    without_sources: 0,
+    embedded_paths: [join(root, "app.js.map")],
+  });
+  expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
 });
 
 describe("ReleaseExposureReader limits", () => {
