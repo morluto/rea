@@ -34,4 +34,10 @@ export const registerUefiTools = (
     toolRegistrationOptions(extract),
     handler(extract),
   );
+  const nvram = toolContract("inspect_uefi_nvram");
+  server.registerTool(
+    nvram.name,
+    toolRegistrationOptions(nvram),
+    handler(nvram),
+  );
 };

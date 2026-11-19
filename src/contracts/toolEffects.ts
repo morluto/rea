@@ -271,6 +271,7 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     writesFilesystem: true,
     idempotent: false,
   }),
+  inspect_uefi_nvram: effects({ mutatesSession: true }),
   inspect_android_package: effects({
     mutatesSession: true,
     launchesProcess: true,

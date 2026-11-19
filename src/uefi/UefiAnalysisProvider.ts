@@ -26,6 +26,7 @@ import {
   type UefiExtractResult,
   type UefiFfsFileRecord,
   type UefiInspectResult,
+  type UefiNvramInspectResult,
   type UefiSectionRecord,
   type UefiVolumeRecord,
 } from "../domain/uefi/uefiFirmwareAnalysis.js";
@@ -38,6 +39,7 @@ import type {
   UefiLzmaDecodeRequest,
 } from "./UefiImageScan.js";
 import { scanUefiImage } from "./UefiImageScan.js";
+import { scanAmiNvramStores } from "./UefiNvram.js";
 import { AMD_ZLIB_HEADER_LENGTH, peelAmiZlibPayload } from "./FfsSections.js";
 import { uefiFailure } from "./UefiFailures.js";
 import {
@@ -295,6 +297,12 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           undefined,
           this.#resources,
         );
+        if (request.operation === "inspect_uefi_nvram") {
+          return {
+            ok: true,
+            value: this.#inspectNvram(request, snapshot.sha256, snapshot.bytes),
+          };
+        }
         const scan = await scanUefiImage(
           snapshot.bytes,
           request.operation === "inspect_uefi_firmware"
@@ -392,6 +400,62 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       limitations: [
         ...scan.limitations,
         "Static cartography only; no executable code is loaded or emulated.",
+      ],
+    });
+  }
+
+  /** AMI NVRAM stores are parsed from the raw image; no firmware-volume walk needed. */
+  #inspectNvram(
+    request: Extract<UefiRequest, { operation: "inspect_uefi_nvram" }>,
+    imageSha256: string,
+    image: Buffer,
+  ): AnalysisExecution {
+    const scan = scanAmiNvramStores(
+      image,
+      request.input.max_stores,
+      request.input.max_depth,
+    );
+    const result: UefiNvramInspectResult =
+      uefiResultSchemas.inspect_uefi_nvram.parse({
+        parser: { name: "rea-uefi", version: UEFI_PROVIDER_IDENTITY.version },
+        input_size: image.length,
+        image_sha256: imageSha256,
+        stores: scan.stores.map((store) => ({
+          offset: store.offset,
+          name: store.name,
+          variables: store.variables.map((variable) => ({
+            offset: variable.offset,
+            name: variable.name,
+            attributes: variable.attributes,
+            state: variable.state,
+            depth: variable.depth,
+            parent_offset: variable.parentOffset,
+            data_offset: variable.dataOffset,
+            data_length: variable.dataLength,
+            data_sha256: createHash("sha256")
+              .update(
+                image.subarray(
+                  variable.dataOffset,
+                  variable.dataOffset + variable.dataLength,
+                ),
+              )
+              .digest("hex"),
+          })),
+          trailing_padding: store.trailingPadding,
+        })),
+        coverage: scan.coverage,
+        limitations: [...scan.limitations],
+      });
+    return createAnalysisExecution(result, UEFI_PROVIDER_IDENTITY, {
+      subject: {
+        path: request.input.path,
+        sha256: imageSha256,
+        format: "file",
+      },
+      locations: [{ kind: "artifact-path", path: request.input.path }],
+      limitations: [
+        ...scan.limitations,
+        "Static AMI NVRAM parsing only; variable bytes are reported, never interpreted or executed.",
       ],
     });
   }

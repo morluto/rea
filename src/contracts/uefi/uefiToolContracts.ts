@@ -41,4 +41,19 @@ export const UEFI_TOOL_CONTRACTS = [
       },
     ],
   },
+  {
+    name: "inspect_uefi_nvram",
+    ...toolContractMetadata("inspect_uefi_nvram"),
+    kind: "firmware-provider",
+    description:
+      "Map AMI NVRAM variable stores (factory-default 'StdDefaults' and peer stores) inside a local flash image with the pure-TypeScript rea-uefi parser: scan the raw image for NVAR entry chains, validate the strong attribute/name signature, and recurse into the nested chain that a container such as StdDefaults carries so the individual setup variables surface as depth/`parent_offset` rows. Reports each variable's attributes, state, data range and SHA-256 plus trailing padding. Nothing is executed and no external tool or decompression lane is required. Variables are name-only in this proprietary layout; namespace GUIDs live in the IFR varstore, not here.",
+    inputSchema: uefiInputSchemas.inspect_uefi_nvram,
+    outputSchema: evidenceResultOf(uefiResultSchemas.inspect_uefi_nvram),
+    examples: [
+      {
+        title: "Inspect AMI NVRAM stores",
+        input: { path: "/media/firmware/images/B550AORUSELITEV212.FId" },
+      },
+    ],
+  },
 ] as const satisfies readonly ToolContract[];

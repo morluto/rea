@@ -116,4 +116,20 @@ export const registerUefiCommands = (
         include_compressed: options.includeCompressed,
       }),
   });
+  cli.command(CLI_COMMANDS.inspectUefiNvram, {
+    description:
+      "Map AMI NVRAM variable stores (for example StdDefaults) of a flash image",
+    args: z.object({ path }),
+    options: z.object({
+      maxStores: uefiInputSchemas.inspect_uefi_nvram.shape.max_stores,
+      maxDepth: uefiInputSchemas.inspect_uefi_nvram.shape.max_depth,
+    }),
+    run: ({ args, options }) =>
+      execute(CLI_COMMANDS.inspectUefiNvram, "inspect_uefi_nvram", {
+        // CLI paths are operator-relative; resolve before shared validation.
+        path: absoluteCallerPath(args.path),
+        max_stores: options.maxStores,
+        max_depth: options.maxDepth,
+      }),
+  });
 };

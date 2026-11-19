@@ -223,6 +223,27 @@ export const uefiInputSchemas = {
         "Publish recognized-but-undecodable compressed payloads as raw blobs; decoding gaps stay explicit",
       ),
   }),
+  inspect_uefi_nvram: z.strictObject({
+    ...target,
+    max_stores: z
+      .number()
+      .int()
+      .min(1)
+      .max(1024)
+      .default(64)
+      .describe(
+        "Maximum AMI NVRAM variable stores reported before coverage turns partial",
+      ),
+    max_depth: z
+      .number()
+      .int()
+      .min(1)
+      .max(4)
+      .default(2)
+      .describe(
+        "Nesting depth for NVAR chains embedded in variable data (StdDefaults holds one nested chain)",
+      ),
+  }),
 } as const;
 
 /** Supported UEFI firmware operations. */
@@ -243,6 +264,10 @@ export const uefiRequestSchema = z.discriminatedUnion("operation", [
   z.strictObject({
     operation: z.literal("extract_uefi_firmware"),
     input: uefiInputSchemas.extract_uefi_firmware,
+  }),
+  z.strictObject({
+    operation: z.literal("inspect_uefi_nvram"),
+    input: uefiInputSchemas.inspect_uefi_nvram,
   }),
 ]);
 
@@ -314,6 +339,26 @@ export const uefiIntegrityRecordSchema = z.strictObject({
   logical_path: z.string(),
   range,
   detail: z.string(),
+});
+
+/** One AMI NVRAM variable entry; data bytes are referenced, never interpreted. */
+export const uefiNvramVariableRecordSchema = z.strictObject({
+  offset: bytes,
+  name: z.string(),
+  attributes: bytes,
+  state: bytes,
+  depth: z.number().int().min(0),
+  parent_offset: bytes.nullable(),
+  data_offset: bytes,
+  data_length: bytes,
+  data_sha256: digestSchema,
+});
+/** One top-level AMI NVRAM chain with its flattened nested variables. */
+export const uefiNvramStoreRecordSchema = z.strictObject({
+  offset: bytes,
+  name: z.string().nullable(),
+  variables: z.array(uefiNvramVariableRecordSchema),
+  trailing_padding: bytes.nullable(),
 });
 
 /** Portable results retain observed boundaries, unknowns and integrity notes. */
@@ -415,6 +460,14 @@ export const uefiResultSchemas = {
     diagnostics: z.string(),
     published_bytes: bytes,
   }),
+  inspect_uefi_nvram: z.strictObject({
+    parser: parserSchema,
+    input_size: bytes,
+    image_sha256: digestSchema,
+    stores: z.array(uefiNvramStoreRecordSchema),
+    coverage: z.enum(["complete", "partial"]),
+    limitations: z.array(z.string()),
+  }),
 } as const;
 
 /** Inferred record and result types shared by the engine, provider and contracts. */
@@ -428,4 +481,11 @@ export type UefiInspectResult = z.infer<
 >;
 export type UefiExtractResult = z.infer<
   (typeof uefiResultSchemas)["extract_uefi_firmware"]
+>;
+export type UefiNvramVariableRecord = z.infer<
+  typeof uefiNvramVariableRecordSchema
+>;
+export type UefiNvramStoreRecord = z.infer<typeof uefiNvramStoreRecordSchema>;
+export type UefiNvramInspectResult = z.infer<
+  (typeof uefiResultSchemas)["inspect_uefi_nvram"]
 >;
