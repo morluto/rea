@@ -1,3 +1,4 @@
+import type { JsonValue } from "./jsonValue.js";
 import { ProviderAdapterError } from "./providerAdapterError.js";
 import { ProviderCleanupError } from "./providerCleanupError.js";
 import { childFailureDiagnostics } from "./analysisErrorProjection.js";
@@ -113,7 +114,7 @@ export const analysisErrorWithCloseRejections = (
 export const providerCleanupErrorFromFailures = (
   providerId: string,
   failures: readonly AnalysisError[],
-  reason: string,
+  diagnostics: string | Readonly<Record<string, JsonValue>>,
   options: {
     readonly operation: string;
     readonly causes?: readonly unknown[];
@@ -123,7 +124,7 @@ export const providerCleanupErrorFromFailures = (
   new ProviderCleanupError(
     providerId,
     failures.flatMap((failure) => failure.cleanupResources),
-    { reason },
+    typeof diagnostics === "string" ? { reason: diagnostics } : diagnostics,
     {
       operation: options.operation,
       cause: new AggregateError(options.causes ?? failures, options.message),

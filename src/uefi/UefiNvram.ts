@@ -1,3 +1,4 @@
+import { Budget } from "../domain/budget.js";
 import { BinaryReader } from "../domain/binaryContainer.js";
 import { formatGuidLittleEndian, GUID_LENGTH } from "./UefiGuid.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
@@ -16,7 +17,7 @@ import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
  *
  * The factory-default store is itself one such entry (name "StdDefaults") whose
  * data holds a nested NVAR chain of the individual setup variables. The scan
- * therefore recurses into entries whose data starts with another valid entry,
+ * therefore recurses into entries whose data starts with a bounded NVAR record,
  * so the result is a flat list with `depth` and `parent_offset` describing the
  * nesting instead of hiding the children behind an opaque data range.
  */
@@ -113,12 +114,16 @@ type FramedNvarRecord =
 type NvarRecord =
   | { kind: "end" }
   | { kind: "invalid-frame" }
+  | { kind: "limited" }
   | FramedNvarRecord;
+
+type ReserveNvarRecord = (offset: number) => boolean;
 
 function readNvarRecord(
   reader: BinaryReader,
   offset: number,
   endOffset: number,
+  reserve: ReserveNvarRecord,
 ): NvarRecord {
   if (
     offset < 0 ||
@@ -126,6 +131,7 @@ function readNvarRecord(
     reader.u32(offset) !== NVAR_MAGIC
   )
     return { kind: "end" };
+  if (!reserve(offset)) return { kind: "limited" };
   if (offset + NVAR_HEADER_BYTES > endOffset) return { kind: "invalid-frame" };
   const totalSize = reader.u16(offset + 4);
   const entryEnd = offset + totalSize;
@@ -139,6 +145,26 @@ function readNvarRecord(
   return entry === null
     ? { kind: "malformed", endOffset: entryEnd }
     : { kind: "active", entry };
+}
+
+/** A short matching signature at an established boundary is a truncated successor. */
+function readNvarSuccessor(
+  reader: BinaryReader,
+  offset: number,
+  endOffset: number,
+  reserve: ReserveNvarRecord,
+): NvarRecord {
+  const remaining = endOffset - offset;
+  if (
+    remaining > 0 &&
+    remaining < NVAR_BYTES.length &&
+    reader.bytes
+      .subarray(offset, endOffset)
+      .equals(NVAR_BYTES.subarray(0, remaining))
+  ) {
+    return reserve(offset) ? { kind: "invalid-frame" } : { kind: "limited" };
+  }
+  return readNvarRecord(reader, offset, endOffset, reserve);
 }
 
 function parseActiveRecord(
@@ -190,27 +216,30 @@ function parseActiveRecord(
   };
 }
 
+interface NvarChainContext {
+  readonly reader: BinaryReader;
+  readonly reserve: ReserveNvarRecord;
+  readonly maxDepth: number;
+  readonly noteOmission: (detail: string) => void;
+}
+
 /** Walk a confirmed chain without using record bodies to advance its cursor. */
 function collectChain(
-  reader: BinaryReader,
-  first: { offset: number; record: FramedNvarRecord },
-  endOffset: number,
-  depth: number,
-  parentOffset: number | null,
-  maxDepth: number,
+  context: NvarChainContext,
+  frame: { offset: number; first: FramedNvarRecord; endOffset: number },
+  scope: Pick<AmiNvramVariable, "depth" | "parentOffset">,
   out: AmiNvramVariable[],
-  reserve: () => boolean,
-  noteOmission: (detail: string) => void,
-): number {
-  let cursor = first.offset;
-  let record: NvarRecord = first.record;
-  while (record.kind !== "end") {
-    if (!reserve()) break;
+): { endOffset: number; nextSearchOffset: number } {
+  const { reader, reserve, maxDepth, noteOmission } = context;
+  let cursor = frame.offset;
+  let record: NvarRecord = frame.first;
+  while (record.kind !== "end" && record.kind !== "limited") {
     if (record.kind === "invalid-frame") {
       noteOmission(
         `NVAR record at 0x${cursor.toString(16)} has an incomplete or invalid extent.`,
       );
-      break;
+      // Its extent is unknown, but raw discovery already examined this signature.
+      return { endOffset: cursor, nextSearchOffset: cursor + 1 };
     }
     if (record.kind !== "active") {
       if (record.kind === "malformed")
@@ -218,27 +247,29 @@ function collectChain(
           `NVAR record at 0x${cursor.toString(16)} has malformed variable data.`,
         );
       cursor = record.endOffset;
-      record = readNvarRecord(reader, cursor, endOffset);
+      record = readNvarSuccessor(reader, cursor, frame.endOffset, reserve);
       continue;
     }
 
     const { entry } = record;
-    out.push({ ...entry, depth, parentOffset });
+    out.push({ ...entry, ...scope });
     const dataEnd = entry.dataOffset + entry.dataLength;
-    const nested = readNvarRecord(reader, entry.dataOffset, dataEnd);
-    // Framing can establish a nested chain even if its first body is unusable.
-    if (nested.kind !== "end" && nested.kind !== "invalid-frame") {
-      if (depth < maxDepth) {
+    const nested = readNvarRecord(reader, entry.dataOffset, dataEnd, reserve);
+    if (nested.kind === "limited") {
+      return { endOffset: entry.endOffset, nextSearchOffset: entry.endOffset };
+    }
+    if (nested.kind === "invalid-frame") {
+      noteOmission(
+        `Possible nested NVAR record at 0x${entry.dataOffset.toString(16)} has an incomplete or invalid extent.`,
+      );
+    } else if (nested.kind !== "end") {
+      // Framing can establish a nested chain even if its first body is unusable.
+      if (scope.depth < maxDepth) {
         collectChain(
-          reader,
-          { offset: entry.dataOffset, record: nested },
-          dataEnd,
-          depth + 1,
-          entry.offset,
-          maxDepth,
+          context,
+          { offset: entry.dataOffset, first: nested, endOffset: dataEnd },
+          { depth: scope.depth + 1, parentOffset: entry.offset },
           out,
-          reserve,
-          noteOmission,
         );
       } else {
         noteOmission(
@@ -247,9 +278,9 @@ function collectChain(
       }
     }
     cursor = entry.endOffset;
-    record = readNvarRecord(reader, cursor, endOffset);
+    record = readNvarSuccessor(reader, cursor, frame.endOffset, reserve);
   }
-  return cursor;
+  return { endOffset: cursor, nextSearchOffset: cursor };
 }
 
 /** Scan a raw image for chained AMI NVRAM variable stores. */
@@ -267,23 +298,22 @@ export const scanAmiNvramStores = (
     partial = true;
     if (limitations.length < 512) limitations.push(detail);
   };
-  let remaining: number = UEFI_FIRMWARE_LIMITS.scanRecords;
-  let recordLimited = false;
-  const reserve = (): boolean => {
+  const records = new Budget(UEFI_FIRMWARE_LIMITS.scanRecords);
+  const limit: { offset: number | null } = { offset: null };
+  const reserve: ReserveNvarRecord = (offset) => {
     checkpoint();
-    if (remaining === 0) {
-      recordLimited = true;
-      return false;
-    }
-    remaining -= 1;
-    return true;
+    if (records.tryCharge(1)) return true;
+    limit.offset ??= offset;
+    return false;
   };
+  const context = { reader, reserve, maxDepth, noteOmission };
   let searchFrom = 0;
   while (searchFrom + NVAR_MIN_ENTRY_BYTES <= image.length) {
     checkpoint();
     const firstOffset = image.indexOf(NVAR_BYTES, searchFrom);
     if (firstOffset < 0) break;
-    const first = readNvarRecord(reader, firstOffset, image.length);
+    const first = readNvarRecord(reader, firstOffset, image.length, reserve);
+    if (first.kind === "limited") break;
     if (first.kind !== "active") {
       searchFrom = firstOffset + 1;
       continue;
@@ -295,21 +325,17 @@ export const scanAmiNvramStores = (
       return { stores, coverage: "partial", limitations };
     }
     const variables: AmiNvramVariable[] = [];
-    const lastEnd = collectChain(
-      reader,
-      { offset: firstOffset, record: first },
-      image.length,
-      0,
-      null,
-      maxDepth,
+    const { endOffset, nextSearchOffset } = collectChain(
+      context,
+      { offset: firstOffset, first, endOffset: image.length },
+      { depth: 0, parentOffset: null },
       variables,
-      reserve,
-      noteOmission,
     );
     let padding = 0;
     while (
-      lastEnd + padding < image.length &&
-      image[lastEnd + padding] === 0xff
+      limit.offset === null &&
+      endOffset + padding < image.length &&
+      image[endOffset + padding] === 0xff
     ) {
       if (padding % 65536 === 0) checkpoint();
       padding += 1;
@@ -321,13 +347,14 @@ export const scanAmiNvramStores = (
         variables,
         trailingPadding: padding > 0 ? padding : null,
       });
-    searchFrom = Math.max(firstOffset + 1, lastEnd);
-    if (recordLimited) {
-      limitations.push(
-        `Structural record limit ${UEFI_FIRMWARE_LIMITS.scanRecords} reached in the NVAR chain at 0x${firstOffset.toString(16)}.`,
-      );
-      return { stores, coverage: "partial", limitations };
-    }
+    searchFrom = nextSearchOffset;
+    if (limit.offset !== null) break;
+  }
+  if (limit.offset !== null) {
+    limitations.push(
+      `Structural record limit ${UEFI_FIRMWARE_LIMITS.scanRecords} reached at NVAR candidate 0x${limit.offset.toString(16)}.`,
+    );
+    return { stores, coverage: "partial", limitations };
   }
   if (stores.length === 0)
     limitations.push(

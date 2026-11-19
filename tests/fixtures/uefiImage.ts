@@ -1,7 +1,5 @@
 import { Buffer } from "node:buffer";
 
-import { formatGuidLittleEndian } from "../../src/uefi/UefiGuid.js";
-
 /** LZMA custom GUIDed-section definition GUID (display form). */
 export const GUID_LZMA_CUSTOM_DISPLAY = "ee4e5898-3914-4259-9d6e-dc7bd79403cf";
 
@@ -69,6 +67,8 @@ export function buildFfsFile(spec: FfsFileSpec): Buffer {
     header[17] = (0x100 - payloadSum(spec.payload)) & 0xff;
   } else if (spec.fileChecksum === "wrong") {
     header[17] = (0x100 - payloadSum(spec.payload) + 1) & 0xff;
+  } else {
+    header[17] = 0xaa;
   }
   if (spec.breakHeaderChecksum === true) {
     header[16] = ((header[16] ?? 0) + 1) & 0xff;
@@ -278,12 +278,4 @@ export function buildImage(spec: ImageSpec): Buffer {
     cursor += spec.tailPad ?? 0;
   }
   return Buffer.concat(chunks);
-}
-
-/** Round-trip sanity: a built FV header must parse its checksum as valid. */
-export function assertBuiltFvHeaderIntegrity(fv: BuiltFv): void {
-  const guid = formatGuidLittleEndian(fv.buffer, 16);
-  if (guid == null || guid !== "8c8ce578-8a3d-4f1c-9935-896185c32dd3") {
-    throw new Error("fixture FV header GUID mismatch");
-  }
 }

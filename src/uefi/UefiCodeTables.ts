@@ -67,6 +67,16 @@ export const COMPRESSION_GUID_BY_DISPLAY: Readonly<
   "fc1bcdb0-7d31-49aa-936a-a4600d9dd083": "crc32-guided",
 };
 
+/** Known GUID-defined wrappers whose payload needs a handler before section traversal. */
+export const OPAQUE_GUIDED_SECTION_GUIDS: ReadonlySet<string> = new Set([
+  "0f9d89e8-9259-4f76-a5af-0c89e34023df", // PI firmware contents signed
+  "a7717414-c616-4977-9420-844712a735bf", // RSA2048/SHA256
+  "0ed85e23-f253-413f-a03c-901987b04397", // HP LZMA
+  "bd9921ea-ed91-404a-8b2f-b4d724747c8c", // Microsoft LZMA
+  "1d301fe9-be79-4353-91c2-d23bc959ae0c", // Gzip
+  "3d532050-5cda-4fd0-879e-0f7f630d5afb", // Brotli
+]);
+
 /** FFS attributes (PI Specification 3.3.1): raw flags, data alignment and checksum bit. */
 export const FFS_ATTRIBUTE_MASKS = {
   largeFile: 0x01,
@@ -74,16 +84,6 @@ export const FFS_ATTRIBUTE_MASKS = {
   fixed: 0x04,
   dataAlignment: 0x38,
   checksumValid: 0x40,
-} as const;
-
-/** FFS state bits after erase-polarity normalization (PI Specification 3.3.5). */
-export const FFS_STATE_BITS = {
-  headerConstruction: 0x01,
-  headerValid: 0x02,
-  dataValid: 0x04,
-  markedForUpdate: 0x08,
-  deleted: 0x10,
-  headerInvalid: 0x20,
 } as const;
 
 /** FIRMWARE_VOLUME_ATTRIBUTES: bit 0x800 marks bits-on-erased-when-set polarity. */
@@ -131,6 +131,7 @@ export const SECTION_LAYOUT = {
   compressionFieldsLength: 5,
   compressionTypeFieldOffset: 4,
   guidedFieldsLength: 20,
+  guidedCrc32Length: 4,
   guidDataOffsetFieldOffset: 16,
   guidAttributesFieldOffset: 18,
 } as const;

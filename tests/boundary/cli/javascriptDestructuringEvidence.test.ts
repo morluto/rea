@@ -7,6 +7,79 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/j
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
+const iteratorCloseSource = `
+    const box = { label: "ready", items: [{ mode: "kept" }, { mode: "old" }] };
+    Object.getPrototypeOf([].values()).return = function () {
+      delete this.next().value.mode;
+      return {};
+    };
+    const { label: beforeClose, items: [first], items: { 0: { mode: consumed }, 1: { mode: afterClose } } } = box;
+    const stored = { items: [0], next: { mode: "borrowed" } };
+    const { insert = (stored.items[1] = stored.next), items: [assigned], next: { mode: storedAfterClose } } = stored;
+    const restSource = [undefined, { mode: "before" }];
+    try { const [head = null.value, ...rest] = restSource; } catch {}
+    const { 1: { mode: abruptAfterClose } } = restSource;
+    const replaced = { items: [0], next: { mode: "borrowed" } };
+    const { replace = (replaced.items = [0, replaced.next]), next: { mode: replacedBeforeClose }, items: [use], next: { mode: replacedAfterClose } } = replaced;
+    const holder = { parent: { items: [0], next: { mode: "before" } } };
+    const custom = { child: holder.parent.next, [Symbol.iterator]() { delete this.child.mode; return [0].values(); } };
+    const { useCustom = (holder.parent.items = custom), items: [read], next: { mode: projectedAfterAcquisition } } = holder.parent;
+  `;
+
+const arrayPrototypeAliasSource = `
+  change();
+  function change() {
+    const proto = Reflect.getPrototypeOf([]);
+    proto[Symbol.iterator] = function* () {};
+  }
+  const pairs = [["first"]];
+  const [[aliasedPrototypeElement]] = pairs;
+  pairs[0][0] = "later";
+  `;
+
+const expectedDependencies = [
+  ["declared", ["a"]],
+  ["a", ["a"]],
+  ["plain", ["a", "0"]],
+  ["fallback", ["a", "0"]],
+  ["scalar", ["b"]],
+  ["ordinary", ["0"]],
+  ["arrayAssigned", ["0"]],
+  ["elided", ["1"]],
+  ["projected", ["items", "0"]],
+  ["arrayObject", ["0", "mode"]],
+  ["nestedElement", ["items", "0"]],
+  ["innerElement", ["0", "0"]],
+  ["spreadElement", ["1"]],
+  ["aliasedPrototypeElement", ["0", "0"], "candidate"],
+  ["selected", ["0"], "candidate"],
+  ["beforeClose", ["label"]],
+  ["consumed", ["items", "0", "mode"]],
+  ["afterClose", ["items", "1", "mode"], "candidate"],
+  ["storedAfterClose", ["next", "mode"], "candidate"],
+  ["abruptAfterClose", ["1", "mode"], "candidate"],
+  ["replacedBeforeClose", ["next", "mode"]],
+  ["replacedAfterClose", ["next", "mode"], "candidate"],
+  ["projectedAfterAcquisition", ["parent", "next", "mode"], "candidate"],
+] as const;
+
+const tracedBindings = [
+  "declared",
+  "ordinary",
+  "arrayAssigned",
+  "elided",
+  "projected",
+  "arrayObject",
+  "nestedElement",
+  "innerElement",
+  "spreadElement",
+  "aliasedPrototypeElement",
+  "selected",
+  "beforeClose",
+  "consumed",
+  "afterClose",
+] as const;
+
 cliTest(
   "traces proved destructuring dependencies and leaves custom iteration uncertain",
   async ({ cli }) => {
@@ -48,6 +121,15 @@ cliTest(
     const nestedArray = [{ mode: "read-time" }];
     const [{ mode: arrayObject }] = nestedArray;
     nestedArray[0].mode = "later";
+    const nestedSource = { items: ["nested"] };
+    const { items: [nestedElement] } = nestedSource;
+    nestedSource.items[0] = "later";
+    const nestedPairs = [["read-time"]];
+    const [[innerElement]] = nestedPairs;
+    nestedPairs[0][0] = "later";
+    const spreadSource = [...["prefix"], "read-time"];
+    const [,spreadElement] = spreadSource;
+    spreadSource[1] = "later";
     const box = { items: [] };
     const iterator = box.items.values();
     const prototype = Reflect.getPrototypeOf(iterator);
@@ -59,6 +141,11 @@ cliTest(
     [selected] = after;
   `,
     );
+    await writeFile(join(root, "iterator-close.js"), iteratorCloseSource);
+    await writeFile(
+      join(root, "array-prototype-alias.js"),
+      arrayPrototypeAliasSource,
+    );
     const output = await cli.run({
       arguments: ["analyze-javascript-application", root, "--json"],
     });
@@ -67,19 +154,7 @@ cliTest(
       .object({ normalized_result: javascriptApplicationAnalysisResultSchema })
       .parse(output.json);
     const graph = result.semantic_graph;
-    for (const [name, path, resolution = "resolved"] of [
-      ["declared", ["a"]],
-      ["a", ["a"]],
-      ["plain", ["a", "0"]],
-      ["fallback", ["a", "0"]],
-      ["scalar", ["b"]],
-      ["ordinary", ["0"]],
-      ["arrayAssigned", ["0"]],
-      ["elided", ["1"]],
-      ["projected", ["items", "0"]],
-      ["arrayObject", ["0", "mode"]],
-      ["selected", ["0"], "candidate"],
-    ] as const) {
+    for (const [name, path, resolution = "resolved"] of expectedDependencies) {
       const binding = graph.nodes.find(
         (node) => node.kind === "binding" && node.label === name,
       );
@@ -108,15 +183,7 @@ cliTest(
       ),
     ).toMatchObject({ resolution: "resolved" });
     const queryPath = join(root, "query.json");
-    for (const name of [
-      "declared",
-      "ordinary",
-      "arrayAssigned",
-      "elided",
-      "projected",
-      "arrayObject",
-      "selected",
-    ]) {
+    for (const name of tracedBindings) {
       const binding = graph.nodes.find(
         ({ kind, label }) => kind === "binding" && label === name,
       );
@@ -144,7 +211,12 @@ cliTest(
           ]),
         },
       };
-      if (name === "selected") expect(trace.json).not.toMatchObject(relation);
+      if (
+        name === "selected" ||
+        name === "afterClose" ||
+        name === "aliasedPrototypeElement"
+      )
+        expect(trace.json).not.toMatchObject(relation);
       else expect(trace.json).toMatchObject(relation);
     }
   },
