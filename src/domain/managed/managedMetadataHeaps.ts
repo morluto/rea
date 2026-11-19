@@ -1,3 +1,4 @@
+import { BinaryReader } from "../binaryContainer.js";
 import { decodeStrictUtf8 } from "../strictUtf8.js";
 import type { ManagedParseIssue } from "./managedArtifact.js";
 import { err, ok, type Result } from "../result.js";
@@ -13,45 +14,54 @@ import { managedFailure } from "./managedReaderFailure.js";
 /** Cursor for checked fixed-width metadata row decoding. */
 export class MetadataRowCursor {
   #offset: number;
+  readonly #reader: BinaryReader;
+  readonly #end: number;
 
   constructor(
-    private readonly bytes: Buffer,
+    bytes: Buffer,
     readonly start: number,
-    private readonly end: number,
+    end: number,
     private readonly scope: string,
   ) {
+    this.#reader = new BinaryReader(bytes, true, "managed");
     this.#offset = start;
+    this.#end = Math.min(end, bytes.length);
   }
 
   get offset(): number {
     return this.#offset;
   }
 
-  readUInt16(): number {
+  u16(): number {
     this.require(2);
-    const value = this.bytes.readUInt16LE(this.#offset);
+    const value = this.#reader.u16(this.#offset);
     this.#offset += 2;
     return value;
   }
 
-  readUInt32(): number {
+  u32(): number {
     this.require(4);
-    const value = this.bytes.readUInt32LE(this.#offset);
+    const value = this.#reader.u32(this.#offset);
     this.#offset += 4;
     return value;
   }
 
   readIndex(size: 2 | 4): number {
-    return size === 2 ? this.readUInt16() : this.readUInt32();
+    return size === 2 ? this.u16() : this.u32();
   }
 
   private require(length: number): void {
-    if (this.#offset < this.start || this.#offset > this.end - length)
+    const offset = this.#offset;
+    if (
+      !Number.isSafeInteger(offset) ||
+      offset < 0 ||
+      offset > this.#end - length
+    )
       throw managedFailure(
         "invalid-row",
         this.scope,
         `${this.scope} row ended before all declared columns`,
-        this.#offset,
+        offset,
       );
   }
 }

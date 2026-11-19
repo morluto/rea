@@ -1,3 +1,4 @@
+import { BinaryReader } from "../../domain/binaryContainer.js";
 import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
 import {
   ArtifactReaderFailure,
@@ -5,6 +6,7 @@ import {
   artifactFixedLimitFailure,
 } from "../../resources/index.js";
 import { walkDenoVirtualFs, type DenoVfsWalk } from "./DenoVirtualFs.js";
+import { parseJsonWithDuplicatePolicy } from "../../domain/jsonDuplicateMember.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
 /** Opening and closing marker of a Deno compile data section. */
@@ -169,8 +171,10 @@ export const parseDenoSection = async (
     return readExact(offset, bytes);
   };
   const u8 = async (): Promise<number> => (await pull(1))[0] ?? 0;
-  const u32 = async (): Promise<number> => (await pull(4)).readUInt32LE(0);
-  const u64 = async (): Promise<bigint> => (await pull(8)).readBigUInt64LE(0);
+  const u32 = async (): Promise<number> =>
+    new BinaryReader(await pull(4), true, "deno").u32(0);
+  const u64 = async (): Promise<bigint> =>
+    new BinaryReader(await pull(8), true, "deno").word(0, 64);
   const readBounded = async (
     claimed: bigint,
     max: number,
@@ -402,11 +406,15 @@ const decodeStrict = (
 const decodeJson = (bytes: Buffer, scope: string): unknown => {
   const text = decodeStrict(bytes, jsonDecoder);
   if (text === undefined) throw denoFormatFailure(`${scope} is invalid`);
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
+  const parsed = parseJsonWithDuplicatePolicy(text, "reject");
+  if (!parsed.ok) {
+    if (parsed.duplicate !== undefined)
+      throw denoFormatFailure(
+        `${scope} declares member ${JSON.stringify(parsed.duplicate.name)} more than once`,
+      );
     throw denoFormatFailure(`${scope} is invalid`);
   }
+  return parsed.value;
 };
 
 const observeMetadata = (value: unknown): DenoObservedMetadata => {

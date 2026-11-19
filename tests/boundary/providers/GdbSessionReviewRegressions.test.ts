@@ -13,6 +13,7 @@ import { delimiter, join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 
 import { GdbSessionManager } from "../../../src/gdb/GdbSessionManager.js";
+import { AnalysisSettings } from "../../../src/application/AnalysisSettings.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
@@ -451,8 +452,11 @@ it.skipIf(process.platform === "win32")(
       `#!${process.execPath}
 ${fakeGdbStartupPreamble}
 import { readFile, writeFile } from "node:fs/promises";
+import { writeFileSync } from "node:fs";
 process.on("SIGTERM", async () => {
-  await writeFile(${JSON.stringify(signalPath)}, "SIGTERM");
+  // Publish the signal before yielding: bounded stop may end this fake
+  // while an asynchronous write has created but not populated its file.
+  writeFileSync(${JSON.stringify(signalPath)}, "SIGTERM");
   while (true) {
     try {
       await readFile(${JSON.stringify(releasePath)}, "utf8");
@@ -589,7 +593,6 @@ process.stdin.on("data", (chunk) => {
     else if (match) process.stdout.write("~\\"partial output\\n\\"\\n");
   }
 });
-setTimeout(() => process.exit(0), 250).unref();
 `,
     );
     await chmod(provider, 0o700);
@@ -600,7 +603,20 @@ setTimeout(() => process.exit(0), 250).unref();
       },
     });
     managers.push(manager);
-    const started = await manager.start();
+    // The 40 ms budget exercises the console timeout, not provider startup.
+    const startup = new AnalysisSettings({});
+    expect(
+      startup.update({
+        changes: [
+          {
+            setting: "debugger.command_deadline_ms",
+            action: "set",
+            value: 5000,
+          },
+        ],
+      }).ok,
+    ).toBe(true);
+    const started = await startup.run(() => manager.start());
     expect(started.ok).toBe(true);
     if (!started.ok) return;
 
@@ -621,6 +637,9 @@ setTimeout(() => process.exit(0), 250).unref();
       });
       expect(result.error.cleanupIncomplete).toBe(true);
     }
+    // Only the fixture knows this provider has no real inferior. Stop it after
+    // asserting the production cleanup uncertainty instead of racing an exit timer.
+    await fixtureOwner.cleanup(managers, async () => {});
     await expectOwnedProcessExited(
       await waitForTestPidFile(join(directory, "pid"), 1_000),
     );

@@ -1,6 +1,11 @@
 import { z } from "zod";
 
 import { err, ok, type Result } from "../domain/result.js";
+import {
+  declaredOptionType,
+  isCountOption,
+  optionFlagName,
+} from "./optionFields.js";
 
 /**
  * REA's argv parser for one command: binds tokens to the command's
@@ -33,10 +38,14 @@ export interface CliFieldError {
  */
 export type CliArgvFailure =
   | { readonly kind: "parse"; readonly message: string }
+  | { readonly kind: "surplus"; readonly message: string }
+  | { readonly kind: "dry_run"; readonly message: string }
   | {
       readonly kind: "validation";
       readonly message: string;
       readonly fieldErrors: readonly CliFieldError[];
+      /** Original parser facts for command-specific safe constraint projection. */
+      readonly issues: readonly z.core.$ZodIssue[];
     };
 
 const parseFailure = (message: string): Result<never, CliArgvFailure> =>
@@ -55,21 +64,6 @@ export interface CliParsedArgv {
   readonly options: Record<string, unknown>;
 }
 
-const kebabCase = (key: string): string =>
-  key.replaceAll(/[A-Z]/gu, (letter) => `-${letter.toLowerCase()}`);
-
-/** The declared type below optional, default, nullable and similar wrappers. */
-const declaredType = (field: z.ZodType): z.ZodType => {
-  let current = field;
-  for (
-    let inner: unknown = Reflect.get(current.def, "innerType");
-    inner instanceof z.ZodType;
-    inner = Reflect.get(current.def, "innerType")
-  )
-    current = inner;
-  return current;
-};
-
 const fieldOf = (
   schema: z.ZodObject | undefined,
   name: string,
@@ -80,23 +74,27 @@ const fieldOf = (
 
 const isBoolean = (schema: z.ZodObject | undefined, name: string): boolean => {
   const field = fieldOf(schema, name);
-  return field !== undefined && declaredType(field) instanceof z.ZodBoolean;
+  return (
+    field !== undefined && declaredOptionType(field) instanceof z.ZodBoolean
+  );
 };
 
 /** A count option (`.meta({ count: true })`) adds one per occurrence. */
-const isCount = (schema: z.ZodObject | undefined, name: string): boolean =>
-  fieldOf(schema, name)?.meta()?.count === true;
+const isCount = (schema: z.ZodObject | undefined, name: string): boolean => {
+  const field = fieldOf(schema, name);
+  return field !== undefined && isCountOption(field);
+};
 
 const isArray = (schema: z.ZodObject | undefined, name: string): boolean => {
   const field = fieldOf(schema, name);
-  return field !== undefined && declaredType(field) instanceof z.ZodArray;
+  return field !== undefined && declaredOptionType(field) instanceof z.ZodArray;
 };
 
 /** Number and boolean options arrive as text; the schema validates the result. */
 const coerce = (value: unknown, schema: z.ZodObject, name: string): unknown => {
   const field = fieldOf(schema, name);
   if (field === undefined || typeof value !== "string") return value;
-  const type = declaredType(field);
+  const type = declaredOptionType(field);
   if (type instanceof z.ZodNumber) return Number(value);
   if (type instanceof z.ZodBoolean) return value === "true";
   return value;
@@ -123,6 +121,7 @@ export const validateCliInputs = (
   const { issues } = parsed.error;
   return err({
     kind: "validation",
+    issues,
     message:
       issues.map(({ message }) => message).join("; ") || "Validation failed",
     fieldErrors: issues.map((issue) => ({
@@ -151,7 +150,9 @@ export const parseCliArgv = (
   );
   const camelOf = new Map(
     [...known].flatMap((name) =>
-      kebabCase(name) === name ? [] : [[kebabCase(name), name] as const],
+      optionFlagName(name) === name
+        ? []
+        : [[optionFlagName(name), name] as const],
     ),
   );
   const optionName = (raw: string): string | undefined => {
@@ -163,7 +164,10 @@ export const parseCliArgv = (
   );
   const positionals: string[] = [];
   const options: Record<string, unknown> = {};
+  let invalidDryRun = false;
   const set = (name: string, value: string): void => {
+    if (name === "dryRun" && isBoolean(optionsSchema, name))
+      invalidDryRun ||= value !== "true" && value !== "false";
     if (!isArray(optionsSchema, name)) {
       options[name] = value;
       return;
@@ -229,9 +233,26 @@ export const parseCliArgv = (
       positionals.push(token);
     }
   }
+  // Check retained token facts before defaults or transforms can run. A later
+  // valid occurrence must not hide an earlier invalid dry-run literal.
+  if (invalidDryRun)
+    return err({
+      kind: "dry_run",
+      message: "Invalid --dry-run value; use true or false.",
+    });
+  const keys = Object.keys(argsSchema?.shape ?? {});
+  const last = keys.at(-1);
+  const variadic = last !== undefined && isArray(argsSchema, last);
+  if (!variadic && positionals.length > keys.length)
+    return err({
+      kind: "surplus",
+      message: `Unexpected positional arguments: ${positionals
+        .slice(keys.length)
+        .map((value) => JSON.stringify(value))
+        .join(" ")}.`,
+    });
   const rawArgs: Record<string, unknown> = {};
   if (argsSchema !== undefined) {
-    const keys = Object.keys(argsSchema.shape);
     for (const [position, key] of keys.entries()) {
       if (isArray(argsSchema, key)) {
         if (position !== keys.length - 1)

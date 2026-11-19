@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { chmod, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -115,6 +116,18 @@ beforeAll(async () => {
 afterAll(async () => {
   await disposeInstallDir?.();
 });
+
+const lowScoreDosCom = async (target: BinaryTarget): Promise<BinaryTarget> => {
+  const directory = await createTestTempDirectory("rea-com-profile-");
+  const path = join(directory, "fixture.com");
+  const bytes = Buffer.from("b83412c3", "hex");
+  await writeFile(path, bytes);
+  return {
+    ...target,
+    path,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  };
+};
 
 const provider = (environment: Record<string, string>) => {
   const parsed = parseConfig({
@@ -447,7 +460,9 @@ describe("Ghidra language override profile", () => {
           ],
         },
       });
-      const automatic = await provider({}).resolveAnalysisProfile(target);
+      const admitted =
+        format === "dos-com" ? await lowScoreDosCom(target) : target;
+      const automatic = await provider({}).resolveAnalysisProfile(admitted);
       expect(automatic.ok).toBe(true);
     },
   );

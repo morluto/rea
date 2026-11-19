@@ -1,7 +1,11 @@
-import { expect, it } from "vitest";
+import { afterAll, expect, it } from "vitest";
 
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { ArtifactResourceScope } from "../resources/index.js";
 import { runAdbCapture } from "./AdbCommand.js";
+
+const resources = new ArtifactResourceScope();
+afterAll(() => resources.close());
 
 // Exercise the real subprocess capture and public error projection, substituting
 // only the bring-your-own executable. These are not Android-device checks.
@@ -54,6 +58,7 @@ it.each([
       binary: process.execPath,
       pathSource: "environment",
       environment: { REA_TEST_PRIVATE: "ambient-value-must-not-be-persisted" },
+      resources,
     },
     ["-e", testCase.source],
     {
@@ -94,7 +99,12 @@ it.each([true, false])(
     const result = await runAdbCapture(
       volatileOutput ? "read_adb_logcat" : "install_adb_package",
       { device: "device" },
-      { binary: process.execPath, pathSource: "environment", environment: {} },
+      {
+        binary: process.execPath,
+        pathSource: "environment",
+        environment: {},
+        resources,
+      },
       ["-e", 'process.stdout.write("X".repeat(4096))'],
       { timeoutMs: 5_000, maxOutputBytes: 1024, volatileOutput },
       undefined,

@@ -87,6 +87,20 @@ describe("iterative JSON encoding", () => {
     );
   });
 
+  it("emits deep pretty JSON indentation in bounded parts", () => {
+    const depth = 10_000;
+    let value: unknown = 0;
+    for (let index = 0; index < depth; index += 1) value = [value];
+    let characters = 0;
+    let largestPart = 0;
+    for (const part of jsonParts(value, true)) {
+      characters += part.length;
+      largestPart = Math.max(largestPart, part.length);
+    }
+    expect(characters).toBe(2 * depth * depth + 4 * depth + 1);
+    expect(largestPart).toBeLessThanOrEqual(16 * 1024);
+  });
+
   it("yields bounded parts before reading later members", () => {
     const value: Record<string, unknown> = { first: "x".repeat(100_000) };
     Object.defineProperty(value, "later", {

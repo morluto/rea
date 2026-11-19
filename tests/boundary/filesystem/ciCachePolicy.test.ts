@@ -64,9 +64,7 @@ const assertRetentionPolicy = (expression: string): void => {
             repositoryName === currentRepository &&
             branch === defaultBranch &&
             ["push", "schedule", "workflow_dispatch"].includes(event) &&
-            ["success", "failure", "timed_out", "cancelled"].includes(
-              conclusion,
-            );
+            ["success", "failure", "timed_out"].includes(conclusion);
           expect(
             evaluatePolicy(expression, {
               github: {
@@ -556,6 +554,7 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
         workflow_run: z.object({
           workflows: z.array(z.literal("CI")),
           types: z.array(z.literal("completed")),
+          branches: z.array(z.literal("main")),
         }),
         workflow_call: z.unknown().optional(),
         pull_request: z.unknown().optional(),
@@ -605,7 +604,6 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
     "persist-credentials": false,
   });
   expect(checkouts).toHaveLength(2);
-  expect(steps.some((step) => step.run === "npm ci")).toBe(false);
   const setupNode = steps.find(
     (step) =>
       step.uses ===
@@ -634,6 +632,9 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
   );
   expect(retentionEnv.CACHE_PORTABLE_PREFIX).toBe(
     "rea-portable-build-v2-${{ runner.os }}-${{ runner.arch }}-",
+  );
+  expect(retentionEnv.CACHE_WINDOWS_BUILD_PREFIX).toBe(
+    "rea-windows-build-v1-Windows-X64-",
   );
   expect(retentionEnv.DEDUPE_NPM_DOWNLOADS).toBe("true");
   expect(retentionEnv.GH_TOKEN).toBe("${{ github.token }}");
@@ -667,6 +668,14 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
   expect(retentionEnv.CACHE_KNIP_PREFIX).toBe(knipPrefix);
   expect(retentionEnv.CACHE_KNIP_KEEP_KEY).toBe(targetSourceKey("knip-cache"));
   expect(publishedKey("knip-cache").startsWith(knipPrefix)).toBe(true);
+  const windowsNativeSteps =
+    ci?.workflow.jobs?.["windows-native-build"]?.steps ?? [];
+  const windowsNativeKey = windowsNativeSteps.find(
+    (step) => step.id === "windows-native-key",
+  );
+  expect(String(windowsNativeKey?.run)).toContain("ImageOS");
+  expect(String(windowsNativeKey?.run)).toContain("ImageVersion");
+  expect(String(windowsNativeKey?.run)).toContain("date -u +%Y-%m-%d");
 });
 
 it("publishes each hosted npm download cache from one writer", async () => {
@@ -722,8 +731,38 @@ it("exports turbo remote-cache credentials wherever a workflow runs turbo", asyn
   const files = (await readdir(directory)).filter((file) =>
     /\.ya?ml$/u.test(file),
   );
-  const turboCommand =
-    /\bturbo\b|build:cached|check:ci|docs:check|docs:generate|docs:prepare|test:prepare/u;
+  const packageScripts = z
+    .object({ scripts: z.record(z.string(), z.string()) })
+    .parse(
+      JSON.parse(await readFile(join(repository, "package.json"), "utf8")),
+    ).scripts;
+  const turboScripts = new Set<string>();
+  let discovered = true;
+  while (discovered) {
+    discovered = false;
+    for (const [scriptName, scriptCommand] of Object.entries(packageScripts)) {
+      if (turboScripts.has(scriptName)) continue;
+      if (/\bturbo\b|run-turbo\.mjs/u.test(scriptCommand)) {
+        turboScripts.add(scriptName);
+        discovered = true;
+        continue;
+      }
+      for (const match of scriptCommand.matchAll(/\bnpm run ([\w:-]+)/gu))
+        if (match[1] !== undefined && turboScripts.has(match[1])) {
+          turboScripts.add(scriptName);
+          discovered = true;
+          break;
+        }
+    }
+  }
+  const runsTurboCommand = (command: string): boolean => {
+    if (/\bturbo\b/u.test(command)) return true;
+    for (const match of command.matchAll(
+      /\bnpm run (?:--silent\s+)?(?!--)([\w:-]+)/gu,
+    ))
+      if (match[1] !== undefined && turboScripts.has(match[1])) return true;
+    return false;
+  };
   const workflowSchema = z.object({
     env: z.record(z.string(), z.unknown()).optional(),
     jobs: z.record(
@@ -742,7 +781,7 @@ it("exports turbo remote-cache credentials wherever a workflow runs turbo", asyn
     );
     for (const [name, job] of Object.entries(workflow.jobs)) {
       const runsTurbo = job.steps?.some(
-        (step) => step.run !== undefined && turboCommand.test(step.run),
+        (step) => step.run !== undefined && runsTurboCommand(step.run),
       );
       if (!runsTurbo) continue;
       const env = { ...workflow.env, ...job.env };

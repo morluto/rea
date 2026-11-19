@@ -15,6 +15,7 @@ const workflowSchema = z.object({
       steps: z
         .array(
           z.object({
+            id: z.string().optional(),
             run: z.string().optional(),
             with: z.object({ name: z.string().optional() }).optional(),
           }),
@@ -207,10 +208,29 @@ it("checks the complete source with the fallback compiler before Windows build r
     parse(await readFile(WORKFLOW, "utf8")),
   );
   const steps = workflow.jobs["windows-curated"]?.steps ?? [];
+  const restored = steps.findIndex((step) => step.id === "windows-build-cache");
   const checked = steps.findIndex(
-    (step) => step.run === "npm run typecheck -- --checkers 2",
+    (step) => step.run === "node scripts/run-turbo.mjs run typecheck",
   );
   const built = steps.findIndex((step) => step.run === "npm run build:cached");
-  expect(checked).toBeGreaterThan(-1);
+  expect(restored).toBeGreaterThan(-1);
+  expect(checked).toBeGreaterThan(restored);
   expect(built).toBeGreaterThan(checked);
+  const vitestRuns = steps
+    .map((step) => step.run)
+    .filter((value) => value?.includes("npx vitest run"));
+  // One Node 24 curated run and one Node 22 path-boundary run; both cover the
+  // three native directory-identity suites without booting a second Node 24 Vitest process.
+  expect(vitestRuns).toHaveLength(2);
+  for (const run of vitestRuns) {
+    expect(run).toContain(
+      "tests/boundary/filesystem/directoryArtifactReaderOpen.test.ts",
+    );
+    expect(run).toContain(
+      "tests/boundary/filesystem/javascriptPackagePrecedence.test.ts",
+    );
+    expect(run).toContain(
+      "tests/boundary/filesystem/javascriptArtifactContentIdentity.test.ts",
+    );
+  }
 });

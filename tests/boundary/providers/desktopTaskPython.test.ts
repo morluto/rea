@@ -16,12 +16,19 @@ import {
   CHECK_CASES,
   CHECK_VIEWS,
 } from "../../../src/domain/desktop/appTaskChecks.fixture.js";
+import { xmlView } from "../../../src/domain/desktop/stateFormats.js";
+import { desktopViewPolicy } from "../../../src/domain/desktop/desktopViewPolicy.js";
+import {
+  draftOf,
+  statePath,
+} from "../../../src/domain/desktop/appTaskDraft.fixture.js";
 import { SETTLE_TIMING } from "../../../src/domain/desktop/appSettle.js";
 import { renderTaskVerifier } from "../../../src/domain/desktop/appTaskPython.js";
 import {
   readerAnswerView,
   readerCommand,
 } from "../../../src/domain/desktop/appTaskReaders.js";
+import { appStateViews } from "../../../src/domain/desktop/appStateViews.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 /** The protocol client calls the verifier makes, replaced so it reads the given views. */
@@ -98,10 +105,13 @@ async def get_data(url, **_):
     reads.append(clock[0])
     clock[0] += durations[len(reads) - 1] if len(reads) <= len(durations) else READ_S
     views = views_at(clock[0])
+    file_contents = scenario.get("file_contents") or {}
     files = [types.SimpleNamespace(kind="file", metadata={"urn:agentenv:data-objects/v1": {"path": path}},
-                                   file=types.SimpleNamespace(bytes=base64.b64encode(json.dumps(view).encode()).decode()))
+                                   file=types.SimpleNamespace(bytes=base64.b64encode(
+                                       (file_contents[path] if path in file_contents else json.dumps(view)).encode()).decode()))
              for path, view in views.items()]
-    return types.SimpleNamespace(parts=[*files, types.SimpleNamespace(kind="data", data={"state": views})])
+    state_parts = scenario.get("state_parts", [{"kind": "data", "data": {"state": views}}])
+    return types.SimpleNamespace(parts=[*files, *(types.SimpleNamespace(**part) for part in state_parts)])
 
 
 async def sleep(seconds):
@@ -196,6 +206,8 @@ const runVerifier = async (
     readonly readers?: readonly DesktopTaskReader[];
     readonly answers?: Readonly<Record<string, unknown>>;
     readonly retryAnswers?: Readonly<Record<string, unknown>>;
+    readonly fileContents?: Readonly<Record<string, string>>;
+    readonly stateParts?: readonly Record<string, unknown>[];
     readonly exec?: boolean;
     readonly cleanupFailures?: number;
     readonly retry?: boolean;
@@ -229,24 +241,32 @@ const runVerifier = async (
       "notes",
     ),
   );
+  // Node writes the JSON input as UTF-8; isolated Python must decode it the
+  // same way even when the host's default pipe encoding differs.
   return JSON.parse(
-    execFileSync("python3", ["-I", "-B", "-c", DRIVER, folder, verifier], {
-      input: JSON.stringify({
-        saves,
-        durations,
-        answers: computer.answers,
-        retry_answers: computer.retryAnswers,
-        exec: computer.exec ?? true,
-        cleanup_failures: computer.cleanupFailures,
-        retry: computer.retry,
-        cancel_cleanup: computer.cancelCleanup,
-        reload_verifier: computer.reloadVerifier,
-        concurrent: computer.concurrent,
-        parallel_retry: computer.parallelRetry,
-        report_failure: computer.reportFailure,
-      }),
-      encoding: "utf8",
-    }),
+    execFileSync(
+      "python3",
+      ["-I", "-B", "-X", "utf8", "-c", DRIVER, folder, verifier],
+      {
+        input: JSON.stringify({
+          saves,
+          durations,
+          answers: computer.answers,
+          retry_answers: computer.retryAnswers,
+          file_contents: computer.fileContents,
+          state_parts: computer.stateParts,
+          exec: computer.exec ?? true,
+          cleanup_failures: computer.cleanupFailures,
+          retry: computer.retry,
+          cancel_cleanup: computer.cancelCleanup,
+          reload_verifier: computer.reloadVerifier,
+          concurrent: computer.concurrent,
+          parallel_retry: computer.parallelRetry,
+          report_failure: computer.reportFailure,
+        }),
+        encoding: "utf8",
+      },
+    ),
   ) as VerifierOutput;
 };
 
@@ -268,6 +288,55 @@ const linesPresent = (...lines: string[]): DesktopTaskCheck => ({
 });
 const graded = ({ results }: VerifierOutput) =>
   results.map(({ result, settled, read_cut }) => [result, settled, read_cut]);
+
+it("grades the first valid state part with the same view admission as the host witness", async () => {
+  const file = "Documents/today.txt";
+  const checks: DesktopTaskCheck[] = [
+    { id: "present", kind: "file_present", file },
+    linesPresent("milk"),
+  ];
+  const statePart = (state: unknown) => ({ kind: "data", data: { state } });
+  const malformed = [
+    statePart({ [file]: { format: "text" } }),
+    statePart({ [file]: { format: 7, view: null } }),
+    statePart({ [file]: { format: "text", view: null, error: 7 } }),
+  ];
+  const host = appStateViews([...malformed, statePart({})]);
+  if (!host.ok) throw new Error(host.error);
+  expect(
+    evaluateTaskChecks(checks, host.value).map(({ passed }) => passed),
+  ).toEqual([false, false]);
+  const empty = await runVerifier(checks, [[0, {}]], [], {
+    stateParts: [...malformed, statePart({})],
+  });
+  expect(empty.results).toEqual([
+    expect.objectContaining({ result: false }),
+    expect.objectContaining({
+      result: false,
+      description: expect.stringContaining("has no line"),
+    }),
+  ]);
+
+  const valid = [statePart(today("milk")), statePart({})];
+  const first = await runVerifier(checks, [[0, {}]], [], { stateParts: valid });
+  expect(first.results.map(({ result }) => result)).toEqual([true, true]);
+  const unreadable = await runVerifier(checks, [[0, {}]], [], {
+    stateParts: [
+      statePart({ [file]: { format: null, view: null, error: "read failed" } }),
+      statePart(today("milk")),
+    ],
+  });
+  expect(unreadable.results[1]).toMatchObject({
+    result: false,
+    description: expect.stringContaining("read failed"),
+  });
+  const invalid = await runVerifier(checks, [[0, {}]], [], {
+    stateParts: [{ kind: "data", data: null }, ...malformed],
+    reportFailure: true,
+  });
+  expect(invalid.results).toEqual([]);
+  expect(invalid.first_error).toMatch(/returned no state views/u);
+});
 
 it("evaluates every kind of file check without computer-exec as REA does", async () => {
   const checks: DesktopTaskCheck[] = CHECK_CASES.map(([check], index) => ({
@@ -297,6 +366,111 @@ it("evaluates every kind of file check without computer-exec as REA does", async
     typescript.map(({ description }) => description),
   );
 });
+
+it.each([
+  ["", true],
+  [" \t\r\n", true],
+  ["\ufeff", true],
+  ["\u0085", false],
+  ["\u001c", false],
+  ["\u2003", true],
+  ["\u200b", false],
+] as const)(
+  "grades numeric padding %j with the same trimming as REA",
+  async (padding, expected) => {
+    const file = "Documents/measurement.json";
+    const checks: DesktopTaskCheck[] = [
+      {
+        id: "measurement",
+        kind: "value_equals",
+        file,
+        pointer: "/value",
+        value: 5,
+        tolerance: 0,
+      },
+    ];
+    const views = {
+      [file]: {
+        format: "json" as const,
+        view: { value: `${padding}5${padding}` },
+        truncated: false,
+      },
+    };
+    expect(
+      evaluateTaskChecks(checks, new Map(Object.entries(views)))[0]?.passed,
+    ).toBe(expected);
+    const output = await runVerifier(checks, [[0, views]], [], { exec: false });
+    expect(output.results.map(({ result }) => result)).toEqual([expected]);
+  },
+);
+
+it.each([
+  ["\ufeff", true],
+  ["\u0085", false],
+] as const)(
+  "uses the same saved-time padding %j when resolving XML selectors",
+  async (padding, expected) => {
+    const file = "Documents/records.xml";
+    const view = xmlView(
+      `<rows><row><label>Alpha<saved>${padding}2026-11-13T10:00:00Z${padding}</saved></label><value>done</value></row></rows>`,
+    );
+    if (view === undefined) throw new Error("Expected XML fixture");
+    const views = {
+      [file]: { format: "xml" as const, view, truncated: false },
+    };
+    const checks: DesktopTaskCheck[] = [
+      {
+        id: "row",
+        kind: "value_equals",
+        file,
+        pointer:
+          "/root/children/[>label=Alpha]/children/[name=value]/children/0",
+        value: "done",
+      },
+    ];
+    expect(
+      evaluateTaskChecks(checks, new Map(Object.entries(views)))[0]?.passed,
+    ).toBe(expected);
+    const output = await runVerifier(checks, [[0, views]], [], { exec: false });
+    expect(output.results.map(({ result }) => result)).toEqual([expected]);
+  },
+);
+
+it.each([64, 350, 490])(
+  "grades nested XML selector text at depth %i like REA",
+  async (depth) => {
+    const file = "Documents/deep.xml";
+    const xml =
+      "<root><record><name>ma" +
+      "<n>".repeat(depth) +
+      "rke" +
+      "</n>".repeat(depth) +
+      "r<saved>2026-11-13T10:00:00Z</saved></name></record></root>";
+    const view = xmlView(xml, desktopViewPolicy({ xml_depth: 494 }));
+    if (view === undefined) throw new Error("Expected XML fixture");
+    expect(view).toMatchObject({ truncated: false });
+    const views = {
+      [file]: { format: "xml" as const, view, truncated: false },
+    };
+    const checks: DesktopTaskCheck[] = [
+      {
+        id: "deep",
+        kind: "value_equals",
+        file,
+        pointer: "/root/children/[>name=marker]/name",
+        value: "record",
+      },
+    ];
+    expect(
+      evaluateTaskChecks(checks, new Map(Object.entries(views)))[0]?.passed,
+    ).toBe(true);
+    const output = await runVerifier(checks, [[0, views]], [], {
+      exec: false,
+      fileContents: { [file]: xml },
+    });
+    expect(output.results.map(({ result }) => result)).toEqual([true]);
+  },
+);
 
 it("decodes JSON pointer escapes once in the exported verifier", async () => {
   const checks: DesktopTaskCheck[] = [
@@ -756,3 +930,65 @@ it.each([false, true])(
     }
   },
 );
+
+it("keeps distinct JSON kind/name tuples addressable after regenerated ids and reordering", async () => {
+  const file = "Documents/records.json";
+  const records = (done: boolean) => [
+    {
+      uid: "812403bed9f511f19fc4edd4f1920549",
+      format: "A\0B",
+      name: "C",
+      done,
+    },
+    {
+      uid: "84f27625d9f511f188ededd4f1920549",
+      format: "A",
+      name: "B\0C",
+      done: false,
+    },
+  ];
+  const before = records(false),
+    after = records(true);
+  const [draft] = draftOf({
+    [file]: statePath("document", "json", before, after),
+  });
+  if (draft === undefined) throw new Error("Expected a changed file");
+  const checks = draft.suggested.map((check, index) => ({
+    ...check,
+    id: `c${String(index)}`,
+  }));
+  const saved = after.toReversed().map((record, index) => ({
+    ...record,
+    uid: `${String(index).repeat(32)}`,
+  }));
+  const views = (view: typeof after) => ({
+    [file]: { format: "json", view, truncated: false },
+  });
+  const original = await runVerifier(checks, [[0, views(after)]], [], {
+    exec: false,
+  });
+  expect(original.results.length).toBeGreaterThan(0);
+  expect(original.results.every(({ result }) => result)).toBe(true);
+  const repeated = await runVerifier(checks, [[0, views(saved)]], [], {
+    exec: false,
+  });
+  expect(repeated.results.every(({ result }) => result)).toBe(true);
+  expect(
+    evaluateTaskChecks(checks, new Map([[file, views(saved)[file]]])).every(
+      ({ passed }) => passed,
+    ),
+  ).toBe(true);
+  const wrong = saved.map((record) => ({
+    ...record,
+    done: record.format === "A",
+  }));
+  const refused = await runVerifier(checks, [[0, views(wrong)]], [], {
+    exec: false,
+  });
+  expect(refused.results.some(({ result }) => !result)).toBe(true);
+  expect(
+    evaluateTaskChecks(checks, new Map([[file, views(wrong)[file]]])).some(
+      ({ passed }) => !passed,
+    ),
+  ).toBe(true);
+});

@@ -429,6 +429,43 @@ it.each([
   },
 );
 
+it("reports typed row bounds at the selected row and retained carrier", () => {
+  const bytes = buildManagedPeFixture();
+  const pe = readManagedPeLayout(bytes);
+  if (pe.cli === null) throw new Error("fixture has no CLI header");
+  const layout = readManagedMetadataLayout(
+    bytes,
+    pe.rvaToOffset(pe.cli.metadata.rva, pe.cli.metadata.size, "metadata"),
+    pe.cli.metadata.size,
+  );
+  const table = layout.table(4);
+  if (table === undefined) throw new Error("fixture has no Field rows");
+  const row = metadataRowCursor(bytes, layout, 4, 1);
+  row.readIndex(2);
+  row.readIndex(layout.stringIndexSize);
+  row.readIndex(layout.blobIndexSize);
+  const truncated = metadataRowCursor(
+    bytes.subarray(0, table.offset + 1),
+    layout,
+    4,
+    1,
+  );
+  for (const [cursor, offset] of [
+    [row, table.offset + table.rowSize],
+    [truncated, table.offset],
+  ] as const) {
+    expect(() => cursor.readIndex(2)).toThrowError(
+      expect.objectContaining({
+        issue: expect.objectContaining({
+          code: "invalid-row",
+          scope: "metadata.Field",
+          offset,
+        }),
+      }),
+    );
+  }
+});
+
 /** Artifact offset of row 1's signature blob, read with the production heap reader. */
 const memberSignatureBlobOffset = (
   bytes: Buffer,
@@ -444,11 +481,11 @@ const memberSignatureBlobOffset = (
   const row = metadataRowCursor(bytes, layout, table, 1);
   // ECMA-335 II.22.15 Field, II.22.26 MethodDef and II.22.25 MemberRef
   // columns before Name.
-  if (table === 4) row.readUInt16();
+  if (table === 4) row.u16();
   if (table === 6) {
-    row.readUInt32();
-    row.readUInt16();
-    row.readUInt16();
+    row.u32();
+    row.u16();
+    row.u16();
   }
   if (table === 10) row.readIndex(layout.codedIndexSize("MemberRefParent"));
   row.readIndex(layout.stringIndexSize);

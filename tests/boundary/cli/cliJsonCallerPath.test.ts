@@ -1,3 +1,4 @@
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import {
   chmod,
   mkdir,
@@ -11,7 +12,6 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { Cli } from "incur";
 import pino from "pino";
 import { expect, it } from "vitest";
 
@@ -35,7 +35,7 @@ const providerIdentity = {
 } as const;
 
 const serveJson = async (
-  cli: ReturnType<typeof Cli.create>,
+  cli: ReturnType<typeof createCommandCli>,
   command: string,
   input: unknown,
 ): Promise<unknown> => {
@@ -88,9 +88,7 @@ it.skipIf(process.platform === "win32")(
         },
         close: async () => undefined,
       };
-      const electronCli = Cli.create("rea-path-electron-test", {
-        sync: false,
-      });
+      const electronCli = createCommandCli();
       registerElectronCommands(
         electronCli,
         pino({ level: "silent" }),
@@ -138,9 +136,7 @@ it.skipIf(process.platform === "win32")(
         },
         close: async () => undefined,
       };
-      const browserCli = Cli.create("rea-path-browser-test", {
-        sync: false,
-      });
+      const browserCli = createCommandCli();
       registerBrowserScenarioCommands(
         browserCli,
         pino({ level: "silent" }),
@@ -202,9 +198,7 @@ it.skipIf(process.platform === "win32")(
           JSON.parse(await readFile(`${root}/link/../evidence.json`, "utf8")),
         ).evidence_id,
       ).toBe(selectedEvidence.evidence_id);
-      const analysisViewCli = Cli.create("rea-path-evidence-test", {
-        sync: false,
-      });
+      const analysisViewCli = createCommandCli();
       registerAnalysisViewCommands(analysisViewCli, pino({ level: "silent" }));
       for (const path of [
         "link/../evidence.json",

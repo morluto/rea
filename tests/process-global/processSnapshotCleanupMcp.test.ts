@@ -117,9 +117,9 @@ it("retains and retries the exact snapshot file handle through public MCP captur
       },
     });
     const firstDelivered = delivery.mock.calls.at(-1)?.[0];
+    expect(firstDelivered?.cleanupIncomplete).toBe(true);
     if (firstDelivered === undefined)
       throw new Error("Expected a delivered snapshot failure");
-    expect(firstDelivered.cleanupIncomplete).toBe(true);
     expect(firstDelivered.cleanupResources).toContain(injected.path);
 
     const retryBlocked = parseMcpToolError(await capture());
