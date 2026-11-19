@@ -191,7 +191,8 @@ export const parseBinaryTarget = async (
     const sourcePath =
       HOST_PLATFORM.platform === "win32" ? candidate : canonical;
     throwIfTargetResolutionCancelled(signal);
-    const resolved = await resolveAppBundle(canonical);
+    const resolved = await resolveAppBundle(canonical, options);
+    if (!resolved.ok && resolved.error.cleanupIncomplete) return resolved;
     throwIfTargetResolutionCancelled(signal);
     if (!resolved.ok) return resolved;
     const { executable: path, infoPlist } = resolved.value;
@@ -902,11 +903,12 @@ const sha256Handle = async (
 
 const resolveAppBundle = async (
   path: string,
+  options: Pick<BinaryTargetResolverOptions, "resources" | "signal">,
 ): Promise<Result<ResolvedAppBundle, BinaryTargetError>> => {
   const metadata = await stat(path);
   if (!metadata.isDirectory()) return ok({ executable: path });
   if (openableAppleBundleExtension(extname(path)) !== undefined)
-    return resolveAppleBundleExecutable(path);
+    return resolveAppleBundleExecutable(path, options);
   // Another Apple bundle type, such as a driver or kernel extension, is not
   // an application directory and has no JavaScript route.
   if (isUnopenedAppleBundleExtension(extname(path)))

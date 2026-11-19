@@ -139,17 +139,19 @@ describe("app bundle program directory containment", () => {
       let childResolved = false;
 
       const result = await resolveAppleBundleExecutable(bundle, {
-        readFile: async () => Buffer.from(plist),
-        realpath: async (path) => {
-          if (path === bundle) return canonicalBundle;
-          if (path === programs) return outsidePrograms;
-          if (path === executable) {
-            childResolved = true;
-            throw Object.assign(new Error("missing executable"), {
-              code: "ENOENT",
-            });
-          }
-          return path;
+        fileSystem: {
+          readFile: async () => Buffer.from(plist),
+          realpath: async (path) => {
+            if (path === bundle) return canonicalBundle;
+            if (path === programs) return outsidePrograms;
+            if (path === executable) {
+              childResolved = true;
+              throw Object.assign(new Error("missing executable"), {
+                code: "ENOENT",
+              });
+            }
+            return path;
+          },
         },
       });
 
