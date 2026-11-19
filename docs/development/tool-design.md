@@ -279,8 +279,12 @@ and independently specified expectations. See [boundary regressions](testing.md#
 
 Give each nested parser the admitted extent of its containing record.
 Check a child's declared encoded range against that extent before applying
-its decoding allowance. When the range cannot fit, report the format failure
-even if the declared decoded size would also exceed a budget.
+its decoding allowance. If the format declares more fields or rows after the
+child, leave room for their minimum required framing. When the range cannot
+fit, report the format failure even if the decoded size would also exceed a
+budget. Keep encoded ranges separate from declared decoded lengths so an
+expansion limit can preserve the source range and any independently readable
+siblings.
 Retain the source offset and the reason when a field is malformed or its
 encoding is unsupported. A stream may need more bytes to complete a frame.
 A completed artifact with the same missing bytes has truncated data. Carry
