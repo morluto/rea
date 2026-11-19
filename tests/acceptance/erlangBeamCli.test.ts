@@ -439,6 +439,31 @@ cliTest(
 );
 
 cliTest(
+  "checks the BEAM chunk extent before reporting the chunk-count limit",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-beam-chunk-extent-");
+    const path = join(root, "app.beam");
+    const bytes = erlangBeamFixture();
+    const firstSize = bytes.readUInt32BE(16);
+    const secondHeader = 20 + Math.ceil(firstSize / 4) * 4;
+    await writeFile(path, bytes);
+    const inspect = () =>
+      cli.run({
+        arguments: ["inspect-erlang-beam", path, "--max-chunks", "1", "--json"],
+      });
+    const admitted = await inspect();
+    expect(admitted.json).toMatchObject({ code: "resource_constraint" });
+
+    // Retain bytes beyond the declared form. They cannot supply the second
+    // chunk's payload even though the complete file contains it.
+    bytes.writeUInt32BE(secondHeader, 4);
+    await writeFile(path, bytes);
+    const refused = await inspect();
+    expect(refused.json).toMatchObject({ code: "invalid_request" });
+  },
+);
+
+cliTest(
   "resolves a relative BEAM path against the working directory",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-beam-cli-rel-");

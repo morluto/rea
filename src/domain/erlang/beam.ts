@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
@@ -118,7 +119,7 @@ export const erlangBeamSchema = z.strictObject({
   module: z.string().nullable(),
   coverage: z.strictObject({
     // "partial" when bytes trail the declared FOR1 form and go unexamined.
-    status: z.enum(["complete", "partial"]),
+    status: knownCoverageStatusSchema,
     examined_chunks: uint,
     atoms: uint,
     // Optional so Evidence retained by builds predating this field reparses

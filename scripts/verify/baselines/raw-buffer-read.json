@@ -62,7 +62,6 @@
   "src/dotnet/ManagedConstantValue.ts": 12,
   "src/dotnet/ManagedMemberInstructionDecoder.ts": 30,
   "src/dotnet/ManagedMethodBodyReader.ts": 5,
-  "src/erlang/BeamParser.ts": 3,
   "src/flutter/DartElf.ts": 2,
   "src/ghidra/GhidraLoadImageValues.ts": 1,
   "src/ghidra/extensions/GhidraExtensions.ts": 1,
