@@ -1,4 +1,4 @@
-import type * as t from "@babel/types";
+import * as t from "@babel/types";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 import {
   semanticArrayIndex,
@@ -52,6 +52,24 @@ export const semanticKnownArrayIteration = (
   value?.status === "array" &&
   !ambientPathMayObserveAt(state, read, arrayIteratorNextPath, "contents") &&
   value.items.every((item) => semanticArrayIndex(item.name) !== null);
+
+const arrayIteratorReturnPaths = [
+  [...semanticArrayIteratorPrototypePath, "return"],
+  [...semanticArrayIteratorPrototypePath, "__proto__", "return"],
+  [...semanticArrayIteratorPrototypePath, "__proto__", "__proto__", "return"],
+  ["global", "Iterator", "prototype", "return"],
+  ["global", "Object", "prototype", "return"],
+] as const;
+
+/** A finite pattern may finish with a live iterator and look up its return hook. */
+export const semanticArrayPatternCloseMayInvoke = (
+  pattern: t.ArrayPattern,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  !t.isRestElement(pattern.elements.at(-1)) &&
+  arrayIteratorReturnPaths.some((path) =>
+    ambientPathMayObserveAt(state, pattern, path, "contents"),
+  );
 
 /** Invocation spreads use the same native-iteration proof at their source read. */
 export const semanticKnownArrayIterationAt = (

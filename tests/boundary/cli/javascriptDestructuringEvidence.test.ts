@@ -7,6 +7,15 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/j
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
+const iteratorCloseSource = `
+    const box = { label: "ready", items: [0, { mode: "old" }] };
+    Object.getPrototypeOf([].values()).return = function () {
+      delete this.next().value.mode;
+      return {};
+    };
+    const { label: beforeClose, items: [first], items: { 1: { mode: afterClose } } } = box;
+  `;
+
 cliTest(
   "traces proved destructuring dependencies and leaves custom iteration uncertain",
   async ({ cli }) => {
@@ -59,6 +68,7 @@ cliTest(
     [selected] = after;
   `,
     );
+    await writeFile(join(root, "iterator-close.js"), iteratorCloseSource);
     const output = await cli.run({
       arguments: ["analyze-javascript-application", root, "--json"],
     });
@@ -79,6 +89,8 @@ cliTest(
       ["projected", ["items", "0"]],
       ["arrayObject", ["0", "mode"]],
       ["selected", ["0"], "candidate"],
+      ["beforeClose", ["label"]],
+      ["afterClose", ["items", "1", "mode"], "candidate"],
     ] as const) {
       const binding = graph.nodes.find(
         (node) => node.kind === "binding" && node.label === name,
@@ -116,6 +128,8 @@ cliTest(
       "projected",
       "arrayObject",
       "selected",
+      "beforeClose",
+      "afterClose",
     ]) {
       const binding = graph.nodes.find(
         ({ kind, label }) => kind === "binding" && label === name,
@@ -144,7 +158,8 @@ cliTest(
           ]),
         },
       };
-      if (name === "selected") expect(trace.json).not.toMatchObject(relation);
+      if (name === "selected" || name === "afterClose")
+        expect(trace.json).not.toMatchObject(relation);
       else expect(trace.json).toMatchObject(relation);
     }
   },

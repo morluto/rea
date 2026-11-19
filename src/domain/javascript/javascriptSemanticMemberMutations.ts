@@ -79,6 +79,7 @@ import {
   type JavaScriptExecution,
 } from "./javascriptSemanticExecutionPoints.js";
 import {
+  semanticArrayPatternCloseMayInvoke,
   semanticKnownArrayIteration,
   semanticReferenceSourcesInactive,
   semanticSelectedReferenceSlot,
@@ -872,6 +873,7 @@ export function* collectSemanticMemberMutationsSteps(
       reference.memberReadAt?.end,
       capturedSelectionKey(reference.capturedSelections),
       reference.iterationOnly,
+      reference.arrayPattern?.start,
       reference.widenedGetterResult === true,
       reference.definiteReceiver === true,
       reference.assignedSources?.[0]?.target?.start,
@@ -1898,6 +1900,9 @@ export function* collectSemanticMemberMutationsSteps(
           effect: "escape",
           originAt: source.mutation,
           iterationOnly: source.kind === "iteration",
+          ...(source.arrayPattern === undefined
+            ? {}
+            : { arrayPattern: source.arrayPattern }),
         });
       }
       for (const source of semanticPropertyReadSources(node, parent, state)) {
@@ -2094,7 +2099,24 @@ export function* collectSemanticMemberMutationsSteps(
         state,
         reference.node,
       );
-      if (knownArray && reference.iterationOnly) continue;
+      if (knownArray && reference.iterationOnly) {
+        const pattern = reference.arrayPattern;
+        if (
+          pattern !== undefined &&
+          semanticArrayPatternCloseMayInvoke(pattern, state)
+        )
+          // The hook receives the native iterator. It can advance it and
+          // expose yielded references without receiving the array itself.
+          markValue(
+            node,
+            [...projection, null],
+            reference.bindings,
+            "escape",
+            semanticScopeExitEffect(pattern, mutation),
+            reference.originAt,
+          );
+        continue;
+      }
       markValue(
         reference.node,
         knownArray ? reference.path : reference.fallbackPath,
@@ -2143,6 +2165,7 @@ interface IterableReference extends ReferencedValue, MutationSelectionContext {
   readonly mutation?: t.Node;
   readonly originAt: t.Node | undefined;
   readonly iterationOnly?: boolean;
+  readonly arrayPattern?: t.ArrayPattern;
   readonly definiteReceiver?: boolean;
   readonly assignedSources?: readonly SemanticIterationSource[];
   readonly requiredSources?: NonNullable<

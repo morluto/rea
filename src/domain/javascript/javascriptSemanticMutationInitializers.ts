@@ -233,10 +233,16 @@ export const semanticTopLevelEffectFollowsCapture = (
 };
 
 const scopeExitMarkers = new WeakMap<t.Node, t.EmptyStatement>();
-const scopeExitOwners = new WeakMap<t.Node, t.Node>();
+const scopeExitOwners = new WeakMap<
+  t.Node,
+  { readonly scope: t.Node; readonly positionOwner: t.Node }
+>();
 
-/** A derived scope-end effect keeps disposal separate from initializer evaluation. */
-export const semanticScopeExitEffect = (scope: t.Node): t.Node => {
+/** A derived scope-end effect keeps finalization separate from source evaluation. */
+export const semanticScopeExitEffect = (
+  scope: t.Node,
+  positionOwner = scope,
+): t.Node => {
   const cached = scopeExitMarkers.get(scope);
   if (cached !== undefined) return cached;
   const marker = t.emptyStatement();
@@ -247,7 +253,7 @@ export const semanticScopeExitEffect = (scope: t.Node): t.Node => {
   if (scope.loc != null)
     marker.loc = { ...scope.loc, start: scope.loc.end, end: scope.loc.end };
   scopeExitMarkers.set(scope, marker);
-  scopeExitOwners.set(marker, scope);
+  scopeExitOwners.set(marker, { scope, positionOwner });
   return marker;
 };
 
@@ -286,8 +292,8 @@ export const semanticEffectFollowsReference = (
   if (reference === effect) return false;
   const exit = effect === undefined ? undefined : scopeExitOwners.get(effect);
   if (exit !== undefined) {
-    if (withinScopeExit(reference, exit, parents)) return true;
-    effect = exit;
+    if (withinScopeExit(reference, exit.scope, parents)) return true;
+    effect = exit.scope;
   }
   let current: t.Node | undefined = reference;
   let child: t.Node | undefined;
@@ -341,8 +347,8 @@ export const semanticEffectTiming = (
   if (effect === undefined) return "unknown";
   const exit = scopeExitOwners.get(effect);
   if (exit !== undefined) {
-    if (withinScopeExit(site, exit, state.parentsByNode)) return "after";
-    effect = exit;
+    if (withinScopeExit(site, exit.scope, state.parentsByNode)) return "after";
+    effect = exit.scope;
   }
   // Invocation receives arguments after their values have been selected.
   if (
@@ -1970,11 +1976,17 @@ export const semanticEscapeFollowsCapture = (
   if (exit !== undefined) {
     // Unlike a source-global ordering proof, this binding was initialized in
     // the captured body. Its later sibling scope exits follow this activation.
-    const exitPosition = t.isStatement(exit)
-      ? statementPosition(exit, parents)
-      : null;
+    const { scope, positionOwner } = exit;
+    const exitPosition = t.isStatement(scope)
+      ? statementPosition(scope, parents)
+      : directMutationPosition(positionOwner, parents);
     return (
-      withinScopeExit(capture, exit, parents) ||
+      (t.isArrayPattern(scope) &&
+        ((t.isVariableDeclarator(positionOwner) &&
+          positionOwner.init === capture) ||
+          (t.isAssignmentExpression(positionOwner) &&
+            positionOwner.right === capture))) ||
+      withinScopeExit(capture, scope, parents) ||
       (capturePosition !== null &&
         exitPosition !== null &&
         positionPrecedes(capturePosition, exitPosition))
