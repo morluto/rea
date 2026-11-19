@@ -45,14 +45,19 @@ entry's `Path` or the home directory. An `env -C` or `env --chdir` prefix
 selects the directory for executable lookup and relative arguments. Capture
 retains the original argv and launch directory, with the resolved application
 directory recorded as `application_working_directory`. Export maps that
-directory into the seed before replay. When the line starts with
-`env NAME=value` or `env -- NAME=value`, the program is found on the `PATH` those assignments set,
-with an empty or relative entry read from the folder the application runs
-in. Explicit XDG folders take precedence for state discovery. For a direct
-application outside a managed sandbox, an absolute `HOME` assignment selects
-the default XDG roots and app-named dotfiles. Desktop entry lookup continues
-to use the host home. Otherwise the program is
-looked up on the host's `PATH` in the order the launch searches it, and one
+directory into the seed before replay.
+
+A leading `env` can remove inherited
+values with `-u NAME` or `--unset=NAME`. Subsequent `NAME=value` assignments
+can restore a removed variable. An optional `--` ends option processing
+before the assignments. The resulting `PATH` finds the program, and the
+resulting XDG variables select its state directories. Removing an XDG
+variable restores its home default. Explicitly removing `PATH` uses the
+default lookup path `/bin:/usr/bin` in the Linux capture environment.
+For a direct application outside a managed sandbox, an absolute `HOME` assignment
+selects the default XDG roots and app-named dotfiles. Desktop entry lookup uses
+the host home. An empty or relative `PATH` entry is read from the application's working
+directory. Without a `PATH` change, a program
 found only through a relative or empty entry is refused, since the exported
 computer would not have that entry. An `--executable` runs from
 the current directory, as it would from a shell, and a relative path to it is

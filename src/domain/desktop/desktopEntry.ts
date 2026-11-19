@@ -17,7 +17,7 @@ export interface DesktopEntry {
 const GROUP = /^\[(?<name>[^\]]+)\]$/u;
 // Only LF separates records; Unicode line/paragraph separators are value data.
 const ENTRY = /^(?<key>[A-Za-z0-9-]+)[ \t]*=[ \t]*(?<value>.*)$/su;
-const VALUE_ESCAPES: Readonly<Record<string, string>> = {
+const VALUE_ESCAPES: Readonly<Record<string, string | undefined>> = {
   s: " ",
   n: "\n",
   t: "\t",
@@ -267,8 +267,8 @@ export type DesktopCommandWrapper = {
   readonly program: string;
   /** The program's position in the expanded command, after any env operands. */
   readonly index: number;
-  /** Variables an `env` prefix sets; its `PATH` is the one that finds the program. */
-  readonly environment: Readonly<Record<string, string>>;
+  /** Changes made by the env prefix. An own undefined value removes a variable. */
+  readonly environment: Readonly<Record<string, string | undefined>>;
   /** Present when the env wrapper discards all inherited variables. */
   readonly clearEnvironment?: true;
   /** The last env chdir option and the argv span that carries its operand. */
@@ -357,12 +357,32 @@ const flatpakApplication = (argv: readonly string[], start: number) => {
   return { application_id: null, argumentIndex: argv.length };
 };
 
+const envDirectoryOperand = (option: string, next: string | undefined) => {
+  const short = /^-(i*)C(.*)$/su.exec(option);
+  const separate = short?.[2] === "" || option === "--chdir";
+  const path = separate
+    ? (next ?? "")
+    : option.startsWith("--chdir=")
+      ? option.slice("--chdir=".length)
+      : short?.[2];
+  return { path, width: separate ? 2 : 1, combined: Boolean(short?.[1]) };
+};
+
+const envUnsetOperand = (option: string, next: string | undefined) => {
+  if (option === "-u" || option === "--unset")
+    return { name: next ?? "", width: 2 };
+  if (option.startsWith("--unset="))
+    return { name: option.slice("--unset=".length), width: 1 };
+  if (option.startsWith("-u")) return { name: option.slice(2), width: 1 };
+  return undefined;
+};
+
 const desktopEnvironment = (argv: readonly string[]) => {
   let index = 1;
   let clearEnvironment = false;
   let chdir: DesktopCommandWrapper["chdir"];
   // No prototype, so an assignment such as `__proto__=x` stays a variable.
-  const environment: Record<string, string> = Object.create(null);
+  const environment: Record<string, string | undefined> = Object.create(null);
   while (index < argv.length) {
     const option = argv[index]!;
     if (/^-i+$/u.test(option) || option === "--ignore-environment") {
@@ -370,17 +390,21 @@ const desktopEnvironment = (argv: readonly string[]) => {
       index += 1;
       continue;
     }
-    const shortDirectory = /^-(i*)C(.*)$/su.exec(option);
-    const separate = shortDirectory?.[2] === "" || option === "--chdir";
-    const path = separate
-      ? (argv[index + 1] ?? "")
-      : option.startsWith("--chdir=")
-        ? option.slice("--chdir=".length)
-        : shortDirectory?.[2];
-    if (path === undefined) break;
+    const { path, width, combined } = envDirectoryOperand(
+      option,
+      argv[index + 1],
+    );
+    if (path === undefined) {
+      const unset = envUnsetOperand(option, argv[index + 1]);
+      if (unset === undefined) break;
+      if (!unset.name || unset.name.includes("="))
+        return { index: argv.length, chdir, clearEnvironment, environment };
+      environment[unset.name] = undefined;
+      index += unset.width;
+      continue;
+    }
     const start = index;
-    index += separate ? 2 : 1;
-    const combined = Boolean(shortDirectory?.[1]);
+    index += width;
     if (combined) clearEnvironment = true;
     chdir = {
       path,
@@ -416,7 +440,10 @@ export const unwrapDesktopCommand = (
           index: 0,
           chdir: undefined,
           clearEnvironment: false,
-          environment: Object.create(null) as Record<string, string>,
+          environment: Object.create(null) as Record<
+            string,
+            string | undefined
+          >,
         };
   const program = argv[index] ?? "";
   const wrapperOptions = {

@@ -200,6 +200,29 @@ describe("unwrapDesktopCommand", () => {
     });
   });
 
+  it("keeps the working-directory span and executable boundary across unset options", () => {
+    const argv = [
+      "env",
+      "-u",
+      "PATH",
+      "-C",
+      "profile",
+      "--unset=XDG_CONFIG_HOME",
+      "--",
+      "PATH=bin",
+      "./app",
+      "-u",
+    ];
+    expect(unwrapDesktopCommand(argv)).toEqual({
+      kind: "direct",
+      program: "./app",
+      index: 8,
+      argumentIndex: 9,
+      chdir: { path: "profile", start: 3, end: 5 },
+      environment: { PATH: "bin", XDG_CONFIG_HOME: undefined },
+    });
+  });
+
   it("keeps an env operand named -- after an assignment distinct from the option terminator", () => {
     expect(
       unwrapDesktopCommand(["env", "MODE=selected", "--", "notes"]),
@@ -235,6 +258,32 @@ describe("unwrapDesktopCommand", () => {
         unwrapDesktopCommand(["env", "__proto__=x", "notes"]).environment,
       ),
     ).toEqual([["__proto__", "x"]]);
+  });
+
+  it.each([
+    [["-u", "VARIABLE"]],
+    [["--unset", "VARIABLE"]],
+    [["-uVARIABLE"]],
+    [["--unset=VARIABLE"]],
+  ])("keeps the Flatpak argument boundary after env %j", (option) => {
+    const argv = [
+      "env",
+      ...option,
+      "flatpak",
+      "run",
+      "--branch",
+      "beta",
+      "org.example.Notes",
+      "-u",
+    ];
+    const wrapper = unwrapDesktopCommand(argv);
+    expect(wrapper).toMatchObject({
+      kind: "flatpak",
+      application_id: "org.example.Notes",
+    });
+    expect(Object.hasOwn(wrapper.environment, "VARIABLE")).toBe(true);
+    expect(wrapper.environment.VARIABLE).toBeUndefined();
+    expect(argv.slice(wrapper.argumentIndex)).toEqual(["-u"]);
   });
 
   it("recognises flatpak launchers and their application id", () => {

@@ -544,6 +544,15 @@ describe("repositories whose URI held credentials", () => {
 });
 
 describe("electronLaunchArguments", () => {
+  it("inserts the Electron option after the program wrapped by env unset", () => {
+    expect(
+      electronLaunchArguments(
+        ["env", "-u", "GTK_THEME", "--", "typora", "%U"],
+        true,
+      ),
+    ).toEqual(["env", "-u", "GTK_THEME", "--", "typora", "--no-sandbox", "%U"]);
+  });
+
   it("turns Chromium's sandbox off right after an Electron program, once", () => {
     expect(electronLaunchArguments(["typora", "/home/ada/a.md"], true)).toEqual(
       ["typora", "--no-sandbox", "/home/ada/a.md"],

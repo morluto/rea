@@ -251,14 +251,13 @@ const launchEnvironment = (
   wrapper: ReturnType<typeof unwrapDesktopCommand>,
   inherited: LinuxApplicationRequest["environment"],
 ) => {
-  if (!wrapper.clearEnvironment) {
-    const environment = { ...inherited, ...wrapper.environment };
-    return { environment, lookupEnvironment: environment };
-  }
-  const environment = wrapper.environment;
+  const environment = wrapper.clearEnvironment
+    ? wrapper.environment
+    : { ...inherited, ...wrapper.environment };
   // GNU env's execvp searches the Linux system path when PATH is absent.
   const lookupEnvironment =
-    environment.PATH === undefined
+    environment.PATH === undefined &&
+    (wrapper.clearEnvironment || Object.hasOwn(wrapper.environment, "PATH"))
       ? { ...environment, PATH: "/bin:/usr/bin" }
       : environment;
   return { environment, lookupEnvironment };

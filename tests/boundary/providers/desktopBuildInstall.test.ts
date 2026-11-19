@@ -95,6 +95,45 @@ const stage = async (prefix: string) => {
   return root;
 };
 
+it.each([
+  "env",
+  "env --",
+  "env -iC/tmp --",
+  "env --ignore-environment",
+  "env -- -",
+  "env -C /opt --chdir=/tmp --",
+  "env --chdir= -C /tmp --",
+  "env -C /tmp -u GTK_THEME --unset=QT_QPA_PLATFORM --",
+])(
+  "keeps the %s prefix when it points the AppImage's entry at AppRun",
+  async (prefix) => {
+    const root = await stage("rea-appimage-env-");
+    const image = join(root, "env/vendor/app.AppImage");
+    await writeFile(
+      image,
+      STUB_APPIMAGE.replace(
+        "'Exec=drawio %U'",
+        `'Exec=${prefix} QT_QPA_PLATFORM=xcb "GTK_THEME=Adwaita dark" drawio %U'`,
+      ),
+    );
+    await chmod(image, 0o755);
+    await runDownloadInstall(
+      renderBuildBundle(appImageRequest("drawio"), localPayload),
+      root,
+    );
+
+    const appRun = join(root, "opt/rea-apps/drawio/squashfs-root/AppRun");
+    expect(
+      await readFile(
+        join(root, "local-share/applications/drawio.desktop"),
+        "utf8",
+      ),
+    ).toContain(
+      `\nExec=${prefix} QT_QPA_PLATFORM=xcb "GTK_THEME=Adwaita dark" ${appRun} %U\n`,
+    );
+  },
+);
+
 describe("download install scripts", () => {
   it("extracts an AppImage under its folder and installs its own entry with an absolute Exec, its icon and no TryExec", async () => {
     const root = await stage("rea-appimage-install-");
@@ -139,44 +178,6 @@ describe("download install scripts", () => {
     expect(failed?.stderr).toContain("com.example.Other.desktop");
     expect(failed?.stderr).toContain("drawio.desktop");
   });
-
-  it.each([
-    "",
-    "-- ",
-    "-C /opt --chdir=/tmp -- ",
-    "-iC/tmp -- ",
-    "--ignore-environment ",
-    "-- - ",
-    "--chdir= -C /tmp -- ",
-  ])(
-    "keeps an env %sprefix and its assignments when it points the AppImage's entry at AppRun",
-    async (delimiter) => {
-      const root = await stage("rea-appimage-env-");
-      const image = join(root, "env/vendor/app.AppImage");
-      await writeFile(
-        image,
-        STUB_APPIMAGE.replace(
-          "'Exec=drawio %U'",
-          `'Exec=env ${delimiter}QT_QPA_PLATFORM=xcb "GTK_THEME=Adwaita dark" drawio %U'`,
-        ),
-      );
-      await chmod(image, 0o755);
-      await runDownloadInstall(
-        renderBuildBundle(appImageRequest("drawio"), localPayload),
-        root,
-      );
-
-      const appRun = join(root, "opt/rea-apps/drawio/squashfs-root/AppRun");
-      expect(
-        await readFile(
-          join(root, "local-share/applications/drawio.desktop"),
-          "utf8",
-        ),
-      ).toContain(
-        `\nExec=env ${delimiter}QT_QPA_PLATFORM=xcb "GTK_THEME=Adwaita dark" ${appRun} %U\n`,
-      );
-    },
-  );
 
   it("points an Exec spaced around its = at AppRun and drops a spaced TryExec, as the desktop entry parser reads them", async () => {
     const root = await stage("rea-appimage-spaced-");
@@ -298,6 +299,12 @@ describe("download install scripts and archive links", () => {
 const shellQuote = (value: string): string =>
   `'${value.replaceAll("'", `'"'"'`)}'`;
 
+const electronLaunchPrefixes = [
+  ["", "ambient"],
+  ["/usr/bin/env -- REA_TEST_ENV=selected ", "selected"],
+  ["/usr/bin/env -u REA_TEST_ENV -- ", ""],
+] as const;
+
 describe("installed launch paths", () => {
   it("keeps an archive folder with spaces as the rea entrypoint", async () => {
     const root = await createTestTempDirectory("rea-launcher-spaces-");
@@ -354,9 +361,9 @@ describe("installed launch paths", () => {
     expect(await readFile(marker, "utf8")).toBe(`${linked}\n--version\n`);
   });
 
-  it.each(["", "/usr/bin/env -- REA_TEST_ENV=selected "])(
+  it.each(electronLaunchPrefixes)(
     "rewrites and launches an Electron-style command with the shared launch policy (prefix %j)",
-    async (prefix) => {
+    async (prefix, expectedEnvironment) => {
       const bundle = renderBuildBundle(
         {
           ...request({
@@ -442,10 +449,10 @@ describe("installed launch paths", () => {
         [],
       );
       const { stdout } = await execute(argv[0]!, argv.slice(1), {
-        env: { PATH: "/usr/bin:/bin" },
+        env: { PATH: "/usr/bin:/bin", REA_TEST_ENV: "ambient" },
       });
       expect(stdout).toBe(
-        `${prefix.length === 0 ? "" : "selected"}\n--no-sandbox\n--title=sample\n--\nAPP_MODE=argument\n`,
+        `${expectedEnvironment}\n--no-sandbox\n--title=sample\n--\nAPP_MODE=argument\n`,
       );
     },
   );

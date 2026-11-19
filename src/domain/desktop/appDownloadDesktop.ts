@@ -73,6 +73,16 @@ def program_span(raw):
                 directory = option[len("--chdir="):]
             elif short_directory:
                 directory = short_directory[1]
+            elif option in ("-u", "--unset") or option.startswith(("-u", "--unset=")):
+                if option in ("-u", "--unset"):
+                    index += 1
+                    name = tokens[index][0] if index < len(tokens) else ""
+                elif option.startswith("--unset="):
+                    name = option[len("--unset="):]
+                else:
+                    name = option[2:]
+                if not name or "=" in name:
+                    raise ValueError("invalid env unset operand in desktop Exec")
             else:
                 break
             index += 1
