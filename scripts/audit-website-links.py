@@ -31,25 +31,35 @@ def github_target(url):
     if len(parts) < 2:
         return None
     repo = f"repos/{parts[0]}/{parts[1]}"
+    ref_namespace = None
     if url.hostname == "raw.githubusercontent.com" and len(parts) >= 4:
-        # Raw URLs omit the blob segment; share ref/path resolution below.
-        parts = [*parts[:2], "blob", *parts[2:]]
+        # GitHub's Raw button includes an explicit refs/heads or refs/tags prefix.
+        if len(parts) >= 6 and parts[2] == "refs" and parts[3] in ("heads", "tags"):
+            ref_namespace = parts[3]
+            parts = [*parts[:2], "blob", *parts[4:]]
+        else:
+            parts = [*parts[:2], "blob", *parts[2:]]
     if len(parts) == 2:
         return repo
     kind = parts[2]
     if kind in ("blob", "tree") and len(parts) >= 4:
         ref = parts[3]
         # GitHub uses the longest matching branch name before the source path.
-        if not re.fullmatch(r"[0-9a-f]{40}", ref):
-            heads = github_api(f"{repo}/git/matching-refs/heads/{quote(ref, safe='')}")
-            tags = github_api(f"{repo}/git/matching-refs/tags/{quote(ref, safe='')}")
-            references = (*heads, *tags)
+        if ref_namespace or not re.fullmatch(r"[0-9a-f]{40}", ref):
+            namespaces = (ref_namespace,) if ref_namespace else ("heads", "tags")
+            references = [
+                reference
+                for namespace in namespaces
+                for reference in github_api(f"{repo}/git/matching-refs/{namespace}/{quote(ref, safe='')}")
+            ]
             suffix = "/".join(parts[3:])
             matches = [item["ref"].split("/", 2)[2] for item in references]
             matches = [name for name in matches if suffix == name or suffix.startswith(name + "/")]
             if matches:
                 ref = max(matches, key=len)
         path = "/".join(parts[3:])[len(ref):].lstrip("/")
+        if ref_namespace:
+            ref = f"refs/{ref_namespace}/{ref}"
         return f"{repo}/contents/{quote(path, safe='/')}?ref={quote(ref, safe='')}"
     if kind in ("issues", "pull") and len(parts) == 4 and parts[3].isdigit():
         return f"{repo}/{'pulls' if kind == 'pull' else 'issues'}/{parts[3]}"

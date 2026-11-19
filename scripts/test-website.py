@@ -139,6 +139,34 @@ class WebsiteLinkAuditChecks(unittest.TestCase):
         self.assertEqual(heads, [{"ref": "refs/heads/topic"}])
         self.assertEqual(tags, [{"ref": "refs/tags/topic/nested"}])
 
+    def test_raw_links_preserve_explicit_branch_and_tag_namespaces(self):
+        heads = [{"ref": "refs/heads/topic"}, {"ref": "refs/heads/topic/guide"}]
+        tags = [{"ref": "refs/tags/topic"}, {"ref": "refs/tags/topic/v1"}]
+        cases = (
+            ("heads/topic/guide/README.md", "README.md", "refs%2Fheads%2Ftopic%2Fguide"),
+            ("tags/topic/guide/README.md", "guide/README.md", "refs%2Ftags%2Ftopic"),
+            ("tags/topic/v1/README.md", "README.md", "refs%2Ftags%2Ftopic%2Fv1"),
+        )
+
+        for suffix, path, ref in cases:
+            namespace = suffix.split("/", 1)[0]
+            endpoint = f"repos/example/project/contents/{path}?ref={ref}"
+            responses = {
+                f"repos/example/project/git/matching-refs/{namespace}/topic": heads if namespace == "heads" else tags,
+                endpoint: {"name": "README.md"},
+            }
+
+            def github_api(target):
+                if target not in responses:
+                    raise ValueError("gh: Not Found (HTTP 404)")
+                return responses[target]
+
+            url = "https://raw.githubusercontent.com/example/project/refs/" + suffix
+            with self.subTest(url=url), patch.object(AUDIT, "github_api", side_effect=github_api):
+                report = AUDIT.audit_url((url, ["fixture.html"]))
+                self.assertEqual(report["status"], "ok")
+                self.assertEqual(report["endpoint"], endpoint)
+
     def test_plain_refs_and_pinned_commits_keep_their_contents_target(self):
         for ref in ("main", "a" * 40):
             responses = {
