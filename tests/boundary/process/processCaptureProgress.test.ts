@@ -578,11 +578,10 @@ itWithCaptureCapability(
     expect(timeoutProgress.every(({ total }) => total === undefined)).toBe(
       true,
     );
-    const timeoutCleanup = timeoutProgress.find(({ message }) =>
-      message?.startsWith("cleanup:"),
-    )?.message;
-    expect(timeoutCleanup).toContain("disposition=timeout");
-    expect(timeoutCleanup).toContain("owned_process_group=cleaned");
+    expect(timeoutProgress.at(-1)?.message).toContain("disposition=timeout");
+    expect(timeoutProgress.at(-1)?.message).toContain(
+      "owned_process_group=cleaned",
+    );
 
     const cancelling = await connectProgressClient(true);
     // Prepare the SDK's full output-schema cache before timing capture control.
