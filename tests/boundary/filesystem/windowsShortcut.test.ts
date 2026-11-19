@@ -255,15 +255,23 @@ it.each([false, true])(
 );
 
 it.each([
-  { flags: 0x00001000, flagName: "HasDarwinID", blockName: "DarwinDataBlock" },
+  {
+    flags: 0x00001000,
+    flagName: "HasDarwinID",
+    blockName: "DarwinDataBlock",
+    signature: 0xa0000006,
+    size: 0x314,
+  },
   {
     flags: 0x00020000,
     flagName: "RunWithShimLayer",
     blockName: "ShimDataBlock",
+    signature: 0xa0000008,
+    size: 0x88,
   },
 ])(
   "uses the ExtraData terminal to establish whether $blockName is absent",
-  async ({ flags, flagName, blockName }) => {
+  async ({ flags, flagName, blockName, signature, size }) => {
     const root = await createTestTempDirectory("rea-shortcut-extra-data-");
     const service = createWindowsShortcutService();
     const bytes = windowsShortcutBytes({
@@ -291,13 +299,25 @@ it.each([
     expect(await inspect("terminated.lnk", bytes)).toMatchObject({
       extra_data: { blocks: [], terminal_offset: terminalOffset },
       coverage: { status: "partial", failing_offset: terminalOffset },
-      issues: [
-        {
-          code: "missing_extra_data_block",
-          offset: terminalOffset,
-          message: `${flagName} is set and ${blockName} is absent`,
-        },
-      ],
+      header: { link_flags: { decoded: [flagName] } },
+      issues: [{ code: "missing_extra_data_block", offset: terminalOffset }],
+    });
+
+    const payload = Buffer.alloc(size - 8);
+    payload.write("Fixture", 0, signature === 0xa0000006 ? "ascii" : "utf16le");
+    const present = windowsShortcutBytes({
+      flags,
+      idList: null,
+      linkInfo: null,
+      extraData: [{ kind: "unknown", signature, payload }],
+    });
+    expect(await inspect("present.lnk", present)).toMatchObject({
+      extra_data: {
+        blocks: [{ signature, signature_name: blockName, size }],
+        terminal_offset: present.length - 4,
+      },
+      coverage: { status: "complete" },
+      issues: [],
     });
   },
 );
