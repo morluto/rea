@@ -180,7 +180,6 @@ const readWitnessConformanceHeader = (
 /** Byte readers for Swift relative-pointer and conformance decode facets. */
 export interface SwiftDispatchReaders {
   u32(address: bigint): number;
-  i32(address: bigint): number;
   pointer(address: bigint): bigint;
   resolvePointer(address: bigint): PointerResolution;
   string(address: bigint): string;
@@ -204,7 +203,7 @@ const decoded = { status: "decoded" as const, reason: null };
 const SWIFT_STATIC_WITNESS_FLAGS_MASK = 0x78;
 /** Create a Swift ABI signed-relative pointer decoder that records relative_pointers. */
 export const createSwiftRelativeReader = (input: {
-  readers: SwiftDispatchReaders;
+  readers: SwiftDispatchReaders & { i32(address: bigint): number };
   budget: DispatchRecordBudget;
   result: ObjcSwiftMetadata;
 }) => {
