@@ -27,8 +27,6 @@ const FILETIME_UNIX_EPOCH = 116444736000000000n;
 const UUID_UNIX_EPOCH = 0x01b21dd213814000n;
 const ENTRIES_PER_YIELD = 32;
 const VOLUME_UNICODE_LABEL_SELECTOR = 0x14;
-// MS-SHLLINK §2.5.7 requires at least 12 bytes including the 8-byte block header.
-const PROPERTY_STORE_MIN_PAYLOAD_BYTES = 4;
 // MS-SHLLINK §2.4 exempts COMMAND_LINE_ARGUMENTS from this format limit.
 const MAX_STRING_DATA_CHARACTERS = 260;
 /** ECMAScript Date range: 8.64e15 ms either side of the Unix epoch. */
@@ -119,6 +117,14 @@ const EXTRA_SIGNATURE_NAMES = {
   0xa000000b: "KnownFolderDataBlock",
   0xa000000c: "VistaAndAboveIDListDataBlock",
 } as const;
+
+// MS-SHLLINK §2.5.7 and §2.5.8 specify minimum sizes including the 8-byte header.
+const OPAQUE_EXTRA_MIN_PAYLOAD_BYTES: Readonly<
+  Partial<Record<number, number>>
+> = {
+  0xa0000008: 128,
+  0xa0000009: 4,
+};
 
 const extraSignatureName = (signature: number): string | null => {
   const names: Readonly<Partial<Record<number, string>>> =
@@ -1129,21 +1135,20 @@ const decodeExtra = (
       item_offset: payload.readUInt32LE(16),
     };
   }
-  if (signature === 0xa0000009) {
-    if (payload.length >= PROPERTY_STORE_MIN_PAYLOAD_BYTES)
-      return {
-        kind: "property_store",
-        bytes: payload.length,
-        sha256: sha256Hex(payload),
-      };
+  const minimum = OPAQUE_EXTRA_MIN_PAYLOAD_BYTES[signature];
+  const belowMinimum = minimum !== undefined && payload.length < minimum;
+  if (belowMinimum)
     note(
       walk,
       "malformed_structure",
       offset,
-      `PropertyStoreDataBlock payload is shorter than ${String(PROPERTY_STORE_MIN_PAYLOAD_BYTES)} bytes`,
+      `${extraSignatureName(signature)} payload is shorter than ${String(minimum)} bytes`,
     );
-  }
-  return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
+  return {
+    kind: signature === 0xa0000009 && !belowMinimum ? "property_store" : "raw",
+    bytes: payload.length,
+    sha256: sha256Hex(payload),
+  };
 };
 
 const parseIdList = async (

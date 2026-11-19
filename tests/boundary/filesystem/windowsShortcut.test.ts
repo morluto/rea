@@ -479,21 +479,32 @@ describe("Windows shortcut deep parent paths", () => {
 });
 
 it.each([
-  { payloadBytes: 0, status: "partial", kind: "raw" },
-  { payloadBytes: 3, status: "partial", kind: "raw" },
-  { payloadBytes: 4, status: "complete", kind: "property_store" },
+  { carrier: "PropertyStore", payloadBytes: 0, status: "partial", kind: "raw" },
+  { carrier: "PropertyStore", payloadBytes: 3, status: "partial", kind: "raw" },
+  {
+    carrier: "PropertyStore",
+    payloadBytes: 4,
+    status: "complete",
+    kind: "property_store",
+  },
+  { carrier: "Shim", payloadBytes: 126, status: "partial", kind: "raw" },
+  { carrier: "Shim", payloadBytes: 128, status: "complete", kind: "raw" },
 ])(
-  "reports $status coverage for a PropertyStoreDataBlock with $payloadBytes payload bytes",
-  async ({ payloadBytes, status, kind }) => {
-    const root = await createTestTempDirectory("rea-shortcut-property-store-");
-    const path = join(root, "property-store.lnk");
+  "reports $status coverage for a $carrier block with $payloadBytes payload bytes",
+  async ({ carrier, payloadBytes, status, kind }) => {
+    const root = await createTestTempDirectory("rea-shortcut-extra-carrier-");
+    const path = join(root, "shortcut.lnk");
+    const shim = carrier === "Shim";
+    const flags = shim ? 0x00020000 : 0;
+    const signature = shim ? 0xa0000008 : 0xa0000009;
     const payload = Buffer.alloc(payloadBytes);
+    if (shim) Buffer.from("FixtureLayer", "utf16le").copy(payload);
     const bytes = windowsShortcutBytes({
-      flags: 0,
+      flags,
       idList: null,
       linkInfo: null,
       extraData: [
-        { kind: "property_store", payload },
+        { kind: "unknown", signature, payload },
         { kind: "console_fe", codePage: 437 },
       ],
     });
@@ -501,6 +512,9 @@ it.each([
     const result = await createWindowsShortcutService().inspect({ path });
     if (!result.ok) throw result.error;
     expect(result.value.normalized_result).toMatchObject({
+      header: {
+        link_flags: { raw: flags, decoded: shim ? ["RunWithShimLayer"] : [] },
+      },
       coverage: { status, failing_offset: status === "partial" ? 76 : null },
       issues:
         status === "partial"
@@ -511,7 +525,8 @@ it.each([
           {
             offset: 76,
             size: 8 + payloadBytes,
-            signature_name: "PropertyStoreDataBlock",
+            signature,
+            signature_name: `${carrier}DataBlock`,
             decoded: {
               kind,
               bytes: payloadBytes,
