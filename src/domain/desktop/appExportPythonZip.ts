@@ -116,10 +116,12 @@ def _zip_end(file, size: int):
         at = tail.rfind(ZIP_END, 0, at + 3)
     if at < 0:
         return None
-    total, length, offset = struct.unpack_from("<HII", tail, at + 10)
+    entries_on_disk, total, length, offset = struct.unpack_from("<HHII", tail, at + 8)
     classic_disks = [struct.unpack_from("<H", tail, at + field)[0] for field in ZIP_CLASSIC_DISK_OFFSETS]
     end = size - window + at
-    classic = (end, length, offset) if all(disk in ZIP_SINGLE_VOLUME["classic"] for disk in classic_disks) else None
+    classic = ((end, length, offset, total)
+               if entries_on_disk == total and all(disk in ZIP_SINGLE_VOLUME["classic"] for disk in classic_disks)
+               else None)
     locator_at = end - ZIP64_LOCATOR_LAYOUT["bytes"]
     if locator_at < 0:
         return classic
@@ -142,7 +144,9 @@ def _zip_end(file, size: int):
             return None
         length = struct.unpack_from("<Q", zip64, ZIP64_END_LAYOUT["directorySizeOffset"])[0]
         offset = struct.unpack_from("<Q", zip64, ZIP64_END_LAYOUT["directoryOffset"])[0]
-        return record, length, offset
+        entries_on_disk = struct.unpack_from("<Q", zip64, ZIP64_END_LAYOUT["entriesOnDiskOffset"])[0]
+        total = struct.unpack_from("<Q", zip64, ZIP64_END_LAYOUT["totalEntriesOffset"])[0]
+        return (record, length, offset, total) if entries_on_disk == total else None
     limits = ZIP_CLASSIC_DIRECTORY_LIMITS
     if total == limits["count"] or length == limits["size"] or offset == limits["offset"]:
         return None
@@ -203,12 +207,12 @@ def _zip_directory(file, size: int, keep: int):
     located = _zip_end(file, size)
     if located is None:
         return None
-    end, length, declared = located
+    end, length, declared, total = located
     start = end - length
     if start < 0:
         return None
     file.seek(start)
-    records, names, count, at = [], [], 0, start
+    records, names, count, seen, at = [], [], 0, 0, start
     while at < end:
         fixed = file.read(46)
         if at + 46 > end or len(fixed) < 46 or fixed[:4] != ZIP_CENTRAL:
@@ -220,6 +224,7 @@ def _zip_directory(file, size: int, keep: int):
         at += 46 + name_length + extra_length + comment_length
         if len(rest) < name_length + extra_length + comment_length or at > end:
             return None
+        seen += 1
         extra_end = name_length + extra_length
         raw = rest[:name_length]
         selected, extra = _zip_extras(rest[name_length:extra_end])
@@ -229,7 +234,7 @@ def _zip_directory(file, size: int, keep: int):
             if len(records) < keep:
                 records.append(_zip_kept_record(fixed, raw, extra, rest[extra_end:]))
                 names.append(name)
-    return start, declared, records, count, names
+    return (start, declared, records, count, names) if seen == total else None
 
 
 class _BoundedArchive(io.RawIOBase):

@@ -32,6 +32,7 @@ export const ZIP64_LOCATOR = {
 
 type Zip64DirectoryRecord = {
   readonly end: number;
+  readonly entriesOnDisk: bigint;
   readonly totalEntries: bigint;
   readonly directorySize: bigint;
   readonly directoryOffset: bigint;
@@ -54,6 +55,7 @@ export const readZip64DirectoryRecord = (
     return err("size");
   return ok({
     end: offset + ZIP64_END.sizePrefixBytes + Number(bodyBytes),
+    entriesOnDisk: reader.word(offset + ZIP64_END.entriesOnDiskOffset, 64),
     totalEntries: reader.word(offset + ZIP64_END.totalEntriesOffset, 64),
     directorySize: reader.word(offset + ZIP64_END.directorySizeOffset, 64),
     directoryOffset: reader.word(offset + ZIP64_END.directoryOffset, 64),
