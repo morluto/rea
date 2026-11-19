@@ -58,10 +58,7 @@ export class ProgressiveToolCatalog {
   }
 
   private rankMatches(query: string | undefined): string[] {
-    const words = (query ?? "")
-      .toLowerCase()
-      .split(/\s+/u)
-      .filter(Boolean);
+    const words = (query ?? "").toLowerCase().split(/\s+/u).filter(Boolean);
     if (words.length === 0) {
       return [...this.tools.keys()].sort((left, right) =>
         left < right ? -1 : left > right ? 1 : 0,
