@@ -752,6 +752,46 @@ describe("later initializer local projection proof", () => {
   });
 });
 
+describe("later initializer ambient value proof", () => {
+  it.each([
+    ["directly", "() => setTimeout"],
+    ["through a local", "() => { const timer = setTimeout; return timer; }"],
+    ["through a sequence", "() => (0, setTimeout)"],
+  ])(
+    "keeps uncertainty when a late function returns a changed timer %s",
+    (_form, initializer) => {
+      const result = analyze(`
+      setTimeout.load = require;
+      const name = "electron";
+      function register() {
+        load().load(name).ipcMain.on("ping", () => {});
+      }
+      var load = ${initializer};
+      register();
+    `);
+
+      expect(result.parse_error_count).toBe(0);
+      expect(result.parse_status).toBe("partial");
+      expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+    },
+  );
+
+  it("keeps a late scheduler complete when it only invokes the changed timer", () => {
+    const result = analyze(`
+      setTimeout.label = "scheduler";
+      function schedule() {
+        later();
+      }
+      var later = () => setTimeout(() => {}, 0);
+      schedule();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("complete");
+    expect(result.limitations).not.toContainEqual(UNKNOWN_LIMITATION);
+  });
+});
+
 describe("later initializer ambient prototype proof", () => {
   it("keeps the unknown when an ambient value inherits a loader member", () => {
     const result = analyze(`

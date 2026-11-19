@@ -1370,8 +1370,15 @@ export class JavaScriptSymbolicBindings {
     if (
       !(t.isMemberExpression(parent) || t.isOptionalMemberExpression(parent)) ||
       parent.object !== node
-    )
-      return true;
+    ) {
+      // Direct invocation and typeof use the global itself. A value read can
+      // hand the object to a later member selection, including through an alias.
+      return (
+        this.#calleeInvocation(node) !== undefined ||
+        t.isUnaryExpression(parent, { operator: "typeof" }) ||
+        !ambientPathOrMemberMayHaveChanged(this.state, path)
+      );
+    }
     const key = semanticStaticPropertyKey(parent.property, parent.computed);
     if (key === null) return false;
     const memberPath = [...path, key] as const;
