@@ -1,5 +1,6 @@
 import { crc32 } from "node:zlib";
 
+import { BinaryReader } from "../binaryContainer.js";
 import {
   ZIP_EOCD_BYTES,
   ZIP_MAX_COMMENT_BYTES,
@@ -8,6 +9,7 @@ import {
   zipEndUsesSingleVolume,
 } from "../zipEndOfCentralDirectory.js";
 import { strictUtf8Decoder } from "../strictUtf8.js";
+import { ZIP_EXTRA_FIELD, lastZipExtraField } from "../zip/zipExtraFields.js";
 
 const CENTRAL_HEADER = 0x02014b50;
 const CENTRAL_HEADER_BYTES = 46;
@@ -16,7 +18,6 @@ const ZIP64_LOCATOR_BYTES = 20;
 const ZIP64_END = 0x06064b50;
 const ZIP64_END_BYTES = 56;
 const UTF8_NAME = 0x800;
-const UNICODE_PATH = 0x7075;
 const UNIX_TYPE = 0o170000;
 const UNIX_DIRECTORY = 0o040000;
 const MSDOS_DIRECTORY = 0x10;
@@ -88,45 +89,44 @@ interface RecordName {
   readonly flags: number;
 }
 
-/** An Info-ZIP Unicode Path when zip.js uses it: version 1, no UTF-8 flag, and the CRC-32 of the stored name. */
+/** The usable last Unicode Path, or null when the extra block is malformed. */
 const unicodePath = (
-  bytes: Uint8Array,
-  view: DataView,
+  reader: BinaryReader,
   { name, extra, comment, flags }: RecordName,
-): Uint8Array | undefined => {
+): Uint8Array | undefined | null => {
   // zip.js indexes extra fields by ID with Map.set: the last occurrence
   // replaces earlier ones, even when that last claim fails validation.
-  let selected: { at: number; length: number } | undefined;
-  for (let at = extra; at + 4 <= comment;) {
-    const length = view.getUint16(at + 2, true);
-    if (view.getUint16(at, true) === UNICODE_PATH) selected = { at, length };
-    at += 4 + length;
-  }
-  if (selected === undefined) return undefined;
-  const { at, length } = selected;
-  return length >= 5 &&
-    at + 4 + length <= comment &&
-    bytes[at + 4] === 1 &&
+  const selected = lastZipExtraField(
+    reader,
+    extra,
+    comment,
+    ZIP_EXTRA_FIELD.unicodePath,
+  );
+  if (!selected.ok) return null;
+  if (selected.value === undefined) return undefined;
+  const { start, end } = selected.value;
+  const { bytes } = reader;
+  return end - start >= 5 &&
+    bytes[start] === 1 &&
     (flags & UTF8_NAME) === 0 &&
-    view.getUint32(at + 5, true) === crc32(bytes.subarray(name, extra))
-    ? bytes.subarray(at + 9, at + 4 + length)
+    reader.u32(start + 1) === crc32(bytes.subarray(name, extra))
+    ? bytes.subarray(start + 5, end)
     : undefined;
 };
 
 /**
  * Whether an entry's name, as REA decodes it, ends in a slash; undefined when
- * it must be UTF-8 and is not. A plain CP437 name is judged by its last byte,
- * so most records are read without allocating.
+ * its extra block is malformed or its name must be UTF-8 and is not. A plain
+ * CP437 name is judged by its last byte, so most records are read without allocating.
  */
 const endsInSlash = (
-  bytes: Uint8Array,
-  view: DataView,
+  reader: BinaryReader,
   record: RecordName,
 ): boolean | undefined => {
   const unicode =
-    record.comment > record.extra
-      ? unicodePath(bytes, view, record)
-      : undefined;
+    record.comment > record.extra ? unicodePath(reader, record) : undefined;
+  if (unicode === null) return undefined;
+  const { bytes } = reader;
   const utf8 =
     unicode ??
     ((record.flags & UTF8_NAME) === 0
@@ -157,6 +157,11 @@ export const scanZipDirectory = (
   if (located === undefined) return undefined;
   const start = located.end - located.size;
   if (start < 0) return undefined;
+  const reader = new BinaryReader(
+    Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    true,
+    "zip",
+  );
   const records: Uint8Array[] = [];
   let count = 0;
   for (let at = start; at < located.end;) {
@@ -170,7 +175,7 @@ export const scanZipDirectory = (
     const comment = extra + view.getUint16(at + 30, true);
     const next = comment + view.getUint16(at + 32, true);
     if (next > located.end) return undefined;
-    const slash = endsInSlash(bytes, view, {
+    const slash = endsInSlash(reader, {
       name,
       extra,
       comment,

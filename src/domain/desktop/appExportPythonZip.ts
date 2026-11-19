@@ -2,6 +2,7 @@ import {
   ZIP_CLASSIC_DISK_OFFSETS,
   ZIP_SINGLE_VOLUME,
 } from "../zipEndOfCentralDirectory.js";
+import { ZIP_EXTRA_FIELD } from "../zip/zipExtraFields.js";
 
 /**
  * The exported module's zip and gzip readers: the central directory read a
@@ -19,6 +20,7 @@ ZIP64_LOCATOR = b"PK\x06\x07"
 ZIP64_END = b"PK\x06\x06"
 ZIP_CLASSIC_DISK_OFFSETS = ${JSON.stringify(Object.values(ZIP_CLASSIC_DISK_OFFSETS))}
 ZIP_SINGLE_VOLUME = ${JSON.stringify(ZIP_SINGLE_VOLUME)}
+ZIP_EXTRA_FIELD = ${JSON.stringify(ZIP_EXTRA_FIELD)}
 #: Formats an archive entry may have whose reader needs a tool, a worker or another archive opened.
 NOT_READ_INSIDE = ((SQLITE_HEADER, "sqlite", "a SQLite database"), (GVDB_HEADER, "dconf", "a dconf database"),
                    (ZIP_HEADER, "zip", "an archive"))
@@ -121,15 +123,33 @@ def _zip_end(file, size: int):
     return classic
 
 
-def _zip_unicode_path(raw: bytes, flags: int, extra: bytes):
-    """The last Info-ZIP Unicode Path, validated only after it replaces earlier claims, as in zip.js."""
-    at, data, length = 0, None, 0
-    while at + 4 <= len(extra):
-        kind, size = struct.unpack_from("<HH", extra, at)
-        if kind == 0x7075:
-            data, length = extra[at + 4:at + 4 + size], size
-        at += 4 + size
-    usable = (data is not None and length >= 5 and len(data) == length and data[0] == 1 and not flags & 0x800
+def _zip_extras(extra: bytes):
+    """Check all framed fields before selection and return the last Unicode Path and the other original bytes."""
+    at, copied, selected, kept = 0, 0, None, None
+    header = ZIP_EXTRA_FIELD["headerBytes"]
+    while at + header <= len(extra):
+        payload = at + header
+        size = struct.unpack_from("<H", extra, at + ZIP_EXTRA_FIELD["sizeOffset"])[0]
+        end = payload + size
+        if end > len(extra):
+            raise zipfile.BadZipFile("Corrupt extra field")
+        kind = struct.unpack_from("<H", extra, at + ZIP_EXTRA_FIELD["idOffset"])[0]
+        if kind == ZIP_EXTRA_FIELD["unicodePath"]:
+            selected = (payload, end)
+            if kept is None:
+                kept = bytearray()
+            kept += extra[copied:at]
+            copied = end
+        at = end
+    if selected is None:
+        return None, extra
+    kept += extra[copied:]
+    return extra[selected[0]:selected[1]], kept
+
+
+def _zip_unicode_path(raw: bytes, flags: int, data):
+    """Use the last Info-ZIP Unicode Path only when it binds to the stored name, as zip.js does."""
+    usable = (data is not None and len(data) >= 5 and data[0] == 1 and not flags & 0x800
               and int.from_bytes(data[1:5], "little") == zlib.crc32(raw))
     return data[5:] if usable else None
 
@@ -141,24 +161,13 @@ def _zip_name(raw: bytes, flags: int, unicode_path):
     return raw.decode("cp437") if unicode_path is None else unicode_path.decode("utf-8")
 
 
-def _zip_kept_record(fixed: bytes, rest: bytes, name_length: int, extra_length: int):
+def _zip_kept_record(fixed: bytes, raw: bytes, extra, comment: bytes):
     """Remove already-interpreted Unicode claims from the bounded decoder copy. zipfile otherwise interprets each
     occurrence, retaining an earlier valid name or rejecting invalid UTF-8 that zip.js already superseded.
     All other fields, comments and the original artifact bytes remain unchanged."""
-    raw, extra = rest[:name_length], rest[name_length:name_length + extra_length]
-    kept, at = bytearray(), 0
-    while at + 4 <= len(extra):
-        kind, length = struct.unpack_from("<HH", extra, at)
-        end = at + 4 + length
-        if end > len(extra):
-            raise zipfile.BadZipFile("Corrupt extra field")
-        if kind != 0x7075:
-            kept += extra[at:end]
-        at = end
-    kept += extra[at:]
     header = bytearray(fixed)
-    struct.pack_into("<H", header, 30, len(kept))
-    return header + raw + kept + rest[name_length + extra_length:]
+    struct.pack_into("<H", header, 30, len(extra))
+    return header + raw + extra + comment
 
 
 def _zip_directory(file, size: int, keep: int):
@@ -185,12 +194,14 @@ def _zip_directory(file, size: int, keep: int):
         at += 46 + name_length + extra_length + comment_length
         if len(rest) < name_length + extra_length + comment_length or at > end:
             return None
-        unicode_path = _zip_unicode_path(rest[:name_length], flags, rest[name_length:name_length + extra_length])
-        name = _zip_name(rest[:name_length], flags, unicode_path)
+        extra_end = name_length + extra_length
+        raw = rest[:name_length]
+        selected, extra = _zip_extras(rest[name_length:extra_end])
+        name = _zip_name(raw, flags, _zip_unicode_path(raw, flags, selected))
         if not (name.endswith("/") or (external >> 16) & 0o170000 == 0o040000 or (made_by >> 8 == 0 and external & 0x10)):
             count += 1
             if len(records) < keep:
-                records.append(_zip_kept_record(fixed, rest, name_length, extra_length))
+                records.append(_zip_kept_record(fixed, raw, extra, rest[extra_end:]))
                 names.append(name)
     return start, declared, records, count, names
 

@@ -183,6 +183,33 @@ it("refuses invalid UTF-8 in the selected Unicode claim while preserving an unre
   });
 });
 
+it("refuses a central extra field whose payload extends past the containing record's extra bytes", async () => {
+  const name = "report.txt";
+  const opaque = Buffer.from([0xfe, 0xca, 2, 0, 1]);
+  const unicode = unicodePathExtra(name, "renamed.txt");
+  unicode.writeUInt16LE(unicode.length - 3, 2);
+  const archives = [
+    zipArchive([{ name, data: "observed", centralExtra: opaque }]),
+    zipArchive([{ name, data: "observed", centralExtra: unicode }]),
+    zipArchive([
+      { name: "directory/", centralExtra: opaque },
+      { name, data: "observed" },
+    ]),
+  ];
+  const fromPython = await pythonFileViews(saved(archives));
+  for (const [index, archive] of archives.entries()) {
+    expect.soft(await readZipView(archive)).toEqual({
+      ok: false,
+      error: "not a readable zip archive",
+    });
+    expect.soft(fromPython[index]).toEqual({
+      format: "zip",
+      view: null,
+      error: "not a readable zip archive",
+    });
+  }
+});
+
 it("excludes a final Unicode directory without consuming a retained file slot", async () => {
   const name = "settings.json";
   const archive = zipArchive([
