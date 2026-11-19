@@ -11,7 +11,10 @@ import {
   AnalysisTimeoutError,
 } from "./analysisErrorCore.js";
 import { ArtifactOperationError } from "./artifactOperationError.js";
-import { OPENABLE_APPLE_BUNDLE_TYPES_TEXT } from "./apple/appleBundleTypes.js";
+import {
+  INFO_PLIST_DECODE_MIB,
+  OPENABLE_APPLE_BUNDLE_TYPES_TEXT,
+} from "./apple/appleBundleTypes.js";
 import {
   BinaryTargetError,
   ConfigurationError,
@@ -42,6 +45,7 @@ import {
   type AnalysisContinuingCallerGuidance,
   type AnalysisError,
   type AnalysisErrorTag,
+  type AnalysisRelatedInputs,
   domainErrorTag,
   ProviderOwnedAnalysisError,
 } from "./analysisErrorBase.js";
@@ -172,7 +176,7 @@ export const analysisErrorRemediationAction = (
     error instanceof BinaryTargetError &&
     error.constraint === "directory_requires_file"
   )
-    return `For a JavaScript/Electron application directory, call analyze_javascript_application with input_path or run \`rea analyze <directory>\`. For binary analysis, select its executable file or an Apple bundle directory (${OPENABLE_APPLE_BUNDLE_TYPES_TEXT}).`;
+    return `For a JavaScript/Electron application directory, call analyze_javascript_application with input_path. For binary analysis, select its executable file or an Apple bundle directory (${OPENABLE_APPLE_BUNDLE_TYPES_TEXT}).`;
   if (
     error instanceof BinaryTargetError &&
     error.constraint === "bundle_type_unsupported"
@@ -184,7 +188,12 @@ export const analysisErrorRemediationAction = (
       error.constraint === "bundle_program_missing") &&
     error.infoPlist !== undefined
   )
-    return `Read ${error.infoPlist} with inspect_plist (\`rea inspect-plist <path>\`) to review its CFBundleExecutable, then select an existing program file directly.`;
+    return `Read ${error.infoPlist} with inspect_plist to review its CFBundleExecutable, then select an existing program file directly.`;
+  if (
+    error instanceof BinaryTargetError &&
+    error.constraint === "bundle_info_plist_decode_budget_exceeded"
+  )
+    return `Reduce the Info.plist below the ${INFO_PLIST_DECODE_MIB} MiB decoded representation allowance, then retry opening the bundle.`;
   if (
     error instanceof BinaryTargetError &&
     (error.constraint === "bundle_info_plist_missing" ||
@@ -197,7 +206,7 @@ export const analysisErrorRemediationAction = (
     error instanceof BinaryTargetError &&
     error.constraint === "load_selection_rejected"
   )
-    return "Correct the reported load argument (--target-format, --architecture, or --entry-point on the CLI; format, architecture, or entry_point through MCP) and retry.";
+    return "Correct the reported load argument (format, architecture, or entry_point) and retry.";
   if (
     error instanceof BinaryTargetError &&
     error.constraint === "file_format_rejected"
@@ -207,7 +216,7 @@ export const analysisErrorRemediationAction = (
     error instanceof BinaryTargetError &&
     error.constraint === "wasm_requires_static_inspection"
   )
-    return `For static inspection, call inspect_wasm_artifact with ${JSON.stringify({ path: error.path })} or run \`rea inspect-wasm-artifact <path> --format json\`. This separate lane requires caller-supplied WABT 1.0.42 via absolute REA_WABT_BIN_DIRECTORY; check its availability in binary_session. REA does not execute WASM or install tools, and the header alone does not establish that the complete module is valid.`;
+    return `For static inspection, call inspect_wasm_artifact with ${JSON.stringify({ path: error.path })}. This separate lane requires caller-supplied WABT 1.0.42 via absolute REA_WABT_BIN_DIRECTORY; check its availability in binary_session. REA does not execute WASM or install tools, and the header alone does not establish that the complete module is valid.`;
   if (
     error instanceof AnalysisAccessDeniedError ||
     (error instanceof BinaryTargetError && error.systemCode !== undefined)
@@ -465,7 +474,7 @@ const outcomeUserMessage = (error: AnalysisError): string => {
     return `${error.message}. Static WebAssembly inspection uses a separate optional WABT lane, not a native analysis engine.`;
   if (error instanceof BinaryTargetError)
     return error.constraint === "directory_requires_file"
-      ? `open_binary accepts files and Apple bundle directories (${OPENABLE_APPLE_BUNDLE_TYPES_TEXT}). This target is another directory; JavaScript/Electron application directories can be analyzed directly with analyze_javascript_application or \`rea analyze <directory>\`.`
+      ? `open_binary accepts files and Apple bundle directories (${OPENABLE_APPLE_BUNDLE_TYPES_TEXT}). This target is another directory; JavaScript/Electron application directories can be analyzed directly with analyze_javascript_application.`
       : error.constraint === undefined
         ? `${error.message}. Check that the path exists, is readable, and points to a supported file.`
         : `${error.message}.`;
@@ -544,6 +553,12 @@ const artifactMessage = ({
       detail ??
       "Artifact processing reached a resource limit. Select an artifact within the reported limits and retry."
     );
+  if (reason === "unsupported")
+    return "Artifact structure uses an unsupported format or revision. Use a decoder that supports the reported form.";
+  if (reason === "truncated")
+    return "A declared artifact structure is truncated. Select a complete copy and retry; do not pad or truncate required bytes.";
+  if (reason === "malformed")
+    return "Artifact bytes contain malformed format structure. Review the reported field and select a valid copy.";
   if (reason === "path")
     return (
       detail ??
@@ -564,10 +579,75 @@ const artifactMessage = ({
       details.calculatedSha256 !== null
         ? `Declared ASAR integrity for unpacked entry ${details.logicalPath} contradicts its companion file; packaging tools commonly sign or strip unpacked native binaries after writing the archive.`
         : "Artifact bytes contradict declared integrity."
-    } If expected, rerun ${operation === "inventory_artifact" ? "inspect_artifact" : operation} with integrity_policy=record-and-continue (CLI: --integrity-policy record-and-continue) to retain observed bytes as untrusted; otherwise get a fresh copy.`;
+    } If expected, rerun ${operation === "inventory_artifact" ? "inspect_artifact" : operation} with integrity_policy=record-and-continue to retain observed bytes as untrusted; otherwise get a fresh copy.`;
   if (reason === "format" || reason === "integrity")
     return "Artifact is invalid or has changed. Get a fresh copy and try again.";
   return "Artifact could not be read or written. Check file access and try again.";
+};
+
+const mergeRelatedList = (
+  left: readonly string[] | undefined,
+  right: readonly string[] | undefined,
+): readonly string[] | undefined => {
+  const merged = [...new Set([...(left ?? []), ...(right ?? [])])];
+  return merged.length === 0 ? undefined : merged;
+};
+
+const presentedRelatedInputs = (
+  error: AnalysisError,
+): AnalysisRelatedInputs | undefined => {
+  if (error instanceof BinaryTargetError) {
+    if (error.constraint === "directory_requires_file")
+      return { operations: ["analyze_javascript_application"] };
+    if (error.remediationAction !== undefined) return undefined;
+    if (
+      (error.constraint === "bundle_executable_undeclared" ||
+        error.constraint === "bundle_program_missing") &&
+      error.infoPlist !== undefined
+    )
+      return { operations: ["inspect_plist"] };
+    if (error.constraint === "load_selection_rejected")
+      return { parameters: ["format", "architecture", "entry_point"] };
+    if (error.constraint === "wasm_requires_static_inspection")
+      return { operations: ["inspect_wasm_artifact"] };
+  }
+  if (
+    error instanceof ArtifactOperationError &&
+    error.reason === "integrity" &&
+    error.artifactDetails !== undefined &&
+    INTEGRITY_POLICY_OPERATIONS.has(error.operation)
+  )
+    return {
+      parameters: ["integrity_policy"],
+      ...(error.operation === "inventory_artifact"
+        ? { operations: ["inspect_artifact"] }
+        : {}),
+    };
+  return undefined;
+};
+
+/**
+ * Contract fields and operations that the shared error presentation names for
+ * recovery, combined with any producer-bound `error.related`.
+ */
+export const analysisErrorRelatedInputs = (
+  error: AnalysisError,
+): AnalysisRelatedInputs | undefined => {
+  error = resolvedAnalysisError(error);
+  const presented = presentedRelatedInputs(error);
+  const parameters = mergeRelatedList(
+    error.related?.parameters,
+    presented?.parameters,
+  );
+  const operations = mergeRelatedList(
+    error.related?.operations,
+    presented?.operations,
+  );
+  if (parameters === undefined && operations === undefined) return undefined;
+  return {
+    ...(parameters === undefined ? {} : { parameters }),
+    ...(operations === undefined ? {} : { operations }),
+  };
 };
 
 const evidenceFileMessage = ({

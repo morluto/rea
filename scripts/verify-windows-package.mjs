@@ -13,10 +13,15 @@ import { verifyCompleteToolCatalog } from "./lib/verify-package-core.mjs";
 import { createPackageVerifierCommands } from "./lib/verify-package-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { verifyPackageUpdate } from "./verify-package-update.mjs";
-import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  completeVerifierRun,
+  createVerifierPhaseTimings,
+  createVerifierRun,
+} from "./lib/verifier-run.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 const verifierRun = createVerifierRun();
+const timings = createVerifierPhaseTimings();
 const root = process.cwd();
 // Windows children write beneath the root; a private root's DELETE handle would block them.
 const fixture = await VerifierFixture.open({
@@ -28,12 +33,26 @@ const workspace = fixture.path;
 const workspaceOwner = { path: workspace, close: () => fixture.release() };
 const prefix = join(workspace, "prefix");
 let commands;
-const closeWorkspace = () =>
-  commands === undefined ? workspaceOwner.close() : commands.close();
+const closeWorkspace = async () => {
+  timings.begin("cleanup");
+  try {
+    await (commands === undefined ? workspaceOwner.close() : commands.close());
+  } catch (cause) {
+    timings.finish("failed");
+    throw cause;
+  }
+  timings.finish();
+};
+const reportFailureTimings = () =>
+  process.stderr.write(
+    `${JSON.stringify({ phase_timings: timings.snapshot() })}\n`,
+  );
 let report;
 
 try {
+  timings.begin("command_setup");
   commands = await createPackageVerifierCommands({ workspace: workspaceOwner });
+  timings.begin("pack");
   const packed = JSON.parse(
     (
       await commands.execNpm(
@@ -69,8 +88,18 @@ try {
 
   const tarball = join(workspace, packageResult.filename);
   await access(tarball);
+  timings.begin("install");
   await commands.execNpm(
-    ["install", "--no-package-lock", "--no-save", "--prefix", prefix, tarball],
+    [
+      "install",
+      "--no-package-lock",
+      "--no-save",
+      "--no-audit",
+      "--no-fund",
+      "--prefix",
+      prefix,
+      tarball,
+    ],
     { cwd: workspace, windowsHide: true },
   );
   const entry = join(
@@ -84,6 +113,7 @@ try {
     ...process.env,
     REA_ANALYSIS_PROVIDER: "auto",
   };
+  timings.begin("cli_help");
   const help = await commands.exec(process.execPath, [entry, "--help"], {
     env: environment,
     windowsHide: true,
@@ -95,6 +125,7 @@ try {
   )
     throw new Error("Packaged Windows CLI help omitted analysis commands");
 
+  timings.begin("mcp_catalog");
   const server = new StdioClientTransport({
     command: process.execPath,
     args: [entry, "mcp"],
@@ -125,6 +156,7 @@ try {
     },
   ]);
 
+  timings.begin("setup");
   const home = join(workspace, "home");
   const setupEnvironment = {
     ...environment,
@@ -215,6 +247,7 @@ try {
     repeated.appliedActions.length !== 0
   )
     throw new Error("Packaged agent setup is not idempotent");
+  timings.begin("uninstall");
   const uninstalled = JSON.parse(
     (
       await commands.exec(process.execPath, [entry, "uninstall", "--json"], {
@@ -229,6 +262,7 @@ try {
     )
       throw new Error(`Packaged uninstall did not remove ${id}`);
 
+  timings.begin("update");
   if (process.platform !== "win32")
     await commands.execNpm(
       ["install", "--global", "--ignore-scripts", "--prefix", prefix, tarball],
@@ -258,9 +292,19 @@ try {
     update,
   };
 } catch (cause) {
-  await withVerifierCleanup(() => Promise.reject(cause), [closeWorkspace]);
+  timings.finish("failed");
+  try {
+    await withVerifierCleanup(() => Promise.reject(cause), [closeWorkspace]);
+  } finally {
+    reportFailureTimings();
+  }
 }
-await closeWorkspace();
+try {
+  await closeWorkspace();
+} catch (cause) {
+  reportFailureTimings();
+  throw cause;
+}
 process.stdout.write(
-  `${JSON.stringify({ verifier_run: await completeVerifierRun(verifierRun), ...report })}\n`,
+  `${JSON.stringify({ verifier_run: await completeVerifierRun(verifierRun), ...report, phase_timings: timings.snapshot() })}\n`,
 );

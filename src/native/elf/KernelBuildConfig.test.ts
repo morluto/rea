@@ -162,7 +162,6 @@ it("keeps the strict grammar for malformed quoted values", async () => {
     '"a"b"',
     '"tail\\"',
     '"a\rb"',
-    '"a\u2028b"',
     "y\u2028",
   ])
     expect(

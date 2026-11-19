@@ -9,7 +9,7 @@ import { formatCliOutput } from "./cli/cliOutputFormatter.js";
 import {
   parseOutputFilter,
   type OutputFilterPath,
-  type UnclosedOutputFilterSlice,
+  type OutputFilterError,
 } from "./cli/outputFilter.js";
 import type { Result } from "./domain/result.js";
 
@@ -104,7 +104,7 @@ interface CliOutputControls {
   readonly filterOutput: string | undefined;
   /** `--filter-output` parsed once; a parse failure fails validation. */
   readonly filterPaths:
-    | Result<readonly OutputFilterPath[], UnclosedOutputFilterSlice>
+    | Result<readonly OutputFilterPath[], OutputFilterError>
     | undefined;
   readonly columns: readonly string[] | undefined;
   readonly format: CliOutputFormat;
@@ -142,8 +142,9 @@ export const readCliOutputArguments = (
 ): ParsedCliOutputArguments => {
   const tokens = global.arguments;
   const values = new Set(global.outputValues.map(({ index }) => index));
+  const timing = new Set(global.timingIndices);
+  const rootVersion = global.flags.has("--version");
   let format: CliOutputFormat = "toon";
-  let rootVersion = false;
   let versionEligible = true;
   let formatExplicit = false;
   let filterOutput: string | undefined;
@@ -156,17 +157,13 @@ export const readCliOutputArguments = (
   let tokenOffset: number | undefined;
   for (let index = 0; index < tokens.length; index += 1) {
     const argument = tokens[index]!;
-    // A value is read with the flag that consumed it.
-    if (values.has(index)) continue;
+    // The global split has already consumed output values and timing flags.
+    if (values.has(index) || timing.has(index)) continue;
     // Only these flags can accompany a formatted root version request.
-    if (argument === "--version") {
-      const next = tokens[index + 1];
-      if (next === undefined || next.startsWith("-")) rootVersion = true;
-      else versionEligible = false;
-    } else if (
+    if (
+      argument !== "--version" &&
       argument !== "--json" &&
-      argument !== "--format" &&
-      argument !== "--timings"
+      argument !== "--format"
     )
       versionEligible = false;
     if (argument === "--json") {
@@ -221,7 +218,7 @@ export const readCliOutputArguments = (
   };
   return {
     ...controls,
-    validation: validateCliOutputControls(controls, rootVersion),
+    validation: validateCliOutputControls(controls, rootVersion, global),
     versionReportFormat:
       rootVersion &&
       versionEligible &&
@@ -240,6 +237,20 @@ export const readCliOutputArguments = (
 export const missingCliOutputValueMessage = (flag: string): string =>
   `${flag} requires a value, as in ${flag} <value> or ${flag}=<value>.`;
 
+const discoveryRowFormatFlag = (
+  global: CliGlobalArguments,
+): "--llms" | "--llms-full" | "--schema" | undefined => {
+  const { command, flags } = global;
+  const help = flags.has("--help") || flags.has("-h");
+  if ((flags.has("--update") && !help) || flags.has("--mcp")) return undefined;
+  if (flags.has("--llms-full")) return "--llms-full";
+  if (flags.has("--llms")) return "--llms";
+  if (flags.has("--version") && !help) return undefined;
+  if (command.length === 0 || help) return undefined;
+  if (flags.has("--schema")) return "--schema";
+  return undefined;
+};
+
 /** Reject output controls that cannot safely produce a complete result. */
 const validateCliOutputControls = (
   {
@@ -253,6 +264,7 @@ const validateCliOutputControls = (
     tokenCount,
   }: CliOutputControls,
   rootVersion: boolean,
+  global: CliGlobalArguments,
 ): CliOutputArgumentValidation => {
   if (invalidValue !== undefined)
     return {
@@ -267,7 +279,9 @@ const validateCliOutputControls = (
       format: format === "yaml" || format === "jsonl" ? format : "json",
       code: "INVALID_OUTPUT_FILTER",
       message:
-        "The --filter-output expression has a slice without a closing ]. Close the slice or remove --filter-output.",
+        filterPaths.error.kind === "unclosed_slice"
+          ? "The --filter-output expression has a slice without a closing ]. Close the slice or remove --filter-output."
+          : "The --filter-output expression has a slice with more than two bounds. Use [start,end].",
     };
   const delimited = format === "csv" || format === "tsv";
   // Name missing delimited controls before their combination checks; preserve
@@ -278,6 +292,14 @@ const validateCliOutputControls = (
       format: format === "yaml" || format === "jsonl" ? format : "json",
       code: "MISSING_OUTPUT_VALUE",
       message: missingCliOutputValueMessage(missingValue),
+    };
+  const discoveryFlag = delimited ? discoveryRowFormatFlag(global) : undefined;
+  if (delimited && discoveryFlag !== undefined)
+    return {
+      ok: false,
+      format: "json",
+      code: "UNSUPPORTED_OUTPUT_COMBINATION",
+      message: `${discoveryFlag} returns a complete document and does not support --format ${format}. Use --format json, yaml, md, toon, or jsonl; CSV/TSV output is available only for selected row collections.`,
     };
   if (delimited && rootVersion)
     return {

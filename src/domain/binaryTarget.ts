@@ -16,6 +16,7 @@ import { err, ok, type Result } from "./result.js";
 import {
   readPeOptionalHeaderFixedFields,
   readPeOptionalHeaderDirectory,
+  readPeOptionalHeaderStructure,
 } from "./peOptionalHeader.js";
 import type { PeOptionalHeaderFacts } from "./peMachine.js";
 import { readPeCoffHeader } from "./peCoffHeader.js";
@@ -107,6 +108,11 @@ export type ExecutableMetadata =
       readonly managed: boolean;
       readonly codeView?: PeCodeViewRecord;
     };
+
+/** Fixed bytes through the end of the PE signature and COFF header. */
+export const PE_RECORD_HEADER_BYTES = 24;
+/** Bound the optional-header read used by structural PE admission. */
+export const MAX_PE_OPTIONAL_HEADER_BYTES = 4096;
 
 /**
  * Whether leading bytes begin an executable header family that
@@ -593,6 +599,59 @@ export const parseMzExecutableMetadata = (
     : parsed;
 };
 
+/** Parse the CPU-agnostic PE structure needed by inventory classification. */
+export const parsePeRecordStructure = (
+  record: Buffer,
+): Result<
+  {
+    readonly machine: number;
+    readonly characteristics: number;
+    readonly optionalHeader: Buffer;
+  },
+  | {
+      readonly kind: "incomplete";
+      readonly requiredBytes: number;
+      readonly message: string;
+    }
+  | { readonly kind: "malformed"; readonly message: string }
+> => {
+  if (record.length < PE_RECORD_HEADER_BYTES)
+    return err({
+      kind: "incomplete",
+      requiredBytes: PE_RECORD_HEADER_BYTES,
+      message: "invalid or truncated PE header",
+    });
+  if (record.toString("binary", 0, 4) !== "PE\u0000\u0000")
+    return err({
+      kind: "malformed",
+      message: "invalid or truncated PE header",
+    });
+  const coff = readPeCoffHeader(record.subarray(4, PE_RECORD_HEADER_BYTES));
+  if (!coff.ok)
+    return err({
+      kind: "malformed",
+      message: "invalid or truncated PE header",
+    });
+  const { machine, optionalHeaderSize, characteristics } = coff.value;
+  if (optionalHeaderSize > MAX_PE_OPTIONAL_HEADER_BYTES)
+    return err({
+      kind: "malformed",
+      message: "invalid or truncated PE optional header",
+    });
+  const declaredEnd = PE_RECORD_HEADER_BYTES + optionalHeaderSize;
+  if (record.length < declaredEnd)
+    return err({
+      kind: "incomplete",
+      requiredBytes: declaredEnd,
+      message: "invalid or truncated PE optional header",
+    });
+  const optionalHeader = record.subarray(PE_RECORD_HEADER_BYTES, declaredEnd);
+  const parsed = readPeOptionalHeaderStructure(optionalHeader);
+  if (!parsed.ok)
+    return err({ kind: "malformed", message: parsed.error.message });
+  return ok({ machine, characteristics, optionalHeader });
+};
+
 /** Parse a bounded PE signature, COFF record, and optional header without I/O. */
 export const parsePeRecordFacts = (
   record: Buffer,
@@ -604,26 +663,18 @@ export const parsePeRecordFacts = (
   },
   string
 > => {
-  if (
-    record.length < 24 ||
-    record.toString("binary", 0, 4) !== "PE\u0000\u0000"
-  )
-    return err("invalid or truncated PE header");
-  const coff = readPeCoffHeader(record.subarray(4, 24));
-  if (!coff.ok) return err("invalid or truncated PE header");
+  const structure = parsePeRecordStructure(record);
+  if (!structure.ok) return err(structure.error.message);
   const {
     machine: machineType,
-    optionalHeaderSize,
     characteristics,
-  } = coff.value;
+    optionalHeader,
+  } = structure.value;
   const machine = decodePeMachine(machineType);
   if (machine === undefined)
     return err(
       `unsupported PE architecture (COFF machine 0x${machineType.toString(16).padStart(4, "0")})`,
     );
-  if (optionalHeaderSize > 4096 || record.length < 24 + optionalHeaderSize)
-    return err("invalid or truncated PE optional header");
-  const optionalHeader = record.subarray(24, 24 + optionalHeaderSize);
   const facts = readPeOptionalHeader(optionalHeader, machineType);
   if (!facts.ok) return err(facts.error.message);
   if (facts.value.machine === null) return err("unsupported PE architecture");

@@ -12,7 +12,14 @@ import {
   type Il2cppMetadataSection,
   type IL2cppMetadataSectionName,
 } from "../domain/il2cpp/il2cppMetadata.js";
-import { observeIl2cppMetadataHeaderPrefix } from "../domain/il2cpp/il2cppMetadataHeaderPrefix.js";
+import {
+  IL2CPP_METADATA_PREFIX_BYTES,
+  observeIl2cppMetadataHeaderPrefix,
+} from "../domain/il2cpp/il2cppMetadataHeaderPrefix.js";
+import {
+  firstIl2cppSectionIssue,
+  readIl2cppSectionTable,
+} from "./Il2cppMetadataSectionTable.js";
 import { firstDeclaringTypeCycle } from "../domain/il2cpp/il2cppDeclaringTypes.js";
 import {
   readIl2cppMembers,
@@ -86,7 +93,7 @@ const sectionEntryBytes = (layout: VersionLayout) =>
 
 /** Magic, version and one entry per section. */
 export const il2cppMetadataHeaderBytes = (version: Il2cppMetadataVersion) =>
-  8 +
+  IL2CPP_METADATA_PREFIX_BYTES +
   il2cppMetadataSectionNames(version).length *
     sectionEntryBytes(VERSION_LAYOUTS[version]);
 
@@ -158,17 +165,11 @@ const readHeader = (bytes: Buffer) => {
       `the file has ${bytes.length} bytes, fewer than the ${headerBytes}-byte version ${version} header`,
     );
   const entryBytes = sectionEntryBytes(VERSION_LAYOUTS[version]);
-  const sections: Il2cppMetadataSection[] = il2cppMetadataSectionNames(
-    version,
-  ).map((name, index) => {
-    const at = 8 + index * entryBytes;
-    return {
-      name,
-      offset: bytes.readInt32LE(at),
-      size: bytes.readInt32LE(at + 4),
-      count: entryBytes === 12 ? bytes.readInt32LE(at + 8) : null,
-    };
-  });
+  const sections = readIl2cppSectionTable(
+    bytes,
+    il2cppMetadataSectionNames(version),
+    entryBytes,
+  );
   return { magic, version, headerBytes, sections } as const;
 };
 
@@ -183,35 +184,22 @@ const checkSections = (
       "unexpected-header-size",
       `stringLiterals starts at ${String(first?.offset)}, not immediately after the ${headerBytes}-byte header`,
     );
-  for (const section of sections)
-    if (
-      section.offset < 0 ||
-      section.size < 0 ||
-      (section.count ?? 0) < 0 ||
-      section.offset + section.size > bytes.length
-    )
-      throw new Il2cppMetadataFormatFailure(
-        "section-out-of-bounds",
-        `section ${section.name} (offset ${section.offset}, size ${section.size}, count ${String(section.count)}) is negative or extends past the ${bytes.length}-byte file`,
-      );
-    else if (section.size > 0 && section.offset < headerBytes)
-      throw new Il2cppMetadataFormatFailure(
-        "section-out-of-bounds",
-        `section ${section.name} starts at ${section.offset}, inside the ${headerBytes}-byte header`,
-      );
-  // Empty sections may share an offset with any neighbor; gaps are padding.
-  const occupied = sections
-    .filter((section) => section.size > 0)
-    .sort((left, right) => left.offset - right.offset);
-  for (let index = 1; index < occupied.length; index += 1) {
-    const previous = occupied[index - 1]!;
-    const current = occupied[index]!;
-    if (previous.offset + previous.size > current.offset)
-      throw new Il2cppMetadataFormatFailure(
-        "section-overlap",
-        `section ${previous.name} [${previous.offset}, ${previous.offset + previous.size}) overlaps ${current.name} starting at ${current.offset}`,
-      );
+  const issue = firstIl2cppSectionIssue(sections, headerBytes, bytes.length);
+  if (issue === undefined) return;
+  if (issue.kind === "overlap") {
+    const { previous, current } = issue;
+    throw new Il2cppMetadataFormatFailure(
+      "section-overlap",
+      `section ${previous.name} [${previous.offset}, ${previous.offset + previous.size}) overlaps ${current.name} starting at ${current.offset}`,
+    );
   }
+  const { section } = issue;
+  throw new Il2cppMetadataFormatFailure(
+    "section-out-of-bounds",
+    issue.kind === "header"
+      ? `section ${section.name} starts at ${section.offset}, inside the ${headerBytes}-byte header`
+      : `section ${section.name} (offset ${section.offset}, size ${section.size}, count ${String(section.count)}) is negative or extends past the ${bytes.length}-byte file`,
+  );
 };
 
 /** A counted header's entry count; fixed headers record none. */

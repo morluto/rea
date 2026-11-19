@@ -230,6 +230,7 @@ export const elfNoteWithUnreadableSectionNameFixture = (
 export const compressedElfNoteSectionFixture = (
   bits: 32 | 64 = 64,
   little = true,
+  ownership: "section" | "both" = "section",
 ): Buffer => {
   const notes = concat(
     gnuBuildIdNote(undefined, little),
@@ -243,14 +244,35 @@ export const compressedElfNoteSectionFixture = (
     bits,
     little,
     type: 1,
-    ownership: "section",
+    ownership,
     sectionName: ".debug.notes",
     alignment: bits === 64 ? 8 : 4,
     notes: concat(header, deflateSync(notes)),
   });
-  const noteSection = (bits === 64 ? 64 : 52) + (bits === 64 ? 64 : 40);
+  const headerSize = bits === 64 ? 64 : 52;
+  const programSize = bits === 64 ? 56 : 32;
+  const sectionSize = bits === 64 ? 64 : 40;
+  const noteSection =
+    headerSize + (ownership === "both" ? programSize : 0) + sectionSize;
   writeWord(bytes, noteSection + 8, 0x800, bits, little);
   return bytes;
+};
+
+/** Move an ELF64 little-endian fixture's existing section rows to a backed direct-count table. */
+export const withElf64DirectSectionCount = (
+  image: Buffer,
+  count: number,
+): Buffer => {
+  const offset = Number(image.readBigUInt64LE(40));
+  const priorCount = image.readUInt16LE(60);
+  const table = Math.ceil(image.length / 8) * 8;
+  const result = Buffer.alloc(table + count * 64);
+  image.copy(result);
+  image.copy(result, table, offset, offset + priorCount * 64);
+  result.writeBigUInt64LE(BigInt(table), 40);
+  result.writeUInt16LE(64, 58);
+  result.writeUInt16LE(count, 60);
+  return result;
 };
 
 /** Valid ELF64 section count stored in section header zero per the gABI. */

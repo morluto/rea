@@ -1,9 +1,21 @@
+import { BinaryReader } from "../binaryContainer.js";
 import { LC } from "./machoLoadCommandCodes.js";
 import { err, ok, type Result } from "../result.js";
 import {
   machoLoadCommandAlignment,
   readMachoHeaderPrefixFacts,
 } from "./machoContainer.js";
+
+const MACHO_LOAD_COMMAND_HEADER_BYTES = 8;
+
+const wordReader = (bytes: Uint8Array, littleEndian: boolean): BinaryReader =>
+  new BinaryReader(
+    Buffer.isBuffer(bytes)
+      ? bytes
+      : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    littleEndian,
+    "macho",
+  );
 
 /** Header commitments needed to walk commands without retaining their payloads. */
 export interface MachoLoadCommandTableHeader {
@@ -35,16 +47,16 @@ export const readMachoHeaderDeclarations = (
     return err(
       `truncated Mach-O header: a ${wide ? 64 : 32}-bit header needs ${headerSize} bytes; the file has ${fileSize}`,
     );
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const commandBytes = view.getUint32(20, littleEndian);
+  const reader = wordReader(bytes, littleEndian);
+  const commandBytes = reader.u32(20);
   return ok({
     headerSize,
     wide,
     littleEndian,
-    commandCount: view.getUint32(16, littleEndian),
+    commandCount: reader.u32(16),
     commandBytes,
-    fileType: view.getUint32(12, littleEndian),
-    flags: view.getUint32(MACHO_HEADER_FLAGS_OFFSET, littleEndian),
+    fileType: reader.u32(12),
+    flags: reader.u32(MACHO_HEADER_FLAGS_OFFSET),
     identity: prefix.identity,
   });
 };
@@ -64,6 +76,31 @@ export const readMachoLoadCommandDeclarations = (
   return parsed;
 };
 
+/** The file span and minimum count framing must fit before payloads are read. */
+export const machoCommandTableIssue = (
+  {
+    commandBytes,
+    commandCount,
+    headerSize,
+  }: Pick<
+    MachoLoadCommandTableHeader,
+    "commandBytes" | "commandCount" | "headerSize"
+  >,
+  fileSize: number,
+): { readonly kind: "extent" | "count"; readonly message: string } | null => {
+  if (commandBytes > fileSize - headerSize)
+    return {
+      kind: "extent",
+      message: `truncated Mach-O load commands: the header declares ${commandBytes} bytes after its ${headerSize}-byte header; the file has ${fileSize}`,
+    };
+  if (commandCount * MACHO_LOAD_COMMAND_HEADER_BYTES > commandBytes)
+    return {
+      kind: "count",
+      message: `Mach-O load command count ${commandCount} cannot fit in its ${commandBytes}-byte command table`,
+    };
+  return null;
+};
+
 /** Admit the declared command table within the complete file's extent. */
 export const readMachoLoadCommandTableHeader = (
   bytes: Uint8Array,
@@ -71,12 +108,8 @@ export const readMachoLoadCommandTableHeader = (
 ): Result<MachoHeaderDeclarations | null, string> => {
   const parsed = readMachoLoadCommandDeclarations(bytes, fileSize);
   if (!parsed.ok || parsed.value === null) return parsed;
-  const { commandBytes, headerSize } = parsed.value;
-  if (commandBytes > fileSize - headerSize)
-    return err(
-      `truncated Mach-O load commands: the header declares ${commandBytes} bytes after its ${headerSize}-byte header; the file has ${fileSize}`,
-    );
-  return parsed;
+  const issue = machoCommandTableIssue(parsed.value, fileSize);
+  return issue === null ? parsed : err(issue.message);
 };
 
 /** One owner's count, alignment and extent proof for a sequential command walk. */
@@ -107,12 +140,15 @@ export class MachoLoadCommandCursor {
     string
   > {
     const { commandBytes, littleEndian, wide } = this.table;
-    if (this.#offset + 8 > commandBytes || bytes.byteLength < 8)
-      return err(`load command ${this.#index} starts beyond sizeofcmds`);
-    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    const size = view.getUint32(4, littleEndian);
     if (
-      size < 8 ||
+      this.#offset + MACHO_LOAD_COMMAND_HEADER_BYTES > commandBytes ||
+      bytes.byteLength < MACHO_LOAD_COMMAND_HEADER_BYTES
+    )
+      return err(`load command ${this.#index} starts beyond sizeofcmds`);
+    const reader = wordReader(bytes, littleEndian);
+    const size = reader.u32(4);
+    if (
+      size < MACHO_LOAD_COMMAND_HEADER_BYTES ||
       size % machoLoadCommandAlignment(wide) !== 0 ||
       size > commandBytes - this.#offset
     )
@@ -122,7 +158,7 @@ export class MachoLoadCommandCursor {
     const frame = {
       index: this.#index,
       offset: this.#offset,
-      command: view.getUint32(0, littleEndian),
+      command: reader.u32(0),
       size,
     };
     this.#index += 1;
@@ -233,13 +269,9 @@ export const decodeMachoFixedWordFields = (
   const names = FIXED_WORD_FIELDS.get(command);
   if (names === undefined) return undefined;
   if (fieldBytes.byteLength < names.length * 4) return null;
-  const view = new DataView(
-    fieldBytes.buffer,
-    fieldBytes.byteOffset,
-    fieldBytes.byteLength,
-  );
+  const reader = wordReader(fieldBytes, littleEndian);
   return Object.fromEntries(
-    names.map((name, index) => [name, view.getUint32(index * 4, littleEndian)]),
+    names.map((name, index) => [name, reader.u32(index * 4)]),
   );
 };
 
@@ -315,8 +347,8 @@ export const readMachoCommandStringBytes = (
       _tag: "InvalidMachoCommandString",
       reason: "truncated-offset",
     });
-  const view = new DataView(body.buffer, body.byteOffset, body.byteLength);
-  const offset = view.getUint32(8, littleEndian);
+  const reader = wordReader(body, littleEndian);
+  const offset = reader.u32(8);
   if (offset < minimumOffset || offset >= body.byteLength)
     return err({
       _tag: "InvalidMachoCommandString",

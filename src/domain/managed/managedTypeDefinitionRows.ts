@@ -22,7 +22,7 @@ export const readTypeDefinitionRowFacts = (
   row: number,
 ): TypeDefinitionRowFacts => {
   const cursor = metadataRowCursor(bytes, layout, 2, row);
-  const flags = cursor.readUInt32();
+  const flags = cursor.u32();
   const nameIndex = cursor.readIndex(layout.stringIndexSize);
   const namespaceIndex = cursor.readIndex(layout.stringIndexSize);
   const extendsOffset = cursor.offset;

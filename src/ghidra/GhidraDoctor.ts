@@ -5,11 +5,11 @@ import type {
   DoctorProviderCheck,
   DoctorProviderInspection,
 } from "../ports/DoctorProviderInspection.js";
-import { admitGhidraInstallation } from "./GhidraAdmission.js";
 import {
+  admitGhidraInstallation,
   EXISTING_PROJECT_WINDOWS_REMEDIATION,
   EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
-} from "./GhidraProviderCapabilities.js";
+} from "./GhidraAdmission.js";
 import {
   inspectGhidraInstallation,
   type GhidraInstallationCheck,

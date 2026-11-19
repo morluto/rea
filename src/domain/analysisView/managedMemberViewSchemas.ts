@@ -198,6 +198,7 @@ export const managedMembersViewContextSchema = z.strictObject({
   selection: member.selection,
   method_rows: member.method_rows,
   source_metadata_status: member.metadata.shape.status,
+  unresolved_module_name: member.metadata.shape.unresolved_module_name,
   source_coverage: member.coverage,
 });
 

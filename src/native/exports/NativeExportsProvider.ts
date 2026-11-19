@@ -1,4 +1,7 @@
-import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
+import {
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../../domain/parseFailureAnalysisError.js";
 import {
   imageFileSizeRemediation,
   projectSelectedArtifactFileFailure,
@@ -126,19 +129,13 @@ const nativeExportsFailurePrimary = (
   );
   if (identityFailure !== undefined) return identityFailure;
   if (cause instanceof BinaryResourceFailure)
-    return new AnalysisResourceConstraintError(
-      OPERATION,
-      "capacity",
-      `Selected artifact ${input.path}: ${cause.message}`,
-      { boundary: cause.boundary, maximum: cause.maximum_bytes },
-      {
+    return parseLimitConstraint(OPERATION, "capacity", cause, {
+      path: input.path,
+      ...limitRecovery(
+        binaryResourceAllowance(cause, NATIVE_EXPORT_LIMITS),
         cause,
-        ...limitRecovery(
-          binaryResourceAllowance(cause, NATIVE_EXPORT_LIMITS),
-          cause,
-        ),
-      },
-    );
+      ),
+    });
   const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
   if (formatFailure !== undefined) return formatFailure;
   if (

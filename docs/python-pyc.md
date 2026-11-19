@@ -147,7 +147,13 @@ and a null dictionary value ends the dict without that entry.
 
 The selected file is limited to 16 MiB by default (64 MiB maximum). Marshal
 object count, nesting depth, and per-string size are bounded; exceeding a
-budget fails without partial success. Decode-limit failures are deterministic:
+budget fails without partial success. Parser refusals name the exhausted
+allowance and its effective bound in `details.reported_limits.boundary` and
+`details.reported_limits.maximum`. A derived budget reports its own name and
+maximum. For example, `nested_code_steps` reports the product of
+`max_objects` and `max_depth`, and recovery names both caller controls.
+
+Decode-limit failures are deterministic:
 the recovery action names the selected field and CLI option, its effective
 value, and its accepted maximum. Raise that field on the next call when the
 maximum permits it; waiting for another analysis or increasing host memory does

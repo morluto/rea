@@ -1,4 +1,4 @@
-import { nodeCodecResult } from "../compression/NodeCodecResult.js";
+import { nodeCodecResult } from "../kernel/nodeCodecResult.js";
 import { inflateSync } from "node:zlib";
 import { z } from "zod";
 import { RUST_PRODUCER_DEFAULTS } from "../domain/rust/rustResourceLimits.js";
@@ -8,8 +8,12 @@ import {
   type RustPackage,
 } from "../domain/rust/rustBinary.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
-import { malformedInput, ParseFailureError } from "../domain/parseFailure.js";
-import { findDuplicateJsonMember } from "../domain/jsonDuplicateMember.js";
+import {
+  decodeLimit,
+  malformedInput,
+  ParseFailureError,
+} from "../domain/parseFailure.js";
+import { parseJsonWithDuplicatePolicy } from "../domain/jsonDuplicateMember.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 
 /** Compressed zlib stream limit. */
@@ -48,28 +52,18 @@ const malformedSection = (detail: string, cause: unknown) =>
     { cause },
   );
 
-/** A resource admission limit with explicit semantic units. */
-export type RustAuditableConstraint =
-  | {
-      readonly resource: "memory";
-      readonly reported_limits: { readonly maximum_bytes: number };
-    }
-  | {
-      readonly resource: "transport";
-      readonly reported_limits: { readonly maximum_output_bytes: number };
-    };
+export const RUST_AUDITABLE_GRAPH_LIMIT = "dependency graph output bytes";
 
-/** Admission refused before retained output or graph expansion. */
-export class RustAuditableResourceFailure extends Error {
-  constructor(
-    readonly constraint: RustAuditableConstraint,
-    message: string,
-    options?: ErrorOptions,
-  ) {
-    super(message, options);
-    this.name = "RustAuditableResourceFailure";
-  }
-}
+const compressedSectionLimit = (required: number) =>
+  decodeLimit(
+    RUST_AUDITABLE_FORMAT,
+    "Dependency section exceeds the 1 MiB compressed limit",
+    {
+      name: "compressed dependency bytes",
+      maximum: RUST_SECTION_BYTES,
+      required,
+    },
+  );
 
 /** Parsed section payload. Cycles are listed and are not walked. */
 export const readAuditableSection = (
@@ -87,13 +81,7 @@ export const readAuditableSection = (
     bytes.length > RUST_SECTION_BYTES &&
     options.peFileAlignment === undefined
   )
-    throw new RustAuditableResourceFailure(
-      {
-        resource: "memory",
-        reported_limits: { maximum_bytes: RUST_SECTION_BYTES },
-      },
-      "Dependency section exceeds the 1 MiB compressed limit",
-    );
+    throw compressedSectionLimit(bytes.length);
   const inflated = inflateSection(bytes, options.peFileAlignment);
   const document = parseDocument(
     inflated.bytes,
@@ -154,13 +142,7 @@ const inflateSection = (
   }
   const compressedBytes = result.consumedBytes;
   if (compressedBytes > RUST_SECTION_BYTES)
-    throw new RustAuditableResourceFailure(
-      {
-        resource: "memory",
-        reported_limits: { maximum_bytes: RUST_SECTION_BYTES },
-      },
-      "Dependency section exceeds the 1 MiB compressed limit",
-    );
+    throw compressedSectionLimit(compressedBytes);
   if (peFileAlignment !== undefined && peFileAlignment > 0) {
     const padding = bytes.subarray(compressedBytes);
     const alignedRawSize =
@@ -181,12 +163,14 @@ const inflateSection = (
     compressedBytes * RUST_INFLATE_RATIO,
   );
   if (result.buffer.length > compressedMaximum)
-    throw new RustAuditableResourceFailure(
-      {
-        resource: "memory",
-        reported_limits: { maximum_bytes: compressedMaximum },
-      },
+    throw decodeLimit(
+      RUST_AUDITABLE_FORMAT,
       "Inflated dependency JSON exceeds the size limit",
+      {
+        name: "inflated dependency JSON bytes",
+        maximum: compressedMaximum,
+        required: result.buffer.length,
+      },
     );
   return { bytes: result.buffer, compressedBytes };
 };
@@ -199,14 +183,16 @@ const inflateFailure = (
   const code =
     cause instanceof Error && "code" in cause ? String(cause.code) : "";
   if (code === "ERR_BUFFER_TOO_LARGE")
-    return new RustAuditableResourceFailure(
-      { resource: "memory", reported_limits: { maximum_bytes: maximum } },
+    return decodeLimit(
+      RUST_AUDITABLE_FORMAT,
       // The stream length is unknown until inflate finishes, so a padded PE
       // section is bounded by its storage size; say so instead of implying the
       // smaller limit derived from the consumed stream.
       storageBounded
         ? `Inflated dependency JSON exceeds the ${String(maximum)}-byte allowance derived from the padded section's storage size; the zlib stream length is unknown until it inflates, so the smaller stream-based limit could not be applied first`
         : "Inflated dependency JSON exceeds the size limit",
+      { name: "inflated dependency JSON bytes", maximum },
+      { cause },
     );
   if (
     code === "ERR_TRAILING_JUNK_AFTER_STREAM_END" ||
@@ -231,19 +217,17 @@ const parseDocument = (
     throw malformedSection("Dependency JSON is not valid UTF-8", cause);
   }
   assertDepth(text);
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch (cause) {
-    throw malformedSection("Dependency section JSON is invalid", cause);
-  }
   // JSON.parse keeps the last of a repeated field; the format allows one.
-  const duplicate = findDuplicateJsonMember(text);
-  if (duplicate !== undefined)
-    throw malformedInput(
-      RUST_AUDITABLE_FORMAT,
-      `Dependency JSON contains duplicate field ${JSON.stringify(duplicate.name)}`,
-    );
+  const decoded = parseJsonWithDuplicatePolicy(text, "reject");
+  if (!decoded.ok) {
+    if (decoded.duplicate !== undefined)
+      throw malformedInput(
+        RUST_AUDITABLE_FORMAT,
+        `Dependency JSON contains duplicate field ${JSON.stringify(decoded.duplicate.name)}`,
+      );
+    throw malformedSection("Dependency section JSON is invalid", decoded.cause);
+  }
+  const value = decoded.value;
   const version = documentVersionSchema.safeParse(value);
   if (!version.success)
     throw malformedSection(
@@ -293,13 +277,12 @@ const admitGraphExpansion = (value: unknown, maxOutputBytes: number): void => {
   let edges = 0;
   const admit = () => {
     const edgeBytes = edges * MIN_EDGE_OUTPUT_BYTES + Math.max(0, edges - 1);
-    if (minimumBytes + edgeBytes > maxOutputBytes)
-      throw new RustAuditableResourceFailure(
-        {
-          resource: "transport",
-          reported_limits: { maximum_output_bytes: maxOutputBytes },
-        },
+    const required = minimumBytes + edgeBytes;
+    if (required > maxOutputBytes)
+      throw decodeLimit(
+        RUST_AUDITABLE_FORMAT,
         "Dependency graph exceeds the complete report byte budget before expansion",
+        { name: RUST_AUDITABLE_GRAPH_LIMIT, maximum: maxOutputBytes, required },
       );
   };
   const currentEdgeBytes = () =>

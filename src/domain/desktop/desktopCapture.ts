@@ -193,7 +193,9 @@ const aptRepositorySchema = z.strictObject({
   sources_file: z.string().nullable(),
   /** Without the user name and password the entry may hold. */
   uri: z.string().nullable(),
-  /** Whether the entry's URI held a user name or password, which REA does not record; absent from captures written before it was recorded. */
+  /** The index Repo-URI observed by apt, without credentials. Older captures omit it. */
+  repo_uri: z.string().min(1).optional(),
+  /** Whether the entry or index URI held credentials, which REA does not record. */
   uri_credentials_removed: z.boolean().optional(),
   suite: z.string().nullable(),
   /** Empty for a flat repository. */
@@ -263,7 +265,10 @@ const packageSchema = z.strictObject({
 export const desktopApplicationInventorySchema = z.strictObject({
   desktop_entry: desktopEntrySchema.nullable(),
   argv: z.array(z.string()).min(1),
+  /** Directory in which the recorded argv is invoked. */
   working_directory: z.string().min(1),
+  /** Physical directory selected by an env chdir option, when present. */
+  application_working_directory: z.string().min(1).optional(),
   executable: z.strictObject({
     path: z.string().min(1),
     resolved_path: z.string().nullable(),

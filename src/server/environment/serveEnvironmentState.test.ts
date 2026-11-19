@@ -8,7 +8,10 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
-import { phaseArrival } from "../../../tests/support/lifecycleHarness.js";
+import {
+  phaseArrival,
+  phaseGate,
+} from "../../../tests/support/lifecycleHarness.js";
 
 const closeFailureControl = vi.hoisted(() => ({
   failure: null as Error | null,
@@ -79,21 +82,33 @@ const renamedDocument = () => {
 const dataPlane = (
   intake: Partial<StateIntake> = {},
   stopped?: AbortSignal,
+  queued?: (method: string) => void,
 ) => {
   const store = new EnvironmentStateStore(state);
+  const methods = stateDataPlane(
+    store,
+    { ...DEFAULT_STATE_INTAKE, ...intake },
+    stopped,
+  );
   const route = environmentRoutes(
     environmentCard("grafana-example", [], "state"),
-    stateDataPlane(store, { ...DEFAULT_STATE_INTAKE, ...intake }, stopped),
+    (...args) => {
+      const reply = methods(...args);
+      queued?.(args[0]);
+      return reply;
+    },
   ).find((entry) => entry.path === ENVIRONMENT_RPC_PATH);
   if (route === undefined) throw new Error("No data-plane route");
-  const post = async (body: unknown, signal?: AbortSignal) => {
-    const response = await route.handle(
+  const postRaw = (body: unknown, signal?: AbortSignal) =>
+    route.handle(
       new Request(`http://127.0.0.1${ENVIRONMENT_RPC_PATH}`, {
         method: "POST",
         body: typeof body === "string" ? body : JSON.stringify(body),
         ...(signal === undefined ? {} : { signal }),
       }),
     );
+  const post = async (body: unknown, signal?: AbortSignal) => {
+    const response = await postRaw(body, signal);
     return {
       status: response.status,
       json: response.status === 202 ? undefined : await response.json(),
@@ -109,7 +124,7 @@ const dataPlane = (
       })
     ).json;
   const add = (part: unknown) => call("data/add", { parts: [part] });
-  return { store, post, call, add };
+  return { store, postRaw, post, call, add };
 };
 
 const loginOf = (store: EnvironmentStateStore) =>
@@ -267,7 +282,6 @@ describe("state data plane", () => {
 });
 
 it("preserves arbitrary own data keys in inline and encoded file parts", async () => {
-  const plane = dataPlane();
   const initial = renamedDocument();
   const original = initial.rea_state.entities[0]!;
   const members = JSON.parse(
@@ -289,6 +303,7 @@ it("preserves arbitrary own data keys in inline and encoded file parts", async (
       },
     },
   ]) {
+    const plane = dataPlane();
     await expect(plane.add(part)).resolves.toMatchObject({ result: {} });
     const retained = plane.store.entity(
       entity.type,
@@ -411,46 +426,6 @@ describe("state data plane intake", () => {
     ).resolves.toMatchObject({ result: {} });
     expect(loginOf(plane.store)).toBe("renamed");
   });
-
-  it("runs batches in order and runs notifications without replying", async () => {
-    const plane = dataPlane();
-    const batch = await plane.post([
-      {
-        jsonrpc: "2.0",
-        id: 1,
-        method: "data/add",
-        params: { parts: [{ kind: "data", data: renamedDocument() }] },
-      },
-      { jsonrpc: "2.0", id: 2, method: "data/get" },
-    ]);
-    expect(batch.json).toMatchObject([
-      { id: 1, result: {} },
-      {
-        id: 2,
-        result: {
-          parts: [
-            {
-              kind: "data",
-              data: {
-                rea_state: {
-                  entities: expect.arrayContaining([
-                    expect.objectContaining({
-                      type: "/api/users",
-                      id: "2",
-                      fields: expect.objectContaining({ login: "renamed" }),
-                    }),
-                  ]),
-                },
-              },
-            },
-          ],
-        },
-      },
-    ]);
-    const notified = await plane.post({ jsonrpc: "2.0", method: "data/reset" });
-    expect(notified.status).toBe(202);
-    expect(loginOf(plane.store)).toBe("probe");
-  });
 });
 
 describe("state data plane file closes", () => {
@@ -512,46 +487,31 @@ describe("state data plane timing and order", () => {
     });
   });
 
-  it("applies data-plane calls from separate requests in arrival order", async () => {
-    let release: () => void = () => undefined;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const plane = dataPlane({
-      fetchState: async () => {
-        await gate;
-        return new Response(JSON.stringify(renamedDocument()));
+  it("queues a whole batch before a later request and applies a reset notification without replying", async () => {
+    const download = phaseGate<void, Response>();
+    const resetQueued = phaseArrival();
+    const plane = dataPlane(
+      { fetchState: () => download.hold() },
+      undefined,
+      (method) => {
+        if (method === "data/reset") resetQueued.arrive();
       },
-    });
-    const slowAdd = plane.add({
-      kind: "file",
-      file: { uri: "https://state.example.test/state.json" },
-    });
-    const reset = plane.call("data/reset");
-    release();
-    await expect(slowAdd).resolves.toMatchObject({ result: {} });
-    await expect(reset).resolves.toMatchObject({ result: {} });
-    // The reset arrived after the add, so it wins even though the add finished loading later.
-    expect(loginOf(plane.store)).toBe("probe");
-  });
-
-  it("queues every message of a batch at arrival, so a later request's reset never lands between them", async () => {
-    let release: () => void = () => undefined;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const held = heldFetcher(async () => {
-      await gate;
-      return new Response(JSON.stringify(renamedDocument()));
-    });
-    const plane = dataPlane({ fetchState: held.fetchState });
+    );
     const batch = plane.post([
       addByUri(1),
       { jsonrpc: "2.0", id: 2, method: "data/get" },
     ]);
-    await held.fetching(batch, "state fetch admission");
-    const reset = plane.call("data/reset");
-    release();
+    let reset: Promise<Response> | undefined;
+    try {
+      await download.reached(batch, "state fetch admission");
+      reset = Promise.resolve(
+        plane.postRaw({ jsonrpc: "2.0", method: "data/reset" }),
+      );
+      await resetQueued.reached(reset, "reset queue admission");
+    } finally {
+      download.release(new Response(JSON.stringify(renamedDocument())));
+      await Promise.allSettled([batch, reset]);
+    }
     const replies = (await batch).json;
     expect(replies).toMatchObject([
       { id: 1, result: {} },
@@ -578,7 +538,9 @@ describe("state data plane timing and order", () => {
       },
     ]);
     // The get arrived with the add, before the reset, so it reports the loaded state.
-    await expect(reset).resolves.toMatchObject({ result: {} });
+    const notification = await reset;
+    expect(notification.status).toBe(202);
+    expect(await notification.text()).toBe("");
     expect(loginOf(plane.store)).toBe("probe");
   });
 });
@@ -656,7 +618,7 @@ describe("state data plane cancellation", () => {
 });
 
 describe("state data plane response budget", () => {
-  it("answers replies past the response budget with an error stating it instead of building the body", async () => {
+  it("measures oversized batch replies without stringifying them whole and leaves room for reset", async () => {
     const document = renamedDocument();
     const large = {
       rea_state: {
@@ -682,89 +644,53 @@ describe("state data plane response budget", () => {
       plane.add({ kind: "file", file: { uri: pathToFileURL(path).href } }),
     ).resolves.toMatchObject({ result: {} });
     const get = (id: number) => ({ jsonrpc: "2.0", id, method: "data/get" });
-    const batch = await plane.post([
-      get(1),
-      get(2),
-      get(3),
-      get(4),
-      { jsonrpc: "2.0", id: 5, method: "data/reset" },
-    ]);
-    // Two reads fit; the third and fourth would pass the budget, and the reset's small reply is kept.
-    expect(batch.json).toMatchObject([
-      { id: 1, result: { parts: [{ kind: "data" }] } },
-      { id: 2, result: { parts: [{ kind: "data" }] } },
-      {
+    const replyBytes = Buffer.byteLength(
+      JSON.stringify({
+        jsonrpc: "2.0",
         id: 3,
-        error: {
-          code: -32000,
-          data: {
-            max_response_bytes: MAX_RPC_RESPONSE_BYTES,
-            reply_bytes: expect.any(Number),
-          },
-        },
-      },
-      { id: 4, error: { code: -32000 } },
-      { id: 5, result: {} },
-    ]);
-    expect(Buffer.byteLength(JSON.stringify(batch.json))).toBeLessThanOrEqual(
-      MAX_RPC_RESPONSE_BYTES,
+        result: { parts: [{ kind: "data", data: plane.store.snapshot() }] },
+      }),
     );
-    expect(loginOf(plane.store)).toBe("probe");
-  });
-
-  it("measures each reply before building it, so one past the budget is never serialized whole", async () => {
-    const document = renamedDocument();
-    const login = "x".repeat(Math.ceil(MAX_RPC_RESPONSE_BYTES / 3));
-    const large = {
-      rea_state: {
-        ...document.rea_state,
-        entities: document.rea_state.entities.map((entity) =>
-          entity.type === "/api/users" && entity.id === "2"
-            ? { ...entity, fields: { ...entity.fields, login } }
-            : entity,
-        ),
-      },
-    };
-    const root = await createTestTempDirectory(
-      "rea-environment-state-measure-",
-    );
-    const path = join(root, "large.json");
-    await writeFile(path, JSON.stringify(large));
-    const plane = dataPlane();
-    await plane.add({ kind: "file", file: { uri: pathToFileURL(path).href } });
-    const reply = (id: number) => ({
-      jsonrpc: "2.0",
-      id,
-      result: { parts: [{ kind: "data", data: plane.store.snapshot() }] },
-    });
-    const replyBytes = Buffer.byteLength(JSON.stringify(reply(3)));
     const stringify = vi.spyOn(JSON, "stringify");
     try {
-      const batch = await plane.post(
-        [1, 2, 3].map((id) => ({ jsonrpc: "2.0", id, method: "data/get" })),
-      );
-      // A refused read is measured exactly, from bounded parts.
-      expect(batch.json).toMatchObject([
-        { id: 1 },
-        { id: 2 },
-        {
-          id: 3,
-          error: {
-            data: { reply_bytes: replyBytes },
-          },
-        },
+      const response = await plane.postRaw([
+        get(1),
+        get(2),
+        get(3),
+        get(4),
+        { jsonrpc: "2.0", id: 5, method: "data/reset" },
       ]);
-      // No whole reply was handed to JSON.stringify by the server.
+      expect(response.status).toBe(200);
+      const text = await response.text();
+      expect(Buffer.byteLength(text)).toBeLessThanOrEqual(
+        MAX_RPC_RESPONSE_BYTES,
+      );
+      const refusal = {
+        code: -32000,
+        data: {
+          max_response_bytes: MAX_RPC_RESPONSE_BYTES,
+          reply_bytes: replyBytes,
+        },
+      };
       expect(
         stringify.mock.calls.some(
           ([value]) =>
             typeof value === "object" &&
             value !== null &&
             "result" in value &&
-            typeof (value as { result?: unknown }).result === "object" &&
-            (value as { id?: unknown }).id === 3,
+            typeof value.result === "object" &&
+            "id" in value &&
+            (value.id === 3 || value.id === 4),
         ),
       ).toBe(false);
+      expect(JSON.parse(text)).toMatchObject([
+        { id: 1, result: { parts: [{ kind: "data" }] } },
+        { id: 2, result: { parts: [{ kind: "data" }] } },
+        { id: 3, error: refusal },
+        { id: 4, error: refusal },
+        { id: 5, result: {} },
+      ]);
+      expect(loginOf(plane.store)).toBe("probe");
     } finally {
       stringify.mockRestore();
     }

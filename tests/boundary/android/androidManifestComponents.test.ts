@@ -1,4 +1,5 @@
 import { expect, it, vi } from "vitest";
+import { parseManifestPackage } from "../../../src/apktool/ApktoolDecodeOutput.js";
 import { androidResultSchemas } from "../../../src/domain/android/androidAnalysis.js";
 
 import {
@@ -357,14 +358,21 @@ it.each([
   },
 );
 
-it("refuses a namespaced manifest root", () => {
-  const inventory = parseAndroidManifestComponents(
-    '<manifest xmlns="urn:vendor" xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><activity android:name=".Decoy"/></application></manifest>',
-    "complete",
-    "30",
+it("admits the same unqualified manifest root in both Android readers", () => {
+  const manifest = (namespace: string) =>
+    `<manifest xmlns="${namespace}" xmlns:a="http://schemas.android.com/apk/res/android" xmlns:vendor="urn:vendor" package="com.example" vendor:package="com.decoy"><application><activity a:name=".Main"/></application></manifest>`;
+  const valid = manifest("");
+  expect(parseManifestPackage(valid)).toBe("com.example");
+  expect(parseAndroidManifestComponents(valid, "complete", "30")).toMatchObject(
+    { status: "complete", items: [{ name: "com.example.Main" }] },
   );
-  expect(inventory.status).toBe("unavailable");
-  expect(inventory.items).toEqual([]);
+  const unexpected = manifest("urn:vendor");
+  expect(
+    parseAndroidManifestComponents(unexpected, "complete", "30"),
+  ).toMatchObject({ status: "unavailable", items: [] });
+  expect(() => parseManifestPackage(unexpected)).toThrow(
+    "AndroidManifest.xml root must be <manifest>",
+  );
 });
 
 it("does not index foreign activities as alias targets", () => {
@@ -927,12 +935,12 @@ it("reports unavailable inventory for malformed or unexpected manifests", () => 
       "complete",
     ),
   ).toMatchObject({ status: "unavailable", items: [] });
-  expect(
-    parseAndroidManifestComponents(
-      '<?xml version="1.0" encoding="utf-8"?><!DOCTYPE manifest><manifest />',
-      "complete",
-    ),
-  ).toMatchObject({ status: "unavailable", items: [] });
+  const withDoctype =
+    '<?xml version="1.0" encoding="utf-8"?><!DOCTYPE manifest><manifest package="com.example" />';
+  expect(parseAndroidManifestComponents(withDoctype, "complete")).toMatchObject(
+    { status: "unavailable", items: [] },
+  );
+  expect(parseManifestPackage(withDoctype)).toBe("com.example");
 });
 
 it("bounds the component inventory and says so", () => {

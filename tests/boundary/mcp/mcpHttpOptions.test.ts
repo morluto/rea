@@ -7,11 +7,21 @@ import {
   mcpAllowedHostsTextSchema,
 } from "../../../src/config/mcpHttpEndpoint.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { classifyCliEntrypoint } from "../../../src/cliBuiltinArguments.js";
 import { runMcpHttpEntrypoint } from "../../../src/main.js";
 import {
-  parseMcpHttpArguments,
   renderMcpHttpHelp,
+  validateMcpHttpCommand,
 } from "../../../src/main/mcpHttpArguments.js";
+
+const httpCommand = (args: readonly string[]) => {
+  const entry = classifyCliEntrypoint(["mcp", ...args], {});
+  if (entry.kind !== "mcp-http") throw new Error("Expected an MCP HTTP entry");
+  return entry.command;
+};
+
+const parseMcpHttpArguments = (args: readonly string[]) =>
+  validateMcpHttpCommand(httpCommand(args));
 
 describe("rea mcp --http arguments", () => {
   it("accepts --http with optional host and port in either flag spelling", () => {
@@ -38,10 +48,6 @@ describe("rea mcp --http arguments", () => {
     expect(parseMcpHttpArguments(["--http", "add"])).toMatchObject({
       ok: false,
       message: "Unknown mcp --http argument: add",
-    });
-    expect(parseMcpHttpArguments(["--port", "1"])).toMatchObject({
-      ok: false,
-      message: "--host and --port require --http",
     });
     for (const port of ["70000", "08", "-1", "http"])
       expect(parseMcpHttpArguments(["--http", `--port=${port}`])).toMatchObject(
@@ -127,17 +133,54 @@ describe("rea mcp --http arguments", () => {
       };
     };
     const help = io();
-    await runMcpHttpEntrypoint(["--http", "--help"], help);
+    await runMcpHttpEntrypoint(httpCommand(["--http", "--help"]), help);
     expect(help.stdout).toEqual([`${renderMcpHttpHelp()}\n`]);
     expect(help.stderr).toEqual([]);
     expect(help.exitCodes).toEqual([0]);
     const rejected = io();
-    await runMcpHttpEntrypoint(["--http", "add"], rejected);
+    await runMcpHttpEntrypoint(httpCommand(["--http", "add"]), rejected);
     expect(rejected.stdout).toEqual([]);
     expect(rejected.stderr).toEqual(["Unknown mcp --http argument: add\n"]);
     expect(rejected.exitCodes).toEqual([1]);
   });
 });
+
+processTest(
+  "keeps a flag-shaped output format with the doctor command without starting HTTP",
+  async ({ processes }) => {
+    const result = await processes.run(process.execPath, [
+      fileURLToPath(new URL("../../../scripts/rea.mjs", import.meta.url)),
+      "mcp",
+      "--format",
+      "--http",
+      "doctor",
+      "--json",
+    ]);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: "Invalid output format: --http",
+    });
+  },
+);
+
+processTest(
+  "reports an HTTP option without its mode through the compiled CLI",
+  async ({ processes }) => {
+    const result = await processes.run(process.execPath, [
+      fileURLToPath(new URL("../../../scripts/rea.mjs", import.meta.url)),
+      "mcp",
+      "--port",
+      "8765",
+    ]);
+    expect(result).toMatchObject({
+      exitCode: 1,
+      stdout: "",
+      stderr: "--host and --port require --http\n",
+    });
+  },
+);
 
 processTest(
   "rejects an invalid earlier host list before the compiled CLI opens a listener",

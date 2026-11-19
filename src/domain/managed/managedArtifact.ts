@@ -56,15 +56,31 @@ const assemblyIdentitySchema = z.object({
   row_offset: offsetSchema,
 });
 
-const moduleIdentitySchema = z.object({
-  name: z.string(),
+const moduleRowCoordinates = {
   generation: z.int().min(0).max(0xffff),
   mvid: cliMetadataGuidSchema.nullable(),
   enc_id: cliMetadataGuidSchema.nullable(),
   enc_base_id: cliMetadataGuidSchema.nullable(),
   token: managedMetadataTokenSchema,
   row_offset: offsetSchema,
+};
+
+const moduleIdentitySchema = z.object({
+  name: z.string(),
+  ...moduleRowCoordinates,
 });
+
+const unresolvedModuleNameSchema = z.strictObject({
+  name: z.null(),
+  name_index: z.int().min(1).max(0xffff_ffff),
+  ...moduleRowCoordinates,
+  token: z.literal("0x00000001"),
+});
+
+export type NamedManagedModule = z.infer<typeof moduleIdentitySchema>;
+export type UnresolvedManagedModuleName = z.infer<
+  typeof unresolvedModuleNameSchema
+>;
 
 /**
  * What a managed inspection established about the CLI metadata: none present,
@@ -87,6 +103,7 @@ const managedMetadataSummarySchema = z.object({
   status: managedMetadataStatusSchema,
   version: z.string().nullable(),
   table_row_counts: z.record(z.string(), z.int().min(0).max(0xffff_ffff)),
+  unresolved_module_name: unresolvedModuleNameSchema.exactOptional(),
 });
 
 const managedTokenIdentityScopeSchema = z.object({
@@ -532,11 +549,8 @@ export const managedArtifactInspectionSchema = z.object({
       }),
     ),
   }),
-  metadata: z.object({
-    status: managedMetadataStatusSchema,
-    version: z.string().nullable(),
+  metadata: managedMetadataSummarySchema.extend({
     stream_names: z.array(z.string()),
-    table_row_counts: z.record(z.string(), z.int().min(0).max(0xffff_ffff)),
   }),
   module: moduleIdentitySchema.nullable(),
   assembly: assemblyIdentitySchema.nullable(),

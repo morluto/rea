@@ -1,8 +1,5 @@
 import { z } from "zod";
-import {
-  readRecordedResponseDeclaration,
-  recordedResponseStatus,
-} from "./recordedResponseBody.js";
+import { readRecordedResponseDeclaration } from "./recordedResponseBody.js";
 import {
   parseRecordedTransportUrl,
   parseUrlQueryParameterNames,
@@ -160,7 +157,7 @@ export const readRecordedRequestLine = (
     origin: parsed.origin,
     path: parsed.path,
     query: parsed.query,
-    status: recordedResponseStatus(response),
+    status: response?.status ?? null,
     rawMime,
   };
 };

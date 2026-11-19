@@ -138,12 +138,11 @@ export class CaptureRedaction {
   }
 }
 
+import { isRecord } from "../../kernel/isRecord.js";
+
 /** Escape a producer property for an RFC 6901 location. */
 export const capturePointer = (parent: string, key: string): string =>
   `${parent}/${escapeJsonPointerToken(key)}`;
 
 /** Structural record guard does not duck-type number/byte sidecar markers. */
-export const captureObject = (
-  value: unknown,
-): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+export const captureObject = isRecord;

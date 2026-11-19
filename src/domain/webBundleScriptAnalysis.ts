@@ -4,7 +4,10 @@ import {
   webBundleAnalysisSchema,
   webBundleCallSiteSchema,
 } from "./webBundleAnalysis.js";
-import { analysisResultLimitSchema } from "./analysisSettingDefinitions.js";
+import {
+  analysisParameterLimitSchema,
+  analysisResultLimitSchema,
+} from "./analysisSettingDefinitions.js";
 import { javaScriptRouteSourceFactsSchema } from "./javascript/javascriptRouteFacts.js";
 import { javaScriptRefusedPhaseSchema } from "./javascript/javascriptSemanticWorkAllowance.js";
 import type { AnalysisError } from "./analysisErrorBase.js";
@@ -17,7 +20,7 @@ const observationsSchema = z.strictObject({
   endpoints: webBundleAnalysisSchema.shape.observations.shape.endpoints,
   webmcp_declarations:
     webBundleAnalysisSchema.shape.observations.shape.webmcp_declarations,
-  /** Browser requests whose URL argument is not a string literal. */
+  /** Browser requests whose URL argument could not be resolved statically. */
   unresolved_endpoints: z.array(webBundleCallSiteSchema),
 });
 
@@ -31,6 +34,12 @@ const refusedScriptFactsSchema = z.strictObject({
   inferences: webBundleAnalysisSchema.shape.inferences,
 });
 
+const semanticLimitSchema = z.strictObject({
+  reason: z.string(),
+  limit: analysisParameterLimitSchema,
+});
+export type WebBundleSemanticLimit = z.infer<typeof semanticLimitSchema>;
+
 /** Serializable result for one captured script, suitable for worker transport. */
 export const webBundleScriptAnalysisSchema = z
   .discriminatedUnion("status", [
@@ -40,6 +49,7 @@ export const webBundleScriptAnalysisSchema = z
       parse_status: z.enum(["parsed", "recovered", "failed"]),
       visited_ast_nodes: z.number().int().min(0),
       widened_return_references: z.boolean(),
+      semantic_limits: z.array(semanticLimitSchema).exactOptional(),
       route_facts: javaScriptRouteSourceFactsSchema.nullable().optional(),
       observations: observationsSchema,
       inferences: webBundleAnalysisSchema.shape.inferences,
@@ -144,6 +154,8 @@ export const webBundleScriptAnalysisSchema = z
 
     if (result.parse_status === "failed") {
       const hasFindings =
+        (result.semantic_limits !== undefined &&
+          result.semantic_limits.length > 0) ||
         result.observations.edges.length > 0 ||
         result.observations.routes.length > 0 ||
         result.observations.endpoints.length > 0 ||

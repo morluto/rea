@@ -335,8 +335,19 @@ it("fails closed when the combined entry budget is exhausted", () => {
 });
 
 it("examines the first of two .modinfo sections and records the duplicate", () => {
-  const report = parse(kernelModuleFixture({ repeatModinfo: true }));
-  expect(report.modinfo?.entries).toHaveLength(6);
+  const report = parse(
+    kernelModuleFixture({
+      modinfo: Buffer.from("name=first\0"),
+      sharedNameSections: {
+        name: ".modinfo",
+        count: 1,
+        body: Buffer.from("name=second\0"),
+      },
+    }),
+  );
+  expect(report.modinfo?.entries.map(({ key, value }) => [key, value])).toEqual(
+    [["name", "first"]],
+  );
   expect(report.limitations).toContainEqual(
     expect.stringMatching(/multiple.*\.modinfo.*first.*examined/iu),
   );

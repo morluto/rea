@@ -88,6 +88,7 @@ export {
   imageFileSizeRemediation,
   projectArtifactCloseFailure,
   projectOwnedArtifactIdentityFailure,
+  projectOwnedArtifactInputFailure,
   projectSelectedArtifactFileFailure,
   projectStableArtifactFailure,
   readerIntegrityFailure,
@@ -105,11 +106,14 @@ export {
 export {
   assertStableArtifactState,
   completedStableArtifact,
+  completedStableArtifactStream,
   readStableArtifact,
+  streamStableArtifact,
 } from "./readStableArtifact.js";
 export type {
   StableArtifactFileSystem,
   StableArtifactSnapshot,
+  StableArtifactStream,
 } from "./readStableArtifact.js";
 export {
   ArtifactPathRegistry,
@@ -143,5 +147,8 @@ export {
   ZIP_READER_OPTIONS,
   ZipArtifactReader,
   decodeZipEntryText,
+  zipEntryNameLimitations,
   zipEntryPath,
+  zipListingCoverage,
+  typedZipFailure,
 } from "./ZipArtifactReader.js";

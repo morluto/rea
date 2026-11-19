@@ -43,6 +43,7 @@ import { verifyGhidraRelocationSymbols } from "./lib/real-ghidra-relocation-symb
 import {
   verifyDenseDefaultReturn,
   verifyJumpTableDenseSwitch,
+  verifyMaskedByteSwitch,
   verifyNativeTypeLayout,
   verifyRelativeSwitch,
   verifyRelativeSignedSwitch,
@@ -54,7 +55,7 @@ let report;
 const installDir = process.env.GHIDRA_INSTALL_DIR;
 if (installDir === undefined || !isAbsolute(installDir))
   throw new Error(
-    "Set GHIDRA_INSTALL_DIR to the absolute root of an extracted Ghidra 12.1.4 release.",
+    `Set GHIDRA_INSTALL_DIR to the absolute root of an extracted Ghidra ${SUPPORTED_GHIDRA_VERSION} release.`,
   );
 const installation = await inspectVerifierGhidraInstallation({
   environment: process.env,
@@ -186,32 +187,37 @@ await withVerifierFixture(fixtures, async () => {
         ]);
       }
     }
-    const signedRelativeSource = fileURLToPath(
-      new URL(
-        "../tests/conformance/ghidra/relative-switch-signed.S",
-        import.meta.url,
-      ),
-    );
-    for (const selectorBias of [0, 2, 10]) {
+    // Compile the assembly fixtures through the same operator-selected Clang.
+    const switchFixtures = [
+      ...[0, 2, 10].map((selectorBias) => ({
+        source: "../tests/conformance/ghidra/relative-switch-signed.S",
+        variant: `relative-signed-${selectorBias}`,
+        flags: [`-DREA_SELECTOR_BIAS=${selectorBias}`],
+      })),
+      {
+        source: "../tests/conformance/ghidra/masked-byte-switch.S",
+        variant: "masked-byte-switch",
+        flags: [],
+      },
+    ];
+    for (const { source, variant, flags } of switchFixtures) {
+      const sourceFile = fileURLToPath(new URL(source, import.meta.url));
       for (const format of [
         "elf",
         ...(expectedNativeTarget.architecture === "arm64" ? ["mach-o"] : []),
       ]) {
-        const targetPath = join(
-          fixtureRoot,
-          `relative-signed-${selectorBias}-${format}.o`,
-        );
+        const targetPath = join(fixtureRoot, `${variant}-${format}.o`);
         await exec(clang, [
           ...(format === "elf" ? ["--target=aarch64-linux-gnu"] : []),
-          `-DREA_SELECTOR_BIAS=${selectorBias}`,
+          ...flags,
           "-c",
-          signedRelativeSource,
+          sourceFile,
           "-o",
           targetPath,
         ]);
         crossTargets.push([
           targetPath,
-          `relative-signed-${selectorBias}`,
+          variant,
           { format, architecture: "arm64" },
         ]);
       }
@@ -322,7 +328,11 @@ await withVerifierFixture(fixtures, async () => {
   const crossResults = [];
   for (const [targetPath, variant, expectedTarget] of crossTargets) {
     const result = await verifyTarget(targetPath, variant, expectedTarget);
-    if (variant !== "aarch64-jump-table" && !variant.startsWith("relative-"))
+    if (
+      variant !== "aarch64-jump-table" &&
+      variant !== "masked-byte-switch" &&
+      !variant.startsWith("relative-")
+    )
       assertCrossFixture(result);
     crossResults.push(result);
   }
@@ -584,30 +594,33 @@ async function verifyTarget(targetPath, variant, expectedTarget = null) {
             client,
           })
         : null;
-    const probes = variant.startsWith("relative-signed-")
-      ? await verifyRelativeSignedSwitch(
-          client,
-          Number(variant.split("-").at(-1)),
-        )
-      : variant.startsWith("relative-")
-        ? await verifyRelativeSwitch(
-            client,
-            procedures,
-            Number(variant.slice(-1)),
-          )
-        : variant === "type-layout"
-          ? await verifyNativeTypeLayout(client, names)
-          : variant === "jump-table"
-            ? await verifyJumpTableDenseSwitch(client, procedures)
-            : variant === "custom" || variant === "aarch64-jump-table"
-              ? null
-              : await verifyInventoryOperations({
-                  client,
-                  variant,
-                  procedures,
-                  names,
-                  strings,
-                });
+    const probes =
+      variant === "masked-byte-switch"
+        ? await verifyMaskedByteSwitch(client)
+        : variant.startsWith("relative-signed-")
+          ? await verifyRelativeSignedSwitch(
+              client,
+              Number(variant.split("-").at(-1)),
+            )
+          : variant.startsWith("relative-")
+            ? await verifyRelativeSwitch(
+                client,
+                procedures,
+                Number(variant.slice(-1)),
+              )
+            : variant === "type-layout"
+              ? await verifyNativeTypeLayout(client, names)
+              : variant === "jump-table"
+                ? await verifyJumpTableDenseSwitch(client, procedures)
+                : variant === "custom" || variant === "aarch64-jump-table"
+                  ? null
+                  : await verifyInventoryOperations({
+                      client,
+                      variant,
+                      procedures,
+                      names,
+                      strings,
+                    });
     const nativeValues =
       variant === "debug"
         ? await verifyNativeValueTrace(client, procedures, parsedTarget.value)

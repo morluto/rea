@@ -264,8 +264,24 @@ export const amdFixture = (
     },
   ]);
 };
+/**
+ * One final LZ4 literal sequence, the block form CUDA's 0x2000 profile stores.
+ * A single sequence is valid LZ4: separate sequences need an intervening match.
+ */
+const lz4LiteralBlock = (data: Buffer): Buffer => {
+  const head = [Math.min(data.length, 15) << 4];
+  if (data.length >= 15) {
+    let extra = data.length - 15;
+    while (extra >= 255) {
+      head.push(255);
+      extra -= 255;
+    }
+    head.push(extra);
+  }
+  return Buffer.concat([Buffer.from(head), data]);
+};
 export const cudaFixture = (
-  compression: "none" | "zstd" | "legacy" = "none",
+  compression: "none" | "zstd" | "lz4" | "legacy" = "none",
   entries: { kind: number; target: number; bytes: Buffer; flags?: number }[] = [
     { kind: 1, target: 80, bytes: Buffer.from(ptxFixture) },
     { kind: 2, target: 90, bytes: cubinFixture({ architecture: 90 }) },
@@ -278,13 +294,19 @@ export const cudaFixture = (
           ? zstdCompressSync(bytes)
           : compression === "legacy"
             ? deflateSync(bytes)
-            : bytes,
+            : compression === "lz4"
+              ? lz4LiteralBlock(bytes)
+              : bytes,
+      // CUDA tags each supported profile with its own flag bit; 0x2000 alone is
+      // the LZ4 profile and 0x1000 alone stays an unsupported declaration.
       compressionFlag =
         compression === "zstd"
           ? 0x8000n
           : compression === "legacy"
             ? 0x1000n
-            : 0n;
+            : compression === "lz4"
+              ? 0x2000n
+              : 0n;
     const result = Buffer.alloc(64 + Math.ceil(data.length / 8) * 8);
     result.writeUInt16LE(kind, 0);
     result.writeUInt16LE(0x101, 2);

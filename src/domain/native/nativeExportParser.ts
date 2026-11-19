@@ -10,7 +10,7 @@ import {
 } from "../binaryContainer.js";
 import { architectureForElfMachine } from "./elfImage.js";
 import { readElfStringBytes } from "./elfStringBytes.js";
-import { readElfSymbol } from "../elfSymbol.js";
+import { elfSymbolSize, readElfSymbol } from "../elfSymbol.js";
 import {
   readElfDirectoryFromBuffer,
   type NativeSection,
@@ -721,7 +721,7 @@ function* parseElfExports(
         ...ELF_LIMITATIONS,
       ],
     };
-  const width = directory.bits === 64 ? 24 : 16;
+  const width = elfSymbolSize(directory.bits);
   const strings = sections[dynsym.link];
   const compressed = dynsym.compressed
     ? dynsym
@@ -760,14 +760,14 @@ function* parseElfExports(
       "malformed",
       "ELF dynamic symbol table entry size, length, null entry or string-table link is invalid",
     );
-  const count = Number(dynsym.size / BigInt(width));
-  rowBudget(count, "ELF dynamic symbol table");
-  const table = reader.table(
+  const { offset: table, size } = reader.fileRange(
     dynsym.offset,
-    count,
-    width,
+    dynsym.size,
     "ELF dynamic symbols",
   );
+  const count = size / width;
+  // With a fixed 16- or 24-byte row, the inventory ceiling also bounds table bytes.
+  rowBudget(count, "ELF dynamic symbol table");
   // Entry zero is skipped only after it is observed to be the undefined
   // symbol. A stray st_name is recorded; any other nonzero field is refused.
   const nullSymbolNote = reservedElfDynamicSymbolNote(

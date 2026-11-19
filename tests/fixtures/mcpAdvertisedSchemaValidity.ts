@@ -31,6 +31,9 @@ export function advertisedSchemaErrors(
     strict: false,
     validateFormats: false,
     addUsedSchema: false,
+    // Keep shared definitions as compiled functions instead of expanding them
+    // at every reference, while still compiling every $ref target.
+    inlineRefs: false,
     // This check compiles schemas to detect invalid references but never runs
     // their validators. Generated-code optimization adds substantial work here
     // without checking another contract; actual SDK validators keep defaults.

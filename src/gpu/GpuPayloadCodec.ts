@@ -1,4 +1,4 @@
-import { nodeCodecResult } from "../compression/NodeCodecResult.js";
+import { nodeCodecResult } from "../kernel/nodeCodecResult.js";
 import { constants, inflate, zstdDecompress } from "node:zlib";
 import { promisify } from "node:util";
 import { assertArtifactReadActive } from "../resources/index.js";

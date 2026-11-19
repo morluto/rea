@@ -4,39 +4,43 @@ import {
 } from "../../domain/elfStringTable.js";
 import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
 import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
-import { validateElfSectionTablePresence } from "../../domain/elfDeclaredRanges.js";
+import { validateElfSectionTableFields } from "../../domain/elfDeclaredRanges.js";
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
 import {
   ArtifactReaderFailure,
   assertArtifactReadActive,
-  type ArtifactFixedLimit,
 } from "../../resources/index.js";
 import {
   readElfFixedHeader,
   type ElfFixedHeader,
 } from "../../domain/elfFixedHeader.js";
 import {
+  ELF_NOTE_HEADER_BYTES,
   elfNoteAlignment as noteAlignment,
-  elfNoteLayout,
-  readElfNoteHeader,
+  elfNoteSectionStorage,
+  isElfNotePadding,
+  readElfNoteFrame,
+  type ElfNoteAlignment,
 } from "../../domain/native/elfNoteLayout.js";
 import type {
   ElfNotes,
   InspectElfNotesInput,
 } from "../../domain/native/elfNotes.js";
 import {
-  androidNoteTypeName,
-  coreNoteTypeName,
+  elfNoteTypeName,
   elfObjectTypeName,
-  gnuNoteTypeName,
 } from "../../domain/native/elfNotes.js";
 import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import { decodeLimit, ParseFailureError } from "../../domain/parseFailure.js";
-import { decodeElfSectionNameTable } from "../../domain/native/elfSectionNameTable.js";
+import { readElfTableDeclarationsFromBuffer } from "../../domain/native/nativeSectionDirectory.js";
+import {
+  decodeElfSectionNameTable,
+  readElfSectionNameTableHeader,
+} from "../../domain/native/elfSectionNameTable.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
+import { decodeFdoNote, type FdoDecodeBudget } from "./ElfFdoNote.js";
 
 const PT_NOTE = 4;
-const SHT_NOTE = 7;
 const SHT_STRTAB = 3;
 const HEX_DESCRIPTOR_LIMIT = 64;
 
@@ -48,12 +52,15 @@ const isLinuxCoreProfile = (header: ElfFixedHeader): boolean =>
  * The note text, hash, and scan ceiling. It equals the admitted image length
  * plus decoded section names, so host memory cannot raise it.
  */
-const noteTextAllowance = (budget: TextBudget): ArtifactFixedLimit => ({
-  name: "The ELF note text, hash, and scan allowance (derived from the image length and section names)",
-  kind: "parser",
-  limit: budget.limit,
-  unit: "bytes",
-});
+export const ELF_NOTE_TEXT_ALLOWANCE =
+  "The ELF note text, hash, and scan allowance (derived from the image length and section names)";
+
+const noteTextLimit = (budget: TextBudget): ParseFailureError<"limit"> =>
+  decodeLimit(
+    "elf-notes",
+    `ELF note text exceeds the ${String(budget.limit)}-byte budget.`,
+    { name: "note_text_bytes", maximum: budget.limit },
+  );
 
 interface TextBudget {
   limit: number;
@@ -62,6 +69,8 @@ interface TextBudget {
   scanned: number;
   readonly hashes: Map<string, string>;
   readonly scans: Map<string, number>;
+  /** GNU build-id descriptors above this many bytes are not hex-encoded. */
+  readonly maxGnuBuildIdBytes?: number | undefined;
 }
 
 /** Limit name of the caller's file budget, which also bounds decoded section names. */
@@ -108,6 +117,52 @@ export const elfNoteSectionNameBudget = (
       };
 };
 
+/**
+ * Refuse a compressed section-name table whose declared decoded size does not
+ * fit the source-plus-decoded-names budget, before any decoder inflates it.
+ * Only a compression header the owning decoder admits is charged; structural
+ * problems and unsupported compression are left to the decoders that own them.
+ */
+export const assertElfSectionNameBudget = (
+  bytes: Buffer,
+  maxFileBytes: number,
+): void => {
+  // The image directory's own declarations, so extended section counts and
+  // name indexes in section zero are charged exactly as the decoder sees them.
+  const declarations = readElfTableDeclarationsFromBuffer(bytes);
+  if (!declarations.ok) return;
+  const { header, sections } = declarations.value;
+  const little = header.byteOrder === "little";
+  const { offset, width, count, namesIndex } = sections;
+  if (count === 0 || namesIndex === 0) return;
+  const at = offset + BigInt(namesIndex) * BigInt(width);
+  if (at > BigInt(bytes.length - width)) return;
+  const parsed = readElfSectionHeader(
+    bytes.subarray(Number(at), Number(at) + width),
+    header.elfClass,
+    little,
+  );
+  if (!parsed.ok || parsed.value.offset > BigInt(bytes.length)) return;
+  const start = Number(parsed.value.offset);
+  const names = readElfSectionNameTableHeader(
+    bytes.subarray(
+      start,
+      parsed.value.size > BigInt(bytes.length - start)
+        ? bytes.length
+        : start + Number(parsed.value.size),
+    ),
+    parsed.value.flags,
+    header.elfClass,
+    little,
+  );
+  if (names.state !== "compressed") return;
+  if (names.declaredSize > BigInt(Math.max(0, maxFileBytes - bytes.length)))
+    throw sectionNameBudgetFailure(
+      BigInt(bytes.length) + names.declaredSize,
+      maxFileBytes,
+    );
+};
+
 const fail = (message: string): never => {
   throw new ArtifactReaderFailure("format", message);
 };
@@ -122,11 +177,7 @@ const chargeText = (
     bytes < 0 ||
     bytes > budget.limit - budget[field]
   )
-    throw new ArtifactReaderFailure(
-      "limit",
-      `ELF note text exceeds the ${String(budget.limit)}-byte budget.`,
-      { boundary: "memory", fixedAllowance: noteTextAllowance(budget) },
-    );
+    throw noteTextLimit(budget);
   budget[field] += bytes;
 };
 
@@ -216,53 +267,50 @@ const parseNoteStream = (
   reader: ElfReader,
   offset: number,
   size: number,
-  alignment: number,
+  alignment: ElfNoteAlignment,
   maxEntries: number,
   examined: { count: number },
   text: TextBudget,
   signal?: AbortSignal,
 ): ParsedNote[] => {
-  // Alignment padding is not read when a note's aligned size equals the
-  // declared table. Require the whole table first so a short file is invalid
-  // input instead of a provider result the service rejects.
-  reader.require(offset, size);
+  // Admit the full declared range, including alignment bytes that are not decoded.
+  const table = reader.slice(offset, size);
   const notes: ParsedNote[] = [];
   let at = 0;
-  while (at + 12 <= size) {
+  while (at + ELF_NOTE_HEADER_BYTES <= table.length) {
     assertArtifactReadActive(signal);
-    examined.count += 1;
-    if (examined.count > maxEntries)
-      throw new ArtifactReaderFailure(
-        "limit",
-        `ELF note tables exceed the ${String(maxEntries)}-entry budget.`,
-        { boundary: "capacity" },
-      );
-    const header = offset + at;
-    const parsedHeader = readElfNoteHeader(
-      reader.slice(header, 12),
+    const nameStart = at + ELF_NOTE_HEADER_BYTES;
+    const frame = readElfNoteFrame(
+      table.subarray(at, nameStart),
       reader.little,
+      alignment,
+      table.length - at,
     );
-    if (!parsedHeader.ok) return fail(parsedHeader.error.message);
-    const { namesz, descsz, type } = parsedHeader.value;
-    // Align offsets from the start of this note. Independently rounding
-    // namesz/descsz disagrees with binutils when alignment is 8 because the
-    // 12-byte note header is not 8-aligned (GNU property namesz=4 then starts
-    // its descriptor at 16, not 20).
-    const { descriptor: descRel, next: nextRel } = elfNoteLayout(
+    if (!frame.ok) return fail(frame.error.message);
+    const {
       namesz,
       descsz,
-      alignment,
-    );
-    const next = at + nextRel;
-    if (next > size) fail("ELF note entry exceeds its table.");
-    if (next <= at) fail("ELF note alignment did not advance.");
-    const nameBytes = reader.slice(header + 12, namesz);
-    const descriptor = reader.slice(header + descRel, descsz);
+      type,
+      descriptor: descRel,
+      next,
+      framing,
+    } = frame.value;
+    if (framing !== "complete") fail("ELF note entry exceeds its table.");
+    examined.count += 1;
+    if (examined.count > maxEntries)
+      throw decodeLimit(
+        "elf-notes",
+        `ELF note tables exceed the ${String(maxEntries)}-entry budget.`,
+        { name: "max_entries", maximum: maxEntries, required: examined.count },
+      );
+    const descStart = at + descRel;
+    const nameBytes = table.subarray(nameStart, nameStart + namesz);
+    const descriptor = table.subarray(descStart, descStart + descsz);
     const ownerEnd = nameBytes.indexOf(0);
     const ownerBytes = ownerEnd < 0 ? namesz : ownerEnd;
     chargeText(text, ownerBytes + namesz * 2);
     notes.push({
-      location: { offset: header, bytes: next - at },
+      location: { offset: offset + at, bytes: next },
       namesz,
       descsz,
       type,
@@ -272,14 +320,11 @@ const parseNoteStream = (
           : nameBytes.subarray(0, ownerEnd).toString("latin1"),
       owner_bytes_hex: nameBytes.toString("hex"),
       descriptor,
-      descriptor_offset: header + descRel,
+      descriptor_offset: offset + descStart,
     });
-    at = next;
+    at += next;
   }
-  if (
-    at < size &&
-    reader.slice(offset + at, size - at).some((byte) => byte !== 0)
-  )
+  if (at < table.length && !isElfNotePadding(table.subarray(at)))
     fail("ELF note table has trailing non-zero bytes.");
   return notes;
 };
@@ -293,6 +338,11 @@ const decodeGnu = (
 ): ElfNotes["entries"][number]["gnu"] => {
   if (owner !== "GNU") return null;
   if (type === 3 && descriptor.length > 0) {
+    if (
+      text.maxGnuBuildIdBytes !== undefined &&
+      descriptor.length > text.maxGnuBuildIdBytes
+    )
+      return { build_id_hex: null, abi_tag: null, gold_version: null };
     chargeText(text, descriptor.length * 2);
     return {
       build_id_hex: descriptor.toString("hex"),
@@ -462,11 +512,7 @@ const decodeCoreFile = (
 
   const rowBytes = count * (wide ? 54 : 30);
   if (rowBytes > text.limit - text.used) {
-    throw new ArtifactReaderFailure(
-      "limit",
-      `ELF note text exceeds the ${String(text.limit)}-byte budget.`,
-      { boundary: "memory", fixedAllowance: noteTextAllowance(text) },
-    );
+    throw noteTextLimit(text);
   }
 
   const scanKey = `file:${String(descriptor.byteOffset)}:${String(descriptor.length)}`;
@@ -664,6 +710,12 @@ const decodeCore = (
   return null;
 };
 
+/** Optional decoding bounds for consumers that retain only part of a note. */
+export interface ElfNoteParseOptions {
+  /** Leave larger GNU build-ids undecoded; `descsz` still reports their size. */
+  readonly maxGnuBuildIdBytes?: number;
+}
+
 const ANDROID_IDENT_SLOT_BYTES = 64;
 const ANDROID_IDENT_MODERN_MIN_BYTES = 4 + ANDROID_IDENT_SLOT_BYTES * 2;
 
@@ -740,6 +792,7 @@ export const parseElfNotes = (
   bytes: Buffer,
   artifact: ElfNotes["artifact"],
   input: InspectElfNotesInput,
+  options: ElfNoteParseOptions = {},
 ): ElfNotes => {
   const fixed = readElfFixedHeader(bytes);
   if (!fixed.ok) return fail(fixed.error);
@@ -755,8 +808,8 @@ export const parseElfNotes = (
     sections.offset > BigInt(Number.MAX_SAFE_INTEGER)
   )
     return fail("ELF offset or size exceeds a safe integer.");
-  const presence = validateElfSectionTablePresence(raw.value);
-  if (!presence.ok) return fail(presence.error);
+  const sectionTable = validateElfSectionTableFields(raw.value);
+  if (!sectionTable.ok) return fail(sectionTable.error);
   const phoff = Number(programs.offset);
   const shoff = Number(sections.offset);
   const phentsize = programs.width;
@@ -764,12 +817,7 @@ export const parseElfNotes = (
   const shentsize = sections.width;
   const shnum = sections.count;
   const shstrndx = sections.namesIndex;
-  if (
-    phnum === 0xffff ||
-    shnum === 0xffff ||
-    shstrndx === 0xffff ||
-    (shoff !== 0 && shnum === 0)
-  )
+  if (phnum === 0xffff || shstrndx === 0xffff || (shoff !== 0 && shnum === 0))
     throw new BinaryFormatFailure(
       "unsupported",
       "ELF extended numbering is unsupported.",
@@ -791,6 +839,12 @@ export const parseElfNotes = (
     scanned: 0,
     hashes: new Map(),
     scans: new Map(),
+    maxGnuBuildIdBytes: options.maxGnuBuildIdBytes,
+  };
+  const fdo: FdoDecodeBudget = {
+    decoded: 0,
+    retained: 0,
+    descriptors: new Map(),
   };
   let shstrtab: Buffer | null = null;
   const sectionNameLimitations = new Set<string>();
@@ -847,6 +901,34 @@ export const parseElfNotes = (
   const tables: ElfNotes["tables"] = [];
   const parsed: ReturnType<typeof toEntry>[] = [];
   const examined = { count: 0 };
+  const noteSections = [];
+  const compressedNoteRanges = new Set<string>();
+  const sectionTableOverlapsHeader = shnum !== 0 && shoff < header.headerSize;
+  if (!sectionTableOverlapsHeader) {
+    for (let index = 0; index < shnum; index += 1) {
+      const at = shoff + index * shentsize;
+      const declaration = readElfSectionHeader(
+        bytes.subarray(at, at + shentsize),
+        header.elfClass,
+        reader.little,
+      );
+      if (!declaration.ok) return fail(declaration.error.message);
+      const section = declaration.value;
+      const storage = elfNoteSectionStorage(section);
+      if (storage === "not-note") continue;
+      const { nameOffset, offset, size, alignment } = section;
+      noteSections.push({
+        index,
+        nameOffset,
+        offset,
+        size,
+        alignment,
+        storage,
+      });
+      if (storage === "compressed")
+        compressedNoteRanges.add(`${offset}:${size}`);
+    }
+  }
   if (phnum !== 0) {
     if (phoff < header.headerSize)
       return fail("ELF program header table overlaps the native header.");
@@ -868,6 +950,15 @@ export const parseElfNotes = (
         return fail("ELF offset or size exceeds a safe integer.");
       const fileOffset = Number(program.offset);
       const fileSize = Number(program.fileSize);
+      // An exact program alias does not turn compressed storage into a note
+      // stream. The section still owns the unsupported-storage outcome.
+      if (
+        compressedNoteRanges.size > 0 &&
+        compressedNoteRanges.has(`${program.offset}:${program.fileSize}`)
+      ) {
+        reader.require(fileOffset, fileSize);
+        continue;
+      }
       const alignment = noteAlignment(Number(program.alignment));
       tables.push({
         kind: "program",
@@ -885,63 +976,58 @@ export const parseElfNotes = (
         examined,
         text,
       ))
-        parsed.push(toEntry(note, "program", index, header, text));
+        parsed.push(toEntry(note, "program", index, header, text, fdo));
     }
   }
-  if (shnum !== 0) {
-    if (shoff < header.headerSize)
-      return fail("ELF section header table overlaps the native header.");
-    for (let index = 0; index < shnum; index += 1) {
-      const at = shoff + index * shentsize;
-      const parsedSection = readElfSectionHeader(
-        bytes.subarray(at, at + shentsize),
-        header.elfClass,
-        reader.little,
+  if (sectionTableOverlapsHeader)
+    return fail("ELF section header table overlaps the native header.");
+  for (const {
+    index,
+    nameOffset,
+    offset,
+    size,
+    alignment: declaredAlignment,
+    storage,
+  } of noteSections) {
+    if (
+      offset > BigInt(Number.MAX_SAFE_INTEGER) ||
+      size > BigInt(Number.MAX_SAFE_INTEGER)
+    )
+      return fail("ELF offset or size exceeds a safe integer.");
+    const fileOffset = Number(offset);
+    const fileSize = Number(size);
+    reader.require(fileOffset, fileSize);
+    if (storage === "compressed")
+      throw new BinaryFormatFailure(
+        "unsupported",
+        "Compressed ELF note sections are unsupported; descriptor file offsets require uncompressed note storage.",
       );
-      if (!parsedSection.ok) return fail(parsedSection.error.message);
-      const section = parsedSection.value;
-      if (section.type !== SHT_NOTE) continue;
-      const nameOffset = section.nameOffset;
-      if (
-        section.offset > BigInt(Number.MAX_SAFE_INTEGER) ||
-        section.size > BigInt(Number.MAX_SAFE_INTEGER)
-      )
-        return fail("ELF offset or size exceeds a safe integer.");
-      const fileOffset = Number(section.offset);
-      const fileSize = Number(section.size);
-      reader.require(fileOffset, fileSize);
-      if (section.compressed)
-        throw new BinaryFormatFailure(
-          "unsupported",
-          "Compressed ELF note sections are unsupported; descriptor file offsets require uncompressed note storage.",
-        );
-      if (section.alignment > BigInt(Number.MAX_SAFE_INTEGER))
-        return fail("ELF offset or size exceeds a safe integer.");
-      const alignment = noteAlignment(Number(section.alignment));
-      const sectionName =
-        shstrtab === null
-          ? { name: null, limitation: null }
-          : reader.cString(shstrtab, nameOffset, text);
-      if (sectionName.limitation !== null)
-        sectionNameLimitations.add(sectionName.limitation);
-      tables.push({
-        kind: "section",
-        index,
-        name: sectionName.name,
-        location: { offset: fileOffset, bytes: fileSize },
-        alignment,
-      });
-      for (const note of parseNoteStream(
-        reader,
-        fileOffset,
-        fileSize,
-        alignment,
-        input.max_entries,
-        examined,
-        text,
-      ))
-        parsed.push(toEntry(note, "section", index, header, text));
-    }
+    if (declaredAlignment > BigInt(Number.MAX_SAFE_INTEGER))
+      return fail("ELF offset or size exceeds a safe integer.");
+    const alignment = noteAlignment(Number(declaredAlignment));
+    const sectionName =
+      shstrtab === null
+        ? { name: null, limitation: null }
+        : reader.cString(shstrtab, nameOffset, text);
+    if (sectionName.limitation !== null)
+      sectionNameLimitations.add(sectionName.limitation);
+    tables.push({
+      kind: "section",
+      index,
+      name: sectionName.name,
+      location: { offset: fileOffset, bytes: fileSize },
+      alignment,
+    });
+    for (const note of parseNoteStream(
+      reader,
+      fileOffset,
+      fileSize,
+      alignment,
+      input.max_entries,
+      examined,
+      text,
+    ))
+      parsed.push(toEntry(note, "section", index, header, text, fdo));
   }
   const absent = tables.length === 0;
   return {
@@ -961,6 +1047,13 @@ export const parseElfNotes = (
     limitations: [
       ...(absent ? ABSENT_LIMITATIONS : LIMITATIONS),
       ...sectionNameLimitations,
+      ...(parsed.some(
+        ({ fdo: note }) => note !== null && note.metadata !== null,
+      )
+        ? [
+            "FDO packaging and dlopen metadata are unverified producer declarations.",
+          ]
+        : []),
       ...(parsed.some(({ owner }) => owner === "CORE")
         ? [
             isLinuxCoreProfile(header)
@@ -978,11 +1071,12 @@ const toEntry = (
   tableIndex: number,
   header: ElfFixedHeader,
   text: TextBudget,
+  fdo: FdoDecodeBudget,
 ): Omit<ElfNotes["entries"][number], "index"> => {
   const little = header.byteOrder === "little";
-  const gnuOwner = note.owner === "GNU";
-  const coreOwner = note.owner === "CORE" && isLinuxCoreProfile(header);
-  const androidOwner = note.owner === "Android";
+  const linuxCore = isLinuxCoreProfile(header);
+  const typeName = elfNoteTypeName(note.owner, note.type, linuxCore);
+  const coreOwner = note.owner === "CORE" && linuxCore;
   const range = `${String(note.descriptor_offset)}:${String(note.descsz)}`;
   let digest = text.hashes.get(range);
   if (digest === undefined) {
@@ -997,13 +1091,7 @@ const toEntry = (
     namesz: note.namesz,
     descsz: note.descsz,
     type: note.type,
-    type_name: gnuOwner
-      ? gnuNoteTypeName(note.type)
-      : coreOwner
-        ? coreNoteTypeName(note.type)
-        : androidOwner
-          ? androidNoteTypeName(note.type)
-          : "unknown",
+    type_name: typeName,
     owner: note.owner,
     owner_bytes_hex: note.owner_bytes_hex,
     descriptor: {
@@ -1034,6 +1122,7 @@ const toEntry = (
       little,
       text,
     ),
+    fdo: decodeFdoNote(typeName, range, note.descriptor, fdo),
   };
 };
 

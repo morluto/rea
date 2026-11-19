@@ -179,6 +179,34 @@ describe("APK signing block locator", () => {
   });
 });
 
+describe("Zip64 volume declarations", () => {
+  it.each([16, 20])(
+    "refuses a Zip64 end record naming another volume at field %s",
+    async (field) => {
+      const { bytes, recordOffset } = await zip64Tail();
+      expect(parseZipTail(bytes).ok).toBe(true);
+      new DataView(bytes.buffer).setUint32(recordOffset + field, 1, true);
+      expect(parseZipTail(bytes)).toMatchObject({
+        ok: false,
+        error: { kind: "zip64-unsupported" },
+      });
+    },
+  );
+
+  it("accepts deferred classic disk fields but refuses another disk", async () => {
+    const { bytes, eocdOffset } = await zip64Tail();
+    const view = new DataView(bytes.buffer);
+    view.setUint16(eocdOffset + 4, 0xffff, true);
+    view.setUint16(eocdOffset + 6, 0xffff, true);
+    expect(parseZipTail(bytes).ok).toBe(true);
+    view.setUint16(eocdOffset + 6, 1, true);
+    expect(parseZipTail(bytes)).toMatchObject({
+      ok: false,
+      error: { kind: "zip64-unsupported" },
+    });
+  });
+});
+
 describe("Zip64 end-of-central-directory", () => {
   it.each([43n, 45n, 1n << 63n])(
     "rejects a Zip64 record whose declared body size is %s",

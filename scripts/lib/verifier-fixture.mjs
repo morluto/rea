@@ -4,8 +4,20 @@ import { createCanonicalTemporaryDirectory } from "./canonical-temporary-directo
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 import { importVerifierSource } from "./verifier-source-loader.mjs";
 
-// Named types come from the declaration file TypeScript consumers import.
-/** @typedef {import("./verifier-fixture.mjs").VerifierFixtureRoot} VerifierFixtureRoot */
+/**
+ * An allocated root the fixture owns; `close` removes it.
+ * @typedef {{
+ *   readonly path: string;
+ *   close: () => Promise<void>;
+ * }} VerifierFixtureRoot
+ */
+/**
+ * A directory the verifier keeps after the run; nothing removes it.
+ * @typedef {{
+ *   readonly path: string;
+ *   readonly kept: true;
+ * }} VerifierArtifactDirectory
+ */
 /**
  * One cleanup that must confirm; a rejection or throw means it did not.
  * @typedef {() => unknown} VerifierCleanupTask
@@ -91,6 +103,7 @@ export class VerifierFixture {
    * never removed. Allocation names it on stderr, so a run that fails before
    * writing its receipt still reports where its artifacts are.
    * @param {{ readonly prefix?: string; readonly parent?: string }} [options]
+   * @returns {Promise<VerifierArtifactDirectory>}
    */
   static async keepArtifacts({ prefix, parent } = {}) {
     const { path } = await createCanonicalTemporaryDirectory(
@@ -98,7 +111,7 @@ export class VerifierFixture {
       ...(parent === undefined ? [] : [parent]),
     );
     process.stderr.write(`Keeping verifier artifacts at ${path}\n`);
-    return Object.freeze({ path, kept: true });
+    return Object.freeze({ path, kept: /** @type {const} */ (true) });
   }
 
   get path() {

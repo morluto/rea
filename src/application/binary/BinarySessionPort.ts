@@ -2,7 +2,7 @@ import type { EspFlashSelection } from "../../domain/firmware/espFlashLocation.j
 import type { InvestigationRecordPort } from "../investigation/InvestigationRecordPort.js";
 import type { RecoveryAdmission } from "../investigation/InvestigationRetention.js";
 import type { ResetInvestigationReceipt } from "../../domain/investigationLifecycle.js";
-import type { ExecutableFormatHint } from "../../domain/dosCom.js";
+import type { TargetFormatHint } from "../../domain/targetFormats.js";
 import type {
   BinaryArchitecture,
   BinaryTarget,
@@ -33,7 +33,12 @@ import type { SavedAnalysisSnapshot } from "../../domain/savedAnalysisSnapshot.j
 
 /** Selection observed at the end of one serialized open attempt. */
 export type OpenSelectionReceipt =
-  | { readonly kind: "binary"; readonly path: string; readonly sha256: string }
+  | {
+      readonly kind: "binary";
+      readonly path: string;
+      readonly sha256: string;
+      readonly caller_input_path?: string;
+    }
   | {
       readonly kind: "resources";
       readonly path: string;
@@ -89,7 +94,7 @@ export interface BinarySessionPort
     options?: {
       readonly signal?: AbortSignal;
       readonly targetKind?: BinaryTarget["kind"];
-      readonly formatHint?: ExecutableFormatHint;
+      readonly formatHint?: TargetFormatHint;
       readonly architecture?: BinaryArchitecture;
       readonly entryPoint?: string;
       readonly espFlash?: EspFlashSelection;
@@ -144,6 +149,10 @@ export interface BinarySessionPort
     readonly refreshCandidates?: boolean;
   }): Promise<JsonValue>;
   activeTarget(): BinaryTarget | undefined;
+  /** Create an isolated session over this session's auxiliary providers. */
+  createManagedBinarySession?():
+    | ManagedBinarySessionPort
+    | Promise<ManagedBinarySessionPort>;
   /** Read a snapshot with failed descriptors retained for session cleanup retry. */
   readAnalysisSnapshot(
     path: string,
@@ -163,4 +172,17 @@ export interface BinarySessionPort
   ): Result<null, EvidenceIntegrityError>;
   onAvailabilityChanged?(listener: () => void | Promise<void>): () => void;
   onAnalysisSnapshotChanged?(listener: () => void | Promise<void>): () => void;
+}
+
+/** Narrow session interface required for one-shot managed provider execution. */
+export interface ManagedBinarySessionPort extends Pick<
+  BinarySessionPort,
+  "open" | "execute" | "close"
+> {
+  executeForDirectObservation?(
+    operation: AnalysisOperation,
+    parameters?: Readonly<Record<string, JsonValue>>,
+    recoveryParameters?: Readonly<Record<string, JsonValue>>,
+    options?: ExecutionOptions,
+  ): Promise<Result<AnalysisExecution, AnalysisError>>;
 }

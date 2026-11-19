@@ -13,7 +13,7 @@ import {
   AnalysisCancelledError,
   cancelledBy,
 } from "../domain/analysisErrorCore.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { describeValidationFailure } from "../domain/validationFailure.js";
 import {
@@ -249,11 +249,7 @@ const releaseActionWindow = async (
   const cancellation = cancelledBy(OPERATION, signal);
   return actionStatus === "failed"
     ? error.retainSecondaryFailure(cancellation)
-    : analysisErrorWithCleanupFailure(
-        cancellation,
-        error,
-        OPERATION,
-      ).bindCleanupDependencies([cancellation, error]);
+    : analysisErrorWithCleanupDependencies(cancellation, error, OPERATION);
 };
 
 type RunActionContext = {

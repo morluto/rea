@@ -41,6 +41,7 @@ import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
+import { hostRangeErrorKind } from "../domain/parseFailure.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 type JsonInputFileFailure =
@@ -527,9 +528,9 @@ const jsonReadFailure = (
   )
     return cause;
   if (
+    hostRangeErrorKind(cause) === "host-capacity" &&
     cause instanceof Error &&
-    ((cause instanceof RangeError &&
-      cause.message === "Invalid string length") ||
+    (cause.message === "Invalid string length" ||
       ("code" in cause && cause.code === "ERR_STRING_TOO_LONG"))
   )
     return new AnalysisResourceConstraintError(

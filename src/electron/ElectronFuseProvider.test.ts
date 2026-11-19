@@ -835,6 +835,9 @@ it("enforces the 32 sentinel boundary with typed and public limit details", asyn
       expect(result.ok).toBe(true);
       if (result.ok) expect(result.value.slices[0]?.sentinel_count).toBe(32);
     } else {
+      await expect(readElectronFuseImage(path)).rejects.toMatchObject({
+        limit: { name: "maximum_sentinels_per_slice", maximum: 32 },
+      });
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.error._tag).toBe("AnalysisResourceConstraintError");
@@ -867,6 +870,9 @@ it("rejects a sparse artifact over 1 GiB before scanning", async () => {
   const path = join(root, "large");
   await writeFile(path, thinFuseImage(OBSIDIAN_FUSE_BYTES).bytes);
   await truncate(path, 1024 * 1024 * 1024 + 1);
+  await expect(readElectronFuseImage(path)).rejects.toMatchObject({
+    limit: { name: "maximum_input_bytes", maximum: 1024 * 1024 * 1024 },
+  });
   const result = await provider.inspect({ path });
   expect(result.ok).toBe(false);
   if (!result.ok) {

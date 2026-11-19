@@ -1,4 +1,4 @@
-import { expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 import { z } from "zod";
 import {
   freezeOwnedJsonTreeSnapshot,
@@ -52,23 +52,31 @@ it("keeps schema-specific normalized facts separate without mutating sealed sour
   }
 });
 
-it("borrows omitted optional fields from a sealed JSON source and reuses their parsed facts", () => {
+it("borrows a sealed JSON source with an omitted optional field", () => {
   const source = freezeOwnedJsonTreeSnapshot({});
   const schema = z.strictObject({ optional: z.string().optional() });
-  const parse = vi.spyOn(schema, "safeParse");
   const read = createAnalysisViewResultReader(schema);
-  try {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const result = read(parent(source));
-      if (!result.ok) throw result.error;
-      expect(result.value).toBe(source);
-      expect(result.value.optional).toBeUndefined();
-      expect(Object.hasOwn(result.value, "optional")).toBe(false);
-    }
-    expect(parse).toHaveBeenCalledTimes(1);
-  } finally {
-    parse.mockRestore();
-  }
+  const result = read(parent(source));
+  if (!result.ok) throw result.error;
+  expect(result.value).toBe(source);
+  expect(Object.hasOwn(result.value, "optional")).toBe(false);
+});
+
+it("reuses normalized facts only when the parent carries the owning seal", () => {
+  const source = freezeOwnedJsonTreeSnapshot({});
+  const sealed = parent(source);
+  const unsealed = { ...sealed, sealedResult: false };
+  let revision = "initial";
+  const read = createAnalysisViewResultReader(
+    z.strictObject({}).transform(() => ({ revision })),
+  );
+
+  expect(read(unsealed)).toEqual({ ok: true, value: { revision: "initial" } });
+  revision = "sealed";
+  expect(read(sealed)).toEqual({ ok: true, value: { revision: "sealed" } });
+  revision = "latest";
+  expect(read(sealed)).toEqual({ ok: true, value: { revision: "sealed" } });
+  expect(read(unsealed)).toEqual({ ok: true, value: { revision: "latest" } });
 });
 
 it("preserves explicit undefined normalization without freezing or caching non-JSON facts", () => {
