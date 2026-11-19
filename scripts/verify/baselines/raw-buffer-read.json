@@ -69,6 +69,5 @@
   "src/native/pwntools/PwntoolsRecordedCrashProvider.ts": 1,
   "src/native/pwntools/RecordedCrashSourceBindings.ts": 6,
   "src/native/windows/WindowsShortcutParser.ts": 48,
-  "src/pcap/PcapDnsWire.ts": 5,
   "src/v8/V8CodeCacheParser.ts": 1
 }
