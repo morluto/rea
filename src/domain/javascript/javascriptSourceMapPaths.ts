@@ -3,6 +3,8 @@ import { domainToASCII, fileURLToPath, pathToFileURL } from "node:url";
 
 import { z } from "zod";
 
+import { createSyntheticUrlRoot } from "./javascriptSyntheticUrlRoot.js";
+
 /** Map-scoped source declaration and its path interpretation for matching. */
 export const javascriptSourceMapReferenceSchema = z.strictObject({
   source_name: z.string(),
@@ -78,12 +80,20 @@ const resolveJavaScriptSourceMapPath = (
 ): JavaScriptSourceMapReference["resolution"] => {
   const portable = source.replaceAll("\\", "/");
   const windowsPath = /^[a-z]:\//iu.test(portable) || source.startsWith("\\\\");
-  // Preserve parent traversal rather than letting URL resolution clamp at '/'.
-  const anchor = `/${"source/".repeat(portable.split("/").length + 1)}`;
-  const directory = posix.join(anchor, posix.dirname(mapPath));
-  const base = pathToFileURL(`${directory}/`, { windows: false });
+  const declaredText = windowsPath
+    ? source
+    : (source.split(/[?#]/u, 1)[0] ?? "");
+  // The URL parser can discard a literal NUL at the edge of the input.
+  if (declaredText.includes("\0")) return nulPath();
+  const anchor = createSyntheticUrlRoot(source);
+  const mapDirectory = posix.dirname(mapPath);
+  const resolve = (root: string): URL | null =>
+    URL.parse(
+      source,
+      pathToFileURL(`${posix.join(root, mapDirectory)}/`, { windows: false }),
+    );
   const absolute = windowsPath ? windowsFileUrl(source) : URL.parse(source);
-  const resolved = windowsPath ? absolute : URL.parse(source, base);
+  const resolved = windowsPath ? absolute : resolve(anchor.root);
   if (resolved === null)
     return {
       kind: "unresolved",
@@ -114,15 +124,15 @@ const resolveJavaScriptSourceMapPath = (
       ? !portable.startsWith("/")
       : absolute.href !== resolved.href;
   const path = decodedUrlPath(resolved);
-  if (path === null)
-    return {
-      kind: "unresolved",
-      reason:
-        "Source reference has malformed URL encoding or an invalid file URL.",
-    };
+  if (path === null) return invalidDecodedPath();
+  if (path.includes("\0")) return nulPath();
   const value = relative
-    ? posix.relative(anchor, path)
+    ? anchor.relativePath(path, (root) => {
+        const alternate = resolve(root);
+        return alternate === null ? null : decodedUrlPath(alternate);
+      })
     : path.replace(/^\/+/, "");
+  if (value === null) return invalidDecodedPath();
   if (value === "" || value === ".." || value.startsWith("../"))
     return {
       kind: "unresolved",
@@ -130,6 +140,17 @@ const resolveJavaScriptSourceMapPath = (
     };
   return { path: value, kind: relative ? "artifact-relative" : "suffix" };
 };
+
+const invalidDecodedPath = (): JavaScriptSourceMapReference["resolution"] => ({
+  kind: "unresolved",
+  reason: "Source reference has malformed URL encoding or an invalid file URL.",
+});
+
+const nulPath = (): JavaScriptSourceMapReference["resolution"] => ({
+  kind: "unresolved",
+  reason:
+    "Source reference contains a NUL byte and cannot name a filesystem path.",
+});
 
 // Reject URL delimiters/escapes before IDNA can truncate or decode the host.
 const unusableHost = /[\0\t\n\r #/:<>?@[\\\]^|%]/u;
