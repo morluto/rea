@@ -67,6 +67,18 @@ const admit = async (bytes: Buffer) => {
 };
 
 for (const bits of [32, 64] as const) {
+  it(`admits a padded declared stride for ELF${bits} program and section tables`, async () => {
+    const fixture = image(bits, true);
+    fixture.u16(bits === 64 ? 54 : 42, fixture.programWidth + 4);
+    fixture.u16(bits === 64 ? 58 : 46, fixture.sectionWidth + 4);
+    fixture.bytes.copyWithin(
+      fixture.section + 4,
+      fixture.section,
+      fixture.section + fixture.sectionWidth,
+    );
+    fixture.bytes.fill(0, fixture.section, fixture.section + 4);
+    expect((await admit(fixture.bytes)).ok).toBe(true);
+  });
   for (const little of [true, false]) {
     it(`refuses declared table and payload truncation before provider admission (ELF${bits} ${little ? "LE" : "BE"})`, async () => {
       const fixture = image(bits, little);

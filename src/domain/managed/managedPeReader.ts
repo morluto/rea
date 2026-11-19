@@ -1,3 +1,4 @@
+import { BinaryReader } from "../binaryContainer.js";
 import { observeMzWindowsHeader } from "../dosMz.js";
 import {
   PE_SIZE_OF_HEADERS_OFFSET,
@@ -228,11 +229,14 @@ const resolveRva = (
 const mapRva = (mapping: RvaMapping): number =>
   mapping.rva === 0 && mapping.size === 0 ? 0 : resolveRva(mapping).offset;
 
-const readDirectory = (bytes: Buffer, offset: number): PeDataDirectory => {
-  requireRange(bytes, offset, 8, "pe.data-directory");
+const readDirectory = (
+  reader: BinaryReader,
+  offset: number,
+): PeDataDirectory => {
+  requireRange(reader.bytes, offset, 8, "pe.data-directory");
   return {
-    rva: bytes.readUInt32LE(offset),
-    size: bytes.readUInt32LE(offset + 4),
+    rva: reader.u32(offset),
+    size: reader.u32(offset + 4),
   };
 };
 
@@ -288,8 +292,9 @@ const readCliHeader = (
       "CLI metadata directory is absent",
       offset + 8,
     );
-  const flags = bytes.readUInt32LE(offset + 16);
-  const managedNativeHeader = readDirectory(bytes, offset + 64);
+  const reader = new BinaryReader(bytes, true, "managed-pe");
+  const flags = reader.u32(offset + 16);
+  const managedNativeHeader = readDirectory(reader, offset + 64);
   let readyToRunSignature = false;
   if (managedNativeHeader.rva !== 0 && managedNativeHeader.size >= 4) {
     const nativeOffset = mapRva({
@@ -299,7 +304,7 @@ const readCliHeader = (
       size: 4,
       scope: "cli.managed-native-header",
     });
-    readyToRunSignature = bytes.readUInt32LE(nativeOffset) === 0x0052_5452;
+    readyToRunSignature = reader.u32(nativeOffset) === 0x0052_5452;
   }
   return {
     headerOffset: offset,
@@ -308,9 +313,9 @@ const readCliHeader = (
     runtimeMinor,
     metadata,
     flags,
-    entryPoint: bytes.readUInt32LE(offset + 20),
-    resources: readDirectory(bytes, offset + 24),
-    strongName: readDirectory(bytes, offset + 32),
+    entryPoint: reader.u32(offset + 20),
+    resources: readDirectory(reader, offset + 24),
+    strongName: readDirectory(reader, offset + 32),
     managedNativeHeader,
     readyToRunSignature,
   };

@@ -24,6 +24,11 @@ import {
   managedPeFixtureTarget,
 } from "../../../src/dotnet/ManagedPe.fixture.js";
 
+import {
+  managedStringsAmbiguity,
+  STRING_AMBIGUITY_MVID,
+} from "../../fixtures/managedStringsAmbiguity.js";
+
 /** Tiny-format CIL method body. */
 const tinyIl = (il: readonly number[]): Buffer =>
   Buffer.from([(il.length << 2) | 2, ...il]);
@@ -51,6 +56,25 @@ const memberGraph = (
   const graph = parseJavaScriptApplicationGraph(result.graph);
   return { members, memberEvidence, result, graph };
 };
+
+it("keeps an unnamed Module node bound to its independently observed MVID", () => {
+  const { bytes } = managedStringsAmbiguity("forward");
+  const { graph } = memberGraph(bytes);
+  expect(
+    graph.nodes.find(({ kind }) => kind === "managed-module"),
+  ).toMatchObject({
+    observations: [
+      {
+        label: null,
+        properties: {
+          name: null,
+          mvid: STRING_AMBIGUITY_MVID,
+          token: "0x00000001",
+        },
+      },
+    ],
+  });
+});
 
 const createManagedInteropEvidence = () => {
   const bytes = buildManagedPeFixture({
@@ -117,16 +141,17 @@ describe("managed application graph MethodDef scope", () => {
     }
   });
 
-  it("keeps an unexamined MethodDef scope unknown", () => {
+  it("keeps an unrecorded MethodDef scope unknown in historical member Evidence", () => {
     const bytes = buildManagedPeFixture({ ilBody: tinyIl([0x2a]) });
     const binary = managedPeFixtureTarget(bytes);
-    const members = inspectManagedMembersBytes(bytes, binary);
+    const { unresolved_definitions: _projection, ...historical } =
+      inspectManagedMembersBytes(bytes, binary);
     const evidence = createEvidence(binary, MANAGED_STATIC_PROVIDER, {
       operation: "inspect_managed_members",
       parameters: {},
-      result: { ...members, method_rows: null },
+      result: { ...historical, method_rows: null },
       rawResult: null,
-      limitations: members.limitations,
+      limitations: historical.limitations,
     });
     const projection = projectManagedApplicationGraphEvidence({
       managed_members: evidence,

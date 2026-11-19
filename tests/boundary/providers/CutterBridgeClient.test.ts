@@ -1027,7 +1027,10 @@ describe("CutterBridgeClient: scenario group 5", () => {
           respond({ ok: true, acknowledged: true });
           return;
         }
-        if (malformed) respond("{", { raw: true });
+        if (malformed)
+          respond('{"ok":true,"output":{18446744071578845304:0}}', {
+            raw: true,
+          });
         else
           respond(
             { ok: true, execution_state: "complete", output: "split 雪 ☃️" },
@@ -1060,7 +1063,7 @@ describe("CutterBridgeClient: scenario group 5", () => {
         sessionId,
         expectedGeneration: 0,
         command: "pd 1",
-        json: false,
+        json: true,
       }),
     ).resolves.toMatchObject({
       executionState: "unknown",
@@ -1261,6 +1264,64 @@ describe("CutterBridgeClient: scenario group 7", () => {
       await rm(directory, { recursive: true, force: true });
     server = undefined;
     directory = undefined;
+  });
+
+  it("retains large JSON integer digits in authenticated command evidence", async () => {
+    directory = await mkdtemp(join(tmpdir(), "rea-cutter-json-output-"));
+    const sessionId = "27d3e3f1-f1e5-49ae-91ec-95af1f343a5a";
+    const token = "synthetic-cutter-bridge-token-for-test";
+    server = authenticatedServer(token, sessionId, (request, respond) => {
+      if (request.kind === "ack") {
+        respond({ ok: true, acknowledged: true });
+        return;
+      }
+      expect(request.json).toBe(true);
+      respond(
+        '{"ok":true,"execution_state":"complete","document_generation":2,"output":' +
+          '[{"offset":18446744071578845304,"maxbound":18446744071578845312,' +
+          '"size":8,"nested":[-9223372036854775808,9007199254740991,1.5,"18446744071578845304"],' +
+          '"__proto__":18446744071578845312}]}',
+        { raw: true },
+      );
+    });
+    await writeDescriptor(directory, sessionId, await listen(server), token);
+    const service = new CutterBridgeService(
+      createClient({ REA_CUTTER_BRIDGE_DIR: directory }),
+    );
+    const result = await service.execute({
+      session_id: sessionId,
+      expected_generation: 0,
+      command: "aflj",
+      json: true,
+    });
+    const output = [
+      {
+        offset: "18446744071578845304",
+        maxbound: "18446744071578845312",
+        size: 8,
+        ["__proto__"]: "18446744071578845312",
+        nested: [
+          "-9223372036854775808",
+          9007199254740991,
+          1.5,
+          "18446744071578845304",
+        ],
+      },
+    ];
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        normalized_result: {
+          output,
+          execution_state: "complete",
+          document_generation: 2,
+        },
+        raw_result: output,
+        limitations: expect.arrayContaining([
+          expect.stringContaining("decimal strings"),
+        ]),
+      },
+    });
   });
 
   it("handles an abort detected immediately after listener registration", async () => {

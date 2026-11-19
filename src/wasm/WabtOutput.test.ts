@@ -24,7 +24,7 @@ it("corroborates a blank custom name with bounded invalid UTF-8 bytes", () => {
     "",
   ].join("\n");
   const parsed = parseWabtOutput(dump, bytes.length, [], [], bytes);
-  expect(parsed.invalidNameEnds).toEqual([13]);
+  expect(parsed.invalidNameEnds).toEqual(new Set([13]));
   expect(parsed.sections).toMatchObject([{ kind: "Custom", description: "" }]);
   const valid = Buffer.from(bytes);
   valid[11] = 0x61;

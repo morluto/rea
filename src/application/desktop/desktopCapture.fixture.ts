@@ -313,6 +313,14 @@ export const readers: DesktopExportReaders = {
       },
     };
   },
-  dconf: async () => ({ ok: false, error: "unused" }),
+  dconf: async () => ({
+    ok: false,
+    error: "unused",
+    kind: "read-failed",
+    code: null,
+    exitCode: null,
+    command: null,
+    stderr: null,
+  }),
   taskReader: runDesktopTaskReader,
 };

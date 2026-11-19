@@ -17,6 +17,7 @@ import {
   readCudaParameters,
 } from "./CudaInfo.js";
 import type { GpuKernel, GpuLocation } from "../domain/gpu/gpuCodeObjects.js";
+import type { ZstandardFramePause } from "../domain/compression/zstandardExactFrame.js";
 import {
   BinaryReader,
   BinaryFormatFailure,
@@ -28,7 +29,7 @@ import {
   type NativeSectionDirectory,
 } from "../domain/native/nativeSectionDirectory.js";
 import { readElfStringBytes } from "../domain/native/elfStringBytes.js";
-import { readElfSymbol } from "../domain/elfSymbol.js";
+import { elfSymbolSize, readElfSymbol } from "../domain/elfSymbol.js";
 import {
   ELF_SHN_XINDEX,
   ElfSymbolSectionIndexTables,
@@ -100,6 +101,7 @@ export const readGpuElfKernels = async (
   source: GpuSource,
   kind: "cubin" | "amdgpu",
   onKernel: (kernel: GpuKernel) => void,
+  pause: ZstandardFramePause,
   preparedAmd?: AmdElfMetadata,
   onTarget?: (target: GpuPayloadTarget) => void,
 ): Promise<{
@@ -111,6 +113,7 @@ export const readGpuElfKernels = async (
   const directory = await readGpuNativeDirectory(
     source,
     readElfSectionDirectory(source.size),
+    pause,
   );
   if (directory.machine !== (kind === "cubin" ? 190 : 224))
     rejectGpu("GPU entry kind disagrees with ELF machine");
@@ -276,7 +279,7 @@ const cudaKernels = async (
     if (section.type !== 2 && section.type !== 11) continue;
     symbolTables++;
     const width = gpuCount(section.entry_size),
-      minimum = directory.bits === 64 ? 24 : 16;
+      minimum = elfSymbolSize(directory.bits);
     if (width < minimum || section.size % BigInt(width) !== 0n)
       rejectGpu("CUBIN symbol table width is invalid");
     const namesSection = directory.sections[section.link];

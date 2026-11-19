@@ -28,6 +28,11 @@ it("selects original source language from decoded URL paths while retaining URL 
       content: typescriptContent,
     },
     {
+      path: "escaped%2E%54S?revision=2#original.js",
+      mediaType: "text/typescript",
+      content: typescriptContent,
+    },
+    {
       path: "invalid%.ts?revision=2#view.tsx",
       mediaType: "text/typescript",
       content: typescriptContent,
@@ -39,6 +44,11 @@ it("selects original source language from decoded URL paths while retaining URL 
     },
     {
       path: "module.mts",
+      mediaType: "text/typescript",
+      content: annotatedContent,
+    },
+    {
+      path: "module.MTS",
       mediaType: "text/typescript",
       content: annotatedContent,
     },

@@ -12,7 +12,6 @@ import {
   createFileMappingIndex,
   mappedFileOffset,
   readMappedCString,
-  type BinaryContainer,
 } from "../../domain/binaryContainer.js";
 
 it("preserves representable offsets for invalid file ranges", () => {
@@ -34,6 +33,28 @@ it("preserves representable offsets for invalid file ranges", () => {
   expect(() => reader.fileRange(2n ** 60n, 1n, "segment")).toThrow(
     BinaryFormatFailure,
   );
+});
+
+it("decodes signed and floating fields in both byte orders", () => {
+  const bytes = Buffer.alloc(18);
+  bytes.writeInt16LE(-2, 0);
+  bytes.writeInt32LE(-3, 2);
+  bytes.writeFloatLE(1.5, 6);
+  bytes.writeBigInt64LE(-4n, 10);
+  const little = new BinaryReader(bytes, true, "zip");
+  expect([little.u8(0), little.i8(0), little.i16(0), little.i32(2)]).toEqual([
+    0xfe, -2, -2, -3,
+  ]);
+  expect([little.f32(6), little.i64(10)]).toEqual([1.5, -4n]);
+  bytes.writeDoubleBE(-0.25, 0);
+  const big = new BinaryReader(bytes, false, "zip");
+  expect([big.f64(0), big.i16(0), big.i32(0)]).toEqual([
+    -0.25,
+    bytes.readInt16BE(0),
+    bytes.readInt32BE(0),
+  ]);
+  expect(() => little.i64(11)).toThrow(BinaryFormatFailure);
+  expect(() => big.f32(15)).toThrow(BinaryFormatFailure);
 });
 
 it("decodes numeric fields at nonzero buffer offsets and preserves malformed and truncated range failures", () => {
@@ -254,28 +275,15 @@ it("refuses a zero-fill alias inside a span spanning multiple mappings", () => {
 it.each(["scan", "index"] as const)(
   "reads strings across discontiguous source ranges without examining bytes after NUL (%s)",
   (mode) => {
-    const image: BinaryContainer = {
-      format: "pe",
-      architecture: "amd64",
-      bits: 64,
-      byte_order: "little",
-      pe_header_mapping: mappings[0]!,
-      mappings: [{ address: 104n, offset: 8, size: 4 }],
-      zero_fills: [{ address: 106n, size: 2n }],
-      sections: [],
-    };
+    const ranges = [mappings[0]!, { address: 104n, offset: 8, size: 4 }];
+    const zeroFills = [{ address: 106n, size: 2n }];
     const bytes = Buffer.from("ABCDxxxxE\0xx");
     const result =
       mode === "scan"
-        ? readMappedCString(bytes, image, 102n, 8)
-        : createFileMappingIndex(
-            [mappings[0]!, ...image.mappings],
-            image.zero_fills,
-          ).readCString(bytes, 102n, 8);
+        ? readMappedCString(bytes, ranges, 102n, 8, zeroFills)
+        : createFileMappingIndex(ranges, zeroFills).readCString(bytes, 102n, 8);
     expect(result.toString()).toBe("CDE");
-    expect(() =>
-      mappedFileOffset([...mappings.slice(0, 1), ...image.mappings], 102n, 4),
-    ).toThrow(/ambiguous/);
+    expect(() => mappedFileOffset(ranges, 102n, 4)).toThrow(/ambiguous/);
   },
 );
 
@@ -317,7 +325,7 @@ it.each([
   ({ magic, bits, headerSize }) => {
     const bytes = Buffer.alloc(4);
     bytes.writeUInt32BE(magic);
-    expect(() => readBinaryContainer(bytes)).toThrow(
+    expect(() => readBinaryContainer(bytes, "elf-directory")).toThrow(
       new BinaryFormatFailure(
         "malformed",
         `truncated Mach-O header: a ${bits}-bit header needs ${headerSize} bytes; the file has 4`,
@@ -330,14 +338,14 @@ it("keeps a JVM-sized FAT count unconfirmed while rejecting malformed zero-count
   const bytes = Buffer.alloc(8);
   bytes.writeUInt32BE(0xcafebabe);
   bytes.writeUInt32BE(0x0000003d, 4); // JVM major version 61; no FAT table follows.
-  expect(() => readBinaryContainer(bytes)).toThrow(
+  expect(() => readBinaryContainer(bytes, "elf-directory")).toThrow(
     new BinaryFormatFailure(
       "unsupported",
       "Only ELF, PE, and thin Mach-O native images are supported",
     ),
   );
   bytes.writeUInt32BE(0, 4);
-  expect(() => readBinaryContainer(bytes)).toThrow(
+  expect(() => readBinaryContainer(bytes, "elf-directory")).toThrow(
     new BinaryFormatFailure(
       "malformed",
       "FAT header declares no architectures",
@@ -368,10 +376,12 @@ const elfWithLoadSegment = (fileSize: bigint): Buffer => {
 };
 
 it("names a load segment that runs past the end of the file as truncated", () => {
-  expect(readBinaryContainer(elfWithLoadSegment(120n)).mappings).toHaveLength(
-    1,
-  );
-  expect(() => readBinaryContainer(elfWithLoadSegment(0x1000n))).toThrow(
+  expect(
+    readBinaryContainer(elfWithLoadSegment(120n), "elf-directory").mappings,
+  ).toHaveLength(1);
+  expect(() =>
+    readBinaryContainer(elfWithLoadSegment(0x1000n), "elf-directory"),
+  ).toThrow(
     expect.objectContaining({
       failure: {
         kind: "truncated",

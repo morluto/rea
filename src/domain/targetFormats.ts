@@ -38,6 +38,7 @@ export const BINARY_TARGET_FORMAT_KINDS = {
   "systemd-journal": "archive",
   plist: "artifact",
   javascript: "artifact",
+  uefi: "artifact",
   "source-map": "artifact",
 } as const;
 

@@ -44,7 +44,8 @@ type FormatsWithReaders =
   | "esp-flash-image"
   | "fit"
   | "ntfs-mft"
-  | "systemd-journal";
+  | "systemd-journal"
+  | "uefi";
 
 const readerFormatsMatch: Equal<ArtifactReaderFormat, FormatsWithReaders> =
   true;
