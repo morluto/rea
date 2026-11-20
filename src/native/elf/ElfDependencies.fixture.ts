@@ -120,6 +120,8 @@ export interface ElfDependencyFixtureOptions {
   readonly sectionEntrySizes?: Readonly<Record<string, number>>;
   /** Leaves DT_SYMENT out of the dynamic table. */
   readonly omitSymentTag?: boolean;
+  /** Leaves DT_SYMTAB out of the dynamic table. */
+  readonly omitSymtabTag?: boolean;
   /** Splits the identity PT_LOAD in two halfway through the .hash table. */
   readonly splitLoadAtHash?: boolean;
   /** Adds a one-byte zero-fill load alias at this offset into .gnu.version. */
@@ -411,6 +413,7 @@ interface FixtureConfig {
   readonly sectionSizes: Readonly<Record<string, number>>;
   readonly sectionEntrySizes: Readonly<Record<string, number>>;
   readonly omitSymentTag: boolean;
+  readonly omitSymtabTag: boolean;
   readonly splitLoadAtHash: boolean;
   readonly versymZeroFillOffset: number | undefined;
 }
@@ -509,6 +512,7 @@ const fixtureConfig = (options: ElfDependencyFixtureOptions): FixtureConfig => {
     sectionSizes: options.sectionSizes ?? {},
     sectionEntrySizes: options.sectionEntrySizes ?? {},
     omitSymentTag: options.omitSymentTag === true,
+    omitSymtabTag: options.omitSymtabTag === true,
     splitLoadAtHash: options.splitLoadAtHash === true,
     versymZeroFillOffset: options.versymZeroFillOffset,
   };
@@ -648,7 +652,7 @@ const buildDynamicTags = (
     addTag(4, offsets.hashOff);
   if (tables.gnuHashBytes.length !== 0) addTag(0x6ffffef5, offsets.gnuHashOff);
   addTag(5, offsets.dynstrOff);
-  addTag(6, offsets.dynsymOff);
+  if (!config.omitSymtabTag) addTag(6, offsets.dynsymOff);
   addTag(10, tables.dynstrBytes.length);
   if (!config.omitSymentTag) addTag(11, bits === 64 ? 24 : 16);
   addTag(0x6ffffff0, offsets.versymOff);

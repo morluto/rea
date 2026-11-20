@@ -1123,12 +1123,29 @@ export const readElfDependenciesSteps = function* (
       message:
         "GNU versym table could not be located from section headers or DT_VERSYM",
     });
+  const versymSlots =
+    versymTable === null
+      ? null
+      : {
+          offset: versymTable.offset,
+          count: Math.floor(versymTable.size / GNU_VERSYM_SLOT_BYTES),
+        };
+  if (
+    versymSlots !== null &&
+    symbolCount !== null &&
+    versymSlots.count < symbolCount
+  )
+    issues.push({
+      code: "table_unavailable",
+      location: hex(versymSlots.offset),
+      message: `GNU versym table holds ${String(versymSlots.count)} of ${String(symbolCount)} dynamic symbol slots; later slots were not read`,
+    });
   const imports = parseImports(
     reader,
     bytes,
     bits,
     dynsymTable,
-    versymTable,
+    versymSlots,
     dynstr,
     symbolCount,
     symbolEntrySize,
@@ -1620,7 +1637,7 @@ const parseImports = (
   bytes: Buffer,
   bits: 32 | 64,
   dynsym: LocatedTable | null,
-  versym: LocatedTable | null,
+  versym: { readonly offset: number; readonly count: number } | null,
   dynstr: DynamicStrings,
   declaredCount: number | null,
   entrySize: number,
@@ -1665,18 +1682,7 @@ const parseImports = (
   }
   let versymBytes: Buffer | null = null;
   if (versym !== null) {
-    // A short table still holds whole slots for its leading symbols; keep those
-    // and leave later versions unexamined.
-    const slotCount = Math.min(
-      symbolCount,
-      Math.floor(versym.size / GNU_VERSYM_SLOT_BYTES),
-    );
-    if (slotCount < symbolCount)
-      issues.push({
-        code: "table_unavailable",
-        location: hex(versym.offset),
-        message: `GNU versym table holds ${String(slotCount)} of ${String(symbolCount)} dynamic symbol slots; later import versions were not read`,
-      });
+    const slotCount = Math.min(symbolCount, versym.count);
     try {
       versymBytes = reader.range(
         versym.offset,
