@@ -9,6 +9,13 @@ import { awaitTerminalExit } from "./ProcessCaptureLifecycle.js";
 import type { ProcessTimer } from "./ProcessTimer.js";
 import { monotonicProcessCaptureClock } from "./ProcessCaptureClock.js";
 
+// Keep native promise timers. Capture their outcomes so even an unref'ed
+// grace wait has observable cancellation.
+vi.mock("node:timers/promises", async (importOriginal) => {
+  const timers = await importOriginal<typeof import("node:timers/promises")>();
+  return { ...timers, setTimeout: vi.fn(timers.setTimeout) };
+});
+
 type Delivery = ProcessCaptureFinalization["signals"][number]["delivery"];
 
 interface FakeExit {
@@ -63,6 +70,7 @@ const fakePollingClock = () => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.mocked(delay).mockClear();
 });
 
 const observed = <Result extends { readonly unobserved?: boolean }>(
@@ -312,16 +320,22 @@ it("returns at once when a cancellation kill cannot be delivered", async () => {
   expect(result.unobserved, "the capture does not wait for an exit").toBe(true);
 });
 
-it("waits for a pending delivery before reporting an observed exit", async () => {
+it("joins a pending delivery after an observed exit and cancels its grace waits", async () => {
   let release: () => void = () => undefined;
   const hold = new Promise<void>((resolve) => {
     release = resolve;
   });
   const fake = fakeTerminal({ SIGTERM: "signaled" }, hold);
   const pending = start(fake, { timeout_ms: 100, finalization_ms: 5_000 });
+  let graceWaits = Promise.resolve<PromiseSettledResult<unknown>[]>([]);
   try {
     await expect.poll(() => fake.signals).toContain("SIGTERM");
     fake.deliverExit({ exitCode: 0, signal: 0 });
+    const startedWaits = vi
+      .mocked(delay)
+      .mock.results.map(({ value }) => value);
+    graceWaits = Promise.allSettled(startedWaits);
+
     const result = await Promise.race([
       pending,
       new Promise<void>((resolve) => setImmediate(resolve)),
@@ -340,6 +354,14 @@ it("waits for a pending delivery before reporting an observed exit", async () =>
     exit.finalization?.signals,
     "the delivery result is complete in the published record",
   ).toMatchObject([{ signal: "SIGTERM", delivery: "signaled" }]);
+  const waits = await graceWaits;
+  expect(waits).not.toHaveLength(0);
+  for (const wait of waits) {
+    expect(wait).toMatchObject({
+      status: "rejected",
+      reason: { name: "AbortError" },
+    });
+  }
 });
 
 it("stops waiting for a hung delivery once the exit is observed", async () => {
@@ -448,25 +470,6 @@ it("stops waiting when the escalation delivery never settles and no exit arrives
     elapsed_ms: null,
     exit_code: null,
   });
-});
-
-const activeTimers = (): number =>
-  process.getActiveResourcesInfo().filter((name) => name === "Timeout").length;
-
-it("cancels the bounded-wait timer once deliveries settle after an exit", async () => {
-  const fake = fakeTerminal();
-  const before = activeTimers();
-  const pending = start(fake, { timeout_ms: 100, finalization_ms: 5_000 });
-  await expect.poll(() => fake.signals).toContain("SIGTERM");
-  fake.deliverExit({ exitCode: 0, signal: 0 });
-
-  await pending;
-  await new Promise((resolve) => setImmediate(resolve));
-
-  expect(
-    activeTimers(),
-    "no one-second grace timer outlives the finalized exit",
-  ).toBeLessThanOrEqual(before);
 });
 
 it("keeps a non-empty reason when a signal delivery throws without a message", async () => {
