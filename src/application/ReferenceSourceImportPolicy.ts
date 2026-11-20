@@ -256,7 +256,7 @@ const readIgnoreCase = async (
     return err(
       failure(
         "io",
-        `Invalid core.ignorecase in ${location.commonDirectory}/config`,
+        `Invalid core.ignorecase in ${join(location.commonDirectory, "config")}`,
       ),
     );
   } catch (cause: unknown) {
