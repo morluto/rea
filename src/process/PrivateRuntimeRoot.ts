@@ -9,6 +9,7 @@ import { PrivateRuntimeRootUnavailableError } from "../domain/privateRuntimeRoot
 import {
   windowsNativeCapabilities,
   type WindowsNativeCapability,
+  type WindowsNativeCapabilitySet,
 } from "./WindowsAuthority.js";
 
 /** Filesystem coordinates for one provider-owned private runtime directory. */
@@ -31,9 +32,10 @@ export type PrivateRuntimeRootCapability =
 /** Report whether this process can establish a private runtime root. */
 export const privateRuntimeRootCapability = (
   platform: NodeJS.Platform,
+  windows?: WindowsNativeCapabilitySet,
 ): PrivateRuntimeRootCapability =>
   platform === "win32"
-    ? windowsNativeCapabilities(platform).private_runtime_dacl
+    ? (windows ?? windowsNativeCapabilities(platform)).private_runtime_dacl
     : { available: true, reason: null, proof: "posix-mkdtemp-owner-only" };
 
 /**

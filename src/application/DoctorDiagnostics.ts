@@ -16,9 +16,11 @@ import type {
   DoctorProviderProbeHost,
   StaticDoctorProviderSettings,
 } from "./Doctor.js";
-import type {
-  DoctorCheck,
-  DoctorProviderInspection,
+import type { PrivateRuntimeRootCapability } from "../process/PrivateRuntimeRoot.js";
+import {
+  windowsNativeFailureClassification,
+  type DoctorCheck,
+  type DoctorProviderInspection,
 } from "../ports/DoctorProviderInspection.js";
 import { settleConcurrent } from "./settleConcurrent.js";
 
@@ -43,7 +45,11 @@ export const collectDoctorDiagnostics = async (
     collectProviderDiagnostics(host, clients),
     optionalTargetCheck(target, host),
   ]);
-  checks.push(resolvedHostCheck, ...providers.checks);
+  checks.push(resolvedHostCheck);
+  const privateRuntimeRoot = host.privateRuntimeRoot?.();
+  if (privateRuntimeRoot !== undefined)
+    checks.push(privateRuntimeRootCheck(privateRuntimeRoot));
+  checks.push(...providers.checks);
   if (targetCheck !== undefined) checks.push(targetCheck);
   return { ...providers, checks };
 };
@@ -300,6 +306,38 @@ const hostCheck = async (host: DoctorHost): Promise<DoctorCheck> => {
     classification: "unsupported_host",
   });
 };
+
+const PRIVATE_RUNTIME_ROOT_PROOF_DETAIL = {
+  "posix-mkdtemp-owner-only":
+    "Private runtime roots are created by mkdtemp with owner-only mode 0700. REA does not read back ACLs on this host, so this is POSIX permission privacy, not verified-DACL privacy.",
+  "native-authority":
+    "The Windows native self-test created a private runtime root and read its security descriptor back by handle: the current user owns it, and a protected DACL admits only the current user and SYSTEM. Other processes running as the same user are outside this boundary.",
+} as const;
+
+/** Most workflows allocate a private runtime root, so failure is host-wide. */
+const privateRuntimeRootCheck = (
+  capability: PrivateRuntimeRootCapability,
+): DoctorCheck =>
+  capability.available
+    ? {
+        name: "private-runtime-root",
+        ok: true,
+        classification: "healthy",
+        detail: PRIVATE_RUNTIME_ROOT_PROOF_DETAIL[capability.proof],
+        details: { proof: capability.proof },
+      }
+    : {
+        name: "private-runtime-root",
+        ok: false,
+        classification: windowsNativeFailureClassification(capability.code),
+        detail: capability.reason,
+        details: {
+          proof: capability.proof,
+          code: capability.code,
+          failure_stage: capability.failureStage,
+        },
+        remediation: capability.remediation,
+      };
 
 const findHopper = async (
   host: DoctorProviderProbeHost,

@@ -8,6 +8,10 @@ import {
   type WindowsNativeCapabilitySet,
 } from "../../src/process/WindowsAuthority.js";
 import {
+  privateRuntimeRootCapability,
+  type PrivateRuntimeRootCapability,
+} from "../../src/process/PrivateRuntimeRoot.js";
+import {
   probeProcessCaptureCapability,
   type ProcessCaptureCapability,
 } from "../../src/process/capture/ProcessCaptureCapability.js";
@@ -42,6 +46,8 @@ export interface WindowsCapabilityReport {
   }>;
   /** Security controls that are unavailable until native authority exists. */
   readonly security: WindowsNativeCapabilitySet;
+  /** POSIX owner-only mode, or a Windows DACL the native self-test read back. */
+  readonly private_runtime_root: PrivateRuntimeRootCapability;
 }
 
 /** Probe named prerequisites without converting missing controls into support. */
@@ -52,6 +58,9 @@ export const probeWindowsCapabilities = async (
     dependencies.probeSymlinkCreation(),
     dependencies.probePty(),
   ]);
+  const security =
+    dependencies.nativeCapabilities?.() ??
+    windowsNativeCapabilities(dependencies.platform);
   return {
     platform: dependencies.platform,
     architecture: dependencies.architecture,
@@ -64,9 +73,11 @@ export const probeWindowsCapabilities = async (
         ? { available: true, reason: null }
         : { available: false, reason: pty.reason },
     },
-    security:
-      dependencies.nativeCapabilities?.() ??
-      windowsNativeCapabilities(dependencies.platform),
+    security,
+    private_runtime_root: privateRuntimeRootCapability(
+      dependencies.platform,
+      security,
+    ),
   };
 };
 

@@ -33,6 +33,10 @@ import {
   omitEnvironmentSettings,
   snapshotEnvironment,
 } from "../process/snapshotEnvironment.js";
+import {
+  privateRuntimeRootCapability,
+  type PrivateRuntimeRootCapability,
+} from "../process/PrivateRuntimeRoot.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
 
 import { analysisErrorRemediationAction } from "../domain/analysisErrorPresentation.js";
@@ -122,6 +126,8 @@ export interface DoctorHost {
    */
   readonly nativeConfiguration?: NativeAnalysisConfigurationInspection;
   readonly configuredIlspyCmdPath?: string;
+  /** How this process makes runtime roots private; undefined skips that check. */
+  privateRuntimeRoot?(): PrivateRuntimeRootCapability;
   macosVersion(): Promise<string | undefined>;
   linuxDistribution(): Promise<LinuxDistribution | undefined>;
   /** Route-specific target admission details from the host. */
@@ -993,6 +999,7 @@ export const systemDoctorHost = (
     ...terminalProbeHost,
     architecture,
     runtime: javaScriptRuntime(process.versions),
+    privateRuntimeRoot: () => privateRuntimeRootCapability(platform),
     macosVersion: () =>
       readMacosVersion(hostExecFileOutput, commandEnvironment),
     linuxDistribution: () => readLinuxDistribution(architecture),

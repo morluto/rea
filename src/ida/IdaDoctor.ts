@@ -1,6 +1,7 @@
-import type {
-  DoctorProviderCheck,
-  DoctorProviderInspection,
+import {
+  windowsNativeFailureClassification,
+  type DoctorProviderCheck,
+  type DoctorProviderInspection,
 } from "../ports/DoctorProviderInspection.js";
 import {
   readIdaConfiguration,
@@ -118,12 +119,7 @@ const privateWorkspaceChecks = (
           code: privacy.code,
           detail: privacy.reason,
           remediation: privacy.remediation,
-          classification:
-            privacy.code === "runtime_missing"
-              ? "missing_dependency"
-              : privacy.code === "runtime_unavailable"
-                ? "runtime_failure"
-                : "unsupported_host",
+          classification: windowsNativeFailureClassification(privacy.code),
         },
       ];
     }

@@ -1,9 +1,10 @@
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
-import type {
-  DoctorProviderCheck,
-  DoctorProviderInspection,
+import {
+  windowsNativeFailureClassification,
+  type DoctorProviderCheck,
+  type DoctorProviderInspection,
 } from "../ports/DoctorProviderInspection.js";
 import {
   admitGhidraInstallation,
@@ -42,7 +43,6 @@ export const projectGhidraDoctorInspection = (
   // Native authority is reported once the installation itself is usable.
   const readiness =
     inspection.status === "available" ? admission.windowsNative : undefined;
-  const windowsAuthorityUnavailable = readiness?.available === false;
   const temporaryDirectoryUnavailable = temporaryDirectory?.ok === false;
   return {
     id: "ghidra",
@@ -83,12 +83,9 @@ export const projectGhidraDoctorInspection = (
                   code: readiness.code,
                   detail: readiness.reason,
                   remediation: readiness.remediation,
-                  classification:
-                    readiness.code === "runtime_unavailable"
-                      ? ("runtime_failure" as const)
-                      : readiness.code === "runtime_missing"
-                        ? ("missing_dependency" as const)
-                        : ("unsupported_host" as const),
+                  classification: windowsNativeFailureClassification(
+                    readiness.code,
+                  ),
                 },
           ]
         : []),

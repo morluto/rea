@@ -120,7 +120,43 @@ describe("Windows host capability report", () => {
           remediation: "Install the matching Windows x64 REA package.",
         },
       },
+      private_runtime_root: {
+        available: false,
+        reason: "Authored private DACL authority unavailable diagnostic",
+        proof: "not-proven",
+        code: "runtime_missing",
+        failureStage: "artifact",
+        remediation: "Install the matching Windows x64 REA package.",
+      },
     });
+  });
+
+  it("tells POSIX owner-only runtime roots apart from verified Windows DACLs", async () => {
+    const verified = {
+      available: true,
+      reason: null,
+      proof: "native-authority",
+    } as const;
+    const windows = await probeWindowsCapabilities(
+      dependencies({
+        nativeCapabilities: () => ({
+          job_object_process_ownership: verified,
+          private_runtime_dacl: verified,
+          reparse_safe_path_admission: verified,
+        }),
+      }),
+    );
+    const linux = await probeWindowsCapabilities(
+      dependencies({ platform: "linux" }),
+    );
+
+    expect(windows.private_runtime_root).toEqual(verified);
+    expect(linux.private_runtime_root).toEqual({
+      available: true,
+      reason: null,
+      proof: "posix-mkdtemp-owner-only",
+    });
+    expect(linux.security.private_runtime_dacl.available).toBe(false);
   });
 
   it("reports successful probes independently", async () => {
@@ -160,6 +196,10 @@ describe("Windows host capability report", () => {
       reason: null,
     });
     expect(result.security.private_runtime_dacl).toMatchObject({
+      available: false,
+      proof: "not-proven",
+    });
+    expect(result.private_runtime_root).toMatchObject({
       available: false,
       proof: "not-proven",
     });

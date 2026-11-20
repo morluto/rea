@@ -1,4 +1,5 @@
 import type { JsonValue } from "../domain/jsonValue.js";
+import type { WindowsNativeReadiness } from "../process/WindowsAuthority.js";
 
 /** One actionable environment diagnostic. */
 export interface DoctorCheck {
@@ -55,6 +56,16 @@ export interface DoctorProviderSetting {
   readonly value: string;
   readonly source: "env" | "config" | "auto";
 }
+
+/** Doctor classification of a Windows native control this host did not prove. */
+export const windowsNativeFailureClassification = (
+  code: Extract<WindowsNativeReadiness, { available: false }>["code"],
+): DoctorFailureClassification =>
+  code === "runtime_missing"
+    ? "missing_dependency"
+    : code === "runtime_unavailable"
+      ? "runtime_failure"
+      : "unsupported_host";
 
 /** Read-only provider inspection supplied by an outer composition adapter. */
 export interface DoctorProviderInspection {
