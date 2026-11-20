@@ -1,5 +1,7 @@
 import * as t from "@babel/types";
 import {
+  semanticMemberChain,
+  staticJavaScriptTruthiness,
   staticObjectPropertyReader,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
@@ -11,7 +13,10 @@ import {
 } from "./javascriptSemanticEffectLog.js";
 import { semanticBindingPrecedesCapture } from "./javascriptSemanticMutationInitializers.js";
 import { semanticArrayIndex } from "./javascriptSemanticPropertyPaths.js";
-import { semanticKnownArrayIteration } from "./javascriptSemanticReferenceSources.js";
+import {
+  isLexicalPatternDeclaration,
+  semanticKnownArrayIteration,
+} from "./javascriptSemanticReferenceSources.js";
 import { semanticArrayLiteralSlots } from "./javascriptSemanticArrayLayout.js";
 import { semanticSlotAtPath } from "./javascriptSemanticSlots.js";
 import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
@@ -47,6 +52,13 @@ interface ReadPresence {
     acquisition: t.ArrayPattern,
   ) => ReadOwnData | undefined;
 }
+
+/** A proved own slot yields its initializer's result, even if that result is null. */
+export const isKnownDefinedSource = (node: t.Node | undefined): boolean =>
+  node !== undefined &&
+  (t.isLiteral(node) ||
+    t.isObjectMethod(node) ||
+    staticJavaScriptTruthiness(node) === true);
 
 /** Prove a direct data slot in its source at the time of the read. */
 export const createSemanticReadPresenceQuery = (
@@ -258,3 +270,41 @@ export const createSemanticReadPresenceQuery = (
     return { read, readNestedArray: arraySlots };
   };
 };
+
+/** Check first default guards against the completed conservative effect inventory. */
+export function* semanticInactiveFirstDefaultWritesSteps(
+  state: JavaScriptSemanticAnalysisState,
+  defaults: ReadonlyMap<t.VariableDeclarator, t.AssignmentPattern>,
+): Generator<void, t.AssignmentExpression[]> {
+  if (defaults.size === 0) return [];
+  const inactive: t.AssignmentExpression[] = [];
+  const readPresence = createSemanticReadPresenceQuery(state);
+  let index = 0;
+  for (const [declarator, pattern] of defaults) {
+    if (index++ % 64 === 0) yield;
+    const capture = declarator.init;
+    const effect = unwrapJavaScriptExpression(pattern.right).node;
+    if (
+      !isLexicalPatternDeclaration(declarator, state) ||
+      !t.isIdentifier(capture) ||
+      !t.isIdentifier(pattern.left) ||
+      !t.isAssignmentExpression(effect, { operator: "=" }) ||
+      !t.isMemberExpression(effect.left)
+    )
+      continue;
+    const receiver = semanticMemberChain(effect.left)?.root;
+    const binding = resolveSemanticBindingState(state, capture, capture.name);
+    if (
+      binding === undefined ||
+      !t.isIdentifier(receiver) ||
+      resolveSemanticBindingState(state, receiver, receiver.name) !== binding
+    )
+      continue;
+    const guard = readPresence(binding.bindingId, capture, {
+      path: [],
+      selection: "array-iterator",
+    })?.read(["0"]);
+    if (isKnownDefinedSource(guard)) inactive.push(effect);
+  }
+  return inactive;
+}

@@ -42,8 +42,24 @@ export function discoverNumericLimitUses(
   }[];
 };
 
-/** Why a tracked limit is not an analysis setting, when it is present. */
+/** A required runtime limit that is missing or is not an analysis setting. */
+export type RequiredRuntimeLimitFailure = {
+  readonly code:
+    | "required_runtime_limit_missing"
+    | "required_runtime_limit_not_analysis_setting";
+  readonly name: string;
+};
+
+/**
+ * Classify one required runtime limit.
+ * Absence from source, the exception registry, and ANALYSIS_SETTINGS is
+ * `required_runtime_limit_missing`.
+ */
 export function requiredRuntimeLimitFailure(
   name: string,
-  presence: { readonly inRuntime: boolean; readonly inRegistry: boolean },
-): string | undefined;
+  presence: {
+    readonly inSource: boolean;
+    readonly inRuntime: boolean;
+    readonly inRegistry: boolean;
+  },
+): RequiredRuntimeLimitFailure | undefined;

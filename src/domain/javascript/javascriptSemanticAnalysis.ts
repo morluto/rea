@@ -18,6 +18,7 @@ import {
   semanticReadMayObserveEffect,
   semanticReferenceRoot,
   type SemanticAmbientRootPaths,
+  retainSemanticInactiveMemberWrites,
 } from "./javascriptSemanticEffectLog.js";
 import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticReceiverFacts.js";
 import * as t from "@babel/types";
@@ -88,6 +89,7 @@ import {
   semanticBundledRequireOriginCandidate,
 } from "./javascriptBundledRequireOrigin.js";
 import { collectSemanticMemberMutationsSteps } from "./javascriptSemanticMemberMutations.js";
+import { semanticInactiveFirstDefaultWritesSteps } from "./javascriptSemanticReadPresence.js";
 import {
   DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
   type JavaScriptMemberMutationAllowance,
@@ -251,7 +253,7 @@ function* indexSemanticMemberMutationFactsSteps(
 ): Generator<void, void> {
   if (state.memberMutationFactsComplete) return;
   yield* indexSemanticAmbientWritesSteps(state);
-  yield* collectSemanticMemberMutationsSteps(
+  const candidateDefaults = yield* collectSemanticMemberMutationsSteps(
     state.program,
     state,
     (site, reference, path) =>
@@ -264,6 +266,15 @@ function* indexSemanticMemberMutationFactsSteps(
       ),
   );
   state.memberMutationFactsComplete = true;
+  const inactiveWrites = yield* semanticInactiveFirstDefaultWritesSteps(
+    state,
+    candidateDefaults,
+  );
+  // Every guard is proved before any inactive write is excluded.
+  if (inactiveWrites.length > 0) {
+    retainSemanticInactiveMemberWrites(state, inactiveWrites);
+    clearSemanticValueCaches(state);
+  }
   invalidateSemanticRequireDelegateWrites(state);
 }
 

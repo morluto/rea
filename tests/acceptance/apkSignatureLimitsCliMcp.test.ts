@@ -14,6 +14,11 @@ import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import {
+  APK_SIGNATURE_V2_ID,
+  APK_SIGNATURE_V3_ID,
+  LEAF_CERTIFICATE,
+  v2SchemeValue,
+  v3SchemeValue,
   withSigningBlock,
   zipWith,
 } from "../fixtures/apkSignature/v1SignatureBlock.js";
@@ -122,6 +127,67 @@ cliTest(
       expect(report.artifact.path).toBe(path);
       expect(report.artifact.sha256).toBe(digests.get(count));
       expect(report.posture.strongest_scheme).toBe("none");
+    }
+  },
+);
+
+cliTest(
+  "preserves the fixed signer and lineage refusals through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-apk-scheme-limit-");
+    const archive = await zipWith([
+      { name: "AndroidManifest.xml", data: Uint8Array.of(3, 0, 8, 0) },
+    ]);
+    const signer = v2SchemeValue(LEAF_CERTIFICATE).subarray(4);
+    const signerLength = Buffer.alloc(4);
+    signerLength.writeUInt32LE(signer.length * 33);
+    const { call } = await connectLocalToolsMcp({
+      REA_MCP_OUTPUT_SCHEMA_PROFILE: "off",
+    });
+    for (const { id, value, scheme, boundary, key } of [
+      {
+        id: APK_SIGNATURE_V2_ID,
+        value: Buffer.concat([
+          signerLength,
+          ...Array.from({ length: 33 }, () => signer),
+        ]),
+        scheme: "v2",
+        boundary: "signers",
+        key: "max_signers",
+      },
+      {
+        id: APK_SIGNATURE_V3_ID,
+        value: v3SchemeValue(
+          null,
+          Array.from({ length: 33 }, () => LEAF_CERTIFICATE),
+        ),
+        scheme: "v3",
+        boundary: "lineage-nodes",
+        key: "max_lineage_nodes",
+      },
+    ]) {
+      const path = join(root, `${scheme}.apk`);
+      await writeFile(path, withSigningBlock(archive, [{ id, value }]));
+      const reply = await cli.run({
+        arguments: ["inspect-apk-signature", path, "--json"],
+      });
+      expect(reply.exitCode, reply.stderr).toBe(1);
+      const error = analysisErrorProjectionSchema.parse(reply.json);
+      expect(error).toMatchObject({
+        code: "resource_constraint",
+        retryable: false,
+        details: {
+          operation: "inspect_apk_signature",
+          resource: "capacity",
+          reason: `APK Signature Scheme ${scheme} holds more ${boundary} than the 32 limit.`,
+        },
+      });
+      expect(error.details?.reported_limits).toEqual({ [key]: 32 });
+      expect(error.remediation.action).toBe(
+        `The APK Signature Scheme ${scheme} allowance of 32 ${boundary} (this release has no runtime override) is a fixed count. Waiting for an active analysis to finish does not raise it. Repeating the unchanged request fails the same way.`,
+      );
+      const rejected = await call("inspect_apk_signature", { path });
+      expect(parseMcpToolError(rejected).error).toEqual(error);
     }
   },
 );

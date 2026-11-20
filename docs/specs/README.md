@@ -46,3 +46,9 @@ for new work, roadmap granularity and producer-owned contracts.
 - [CycloneDX dependency view](analysis-views/cyclonedx-dependencies/spec.md) ([plan](analysis-views/cyclonedx-dependencies/plan.md), [tasks](analysis-views/cyclonedx-dependencies/tasks.md))
 
 - [NuGet package inspection](artifacts/nuget-nupkg/spec.md) ([plan](artifacts/nuget-nupkg/plan.md), [tasks](artifacts/nuget-nupkg/tasks.md))
+- [Recoverable analysis budgets](analysis/recoverable-budgets/spec.md) ([plan](analysis/recoverable-budgets/plan.md), [tasks](analysis/recoverable-budgets/tasks.md))
+- [Per-call EVM producer budgets](evm/producer-limits/spec.md) ([plan](evm/producer-limits/plan.md), [tasks](evm/producer-limits/tasks.md))
+- [Android OTA payload inspection](firmware/android-ota-payload/spec.md) ([plan](firmware/android-ota-payload/plan.md), [tasks](firmware/android-ota-payload/tasks.md))
+- [Windows ReFS filesystem authority](native/windows-refs/spec.md) ([plan](native/windows-refs/plan.md), [tasks](native/windows-refs/tasks.md))
+- [Historical capture admission budgets](web/historical-capture-budgets/spec.md) ([plan](web/historical-capture-budgets/plan.md), [tasks](web/historical-capture-budgets/tasks.md))
+- [Per-call source-map budget recovery](web/source-map-budget-recovery/spec.md) ([plan](web/source-map-budget-recovery/plan.md), [tasks](web/source-map-budget-recovery/tasks.md))
