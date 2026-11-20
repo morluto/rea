@@ -1224,7 +1224,9 @@ export class BinarySession
       onCleanupFailure === undefined ? {} : { onCleanupFailure },
     );
     if (!closed.ok) {
-      this.#clearUnrestoredSnapshot();
+      // A fresh session can hold an imported snapshot and no retired target.
+      // Clear only a binding left by a target this open already retired.
+      if (previous !== undefined) this.#clearUnrestoredSnapshot();
       return analysisErrorWithCloseRejection(
         primary,
         closed.error,
@@ -1726,7 +1728,7 @@ export class BinarySession
     }
   }
 
-  /** No active target remains, so the snapshot cache must not keep the retired binding. */
+  /** The retired target did not return, so its snapshot binding must not block the next open. */
   #clearUnrestoredSnapshot(): void {
     if (this.#active !== undefined) return;
     this.clearSnapshot();
