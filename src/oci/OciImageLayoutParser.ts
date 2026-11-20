@@ -453,6 +453,17 @@ const diffIdsOf = (rootfs: Record<string, unknown>, defects: string[]) => {
   return diffIds;
 };
 
+const configSubobject = (
+  value: unknown,
+  defect: string,
+  defects: string[],
+): Record<string, unknown> => {
+  if (value === undefined) return {};
+  if (isRecord(value)) return value;
+  defects.push(defect);
+  return {};
+};
+
 /**
  * Image facts from one config document, with the defects that left any of
  * them out. Defects are reported once per config blob by the caller.
@@ -463,8 +474,16 @@ const parseConfig = (
 ): { facts: ConfigFacts; defects: string[] } => {
   if (!isRecord(value)) return { facts: EMPTY_CONFIG_FACTS, defects: [] };
   const defects: string[] = [];
-  const config = isRecord(value.config) ? value.config : {};
-  const rootfs = isRecord(value.rootfs) ? value.rootfs : {};
+  const config = configSubobject(
+    value.config,
+    "config is not a JSON object; its runtime facts are not modeled",
+    defects,
+  );
+  const rootfs = configSubobject(
+    value.rootfs,
+    "rootfs is not a JSON object; its diff IDs are not modeled",
+    defects,
+  );
   return {
     facts: {
       architecture: nonempty(value.architecture),

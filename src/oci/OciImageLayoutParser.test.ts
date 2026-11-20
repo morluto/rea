@@ -1979,6 +1979,134 @@ it("reports invalid rootfs.diff_ids members and keeps the other image facts", as
   }
 });
 
+const writeLayoutWithConfigPatch = async (
+  root: string,
+  patch: (configDocument: Record<string, unknown>) => void,
+) => {
+  const written = await writeOciImageLayoutFixture(root);
+  const blobPath = (digest: string) =>
+    join(root, "blobs", "sha256", digest.slice("sha256:".length));
+  const oldConfigPath = blobPath(written.configDigest);
+  const configDocument = JSON.parse(
+    await readFile(oldConfigPath, "utf8"),
+  ) as Record<string, unknown>;
+  patch(configDocument);
+  const configJson = `${JSON.stringify(configDocument)}\n`;
+  await unlink(oldConfigPath);
+  const configDigest = await putOciBlob(root, configJson);
+  const oldManifestPath = blobPath(written.manifestDigest);
+  const manifest = JSON.parse(await readFile(oldManifestPath, "utf8")) as {
+    config: Record<string, unknown>;
+  };
+  manifest.config = {
+    ...manifest.config,
+    digest: configDigest,
+    size: Buffer.byteLength(configJson),
+  };
+  const manifestJson = `${JSON.stringify(manifest)}\n`;
+  await unlink(oldManifestPath);
+  const manifestDigest = await putOciBlob(root, manifestJson);
+  const indexPath = join(root, "index.json");
+  const index = JSON.parse(await readFile(indexPath, "utf8")) as {
+    manifests: Record<string, unknown>[];
+  };
+  index.manifests[0] = {
+    ...index.manifests[0],
+    digest: manifestDigest,
+    size: Buffer.byteLength(manifestJson),
+  };
+  await writeFile(indexPath, `${JSON.stringify(index)}\n`);
+  return { ...written, manifestDigest, configDigest };
+};
+
+it("reports a non-object config subobject and keeps the other image facts", async () => {
+  const root = await createTestTempDirectory("rea-oci-config-subobject-");
+  const written = await writeLayoutWithConfigPatch(root, (doc) => {
+    doc.config = [];
+  });
+  const report = await inspectLayout(root);
+  expect(report.findings).toEqual([
+    {
+      kind: "malformed_blob_json",
+      digest: written.configDigest,
+      path: null,
+      message: `Config ${written.configDigest} config is not a JSON object; its runtime facts are not modeled.`,
+    },
+  ]);
+  expect(report.images[0]).toMatchObject({
+    architecture: "amd64",
+    os: "linux",
+    user: null,
+    env: [],
+    entrypoint: null,
+    cmd: null,
+    rootfs_diff_ids: [written.layerDigest],
+    history: expect.arrayContaining([
+      expect.objectContaining({ empty_layer: false }),
+    ]),
+    layers: [expect.objectContaining({ digest: written.layerDigest })],
+  });
+  expect(report.coverage.status).toBe("partial");
+});
+
+it("reports a non-object rootfs subobject and keeps the other image facts", async () => {
+  const root = await createTestTempDirectory("rea-oci-rootfs-subobject-");
+  const written = await writeLayoutWithConfigPatch(root, (doc) => {
+    doc.rootfs = [];
+  });
+  const report = await inspectLayout(root);
+  expect(report.findings).toEqual([
+    {
+      kind: "malformed_blob_json",
+      digest: written.configDigest,
+      path: null,
+      message: `Config ${written.configDigest} rootfs is not a JSON object; its diff IDs are not modeled.`,
+    },
+  ]);
+  expect(report.images[0]).toMatchObject({
+    architecture: "amd64",
+    os: "linux",
+    user: "nobody",
+    entrypoint: ["/bin/sh"],
+    cmd: ["-c", "true"],
+    rootfs_diff_ids: [],
+    history: expect.arrayContaining([
+      expect.objectContaining({ empty_layer: false }),
+    ]),
+    layers: [expect.objectContaining({ digest: written.layerDigest })],
+  });
+  expect(report.coverage.status).toBe("partial");
+});
+
+it("keeps absent config and rootfs subobjects defect-free while reporting null subobjects", async () => {
+  const absentRoot = await createTestTempDirectory("rea-oci-absent-subobject-");
+  await writeLayoutWithConfigPatch(absentRoot, (doc) => {
+    delete doc.config;
+    delete doc.rootfs;
+  });
+  const absentReport = await inspectLayout(absentRoot);
+  expect(absentReport.findings).toEqual([]);
+  expect(absentReport.images[0]).toMatchObject({
+    architecture: "amd64",
+    os: "linux",
+    user: null,
+    rootfs_diff_ids: [],
+  });
+  expect(absentReport.coverage.status).toBe("complete");
+
+  const nullRoot = await createTestTempDirectory("rea-oci-null-subobject-");
+  const nullWritten = await writeLayoutWithConfigPatch(nullRoot, (doc) => {
+    doc.config = null;
+    doc.rootfs = null;
+  });
+  const nullReport = await inspectLayout(nullRoot);
+  expect(nullReport.findings.map((finding) => finding.message)).toEqual([
+    `Config ${nullWritten.configDigest} config is not a JSON object; its runtime facts are not modeled.`,
+    `Config ${nullWritten.configDigest} rootfs is not a JSON object; its diff IDs are not modeled.`,
+  ]);
+  expect(nullReport.coverage.status).toBe("partial");
+});
+
 it("omits empty ExposedPorts and Volumes keys with a finding", async () => {
   const root = await createTestTempDirectory("rea-oci-empty-keys-");
   const written = await writeOciImageLayoutFixture(root, {
