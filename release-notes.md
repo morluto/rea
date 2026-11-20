@@ -414,6 +414,7 @@
 * **elf:** admit Xtensa through canonical target contracts ([#11178](https://github.com/morluto/rea/issues/11178)) ([1995ab7](https://github.com/morluto/rea/commit/1995ab7fcefbdb89459fb6bb7607c96b8c4ab93e))
 * **elf:** preserve compiler metadata after an empty kernel builder ([a7398cc](https://github.com/morluto/rea/commit/a7398cc9eb40ee89ae46d0f72b726fbd93fa4ea7)), closes [#9942](https://github.com/morluto/rea/issues/9942) [#9950](https://github.com/morluto/rea/issues/9950)
 * **elf:** preserve compressed note storage through program aliases ([#12390](https://github.com/morluto/rea/issues/12390)) ([cb9fce0](https://github.com/morluto/rea/commit/cb9fce082def7c0003b29c93ed680801b65eef96))
+* **elf:** preserve truncated kernel config evidence at the inflate limit ([#12653](https://github.com/morluto/rea/issues/12653)) ([484bdc1](https://github.com/morluto/rea/commit/484bdc183af0b3165fc4f5a32ec50d5df0a404e1))
 * **elf:** preserve Unicode separators in kernel config strings ([#11831](https://github.com/morluto/rea/issues/11831)) ([1ab2121](https://github.com/morluto/rea/commit/1ab212164c44b24dd515bc715a90bc052037a18b))
 * **elf:** preserve unprefixed Kconfig hex values ([#12516](https://github.com/morluto/rea/issues/12516)) ([3dfd7c2](https://github.com/morluto/rea/commit/3dfd7c2f0d2230f6ebf886b52894fec204a35f63))
 * **elf:** recover pointers from Android APS2 relocation tables ([#12047](https://github.com/morluto/rea/issues/12047)) ([32b2020](https://github.com/morluto/rea/commit/32b20205715e4af02800ace8ac997895f140c474))
@@ -1128,6 +1129,7 @@
 * **macho:** select slices through one owner with typed refusals ([#10874](https://github.com/morluto/rea/issues/10874)) ([557bf41](https://github.com/morluto/rea/commit/557bf41c2c7971242ed013fddf12d8f7c6117612))
 * **macho:** share checked segment and section framing ([#12366](https://github.com/morluto/rea/issues/12366)) ([5f25808](https://github.com/morluto/rea/commit/5f258086b031b18b4cd65b9c35c63d0c726bfad0))
 * **macho:** share encryption command word reads ([#12543](https://github.com/morluto/rea/issues/12543)) ([4892615](https://github.com/morluto/rea/commit/4892615ecbe53ffa5a4696f781f869154ddb8e98))
+* **macho:** share selected fixup and magic field reads ([#12637](https://github.com/morluto/rea/issues/12637)) ([6596d29](https://github.com/morluto/rea/commit/6596d294b97b3df13a8429ae34a95ad407790564))
 * **managed:** read CLI header fields through BinaryReader ([#12503](https://github.com/morluto/rea/issues/12503)) ([6cbd9cf](https://github.com/morluto/rea/commit/6cbd9cf99401167d8dbbf3947ed449cc3a2887b1))
 * **managed:** read inspection coverage through the managed inspection state owner ([#11311](https://github.com/morluto/rea/issues/11311)) ([ae634eb](https://github.com/morluto/rea/commit/ae634eb5f6aa30c9adaac5ba7bf9066bff335f94))
 * **managed:** read metadata pointer rows through BinaryReader ([#12483](https://github.com/morluto/rea/issues/12483)) ([3d0fa7d](https://github.com/morluto/rea/commit/3d0fa7dae2cd960c077aa63e8a80a2195a846a10))
@@ -1273,6 +1275,7 @@
 * **web:** report source-map output limits from LimitRef ([#12200](https://github.com/morluto/rea/issues/12200)) ([9968f27](https://github.com/morluto/rea/commit/9968f27face8023c7f83787a497ea9325cb7f6e4))
 * **windows:** share Shell Link location field reads ([#12584](https://github.com/morluto/rea/issues/12584)) ([c8a783d](https://github.com/morluto/rea/commit/c8a783d7cfbe97393c2a78ca4611e6298b4e66e4))
 * **zip:** read EOCD and trailing archive fields via BinaryReader ([#11918](https://github.com/morluto/rea/issues/11918)) ([afd277d](https://github.com/morluto/rea/commit/afd277dabc3b0a17eb9042453d8cb12b7d374100))
+* **zip:** share local header facts across readers ([#12629](https://github.com/morluto/rea/issues/12629)) ([fb9f19d](https://github.com/morluto/rea/commit/fb9f19d83aaf2a20dc7efe348f95231f40ee7e43))
 
 
 ### Documentation
@@ -1296,6 +1299,7 @@
 * **devicetree:** use the ev_ retained Evidence id prefix in the example ([cb4ffa0](https://github.com/morluto/rea/commit/cb4ffa022060d0fa11807e7c8b4fc3491f4e182e)), closes [#7612](https://github.com/morluto/rea/issues/7612) [#7760](https://github.com/morluto/rea/issues/7760)
 * **errors:** generate the error catalogue from the classification tables ([0f6b330](https://github.com/morluto/rea/commit/0f6b330cb632ed981dcfaeb90a9697f1855e3851))
 * **errors:** keep projectAnalysisError's doc on its declaration ([#11660](https://github.com/morluto/rea/issues/11660)) ([ad4cc75](https://github.com/morluto/rea/commit/ad4cc7536f0d5d9c879bbd7538b4f2731b63dc51))
+* **ghidra:** label 12.1.x verification as history and point to the 12.2 baseline ([#12656](https://github.com/morluto/rea/issues/12656)) ([e6ebfbe](https://github.com/morluto/rea/commit/e6ebfbecde9fd61aa921b72500d349c26954880c))
 * **i18n:** complete the Spanish website translations ([#12092](https://github.com/morluto/rea/issues/12092)) ([1bd45f0](https://github.com/morluto/rea/commit/1bd45f073ca320766b01741dbfedf11f3fcaf0ec))
 * **i18n:** complete zh-CN translations including rl-environments ([#12079](https://github.com/morluto/rea/issues/12079)) ([2191896](https://github.com/morluto/rea/commit/2191896f3b9c4e63f098fdd3af3980d05811e3e6))
 * **i18n:** fix two Spanish strings flagged in review of [#12103](https://github.com/morluto/rea/issues/12103) ([#12104](https://github.com/morluto/rea/issues/12104)) ([15090cf](https://github.com/morluto/rea/commit/15090cf848ab153324d22e291a3ef1ece34e4d92))
