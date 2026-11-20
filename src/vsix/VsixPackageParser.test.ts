@@ -900,6 +900,32 @@ it.each(["./out/.", "./out/sub/.."])(
   },
 );
 
+it.each([".", "./", "./out/.."])(
+  "resolves main %s at the package root to its index file",
+  async (main) => {
+    const bytes = await vsixPackageFixture({
+      includeMain: false,
+      packageJson: JSON.stringify({
+        name: "hello",
+        publisher: "demo",
+        version: "1.2.3",
+        engines: { vscode: "^1.74.0" },
+        main,
+      }),
+      extraMembers: {
+        "extension/index.js": "exports.activate = () => {};",
+      },
+    });
+    const report = vsixPackageSchema.parse(
+      await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+    );
+    expect(report.entry_points.main).toEqual({
+      path: "extension/index.js",
+      present: true,
+    });
+  },
+);
+
 it("matches entry points by exact member case, reporting a case-only match", async () => {
   const bytes = await vsixPackageFixture({
     packageJson: JSON.stringify({

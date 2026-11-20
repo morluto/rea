@@ -294,7 +294,9 @@ const contributeCount = (value: unknown): number => {
  * The package member a package.json entry point names. VS Code resolves it
  * relative to `extension/`, so `.` and `..` segments are resolved there; a
  * path that climbs out of `extension/` keeps its unresolved form, which no
- * member matches.
+ * member matches. A path that resolves to the package root is `extension`,
+ * so the directory lookups that append `/package.json` or `/index.js` name
+ * real members.
  */
 const packageJsonEntryPath = (value: unknown): string | null => {
   if (typeof value !== "string") return null;
@@ -307,7 +309,9 @@ const packageJsonEntryPath = (value: unknown): string | null => {
     if (segment !== "..") segments.push(segment);
     else if (segments.pop() === undefined) return `extension/${relative}`;
   }
-  return `extension/${segments.join("/")}`;
+  return segments.length === 0
+    ? "extension"
+    : `extension/${segments.join("/")}`;
 };
 
 /**
