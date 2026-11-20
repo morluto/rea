@@ -264,6 +264,55 @@ test("recovers a denied Hopper launch through the same stdio MCP session and CLI
   ).toBe(false);
 });
 
+const startupSetting = (bootstrap: string, name: string): string => {
+  const line = bootstrap
+    .split("\n")
+    .find((value) => value.startsWith(`${name} = `));
+  if (line === undefined) throw new Error(`Missing bootstrap setting ${name}`);
+  return z.string().parse(JSON.parse(line.slice(name.length + 3)));
+};
+
+const readStartupReceipt = (
+  receipt: string,
+  launchMode: "handoff" | "not-found",
+  initial: ReturnType<typeof parseMcpToolError>,
+): Promise<string> => {
+  return readFile(receipt, "utf8").catch((cause: unknown) => {
+    if (
+      !(cause instanceof Error) ||
+      !("code" in cause) ||
+      cause.code !== "ENOENT"
+    )
+      throw cause;
+    const startup = z
+      .object({
+        diagnostics: z.object({
+          primary_error: z.object({
+            code: z.string(),
+            details: z
+              .object({
+                stage: z.string().optional(),
+                timeout_ms: z.number().optional(),
+              })
+              .optional(),
+          }),
+        }),
+      })
+      .safeParse(initial.error.details);
+    throw new Error(
+      `Hopper ${launchMode} fixture did not write its bootstrap receipt. MCP startup outcome: ${JSON.stringify(
+        {
+          code: initial.error.code,
+          primary: startup.success
+            ? startup.data.diagnostics.primary_error
+            : undefined,
+        },
+      )}`,
+      { cause },
+    );
+  });
+};
+
 test.for(["handoff", "not-found"] as const)(
   "preserves an unconfirmed %s handoff and closes only a late bridge with matching run identity",
   async (launchMode, { workspace }) => {
@@ -315,43 +364,10 @@ test.for(["handoff", "not-found"] as const)(
       true,
     );
     const initial = parseMcpToolError(await call("current_document"));
-    // Capture ownership evidence before result assertions so teardown retains
-    // the runtime even when the asserted failure stage regresses.
-    const bootstrapPath = await readFile(receipt, "utf8").catch(
-      (cause: unknown) => {
-        if (
-          !(cause instanceof Error) ||
-          !("code" in cause) ||
-          cause.code !== "ENOENT"
-        )
-          throw cause;
-        const startup = z
-          .object({
-            diagnostics: z.object({
-              primary_error: z.object({
-                code: z.string(),
-                details: z
-                  .object({
-                    stage: z.string().optional(),
-                    timeout_ms: z.number().optional(),
-                  })
-                  .optional(),
-              }),
-            }),
-          })
-          .safeParse(initial.error.details);
-        throw new Error(
-          `Hopper ${launchMode} fixture did not write its bootstrap receipt. MCP startup outcome: ${JSON.stringify(
-            {
-              code: initial.error.code,
-              primary: startup.success
-                ? startup.data.diagnostics.primary_error
-                : undefined,
-            },
-          )}`,
-          { cause },
-        );
-      },
+    const bootstrapPath = await readStartupReceipt(
+      receipt,
+      launchMode,
+      initial,
     );
     runtime = dirname(bootstrapPath);
     expect(initial.error).toMatchObject({
@@ -407,17 +423,9 @@ test.for(["handoff", "not-found"] as const)(
       "cleanup_incomplete",
     );
     const bootstrap = await readFile(bootstrapPath, "utf8");
-    const setting = (name: string): string => {
-      const line = bootstrap
-        .split("\n")
-        .find((value) => value.startsWith(`${name} = `));
-      if (line === undefined)
-        throw new Error(`Missing bootstrap setting ${name}`);
-      return z.string().parse(JSON.parse(line.slice(name.length + 3)));
-    };
-    const socket = setting("REA_SOCKET");
-    const token = setting("REA_TOKEN");
-    const runId = setting("REA_RUN_ID");
+    const socket = startupSetting(bootstrap, "REA_SOCKET");
+    const token = startupSetting(bootstrap, "REA_TOKEN");
+    const runId = startupSetting(bootstrap, "REA_RUN_ID");
     runtime = dirname(socket);
     const lateBridge = (identity: string, credential = token) => {
       const child = spawn(
