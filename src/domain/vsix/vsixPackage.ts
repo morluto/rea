@@ -116,6 +116,9 @@ export const vsixPackagePathKind = (name: string): VsixMemberKind => {
     base.endsWith(".zip") ||
     base.endsWith(".vsix") ||
     base.endsWith(".nupkg") ||
+    base.endsWith(".jar") ||
+    base.endsWith(".war") ||
+    base.endsWith(".ear") ||
     base.endsWith(".tar") ||
     base.endsWith(".gz") ||
     base.endsWith(".tgz") ||

@@ -162,6 +162,10 @@ it("derives member kinds from ZIP names", () => {
   expect(vsixPackagePathKind("extension/vendor/payload.zip")).toBe(
     "nested_archive",
   );
+  expect(vsixPackagePathKind("extension/server/server.jar")).toBe(
+    "nested_archive",
+  );
+  expect(vsixPackagePathKind("extension/lib/App.WAR")).toBe("nested_archive");
   expect(vsixPackagePathKind("extension/readme.md")).toBe("unknown");
 });
 
