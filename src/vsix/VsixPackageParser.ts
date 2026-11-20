@@ -61,6 +61,8 @@ export const VSIX_LIMITATIONS = {
     "The selected extension/package.json is not well-formed JSON.",
   malformedMainDirectoryPackageJson: (path: string): string =>
     `Member ${JSON.stringify(path)} is not a JSON object, so the directory main does not resolve; its index files were not used.`,
+  entryPointCaseOnlyMatch: (path: string, member: string): string =>
+    `Entry point ${JSON.stringify(path)} matches member ${JSON.stringify(member)} only when case is ignored; it is reported absent, as a case-sensitive file system would not load it.`,
   emptyContributesKey:
     "extension/package.json contributes has an empty key; it is not listed in contributes.keys.",
   duplicatePath: (path: string): string =>
@@ -319,17 +321,34 @@ const NODE_INDEX_CANDIDATES = [
 ] as const;
 const BROWSER_ENTRY_CANDIDATES = ["", ".js"] as const;
 
-/** The member an entry point resolves to, or the declared path when none. */
+/**
+ * The member an entry point resolves to, or the declared path when none.
+ * Member names match exactly, as on a case-sensitive file system; a match
+ * that holds only when case is ignored is reported separately.
+ */
 const resolveEntryPoint = (
   declared: string,
   suffixes: readonly string[],
-  memberPaths: ReadonlyMap<string, string>,
+  memberPaths: ReadonlySet<string>,
 ): { path: string; present: boolean } => {
   for (const suffix of suffixes) {
-    const member = memberPaths.get(`${declared}${suffix}`.toLowerCase());
-    if (member !== undefined) return { path: member, present: true };
+    const candidate = `${declared}${suffix}`;
+    if (memberPaths.has(candidate)) return { path: candidate, present: true };
   }
   return { path: declared, present: false };
+};
+
+/** A member that matches an unresolved entry point only when case is ignored. */
+const caseOnlyEntryPointMatch = (
+  declared: string,
+  suffixes: readonly string[],
+  foldedMemberPaths: ReadonlyMap<string, string>,
+): string | undefined => {
+  for (const suffix of suffixes) {
+    const member = foldedMemberPaths.get(`${declared}${suffix}`.toLowerCase());
+    if (member !== undefined) return member;
+  }
+  return undefined;
 };
 
 /**
@@ -382,7 +401,7 @@ const directoryManifestMain = (
  */
 const resolveNodeEntryPoint = (
   declared: string,
-  memberPaths: ReadonlyMap<string, string>,
+  memberPaths: ReadonlySet<string>,
   directoryMain: DirectoryManifestMain,
 ): { path: string; present: boolean } => {
   const asFile = resolveEntryPoint(declared, NODE_FILE_CANDIDATES, memberPaths);
@@ -1005,14 +1024,16 @@ export const parseVsixPackage = async (
     const packageEngine = packageParsed?.engine ?? null;
     const mainPath = packageParsed?.main ?? null;
     const browserPath = packageParsed?.browser ?? null;
-    const memberPaths = new Map(
-      files.map((file) => [file.path.toLowerCase(), file.path]),
-    );
+    const memberPaths = new Set(files.map((file) => file.path));
     // A `main` naming a directory resolves through that directory's own
     // package.json before its index files, as Node's loader does.
     let mainDirectoryMain: DirectoryManifestMain = { kind: "none" };
+    const mainManifestMatches =
+      mainPath === null
+        ? []
+        : files.filter((file) => file.path === `${mainPath}/package.json`);
     const mainManifest =
-      mainPath === null ? undefined : uniqueByPath(`${mainPath}/package.json`);
+      mainManifestMatches.length === 1 ? mainManifestMatches[0] : undefined;
     if (
       mainManifest !== undefined &&
       !mainManifest.traverses &&
@@ -1030,13 +1051,11 @@ export const parseVsixPackage = async (
           "max_manifest_bytes",
         );
       } catch (cause: unknown) {
-        if (
-          !(
-            cause instanceof ParseFailureError &&
-            cause.failure.kind === "limit" &&
-            cause.failure.limit?.name === "max_manifest_bytes"
-          )
-        )
+        if (!(
+          cause instanceof ParseFailureError &&
+          cause.failure.kind === "limit" &&
+          cause.failure.limit?.name === "max_manifest_bytes"
+        ))
           throw cause;
         limitations.push(
           `Member ${JSON.stringify(mainManifest.path)} exceeds the ${String(input.max_manifest_bytes)}-byte manifest budget and was not read to resolve main.`,
@@ -1080,6 +1099,32 @@ export const parseVsixPackage = async (
       extensionPack.vsixmanifest,
       extensionPack.package_json,
     );
+    const mainEntry =
+      mainPath === null
+        ? null
+        : resolveNodeEntryPoint(mainPath, memberPaths, mainDirectoryMain);
+    const browserEntry =
+      browserPath === null
+        ? null
+        : resolveEntryPoint(browserPath, BROWSER_ENTRY_CANDIDATES, memberPaths);
+    const foldedMemberPaths = new Map(
+      files.map((file) => [file.path.toLowerCase(), file.path]),
+    );
+    for (const [entry, suffixes] of [
+      [mainEntry, [...NODE_FILE_CANDIDATES, ...NODE_INDEX_CANDIDATES]],
+      [browserEntry, BROWSER_ENTRY_CANDIDATES],
+    ] as const) {
+      if (entry === null || entry.present) continue;
+      const member = caseOnlyEntryPointMatch(
+        entry.path,
+        suffixes,
+        foldedMemberPaths,
+      );
+      if (member !== undefined)
+        limitations.push(
+          VSIX_LIMITATIONS.entryPointCaseOnlyMatch(entry.path, member),
+        );
+    }
     const signatures = {
       p7s: presentPaths.has("extension.signature.p7s"),
       manifest: presentPaths.has(".signature.manifest"),
@@ -1106,18 +1151,8 @@ export const parseVsixPackage = async (
       },
       target_platform: vsixIdentity?.target_platform ?? null,
       entry_points: {
-        main:
-          mainPath === null
-            ? null
-            : resolveNodeEntryPoint(mainPath, memberPaths, mainDirectoryMain),
-        browser:
-          browserPath === null
-            ? null
-            : resolveEntryPoint(
-                browserPath,
-                BROWSER_ENTRY_CANDIDATES,
-                memberPaths,
-              ),
+        main: mainEntry,
+        browser: browserEntry,
       },
       activation_events: (packageParsed?.activationEvents ?? []).map(
         (event) => ({

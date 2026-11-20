@@ -757,6 +757,39 @@ it.each(["{not json", "[]", "null"])(
   },
 );
 
+it("matches entry points by exact member case, reporting a case-only match", async () => {
+  const bytes = await vsixPackageFixture({
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      engines: { vscode: "^1.74.0" },
+      main: "./out/Extension.js",
+      browser: "./out/Web",
+    }),
+    extraMembers: { "extension/out/web.js": "exports.activate = () => {};" },
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.entry_points).toEqual({
+    main: { path: "extension/out/Extension.js", present: false },
+    browser: { path: "extension/out/Web", present: false },
+  });
+  expect(report.limitations).toContain(
+    VSIX_LIMITATIONS.entryPointCaseOnlyMatch(
+      "extension/out/Extension.js",
+      "extension/out/extension.js",
+    ),
+  );
+  expect(report.limitations).toContain(
+    VSIX_LIMITATIONS.entryPointCaseOnlyMatch(
+      "extension/out/Web",
+      "extension/out/web.js",
+    ),
+  );
+});
+
 it("marks a missing main entry as absent without treating it as a format error", async () => {
   const bytes = await vsixPackageFixture({ includeMain: false });
   const report = vsixPackageSchema.parse(
