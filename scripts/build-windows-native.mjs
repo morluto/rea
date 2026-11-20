@@ -8,11 +8,14 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
 
-const { WINDOWS_NATIVE_ARTIFACT, createWindowsNativeManifest } =
-  await importVerifierSource(
-    new URL("../src/domain/windowsNativeArtifact.ts", import.meta.url).href,
-    import.meta.url,
-  );
+const {
+  WINDOWS_NATIVE_ARTIFACT,
+  createWindowsNativeManifest,
+  validateWindowsNativeDelayImports,
+} = await importVerifierSource(
+  new URL("../src/domain/windowsNativeArtifact.ts", import.meta.url).href,
+  import.meta.url,
+);
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const nodeVersion = "22.19.0";
@@ -147,6 +150,8 @@ const packageJson = JSON.parse(
   await readFile(join(root, "package.json"), "utf8"),
 );
 const bytes = await readFile(join(output, artifact));
+const delayImports = validateWindowsNativeDelayImports(bytes);
+if (!delayImports.ok) throw delayImports.error;
 const created = createWindowsNativeManifest(packageJson.version, bytes);
 if (!created.ok) throw created.error;
 const metadata = created.value;

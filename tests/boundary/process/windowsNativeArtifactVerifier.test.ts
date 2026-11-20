@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { access, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -52,6 +53,30 @@ const copyModuleGraph = async (root: string, entry: string): Promise<void> => {
   }
 };
 
+const delayImportFixture = () => {
+  const { bytes: identity, manifest } = windowsNativeArtifactFixture();
+  const optional = 88;
+  const directory = optional + 112 + 13 * 8;
+  const section = optional + 240;
+  const descriptors = 512;
+  const bytes = Buffer.alloc(descriptors + 64);
+  identity.copy(bytes);
+  bytes.writeUInt16LE(1, 70); // NumberOfSections
+  bytes.writeUInt16LE(240, 84); // SizeOfOptionalHeader
+  bytes.writeUInt32LE(16, optional + 108);
+  bytes.writeUInt32LE(0x1000, directory);
+  bytes.writeUInt32LE(32, directory + 4);
+  bytes.writeUInt32LE(64, section + 8); // VirtualSize
+  bytes.writeUInt32LE(0x1000, section + 12);
+  bytes.writeUInt32LE(64, section + 16); // SizeOfRawData
+  bytes.writeUInt32LE(descriptors, section + 20);
+  bytes.writeUInt32LE(0xc000_0040, section + 36);
+  bytes.writeUInt32LE(1, descriptors);
+  bytes.writeUInt32LE(0x1030, descriptors + 4);
+  bytes.writeUInt32LE(0x1020, descriptors + 12);
+  return { bytes, manifest, directory, section };
+};
+
 for (const mode of ["preinstall source", "packed source-free"]) {
   processTest(
     `verifies native artifact identity from ${mode} without installed dependencies`,
@@ -89,10 +114,16 @@ for (const mode of ["preinstall source", "packed source-free"]) {
       );
       const artifactRoot = join(root, "native/windows/build");
       await mkdir(artifactRoot, { recursive: true });
-      const { bytes, manifest } = windowsNativeArtifactFixture();
-      await writeFile(join(artifactRoot, manifest.artifact), bytes);
+      const { bytes, manifest, directory, section } = delayImportFixture();
       const manifestPath = join(artifactRoot, "manifest.json");
-      await writeFile(manifestPath, JSON.stringify(manifest));
+      const writeArtifact = async () => {
+        manifest.artifactSha256 = createHash("sha256")
+          .update(bytes)
+          .digest("hex");
+        await writeFile(join(artifactRoot, manifest.artifact), bytes);
+        await writeFile(manifestPath, JSON.stringify(manifest));
+      };
+      await writeArtifact();
       const run = () =>
         processes.run(
           process.execPath,
@@ -106,6 +137,20 @@ for (const mode of ["preinstall source", "packed source-free"]) {
         ...manifest,
         artifactBytes: bytes.length,
       });
+      bytes.writeUInt32LE(0x4000_0040, section + 36);
+      await writeArtifact();
+      const readOnlyIat = await run();
+      expect(readOnlyIat.exitCode).not.toBe(0);
+      expect(readOnlyIat.stderr).toContain("outside writable PE data");
+
+      bytes.fill(0, directory, directory + 8);
+      await writeArtifact();
+      const missingDirectory = await run();
+      expect(missingDirectory.exitCode).not.toBe(0);
+      expect(missingDirectory.stderr).toContain(
+        "no valid delay-import directory",
+      );
+
       await writeFile(
         manifestPath,
         JSON.stringify({ ...manifest, extra: true }),
