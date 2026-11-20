@@ -20,6 +20,37 @@ const metadata = (
   "dist-tags": tags,
 });
 
+it("verifies a published version missing from the compact package index", async () => {
+  const requests: string[] = [];
+  const result = await readNpmRelease("6.10.1", async (url) => {
+    requests.push(String(url));
+    switch (String(url)) {
+      case "https://registry.npmjs.org/rea-agents":
+        return Response.json(
+          metadata("6.9.0", "sha512-old", { latest: "6.9.0" }),
+        );
+      case "https://registry.npmjs.org/rea-agents/6.10.1":
+        return Response.json({
+          name: "rea-agents",
+          version: "6.10.1",
+          dist: { integrity: "sha512-qualified" },
+        });
+      case "https://registry.npmjs.org/-/package/rea-agents/dist-tags":
+        return Response.json({ latest: "6.10.1" });
+      default:
+        throw new Error(`Unexpected request: ${url}`);
+    }
+  });
+  expect(result).toEqual({
+    status: "published",
+    tag: "latest",
+    taggedVersion: "6.10.1",
+    stableVersion: "6.10.1",
+    integrity: "sha512-qualified",
+  });
+  expect(requests).toContain("https://registry.npmjs.org/rea-agents/6.10.1");
+});
+
 it("accepts existing registry bytes only when content and selected channel match", async () => {
   const root = await createTestTempDirectory("rea-npm-release-");
   const tarball = join(root, "package.tgz");
@@ -78,8 +109,10 @@ it("distinguishes absence from failed or malformed registry responses", async ()
     ),
   ).resolves.toEqual({ status: "absent" });
   await expect(
-    readNpmRelease("6.5.0", async () =>
-      Response.json({ name: "rea-agents", versions: {}, "dist-tags": {} }),
+    readNpmRelease("6.5.0", async (url) =>
+      String(url).endsWith("/6.5.0")
+        ? new Response(null, { status: 404 })
+        : Response.json({ name: "rea-agents", versions: {}, "dist-tags": {} }),
     ),
   ).resolves.toEqual({ status: "absent" });
   await expect(
@@ -96,6 +129,18 @@ it("distinguishes absence from failed or malformed registry responses", async ()
       Response.json(metadata("6.5.0", "", { latest: "6.5.0" })),
     ),
   ).rejects.toThrow();
+});
+
+it("refuses to report absence when exact-version lookup fails", async () => {
+  await expect(
+    readNpmRelease(
+      "6.5.0",
+      async (url) =>
+        new Response(null, {
+          status: String(url).endsWith("/6.5.0") ? 503 : 404,
+        }),
+    ),
+  ).rejects.toThrow("npm version lookup failed: HTTP 503");
 });
 
 it("waits only for confirmed propagation absence and does not retry errors", async () => {
