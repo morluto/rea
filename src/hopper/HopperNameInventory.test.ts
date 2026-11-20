@@ -186,6 +186,7 @@ describe("Hopper list_names reply contract", () => {
         sha256: "a".repeat(64),
         kind: "database",
         format: "analysis-database",
+        databaseEngine: "hopper",
       });
 
       try {

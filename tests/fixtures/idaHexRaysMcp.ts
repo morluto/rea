@@ -24,7 +24,11 @@ export class RecordingHexRaysIdaMcp implements IdaMcpConnection {
   /** Leases this server holds, keyed by instance id. */
   readonly leases = new Map<string, { path: string; backend: string }>();
   /** Databases other clients hold; listed without an instance id. */
-  peers: { path: string; backend: string }[] = [];
+  peers: {
+    path: string;
+    backend: string;
+    status?: "available" | "attached" | "current" | "unavailable";
+  }[] = [];
   tools = [
     "open_database",
     "list_databases",
@@ -102,8 +106,9 @@ export class RecordingHexRaysIdaMcp implements IdaMcpConnection {
               error: null,
             })),
             ...this.peers.map((peer) => ({
-              ...peer,
-              status: "available",
+              path: peer.path,
+              backend: peer.backend,
+              status: peer.status ?? "available",
               instance_id: null,
               error: null,
             })),

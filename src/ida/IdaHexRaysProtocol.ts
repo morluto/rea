@@ -1,8 +1,8 @@
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { AnalysisProtocolError } from "../domain/analysisErrorCore.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { IdaMcpConnection } from "./IdaMcpConnection.js";
 import type { IdaRawObservation } from "./IdaOperationRunner.js";
@@ -37,14 +37,18 @@ export const hexRaysOpenSchema = z
   })
   .passthrough();
 
-/** Inventory rows; `instance_id` is null for databases this server holds no lease on. */
+/**
+ * Inventory rows. `instance_id` is null when this server holds no lease.
+ * The row is still a live database owner; null does not mean it has stopped.
+ * `idat` is a headless owner, distinct from a GUI database.
+ */
 export const hexRaysListSchema = z
   .object({
     instances: z.array(
       z
         .object({
           path: z.string(),
-          backend: z.enum(["gui", "idalib"]),
+          backend: z.enum(["gui", "idalib", "idat"]),
           status: z.enum(["available", "attached", "current", "unavailable"]),
           instance_id: z.string().nullable(),
         })
@@ -72,7 +76,7 @@ const queryBridge = () => {
   );
   querySource = {
     code,
-    sha256: createHash("sha256").update(code).digest("hex"),
+    sha256: sha256Hex(code),
   };
   return querySource;
 };

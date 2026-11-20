@@ -710,8 +710,7 @@ export class IdaSessionClient implements AnalysisClient {
       // A registration for another profile can still point at the official
       // server; name the registration that fits instead of a reinstall.
       const servesHexRays =
-        protocol !== "hexrays" &&
-        hexRaysTools.every((name) => tools.has(name));
+        protocol !== "hexrays" && hexRaysTools.every((name) => tools.has(name));
       const hexRaysHint = servesHexRays
         ? ' This server serves the Hex-Rays IDA MCP catalog; register it with "mode": "headless" and "protocol": "hexrays".'
         : "";
@@ -850,14 +849,22 @@ export class IdaSessionClient implements AnalysisClient {
     const raw = await this.connection.call("list_databases", {});
     return {
       raw,
-      // REA's stdio server holds an instance id only for leases it opened.
-      sessions: hexRaysListSchema.parse(raw).instances.map((entry) => ({
-        session_id: entry.instance_id ?? "",
-        backend: entry.backend === "gui" ? "gui" : "worker",
-        owned: entry.instance_id !== null,
-        input_path: entry.path,
-        is_active: entry.status === "current" || entry.status === "attached",
-      })),
+      // A null instance id means this server holds no lease. The database is
+      // still listed, so another client can be using the private files. That
+      // row must not become the supervisor's released-worker shape (empty
+      // session id, unowned, inactive), which cleanup treats as deletable.
+      sessions: hexRaysListSchema.parse(raw).instances.map((entry) => {
+        const leased = entry.instance_id !== null;
+        return {
+          session_id: entry.instance_id ?? "",
+          backend: entry.backend === "gui" ? "gui" : "worker",
+          owned: leased,
+          input_path: entry.path,
+          is_active: leased
+            ? entry.status === "current" || entry.status === "attached"
+            : true,
+        };
+      }),
     };
   }
 

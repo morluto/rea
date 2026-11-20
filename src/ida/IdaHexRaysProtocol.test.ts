@@ -10,7 +10,7 @@ import { readIdaConfiguration } from "./IdaConfiguration.js";
 import { IdaSessionClient } from "./IdaSessionClient.js";
 import { runHexRaysQuery } from "./IdaHexRaysProtocol.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import { WindowsPrivateRuntime } from "../windows/WindowsPrivateRuntime.js";
 
 const roots: string[] = [];
@@ -188,6 +188,7 @@ describe("Hex-Rays IDA MCP startup profile", () => {
         args: ["stdio"],
         env: {},
         mode: "headless",
+        protocol: "modern",
         timeoutMs: 1000,
         workspaceRoot: root,
       },
@@ -291,13 +292,6 @@ describe("Hex-Rays IDA MCP session", () => {
     await access(target.path);
   });
 
-  it("ignores databases other clients hold", async () => {
-    const { producer, client } = await fixture();
-    producer.peers = [{ path: "/elsewhere/peer.bin", backend: "idalib" }];
-    expect((await client.execute("list_procedures", {})).ok).toBe(true);
-    expect((await client.close()).ok).toBe(true);
-  });
-
   it("refuses a GUI database and retains the workspace it cannot prove released", async () => {
     const { root, producer, client } = await fixture();
     producer.openBackend = "gui";
@@ -380,4 +374,58 @@ describe("Hex-Rays IDA MCP session", () => {
     ).toHaveLength(2);
     expect(await workspaces(retained.root)).toEqual([]);
   });
+});
+
+describe("Hex-Rays unleased database inventory", () => {
+  it.each([
+    ["idalib", "available"],
+    ["idat", "unavailable"],
+  ] as const)(
+    "releases when another client's %s database is not the private copy",
+    async (backend, status) => {
+      const { root, producer, client } = await fixture();
+      producer.peers = [{ path: "/elsewhere/peer.bin", backend, status }];
+      expect((await client.execute("list_procedures", {})).ok).toBe(true);
+      expect((await client.close()).ok).toBe(true);
+      expect(await workspaces(root)).toEqual([]);
+    },
+  );
+
+  it.each([
+    ["idalib", "available"],
+    ["idalib", "unavailable"],
+    ["idat", "available"],
+  ] as const)(
+    "retains the private workspace while an unleased %s database is %s",
+    async (backend, status) => {
+      const { root, producer, client } = await fixture();
+      expect((await client.execute("list_procedures", {})).ok).toBe(true);
+      const path = String(
+        producer.calls.find(({ name }) => name === "open_database")?.args.path,
+      );
+      producer.peers = [{ path, backend, status }];
+      const closed = await client.close();
+      expect(closed.ok).toBe(false);
+      if (closed.ok) throw new Error("expected retained cleanup");
+      expect(closed.error.cleanupIncomplete).toBe(true);
+      expect(projectAnalysisError(closed.error).details).toMatchObject({
+        diagnostics: {
+          upstream_sessions: {
+            state: "unverified",
+            sessions: [
+              {
+                session_id: "",
+                backend: "worker",
+                owned: false,
+                input_path: path,
+                is_active: true,
+              },
+            ],
+          },
+        },
+      });
+      expect(producer.leases.size).toBe(0);
+      expect(await workspaces(root)).toHaveLength(1);
+    },
+  );
 });
