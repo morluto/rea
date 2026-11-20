@@ -1,10 +1,8 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
@@ -12,8 +10,14 @@ import { parseEvidence } from "../dist/domain/evidence.js";
 import {
   requireMcpOperationResult,
   requireMcpOutput,
+  requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 if (process.argv.length !== 2)
@@ -27,7 +31,6 @@ if (process.env.GHIDRA_INSTALL_DIR === undefined)
   throw new Error(
     "Set GHIDRA_INSTALL_DIR to a bring-your-own Ghidra installation.",
   );
-const exec = promisify(execFile);
 const run = createVerifierRun();
 const root = fileURLToPath(new URL("..", import.meta.url));
 // Source-owned big-endian 68000 image, loaded at 0x1000:
@@ -77,6 +80,8 @@ const env = {
   REA_ANALYSIS_PROVIDER: "ghidra",
   REA_PROCESS_RUN_ID: run.run_id,
 };
+// Compiler and CLI launches share one command owner, created before either starts.
+const commands = await createVerifierCommands();
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
@@ -89,6 +94,7 @@ transport.stderr?.on("data", (chunk) => {
   stderr = (stderr + chunk.toString()).slice(-65536);
 });
 let report;
+let primaryFailure;
 try {
   await client.connect(transport);
   const opened = await call("open_binary", {
@@ -165,10 +171,10 @@ try {
   );
   // Rejected selections must not replace the live session.
   for (const [entryPoint, reason] of [
-    ["0x1001", /raw-binary m68k entry_point 0x1001 must be 2-byte aligned/u],
+    ["0x1001", "raw-binary m68k entry_point 0x1001 must be 2-byte aligned"],
     [
       "0xfffffff0",
-      /raw-binary mapping from 0xfffffff0 must fit in the m68k address width/u,
+      "raw-binary mapping from 0xfffffff0 must fit in the m68k address width",
     ],
   ]) {
     const rejected = await client.callTool({
@@ -180,15 +186,23 @@ try {
         entry_point: entryPoint,
       },
     });
-    assert.equal(rejected.isError, true);
-    assert.match(JSON.stringify(rejected.content), reason);
+    // admitRawBinary rejects the selection before Ghidra starts.
+    const rejectedError = requireMcpToolError(rejected);
+    assert.partialDeepStrictEqual(rejectedError, {
+      code: "invalid_request",
+      details: {
+        path,
+        reason,
+        constraint: "load_selection_rejected",
+      },
+    });
     const preserved = await call("binary_session");
     assert.equal(preserved.analysis_run.run_id, status.analysis_run.run_id);
     assert.equal(preserved.entry_point, "0x1000");
   }
   await call("close_binary");
   await client.ping();
-  const { stdout } = await exec(
+  const { stdout } = await commands.exec(
     process.execPath,
     [
       entrypoint,
@@ -209,7 +223,7 @@ try {
   const cli = evidence(JSON.parse(stdout));
   assert.deepEqual(cli.normalized_result, image.normalized_result);
   assert.equal(cli.analysis_profile.digest, image.analysis_profile.digest);
-  const fileCli = await exec(
+  const fileCli = await commands.exec(
     process.execPath,
     [
       entrypoint,
@@ -262,10 +276,7 @@ try {
   };
 } catch (cause) {
   if (stderr) process.stderr.write(stderr);
-  workspaceFixture.retain(
-    `m68k verification failed; retained workspace: ${workspace}`,
-  );
-  throw cause;
+  primaryFailure = cause;
 } finally {
   try {
     await client.close();
@@ -273,18 +284,45 @@ try {
     await transport.close();
   }
 }
-const survivors = await readdir(runtime);
-if (survivors.length > 0)
+if (primaryFailure === undefined) {
+  const survivors = await readdir(runtime);
+  if (survivors.length > 0)
+    primaryFailure = retainWorkspace(
+      `Runtime resources survived server shutdown (${survivors.join(", ")}); retained workspace: ${workspace}`,
+    );
+}
+let cleanupFailure;
+try {
+  await workspaceFixture.closeEarly([() => commands.close()]);
+} catch (cause) {
+  cleanupFailure = cause;
+}
+if (cleanupFailure !== undefined)
   throw retainWorkspace(
-    `Runtime resources survived server shutdown (${survivors.join(", ")}); retained workspace: ${workspace}`,
+    `m68k command cleanup failed; retained diagnostic workspace: ${workspace}`,
+    {
+      cause:
+        primaryFailure === undefined
+          ? cleanupFailure
+          : new AggregateError(
+              [primaryFailure, cleanupFailure],
+              "m68k verification and command cleanup both failed",
+            ),
+    },
   );
 const verifierRun = await completeVerifierRun(run);
-if (
-  verifierRun.process_lineage.status !== "verified" ||
-  verifierRun.process_lineage.descendants.length !== 0
-)
+try {
+  assertVerifierCleanupComplete(verifierRun.process_lineage);
+} catch (cause) {
   throw retainWorkspace(
     `Cleanup unverified; retained diagnostic workspace: ${workspace}`,
+    { cause: primaryFailure ?? cause },
+  );
+}
+if (primaryFailure !== undefined)
+  throw retainWorkspace(
+    `m68k verification failed; retained workspace: ${workspace}`,
+    { cause: primaryFailure },
   );
 await workspaceFixture.release();
 process.stdout.write(
