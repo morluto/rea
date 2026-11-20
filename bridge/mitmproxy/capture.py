@@ -10,6 +10,7 @@ import hashlib
 import ipaddress
 import json
 import math
+import os
 import re
 import resource
 from pathlib import Path
@@ -347,6 +348,8 @@ def decode(request):
 
 
 ADDRESS_BUDGET = 768 * 1024 * 1024
+CPU_BUDGET = 30
+EFFECTIVE_CPU_RECORD = "effective-cpu.json"
 
 
 def failure_reply(error, address_limit=None):
@@ -370,6 +373,23 @@ def _clamp_resource_limit(kind, requested):
     effective = min(finite)
     resource.setrlimit(kind, (effective, hard))
     return effective
+
+
+def _record_cpu_limit(reply_path, effective):
+    """Publish the installed CPU ceiling before decode.
+
+    SIGXCPU ends the process with no reply. The parent reads this sibling of
+    the reply when it observes that signal.
+    """
+    target = Path(reply_path).with_name(EFFECTIVE_CPU_RECORD)
+    temporary = Path(reply_path).with_name(EFFECTIVE_CPU_RECORD + ".tmp")
+    payload = json.dumps({"seconds": effective}, separators=(",", ":")).encode("ascii")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        os.write(descriptor, payload)
+    finally:
+        os.close(descriptor)
+    os.replace(temporary, target)
 
 
 def _address_limit_reply(effective):
@@ -420,7 +440,7 @@ class OfflineCapture:
     def running(self):
         try:
             address_limit = _clamp_resource_limit(resource.RLIMIT_AS, ADDRESS_BUDGET)
-            _clamp_resource_limit(resource.RLIMIT_CPU, 30)
+            cpu_limit = _clamp_resource_limit(resource.RLIMIT_CPU, CPU_BUDGET)
             # Zero never raises the inherited hard core limit, and it stops descendants from raising it.
             resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
             request = json.loads(Path(ctx.options.rea_request_path).read_text(encoding="utf-8"))
@@ -428,6 +448,7 @@ class OfflineCapture:
             if any(type(budgets[key]) is not int or budgets[key] < 1 for key in ("inputBytes", "outputBytes", "depth")):
                 raise ValueError("Invalid admitted capture budgets")
             output_bytes = budgets["outputBytes"]
+            _record_cpu_limit(request["reply_path"], cpu_limit)
             file_limit = _clamp_resource_limit(resource.RLIMIT_FSIZE, output_bytes)
             try:
                 response = {"ok": True, "value": decode(request)}

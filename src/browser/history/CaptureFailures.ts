@@ -1,3 +1,5 @@
+import { open } from "node:fs/promises";
+import { join } from "node:path";
 import { capturedProviderOutput } from "../../process/capturedProviderOutput.js";
 import { javaScriptWorkerMemoryLimitBytes } from "../../process/JavaScriptWorkerMemoryLimit.js";
 import { isAbortOf } from "../../process/SignalAbort.js";
@@ -98,6 +100,103 @@ export const protobufCaptureFailure = (
 export const CAPTURE_PROCESS_MEMORY_LIMIT_REASON =
   "The capture decoder reached its Windows Job Object memory limit";
 
+/** Sibling of reply.json. The parent reads it after SIGXCPU. */
+export const EFFECTIVE_DECODER_CPU_RECORD = "effective-cpu.json";
+
+const MAX_EFFECTIVE_CPU_RECORD_BYTES = 64;
+
+/** Read the installed CPU ceiling. Undefined when the record is absent or malformed. */
+export const parseRecordedCpuSeconds = (bytes: Buffer): number | undefined => {
+  if (
+    bytes.byteLength === 0 ||
+    bytes.byteLength > MAX_EFFECTIVE_CPU_RECORD_BYTES
+  )
+    return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(bytes.toString("utf8")) as unknown;
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+    return undefined;
+  const record = parsed as Record<string, unknown>;
+  const seconds = record.seconds;
+  if (
+    Object.keys(record).length !== 1 ||
+    typeof seconds !== "number" ||
+    !Number.isSafeInteger(seconds) ||
+    seconds < 0
+  )
+    return undefined;
+  return seconds;
+};
+
+/** The CPU ceiling the decoder published before it was killed. */
+export const recordedDecoderCpuSeconds = async (
+  runtimePath: string | undefined,
+  cause: unknown,
+): Promise<number | undefined> => {
+  if (
+    runtimePath === undefined ||
+    !(cause instanceof OwnedCommandFailure) ||
+    cause.snapshot?.signal !== "SIGXCPU"
+  )
+    return undefined;
+  let descriptor: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    descriptor = await open(
+      join(runtimePath, EFFECTIVE_DECODER_CPU_RECORD),
+      "r",
+    );
+    const info = await descriptor.stat();
+    if (info.size > MAX_EFFECTIVE_CPU_RECORD_BYTES) return undefined;
+    const bytes = Buffer.alloc(info.size);
+    const read = await descriptor.read(bytes, 0, info.size, 0);
+    if (read.bytesRead !== info.size) return undefined;
+    return parseRecordedCpuSeconds(bytes);
+  } catch {
+    return undefined;
+  } finally {
+    await descriptor?.close();
+  }
+};
+
+/** A SIGXCPU death names the installed ceiling when the decoder recorded it. */
+const captureCpuSignalFailure = (
+  input: InspectWebNetworkCaptureInput,
+  cause: OwnedCommandFailure,
+  effectiveCpuSeconds: number | undefined,
+): AnalysisResourceConstraintError => {
+  const recorded = effectiveCpuSeconds !== undefined;
+  const reason = recorded
+    ? `The effective RLIMIT_CPU of ${String(effectiveCpuSeconds)} seconds stopped the decoder. The requested decoder budget does not raise an inherited limit.`
+    : "The decoder terminated with SIGXCPU. The effective CPU limit was not recorded. A requested decoder budget does not raise an inherited RLIMIT_CPU.";
+  return new AnalysisResourceConstraintError(
+    OPERATION,
+    "cpu",
+    `${reason}: ${input.capture_path}. No complete capture result is available.`,
+    {
+      boundary: "historical-capture-decoder",
+      capture_path: input.capture_path,
+      format: input.format,
+      observed_signal: "SIGXCPU",
+      observed_exit_code: cause.snapshot?.exitCode ?? null,
+      ...(recorded ? { cpu_seconds: effectiveCpuSeconds } : {}),
+    },
+    {
+      cause,
+      retryable: false,
+      remediationAction: recorded
+        ? `Raise the process RLIMIT_CPU above ${String(effectiveCpuSeconds)} seconds, or select a smaller capture. Repeating the unchanged request can stop at the same inherited limit.`
+        : "Raise the process RLIMIT_CPU, or select a smaller capture. The effective inherited limit was not recorded, so the requested decoder budget is not that ceiling.",
+      ...(cause.snapshot === null
+        ? {}
+        : { capturedOutput: capturedProviderOutput(cause.snapshot) }),
+    },
+  );
+};
+
 /**
  * Preserve the origin and typed cause of a historical capture failure.
  * `cleanupLease` is the decoder's lease on `rawCause`'s retained process
@@ -110,6 +209,7 @@ export const historicalCaptureFailure = (
   options?: ExecutionOptions,
   heap: CaptureDecoderHeap = DEFAULT_CAPTURE_DECODER_HEAP,
   cleanupLease?: AnalysisCleanupLease,
+  effectiveCpuSeconds?: number,
 ): AnalysisError => {
   const { cause, origin } = artifactFilePrimaryFacts(rawCause);
   if (origin === "owned-or-classified" && cause instanceof AnalysisError)
@@ -148,7 +248,15 @@ export const historicalCaptureFailure = (
         new AnalysisCleanupLeaseGroup(cleanup, [cleanupLease]);
       return cause.cause instanceof OwnedCommandFailure
         ? analysisErrorWithCleanupFailure(
-            historicalCaptureFailure(input, cause.cause, phase, options, heap),
+            historicalCaptureFailure(
+              input,
+              cause.cause,
+              phase,
+              options,
+              heap,
+              undefined,
+              effectiveCpuSeconds,
+            ),
             cleanup,
             OPERATION,
           )
@@ -201,6 +309,12 @@ export const historicalCaptureFailure = (
         cause,
         heap,
       );
+    if (
+      phase === "decoder" &&
+      outcome.kind === "resource-signal" &&
+      outcome.signal === "SIGXCPU"
+    )
+      return captureCpuSignalFailure(input, cause, effectiveCpuSeconds);
   }
   if (
     phase !== "decoder" &&

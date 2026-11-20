@@ -362,6 +362,9 @@ class OfflineLimitTests(unittest.TestCase):
                 )
             module.ctx.options = types.SimpleNamespace(rea_request_path=request_path)
             module.addons[0].running()
+            with open(os.path.join(parent, "effective-cpu.json"), encoding="ascii") as handle:
+                cpu_record = json.load(handle)
+        self.assertEqual(cpu_record, {"seconds": 30})
         self.assertEqual(
             calls,
             [
@@ -371,6 +374,42 @@ class OfflineLimitTests(unittest.TestCase):
                 (4, (output_bytes, 9000)),
             ],
         )
+        self.assertEqual(shutdowns, ["down"])
+
+    def test_tighter_inherited_cpu_limit_is_recorded(self):
+        infinity = 2 ** 62
+        limits = {kind: (infinity, infinity) for kind in (1, 3, 4)}
+        limits[2] = (1, 100)
+        calls = []
+
+        def setrlimit(kind, pair):
+            _soft, hard = limits[kind]
+            if hard != infinity and pair[1] > hard:
+                raise ValueError("not allowed to raise maximum limit")
+            calls.append((kind, pair))
+            limits[kind] = pair
+
+        module = self.load_limited(limits, setrlimit)
+        shutdowns = []
+        module.ctx.master = types.SimpleNamespace(shutdown=lambda: shutdowns.append("down"))
+        with tempfile.TemporaryDirectory() as parent:
+            request_path = os.path.join(parent, "request.json")
+            reply_path = os.path.join(parent, "reply.json")
+            with open(request_path, "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "budgets": {"inputBytes": 8, "outputBytes": 1000, "depth": 2},
+                        "reply_path": reply_path,
+                    },
+                    handle,
+                )
+            module.ctx.options = types.SimpleNamespace(rea_request_path=request_path)
+            module.addons[0].running()
+            with open(os.path.join(parent, "effective-cpu.json"), encoding="ascii") as handle:
+                cpu_record = json.load(handle)
+        self.assertEqual(calls[1], (2, (1, 100)))
+        self.assertEqual(cpu_record, {"seconds": 1})
+        self.assertFalse(os.path.exists(os.path.join(parent, "effective-cpu.json.tmp")))
         self.assertEqual(shutdowns, ["down"])
 
     def test_tighter_inherited_file_limit_bounds_the_reply(self):
