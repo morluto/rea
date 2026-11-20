@@ -2712,6 +2712,42 @@ it.each([
     "candidate",
   ],
   [
+    "let target declared by a later declarator in the same statement",
+    'let selected;const xs=[1,"one"];let scratch=([fixed,selected]=xs),fixed;',
+    ["1"],
+    "candidate",
+  ],
+  [
+    "let target in its own initializer",
+    'let selected;const xs=[1,"one"];let fixed=flag?([fixed,selected]=xs):0;',
+    ["1"],
+    "candidate",
+  ],
+  [
+    "let target in its own destructuring RHS",
+    'let selected;const xs=[1,"one"];let [fixed]=([fixed,selected]=xs,[0]);',
+    ["1"],
+    "candidate",
+  ],
+  [
+    "let target initialized by an earlier declarator",
+    'let selected;const xs=[1,"one"];let fixed,scratch=([fixed,selected]=xs);',
+    ["1"],
+    "resolved",
+  ],
+  [
+    "let target already initialized inside its binding pattern",
+    'let selected;const xs=[1,"one"];let [fixed,scratch=([fixed,selected]=xs)]=[0];',
+    ["1"],
+    "resolved",
+  ],
+  [
+    "deferred initializer callable runs after its let initializes",
+    'let fixed=()=>{let selected;const xs=[1,"one"];[fixed,selected]=xs;};fixed();',
+    ["1"],
+    "resolved",
+  ],
+  [
     "let target before an initialized block declaration",
     'let selected;{const obj={fixed:1,mode:"one"};({fixed,mode:selected}=obj);let fixed=0;}',
     ["mode"],

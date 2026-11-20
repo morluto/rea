@@ -96,7 +96,7 @@ export interface JavaScriptSemanticBindingState {
   /** Source declaration form retained internally for CommonJS wrapper bindings. */
   declarationKinds: Set<"var" | "let" | "const" | "using" | "await using">;
   /** Declaration site even when a let binding has no initializer. */
-  letDeclaration?: t.VariableDeclaration | null;
+  letDeclarator?: t.VariableDeclarator | null;
   mutable: boolean;
   readonly memberWrites: JavaScriptSemanticMemberEffect[];
   readonly escapedPaths: JavaScriptSemanticMemberEffect[];

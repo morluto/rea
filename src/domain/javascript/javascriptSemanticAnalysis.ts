@@ -155,7 +155,7 @@ interface BindPatternInput {
   readonly state: JavaScriptSemanticAnalysisState;
   readonly mutable: boolean;
   readonly declarationKind?: "var" | "let" | "const" | "using" | "await using";
-  readonly letDeclaration?: t.VariableDeclaration;
+  readonly letDeclarator?: t.VariableDeclarator;
   readonly kind?: JavaScriptSemanticDefinition["kind"];
   readonly projection?: readonly (string | number | null)[];
   readonly referenceOnly?: boolean;
@@ -188,7 +188,7 @@ interface AddBindingInput {
   readonly kind: JavaScriptSemanticDefinition["kind"];
   readonly mutable: boolean;
   readonly declarationKind?: "var" | "let" | "const" | "using" | "await using";
-  readonly letDeclaration?: t.VariableDeclaration;
+  readonly letDeclarator?: t.VariableDeclarator;
   readonly definitionNode: t.Node;
   readonly initializer: t.Node | null;
   readonly directOrigin?: JavaScriptModuleOrigin;
@@ -1771,7 +1771,7 @@ const bindInnerDeclaration = (
         ? { declarationKind: parent.kind }
         : {}),
       ...(t.isVariableDeclaration(parent, { kind: "let" })
-        ? { letDeclaration: parent }
+        ? { letDeclarator: node }
         : {}),
     });
   else if (t.isClass(node) && t.isIdentifier(node.id))
@@ -2265,9 +2265,9 @@ const bindPattern = (input: BindPatternInput): void => {
       kind,
       mutable,
       ...(declarationKind === undefined ? {} : { declarationKind }),
-      ...(input.letDeclaration === undefined
+      ...(input.letDeclarator === undefined
         ? {}
-        : { letDeclaration: input.letDeclaration }),
+        : { letDeclarator: input.letDeclarator }),
       definitionNode: pattern,
       initializer,
       projection,
@@ -2418,11 +2418,11 @@ const addBinding = (input: AddBindingInput): void => {
   binding.mutable ||= mutable;
   if (declarationKind !== undefined)
     binding.declarationKinds.add(declarationKind);
-  if (input.letDeclaration !== undefined)
-    binding.letDeclaration =
-      binding.letDeclaration === undefined ||
-      binding.letDeclaration === input.letDeclaration
-        ? input.letDeclaration
+  if (input.letDeclarator !== undefined)
+    binding.letDeclarator =
+      binding.letDeclarator === undefined ||
+      binding.letDeclarator === input.letDeclarator
+        ? input.letDeclarator
         : null;
   binding.definitions.push({ kind, location: range(definitionNode) });
   if (initializer !== null)
