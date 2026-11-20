@@ -267,7 +267,7 @@ export class PlaywrightScenarioStorage {
     page: Page,
     context: BrowserContext,
   ): Promise<void> {
-await this.installDocumentSeedScript(context);
+    await this.installDocumentSeedScript(context);
     if (this.#closed) return;
     const rootInfo = await withScenarioCommandDeadline(
       () => this.cdp.send("Target.getTargetInfo"),
