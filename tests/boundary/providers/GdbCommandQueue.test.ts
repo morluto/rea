@@ -4,11 +4,12 @@ import {
   fakeGdbModeledReplies,
   fakeGdbStartupPreamble,
 } from "./gdbTestHelpers.js";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, readFile, writeFile } from "node:fs/promises";
+
 import { join } from "node:path";
 
 import { afterEach, expect, it } from "vitest";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { GdbSessionManager } from "../../../src/gdb/GdbSessionManager.js";
 
@@ -29,13 +30,11 @@ afterEach(async () => {
   });
   if (failures.length > 0)
     throw new AggregateError(failures, "GDB queue cleanup failed");
-  if (directory !== undefined)
-    await rm(directory, { recursive: true, force: true });
   directory = undefined;
 });
 
 it("bounds active and queued GDB commands, including cancelled placeholders", async () => {
-  directory = await mkdtemp(join(tmpdir(), "rea-gdb-command-queue-limit-"));
+  directory = await createTestTempDirectory("rea-gdb-command-queue-limit-");
   const provider = join(directory, "fake-gdb-queue.mjs");
   const activePath = join(directory, "active-command");
   const releasePath = join(directory, "release-command");

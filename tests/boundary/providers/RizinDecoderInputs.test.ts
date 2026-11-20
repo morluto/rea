@@ -1,9 +1,10 @@
 import { execFileSync } from "node:child_process";
-import { mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
+
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../../src/contracts/reverseEngineeringToolContracts.js";
 import { rizinCommandLimitations } from "../../../src/rizin/RizinCommand.js";
@@ -50,7 +51,7 @@ const runRizin = async (
   input: Readonly<Record<string, string | number>>,
   image: Buffer,
 ) => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-rizin-decoder-"));
+  const directory = await createTestTempDirectory("rea-rizin-decoder-");
   // The harness owns the directory, so it must exist before setup can fail.
   const { client } = await createProviderEnvironmentMcpHarness({
     directory,

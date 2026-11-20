@@ -1,11 +1,12 @@
 import { EventEmitter } from "node:events";
 import { spawn } from "node:child_process";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 
 import { afterEach, expect, it } from "vitest";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import {
   AnalysisCancelledError,
@@ -1418,7 +1419,7 @@ it("does not infer detached state when the inferior verifier observes an exited 
 });
 
 it("retains the GDB session while an unknown descendant holds output after leader exit", async () => {
-  directory ??= await mkdtemp(join(tmpdir(), "rea-gdb-coverage-"));
+  directory ??= await createTestTempDirectory("rea-gdb-coverage-");
   const tty = join(directory, "inferior-output");
   await writeFile(tty, "");
   const fake = createFakeSpawner((_child, token, command) => {
@@ -1716,7 +1717,7 @@ const startWithVerifiedInferiorTty = async (
 };
 
 const createProvider = async (body: string): Promise<string> => {
-  directory ??= await mkdtemp(join(tmpdir(), "rea-gdb-coverage-"));
+  directory ??= await createTestTempDirectory("rea-gdb-coverage-");
   const provider = join(directory, `fake-gdb-${managers.length}.mjs`);
   await writeFile(
     provider,
@@ -1761,8 +1762,6 @@ process.stdin.on('data', (chunk) => {
 
 afterEach(async () => {
   await fixtureOwner.cleanup(managers, async () => {
-    if (directory !== undefined)
-      await rm(directory, { recursive: true, force: true });
     directory = undefined;
   });
 });

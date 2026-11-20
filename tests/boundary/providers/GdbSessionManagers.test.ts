@@ -9,11 +9,12 @@ import {
 } from "./gdbTestHelpers.js";
 import { EventEmitter } from "node:events";
 import { runInNewContext } from "node:vm";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, readFile, writeFile } from "node:fs/promises";
+
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { GdbSessionManager } from "../../../src/gdb/GdbSessionManager.js";
 import { gdbReportedVersion } from "../../../src/gdb/GdbProviderIdentity.js";
@@ -82,14 +83,13 @@ describe("persistent debugger session managers", () => {
       try {
         await expectNoUnmodeledGdbCommands(join(directory, "unmodeled"));
       } finally {
-        await rm(directory, { recursive: true, force: true });
         directory = undefined;
       }
     });
   });
 
   it("runs a correlated GDB MI command, reports status, and closes its owned process", async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-gdb-manager-"));
+    directory = await createTestTempDirectory("rea-gdb-manager-");
     const provider = join(directory, "fake-gdb.mjs");
     await writeFile(
       provider,
@@ -154,7 +154,7 @@ process.stdin.on("data", (chunk) => {
   ] as const)(
     "restores a GDB session after resetting invalid %s",
     async (setting, environmentName, value) => {
-      directory = await mkdtemp(join(tmpdir(), "rea-gdb-setting-"));
+      directory = await createTestTempDirectory("rea-gdb-setting-");
       const provider = join(directory, "fake-gdb.mjs");
       await writeFile(provider, gdbSettingsFixture(directory));
       await chmod(provider, 0o700);
@@ -210,7 +210,7 @@ process.stdin.on("data", (chunk) => {
   ])(
     "does not start GDB when it %s the required auto-load setting",
     async (_label, reply) => {
-      directory = await mkdtemp(join(tmpdir(), "rea-gdb-autoload-"));
+      directory = await createTestTempDirectory("rea-gdb-autoload-");
       const provider = join(directory, "fake-gdb-reject.mjs");
       await writeFile(provider, autoLoadReplyFixture(directory, reply));
       await chmod(provider, 0o700);
@@ -234,7 +234,7 @@ process.stdin.on("data", (chunk) => {
 
 it("starts GDB without applying an invalid console output limit", async () => {
   const owner = createGdbFixtureOwner();
-  const directory = await mkdtemp(join(tmpdir(), "rea-gdb-start-output-"));
+  const directory = await createTestTempDirectory("rea-gdb-start-output-");
   const provider = join(directory, "fake-gdb.mjs");
   await writeFile(provider, gdbSettingsFixture(directory));
   await chmod(provider, 0o700);
@@ -259,9 +259,7 @@ it("starts GDB without applying an invalid console output limit", async () => {
     });
     await expectNoUnmodeledGdbCommands(join(directory, "unmodeled"));
   } finally {
-    await owner.cleanup([manager], () =>
-      rm(directory, { recursive: true, force: true }),
-    );
+    await owner.cleanup([manager], async () => undefined);
   }
 });
 
@@ -285,7 +283,7 @@ it.each([
 
 it("leaves the GDB version unknown when its banner is not strict UTF-8", async () => {
   const owner = createGdbFixtureOwner();
-  const directory = await mkdtemp(join(tmpdir(), "rea-gdb-version-utf8-"));
+  const directory = await createTestTempDirectory("rea-gdb-version-utf8-");
   const provider = join(directory, "fake-gdb.mjs");
   const unmodeledPath = join(directory, "unmodeled");
   await writeFile(
@@ -346,9 +344,7 @@ process.stdin.on("data", (chunk) => {
       code: "ENOENT",
     });
   } finally {
-    await owner.cleanup([manager], () =>
-      rm(directory, { recursive: true, force: true }),
-    );
+    await owner.cleanup([manager], async () => undefined);
   }
 });
 

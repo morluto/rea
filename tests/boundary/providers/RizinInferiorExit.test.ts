@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile } from "node:fs/promises";
+
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import {
   ProviderProcessSupervisor,
@@ -16,7 +17,6 @@ import {
 } from "./RizinTestInferiorTty.js";
 
 const targets = new Set<ProviderProcessSupervisor>();
-const directories = new Set<string>();
 afterEach(async () => {
   const failures: Error[] = [];
   for (const supervisor of targets) {
@@ -27,10 +27,6 @@ afterEach(async () => {
   }
   if (failures.length > 0)
     throw new AggregateError(failures, "Retained owned inferior fixtures");
-  for (const directory of directories) {
-    await rm(directory, { recursive: true, force: true });
-    directories.delete(directory);
-  }
 });
 
 it
@@ -38,8 +34,7 @@ it
   .each(["exit", "redirect", "ambiguous-policy"] as const)(
   "verifies the original inferior after %s during detach",
   async (mode) => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-rizin-exit-"));
-    directories.add(directory);
+    const directory = await createTestTempDirectory("rea-rizin-exit-");
     const ready = join(directory, "ready");
     const redirected = join(directory, "redirected");
     const tty = await rizinTestInferiorTty();
