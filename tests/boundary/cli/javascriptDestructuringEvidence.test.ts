@@ -52,6 +52,14 @@ const firstDefaultSource = `
   missing[1][0] = "later";
 `;
 
+const immutableTargetSource = `
+  const fixed = 0;
+  let beforeImmutable, afterImmutable;
+  const values = ["before", 1, "unreached"];
+  [beforeImmutable, fixed, afterImmutable] = values;
+  values[0] = "later";
+`;
+
 const expectedDependencies = [
   ["declared", ["a"]],
   ["a", ["a"]],
@@ -59,6 +67,8 @@ const expectedDependencies = [
   ["fallback", ["a", "0"]],
   ["scalar", ["b"]],
   ["ordinary", ["0"]],
+  ["beforeImmutable", ["0"]],
+  ["afterImmutable", ["2"], "candidate"],
   ["arrayAssigned", ["0"]],
   ["elided", ["1"]],
   ["projected", ["items", "0"]],
@@ -87,6 +97,8 @@ const expectedDependencies = [
 const tracedBindings = [
   "declared",
   "ordinary",
+  "beforeImmutable",
+  "afterImmutable",
   "arrayAssigned",
   "elided",
   "projected",
@@ -180,6 +192,7 @@ cliTest(
       ["first-default.js", firstDefaultSource],
     ] as const)
       await writeFile(join(root, path), source);
+    await writeFile(join(root, "immutable-target.js"), immutableTargetSource);
     const output = await cli.run({
       arguments: ["analyze-javascript-application", root, "--json"],
     });

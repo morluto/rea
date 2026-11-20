@@ -106,6 +106,15 @@ export interface JavaScriptSemanticBindingState {
   runtimeImport: boolean;
 }
 
+/** These declarations reject an assignment even if a write site was recorded. */
+export const semanticBindingRejectsAssignment = (
+  binding: JavaScriptSemanticBindingState,
+): boolean =>
+  binding.runtimeImport ||
+  binding.declarationKinds.has("const") ||
+  binding.declarationKinds.has("using") ||
+  binding.declarationKinds.has("await using");
+
 /** Mutable lexical-scope state used only during AST recovery. */
 export interface JavaScriptSemanticScopeState {
   readonly scopeId: string;

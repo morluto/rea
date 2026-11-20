@@ -2581,3 +2581,91 @@ it.each([
     );
   },
 );
+
+it.each([
+  [
+    "immutable array assignment target",
+    'const fixed=0;let selected;const xs=[1,"one"];[fixed,selected]=xs;xs[1]="later";',
+    ["1"],
+    "candidate",
+  ],
+  [
+    "immutable target with a known merged source slot",
+    'const fixed=0;let selected;const xs=[1,"one"];[fixed,selected]=xs;',
+    ["1"],
+    "candidate",
+  ],
+  [
+    "immutable object assignment target",
+    'const fixed=0;let selected;const obj={fixed:1,mode:"one"};({fixed,mode:selected}=obj);obj.mode="later";',
+    ["mode"],
+    "candidate",
+  ],
+  [
+    "immutable target nested inside an array",
+    'const fixed=0;let selected;const xs=[{fixed:1,mode:"one"}];[{fixed,mode:selected}]=xs;xs[0].mode="later";',
+    ["0", "mode"],
+    "candidate",
+  ],
+  [
+    "runtime import assignment target",
+    'import {fixed} from "./hypothetical.js";let selected;const xs=[1,"one"];[fixed,selected]=xs;xs[1]="later";',
+    ["1"],
+    "candidate",
+  ],
+  [
+    "resource assignment target",
+    'using fixed={ [Symbol.dispose]() {} };let selected;const xs=[1,"one"];[fixed,selected]=xs;',
+    ["1"],
+    "candidate",
+  ],
+  [
+    "unknown property key with an immutable target",
+    'const fixed=0;let selected;const obj={fixed:1,mode:"one"};({[key]:fixed,mode:selected}=obj);',
+    ["mode"],
+    "candidate",
+  ],
+  [
+    "nested rest with an immutable target",
+    'const fixed=0;let selected;const xs=[[1],"one"];[[...fixed],selected]=xs;',
+    ["1"],
+    "candidate",
+  ],
+  [
+    "read before an immutable target",
+    "let selected;const fixed=0;let later;const xs=[1,2,3];[selected,fixed,later]=xs;xs[0]=2;",
+    ["0"],
+    "resolved",
+  ],
+  [
+    "initialized mutable target",
+    'let fixed,selected;const xs=[1,"one"];[fixed,selected]=xs;xs[1]="later";',
+    ["1"],
+    "resolved",
+  ],
+  [
+    "immutable lexical declaration",
+    'const xs=[1,"one"];const [fixed,selected]=xs;xs[1]="later";',
+    ["1"],
+    "resolved",
+  ],
+] as const)(
+  "keeps destructuring evidence ordered for %s",
+  (_name, source, path, resolution) => {
+    const graph = graphForJavaScript(source);
+    const selected = graph.nodes.find(
+      ({ kind, label }) => kind === "binding" && label === "selected",
+    );
+    expect(selected).toBeDefined();
+    const edge = graph.relations.find(
+      (relation) =>
+        relation.relation === "destructures" &&
+        relation.target_node_id === selected?.node_id,
+    );
+    expect(edge).toMatchObject({ resolution });
+    expect(
+      graph.nodes.find(({ node_id }) => node_id === edge?.source_node_id)
+        ?.properties.property_path,
+    ).toEqual(path);
+  },
+);
