@@ -302,6 +302,9 @@ const repositoryBase = (
     ? {}
     : { repo_suite: aptIndexSourceSuite(target) }),
   components: [...(entry?.components ?? [])],
+  ...(entry?.repoComponents === undefined
+    ? {}
+    : { repo_components: [...entry.repoComponents] }),
   architectures: [...(entry?.architectures ?? [])],
   release: target?.suite ?? target?.codename ?? null,
 });
