@@ -175,6 +175,36 @@ describe("parseOneLineSources", () => {
       }),
     ]);
   });
+  it("preserves non-ASCII whitespace inside and at the edges of APT list words", () => {
+    const uri = "https://vendor.invalid/edge\u00a0embedded\u00a0";
+    const suite = "\u00a0stable";
+    const component = "main\u00a0";
+    expect(
+      parseOneLineSources(`deb\t${uri} ${suite} ${component}\n`, TYPORA_LIST),
+    ).toMatchObject([
+      {
+        uris: [{ uri, credentials: false }],
+        suites: [suite],
+        components: [component],
+      },
+    ]);
+  });
+
+  it("keeps a hash inside an option and strips the trailing comment", () => {
+    expect(
+      parseOneLineSources(
+        "deb [signed-by=/usr/share/keyrings/vendor#1.gpg] https://vendor.invalid/archive stable main # extra",
+        TYPORA_LIST,
+      ),
+    ).toMatchObject([
+      {
+        uris: [{ uri: "https://vendor.invalid/archive", credentials: false }],
+        suites: ["stable"],
+        components: ["main"],
+        signedBy: ["/usr/share/keyrings/vendor#1.gpg"],
+      },
+    ]);
+  });
 });
 
 describe("parseDeb822Sources", () => {
