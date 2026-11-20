@@ -57,6 +57,22 @@ const typora = (
   unpackaged_libraries: [],
 });
 
+it("replays the observed suite of a repository whose authored suite is templated", () => {
+  const authored = repository({
+    sources_file: "/etc/apt/sources.list.d/vendor.sources",
+    suite: "stable/binary-$(ARCH)/",
+    repo_suite: "stable/binary-x86_64/",
+  });
+  const install = exportInstall(typora([authored]), "typora", "x64");
+
+  expect(install.ok && install.value.sources[0]?.suite).toBe(
+    "stable/binary-x86_64/",
+  );
+  expect(repositoryRefusal({ ...authored, repo_suite: undefined })).toContain(
+    "Capture the application again",
+  );
+});
+
 describe("exportInstall", () => {
   it("installs from a vendor repository whose key the capture verified", () => {
     const install = exportInstall(typora([repository()]), "typora", "arm64");

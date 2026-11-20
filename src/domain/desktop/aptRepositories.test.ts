@@ -561,6 +561,7 @@ describe("single-stanza APT source identity", () => {
         sources_file: deb822LookupFile,
         uri_credentials_removed: false,
         suite,
+        ...(field === "suite" ? { repo_suite: "unstable/binary-amd64/" } : {}),
         components: [],
       };
       for (const architecture of ["amd64", "arm64", undefined]) {
@@ -571,15 +572,11 @@ describe("single-stanza APT source identity", () => {
           [repository],
           new Map([[description, target]]),
         );
-        if (architecture === "amd64") {
+        if (architecture === "amd64")
           expect(entry).toMatchObject({ uri, suite, components: [] });
-          expect(files).toEqual(new Set([description]));
-        } else {
-          expect(entry).toBeUndefined();
-          // A historical capture can replay an already materialized Repo-URI.
-          // The authored suite has no separate expanded value in that contract.
-          expect(files).toEqual(new Set(field === "URI" ? [description] : []));
-        }
+        else expect(entry).toBeUndefined();
+        // Recorded replay facts need no second expansion against host settings.
+        expect(files).toEqual(new Set([description]));
       }
     },
   );

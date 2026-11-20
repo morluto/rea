@@ -207,6 +207,49 @@ it.each([
   },
 );
 
+it("records an expanded APT source suite separately from the authored suite", async () => {
+  const root = await createTestTempDirectory("apt-source-suite-");
+  const file = join(root, "vendor.sources");
+  const uri = "https://vendor.invalid/archive/";
+  const suite = "stable/binary-$(ARCH)/";
+  const repoSuite = "stable/binary-x86_64/";
+  await writeFile(
+    file,
+    `Types: deb\nURIs: ${uri}\nSuites: ${suite} fallback/\n`,
+  );
+  const source = `${uri.slice(0, -1)} ${repoSuite} Packages`;
+  const output = [
+    `Description: ${source}`,
+    `Sourcesentry: ${file}:1`,
+    `Repo-URI: ${uri}`,
+    `Release: ${repoSuite}`,
+    `Base-URI: ${uri}${repoSuite}`,
+    `Filename: ${join(root, "Packages")}`,
+  ].join("\n");
+  const runQuery: QueryRunner = async (command) => {
+    if (command !== "apt-get") throw new Error(`Unexpected query ${command}`);
+    return { stdout: output, exitCode: 0 };
+  };
+  const facts = await inspectAptRepositories(
+    { sources: [source], origins: ["Vendor"] },
+    {
+      runQuery,
+      apt: {
+        lists: root,
+        trustedParts: root,
+        trusted: join(root, "trusted.gpg"),
+        configuredArchitecture: "x86_64",
+      },
+    },
+    undefined,
+  );
+  expect(facts.repositories[0]).toMatchObject({
+    suite,
+    repo_suite: repoSuite,
+    release: null,
+  });
+});
+
 it.each([
   ["https://vendor.invalid:/archive", "https://vendor.invalid/archive/"],
   [

@@ -17,7 +17,9 @@ that key, with those libraries, and starts it.
   deb822 stanza; `sources.list`, one-line `*.list` or deb822 `*.sources`) with
   its authored URI, suite, components and architecture restriction. The optional
   `repo_uri` field records the index's sanitized `Repo-URI` independently of
-  the authored URI. Undecodable UTF-8 entries and index paragraphs are withheld
+  the authored URI. When APT selects a different suite, `repo_suite`
+  records the index's source suite separately from the authored value.
+  Undecodable UTF-8 entries and index paragraphs are withheld
   without substituting replacement characters. A policy query with undecodable
   bytes leaves repository attribution unknown. Flat repositories
   (suite `./` or `/`, no components), `[signed-by=…]` and `Signed-By:` options
@@ -96,8 +98,9 @@ that key, with those libraries, and starts it.
   `uri` still holds them is refused whole, since its library packages counted
   that repository), it is reached over http or https, and its architecture
   restriction includes the host's. AgentEnv writes a deb822 source. The
-  exporter and package attribution use the same URI that reproduces the
-  observed index identity. A legacy one-line source with percent escapes
+  exporter and package attribution share the URI and concrete suite that
+  reproduce the observed index identity. A capture with a templated suite
+  needs `repo_suite` to replay it. A legacy one-line source with percent escapes
   needs a new capture with `repo_uri`. A URI that cannot be represented as
   one deb822 token is withheld with the reason. With none usable, the export is refused
   naming each repository, by its URI without credentials, and its reason; the

@@ -267,13 +267,14 @@ const expandAptArchitecture = (
     : value.replaceAll(variable, architecture);
 };
 
+/** The source suite as selected by APT, including the flat suite `/`. */
+export const aptIndexSourceSuite = (target: AptIndexTarget): string =>
+  target.release || "/";
+
 /** Match the selected release without changing an authored suite. */
-const isRelease = (suite: string, target: AptIndexTarget): boolean => {
-  const selected = expandAptArchitecture(suite, target.configuredArchitecture);
-  return (
-    selected === target.release || (selected === "/" && target.release === "")
-  );
-};
+const isRelease = (suite: string, target: AptIndexTarget): boolean =>
+  expandAptArchitecture(suite, target.configuredArchitecture) ===
+  aptIndexSourceSuite(target);
 
 const stanza = (
   at: { readonly file: string; readonly position: number },
@@ -545,21 +546,24 @@ export const entryForTarget = (
   };
 };
 
-type ReplayRepository = Pick<
+type ReplayUriRepository = Pick<
   AptRepository,
   "uri" | "repo_uri" | "uri_credentials_removed"
 > &
   Partial<Pick<AptRepository, "sources_file">>;
 
-type RepositoryDeclaration = ReplayRepository &
-  Pick<AptRepository, "source" | "suite" | "components">;
+type ReplayRepository = ReplayUriRepository &
+  Pick<AptRepository, "suite" | "repo_suite">;
 
-const oneLineSource = (repository: ReplayRepository): boolean =>
+type RepositoryDeclaration = ReplayRepository &
+  Pick<AptRepository, "source" | "components">;
+
+const oneLineSource = (repository: ReplayUriRepository): boolean =>
   repository.sources_file?.endsWith(".sources") !== true;
 
 /** Detect credentials left in a legacy or externally supplied capture. */
 export const aptRepositoryHoldsCredentials = (
-  repository: ReplayRepository,
+  repository: ReplayUriRepository,
 ): boolean => {
   const { uri, repo_uri } = repository;
   return (
@@ -571,17 +575,19 @@ export const aptRepositoryHoldsCredentials = (
 };
 
 type AptReplayRefusal = {
-  readonly kind: "credentials" | "uri";
+  readonly kind: "credentials" | "uri" | "suite";
   readonly reason: string;
 };
 
 const httpSourceUri = (uri: string): boolean => /^https?:\/\/[^/]+/u.test(uri);
-const isDeb822UriToken = (uri: string): boolean =>
-  !/[\s\p{Cc}]/u.test(uri) && !uri.includes("$(ARCH)");
+const isDeb822ReplayToken = (value: string): boolean =>
+  value.length !== 0 &&
+  !/[\s\p{Cc}]/u.test(value) &&
+  !value.includes("$(ARCH)");
 
 /** Admit one AgentEnv deb822 URI and the APT Repo-URI it reproduces. */
-export const aptRepositoryReplayUri = (
-  repository: ReplayRepository,
+const replayUri = (
+  repository: ReplayUriRepository,
 ): Result<
   { readonly uri: string; readonly repoUri: string },
   AptReplayRefusal
@@ -624,16 +630,47 @@ export const aptRepositoryReplayUri = (
 
   const repoUri = observed ?? deb822RepoUri(uri);
   const declaration =
-    deb822RepoUri(uri) === repoUri && isDeb822UriToken(uri)
+    deb822RepoUri(uri) === repoUri && isDeb822ReplayToken(uri)
       ? uri
       : withoutOptionalTrailingSlash(repoUri);
-  if (!isDeb822UriToken(declaration) || deb822RepoUri(declaration) !== repoUri)
+  if (
+    !isDeb822ReplayToken(declaration) ||
+    deb822RepoUri(declaration) !== repoUri
+  )
     return err({
       kind: "uri",
       reason:
         "apt's repository URI cannot be represented as one AgentEnv deb822 URI token",
     });
   return ok({ uri: declaration, repoUri });
+};
+
+/** The concrete deb822 URI and suite that reproduce the captured source index. */
+export const aptRepositoryReplay = (
+  repository: ReplayRepository,
+): Result<
+  { readonly uri: string; readonly repoUri: string; readonly suite: string },
+  AptReplayRefusal
+> => {
+  const uri = replayUri(repository);
+  if (!uri.ok) return uri;
+  const authored = repository.suite;
+  if (authored === null)
+    return err({ kind: "suite", reason: "no apt sources entry configures it" });
+  if (repository.repo_suite === undefined && authored.includes("$(ARCH)"))
+    return err({
+      kind: "suite",
+      reason:
+        "its sources entry templates the suite and the capture does not record apt's selected suite. Capture the application again",
+    });
+  const suite = repository.repo_suite ?? authored;
+  if (!isDeb822ReplayToken(suite))
+    return err({
+      kind: "suite",
+      reason:
+        "apt's selected suite cannot be represented as one AgentEnv deb822 suite token",
+    });
+  return ok({ ...uri.value, suite });
 };
 
 /**
@@ -648,16 +685,17 @@ export const declaredPackageFiles = (
 ): ReadonlySet<string> => {
   const declarations = repositories.flatMap((repository) => {
     const observed = targets.get(repository.source);
-    const replay = aptRepositoryReplayUri(repository);
+    const replay = aptRepositoryReplay(repository);
     return !replay.ok ||
-      observed?.repoUri !== replay.value.repoUri ||
-      repository.suite === null
+      observed === undefined ||
+      observed.repoUri !== replay.value.repoUri ||
+      aptIndexSourceSuite(observed) !== replay.value.suite
       ? []
       : [
           {
             ...repository,
             repoUri: replay.value.repoUri,
-            suite: repository.suite,
+            suite: replay.value.suite,
           },
         ];
   });
@@ -667,7 +705,7 @@ export const declaredPackageFiles = (
       declarations.some(
         ({ repoUri, suite, components }) =>
           repoUri === target.repoUri &&
-          isRelease(suite, target) &&
+          suite === aptIndexSourceSuite(target) &&
           (target.component === null
             ? components.length === 0
             : components.includes(target.component)),

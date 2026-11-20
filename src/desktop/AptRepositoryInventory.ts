@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 
 import {
   aptListFileName,
+  aptIndexSourceSuite,
   entryForTarget,
   isUbuntuProRepository,
   parseAptConfigShell,
@@ -295,6 +296,11 @@ const repositoryBase = (
   uri_credentials_removed:
     entry?.credentials === true || target?.repoUriCredentialsRemoved === true,
   suite: entry?.suite ?? null,
+  ...(target === undefined ||
+  entry === undefined ||
+  entry.suite === aptIndexSourceSuite(target)
+    ? {}
+    : { repo_suite: aptIndexSourceSuite(target) }),
   components: [...(entry?.components ?? [])],
   architectures: [...(entry?.architectures ?? [])],
   release: target?.suite ?? target?.codename ?? null,
