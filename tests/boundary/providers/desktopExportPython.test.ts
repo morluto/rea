@@ -8,8 +8,6 @@ import {
   spawnSync,
   type ExecFileSyncOptionsWithStringEncoding,
 } from "node:child_process";
-import { mkdtempSync, writeFileSync, unlinkSync, rmdirSync } from "node:fs";
-import { tmpdir } from "node:os";
 import {
   chmod,
   mkdir,
@@ -38,34 +36,29 @@ import { withheldSettingsClass } from "../../../src/domain/desktop/appExportWith
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 /** Keep the exported Python helpers out of the host command-line size limit. */
-const execPython = (
+const execPython = async (
   args: string[],
   options: ExecFileSyncOptionsWithStringEncoding,
-): string => {
-  const directory = mkdtempSync(join(tmpdir(), "rea-export-python-"));
+): Promise<string> => {
+  const directory = await createTestTempDirectory("rea-export-python-");
   const script = join(directory, "fixture.py");
   const codeIndex = args.indexOf("-c");
-  try {
-    writeFileSync(script, args[codeIndex + 1]!, "utf8");
-    return execFileSync(
-      process.platform === "win32" ? "python" : "python3",
-      [
-        "-X",
-        "utf8",
-        ...args.slice(0, codeIndex),
-        script,
-        ...args.slice(codeIndex + 2),
-      ],
-      options,
-    );
-  } finally {
-    unlinkSync(script);
-    rmdirSync(directory);
-  }
+  await writeFile(script, args[codeIndex + 1]!, "utf8");
+  return execFileSync(
+    process.platform === "win32" ? "python" : "python3",
+    [
+      "-X",
+      "utf8",
+      ...args.slice(0, codeIndex),
+      script,
+      ...args.slice(codeIndex + 2),
+    ],
+    options,
+  );
 };
 
 /** The exported module's view format for each file, run with only its standard library imports. */
-const pythonFormats = (files: readonly (readonly [string, string])[]) => {
+const pythonFormats = async (files: readonly (readonly [string, string])[]) => {
   const imports = PYTHON_IMPORTS.split("\n")
     .filter((line) => !line.includes("agentenv_protocol"))
     .join("\n");
@@ -73,15 +66,17 @@ const pythonFormats = (files: readonly (readonly [string, string])[]) => {
 for name, text in json.load(sys.stdin):
     print(_text_view(name, text, len(text.encode()))["format"])
 `;
-  return execPython(["-I", "-B", "-c", program], {
-    input: JSON.stringify(files),
-    encoding: "utf8",
-  })
+  return (
+    await execPython(["-I", "-B", "-c", program], {
+      input: JSON.stringify(files),
+      encoding: "utf8",
+    })
+  )
     .trim()
     .split(/\r?\n/u);
 };
 
-it("detects Unicode XML names in both state readers while rejecting non-XML text", () => {
+it("detects Unicode XML names in both state readers while rejecting non-XML text", async () => {
   const files = [
     ["map.dat", '<地图 名称="甲"><节点/></地图>'],
     ["map.dat", '<!DOCTYPE 地图 SYSTEM "map.dtd"><地图/>'],
@@ -110,7 +105,7 @@ it("detects Unicode XML names in both state readers while rejecting non-XML text
     "text",
     "text",
   ];
-  expect(pythonFormats(files)).toEqual(expected);
+  expect(await pythonFormats(files)).toEqual(expected);
   expect(
     files.map(([name, text]) =>
       detectStateFormat(name, new TextEncoder().encode(text)),
@@ -118,7 +113,7 @@ it("detects Unicode XML names in both state readers while rejecting non-XML text
   ).toEqual(expected);
 });
 
-it("detects key files by the state view's rule rather than a name or any group header", () => {
+it("detects key files by the state view's rule rather than a name or any group header", async () => {
   const files = [
     ["list.txt", "Groceries\n[x]\nmilk\n"],
     ["settings.ini", "free text\n"],
@@ -127,7 +122,7 @@ it("detects key files by the state view's rule rather than a name or any group h
     ["notes.rc", "[a]\r\nkey = value\r\n"],
   ] as const;
 
-  const formats = pythonFormats(files);
+  const formats = await pythonFormats(files);
 
   expect(formats).toEqual(["text", "text", "text", "keyfile", "keyfile"]);
   expect(formats).toEqual(
@@ -137,7 +132,7 @@ it("detects key files by the state view's rule rather than a name or any group h
   );
 });
 
-it("keeps JSON Lines holding a number it cannot read exactly as text, as REA does", () => {
+it("keeps JSON Lines holding a number it cannot read exactly as text, as REA does", async () => {
   const lines = '{"id":9007199254740993}\n{"id":2}\n';
   const files = [
     ["events.jsonl", lines],
@@ -147,7 +142,7 @@ it("keeps JSON Lines holding a number it cannot read exactly as text, as REA doe
     ["long.json", `{"id":${"9".repeat(5000)}}`],
   ] as const;
 
-  const formats = pythonFormats(files);
+  const formats = await pythonFormats(files);
 
   expect(formats).toEqual(["text", "text", "json", "json", "json"]);
   expect(formats).toEqual(
@@ -158,7 +153,7 @@ it("keeps JSON Lines holding a number it cannot read exactly as text, as REA doe
 });
 
 /** The exported module's UTF-16 seed respelling of each file, from /home/ada to /home/user, as hex. */
-const pythonUtf16Respelled = (files: readonly string[]) => {
+const pythonUtf16Respelled = async (files: readonly string[]) => {
   const imports = PYTHON_IMPORTS.split("\n")
     .filter((line) => !line.includes("agentenv_protocol"))
     .join("\n");
@@ -169,10 +164,12 @@ ${PYTHON_HELPERS}
 for data in json.load(sys.stdin):
     print(_respelled_utf16(bytes.fromhex(data), PurePosixPath("/home/user")).hex())
 `;
-  return execPython(["-I", "-B", "-c", program], {
-    input: JSON.stringify(files),
-    encoding: "utf8",
-  })
+  return (
+    await execPython(["-I", "-B", "-c", program], {
+      input: JSON.stringify(files),
+      encoding: "utf8",
+    })
+  )
     .trim()
     .split(/\r?\n/u);
 };
@@ -182,7 +179,7 @@ const utf16 = (text: string, order: "le" | "be") => {
   return order === "le" ? le : Buffer.from(le).swap16();
 };
 
-it("respells the captured home in UTF-16 seeds with a byte-order mark, keeping the mark and order", () => {
+it("respells the captured home in UTF-16 seeds with a byte-order mark, keeping the mark and order", async () => {
   const work = "# build\n20260216;1;/home/ada/.varicad\n";
   const files = [
     utf16(work, "le"),
@@ -193,7 +190,7 @@ it("respells the captured home in UTF-16 seeds with a byte-order mark, keeping t
     Buffer.from("/home/ada/plain\n"),
   ];
 
-  const respelled = pythonUtf16Respelled(
+  const respelled = await pythonUtf16Respelled(
     files.map((file) => file.toString("hex")),
   );
 
@@ -258,7 +255,7 @@ home = Path(sys.argv[1])
 _ensure_state_aliases(home)
 _ensure_state_aliases(home)
 `;
-    execPython(["-I", "-B", "-c", program, home], { encoding: "utf8" });
+    await execPython(["-I", "-B", "-c", program, home], { encoding: "utf8" });
     expect(
       await readFile(join(home, "settings", "profile", "profile.ini"), "utf8"),
     ).toBe("profile");
@@ -279,7 +276,7 @@ ${PYTHON_HELPERS}
 home = Path(sys.argv[1])
 _ensure_state_aliases(home)
 `;
-  execPython(["-I", "-B", "-c", program, home], { encoding: "utf8" });
+  await execPython(["-I", "-B", "-c", program, home], { encoding: "utf8" });
   expect(
     await readFile(join(home, "settings", "profile", "profile.ini"), "utf8"),
   ).toBe("profile");
@@ -303,7 +300,7 @@ home = Path(sys.argv[1])
 _ensure_state_aliases(home)
 _ensure_state_aliases(home)
 `;
-  execPython(["-I", "-B", "-c", program, home], { encoding: "utf8" });
+  await execPython(["-I", "-B", "-c", program, home], { encoding: "utf8" });
   expect(await readFile(join(home, "settings"), "utf8")).toBe("saved");
 
   const absent = join(root, "absent");
@@ -314,7 +311,9 @@ ${PYTHON_HELPERS}
 home = Path(sys.argv[1])
 _ensure_state_aliases(home)
 `;
-  execPython(["-I", "-B", "-c", absentProgram, absent], { encoding: "utf8" });
+  await execPython(["-I", "-B", "-c", absentProgram, absent], {
+    encoding: "utf8",
+  });
   await writeFile(join(absent, "settings"), "created");
   expect(await readFile(join(absent, ".config", "tellicorc"), "utf8")).toBe(
     "created",
@@ -324,7 +323,9 @@ _ensure_state_aliases(home)
   );
   const bare = join(root, "bare");
   await mkdir(bare);
-  execPython(["-I", "-B", "-c", absentProgram, bare], { encoding: "utf8" });
+  await execPython(["-I", "-B", "-c", absentProgram, bare], {
+    encoding: "utf8",
+  });
   await writeFile(join(bare, "settings"), "created");
   expect(await readFile(join(bare, ".config", "tellicorc"), "utf8")).toBe(
     "created",
@@ -338,7 +339,9 @@ ${PYTHON_HELPERS}
 home = Path(sys.argv[1])
 _ensure_state_aliases(home)
 `;
-  execPython(["-I", "-B", "-c", legacyProgram, legacy], { encoding: "utf8" });
+  await execPython(["-I", "-B", "-c", legacyProgram, legacy], {
+    encoding: "utf8",
+  });
   await writeFile(join(legacy, "settings"), "legacy");
   expect(await readFile(join(legacy, ".config", "tellicorc"), "utf8")).toBe(
     "legacy",
@@ -378,7 +381,7 @@ _seed_home(home)
 _ensure_state_aliases(home)
 _ensure_state_aliases(home)
 `;
-  execPython(
+  await execPython(
     ["-I", "-B", "-c", program, root, home, JSON.stringify("directory")],
     { encoding: "utf8" },
   );
@@ -394,7 +397,7 @@ _ensure_state_aliases(home)
   const other = join(root, "other-home");
   await mkdir(other);
   await writeFile(join(other, "settings"), "preserve");
-  expect(() =>
+  await expect(
     execPython(
       ["-I", "-B", "-c", program, root, other, JSON.stringify("directory")],
       {
@@ -402,14 +405,14 @@ _ensure_state_aliases(home)
         stdio: "pipe",
       },
     ),
-  ).toThrow();
+  ).rejects.toThrow();
   expect(await readFile(join(other, "settings"), "utf8")).toBe("preserve");
 
   const empty = join(root, "empty-home");
   await mkdir(empty);
   const emptySeed = join(root, "empty-seed");
   await mkdir(emptySeed);
-  execPython(
+  await execPython(
     ["-I", "-B", "-c", program, emptySeed, empty, JSON.stringify("directory")],
     {
       encoding: "utf8",
@@ -423,7 +426,7 @@ _ensure_state_aliases(home)
   // An older capture does not establish the missing target's kind.
   const unknown = join(root, "unknown-home");
   await mkdir(unknown);
-  execPython(["-I", "-B", "-c", program, emptySeed, unknown, "null"], {
+  await execPython(["-I", "-B", "-c", program, emptySeed, unknown, "null"], {
     encoding: "utf8",
   });
   expect(await readlink(join(unknown, "settings"))).toBe(
@@ -454,23 +457,28 @@ else:
   return bin;
 };
 
-const taskbarWindow = (bin: string, windowClass: string): string => {
+const taskbarWindow = async (
+  bin: string,
+  windowClass: string,
+): Promise<string> => {
   const imports = PYTHON_IMPORTS.split("\n")
     .filter((line) => !line.includes("agentenv_protocol"))
     .join("\n");
-  return execPython(
-    [
-      "-I",
-      "-B",
-      "-c",
-      `${imports}\nfrom pathlib import PurePosixPath
+  return (
+    await execPython(
+      [
+        "-I",
+        "-B",
+        "-c",
+        `${imports}\nfrom pathlib import PurePosixPath
 SEED_HOME = "/home/ada"\n${PYTHON_HELPERS}\nprint(_taskbar_window(sys.argv[1]))`,
-      windowClass,
-    ],
-    {
-      encoding: "utf8",
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` },
-    },
+        windowClass,
+      ],
+      {
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` },
+      },
+    )
   ).trim();
 };
 
@@ -482,22 +490,28 @@ it("holds readiness until a window of the app's class that the taskbar lists is 
   const other =
     'WM_CLASS(STRING) = "mousepad", "Mousepad"\n_NET_WM_STATE(ATOM) = ';
 
-  expect(taskbarWindow(await fakeXprop({ "0x1": splash }), "varicad")).toBe(
-    "False",
-  );
   expect(
-    taskbarWindow(await fakeXprop({ "0x1": splash, "0x2": main }), "varicad"),
+    await taskbarWindow(await fakeXprop({ "0x1": splash }), "varicad"),
+  ).toBe("False");
+  expect(
+    await taskbarWindow(
+      await fakeXprop({ "0x1": splash, "0x2": main }),
+      "varicad",
+    ),
   ).toBe("True");
   expect(
-    taskbarWindow(await fakeXprop({ "0x1": splash, "0x3": other }), "varicad"),
+    await taskbarWindow(
+      await fakeXprop({ "0x1": splash, "0x3": other }),
+      "varicad",
+    ),
   ).toBe("False");
-  expect(taskbarWindow(await fakeXprop({ "0x3": other }), "Mousepad")).toBe(
-    "True",
-  );
+  expect(
+    await taskbarWindow(await fakeXprop({ "0x3": other }), "Mousepad"),
+  ).toBe("True");
   const typedSplash =
     'WM_CLASS(STRING) = "varicad", "varicad"\n_NET_WM_STATE(ATOM) = \n_NET_WM_WINDOW_TYPE(ATOM) = _NET_WM_WINDOW_TYPE_SPLASH';
   expect(
-    taskbarWindow(await fakeXprop({ "0x4": typedSplash }), "varicad"),
+    await taskbarWindow(await fakeXprop({ "0x4": typedSplash }), "varicad"),
   ).toBe("False");
 });
 
@@ -547,12 +561,12 @@ it.each([
 ])(
   "interprets X11 readiness when xprop %s",
   async (_, windows, class_, ready) => {
-    expect(taskbarWindow(await fakeXprop(windows), class_)).toBe(ready);
+    expect(await taskbarWindow(await fakeXprop(windows), class_)).toBe(ready);
   },
 );
 
 /** The exported module's JSON verdict for each text, with only its standard library imports: its view or its error. */
-const pythonJson = (texts: readonly string[]) => {
+const pythonJson = async (texts: readonly string[]) => {
   const imports = PYTHON_IMPORTS.split("\n")
     .filter((line) => !line.includes("agentenv_protocol"))
     .join("\n");
@@ -560,16 +574,18 @@ const pythonJson = (texts: readonly string[]) => {
 for text in json.load(sys.stdin):
     print(json.dumps(_text_view("a.json", text, len(text.encode()))))
 `;
-  return execPython(["-I", "-B", "-c", program], {
-    input: JSON.stringify(texts),
-    encoding: "utf8",
-  })
+  return (
+    await execPython(["-I", "-B", "-c", program], {
+      input: JSON.stringify(texts),
+      encoding: "utf8",
+    })
+  )
     .trim()
     .split(/\r?\n/u)
     .map((line) => JSON.parse(line) as { view: unknown; error?: string });
 };
 
-it("refuses the JSON numbers REA's state view refuses, as JSON with an error rather than an infinity", () => {
+it("refuses the JSON numbers REA's state view refuses, as JSON with an error rather than an infinity", async () => {
   const texts = [
     '{"a": 1e999}',
     '{"a": -1e999}',
@@ -583,7 +599,7 @@ it("refuses the JSON numbers REA's state view refuses, as JSON with an error rat
     '{"a": 1, "a": 9007199254740993}',
   ];
 
-  const python = pythonJson(texts);
+  const python = await pythonJson(texts);
 
   texts.forEach((text, index) => {
     const typescript = textualView("json", new TextEncoder().encode(text));
@@ -594,7 +610,7 @@ it("refuses the JSON numbers REA's state view refuses, as JSON with an error rat
 });
 
 /** The exported module's format, view and error for each named text, and REA's for the same bytes. */
-const textViews = (
+const textViews = async (
   files: readonly (readonly [string, string])[],
   policy: DesktopViewPolicy = DESKTOP_VIEW_DEFAULTS,
 ) => {
@@ -606,11 +622,13 @@ for name, text in json.load(sys.stdin):
     view = _text_view(name, text, len(text.encode()))
     print(json.dumps({"format": view["format"], "view": view["view"], "error": view.get("error")}))
 `;
-  const python = execPython(["-I", "-B", "-c", program], {
-    input: JSON.stringify(files),
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-  })
+  const python = (
+    await execPython(["-I", "-B", "-c", program], {
+      input: JSON.stringify(files),
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+    })
+  )
     .trim()
     .split("\n")
     .map((line) => JSON.parse(line) as unknown);
@@ -627,12 +645,12 @@ for name, text in json.load(sys.stdin):
   return { python, rea };
 };
 
-it("applies the selected desktop view budgets equally in TypeScript and emitted Python", () => {
+it("applies the selected desktop view budgets equally in TypeScript and emitted Python", async () => {
   const files = [
     ["lines.txt", "one\ntwo\nthree"],
     ["value.json", '{"key":"value"}'],
   ] as const;
-  const limited = textViews(
+  const limited = await textViews(
     files,
     desktopViewPolicy({ text_lines: 2, parsed_bytes: 4 }),
   );
@@ -643,7 +661,7 @@ it("applies the selected desktop view budgets equally in TypeScript and emitted 
     line_count: 3,
   });
   expect(limited.rea[1]?.error).toContain("limit for JSON");
-  const recovered = textViews(
+  const recovered = await textViews(
     files,
     desktopViewPolicy({ text_lines: 3, parsed_bytes: 64 }),
   );
@@ -659,7 +677,7 @@ it("applies the selected desktop view budgets equally in TypeScript and emitted 
   });
 });
 
-it("bounds the emitted reader's probe when an app grows a file after its size check", () => {
+it("bounds the emitted reader's probe when an app grows a file after its size check", async () => {
   const imports = PYTHON_IMPORTS.split("\n")
     .filter((line) => !line.includes("agentenv_protocol"))
     .join("\n");
@@ -693,7 +711,7 @@ with tempfile.TemporaryDirectory() as root:
     print(json.dumps({"ordinary": ordinary, "grown": grown, "read_bytes": read_bytes, "grown_bytes": growing.stat().st_size}))
 `;
   const result = JSON.parse(
-    execPython(["-I", "-B", "-c", program], { encoding: "utf8" }),
+    await execPython(["-I", "-B", "-c", program], { encoding: "utf8" }),
   );
   expect(result.ordinary).toMatchObject({
     format: "text",
@@ -709,7 +727,7 @@ with tempfile.TemporaryDirectory() as root:
   expect(result.grown_bytes).toBe(20000);
 });
 
-it("reads text nested past Python's recursion limit as JSON only when all of it is, as REA does", () => {
+it("reads text nested past Python's recursion limit as JSON only when all of it is, as REA does", async () => {
   const brackets = (open: number, close: number) =>
     `${"[".repeat(open)}${"]".repeat(close)}`;
   const files = [
@@ -719,7 +737,7 @@ it("reads text nested past Python's recursion limit as JSON only when all of it 
     ["deep.json", `${brackets(1100, 1100)} x`],
   ] as const;
 
-  const { python, rea } = textViews(files);
+  const { python, rea } = await textViews(files);
 
   expect(python).toEqual(rea);
   expect(rea.map(({ format, error }) => [format, error])).toEqual([
@@ -730,7 +748,7 @@ it("reads text nested past Python's recursion limit as JSON only when all of it 
   ]);
 });
 
-it("refuses JSON and key files over 4 MiB as REA does, telling JSON apart from text without parsing it", () => {
+it("refuses JSON and key files over 4 MiB as REA does, telling JSON apart from text without parsing it", async () => {
   const objects = `[{}${",{}".repeat(1_400_000)}]`;
   const files = [
     ["objects.json", objects],
@@ -739,7 +757,7 @@ it("refuses JSON and key files over 4 MiB as REA does, telling JSON apart from t
     ["log", `[0] ${"x".repeat(4_200_000)}`],
   ] as const;
 
-  const { python, rea } = textViews(files);
+  const { python, rea } = await textViews(files);
 
   expect(python).toEqual(rea);
   const refused = "larger than the 4 MiB limit for JSON and key file views";
@@ -751,7 +769,7 @@ it("refuses JSON and key files over 4 MiB as REA does, telling JSON apart from t
   ]);
 });
 
-it("checks text for JSON the way REA does, token by token, without parsing it", () => {
+it("checks text for JSON the way REA does, token by token, without parsing it", async () => {
   const [bom, nbsp, lineSeparator] = [0xfeff, 0xa0, 0x2028].map((code) =>
     String.fromCharCode(code),
   );
@@ -768,7 +786,7 @@ it("checks text for JSON the way REA does, token by token, without parsing it", 
     .join("\n");
 
   const python = JSON.parse(
-    execPython(
+    await execPython(
       [
         "-I",
         "-B",
@@ -788,7 +806,7 @@ it("checks text for JSON the way REA does, token by token, without parsing it", 
   expect(parsed.filter(Boolean)).toHaveLength(10);
 });
 
-it("checks JSON depth with one iterator per level, copying no wide list", () => {
+it("checks JSON depth with one iterator per level, copying no wide list", async () => {
   const imports = PYTHON_IMPORTS.split("\n")
     .filter((line) => !line.includes("agentenv_protocol"))
     .join("\n");
@@ -807,7 +825,7 @@ print(json.dumps({"deep": deep, "peak": peak, "edge": _deeper_than(nested, 501),
 `;
 
   const result = JSON.parse(
-    execPython(["-I", "-B", "-c", program], { encoding: "utf8" }),
+    await execPython(["-I", "-B", "-c", program], { encoding: "utf8" }),
   ) as { deep: boolean; peak: number; edge: boolean; over: boolean };
 
   expect(result).toMatchObject({ deep: false, edge: false, over: true });
@@ -815,11 +833,11 @@ print(json.dumps({"deep": deep, "peak": peak, "edge": _deeper_than(nested, 501),
   expect(result.peak).toBeLessThan(1024 * 1024);
 });
 
-it("keeps special SQLite numbers distinct from text in exported table views", () => {
+it("keeps special SQLite numbers distinct from text in exported table views", async () => {
   const imports = PYTHON_IMPORTS.split("\n")
     .filter((line) => !line.includes("agentenv_protocol"))
     .join("\n");
-  const cells = execPython(
+  const cells = await execPython(
     [
       "-I",
       "-B",
@@ -853,7 +871,7 @@ with sqlite3.connect(":memory:") as db:
   });
 });
 
-it("agrees on keyfile whitespace in both state readers", () => {
+it("agrees on keyfile whitespace in both state readers", async () => {
   const files = [
     ["settings.ini", "[ui]\n\u0085\nzoom=2\n"],
     ["settings.ini", "[ui]\n\ufeffzoom=2\n"],
@@ -887,7 +905,7 @@ it("agrees on keyfile whitespace in both state readers", () => {
       error: null,
     },
   ];
-  const { python, rea } = textViews(files);
+  const { python, rea } = await textViews(files);
   expect(rea).toEqual(expected);
   expect(python).toEqual(expected);
 });
@@ -923,7 +941,7 @@ ${PYTHON_HELPERS}
 settings = Exported.Settings(**{name: "YQ==" for name in json.loads(sys.argv[2])})
 _write_withheld(Path(sys.argv[1]), settings, json.loads(sys.argv[3]))
 `;
-    execPython(
+    await execPython(
       [
         "-B",
         "-c",

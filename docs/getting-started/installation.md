@@ -1621,12 +1621,13 @@ test ! -e "$decompiler_dir/decompile" && test ! -L "$decompiler_dir/decompile" &
 rea doctor --json
 ```
 
-Verified end to end on macOS 15.6 arm64 with Apple clang 17 and the stock
-bison 2.3, against Ghidra 12.1.4: the build produces a Mach-O arm64
-`ghidra_opt`, the doctor check `ghidra-native_decompiler` turns healthy with
-"reports mach-o arm64, which matches darwin/arm64", and `rea decompile` on an
-arm64 Mach-O returns decompiled C through the headless provider. The JDK is
-not needed for the make step, only for the Ghidra provider. If your toolchain
+Recorded on Ghidra 12.1.4 (no longer accepted); not yet re-run on 12.2. On
+macOS 15.6 arm64 with Apple clang 17 and the stock bison 2.3, that build
+produced a Mach-O arm64 `ghidra_opt`, the doctor check
+`ghidra-native_decompiler` turned healthy with "reports mach-o arm64, which
+matches darwin/arm64", and `rea decompile` on an arm64 Mach-O returned
+decompiled C through the headless provider. The JDK is not needed for the make
+step, only for the Ghidra provider. If your toolchain
 rejects the inherited `-mmacosx-version-min=10.6` flag, retry the make with
 `ADDITIONAL_FLAGS="-w"`.
 
@@ -2062,7 +2063,7 @@ terminal, use the package runner at the version the plugin pins:
 <!-- x-release-please-start-version -->
 
 ```bash
-npx -y rea-agents@6.9.0 doctor --provider ghidra --json
+npx -y rea-agents@6.10.1 doctor --provider ghidra --json
 ```
 
 <!-- x-release-please-end -->
@@ -2095,7 +2096,7 @@ therefore runs the published package instead of a local build:
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "rea-agents@6.9.0", "mcp"]
+      "args": ["-y", "rea-agents@6.10.1", "mcp"]
     }
   }
 }

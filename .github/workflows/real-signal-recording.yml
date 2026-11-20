@@ -44,7 +44,9 @@ jobs:
         uses: ./.github/actions/npm-cache
       - uses: ./.github/actions/ubuntu-archive
       - name: Install signal recording prerequisites
-        run: sudo apt-get install -y sigrok-cli util-linux python3
+        uses: ./.github/actions/host-apt-packages
+        with:
+          packages: sigrok-cli util-linux python3
       - run: npm ci
       - uses: ./.github/actions/portable-build-cache
         with:

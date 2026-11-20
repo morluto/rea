@@ -6,6 +6,7 @@ import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js"
 import { AsarArtifactReader } from "../AsarArtifactReader.js";
 import {
   InesArtifactReader,
+  inesInventoryLimitation,
   type InesRegionScan,
 } from "../InesArtifactReader.js";
 
@@ -554,6 +555,7 @@ const buildInventorySnapshot = async (
     coverage,
     limitations: buildLimitations(
       [
+        ...(ines === undefined ? [] : [inesInventoryLimitation(ines.header)]),
         ...traversal.limitations,
         ...relationshipLimitations,
         ...(input.recognitionLimitations ?? []),

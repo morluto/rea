@@ -37,8 +37,8 @@ const readerOptions = {
 };
 
 /** Independent reading of LLVM readelf's `-h -l -S -s -A` report. */
-const readRiscvElf = async (reader, path, floatAbi) => {
-  const { stdout, stderr } = await execute(
+const readRiscvElf = async (reader, path, floatAbi, run = execute) => {
+  const { stdout, stderr } = await run(
     reader,
     ["-h", "-l", "-S", "-s", "-A", "-W", path],
     readerOptions,
@@ -93,10 +93,13 @@ const sha256 = async (path) =>
 
 /** Build and independently inspect a source-owned ELF; never execute it. */
 export async function buildRiscvFixture(directory, bits, buildOptions = {}) {
-  const { floatAbi = "double", pie = false } =
-    typeof buildOptions === "string"
-      ? { floatAbi: buildOptions }
-      : buildOptions;
+  const {
+    floatAbi = "double",
+    pie = false,
+    execute: run = execute,
+  } = typeof buildOptions === "string"
+    ? { floatAbi: buildOptions }
+    : buildOptions;
   assert.ok(bits === 32 || bits === 64);
   const build = BUILDS[floatAbi];
   assert.ok(build !== undefined, `No ${floatAbi}-float RISC-V fixture`);
@@ -133,11 +136,11 @@ export async function buildRiscvFixture(directory, bits, buildOptions = {}) {
     path,
   ];
   const options = { timeout: 10000, maxBuffer: 1024 * 1024 };
-  const compilerVersion = await execute(compiler, ["--version"], options);
-  const linkerVersion = await execute(linker, ["--version"], options);
-  const readerVersion = await execute(reader, ["--version"], options);
-  await execute(compiler, args, { ...options, timeout: 60000 });
-  const elf = await readRiscvElf(reader, path, floatAbi);
+  const compilerVersion = await run(compiler, ["--version"], options);
+  const linkerVersion = await run(linker, ["--version"], options);
+  const readerVersion = await run(reader, ["--version"], options);
+  await run(compiler, args, { ...options, timeout: 60000 });
+  const elf = await readRiscvElf(reader, path, floatAbi, run);
   assert.equal(elf.class, `ELF${bits}`);
   assert.match(elf.data, /little endian/u);
   assert.match(elf.type, pie ? /^DYN\b/u : /^EXEC\b/u);
@@ -202,7 +205,7 @@ export async function buildRiscvFixture(directory, bits, buildOptions = {}) {
  * section must keep its address and bytes, so the typed build's symbol
  * addresses locate the same code in the stripped image.
  */
-export async function stripRiscvFixture(directory, typed) {
+export async function stripRiscvFixture(directory, typed, run = execute) {
   const path = join(
     directory,
     typed.path.split("/").at(-1).replace(".elf", "-stripped.elf"),
@@ -213,11 +216,16 @@ export async function stripRiscvFixture(directory, typed) {
     "-o",
     path,
   ];
-  await execute(typed.toolchain.compiler.command, args, {
+  await run(typed.toolchain.compiler.command, args, {
     timeout: 60000,
     maxBuffer: 1024 * 1024,
   });
-  const elf = await readRiscvElf(typed.toolchain.reader.command, path, "soft");
+  const elf = await readRiscvElf(
+    typed.toolchain.reader.command,
+    path,
+    "soft",
+    run,
+  );
   assert.equal(elf.flags, typed.riscv.flags);
   assert.deepEqual(elf.isa, typed.riscv.isa);
   assert.ok(

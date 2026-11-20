@@ -1,7 +1,8 @@
-import type * as t from "@babel/types";
+import * as t from "@babel/types";
 import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 import {
   semanticArrayIndex,
+  type JavaScriptSemanticPropertySelection,
   type JavaScriptSemanticPropertyPath as PropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
 import {
@@ -11,6 +12,10 @@ import {
 import { semanticSlotAtPath } from "./javascriptSemanticSlots.js";
 import type { JavaScriptSemanticValue } from "./javascriptSemanticValueTypes.js";
 import { ambientPathMayObserveAt } from "./javascriptSemanticEffectLog.js";
+import {
+  semanticArrayIteratorPrototypePath,
+  semanticNativeArrayIteratorIntactAt,
+} from "./javascriptSemanticArrayLayout.js";
 
 /**
  * Node's wrapper module inherits require. A copy cannot read that delegate
@@ -33,14 +38,122 @@ interface ReferenceSource {
   readonly iterationSources?: readonly ReferenceSource[];
 }
 
+const arrayIteratorReturnGlobalOwners = new Set(["Iterator", "Object"]);
+
+/** Select prototype effects from spread sources whose exact index is unknown. */
+export const semanticArrayIterationPrototypeEffectPath = (
+  path: readonly (string | null)[],
+  kind: "write" | "escape",
+): readonly (string | null)[] | undefined => {
+  const [namespace, owner, property] = path;
+  if (namespace === semanticArrayIteratorPrototypePath[0]) return path;
+  if (
+    namespace !== "global" ||
+    typeof owner !== "string" ||
+    (owner !== "Array" && !arrayIteratorReturnGlobalOwners.has(owner))
+  )
+    return undefined;
+  return property === "prototype" ||
+    property === null ||
+    (kind === "escape" && path.length === 2)
+    ? [namespace, owner, "prototype", ...path.slice(3)]
+    : undefined;
+};
+
 /** Native array iteration preserves numeric slots only while its iterator is intact. */
 export const semanticKnownArrayIteration = (
   value: JavaScriptSemanticValue | undefined,
   state: JavaScriptSemanticAnalysisState,
-): boolean =>
-  !state.arrayIterationUnknown &&
+  read: t.Node,
+): value is Extract<JavaScriptSemanticValue, { status: "array" }> =>
   value?.status === "array" &&
+  semanticNativeArrayIteratorIntactAt(state, read) &&
   value.items.every((item) => semanticArrayIndex(item.name) !== null);
+
+const arrayIteratorReturnPaths = [
+  [...semanticArrayIteratorPrototypePath, "return"],
+  [...semanticArrayIteratorPrototypePath, "__proto__", "return"],
+  [...semanticArrayIteratorPrototypePath, "__proto__", "__proto__", "return"],
+  ...Array.from(arrayIteratorReturnGlobalOwners, (owner) => [
+    "global",
+    owner,
+    "prototype",
+    "return",
+  ]),
+] as const;
+
+/** Whether a native array iterator can observe a possible close hook here. */
+const semanticArrayIteratorMayHaveReturnAt = (
+  pattern: t.ArrayPattern,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  arrayIteratorReturnPaths.some((path) =>
+    ambientPathMayObserveAt(state, pattern, path, "contents"),
+  );
+
+export const isLexicalPatternDeclaration = (
+  owner: t.Node | undefined,
+  state: JavaScriptSemanticAnalysisState,
+): owner is t.VariableDeclarator => {
+  if (!t.isVariableDeclarator(owner)) return false;
+  const declaration = state.parentsByNode.get(owner);
+  return (
+    t.isVariableDeclaration(declaration) &&
+    (declaration.kind === "const" || declaration.kind === "let")
+  );
+};
+
+/** A proved lexical inner read can resume its outer iterator after a hook-free close. */
+export const semanticArrayPatternCanResumeAfterClose = (
+  pattern: t.ArrayPattern,
+  owner: t.Node | undefined,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  isLexicalPatternDeclaration(owner, state) &&
+  !semanticArrayIteratorMayHaveReturnAt(pattern, state);
+
+/** References a possible native close hook can still obtain by advancing its iterator. */
+export const semanticArrayPatternCloseSelection = (
+  pattern: t.ArrayPattern,
+  owner: t.Node | undefined,
+  array: Extract<JavaScriptSemanticValue, { status: "array" }>,
+  state: JavaScriptSemanticAnalysisState,
+): JavaScriptSemanticPropertySelection | undefined => {
+  if (!semanticArrayIteratorMayHaveReturnAt(pattern, state)) return undefined;
+  const last = pattern.elements.at(-1);
+  const hasRest = t.isRestElement(last);
+  let consumed = 0;
+  if (isLexicalPatternDeclaration(owner, state)) {
+    for (const [index, element] of pattern.elements.entries()) {
+      // A lexical rest drains the iterator only after earlier pattern work
+      // reaches it. A preceding default or nested binding can throw first.
+      if (hasRest && element === last) return undefined;
+      const slot = array.items[index];
+      const ownSlot =
+        consumed === index &&
+        slot?.name === String(index) &&
+        slot.presence === "present";
+      if (
+        element !== null &&
+        !t.isIdentifier(element) &&
+        !(
+          hasRest &&
+          owner.id === pattern &&
+          ownSlot &&
+          t.isAssignmentPattern(element) &&
+          t.isIdentifier(element.left) &&
+          semanticValueDefinitelyDefined(slot.value)
+        )
+      )
+        break;
+      if (ownSlot) consumed += 1;
+      else if (!hasRest) break;
+    }
+  }
+  // The literal suffix can be empty while the iterator still has references
+  // from stored writes. Resolve those separately at the close site.
+  return { excludedKeys: [], startIndex: consumed };
+};
 
 /** Invocation spreads use the same native-iteration proof at their source read. */
 export const semanticKnownArrayIterationAt = (
@@ -50,6 +163,7 @@ export const semanticKnownArrayIterationAt = (
   semanticKnownArrayIteration(
     evaluateSemanticExpression(node, state, node),
     state,
+    node,
   );
 
 /** Numeric destructuring projections do not select slots of custom iterators. */
@@ -75,8 +189,7 @@ const selectedReferenceIterationKnown = (
         // inventory can prove every possible nested iterable without treating
         // a computed object property or custom iterator as an own-index read.
         if (
-          !semanticKnownArrayIteration(value, state) ||
-          value.status !== "array" ||
+          !semanticKnownArrayIteration(value, state, source.node) ||
           value.unknownItems
         )
           return false;
@@ -92,7 +205,9 @@ const selectedReferenceIterationKnown = (
     }
     values = [...selected];
   }
-  return values.every((value) => semanticKnownArrayIteration(value, state));
+  return values.every((value) =>
+    semanticKnownArrayIteration(value, state, source.node),
+  );
 };
 
 /** Exclude references whose source slot or destructuring fallback is absent. */
