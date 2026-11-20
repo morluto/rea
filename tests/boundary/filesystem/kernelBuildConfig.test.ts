@@ -71,6 +71,26 @@ describe("kernel build config stable filesystem boundary", () => {
     }
   });
 
+  it("retains partial framing evidence under the config inflate limit", async () => {
+    const root = await createTestTempDirectory("rea-kernel-config-framing-");
+    const path = join(root, "vmlinux");
+    await writeFile(path, kernelBuildConfigFixture().subarray(0, -1));
+    const service = createKernelBuildConfigService();
+    try {
+      for (const max_config_bytes of [4096, 64]) {
+        const result = await service.inspect({ path, max_config_bytes });
+        if (!result.ok) throw result.error;
+        expect(result.value.normalized_result).toMatchObject({
+          banner: { status: "present", version: "6.6.0" },
+          config: { status: "incomplete", reason: "config_gzip_truncated" },
+          coverage: { status: "partial" },
+        });
+      }
+    } finally {
+      await service.close();
+    }
+  });
+
   it("reports an ordinary IKCFG_ST string as no config with file Evidence", async () => {
     const root = await createTestTempDirectory("rea-kernel-config-plain-");
     const path = join(root, "vmlinux");
