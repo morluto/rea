@@ -28,6 +28,7 @@ import { decodeXmlPlistText } from "../domain/propertyListXmlText.js";
 import { hasZipSignature } from "../domain/zipPackageFormat.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 import { Budget } from "../domain/budget.js";
+import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 import { boundedList } from "../domain/boundedList.js";
 import {
   MAX_INSPECT_VSIX_PACKAGE_MANIFEST_XML_NODES,
@@ -66,6 +67,8 @@ export const VSIX_LIMITATIONS = {
     `ZIP member ${JSON.stringify(name)} leaves the package root and was not extracted.`,
   memberOversize: (path: string, maximum: number): string =>
     `Member ${JSON.stringify(path)} exceeds the ${String(maximum)}-byte hash budget and was listed without a digest.`,
+  packageExpansionSpent: (path: string, maximum: number): string =>
+    `Member ${JSON.stringify(path)} was listed without a digest because the package's ${String(maximum)}-byte total decode budget was spent.`,
 } as const;
 
 const BASE_LIMITATIONS = [
@@ -808,6 +811,9 @@ export const parseVsixPackage = async (
     }
     const interestingMembers: VsixPackage["interesting_members"] = [];
     const kindCounts = emptyKindCounts();
+    // One package-wide ceiling on decoded member bytes, so many small
+    // compressed members cannot each spend a full per-member budget.
+    const expansion = new Budget(artifactExpansionBudgetBytes(bytes.length));
     for (const [index, file] of files.entries()) {
       let kind = file.kind;
       let classification: "observed" | "inferred" = "inferred";
@@ -817,31 +823,43 @@ export const parseVsixPackage = async (
       let hashed: Uint8Array | undefined;
       if (shouldHash && !file.traverses && !file.encrypted) {
         const declared = zipSize(file.entry.uncompressedSize);
-        if (declared !== null && declared > input.max_member_bytes) {
+        const allowance = Math.min(input.max_member_bytes, expansion.remaining);
+        const unread = () =>
+          allowance < input.max_member_bytes
+            ? VSIX_LIMITATIONS.packageExpansionSpent(
+                file.path,
+                expansion.maximum,
+              )
+            : VSIX_LIMITATIONS.memberOversize(
+                file.path,
+                input.max_member_bytes,
+              );
+        if (declared !== null && declared > allowance) {
           limitations.push(
-            VSIX_LIMITATIONS.memberOversize(file.path, input.max_member_bytes),
+            declared > input.max_member_bytes
+              ? VSIX_LIMITATIONS.memberOversize(
+                  file.path,
+                  input.max_member_bytes,
+                )
+              : unread(),
           );
         } else {
           try {
             hashed = await readMemberBytes(
               file.entry,
               signal,
-              input.max_member_bytes,
+              allowance,
               `Member ${file.path}`,
               "max_member_bytes",
             );
+            expansion.chargeOverCommitting(hashed.length);
           } catch (cause: unknown) {
             if (
               cause instanceof ParseFailureError &&
               cause.failure.kind === "limit" &&
               cause.failure.limit?.name === "max_member_bytes"
             ) {
-              limitations.push(
-                VSIX_LIMITATIONS.memberOversize(
-                  file.path,
-                  input.max_member_bytes,
-                ),
-              );
+              limitations.push(unread());
             } else throw cause;
           }
         }

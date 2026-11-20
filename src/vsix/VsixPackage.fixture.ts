@@ -75,8 +75,9 @@ const addBytes = async (
   writer: ZipWriter<Uint8Array>,
   name: string,
   bytes: Uint8Array,
+  level = 0,
 ): Promise<void> => {
-  await writer.add(name, new Uint8ArrayReader(bytes), { level: 0 });
+  await writer.add(name, new Uint8ArrayReader(bytes), { level });
 };
 
 /** Inert OPC ZIP with a vsixmanifest, package.json, and conventional members. */
@@ -86,6 +87,8 @@ export const vsixPackageFixture = async (
     readonly packageJson?: string | null;
     readonly extraMembers?: Readonly<Record<string, string>>;
     readonly extraBinaryMembers?: Readonly<Record<string, Uint8Array>>;
+    /** Deflate the extra binary members instead of storing them. */
+    readonly compressBinaryMembers?: boolean;
     readonly includeContentTypes?: boolean;
     readonly includeManifest?: boolean;
     readonly includeMain?: boolean;
@@ -132,7 +135,12 @@ export const vsixPackageFixture = async (
   for (const [name, text] of Object.entries(options.extraMembers ?? {}))
     await addText(writer, name, text);
   for (const [name, bytes] of Object.entries(options.extraBinaryMembers ?? {}))
-    await addBytes(writer, name, bytes);
+    await addBytes(
+      writer,
+      name,
+      bytes,
+      options.compressBinaryMembers === true ? 9 : 0,
+    );
   return writer.close();
 };
 
