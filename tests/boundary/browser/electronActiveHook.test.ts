@@ -3461,7 +3461,7 @@ setImmediate(() => {
   });
 });
 
-it("preserves application rejection listeners and borrowed process emit behavior", async () => {
+it("preserves native rejection listener identity, throws and borrowed process emits", async () => {
   const root = await createTestTempDirectory(
     "rea-electron-hook-rejection-listener-",
   );
@@ -3474,19 +3474,35 @@ const reason = new Error("controlled listener reason");
 const promise = Promise.resolve();
 const sentinel = new Error("controlled listener throw");
 let calls = 0;
-process.on("unhandledRejection", (actualReason, actualPromise) => {
+function throwingListener(actualReason, actualPromise) {
   if (actualReason !== reason || actualPromise !== promise) throw new Error("identity changed");
-  calls++;
-  if (calls === 2) throw sentinel;
-});
+  if (++calls === 2) throw sentinel;
+}
+process.on("unhandledRejection", throwingListener);
 const returned = process.emit("unhandledRejection", reason, promise);
 let sameThrow = false;
 try { process.emit("unhandledRejection", reason, promise); } catch (cause) { sameThrow = cause === sentinel; }
 const borrowed = process.emit.call(new EventEmitter(), "unhandledRejection", reason, promise);
-console.log(JSON.stringify({ calls, returned, sameThrow, borrowed,
+process.off("unhandledRejection", throwingListener);
+const rejectionShapes = () => globalThis.__reaElectronActiveSnapshot().events.filter(event =>
+  event.kind === "process-lifecycle" && event.event === "unhandled-rejection").map(event => event.argument_shapes);
+const explicitShapes = rejectionShapes();
+const entries = [{}, [], () => undefined, []].map((target, index) => {
+  const { proxy, revoke } = Proxy.revocable(target, {});
+  if (index < 3) revoke();
+  return { reason: proxy, promise: undefined };
+});
+const received = [];
+process.on("unhandledRejection", (reason, promise) => {
+  received.push(entries.findIndex(entry => entry.reason === reason && entry.promise === promise));
+});
+for (const entry of entries) entry.promise = Promise.reject(entry.reason);
+setImmediate(() => console.log(JSON.stringify({
+  calls, returned, sameThrow, borrowed, explicitShapes,
+  received,
   listeners: process.listenerCount("unhandledRejection"),
-  observed: globalThis.__reaElectronActiveSnapshot().events.filter(event => event.kind === "process-lifecycle" && event.event === "unhandled-rejection").length,
-}));
+  rejectedShapes: rejectionShapes().slice(explicitShapes.length),
+})));
 `,
   );
   const result = await runNode(script, root);
@@ -3496,43 +3512,13 @@ console.log(JSON.stringify({ calls, returned, sameThrow, borrowed,
     returned: true,
     sameThrow: true,
     borrowed: false,
+    explicitShapes: [
+      ["object", "object"],
+      ["object", "object"],
+    ],
+    received: [0, 1, 2, 3],
     listeners: 1,
-    observed: 2,
-  });
-});
-
-it("delivers revoked proxy rejections to the application's original handler", async () => {
-  const root = await createTestTempDirectory(
-    "rea-electron-hook-revoked-rejection-",
-  );
-  await writeElectronFixture(root);
-  const script = join(root, "revoked-rejections.cjs");
-  await writeFile(
-    script,
-    `const entries = [{}, [], () => undefined, []].map((target, index) => {
-  const { proxy, revoke } = Proxy.revocable(target, {});
-  if (index < 3) revoke();
-  return { reason: proxy, promise: undefined };
-});
-const received = [];
-process.on("unhandledRejection", (reason, promise) => {
-  received.push(entries.some(entry => entry.reason === reason && entry.promise === promise));
-});
-for (const entry of entries) entry.promise = Promise.reject(entry.reason);
-setImmediate(() => console.log(JSON.stringify({
-  received,
-  listeners: process.listenerCount("unhandledRejection"),
-  shapes: globalThis.__reaElectronActiveSnapshot().events.filter(event =>
-    event.kind === "process-lifecycle" && event.event === "unhandled-rejection").map(event => event.argument_shapes),
-})));
-`,
-  );
-  const result = await runNode(script, root);
-  expect(result.code, result.stderr).toBe(0);
-  expect(JSON.parse(result.stdout)).toEqual({
-    received: [true, true, true, true],
-    listeners: 1,
-    shapes: [
+    rejectedShapes: [
       ["object", "object"],
       ["object", "object"],
       ["function", "object"],
