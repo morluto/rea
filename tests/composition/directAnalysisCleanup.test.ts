@@ -129,6 +129,7 @@ it("rejects malformed one-shot operation inputs before creating a session", asyn
     ...dependencies,
     createBinarySession: create,
     createNativeBinarySession: create,
+    createNativeDispatchBinarySession: create,
     createArtifactBinarySession: create,
     createManagedBinarySession: create,
   };
@@ -159,6 +160,10 @@ it("rejects malformed one-shot operation inputs before creating a session", asyn
     if (!result.ok)
       expect(result.error).toMatchObject({ code: "invalid_request" });
   }
+  const xrefs = await runDirectAnalysis(guarded, "/missing", "xrefs", {
+    address: "table_only",
+    extra: true,
+  });
   const managed = await runManagedProviderExecution(
     guarded,
     "/missing",
@@ -172,6 +177,16 @@ it("rejects malformed one-shot operation inputs before creating a session", asyn
       code: "invalid_request",
     });
   expect(create).not.toHaveBeenCalled();
+  expect(xrefs).toMatchObject({
+    ok: false,
+    error: {
+      code: "invalid_request",
+      details: {
+        operation: "xrefs",
+        issues: [{ path: ["extra"], reason: "unknown_argument" }],
+      },
+    },
+  });
 });
 
 it.each([false, true])(
