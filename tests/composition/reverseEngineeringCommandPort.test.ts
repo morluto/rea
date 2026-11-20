@@ -156,15 +156,16 @@ it("projects missing and non-file objdump targets with actionable path reasons",
     runOwned: run,
   });
 
-  for (const [path, reason] of [
-    [missing, "not found"],
-    [directory, "not a regular file"],
+  for (const [path, reason, code] of [
+    [missing, "not found", "ENOENT"],
+    [directory, "not a regular file", "EINVAL"],
   ] as const) {
     const result = await service.inspectWithObjdump({
       path,
       operation: "symbols",
     });
     if (result.ok) throw new Error("Expected target validation failure");
+    expect(result.error.cause).toMatchObject({ code });
     const projection = projectAnalysisError(result.error);
     expect(analysisErrorProjectionSchema.safeParse(projection).success).toBe(
       true,

@@ -1,6 +1,7 @@
 import { ProcessOwnershipInspectionCancelled } from "../process/ProcessInspectionCancellation.js";
 import { createHash, randomUUID } from "node:crypto";
-import { access } from "node:fs/promises";
+import { access, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
 import { createWebTextArtifact } from "../domain/webContentArtifact.js";
@@ -113,6 +114,7 @@ type TestMode =
         | "truncated-exit"
         | "abort-first-exit"
         | "tail-exit"
+        | "tail-exit-held-pipe"
         | "malformed"
         | "wrong-job-failure"
         | "resource-failure"
@@ -123,24 +125,20 @@ type TestMode =
         | "heap-exit-after-noise";
     };
 
+const tailRelease = "release-stderr-tail";
+const lateTailMarker = "late tail marker";
+const lateTailProgram = (holdPipe: boolean): string => `
+  const { existsSync } = require("node:fs");
+  const wait = setInterval(() => {
+    if (!existsSync(${JSON.stringify(tailRelease)})) return;
+    clearInterval(wait);
+    process.stderr.write(${JSON.stringify(lateTailMarker)});
+    ${holdPipe ? "setInterval(() => {}, 1000);" : ""}
+  }, 10);
+`;
+
 const protocolWorkerProgram = (
-  failure:
-    | "wrong-id"
-    | "oversized-control"
-    | "oversized-result"
-    | "late-failure"
-    | "exit-7"
-    | "truncated-exit"
-    | "abort-first-exit"
-    | "tail-exit"
-    | "malformed"
-    | "wrong-job-failure"
-    | "resource-failure"
-    | "work-refusal"
-    | "final-frame-held-pipe"
-    | "zero-exit-held-pipe"
-    | "heap-exit"
-    | "heap-exit-after-noise",
+  failure: Extract<TestMode, { kind: "protocol" }>["failure"],
 ): string => `
   import { createInterface } from "node:readline";
   import { spawn } from "node:child_process";
@@ -160,9 +158,8 @@ const protocolWorkerProgram = (
            process.exit(0);`
           : failure === "exit-7"
             ? `process.stderr.write("controlled exit 7\\n", () => process.exit(7));`
-            : failure === "tail-exit"
-              ? `const lateProgram = "setTimeout(() => { process.stderr.write('late tail marker'); setTimeout(() => process.exit(0), 500); }, 50);";
-             spawn(process.execPath, ["-e", lateProgram], { stdio: ["ignore", "ignore", "inherit"] });
+            : failure === "tail-exit" || failure === "tail-exit-held-pipe"
+              ? `spawn(process.execPath, ["-e", ${JSON.stringify(lateTailProgram(failure === "tail-exit-held-pipe"))}], { stdio: ["ignore", "ignore", "inherit"] });
              process.stderr.write("early exit marker\\n", () => process.exit(7));`
               : failure === "truncated-exit"
                 ? `process.stderr.write("x".repeat(300 * 1024), () => process.exit(7));`
@@ -1058,13 +1055,26 @@ it("projects late stderr tails with completeness from the actual selection point
     const worker = new WebBundleAnalysisWorker(
       128,
       launcherFor(
-        { kind: "protocol", failure: "tail-exit" },
         {
-          onSpawn: ({ process: child }) => {
-            if (abortAfterExit)
-              child.once("exit", () =>
-                setTimeout(() => controller.abort(reason), 150),
-              );
+          kind: "protocol",
+          failure: abortAfterExit ? "tail-exit-held-pipe" : "tail-exit",
+        },
+        {
+          onSpawn: ({ process: child, root }) => {
+            child.once("exit", () => {
+              if (root !== undefined)
+                void writeFile(join(root, tailRelease), "").catch(
+                  (cause: unknown) => controller.abort(cause),
+                );
+            });
+            if (!abortAfterExit) return;
+            let seen = "";
+            child.stderr?.on("data", function observe(chunk: Buffer) {
+              seen += chunk.toString("utf8");
+              if (!seen.includes(lateTailMarker)) return;
+              child.stderr?.off("data", observe);
+              queueMicrotask(() => controller.abort(reason));
+            });
           },
         },
       ),
@@ -1078,7 +1088,7 @@ it("projects late stderr tails with completeness from the actual selection point
       const error = failureOf(result);
       expect(error).toBeInstanceOf(AnalysisOutputError);
       expect(error.capturedOutput?.stderr).toContain("early exit marker");
-      expect(error.capturedOutput?.stderr).toContain("late tail marker");
+      expect(error.capturedOutput?.stderr).toContain(lateTailMarker);
       expect(error.capturedOutput?.truncated).toBe(abortAfterExit);
       if (abortAfterExit)
         expect(error.secondaryFailures[0]?.cause).toBe(reason);

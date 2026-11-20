@@ -54,25 +54,24 @@ it("keeps a failed launch's transferred preparation cleanup until a close releas
 });
 
 it("reports a failed launch's preparation cleanup failure that names no owner", async () => {
+  const preparation = new DarwinProcessOwnershipInspectionError(
+    "ownership-helper preparation failed",
+    {
+      cleanupFailure: new ProviderCleanupError("fixture", ["helper root"], {
+        reason: "unremovable",
+      }),
+    },
+  );
   const owned = transport(async () => {
-    throw new DarwinProcessOwnershipInspectionError(
-      "ownership-helper preparation failed",
-      {
-        cleanupFailure: new ProviderCleanupError("fixture", ["helper root"], {
-          reason: "unremovable",
-        }),
-      },
-    );
+    throw preparation;
   });
-  await expect(owned.start()).rejects.toBeInstanceOf(
-    DarwinProcessOwnershipInspectionError,
-  );
-  const failure = await owned.close().then(
-    () => undefined,
-    (cause: unknown) => cause,
-  );
-  expect(failure).toBeInstanceOf(ProviderCleanupError);
-  expect((failure as ProviderCleanupError).cleanupIncomplete).toBe(true);
+  await expect(owned.start()).rejects.toBe(preparation);
+  await expect(owned.close()).rejects.toBeInstanceOf(ProviderCleanupError);
+  await expect(owned.close()).rejects.toMatchObject({
+    cause: preparation,
+    cleanupIncomplete: true,
+    cleanupResources: ["process ownership inspection"],
+  });
 });
 
 it("closes cleanly after a launch failure that transferred no cleanup", async () => {

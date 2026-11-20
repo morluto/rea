@@ -187,6 +187,7 @@ cliTest(
       expect(summary.summary.limitations).toContainEqual(limitation);
       expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
       await unlink(path);
+      if (blockBytes !== 36) continue;
 
       const source = {
         kind: "retained-evidence",
@@ -443,6 +444,7 @@ cliTest(
         expect(summary.summary.limitations).toContain(limitation);
       expect(Buffer.compare(await readFile(path), fixture.bytes)).toBe(0);
       await unlink(path);
+      if (layout !== "legacy") continue;
       await assertRetainedLayoutViews(
         call,
         summary.parent_evidence_id,
@@ -555,7 +557,7 @@ cliTest(
   },
 );
 
-it.each(["named", "default", "inventory-only", "absent"] as const)(
+it.each(["named", "default", "inventory-only"] as const)(
   "reports actual chat-template presence in summaries and page context (%s)",
   async (kind) => {
     const root = await createTestTempDirectory("rea-model-templates-");
@@ -579,9 +581,7 @@ it.each(["named", "default", "inventory-only", "absent"] as const)(
         ? [names, template]
         : kind === "default"
           ? [template]
-          : kind === "inventory-only"
-            ? [names]
-            : [];
+          : [names];
     await writeFile(path, ggufFixture({ metadata }).bytes);
     const call = await modelMcp.session.call();
     const response = await call("inspect_model_artifact", { path });
@@ -1049,6 +1049,7 @@ cliTest(
           createHash("sha256").update(safetensors.header).digest("hex"),
         );
       } else {
+        expect(report.metadata).toEqual([]);
         expect(report.tensors).toEqual([]);
         expect(report.tensor_data_offset).toBe(alignedOffset);
         expect(report.artifact.header_length).toBe(

@@ -269,11 +269,6 @@ cliTest(
       expect(fullReply.isError).not.toBe(true);
       const full = parseEvidence(fullReply.structuredContent);
       const report = rustBinarySchema.parse(full.normalized_result);
-      const explicit = await call("inspect_rust_binary", {
-        path,
-        detail: "complete",
-      });
-      expect(parseEvidence(explicit.structuredContent)).toEqual(full);
       const selection = {
         collection: "packages",
         names: ["same"],
@@ -398,6 +393,11 @@ cliTest(
     const captured = await call("inspect_rust_binary", { path });
     expect(captured.isError, JSON.stringify(captured.content)).not.toBe(true);
     const full = parseEvidence(captured.structuredContent);
+    const explicit = await call("inspect_rust_binary", {
+      path,
+      detail: "complete",
+    });
+    expect(parseEvidence(explicit.structuredContent)).toEqual(full);
     const report = rustBinarySchema.parse(full.normalized_result);
     const metadata = report.auditable_metadata;
     if (metadata === null) throw new Error("Expected Rust dependency metadata");
@@ -429,6 +429,18 @@ cliTest(
     await writeFile(record, JSON.stringify(historical));
     await unlink(path);
     const view = { kind: "rust", collection: "packages", fields: ["features"] };
+    const expected = {
+      parent_evidence_id: historical.evidence_id,
+      page: { rows: [{ index: 0, features: null }] },
+    };
+    const inline = await call("inspect_analysis_view", {
+      source: { kind: "inline", evidence: historical },
+      view,
+    });
+    expect(inline.isError, JSON.stringify(inline.content)).not.toBe(true);
+    expect(
+      parseEvidence(inline.structuredContent).normalized_result,
+    ).toMatchObject(expected);
     for (const source of [
       { kind: "retained-evidence", evidence_id: historical.evidence_id },
       { kind: "evidence-file", path: record },
@@ -444,10 +456,9 @@ cliTest(
         ],
       });
       expect(reply.exitCode, reply.stderr + JSON.stringify(reply.json)).toBe(0);
-      expect(parseEvidence(reply.json).normalized_result).toMatchObject({
-        parent_evidence_id: historical.evidence_id,
-        page: { rows: [{ index: 0, features: null }] },
-      });
+      expect(parseEvidence(reply.json).normalized_result).toMatchObject(
+        expected,
+      );
     }
     const imported = await call("import_evidence_bundle", { path: bundle });
     expect(imported.isError, JSON.stringify(imported.content)).not.toBe(true);
@@ -498,6 +509,29 @@ cliTest(
       source_coverage: {
         embedded_records: "unknown",
         runtime_dependencies: "unknown",
+      },
+    });
+    const collection = await call("inspect_analysis_view", {
+      source: {
+        kind: "retained-evidence",
+        evidence_id: view.parent_evidence_id,
+      },
+      view: { kind: "rust", collection: "edges", offset: 3, limit: 1 },
+    });
+    expect(collection.isError, JSON.stringify(collection.content)).not.toBe(
+      true,
+    );
+    expect(
+      parseEvidence(collection.structuredContent).normalized_result,
+    ).toMatchObject({
+      page: { collection: "edges", rows: [] },
+      source_coverage: { embedded_records: "unknown" },
+      coverage: {
+        status: "unavailable",
+        examined: 0,
+        total: null,
+        next_offset: null,
+        exhausted: false,
       },
     });
     const missing = join(root, "never-created");

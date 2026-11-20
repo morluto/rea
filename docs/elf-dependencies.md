@@ -21,11 +21,6 @@ requires an absolute filesystem path and preserves that exact selection:
 }
 ```
 
-The [feature specification](specs/native/elf-dependencies/spec.md),
-[plan](specs/native/elf-dependencies/plan.md) and
-[tasks](specs/native/elf-dependencies/tasks.md) record the requirements and
-verification.
-
 Relocatable objects are not this inventory; use `inspect_kernel_module` for
 Linux kernel modules. Core dumps are not this inventory; use
 `inspect_recorded_crash`.

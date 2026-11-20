@@ -1,6 +1,6 @@
 /**
  * The effect log: one owner of the questions readers ask about recorded
- * effects (docs/adr/javascript/pushed-effect-invalidation.md). Readers ask
+ * effects. Readers ask
  * whether a read may observe an effect; the timing, capture and path proofs
  * stay here. Recorded opaque sites live in javascriptSemanticEffectRecord.ts.
  */
