@@ -6,12 +6,12 @@ import {
   fakeGdbStartupPreamble,
 } from "./gdbTestHelpers.js";
 import { readFileSync } from "node:fs";
-import { chmod, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 
 import { delimiter, join } from "node:path";
 
 import { afterEach, expect, it } from "vitest";
-import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { GdbSessionManager } from "../../../src/gdb/GdbSessionManager.js";
 import { AnalysisSettings } from "../../../src/application/AnalysisSettings.js";
@@ -84,7 +84,7 @@ it("keeps persistent GDB sessions unavailable on Windows", async () => {
 it.skipIf(process.platform === "win32")(
   "spawns GDB from the provider environment snapshot",
   async () => {
-    directory = await createTestTempDirectory("rea-gdb-environment-snapshot-");
+    directory = await mkdtemp(join(tmpdir(), "rea-gdb-environment-snapshot-"));
     const selectedDirectory = join(directory, "selected-bin");
     await import("node:fs/promises").then(({ mkdir }) =>
       mkdir(selectedDirectory),
@@ -133,7 +133,7 @@ process.stdin.on("data", (chunk) => {
 it.skipIf(process.platform === "win32")(
   "classifies an early GDB startup exit as a process failure with diagnostics",
   async () => {
-    directory = await createTestTempDirectory("rea-gdb-startup-early-exit-");
+    directory = await mkdtemp(join(tmpdir(), "rea-gdb-startup-early-exit-"));
     const provider = join(directory, "fake-gdb-exits-during-config.mjs");
     await writeFile(
       provider,
@@ -193,7 +193,7 @@ process.stdin.on("data", (chunk) => {
 it.skipIf(process.platform === "win32")(
   "verifies inferior state after an automatic-loading rejection before cleanup",
   async () => {
-    directory = await createTestTempDirectory("rea-gdb-autoload-reject-");
+    directory = await mkdtemp(join(tmpdir(), "rea-gdb-autoload-reject-"));
     const provider = join(directory, "fake-gdb-autoload-reject.mjs");
     let detachChecked = false;
     await writeFile(
@@ -250,7 +250,7 @@ process.stdin.on("data", (chunk) => {
 it.skipIf(process.platform === "win32")(
   "preserves invalid UTF-8 in startup Evidence when cleanup remains incomplete",
   async () => {
-    directory = await createTestTempDirectory("rea-gdb-startup-invalid-utf8-");
+    directory = await mkdtemp(join(tmpdir(), "rea-gdb-startup-invalid-utf8-"));
     const provider = join(directory, "fake-gdb-startup-invalid-utf8.mjs");
     await writeFile(
       provider,
@@ -311,7 +311,7 @@ process.stdin.on("data", (chunk) => {
 it.skipIf(process.platform === "win32")(
   "bounds persistent GDB sessions before spawning another process",
   async () => {
-    directory = await createTestTempDirectory("rea-gdb-session-limit-");
+    directory = await mkdtemp(join(tmpdir(), "rea-gdb-session-limit-"));
     const provider = join(directory, "fake-gdb.mjs");
     const countPath = join(directory, "spawn-count");
     await writeFile(
@@ -375,7 +375,7 @@ process.stdin.on("data", (chunk) => {
 it.skipIf(process.platform === "win32")(
   "counts established GDB sessions and in-flight reservations together",
   async () => {
-    directory = await createTestTempDirectory("rea-gdb-reservations-");
+    directory = await mkdtemp(join(tmpdir(), "rea-gdb-reservations-"));
     const provider = join(directory, "fake-gdb.mjs");
     await writeFile(
       provider,
@@ -443,7 +443,7 @@ process.stdin.on("data", (chunk) => {
 it.skipIf(process.platform === "win32")(
   "cancels and drains GDB starts before closeAll resolves",
   async () => {
-    directory = await createTestTempDirectory("rea-gdb-start-shutdown-");
+    directory = await mkdtemp(join(tmpdir(), "rea-gdb-start-shutdown-"));
     const provider = join(directory, "fake-gdb-blocked.mjs");
     const pidPath = join(directory, "pid");
     const signalPath = join(directory, "signal");
@@ -528,6 +528,7 @@ afterEach(async () => {
     try {
       await expectNoUnmodeledGdbCommands(unmodeledPath());
     } finally {
+      await rm(directory, { recursive: true, force: true });
       directory = undefined;
     }
   });
@@ -536,7 +537,7 @@ afterEach(async () => {
 it.skipIf(process.platform === "win32")(
   "marks GDB status history truncated when old MI records are discarded",
   async () => {
-    directory = await createTestTempDirectory("rea-gdb-history-truncated-");
+    directory = await mkdtemp(join(tmpdir(), "rea-gdb-history-truncated-"));
     const provider = join(directory, "fake-gdb-history-truncated.mjs");
     await writeFile(
       provider,
@@ -572,7 +573,7 @@ process.stdin.on("data", (chunk) => {
 it.skipIf(process.platform === "win32")(
   "returns partial GDB observations with unknown completion on command timeout",
   async () => {
-    directory = await createTestTempDirectory("rea-gdb-command-timeout-");
+    directory = await mkdtemp(join(tmpdir(), "rea-gdb-command-timeout-"));
     const provider = join(directory, "fake-gdb-command-timeout.mjs");
     await writeFile(
       provider,
@@ -650,8 +651,8 @@ process.stdin.on("data", (chunk) => {
 it.skipIf(process.platform === "win32")(
   "retains timed-out GDB records and cleanup uncertainty when stopping is incomplete",
   async () => {
-    directory = await createTestTempDirectory(
-      "rea-gdb-timeout-cleanup-incomplete-",
+    directory = await mkdtemp(
+      join(tmpdir(), "rea-gdb-timeout-cleanup-incomplete-"),
     );
     const provider = join(directory, "fake-gdb-timeout-cleanup.mjs");
     await writeFile(
@@ -720,7 +721,7 @@ setTimeout(() => process.exit(0), 250);
 it.skipIf(process.platform === "win32")(
   "keeps queued GDB commands serialized when a waiting request is cancelled",
   async () => {
-    directory = await createTestTempDirectory("rea-gdb-queue-cancel-");
+    directory = await mkdtemp(join(tmpdir(), "rea-gdb-queue-cancel-"));
     const provider = join(directory, "fake-gdb-queue-cancel.mjs");
     const overlapPath = join(directory, "overlap");
     await writeFile(
@@ -783,7 +784,7 @@ process.stdin.on("data", (chunk) => {
 it.skipIf(process.platform === "win32")(
   "marks GDB exit-fallback output truncated when MI history was bounded",
   async () => {
-    directory = await createTestTempDirectory("rea-gdb-exit-truncated-");
+    directory = await mkdtemp(join(tmpdir(), "rea-gdb-exit-truncated-"));
     const provider = join(directory, "fake-gdb-exit-truncated.mjs");
     await writeFile(
       provider,
@@ -856,7 +857,7 @@ process.stdin.on("data", (chunk) => {
 it.skipIf(process.platform === "win32")(
   "cancels a running GDB command and retains its closed status",
   async () => {
-    directory = await createTestTempDirectory("rea-gdb-command-cancel-");
+    directory = await mkdtemp(join(tmpdir(), "rea-gdb-command-cancel-"));
     const provider = join(directory, "fake-gdb-command-cancel.mjs");
     await writeFile(
       provider,
@@ -922,7 +923,7 @@ process.stdin.on("data", (chunk) => {
 it.skipIf(process.platform === "win32")(
   "re-reads the configured inferior TTY before detaching after a console alias change",
   async () => {
-    directory = await createTestTempDirectory("rea-gdb-tty-readback-");
+    directory = await mkdtemp(join(tmpdir(), "rea-gdb-tty-readback-"));
     const provider = join(directory, "fake-gdb-tty-readback.mjs");
     const detachPath = join(directory, "detached");
     await writeFile(
@@ -977,7 +978,7 @@ setTimeout(() => process.exit(0), 500);
 it.skipIf(process.platform === "win32")(
   "reports bounded GDB stderr retention in session status",
   async () => {
-    directory = await createTestTempDirectory("rea-gdb-diagnostic-limit-");
+    directory = await mkdtemp(join(tmpdir(), "rea-gdb-diagnostic-limit-"));
     const provider = join(directory, "fake-gdb-diagnostic-limit.mjs");
     await writeFile(
       provider,
@@ -1018,7 +1019,7 @@ process.stdin.on("data", (chunk) => {
 it.skipIf(process.platform === "win32")(
   "converts a GDB stdin pipe failure into a provider session error",
   async () => {
-    directory = await createTestTempDirectory("rea-gdb-stdin-error-");
+    directory = await mkdtemp(join(tmpdir(), "rea-gdb-stdin-error-"));
     const provider = join(directory, "fake-gdb-stdin-error.mjs");
     const stdinClosed = join(directory, "stdin-closed");
     await writeFile(
@@ -1119,7 +1120,7 @@ setInterval(() => {}, 1000);
 it.skipIf(process.platform === "win32")(
   "keeps GDB exit-fallback Evidence scoped to the active command",
   async () => {
-    directory = await createTestTempDirectory("rea-gdb-command-exit-scope-");
+    directory = await mkdtemp(join(tmpdir(), "rea-gdb-command-exit-scope-"));
     const provider = join(directory, "fake-gdb-command-exit-scope.mjs");
     await writeFile(
       provider,
@@ -1230,8 +1231,8 @@ process.stdin.on("data", (chunk) => {
 it.skipIf(process.platform === "win32")(
   "preserves the GDB cleanup failure when a running command is cancelled",
   async () => {
-    directory = await createTestTempDirectory(
-      "rea-gdb-cancel-cleanup-failure-",
+    directory = await mkdtemp(
+      join(tmpdir(), "rea-gdb-cancel-cleanup-failure-"),
     );
     const provider = join(directory, "fake-gdb-cancel-cleanup-failure.mjs");
     await writeFile(
