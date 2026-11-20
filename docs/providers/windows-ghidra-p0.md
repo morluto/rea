@@ -100,6 +100,17 @@ failures remain stable for the process lifetime.
 Other doctor checks, including unconfigured agent integrations, can remain
 unready while Ghidra itself is available.
 
+`rea doctor` also reports a `private-runtime-root` check whether or not a
+provider is configured. On Windows it passes with `details.proof` set to
+`native-authority` only after the native self-test has created a runtime root
+and read its owner and protected DACL back by handle. Otherwise it fails with
+the native `code`, `failure_stage` and remediation described above. Most REA
+workflows allocate a private runtime root, so this failure makes the
+audit-wide result unhealthy; an explicit `--provider`, `--client` or `--skill`
+scope lists it under `informational_checks`. On macOS and Linux the check reports
+`posix-mkdtemp-owner-only`: mkdtemp's owner-only mode 0700, without an ACL
+readback.
+
 `rea setup` can register supported agent integrations and the bundled skill.
 Its existing preview and approval apply to configuration writes. Setup
 preserves valid Ghidra and Java settings even when a separate runtime
