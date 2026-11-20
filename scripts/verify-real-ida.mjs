@@ -15,14 +15,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { access, readdir, writeFile } from "node:fs/promises";
-import {
-  basename,
-  dirname,
-  isAbsolute,
-  join,
-  relative,
-  resolve,
-} from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
@@ -38,6 +31,7 @@ const { values } = parseArgs({
     "expected-string": { type: "string" },
     "expected-xref": { type: "string" },
     "expected-backend": { type: "string" },
+    "verify-peer-cleanup": { type: "boolean" },
     "package-root": { type: "string" },
     report: { type: "string" },
   },
@@ -71,6 +65,9 @@ const [
   { createIdaMcpConnection },
   { idaAddressSchema },
   { hasIdaDatabaseSignature },
+  { hexRaysOpenSchema, hexRaysListSchema, hexRaysCloseSchema },
+  { sameIdaHostPath },
+  { isPathWithinRoot },
 ] = await Promise.all([
   importBuilt("contracts/toolContracts.js"),
   importBuilt("domain/evidence.js"),
@@ -79,6 +76,9 @@ const [
   importBuilt("ida/IdaMcpConnection.js"),
   importBuilt("ida/IdaProtocolValues.js"),
   importBuilt("domain/analysisDatabase.js"),
+  importBuilt("ida/IdaHexRaysProtocol.js"),
+  importBuilt("ida/IdaWorkspace.js"),
+  importBuilt("domain/localPath.js"),
 ]);
 const config = await withVerifierResourceOwner(async (resourceScope) => {
   const registration = await readIdaConfiguration(
@@ -104,6 +104,10 @@ if (
 )
   throw new Error(
     "--expected-backend requires a Hex-Rays registration and an idat or idalib value.",
+  );
+if (values["verify-peer-cleanup"] && config.protocol !== "hexrays")
+  throw new Error(
+    "--verify-peer-cleanup requires a Hex-Rays stdio registration.",
   );
 const environment = Object.fromEntries(
   Object.entries({
@@ -224,6 +228,68 @@ const cli = async () => {
   report.checks.push("production CLI and complete function Evidence");
   return dossier;
 };
+const verifyPeerCleanup = async (analysis, closeWithPeer, retryClose) => {
+  phase = "Hex-Rays peer lease cleanup";
+  const privateInput = privateIdaInput(
+    analysis.raw_result.metadata_before,
+    target,
+    targetIsDatabase,
+  );
+  const workspace = dirname(privateInput);
+  assert.ok(workspaces.has(workspace));
+  const peer = createIdaMcpConnection(config, process.env, {
+    platform: process.platform,
+  });
+  let instanceId;
+  const releasePeer = async () => {
+    if (instanceId === undefined) return;
+    hexRaysCloseSchema.parse(
+      await peer.call("close_database", { instance_id: instanceId }),
+    );
+    instanceId = undefined;
+  };
+
+  await withVerifierCleanup(async () => {
+    await peer.connect();
+    const lease = hexRaysOpenSchema.parse(
+      await peer.call("open_database", {
+        path: privateInput,
+        set_current: false,
+      }),
+    );
+    instanceId = lease.instance_id;
+    assert.equal(lease.backend, analysis.raw_result.worker_backend);
+
+    const retained = requireMcpToolError(await closeWithPeer());
+    assert.equal(retained.code, "cleanup_incomplete");
+    const resources = retained.details?.resources;
+    assert.ok(
+      Array.isArray(resources) && resources.includes(workspace),
+      "The cleanup error must identify the retained workspace.",
+    );
+    await access(privateInput);
+    const inventory = hexRaysListSchema.parse(
+      await peer.call("list_databases", {}),
+    );
+    const held = inventory.instances.find(
+      (row) => row.instance_id === instanceId,
+    );
+    assert.ok(held?.status === "current" || held?.status === "attached");
+    assert.equal(held.backend, lease.backend);
+    assert.ok(
+      sameIdaHostPath(held.path, privateInput),
+      "The peer lease must still bind the private input.",
+    );
+
+    await releasePeer();
+    await retryClose();
+    await assert.rejects(access(workspace), { code: "ENOENT" });
+    report.checks.push(
+      "a second Hex-Rays client retains the private database until its lease is released and REA retries cleanup",
+    );
+  }, [releasePeer, () => peer.close()]);
+};
+
 const mcp = async (cliDossier) => {
   const client = new Client({ name: "rea-real-ida-verifier", version: "1" });
   const transport = await createOwnedMcpStdioTransport({
@@ -435,7 +501,23 @@ const mcp = async (cliDossier) => {
     });
     assert.equal(invalid.isError, true);
     assert.equal(requireMcpToolError(invalid).code, "invalid_request");
-    await call("close_binary", {});
+    if (values["verify-peer-cleanup"])
+      await verifyPeerCleanup(
+        analyzed,
+        () =>
+          client.callTool(
+            { name: "close_binary", arguments: {} },
+            { timeout: config.timeoutMs * 2 },
+          ),
+        () => call("close_binary", {}),
+      );
+    else {
+      await call("close_binary", {});
+      if (config.protocol === "hexrays")
+        report.unverified.push(
+          "Peer-held Hex-Rays cleanup: --verify-peer-cleanup was not selected.",
+        );
+    }
     opened = false;
     report.checks.push(
       "one MCP connection, positive procedure inventory/search, contract-valid tool results, invalid input, and close",
@@ -474,13 +556,12 @@ const cleanup = async () => {
         // Leases are per server process, so a fresh server proves release by
         // listing no live database inside any REA private workspace.
         const inventory = await upstream.call("list_databases", {});
-        const inside = (workspace, path) => {
-          const rest = relative(workspace, path);
-          return rest !== "" && !rest.startsWith("..") && !isAbsolute(rest);
-        };
         assert.ok(
           inventory.instances.every(({ path }) =>
-            [...workspaces].every((workspace) => !inside(workspace, path)),
+            [...workspaces].every(
+              (workspace) =>
+                !isAbsolute(path) || !isPathWithinRoot(workspace, path),
+            ),
           ),
         );
       } else {
@@ -512,7 +593,7 @@ try {
   // Engines write databases beside their input; only the private copy may get one.
   assert.deepEqual((await readdir(dirname(target))).sort(), siblings);
   report.checks.push(
-    "original binary unchanged, never executed, and no files written beside it",
+    "original target bytes and sibling directory entries unchanged",
   );
   report.passed = true;
 } catch (cause) {
