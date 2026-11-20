@@ -1802,6 +1802,64 @@ it("reads a config shared by many manifests once", async () => {
   expect(report.coverage.json_bytes_read).toBe(expected);
 });
 
+it("refuses index entry text that accumulates past max_descriptor_bytes", async () => {
+  const root = await createTestTempDirectory("rea-oci-descriptor-bytes-");
+  const written = await writeOciImageLayoutFixture(root);
+  const OCI_INDEX = "application/vnd.oci.image.index.v1+json";
+  const entry = {
+    mediaType: "application/vnd.oci.image.manifest.v1+json",
+    digest: written.manifestDigest,
+    size: written.manifestSize,
+    annotations: { note: "x".repeat(200) },
+  };
+  const nested = [];
+  for (let index = 0; index < 3; index += 1) {
+    const body = `${JSON.stringify({
+      schemaVersion: 2,
+      mediaType: OCI_INDEX,
+      manifests: [
+        {
+          ...entry,
+          annotations: { note: `${String(index)}${"x".repeat(200)}` },
+        },
+      ],
+    })}\n`;
+    nested.push({
+      mediaType: OCI_INDEX,
+      digest: await putOciBlob(root, body),
+      size: Buffer.byteLength(body),
+    });
+  }
+  await writeFile(
+    join(root, "index.json"),
+    `${JSON.stringify({ schemaVersion: 2, mediaType: OCI_INDEX, manifests: nested })}\n`,
+  );
+  const reader = new DirectoryArtifactReader(root);
+  try {
+    await expect(
+      parseOciImageLayout(
+        reader,
+        inspectOciImageLayoutInputSchema.parse({
+          path: root,
+          max_descriptor_bytes: 1024,
+        }),
+      ),
+    ).rejects.toSatisfy((cause: unknown) => {
+      expect(cause).toBeInstanceOf(ParseFailureError);
+      if (!(cause instanceof ParseFailureError)) return false;
+      expect(cause.failure).toMatchObject({
+        kind: "limit",
+        limit: { name: "max_descriptor_bytes", maximum: 1024 },
+      });
+      return true;
+    });
+  } finally {
+    await reader.close();
+  }
+  const report = await inspectLayout(root);
+  expect(report.indexes).toHaveLength(4);
+});
+
 it("refuses a layout whose shared config expands past max_config_bytes", async () => {
   const root = await createTestTempDirectory("rea-oci-config-bytes-");
   await writeSharedLayerLayout(root, 5, 1);

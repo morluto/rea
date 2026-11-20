@@ -818,6 +818,34 @@ const inventoryOciImageLayout = async (
       );
   };
 
+  // Index entries keep their text, annotations included, in the report, so
+  // every retained entry spends max_descriptor_bytes before it is added.
+  let descriptorBytesRetained = 0;
+  const chargeDescriptorBytes = (
+    descriptor: OciImageLayoutIndex["entries"][number],
+  ): void => {
+    let bytes =
+      Buffer.byteLength(descriptor.digest) +
+      Buffer.byteLength(descriptor.media_type);
+    for (const text of Object.values(descriptor.platform ?? {}))
+      if (text !== null) bytes += Buffer.byteLength(text);
+    for (const annotation of descriptor.annotations)
+      bytes +=
+        Buffer.byteLength(annotation.name) +
+        Buffer.byteLength(annotation.value);
+    descriptorBytesRetained += bytes;
+    if (descriptorBytesRetained > input.max_descriptor_bytes)
+      throw decodeLimit(
+        OCI_IMAGE_LAYOUT_FORMAT,
+        `OCI image layout index entries exceed the ${String(input.max_descriptor_bytes)}-byte budget.`,
+        {
+          name: "max_descriptor_bytes",
+          maximum: input.max_descriptor_bytes,
+          required: descriptorBytesRetained,
+        },
+      );
+  };
+
   // A referenced index, manifest or config that could not be read leaves its
   // facts unexamined, whatever finding explains why.
   let referencedJsonSkipped = false;
@@ -1047,6 +1075,7 @@ const inventoryOciImageLayout = async (
         );
         continue;
       }
+      chargeDescriptorBytes(descriptor);
       indexEntries.push(descriptor);
       reportSizeDefect(
         `Index ${digest} manifests[${String(position)}]`,
