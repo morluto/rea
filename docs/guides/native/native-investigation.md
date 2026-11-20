@@ -770,7 +770,13 @@ Selected plist paths preserve filesystem resolution, including `..` after a
 directory symlink and trailing directory separators. Resource-only bundle
 sessions resolve relative selections from the bundle root with the same path
 semantics as executable sessions; the reported source path retains those
-selected segments.
+selected segments. `source_sha256` identifies the stable bytes used for
+classification, decoding, and any native conversion. In an executable session the
+Evidence subject remains the open program, the same binding as other
+bundle-resource observations. A resource-only session keeps a null subject.
+For either bundle session, the selected plist must resolve inside the opened
+bundle. Use `rea inspect-plist <path>` or open the plist itself in MCP when
+it resides outside the bundle.
 
 A conversion refusal includes plutil's diagnostic from either output stream.
 `details.captured_output` retains bounded stdout/stderr excerpts, observed byte

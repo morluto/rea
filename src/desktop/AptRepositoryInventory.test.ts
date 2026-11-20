@@ -17,6 +17,7 @@ import {
   VENDOR_A,
   VENDOR_B,
 } from "../domain/desktop/aptKeys.fixture.js";
+import { exportInstall } from "../domain/desktop/appExportInstall.js";
 import {
   aptListFileName,
   declaredPackageFiles,
@@ -224,6 +225,226 @@ aptPathIt.each([
     expect(JSON.stringify(facts.repositories)).not.toMatch(
       /test-user|test-secret/u,
     );
+  },
+);
+
+it.skipIf(process.platform === "win32").each([
+  {
+    authored: "ma%69n cont%72ib",
+    effective: ["main", "contrib"],
+    replayable: true,
+  },
+  { authored: '"main extra"', effective: ["main extra"], replayable: false },
+])(
+  "uses the same replay decision for one-line repository components $authored",
+  async ({ authored, effective, replayable }) => {
+    const root = await createTestTempDirectory("apt-list-replay-");
+    const file = join(root, "vendor.list");
+    const key = join(root, "vendor.gpg");
+    const uri = "https://vendor.invalid/apt";
+    const suite = '"st%61ble"';
+    const baseUri = `${uri}/dists/stable/`;
+    await writeFile(key, VENDOR_A.key);
+    await writeFile(
+      join(root, `${aptListFileName(baseUri)}InRelease`),
+      "controlled release",
+    );
+    await writeFile(
+      file,
+      `deb [signed-by=${key}] "${uri}" ${suite} ${authored}\n`,
+    );
+    const descriptions = effective.map(
+      (component) => `${uri} stable/${component} amd64 Packages`,
+    );
+    const output = effective
+      .map((component, index) =>
+        [
+          `Description: ${descriptions[index]}`,
+          `Sourcesentry: ${file}:1`,
+          `Repo-URI: ${uri}/`,
+          "Release: stable",
+          "Suite: stable",
+          `Component: ${component}`,
+          `Base-URI: ${baseUri}`,
+          `Filename: ${join(root, "Packages")}`,
+        ].join("\n"),
+      )
+      .join("\n\n");
+    const runQuery: QueryRunner = async (command) => {
+      if (command === "apt-get") return { stdout: output, exitCode: 0 };
+      if (command === "gpgv") return { stdout: GPGV_A_ONLY, exitCode: 2 };
+      throw new Error(`Unexpected query ${command}`);
+    };
+    const sources = descriptions.slice(0, 1);
+    const facts = await inspectAptRepositories(
+      { sources, origins: ["Vendor"] },
+      { runQuery, apt: { lists: root, trustedParts: root, trusted: key } },
+      undefined,
+    );
+    expect(facts.repositories).toEqual([
+      expect.objectContaining({
+        uri: `"${uri}"`,
+        repo_uri: `${uri}/`,
+        suite,
+        repo_suite: "stable",
+        repo_components: effective,
+        signing_key: expect.objectContaining({
+          fingerprint: VENDOR_A.fingerprint,
+        }),
+      }),
+    ]);
+    expect(
+      declaredPackageFiles(facts.repositories, facts.indexTargets),
+    ).toEqual(new Set(replayable ? descriptions : []));
+    const install = exportInstall(
+      {
+        kind: "deb",
+        name: "example:amd64",
+        version: "1.0",
+        architecture: "amd64",
+        sources,
+        source_origins: ["Vendor"],
+        package_lists_present: true,
+        apt_repositories: [...facts.repositories],
+      },
+      "example",
+      "x64",
+    );
+    if (replayable)
+      expect(install).toMatchObject({
+        ok: true,
+        value: {
+          sources: [{ uri, suite: "stable", components: effective }],
+        },
+      });
+    else
+      expect(install).toMatchObject({
+        ok: false,
+        error: {
+          reason: expect.stringContaining(
+            "one AgentEnv deb822 component token",
+          ),
+        },
+      });
+  },
+);
+
+it("records an expanded APT source suite separately from the authored suite", async (context) => {
+  context.skip(!onPosixHost, "the sources entry is a Windows drive path");
+  const root = await createTestTempDirectory("apt-source-suite-");
+  const file = join(root, "vendor.sources");
+  const uri = "https://vendor.invalid/archive/";
+  const suite = "stable/binary-$(ARCH)/";
+  const repoSuite = "stable/binary-x86_64/";
+  await writeFile(
+    file,
+    `Types: deb\nURIs: ${uri}\nSuites: ${suite} fallback/\n`,
+  );
+  const source = `${uri.slice(0, -1)} ${repoSuite} Packages`;
+  const output = [
+    `Description: ${source}`,
+    `Sourcesentry: ${file}:1`,
+    `Repo-URI: ${uri}`,
+    `Release: ${repoSuite}`,
+    `Base-URI: ${uri}${repoSuite}`,
+    `Filename: ${join(root, "Packages")}`,
+  ].join("\n");
+  const runQuery: QueryRunner = async (command) => {
+    if (command !== "apt-get") throw new Error(`Unexpected query ${command}`);
+    return { stdout: output, exitCode: 0 };
+  };
+  const facts = await inspectAptRepositories(
+    { sources: [source], origins: ["Vendor"] },
+    {
+      runQuery,
+      apt: {
+        lists: root,
+        trustedParts: root,
+        trusted: join(root, "trusted.gpg"),
+        configuredArchitecture: "x86_64",
+      },
+    },
+    undefined,
+  );
+  expect(facts.repositories[0]).toMatchObject({
+    suite,
+    repo_suite: repoSuite,
+    release: null,
+  });
+});
+
+aptPathIt.each([
+  ["https://vendor.invalid:/archive", "https://vendor.invalid/archive/"],
+  [
+    "https://vendor.invalid:80abc/archive",
+    "https://vendor.invalid:80/archive/",
+  ],
+  ["https://vendor.invalid:https/archive", "https://vendor.invalid/archive/"],
+  ["https://[2001:db8::11]:80abc/apt", "https://[2001:db8::11]:80/apt/"],
+  ["https://[2001:db8::11]:https/apt", "https://[2001:db8::11]/apt/"],
+])(
+  "retains authored %s when APT reports %s, including its signing key",
+  async (authored, repoUri) => {
+    const root = await createTestTempDirectory("apt-port-suffix-");
+    const sources = join(root, "vendor.sources");
+    const key = join(root, "vendor.gpg");
+    const lists = join(root, "lists");
+    const baseUri = `${repoUri}dists/stable/`;
+    const source = `${repoUri.slice(0, -1)} stable/main amd64 Packages`;
+    await mkdir(lists);
+    await writeFile(key, VENDOR_A.key);
+    await writeFile(
+      join(lists, `${aptListFileName(baseUri)}InRelease`),
+      "controlled release",
+    );
+    await writeFile(
+      sources,
+      `Types: deb\nURIs: ${authored}\nSuites: stable\nComponents: main\nSigned-By: ${key}\n`,
+    );
+    const targets = [
+      `Description: ${source}`,
+      `Sourcesentry: ${sources}:1`,
+      `Repo-URI: ${repoUri}`,
+      "Release: stable",
+      "Suite: stable",
+      "Component: main",
+      `Base-URI: ${baseUri}`,
+      `Filename: ${join(lists, "Packages")}`,
+    ].join("\n");
+    const runQuery: QueryRunner = async (command) => {
+      if (command === "apt-get") return { stdout: targets, exitCode: 0 };
+      if (command !== "gpgv") throw new Error(`Unexpected query ${command}`);
+      return { stdout: GPGV_A_ONLY, exitCode: 2 };
+    };
+    const facts = await inspectAptRepositories(
+      { sources: [source], origins: ["Vendor"] },
+      {
+        runQuery,
+        apt: { lists, trustedParts: root, trusted: join(root, "trusted.gpg") },
+      },
+      undefined,
+    );
+
+    expect(facts.repositories).toEqual([
+      expect.objectContaining({
+        source,
+        sources_file: sources,
+        uri: authored,
+        repo_uri: repoUri,
+        uri_credentials_removed: false,
+        suite: "stable",
+        components: ["main"],
+        architectures: [],
+        release: "stable",
+        signing_key: expect.objectContaining({
+          path: key,
+          format: "binary",
+          fingerprint: VENDOR_A.fingerprint,
+        }),
+      }),
+    ]);
+    expect(facts.repositories[0]).not.toHaveProperty("signing_key_reason");
+    expect([...facts.keys.values()]).toEqual([VENDOR_A.key]);
   },
 );
 
@@ -532,19 +753,66 @@ describe.skipIf(
           `Dir::Etc::Trusted=${selected.trusted}`,
           "-o",
           `Dir::State::status=${selected.status}`,
+          "-o",
+          "APT::Architecture=armhf",
           ...argv,
         ],
         signal,
       );
-    expect(await resolveAptLocations(configured, undefined)).toEqual(selected);
+    expect(await resolveAptLocations(configured, undefined)).toEqual({
+      ...selected,
+      configuredArchitecture: "armhf",
+    });
   });
+
+  it.each([
+    ["x86_64", "x86_64"],
+    ["amd64", "amd64"],
+    ["../etc", undefined],
+    ["x86_64/etc", undefined],
+  ] as const)(
+    "keeps APT architecture %s only when it is an architecture token",
+    async (configured, kept) => {
+      const root = await createTestTempDirectory("apt-config-arch-");
+      const selected = {
+        lists: `${root}/lists/`,
+        trustedParts: `${root}/trusted/`,
+        trusted: `${root}/trusted.gpg`,
+        status: `${root}/status`,
+      };
+      const configuredQuery: QueryRunner = (command, argv, signal) =>
+        runHostQuery(
+          command,
+          [
+            "-o",
+            `Dir::State::Lists=${selected.lists}`,
+            "-o",
+            `Dir::Etc::TrustedParts=${selected.trustedParts}`,
+            "-o",
+            `Dir::Etc::Trusted=${selected.trusted}`,
+            "-o",
+            `Dir::State::status=${selected.status}`,
+            "-o",
+            `APT::Architecture=${configured}`,
+            ...argv,
+          ],
+          signal,
+        );
+      const locations = await resolveAptLocations(configuredQuery, undefined);
+      expect(locations).toEqual(
+        kept === undefined
+          ? selected
+          : { ...selected, configuredArchitecture: kept },
+      );
+    },
+  );
 
   it("reads the lists folder an APT_CONFIG file names, resolved under Dir::State", async () => {
     const root = await createTestTempDirectory("apt-config-");
     const config = join(root, "apt.conf");
     await writeFile(
       config,
-      `Dir::State "${root}/state";\nDir::State::Lists "user lists";\n`,
+      `Dir::State "${root}/state";\nDir::State::Lists "user lists";\nAPT::Architecture "amd64";\n`,
     );
     const configured: QueryRunner = (command, argv, signal) =>
       runHostQuery("env", [`APT_CONFIG=${config}`, command, ...argv], signal);
@@ -556,6 +824,7 @@ describe.skipIf(
       trustedParts: "/etc/apt/trusted.gpg.d/",
       trusted: "/etc/apt/trusted.gpg",
       status: "/var/lib/dpkg/status",
+      configuredArchitecture: "amd64",
     });
     expect(
       await resolveAptLocations(

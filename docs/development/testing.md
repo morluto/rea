@@ -791,6 +791,16 @@ recovery or display when those belong to the consumer. For generated
 installers and verifiers, exercise the emitted artifact in its supported
 runtime so the test covers the code that actually receives the input.
 
+When detection and detailed inspection share a reader, compare a valid
+input, a recognizable malformed input, and a valid input whose examined
+prefix ends at the budget when those cases apply. Assert the recognized
+format, which fields are established, and the coverage and diagnostics in
+each consumer. If the source feeds both a digest and a converter, exercise a
+change to the original between the snapshot read and conversion. Assert that
+the digest and converted value describe the same bytes, or that the operation
+returns a typed failure. Check advertised effects and the lifecycle of any
+temporary copy.
+
 | Failure class                         | Regression that catches it                                                                                                                                                                                                                                                                                                                         |
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Format assumptions                    | Pair valid padding, offsets, or names containing delimiters with malformed input. Identify the producer revision when behavior varies by version; an unrelated runtime API's range is not an on-disk format limit.                                                                                                                                 |
