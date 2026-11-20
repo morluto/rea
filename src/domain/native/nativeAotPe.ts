@@ -264,8 +264,22 @@ const readMappedPointer = (
 };
 
 const METHOD_TABLE_RECORD_BYTES = 32;
+const METHOD_TABLE_RECORD = {
+  address: 0,
+  flags: 8,
+  baseSize: 12,
+  related: 16,
+  slotsCount: 24,
+  interfacesCount: 26,
+  included: 28,
+} as const;
+
 class MethodTableIndex {
-  #records = Buffer.alloc(0);
+  #records = new BinaryReader(
+    Buffer.alloc(0),
+    true,
+    "NativeAOT MethodTable index",
+  );
   #count = 0;
   #includedCount = 0;
 
@@ -281,15 +295,24 @@ class MethodTableIndex {
   append(table: MethodTable): boolean {
     if (!this.#ensureCapacity(this.#count + 1)) return false;
     const offset = this.#count * METHOD_TABLE_RECORD_BYTES;
-    this.#records.writeBigUInt64LE(table.address, offset);
-    this.#records.writeUInt32LE(table.flags, offset + 8);
-    this.#records.writeUInt32LE(table.baseSize, offset + 12);
-    this.#records.writeBigUInt64LE(table.related, offset + 16);
-    this.#records.writeUInt16LE(table.slotsCount, offset + 24);
-    this.#records.writeUInt16LE(table.interfacesCount, offset + 26);
-    this.#records.writeUInt8(0, offset + 28);
-    this.#records.writeUInt8(0, offset + 29);
-    this.#records.writeUInt16LE(0, offset + 30);
+    const { bytes } = this.#records;
+    bytes.writeBigUInt64LE(table.address, offset + METHOD_TABLE_RECORD.address);
+    bytes.writeUInt32LE(table.flags, offset + METHOD_TABLE_RECORD.flags);
+    bytes.writeUInt32LE(table.baseSize, offset + METHOD_TABLE_RECORD.baseSize);
+    bytes.writeBigUInt64LE(table.related, offset + METHOD_TABLE_RECORD.related);
+    bytes.writeUInt16LE(
+      table.slotsCount,
+      offset + METHOD_TABLE_RECORD.slotsCount,
+    );
+    bytes.writeUInt16LE(
+      table.interfacesCount,
+      offset + METHOD_TABLE_RECORD.interfacesCount,
+    );
+    bytes.fill(
+      0,
+      offset + METHOD_TABLE_RECORD.included,
+      offset + METHOD_TABLE_RECORD_BYTES,
+    );
     this.#count++;
     return true;
   }
@@ -299,12 +322,14 @@ class MethodTableIndex {
       return undefined;
     const offset = index * METHOD_TABLE_RECORD_BYTES;
     return {
-      address: this.#records.readBigUInt64LE(offset),
-      flags: this.#records.readUInt32LE(offset + 8),
-      baseSize: this.#records.readUInt32LE(offset + 12),
-      related: this.#records.readBigUInt64LE(offset + 16),
-      slotsCount: this.#records.readUInt16LE(offset + 24),
-      interfacesCount: this.#records.readUInt16LE(offset + 26),
+      address: this.#records.word(offset + METHOD_TABLE_RECORD.address, 64),
+      flags: this.#records.u32(offset + METHOD_TABLE_RECORD.flags),
+      baseSize: this.#records.u32(offset + METHOD_TABLE_RECORD.baseSize),
+      related: this.#records.word(offset + METHOD_TABLE_RECORD.related, 64),
+      slotsCount: this.#records.u16(offset + METHOD_TABLE_RECORD.slotsCount),
+      interfacesCount: this.#records.u16(
+        offset + METHOD_TABLE_RECORD.interfacesCount,
+      ),
     };
   }
 
@@ -312,13 +337,18 @@ class MethodTableIndex {
     return (
       index >= 0 &&
       index < this.#count &&
-      this.#records.readUInt8(index * METHOD_TABLE_RECORD_BYTES + 28) !== 0
+      this.#records.u8(
+        index * METHOD_TABLE_RECORD_BYTES + METHOD_TABLE_RECORD.included,
+      ) !== 0
     );
   }
 
   include(index: number): void {
     if (!this.isIncluded(index)) {
-      this.#records.writeUInt8(1, index * METHOD_TABLE_RECORD_BYTES + 28);
+      this.#records.bytes.writeUInt8(
+        1,
+        index * METHOD_TABLE_RECORD_BYTES + METHOD_TABLE_RECORD.included,
+      );
       this.#includedCount++;
     }
   }
@@ -334,8 +364,9 @@ class MethodTableIndex {
       const next = storage.subarray(this.#count, this.#count * 2).fill(-1);
       const queue = storage.subarray(this.#count * 2);
       for (let index = 0; index < this.#count; index += 1) {
-        const related = this.#records.readBigUInt64LE(
-          index * METHOD_TABLE_RECORD_BYTES + 16,
+        const related = this.#records.word(
+          index * METHOD_TABLE_RECORD_BYTES + METHOD_TABLE_RECORD.related,
+          64,
         );
         if (related === 0n) continue;
         const parent = this.find(related, this.budget);
@@ -394,12 +425,18 @@ class MethodTableIndex {
       if (!budget.consumeWork(8)) return -1;
       const middle = low + ((high - low) >>> 1);
       const record = middle * METHOD_TABLE_RECORD_BYTES;
-      const candidate = this.#records.readBigUInt64LE(record);
+      const candidate = this.#records.word(
+        record + METHOD_TABLE_RECORD.address,
+        64,
+      );
       if (candidate < address) low = middle + 1;
       else high = middle;
     }
     return low < this.#count &&
-      this.#records.readBigUInt64LE(low * METHOD_TABLE_RECORD_BYTES) === address
+      this.#records.word(
+        low * METHOD_TABLE_RECORD_BYTES + METHOD_TABLE_RECORD.address,
+        64,
+      ) === address
       ? low
       : -1;
   }
@@ -421,10 +458,11 @@ class MethodTableIndex {
 
   #ensureCapacity(requiredRecords: number): boolean {
     const requiredBytes = requiredRecords * METHOD_TABLE_RECORD_BYTES;
-    if (requiredBytes <= this.#records.byteLength) return true;
+    const { bytes, little, format } = this.#records;
+    if (requiredBytes <= bytes.byteLength) return true;
     const capacityBytes = Math.min(
       this.budget.limits.workingMemoryBytes,
-      Math.max(requiredBytes, this.#records.byteLength * 2 || 4096),
+      Math.max(requiredBytes, bytes.byteLength * 2 || 4096),
     );
     if (capacityBytes < requiredBytes) {
       this.budget.truncationReason ??= "working-memory-budget";
@@ -432,9 +470,9 @@ class MethodTableIndex {
     }
     if (!this.budget.reserveWorkingMemory(capacityBytes)) return false;
     const expanded = Buffer.allocUnsafe(capacityBytes);
-    this.#records.copy(expanded, 0, 0, this.#count * METHOD_TABLE_RECORD_BYTES);
-    this.budget.releaseWorkingMemory(this.#records.byteLength);
-    this.#records = expanded;
+    bytes.copy(expanded, 0, 0, this.#count * METHOD_TABLE_RECORD_BYTES);
+    this.budget.releaseWorkingMemory(bytes.byteLength);
+    this.#records = new BinaryReader(expanded, little, format);
     return true;
   }
 }
