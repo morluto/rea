@@ -88,6 +88,8 @@ export const webBundleEndpointRowSchema = z.strictObject({
   value: endpointSchema.shape.value.optional(),
   mechanism: endpointSchema.shape.mechanism.optional(),
   location: sourceLocationSchema.optional(),
+  occurrences: endpointSchema.shape.occurrences.optional(),
+  script_keys: endpointSchema.shape.script_keys.optional(),
 });
 
 export const webBundleInferenceRowSchema = z.strictObject({
@@ -362,7 +364,9 @@ export const projectWebBundleView = (
             (indices === undefined || indices.has(index)) &&
             (values === undefined || values.has(row.value)) &&
             (scriptKeys === undefined ||
-              scriptKeys.has(row.location.script_key)) &&
+              (row.script_keys !== undefined
+                ? row.script_keys.some((key) => scriptKeys.has(key))
+                : scriptKeys.has(row.location.script_key))) &&
             (mechanisms === undefined || mechanisms.has(row.mechanism)),
       (row, source_index) => ({
         source_index,

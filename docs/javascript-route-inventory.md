@@ -51,8 +51,11 @@ Both row collections accept exact `indices`, `values`, `script_keys`, `fields`,
 `kinds`. Filters combine with AND, and an explicit empty selector matches no
 rows. Every row retains its `source_index` in the original collection, including
 when other fields are omitted. This identity is scoped to the parent Evidence
-and collection. Original ordering and separate occurrences of duplicate values
-are preserved; request endpoint `location` or inference `basis` for source details.
+and collection. Original ordering is preserved. Endpoints are deduplicated
+across scripts by value and mechanism: the retained row keeps the first
+occurrence's `location`, and `occurrences` and `script_keys` record how many
+scripts contained the same finding and which ones; request endpoint
+`location` or inference `basis` for source details.
 
 Follow `coverage.next_offset` until `coverage.exhausted`; those fields describe
 the selected rows, independently of producer `completeness`. Each response also

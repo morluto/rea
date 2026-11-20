@@ -259,10 +259,14 @@ const appendDeduplicatedFindings = (
       continue;
     }
     retained.occurrences = (retained.occurrences ?? 1) + 1;
-    retained.script_keys = [
-      ...(retained.script_keys ?? [retained.location.script_key]),
-      finding.location.script_key,
-    ];
+    if (retained.script_keys === undefined) {
+      retained.script_keys = [
+        retained.location.script_key,
+        finding.location.script_key,
+      ];
+    } else {
+      retained.script_keys.push(finding.location.script_key);
+    }
   }
 };
 
@@ -513,11 +517,19 @@ const buildCompleteness = (
   visited_ast_nodes: input.visitedNodes,
 });
 
+/**
+ * Reported when findings are merged across scripts. Wording may change, but
+ * the limitation itself must stay so callers know the retained location is
+ * the first occurrence only.
+ */
+export const CROSS_SCRIPT_DEDUP_LIMITATION =
+  "Routes and endpoints are deduplicated across scripts by value and mechanism; the retained entry keeps the first occurrence's location, and occurrences and script_keys record the scripts that contained the same finding.";
+
 const bundleLimitations = (): WebBundleAnalysis["limitations"] => [
   "Static bundle findings are observations or bounded inferences; REA does not execute captured JavaScript.",
   "Bare string arguments of unbound HTTP-method-named calls are low-confidence endpoint candidates; form, translation, storage and other APIs can use the same syntax. URL-shaped findings still do not prove network execution.",
   'Endpoint candidates are deduplicated by script, value and detector; basis retains only the first matching source coordinate. They are not a complete call-site inventory or a runtime occurrence count. completeness.status="complete" describes examination of captured source, not a call-site census.',
-  "Routes and endpoints are deduplicated across scripts by value and mechanism; the retained entry keeps the first occurrence's location, and occurrences and script_keys record the scripts that contained the same finding.",
+  CROSS_SCRIPT_DEDUP_LIMITATION,
   "String-built routes and endpoints, encrypted configuration, and server-side behavior may remain unknown.",
   "Page-declared WebMCP metadata is untrusted and is never registered or invoked as an REA tool.",
 ];

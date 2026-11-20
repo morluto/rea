@@ -6,7 +6,10 @@ import { createWebPageInspection } from "../../tests/support/browser/webPageInsp
 import { analyzeJavaScriptStaticSource } from "../../tests/fixtures/javascriptStaticAnalysis.js";
 import { analyzeCapturedWebScript } from "./webBundleAnalyzer.js";
 import { analyzeWebBundleFixture } from "../../tests/support/browser/analyzeWebBundleFixture.js";
-import { buildCapturedWebBundleAnalysis } from "./webBundleAnalyzerResult.js";
+import {
+  buildCapturedWebBundleAnalysis,
+  CROSS_SCRIPT_DEDUP_LIMITATION,
+} from "./webBundleAnalyzerResult.js";
 import { webBundleAnalysisSchema } from "./webBundleAnalysis.js";
 import { isIncludedScript } from "./webBundleAnalyzerState.js";
 import { webBundleScriptAnalysisSchema } from "./webBundleScriptAnalysis.js";
@@ -1036,9 +1039,7 @@ describe("web bundle cross-script finding deduplication", () => {
     expect(endpoints[1]).not.toHaveProperty("script_keys");
     expect(endpoints[2]).not.toHaveProperty("occurrences");
     expect(webBundleAnalysisSchema.parse(result)).toEqual(result);
-    expect(result.limitations).toContain(
-      "Routes and endpoints are deduplicated across scripts by value and mechanism; the retained entry keeps the first occurrence's location, and occurrences and script_keys record the scripts that contained the same finding.",
-    );
+    expect(result.limitations).toContain(CROSS_SCRIPT_DEDUP_LIMITATION);
   });
 
   it("merges the same route across scripts", () => {
