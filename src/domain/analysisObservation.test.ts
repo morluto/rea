@@ -29,9 +29,10 @@ it("preserves selected Evidence authority alongside immutable snapshot ownership
   });
   expect(isImmutableEvidence(evidence)).toBe(true);
   expect(Object.isFrozen(evidence.normalized_result)).toBe(true);
+  // No file subject or explicit authority establishes shipped-artifact provenance.
   expect(
     createAnalysisExecutionEvidence("inspect", {}, observation, "observed", {
       immutable: true,
     }).authority,
-  ).toBe("shipped-artifact");
+  ).toBe("analyst-inference");
 });
