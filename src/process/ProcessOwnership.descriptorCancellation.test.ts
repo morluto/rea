@@ -1,13 +1,7 @@
-import {
-  mkdtemp,
-  mkdir,
-  rm,
-  writeFile,
-  type FileHandle,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 
@@ -79,8 +73,7 @@ const prepare = async () => {
   fixture.onReadFailure = undefined;
   fixture.onClosed = undefined;
   fixture.onDeniedClose = undefined;
-  const root = await mkdtemp(join(tmpdir(), "rea-inspection-descriptor-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const root = await createTestTempDirectory("rea-inspection-descriptor-");
   const rows = [42, 43, 44].map((pid) => ({
     pid,
     parentPid: 1,

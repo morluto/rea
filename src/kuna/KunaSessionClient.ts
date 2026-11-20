@@ -44,7 +44,11 @@ import {
   type AnalysisSearchQuery,
 } from "../domain/analysisSearch.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
-import type { EvidenceLocation } from "../domain/evidence.js";
+import {
+  createEvidence,
+  type Evidence,
+  type EvidenceLocation,
+} from "../domain/evidence.js";
 import { combineFunctionRelationshipCoverage } from "../domain/functionCallCoverage.js";
 import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
@@ -52,6 +56,7 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { providerCleanupErrorFromFailures } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   classifyProviderFailure,
@@ -88,9 +93,14 @@ import {
 } from "./KunaProjectFiles.js";
 import {
   KUNA_LAYOUT_NOT_APPLICABLE,
+  kunaDataEntriesMessage,
+  kunaDataEntriesRemediation,
   kunaDataEntryMessage,
+  kunaDataEntryRemediation,
   kunaDataNameLimitation,
+  type KunaDataPlacement,
   kunaEntryLimitations,
+  kunaExecutableInstructionRegion,
   kunaInventoryLimitations,
   MACHO_LOAD_COMMAND_PREFIX,
   placeKunaEntry,
@@ -150,8 +160,8 @@ type AnswerSource =
 interface InventoryIndex {
   readonly inventory: readonly KunaInventoryFunction[];
   readonly layout: KunaInventoryLayout;
-  /** The data region of each entry the layout places in data. */
-  readonly data: ReadonlyMap<KunaInventoryFunction, string>;
+  /** The data placement of each entry the layout places in data. */
+  readonly data: ReadonlyMap<KunaInventoryFunction, KunaDataPlacement>;
   readonly unplaced: ReadonlySet<KunaInventoryFunction>;
   readonly byAddress: ReadonlyMap<string, KunaInventoryFunction>;
   readonly byName: ReadonlyMap<string, readonly KunaInventoryFunction[]>;
@@ -204,6 +214,7 @@ interface Answer {
   readonly locations: readonly EvidenceLocation[];
   readonly limitations: readonly string[];
   readonly referenceSource?: JsonValue;
+  readonly callDestinationEvidence?: Evidence;
   readonly requiresSourceEvidence?: true;
   readonly stringSource?: JsonValue;
   readonly relationshipCoverage?: RelationshipCoverage;
@@ -585,7 +596,8 @@ export class KunaSessionClient implements AnalysisClient {
         );
       if (
         (operation === "procedure_pseudo_code" &&
-          parameters.analysis !== "independent_fresh") ||
+          parameters.analysis !== "independent_fresh" &&
+          parameters.analysis !== "call_destination") ||
         operation === "procedure_assembly" ||
         operation === "analyze_function"
       ) {
@@ -602,8 +614,13 @@ export class KunaSessionClient implements AnalysisClient {
       );
       if (!answer.ok)
         return err(kunaQueryFailureForCaller(answer.error, operation));
-      if (isAborted(options.signal))
-        return err(cancelledBy(operation, options.signal));
+      if (isAborted(options.signal)) {
+        const cancellation = cancelledBy(operation, options.signal);
+        const completed = answer.value.callDestinationEvidence;
+        if (completed !== undefined)
+          cancellation.retainPartialObservation(completed);
+        return err(cancellation);
+      }
       return ok(
         this.#execution(
           kunaLimitations(operation, this.#deadline, this.#heapRequest),
@@ -663,24 +680,19 @@ export class KunaSessionClient implements AnalysisClient {
     }
     if (failures.length > 0)
       return err(
-        new ProviderCleanupError(
+        providerCleanupErrorFromFailures(
           KUNA_PROVIDER_ID,
-          failures.flatMap((failed) => failed.cleanupResources),
+          failures,
+          failures
+            .map((failure) =>
+              String(failure.diagnostics?.["reason"] ?? failure.message),
+            )
+            .join("; "),
           {
-            reason: failures
-              .map((failed) =>
-                String(failed.diagnostics?.["reason"] ?? failed.message),
-              )
-              .join("; "),
-          },
-          {
-            cause: new AggregateError(
-              failures,
-              "Kuna session cleanup remains incomplete",
-            ),
             operation: "close_binary",
+            message: "Kuna session cleanup remains incomplete",
           },
-        ).bindCleanupDependencies(failures),
+        ),
       );
     this.#releasePin?.();
     this.#releasePin = undefined;
@@ -784,6 +796,9 @@ export class KunaSessionClient implements AnalysisClient {
         ...(answer.requiresSourceEvidence === undefined
           ? {}
           : { requiresSourceEvidence: answer.requiresSourceEvidence }),
+        ...(answer.callDestinationEvidence === undefined
+          ? {}
+          : { sourceEvidence: [answer.callDestinationEvidence] }),
         ...(answer.referenceCoverageGaps === undefined
           ? {}
           : { referenceCoverageGaps: answer.referenceCoverageGaps }),
@@ -875,6 +890,16 @@ export class KunaSessionClient implements AnalysisClient {
     if (!index.ok) return index;
     if (operation === "address_name")
       return this.#addressName(parameters, index.value, installation, options);
+    if (
+      operation === "procedure_pseudo_code" &&
+      parameters.analysis === "call_destination"
+    )
+      return this.#callDestinationPseudocode(
+        parameters.procedure,
+        index.value,
+        installation,
+        options,
+      );
     const entry = this.#resolve(operation, parameters.procedure, index.value);
     if (!entry.ok) {
       const selectedAddress =
@@ -916,33 +941,13 @@ export class KunaSessionClient implements AnalysisClient {
           limitations: classification,
         });
       case "procedure_pseudo_code": {
-        if (parameters.analysis === "independent_fresh") {
-          const signal =
-            options.signal === undefined
-              ? this.#session.signal
-              : AbortSignal.any([options.signal, this.#session.signal]);
-          const standalone = await this.#singleFunction(
-            operation,
+        if (parameters.analysis === "independent_fresh")
+          return this.#freshPseudocode(
             selected.address,
             installation,
-            signal,
-            true,
+            options,
+            classification,
           );
-          if (standalone === EXPORT_READY)
-            throw new Error(
-              "Independent decompilation unexpectedly yielded to project",
-            );
-          if (!standalone.ok) return standalone;
-          return ok({
-            result: standalone.value,
-            source: { kind: "single-function" },
-            locations,
-            limitations: [
-              "This is a fresh independent single-function decompile; it does not use the project export's whole-program prototypes.",
-              ...classification,
-            ],
-          });
-        }
         const pseudocode = await this.#pseudocode(
           operation,
           selected,
@@ -981,6 +986,172 @@ export class KunaSessionClient implements AnalysisClient {
           ),
         );
     }
+  }
+
+  async #freshPseudocode(
+    address: string,
+    installation: KunaInstallation,
+    options: ExecutionOptions,
+    limitations: readonly string[],
+  ): Promise<Result<Answer, AnalysisError>> {
+    const signal =
+      options.signal === undefined
+        ? this.#session.signal
+        : AbortSignal.any([options.signal, this.#session.signal]);
+    const standalone = await this.#singleFunction(
+      "procedure_pseudo_code",
+      address,
+      installation,
+      signal,
+      true,
+    );
+    if (standalone === EXPORT_READY)
+      throw new Error(
+        "Independent decompilation unexpectedly yielded to project",
+      );
+    if (!standalone.ok) return standalone;
+    return ok({
+      result: standalone.value,
+      source: { kind: "single-function" },
+      locations: [{ kind: "address", address }],
+      limitations: [
+        "This is a fresh independent single-function decompile; it does not use the project export's whole-program prototypes.",
+        ...limitations,
+      ],
+    });
+  }
+
+  async #callDestinationPseudocode(
+    raw: unknown,
+    index: InventoryIndex,
+    installation: KunaInstallation,
+    options: ExecutionOptions,
+  ): Promise<Result<Answer, AnalysisError>> {
+    const operation = "procedure_pseudo_code";
+    if (
+      this.#target.format !== "mach-o" ||
+      this.#target.architecture !== "arm64"
+    )
+      return err(
+        new AnalysisInputError(operation, {
+          userMessage:
+            "Kuna call-destination decompilation requires an arm64 Mach-O target.",
+          conformsToInputContract: true,
+          remediationAction:
+            "Omit analysis to decompile a discovered procedure, or open an arm64 Mach-O target.",
+        }),
+      );
+    const address = normalizeKunaAddress(raw);
+    if (address === undefined)
+      return err(
+        new AnalysisInputError(
+          operation,
+          {
+            userMessage:
+              "Call-destination decompilation requires an exact 0x-prefixed address.",
+          },
+          [{ path: ["procedure"], reason: "invalid_format" }],
+        ),
+      );
+    const entry = index.byAddress.get(address);
+    if (entry !== undefined && !index.data.has(entry))
+      return err(
+        new AnalysisInputError(operation, {
+          userMessage: `${address} is already in Kuna's procedure inventory.`,
+          conformsToInputContract: true,
+          remediationAction:
+            "Omit analysis to decompile the discovered procedure.",
+        }),
+      );
+    const region = kunaExecutableInstructionRegion(index.layout, address);
+    if (region === undefined)
+      return err(
+        new AnalysisInputError(operation, {
+          userMessage: `${address} cannot be placed in file-backed executable Mach-O section bytes.`,
+          conformsToInputContract: true,
+          remediationAction:
+            "Verify the exact address and its section with inspect_macho.",
+        }),
+      );
+    const references = await this.#references.incoming(
+      installation,
+      address,
+      options.signal,
+    );
+    if (!references.ok) return references;
+    const call = references.value.arm64DirectCalls.find((site) => {
+      const caller = index.byAddress.get(site.caller_address);
+      if (
+        caller === undefined ||
+        placeKunaEntry(index.layout, caller).kind !== "code"
+      )
+        return false;
+      const callerRegion = kunaExecutableInstructionRegion(
+        index.layout,
+        caller.address,
+      );
+      const offset = BigInt(site.from_address) - BigInt(caller.address);
+      return (
+        callerRegion !== undefined &&
+        offset >= 0n &&
+        (caller.size === 0 || offset < BigInt(caller.size)) &&
+        callerRegion ===
+          kunaExecutableInstructionRegion(index.layout, site.from_address)
+      );
+    });
+    if (call === undefined)
+      return err(
+        new AnalysisInputError(operation, {
+          userMessage: `Kuna reported no usable exact direct call from a discovered procedure to ${address}.`,
+          conformsToInputContract: true,
+          remediationAction:
+            "Inspect xrefs for this exact address. Absence of a usable call does not establish that the address holds data.",
+        }),
+      );
+    const referenceSource = {
+      kind: "kuna-direct-call-destination",
+      section: region,
+      call: { ...call },
+      xrefs_sha256: references.value.sha256,
+      xrefs_bytes: references.value.bytes,
+    };
+    const evidence = createEvidence(
+      this.#target,
+      { id: KUNA_PROVIDER_ID, name: "Kuna", version: installation.version },
+      {
+        operation: "kuna:direct-call-destination",
+        parameters: { address },
+        result: referenceSource,
+        ...(this.#profile === undefined
+          ? {}
+          : { analysisProfile: this.#profile }),
+        limitations: [
+          ...kunaVerificationLimitations(installation),
+          "This observation establishes one direct call to the selected address. Procedure boundaries and pseudocode are outside this observation.",
+        ],
+        locations: [
+          { kind: "address", address: call.from_address },
+          { kind: "address", address },
+        ],
+      },
+    );
+    const answer = await this.#freshPseudocode(address, installation, options, [
+      "Kuna decoded a reported direct-call destination outside the procedure inventory. This observation does not establish a discovered procedure, function boundaries, or a project export body.",
+    ]).catch((cause: unknown) =>
+      err(classifyProviderFailure(cause, kunaSessionDialect(operation))),
+    );
+    if (!answer.ok) {
+      if (answer.error.partialObservation === undefined)
+        answer.error.retainPartialObservation(evidence);
+      else answer.error.retainArgumentObservation("procedure", evidence);
+      return answer;
+    }
+    return ok({
+      ...answer.value,
+      referenceSource,
+      callDestinationEvidence: evidence,
+      requiresSourceEvidence: true,
+    });
   }
 
   async #stringAnswer(
@@ -1057,7 +1228,7 @@ export class KunaSessionClient implements AnalysisClient {
       readonly value: string;
       readonly matched_aliases?: string[];
     }[] = [];
-    const omitted: string[] = [];
+    const omitted: KunaDataPlacement[] = [];
     let unclassified = 0;
     for (const entry of inventory) {
       const row = { address: entry.address, value: entry.name };
@@ -1066,9 +1237,9 @@ export class KunaSessionClient implements AnalysisClient {
           ? row
           : matchProcedureNames(row, entry.aliases, matches);
       if (selected === undefined) continue;
-      const region = data.get(entry);
-      if (region !== undefined) {
-        omitted.push(region);
+      const placement = data.get(entry);
+      if (placement !== undefined) {
+        omitted.push(placement);
         continue;
       }
       if (unplaced.has(entry)) unclassified += 1;
@@ -1280,15 +1451,16 @@ export class KunaSessionClient implements AnalysisClient {
     const address = normalizeKunaAddress(selector);
     const refused = (entry: KunaInventoryFunction) =>
       field === "procedure" && index.data.has(entry);
-    const dataRefusal = (entry: KunaInventoryFunction) =>
-      err(
+    const dataRefusal = (entry: KunaInventoryFunction) => {
+      const placement = index.data.get(entry)!;
+      return err(
         new AnalysisInputError(operation, {
-          userMessage: kunaDataEntryMessage(entry, index.data.get(entry)!),
+          userMessage: kunaDataEntryMessage(entry, placement),
           conformsToInputContract: true,
-          remediationAction:
-            "Inspect the data address with address_name or xrefs, or select a procedure entry from list_procedures. Do not repeat the unchanged call.",
+          remediationAction: kunaDataEntryRemediation(placement),
         }),
       );
+    };
     const selected = (entry: KunaInventoryFunction) => {
       const placement = placeKunaEntry(index.layout, entry);
       return ok({
@@ -1308,7 +1480,13 @@ export class KunaSessionClient implements AnalysisClient {
             operation,
             {
               userMessage: `${address} is not a procedure entry Kuna found; list_procedures shows the entries it found.`,
-              remediationAction: KUNA_PROCEDURE_MISSING_ADDRESS_REMEDIATION,
+              remediationAction:
+                operation === "procedure_pseudo_code" &&
+                this.#target.architecture === "arm64" &&
+                kunaExecutableInstructionRegion(index.layout, address) !==
+                  undefined
+                  ? "Use xrefs for the exact address. If Kuna reports a direct call from a discovered procedure, retry procedure_pseudo_code with analysis: call_destination."
+                  : KUNA_PROCEDURE_MISSING_ADDRESS_REMEDIATION,
               conformsToInputContract: true,
             },
             [
@@ -1332,6 +1510,9 @@ export class KunaSessionClient implements AnalysisClient {
       return dataRefusal(named[0]);
     const missing = named.length === 0;
     const ambiguous = matches.length > 1;
+    // Read only when every named entry was refused, so each has a data placement.
+    const dataEntries = () =>
+      named.map((entry) => ({ entry, placement: index.data.get(entry)! }));
     const procedureLookupFailure =
       field === "procedure" && (missing || ambiguous);
     const message = missing
@@ -1339,7 +1520,7 @@ export class KunaSessionClient implements AnalysisClient {
         ? missingKunaXrefNameMessage(selector)
         : `Kuna found no procedure named ${selector}; search_procedures finds similar names.`
       : matches.length === 0
-        ? `${selector} names ${String(named.length)} Kuna entries that lie in Mach-O data regions (${named.map(({ address }) => address).join(", ")}); they are data, not procedures.`
+        ? kunaDataEntriesMessage(selector, dataEntries())
         : ambiguousKunaNameMessage(
             selector,
             matches.map(({ address }) => address),
@@ -1354,7 +1535,9 @@ export class KunaSessionClient implements AnalysisClient {
         : procedureLookupFailure
           ? KUNA_PROCEDURE_MISSING_NAME_REMEDIATION
           : matches.length === 0
-            ? "Inspect the data addresses with address_name or xrefs, or select a procedure entry from list_procedures. Do not repeat the unchanged call."
+            ? kunaDataEntriesRemediation(
+                dataEntries().map(({ placement }) => placement),
+              )
             : undefined;
     return err(
       new AnalysisInputError(
@@ -1416,7 +1599,7 @@ export class KunaSessionClient implements AnalysisClient {
         locations,
         limitations:
           placement.kind === "data"
-            ? [kunaDataNameLimitation(entry, placement.region)]
+            ? [kunaDataNameLimitation(entry, placement)]
             : kunaEntryLimitations(index.layout, placement),
       });
     }

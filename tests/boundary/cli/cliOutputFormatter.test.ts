@@ -181,6 +181,37 @@ it.each(["  =1+1", "+1", "-1", "@SUM(A1:A2)"])(
   },
 );
 
+it("keeps a null word size null and a native word size numeric", () => {
+  const wasm = { format: "wasm", bits: null };
+  const native = { format: "elf", bits: 64 };
+  expect(formatCliOutput(wasm, "json")).toBe(
+    '{\n  "format": "wasm",\n  "bits": null\n}',
+  );
+  expect(formatCliOutput(native, "json")).toBe(
+    '{\n  "format": "elf",\n  "bits": 64\n}',
+  );
+  expect(formatCliOutput(wasm, "yaml")).toBe("format: wasm\nbits: null\n");
+  expect(formatCliOutput(native, "yaml")).toBe("format: elf\nbits: 64\n");
+  expect(formatCliOutput(wasm, "toon")).toBe("format: wasm\nbits: null");
+  expect(formatCliOutput(native, "toon")).toBe("format: elf\nbits: 64");
+  expect(formatCliOutput(wasm, "md")).toContain("| bits   | null  |");
+  expect(formatCliOutput(native, "md")).toContain("| bits   | 64    |");
+  for (const format of ["csv", "tsv"] as const) {
+    const rows = formatCliOutput([wasm, native], format, {
+      fields: ["bits"],
+      metadata: {},
+    });
+    const lineEnding = format === "csv" ? "\r\n" : "\n";
+    const body = rows.slice(rows.indexOf(lineEnding) + lineEnding.length);
+    expect(
+      parseDelimited(
+        body.replace(/\r?\n$/u, ""),
+        format === "csv" ? "," : "\t",
+      ),
+    ).toEqual([["bits"], [""], ["64"]]);
+  }
+});
+
 it("refuses formula-leading column headers", () => {
   expect(
     prepareDelimitedOutput([{ value: "safe" }], "csv", {

@@ -11,16 +11,20 @@ executing anything in it or contacting a NuGet feed.
 ## Requirements
 
 - Report the artifact path, SHA-256 and byte length.
-- Select the `.nuspec` from a unique OPC `_rels/.rels` relationship whose Type
-  ends in `/manifest` when that target exists, otherwise from a unique root
+- Select the `.nuspec` from a unique OPC `_rels/.rels` relationship with Type
+  `http://schemas.microsoft.com/packaging/2010/07/manifest` when that target exists, otherwise from a unique root
   `.nuspec`. Missing, ambiguous or malformed manifests succeed with the ZIP
   inventory, `identity: null` and an explicit limitation.
-- Report `identity`, `license`, `repository` and `dependency_groups` as spelled
-  in the `.nuspec`. Ungrouped dependencies form a group with
-  `target_framework: null`. Version ranges stay text; restore results are
-  unknown.
+- Report the `identity`, `license`, `repository` and `dependency_groups`
+  declared in the `.nuspec`. Normalize the named license types `expression`
+  and `file` case-insensitively. Without any `<group>`, ungrouped dependencies
+  form a group with `target_framework: null`. Beside groups, in any
+  `<dependencies>` element, they are omitted with a limitation that counts
+  them, as NuGet's restore-time reader ignores them. Version ranges stay text;
+  restore results are unknown.
 - List file ZIP members with sizes, an `encrypted` flag and a path-derived
-  NuGet folder `role`. Omit directory markers.
+  NuGet folder `role`. `[Content_Types].xml`, `.rels` parts, and members under
+  `_rels/` or `package/` are OPC packaging parts. Omit directory markers.
 - Bound the file size, ZIP entry count and `.nuspec` bytes with named
   allowances. Enforce the entry allowance while enumerating the ZIP. Refuse a
   file that is not a valid ZIP without a partial inventory.

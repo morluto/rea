@@ -383,11 +383,12 @@ export const runProductionMcpDoctorCli = async (
   if (!parsed.ok) {
     if (parsed.help)
       return { output: `${renderMcpDoctorHelp()}\n`, exitCode: 0 };
+    const failure = parsed.fullOutput
+      ? { ok: false, error: parsed.error }
+      : parsed.error;
     return {
       output: renderCliDocument(
-        parsed.format === "jsonl"
-          ? jsonLinesErrorRecord({ code: parsed.code, message: parsed.message })
-          : { code: parsed.code, message: parsed.message },
+        parsed.format === "jsonl" ? jsonLinesErrorRecord(failure) : failure,
         parsed.format,
         input.stdoutIsTerminal,
       ),
@@ -482,11 +483,11 @@ const parseIdentityToolResult = (
   };
 };
 
-/**
- * Parsed `rea mcp doctor` arguments, including a help request. The `help`
- * variant is the only success-independent early return; every other accepted
- * flag is an output selector declared in `MCP_DOCTOR_OPTIONS`.
- */
+interface McpDoctorArgumentError {
+  readonly code: "MISSING_OUTPUT_VALUE" | "VALIDATION_ERROR";
+  readonly message: string;
+}
+
 type McpDoctorArguments =
   | {
       readonly ok: true;
@@ -498,82 +499,56 @@ type McpDoctorArguments =
       readonly ok: false;
       readonly help: false;
       readonly format: OutputFormat;
-      readonly code: "MISSING_OUTPUT_VALUE" | "VALIDATION_ERROR";
-      readonly message: string;
+      readonly fullOutput: boolean;
+      readonly error: McpDoctorArgumentError;
     };
 
 const parseOutputArguments = (
   arguments_: readonly string[],
 ): McpDoctorArguments => {
-  // Help wins over output selection and validation errors, but only when it
-  // appears in option position. A token consumed as `--format`'s value is
-  // not a flag, so `--format --help` reports an invalid format instead of
-  // masking the typo with usage.
-  if (hasHelpInOptionPosition(arguments_)) return { ok: false, help: true };
+  // Keep the first error while collecting output choices. Help wins when
+  // encountered in option position, outside a consumed format value.
   let format: OutputFormat = "toon";
   let fullOutput = false;
+  let error: McpDoctorArgumentError | undefined;
   for (let index = 0; index < arguments_.length; index += 1) {
-    const argument = arguments_[index];
+    const argument = arguments_[index]!;
     if (argument === "--json") {
       format = "json";
       continue;
     }
-    const inline = argument?.startsWith("--format=")
+    const inline = argument.startsWith("--format=")
       ? argument.slice("--format=".length)
       : undefined;
     if (argument === "--format" || inline !== undefined) {
       const candidate = inline ?? arguments_[index + 1];
       if (inline === undefined) index += 1;
       if (candidate === undefined || candidate === "")
-        return {
-          ok: false,
-          help: false,
-          format,
+        error ??= {
           code: "MISSING_OUTPUT_VALUE",
           message: missingCliOutputValueMessage("--format"),
         };
-      if (!isOutputFormat(candidate))
-        return {
-          ok: false,
-          help: false,
-          format,
+      else if (isOutputFormat(candidate)) format = candidate;
+      else
+        error ??= {
           code: "VALIDATION_ERROR",
           message: `Invalid output format: ${candidate}`,
         };
-      format = candidate;
       continue;
     }
     if (argument === "--full-output") {
       fullOutput = true;
       continue;
     }
-    if (HELP_FLAGS.has(argument ?? "")) return { ok: false, help: true };
-    return {
-      ok: false,
-      help: false,
-      format,
+    if (HELP_FLAGS.has(argument)) return { ok: false, help: true };
+    error ??= {
       code: "VALIDATION_ERROR",
-      message: `Unknown mcp doctor option: ${argument ?? "missing"}`,
+      message: `Unknown mcp doctor option: ${argument}`,
     };
   }
+  if (error !== undefined)
+    return { ok: false, help: false, format, fullOutput, error };
   return { ok: true, format, fullOutput };
-};
-
-/**
- * Report whether `--help`/`-h` appears in option position. Tokens consumed
- * as `--format`'s value are skipped so `--format --help` stays an invalid
- * format error instead of silently becoming a help request.
- */
-const hasHelpInOptionPosition = (arguments_: readonly string[]): boolean => {
-  for (let index = 0; index < arguments_.length; index += 1) {
-    const argument = arguments_[index];
-    if (argument === "--format") {
-      index += 1;
-      continue;
-    }
-    if (HELP_FLAGS.has(argument ?? "")) return true;
-  }
-  return false;
 };
 
 const isOutputFormat = (value: string | undefined): value is OutputFormat =>

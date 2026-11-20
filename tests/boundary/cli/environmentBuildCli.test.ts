@@ -187,25 +187,29 @@ cliTest.for(["absolute", "relative"] as const)(
     expect(projected.exitCode, projected.stderr).toBe(0);
     const manifest = join(root, "manifest.json");
     await writeFile(manifest, projected.stdout);
-    for (const command of [
-      "environment-build",
-      "environment-export",
-    ] as const) {
-      const parent = join(root, `${command}-refused`);
-      await mkdir(parent);
-      // Do not use join for the last segment: the caller's spelling matters.
-      const destination = `${join(parent, "a", "b", "c")}${sep}..`;
-      const args =
-        command === "environment-build"
-          ? [command, har, destination, "--json"]
-          : [command, manifest, "--evidence", capture, destination, "--json"];
-      const refused = await cli.run({ arguments: args });
-      expect(refused.exitCode, refused.stderr).toBe(1);
-      expect(refused.json).toMatchObject({
-        code: "invalid_request",
-        details: { issues: [{ path: ["directory"] }] },
-      });
-      expect(await readdir(parent)).toEqual([]);
+    // POSIX resolves the final dot-dot only after traversing the preceding components.
+    if (process.platform !== "win32") {
+      for (const command of [
+        "environment-build",
+        "environment-export",
+      ] as const) {
+        const parent = join(root, `${command}-refused`);
+        // Do not use join for the last segment: the caller's spelling matters.
+        const destination = `${join(parent, "a", "b", "c")}${sep}..`;
+        const args =
+          command === "environment-build"
+            ? [command, har, destination, "--json"]
+            : [command, manifest, "--evidence", capture, destination, "--json"];
+        const refused = await cli.run({ arguments: args });
+        expect(refused.exitCode, refused.stderr).toBe(1);
+        expect(refused.json).toMatchObject({
+          code: "invalid_request",
+          details: {
+            issues: [{ path: ["directory"], reason: "invalid_value" }],
+          },
+        });
+        await expect(readdir(parent)).rejects.toMatchObject({ code: "ENOENT" });
+      }
     }
     const exported = await cli.run({
       arguments: [
@@ -288,6 +292,7 @@ cliTest(
       status: "planned",
       directory: null,
       next: [],
+      coverage: { reads: { state: 5, recorded: 9 } },
     });
     expect(await readdir(root)).toEqual(["grafana.har"]);
 

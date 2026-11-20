@@ -159,6 +159,16 @@ const declaredPattern = (expression: RegExp): string => {
 };
 
 /**
+ * Declare the pattern an argv token grammar accepts. The grammar's own check
+ * still rejects every token the pattern excludes, so the advertisement states
+ * the accepted set without adding a second runtime check.
+ */
+export const declaredTokenPattern = <Schema extends z.ZodString>(
+  schema: Schema,
+  pattern: RegExp,
+): Schema => schema.meta({ pattern: declaredPattern(pattern) });
+
+/**
  * Check a predicate or canonical regex and declare its pattern-only wire
  * form. A regex keeps Zod's format issue rather than becoming a custom issue.
  */

@@ -1,4 +1,10 @@
-import { DOMParser, onErrorStopParsing, type Document } from "@xmldom/xmldom";
+import {
+  DOMParser,
+  onErrorStopParsing,
+  type Document,
+  type Element,
+  type Node,
+} from "@xmldom/xmldom";
 import { SaxesParser, type SaxesTagNS } from "saxes";
 import { err, ok, type Result } from "./result.js";
 import {
@@ -9,6 +15,12 @@ import {
 
 /** XML 1.0 literal line endings; Unicode separators remain source characters. */
 export const XML_LINE_ENDING = /\r\n?|\n/gu;
+
+/** Match an element in no namespace, including under an explicit empty default. */
+export const isUnqualifiedXmlElement = (node: Node | null): node is Element =>
+  node !== null &&
+  node.nodeType === 1 &&
+  (node as Element).namespaceURI === null;
 
 const XML_FORMAT = "xml";
 

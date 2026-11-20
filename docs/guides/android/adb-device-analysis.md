@@ -127,9 +127,9 @@ existing analysis families directly, for example
 | `start_adb_activity`    | **mutates device** | Starts an intent (`am start -W -a` with optional URI, component, and up to 16 typed extras); preserves the activity manager's verdict                                                                                                 |
 | `stop_adb_app`          | **mutates device** | Force-stops every process of a package, ending a dynamic-analysis run                                                                                                                                                                 |
 
-Screen capture validates the PNG signature, IHDR framing, dimensions, and IHDR
-checksum before publishing. It does not validate encoding fields or decode and
-validate image contents; that limitation is retained in Evidence.
+Screen capture validates the PNG signature, IHDR framing and checksum, dimensions,
+and encoding fields before publishing. Evidence records that pixel data remains
+undecoded.
 
 When `push_adb_file` receives an existing directory, adb places the local file
 inside it under the local basename; Evidence reports that effective file path

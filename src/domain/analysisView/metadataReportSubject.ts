@@ -16,7 +16,7 @@ import type { AnalysisViewParent } from "./analysisViewParent.js";
 export const requireMetadataReportSubject = (
   parent: AnalysisViewParent,
   report: {
-    readonly format: "elf" | "pe" | "macho";
+    readonly format: "elf" | "pe" | "macho" | "wasm";
     readonly architecture: string;
     readonly artifact: { readonly sha256: string };
     readonly selected_slice?: MachoTargetSelection;

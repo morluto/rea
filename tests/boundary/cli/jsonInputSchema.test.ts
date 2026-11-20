@@ -368,9 +368,25 @@ it("advertises caller paths as local spellings the CLI resolves, not URLs", asyn
     reference: { kind: "file", path },
     application: {},
   });
-  for (const path of ["ref.json", "./file:ref.json", "C:\\ref.json"])
+  for (const path of [
+    "ref.json",
+    "./file:ref.json",
+    "C:\\ref.json",
+    " ref.json ",
+    "folder/ ",
+  ])
     expect(validate(document(path)), path).toBe(true);
-  for (const path of ["file:ref.json", "FILE:ref.json", "https://x/ref.json"])
+  for (const path of [
+    "file:ref.json",
+    "FILE:ref.json",
+    "https://x/ref.json",
+    "",
+    " ",
+    "\t\r\n",
+    "\u00a0",
+    "\u2003",
+    "\ufeff",
+  ])
     expect(validate(document(path)), path).toBe(false);
 });
 

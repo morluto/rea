@@ -20,7 +20,25 @@ const LAUNCH_REFUSALS: Readonly<Record<string, LaunchRefusal["kind"]>> = {
   EACCES: "not_executable",
   EPERM: "not_executable",
   ENOEXEC: "not_executable",
+  // Node on Windows (libuv) reports ERROR_BAD_EXE_FORMAT as EFTYPE.
+  EFTYPE: "not_executable",
   EISDIR: "not_executable",
+};
+
+/** The native launcher's Win32 code for a file that is not a runnable image. */
+const ERROR_BAD_EXE_FORMAT = 193;
+
+/**
+ * The errno of a launch failure. The Windows native launcher names only
+ * file-not-found and access-denied as errno; its ERROR_BAD_EXE_FORMAT
+ * becomes EFTYPE, as Node's own spawn reports the same file.
+ */
+const launchErrnoOf = (cause: Error): unknown => {
+  const code = Reflect.get(cause, "code");
+  return code === "ERR_REA_WINDOWS_NATIVE" &&
+    Reflect.get(cause, "win32Code") === ERROR_BAD_EXE_FORMAT
+    ? "EFTYPE"
+    : code;
 };
 
 /** The host resource a launch could not obtain. */
@@ -158,7 +176,7 @@ export const launcherFailureOf = (
   if (identity === undefined) return undefined;
   const syscall = Reflect.get(cause, "syscall");
   return {
-    ...classifyLaunchErrno(Reflect.get(cause, "code")),
+    ...classifyLaunchErrno(launchErrnoOf(cause)),
     ...identity,
     syscall: typeof syscall === "string" ? syscall : undefined,
   };

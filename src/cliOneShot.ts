@@ -126,7 +126,8 @@ export const runOneShotCli = async (
   const { loadCliRuntime } = await import("./cli/cliLoader.js");
   const runtime = await loadCliRuntime(global, host.environment);
   host.ownCliResources(runtime.closeCliResources);
-  const { createCliResultOutput } = await import("./cli/cliResultOutput.js");
+  const { createCliResultOutput, cliOutputCancellationStatus } =
+    await import("./cli/cliResultOutput.js");
   let wroteOutput = false;
   const resultOutput = createCliResultOutput(
     outputOptions,
@@ -150,6 +151,11 @@ export const runOneShotCli = async (
       },
     });
   } catch (cause) {
+    const cancelledStatus = cliOutputCancellationStatus(cause);
+    if (cancelledStatus !== undefined) {
+      host.exit(cancelledStatus, async () => resultOutput?.finish());
+      return;
+    }
     if (wroteOutput) throw cause;
     const recovered = await resultOutput
       ?.recoverFormattingFailure(cause)

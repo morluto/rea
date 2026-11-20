@@ -1,5 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -61,6 +60,30 @@ it.each([
   },
 );
 
+it("reports an oversized Info.plist as an input refusal before decoding", async () => {
+  const root = await createTestTempDirectory("rea-app-plist-input-");
+  const bundle = join(root, "Fixture.app");
+  const plist = join(bundle, "Contents", "Info.plist");
+  await mkdir(join(bundle, "Contents"), { recursive: true });
+  await writeFile(plist, "");
+  await truncate(plist, 64 * 1024 * 1024 + 1);
+
+  expect(await resolveAppleBundleExecutable(bundle)).toMatchObject({
+    ok: false,
+    error: {
+      path: plist,
+      reason: expect.stringContaining("67108864-byte input allowance"),
+      cause: {
+        name: "ParseFailureError",
+        kind: "limit",
+        failure: {
+          limit: { maximum: 64 * 1024 * 1024, required: 64 * 1024 * 1024 + 1 },
+        },
+      },
+    },
+  });
+});
+
 describe("app bundle Info.plist magic", () => {
   it("decodes an executable when an unrelated UID uses a three-byte width", async () => {
     const root = await createTestTempDirectory("rea-app-three-byte-uid-");
@@ -78,43 +101,63 @@ describe("app bundle Info.plist magic", () => {
   });
 
   it("does not decode a high-bit fold of bplist as a binary Info.plist", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-bplist-fold-"));
-    try {
-      const bundle = join(root, "Fixture.app");
-      const plistPath = join(bundle, "Contents", "Info.plist");
-      await mkdir(join(bundle, "Contents"), { recursive: true });
-      const plist = Buffer.from("bplist00");
-      plist[0] = (plist[0] ?? 0) | 0x80;
-      await writeFile(plistPath, plist);
-      const result = await resolveAppleBundleExecutable(bundle);
-      expect(result).toMatchObject({
-        ok: false,
-        error: {
-          cause: { name: "XmlPlistTextDecodeError", reason: "invalid-bytes" },
-        },
-      });
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+    const root = await createTestTempDirectory("rea-bplist-fold-");
+    const bundle = join(root, "Fixture.app");
+    const plistPath = join(bundle, "Contents", "Info.plist");
+    await mkdir(join(bundle, "Contents"), { recursive: true });
+    const plist = Buffer.from("bplist00");
+    plist[0] = (plist[0] ?? 0) | 0x80;
+    await writeFile(plistPath, plist);
+    const result = await resolveAppleBundleExecutable(bundle);
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        cause: { name: "XmlPlistTextDecodeError", reason: "invalid-bytes" },
+      },
+    });
+  });
+});
+
+describe("app bundle Info.plist decode budget", () => {
+  it("refuses an XML Info.plist whose decoded representation exceeds the budget", async () => {
+    const root = await createTestTempDirectory("rea-app-plist-budget-");
+    const bundle = join(root, "Fixture.app");
+    const plistPath = join(bundle, "Contents", "Info.plist");
+    const executable = join(bundle, "Contents", "MacOS", "Fixture");
+    await mkdir(join(bundle, "Contents", "MacOS"), { recursive: true });
+    await writeFile(
+      plistPath,
+      `<plist version="1.0"><dict><key>CFBundleExecutable</key><string>Fixture</string><key>Padding</key><string>${"a".repeat(5_000_000)}</string></dict></plist>`,
+    );
+    await writeFile(executable, "inert fixture; never executed");
+
+    const result = await resolveAppleBundleExecutable(bundle);
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        constraint: "bundle_info_plist_decode_budget_exceeded",
+        reason: expect.stringContaining("16 MiB"),
+      },
+    });
   });
 });
 
 describe("app bundle program directory containment", () => {
   it("rejects an escaping programs directory before resolving its child", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-app-programs-"));
-    try {
-      const bundle = join(root, "Fixture.app");
-      const programs = join(bundle, "Contents", "MacOS");
-      const executable = join(programs, "Missing");
-      const canonicalBundle = join(root, "Canonical.app");
-      const outsidePrograms = join(root, "outside");
-      const plist =
-        "<plist><dict><key>CFBundleExecutable</key><string>Missing</string></dict></plist>";
-      await mkdir(join(bundle, "Contents"), { recursive: true });
-      await writeFile(join(bundle, "Contents", "Info.plist"), plist);
-      let childResolved = false;
+    const root = await createTestTempDirectory("rea-app-programs-");
+    const bundle = join(root, "Fixture.app");
+    const programs = join(bundle, "Contents", "MacOS");
+    const executable = join(programs, "Missing");
+    const canonicalBundle = join(root, "Canonical.app");
+    const outsidePrograms = join(root, "outside");
+    const plist =
+      "<plist><dict><key>CFBundleExecutable</key><string>Missing</string></dict></plist>";
+    await mkdir(join(bundle, "Contents"), { recursive: true });
+    await writeFile(join(bundle, "Contents", "Info.plist"), plist);
+    let childResolved = false;
 
-      const result = await resolveAppleBundleExecutable(bundle, {
+    const result = await resolveAppleBundleExecutable(bundle, {
+      fileSystem: {
         readFile: async () => Buffer.from(plist),
         realpath: async (path) => {
           if (path === bundle) return canonicalBundle;
@@ -127,18 +170,16 @@ describe("app bundle program directory containment", () => {
           }
           return path;
         },
-      });
+      },
+    });
 
-      expect(result).toMatchObject({
-        ok: false,
-        error: {
-          reason: "app program directory leaves Contents/MacOS",
-        },
-      });
-      expect(childResolved).toBe(false);
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        reason: "app program directory leaves Contents/MacOS",
+      },
+    });
+    expect(childResolved).toBe(false);
   });
 });
 

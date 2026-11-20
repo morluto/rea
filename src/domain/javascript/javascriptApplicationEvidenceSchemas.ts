@@ -528,3 +528,20 @@ export type ApplicationGraphEvidenceContext = z.infer<
 export type ApplicationNodeIdentity = z.infer<
   typeof applicationNodeIdentitySchema
 >;
+
+/** Qualify a source interpretation while preserving its location and artifact identity. */
+export const qualifyJavaScriptLoaderEvidence = (
+  evidence: ApplicationGraphEvidence,
+  condition: string,
+): ApplicationGraphEvidence => ({
+  ...evidence,
+  confidence:
+    evidence.confidence === "exact" || evidence.confidence === "high"
+      ? "medium"
+      : evidence.confidence,
+  coverage:
+    evidence.coverage.status === "complete"
+      ? { ...evidence.coverage, status: "partial" }
+      : evidence.coverage,
+  limitations: [...evidence.limitations, condition],
+});

@@ -206,6 +206,11 @@ export const CLI_COMMAND_REGISTRATIONS = {
         context.environment,
       ),
   ),
+  uefi: plain(
+    () => import("./uefiCommands.js"),
+    (module, context) =>
+      module.registerUefiCommands(context.cli, context.logger),
+  ),
   android: plain(
     () => import("./androidCommands.js"),
     (module, context) =>
@@ -461,6 +466,7 @@ const CLI_FAMILY_REGISTRATIONS: {
   ],
   managed: ["managed"],
   firmware: ["firmware"],
+  uefi: ["uefi"],
   android: ["android"],
   pcap: ["pcap"],
   flutter: ["flutter"],

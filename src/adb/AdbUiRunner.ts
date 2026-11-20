@@ -296,13 +296,13 @@ export class AdbUiRunner {
 
   /** One validated UI execution, shared by the success and recovery paths. */
   #execution(
-    request: AdbUiRequest,
     client: z.infer<typeof adbClientIdentitySchema>,
     serial: string,
     observed: UiObservation,
     provider: EvidenceProvider,
   ): AnalysisObservation {
     return {
+      authority: "controlled-replay",
       result: jsonValueSchema.parse({ client, serial, ...observed }),
       rawResult: null,
       provider,
@@ -1162,13 +1162,7 @@ export class AdbUiRunner {
       }
       observed ??= this.#validateObservation(request, owned, reply, signal);
       if (signal?.aborted) throw cancelledBy(request.operation, signal);
-      const execution = this.#execution(
-        request,
-        client,
-        serial,
-        observed,
-        provider,
-      );
+      const execution = this.#execution(client, serial, observed, provider);
       const unknownAction = this.#unknownActionOutcome;
       if (
         request.operation === "inspect_adb_ui" &&
@@ -1293,7 +1287,6 @@ export class AdbUiRunner {
       // exported session records the action and its after-state even when
       // acknowledgement, cleanup or the caller interrupted the request.
       const recovered = this.#execution(
-        request,
         client,
         request.input.serial,
         observed,
@@ -1304,7 +1297,6 @@ export class AdbUiRunner {
         adbEvidenceParameters(request, recovered.result),
         recovered,
         "observed",
-        { authority: "controlled-replay" },
       );
       (returned ?? primary).retainPartialObservation(evidence);
       if (delivered && !owned.lateEvidenceRecorded) {

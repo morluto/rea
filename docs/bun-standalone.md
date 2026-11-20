@@ -33,8 +33,11 @@ Bun 1.3.9 layout. These labels identify structural layouts, not a detected compi
 version. Bun does not store an explicit revision identifier: unknown table sizes
 and ambiguous known layouts are unsupported. A future layout that is byte-for-byte
 compatible cannot be distinguished. Invalid pointers and truncated claimed sections
-are malformed. An absent trailer without a named section does not establish a Bun
-graph. Unknown enum values remain raw, with a null name.
+are malformed. A named Mach-O section is also malformed when it declares zero-fill
+or falls outside its containing segment's file or virtual address range. A confirmed
+section graph requires a complete Mach-O load command table. An absent
+trailer without a named section does not establish a Bun graph. Unknown enum values
+remain raw, with a null name.
 
 Sourcemaps are stored Bun regions, not necessarily standalone JSON source maps.
 Extracted contents retain their original encoding. Use JavaScript analysis only on
@@ -56,6 +59,9 @@ are `payload_bytes`, `module_count`, `representation_bytes`, `metadata_read_byte
 absence. ELF section names are examined at their actual offsets, including names
 beyond a large section-name prefix. Select `artifact_limits.expanded_bytes` to
 change the aggregate referenced-plaintext work allowance.
+The reader validates the graph extent and suffix before applying `payload_bytes`.
+A declared extent outside its carrier or a suffix count that disagrees with the
+located payload is a format error.
 
 For a reported metadata-read refusal, keep the same carrier and retry with
 `--artifact-limits '{"bun":{"metadata_read_bytes":536870912}}'` or the equivalent
@@ -64,7 +70,7 @@ the effective limit and exact repair; accepted overrides are reported separately
 from caller selections. Changes apply on the next call without restarting REA.
 Summary and selected extraction do not change the producer's admission.
 
-See [limits and recovery](design/limits-and-recovery.md) for admission ceilings.
+Module-graph admission ceilings are in [Bun standalone module graphs](#bun-standalone-module-graphs). Shared artifact-reader admission stays in [limits and recovery](design/limits-and-recovery.md#artifact-reader-admission).
 Synthetic tests cover the carriers and malformed declarations. Run
 `node scripts/verify-bun-standalone.mjs` after `npm run build:cached` for local Bun
 verification, and add `--docker` to compile a Linux fixture with `oven/bun:1.4.0`.
@@ -75,3 +81,24 @@ and [Bun 1.3.9 serializer](https://github.com/oven-sh/bun/blob/bun-v1.3.9/src/St
 
 The current 52-byte record order can also be checked in the
 [Bun 1.4.4 Rust serializer](https://github.com/oven-sh/bun/blob/bun-v1.4.4/src/standalone_graph/StandaloneModuleGraph.rs).
+
+## Bun standalone module graphs
+
+`inspect_artifact` and `extract_artifact` accept per-call `artifact_limits`.
+The `bun` group defaults to 100,000 modules, independent 256 MiB payload,
+retained-representation and physical metadata-read allowances, 256 path parts
+and 250,000 logical path nodes. Recognition separately admits a 1 MiB ELF
+section table and 16 MiB Mach-O load commands. Exhausted recognition remains
+unknown rather than proving the carrier has no Bun graph. Inventory preserves
+native-root facts or another confirmed pack and reports the exact unexamined
+alternative inline; it does not assert Bun presence. ELF section names
+are examined with exact bounded reads, including names beyond the former
+prefix window.
+
+For example, keep the same complete carrier and retry a reported recognition
+limitation with `{"artifact_limits":{"bun":{"recognition_table_bytes":2097152}}}`.
+The CLI spelling is `--artifact-limits '{"bun":{"recognition_table_bytes":2097152}}'`.
+No REA restart is needed. A smaller later selection is re-admitted; previously
+parsed facts cannot bypass it. The 256 KiB / 1,024-entry exact-range cache
+avoids full-page amplification and remains an internal optimization, not an agent
+resource setting. Shared logical path prefixes count once before nodes are added.

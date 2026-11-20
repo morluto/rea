@@ -103,31 +103,44 @@ it("rejects an unknown operation before any effect", async () => {
   );
 });
 
-it("composes observed Evidence with the caller parameters inline", async () => {
-  const port: AdbDeviceAnalysisPort = {
-    async inspectAvailability() {
-      return { status: "available", code: null, reason: null, diagnostics: {} };
-    },
-    async close() {},
-    async execute(request) {
-      expect(request).toEqual({
-        operation: "list_adb_devices",
-        input: {},
-      });
-      return ok(execution);
-    },
-  };
-  const result = await new AdbDeviceAnalysisService(port).execute(
-    "list_adb_devices",
-    {},
-  );
-  if (!result.ok) throw new Error(result.error.message);
-  const evidence = parseEvidence(result.value);
-  expect(evidence.provider).toEqual(identity);
-  expect(evidence.operation).toBe("list_adb_devices");
-  expect(evidence.parameters).toEqual({});
-  expect(evidence.confidence).toBe("observed");
-});
+it.each([undefined, "controlled-replay"] as const)(
+  "composes observed Evidence while preserving reported authority %s",
+  async (authority) => {
+    const port: AdbDeviceAnalysisPort = {
+      async inspectAvailability() {
+        return {
+          status: "available",
+          code: null,
+          reason: null,
+          diagnostics: {},
+        };
+      },
+      async close() {},
+      async execute(request) {
+        expect(request).toEqual({
+          operation: "list_adb_devices",
+          input: {},
+        });
+        return ok({
+          ...execution,
+          ...(authority === undefined ? {} : { authority }),
+        });
+      },
+    };
+    const result = await new AdbDeviceAnalysisService(port).execute(
+      "list_adb_devices",
+      {},
+    );
+    if (!result.ok) throw new Error(result.error.message);
+    const evidence = parseEvidence(result.value);
+    expect(evidence.provider).toEqual(identity);
+    expect(evidence.operation).toBe("list_adb_devices");
+    expect(evidence.parameters).toEqual({});
+    expect(evidence.confidence).toBe("observed");
+    // A device REA attaches to is not one it owns, so the observation names the service rather than a replay.
+    expect(evidence.authority).toBe(authority ?? "external-service");
+  },
+);
 
 it("preserves cancellation before execution", async () => {
   const controller = new AbortController();
