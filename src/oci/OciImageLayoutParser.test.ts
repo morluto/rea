@@ -1,6 +1,6 @@
 import { mkdir, readFile, symlink, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import {
   inspectOciImageLayoutInputSchema,
@@ -8,6 +8,7 @@ import {
   parseOciDigest,
 } from "../domain/oci/imageLayout.js";
 import { ParseFailureError } from "../domain/parseFailure.js";
+import { primaryAnalysisError } from "../domain/analysisErrorBase.js";
 import { DirectoryArtifactReader } from "../resources/index.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import {
@@ -586,6 +587,50 @@ it("projects a non-directory selection as an unsupported target", async () => {
         _tag: "AnalysisUnsupportedTargetError",
       });
   } finally {
+    await provider.close();
+  }
+});
+
+it("keeps the parse refusal and its layout snapshot when reader cleanup also fails", async () => {
+  const root = await createTestTempDirectory("rea-oci-cleanup-");
+  await writeOciImageLayoutFixture(root);
+  await writeFile(
+    join(root, "index.json"),
+    `${JSON.stringify({
+      schemaVersion: 2,
+      mediaType: "application/vnd.oci.image.index.v1+json",
+      manifests: [],
+      padding: "x".repeat(2000),
+    })}\n`,
+  );
+  const nativeClose = DirectoryArtifactReader.prototype.close;
+  let attempts = 0;
+  const close = vi
+    .spyOn(DirectoryArtifactReader.prototype, "close")
+    .mockImplementation(async function (this: DirectoryArtifactReader) {
+      attempts++;
+      if (attempts === 1) throw new Error("controlled close failure");
+      await nativeClose.call(this);
+    });
+  const provider = new OciImageLayoutProvider();
+  try {
+    const result = await provider.inspect(
+      inspectOciImageLayoutInputSchema.parse({
+        path: root,
+        max_json_bytes: 256,
+      }),
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.cleanupIncomplete).toBe(true);
+    const primary = primaryAnalysisError(result.error);
+    expect(primary.message).toContain("index.json exceeds the 256-byte budget");
+    expect(primary.partialObservation).toMatchObject({
+      kind: "file-snapshot-hash",
+      path: "oci-layout",
+    });
+  } finally {
+    close.mockRestore();
     await provider.close();
   }
 });

@@ -22,7 +22,9 @@ import {
   OCI_IMAGE_LAYOUT_FORMAT,
   OCI_IMAGE_LAYOUT_LIMIT_MAXIMA,
   type InspectOciImageLayoutInput,
+  type OciImageLayout,
 } from "../domain/oci/imageLayout.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { err, ok } from "../domain/result.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import {
@@ -158,15 +160,35 @@ export class OciImageLayoutProvider {
           resource: input.path,
           reader,
         };
+        let outcome:
+          | { readonly kind: "completed"; readonly value: OciImageLayout }
+          | { readonly kind: "failed"; readonly cause: unknown };
         try {
-          return ok(await parseOciImageLayout(reader, input, options?.signal));
-        } finally {
-          const closed = await this.#resources.release(owner);
-          if (closed.kind === "failed")
-            throw this.#resources.cleanupFailure({ kind: "completed" }, [
-              closed,
-            ]);
+          outcome = {
+            kind: "completed",
+            value: await parseOciImageLayout(reader, input, options?.signal),
+          };
+        } catch (cause: unknown) {
+          outcome = { kind: "failed", cause };
         }
+        const closed = await this.#resources.release(owner);
+        if (closed.kind === "failed") {
+          const cleanup = this.#resources.cleanupFailure(
+            { kind: "completed" },
+            [closed],
+          );
+          if (outcome.kind === "completed") throw cleanup;
+          // The parse's own failure, with its partial facts, stays primary.
+          return err(
+            analysisErrorWithCleanupDependencies(
+              layoutFailure(outcome.cause, input),
+              translateArtifactFailure(OPERATION, cleanup),
+              OPERATION,
+            ),
+          );
+        }
+        if (outcome.kind === "failed") throw outcome.cause;
+        return ok(outcome.value);
       });
     } catch (cause) {
       return err(layoutFailure(cause, input));
