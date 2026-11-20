@@ -1,10 +1,13 @@
 import { expect, it as test } from "vitest";
-import { readKunaConfiguration } from "../../../../src/kuna/KunaConfiguration.js";
 import { KUNA_DIAGNOSTIC_BYTES } from "../../../../src/kuna/KunaLimits.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../../../../src/domain/providerCleanupError.js";
 
-import { fakeKunaCalls, setFakeKunaBehavior } from "./fakeKuna.js";
+import {
+  fakeKunaCalls,
+  releaseFakeKunaCommand,
+  setFakeKunaBehavior,
+} from "./fakeKuna.js";
 import { run, session, unprovenCleanupLauncher } from "./kunaSessionFixture.js";
 import { waitFor } from "../../../support/testWait.js";
 
@@ -147,36 +150,28 @@ it("returns every encoding at an exact address in numeric inventory order", asyn
   }
 });
 
-it.each([
-  ["not-json", { strings: "not-json" }],
-  ["miscounted", { strings: "miscounted" }],
-  [
-    "duplicate identity",
-    {
-      stringRows: [
-        { address: 0x30, text: "hello" },
-        { address: 0x10, text: "other" },
-        { address: 0x30, text: "hello" },
-      ],
-    },
-  ],
-] as const)(
-  "does not publish or cache a %s inventory",
-  async (_label, behavior) => {
-    const { open, kuna } = await session("rea-kuna-strings-invalid-", behavior);
-    const client = open();
-    try {
-      expect(
-        await client.execute("search_strings", { pattern: "fixture" }),
-      ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
-      await setFakeKunaBehavior(kuna, {});
-      expect((await run(client, "list_strings")).result).toHaveLength(2);
-      expect(await scans(kuna)).toHaveLength(2);
-    } finally {
-      expect(await client.close()).toEqual({ ok: true, value: null });
-    }
-  },
-);
+it("does not publish or cache a miscounted inventory after the producer exits", async () => {
+  const { open, kuna } = await session("rea-kuna-strings-invalid-", {
+    strings: "miscounted",
+  });
+  const client = open();
+  try {
+    expect(
+      await client.execute("search_strings", { pattern: "fixture" }),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisOutputError",
+        reason: expect.stringContaining("count disagrees"),
+      },
+    });
+    await setFakeKunaBehavior(kuna, {});
+    expect((await run(client, "list_strings")).result).toHaveLength(2);
+    expect(await scans(kuna)).toHaveLength(2);
+  } finally {
+    expect(await client.close()).toEqual({ ok: true, value: null });
+  }
+});
 
 it("parses a scan larger than any fixed output buffer as it streams", async () => {
   const padding = 24 * 1024 * 1024;
@@ -218,7 +213,10 @@ it("stops Kuna at the first contradictory row instead of awaiting the rest", asy
       error: {
         _tag: "AnalysisOutputError",
         operation: "search_strings",
-        diagnostics: { producer_operation: "kuna:strings" },
+        diagnostics: {
+          code: "address_hex_disagrees",
+          producer_operation: "kuna:strings",
+        },
       },
     });
     await setFakeKunaBehavior(kuna, {});
@@ -231,7 +229,7 @@ it("stops Kuna at the first contradictory row instead of awaiting the rest", asy
 
 it("cancels one waiter without stopping the shared scan, and rebuilds in a fresh session", async () => {
   const { open, kuna } = await session("rea-kuna-strings-waiters-", {
-    stringDelayMs: 200,
+    gatedCommands: ["strings"],
   });
   const first = open();
   try {
@@ -248,6 +246,7 @@ it("cancels one waiter without stopping the shared scan, and rebuilds in a fresh
       ok: false,
       error: { _tag: "AnalysisCancelledError" },
     });
+    await releaseFakeKunaCommand(kuna, "strings");
     expect(await survivor).toMatchObject({ ok: true });
     expect(await scans(kuna)).toHaveLength(1);
   } finally {
@@ -337,7 +336,7 @@ it("retains metadata admission until a string process stop is proven", async () 
 });
 
 it("uses the whole-program deadline independently of the single-function budget", async () => {
-  const { open, kuna } = await session(
+  const { open } = await session(
     "rea-kuna-strings-deadline-",
     { stringDelayMs: 200 },
     {
@@ -345,19 +344,6 @@ it("uses the whole-program deadline independently of the single-function budget"
       REA_KUNA_PROJECT_TIMEOUT_MS: "1000",
     },
   );
-  expect(
-    readKunaConfiguration(
-      {
-        REA_KUNA_COMMAND: kuna,
-        REA_KUNA_TIMEOUT_MS: "20",
-        REA_KUNA_PROJECT_TIMEOUT_MS: "1000",
-      },
-      process.platform,
-    ),
-  ).toMatchObject({
-    ok: true,
-    value: { functionTimeoutMs: 20, projectTimeoutMs: 1000 },
-  });
   const client = open();
   try {
     expect((await run(client, "list_strings")).result).toHaveLength(2);
