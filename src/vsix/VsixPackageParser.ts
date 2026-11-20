@@ -284,13 +284,24 @@ const contributeCount = (value: unknown): number => {
   return 1;
 };
 
+/**
+ * The package member a package.json entry point names. VS Code resolves it
+ * relative to `extension/`, so `.` and `..` segments are resolved there; a
+ * path that climbs out of `extension/` keeps its unresolved form, which no
+ * member matches.
+ */
 const packageJsonEntryPath = (value: unknown): string | null => {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   if (trimmed === "") return null;
-  return vsixPackageLogicalPath(
-    `extension/${trimmed.replace(/^\.\//u, "").replace(/^\//u, "")}`,
-  );
+  const relative = vsixPackageLogicalPath(trimmed).replace(/^\/+/u, "");
+  const segments: string[] = [];
+  for (const segment of relative.split("/")) {
+    if (segment === "" || segment === ".") continue;
+    if (segment !== "..") segments.push(segment);
+    else if (segments.pop() === undefined) return `extension/${relative}`;
+  }
+  return `extension/${segments.join("/")}`;
 };
 
 const sameIdSet = (

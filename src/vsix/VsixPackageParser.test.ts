@@ -635,6 +635,30 @@ it("keeps a Zstandard decoder window refusal as a memory limit instead of a malf
   }
 });
 
+it("resolves dot segments in entry points under extension/", async () => {
+  const bytes = await vsixPackageFixture({
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      engines: { vscode: "^1.74.0" },
+      main: "./out/./lib/../extension.js",
+      browser: "../outside/web.js",
+    }),
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.entry_points.main).toEqual({
+    path: "extension/out/extension.js",
+    present: true,
+  });
+  expect(report.entry_points.browser).toEqual({
+    path: "extension/../outside/web.js",
+    present: false,
+  });
+});
+
 it("marks a missing main entry as absent without treating it as a format error", async () => {
   const bytes = await vsixPackageFixture({ includeMain: false });
   const report = vsixPackageSchema.parse(
