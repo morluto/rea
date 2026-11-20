@@ -18,6 +18,7 @@ import { referenceSourceImportAnalysisError } from "../../../src/application/Ref
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { readReferenceSource } from "../../../src/reference/ReferenceSourceReader.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { requireReferenceSourceReads } from "../../support/referenceSourceResourceScope.js";
 import { err, ok } from "../../../src/domain/result.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -40,6 +41,7 @@ interface DirectoryOperations {
   close(): Promise<void>;
 }
 
+beforeEach(requireReferenceSourceReads);
 beforeEach(async () => {
   actual =
     await vi.importActual<typeof import("node:fs/promises")>(

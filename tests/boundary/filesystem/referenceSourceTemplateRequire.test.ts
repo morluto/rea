@@ -1,10 +1,15 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { expect, it } from "vitest";
+import { beforeEach, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { importReferenceSource } from "../../support/referenceSourceResourceScope.js";
+import {
+  importReferenceSource,
+  requireReferenceSourceReads,
+} from "../../support/referenceSourceResourceScope.js";
+
+beforeEach(requireReferenceSourceReads);
 
 it("retains CommonJS requires spelled as exact no-substitution templates", async () => {
   const root = await createTestTempDirectory("rea-reference-template-require-");

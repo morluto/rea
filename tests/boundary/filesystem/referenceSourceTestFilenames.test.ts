@@ -2,10 +2,15 @@ import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { expect, it } from "vitest";
+import { beforeEach, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { importReferenceSource } from "../../support/referenceSourceResourceScope.js";
+import {
+  importReferenceSource,
+  requireReferenceSourceReads,
+} from "../../support/referenceSourceResourceScope.js";
+
+beforeEach(requireReferenceSourceReads);
 
 it("imports test-suffixed filenames with unchanged paths, hashes, and languages", async () => {
   const root = await createTestTempDirectory("rea-reference-test-filenames-");

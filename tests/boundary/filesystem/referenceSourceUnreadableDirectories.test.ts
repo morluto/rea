@@ -1,13 +1,16 @@
 import { chmod, mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   importReferenceSource,
   readReferenceSource,
+  requireReferenceSourceReads,
 } from "../../support/referenceSourceResourceScope.js";
+
+beforeEach(requireReferenceSourceReads);
 
 const importTree = (root: string) =>
   importReferenceSource({

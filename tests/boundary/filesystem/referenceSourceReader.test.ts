@@ -2,13 +2,18 @@ import { createHash } from "node:crypto";
 import { lstat, mkdir, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { readStableSymlinkTarget } from "../../../src/reference/ReferenceSourceReaderEntries.js";
-import { readReferenceSource } from "../../support/referenceSourceResourceScope.js";
+import {
+  readReferenceSource,
+  requireReferenceSourceReads,
+} from "../../support/referenceSourceResourceScope.js";
 import { ok } from "../../../src/domain/result.js";
+
+beforeEach(requireReferenceSourceReads);
 
 it.each(["rejected", "returned"] as const)(
   "retains a symlink's physical failure when cancellation accompanies its %s outcome",
