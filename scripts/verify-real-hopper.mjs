@@ -93,7 +93,6 @@ try {
   const sessionsBefore = (
     await snapshotHopperRuntime(runtimeParent, HOPPER_TARGET_LEASE_DIRECTORY)
   ).paths;
-  const ownedProcessIds = new Set();
   const textValue = mcpTextValue;
 
   const requireOverview = (value, operation) => {
@@ -301,7 +300,6 @@ try {
     await client.connect(transport);
     if (transport.pid === null)
       throw new Error("The verifier did not capture its MCP process identity");
-    ownedProcessIds.add(transport.pid);
     const progressUpdates = [];
     const options = {
       timeout,
@@ -531,14 +529,18 @@ try {
       ]);
       await call("close_binary");
     }
-    const lifecycleAndCli = await verifyHopperLifecycleAndCli(client, options, {
-      primary: targetA,
-      secondary: targetB,
-      ...(fixtureTargets.unicode === undefined
-        ? {}
-        : { unicode: fixtureTargets.unicode.path }),
-      ownedProcessIds,
-    });
+    const lifecycleAndCli = await verifyHopperLifecycleAndCli(
+      client,
+      options,
+      {
+        primary: targetA,
+        secondary: targetB,
+        ...(fixtureTargets.unicode === undefined
+          ? {}
+          : { unicode: fixtureTargets.unicode.path }),
+      },
+      commands,
+    );
     const closedSession = requireMcpLifecycleResult(
       await fullSessionStatus(),
       "binary_session",
@@ -622,6 +624,7 @@ try {
       serverCommand,
       serverArgs,
       environment: serverEnvironment,
+      commands,
     });
 } catch (cause) {
   primaryFailure = cause;

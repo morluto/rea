@@ -1,11 +1,9 @@
 import { canonicalOutputSchema } from "./canonical-output-schema.mjs";
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { copyFile, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import Ajv from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import {
@@ -403,7 +401,12 @@ export async function verifyHopperBoundaryContracts(
 }
 
 /** Prove actual document disposal and shared CLI/MCP behavior on disposable copies. */
-export async function verifyHopperLifecycleAndCli(client, options, targets) {
+export async function verifyHopperLifecycleAndCli(
+  client,
+  options,
+  targets,
+  commands,
+) {
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), "hopper-boundary-")),
   );
@@ -415,16 +418,11 @@ export async function verifyHopperLifecycleAndCli(client, options, targets) {
       await client.callTool({ name, arguments: args }, options),
       name,
     );
-  const cli = promisify(execFile);
-  const runCli = (args) => {
-    const pending = cli(process.execPath, args, {
+  const runCli = (args) =>
+    commands.exec(process.execPath, args, {
       timeout: 180_000,
       maxBuffer: 1_048_576,
     });
-    if (pending.child.pid !== undefined)
-      targets.ownedProcessIds.add(pending.child.pid);
-    return pending;
-  };
   try {
     await copyFile(targets.primary, primary);
     await copyFile(targets.secondary, secondary);

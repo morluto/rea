@@ -1,7 +1,5 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
-import { promisify } from "node:util";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
@@ -19,8 +17,6 @@ import {
   requireMcpLifecycleResult,
 } from "./mcp-verifier-results.mjs";
 
-const execFileAsync = promisify(execFile);
-
 /** Prove actual MCP owner exit releases the demo singleton for subsequent CLI/MCP sessions. */
 export async function verifyLinuxHopperOwnerExit({
   primary,
@@ -28,6 +24,7 @@ export async function verifyLinuxHopperOwnerExit({
   serverCommand,
   serverArgs,
   environment,
+  commands,
 }) {
   const sentinel = await startUnrelatedHopperSentinel();
   const outcomes = [];
@@ -132,7 +129,7 @@ export async function verifyLinuxHopperOwnerExit({
         assert.equal(cleanup.cleaned, true, JSON.stringify(cleanup));
         // The SIGKILL case must recover the stale lease for both target identities.
         for (const target of [primary, secondary]) {
-          const result = await execFileAsync(
+          const result = await commands.exec(
             process.execPath,
             [
               "scripts/rea.mjs",
