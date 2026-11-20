@@ -89,7 +89,10 @@ const layoutFailure = (cause: unknown, input: InspectOciImageLayoutInput) => {
     ).find((name) => name === cause.failure.limit.name);
     return parseLimitConstraint(
       OPERATION,
-      cause.failure.limit.name === "max_entries" ? "capacity" : "memory",
+      cause.failure.limit.name === "max_entries" ||
+        cause.failure.limit.name === "max_descriptors"
+        ? "capacity"
+        : "memory",
       cause,
       {
         path: input.path,

@@ -65,9 +65,13 @@ directory admission helpers.
 ## Limits and failures
 
 Each JSON document (`oci-layout`, `index.json`, manifests, configs) is limited
-to 1 MiB by default (16 MiB maximum). Directory enumeration is limited to 4096
-entries by default (65536 maximum). Nested indexes beyond `max_index_depth`
-become findings and are not walked further.
+to 1 MiB by default (16 MiB maximum). Directory enumeration is limited by
+`max_entries` to 4096 entries by default (65536 maximum). Decoded index,
+manifest and layer descriptors are limited separately by `max_descriptors` to
+65536 by default (1048576 maximum); a layer shared by many manifests is one
+file but counts once per manifest that references it. Exceeding either budget
+refuses the inspect and names the allowance. Nested indexes beyond
+`max_index_depth` become findings and are not walked further.
 
 A missing, malformed, or oversize `oci-layout` refuses the inspect. A missing,
 malformed, or oversize `index.json` refuses with the `oci-layout` file-snapshot

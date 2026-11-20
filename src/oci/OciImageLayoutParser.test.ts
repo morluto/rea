@@ -716,3 +716,110 @@ it("keeps a reader failure on a referenced blob instead of a JSON finding", asyn
     inspectFile.mockRestore();
   }
 });
+
+const writeSharedLayerLayout = async (
+  root: string,
+  manifestCount: number,
+  layerCount: number,
+): Promise<void> => {
+  const config = `${JSON.stringify({
+    architecture: "amd64",
+    os: "linux",
+    rootfs: { type: "layers", diff_ids: [] },
+  })}\n`;
+  const configDigest = await putOciBlob(root, config);
+  const layers = [];
+  for (let layer = 0; layer < layerCount; layer += 1) {
+    const body = `shared-layer-${String(layer)}`;
+    layers.push({
+      mediaType: "application/vnd.oci.image.layer.v1.tar+gzip",
+      digest: await putOciBlob(root, body),
+      size: Buffer.byteLength(body),
+    });
+  }
+  const manifests = [];
+  for (let image = 0; image < manifestCount; image += 1) {
+    const manifest = `${JSON.stringify({
+      schemaVersion: 2,
+      mediaType: "application/vnd.oci.image.manifest.v1+json",
+      config: {
+        mediaType: "application/vnd.oci.image.config.v1+json",
+        digest: configDigest,
+        size: Buffer.byteLength(config),
+      },
+      layers,
+      annotations: { "org.opencontainers.image.ref.name": `v${String(image)}` },
+    })}\n`;
+    manifests.push({
+      mediaType: "application/vnd.oci.image.manifest.v1+json",
+      digest: await putOciBlob(root, manifest),
+      size: Buffer.byteLength(manifest),
+    });
+  }
+  await writeFile(
+    join(root, "index.json"),
+    `${JSON.stringify({
+      schemaVersion: 2,
+      mediaType: "application/vnd.oci.image.index.v1+json",
+      manifests,
+    })}\n`,
+  );
+  await writeFile(
+    join(root, "oci-layout"),
+    `${JSON.stringify({ imageLayoutVersion: "1.0.0" })}\n`,
+  );
+};
+
+it("keeps descriptors of shared layers off the directory-entry budget", async () => {
+  const root = await createTestTempDirectory("rea-oci-shared-layers-");
+  // 50 manifests x 100 shared layers decode over 5,000 descriptors from
+  // about 160 directory entries, past the 4096 max_entries default.
+  await writeSharedLayerLayout(root, 50, 100);
+  const report = await inspectLayout(root);
+  expect(report.images).toHaveLength(50);
+  expect(report.coverage.status).toBe("complete");
+  expect(report.coverage.entries_examined).toBeLessThan(200);
+});
+
+it("refuses a layout past max_descriptors and names that allowance", async () => {
+  const root = await createTestTempDirectory("rea-oci-descriptors-");
+  await writeSharedLayerLayout(root, 5, 10);
+  const reader = new DirectoryArtifactReader(root);
+  try {
+    await expect(
+      parseOciImageLayout(
+        reader,
+        inspectOciImageLayoutInputSchema.parse({
+          path: root,
+          max_descriptors: 20,
+        }),
+      ),
+    ).rejects.toSatisfy((cause: unknown) => {
+      expect(cause).toBeInstanceOf(ParseFailureError);
+      if (!(cause instanceof ParseFailureError)) return false;
+      expect(cause.failure).toMatchObject({
+        kind: "limit",
+        limit: { name: "max_descriptors", maximum: 20, required: 21 },
+      });
+      return true;
+    });
+  } finally {
+    await reader.close();
+  }
+  const provider = new OciImageLayoutProvider();
+  try {
+    const result = await provider.inspect(
+      inspectOciImageLayoutInputSchema.parse({
+        path: root,
+        max_descriptors: 20,
+      }),
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(JSON.stringify(primaryAnalysisError(result.error))).toContain(
+      "max_descriptors",
+    );
+  } finally {
+    await provider.close();
+  }
+});

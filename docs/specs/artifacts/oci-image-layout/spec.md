@@ -30,9 +30,12 @@ image, or contacting a registry.
   crashes.
 - Admit the selected directory through the existing directory/stable-root
   helpers so child symbolic links and paths that leave the root are refused.
-- Bound JSON bytes, hashed blob bytes, directory entries, and nested index
-  depth with named allowances. Refuse oversize or malformed `oci-layout` or
-  `index.json` with partial facts preserved when the layout file was readable.
+- Bound JSON bytes, hashed blob bytes, directory entries, decoded
+  descriptors, and nested index depth with named allowances. Directory entries
+  and decoded descriptors are separate budgets, so manifests sharing layers do
+  not spend the directory allowance. Refuse oversize or malformed
+  `oci-layout` or `index.json` with partial facts preserved when the layout
+  file was readable.
 
 ## Acceptance
 

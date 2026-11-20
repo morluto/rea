@@ -595,17 +595,20 @@ export const parseOciImageLayout = async (
   const indexes: OciImageLayoutIndex[] = [];
   const images: OciImageLayoutImage[] = [];
   const visited = new Set<string>();
-  let processed = 0;
-  const chargeEntry = (): void => {
-    processed += 1;
-    if (processed > input.max_entries)
+  // Decoded descriptors have their own allowance: max_entries bounds the
+  // directory walk, and a shared layer is a single file but one descriptor
+  // in every manifest that references it.
+  let descriptorsDecoded = 0;
+  const chargeDescriptor = (): void => {
+    descriptorsDecoded += 1;
+    if (descriptorsDecoded > input.max_descriptors)
       throw decodeLimit(
         OCI_IMAGE_LAYOUT_FORMAT,
-        `OCI image layout exceeds the ${String(input.max_entries)}-entry budget.`,
+        `OCI image layout exceeds the ${String(input.max_descriptors)}-descriptor budget.`,
         {
-          name: "max_entries",
-          maximum: input.max_entries,
-          required: processed,
+          name: "max_descriptors",
+          maximum: input.max_descriptors,
+          required: descriptorsDecoded,
         },
       );
   };
@@ -708,7 +711,7 @@ export const parseOciImageLayout = async (
   ): Promise<void> => {
     if (visited.has(digest)) return;
     visited.add(digest);
-    chargeEntry();
+    chargeDescriptor();
     if (depth > input.max_index_depth) {
       recordFinding(
         findings,
@@ -737,7 +740,7 @@ export const parseOciImageLayout = async (
       : [];
     const indexEntries: OciImageLayoutIndex["entries"] = [];
     for (const [position, item] of manifests.entries()) {
-      chargeEntry();
+      chargeDescriptor();
       const descriptor = descriptorOf(item);
       if (descriptor === undefined) {
         recordFinding(
@@ -805,7 +808,7 @@ export const parseOciImageLayout = async (
   ): Promise<void> => {
     if (visited.has(`manifest:${digest}`)) return;
     visited.add(`manifest:${digest}`);
-    chargeEntry();
+    chargeDescriptor();
     const document = await readReferencedJson(digest, `manifest ${digest}`);
     if (document === undefined) return;
     if (!isRecord(document.value)) {
@@ -830,7 +833,7 @@ export const parseOciImageLayout = async (
       ? document.value.layers
       : [];
     for (const [position, item] of layerItems.entries()) {
-      chargeEntry();
+      chargeDescriptor();
       const descriptor = descriptorOf(item);
       if (descriptor === undefined) {
         recordFinding(

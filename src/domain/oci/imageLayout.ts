@@ -15,6 +15,8 @@ export const MAX_INSPECT_OCI_IMAGE_LAYOUT_JSON_BYTES = 16 * 1024 * 1024;
 export const MAX_INSPECT_OCI_IMAGE_LAYOUT_BLOB_BYTES = 512 * 1024 * 1024;
 /** Hard ceiling on directory entries examined in one layout. */
 export const MAX_INSPECT_OCI_IMAGE_LAYOUT_ENTRIES = 65536;
+/** Hard ceiling on decoded index, manifest and layer descriptors in one layout. */
+export const MAX_INSPECT_OCI_IMAGE_LAYOUT_DESCRIPTORS = 1048576;
 /** Hard ceiling on nested index depth. */
 export const MAX_INSPECT_OCI_IMAGE_LAYOUT_INDEX_DEPTH = 8;
 
@@ -22,6 +24,7 @@ export const OCI_IMAGE_LAYOUT_LIMIT_MAXIMA = {
   max_json_bytes: MAX_INSPECT_OCI_IMAGE_LAYOUT_JSON_BYTES,
   max_blob_bytes: MAX_INSPECT_OCI_IMAGE_LAYOUT_BLOB_BYTES,
   max_entries: MAX_INSPECT_OCI_IMAGE_LAYOUT_ENTRIES,
+  max_descriptors: MAX_INSPECT_OCI_IMAGE_LAYOUT_DESCRIPTORS,
   max_index_depth: MAX_INSPECT_OCI_IMAGE_LAYOUT_INDEX_DEPTH,
 } as const;
 
@@ -151,6 +154,15 @@ export const inspectOciImageLayoutInputSchema = z.strictObject({
     .default(4096)
     .describe(
       "Maximum directory entries to examine; exceeding the budget fails without partial success",
+    ),
+  max_descriptors: z
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_INSPECT_OCI_IMAGE_LAYOUT_DESCRIPTORS)
+    .default(65536)
+    .describe(
+      "Maximum index, manifest and layer descriptors to decode across the layout, counted per reference so shared layers count once per manifest; exceeding the budget fails without partial success",
     ),
   max_index_depth: z
     .number()
