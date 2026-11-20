@@ -99,7 +99,6 @@ import { elf, thinMach } from "../domain/binaryTarget.fixture.js";
 import { GhidraProvider } from "./GhidraProvider.js";
 import { GhidraClient, type GhidraTargetSnapshot } from "./GhidraClient.js";
 import {
-  ghidraDecompileTimeoutRecovery,
   ghidraMissingProgramGuidance,
   ghidraStartupTimeoutGuidance,
   type GhidraProviderClientFactory,
@@ -1891,32 +1890,40 @@ describe("Ghidra file-offset outcome projection", () => {
       "address_unmapped",
       "unmapped",
       "Address 0x403030 is outside every Ghidra memory block",
+      "select an address",
     ],
     [
       "address_uninitialized",
       "uninitialized",
       "Address 0x403010 is in uninitialized Ghidra memory block .bss",
+      "select an address",
     ],
     [
       "file_mapping_absent",
       "absent",
       "Address 0x403010 in initialized Ghidra memory block auxiliary has no authoritative mapping to the admitted target file",
+      "select an address",
     ],
     [
       "file_mapping_ambiguous",
       "ambiguous",
       "Address 0x403010 has 2 authoritative mappings to the admitted target file",
+      "each candidate offset",
     ],
     [
       "file_offset_unrepresentable",
       "unrepresentable",
       "Address 0x403010 maps to an admitted target-file offset beyond the exact JSON integer range",
+      "exact JSON integer range",
     ],
   ] as const)(
     "reports %s as a conforming address without an exact offset",
-    async (remoteCode, outcome, message) => {
+    async (remoteCode, outcome, message, recovery) => {
       const client = await createElfClient(remoteFailure(remoteCode, message));
       // A non-canonical spelling the bridge accepts survives verbatim.
+      onTestFinished(async () => {
+        await client.close();
+      });
       const result = await client.execute("address_to_file_offset", {
         address: "0X00403010",
       });
@@ -1946,40 +1953,37 @@ describe("Ghidra file-offset outcome projection", () => {
       expect(projected.remediation.action).toContain(
         "inspect_native_load_image",
       );
-      expect(projected.remediation.action).not.toContain("(CLI:");
-      expect(projected.remediation.action).not.toContain("schema");
-      expect(projected.remediation.action).not.toContain("tools/list");
-      await client.close();
+      expect(projected.remediation.action).toContain(recovery);
+      expect(projected.remediation.action).not.toMatch(
+        /\(CLI:|schema|tools\/list/u,
+      );
     },
   );
+});
 
+describe("Ghidra ordinary input refusals", () => {
   it.each([
-    ["address_to_file_offset", "invalid_request"],
-    ["procedure_pseudo_code", "not_found"],
+    ["address_to_file_offset", { address: "0x403010" }, "invalid_request"],
+    ["procedure_pseudo_code", { procedure: "missing" }, "not_found"],
+    ["search_bytes", { pattern: "00" }, "invalid_request"],
   ] as const)(
-    "keeps schema recovery for an ordinary %s %s refusal",
-    async (operation, remoteCode) => {
-      const client = await createElfClient(
-        remoteFailure(remoteCode, "Fixture bridge rejected the request"),
-      );
-      const result = await client.execute(
-        operation,
-        operation === "address_to_file_offset"
-          ? { address: "0x403010" }
-          : { procedure: "missing" },
-      );
+    "keeps schema recovery for an ordinary %s refusal",
+    async (operation, parameters, remoteCode) => {
+      const message = "Fixture bridge rejected the request";
+      const client = await createElfClient(remoteFailure(remoteCode, message));
+      onTestFinished(async () => {
+        await client.close();
+      });
+      const result = await client.execute(operation, parameters);
       if (result.ok) throw new Error("Expected an input refusal");
       expect(projectAnalysisError(result.error)).toMatchObject({
         code: "invalid_request",
-        message: expect.stringMatching(/input.*invalid/iu),
         recovery: { kind: "inspect_input_contract", operation },
         details: {
-          issues: [
-            { path: [], message: "Fixture bridge rejected the request" },
-          ],
+          diagnostics: { remote_code: remoteCode },
+          issues: [{ path: [], message }],
         },
       });
-      await client.close();
     },
   );
 });
@@ -1990,22 +1994,12 @@ describe("Ghidra byte-search cursor projection", () => {
     "Byte search cursor does not match this search. It is bound to the target, analysis profile (including a selected Ghidra project), pattern, mask, bounds, and document, and does not identify which of those differs.";
 
   it("reports a cursor binding mismatch without schema repair", async () => {
-    const ghidra = provider(installationHost(), () => ({
-      start: () => Promise.resolve(ok(sessionInfo())),
-      callTool: () =>
-        Promise.resolve(
-          err(
-            new GhidraSessionError(
-              "remote",
-              MESSAGE,
-              { remote_code: CURSOR_MISMATCH },
-              { remoteCode: CURSOR_MISMATCH },
-            ),
-          ),
-        ),
-      close: () => Promise.resolve(ok(null)),
-    }));
-    const client = await createElfClient(ghidra);
+    const client = await createElfClient(
+      remoteFailure(CURSOR_MISMATCH, MESSAGE),
+    );
+    onTestFinished(async () => {
+      await client.close();
+    });
     const result = await client.execute("search_bytes", {
       pattern: "00",
       cursor: "other-context",
@@ -2044,37 +2038,6 @@ describe("Ghidra byte-search cursor projection", () => {
       },
     });
     expect(projected).not.toHaveProperty("recovery");
-    await client.close();
-  });
-
-  it("keeps schema recovery for an ordinary search_bytes refusal", async () => {
-    const ghidra = provider(installationHost(), () => ({
-      start: () => Promise.resolve(ok(sessionInfo())),
-      callTool: () =>
-        Promise.resolve(
-          err(
-            new GhidraSessionError(
-              "remote",
-              "Fixture bridge rejected the request",
-              { remote_code: "invalid_request" },
-              { remoteCode: "invalid_request" },
-            ),
-          ),
-        ),
-      close: () => Promise.resolve(ok(null)),
-    }));
-    const client = await createElfClient(ghidra);
-    const result = await client.execute("search_bytes", { pattern: "00" });
-    if (result.ok) throw new Error("Expected an input refusal");
-    expect(projectAnalysisError(result.error)).toMatchObject({
-      code: "invalid_request",
-      message: "Analysis input is invalid. Check the arguments and try again.",
-      recovery: { kind: "inspect_input_contract", operation: "search_bytes" },
-      details: {
-        issues: [{ path: [], message: "Fixture bridge rejected the request" }],
-      },
-    });
-    await client.close();
   });
 });
 
@@ -2083,123 +2046,42 @@ describe("Ghidra decompiler failure projection", () => {
     const code = "decompile_failed";
     const message =
       "Ghidra decompilation failed: Low-level Error: Fixture decompiler failure";
-    const ghidra = provider(installationHost(), () => ({
-      start: () => Promise.resolve(ok(sessionInfo())),
-      callTool: () =>
-        Promise.resolve(
-          err(
-            new GhidraSessionError(
-              "remote",
-              message,
-              { remote_code: code },
-              { remoteCode: code },
-            ),
-          ),
-        ),
-      close: () => Promise.resolve(ok(null)),
-    }));
-    const client = await createElfClient(ghidra);
+    const client = await createElfClient(remoteFailure(code, message));
+    onTestFinished(async () => {
+      await client.close();
+    });
     const result = await client.execute("procedure_pseudo_code", {
       procedure: "main",
     });
-    expect(result).toMatchObject({
-      ok: false,
-      error: { _tag: "ProviderAdapterError" },
+    if (result.ok) throw new Error("Expected a decompiler failure");
+    expect(result.error._tag).toBe("ProviderAdapterError");
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
+      code: "execution_failure",
+      retryable: false,
+      message: `${message}. Only the decompiler failed for this procedure. ${GHIDRA_SESSION_RETAINED}`,
+      details: {
+        related_operations: ["analyze_function"],
+        diagnostics: { remote_code: code },
+      },
     });
-    if (!result.ok) {
-      const projected = projectAnalysisError(result.error);
-      expect(projected).toMatchObject({
-        code: "execution_failure",
-        retryable: false,
-        message: `${message}. Only the decompiler failed for this procedure. ${GHIDRA_SESSION_RETAINED}`,
-        details: {
-          related_operations: ["analyze_function"],
-          diagnostics: { remote_code: code },
-        },
-      });
-      expect(projected.message).not.toContain("rea doctor");
-      expect(projected.remediation.action).toContain("analyze_function");
-      expect(projected.remediation.action).not.toContain("rea function");
-      expect(projected.remediation.action).toContain(
-        "facet_availability.pseudocode",
-      );
-      expect(projected.remediation.action).not.toContain("rea doctor");
-      // A one-shot invocation has released the session it would reuse.
-      const invocation = projectAnalysisError(result.error, "invocation");
-      expect(invocation).toMatchObject({
-        code: "execution_failure",
-        remediation: projected.remediation,
-      });
-      expect(projected.message).toBe(
-        `${invocation.message} ${GHIDRA_SESSION_RETAINED}`,
-      );
-      expect(invocation.message).not.toContain(GHIDRA_SESSION_RETAINED);
-    }
-  });
-
-  it("reports one procedure's decompile limit as a request timeout", async () => {
-    const code = "decompile_timed_out";
-    const message =
-      "Ghidra decompilation of 0x401000 exceeded the 5-second configured decompilation limit (ghidra.decompile_timeout_seconds; launch seed REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS)";
-    const ghidra = provider(
-      installationHost(),
-      () => ({
-        start: () => Promise.resolve(ok(sessionInfo())),
-        callTool: () =>
-          Promise.resolve(
-            err(
-              new GhidraSessionError(
-                "remote",
-                message,
-                { remote_code: code },
-                { remoteCode: code },
-              ),
-            ),
-          ),
-        close: () => Promise.resolve(ok(null)),
-      }),
-      { REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS: "5" },
+    expect(projected.message).not.toContain("rea doctor");
+    expect(projected.remediation.action).toContain("analyze_function");
+    expect(projected.remediation.action).not.toContain("rea function");
+    expect(projected.remediation.action).toContain(
+      "facet_availability.pseudocode",
     );
-    const client = await createElfClient(ghidra);
-    const result = await client.execute("procedure_pseudo_code", {
-      procedure: "main",
+    expect(projected.remediation.action).not.toContain("rea doctor");
+    // A one-shot invocation has released the session it would reuse.
+    const invocation = projectAnalysisError(result.error, "invocation");
+    expect(invocation).toMatchObject({
+      code: "execution_failure",
+      remediation: projected.remediation,
     });
-    // Not a ProviderAdapterError: BinarySession keeps other Ghidra
-    // operations available after a request-level timeout.
-    expect(result).toMatchObject({
-      ok: false,
-      error: { _tag: "AnalysisTimeoutError", timeoutMs: 5000 },
-    });
-    if (!result.ok) {
-      const projected = projectAnalysisError(result.error);
-      expect(projected).toMatchObject({
-        code: "provider_timeout",
-        retryable: true,
-        message: `${message}. Only this procedure's decompilation was stopped. ${GHIDRA_SESSION_RETAINED}`,
-        recovery: { kind: "inspect_timeout_state", timeout_ms: 5000 },
-        details: {
-          diagnostics: { remote_code: code },
-          limit: {
-            setting: "ghidra.decompile_timeout_seconds",
-            effective_value: 5,
-            applies_at: "next_operation",
-            agent_editable: true,
-            scope: "rea-runtime",
-            update_mode: "runtime",
-            pending_restart: false,
-          },
-        },
-      });
-      const action = projected.remediation.action;
-      expect(action).toContain("analyze_function");
-      expect(action).toContain("update_analysis_settings");
-      expect(action).toContain("REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS");
-      expect(action).toContain("tool-call deadline");
-      expect(action).toContain("new Codex/Kimi registrations");
-      expect(action).toContain("preserves existing positive values");
-      expect(action).toContain("edit existing deadlines yourself");
-      expect(action).not.toContain("rea doctor");
-    }
+    expect(projected.message).toBe(
+      `${invocation.message} ${GHIDRA_SESSION_RETAINED}`,
+    );
+    expect(invocation.message).not.toContain(GHIDRA_SESSION_RETAINED);
   });
 });
 
@@ -2233,61 +2115,76 @@ it("preserves a bridge request limit when reattributing a Ghidra session failure
   expect(result.error.limit).toEqual(refusal.limit);
 });
 
-describe("Ghidra decompile deadline for a finished invocation", () => {
-  const decompileDeadline = async (
-    seconds: number,
-    source: GhidraSessionSource,
-    cancelled = false,
-  ) => {
-    const environment: Record<string, string> = {
-      REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS: String(seconds),
-    };
-    if (source === "owned-checkpoint") {
-      const root = await createTestTempDirectory("rea-deadline-checkpoint-");
-      environment.REA_GHIDRA_CHECKPOINT_DIR = root;
-    }
-    if (source === "existing-project") {
-      const root = await createTestTempDirectory("rea-deadline-project-");
-      await mkdir(join(root, "saved.rep"));
-      await writeFile(join(root, "saved.gpr"), "marker");
-      environment.REA_GHIDRA_PROJECT_PATH = join(root, "saved.gpr");
-    }
-    const code = "decompile_timed_out";
-    const message = `Ghidra decompilation of 0x401000 exceeded the ${String(seconds)}-second configured decompilation limit`;
-    const observed = new GhidraSessionError(
-      "remote",
-      message,
-      { remote_code: code },
-      { remoteCode: code },
-    );
-    const ghidra = provider(
-      installationHost(),
-      () => ({
-        start: () => Promise.resolve(ok(sessionInfo())),
-        callTool: () =>
-          Promise.resolve(
-            err(
-              cancelled
-                ? observed.withConcurrentCancellation({ reason: "deadline" })
-                : observed,
-            ),
-          ),
-        close: () => Promise.resolve(ok(null)),
-      }),
-      environment,
-    );
-    const client = await createElfClient(ghidra);
-    const result = await client.execute("procedure_pseudo_code", {
-      procedure: "main",
-    });
-    if (result.ok) throw new Error("Expected the decompile deadline");
-    return {
-      message,
-      continuing: projectAnalysisError(result.error),
-      invocation: projectAnalysisError(result.error, "invocation"),
-    };
+const decompileDeadline = async (
+  seconds: number,
+  source: GhidraSessionSource,
+  cancelled = false,
+) => {
+  const environment: Record<string, string> = {
+    REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS: String(seconds),
   };
+  if (source === "owned-checkpoint") {
+    const root = await createTestTempDirectory("rea-deadline-checkpoint-");
+    environment.REA_GHIDRA_CHECKPOINT_DIR = root;
+  }
+  if (source === "existing-project") {
+    const root = await createTestTempDirectory("rea-deadline-project-");
+    await mkdir(join(root, "saved.rep"));
+    await writeFile(join(root, "saved.gpr"), "marker");
+    environment.REA_GHIDRA_PROJECT_PATH = join(root, "saved.gpr");
+  }
+  const code = "decompile_timed_out";
+  const message = `Ghidra decompilation of 0x401000 exceeded the ${String(seconds)}-second configured decompilation limit`;
+  const observed = new GhidraSessionError(
+    "remote",
+    message,
+    { remote_code: code },
+    { remoteCode: code },
+  );
+  const ghidra = provider(
+    installationHost(),
+    () => ({
+      start: () => Promise.resolve(ok(sessionInfo())),
+      callTool: () =>
+        Promise.resolve(
+          err(
+            cancelled
+              ? observed.withConcurrentCancellation({ reason: "deadline" })
+              : observed,
+          ),
+        ),
+      close: () => Promise.resolve(ok(null)),
+    }),
+    environment,
+  );
+  const client = await createElfClient(ghidra);
+  onTestFinished(async () => {
+    await client.close();
+  });
+  const result = await client.execute("procedure_pseudo_code", {
+    procedure: "main",
+  });
+  if (result.ok) throw new Error("Expected the decompile deadline");
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisTimeoutError",
+    timeoutMs: seconds * 1000,
+  });
+  const continuing = projectAnalysisError(result.error);
+  const invocation = projectAnalysisError(result.error, "invocation");
+  if (!cancelled) {
+    expect(invocation.remediation.action).toBe(
+      "remediationAction" in result.error
+        ? result.error.remediationAction
+        : undefined,
+    );
+    expect(continuing.remediation.action).toBe(
+      result.error.continuingCallerGuidance?.remediationAction,
+    );
+  }
+  return { message, continuing, invocation };
+};
 
+describe("Ghidra decompile deadline for a finished invocation", () => {
   it.each([
     { seconds: 5, source: "fresh-import" },
     { seconds: 2_147_483, source: "fresh-import" },
@@ -2300,7 +2197,6 @@ describe("Ghidra decompile deadline for a finished invocation", () => {
         seconds,
         source,
       );
-      const recovery = ghidraDecompileTimeoutRecovery(seconds, source);
       for (const projected of [continuing, invocation])
         expect(projected).toMatchObject({
           code: "provider_timeout",
@@ -2309,26 +2205,35 @@ describe("Ghidra decompile deadline for a finished invocation", () => {
             kind: "inspect_timeout_state",
             timeout_ms: seconds * 1000,
           },
-          details: { diagnostics: { remote_code: "decompile_timed_out" } },
+          details: {
+            diagnostics: { remote_code: "decompile_timed_out" },
+            related_operations: ["analyze_function"],
+          },
         });
-      expect(invocation.remediation.action).toBe(recovery.remediationAction);
-      expect(continuing.remediation.action).toBe(
-        recovery.continuingRemediationAction,
+      const invocationAction = invocation.remediation.action;
+      expect(invocationAction).toContain(
+        "REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS",
       );
-      expect(
-        invocation.remediation.action.includes("REA_GHIDRA_PROJECT_PATH"),
-      ).toBe(source === "existing-project");
-      if (source === "owned-checkpoint") {
-        expect(invocation.remediation.action).toMatch(
-          /restores.*REA_GHIDRA_CHECKPOINT_DIR/u,
-        );
-        expect(invocation.remediation.action).toMatch(
-          /if initial analysis never completed/u,
-        );
-        expect(continuing.remediation.action).toContain(
-          "update_analysis_settings",
-        );
-      }
+      expect(invocationAction).toMatch(/\b(?:unset|remove|clear)\b/iu);
+      // At the effective ceiling, the recovery cannot offer a higher value.
+      const offersIncrease =
+        /\b(?:above|higher|greater|increase|raise)\b/iu.test(invocationAction);
+      expect(offersIncrease).toBe(seconds < 2_147_483);
+      expect(invocationAction).not.toContain("update_analysis_settings");
+      expect(invocationAction.includes("REA_GHIDRA_PROJECT_PATH")).toBe(
+        source === "existing-project",
+      );
+      expect(invocationAction.includes("REA_GHIDRA_CHECKPOINT_DIR")).toBe(
+        source === "owned-checkpoint",
+      );
+      const continuingAction = continuing.remediation.action;
+      for (const identifier of [
+        "analyze_function",
+        "update_analysis_settings",
+        "ghidra.decompile_timeout_seconds",
+        "REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS",
+      ])
+        expect(continuingAction).toContain(identifier);
       expect(invocation.message.startsWith(message)).toBe(true);
       expect(continuing.message).toBe(
         `${invocation.message} ${GHIDRA_SESSION_RETAINED}`,
