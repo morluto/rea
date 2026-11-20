@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import { constants as bufferConstants } from "node:buffer";
 
 const kind = z.enum(["func", "table", "memory", "global", "tag", "unknown"]);
@@ -48,7 +49,7 @@ const signature = z.discriminatedUnion("kind", [
 
 /** Typed observations decoded once at the WABT producer boundary. */
 export const wasmInterfaceSchema = z.object({
-  state: z.enum(["complete", "partial"]),
+  state: knownCoverageStatusSchema,
   entries: z.array(
     z
       .object({

@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
-import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
+import { SafeOutputTree } from "../../../src/resources/SafeOutputTree.js";
 import { absoluteCallerPath } from "../../../src/filesystem/callerPath.js";
 import { FirmwareFileAccess } from "../../../src/firmware/FirmwareFiles.js";
 import { associateWasmGlue } from "../../../src/wasm/WasmGlueAdapter.js";

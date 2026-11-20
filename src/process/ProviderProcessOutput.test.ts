@@ -7,7 +7,7 @@ import {
   ProviderProcessSupervisor,
   type ProcessDiagnosticBudget,
 } from "./ProviderProcess.js";
-import { redactCapturedTransportCredential } from "./ProviderDiagnosticRedaction.js";
+import { redactExplicitOutput } from "../domain/explicitSensitiveValues.js";
 
 it("retains final stderr between verified exit and output close during stop", async () => {
   const producer = Object.assign(new EventEmitter(), {
@@ -544,13 +544,9 @@ it.each(["stdout", "stderr"] as const)(
         observedBytes: Buffer.byteLength(token),
         text: token.slice(0, 8),
       });
-      expect(
-        redactCapturedTransportCredential(
-          scoped.snapshot[stream],
-          token,
-          "[REDACTED]",
-        ),
-      ).toBe("[REDACTED]");
+      expect(redactExplicitOutput(scoped.snapshot[stream], [token])).toBe(
+        "[REDACTED]",
+      );
     } finally {
       supervisor.dispose();
       producer.stdout.destroy();

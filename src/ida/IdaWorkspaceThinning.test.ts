@@ -278,6 +278,7 @@ describe("IDA workspace admission identity", () => {
         args: [],
         env: {},
         mode: "headless",
+        protocol: "modern",
         timeoutMs: 1000,
         workspaceRoot: root,
       },

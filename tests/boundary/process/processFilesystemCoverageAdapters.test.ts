@@ -74,7 +74,6 @@ it
   )
   .for(["cli", "mcp"] as const)(
   "preserves selected-root permission denial and earlier snapshot facts through %s",
-  { timeout: 20_000 },
   async (adapter, context) => {
     const root = await createTestTempDirectory("rea-fs-root-denial-adapter-");
     const denied = join(root, "denied");
@@ -446,7 +445,6 @@ it.skipIf(CAPTURE_SKIP_REASON || process.platform === "win32")(
     });
     expect(compareProcessCaptures(capture, capture).filesystem).toBe("unknown");
   },
-  20_000,
 );
 
 it
@@ -516,7 +514,6 @@ it
     });
     expect(compareProcessCaptures(capture, capture).filesystem).toBe("unknown");
   },
-  20_000,
 );
 
 itWithCaptureCapability.each(["cli", "mcp"] as const)(
@@ -625,7 +622,6 @@ it
       await chmod(join(root, "state"), 0o700);
     }
   },
-  20_000,
 );
 
 itWithCaptureCapability(

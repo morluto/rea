@@ -9,7 +9,7 @@ import { err, ok } from "../../domain/result.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
 import { createElectronActiveObservationFixtureResult } from "../../domain/javascript/electronActiveObservation.fixture.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import type { ElectronActiveObservationPort } from "./ElectronActiveObservationPort.js";
+import type { ElectronActiveObservationPort } from "../../ports/javascript/ElectronActiveObservationPort.js";
 import { captureElectronScenario } from "./ElectronActiveObservationService.js";
 
 const SKIP_PERMISSIONS =

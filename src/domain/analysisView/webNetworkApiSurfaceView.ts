@@ -10,9 +10,7 @@ import {
 import { WebNetworkApiSurfaceAccumulator } from "./WebNetworkApiSurfaceAccumulator.js";
 import { admitHarCaptureParent } from "./WebNetworkProjectionAccumulator.js";
 
-import { apiSurfaceFields, apiSurfaceViewSchema } from "./apiSurfaceSchema.js";
-
-export { apiSurfaceFields, apiSurfaceViewSchema };
+import { apiSurfaceViewSchema } from "./apiSurfaceSchema.js";
 
 /** Create the budget and query-name policy shared by admission and projection. */
 export const createApiSurfaceAccumulator = (

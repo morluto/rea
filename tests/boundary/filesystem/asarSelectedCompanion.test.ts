@@ -4,7 +4,6 @@ import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver
 import { createDirectAnalysis } from "../../../src/composition/directAnalysis.js";
 import { withArtifactClient } from "../../support/artifactClientScope.js";
 import { artifactInventoryResultSchema } from "../../../src/domain/artifactGraph.js";
-import { createHash } from "node:crypto";
 import {
   mkdir,
   readFile,
@@ -181,9 +180,7 @@ it.skipIf(process.platform === "win32")(
         throw new Error("Retargeted archive was unexpectedly admitted");
       expect(result.error).toMatchObject({
         reason: "integrity",
-        detail: expect.stringContaining(
-          "no longer resolves to its admitted source",
-        ),
+        integrityCheck: "container-identity",
       });
     });
   },

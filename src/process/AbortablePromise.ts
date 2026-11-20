@@ -1,5 +1,13 @@
-/** Sentinel returned when an abort signal wins an asynchronous race. */
-export const ABORTED = Symbol("aborted");
+import type { CarriedCancellationReason } from "../domain/analysisErrorCore.js";
+
+/**
+ * An abortable wait that the signal won. It carries the signal's reason as
+ * observed when the abort won, so `cancelledBy(operation, waited)` keeps that
+ * reason without the consumer reading the signal again.
+ */
+export class AbortedWait implements CarriedCancellationReason {
+  constructor(readonly carried: unknown) {}
+}
 
 /**
  * Await a promise without depending on the producer to observe cancellation.
@@ -9,15 +17,15 @@ export const ABORTED = Symbol("aborted");
 export const waitForAbortable = async <Value>(
   pending: Promise<Value>,
   signal: AbortSignal | undefined,
-): Promise<Value | typeof ABORTED> => {
+): Promise<Value | AbortedWait> => {
   if (signal === undefined) return pending;
   let onAbort: (() => void) | undefined;
-  const cancelled = new Promise<typeof ABORTED>((resolve) => {
+  const cancelled = new Promise<AbortedWait>((resolve) => {
     if (signal.aborted) {
-      resolve(ABORTED);
+      resolve(new AbortedWait(signal.reason));
       return;
     }
-    onAbort = () => resolve(ABORTED);
+    onAbort = () => resolve(new AbortedWait(signal.reason));
     signal.addEventListener("abort", onAbort, { once: true });
   });
   try {

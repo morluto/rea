@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { describe, expect, it } from "vitest";
 
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -40,6 +41,7 @@ const report = (selected: string | undefined): SqliteDatabase => ({
   artifact: { path: "/staged/state.db", sha256: "a".repeat(64), bytes: 4096 },
   wal: null,
   engine: { name: "SQLite", version: "3.50.2" },
+  worker_timeout_ms: 30_000,
   database_encoding: "UTF-8",
   schema: {
     scope: "database",
@@ -74,7 +76,7 @@ const service = (failure: (table: string) => AnalysisError | undefined) => ({
     if (refused !== undefined) return err(refused);
     return ok(
       createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         { id: "sqlite", name: "SQLite", version: "1" },
         {
           operation: OPERATION,
@@ -113,7 +115,7 @@ describe("readSqliteStateView", () => {
             }
             return ok(
               createEvidence(
-                undefined,
+                unknownTarget("not-observed"),
                 { id: "sqlite", name: "SQLite", version: "1" },
                 {
                   operation: OPERATION,

@@ -218,7 +218,7 @@ export const projectEndpointComparisonView = (
       kind: "summary" as const,
       view,
       summary: context,
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   const selected = selectComparisonRows(parsed.value, view);
   return ok({

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 
 import { MachOSliceArtifactReader } from "../../../../src/artifacts/MachOSliceArtifactReader.js";
-import { XcrunCommandRunner } from "../../../../src/native/CommandRunner.js";
+import { XcrunCommandRunner } from "../../../../src/providers/NativeCommandRunner.js";
 import { DarwinProcessOwnershipInspectionError } from "../../../../src/process/DarwinProcessRunTokenReader.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 

@@ -1,5 +1,4 @@
 import type { ApplicationNode } from "../../domain/javascript/javascriptApplicationGraphSchemas.js";
-import { sha256Text } from "../../domain/javascript/javascriptStaticAnalysisHelpers.js";
 import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import {
@@ -11,6 +10,7 @@ import {
   astObservationEvidence,
   staticInferenceEvidence,
 } from "./JavaScriptArtifactGraphEvidence.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 /** Values for one Electron syntax relationship retained in the graph. */
 export interface ElectronGraphEdgeInput {
@@ -75,7 +75,7 @@ export const electronObservationIdentity = (
 ) => ({
   strategy: "observation-fingerprint" as const,
   stability: "observation-only" as const,
-  observation_sha256: sha256Text(
+  observation_sha256: sha256Hex(
     `${context.snapshot.manifest.root_sha256}\0${scope}\0${key}`,
   ),
   scope,

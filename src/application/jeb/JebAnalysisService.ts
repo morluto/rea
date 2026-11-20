@@ -1,5 +1,5 @@
-import type { JebAnalysisPort } from "./JebAnalysisPort.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { JebAnalysisPort } from "../../ports/jeb/JebAnalysisPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import {
   jebRequestSchema,
   type JebOperation,

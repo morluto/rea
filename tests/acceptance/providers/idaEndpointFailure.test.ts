@@ -38,6 +38,7 @@ for (const encodedCredential of [false, true])
         registration,
         JSON.stringify({
           url: endpoint,
+          protocol: "native",
           headers: { Authorization: "Bearer fixture-secret" },
         }),
       );

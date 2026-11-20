@@ -26,6 +26,7 @@ import {
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import { projectBinaryOverview } from "../domain/native/nativeSegments.js";
+import { outputContractDiagnostics } from "../domain/native/nativeProviderOutput.js";
 import {
   availableFunctionBodySchema,
   functionBodyEntryAgrees,
@@ -391,7 +392,7 @@ export function parseGhidraInventoryResult(
     const parsed = resultSchemas.inspect_native_load_image.safeParse(value);
     return parsed.success
       ? ok({ value: normalizeNativeLoadImageObservation(parsed.data) })
-      : err(inventoryOutputFailure(operation, parsed.error));
+      : err(inventoryOutputFailure(operation, parsed.error, value));
   }
   if (operation === "set_address_name" || operation === "set_addresses_names") {
     return parseGhidraAddressNameResult(operation, value, namingRequest);
@@ -406,15 +407,16 @@ export function parseGhidraInventoryResult(
           ? { rawResult: value }
           : {}),
       })
-    : err(inventoryOutputFailure(operation, parsed.error));
+    : err(inventoryOutputFailure(operation, parsed.error, value));
 }
 
 const inventoryOutputFailure = (
   operation: GhidraInventoryOperation,
-  cause: unknown,
+  cause: z.ZodError,
+  value: JsonValue,
 ): AnalysisOutputError =>
   new AnalysisOutputError(
     operation,
     "Ghidra bridge output did not match the inventory contract",
-    { cause },
+    { cause, diagnostics: outputContractDiagnostics(cause, value) },
   );

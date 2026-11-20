@@ -1,4 +1,8 @@
 import * as t from "@babel/types";
+import {
+  bindingAssignmentMayPrecede,
+  bindingInitializersMayPrecede,
+} from "./javascriptSemanticEffectLog.js";
 
 import type {
   JavaScriptSemanticBoundaryOperation,
@@ -22,10 +26,7 @@ import {
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
-import {
-  semanticBindingAtRead,
-  semanticEffectTiming,
-} from "./javascriptSemanticMutationInitializers.js";
+import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
   builtinDataEffectIdentity,
   dataEffectArgumentBindingId as argumentBindingId,
@@ -38,10 +39,11 @@ import {
   traverseDataEffects as traverseWithContext,
   type DataEffectTraversalContext as TraversalContext,
 } from "./javascriptSemanticDataEffectHelpers.js";
-import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
+import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import { semanticPrimitiveSet } from "./javascriptSemanticPrimitives.js";
 import type { JavaScriptSemanticValue } from "./javascriptSemanticValueTypes.js";
+import { hostRefusesJavaScriptRequest } from "./javascriptHostRequestRefusals.js";
 
 interface DataEffectAnalysis {
   readonly configurationOperations: readonly JavaScriptSemanticConfigurationOperation[];
@@ -72,7 +74,11 @@ export const collectJavaScriptSemanticDataEffects = (
     ancestors: [],
   };
   const configuration = collectConfigurations(program, context);
-  const requests = collectRequests(program, context);
+  // A fetch or WebSocket the host refuses to construct sends nothing.
+  const requests = collectRequests(program, context).filter(
+    ({ node, operation }) =>
+      !hostRefusesJavaScriptRequest(node, operation.method),
+  );
   return {
     configurationOperations: [
       ...configuration.map(({ operation }) => operation),
@@ -313,8 +319,10 @@ const soleWriteReachesRead = (
 ): boolean => {
   if (binding === undefined || request === undefined) return false;
   const snapshot = semanticBindingAtRead(binding, read, context.state);
-  const initializers = snapshot.binding.initializers.filter(
-    ({ node }) => semanticEffectTiming(read, node, context.state) !== "after",
+  const initializers = bindingInitializersMayPrecede(
+    context.state,
+    snapshot.binding,
+    read,
   );
   const [initializer] = initializers;
   if (initializers.length !== 1 || initializer === undefined) return false;
@@ -325,11 +333,7 @@ const soleWriteReachesRead = (
     source = unwrapJavaScriptExpression(source.argument).node;
   return (
     source === request &&
-    !snapshot.binding.referenceInitializers.some(
-      ({ assignment, node }) =>
-        assignment &&
-        semanticEffectTiming(read, node, context.state) !== "after",
-    ) &&
+    !bindingAssignmentMayPrecede(context.state, snapshot.binding, read) &&
     (semanticStableInitializer(binding, context.state) !== undefined ||
       snapshot.hasDefiniteInitializer)
   );

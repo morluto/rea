@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { posix } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -23,6 +22,7 @@ import {
   compositeKey,
 } from "../unicodeCodePointOrder.js";
 import { unexaminedJavaScriptStaticCoverage } from "./javascriptStaticCoverage.js";
+import { createSyntheticUrlRoot } from "./javascriptSyntheticUrlRoot.js";
 
 /** Explicit result for source text that Babel cannot parse. */
 export const failedJavaScriptStaticAnalysis = (): JavaScriptStaticAnalysis => ({
@@ -193,11 +193,11 @@ interface StaticPathFact {
   readonly base: "source-directory" | "literal-path" | "unknown";
 }
 
-/** Resolve a path string composed only from inert literal syntax. */
+/** Project path text only after its source-directory or literal base is proven. */
 export const staticPath = (
   node: t.Node,
   pathIntrinsics?: JavaScriptStaticPathIntrinsicQuery,
-): string | undefined => staticPathFact(node, pathIntrinsics)?.path;
+): string | undefined => staticFileExpressionPath(node, pathIntrinsics)?.path;
 
 /** Parse spelling and its source-directory provenance together at the owning boundary. */
 const staticPathFact = (
@@ -368,15 +368,19 @@ export const staticSourceRelativeUrlPath = (
     /%(?:2e|2f|5c)/iu.test(value.split(/[?#]/u, 1)[0] ?? "")
   )
     return undefined;
-  // A sufficiently deep inert anchor preserves any leading parent segments
-  // without using this host's cwd or inventing the application's directory.
-  const directory = `/${"source/".repeat(value.split("/").length + 1)}`;
+  const anchor = createSyntheticUrlRoot(value);
+  const resolve = (root: string): URL =>
+    new URL(value, `file://${root}entry.js`);
   try {
-    const resolved = new URL(value, `file://${directory}entry.js`);
+    const resolved = resolve(anchor.root);
     const path = fileURLToPath(resolved, { windows: false });
     if (value.startsWith("/"))
       return { path, directory: resolved.pathname.endsWith("/") };
-    const relative = posix.relative(directory, path) || ".";
+    const relativePath = anchor.relativePath(path, (root) =>
+      fileURLToPath(resolve(root), { windows: false }),
+    );
+    if (relativePath === null) return undefined;
+    const relative = relativePath || ".";
     // Keep the established explicit source-directory observation spelling.
     return {
       path:
@@ -506,20 +510,6 @@ const isRequestUrlOrPathLiteral = (value: string): boolean =>
   value.startsWith("/") ||
   value.startsWith("./") ||
   value.startsWith("../");
-
-/** Explicit request references, classified after receiver-specific exclusions. */
-const isRequestUrlReference = (value: string): boolean => {
-  if (
-    isRequestUrlOrPathLiteral(value) ||
-    value.startsWith("?") ||
-    value.startsWith("#")
-  )
-    return true;
-  // WHATWG accepts HTTP/WS scheme forms without authority slashes. Parse
-  // without a base so bare keys stay ambiguous, and keep the source spelling.
-  if (!/^(?:https?|wss?):/iu.test(value)) return false;
-  return URL.parse(value) !== null;
-};
 
 /**
  * Browsing-context and document `open` take a URL or type first and a target
@@ -859,10 +849,6 @@ export const registrationKey = (
       digest,
     ]),
   ]);
-
-/** Hash exact UTF-8 source text. */
-export const sha256Text = (value: string): string =>
-  createHash("sha256").update(value).digest("hex");
 
 /** Recognized route-construction call suffixes. */
 export const STATIC_ROUTE_CALL_NAMES = [

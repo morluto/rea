@@ -1,9 +1,9 @@
 import { expect, it } from "vitest";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { decodeLimit } from "../domain/parseFailure.js";
 import {
   apkOutputBudgetError,
   mapApkBlockError,
-  mapApkSchemeError,
   mapCentralDirectoryError,
   v1SignerCapacityError,
 } from "./apkSignatureFailures.js";
@@ -13,28 +13,23 @@ it.each([
   [
     "block pairs",
     mapApkBlockError(
-      { kind: "budget-exceeded", resource: "signing-block-pairs", limit: 4096 },
+      decodeLimit("apk-signing-block", "Fixture limit reached.", {
+        name: "max_signing_block_pairs",
+        maximum: 4096,
+      }),
       "/selected.apk",
     ),
     "max_signing_block_pairs",
     4096,
   ],
   [
-    "scheme signers",
-    mapApkSchemeError(
-      { kind: "budget-exceeded", resource: "signers", limit: 32 },
-      "v2",
-    ),
-    "max_signers",
-    32,
-  ],
-  [
     "v1 entries",
-    mapCentralDirectoryError({
-      kind: "budget-exceeded",
-      resource: "v1-signature-entries",
-      limit: 4096,
-    }),
+    mapCentralDirectoryError(
+      decodeLimit("apk-v1-central-directory", "Fixture limit reached.", {
+        name: "max_v1_signature_entries",
+        maximum: 4096,
+      }),
+    ),
     "max_v1_signature_entries",
     4096,
   ],
@@ -55,8 +50,7 @@ it.each([
       details: { reported_limits: { [key]: limit } },
     });
     expect(projected.remediation.action).toContain(String(limit));
-    expect(projected.remediation.action).toContain("no runtime override");
-    expect(projected.remediation.action).toMatch(/unchanged request.*fails/iu);
+    expect(projected.details?.refusal).toMatchObject({ kind: "fixed_ceiling" });
     expect(projected.remediation.action).not.toContain(
       "Wait for an active analysis to complete",
     );

@@ -3,64 +3,12 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 
 import { nodeSeaPe } from "../../src/artifacts/nodeSea/NodeSea.fixture.js";
-import {
-  artifactInventoryResultSchema,
-  type ArtifactInventoryResult,
-} from "../../src/domain/artifactGraph.js";
-import { FORMAT_DECLARATION_UNKNOWN_LIMITATION } from "../../src/domain/artifactComparison.js";
-import {
-  artifactGraphDigest,
-  artifactManifestId,
-} from "../../src/domain/artifactIdentity.js";
+import { artifactInventoryResultSchema } from "../../src/domain/artifactGraph.js";
 import { parseArtifactInventoryEvidence } from "../../src/domain/artifactInventoryEvidence.js";
-import { createEvidence, type Evidence } from "../../src/domain/evidence.js";
+import type { Evidence } from "../../src/domain/evidence.js";
+import { historicalInventoryEvidence } from "../fixtures/artifactEvidence.js";
 import { connectArtifactComparisonMcp } from "../fixtures/artifactComparisonMcp.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-
-const withoutEntryMetadata = (source: Evidence): Evidence => {
-  const inventory = artifactInventoryResultSchema.parse(
-    source.normalized_result,
-  );
-  const occurrences = inventory.occurrences.map((occurrence) => {
-    if (occurrence.format_metadata?.kind !== "node-sea-entry")
-      return occurrence;
-    const { format_metadata: _metadata, ...historical } = occurrence;
-    return historical;
-  });
-  const graphSha256 = artifactGraphDigest({
-    nodes: inventory.nodes,
-    occurrences,
-    edges: inventory.edges,
-    contradictions: inventory.integrity_contradictions,
-  });
-  const historical: ArtifactInventoryResult = {
-    ...inventory,
-    occurrences,
-    manifest: {
-      ...inventory.manifest,
-      graph_sha256: graphSha256,
-      manifest_id: artifactManifestId(
-        inventory.manifest.root_artifact_id,
-        graphSha256,
-      ),
-    },
-  };
-  return createEvidence(
-    {
-      path: source.subject!.local_path,
-      sha256: inventory.manifest.root_sha256,
-      format: inventory.manifest.root_format,
-    },
-    source.provider,
-    {
-      operation: "inventory_artifact",
-      parameters: {},
-      result: historical,
-      confidence: "derived",
-      authority: "shipped-artifact",
-    },
-  );
-};
 
 it("compares raw SEA asset keys without interpreting serialization order as metadata", async () => {
   const root = await createTestTempDirectory("rea-sea-key-comparison-");
@@ -138,7 +86,12 @@ it("compares raw SEA asset keys without interpreting serialization order as meta
   ).toEqual([]);
 
   // Recommit the reduced graph before sealing modeled historical Evidence.
-  const historical = withoutEntryMetadata(left);
+  const historical = historicalInventoryEvidence(left, (occurrence) => {
+    if (occurrence.format_metadata?.kind !== "node-sea-entry")
+      return occurrence;
+    const { format_metadata: _metadata, ...historical } = occurrence;
+    return historical;
+  });
   const parsed = parseArtifactInventoryEvidence(historical);
   expect(
     parsed.inventory.occurrences.find(
@@ -153,7 +106,11 @@ it("compares raw SEA asset keys without interpreting serialization order as meta
     dimensions: ["availability"],
     evidence_links: [historical.evidence_id, right.evidence_id],
   });
-  expect(unknown.limitations).toContain(FORMAT_DECLARATION_UNKNOWN_LIMITATION);
+  expect(unknown.limitations).toContainEqual(
+    expect.stringMatching(
+      /metadata declarations are missing.*complete declaration unavailable/u,
+    ),
+  );
   const reversed = await compare(right, historical);
   expect(
     reversed.changes.find(({ logical_path }) => logical_path === nfc),

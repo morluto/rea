@@ -7,7 +7,6 @@ import type {
 
 /** Provider resources could not be proven closed after bounded cleanup. */
 export class ProviderCleanupError extends ProviderAdapterError {
-  override cleanupIncomplete = true;
   override readonly userMessage =
     "Provider cleanup could not be fully confirmed. Review the reported local resources before opening another target.";
 
@@ -35,6 +34,7 @@ export class ProviderCleanupError extends ProviderAdapterError {
       diagnostics,
     });
     this.completedObservation = completedObservation;
+    this.markCleanupIncomplete(true);
     this.setCleanupResources(resources);
   }
 }

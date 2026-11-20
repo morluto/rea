@@ -4,10 +4,8 @@ import { join } from "node:path";
 import { describe, expect } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import {
-  analysisCliErrorEnvelopeSchema,
-  analysisErrorProjectionSchema,
-} from "../../../src/contracts/errorSchemas.js";
+import { analysisCliErrorEnvelopeSchema } from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 const unsupportedHostOutput = expect.objectContaining({
@@ -73,7 +71,6 @@ describe("compiled Windows reference-source import", () => {
           });
         } else expect(result.stderr).toBe("");
       },
-      60_000,
     );
   }
 });

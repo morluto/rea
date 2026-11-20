@@ -1,4 +1,4 @@
-import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../resources/index.js";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { err, ok, type Result } from "../domain/result.js";
 

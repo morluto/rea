@@ -23,12 +23,16 @@ and tallies per-row reasons, so the limitations list stays bounded.
   declaration order with a shared slot budget, and resolves each slot. Dynamic
   relocation writes come from the owner,
   `readElfRelocationWritesSteps` in `ElfPointerRelocations.ts`; the RELATIVE
-  type per machine comes from the same owner's `elfRelativeRelocationType`.
+  type per machine and ELF class comes from the same owner's
+  `elfRelativeRelocationType`. That owner also distinguishes RISC-V TLS from
+  other architectures' GLOB_DAT and records full COPY/TLS descriptor extents.
   Section names and fallback file offsets come from an `addressRangeIndex`
   built once over the section headers and searched by address.
 - `ElfInitializerSymbols.ts` loads symbol tables under one total symbol
   budget and decodes section REL / RELA records under one total record budget,
   checking the caller signal during that walk.
+  `elfSymbolSectionIndex.ts` owns companion-table framing and tagged section
+  references shared with CUDA, so reserved markers never become directory indices.
 - `MachoInitializers.ts` reuses the shared Mach-O container and chained-fixup
   decoders, reads symbols under one budget across every `LC_SYMTAB`, and
   names target sections through the same address index.

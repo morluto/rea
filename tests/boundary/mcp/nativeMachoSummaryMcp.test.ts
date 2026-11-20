@@ -1,3 +1,5 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { copyFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -149,7 +151,7 @@ mcpTest(
     const { empty, segment, dependency, command, report } =
       binaryUncertainFixture();
     const source = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "inspect_macho",
@@ -168,7 +170,7 @@ mcpTest(
       createServer(
         { kind: "session", session },
         {
-          environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
+          environment: { ...process.env },
         },
       ),
       undefined,
@@ -180,7 +182,7 @@ mcpTest(
       schemaValidation.assertions,
     );
     expect(
-      tool.ajv.validate(tool.outputSchema, source),
+      tool.ajv.validate(canonicalOutputSchema(tool.name), source),
       JSON.stringify(tool.ajv.errors),
     ).toBe(true);
     const view = await advertisedMcpToolSchemas(
@@ -201,15 +203,11 @@ mcpTest(
         view.ajv.validate(view.inputSchema, request),
         JSON.stringify(view.ajv.errors),
       ).toBe(true);
-      const reply = await client.callTool({
-        name: "inspect_analysis_view",
-        arguments: request,
-      });
+      const reply = await client.callTool(
+        { name: "inspect_analysis_view", arguments: request },
+        { toolDefinition: view.toolDefinition },
+      );
       expect(reply.isError, JSON.stringify(reply.content)).not.toBe(true);
-      expect(
-        view.ajv.validate(view.outputSchema, reply.structuredContent),
-        JSON.stringify(view.ajv.errors),
-      ).toBe(true);
       const result = parseEvidence(reply.structuredContent).normalized_result;
       expect(result).toMatchObject({
         item: [expected],
@@ -234,7 +232,7 @@ mcpTest(
       sections: empty,
     };
     const historical = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "inspect_macho",
@@ -251,21 +249,20 @@ mcpTest(
       },
     );
     expect(
-      tool.ajv.validate(tool.outputSchema, historical),
+      tool.ajv.validate(canonicalOutputSchema(tool.name), historical),
       JSON.stringify(tool.ajv.errors),
     ).toBe(true);
-    const oldView = await client.callTool({
-      name: "inspect_analysis_view",
-      arguments: {
-        source: { kind: "inline", evidence: historical },
-        view: { kind: "macho", facet: "segments" },
+    const oldView = await client.callTool(
+      {
+        name: "inspect_analysis_view",
+        arguments: {
+          source: { kind: "inline", evidence: historical },
+          view: { kind: "macho", facet: "segments" },
+        },
       },
-    });
+      { toolDefinition: view.toolDefinition },
+    );
     expect(oldView.isError, JSON.stringify(oldView.content)).not.toBe(true);
-    expect(
-      view.ajv.validate(view.outputSchema, oldView.structuredContent),
-      JSON.stringify(view.ajv.errors),
-    ).toBe(true);
     expect(
       parseEvidence(oldView.structuredContent).normalized_result,
     ).toMatchObject({ item: [historicalSegment], source_exhaustive: true });
@@ -316,7 +313,7 @@ mcpTest(
       limitations: [],
     });
     const source = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "inspect_macho",
@@ -335,7 +332,7 @@ mcpTest(
       createServer(
         { kind: "session", session },
         {
-          environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
+          environment: { ...process.env },
         },
       ),
       undefined,
@@ -355,18 +352,14 @@ mcpTest(
         view: { kind: "macho", facet },
       };
       expect(
-        schemas.ajv.validate(schemas.inputSchema, request),
+        schemas.ajv.validate(schemas.canonicalInputSchema, request),
         JSON.stringify(schemas.ajv.errors),
       ).toBe(true);
-      const reply = await client.callTool({
-        name: "inspect_analysis_view",
-        arguments: request,
-      });
+      const reply = await client.callTool(
+        { name: "inspect_analysis_view", arguments: request },
+        { toolDefinition: schemas.toolDefinition },
+      );
       expect(reply.isError, JSON.stringify(reply.content)).not.toBe(true);
-      expect(
-        schemas.ajv.validate(schemas.outputSchema, reply.structuredContent),
-        JSON.stringify(schemas.ajv.errors),
-      ).toBe(true);
       expect(
         pageSchema.parse(
           parseEvidence(reply.structuredContent).normalized_result,

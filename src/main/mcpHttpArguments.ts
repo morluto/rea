@@ -1,4 +1,6 @@
-import { Help, z } from "incur";
+import { formatCommandHelp } from "../cli/help.js";
+import type { McpHttpCommand } from "../cliBuiltinArguments.js";
+import { z } from "zod";
 import type { HttpHostname } from "../domain/httpHostname.js";
 
 import {
@@ -38,18 +40,11 @@ const MCP_HTTP_ALIAS = { help: "h" } as const;
 const MCP_HTTP_COMMAND = "rea mcp --http";
 const MCP_HTTP_DESCRIPTION =
   "Serve the MCP server over streamable HTTP for one local client";
-const HELP_FLAGS: ReadonlySet<string> = new Set(["--help", "-h"]);
-const VALUED_FLAGS: ReadonlySet<string> = new Set([
-  "--host",
-  "--port",
-  "--allowed-hosts",
-]);
 
-/** Render help for the dispatcher entry, which accepts no Incur global options. */
+/** Render help for the dispatcher entry, which accepts no global options. */
 export const renderMcpHttpHelp = (): string =>
-  Help.formatCommand(MCP_HTTP_COMMAND, {
+  formatCommandHelp(MCP_HTTP_COMMAND, {
     description: MCP_HTTP_DESCRIPTION,
-    hideGlobalOptions: true,
     options: MCP_HTTP_OPTIONS,
     alias: MCP_HTTP_ALIAS,
     hint: "This entry accepts only the options above. The bound URL is logged as one JSON line on stderr.",
@@ -72,49 +67,24 @@ const invalid = (message: string): McpHttpArguments => ({
   message,
 });
 
-/** Split `--flag=value` into its flag and inline value. */
-const splitFlag = (argument: string): readonly [string, string | undefined] => {
-  const separator = argument.indexOf("=");
-  return separator === -1
-    ? [argument, undefined]
-    : [argument.slice(0, separator), argument.slice(separator + 1)];
-};
-
-/** Parse the dispatcher arguments after `mcp`; help wins only in flag position. */
-export const parseMcpHttpArguments = (
-  arguments_: readonly string[],
+/** Validate the transport options selected by the executable dispatcher. */
+export const validateMcpHttpCommand = (
+  command: McpHttpCommand,
 ): McpHttpArguments => {
-  const values = new Map<string, string>();
-  const allowedHostValues: string[] = [];
-  let http = false;
-  for (let index = 0; index < arguments_.length; index += 1) {
-    const argument = arguments_[index] ?? "";
-    if (HELP_FLAGS.has(argument)) return { ok: false, help: true };
-    if (argument === "--http") {
-      http = true;
-      continue;
-    }
-    const [flag, inline] = splitFlag(argument);
-    if (!VALUED_FLAGS.has(flag))
-      return invalid(`Unknown mcp --http argument: ${argument}`);
-    const value = inline ?? arguments_[index + 1];
-    if (inline === undefined) index += 1;
-    if (value === undefined || (inline === undefined && value.startsWith("-")))
-      return invalid(`Missing value for ${flag}`);
-    if (flag === "--allowed-hosts") allowedHostValues.push(value);
-    else values.set(flag, value);
-  }
-  if (!http) return invalid("--host and --port require --http");
-  const host = values.get("--host")?.trim();
+  if (command.kind === "help") return { ok: false, help: true };
+  if (command.kind === "invalid") return invalid(command.message);
+  const host = command.host?.trim();
   if (host !== undefined && host.length === 0)
     return invalid("--host must be a non-empty host name or IP address");
-  const portText = values.get("--port");
+  const portText = command.port;
   const port =
     portText === undefined ? undefined : mcpHttpPortSchema.safeParse(portText);
   if (port !== undefined && !port.success)
     return invalid(`Invalid --port: ${MCP_HTTP_PORT_CONSTRAINT}`);
   const allowedHostsText =
-    allowedHostValues.length === 0 ? undefined : allowedHostValues.join(",");
+    command.allowedHosts.length === 0
+      ? undefined
+      : command.allowedHosts.join(",");
   const allowedHosts =
     allowedHostsText === undefined
       ? undefined

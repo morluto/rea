@@ -15,7 +15,7 @@ export const parseCliJsonOption = (
     ? parsed
     : err(
         new AnalysisInputError(operation, { cause: parsed.cause }, [
-          { path: [name], reason: "invalid_format", message },
+          { path: [name], reason: "invalid_format", expected: "JSON", message },
         ]),
       );
 };

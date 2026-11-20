@@ -2,6 +2,8 @@ import { win32 } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { err, ok } from "../../src/domain/result.js";
+import { RIZIN_PROVIDER_IDENTITY } from "../../src/rizin/RizinProviderIdentity.js";
 import { resolveWindowsProviderExecutable } from "../../src/composition/resolveWindowsProviderExecutable.js";
 import { createReverseEngineeringCommandPort } from "../../src/composition/reverseEngineering.js";
 
@@ -29,7 +31,7 @@ describe("resolveWindowsProviderExecutable", () => {
         },
         windowsLookup(cwd, [expected]),
       ),
-    ).toBe(expected);
+    ).toEqual(ok(expected));
   });
 
   it("resolves a relative configured path against the caller's Windows CWD", () => {
@@ -39,7 +41,7 @@ describe("resolveWindowsProviderExecutable", () => {
         {},
         windowsLookup("D:\\analysis", []),
       ),
-    ).toBe("D:\\analysis\\tools\\objdump.exe");
+    ).toEqual(ok("D:\\analysis\\tools\\objdump.exe"));
   });
 
   it("resolves relative PATH hits to absolute drive paths", () => {
@@ -50,7 +52,7 @@ describe("resolveWindowsProviderExecutable", () => {
         { PATH: ".\\bin", PATHEXT: ".EXE" },
         windowsLookup("D:\\analysis", [expected]),
       ),
-    ).toBe(expected);
+    ).toEqual(ok(expected));
   });
 
   it("skips script extensions and preserves a caller-selected absolute path", () => {
@@ -62,24 +64,31 @@ describe("resolveWindowsProviderExecutable", () => {
         { PATH: "C:\\tools", PATHEXT: ".CMD;.BAT;.EXE;.COM" },
         windowsLookup("C:\\work", ["C:\\tools\\rizin.CMD", expected]),
       ),
-    ).toBe(expected);
+    ).toEqual(ok(expected));
     expect(
       resolveWindowsProviderExecutable(
         selected,
         {},
         windowsLookup("D:\\work", []),
       ),
-    ).toBe(selected);
+    ).toEqual(ok(selected));
   });
 
-  it("keeps unresolved bare command names unchanged", () => {
+  it("refuses an unresolved bare name instead of letting Windows search the current directory", () => {
     expect(
       resolveWindowsProviderExecutable(
         "missing-tool",
         { PATH: ".\\tools", PATHEXT: ".EXE" },
         windowsLookup("C:\\work", []),
       ),
-    ).toBe("missing-tool");
+    ).toEqual(err({ kind: "not_found" }));
+    expect(
+      resolveWindowsProviderExecutable(
+        "missing-tool",
+        { PATH: "C:\\tools", PATHEXT: ".EXE;C:\\bad" },
+        windowsLookup("C:\\work", []),
+      ),
+    ).toEqual(err({ kind: "invalid_extension", extension: "C:\\bad" }));
   });
 
   it("passes an absolute selected command through provider composition", () => {
@@ -88,8 +97,25 @@ describe("resolveWindowsProviderExecutable", () => {
       "win32",
     );
     expect(
-      commands.objdump({ path: "artifact", operation: "file_headers" })
-        .executable,
-    ).toBe("C:\\tools\\objdump.exe");
+      commands.objdump({ path: "artifact", operation: "file_headers" }),
+    ).toMatchObject({
+      ok: true,
+      value: { executable: "C:\\tools\\objdump.exe" },
+    });
+  });
+
+  it("reports a bare command missing from PATH as unavailable before launch", () => {
+    const commands = createReverseEngineeringCommandPort(
+      { PATH: "", REA_RIZIN_COMMAND: "rea-missing-rizin" },
+      "win32",
+    );
+    expect(commands.rizin({ path: "artifact", command: "i" })).toMatchObject({
+      ok: false,
+      error: {
+        identity: { id: RIZIN_PROVIDER_IDENTITY.id },
+        command: "rea-missing-rizin",
+        reason: { kind: "not_found" },
+      },
+    });
   });
 });

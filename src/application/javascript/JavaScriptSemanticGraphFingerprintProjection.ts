@@ -1,5 +1,5 @@
 import {
-  createJavaScriptSemanticFingerprint,
+  createOwnedJavaScriptSemanticFingerprint,
   type JavaScriptSemanticEvidenceContextRegistry,
 } from "../../domain/javascript/javascriptSemanticGraph.js";
 import type {
@@ -21,7 +21,7 @@ export const projectSemanticFunctionFingerprints = (
     const callable = callableNodes.get(fingerprint.callableId);
     if (callable === undefined) return [];
     return [
-      createJavaScriptSemanticFingerprint(
+      createOwnedJavaScriptSemanticFingerprint(
         {
           function_node_id: callable.node_id,
           algorithm: "rea.javascript-semantic-function",

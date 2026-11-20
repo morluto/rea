@@ -1,5 +1,5 @@
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { DesktopApplicationPort } from "./DesktopApplicationPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { DesktopApplicationPort } from "../../ports/artifacts/DesktopApplicationPort.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "../../domain/investigationProviders.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";

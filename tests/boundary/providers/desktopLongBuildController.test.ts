@@ -7,7 +7,7 @@ import { expect, it } from "vitest";
 
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { BuildComputerLongRuns } from "../../../src/desktop/BuildComputerLongRuns.js";
-import type { ControlledComputer } from "../../../src/desktop/BuildComputerController.js";
+import type { ControlledComputer } from "../../../src/ports/BuildComputerControl.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const execute = promisify(execFile);

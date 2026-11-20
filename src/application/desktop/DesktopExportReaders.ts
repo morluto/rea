@@ -14,7 +14,7 @@ import {
   type StateEnds,
 } from "../../domain/desktop/desktopState.js";
 import type { HostIdentity } from "../../domain/desktop/hostIdentity.js";
-import { runReaderHere } from "../../desktop/TaskReaderProcess.js";
+import type { DesktopTaskReaderRunner } from "../../ports/DesktopTaskReader.js";
 import {
   shippedSeedBytes,
   shippedSeedViews,
@@ -40,6 +40,7 @@ export interface ReaderSources {
   readonly identity: HostIdentity;
   readonly maxBytes: number;
   readonly signal: AbortSignal | undefined;
+  readonly taskReader: DesktopTaskReaderRunner;
   /** The capture's checkpoint names, and the folder a build computer keeps a screenshot of each in, if any. */
   readonly checkpoints: readonly string[];
   readonly screens: string | undefined;
@@ -105,7 +106,8 @@ const exportReaderViews =
         readerViewsOfBytes(
           readers,
           (reader) => readerFile(sources, content, reader.file, at),
-          (argv, timeoutS) => runReaderHere(argv, timeoutS, sources.signal),
+          (argv, timeoutS) =>
+            sources.taskReader(argv, timeoutS, sources.signal),
         ),
       sources.maxBytes,
     );

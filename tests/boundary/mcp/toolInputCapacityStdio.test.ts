@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("applies the selected input allowance through the public deferred stdio entry point", async () => {
   const root = await createTestTempDirectory("rea-input-capacity-stdio-");
@@ -25,7 +26,10 @@ it("applies the selected input allowance through the public deferred stdio entry
     stderr: "pipe",
   });
   transport.stderr?.on("data", () => undefined);
-  const client = new Client({ name: "input-capacity-stdio", version: "1" });
+  const client = new Client(
+    { name: "input-capacity-stdio", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     try {
       await client.close();
@@ -55,4 +59,4 @@ it("applies the selected input allowance through the public deferred stdio entry
     arguments: {},
   });
   expect(healthy.isError).not.toBe(true);
-}, 90_000);
+});

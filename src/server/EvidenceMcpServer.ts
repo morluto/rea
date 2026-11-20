@@ -7,12 +7,17 @@ import type { EvidenceWriter } from "../application/investigation/InvestigationR
 import {
   catalogIdentityForToolFamilies,
   type createCatalogIdentity,
-} from "../catalogIdentity.js";
+} from "../contracts/catalog/catalogIdentity.js";
 import { toolFamilyId } from "../contracts/toolFamilies.js";
+import { isToolFamilyAdvertised } from "../contracts/toolFamilyIds.js";
 import type { ToolResultDelivery } from "./ToolResultDelivery.js";
-import type { McpOutputSchemaProfile } from "../config/mcpOutputSchemaProfile.js";
 import { EvidenceMcpServerCore } from "./EvidenceMcpServerCore.js";
 import type { CompactInputSchemaPresentation } from "../contracts/compactInputSchema.js";
+import {
+  resolveMcpOutputSchemaProfile,
+  type McpOutputSchemaProfile,
+  COMPACT_INPUT_SCHEMA_PRESENTATION,
+} from "../contracts/mcpSchemaPresentation.js";
 
 /** Canonical composition retains the constructor's existing identity defaults. */
 export class EvidenceMcpServer extends EvidenceMcpServerCore {
@@ -21,8 +26,10 @@ export class EvidenceMcpServer extends EvidenceMcpServerCore {
     options: McpServerOptions,
     recordEvidence: EvidenceWriter["recordEvidence"] | undefined,
     delivery: ToolResultDelivery,
-    compactPresentation: CompactInputSchemaPresentation | undefined = undefined,
-    outputSchemaProfile: McpOutputSchemaProfile = "full",
+    compactPresentation: CompactInputSchemaPresentation = COMPACT_INPUT_SCHEMA_PRESENTATION,
+    outputSchemaProfile: McpOutputSchemaProfile = resolveMcpOutputSchemaProfile(
+      undefined,
+    ),
     identity?: ReturnType<typeof createCatalogIdentity>,
     advertisedToolFamilies: ReadonlySet<string> | undefined = undefined,
   ) {
@@ -49,9 +56,9 @@ export class EvidenceMcpServer extends EvidenceMcpServerCore {
    * cannot direct agents to calls that always fail.
    */
   override advertisesTool(name: string): boolean {
-    const families = this.advertisedToolFamilies;
-    if (families === undefined) return true;
-    const family = toolFamilyId(name);
-    return family !== undefined && families.has(family);
+    return isToolFamilyAdvertised(
+      this.advertisedToolFamilies,
+      toolFamilyId(name),
+    );
   }
 }

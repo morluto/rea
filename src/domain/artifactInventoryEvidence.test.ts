@@ -1,3 +1,7 @@
+import {
+  fileSubjectTarget,
+  changedEvidenceSubject,
+} from "../../tests/fixtures/evidenceSubject.js";
 import { artifactInventoryResultSchema } from "./artifactGraph.js";
 import {
   artifactIdForContent,
@@ -23,21 +27,13 @@ const target = inventoryEvidence.subject;
 if (target === null) throw new Error("Artifact fixture has no target");
 
 const inspectionEvidence = (result: unknown, subject = target) =>
-  createEvidence(
-    {
-      path: subject.local_path,
-      sha256: subject.digest.sha256,
-      format: subject.format,
-    },
-    inventoryEvidence.provider,
-    {
-      operation: "inspect_artifact",
-      parameters: {},
-      result,
-      confidence: "observed",
-      authority: "shipped-artifact",
-    },
-  );
+  createEvidence(fileSubjectTarget(subject), inventoryEvidence.provider, {
+    operation: "inspect_artifact",
+    parameters: {},
+    result,
+    confidence: "observed",
+    authority: "shipped-artifact",
+  });
 
 const inspection = createArtifactInspection(inventoryEvidence);
 
@@ -52,11 +48,7 @@ it.each([
     inventoryEvidence.normalized_result,
   );
   const carrier = createEvidence(
-    {
-      path: target.local_path,
-      sha256: target.digest.sha256,
-      format: target.format,
-    },
+    fileSubjectTarget(target),
     inventoryEvidence.provider,
     {
       operation: "inventory_artifact",
@@ -82,10 +74,10 @@ it("accepts an inspection whose carrier, declaration, and substep identities agr
 });
 
 it("rejects an inspection carrier whose Evidence subject disagrees with its nested inventory", () => {
-  const carrier = inspectionEvidence(inspection, {
-    ...target,
-    digest: { sha256: "a".repeat(64) },
-  });
+  const carrier = inspectionEvidence(
+    inspection,
+    changedEvidenceSubject(target, { sha256: "a".repeat(64) }),
+  );
   try {
     parseArtifactInventoryEvidence(carrier);
     throw new Error("Expected the mismatched subject to be rejected");
@@ -177,26 +169,18 @@ it("keeps a commitment failure discovered across individually incomplete pages a
     ),
   };
   const page = (includeNodes: boolean) =>
-    createEvidence(
-      {
-        path: target.local_path,
-        sha256: target.digest.sha256,
-        format: target.format,
+    createEvidence(fileSubjectTarget(target), inventoryEvidence.provider, {
+      operation: "inventory_artifact",
+      parameters: {},
+      confidence: "observed",
+      authority: "shipped-artifact",
+      result: {
+        ...complete,
+        manifest,
+        nodes: includeNodes ? complete.nodes : [],
+        occurrences: includeNodes ? [] : complete.occurrences,
       },
-      inventoryEvidence.provider,
-      {
-        operation: "inventory_artifact",
-        parameters: {},
-        confidence: "observed",
-        authority: "shipped-artifact",
-        result: {
-          ...complete,
-          manifest,
-          nodes: includeNodes ? complete.nodes : [],
-          occurrences: includeNodes ? [] : complete.occurrences,
-        },
-      },
-    );
+    });
   const nodes = page(true);
   const occurrences = page(false);
   expect(parseArtifactInventoryEvidence(nodes).inventory.complete).toBe(false);
@@ -257,28 +241,20 @@ it.each(
     };
     const manifest = { ...inventory.manifest, edge_count: 1 };
     const page = (indices: readonly number[]) =>
-      createEvidence(
-        {
-          path: target.local_path,
-          sha256: target.digest.sha256,
-          format: target.format,
+      createEvidence(fileSubjectTarget(target), inventoryEvidence.provider, {
+        operation: "inventory_artifact",
+        parameters: {},
+        confidence: "observed",
+        authority: "shipped-artifact",
+        result: {
+          ...inventory,
+          manifest,
+          nodes: [],
+          occurrences: [],
+          edges: [],
+          [member]: indices.map((index) => members[member][index]!),
         },
-        inventoryEvidence.provider,
-        {
-          operation: "inventory_artifact",
-          parameters: {},
-          confidence: "observed",
-          authority: "shipped-artifact",
-          result: {
-            ...inventory,
-            manifest,
-            nodes: [],
-            occurrences: [],
-            edges: [],
-            [member]: indices.map((index) => members[member][index]!),
-          },
-        },
-      );
+      });
     const first = page([0]);
     const second = page([1]);
     expect(parseArtifactInventoryEvidence(first).inventory.complete).toBe(

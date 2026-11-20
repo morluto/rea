@@ -165,8 +165,11 @@ unknown fields on tensor entries are ignored within the reader's 32-level JSON
 nesting limit, while the required dtype, shape and data offsets are still
 validated. JSON duplicate keys, invalid UTF-8, out-of-file
 ranges, overlaps, gaps, trailing unindexed data and known dtype/shape byte-length
-contradictions are rejected with a typed `file_format_rejected` constraint (public code `target_unavailable`, category `unsupported_target`).
-A missing, non-regular or otherwise unusable selected path is also `target_unavailable`;
+contradictions are rejected as an invalid `path` (public code `invalid_request`,
+category `invalid_input`, issue reason `invalid_format`), like any other
+malformed or truncated model header. A form outside the reader's coverage, such
+as a PyTorch pickle, is `unsupported_target`.
+A missing, non-regular or otherwise unusable selected path is `target_unavailable`;
 host I/O or resource failures on a valid selection, such as `EMFILE` or `EIO`, are
 `execution_failure` with the path and reason in `details.diagnostics`. Empty
 tensors and scalar shapes are supported. The reader retains shape dimensions as
@@ -254,6 +257,9 @@ The reader admits one active inspection per provider. It enforces a 100,000,000
 byte header ceiling (safetensors counts its declared JSON bytes separately from
 the fixed eight-byte length prefix; GGUF counts the complete header) and a separate 32 MiB
 retained representation budget before retaining rows or expanding strings.
+GGUF checks that a declared string leaves room for the minimum framing of
+later metadata rows, tensor descriptors and array elements before charging
+its representation budget.
 Numeric products use exact integer arithmetic. GGUF follows its four-dimensional
 tensor layout and limits metadata array nesting to 32 frames. Resource refusals
 are typed, rather than returned as complete empty inventories. Cancellation

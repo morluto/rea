@@ -1,4 +1,4 @@
-import { recordValue } from "./CdpCaptureValues.js";
+import type { CdpCommandResult } from "./protocol/CdpCommands.js";
 import type {
   SnapshotDocumentNodes,
   SnapshotAttributes,
@@ -33,22 +33,14 @@ export interface DomSvgNodeQuery {
 /** Bind the browser's SVG flag to the exact snapshotted element. */
 export const capturedSvgNodeKind = (
   query: DomSvgNodeQuery,
-  result: unknown,
-): boolean | undefined => {
-  const node = recordValue(recordValue(result)?.node);
-  if (
-    node?.backendNodeId !== query.backendNodeId ||
-    node.nodeName !== query.nodeName ||
-    node.nodeType !== 1
-  )
-    return undefined;
-  // CDP omits isSVG for non-SVG nodes. Other values are malformed, not false.
-  return node.isSVG === undefined
-    ? false
-    : typeof node.isSVG === "boolean"
-      ? node.isSVG
-      : undefined;
-};
+  { node }: CdpCommandResult<"DOM.describeNode">,
+): boolean | undefined =>
+  node.backendNodeId !== query.backendNodeId ||
+  node.nodeName !== query.nodeName ||
+  node.nodeType !== 1
+    ? undefined
+    : // CDP omits isSVG for non-SVG nodes.
+      (node.isSVG ?? false);
 
 interface DomXmlElement {
   readonly svgElement: boolean;

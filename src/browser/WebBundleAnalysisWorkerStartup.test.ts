@@ -120,11 +120,14 @@ it.for([
         }
       }
     } finally {
-      await worker.close();
-      preparation.mockRestore();
-      child.stdin.destroy();
-      child.stdout.destroy();
-      child.stderr.destroy();
+      try {
+        await worker.close();
+      } finally {
+        preparation.mockRestore();
+        child.stdin.destroy();
+        child.stdout.destroy();
+        child.stderr.destroy();
+      }
     }
   },
 );
