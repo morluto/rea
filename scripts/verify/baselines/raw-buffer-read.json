@@ -17,6 +17,5 @@
   "src/native/elf/ElfNoteParser.ts": 19,
   "src/native/pe/PeCertificateAsn1.ts": 2,
   "src/native/pwntools/RecordedCrashSourceBindings.ts": 6,
-  "src/native/windows/WindowsShortcutParser.ts": 14,
   "src/v8/V8CodeCacheParser.ts": 1
 }
