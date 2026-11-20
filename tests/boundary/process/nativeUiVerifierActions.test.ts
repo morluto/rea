@@ -20,15 +20,18 @@ it.each(["complete", "drop CLI", "drop MCP"])(
       `
 import {EventEmitter} from 'node:events';import {writeFile} from 'node:fs/promises';import {promisify} from 'node:util';
 let count=0;
+let fixtureLive=true;
 const nodes=()=>[{role:'AXButton',path:[0],title:count===0?'Increment REA fixture':'REA fixture incremented '+count}];
 const captured=()=>({steps:[{outcome:'completed'},{outcome:'completed',after:{nodes:nodes()}}]});
 export const execFile=Object.assign(()=>{}, {[promisify.custom]:async (file,args)=>{
  if(args?.includes('capture-native-ui-scenario')){if(process.env.MODE!=='drop CLI')count++;return {stdout:JSON.stringify({normalized_result:captured()})};}
  return {stdout:'{"v":"slash/producer"}\\n{"v":1.0}\\n'};
 }});
-export const spawn=(_command,args)=>{const child=new EventEmitter();child.exitCode=null;child.signalCode=null;globalThis.reaOpenChild=child;child.kill=()=>{child.exitCode=0;child.emit('exit',0);return true;};void writeFile(args[args.indexOf('--stdout')+1],JSON.stringify({pid:424242,window_id:7})+'\\n');return child;};
+export const spawn=(_command,args)=>{const child=new EventEmitter();child.pid=424241;child.exitCode=null;child.signalCode=null;child.kill=()=>{child.exitCode=0;child.emit('exit',0);return true;};void writeFile(args[args.indexOf('--stdout')+1],JSON.stringify({pid:424242})+'\\n'+JSON.stringify({pid:424242,window_id:7})+'\\n');return child;};
 export const parseBinaryTarget=async path=>({ok:true,value:{path,sha256:'a'.repeat(64)}});
 export const observeProcessStartIdentity=async()=>({state:'readable',identity:'authored-process-identity'});
+export const observeProcessStartIdentityExit=async()=>fixtureLive?'present':'exited';
+export const signalProcessWithStartIdentity=async()=>{fixtureLive=false;return 'signaled';};
 export const observeNativeUi=async(target,operation)=>{
  if(target.sha256==='0'.repeat(64))return {ok:false,error:{issues:[{message:'target-mismatch: authored changed digest'}]}};
  if(operation==='capture_native_ui_scenario'){count++;return {ok:true,value:captured()};}
@@ -42,7 +45,7 @@ export const artifactMcpResult=async(_client,name)=>{if(name==='observe_native_u
       join(directory, "hook.mjs"),
       `
 import {registerHooks} from 'node:module';import {pathToFileURL} from 'node:url';
-const darwinHost='data:text/javascript,'+encodeURIComponent('export const HOST_PLATFORM=Object.freeze({platform:"darwin",architecture:'+JSON.stringify(process.arch)+'});');process.kill=()=>{const open=globalThis.reaOpenChild;if(open?.exitCode===null){open.exitCode=0;queueMicrotask(()=>open.emit('exit',0,null));}return true;};
+const darwinHost='data:text/javascript,'+encodeURIComponent('export const HOST_PLATFORM=Object.freeze({platform:"darwin",architecture:'+JSON.stringify(process.arch)+'});');
 registerHooks({resolve(specifier,context,next){if(context.parentURL?.endsWith('/scripts/verify-native-ui.mjs')&&specifier==='../dist/platform/HostPlatform.js')return {shortCircuit:true,url:darwinHost};if(context.parentURL?.endsWith('/scripts/verify-native-ui.mjs')&&['node:child_process','../dist/application/BinaryTargetResolver.js','../dist/native/NativeUiObservation.js','./lib/artifact-e2e.mjs','../dist/process/ProcessOwnershipObservation.js'].includes(specifier))return {shortCircuit:true,url:pathToFileURL(process.env.RECORDING).href};return next(specifier,context);}});
 `,
     );

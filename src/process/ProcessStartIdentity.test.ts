@@ -242,6 +242,33 @@ describe("process start identity lease", () => {
     expect(sendSignal).toHaveBeenCalledWith(42, "SIGKILL");
   });
 
+  it("does not signal when the matching identity completes after cancellation", async () => {
+    const controller = new AbortController();
+    const reason = new Error("fixture cleanup deadline");
+    const processIdentities = vi.fn(async () => {
+      controller.abort(reason);
+      return new Map([
+        [42, { state: "readable" as const, identity: "start-1" }],
+      ]);
+    });
+    const sendSignal = vi.fn();
+    await expect(
+      signalProcessWithStartIdentity(42, "start-1", "SIGTERM", {
+        host: { ...host("start-1"), processIdentities },
+        inspectionSignal: controller.signal,
+        sendSignal,
+      }),
+    ).rejects.toMatchObject({
+      name: "ProcessOwnershipInspectionCancelled",
+      reason,
+    });
+    expect(processIdentities).toHaveBeenCalledWith(
+      [{ pid: 42 }],
+      controller.signal,
+    );
+    expect(sendSignal).not.toHaveBeenCalled();
+  });
+
   it("does not signal a reused PID even when its command is unchanged", async () => {
     const sendSignal = vi.fn();
     await expect(

@@ -1724,11 +1724,17 @@ export const observeProcessStartIdentity = async (
   pid: number,
   host: ProcessOwnershipHost = systemProcessOwnershipHost,
   expectedRunId?: string,
+  signal?: AbortSignal,
 ): Promise<ProcessIdentityObservation | undefined> => {
+  assertProcessOwnershipInspectionActive(signal);
   if (host.processIdentities === undefined)
     return { state: "unavailable", reason: "process identity is unsupported" };
+  const candidates = [{ pid }];
+  const signalArgs: [] | [AbortSignal] = signal === undefined ? [] : [signal];
+  const observations = await host.processIdentities(candidates, ...signalArgs);
+  assertProcessOwnershipInspectionActive(signal);
   const identity = liveProcessIdentity(
-    (await host.processIdentities([{ pid }])).get(pid) ?? {
+    observations.get(pid) ?? {
       state: "unavailable",
       reason: "process identity was not returned",
     },
@@ -1736,21 +1742,27 @@ export const observeProcessStartIdentity = async (
   if (identity === undefined) return undefined;
   if (expectedRunId === undefined || identity.state !== "readable")
     return identity;
-  const process = (await host.listProcesses()).find(
-    (entry) => entry.pid === pid,
-  );
+  const processes = await host.listProcesses(...signalArgs);
+  assertProcessOwnershipInspectionActive(signal);
+  const process = processes.find((entry) => entry.pid === pid);
   let token: ProcessRunTokenObservation | undefined;
   // Darwin's environment() admits a token only after `ps` lists the PID.
   // The native reader already observed this live identity by PID, so an
   // omitted row uses that reader directly instead of another process table.
   if (process === undefined && host.runTokens !== undefined)
-    token = (await host.runTokens([{ pid }])).get(pid);
+    token = (await host.runTokens(candidates, ...signalArgs)).get(pid);
   if (token === undefined) {
-    if (process === undefined) token = await readProcessRunToken(host, pid);
+    if (process === undefined)
+      token = await readProcessRunToken(host, pid, signal);
     else
-      for await (const { observation } of readProcessRunTokens(host, [process]))
+      for await (const { observation } of readProcessRunTokens(
+        host,
+        [process],
+        signal,
+      ))
         token = observation;
   }
+  assertProcessOwnershipInspectionActive(signal);
   if (token === undefined || token.state === "unavailable")
     return {
       state: "unavailable",
@@ -1761,7 +1773,13 @@ export const observeProcessStartIdentity = async (
       state: "unavailable",
       reason: `process ownership token did not match the captured run for PID ${String(pid)}`,
     };
-  const confirmed = await observeProcessStartIdentity(pid, host);
+  const confirmed = await observeProcessStartIdentity(
+    pid,
+    host,
+    undefined,
+    signal,
+  );
+  assertProcessOwnershipInspectionActive(signal);
   if (confirmed === undefined || confirmed.state !== "readable")
     return confirmed;
   return confirmed.identity === identity.identity
@@ -1790,9 +1808,15 @@ export const observeProcessStartIdentityExit = async (
   pid: number,
   expectedIdentity: string,
   host: ProcessOwnershipHost = systemProcessOwnershipHost,
+  signal?: AbortSignal,
 ): Promise<"exited" | "exiting" | "present" | "unverified"> => {
   try {
-    let observed = await observeProcessStartIdentity(pid, host);
+    let observed = await observeProcessStartIdentity(
+      pid,
+      host,
+      undefined,
+      signal,
+    );
     // An exiting process closes its sockets before it becomes a zombie, so a
     // caller that reacts to the closed transport can observe the same
     // generation mid-exit. The shared settlement waits only for that
@@ -1806,11 +1830,13 @@ export const observeProcessStartIdentityExit = async (
           [{ pid }],
           host,
           new Map([[pid, observed]]),
+          signal,
         )
       ).get(pid);
       observed =
         settled === undefined ? observed : liveProcessIdentity(settled);
     }
+    assertProcessOwnershipInspectionActive(signal);
     if (observed === undefined) return "exited";
     if (observed.state !== "readable") return "unverified";
     if (observed.identity !== expectedIdentity) return "exited";
@@ -1828,12 +1854,19 @@ export const signalProcessWithStartIdentity = async (
   signal: NodeJS.Signals,
   options: {
     readonly host?: ProcessOwnershipHost;
+    readonly inspectionSignal?: AbortSignal;
     readonly sendSignal?: (pid: number, signal: NodeJS.Signals) => void;
   } = {},
 ): Promise<"signaled" | "gone" | "identity-changed" | "unverified"> => {
   const host = options.host ?? systemProcessOwnershipHost;
   try {
-    const observed = await observeProcessStartIdentity(pid, host);
+    const observed = await observeProcessStartIdentity(
+      pid,
+      host,
+      undefined,
+      options.inspectionSignal,
+    );
+    assertProcessOwnershipInspectionActive(options.inspectionSignal);
     if (observed === undefined) return "gone";
     if (observed.state !== "readable") return "unverified";
     if (observed.identity !== expectedIdentity) return "identity-changed";

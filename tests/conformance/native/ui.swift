@@ -1,5 +1,8 @@
 import AppKit
 
+let fixturePid = ProcessInfo.processInfo.processIdentifier
+FileHandle.standardOutput.write(Data("{\"pid\":\(fixturePid)}\n".utf8))
+
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
 let window = NSWindow(contentRect: NSRect(x: 120, y: 120, width: 360, height: 180), styleMask: [.titled, .closable], backing: .buffered, defer: false)
@@ -21,7 +24,7 @@ window.contentView?.addSubview(button)
 window.makeKeyAndOrderFront(nil)
 app.activate(ignoringOtherApps: true)
 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-  let record = "{\"pid\":\(ProcessInfo.processInfo.processIdentifier),\"window_id\":\(window.windowNumber)}\n"
+  let record = "{\"pid\":\(fixturePid),\"window_id\":\(window.windowNumber)}\n"
   FileHandle.standardOutput.write(Data(record.utf8))
 }
 app.run()

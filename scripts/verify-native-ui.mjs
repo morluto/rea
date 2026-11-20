@@ -1,16 +1,29 @@
+import { randomUUID } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
-import assert from "node:assert/strict";
 import { mkdir, writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { setTimeout as delay } from "node:timers/promises";
+import { z } from "zod";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import { observeNativeUi } from "../dist/native/NativeUiObservation.js";
 import { NATIVE_UI_HELPER_MAX_BUFFER } from "../dist/native/NativeUiOutputBudget.js";
 import { artifactMcpResult, withArtifactMcp } from "./lib/artifact-e2e.mjs";
-import { observeProcessStartIdentity } from "../dist/process/ProcessOwnershipObservation.js";
+import {
+  observeProcessStartIdentity,
+  observeProcessStartIdentityExit,
+  signalProcessWithStartIdentity,
+} from "../dist/process/ProcessOwnershipObservation.js";
+import {
+  isProcessOwnershipInspectionCancellation,
+  ProcessOwnershipInspectionCancelled,
+} from "../dist/process/ProcessInspectionCancellation.js";
 import { HOST_PLATFORM } from "../dist/platform/HostPlatform.js";
-import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 if (HOST_PLATFORM.platform !== "darwin")
   throw new Error(
@@ -21,16 +34,12 @@ const rootFixture = await VerifierFixture.open({
   private: false,
 });
 const root = rootFixture.path;
-let child;
-let childExit;
-let fixturePid;
-let fixtureIdentity;
-let report;
-// `open -W` exits only after the app exits, so its own exit is the proof that
-// the fixture no longer runs from the root. Without it the root is retained.
-let retainedRoot;
+const FIXTURE_READY_TIMEOUT_MS = 20_000;
 const FIXTURE_EXIT_GRACE_MS = 10_000;
-try {
+const startupRecord = z.strictObject({ pid: z.int().positive() });
+const readyRecord = startupRecord.extend({ window_id: z.int().positive() });
+
+const report = await withVerifierFixture(rootFixture, async () => {
   const childRetrievalTest = join(root, "child-retrieval-test");
   await promisify(execFile)("/usr/bin/xcrun", [
     "swiftc",
@@ -101,32 +110,10 @@ try {
   ]);
   const coordinates = join(root, "scope.json");
   await writeFile(coordinates, "");
-  child = spawn(
-    "/usr/bin/open",
-    ["-W", "-n", "-g", "--stdout", coordinates, join(root, "Fixture.app")],
-    { stdio: "ignore" },
-  );
-  childExit = new Promise((resolve) => child.once("exit", resolve));
-  let scope;
-  const deadline = Date.now() + 20000;
-  while (Date.now() < deadline) {
-    const output = await readFile(coordinates, "utf8");
-    if (output.includes("\n")) {
-      scope = JSON.parse(output.split("\n")[0]);
-      break;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  if (scope === undefined)
-    throw new Error(
-      "Source-owned UI fixture failed to expose one window within 20 seconds",
-    );
-  fixturePid = scope.pid;
-  fixtureIdentity = await observeProcessStartIdentity(fixturePid);
-  assert.equal(
-    fixtureIdentity?.state,
-    "readable",
-    "Fixture OS start identity is unavailable",
+  const scope = await waitForOwnedFixture(
+    join(root, "Fixture.app"),
+    coordinates,
+    rootFixture,
   );
   const target = await parseBinaryTarget(executable);
   if (!target.ok) throw target.error;
@@ -269,7 +256,7 @@ try {
     )
   )
     throw new Error("Real helper did not reject changed target bytes");
-  report = {
+  return {
     ok: true,
     verification_status: observation.ok ? "passed" : "permission-boundary-only",
     positive_e2e: observation.ok,
@@ -281,57 +268,178 @@ try {
     mismatch_rejected: true,
     target_owned: true,
   };
-} finally {
-  if (fixturePid !== undefined && fixtureIdentity?.state === "readable") {
-    const current = await observeProcessStartIdentity(fixturePid);
-    if (current !== undefined) {
-      assert.ok(
-        current.state === "readable" &&
-          current.identity === fixtureIdentity.identity,
-        "Fixture PID identity changed; refusing to signal another process",
-      );
-      try {
-        process.kill(fixturePid, "SIGTERM");
-      } catch (cause) {
-        if (cause.code !== "ESRCH") throw cause;
-      }
-    }
-  }
-  const fixtureExited =
-    child === undefined || (await openExitedWithFixture(child, childExit));
-  if (fixtureExited) await rootFixture.release();
-  else {
-    // The app may have been reparented away from `open`; stopping `open`
-    // does not prove the fixture exited, so its root stays in place.
-    if (child.exitCode === null && child.signalCode === null) {
-      child.kill("SIGTERM");
-      await childExit;
-    }
-    retainedRoot = root;
-    process.stderr.write(
-      `Source-owned UI fixture exit was not observed; retained ${root}\n`,
-    );
-  }
-}
-if (retainedRoot !== undefined)
-  throw new Error(
-    `Source-owned UI fixture exit was not observed; retained ${retainedRoot}`,
-  );
+});
 process.stdout.write(`${JSON.stringify(report)}\n`);
 
-// `open -W` exits on its own only after the app exits (or never launched it).
-// A signaled `open`, or none within the grace period, leaves the app unproven.
-async function openExitedWithFixture(launcher, exit) {
-  if (launcher.exitCode === null && launcher.signalCode === null) {
-    let timer;
-    const exited = await Promise.race([
-      exit.then(() => true),
-      new Promise((resolve) => {
-        timer = setTimeout(() => resolve(false), FIXTURE_EXIT_GRACE_MS);
-      }),
-    ]);
-    clearTimeout(timer);
-    if (!exited) return false;
+/**
+ * Each stage gives the native inspection owner its own cancellation budget.
+ * Wait for admitted reads to settle so cancellation cannot orphan helper work.
+ * @template T
+ * @param {number} milliseconds
+ * @param {(scope: { signal: AbortSignal, active: () => boolean }) => Promise<T>} observe
+ * @returns {Promise<T | undefined>}
+ */
+async function beforeFixtureDeadline(milliseconds, observe) {
+  const deadline = performance.now() + milliseconds;
+  const signal = AbortSignal.timeout(milliseconds);
+  const active = () => !signal.aborted && performance.now() < deadline;
+  try {
+    const result = await observe({ signal, active });
+    return active() ? result : undefined;
+  } catch (cause) {
+    if (
+      !isProcessOwnershipInspectionCancellation(cause) ||
+      cause.reason !== signal.reason
+    )
+      throw cause;
+    return undefined;
   }
-  return launcher.exitCode !== null && launcher.signalCode === null;
+}
+
+/**
+ * @param {(scope: { signal: AbortSignal, active: () => boolean }) =>
+ *   Promise<{ pid: number, identity: string } | undefined>} identify
+ */
+async function stopOwnedFixture(identify) {
+  return beforeFixtureDeadline(FIXTURE_EXIT_GRACE_MS, async (scope) => {
+    const { signal, active } = scope;
+    let signaled = false;
+    while (active()) {
+      const owner = await identify(scope);
+      if (!active()) break;
+      if (owner !== undefined) {
+        const { pid, identity } = owner;
+        const exit = await observeProcessStartIdentityExit(
+          pid,
+          identity,
+          undefined,
+          signal,
+        );
+        if (!active()) break;
+        if (exit === "exited") return true;
+        if (!signaled) {
+          const outcome = await signalProcessWithStartIdentity(
+            pid,
+            identity,
+            "SIGTERM",
+            {
+              inspectionSignal: signal,
+              sendSignal: (checkedPid, action) => {
+                if (!active())
+                  throw new ProcessOwnershipInspectionCancelled(signal.reason);
+                process.kill(checkedPid, action);
+              },
+            },
+          );
+          if (!active()) break;
+          if (outcome === "gone" || outcome === "identity-changed") return true;
+          signaled = outcome === "signaled";
+        }
+      }
+      await delay(100);
+    }
+    return false;
+  });
+}
+
+/**
+ * The app announces its PID before AppKit starts. A different record names
+ * its ready window. Only the app with the launch's token owns the fixture.
+ * @param {string} bundle
+ * @param {string} coordinates
+ * @param {VerifierFixture} fixture
+ */
+async function waitForOwnedFixture(bundle, coordinates, fixture) {
+  const token = randomUUID();
+  const launcher = spawn(
+    "/usr/bin/open",
+    [
+      "-W",
+      "-n",
+      "-g",
+      "--stdout",
+      coordinates,
+      "--env",
+      `REA_PROCESS_RUN_ID=${token}`,
+      bundle,
+    ],
+    { stdio: "ignore" },
+  );
+  /** @type {Error | undefined} */
+  let launcherFailure;
+  const launcherExit = new Promise((resolve) => {
+    launcher.once("exit", resolve);
+    launcher.once("error", (cause) => {
+      launcherFailure = cause;
+      if (launcher.pid === undefined) resolve(undefined);
+    });
+  });
+  /** @type {{ pid: number, identity: string } | undefined} */
+  let owner;
+  // A final unterminated row can still be in flight.
+  const records = async () =>
+    (await readFile(coordinates, "utf8")).split("\n").slice(0, -1);
+  const identify = async (startup, { signal, active }) => {
+    if (startup === undefined || owner !== undefined || !active()) return;
+    const { pid } = startupRecord.parse(JSON.parse(startup));
+    const identity = await observeProcessStartIdentity(
+      pid,
+      undefined,
+      token,
+      signal,
+    );
+    if (identity?.state === "readable" && active())
+      owner = { pid, identity: identity.identity };
+  };
+
+  fixture.releaseAfter(async () => {
+    if (launcherFailure !== undefined && launcher.pid === undefined) return;
+    const exited = await stopOwnedFixture(async (scope) => {
+      if (owner === undefined) await identify((await records())[0], scope);
+      return owner;
+    });
+    if (!exited)
+      throw new Error(
+        `Source-owned UI fixture exit was not observed; retained ${fixture.path}`,
+      );
+  });
+  fixture.releaseAfter(async () => {
+    // The ChildProcess handle owns the launcher, regardless of app ownership.
+    // Launcher completion does not establish anything about the app.
+    if (
+      launcher.exitCode === null &&
+      launcher.signalCode === null &&
+      launcher.pid !== undefined
+    )
+      launcher.kill("SIGTERM");
+    const exited = await Promise.race([
+      launcherExit.then(() => true),
+      delay(FIXTURE_EXIT_GRACE_MS, false, { ref: false }),
+    ]);
+    if (!exited) {
+      launcher.unref();
+      throw new Error("Source-owned UI fixture launcher exit was not observed");
+    }
+  });
+
+  const readyScope = await beforeFixtureDeadline(
+    FIXTURE_READY_TIMEOUT_MS,
+    async (scope) => {
+      while (scope.active()) {
+        if (launcherFailure !== undefined) throw launcherFailure;
+        const [startup, ready] = await records();
+        await identify(startup, scope);
+        if (ready !== undefined && scope.active()) {
+          const observed = readyRecord.parse(JSON.parse(ready));
+          if (owner?.pid === observed.pid) return observed;
+        }
+        await delay(100);
+      }
+      return undefined;
+    },
+  );
+  if (readyScope !== undefined) return readyScope;
+  throw new Error(
+    "Source-owned UI fixture failed to expose one authenticated window within 20 seconds",
+  );
 }

@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
-import { readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
 
@@ -30,24 +30,32 @@ ${standInPrelude}
 record("launcher");
 const args = process.argv.slice(2);
 const coordinates = args[args.indexOf("--stdout") + 1];
+const token = args[args.indexOf("--env") + 1].split("=")[1];
 spawn(process.execPath, [new URL("./fixture.mjs", import.meta.url).pathname], {
   detached: true,
   stdio: ["ignore", openSync(coordinates, "a"), "ignore"],
+  env: { ...process.env, REA_PROCESS_RUN_ID: token },
 }).once("exit", () => process.exit(0));
+if (process.env.NATIVE_UI_EXIT_LAUNCHER === "1") process.exit(0);
 `;
 
 const fixtureSource = `
 import { writeSync } from "node:fs";
 ${standInPrelude}
 record("fixture");
-writeSync(1, JSON.stringify({ pid: process.pid, window_id: 7 }) + "\\n");
+const sendStartup = () => writeSync(1, JSON.stringify({ pid: process.pid }) + "\\n");
+if (process.env.NATIVE_UI_LATE_STARTUP === "1") setTimeout(sendStartup, 20_300);
+else if (process.env.NATIVE_UI_NO_HANDSHAKE !== "1") {
+  sendStartup();
+  writeSync(1, JSON.stringify({ pid: process.pid, window_id: 7 }) + "\\n");
+}
 `;
 
 // Runs the actual verifier and observation mapping. Only the compiler and launcher
 // are replaced: the compiled helper is an authored script answering as the real
 // helper does, so this covers the lane's assertions and not native capture.
 const preloadSource = `
-import { chmodSync, copyFileSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import { basename } from "node:path";
 import { promisify } from "node:util";
@@ -65,7 +73,10 @@ const compile = (args) => {
     script(output, "printf '%s\\\\n' '{\\"a\\":\\"b\\"}' '{\\"n\\":1.0}'");
   else script(output, config.helper);
 };
-const compiled = (file, args) => file === "/usr/bin/xcrun" && args.includes("-o");
+const mockedSwiftSources = new Set(config.mockedSwiftSources.map((source) => realpathSync(source)));
+const compiled = (file, args) =>
+  file === "/usr/bin/xcrun" && args.includes("-o") &&
+  args.some((source) => source.endsWith(".swift") && mockedSwiftSources.has(realpathSync(source)));
 childProcess.execFile = (file, args, ...rest) => {
   if (!compiled(file, args)) return execFile(file, args, ...rest);
   compile(args);
@@ -98,8 +109,18 @@ const standInSchema = z.object({
   pid: z.number().int().positive(),
 });
 
-const runVerifier = async (helper: string, flags: readonly string[]) => {
+const runVerifier = async (
+  helper: string,
+  flags: readonly string[],
+  options: {
+    readonly noHandshake?: boolean;
+    readonly lateStartup?: boolean;
+    readonly exitLauncher?: boolean;
+  } = {},
+) => {
   const workspace = await createTestTempDirectory("rea-native-ui-lane-");
+  const home = join(workspace, "home");
+  await mkdir(home);
   const paths = {
     events: join(workspace, "events.jsonl"),
     release: join(workspace, "release"),
@@ -111,7 +132,24 @@ const runVerifier = async (helper: string, flags: readonly string[]) => {
   await writeFile(join(workspace, "preload.mjs"), preloadSource);
   await writeFile(
     join(workspace, "config.json"),
-    JSON.stringify({ ...paths, helper }),
+    JSON.stringify({
+      ...paths,
+      helper,
+      mockedSwiftSources: [
+        fileURLToPath(
+          new URL(
+            "../../conformance/native/native-ui-children/main.swift",
+            import.meta.url,
+          ),
+        ),
+        fileURLToPath(
+          new URL("../../conformance/native/ui.swift", import.meta.url),
+        ),
+        fileURLToPath(
+          new URL("../../../bridge/native/ReaNativeUI.swift", import.meta.url),
+        ),
+      ],
+    }),
   );
   const child = spawn(
     process.execPath,
@@ -122,7 +160,16 @@ const runVerifier = async (helper: string, flags: readonly string[]) => {
       ...flags,
     ],
     {
-      env: { ...process.env, TMPDIR: workspace },
+      env: {
+        ...process.env,
+        TMPDIR: workspace,
+        HOME: home,
+        XDG_CACHE_HOME: join(home, ".cache"),
+        REA_DARWIN_MODULE_CACHE_PATH: join(workspace, "swift-modules"),
+        ...(options.noHandshake ? { NATIVE_UI_NO_HANDSHAKE: "1" } : {}),
+        ...(options.lateStartup ? { NATIVE_UI_LATE_STARTUP: "1" } : {}),
+        ...(options.exitLauncher ? { NATIVE_UI_EXIT_LAUNCHER: "1" } : {}),
+      },
       stdio: ["ignore", "pipe", "pipe"],
     },
   );
@@ -165,7 +212,7 @@ const runVerifier = async (helper: string, flags: readonly string[]) => {
     code,
     stdout,
     stderr,
-    fixtureLive: !(await untilGone(fixture?.pid ?? -1)),
+    fixtureLive: await isLive(fixture?.pid ?? -1),
     roots: (await readdir(workspace)).filter((name) =>
       name.startsWith("rea-ui-fixture-"),
     ),
@@ -174,6 +221,42 @@ const runVerifier = async (helper: string, flags: readonly string[]) => {
 
 // The verifier refuses other hosts before any fixture is created.
 const macosIt = it.skipIf(process.platform !== "darwin");
+
+macosIt(
+  "retains the fixture root when the launcher exits before the ready handshake",
+  { timeout: 45_000 },
+  async () => {
+    const result = await runVerifier(
+      answersChangedBytes,
+      ["--allow-permission-denial"],
+      { noHandshake: true, exitLauncher: true },
+    );
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain(
+      "Source-owned UI fixture exit was not observed; retained",
+    );
+    expect(result.fixtureLive).toBe(true);
+    expect(result.roots).toHaveLength(1);
+  },
+);
+
+macosIt(
+  "takes ownership during cleanup when the startup record arrives after the window deadline",
+  { timeout: 45_000 },
+  async () => {
+    const result = await runVerifier(
+      answersChangedBytes,
+      ["--allow-permission-denial"],
+      { lateStartup: true, exitLauncher: true },
+    );
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain(
+      "Source-owned UI fixture failed to expose one authenticated window",
+    );
+    expect(result.fixtureLive).toBe(false);
+    expect(result.roots).toEqual([]);
+  },
+);
 
 macosIt(
   "completes at the permission boundary when the helper refuses changed target bytes",
