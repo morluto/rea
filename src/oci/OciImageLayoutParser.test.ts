@@ -1240,6 +1240,34 @@ it("treats a blob named by an uppercase-hex descriptor as referenced", async () 
   expect(rows[0]?.referenced).toBe(true);
 });
 
+it("walks a manifest listed after a path-shaped spelling of its digest", async () => {
+  const root = await createTestTempDirectory("rea-oci-path-spelling-");
+  const written = await writeOciImageLayoutFixture(root);
+  const parsed = parseOciDigest(written.manifestDigest);
+  if (parsed === undefined) throw new Error("expected sha256 digest");
+  const manifest = {
+    mediaType: "application/vnd.oci.image.manifest.v1+json",
+    digest: written.manifestDigest,
+    size: written.manifestSize,
+  };
+  await writeFile(
+    join(root, "index.json"),
+    `${JSON.stringify({
+      schemaVersion: 2,
+      mediaType: "application/vnd.oci.image.index.v1+json",
+      manifests: [
+        { ...manifest, digest: `blobs/sha256/${parsed.hex}` },
+        manifest,
+      ],
+    })}\n`,
+  );
+  const report = await inspectLayout(root);
+  expect(report.images.map((image) => image.digest)).toEqual([
+    written.manifestDigest,
+  ]);
+  expect(report.images[0]?.layers).toHaveLength(1);
+});
+
 it("walks an index and manifest named by hex-casing aliases once", async () => {
   const root = await createTestTempDirectory("rea-oci-alias-walk-");
   const written = await writeOciImageLayoutFixture(root);

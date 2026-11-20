@@ -768,9 +768,13 @@ const inventoryOciImageLayout = async (
   // Traversal is keyed by the resolved blob path, so descriptors whose
   // digests differ only in accepted hex casing read and walk one blob once
   // while each keeps its source spelling in the report.
+  // A spelling that does not parse keeps its own namespace, so text such as
+  // "blobs/sha256/<hex>" never collides with the accepted digest's key.
   const traversalKey = (digest: string): string => {
     const parsed = parseOciDigest(digest);
-    return parsed === undefined ? digest : ociBlobPath(parsed);
+    return parsed === undefined
+      ? `raw:${digest}`
+      : `blob:${ociBlobPath(parsed)}`;
   };
   const visited = new Set<string>();
   // Decoded descriptors have their own allowance: max_entries bounds the
