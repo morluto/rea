@@ -657,3 +657,36 @@ it("keeps the oci-layout snapshot when imageLayoutVersion is missing", async () 
     await provider.close();
   }
 });
+
+it("keeps the directory reader's unknown coverage and its limitation", async () => {
+  const root = await createTestTempDirectory("rea-oci-traversal-coverage-");
+  await writeOciImageLayoutFixture(root);
+  const skipped =
+    "Directory contains 1 entry name(s) that are not valid UTF-8; no filesystem operations were performed for them.";
+  class SkippingReader extends DirectoryArtifactReader {
+    override async *entries(
+      ...args: Parameters<DirectoryArtifactReader["entries"]>
+    ): ReturnType<DirectoryArtifactReader["entries"]> {
+      const [signal, selection] = args;
+      const options =
+        typeof selection === "function"
+          ? { descendInto: selection }
+          : selection;
+      yield* super.entries(signal, { ...options, onCoverage: () => undefined });
+      options?.onCoverage?.({ status: "unknown", limitations: [skipped] });
+    }
+  }
+  const reader = new SkippingReader(root);
+  try {
+    const report = ociImageLayoutSchema.parse(
+      await parseOciImageLayout(
+        reader,
+        inspectOciImageLayoutInputSchema.parse({ path: root }),
+      ),
+    );
+    expect(report.coverage.status).toBe("unknown");
+    expect(report.limitations).toContain(skipped);
+  } finally {
+    await reader.close();
+  }
+});

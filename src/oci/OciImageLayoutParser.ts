@@ -32,6 +32,7 @@ import {
   DirectoryArtifactTraversalLimit,
   readArtifactFileChunks,
   streamChunkToBuffer,
+  type ArtifactReaderTraversal,
   type DirectoryArtifactEntry,
   type DirectoryArtifactReader,
 } from "../resources/index.js";
@@ -456,10 +457,20 @@ export const parseOciImageLayout = async (
     limitations.push(OCI_IMAGE_LAYOUT_LIMITATIONS.envRedacted);
 
   const entries: DirectoryArtifactEntry[] = [];
+  // Silence from the reader is not a completeness claim.
+  const traversal: { current: ArtifactReaderTraversal } = {
+    current: {
+      status: "unknown",
+      limitations: ["Directory traversal did not report its coverage."],
+    },
+  };
   try {
     for await (const entry of reader.entries(signal, {
       maximumEntries: input.max_entries,
       descendInto: (path) => path === "blobs" || path.startsWith("blobs/"),
+      onCoverage: (coverage) => {
+        traversal.current = coverage;
+      },
     }))
       entries.push(entry);
   } catch (cause: unknown) {
@@ -476,6 +487,8 @@ export const parseOciImageLayout = async (
       );
     throw cause;
   }
+  for (const limitation of traversal.current.limitations)
+    if (!limitations.includes(limitation)) limitations.push(limitation);
 
   const byPath = new Map<string, DirectoryArtifactEntry>();
   for (const entry of entries) byPath.set(entry.path, entry);
@@ -1144,7 +1157,7 @@ export const parseOciImageLayout = async (
     },
     "OCI image layout snapshot",
   );
-  const coverageStatus =
+  const findingsStatus =
     referencedJsonSkipped ||
     findings.some(
       (finding) =>
@@ -1156,6 +1169,9 @@ export const parseOciImageLayout = async (
     )
       ? ("partial" as const)
       : ("complete" as const);
+  const traversalStatus = traversal.current.status;
+  const coverageStatus =
+    traversalStatus === "complete" ? findingsStatus : traversalStatus;
 
   return {
     artifact: {
