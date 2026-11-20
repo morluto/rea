@@ -19,15 +19,12 @@ import {
 /** Kuna caps its own decode lanes and worker pool at 32. */
 export const MAXIMUM_KUNA_JOBS = 32;
 
-/** One job is the serial reference export. Zero is not a pool. */
-export const MINIMUM_KUNA_JOBS = 1;
-
 /**
  * A serial (`--jobs 1`) export is Kuna's reference answer: it decompiles
  * callees before callers, which recovers prototypes that parallel workers
  * cannot. Measured on coreutils sort, 40-60% of functions differ otherwise.
  */
-export const DEFAULT_KUNA_JOBS = MINIMUM_KUNA_JOBS;
+export const MINIMUM_KUNA_JOBS = 1;
 
 /** Measured sqlite3 exports occupy ~25 MiB; four GiB retains many projects. */
 export const DEFAULT_KUNA_CACHE_MAX_BYTES = 4 * 1024 ** 3;
@@ -251,7 +248,7 @@ export const readKunaConfiguration = (
 
   const rawJobs = environment.REA_KUNA_JOBS;
   const jobs =
-    rawJobs === undefined ? DEFAULT_KUNA_JOBS : positiveInteger(rawJobs);
+    rawJobs === undefined ? MINIMUM_KUNA_JOBS : positiveInteger(rawJobs);
   if (
     jobs === undefined ||
     jobs < MINIMUM_KUNA_JOBS ||

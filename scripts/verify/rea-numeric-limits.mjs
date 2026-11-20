@@ -1210,7 +1210,7 @@ const restartOnlyBounds = (owners) => {
     ),
     bound(
       "REA_KUNA_JOBS",
-      exportedNumber(owners.kuna, "DEFAULT_KUNA_JOBS"),
+      exportedNumber(owners.kuna, "MINIMUM_KUNA_JOBS"),
       exportedNumber(owners.kuna, "MINIMUM_KUNA_JOBS"),
       exportedNumber(owners.kuna, "MAXIMUM_KUNA_JOBS"),
     ),
