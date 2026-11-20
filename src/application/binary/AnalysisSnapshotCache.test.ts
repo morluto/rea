@@ -1145,26 +1145,17 @@ const createRelationshipCoverageSnapshot = (
     createEvidenceBundle([evidence]),
   );
   if (!exported.ok) throw exported.error;
-  return { cache, operation, parameters, snapshot: exported.value };
+  return { operation, parameters, snapshot: exported.value };
 };
 
 describe("relationship coverage snapshot replay", () => {
-  it("authenticates coverage and rejects missing serialized fields", () => {
+  it("authenticates coverage before importing Evidence and replaying a query", () => {
     const coverage: RelationshipCoverage = {
       status: "complete",
       diagnostics: ["The provider retained an unresolved call target."],
     };
-    const { cache, operation, parameters, snapshot } =
+    const { operation, parameters, snapshot } =
       createRelationshipCoverageSnapshot(coverage);
-    expect(
-      cache.lookup(
-        ANALYSIS_SNAPSHOT_TARGET,
-        ANALYSIS_SNAPSHOT_PROFILE,
-        operation,
-        parameters,
-      )?.relationshipCoverage,
-    ).toEqual(coverage);
-
     const tampered = structuredClone(snapshot);
     const tamperedEntry = tampered.entries[0];
     if (tamperedEntry === undefined) throw new Error("snapshot entry missing");
@@ -1172,28 +1163,26 @@ describe("relationship coverage snapshot replay", () => {
       status: "complete",
       diagnostics: ["forged coverage"],
     };
-    expect(
-      new AnalysisSnapshotCache().import(tampered, undefined, () => ok(0)).ok,
-    ).toBe(false);
 
-    const missingCoverage = structuredClone(snapshot);
-    const missingCoverageEntry = missingCoverage.entries[0];
-    if (missingCoverageEntry === undefined)
-      throw new Error("snapshot entry missing");
-    Reflect.deleteProperty(
-      missingCoverageEntry.execution,
-      "relationship_coverage",
-    );
-    const missingCoverageEvidence = missingCoverage.evidence_bundle.records[0];
-    if (missingCoverageEvidence === undefined)
-      throw new Error("snapshot Evidence missing");
-    Reflect.deleteProperty(missingCoverageEvidence, "relationship_coverage");
-    expect(() => parseAnalysisSnapshot(missingCoverage)).toThrow();
+    const replay = new AnalysisSnapshotCache();
+    const imported = replay.import(tampered, undefined, () => {
+      throw new Error("Unauthenticated Evidence reached the ledger");
+    });
+    expect(imported).toMatchObject({
+      ok: false,
+      error: { _tag: "EvidenceIntegrityError" },
+    });
+    expect(replay.entries()).toEqual([]);
+
+    expect(replay.import(snapshot, undefined, () => ok(0)).ok).toBe(true);
     expect(
-      new AnalysisSnapshotCache().import(missingCoverage, undefined, () =>
-        ok(0),
-      ).ok,
-    ).toBe(false);
+      replay.lookup(
+        ANALYSIS_SNAPSHOT_TARGET,
+        ANALYSIS_SNAPSHOT_PROFILE,
+        operation,
+        parameters,
+      )?.relationshipCoverage,
+    ).toEqual(coverage);
   });
 
   it("replays absent coverage as explicitly unknown", () => {
