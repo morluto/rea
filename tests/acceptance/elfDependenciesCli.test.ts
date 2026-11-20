@@ -205,3 +205,79 @@ for (const tableAvailable of [true, false]) {
     },
   );
 }
+
+cliTest(
+  "retains backed leading GNU version slots without section headers",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-elf-dependencies-versym-");
+    for (const { label, alias, versions, coverage } of [
+      {
+        label: "complete",
+        alias: undefined,
+        versions: [
+          "GLIBC_2.34",
+          "GLIBC_2.2.5",
+          "GLIBCXX_3.4.29",
+          null,
+          "GLIBC_2.2.5",
+        ],
+        coverage: "complete",
+      },
+      {
+        label: "later-byte-ambiguous",
+        alias: 7,
+        versions: ["GLIBC_2.34", "GLIBC_2.2.5", null, null, null],
+        coverage: "partial",
+      },
+      {
+        label: "first-slot-ambiguous",
+        alias: 1,
+        versions: [null, null, null, null, null],
+        coverage: "partial",
+      },
+    ]) {
+      const path = join(root, label);
+      await writeFile(
+        path,
+        elfDependencyFixture({
+          stripped: true,
+          ...(alias === undefined ? {} : { versymZeroFillOffset: alias }),
+        }),
+      );
+      const result = await cli.run({
+        arguments: ["inspect-elf-dependencies", path, "--json"],
+      });
+      expect(result.exitCode, JSON.stringify(result.json)).toBe(0);
+      const report = dependenciesContract.outputSchema.parse(
+        result.json,
+      ).normalized_result;
+      if (!("imports" in report))
+        throw new Error("Expected an inline ELF dependency inventory");
+      expect(report.coverage.status, label).toBe(coverage);
+      expect(
+        report.imports.map(({ name }) => name),
+        label,
+      ).toEqual(["printf", "memcpy", "_ZSt4cout", "abort", "_exit"]);
+      expect(
+        report.imports.map(({ version }) => version?.name ?? null),
+        label,
+      ).toEqual(versions);
+      if (alias !== undefined) {
+        const blocked = report.imports.slice(alias === 7 ? 2 : 0);
+        expect(
+          blocked.map(({ version }) => version),
+          label,
+        ).toEqual(blocked.map(() => null));
+      }
+      if (alias === 7)
+        expect(report.issues, label).toContainEqual(
+          expect.objectContaining({
+            code: "table_unavailable",
+            message: expect.stringContaining(
+              "GNU versym table holds 3 of 6 dynamic symbol slots",
+            ),
+          }),
+        );
+    }
+  },
+);

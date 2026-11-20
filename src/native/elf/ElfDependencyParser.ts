@@ -526,6 +526,45 @@ const tableFromVirtual = (
   };
 };
 
+const GNU_VERSYM_SLOT_BYTES = 2;
+
+/** Keep complete leading slots in one proven file translation. */
+const tableFromMappedVersym = (
+  mappings: ElfLoadMappings,
+  address: bigint | undefined,
+  count: number,
+): LocatedTable | null => {
+  if (address === undefined) return null;
+  const complete = tableFromVirtual(
+    mappings,
+    address,
+    count * GNU_VERSYM_SLOT_BYTES,
+  );
+  if (complete !== null || count <= 1) return complete;
+
+  const mapping = createFileMappingIndex(
+    mappings.fileBacked,
+    mappings.zeroFills,
+  );
+  let low = 0;
+  let high = count - 1;
+  let offset: number | null = null;
+  // A mapped prefix proves every shorter span at the same start.
+  while (low < high) {
+    const slots = Math.ceil((low + high) / 2);
+    try {
+      offset = mapping.offset(address, slots * GNU_VERSYM_SLOT_BYTES);
+      low = slots;
+    } catch (cause) {
+      if (!(cause instanceof BinaryMappingFailure)) throw cause;
+      high = slots - 1;
+    }
+  }
+  if (offset === null) return null;
+  const size = low * GNU_VERSYM_SLOT_BYTES;
+  return { offset, size, location: { offset, bytes: size } };
+};
+
 /**
  * Reads hash-table words from file bytes `[base, end)`. File mapping stays
  * here; `elfHashSymbolCount.ts` owns the DT_HASH and DT_GNU_HASH layouts.
@@ -1061,7 +1100,7 @@ export const readElfDependenciesSteps = function* (
     tableFromSection(versymSection, bytes.length, "GNU versym", issues) ??
     (symbolCount === null
       ? null
-      : tableFromVirtual(mappings, addresses.get(DT_VERSYM), symbolCount * 2));
+      : tableFromMappedVersym(mappings, addresses.get(DT_VERSYM), symbolCount));
   if (
     dynsymTable === null &&
     symbolCount !== null &&
@@ -1627,16 +1666,23 @@ const parseImports = (
   let versymBytes: Buffer | null = null;
   if (versym !== null) {
     // A short table still holds whole slots for its leading symbols; keep those
-    // and leave only the symbols past its end without a version.
-    const slotCount = Math.min(symbolCount, Math.floor(versym.size / 2));
+    // and leave later versions unexamined.
+    const slotCount = Math.min(
+      symbolCount,
+      Math.floor(versym.size / GNU_VERSYM_SLOT_BYTES),
+    );
     if (slotCount < symbolCount)
       issues.push({
         code: "table_unavailable",
         location: hex(versym.offset),
-        message: `GNU versym table holds ${String(slotCount)} of ${String(symbolCount)} dynamic symbol slots; later imports have no version`,
+        message: `GNU versym table holds ${String(slotCount)} of ${String(symbolCount)} dynamic symbol slots; later import versions were not read`,
       });
     try {
-      versymBytes = reader.range(versym.offset, slotCount * 2, "GNU versym");
+      versymBytes = reader.range(
+        versym.offset,
+        slotCount * GNU_VERSYM_SLOT_BYTES,
+        "GNU versym",
+      );
     } catch (cause) {
       if (!(cause instanceof BinaryFormatFailure)) throw cause;
       issues.push({
@@ -1676,9 +1722,12 @@ const parseImports = (
       `dynsym[${String(index)}]`,
     );
     let version: ElfDependencyImport["version"] = null;
-    if (versymBytes !== null && (index + 1) * 2 <= versymBytes.length) {
+    if (
+      versymBytes !== null &&
+      (index + 1) * GNU_VERSYM_SLOT_BYTES <= versymBytes.length
+    ) {
       const raw = new BinaryReader(versymBytes, reader.little, "elf").u16(
-        index * 2,
+        index * GNU_VERSYM_SLOT_BYTES,
       );
       const versionIndex = raw & 0x7fff;
       const hidden = (raw & 0x8000) !== 0;
@@ -1703,7 +1752,9 @@ const parseImports = (
         if (resolved === undefined)
           issues.push({
             code: "version_unresolved",
-            location: hex((versym?.offset ?? 0) + index * 2),
+            location: hex(
+              (versym?.offset ?? 0) + index * GNU_VERSYM_SLOT_BYTES,
+            ),
             message: `Import ${name ?? `#${String(index)}`} references version index ${String(versionIndex)} with no matching verneed record`,
           });
       }
