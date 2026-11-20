@@ -2126,6 +2126,54 @@ it.each([
     "resolved",
   ],
   [
+    "a projected array before its whole receiver is replaced",
+    'const box={pairs:[["one"]]};const {0:[selected]}=box.pairs;box.pairs=[];',
+    ["pairs", "0", "0"],
+    "resolved",
+  ],
+  [
+    "a projected array before a later custom receiver",
+    'const box={pairs:[["one"]]};const {0:[selected]}=box.pairs;box.pairs={*[Symbol.iterator](){yield "later";}};',
+    ["pairs", "0", "0"],
+    "resolved",
+  ],
+  [
+    "a deeper projected array before a later parent replacement",
+    'const box={nested:{pairs:[["one"]]}};const {0:[selected]}=box.nested.pairs;box.nested={pairs:[]};',
+    ["nested", "pairs", "0", "0"],
+    "resolved",
+  ],
+  [
+    "an earlier custom inner receiver before the whole array is replaced",
+    'const box={pairs:[["one"]]};box.pairs[0]={*[Symbol.iterator](){yield "earlier";}};const {0:[selected]}=box.pairs;box.pairs=[];',
+    ["pairs", "0", "0"],
+    "candidate",
+  ],
+  [
+    "an earlier default replacing the next own numeric receiver",
+    'const box={pairs:[["one"],["two"]]};const {none=(box.pairs[1]={*[Symbol.iterator](){yield "earlier";}}),1:[selected]}=box.pairs;box.pairs=[];',
+    ["pairs", "1", "0"],
+    "candidate",
+  ],
+  [
+    "a projected array before later receiver and iterator replacements",
+    'const box={pairs:[["one"]]};const {0:[selected]}=box.pairs;Object.getPrototypeOf([].values()).next=()=>({done:true});box.pairs=[];',
+    ["pairs", "0", "0"],
+    "resolved",
+  ],
+  [
+    "an earlier opaque escape from the projected receiver",
+    'const box={pairs:[["one"]]};consume(box.pairs);const {0:[selected]}=box.pairs;box.pairs=[];',
+    ["pairs", "0", "0"],
+    "candidate",
+  ],
+  [
+    "an earlier local iterator override on the selected inner array",
+    'const box={pairs:[["one"]]};box.pairs[0][Symbol.iterator]=function*(){};const {0:[selected]}=box.pairs;box.pairs=[];',
+    ["pairs", "0", "0"],
+    "candidate",
+  ],
+  [
     "a numeric slot selected through an accessor",
     'const box={get pairs(){return [["one"]];}};const {0:[selected]}=box.pairs;box.pairs[0][0]="later";',
     ["pairs", "0", "0"],
@@ -2427,3 +2475,41 @@ it.each([
     ).toEqual(path);
   },
 );
+
+it("keeps a retained alias unknown after a possible close on a captured receiver", () => {
+  const graph = graphForJavaScript(`
+    const box = { pairs: [[0, { mode: "old" }]] };
+    const kept = box.pairs[0][1];
+    Object.getPrototypeOf([].values()).return = function () {
+      const value = this.next().value;
+      if (value) delete value.mode;
+      return {};
+    };
+    const { 0: [used] } = box.pairs;
+    const { mode: selected } = kept;
+    box.pairs = [];
+  `);
+  const target = graph.nodes.find(
+    (node) => node.kind === "binding" && node.label === "selected",
+  );
+  expect(target).toBeDefined();
+  const relation = graph.relations.find(
+    (edge) =>
+      edge.relation === "destructures" &&
+      edge.target_node_id === target?.node_id,
+  );
+  expect(relation).toMatchObject({ resolution: "candidate" });
+  const literalIds = new Set(
+    graph.nodes
+      .filter((node) => node.kind === "literal")
+      .map((node) => node.node_id),
+  );
+  expect(
+    graph.relations.some(
+      (edge) =>
+        edge.relation === "defines" &&
+        edge.target_node_id === target?.node_id &&
+        literalIds.has(edge.source_node_id),
+    ),
+  ).toBe(false);
+});
