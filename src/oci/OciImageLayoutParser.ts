@@ -765,6 +765,13 @@ const inventoryOciImageLayout = async (
 
   const indexes: OciImageLayoutIndex[] = [];
   const images: OciImageLayoutImage[] = [];
+  // Traversal is keyed by the resolved blob path, so descriptors whose
+  // digests differ only in accepted hex casing read and walk one blob once
+  // while each keeps its source spelling in the report.
+  const traversalKey = (digest: string): string => {
+    const parsed = parseOciDigest(digest);
+    return parsed === undefined ? digest : ociBlobPath(parsed);
+  };
   const visited = new Set<string>();
   // Decoded descriptors have their own allowance: max_entries bounds the
   // directory walk, and a shared layer is a single file but one descriptor
@@ -906,7 +913,7 @@ const inventoryOciImageLayout = async (
   ): void => {
     // Breadth-first, an index already queued was reached at this depth or a
     // shallower one.
-    if (queuedIndexes.has(digest)) return;
+    if (queuedIndexes.has(traversalKey(digest))) return;
     if (depth > input.max_index_depth) {
       referenceGraphTruncated = true;
       recordFinding(
@@ -917,7 +924,7 @@ const inventoryOciImageLayout = async (
       );
       return;
     }
-    queuedIndexes.add(digest);
+    queuedIndexes.add(traversalKey(digest));
     indexQueue.push({ digest, mediaType, depth });
   };
 
@@ -981,8 +988,8 @@ const inventoryOciImageLayout = async (
     document: JsonDocument,
     depth: number,
   ): Promise<void> => {
-    if (visited.has(digest)) return;
-    visited.add(digest);
+    if (visited.has(traversalKey(digest))) return;
+    visited.add(traversalKey(digest));
     chargeDescriptor();
     if (depth > input.max_index_depth) {
       referenceGraphTruncated = true;
@@ -1090,8 +1097,8 @@ const inventoryOciImageLayout = async (
     mediaType: string,
     depth: number,
   ): Promise<void> => {
-    if (visited.has(`manifest:${digest}`)) return;
-    visited.add(`manifest:${digest}`);
+    if (visited.has(`manifest:${traversalKey(digest)}`)) return;
+    visited.add(`manifest:${traversalKey(digest)}`);
     chargeDescriptor();
     const document = await readReferencedJson(digest, `manifest ${digest}`);
     if (document === undefined) {
@@ -1206,10 +1213,9 @@ const inventoryOciImageLayout = async (
       const decodeConfig =
         configDescriptor.media_type !== null &&
         isOciConfigMediaType(configDescriptor.media_type);
-      let config = decodeConfig
-        ? configs.get(configDescriptor.digest)
-        : undefined;
-      if (decodeConfig && !configs.has(configDescriptor.digest)) {
+      const configKey = traversalKey(configDescriptor.digest);
+      let config = decodeConfig ? configs.get(configKey) : undefined;
+      if (decodeConfig && !configs.has(configKey)) {
         const configDocument = await readReferencedJson(
           configDescriptor.digest,
           `config ${configDescriptor.digest}`,
@@ -1238,7 +1244,7 @@ const inventoryOciImageLayout = async (
             );
           config = { facts: parsedConfig.facts, bytes: configDocument.bytes };
         }
-        configs.set(configDescriptor.digest, config);
+        configs.set(configKey, config);
       }
       if (config !== undefined) {
         chargeConfigBytes(config.bytes);
@@ -1280,7 +1286,7 @@ const inventoryOciImageLayout = async (
     nonempty(indexRoot.media_type) ??
     "application/vnd.oci.image.index.v1+json";
   const rootDigest = `sha256:${indexDocument.sha256}`;
-  queuedIndexes.add(rootDigest);
+  queuedIndexes.add(traversalKey(rootDigest));
   await walkIndex(rootDigest, topMediaType, indexDocument, 0);
   for (
     let next = indexQueue.shift();

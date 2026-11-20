@@ -1240,6 +1240,47 @@ it("treats a blob named by an uppercase-hex descriptor as referenced", async () 
   expect(rows[0]?.referenced).toBe(true);
 });
 
+it("walks an index and manifest named by hex-casing aliases once", async () => {
+  const root = await createTestTempDirectory("rea-oci-alias-walk-");
+  const written = await writeOciImageLayoutFixture(root);
+  const OCI_INDEX = "application/vnd.oci.image.index.v1+json";
+  const manifest = {
+    mediaType: "application/vnd.oci.image.manifest.v1+json",
+    digest: written.manifestDigest,
+    size: written.manifestSize,
+  };
+  const upper = (digest: string) => {
+    const parsed = parseOciDigest(digest);
+    if (parsed === undefined) throw new Error("expected sha256 digest");
+    return `${parsed.algorithm}:${parsed.hex.toUpperCase()}`;
+  };
+  const nestedJson = `${JSON.stringify({
+    schemaVersion: 2,
+    mediaType: OCI_INDEX,
+    manifests: [manifest, { ...manifest, digest: upper(manifest.digest) }],
+  })}\n`;
+  const nested = {
+    mediaType: OCI_INDEX,
+    digest: await putOciBlob(root, nestedJson),
+    size: Buffer.byteLength(nestedJson),
+  };
+  await writeFile(
+    join(root, "index.json"),
+    `${JSON.stringify({
+      schemaVersion: 2,
+      mediaType: OCI_INDEX,
+      manifests: [nested, { ...nested, digest: upper(nested.digest) }],
+    })}\n`,
+  );
+  const report = await inspectLayout(root);
+  expect(report.indexes.map((entry) => entry.depth)).toEqual([0, 1]);
+  expect(report.images).toHaveLength(1);
+  expect(report.indexes[0]?.entries.map((entry) => entry.digest)).toEqual([
+    nested.digest,
+    upper(nested.digest),
+  ]);
+});
+
 it("reports a descriptor it cannot model instead of dropping it silently", async () => {
   const root = await createTestTempDirectory("rea-oci-malformed-descriptor-");
   await writeOciImageLayoutFixture(root);
