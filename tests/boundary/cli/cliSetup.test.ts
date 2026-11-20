@@ -140,7 +140,9 @@ cliTest.for([
 
     await expect(access(config)).rejects.toMatchObject({ code: "ENOENT" });
     expect(result.exitCode).not.toBe(0);
-    expect(`${result.stdout}\n${result.stderr}`).toContain("--dry-run");
+    expect(result.json).toMatchObject({ code: "PARSE_ERROR" });
+    expect(result.stdout).toContain("--dry-run");
+    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(/^ +at /mu);
   },
 );
 
@@ -159,23 +161,6 @@ cliTest.for(["--dry-run=true", "--dry-run=false"] as const)(
       expect(result.json).toMatchObject({ status: "ready" });
       await expect(access(config)).resolves.toBeUndefined();
     }
-  },
-);
-
-cliTest(
-  "reports invalid dry-run through the public CLI without a stack trace",
-  async ({ cli }) => {
-    const home = await createTestTempDirectory(
-      "rea-cli-public-invalid-dry-run-",
-    );
-    const config = join(home, ".codex", "config.toml");
-    const result = await runSetup(cli, home, "--dry-run=abc");
-
-    expect(result.exitCode).not.toBe(0);
-    expect(result.json).toMatchObject({ code: "PARSE_ERROR" });
-    expect(result.stdout).toContain("--dry-run");
-    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(/^ +at /mu);
-    await expect(access(config)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );
 
