@@ -317,7 +317,42 @@ test.for(["handoff", "not-found"] as const)(
     const initial = parseMcpToolError(await call("current_document"));
     // Capture ownership evidence before result assertions so teardown retains
     // the runtime even when the asserted failure stage regresses.
-    const bootstrapPath = await readFile(receipt, "utf8");
+    const bootstrapPath = await readFile(receipt, "utf8").catch(
+      (cause: unknown) => {
+        if (
+          !(cause instanceof Error) ||
+          !("code" in cause) ||
+          cause.code !== "ENOENT"
+        )
+          throw cause;
+        const startup = z
+          .object({
+            diagnostics: z.object({
+              primary_error: z.object({
+                code: z.string(),
+                details: z
+                  .object({
+                    stage: z.string().optional(),
+                    timeout_ms: z.number().optional(),
+                  })
+                  .optional(),
+              }),
+            }),
+          })
+          .safeParse(initial.error.details);
+        throw new Error(
+          `Hopper ${launchMode} fixture did not write its bootstrap receipt. MCP startup outcome: ${JSON.stringify(
+            {
+              code: initial.error.code,
+              primary: startup.success
+                ? startup.data.diagnostics.primary_error
+                : undefined,
+            },
+          )}`,
+          { cause },
+        );
+      },
+    );
     runtime = dirname(bootstrapPath);
     expect(initial.error).toMatchObject({
       code: "cleanup_incomplete",
