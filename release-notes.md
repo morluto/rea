@@ -286,6 +286,8 @@
 * **ci:** use the test deadline for conformance fixture commands ([#12022](https://github.com/morluto/rea/issues/12022)) ([40f9269](https://github.com/morluto/rea/commit/40f9269284fa1d3fa44d7465d0dc00327f80a7e9))
 * **ci:** verify completed workflow identity for push baselines ([#12423](https://github.com/morluto/rea/issues/12423)) ([762909f](https://github.com/morluto/rea/commit/762909f72c7949f46245f5ae0010c05b406084fa))
 * **ci:** verify dependency inventory on lockfile changes ([#12389](https://github.com/morluto/rea/issues/12389)) ([aa87d42](https://github.com/morluto/rea/commit/aa87d427c0fdd117bf3bab859f00bfbf12c21f75))
+* **cleanup:** follow live resources across owner close failures ([b2bb427](https://github.com/morluto/rea/commit/b2bb427553f9a491ae772f1e1d430716f837ca9f))
+* **cleanup:** report live resources independently of failed closes ([#12589](https://github.com/morluto/rea/issues/12589)) ([b2bb427](https://github.com/morluto/rea/commit/b2bb427553f9a491ae772f1e1d430716f837ca9f))
 * **cli:** admit activity extras with the runtime contract ([#10289](https://github.com/morluto/rea/issues/10289)) ([fceb469](https://github.com/morluto/rea/commit/fceb4693fc6c7ba0999806beab182a12f8fe6128))
 * **cli:** advertise parsed JSON documents in --schema ([d734e64](https://github.com/morluto/rea/commit/d734e6424df5fed42399dc22b759a1c9962c01f2))
 * **cli:** advertise the decimal token grammar on integer arguments ([884b683](https://github.com/morluto/rea/commit/884b683a94be222538aad84eb7993f62fda9aca7)), closes [#9344](https://github.com/morluto/rea/issues/9344)
