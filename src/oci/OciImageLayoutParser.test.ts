@@ -1290,6 +1290,9 @@ it("reports an unsupported layer digest without claiming the blob is missing", a
     present: true,
     hashed: false,
   });
+  expect(
+    report.images[0]?.layers.find((layer) => layer.digest === `sha1:${hex}`),
+  ).toMatchObject({ present: true });
   expect(report.coverage.status).toBe("partial");
 });
 

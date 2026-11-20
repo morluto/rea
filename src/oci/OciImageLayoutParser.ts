@@ -1158,9 +1158,14 @@ const inventoryOciImageLayout = async (
           `Layer media type ${JSON.stringify(descriptor.media_type)} is unknown.`,
           descriptor.digest,
         );
+      // Presence is observed at the layout path even when the digest
+      // algorithm cannot be verified, matching the blob inventory.
       const parsed = parseOciDigest(descriptor.digest);
-      const path = parsed === undefined ? null : ociBlobPath(parsed);
-      const entry = path === null ? undefined : byPath.get(path);
+      const path =
+        parsed === undefined
+          ? unverifiedBlobPath(descriptor.digest)
+          : ociBlobPath(parsed);
+      const entry = path === undefined ? undefined : byPath.get(path);
       layers.push({
         media_type: descriptor.media_type,
         digest: descriptor.digest,
