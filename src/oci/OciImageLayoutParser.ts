@@ -1360,6 +1360,13 @@ const inventoryOciImageLayout = async (
     recordFinding(findings, kind, message, digest, path);
   };
 
+  // Digest spellings that differ only in accepted hex casing resolve to one
+  // file, so each file is hashed once and every spelling reuses the result,
+  // including an oversize refusal, with its own row and checks.
+  const hashedByPath = new Map<
+    string,
+    Awaited<ReturnType<typeof hashBlob>> | BlobOversize
+  >();
   for (const [digest, reference] of referenced) {
     const parsed = parseOciDigest(digest);
     if (parsed === undefined) {
@@ -1466,14 +1473,24 @@ const inventoryOciImageLayout = async (
           path,
         );
     try {
-      const hashed = await hashBlob(
-        reader,
-        entry,
-        input,
-        signal,
-        parsed.algorithm,
-      );
-      blobsHashed += 1;
+      let hashed = hashedByPath.get(path);
+      if (hashed === undefined) {
+        try {
+          hashed = await hashBlob(
+            reader,
+            entry,
+            input,
+            signal,
+            parsed.algorithm,
+          );
+          blobsHashed += 1;
+        } catch (cause: unknown) {
+          if (!(cause instanceof BlobOversize)) throw cause;
+          hashed = cause;
+        }
+        hashedByPath.set(path, hashed);
+      }
+      if (hashed instanceof BlobOversize) throw hashed;
       const expected =
         parsed.algorithm === "sha512" ? hashed.sha512 : hashed.sha256;
       if (expected !== parsed.hex)

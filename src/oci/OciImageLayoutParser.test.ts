@@ -1268,6 +1268,39 @@ it("walks a manifest listed after a path-shaped spelling of its digest", async (
   expect(report.images[0]?.layers).toHaveLength(1);
 });
 
+it("hashes a blob named by several hex-casing spellings once", async () => {
+  const root = await createTestTempDirectory("rea-oci-alias-hash-");
+  const written = await writeOciImageLayoutFixture(root);
+  const baseline = await inspectLayout(root);
+  const parsed = parseOciDigest(written.layerDigest);
+  if (parsed === undefined) throw new Error("expected sha256 digest");
+  const spellings = [
+    `sha256:${parsed.hex.toUpperCase()}`,
+    `sha256:${parsed.hex.slice(0, 32).toUpperCase()}${parsed.hex.slice(32)}`,
+  ];
+  const indexPath = join(root, "index.json");
+  const index = JSON.parse(await readFile(indexPath, "utf8")) as {
+    manifests: Record<string, unknown>[];
+  };
+  for (const digest of spellings)
+    index.manifests.push({
+      mediaType: "application/vnd.oci.image.layer.v1.tar",
+      digest,
+      size: 11,
+    });
+  await writeFile(indexPath, `${JSON.stringify(index)}\n`);
+  const report = await inspectLayout(root);
+  expect(report.coverage.blobs_hashed).toBe(baseline.coverage.blobs_hashed);
+  const layerRow = report.blobs.find(
+    (blob) => blob.digest === written.layerDigest,
+  );
+  for (const digest of spellings)
+    expect(report.blobs.find((blob) => blob.digest === digest)).toMatchObject({
+      hashed: true,
+      sha256: layerRow?.sha256,
+    });
+});
+
 it("walks an index and manifest named by hex-casing aliases once", async () => {
   const root = await createTestTempDirectory("rea-oci-alias-walk-");
   const written = await writeOciImageLayoutFixture(root);
