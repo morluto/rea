@@ -51,6 +51,38 @@ it("verifies a published version missing from the compact package index", async 
   expect(requests).toContain("https://registry.npmjs.org/rea-agents/6.10.1");
 });
 
+it.each([
+  [
+    () => new Response(null, { status: 503 }),
+    "npm dist-tag lookup failed: HTTP 503",
+  ],
+  [() => Response.json({ latest: 42 }), "Invalid npm dist-tags"],
+])(
+  "refuses to publish when the dist-tag lookup fails: %s",
+  async (tagResponse, error) => {
+    await expect(
+      readNpmRelease("6.10.1", async (url) => {
+        switch (new URL(String(url)).pathname) {
+          case "/rea-agents":
+            return Response.json(
+              metadata("6.9.0", "sha512-old", { latest: "6.9.0" }),
+            );
+          case "/rea-agents/6.10.1":
+            return Response.json({
+              name: "rea-agents",
+              version: "6.10.1",
+              dist: { integrity: "sha512-qualified" },
+            });
+          case "/-/package/rea-agents/dist-tags":
+            return tagResponse();
+          default:
+            throw new Error(`Unexpected request: ${url}`);
+        }
+      }),
+    ).rejects.toThrow(error);
+  },
+);
+
 it("accepts existing registry bytes only when content and selected channel match", async () => {
   const root = await createTestTempDirectory("rea-npm-release-");
   const tarball = join(root, "package.tgz");
