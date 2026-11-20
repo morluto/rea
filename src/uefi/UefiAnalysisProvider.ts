@@ -102,7 +102,6 @@ interface DiscoveredUefiModule {
 const resolveGhidraHeadless = (): string | null => {
   const candidateDirs = [
     process.env.GHIDRA_INSTALL_DIR,
-    "/run/media/julian/ML3/ghidra/ghidra_12.1.4_PUBLIC",
     "/opt/ghidra",
     "/usr/share/ghidra",
   ].filter((d): d is string => typeof d === "string" && d.length > 0);
@@ -1009,7 +1008,10 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               },
             );
             if (existsSync(ghidraOutC)) {
-              cContent = await readFile(ghidraOutC, "utf8");
+              const cStat = await stat(ghidraOutC);
+              if (cStat.size <= 4 * 1024 * 1024) {
+                cContent = await readFile(ghidraOutC, "utf8");
+              }
             }
           } catch (ghidraErr: unknown) {
             if (signal.aborted) signal.throwIfAborted();
