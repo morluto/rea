@@ -47,6 +47,30 @@ export async function waitForNpmRelease(
   );
 }
 
+/** A single deadline covers both the registry requests and the polling delays. */
+export async function verifyRegistryVisibility(
+  version,
+  signal = AbortSignal.timeout(30 * 60 * 1_000),
+  request = fetch,
+) {
+  const lookup = (candidate) =>
+    readNpmRelease(candidate, (url, init) =>
+      request(url, { ...init, signal: AbortSignal.any([signal, init.signal]) }),
+    );
+  try {
+    signal.throwIfAborted();
+    return await waitForNpmRelease(version, lookup, (milliseconds) =>
+      setTimeout(milliseconds, undefined, { signal }),
+    );
+  } catch (cause) {
+    if (!signal.aborted) throw cause;
+    throw new Error(
+      `npm registry visibility deadline reached for rea-agents@${version}`,
+      { cause },
+    );
+  }
+}
+
 async function main() {
   const [operation, tarball, version, ...extra] = process.argv.slice(2);
   if (
@@ -58,7 +82,7 @@ async function main() {
     throw new Error(
       "Usage: node scripts/ci/npm-release.mjs verify <qualified-tarball> <version>",
     );
-  const published = await waitForNpmRelease(version);
+  const published = await verifyRegistryVisibility(version);
   await requireMatchingNpmRelease(tarball, version, published);
   if (process.env.GITHUB_STEP_SUMMARY !== undefined) {
     await appendFile(

@@ -6,6 +6,7 @@ import {
   readNpmRelease,
   stableUpdateVersion,
   waitForNpmRelease,
+  verifyRegistryVisibility,
 } from "../../../scripts/ci/npm-release.mjs";
 import { requireMatchingNpmRelease } from "../../../scripts/ci/npm-release-state.mjs";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -149,4 +150,38 @@ it.each([
   await expect(
     readNpmRelease("6.5.0", async () => Response.json(value)),
   ).rejects.toThrow();
+});
+
+it("aborts an ongoing registry request at the visibility deadline", async () => {
+  const controller = new AbortController();
+  const deadline = new Error("visibility deadline");
+  const waiting = verifyRegistryVisibility(
+    "6.5.0",
+    controller.signal,
+    async (_url, init) => {
+      controller.abort(deadline);
+      init.signal?.throwIfAborted();
+      throw new Error("request did not receive the deadline");
+    },
+  );
+  await expect(waiting).rejects.toMatchObject({
+    message: "npm registry visibility deadline reached for rea-agents@6.5.0",
+    cause: deadline,
+  });
+});
+
+it("interrupts the propagation delay when visibility time runs out", async () => {
+  const controller = new AbortController();
+  let lookups = 0;
+  const waiting = verifyRegistryVisibility(
+    "6.5.0",
+    controller.signal,
+    async () => {
+      lookups++;
+      setImmediate(() => controller.abort());
+      return new Response(null, { status: 404 });
+    },
+  );
+  await expect(waiting).rejects.toThrow("visibility deadline reached");
+  expect(lookups).toBe(1);
 });

@@ -13,3 +13,9 @@ export function waitForNpmRelease(
   lookup?: (version: string) => Promise<NpmReleaseState>,
   pause?: (milliseconds: number) => Promise<unknown>,
 ): Promise<Extract<NpmReleaseState, { status: "published" }>>;
+
+export function verifyRegistryVisibility(
+  version: string,
+  signal?: AbortSignal,
+  request?: (url: string, init: RequestInit) => Promise<Response>,
+): Promise<Extract<NpmReleaseState, { status: "published" }>>;
