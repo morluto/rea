@@ -494,6 +494,67 @@ it("reports a descriptor it cannot model instead of dropping it silently", async
   expect(report.indexes[0]?.entries).toHaveLength(1);
 });
 
+it("reports an unsupported layer digest without claiming the blob is missing", async () => {
+  const root = await createTestTempDirectory("rea-oci-sha1-layer-");
+  const written = await writeOciImageLayoutFixture(root);
+  const hex = "a".repeat(40);
+  await mkdir(join(root, "blobs", "sha1"), { recursive: true });
+  await writeFile(join(root, "blobs", "sha1", hex), "layer");
+  const manifestPath = join(
+    root,
+    "blobs",
+    "sha256",
+    written.manifestDigest.slice("sha256:".length),
+  );
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
+    layers: unknown[];
+  };
+  manifest.layers.push({
+    mediaType: "application/vnd.oci.image.layer.v1.tar",
+    digest: `sha1:${hex}`,
+    size: 5,
+  });
+  const manifestJson = `${JSON.stringify(manifest)}\n`;
+  const manifestDigest = await putOciBlob(root, manifestJson);
+  const indexPath = join(root, "index.json");
+  const index = JSON.parse(await readFile(indexPath, "utf8")) as {
+    manifests: { digest: string; size: number }[];
+  };
+  index.manifests[0] = {
+    ...index.manifests[0]!,
+    digest: manifestDigest,
+    size: Buffer.byteLength(manifestJson),
+  };
+  await writeFile(indexPath, `${JSON.stringify(index)}\n`);
+  await unlink(manifestPath);
+  const report = await inspectLayout(root);
+  expect(report.findings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "unsupported_digest_algorithm",
+        digest: `sha1:${hex}`,
+      }),
+    ]),
+  );
+  expect(
+    report.findings.some(
+      (finding) =>
+        finding.digest === `sha1:${hex}` &&
+        (finding.kind === "missing_blob" ||
+          finding.kind === "unreferenced_blob"),
+    ),
+  ).toBe(false);
+  expect(
+    report.blobs.find((blob) => blob.digest === `sha1:${hex}`),
+  ).toMatchObject({
+    path: `blobs/sha1/${hex}`,
+    kind: "file",
+    present: true,
+    hashed: false,
+  });
+  expect(report.coverage.status).toBe("partial");
+});
+
 it("refuses a missing oci-layout as malformed input", async () => {
   const root = await createTestTempDirectory("rea-oci-empty-");
   await mkdir(root, { recursive: true });

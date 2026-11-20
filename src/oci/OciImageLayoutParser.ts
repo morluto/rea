@@ -400,6 +400,16 @@ const parseConfig = (
   };
 };
 
+/** OCI's `algorithm:encoded` grammar, for digests this parser cannot verify. */
+const OCI_DIGEST_GRAMMAR =
+  /^([a-z0-9]+(?:[+._-][a-z0-9]+)*):([a-zA-Z0-9=_-]+)$/u;
+
+/** Where the layout stores a blob whose digest algorithm is unsupported. */
+const unverifiedBlobPath = (digest: string): string | undefined => {
+  const match = OCI_DIGEST_GRAMMAR.exec(digest);
+  return match === null ? undefined : `blobs/${match[1]!}/${match[2]!}`;
+};
+
 const blobRecord = (
   digest: string,
   path: string,
@@ -898,15 +908,38 @@ export const parseOciImageLayout = async (
   for (const [digest, reference] of referenced) {
     const parsed = parseOciDigest(digest);
     if (parsed === undefined) {
+      // The blob cannot be verified, but its presence is still observable
+      // at the path the layout gives every digest.
+      if (
+        !findings.some(
+          (finding) =>
+            finding.kind === "unsupported_digest_algorithm" &&
+            finding.digest === digest,
+        )
+      )
+        recordFinding(
+          findings,
+          "unsupported_digest_algorithm",
+          `Digest ${digest} uses an unsupported algorithm.`,
+          digest,
+        );
+      const path = unverifiedBlobPath(digest);
+      const entry = path === undefined ? undefined : byPath.get(path);
       blobs.push(
         blobRecord(
           digest,
-          digest,
+          path ?? digest,
           reference.mediaType,
           reference.declaredSize,
           true,
-          "missing",
-          { present: false },
+          entry === undefined
+            ? "missing"
+            : entry.kind === "file"
+              ? "file"
+              : entry.kind === "symlink"
+                ? "symlink"
+                : "other",
+          { present: entry?.kind === "file" },
         ),
       );
       continue;
@@ -1113,6 +1146,7 @@ export const parseOciImageLayout = async (
     findings.some(
       (finding) =>
         finding.kind === "missing_blob" ||
+        finding.kind === "unsupported_digest_algorithm" ||
         finding.kind === "nested_index_depth_exceeded" ||
         finding.kind === "blob_oversize" ||
         finding.kind === "malformed_blob_json",
