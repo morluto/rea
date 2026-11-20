@@ -1,11 +1,16 @@
 import { expect, it } from "vitest";
 
 import { OciImageLayoutService } from "./OciImageLayoutService.js";
-import type { OciImageLayout } from "../../domain/oci/imageLayout.js";
-import { ok } from "../../domain/result.js";
+import {
+  inspectOciImageLayoutInputSchema,
+  type OciImageLayout,
+} from "../../domain/oci/imageLayout.js";
+import { createOciImageLayoutEvidence } from "../../domain/oci/imageLayoutEvidence.js";
+import { err, ok } from "../../domain/result.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
+  AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
 
 const identity = {
@@ -104,6 +109,38 @@ it("retains completed Evidence and caller selections on late cancellation", asyn
       normalized_result: report,
     });
   }
+});
+
+it("keeps caller selections in Evidence recovered from a cleanup failure", async () => {
+  const resolved = inspectOciImageLayoutInputSchema.parse({
+    path: report.artifact.path,
+  });
+  const service = new OciImageLayoutService({
+    close: async () => {},
+    identity,
+    inspect: () =>
+      Promise.resolve(
+        err(
+          new AnalysisOutputError("inspect_oci_image_layout", "cleanup", {
+            partialObservation: createOciImageLayoutEvidence(
+              identity,
+              resolved,
+              report,
+            ),
+          }),
+        ),
+      ),
+  });
+  const result = await service.inspect({ path: report.artifact.path });
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  const success = await new OciImageLayoutService({
+    close: async () => {},
+    identity,
+    inspect: async () => ok(report),
+  }).inspect({ path: report.artifact.path });
+  if (!success.ok) throw success.error;
+  expect(result.error.partialObservation).toEqual(success.value);
 });
 
 it.each([undefined, true, false])(
