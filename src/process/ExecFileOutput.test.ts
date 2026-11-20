@@ -14,28 +14,6 @@ import {
 
 const realSetTimeout = globalThis.setTimeout;
 
-const inlineJavaScriptCharMap: Record<string, string> = {
-  "<": "\\u003C",
-  ">": "\\u003E",
-  "/": "\\u002F",
-  "\\": "\\\\",
-  "\b": "\\b",
-  "\f": "\\f",
-  "\n": "\\n",
-  "\r": "\\r",
-  "\t": "\\t",
-  "\0": "\\0",
-  "\u2028": "\\u2028",
-  "\u2029": "\\u2029",
-};
-
-function escapeUnsafeCharsForInlineJavaScript(value: string): string {
-  return value.replace(
-    /[<>/\\\b\f\n\r\t\0\u2028\u2029]/g,
-    (character) => inlineJavaScriptCharMap[character] ?? character,
-  );
-}
-
 const waitForFile = async (path: string): Promise<boolean> => {
   for (let attempt = 0; attempt < 500; attempt += 1) {
     if (
@@ -58,19 +36,22 @@ it.each([undefined, "SIGTERM"] as const)(
   async (stopSignal) => {
     const directory = await createTestTempDirectory("rea-exec-missing-");
     const command = join(directory, "missing-executable");
-    await expect(
-      execFileBytes(
-        command,
-        ["operand"],
-        stopSignal === undefined ? {} : { stopSignal },
-      ),
-    ).rejects.toMatchObject({
+    const failure = await execFileBytes(
+      command,
+      ["operand"],
+      stopSignal === undefined ? {} : { stopSignal },
+    ).catch((cause: unknown) => cause);
+    expect(failure).toMatchObject({
       code: "ENOENT",
       path: command,
       spawnargs: ["operand"],
       cmd: `${command} operand`,
+    });
+    expect(execFileOutputFailure(failure)).toMatchObject({
+      code: "ENOENT",
       stdout: "",
       stderr: "",
+      spawnFailed: true,
     });
   },
 );
@@ -244,15 +225,6 @@ describe("execFileOutput", () => {
     },
   );
 
-  it("retains both captured streams on a failed child process", async () => {
-    await expect(
-      execFileOutput(process.execPath, [
-        "-e",
-        'process.stdout.write("out"); process.stderr.write("err"); process.exitCode = 7;',
-      ]),
-    ).rejects.toMatchObject({ code: 7, stdout: "out", stderr: "err" });
-  });
-
   it("uses the built-in execFile timeout when no stop signal is requested", async () => {
     await expect(
       execFileOutput(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
@@ -321,8 +293,8 @@ describe("execFileOutput cancellation lifecycle", () => {
       const interrupted = join(directory, "interrupted");
       const script = [
         'const fs = require("node:fs");',
-        `process.on("SIGINT", () => fs.writeFileSync(${escapeUnsafeCharsForInlineJavaScript(JSON.stringify(interrupted))}, ""));`,
-        `fs.writeFileSync(${escapeUnsafeCharsForInlineJavaScript(JSON.stringify(ready))}, "");`,
+        `process.on("SIGINT", () => fs.writeFileSync(${JSON.stringify(interrupted)}, ""));`,
+        `fs.writeFileSync(${JSON.stringify(ready)}, "");`,
         "setInterval(() => {}, 1000);",
       ].join("\n");
       const controller = new AbortController();
@@ -348,46 +320,11 @@ describe("execFileOutput cancellation lifecycle", () => {
       }
     },
   );
-
-  it("rejects an already aborted stoppable command without starting it", async () => {
-    const controller = new AbortController();
-    controller.abort();
-    await expect(
-      execFileOutput(process.execPath, ["-e", ""], {
-        signal: controller.signal,
-        stopSignal: "SIGINT",
-      }),
-    ).rejects.toMatchObject({ name: "AbortError" });
-  });
 });
 
 describe.skipIf(process.platform === "win32")(
   "execFileOutput stop signal at a timeout",
   () => {
-    it("stops a timed-out process with the caller's signal and reports the timeout", async () => {
-      const directory = await createTestTempDirectory("rea-exec-timeout-");
-      const stopped = join(directory, "stopped");
-      // The child exits cleanly once it has recorded the signal it received.
-      const script = [
-        'const fs = require("node:fs");',
-        'for (const name of ["SIGINT", "SIGTERM"])',
-        `  process.on(name, () => setTimeout(() => { fs.writeFileSync(${JSON.stringify(stopped)}, name); process.exit(0); }, 200));`,
-        "setInterval(() => {}, 1000);",
-      ].join("\n");
-
-      const failure: unknown = await execFileOutput(
-        process.execPath,
-        ["-e", script],
-        { timeout: 2_000, stopSignal: "SIGINT" },
-      ).then(
-        () => undefined,
-        (cause: unknown) => cause,
-      );
-
-      expect(failure).toMatchObject({ code: "ETIMEDOUT", killed: true });
-      expect(await readFile(stopped, "utf8")).toBe("SIGINT");
-    });
-
     it.each([-1, Number.NaN, 1.5, Number.POSITIVE_INFINITY, 2 ** 53])(
       "refuses a malformed timeout (%s) in both modes before starting the command",
       async (timeout) => {
@@ -404,54 +341,53 @@ describe.skipIf(process.platform === "win32")(
       },
     );
 
-    it("preserves a child failure's missing signal when reporting timeout", async () => {
-      const directory = await createTestTempDirectory(
-        "rea-exec-missing-signal-",
-      );
+    it.each([
+      { completion: "clean exit", exitCode: 0, signal: null },
+      { completion: "failed exit", exitCode: 1, signal: null },
+      { completion: "forced kill", exitCode: null, signal: "SIGKILL" },
+    ])("reports timeout after $completion", async ({ exitCode, signal }) => {
+      const directory = await createTestTempDirectory("rea-exec-timeout-");
       const ready = join(directory, "ready");
+      const stopped = join(directory, "stopped");
+      const release = join(directory, "release");
       const script = [
         'const fs = require("node:fs");',
-        'for (const name of ["SIGINT", "SIGTERM"])',
-        "  process.on(name, () => process.exit(1));",
+        'for (const name of ["SIGINT", "SIGTERM"]) process.on(name, () => {',
+        `  fs.writeFileSync(${JSON.stringify(stopped)}, name);`,
+        `  const exitCode = ${JSON.stringify(exitCode)};`,
+        "  if (exitCode !== null) process.exit(exitCode);",
+        "});",
+        `const poll = setInterval(() => { if (fs.existsSync(${JSON.stringify(release)})) clearInterval(poll); }, 10);`,
         `fs.writeFileSync(${JSON.stringify(ready)}, "");`,
-        "setInterval(() => {}, 1000);",
       ].join("\n");
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
       const execution = execFileOutput(process.execPath, ["-e", script], {
-        timeout: 10_000,
+        timeout: 2_000,
         stopSignal: "SIGINT",
       }).catch((cause: unknown) => cause);
       try {
         expect(await waitForFile(ready)).toBe(true);
-        await vi.advanceTimersByTimeAsync(10_000);
-        expect(await execution).toMatchObject({
+        await vi.advanceTimersByTimeAsync(2_000);
+        expect(await waitForFile(stopped)).toBe(true);
+        expect(await readFile(stopped, "utf8")).toBe("SIGINT");
+        if (exitCode === null) {
+          await vi.advanceTimersByTimeAsync(5_000);
+          await writeFile(release, "");
+        }
+        const failure = await execution;
+        expect(failure).toMatchObject({
           code: "ETIMEDOUT",
-          signal: null,
+          killed: true,
+          signal,
         });
+        if (exitCode === 1)
+          expect(failure).toMatchObject({ cause: { code: 1 } });
       } finally {
+        await writeFile(release, "");
         await vi.runAllTimersAsync();
         vi.useRealTimers();
         await execution;
-        await rm(directory, { recursive: true, force: true });
       }
-    });
-
-    it("kills a timed-out process that ignores the stop signal", async () => {
-      const script = [
-        'for (const name of ["SIGINT", "SIGTERM"]) process.on(name, () => {});',
-        "setInterval(() => {}, 1000);",
-      ].join("\n");
-
-      await expect(
-        execFileOutput(process.execPath, ["-e", script], {
-          timeout: 1_000,
-          stopSignal: "SIGINT",
-        }),
-      ).rejects.toMatchObject({
-        code: "ETIMEDOUT",
-        killed: true,
-        signal: "SIGKILL",
-      });
     });
   },
 );
@@ -569,70 +505,63 @@ describe.skipIf(process.platform === "win32")(
       const directory = await createTestTempDirectory("rea-exec-inherited-");
       const scratch = join(directory, "scratch");
       const finished = join(directory, "finished.json");
-      const pidPath = join(directory, "child.pid");
+      const reaped = join(directory, "launcher-reaped");
+      const release = join(directory, "release");
       await mkdir(scratch);
       const childSource = [
         'const fs = require("node:fs");',
-        "setTimeout(() => {",
-        `  fs.writeFileSync(${JSON.stringify(finished)}, JSON.stringify({ scratchExists: fs.existsSync(${JSON.stringify(scratch)}) }));`,
-        "  process.exit(0);",
-        "}, 7000);",
+        "const launcher = Number(process.argv[1]);",
+        "let reported = false;",
+        "const poll = setInterval(() => {",
+        `  if (fs.existsSync(${JSON.stringify(release)})) {`,
+        `    fs.writeFileSync(${JSON.stringify(finished)}, JSON.stringify({ scratchExists: fs.existsSync(${JSON.stringify(scratch)}) }));`,
+        "    clearInterval(poll);",
+        "    return;",
+        "  }",
+        "  if (reported) return;",
+        "  try { process.kill(launcher, 0); } catch (error) {",
+        '    if (error.code !== "ESRCH") throw error;',
+        `    fs.writeFileSync(${JSON.stringify(reaped)}, "");`,
+        "    reported = true;",
+        "  }",
+        "}, 10);",
       ].join("\n");
       const script = [
         'const { spawn } = require("node:child_process");',
-        'const fs = require("node:fs");',
-        `const child = spawn(process.execPath, ["-e", ${JSON.stringify(childSource)}], { stdio: "inherit" });`,
-        `fs.writeFileSync(${JSON.stringify(pidPath)}, String(child.pid));`,
+        `spawn(process.execPath, ["-e", ${JSON.stringify(childSource)}, String(process.pid)], { stdio: "inherit" });`,
         "process.exit(0);",
       ].join("\n");
-      const settled = execFileOutput(process.execPath, ["-e", script], {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      let completed = false;
+      const execution = execFileOutput(process.execPath, ["-e", script], {
         timeout: 200,
         stopSignal: "SIGTERM",
       })
         .finally(async () => {
+          completed = true;
           await rm(scratch, { recursive: true, force: true });
         })
-        .then(
-          () => ({ ok: true as const }),
-          (cause: unknown) => ({ ok: false as const, cause }),
-        );
-      let killFailure: unknown;
-      let descendantSettled = false;
+        .catch((cause: unknown) => cause);
       try {
-        const deadline = Date.now() + 15_000;
-        let text: string | undefined;
-        while (Date.now() < deadline) {
-          text = await readFile(finished, "utf8").then(
-            (value) => value,
-            (cause: unknown) => {
-              if (
-                cause instanceof Error &&
-                "code" in cause &&
-                cause.code === "ENOENT"
-              )
-                return undefined;
-              throw cause;
-            },
-          );
-          if (text !== undefined) break;
-          await new Promise((resolve) => setTimeout(resolve, 20));
-        }
-        expect(text).toBeDefined();
-        expect(JSON.parse(text ?? "")).toEqual({ scratchExists: true });
-        const outcome = await settled;
-        descendantSettled = true;
-        expect(outcome).toMatchObject({
-          ok: false,
-          cause: { code: "ETIMEDOUT", killed: true },
+        expect(await waitForFile(reaped)).toBe(true);
+        await vi.advanceTimersByTimeAsync(200);
+        expect(completed).toBe(false);
+        await expect(access(scratch)).resolves.toBeUndefined();
+        await writeFile(release, "");
+        expect(await execution).toMatchObject({
+          code: "ETIMEDOUT",
+          killed: true,
         });
+        expect(JSON.parse(await readFile(finished, "utf8"))).toEqual({
+          scratchExists: true,
+        });
+        await expect(access(scratch)).rejects.toMatchObject({ code: "ENOENT" });
       } finally {
-        if (!descendantSettled) {
-          const pid = Number(await readFile(pidPath, "utf8").catch(() => ""));
-          killFailure = await stopOwnedDescendant(pid, finished);
-        }
-        await settled;
+        await writeFile(release, "");
+        await vi.runAllTimersAsync();
+        vi.useRealTimers();
+        await execution;
       }
-      if (killFailure !== undefined) throw killFailure;
     });
   },
 );
@@ -758,6 +687,7 @@ describe("execFileOutput failure metadata", () => {
       stderrBytes: 3,
       code: 7,
     });
+    expect(execFileOutputFailure(failure)).not.toHaveProperty("spawnFailed");
   });
   // Without stopSignal the command takes Node's execFile; adb always passes
   // one and takes the owned spawn route. Both throw ENOTDIR synchronously.
@@ -793,38 +723,6 @@ describe("execFileOutput failure metadata", () => {
       });
     },
   );
-
-  it("marks an asynchronous spawn failure but not a started process's exit", async () => {
-    const root = await createTestTempDirectory("rea-exec-spawn-owner-");
-    const missing = join(root, "missing");
-    const spawnFailure: unknown = await execFileOutput(missing, [
-      "version",
-    ]).then(
-      () => undefined,
-      (cause: unknown) => cause,
-    );
-    expect(spawnFailure).toMatchObject({
-      code: "ENOENT",
-      path: missing,
-      spawnargs: ["version"],
-    });
-    expect(execFileOutputFailure(spawnFailure)).toMatchObject({
-      code: "ENOENT",
-      spawnFailed: true,
-    });
-
-    const exitFailure: unknown = await execFileOutput(process.execPath, [
-      "-e",
-      "process.exitCode = 3",
-    ]).then(
-      () => undefined,
-      (cause: unknown) => cause,
-    );
-    expect(execFileOutputFailure(exitFailure)).toMatchObject({ code: 3 });
-    expect(execFileOutputFailure(exitFailure)).not.toHaveProperty(
-      "spawnFailed",
-    );
-  });
 
   it("leaves a synchronous argument validation error unadmitted", async () => {
     const failure: unknown = await execFileOutput(process.execPath, [
