@@ -830,6 +830,97 @@ it("records unreferenced blobs, unknown media types and unsupported digests", as
   );
 });
 
+it("counts local subject blobs as referenced and hashes them", async () => {
+  const root = await createTestTempDirectory("rea-oci-subject-");
+  await writeOciImageLayoutFixture(root);
+  const manifestSubject = await putOciBlob(root, '{"subject":"manifest"}');
+  const indexSubject = await putOciBlob(root, '{"subject":"index"}');
+  const emptyConfig = await putOciBlob(root, "{}");
+  const referrer = JSON.stringify({
+    schemaVersion: 2,
+    mediaType: "application/vnd.oci.image.manifest.v1+json",
+    artifactType: "application/vnd.example.sbom",
+    config: {
+      mediaType: "application/vnd.oci.empty.v1+json",
+      digest: emptyConfig,
+      size: 2,
+    },
+    layers: [],
+    subject: {
+      mediaType: "application/vnd.oci.image.manifest.v1+json",
+      digest: manifestSubject,
+      size: 22,
+    },
+  });
+  const referrerDigest = await putOciBlob(root, referrer);
+  const indexPath = join(root, "index.json");
+  const index = JSON.parse(await readFile(indexPath, "utf8")) as {
+    manifests: Record<string, unknown>[];
+    subject?: Record<string, unknown>;
+  };
+  index.manifests.push({
+    mediaType: "application/vnd.oci.image.manifest.v1+json",
+    digest: referrerDigest,
+    size: Buffer.byteLength(referrer),
+  });
+  index.subject = {
+    mediaType: "application/vnd.oci.image.manifest.v1+json",
+    digest: indexSubject,
+    size: 19,
+  };
+  await writeFile(indexPath, `${JSON.stringify(index)}\n`);
+  const report = await inspectLayout(root);
+  expect(
+    report.findings.filter((finding) => finding.kind === "unreferenced_blob"),
+  ).toEqual([]);
+  for (const digest of [manifestSubject, indexSubject]) {
+    const row = report.blobs.find((entry) => entry.digest === digest);
+    expect(row?.referenced).toBe(true);
+    expect(row?.hashed).toBe(true);
+    expect(row?.sha256).toBe(digest.slice("sha256:".length));
+  }
+  expect(report.coverage.status).toBe("complete");
+});
+
+it("does not report a subject that is absent from the layout", async () => {
+  const root = await createTestTempDirectory("rea-oci-absent-subject-");
+  await writeOciImageLayoutFixture(root);
+  const indexPath = join(root, "index.json");
+  const index = JSON.parse(await readFile(indexPath, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  index.subject = {
+    mediaType: "application/vnd.oci.image.manifest.v1+json",
+    digest: `sha256:${"a".repeat(64)}`,
+    size: 10,
+  };
+  await writeFile(indexPath, `${JSON.stringify(index)}\n`);
+  const report = await inspectLayout(root);
+  expect(report.findings).toEqual([]);
+  expect(report.coverage.status).toBe("complete");
+});
+
+it("reports a subject it cannot model and keeps blobs unknown", async () => {
+  const root = await createTestTempDirectory("rea-oci-malformed-subject-");
+  await writeOciImageLayoutFixture(root);
+  const indexPath = join(root, "index.json");
+  const index = JSON.parse(await readFile(indexPath, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  index.subject = "not-a-descriptor";
+  await writeFile(indexPath, `${JSON.stringify(index)}\n`);
+  const report = await inspectLayout(root);
+  expect(report.findings).toEqual([
+    expect.objectContaining({
+      kind: "malformed_blob_json",
+      message: expect.stringContaining("subject is not a JSON object"),
+    }),
+  ]);
+  expect(report.coverage.status).not.toBe("complete");
+});
+
 it("treats a blob named by an uppercase-hex descriptor as referenced", async () => {
   const root = await createTestTempDirectory("rea-oci-uppercase-");
   await writeOciImageLayoutFixture(root);

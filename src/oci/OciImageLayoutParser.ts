@@ -772,6 +772,37 @@ const inventoryOciImageLayout = async (
     }
   };
 
+  // An OCI 1.1 subject names the manifest an index or manifest refers to.
+  // The subject may legitimately be absent from the layout, so only a
+  // subject blob present at its layout path joins the referenced set, where
+  // it is hashed and no longer reported as unreferenced.
+  const rememberSubject = (
+    owner: string,
+    ownerDigest: string,
+    value: unknown,
+  ): void => {
+    if (value === undefined) return;
+    chargeDescriptor();
+    const descriptor = descriptorOf(value);
+    if (descriptor === undefined) {
+      referenceGraphTruncated = true;
+      recordFinding(
+        findings,
+        "malformed_blob_json",
+        `${owner} ${ownerDigest} subject ${descriptorDefect(value)}; the subject is not modeled.`,
+        ownerDigest,
+      );
+      return;
+    }
+    const parsed = parseOciDigest(descriptor.digest);
+    const path =
+      parsed === undefined
+        ? unverifiedBlobPath(descriptor.digest)
+        : ociBlobPath(parsed);
+    if (path === undefined || !byPath.has(path)) return;
+    remember(descriptor.digest, descriptor.media_type, descriptor.size);
+  };
+
   // Indexes are walked breadth-first so each one is first reached at the
   // shallowest depth any path gives it; a deeper first visit through a shared
   // index would otherwise hide what it reaches within max_index_depth.
@@ -807,6 +838,7 @@ const inventoryOciImageLayout = async (
       );
       return;
     }
+    rememberSubject("Index", digest, document.value.subject);
     const schemaVersion =
       typeof document.value.schemaVersion === "number" &&
       Number.isSafeInteger(document.value.schemaVersion)
@@ -912,6 +944,7 @@ const inventoryOciImageLayout = async (
       );
       return;
     }
+    rememberSubject("Manifest", digest, document.value.subject);
     const configDescriptor = descriptorOf(document.value.config);
     if (configDescriptor === undefined && document.value.config !== undefined) {
       referenceGraphTruncated = true;
