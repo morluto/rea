@@ -70,7 +70,8 @@ existing heading anchors when moving a guide.
 
 [`documentation.ts`](https://github.com/morluto/rea/blob/main/docs/.vitepress/documentation.ts)
 owns categorized site navigation and the existing guides' stable public routes.
-Update it when adding or moving a guide. VitePress rewrites categorized sources
+Update it and the [documentation directory](../README.md) when adding or
+recategorizing a guide. VitePress rewrites categorized sources
 to the existing public paths; its Markdown hook resolves repository links from
 the physical source and renders them against those public routes. Keep basenames
 and route assignments unique. Edit links use the physical source file.
@@ -82,10 +83,10 @@ historical release records and references bound to earlier commits or tags.
 
 ## Generated ownership and checks
 
-The [documentation directory](../README.md#machine-owned-documentation) identifies
-the machine-owned outputs and their producers. Their existing paths are retained
-because scripts, package consumers and release history depend on them. Change
-canonical sources and regenerate; do not fix a generated projection by hand.
+The [documentation directory](../README.md#generated-files-and-release-records) lists
+generated files, their producers, and release records. Scripts, package
+consumers, and release history depend on the listed paths. Update the producer
+or its inputs and regenerate.
 
 Do not write the number of tools in living prose; link the generated catalog
 instead. `docs:check` refuses a count of ten or more tools outside dated

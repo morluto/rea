@@ -1476,104 +1476,34 @@ The required checks still report on every PR and fail closed:
 
 ## Real-toolchain verification lanes
 
-See [Real-toolchain verification lanes](../testing-lanes.md#real-toolchain-verification-lanes).
+Use [Testing lanes and provider verification](../testing-lanes.md) to choose a
+command for the host, provider, and workflow you changed. Record which lane
+ran and which coverage was unavailable.
 
-## Android APK analysis
+<!-- Keep fragment links from earlier versions of this page working. -->
 
-See [Android APK analysis](../testing-lanes.md#android-apk-analysis).
-
-## Apktool resource decoding
-
-See [Apktool resource decoding](../testing-lanes.md#apktool-resource-decoding).
-
-## Flutter build identification
-
-See [Flutter build identification](../testing-lanes.md#flutter-build-identification).
-
-## ADB device acquisition
-
-See [ADB device acquisition](../testing-lanes.md#adb-device-acquisition).
-
-## Optional NativeAOT Ghidra analysis
-
-See [Optional NativeAOT Ghidra analysis](../testing-lanes.md#optional-nativeaot-ghidra-analysis).
-
-## IDA MCP adapter
-
-See [IDA MCP adapter](../testing-lanes.md#ida-mcp-adapter).
-
-## Kuna lane
-
-See [Kuna lane](../testing-lanes.md#kuna-lane).
-
-## DOS Ghidra analysis
-
-See [DOS Ghidra analysis](../testing-lanes.md#dos-ghidra-analysis).
-
-## Apple Interface Builder archives
-
-See [Apple Interface Builder archives](../testing-lanes.md#apple-interface-builder-archives).
-
-## Native platform baseline in CI
-
-See [Native platform baseline in CI](../testing-lanes.md#native-platform-baseline-in-ci).
-
-### Termux Android browser smoke test
-
-See [Termux Android browser smoke test](../testing-lanes.md#termux-android-browser-smoke-test).
-
-## Packet capture analysis
-
-See [Packet capture analysis](../testing-lanes.md#packet-capture-analysis).
-
-## Apple native metadata and UI
-
-See [Apple native metadata and UI](../testing-lanes.md#apple-native-metadata-and-ui).
-
-### Firmware adapters
-
-See [Firmware adapters](../testing-lanes.md#firmware-adapters).
-
-### JavaScript source recovery
-
-See [JavaScript source recovery](../testing-lanes.md#javascript-source-recovery).
-
-### Captured website source-map lane
-
-See [Captured website source-map lane](../testing-lanes.md#captured-website-source-map-lane).
-
-### JavaScript large-output lane
-
-See [JavaScript large-output lane](../testing-lanes.md#javascript-large-output-lane).
-
-### Website runtime attribution lane
-
-See [Website runtime attribution lane](../testing-lanes.md#website-runtime-attribution-lane).
-
-### Offline binary layout
-
-See [Offline binary layout](../testing-lanes.md#offline-binary-layout).
-
-### Offline EVM interface
-
-See [Offline EVM interface](../testing-lanes.md#offline-evm-interface).
-
-### Recorded crash evidence
-
-See [Recorded crash evidence](../testing-lanes.md#recorded-crash-evidence).
-
-### Exported environment bundles
-
-See [Exported environment bundles](../testing-lanes.md#exported-environment-bundles).
-
-## Agent evaluation and conformance records
-
-See [Agent evaluation and conformance records](../testing-lanes.md#agent-evaluation-and-conformance-records).
-
-## Frida instrumentation
-
-See [Frida instrumentation](../testing-lanes.md#frida-instrumentation).
-
-### Offline WASM artifacts
-
-See [Offline WASM artifacts](../testing-lanes.md#offline-wasm-artifacts).
+- <a id="android-apk-analysis"></a>[Android APK analysis](../testing-lanes.md#android-apk-analysis)
+- <a id="apktool-resource-decoding"></a>[Apktool resource decoding](../testing-lanes.md#apktool-resource-decoding)
+- <a id="flutter-build-identification"></a>[Flutter build identification](../testing-lanes.md#flutter-build-identification)
+- <a id="adb-device-acquisition"></a>[ADB device acquisition](../testing-lanes.md#adb-device-acquisition)
+- <a id="optional-nativeaot-ghidra-analysis"></a>[Optional NativeAOT Ghidra analysis](../testing-lanes.md#optional-nativeaot-ghidra-analysis)
+- <a id="ida-mcp-adapter"></a>[IDA MCP adapter](../testing-lanes.md#ida-mcp-adapter)
+- <a id="kuna-lane"></a>[Kuna lane](../testing-lanes.md#kuna-lane)
+- <a id="dos-ghidra-analysis"></a>[DOS Ghidra analysis](../testing-lanes.md#dos-ghidra-analysis)
+- <a id="apple-interface-builder-archives"></a>[Apple Interface Builder archives](../testing-lanes.md#apple-interface-builder-archives)
+- <a id="native-platform-baseline-in-ci"></a>[Native platform baseline in CI](../testing-lanes.md#native-platform-baseline-in-ci)
+- <a id="termux-android-browser-smoke-test"></a>[Termux Android browser smoke test](../testing-lanes.md#termux-android-browser-smoke-test)
+- <a id="packet-capture-analysis"></a>[Packet capture analysis](../testing-lanes.md#packet-capture-analysis)
+- <a id="apple-native-metadata-and-ui"></a>[Apple native metadata and UI](../testing-lanes.md#apple-native-metadata-and-ui)
+- <a id="firmware-adapters"></a>[Firmware adapters](../testing-lanes.md#firmware-adapters)
+- <a id="javascript-source-recovery"></a>[JavaScript source recovery](../testing-lanes.md#javascript-source-recovery)
+- <a id="captured-website-source-map-lane"></a>[Captured website source-map lane](../testing-lanes.md#captured-website-source-map-lane)
+- <a id="javascript-large-output-lane"></a>[JavaScript large-output lane](../testing-lanes.md#javascript-large-output-lane)
+- <a id="website-runtime-attribution-lane"></a>[Website runtime attribution lane](../testing-lanes.md#website-runtime-attribution-lane)
+- <a id="offline-binary-layout"></a>[Offline binary layout](../testing-lanes.md#offline-binary-layout)
+- <a id="offline-evm-interface"></a>[Offline EVM interface](../testing-lanes.md#offline-evm-interface)
+- <a id="recorded-crash-evidence"></a>[Recorded crash evidence](../testing-lanes.md#recorded-crash-evidence)
+- <a id="exported-environment-bundles"></a>[Exported environment bundles](../testing-lanes.md#exported-environment-bundles)
+- <a id="agent-evaluation-and-conformance-records"></a>[Agent evaluation and conformance records](../testing-lanes.md#agent-evaluation-and-conformance-records)
+- <a id="frida-instrumentation"></a>[Frida instrumentation](../testing-lanes.md#frida-instrumentation)
+- <a id="offline-wasm-artifacts"></a>[Offline WASM artifacts](../testing-lanes.md#offline-wasm-artifacts)
