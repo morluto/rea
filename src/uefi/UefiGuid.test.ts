@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer";
 import { expect, it } from "vitest";
 import {
   FFS2_FILE_SYSTEM_GUID,
+  FFS3_FILE_SYSTEM_GUID,
   formatGuidLittleEndian,
   guidEquals,
 } from "./UefiGuid.js";
@@ -9,6 +10,12 @@ import {
 const ffs2RawBytes = Buffer.from([
   0x78, 0xe5, 0x8c, 0x8c, 0x3d, 0x8a, 0x1c, 0x4f, 0x99, 0x35, 0x89, 0x61, 0x85,
   0xc3, 0x2d, 0xd3,
+]);
+
+// EFI_FIRMWARE_FILE_SYSTEM3_GUID as EDK II stores it in a volume header.
+const ffs3RawBytes = Buffer.from([
+  0x7a, 0xc0, 0x73, 0x54, 0xcb, 0x3d, 0xca, 0x4d, 0xbd, 0x6f, 0x1e, 0x96, 0x89,
+  0xe7, 0x34, 0x9a,
 ]);
 
 const lzmaCustomRawBytes = Buffer.from([
@@ -27,6 +34,10 @@ it("formats the FFS2 container GUID from raw little-endian bytes", () => {
   expect(formatGuidLittleEndian(header, 16)).toBe(
     "8c8ce578-8a3d-4f1c-9935-896185c32dd3",
   );
+});
+
+it("names the published FFS3 container GUID for its raw bytes", () => {
+  expect(formatGuidLittleEndian(ffs3RawBytes, 0)).toBe(FFS3_FILE_SYSTEM_GUID);
 });
 
 it("formats the LZMA custom compression GUID", () => {
