@@ -14,6 +14,7 @@ describe("RT-Spark board profile", () => {
     if (profile === null) return;
     expect(profile.soc).toBe("stm32f4");
     expect(profile.mcu).toBe("STM32F407ZGT6");
+    expect(profile.imageSha256).toMatch(/^[0-9a-f]{64}$/u);
     expect(boardPeripheralProfileSchema.safeParse(profile).success).toBe(true);
     expect(lookupBoardProfile("unknown-board")).toBeNull();
   });

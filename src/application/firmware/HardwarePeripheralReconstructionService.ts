@@ -61,7 +61,7 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { procedureReferencesResultSchema } from "../../domain/native/nativeReference.js";
+import { procedureReferencesSchema } from "../../domain/native/procedureReferences.js";
 
 /** Input parameters for reconstructing a procedure's hardware peripheral interactions. */
 export const reconstructProcedureHardwareInputSchema = z.strictObject({
@@ -266,6 +266,30 @@ const unresolvedSocPlatformLimitation = (
   return `SoC platform is unresolved because ${names} share the highest peripheral match count`;
 };
 
+const normalizeDigest = (digest: string | null | undefined): string | null => {
+  const normalized = digest?.trim().toLowerCase();
+  return normalized ? normalized : null;
+};
+
+/** Preserve shared MMIO region semantics when tied leading SoC catalogs all map the address. */
+const applySharedSocPeripheralMmio = (
+  attribution: HardwareAccessAttribution,
+  leaders: readonly SocPlatformMatchCandidate[],
+): HardwareAccessAttribution => {
+  if (attribution.isMmio || leaders.length < 2) return attribution;
+  const allMatch = leaders.every(
+    (leader) =>
+      lookupSocPeripheral(attribution.addressValue, leader.platform) !== null,
+  );
+  if (!allMatch) return attribution;
+  return {
+    ...attribution,
+    regionKind: "peripheral_mmio",
+    regionName: "Peripheral MMIO",
+    isMmio: true,
+  };
+};
+
 const applyBoardMemoryWindow = (
   attribution: HardwareAccessAttribution,
   profile: BoardPeripheralProfile,
@@ -297,7 +321,9 @@ const devicesForBlock = (
 /**
  * Reconstruct hardware peripheral interactions from a set of analyzed instruction references.
  * Pure deterministic domain workflow for offline and provider-decoupled analysis.
- * A known board refines memory windows and annotates controllers with that board's devices.
+ * A known board refines memory windows and annotates controllers with that board's devices;
+ * captured sample drivers and image observations apply only when `subjectSha256` matches the
+ * board profile's recorded image digest.
  */
 export const reconstructHardwareFromReferences = (
   references: readonly AnalyzedInstructionReference[],
@@ -305,6 +331,7 @@ export const reconstructHardwareFromReferences = (
   procedure = "detached",
   platform: SocPlatform | null = null,
   board: BoardId | null = null,
+  subjectSha256: string | null = null,
 ): HardwarePeripheralReconstruction => {
   const limitations: string[] = [];
   const boardProfile = board === null ? null : lookupBoardProfile(board);
@@ -319,6 +346,32 @@ export const reconstructHardwareFromReferences = (
   ) {
     limitations.push(
       `Board ${boardProfile.id} targets ${boardProfile.soc}; platform ${platform} does not match, so board devices were not applied.`,
+    );
+  }
+
+  const normalizedSubjectSha256 = normalizeDigest(subjectSha256);
+  const expectedImageSha256 = normalizeDigest(boardProfile?.imageSha256);
+  const hasBoardImageData =
+    boardProfile !== null &&
+    (boardProfile.drivers.length > 0 ||
+      boardProfile.imageObservations !== null);
+  const boardImageApplies =
+    boardApplies &&
+    boardProfile !== null &&
+    expectedImageSha256 !== null &&
+    normalizedSubjectSha256 !== null &&
+    normalizedSubjectSha256 === expectedImageSha256;
+
+  if (
+    boardApplies &&
+    boardProfile !== null &&
+    hasBoardImageData &&
+    !boardImageApplies
+  ) {
+    limitations.push(
+      normalizedSubjectSha256 === null
+        ? `Captured reference image drivers and observations for board ${boardProfile.id} (${expectedImageSha256 ?? "unknown"}) were not applied because the analyzed firmware image digest is unknown.`
+        : `Captured reference image drivers and observations for board ${boardProfile.id} apply only to image ${expectedImageSha256 ?? "unknown"}, not analyzed image ${normalizedSubjectSha256}.`,
     );
   }
 
@@ -354,6 +407,8 @@ export const reconstructHardwareFromReferences = (
     (boardApplies && boardProfile !== null
       ? boardProfile.soc
       : chooseDetectedSocPlatform(detectedPlatforms));
+  const tiedLeaders =
+    activePlatform === null ? leadingSocPlatforms(detectedPlatforms) : [];
 
   const attributions: HardwareAccessAttribution[] = [];
   for (const ref of references) {
@@ -368,15 +423,20 @@ export const reconstructHardwareFromReferences = (
       );
       continue;
     }
-    attributions.push(
+    const resolved =
       boardApplies && boardProfile !== null
         ? applyBoardMemoryWindow(attributed.value, boardProfile)
-        : attributed.value,
-    );
+        : applySharedSocPeripheralMmio(attributed.value, tiedLeaders);
+    attributions.push(resolved);
   }
 
   if (boardApplies && boardProfile !== null) {
     limitations.push(...boardProfile.limitations);
+    if (boardImageApplies) {
+      limitations.push(
+        `Drivers record strings in captured flash image ${expectedImageSha256}. A linked driver is code present in that image, not proof the device is opened during boot.`,
+      );
+    }
   }
 
   const summary = summarizeHardwarePeripheralInteractions(
@@ -412,7 +472,7 @@ export const reconstructHardwareFromReferences = (
             ? devicesForBlock(boardProfile, matchedNames)
             : [],
         boardDrivers:
-          boardApplies && boardProfile !== null
+          boardImageApplies && boardProfile !== null
             ? boardDriversForControllers(boardProfile.drivers, matchedNames)
             : [],
       };
@@ -443,7 +503,7 @@ export const reconstructHardwareFromReferences = (
       : [];
 
   const imageClaims =
-    boardApplies && boardProfile?.imageObservations != null
+    boardImageApplies && boardProfile?.imageObservations != null
       ? hardwareClaimsFromImage(boardProfile.imageObservations)
       : [];
 
@@ -460,7 +520,9 @@ export const reconstructHardwareFromReferences = (
         ? [...unboundBoardDevices(boardProfile)]
         : [],
     boardDrivers:
-      boardApplies && boardProfile !== null ? [...boardProfile.drivers] : [],
+      boardImageApplies && boardProfile !== null
+        ? [...boardProfile.drivers]
+        : [],
     totalReferencesExamined: summary.totalReferencesExamined,
     mmioAccessCount: summary.mmioAccessCount,
     nonMmioAccessCount: summary.nonMmioAccessCount,
@@ -478,7 +540,7 @@ export const reconstructHardwareFromReferences = (
         devices:
           boardApplies && boardProfile !== null ? boardProfile.devices : [],
         drivers:
-          boardApplies && boardProfile !== null
+          boardImageApplies && boardProfile !== null
             ? boardProfile.drivers.map((driver) => ({
                 id: driver.id,
                 evidence: driver.evidence,
@@ -539,7 +601,7 @@ const boardPlatformMismatch = (
 };
 
 const analyzedReferences = (
-  references: z.infer<typeof procedureReferencesResultSchema>["references"],
+  references: z.infer<typeof procedureReferencesSchema>["references"],
 ): AnalyzedInstructionReference[] =>
   references.flatMap((edge) => {
     const kind = edge.kind;
@@ -603,7 +665,7 @@ export const reconstructProcedureHardwareInteractions = async (
   );
   if (!execution.ok) return keepFailure(execution.error, signal);
 
-  const parsedReferences = procedureReferencesResultSchema.safeParse(
+  const parsedReferences = procedureReferencesSchema.safeParse(
     execution.value.result,
   );
   if (!parsedReferences.success) {
@@ -623,6 +685,7 @@ export const reconstructProcedureHardwareInteractions = async (
     procedure,
     platform ?? null,
     board ?? null,
+    source.subjectSha256,
   );
   const result = {
     ...reconstructed,
