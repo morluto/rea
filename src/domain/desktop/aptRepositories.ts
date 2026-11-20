@@ -44,9 +44,9 @@ export interface AptSourceEntry extends Omit<
 const ARMOR_BEGIN = "-----BEGIN PGP PUBLIC KEY BLOCK-----";
 const ARMOR_END = "-----END PGP PUBLIC KEY BLOCK-----";
 
-/** Source fields separate words with whitespace; commas remain URI/name data. */
+/** APT separates source-field values with ASCII whitespace; other characters are data. */
 const fieldValues = (value: string | undefined): readonly string[] =>
-  (value ?? "").split(/\s+/u).filter((part) => part.length > 0);
+  (value ?? "").split(/[ \t\n\v\f\r]+/u).filter((part) => part.length > 0);
 
 /** Architecture and Signed-By options also admit comma-separated values. */
 const optionValues = (value: string | undefined): readonly string[] =>
