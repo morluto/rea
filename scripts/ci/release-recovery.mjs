@@ -56,6 +56,7 @@ export function selectRecoveryRelease({
     .array(
       z.object({
         name: z.string(),
+        run_attempt: positive,
         status: z.string(),
         conclusion: z.string().nullable(),
         steps: z
@@ -66,8 +67,17 @@ export function selectRecoveryRelease({
       }),
     )
     .parse(jobs);
-  const requireJob = (name) => {
+  if (parsedJobs.some((job) => job.run_attempt > original.run_attempt))
+    throw new Error("Original release job is from a future attempt");
+  // A partial rerun leaves successful prerequisite jobs on earlier attempts.
+  // Use the newest execution of each job, including unsuccessful executions.
+  const latestJobs = (name) => {
     const matches = parsedJobs.filter((job) => job.name === name);
+    const attempt = Math.max(0, ...matches.map((job) => job.run_attempt));
+    return matches.filter((job) => job.run_attempt === attempt);
+  };
+  const requireJob = (name) => {
+    const matches = latestJobs(name);
     if (matches.length !== 1 || matches[0].status !== "completed")
       throw new Error(`Expected one completed original job: ${name}`);
     return matches[0];
@@ -80,9 +90,7 @@ export function selectRecoveryRelease({
       throw new Error(`Original release did not pass ${name}`);
   const publish = requireJob("Publish to npm");
   const writes = publish.steps.filter((step) => step.name === "Publish");
-  const verificationJobs = parsedJobs.filter(
-    (job) => job.name === "Verify published npm package",
-  );
+  const verificationJobs = latestJobs("Verify published npm package");
   if (
     verificationJobs.length > 1 ||
     verificationJobs.some((job) => job.status !== "completed")
@@ -162,7 +170,7 @@ async function main() {
             "api",
             "--paginate",
             "--slurp",
-            `repos/${repository}/actions/runs/${runId}/attempts/${positive.parse(run.run_attempt)}/jobs?per_page=100`,
+            `repos/${repository}/actions/runs/${runId}/jobs?filter=all&per_page=100`,
           ]),
         ),
       );

@@ -14,6 +14,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 const sourceSha = "a".repeat(40);
 const job = (name: string, conclusion = "success") => ({
   name,
+  run_attempt: 1,
   status: "completed",
   conclusion,
   steps: [],
@@ -53,6 +54,37 @@ it("recovers a failed post-publication run using its successful original qualifi
     run_id: 123,
     run_attempt: 1,
   });
+});
+
+it("uses the prior qualifying jobs and the latest publisher after a partial rerun", () => {
+  const input = selection();
+  input.run.run_attempt = 2;
+  input.jobs[2]!.steps[0]!.conclusion = "failure";
+  input.jobs.unshift({
+    ...job("Publish to npm"),
+    run_attempt: 2,
+    steps: [{ name: "Publish", conclusion: "success" }],
+  });
+  expect(selectRecoveryRelease(input)).toMatchObject({
+    run_id: 123,
+    run_attempt: 2,
+  });
+});
+
+it("refuses a newer failed qualification even when a prior attempt passed", () => {
+  const input = selection();
+  input.run.run_attempt = 2;
+  input.jobs.push({
+    ...job("Qualify exact release revision / CI required", "failure"),
+    run_attempt: 2,
+  });
+  expect(() => selectRecoveryRelease(input)).toThrow("did not pass");
+});
+
+it("refuses job evidence from an attempt newer than the completed run", () => {
+  const input = selection();
+  input.jobs[1]!.run_attempt = 2;
+  expect(() => selectRecoveryRelease(input)).toThrow("from a future attempt");
 });
 
 it.each(["legacy publisher", "separate verification"])(
