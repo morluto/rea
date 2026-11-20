@@ -5,15 +5,13 @@ import {
 import { isDeepStrictEqual } from "node:util";
 
 import type { SchemaAnnotations } from "../domain/schemaAnnotations.js";
+import { isRecord as isObject } from "../kernel/isRecord.js";
 import {
   schemaArrays,
   schemaChildren,
   schemaMaps,
   schemaPointerSteps,
 } from "./jsonSchemaKeywords.js";
-
-const isObject = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const referencedDescription = (
   references: JsonSchemaReferences,

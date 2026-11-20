@@ -124,21 +124,11 @@ it or require another human sign-off. Keep the PR description and affected
 validation current as work changes. AI agents must leave human declarations to
 the human owner and must not attest to a human review on their behalf.
 
-The `PR readiness` check reports pending for drafts and requires a named human
-owner and all three template declarations for non-drafts. PRs authored by
-@morluto, @kaoru0822-kitauji, @N0zoM1z0, or @gensokyo-dev are exempt from
-the declaration; their human ownership, review, and evidence responsibilities
-above still apply. The check identifies authors by GitHub account ID. It checks
-that the declaration is filled, not whether the code or evidence is correct.
-Existing PRs can copy the **Author readiness** section from the current template.
-Open PRs must have distinct head commits because GitHub shares commit statuses.
-
-Maintainers enable merge enforcement after the workflow is merged: run
-`gh workflow run pr-readiness.yml -f pull_request_number=NUMBER` for existing
-open PRs, then add `PR readiness` from GitHub Actions to the branch's required
-status checks alongside its existing checks. Deploy the workflow to each
-protected target branch before requiring it there. The workflow reads PR
-metadata using trusted default-branch code and writes only a commit status.
+Maintainers review the **Author readiness** declaration in the PR body. PRs
+authored by @morluto, @kaoru0822-kitauji, @N0zoM1z0, @gensokyo-dev, or
+@vincentkoc are exempt from the declaration. Their human ownership, review,
+and evidence responsibilities above still apply. Existing PRs can copy the
+**Author readiness** section from the current template.
 
 When an open PR may overlap another open change or a recently landed fix, note
 the related PR, issue, or commit in the description or a comment as soon as the
@@ -333,8 +323,9 @@ Use the [documentation directory](docs/README.md) and
 domain-based feature specifications and architectural decision records.
 
 The VitePress site uses the Markdown files in `docs/`. Run `npm run docs:dev`
-for live editing, `npm run docs:build` to check the production build and
-links, and `npm run docs:preview` to preview that build at `/rea/`.
+for live editing and `npm run docs:preview` to serve an existing build at
+`/rea/`. Follow the [documentation checks](docs/development/documentation.md#generated-ownership-and-checks)
+to build and verify the rendered routes and anchors.
 
 Site navigation lives in `docs/.vitepress/config.ts`. Keep links to guides
 relative so they work on GitHub and the website; link to repository files
@@ -391,7 +382,7 @@ for commands, test placement, pruning, and real-provider prerequisites.
 Before requesting review, run relevant tests and `npm run check`; add
 `npm run docs:check` when contracts or generated metadata change. Record the
 checks and unavailable coverage. CI owns the full deterministic suite and
-coverage. `npm run check:pr` is an optional full local gate for broad changes or
+coverage. `npm run check:pr` is an optional broad local suite for large changes or
 CI diagnosis. Packaging/setup/distribution changes additionally require
 `npm run verify:package` and `npm pack --dry-run`; provider changes require the
 matching real-provider lane. State which host/provider workflows ran.

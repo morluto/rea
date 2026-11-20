@@ -48,6 +48,16 @@ it("keeps unexamined collections unknown while normalizing immutable managed par
     field_accesses: [],
   };
   const input = parent(freezeOwnedJsonTreeSnapshot(unexamined));
+  const coordinates = managedMembersViewRequestSchema.parse({
+    kind: "managed-members",
+    collection: "unresolved_definitions",
+    offset: 0,
+    limit: 1,
+  });
+  expect(projectManagedMemberView(input, coordinates)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisInputError" },
+  });
   for (let attempt = 0; attempt < 2; attempt++) {
     expect(projectManagedMemberView(input, { kind: "summary" })).toMatchObject({
       ok: true,

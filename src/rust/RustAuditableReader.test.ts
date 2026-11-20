@@ -3,10 +3,7 @@ import { expect, it } from "vitest";
 import { rustAuditableMetadataSchema } from "../domain/rust/rustBinary.js";
 import { ParseFailureError } from "../domain/parseFailure.js";
 
-import {
-  readAuditableSection,
-  RustAuditableResourceFailure,
-} from "./RustAuditableReader.js";
+import { readAuditableSection } from "./RustAuditableReader.js";
 
 // Explicit 1 MiB input boundary, independent of the reader implementation.
 const RUST_SECTION_BYTES = 1024 * 1024;
@@ -221,7 +218,15 @@ it("stops an inflate that exceeds the section ratio", () => {
   const compressed = deflateSync(raw);
   expect(compressed.length * 64).toBeLessThan(raw.length);
   expect(() => readAuditableSection(".dep-v0", 0, compressed)).toThrow(
-    RustAuditableResourceFailure,
+    expect.objectContaining({
+      failure: expect.objectContaining({
+        kind: "limit",
+        limit: {
+          name: "inflated dependency JSON bytes",
+          maximum: compressed.length * 64,
+        },
+      }),
+    }),
   );
   expect(() =>
     readAuditableSection(".dep-v0", 0, Buffer.alloc(RUST_SECTION_BYTES + 1)),
@@ -244,10 +249,13 @@ it("retains the compressed-stream limit for a PE section with padding", () => {
     }),
   ).toThrow(
     expect.objectContaining({
-      constraint: {
-        resource: "memory",
-        reported_limits: { maximum_bytes: RUST_SECTION_BYTES },
-      },
+      failure: expect.objectContaining({
+        kind: "limit",
+        limit: expect.objectContaining({
+          name: "compressed dependency bytes",
+          maximum: RUST_SECTION_BYTES,
+        }),
+      }),
     }),
   );
 });
@@ -270,10 +278,14 @@ it("names the padded-storage basis when a padded section overflows inflate alloc
     }),
   ).toThrow(
     expect.objectContaining({
-      constraint: {
-        resource: "memory",
-        reported_limits: { maximum_bytes: fileAlignment * 64 },
-      },
+      failure: expect.objectContaining({
+        kind: "limit",
+        limit: expect.objectContaining({
+          name: "inflated dependency JSON bytes",
+          maximum: fileAlignment * 64,
+        }),
+      }),
+      cause: expect.objectContaining({ code: "ERR_BUFFER_TOO_LARGE" }),
       message: expect.stringContaining("padded section's storage size"),
     }),
   );
@@ -299,10 +311,13 @@ it("names the fixed cap when it bounds a large padded section's inflate allocati
     failure = cause;
   }
   expect(failure).toMatchObject({
-    constraint: {
-      resource: "memory",
-      reported_limits: { maximum_bytes: 8 * 1024 * 1024 },
-    },
+    failure: expect.objectContaining({
+      kind: "limit",
+      limit: expect.objectContaining({
+        name: "inflated dependency JSON bytes",
+        maximum: 8 * 1024 * 1024,
+      }),
+    }),
   });
   expect((failure as Error).message).not.toContain("storage size");
 });
@@ -409,10 +424,13 @@ it("admits dependency expansion before allocating normalized or reverse edges", 
   expect(payload.length).toBeLessThan(RUST_SECTION_BYTES);
   expect(() => readAuditableSection(".dep-v0", 0, payload)).toThrow(
     expect.objectContaining({
-      constraint: {
-        resource: "transport",
-        reported_limits: { maximum_output_bytes: 8 * 1024 * 1024 },
-      },
+      failure: expect.objectContaining({
+        kind: "limit",
+        limit: expect.objectContaining({
+          name: "dependency graph output bytes",
+          maximum: 8 * 1024 * 1024,
+        }),
+      }),
     }),
   );
 });

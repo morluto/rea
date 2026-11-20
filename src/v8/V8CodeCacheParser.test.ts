@@ -238,7 +238,12 @@ it("enforces the caller-selected observation budget", () => {
     }),
   ).toThrow(
     expect.objectContaining({
-      name: "V8CodeCacheBudgetFailure",
+      name: "ParseFailureError",
+      failure: expect.objectContaining({
+        kind: "limit",
+        format: "v8-code-cache",
+        limit: { name: "max_strings", maximum: 1 },
+      }),
       message: expect.stringContaining("max_strings"),
     }),
   );

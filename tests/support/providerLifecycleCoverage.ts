@@ -134,6 +134,7 @@ const historicalCapture = (
   },
 });
 
+const UEFI_PROVIDER = "src/uefi/UefiAnalysisProvider.test.ts";
 const FIRMWARE_INTEGRATION =
   "tests/boundary/firmware/firmwareIntegration.test.ts";
 const REVERSE_LAUNCH_ERRORS =
@@ -171,11 +172,23 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
           "src/adb/AdbProvider.test.ts",
           "reports cancellation arriving during the version probe",
         ),
+        test(
+          "tests/boundary/providers/adb/adbServerLifetime.test.ts",
+          "asks a cancelled device command to stop with SIGTERM before its group is killed",
+        ),
       ),
       cleanup: covered(
         test(
           "src/adb/AdbProvider.test.ts",
           "retains failed snapshot cleanup with completed push Evidence until close retries",
+        ),
+        test(
+          "tests/boundary/providers/adb/adbServerLifetime.test.ts",
+          "stops a descendant a device command leaves behind with the command's cleanup",
+        ),
+        test(
+          "tests/boundary/providers/adb/adbServerLifetime.test.ts",
+          "starts the adb server explicitly before device commands and never stops it",
         ),
       ),
       retry: covered(
@@ -1271,6 +1284,46 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     ),
   ),
+  "rea-dwarf-units": inProcess(
+    covered(
+      test(
+        "tests/acceptance/dwarfUnitsCli.test.ts",
+        "reports a compile unit through the public CLI",
+      ),
+      test(
+        "tests/boundary/mcp/dwarfUnitsMcp.test.ts",
+        "advertises inspect_dwarf_units and reads a compile unit",
+      ),
+    ),
+    typedFailures("tests/boundary/filesystem/dwarfUnits.test.ts"),
+  ),
+  "rea-elf-debug-link": inProcess(
+    covered(
+      test(
+        "tests/acceptance/elfDebugLinkCli.test.ts",
+        "verifies a matching debug file from absolute and relative paths",
+      ),
+    ),
+    covered(
+      test(
+        "tests/boundary/filesystem/elfDebugLink.test.ts",
+        "returns typed resource and cancellation failures",
+      ),
+      test(
+        "src/native/elf/ElfDebugLinkProvider.test.ts",
+        "keeps a completed candidate stream's identity when cancellation arrives during close",
+      ),
+    ),
+  ),
+  "rea-elf-dependencies": inProcess(
+    covered(
+      test(
+        "tests/acceptance/elfDependenciesCli.test.ts",
+        "reports needed libraries, RUNPATH tokens, and versioned imports through the public CLI",
+      ),
+    ),
+    typedFailures("tests/boundary/filesystem/elfDependencies.test.ts"),
+  ),
   "rea-elf-notes": inProcess(
     covered(
       test(
@@ -1408,6 +1461,20 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     ),
     typedFailures("tests/boundary/filesystem/kernelModule.test.ts"),
   ),
+  "rea-maven-gradle-metadata": inProcess(
+    covered(
+      test(
+        "tests/boundary/mcp/mavenGradleMetadataMcp.test.ts",
+        "advertises inspect_maven_gradle_metadata and reports a real POM",
+      ),
+    ),
+    covered(
+      test(
+        "src/application/java/MavenGradleMetadataService.test.ts",
+        "retains completed Evidence and selected parameters on late cancellation",
+      ),
+    ),
+  ),
   "rea-native-exports": inProcess(
     covered(
       test(
@@ -1482,7 +1549,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
         ),
         test(
           "src/browser/PlaywrightScenarioBrowser.test.ts",
-          "passes the selected environment to the actual browser launch boundary",
+          "passes the selected environment to the $platform browser launch boundary",
         ),
       ),
       handshake: covered(
@@ -1562,6 +1629,20 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     },
   },
+  "rea-nuget-nupkg": inProcess(
+    covered(
+      test(
+        "tests/boundary/mcp/nugetNupkgMcp.test.ts",
+        "advertises inspect_nuget_nupkg and reads package identity",
+      ),
+    ),
+    covered(
+      test(
+        "src/application/nuget/NugetNupkgService.test.ts",
+        "retains completed Evidence and caller selections on late cancellation",
+      ),
+    ),
+  ),
   "rea-python-pyc": inProcess(
     covered(
       test(
@@ -1945,6 +2026,42 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
         test(
           "tests/boundary/captures/captureProvider.test.ts",
           "releases a retained decoder process cleanup before the next inspection completes",
+        ),
+      ),
+    },
+  },
+  "rea-uefi": {
+    ownership: "process",
+    stages: {
+      launch: covered(
+        test(
+          UEFI_PROVIDER,
+          "decodes an LZMA-custom section through the owned worker and derives it",
+        ),
+      ),
+      handshake: ONE_SHOT,
+      operation: covered(
+        test(
+          "tests/acceptance/uefiFirmware.test.ts",
+          "maps a flash image end to end through CLI inspection and MCP session inventory",
+        ),
+      ),
+      cancel: covered(
+        test(
+          UEFI_PROVIDER,
+          "waits for committed output finalization during late cancellation and retries retained cleanup",
+        ),
+      ),
+      cleanup: covered(
+        test(
+          UEFI_PROVIDER,
+          "retains the worker root across a failed descriptor retry and releases its child before root removal",
+        ),
+      ),
+      retry: covered(
+        test(
+          UEFI_PROVIDER,
+          "retains the worker root across a failed descriptor retry and releases its child before root removal",
         ),
       ),
     },

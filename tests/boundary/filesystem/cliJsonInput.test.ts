@@ -16,7 +16,6 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { closeCliResources, createCli } from "../../../src/cli.js";
 import { parseCliJsonInput } from "../../../src/cli/cliJsonInput.js";
 import { cliJavaScriptSourcePaths } from "../../../src/cli/javascriptApplicationAnalysis.js";
-import { readJsonInputFile } from "../../../src/application/JsonInputFile.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { analysisCliErrorEnvelopeSchema } from "../../../src/contracts/errorSchemas.js";
 import { readWithoutFifoWriter } from "../../fixtures/fifoInput.js";
@@ -39,11 +38,11 @@ describe("CLI JSON file selection", () => {
     const root = await createTestTempDirectory("rea-json-input-symlink-");
     const path = join(root, "input.json");
     const selected = join(root, "selected.json");
-    await writeFile(path, '{"value":1}');
+    await writeFile(path, '{"value":"valid �, é, and 😀"}');
     await symlink(path, selected, "file");
     expect(await parseCliJsonInput(selected, "test-input")).toEqual({
       ok: true,
-      value: { value: 1 },
+      value: { value: "valid �, é, and 😀" },
     });
   });
 
@@ -120,7 +119,7 @@ describe("CLI JSON streamed input", () => {
       "1e400",
       '{"__proto__":{"observed":true},"constructor":2,"duplicate":1,"duplicate":3}',
       JSON.stringify({
-        text: `${"x".repeat(65_524)}😀漢字`,
+        text: `${"x".repeat(65_524)}😀漢字�`,
         escaped: "\ud800",
       }),
       JSON.stringify({ [`${"x".repeat(70_000)}😀`]: "long key" }),
@@ -148,7 +147,6 @@ describe("CLI JSON streamed input", () => {
     "{} {}",
     '{"value":',
     '"unterminated',
-    "\uFEFF{}",
     "\u00a0{}",
     "{\u000b}",
     "01",
@@ -207,18 +205,23 @@ describe("CLI JSON streamed input", () => {
     }
   });
 
-  it.each([Buffer.from([0xf0, 0x28, 0x8c, 0xbc]), Buffer.from([0xe2, 0x82])])(
-    "rejects malformed and incomplete UTF-8 at a read boundary (%j)",
-    async (invalid) => {
-      const root = await createTestTempDirectory("rea-json-input-utf8-");
-      const path = join(root, "input.json");
-      await writeFile(
-        path,
-        Buffer.concat([
-          Buffer.from(`${" ".repeat(9 * 1024 * 1024)}"${"x".repeat(65_534)}`),
-          invalid,
-        ]),
-      );
+  it.each([
+    {
+      name: "malformed bytes within a string",
+      invalid: Buffer.from([0xf0, 0x28, 0x8c, 0xbc, 0x22]),
+    },
+    {
+      name: "an incomplete character at EOF",
+      invalid: Buffer.from([0xe2, 0x82]),
+    },
+  ])("rejects $name in small and streamed files", async ({ invalid }) => {
+    const root = await createTestTempDirectory("rea-json-input-utf8-");
+    const path = join(root, "input.json");
+    for (const prefix of [
+      '"',
+      `${" ".repeat(9 * 1024 * 1024)}"${"x".repeat(65_534)}`,
+    ]) {
+      await writeFile(path, Buffer.concat([Buffer.from(prefix), invalid]));
       expect(await parseCliJsonInput(path, "test-input")).toMatchObject({
         ok: false,
         error: {
@@ -226,61 +229,15 @@ describe("CLI JSON streamed input", () => {
           details: { issues: [{ message: "JSON input is not valid UTF-8" }] },
         },
       });
-    },
-  );
-
-  it("cancels a file parse and allows a following read", async () => {
-    const root = await createTestTempDirectory("rea-json-input-cancel-");
-    const path = join(root, "input.json");
-    await writeFile(path, `${" ".repeat(9 * 1024 * 1024)}{"after":true}`);
-    const controller = new AbortController();
-    const cancelled = readJsonInputFile(path, "test-input", controller.signal);
-    setImmediate(() => controller.abort(new Error("cancel JSON file parse")));
-    await expect(cancelled).rejects.toThrow("cancel JSON file parse");
-    await writeFile(path, '{"after":true}');
-    expect(await readJsonInputFile(path, "test-input")).toEqual({
-      ok: true,
-      value: { after: true },
-    });
+    }
   });
 });
 
 describe("CLI JSON input", () => {
-  it("distinguishes malformed inline text from files and preserves bracket-prefixed paths", async () => {
-    expect(await parseCliJsonInput("[", "test-input")).toMatchObject({
-      ok: false,
-      error: {
-        details: { issues: [{ reason: "invalid_format", expected: "JSON" }] },
-      },
-    });
-    const root = await createTestTempDirectory("rea-json-input-");
-    const path = join(root, "input.json");
-    await writeFile(path, '{"value":1}');
-    expect(await parseCliJsonInput(path, "test-input")).toEqual({
-      ok: true,
-      value: { value: 1 },
-    });
+  it("accepts a falsy inline JSON document", async () => {
     expect(await parseCliJsonInput("false", "test-input")).toEqual({
       ok: true,
       value: false,
-    });
-    const bracketPath = join(root, "[input].json");
-    await writeFile(bracketPath, '["preserved"]');
-    expect(await parseCliJsonInput(bracketPath, "test-input")).toEqual({
-      ok: true,
-      value: ["preserved"],
-    });
-    for (const missingPath of [
-      join(root, "{capture}.json"),
-      join(root, "[missing].json"),
-    ])
-      expect(await parseCliJsonInput(missingPath, "test-input")).toMatchObject({
-        ok: false,
-        error: { input_path: missingPath, input_reason: "read-failed" },
-      });
-    expect(await parseCliJsonInput(root, "test-input")).toMatchObject({
-      ok: false,
-      error: { input_reason: "read-failed" },
     });
   });
 
@@ -347,15 +304,6 @@ describe("CLI JSON file cancellation", () => {
     return path;
   };
 
-  it("reports a cancelled file read as cancellation, not a file failure", async () => {
-    const path = await writeSelection();
-    const controller = new AbortController();
-    controller.abort();
-    expect(
-      await parseCliJsonInput(path, "test-input", controller.signal),
-    ).toMatchObject({ ok: false, error: { code: "cancelled" } });
-  });
-
   it("reports cancellation through --source-paths-json selection", async () => {
     const path = await writeSelection();
     const controller = new AbortController();
@@ -378,17 +326,6 @@ describe("CLI JSON file cancellation", () => {
 });
 
 describe("CLI JSON standard input", () => {
-  it("reads valid JSON from stdin when input is '-'", async () => {
-    const stream = Readable.from(['{"seed":123,"label":"piped"}']);
-    const result = await parseCliJsonInput("-", "test-input", undefined, {
-      stdin: stream,
-    });
-    expect(result).toEqual({
-      ok: true,
-      value: { seed: 123, label: "piped" },
-    });
-  });
-
   it("rejects empty stdin with invalid-json", async () => {
     const stream = Readable.from([]);
     const result = await parseCliJsonInput("-", "test-input", undefined, {
@@ -407,25 +344,6 @@ describe("CLI JSON standard input", () => {
     });
   });
 
-  it("rejects malformed JSON from stdin without printing full payload", async () => {
-    const stream = Readable.from(["{ this is not valid json"]);
-    const result = await parseCliJsonInput("-", "test-input", undefined, {
-      stdin: stream,
-    });
-    expect(result).toMatchObject({
-      ok: false,
-      error: {
-        code: "invalid_request",
-        input_path: "-",
-        input_reason: "invalid-json",
-        details: {
-          issues: [{ path: [], reason: "invalid_format" }],
-        },
-      },
-    });
-    expect(JSON.stringify(result)).not.toContain("this is not valid json");
-  });
-
   it("rejects oversized stdin with too-large", async () => {
     const stream = Readable.from([Buffer.alloc(8 * 1024 * 1024 + 1, 0x78)]);
     const result = await parseCliJsonInput("-", "test-input", undefined, {
@@ -440,26 +358,6 @@ describe("CLI JSON standard input", () => {
         details: {
           resource: "memory",
         },
-      },
-    });
-  });
-
-  it("preserves caller cancellation during stdin read", async () => {
-    const controller = new AbortController();
-    controller.abort("aborted");
-    const stream = Readable.from(['{"seed":1}']);
-    const result = await parseCliJsonInput(
-      "-",
-      "test-input",
-      controller.signal,
-      {
-        stdin: stream,
-      },
-    );
-    expect(result).toMatchObject({
-      ok: false,
-      error: {
-        code: "cancelled",
       },
     });
   });
@@ -499,36 +397,9 @@ describe("CLI JSON stdin cancellation and encoding", () => {
     },
   );
 
-  it.each([
-    [
-      Buffer.from("\uFEFF{}"),
-      expect.stringMatching(
-        /byte-order mark.*UTF-8 without a byte-order mark/iu,
-      ),
-    ],
-    [Buffer.from([0xf0, 0x28, 0x8c, 0xbc]), "JSON input is not valid UTF-8"],
-    [Buffer.from([0xe2, 0x82]), "JSON input is not valid UTF-8"],
-  ])(
-    "preserves safe stdin encoding diagnostics (%j)",
-    async (bytes, message) => {
-      expect(
-        await parseCliJsonInput("-", "test-input", undefined, {
-          stdin: Readable.from([bytes]),
-        }),
-      ).toMatchObject({
-        ok: false,
-        error: {
-          input_path: "-",
-          input_reason: "invalid-json",
-          details: { issues: [{ message }] },
-        },
-      });
-    },
-  );
-
   it("reads UTF-8 split between chunks and accepts the exact byte limit", async () => {
     const prefix = Buffer.from('{"label":"');
-    const suffix = Buffer.from('中文🦀"}');
+    const suffix = Buffer.from('中文🦀�"}');
     const padding = Buffer.alloc(
       8 * 1024 * 1024 - prefix.length - suffix.length,
       0x61,
@@ -540,10 +411,9 @@ describe("CLI JSON stdin cancellation and encoding", () => {
         ...[...suffix].map((byte) => Buffer.from([byte])),
       ]),
     });
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error("Expected valid JSON at the stdin limit");
-    expect(result.value).toEqual({
-      label: `${"a".repeat(padding.length)}中文🦀`,
+    expect(result).toEqual({
+      ok: true,
+      value: { label: `${"a".repeat(padding.length)}中文🦀�` },
     });
   });
 

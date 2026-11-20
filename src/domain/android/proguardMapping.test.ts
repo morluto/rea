@@ -63,6 +63,22 @@ const method = (
   return_type = "void",
 ) => ({ class: `${app}.LoginActivity`, name, return_type, parameter_types });
 
+it.each([
+  ["CR", ["\r"]],
+  ["CRLF", ["\r\n"]],
+  ["mixed", ["\r\n", "\r", "\n"]],
+] as const)(
+  "preserves mappings and diagnostics with %s line endings",
+  (_label, endings) => {
+    let line = 0;
+    const text = fixture.replaceAll(
+      "\n",
+      () => endings[line++ % endings.length]!,
+    );
+    expect(parse(text)).toEqual(mapping);
+  },
+);
+
 it("reports header facts, valid record counts and malformed line samples", () => {
   expect(mapping.reported).toEqual({
     compiler: "R8",
@@ -642,6 +658,60 @@ it("treats CRLF and tab indentation like LF and spaces", () => {
 });
 
 it.each([
+  ["tabs", "\t->\t"],
+  ["multiple spaces", "   ->  "],
+  ["no spaces", "->"],
+  ["one-sided spacing", "\t->"],
+] as const)("reads the same mapping when arrows use %s", (_name, arrow) => {
+  expect(parse(fixture.replaceAll(" -> ", arrow))).toEqual(mapping);
+});
+
+it("maps fields and methods whose types are separated by tabs", () => {
+  const observed = parse(
+    [
+      "example.Original -> a:",
+      "    int\t\tcounter -> c",
+      "    4:4:void\trun():5:5 -> r",
+    ].join("\n"),
+  );
+  expect(
+    resolveProguardField(observed, { className: "a", name: "c", type: "I" }),
+  ).toMatchObject({ status: "mapped", mapped: { name: "counter" } });
+  expect(
+    resolveProguardMethod(observed, {
+      className: "a",
+      name: "r",
+      descriptor: "()V",
+    }),
+  ).toMatchObject({ status: "mapped", mapped: { name: "run" } });
+});
+
+it("reports extra mapping arrows on their original source lines", () => {
+  const observed = parse(
+    [
+      "example.Original -> a:",
+      "    int count -> c -> other",
+      "    void run() -> r -> other",
+      "example.Broken -> b -> other:",
+      "    int orphan -> x",
+      "example.Next -> n:",
+    ].join("\n"),
+  );
+  expect(observed.records).toEqual({
+    classes: 2,
+    fields: 0,
+    methods: 0,
+    malformed: 4,
+  });
+  expect(observed.malformed).toEqual([
+    { line: 2, reason: "member-line" },
+    { line: 3, reason: "member-line" },
+    { line: 4, reason: "class-line" },
+    { line: 5, reason: "member-without-class" },
+  ]);
+});
+
+it.each([
   ["empty", ""],
   ["comment-only", "# compiler: R8\n# just a comment\n"],
   ["usage.txt", "com.example.Unused\n    void unused()\n    int field\n"],
@@ -653,6 +723,21 @@ it.each([
   });
 });
 
+const capacityRefusal = (name: string, maximum: number, line: number) => ({
+  ok: false,
+  error: {
+    kind: "capacity",
+    line,
+    cause: {
+      failure: {
+        kind: "limit",
+        format: "proguard-mapping",
+        limit: { name, maximum },
+      },
+    },
+  },
+});
+
 it("refuses class-index growth at its source line with an explicit retained budget", () => {
   const parsed = parseProguardMapping(
     Array.from({ length: 8 }, (_, index) => `Owner${index} -> a${index}:`).join(
@@ -660,10 +745,7 @@ it("refuses class-index growth at its source line with an explicit retained budg
     ),
     { indexBytes: 4096 },
   );
-  expect(parsed).toEqual({
-    ok: false,
-    error: { kind: "capacity", resource: "index", limit_bytes: 4096, line: 4 },
-  });
+  expect(parsed).toMatchObject(capacityRefusal("index", 4096, 4));
 });
 
 it("admits a method's parameter representation before allocating its split array", () => {
@@ -679,10 +761,7 @@ it("admits a method's parameter representation before allocating its split array
   } finally {
     split.mockRestore();
   }
-  expect(parsed).toMatchObject({
-    ok: false,
-    error: { kind: "capacity", resource: "index", line: 2 },
-  });
+  expect(parsed).toMatchObject(capacityRefusal("index", 4096, 2));
   expect(splits).toBe(0);
 });
 
@@ -697,15 +776,7 @@ it("refuses oversized JSON metadata before JSON.parse materializes its tree", ()
   } finally {
     json.mockRestore();
   }
-  expect(parsed).toEqual({
-    ok: false,
-    error: {
-      kind: "capacity",
-      resource: "projection",
-      limit_bytes: 1024,
-      line: 2,
-    },
-  });
+  expect(parsed).toMatchObject(capacityRefusal("projection", 1024, 2));
   expect(calls).toBe(0);
 });
 
@@ -831,15 +902,7 @@ it("bounds repeated shared class names in expanded per-class mapping claims", ()
       projectionBytes: 1024,
     },
   );
-  expect(parsed).toEqual({
-    ok: false,
-    error: {
-      kind: "capacity",
-      resource: "projection",
-      limit_bytes: 1024,
-      line: 3,
-    },
-  });
+  expect(parsed).toMatchObject(capacityRefusal("projection", 1024, 3));
 });
 
 it("does not cumulatively charge deduplicated line-range splits", () => {
@@ -1099,4 +1162,15 @@ it("does not charge repeated identical residual metadata as new retained strings
       type: "J",
     }),
   ).toMatchObject({ status: "mapped" });
+});
+
+it("reports duplicate metadata members even when a repeated id overwrites its string value", () => {
+  const metadata = parse(
+    [
+      '# {"id":"com.android.tools.r8.mapping","id":null}',
+      "com.example.Meta -> a.m:",
+      "    int count -> a",
+    ].join("\n"),
+  );
+  expect(metadata.malformed).toEqual([{ line: 1, reason: "metadata" }]);
 });

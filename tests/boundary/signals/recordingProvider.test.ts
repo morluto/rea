@@ -1380,7 +1380,7 @@ it.each([
       _tag: "AnalysisResourceConstraintError",
       resource: "memory",
       reason: "Decoder discovery exceeds the 65,536-line representation budget",
-      reportedLimits: { line_budget: 65536 },
+      reportedLimits: { boundary: "line_budget", maximum: 65536 },
       fixedAllowance: { kind: "capture" },
     });
     expect(result.error.capturedOutput?.stdout).toBe(

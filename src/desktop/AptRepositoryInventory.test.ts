@@ -13,9 +13,273 @@ import {
 import { runHostQuery, type QueryRunner } from "./HostQuery.js";
 import {
   GPGV_A_ONLY,
+  SIGNED_BY_BOTH,
   VENDOR_A,
   VENDOR_B,
 } from "../domain/desktop/aptKeys.fixture.js";
+import {
+  aptListFileName,
+  declaredPackageFiles,
+  parseAptIndexTargets,
+} from "../domain/desktop/aptRepositories.js";
+
+describe.skipIf(
+  process.platform !== "linux" || !existsSync("/usr/bin/apt-get"),
+)("repository identity from real APT targets", () => {
+  it.each(["list", "sources"] as const)(
+    "preserves commas in %s repository fields through key retention and package attribution",
+    async (format) => {
+      const root = await createTestTempDirectory("apt-source-commas-");
+      const sources = join(root, `vendor.${format}`);
+      const key = join(root, "vendor.gpg");
+      const lists = join(root, "lists");
+      await mkdir(lists);
+      await writeFile(key, VENDOR_A.key);
+      const uris = ["https://vendor.invalid/repo,stable"];
+      if (format === "sources") uris.push("https://mirror.invalid/repo");
+      const declaredUris = uris.map((uri) =>
+        uri.replace(
+          "vendor.invalid",
+          "fixture-user:fixture,password@vendor.invalid",
+        ),
+      );
+      await writeFile(
+        sources,
+        format === "list"
+          ? `deb [arch=amd64,arm64 arch+=i386 arch-=arm64 signed-by=${key}] ${declaredUris[0]} stable,updates main,extra contrib\n`
+          : `Types: deb\nURIs: ${declaredUris.join("/\n ")}/\nSuites: stable,updates\nComponents: main,extra contrib\nArchitectures: amd64 arm64\nArchitectures-Add: i386\nArchitectures-Remove: arm64\nSigned-By: ${key}\n`,
+      );
+      // No update, download or package installation: APT only describes the
+      // configured targets, with source and state paths confined to this root.
+      const query: QueryRunner = async (command, argv, signal, options) => {
+        // Key verification uses the existing captured status fixture; only
+        // APT's source grammar and target coordinates are exercised natively.
+        if (command === "gpgv") return { stdout: GPGV_A_ONLY, exitCode: 2 };
+        if (command !== "apt-get")
+          throw new Error(`Unexpected query ${command}`);
+        return runHostQuery(
+          "/usr/bin/apt-get",
+          [
+            "-o",
+            `Dir::Etc::sourcelist=${sources}`,
+            "-o",
+            "Dir::Etc::sourceparts=-",
+            "-o",
+            `Dir::State::lists=${lists}`,
+            ...argv,
+            "--no-release-info",
+          ],
+          signal,
+          options,
+        );
+      };
+      const output = await query(
+        "apt-get",
+        ["indextargets", "Created-By: Packages"],
+        undefined,
+      );
+      if (typeof output !== "object" || output.exitCode !== 0)
+        throw new Error(`APT target query failed: ${JSON.stringify(output)}`);
+      const targets = parseAptIndexTargets(output.stdout);
+      const descriptions = targets.map((target) => target.description);
+      expect(descriptions).toContainEqual(
+        expect.stringMatching(/ i386 Packages$/u),
+      );
+      expect(descriptions).not.toContainEqual(
+        expect.stringMatching(/ arm64 Packages$/u),
+      );
+      const selected = targets.filter(
+        (target) =>
+          target.component === "main,extra" &&
+          target.description.endsWith(" amd64 Packages"),
+      );
+      expect(
+        selected.map((target) => target.repoUri.replace(/\/$/u, "")),
+      ).toEqual(uris);
+      for (const target of selected)
+        await writeFile(
+          join(lists, `${aptListFileName(target.baseUri)}InRelease`),
+          SIGNED_BY_BOTH,
+        );
+      const facts = await inspectAptRepositories(
+        {
+          sources: selected.map((target) => target.description),
+          origins: selected.map(() => "Vendor"),
+        },
+        { runQuery: query, apt: { lists, trustedParts: root, trusted: key } },
+        undefined,
+      );
+      expect(facts.repositories).toEqual(
+        uris.map((uri) =>
+          expect.objectContaining({
+            uri,
+            uri_credentials_removed: uri === uris[0],
+            suite: "stable,updates",
+            components: ["main,extra", "contrib"],
+            architectures: ["amd64", "i386"],
+            signing_key: expect.objectContaining({
+              path: key,
+              fingerprint: VENDOR_A.fingerprint,
+            }),
+          }),
+        ),
+      );
+      expect([...facts.keys.values()]).toEqual([VENDOR_A.key]);
+      const captured = JSON.stringify([
+        facts.repositories,
+        ...facts.indexTargets.values(),
+      ]);
+      expect(captured).not.toContain("fixture-user");
+      expect(captured).not.toContain("fixture,password");
+      expect(
+        declaredPackageFiles(facts.repositories, facts.indexTargets),
+      ).toEqual(
+        new Set(
+          targets
+            .filter(({ repoUri }) =>
+              repoUri.startsWith("https://mirror.invalid/"),
+            )
+            .map(({ description }) => description),
+        ),
+      );
+    },
+  );
+});
+
+it.each([
+  [
+    "https://vendor.invalid/a%2Cb",
+    "https://vendor.invalid/a,b/",
+    "https://vendor.invalid/a%2Cb",
+    false,
+  ],
+  [
+    "https://test-user%3Atest-secret%40vendor.invalid/a",
+    "https://test-user:test-secret@vendor.invalid/a/",
+    null,
+    true,
+  ],
+  [
+    "https://test-user:test-secret@secret-suffix%40vendor.invalid/a",
+    "https://test-user:test-secret%40secret-suffix@vendor.invalid/a/",
+    null,
+    true,
+  ],
+  [
+    "https://vendor.invalid/a%40b",
+    "https://vendor.invalid/a@b/",
+    "https://vendor.invalid/a%40b",
+    false,
+  ],
+] as const)(
+  "retains separate sanitized authored and observed APT URIs for %s",
+  async (authored, observed, retained, credentials) => {
+    const root = await createTestTempDirectory("apt-repo-replay-");
+    const file = join(root, "vendor.list");
+    await writeFile(file, `deb ${authored} stable main\n`);
+    const source = "https://vendor.invalid/a stable/main arm64 Packages";
+    const output = [
+      `Description: ${source}`,
+      `Sourcesentry: ${file}:1`,
+      `Repo-URI: ${observed}`,
+      "Release: stable",
+      "Component: main",
+      "Base-URI: https://vendor.invalid/dists/stable/",
+      `Filename: ${join(root, "Packages")}`,
+    ].join("\n");
+    const runQuery: QueryRunner = async (command) => {
+      if (command !== "apt-get") throw new Error(`Unexpected query ${command}`);
+      return { stdout: output, exitCode: 0 };
+    };
+    const facts = await inspectAptRepositories(
+      { sources: [source], origins: ["Vendor"] },
+      {
+        runQuery,
+        apt: {
+          lists: root,
+          trustedParts: root,
+          trusted: join(root, "trusted.gpg"),
+        },
+      },
+      undefined,
+    );
+    expect(facts.repositories[0]).toMatchObject({
+      uri: retained,
+      repo_uri: observed.replace(/^https:\/\/[^/]*@/u, "https://"),
+      uri_credentials_removed: credentials,
+    });
+    expect(JSON.stringify(facts.repositories)).not.toMatch(
+      /test-user|test-secret/u,
+    );
+  },
+);
+
+it("withholds an undecodable APT index and preserves an intact peer", async () => {
+  const root = await createTestTempDirectory("apt-index-encoding-");
+  const file = join(root, "vendor.list");
+  await writeFile(
+    file,
+    "deb https://bad.invalid/a%FFb stable main\ndeb https://good.invalid/a%EF%BF%BDb stable main\n",
+  );
+  const bad = "https://bad.invalid/a\ufffdb stable/main arm64 Packages";
+  const good = "https://good.invalid/a\ufffdb stable/main arm64 Packages";
+  const paragraph = (source: string, uri: string, position: number) =>
+    [
+      `Description: ${source}`,
+      `Sourcesentry: ${file}:${position}`,
+      `Repo-URI: ${uri}`,
+      "Release: stable",
+      "Component: main",
+      `Base-URI: ${uri}dists/stable/`,
+      `Filename: ${join(root, "Packages")}`,
+    ].join("\n");
+  const bytes = Buffer.from(
+    `${paragraph(bad.replace("\ufffd", "ÿ"), "https://bad.invalid/aÿb/", 1)}\n\n`,
+    "latin1",
+  );
+  const output = Buffer.concat([
+    bytes,
+    Buffer.from(paragraph(good, "https://good.invalid/a\ufffdb/", 2)),
+  ]);
+  const query: QueryRunner = async (command, _argv, signal, options) => {
+    if (command !== "apt-get") throw new Error(`Unexpected query ${command}`);
+    return runHostQuery(
+      process.execPath,
+      [
+        "-e",
+        'process.stdout.write(Buffer.from(process.argv[1], "base64"))',
+        output.toString("base64"),
+      ],
+      signal,
+      options,
+    );
+  };
+  const facts = await inspectAptRepositories(
+    { sources: [bad, good], origins: ["Vendor", "Vendor"] },
+    {
+      runQuery: query,
+      apt: {
+        lists: root,
+        trustedParts: root,
+        trusted: join(root, "trusted.gpg"),
+      },
+    },
+    undefined,
+  );
+  expect([...facts.indexTargets.keys()]).toEqual([good]);
+  expect(facts.repositories[0]).toMatchObject({
+    uri: null,
+    signing_key_reason: expect.stringContaining("unreadable UTF-8"),
+  });
+  expect(facts.repositories[0]).not.toHaveProperty("repo_uri");
+  expect(facts.repositories[1]).toMatchObject({
+    uri: "https://good.invalid/a%EF%BF%BDb",
+    repo_uri: "https://good.invalid/a\ufffdb/",
+  });
+  expect(declaredPackageFiles(facts.repositories, facts.indexTargets)).toEqual(
+    new Set([good]),
+  );
+});
 
 it.each(["list", "sources"] as const)(
   "does not broaden %s Signed-By fingerprint restrictions to every key in a keyring",
@@ -240,6 +504,7 @@ describe.skipIf(
       lists: `${root}/user's\nlists/`,
       trustedParts: `${root}/trusted\nparts/`,
       trusted: `${root}/trusted\nkeys.gpg`,
+      status: `${root}/installed\nstatus`,
     };
     const configured: QueryRunner = (command, argv, signal) =>
       runHostQuery(
@@ -251,6 +516,8 @@ describe.skipIf(
           `Dir::Etc::TrustedParts=${selected.trustedParts}`,
           "-o",
           `Dir::Etc::Trusted=${selected.trusted}`,
+          "-o",
+          `Dir::State::status=${selected.status}`,
           ...argv,
         ],
         signal,
@@ -274,6 +541,7 @@ describe.skipIf(
       lists: `${root}/state/user lists/`,
       trustedParts: "/etc/apt/trusted.gpg.d/",
       trusted: "/etc/apt/trusted.gpg",
+      status: "/var/lib/dpkg/status",
     });
     expect(
       await resolveAptLocations(

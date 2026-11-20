@@ -48,7 +48,7 @@ const harness = (inputElements?: string) =>
         }),
   });
 
-it("admits an independent inline dossier and composes its summary parent without producer work", async () => {
+it("advertises retained Evidence and composes an independent dossier without producer work", async () => {
   const { session, client } = await harness();
   const source = FUNCTION_COMPARISON_EXAMPLE.left;
   const selection = {
@@ -77,9 +77,23 @@ it("admits an independent inline dossier and composes its summary parent without
   expect(receipt.normalized_result).toMatchObject({
     parent_evidence_id: source.evidence_id,
   });
+  const retainedInput = { ...selection, functions: [reference(source)] };
+  const callPath = (await client.listTools()).tools.find(
+    ({ name }) => name === "build_call_path",
+  );
+  if (callPath === undefined) throw new Error("Expected build_call_path");
+  expect(callPath.description).toContain(
+    '{"kind":"retained-evidence","evidence_id":"ev_..."}',
+  );
+  expect(callPath.description).toContain("parent_evidence_id");
+  const validation = createMcpSchemaValidation();
+  expect(
+    validation.assertions.validate(callPath.inputSchema, retainedInput),
+  ).toBe(true);
+
   const retained = await client.callTool({
     name: "build_call_path",
-    arguments: { ...selection, functions: [reference(source)] },
+    arguments: retainedInput,
   });
   expect(retained.isError, JSON.stringify(retained)).not.toBe(true);
   expect(parseEvidence(retained.structuredContent)).toEqual(expected);

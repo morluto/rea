@@ -13,6 +13,24 @@ import { servedFrom } from "../../../tests/fixtures/environmentStateServing.js";
 describe("served item writes", () => {
   it("answers a create with the parent and tags its ids name, in the order sent", () => {
     const items = servedFrom(ITEM_REFERENCES_ROWS);
+    expect(items.state.writes.get("post_items")).toMatchObject({
+      served: true,
+      rules: expect.arrayContaining([
+        expect.objectContaining({
+          field: "parent",
+          rule: "reference",
+          member: "parentId",
+          type: "/api/locations",
+        }),
+        expect.objectContaining({
+          field: "tags",
+          rule: "reference",
+          member: "tagIds",
+          type: "/api/tags",
+          many: true,
+        }),
+      ]),
+    });
     const body = items.answer("post_items", {
       body: {
         name: "Snow shovel",
@@ -27,7 +45,7 @@ describe("served item writes", () => {
     });
   });
 
-  it("answers a create naming no parent and no tags with none", () => {
+  it("answers creates with no parent or tags whether the ids were omitted or sent empty", () => {
     const items = servedFrom(ITEM_REFERENCES_ROWS);
     expect(
       items.answer("post_items", { body: { name: "Spare fuse" } }).body,
@@ -36,19 +54,25 @@ describe("served item writes", () => {
       parent: null,
       tags: [],
     });
-  });
-
-  it("answers a create sending no parent and no tags as a recorded create sent them", () => {
-    const items = servedFrom(ITEM_REFERENCES_ROWS);
     expect(
       items.answer("post_items", {
-        body: { name: "Spare fuse", parentId: null, tagIds: [] },
+        body: { name: "Spare bulb", parentId: null, tagIds: [] },
       }).body,
-    ).toMatchObject({ name: "Spare fuse", parent: null, tags: [] });
+    ).toMatchObject({ name: "Spare bulb", parent: null, tags: [] });
   });
 
   it("answers a create leaving out a parent the first create left out with none, and one sending null with null", () => {
     const items = servedFrom(ADDED_EMPTY_REFERENCE_ROWS);
+    expect(items.state.writes.get("post_items")).toMatchObject({
+      served: true,
+      rules: expect.arrayContaining([
+        expect.objectContaining({
+          field: "parent",
+          rule: "reference",
+          member: "parentId",
+        }),
+      ]),
+    });
     const left = items.answer("post_items", { body: { name: "Spare fuse" } })
       .body as Record<string, unknown>;
     expect(left).toMatchObject({ name: "Spare fuse" });
@@ -86,6 +110,13 @@ describe("served item writes", () => {
 
   it("flips an entry's flag on each body-less call", () => {
     const entries = servedFrom(BOOKMARK_TOGGLE_ROWS);
+    expect(
+      entries.state.writes.get("put_entries_bookmark_by_id"),
+    ).toMatchObject({
+      served: true,
+      address: { by: "action", segment: "bookmark" },
+      rules: expect.arrayContaining([{ field: "starred", rule: "toggle" }]),
+    });
     const starred = () =>
       (
         entries.answer("get_entries_by_id", { id: "2" }).body as {

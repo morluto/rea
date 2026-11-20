@@ -1,11 +1,13 @@
 import { readFileSync } from "node:fs";
-import { cliCommands } from "../../../src/cli/commandRegistry.js";
+import {
+  cliCommands,
+  commandOwnOperations,
+} from "../../../src/cli/commandRegistry.js";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { createCli } from "../../../src/cli.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
-import { CLI_COMMAND_TOOL_ALIASES } from "./cliContractAliases.js";
 
 /**
  * Report-only parity between each CLI command's own field schemas and the MCP
@@ -184,10 +186,13 @@ const collectParity = () => {
   let compared = 0;
   let commandsCompared = 0;
   let unmatchedFields = 0;
-  for (const { name, definition: entry } of commands) {
-    const contractNames: readonly string[] = CLI_COMMAND_TOOL_ALIASES[
-      name as keyof typeof CLI_COMMAND_TOOL_ALIASES
-    ] ?? [snake(name)];
+  for (const command of commands) {
+    const { name, definition: entry } = command;
+    const ownOperations = commandOwnOperations(command);
+    const contractNames: readonly string[] =
+      ownOperations.length > 0
+        ? ownOperations.map((operation) => operation.name)
+        : [snake(name)];
     for (const contractName of contractNames) {
       const contract = contracts.get(contractName);
       if (contract === undefined) {

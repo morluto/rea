@@ -30,6 +30,8 @@ type FormatsWithReaders =
   | "unityfs"
   | "wxapkg"
   | "uimage"
+  | "android-boot-image"
+  | "android-ota-payload"
   | "mach-o-universal"
   | "directory"
   | "pyinstaller"
@@ -41,7 +43,8 @@ type FormatsWithReaders =
   | "dfuse"
   | "esp-flash-image"
   | "fit"
-  | "ntfs-mft";
+  | "ntfs-mft"
+  | "uefi";
 
 const readerFormatsMatch: Equal<ArtifactReaderFormat, FormatsWithReaders> =
   true;

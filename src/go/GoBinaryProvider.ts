@@ -1,5 +1,9 @@
+import { basename } from "node:path";
 import type { AnalysisControlLimit } from "../domain/analysisSettings.js";
-import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
+import {
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../domain/parseFailureAnalysisError.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { GO_BINARY_PROVIDER_IDENTITY } from "./GoBinaryProviderIdentity.js";
 import {
@@ -13,6 +17,7 @@ import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   assertArtifactReadActive,
+  yieldArtifactRead,
   ArtifactResourceScope,
   ArtifactReaderFailure,
 } from "../resources/index.js";
@@ -36,7 +41,11 @@ import {
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { readGoBinaryImage, type GoBinaryImage } from "./GoBinaryImage.js";
+import {
+  readGoBinaryImage,
+  readGoBinaryImageCooperative,
+  type GoBinaryImage,
+} from "./GoBinaryImage.js";
 import { requireSelectedNativeImage } from "../domain/apple/machoSliceSelection.js";
 import {
   BinaryResourceFailure,
@@ -95,17 +104,12 @@ const failureForPrimary = (
         : cause.boundary === "build-info"
           ? "max_build_info_bytes"
           : undefined;
-    return new AnalysisResourceConstraintError(
+    return parseLimitConstraint(
       OPERATION,
       cause.boundary === "search" ? "cpu" : "memory",
-      `Selected artifact ${path}: ${cause.message}`,
+      cause,
       {
-        boundary: cause.boundary,
-        maximum_bytes: cause.maximum_bytes,
-        ...(parameter === undefined ? {} : { parameter, unit: "bytes" }),
-      },
-      {
-        cause,
+        path,
         ...(parameter === undefined
           ? fixedAllowanceOptions(
               "The Go structural decoding allowance",
@@ -334,11 +338,19 @@ export class GoBinaryProvider implements GoBinaryPort {
           snapshot.bytes,
           input.architecture,
         );
-        const image = readGoBinaryImage(selected.bytes, {
+        const imageOptions = {
           includeStringLiterals: input.include_string_literals === true,
           budgets,
           checkActive: () => assertArtifactReadActive(options?.signal),
-        });
+        };
+        const image =
+          options?.signal === undefined
+            ? readGoBinaryImage(selected.bytes, imageOptions)
+            : await readGoBinaryImageCooperative(
+                selected.bytes,
+                imageOptions,
+                () => yieldArtifactRead(options.signal),
+              );
         const {
           section_names_limitation: _sectionNamesLimitation,
           macho_chained_fixups: _machoChainedFixups,
@@ -354,6 +366,7 @@ export class GoBinaryProvider implements GoBinaryPort {
           ...publicImage,
           artifact: {
             path: input.path,
+            file_name: basename(input.path),
             sha256: snapshot.sha256,
             bytes: snapshot.bytes.length,
           },

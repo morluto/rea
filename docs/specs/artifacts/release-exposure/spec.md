@@ -37,6 +37,8 @@ what was observed, so a team can review or gate a release before it ships.
 - Fail toward `unknown`: a read that could not be completed, a file or member
   whose bytes no longer match the inventoried digest, an unresolved or oversized
   source map, or missing metadata never becomes `not_observed`.
+  Ordinary UTF-8/UTF-16 text and source maps that cannot be decoded completely
+  remain unassessed; observations recovered from their decoded text are retained.
 - For `text.credential_markers`, report the rule id and location only. Matched
   bytes, previews, lengths and hashes of matched bytes are omitted. Source-map
   text is counted and then dropped.

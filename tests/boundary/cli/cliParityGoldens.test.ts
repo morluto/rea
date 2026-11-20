@@ -554,7 +554,6 @@ describe("CLI parity goldens", () => {
           ? {}
           : { COMPLETE: testCase.complete }),
       },
-      ...(testCase.complete === undefined ? {} : { freshProcess: true }),
       ...(testCase.terminal === true ? { terminal: true } : {}),
     });
     const actual = render(testCase, workspace, result);

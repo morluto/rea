@@ -4,7 +4,6 @@ import { jsonValueValidationIssue } from "../domain/jsonValue.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { requireAuthenticationHeadroom } from "./JsonAuthenticationHeadroom.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
-import { resemblesAnalysisSnapshot } from "../domain/analysisSnapshot.js";
 
 import { describeValidationFailure } from "../domain/validationFailure.js";
 import {
@@ -29,6 +28,10 @@ import {
   bufferedJsonParts,
   canonicalJsonParts,
 } from "../domain/jsonSerialization.js";
+import {
+  evidenceFileEnvelopeKind,
+  snapshotWrongEvidenceKind,
+} from "./EvidenceFileEnvelope.js";
 import { readJsonFile } from "./JsonFiles.js";
 import {
   writeTextParts,
@@ -113,6 +116,8 @@ const readBundle = async (
   const loaded = await readJsonFile(path, signal, resources, operation);
   if (!loaded.ok) return loaded;
   if (signal?.aborted) return err(cancelledBy(operation, signal));
+  if (evidenceFileEnvelopeKind(loaded.value) === "analysis-snapshot")
+    return err(snapshotWrongEvidenceKind(path, operation, "bundle"));
   return authenticateEvidenceBundleValue(loaded.value, path, {
     operation,
     immutable,
@@ -146,22 +151,6 @@ export const authenticateEvidenceBundleValue = (
           cause: failure.cause,
           detectedKind: "evidence-record",
           userMessage: failure.message,
-        }),
-      );
-    if (
-      operation === "import_evidence_bundle" &&
-      typeof value === "object" &&
-      value !== null &&
-      !Object.hasOwn(value, "records") &&
-      resemblesAnalysisSnapshot(value)
-    )
-      return err(
-        new EvidenceFileError("read", "wrong-kind", {
-          path: absoluteCallerPath(path),
-          cause: failure.cause,
-          detectedKind: "analysis-snapshot",
-          userMessage:
-            "This JSON appears to be an analysis snapshot rather than an Evidence bundle. Its snapshot content has not been validated. To restore it, use a matching target, provider and analysis profile: call open_binary with snapshot_path set to this file, or pass --snapshot to a compatible CLI analysis command (which loads and updates the snapshot). Alternatively, supply a bundle from export_evidence_bundle.",
         }),
       );
     return err(

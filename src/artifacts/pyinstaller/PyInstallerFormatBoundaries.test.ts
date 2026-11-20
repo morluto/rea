@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { deflateSync } from "node:zlib";
 import { randomBytes } from "node:crypto";
-import { expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { withPyInstallerReader } from "../../../tests/fixtures/pyinstallerReader.js";
 import {
   scanCanonicalArtifactInventory,
@@ -17,6 +17,7 @@ import {
   PYTHON_39_MAGIC,
 } from "./CArchive.fixture.js";
 import { readPyzArchive } from "./PyzArchive.js";
+import { parseCArchiveToc } from "./CArchiveLayout.js";
 import { marshalCode } from "../../python/PythonPyc.fixture.js";
 import { createEvidence } from "../../domain/evidence.js";
 import { parseArtifactInventoryEvidence } from "../../domain/artifactInventoryEvidence.js";
@@ -24,6 +25,84 @@ import {
   ArtifactReaderFailure,
   type ArtifactEntry,
 } from "../../resources/ArtifactReader.js";
+
+describe.each(["2.0", "2.1"] as const)(
+  "CArchive names with a %s cookie",
+  (layout) => {
+    const name = "member-é";
+    const nameOffset = 18;
+    const record = Buffer.alloc(32);
+    record.writeUInt32BE(record.length, 0);
+    record[17] = 0x78; // data member
+    const nameEnd = nameOffset + record.write(name, nameOffset, "utf8");
+    const readPaths = async (tocBytes: Buffer) => {
+      const paths: string[] = [];
+      await withPyInstallerReader(
+        cArchiveExecutable({
+          layout,
+          pythonVersion: layout === "2.0" ? 27 : 309,
+          members: [],
+          tocBytes,
+        }),
+        async (reader) => {
+          for await (const entry of reader.entries()) paths.push(entry.path);
+        },
+      );
+      return paths;
+    };
+
+    it("preserves the UTF-8 name with a terminator and zero padding", async () => {
+      await expect(readPaths(record)).resolves.toEqual([name]);
+    });
+    it.each([
+      ["missing terminator", nameEnd],
+      ["nonzero byte after terminator", nameEnd + 1],
+    ] as const)("reports %s at the rejected record", async (_case, fillAt) => {
+      const malformed = Buffer.from(record).fill(0x61, fillAt);
+      await expect(readPaths(malformed)).rejects.toMatchObject({
+        reason: "format",
+        message: expect.stringContaining("table index 0 at TOC offset 0"),
+      });
+    });
+  },
+);
+
+describe("CArchive entry admission at the TOC record limit", () => {
+  const entryCount = 100_000;
+  const entry = Buffer.alloc(32);
+  entry.writeUInt32BE(entry.length);
+  entry[17] = 0x78;
+  entry.write("member.txt", 18, "ascii");
+  const boundary = entry.length * entryCount;
+  const toc = Buffer.alloc(boundary + entry.length, entry);
+
+  it("accepts exactly the limit and refuses one more framed record", () => {
+    const admitted = parseCArchiveToc(toc.subarray(0, boundary));
+    if (!admitted.ok) throw new Error(admitted.error.message);
+    expect(admitted.value).toHaveLength(entryCount);
+    expect(parseCArchiveToc(toc)).toMatchObject({
+      ok: false,
+      error: { reason: "limit" },
+    });
+  });
+
+  it.each([4, 20])(
+    "preserves framing failure for %i trailing bytes at the entry limit",
+    (tailSize) => {
+      expect(
+        parseCArchiveToc(toc.subarray(0, boundary + tailSize)),
+      ).toMatchObject({
+        ok: false,
+        error: {
+          reason: "format",
+          message: expect.stringContaining(
+            `table index ${entryCount} at TOC offset ${boundary}:`,
+          ),
+        },
+      });
+    },
+  );
+});
 
 it.each([0, 1, 2])(
   "identifies malformed CArchive compression at table index %i",

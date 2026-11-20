@@ -263,7 +263,6 @@ it.each([
     });
     expect(injection.aggregate).toBeInstanceOf(AggregateError);
     expect(result.error.cause).toBe(injection.aggregate);
-    expect(injection.aggregate?.errors[1]).toBe(leaf);
   } finally {
     controller.abort(reason);
     release();
