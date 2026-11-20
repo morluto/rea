@@ -775,7 +775,8 @@ const inventoryOciImageLayout = async (
   // An OCI 1.1 subject names the manifest an index or manifest refers to.
   // The subject may legitimately be absent from the layout, so only a
   // subject blob present at its layout path joins the referenced set, where
-  // it is hashed and no longer reported as unreferenced.
+  // it is hashed and no longer reported as unreferenced. A present subject
+  // with an unfamiliar media type is still reported as unknown.
   const rememberSubject = (
     owner: string,
     ownerDigest: string,
@@ -801,6 +802,13 @@ const inventoryOciImageLayout = async (
         : ociBlobPath(parsed);
     if (path === undefined || !byPath.has(path)) return;
     remember(descriptor.digest, descriptor.media_type, descriptor.size);
+    if (!isOciKnownMediaType(descriptor.media_type))
+      recordFinding(
+        findings,
+        "unknown_media_type",
+        `${owner} ${ownerDigest} subject media type ${JSON.stringify(descriptor.media_type)} is unknown.`,
+        descriptor.digest,
+      );
   };
 
   // Indexes are walked breadth-first so each one is first reached at the

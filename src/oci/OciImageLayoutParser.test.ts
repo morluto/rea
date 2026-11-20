@@ -896,6 +896,33 @@ it("counts local subject blobs as referenced and hashes them", async () => {
   expect(report.coverage.status).toBe("complete");
 });
 
+it("reports a present subject with an unknown media type", async () => {
+  const root = await createTestTempDirectory("rea-oci-unknown-subject-");
+  await writeOciImageLayoutFixture(root);
+  const subject = await putOciBlob(root, "opaque-subject");
+  const indexPath = join(root, "index.json");
+  const index = JSON.parse(await readFile(indexPath, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  index.subject = {
+    mediaType: "application/vnd.example.unknown",
+    digest: subject,
+    size: 14,
+  };
+  await writeFile(indexPath, `${JSON.stringify(index)}\n`);
+  const report = await inspectLayout(root);
+  expect(report.findings).toEqual([
+    expect.objectContaining({
+      kind: "unknown_media_type",
+      digest: subject,
+    }),
+  ]);
+  expect(
+    report.blobs.find((entry) => entry.digest === subject)?.referenced,
+  ).toBe(true);
+});
+
 it("does not report a subject that is absent from the layout", async () => {
   const root = await createTestTempDirectory("rea-oci-absent-subject-");
   await writeOciImageLayoutFixture(root);
