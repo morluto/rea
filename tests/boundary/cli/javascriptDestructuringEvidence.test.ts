@@ -143,7 +143,7 @@ cliTest(
     const { 0: [numericInnerElement] } = numericSource;
     numericSource[0][0] = "later";
     const nestedPairs = [["read-time"], ["sibling"]];
-    const [[innerElement], [siblingInnerElement]] = nestedPairs;
+    const [[innerElement] = ["fallback"], [siblingInnerElement]] = nestedPairs;
     nestedPairs[0][0] = "later";
     nestedPairs[1][0] = "later";
     const spreadSource = [...["prefix"], "read-time"];
