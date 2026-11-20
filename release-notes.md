@@ -671,6 +671,8 @@
 * **nuget:** preserve declared dependencies beside foreign groups ([#12500](https://github.com/morluto/rea/issues/12500)) ([34b7356](https://github.com/morluto/rea/commit/34b7356fd2e00c3577cedf5c26387e42d4b2ee38))
 * **nuget:** read packaging parts and dependency groups as NuGet does ([#11845](https://github.com/morluto/rea/issues/11845)) ([9c1e98f](https://github.com/morluto/rea/commit/9c1e98f1cdc7452347ba816f0bb5c943f5abe144))
 * **nuget:** recognize license types case-insensitively ([#12643](https://github.com/morluto/rea/issues/12643)) ([d68f620](https://github.com/morluto/rea/commit/d68f6207cd8f2582c1b5bbd46d65b3389174fd3b))
+* **nuget:** reject invalid manifest relationship target modes ([#12684](https://github.com/morluto/rea/issues/12684)) ([8b60f3f](https://github.com/morluto/rea/commit/8b60f3f25f729633a68ce04e382ce3e50df0bac9))
+* **nuget:** require an internal OPC manifest mode ([8b60f3f](https://github.com/morluto/rea/commit/8b60f3f25f729633a68ce04e382ce3e50df0bac9))
 * **nuget:** require the OPC namespace for manifest relationships ([#12492](https://github.com/morluto/rea/issues/12492)) ([77d2c62](https://github.com/morluto/rea/commit/77d2c62d4d5e6f18a2a1288e565695d9a921b8d1))
 * **nuget:** select publisher metadata from the first eligible leaf ([#12603](https://github.com/morluto/rea/issues/12603)) ([0fcace1](https://github.com/morluto/rea/commit/0fcace1ad172c5dca1a568106353808fd80728e7))
 * **ota:** merge partition info without discarding integrity claims ([#11836](https://github.com/morluto/rea/issues/11836)) ([75482a9](https://github.com/morluto/rea/commit/75482a9ef972ed628c13757d8ca679c9740f1886))
