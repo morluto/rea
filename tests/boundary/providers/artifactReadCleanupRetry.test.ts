@@ -1,8 +1,9 @@
 import type { FileHandle } from "node:fs/promises";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
+
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const cleanupState = vi.hoisted(() => ({
   failFirstClose: false,
@@ -58,7 +59,7 @@ import { peResourceFixture } from "../../../src/domain/pe/peResources.fixture.js
 it.each(["go", "pe"] as const)(
   "%s provider retains a failed descriptor close and retries that owner before the next read",
   async (kind) => {
-    const root = await mkdtemp(join(tmpdir(), "rea-read-cleanup-"));
+    const root = await createTestTempDirectory("rea-read-cleanup-");
     const path = join(root, kind === "go" ? "program.elf" : "program.exe");
     const bytes =
       kind === "go" ? createGoBinaryFixture().bytes : peResourceFixture().bytes;
@@ -104,7 +105,6 @@ it.each(["go", "pe"] as const)(
       cleanupState.abortController = undefined;
       cleanupState.firstHandle = undefined;
       cleanupState.firstHandleCloseAttempts = 0;
-      await rm(root, { recursive: true, force: true });
     }
   },
 );

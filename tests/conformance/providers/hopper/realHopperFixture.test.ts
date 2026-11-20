@@ -13,31 +13,34 @@ afterEach(async () => {
   root = undefined;
 });
 
-const createdRoot = (): string => {
-  if (root === undefined) throw new Error("Fixture root was not created");
-  return root;
-};
-
 describe("real Hopper fixture binding", () => {
   it("refuses the retired unversioned manifest before artifact admission", async () => {
     const manifest = await fixtureManifest();
     const parsed = JSON.parse(await readFile(manifest, "utf8"));
     delete parsed.schemaVersion;
     await writeFile(manifest, JSON.stringify(parsed));
-    await expect(
-      loadRealHopperFixtureTargets(manifest, { fixtureRoot: createdRoot() }),
-    ).rejects.toThrow("regenerate with npm run build:fixtures");
+    await expect(loadRealHopperFixtureTargets(manifest)).rejects.toThrow(
+      "regenerate with npm run build:fixtures",
+    );
   });
 
-  it("binds exact source-owned artifacts and their semantic oracle", async () => {
+  it("binds a caller-selected local manifest and its exact artifact digests", async () => {
     const manifest = await fixtureManifest();
-    await expect(
-      loadRealHopperFixtureTargets(manifest, { fixtureRoot: createdRoot() }),
-    ).resolves.toMatchObject(
+    await expect(loadRealHopperFixtureTargets(manifest)).resolves.toMatchObject(
       {
-        primary: { path: join(root ?? "", "c") },
-        secondary: { path: join(root ?? "", "version-v2") },
-        large: { path: join(root ?? "", "large") },
+        manifestPath: manifest,
+        primary: {
+          path: join(root ?? "", "c"),
+          sha256: digest(Buffer.from("primary")),
+        },
+        secondary: {
+          path: join(root ?? "", "version-v2"),
+          sha256: digest(Buffer.from("secondary")),
+        },
+        large: {
+          path: join(root ?? "", "large"),
+          sha256: digest(Buffer.from("large")),
+        },
         largeOracle: {
           symbolPrefix: "_rea_inventory_",
           symbolCount: 1_205,
@@ -60,18 +63,18 @@ describe("real Hopper fixture binding", () => {
   it("rejects digest drift and artifacts escaping the manifest root", async () => {
     const manifest = await fixtureManifest();
     await writeFile(join(root ?? "", "c"), "changed");
-    await expect(
-      loadRealHopperFixtureTargets(manifest, { fixtureRoot: createdRoot() }),
-    ).rejects.toThrow(/digest/u);
+    await expect(loadRealHopperFixtureTargets(manifest)).rejects.toThrow(
+      /digest/u,
+    );
 
     const outside = await createTestTempDirectory("rea-hopper-outside-");
     try {
       await writeFile(join(outside, "c"), "primary");
       await rm(join(root ?? "", "c"));
       await symlink(join(outside, "c"), join(root ?? "", "c"));
-      await expect(
-        loadRealHopperFixtureTargets(manifest, { fixtureRoot: createdRoot() }),
-      ).rejects.toThrow(/escapes/u);
+      await expect(loadRealHopperFixtureTargets(manifest)).rejects.toThrow(
+        /escapes/u,
+      );
     } finally {
       await rm(outside, { recursive: true, force: true });
     }
@@ -90,32 +93,9 @@ describe("real Hopper fixture binding", () => {
     secondary.artifactSha256 = primary.artifactSha256;
     await writeFile(manifest, JSON.stringify(parsed));
 
-    await expect(
-      loadRealHopperFixtureTargets(manifest, { fixtureRoot: createdRoot() }),
-    ).rejects.toThrow(/distinct artifacts/u);
-  });
-
-  it("rejects a manifest outside the repository fixture root", async () => {
-    const manifest = await fixtureManifest();
     await expect(loadRealHopperFixtureTargets(manifest)).rejects.toThrow(
-      /escapes the fixture root/u,
+      /distinct artifacts/u,
     );
-  });
-
-  it("rejects a manifest symlink that leaves the fixture root", async () => {
-    const manifest = await fixtureManifest();
-    const outside = await createTestTempDirectory("rea-hopper-manifest-link-");
-    try {
-      const outsideManifest = join(outside, "manifest.json");
-      await writeFile(outsideManifest, await readFile(manifest));
-      const link = join(root ?? "", "linked-manifest.json");
-      await symlink(outsideManifest, link);
-      await expect(
-        loadRealHopperFixtureTargets(link, { fixtureRoot: createdRoot() }),
-      ).rejects.toThrow(/escapes the fixture root/u);
-    } finally {
-      await rm(outside, { recursive: true, force: true });
-    }
   });
 });
 

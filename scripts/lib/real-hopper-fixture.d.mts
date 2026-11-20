@@ -32,5 +32,4 @@ export interface RealHopperFixtureTargets {
 
 export function loadRealHopperFixtureTargets(
   manifestPath: string,
-  options?: { readonly fixtureRoot?: string },
 ): Promise<RealHopperFixtureTargets>;

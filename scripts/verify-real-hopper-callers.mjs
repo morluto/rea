@@ -76,6 +76,7 @@ const sdk = (
 // The command owner is created before the workspace. If allocation fails,
 // the owner is still closed and no root is left behind.
 const commands = await createVerifierCommands();
+// A plain root under /tmp, where this verifier has always built its fixtures.
 const workspace = await VerifierFixture.open({
   prefix: "rea-hopper-callers-verifier-",
   parent: "/tmp",
