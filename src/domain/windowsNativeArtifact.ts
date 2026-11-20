@@ -1,3 +1,5 @@
+import { BinaryReader } from "./binaryContainer.js";
+import { keyedBy, uniqueKeyed } from "./keyedCollection.js";
 import { observeMzWindowsHeader } from "./dosMz.js";
 import { readPeCoffHeader } from "./peCoffHeader.js";
 import {
@@ -194,25 +196,32 @@ export const validateWindowsNativeDelayImports = (
     );
     if (section.ok) sections.push(section.value);
   }
-  const locate = (rva: number, length: number) =>
-    sections.find(
+  const locate = (rva: number, length: number) => {
+    const candidates = sections.filter(
       (section) =>
         rva >= section.virtual_address &&
         rva - section.virtual_address + length <= section.size &&
         section.offset + section.size <= bytes.length,
     );
+    const selected = uniqueKeyed(
+      keyedBy(candidates, () => rva),
+      rva,
+    );
+    return selected.ok ? selected.value : undefined;
+  };
   const owner = locate(directory.address, directory.size);
   if (owner === undefined)
     return fail("has an unmapped delay-import directory");
   const start = owner.offset + directory.address - owner.virtual_address;
+  const reader = new BinaryReader(bytes, true, "pe");
   for (
     let descriptor = start;
     descriptor < start + directory.size;
     descriptor += DELAY_DESCRIPTOR_BYTES
   ) {
-    const attributes = bytes.readUInt32LE(descriptor);
-    const nameRva = bytes.readUInt32LE(descriptor + 4);
-    const iatRva = bytes.readUInt32LE(descriptor + 12);
+    const attributes = reader.u32(descriptor);
+    const nameRva = reader.u32(descriptor + 4);
+    const iatRva = reader.u32(descriptor + 12);
     if (
       descriptor > start &&
       bytes
