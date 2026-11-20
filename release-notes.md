@@ -544,6 +544,7 @@
 * **javascript:** preserve timer delays after global escapes ([54677ec](https://github.com/morluto/rea/commit/54677ec1d6e3f135056d710c80ced4353b1aac89))
 * **javascript:** preserve trailing-slash exports uncertainty ([3a25046](https://github.com/morluto/rea/commit/3a25046b8c69b85c6cd11f64b2f936ad7252cc1f)), closes [#9998](https://github.com/morluto/rea/issues/9998) [#10107](https://github.com/morluto/rea/issues/10107)
 * **javascript:** preserve uncertainty after immutable pattern targets ([#12673](https://github.com/morluto/rea/issues/12673)) ([a5f19cb](https://github.com/morluto/rea/commit/a5f19cbaf6d2b0bcda625e7198d02fcc2bdff822))
+* **javascript:** preserve uncertainty before lexical initialization ([#12682](https://github.com/morluto/rea/issues/12682)) ([ddd31b0](https://github.com/morluto/rea/commit/ddd31b028948b97918468107727c7ba4bfaf53d8))
 * **javascript:** preserve unknown Electron path bases ([#11991](https://github.com/morluto/rea/issues/11991)) ([4230ae1](https://github.com/morluto/rea/commit/4230ae1cd42fc6386f40f6494aff5f0526d3e36c))
 * **javascript:** preserve wide async chunk collection ([#10362](https://github.com/morluto/rea/issues/10362)) ([4b26f38](https://github.com/morluto/rea/commit/4b26f38d6f09423df25aa0ab4ebacabf268a459d))
 * **javascript:** project class definition-time effects through getters ([4a42707](https://github.com/morluto/rea/commit/4a42707544f53ee2cb134b4fa6085b1ff7465cc1)), closes [#9229](https://github.com/morluto/rea/issues/9229) [#9233](https://github.com/morluto/rea/issues/9233)
