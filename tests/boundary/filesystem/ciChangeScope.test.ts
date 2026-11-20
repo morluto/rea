@@ -443,6 +443,23 @@ it("does not credit a fixture test as coverage for an unrelated shared script", 
   });
 });
 
+it("traces an exact template import alongside an unrelated changed test", async () => {
+  const { directory } = await fixture();
+  const source = "src/example/Probe.ts";
+  const test = "tests/boundary/filesystem/templateImport.test.ts";
+  const unrelated = "tests/boundary/filesystem/unrelated.test.ts";
+  await change(
+    directory,
+    [test],
+    "await import(`../../../src/example/Probe.js`);\n",
+  );
+  const base = await change(directory, [source, unrelated]);
+  const head = await change(directory, [source, unrelated], "changed\n");
+  expect(await runPlanScript(directory, base, head)).toMatchObject({
+    testSelection: { mode: "selected", files: [test, unrelated] },
+  });
+});
+
 it("selects the tests a pull request affects and runs everything when it cannot decide", async () => {
   const { directory } = await fixture();
   // The entrypoint's output file is not part of the change.
