@@ -4,7 +4,7 @@ import { expect, it } from "vitest";
 import { configureClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
 import { parseClientConfiguration } from "../../../src/application/ClientConfigurationDocument.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { supportedClientRegistrationProfile } from "../../../src/application/SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../../fixtures/clientRegistrationProfile.js";
 
 it.each([90, 120])(
   "preserves caller-selected Grok startup timeout %s when refreshing its launcher",

@@ -3,31 +3,35 @@ import {
   erlangBeamSchema,
 } from "../../domain/erlang/beam.js";
 import type { ToolContract } from "../toolContractTypes.js";
-import { toolContractMetadata } from "../toolEffects.js";
+import { toolContractMetadata, evidenceEffects } from "../toolEffects.js";
 import { analysisDetailOutputSchemaOf } from "../analysisDetail.js";
 import { z } from "zod";
 import {
   erlangBeamSummaryViewResultSchema,
   erlangBeamTableViewResultSchema,
-} from "../../domain/analysisView/analysisView.js";
+} from "../../domain/analysisView/analysisViewResult.js";
 import {
   erlangBeamCompleteDeliveryShape,
   erlangBeamSummaryDeliveryShape,
 } from "../../domain/analysisView/erlangBeamView.js";
+import { presentRootDiscriminator } from "../../domain/schemaAnnotations.js";
 
 /** Delivery selection does not change provider inputs or complete Evidence identity. */
-export const inspectErlangBeamRequestSchema = z
-  .discriminatedUnion("detail", [
+export const inspectErlangBeamRequestSchema = presentRootDiscriminator(
+  z.discriminatedUnion("detail", [
     inspectErlangBeamInputSchema.extend(erlangBeamCompleteDeliveryShape),
     inspectErlangBeamInputSchema.extend(erlangBeamSummaryDeliveryShape),
-  ])
-  .meta({ "x-rea-root-discriminator": "detail" });
+  ]),
+  "detail",
+);
 
 /** Static BEAM inspection is independent of active native-analysis providers. */
 export const ERLANG_BEAM_TOOL_CONTRACTS = [
   {
     name: "inspect_erlang_beam",
-    ...toolContractMetadata("inspect_erlang_beam"),
+    availability: "standalone",
+    cli: true,
+    ...toolContractMetadata("inspect_erlang_beam", evidenceEffects),
     kind: "artifact-provider",
     requiresActiveTarget: true,
     description:

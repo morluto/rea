@@ -1,4 +1,4 @@
-export interface FixtureProcedure {
+interface FixtureProcedure {
   readonly address: string;
   readonly name: string;
 }
@@ -25,13 +25,6 @@ export function requireCurrentDocument(
   documents: readonly string[],
   normalizedResult: (value: unknown, operation: string) => unknown,
 ): Promise<string>;
-
-export function analyzeFixtureProcedure(
-  client: ToolClient,
-  options: unknown,
-  procedure: FixtureProcedure,
-  normalizedResult: (value: unknown, operation: string) => unknown,
-): Promise<unknown>;
 
 export function verifyRealHopperFixture(options: {
   readonly client: ToolClient;

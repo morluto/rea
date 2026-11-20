@@ -4,6 +4,11 @@ Use the [documentation directory](../README.md) to find existing material before
 adding another guide. Preserve one canonical owner for each contract or workflow;
 link to that owner instead of copying its claims into several guides.
 
+When a contract changes, update its owning page with the implementation. Check
+the examples and recovery steps in related guides against the supported CLI
+and MCP entry points. Link guides to the section that owns the shared behavior
+so readers can reach it from the task they are performing.
+
 ## Choose a destination
 
 | Document                                                 | Destination                            |
@@ -29,11 +34,18 @@ moving it into `specs/`.
 
 ## Feature lifecycle
 
+Create a feature record before implementation when the change adds a new MCP
+tool or CLI command, a new provider lane or format reader, or a new public
+contract. A bug fix inside an existing contract does not require a record.
+Records nest under `docs/specs/<domain>/<slug>/`. Every new record gets a
+`docs/specs/README.md` entry in the same pull request.
+
 Create the specification before implementation. Each feature directory contains:
 
 - `spec.md`: problem, desired behavior, requirements, acceptance and non-goals.
 - `plan.md`: the single implementation plan, contracts and architectural choices.
-- `tasks.md`: incremental, testable steps linked to requirements and verification.
+- `tasks.md`: incremental, testable implementation and verification steps linked
+  to requirements. Do not record pull-request process or review steps.
 
 Split independent domains or separately reviewable features before writing their
 specs. A broad `ROADMAP.md`, when useful, only lists child specifications, order
@@ -58,7 +70,8 @@ existing heading anchors when moving a guide.
 
 [`documentation.ts`](https://github.com/morluto/rea/blob/main/docs/.vitepress/documentation.ts)
 owns categorized site navigation and the existing guides' stable public routes.
-Update it when adding or moving a guide. VitePress rewrites categorized sources
+Update it and the [documentation directory](../README.md) when adding or
+recategorizing a guide. VitePress rewrites categorized sources
 to the existing public paths; its Markdown hook resolves repository links from
 the physical source and renders them against those public routes. Keep basenames
 and route assignments unique. Edit links use the physical source file.
@@ -70,10 +83,14 @@ historical release records and references bound to earlier commits or tags.
 
 ## Generated ownership and checks
 
-The [documentation directory](../README.md#machine-owned-documentation) identifies
-the machine-owned outputs and their producers. Their existing paths are retained
-because scripts, package consumers and release history depend on them. Change
-canonical sources and regenerate; do not fix a generated projection by hand.
+The [documentation directory](../README.md#generated-files-and-release-records) lists
+generated files, their producers, and release records. Scripts, package
+consumers, and release history depend on the listed paths. Update the producer
+or its inputs and regenerate.
+
+Do not write the number of tools in living prose; link the generated catalog
+instead. `docs:check` refuses a count of ten or more tools outside dated
+records (`docs/releases/`, `docs/specs/`, `docs/verification/`, `docs/adr/`).
 
 Run `npm run docs:check` for documentation facts and generated consistency, and
 `npm run verify:docs:routes` to build the complete production site and check local

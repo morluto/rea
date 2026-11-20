@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { lstat, realpath } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
@@ -75,7 +76,7 @@ const canonicalRegularConfigPath = async (
   if (fileSystem.realpath === undefined) return requestedPath;
   let ancestor = absoluteCallerPath(requestedPath);
   const directoryRequired =
-    process.platform !== "win32" && ancestor.endsWith("/");
+    HOST_PLATFORM.platform !== "win32" && ancestor.endsWith("/");
   const missing: string[] = [];
   while (true) {
     try {

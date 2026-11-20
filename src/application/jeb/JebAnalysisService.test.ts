@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import { JebAnalysisService } from "./JebAnalysisService.js";
-import type { JebAnalysisPort } from "./JebAnalysisPort.js";
+import type { JebAnalysisPort } from "../../ports/jeb/JebAnalysisPort.js";
 import type { JebRequest } from "../../domain/jeb/jebAnalysis.js";
-import { createAnalysisExecution } from "../AnalysisProvider.js";
+import { createAnalysisExecution } from "../../ports/AnalysisProvider.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,

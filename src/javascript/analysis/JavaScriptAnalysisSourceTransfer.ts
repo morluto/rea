@@ -1,6 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { win32 } from "node:path";
 
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { windowsPrivateRuntime } from "../../windows/WindowsPrivateRuntime.js";
 
 /**
@@ -16,11 +17,12 @@ export const writeJavaScriptAnalysisSourceTransfer = async (
   path: string,
   source: string,
   options: {
+    /** The host whose filesystem holds the runtime root; defaults to the running host. */
     readonly platform?: NodeJS.Platform;
     readonly signal?: AbortSignal;
   } = {},
 ): Promise<void> => {
-  const platform = options.platform ?? process.platform;
+  const platform = options.platform ?? HOST_PLATFORM.platform;
   options.signal?.throwIfAborted();
   if (platform === "win32") {
     // Yield through a timer phase so ProviderStartupDeadline setTimeout

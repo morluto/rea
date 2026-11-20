@@ -141,5 +141,4 @@ fetch("/copied-module");`,
     expect(analyzed.isError, JSON.stringify(analyzed.content)).not.toBe(true);
     verify(analyzed.structuredContent);
   },
-  90_000,
 );

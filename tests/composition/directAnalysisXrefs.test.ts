@@ -22,7 +22,6 @@ const inventory = [
   { address: "0x1000", value: "add" },
   { address: "0x1000", value: "0xHelper" },
   { address: "0x1000", value: "name:0xSuffix" },
-  { address: "0x1000", value: "entry_alias" },
   { address: "0x1000", value: "namespace::function" },
   { address: "0x2000", value: "data_symbol" },
   { address: "0x3000", value: "unreferenced" },
@@ -126,7 +125,9 @@ describe("direct CLI cross-reference selectors", () => {
 
   it("retains provider validation issues unrelated to symbol resolution", async () => {
     const [path] = await createBinarySessionTargets();
-    const issues = [{ path: ["address"], reason: "invalid_format" }] as const;
+    const issues = [
+      { path: ["address"], reason: "out_of_range", maximum: 4095 },
+    ] as const;
     const provider = fixture({
       xrefsError: new AnalysisInputError("xrefs", undefined, issues),
     });
@@ -134,15 +135,18 @@ describe("direct CLI cross-reference selectors", () => {
       provider.dependencies,
       path,
       "xrefs",
-      { address: "table_only" },
+      { address: "0x1000" },
     ).then(projectCliAnalysisResult);
     expect(result).toMatchObject({
       code: "invalid_request",
       details: { operation: "xrefs", issues },
     });
+    expect(provider.calls).toEqual([
+      { operation: "xrefs", parameters: { address: "0x1000" } },
+    ]);
     expect(provider.closed()).toBe(1);
   });
-  it.each(["hidden_alias", "dead", "0x1000", "1000", "space%20name:0x1000"])(
+  it.each(["hidden_alias", "dead", "0X1000", "space%20name:0x1000"])(
     "retains the provider's existing interpretation of %s",
     async (address) => {
       const [path] = await createBinarySessionTargets();
@@ -163,37 +167,19 @@ describe("direct CLI cross-reference selectors", () => {
       expect(provider.closed()).toBe(1);
     },
   );
-  it.each([
-    "table_only",
-    "entry_alias",
-    "namespace::function",
-    "data_symbol",
-    "same_address",
-    "0x1000",
-    "1000",
-    "0X1000",
-    "space%20name:0x1000",
-  ])(
-    "inspects %s and retains the original selector in Evidence",
-    async (address) => {
-      const [path] = await createBinarySessionTargets();
-      const provider = fixture();
-      const evidence = parseEvidence(
-        await runDirectAnalysis(provider.dependencies, path, "xrefs", {
-          address,
-        }).then(projectCliAnalysisResult),
-      );
-      expect(evidence.parameters).toEqual({ address });
-      expect(evidence.normalized_result).toEqual(["0x4000"]);
-      expect(provider.closed()).toBe(1);
-    },
-  );
 });
 
 describe("direct CLI cross-reference name resolution", () => {
-  it.each(["add", "0xHelper", "name:0xSuffix"])(
+  it.each([
+    ["add", "0x1000"],
+    ["0xHelper", "0x1000"],
+    ["name:0xSuffix", "0x1000"],
+    ["namespace::function", "0x1000"],
+    ["data_symbol", "0x2000"],
+    ["same_address", "0x1000"],
+  ])(
     "resolves %s after the provider rejects its address format",
-    async (address) => {
+    async (address, resolvedAddress) => {
       const [path] = await createBinarySessionTargets();
       const provider = fixture({ requiresPrefixedAddresses: true });
       const evidence = parseEvidence(
@@ -206,7 +192,7 @@ describe("direct CLI cross-reference name resolution", () => {
       expect(provider.calls).toEqual([
         { operation: "xrefs", parameters: { address } },
         { operation: "list_names", parameters: {} },
-        { operation: "xrefs", parameters: { address: "0x1000" } },
+        { operation: "xrefs", parameters: { address: resolvedAddress } },
       ]);
       expect(provider.closed()).toBe(1);
     },

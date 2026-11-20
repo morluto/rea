@@ -1,7 +1,9 @@
 import { parseOpenStep } from "plist";
 
 import { MAX_PLIST_DEPTH, PlistNestingLimitError } from "./apple/plistValue.js";
+import { ParseFailureError } from "./parseFailure.js";
 import { markPlistDictionary } from "./apple/plistUid.js";
+import type { PlistDuplicateKeyCollector } from "./apple/plistDuplicateKeys.js";
 
 const OPEN_STEP_SYNTAX_CODES = [
   "unterminated_block_comment",
@@ -169,14 +171,12 @@ export const decodeOpenStepQuotedString = (token: string): string => {
 export type OpenStepPropertyListCode = (typeof OPEN_STEP_SYNTAX_CODES)[number];
 
 /** OpenStep syntax refusal. `code` is the contract; `position` is the source offset. */
-export class OpenStepPropertyListError extends Error {
-  readonly _tag = "OpenStepPropertyListError";
-
+class OpenStepPropertyListError extends ParseFailureError<"malformed"> {
   constructor(
     readonly code: OpenStepPropertyListCode,
     readonly position?: number,
   ) {
-    super(code);
+    super({ kind: "malformed", format: "openstep-plist", detail: code });
     this.name = "OpenStepPropertyListError";
   }
 }
@@ -223,6 +223,7 @@ const skipTrivia = (text: string, start: number, strict = true): number => {
 export const decodeOpenStepPropertyList = (
   text: string,
   maximumDepth = MAX_PLIST_DEPTH,
+  duplicates?: PlistDuplicateKeyCollector,
 ): unknown => {
   let cursor = 0;
   const trivia = () => {
@@ -240,6 +241,7 @@ export const decodeOpenStepPropertyList = (
       assertDepth(depth);
       cursor += 1;
       const dictionary: Record<string, unknown> = {};
+      const keys: string[] = [];
       markPlistDictionary(dictionary);
       while (true) {
         trivia();
@@ -250,6 +252,7 @@ export const decodeOpenStepPropertyList = (
           );
         if (text[cursor] === "}") {
           cursor += 1;
+          duplicates?.dictionary(keys);
           return dictionary;
         }
         const key = value(depth + 1, true);
@@ -258,6 +261,7 @@ export const decodeOpenStepPropertyList = (
           throw new OpenStepPropertyListError("expected_equals", cursor);
         cursor += 1;
         const entry = value(depth + 1);
+        keys.push(String(key));
         Object.defineProperty(dictionary, String(key), {
           value: entry,
           enumerable: true,

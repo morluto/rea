@@ -3,12 +3,12 @@ import { describe, expect, it, vi } from "vitest";
 import {
   attachManagedDecodeBudget,
   ManagedDecodeBudget,
-} from "./ManagedDecodeBudget.js";
-import { memberListRowLookup } from "./ManagedMemberPointers.js";
-import { readManagedMetadataLayout } from "./ManagedMetadataLayout.js";
+} from "../domain/managed/managedDecodeBudget.js";
+import { memberListRowLookup } from "../domain/managed/managedMemberPointers.js";
+import { readManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
 import { buildManagedMemberPointerFixture } from "./ManagedPe.fixture.js";
-import { readManagedPeLayout } from "./ManagedPeReader.js";
-import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
+import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
+import { ManagedReaderFailure } from "../domain/managed/managedReaderFailure.js";
 
 const representationCapacity = 64 * 1024 * 1024;
 

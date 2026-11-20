@@ -10,9 +10,9 @@ import type { NodeSeaMetadata } from "../domain/artifactFormatMetadata.js";
 import {
   ArtifactPathRegistry,
   normalizeArtifactPath,
-} from "./ArtifactPaths.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
-import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
+  ArtifactReaderFailure,
+  artifactReaderLimitFailure,
+} from "../resources/index.js";
 import {
   decodeNodeSeaBlob,
   type DecodedNodeSeaBlob,
@@ -32,7 +32,6 @@ import {
 
 const SNAPSHOT_PATH = "__node_sea__/snapshot";
 const CODE_CACHE_PATH = "__node_sea__/code-cache";
-const MAIN_FALLBACK_PATH = "__node_sea__/main.cjs";
 const ASSET_FALLBACK_PREFIX = "__node_sea__/assets/";
 
 type NodeSeaRole = "main-script" | "snapshot" | "code-cache" | "asset";
@@ -163,6 +162,9 @@ export class NodeSeaArtifactReader extends PositionalArtifactReader {
       include_exec_argv: decoded.includeExecArgv,
       exec_argv_extension: decoded.execArgvExtension,
       exec_argv: [...decoded.execArgv],
+      ...(decoded.mainCodeFormat === undefined
+        ? {}
+        : { main_code_format: decoded.mainCodeFormat }),
       code_path: decoded.codePath,
       carrier: location.carrier,
       blob_offset: location.blobOffset,
@@ -175,10 +177,11 @@ export class NodeSeaArtifactReader extends PositionalArtifactReader {
     this.#admission = undefined;
     return {
       entries,
-      coverage:
-        fuse.fuseContradiction === null
-          ? undefined
-          : { status: "complete", limitations: [fuse.fuseContradiction] },
+      coverage: {
+        status: "complete",
+        limitations:
+          fuse.fuseContradiction === null ? [] : [fuse.fuseContradiction],
+      },
     };
   }
 }
@@ -217,7 +220,12 @@ function* seaMembers(decoded: DecodedNodeSeaBlob): Generator<{
   };
   if (decoded.mainScript !== null)
     yield {
-      path: mappedPath(decoded.codePath, MAIN_FALLBACK_PATH),
+      path: mappedPath(
+        decoded.codePath,
+        decoded.mainCodeFormat === "module"
+          ? "__node_sea__/main.mjs"
+          : "__node_sea__/main.cjs",
+      ),
       sourcePath: decoded.codePath,
       role: "main-script",
       range: decoded.mainScript,

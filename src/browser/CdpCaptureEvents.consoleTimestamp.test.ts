@@ -3,6 +3,7 @@ import { expect, it } from "vitest";
 import { CdpCaptureEvents } from "./CdpCaptureEvents.js";
 import { inspectWebPageInputSchema } from "../domain/browserObservation.js";
 import { webPageInspectionSchema } from "../domain/browserObservationSchemas.js";
+import { receiveCdpEvent } from "./CdpConnection.js";
 
 const origin = "http://127.0.0.1:43127";
 
@@ -23,7 +24,9 @@ const captureWithConsoleTimestamp = (timestamp: unknown): CdpCaptureEvents => {
     },
   };
   if (timestamp !== undefined) params.timestamp = timestamp;
-  capture.ingest({ method: "Runtime.consoleAPICalled", params });
+  capture.ingest(
+    receiveCdpEvent({ method: "Runtime.consoleAPICalled", params }),
+  );
   return capture;
 };
 

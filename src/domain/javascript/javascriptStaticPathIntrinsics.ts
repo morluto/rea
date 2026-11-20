@@ -7,7 +7,7 @@ import { evaluateSemanticExpressionProvenance } from "./javascriptSemanticValues
 import {
   isUnmodifiedGlobalReference,
   isUnmodifiedImportMetaUrl,
-} from "./javascriptSemanticAmbientWrites.js";
+} from "./javascriptSemanticGlobalReference.js";
 import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
 import type { JavaScriptStaticPathIntrinsicQuery } from "./javascriptStaticAnalysisHelpers.js";
 

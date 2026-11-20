@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   admitWitnessStage,
-  appStateViews,
   stageVerdict,
   type WitnessActionLog,
   type WitnessStageRecord,
@@ -347,56 +346,5 @@ describe("build witness over a long session", () => {
         lastApplied: { key: 950, reset: 900 },
       }),
     ).toMatchObject({ ok: false, error: expect.stringContaining("reset") });
-  });
-});
-
-describe("build witness state views", () => {
-  it("reads the app's data/get state into the views the checks read, keeping each file's error", () => {
-    expect(
-      appStateViews([
-        { kind: "file", file: { bytes: "eA==" } },
-        {
-          kind: "data",
-          data: {
-            state: {
-              "Documents/todo.txt": {
-                format: "text",
-                view: { lines: ["milk"], truncated: false },
-                truncated: false,
-              },
-              "Documents/big.bin": {
-                format: null,
-                view: null,
-                error: "larger than 64 MiB, the most the view reads",
-              },
-            },
-          },
-        },
-      ]),
-    ).toEqual({
-      ok: true,
-      value: new Map([
-        [
-          "Documents/todo.txt",
-          {
-            format: "text",
-            view: { lines: ["milk"], truncated: false },
-            error: null,
-          },
-        ],
-        [
-          "Documents/big.bin",
-          {
-            format: null,
-            view: null,
-            error: "larger than 64 MiB, the most the view reads",
-          },
-        ],
-      ]),
-    });
-    expect(appStateViews([{ kind: "file" }])).toMatchObject({
-      ok: false,
-      error: expect.stringContaining("no state views"),
-    });
   });
 });

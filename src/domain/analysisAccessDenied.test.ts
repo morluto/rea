@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { AnalysisAccessDeniedError } from "./analysisErrorCore.js";
 import { projectAnalysisError } from "./analysisErrorProjection.js";
-import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "./analysisErrorProjectionSchema.js";
 
 it.each(["EACCES", "EPERM"] as const)(
   "projects %s as host access denial with correction guidance and a valid public schema",

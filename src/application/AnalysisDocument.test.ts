@@ -3,7 +3,7 @@ import { resolveAnalysisDocument } from "./AnalysisDocument.js";
 import {
   createAnalysisExecution,
   type AnalysisOperationPort,
-} from "./AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -27,8 +27,6 @@ const unsupported = () =>
 
 it.each([
   null,
-  "caller stopped",
-  { request: "opaque" },
   new AnalysisCapabilityUnavailableError(
     "caller",
     "caller_operation",
@@ -55,46 +53,45 @@ it.each([
   if (result.ok) throw new Error("expected cancelled admission");
   expect(result.error).toBeInstanceOf(AnalysisCancelledError);
   expect(result.error.cause).toBe(reason);
+  expect(result.error).toMatchObject({ operation: "current_document" });
   expect(result.error.cleanupIncomplete).toBe(false);
   if (reason instanceof AnalysisCapabilityUnavailableError)
     expect(reason.cleanupIncomplete).toBe(true);
 });
 
-it.each([false, true])(
-  "does not fall back from an unavailable selection with incomplete cleanup (cancelled: %s)",
-  async (aborted) => {
-    const controller = new AbortController();
-    const failure = new AnalysisCapabilityUnavailableError(
-      "controlled",
-      "current_document",
-      "Unavailable while cleanup is pending",
-      {
-        cleanup: {
-          reason: "live provider resource",
-          resources: ["controlled resource"],
-        },
+it("preserves unavailable selection with incomplete cleanup when cancellation arrives", async () => {
+  const controller = new AbortController();
+  const failure = new AnalysisCapabilityUnavailableError(
+    "controlled",
+    "current_document",
+    "Unavailable while cleanup is pending",
+    {
+      cleanup: {
+        reason: "live provider resource",
+        resources: ["controlled resource"],
       },
-    );
-    const calls: string[] = [];
-    const port: AnalysisOperationPort = {
-      execute: async (operation) => {
-        calls.push(operation);
-        if (aborted) controller.abort(null);
-        return operation === "current_document"
-          ? err(failure)
-          : ok(createAnalysisExecution(["selected"], provider));
-      },
-    };
-    const result = await resolveAnalysisDocument(
-      port,
-      undefined,
-      controller.signal,
-    );
-    expect(result).toEqual(err(failure));
-    expect(calls).toEqual(["current_document"]);
-    expect(failure.cleanupIncomplete).toBe(true);
-  },
-);
+    },
+  );
+  const calls: string[] = [];
+  const port: AnalysisOperationPort = {
+    execute: async (operation) => {
+      calls.push(operation);
+      controller.abort(null);
+      return operation === "current_document"
+        ? err(failure)
+        : ok(createAnalysisExecution(["selected"], provider));
+    },
+  };
+  const result = await resolveAnalysisDocument(
+    port,
+    undefined,
+    controller.signal,
+  );
+  if (result.ok) throw new Error("expected the selection failure");
+  expect(result.error).toBe(failure);
+  expect(result.error.cleanupResources).toEqual(["controlled resource"]);
+  expect(calls).toEqual(["current_document"]);
+});
 
 it("does not start fallback after a clean unavailable selection completes under cancellation", async () => {
   const controller = new AbortController();

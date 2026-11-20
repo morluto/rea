@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { phaseGate } from "../support/lifecycleHarness.js";
 
 const writers = vi.hoisted(() => ({
   before: undefined as undefined | ((path: string) => Promise<void>),
@@ -66,7 +67,7 @@ vi.mock("../../src/process/BoundedFileBytes.js", async (importOriginal) => {
 
 import { configureClientConfiguration } from "../../src/application/SetupClientConfiguration.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { supportedClientRegistrationProfile } from "../../src/application/SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../fixtures/clientRegistrationProfile.js";
 
 afterEach(() => {
   writers.before = undefined;
@@ -346,19 +347,11 @@ it.skipIf(process.platform === "win32")(
       if (presence === "existing") await writeFile(realPath, "{}\n");
 
       const entered: string[] = [];
-      let releaseFirst!: () => void;
-      const release = new Promise<void>((resolve) => {
-        releaseFirst = resolve;
-      });
-      let markStarted!: () => void;
-      const started = new Promise<void>((resolve) => {
-        markStarted = resolve;
-      });
+      const writer = phaseGate();
       writers.before = async (target) => {
         entered.push(target);
         if (entered.length === 1) {
-          markStarted();
-          await release;
+          await writer.hold();
         }
       };
 
@@ -371,9 +364,10 @@ it.skipIf(process.platform === "win32")(
         },
         { FIRST: "1" },
       );
+      let second: ReturnType<typeof configureClientConfiguration> | undefined;
       try {
-        await started;
-        const second = configureClientConfiguration(
+        await writer.reached(first, "setup configuration writer");
+        second = configureClientConfiguration(
           {
             name: "cursor",
             registrationProfile: supportedClientRegistrationProfile("cursor"),
@@ -398,7 +392,7 @@ it.skipIf(process.platform === "win32")(
         });
         expect(secondReachedWriter).toBe(false);
         expect(entered).toEqual([realPath]);
-        releaseFirst();
+        writer.release();
         const [firstResult, secondResult] = await Promise.all([first, second]);
         expect([firstResult.status, secondResult.status]).toEqual([
           "configured",
@@ -411,8 +405,9 @@ it.skipIf(process.platform === "win32")(
           await readFile(realPath, "utf8"),
         );
       } finally {
-        releaseFirst();
+        writer.release();
         writers.before = undefined;
+        await Promise.allSettled([first, second]);
       }
     }
   },
@@ -450,42 +445,43 @@ it("releases a failed setup transaction so a queued request can configure the fi
     configPath: path,
     format: "json",
   } as const;
-  let markStarted!: () => void;
-  const started = new Promise<void>((resolve) => {
-    markStarted = resolve;
-  });
-  let releaseWriter!: () => void;
-  const release = new Promise<void>((resolve) => {
-    releaseWriter = resolve;
-  });
+  const writer = phaseGate();
   writers.before = async () => {
     writers.before = undefined;
-    markStarted();
-    await release;
+    await writer.hold();
     throw new Error("The first writer could not stage its configuration");
   };
 
   const first = configureClientConfiguration(client, { FIRST: "1" });
-  await started;
-  const second = configureClientConfiguration(client, { SECOND: "2" });
-  releaseWriter();
-  const [failed, queued] = await Promise.all([first, second]);
+  let second: ReturnType<typeof configureClientConfiguration> | undefined;
+  try {
+    await writer.reached(first, "setup configuration writer");
+    second = configureClientConfiguration(client, { SECOND: "2" });
+    writer.release();
+    const [failed, queued] = await Promise.all([first, second]);
 
-  expect(failed).toMatchObject({
-    status: "failed",
-    reason: "write",
-    failure: {
-      operation: "publish",
-      path,
-      detail: "The first writer could not stage its configuration",
-    },
-  });
-  expect(queued.status).toBe("configured");
-  expect(JSON.parse(await readFile(path, "utf8")).mcpServers.rea.env).toEqual({
-    SECOND: "2",
-  });
-  expect(await readdir(root)).toEqual(["config.json"]);
-  expect(await configureClientConfiguration(client)).toEqual({
-    status: "unchanged",
-  });
+    expect(failed).toMatchObject({
+      status: "failed",
+      reason: "write",
+      failure: {
+        operation: "publish",
+        path,
+        detail: "The first writer could not stage its configuration",
+      },
+    });
+    expect(queued.status).toBe("configured");
+    expect(JSON.parse(await readFile(path, "utf8")).mcpServers.rea.env).toEqual(
+      {
+        SECOND: "2",
+      },
+    );
+    expect(await readdir(root)).toEqual(["config.json"]);
+    expect(await configureClientConfiguration(client)).toEqual({
+      status: "unchanged",
+    });
+  } finally {
+    writer.release();
+    writers.before = undefined;
+    await Promise.allSettled([first, second]);
+  }
 });

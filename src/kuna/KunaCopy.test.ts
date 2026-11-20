@@ -5,28 +5,24 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactFileOperation.js";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
 import { readFile, writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
 
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { copyAndHash, kunaCopyFailureFacts } from "./KunaCommand.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import {
+  phaseArrival,
+  phaseGate,
+} from "../../tests/support/lifecycleHarness.js";
+import { withKunaProjectDeadline } from "../../tests/boundary/providers/kuna/kunaProjectRequest.js";
 
 vi.mock("node:fs/promises", { spy: true });
-
-const copyGate = () => {
-  let resolve!: () => void;
-  const promise = new Promise<void>((acknowledge) => {
-    resolve = acknowledge;
-  });
-  return { promise, resolve };
-};
 
 it.each([null, { caller: "active input copy" }])(
   "attributes cancellation after an actual copied chunk to its file owner (%j)",
@@ -37,23 +33,20 @@ it.each([null, { caller: "active input copy" }])(
     const resources = new ArtifactResourceScope();
     onTestFinished(() => resources.close());
     const controller = new AbortController();
-    let acknowledge!: () => void;
-    const entered = new Promise<void>((resolve) => {
-      acknowledge = resolve;
-    });
+    const prefix = phaseArrival();
     const copying = copyAndHash(source, join(root, "destination"), {
       signal: controller.signal,
       resources,
       keep: {
         probeBytes: 32,
         length: () => {
-          acknowledge();
+          prefix.arrive();
           return 32;
         },
       },
     });
     const result = copying.catch((cause: unknown) => cause);
-    await awaitAcknowledgement(entered, result, "actual input prefix");
+    await prefix.reached(result, "actual input prefix");
     controller.abort(reason);
     const failure = await result;
     expect(failure).toBeInstanceOf(ArtifactReaderFailure);
@@ -100,8 +93,7 @@ it.each(["read", "write"] as const)(
     await writeFile(source, Buffer.alloc(100, 0x61));
     const resources = new ArtifactResourceScope();
     const controller = new AbortController();
-    const entered = copyGate();
-    const release = copyGate();
+    const held = phaseGate();
     const handles: FileHandle[] = [];
     const native =
       await vi.importActual<typeof import("node:fs/promises")>(
@@ -116,8 +108,7 @@ it.each(["read", "write"] as const)(
         const original = file[stage];
         vi.spyOn(file, stage).mockImplementationOnce(
           async (...ioArgs: unknown[]) => {
-            entered.resolve();
-            await release.promise;
+            await held.hold();
             return Reflect.apply(original, file, ioArgs);
           },
         );
@@ -125,7 +116,7 @@ it.each(["read", "write"] as const)(
       return file;
     });
     onTestFinished(async () => {
-      release.resolve();
+      held.release();
       vi.restoreAllMocks();
       await resources.close();
       for (const handle of handles) await handle.close();
@@ -139,13 +130,13 @@ it.each(["read", "write"] as const)(
       .finally(() => {
         settled = true;
       });
-    await awaitAcknowledgement(entered.promise, result, `native ${stage}`);
+    await held.reached(result, `native ${stage}`);
     const reason = { stage };
     controller.abort(reason);
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(settled).toBe(false);
     expect(handles.every(({ fd }) => fd >= 0)).toBe(true);
-    release.resolve();
+    held.release();
     const failure = await result;
     expect(failure).toBeInstanceOf(ArtifactReaderFailure);
     if (!(failure instanceof ArtifactReaderFailure))
@@ -305,11 +296,13 @@ it("keeps staging until both copy descriptors close, then retires the exact work
     await cache.close();
     vi.restoreAllMocks();
   });
-  const built = await cache.build({
-    installation,
-    targetPath,
-    targetSha256: createHash("sha256").update("owned input").digest("hex"),
-  });
+  const built = await cache.build(
+    withKunaProjectDeadline({
+      installation,
+      targetPath,
+      targetSha256: createHash("sha256").update("owned input").digest("hex"),
+    }),
+  );
   if (built.ok)
     throw new Error(
       "Expected copy descriptor cleanup failure before any engine call",
@@ -347,8 +340,7 @@ it.each([false, true])(
     await writeFile(source, input);
     const resources = new ArtifactResourceScope();
     const controller = new AbortController();
-    const entered = copyGate();
-    const release = copyGate();
+    const held = phaseGate();
     const original = OwnedFileHandle.prototype.close;
     let first = true;
     let rejectClose = refuse;
@@ -356,15 +348,14 @@ it.each([false, true])(
       async function (this: OwnedFileHandle) {
         if (first) {
           first = false;
-          entered.resolve();
-          await release.promise;
+          await held.hold();
         }
         if (rejectClose) throw new Error("final descriptor close refused");
         await original.call(this);
       },
     );
     onTestFinished(async () => {
-      release.resolve();
+      held.release();
       rejectClose = false;
       await resources.close();
       vi.restoreAllMocks();
@@ -374,15 +365,11 @@ it.each([false, true])(
       resources,
       keep: { probeBytes: 1, length: () => 8 },
     }).catch((cause: unknown) => cause);
-    await awaitAcknowledgement(
-      entered.promise,
-      result,
-      "final copy descriptor close",
-    );
+    await held.reached(result, "final copy descriptor close");
     expect((await readFile(destination)).equals(input)).toBe(true);
     const reason = { phase: "final copy close" };
     controller.abort(reason);
-    release.resolve();
+    held.release();
     const failure = await result;
     expect(failure).toBeInstanceOf(ArtifactReaderFailure);
     const { completion } = kunaCopyFailureFacts(failure);

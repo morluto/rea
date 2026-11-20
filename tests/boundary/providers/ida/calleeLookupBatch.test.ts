@@ -156,6 +156,7 @@ it("uses the batch through a modern session and preserves the observed callee Ev
       args: [],
       env: {},
       mode: "headless",
+      protocol: "modern",
       timeoutMs: 1000,
       workspaceRoot: root,
     },

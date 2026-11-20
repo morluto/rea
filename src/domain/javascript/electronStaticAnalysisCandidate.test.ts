@@ -18,7 +18,7 @@ describe("conditional Electron identities", () => {
 
   it("retains alias-derived findings without proving an unknown loader", () => {
     const result = analyze(source, "main.MJS");
-    expect(result.analysis_coverage?.applicability.electron).toBe("unknown");
+    expect(result.analysis_coverage.applicability.electron).toBe("unknown");
     expect(result.electron.browser_windows).toMatchObject([
       {
         loader_authority: "candidate",
@@ -38,7 +38,7 @@ describe("conditional Electron identities", () => {
 
   it("retains established CommonJS and ES module observations as proven", () => {
     const commonjs = analyze(source, "main.cjs");
-    expect(commonjs.analysis_coverage?.applicability.electron).toBe("observed");
+    expect(commonjs.analysis_coverage.applicability.electron).toBe("observed");
     expect(
       commonjs.electron.browser_windows[0]?.loader_authority,
     ).toBeUndefined();
@@ -46,7 +46,7 @@ describe("conditional Electron identities", () => {
       'import { BrowserWindow } from "electron"; new BrowserWindow({});',
       "main.mjs",
     );
-    expect(esm.analysis_coverage?.applicability.electron).toBe("observed");
+    expect(esm.analysis_coverage.applicability.electron).toBe("observed");
     expect(esm.electron.browser_windows[0]?.loader_authority).toBeUndefined();
   });
 
@@ -54,7 +54,7 @@ describe("conditional Electron identities", () => {
     const optional =
       'const {app, BrowserWindow} = require?.("electron"); app.setAppPath("/tmp"); new BrowserWindow();';
     const candidate = analyze(optional, "main.MJS");
-    expect(candidate.analysis_coverage?.applicability.electron).toBe("unknown");
+    expect(candidate.analysis_coverage.applicability.electron).toBe("unknown");
     expect(candidate.electron.browser_windows).toMatchObject([
       { loader_authority: "candidate" },
     ]);

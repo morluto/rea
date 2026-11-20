@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 
@@ -16,7 +16,7 @@ import type {
   AgentEnvComputer,
   RecordingManifest,
 } from "../../desktop/AgentEnvComputer.js";
-import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
 import {
   LOGGED_ACTIONS,
   LOGGED_BYTES,
@@ -25,13 +25,14 @@ import {
   type BuildComputerAction,
   type ReadonlyActionLog,
 } from "./DesktopBuildActionLog.js";
-import { errorText } from "./DesktopBuildCommands.js";
 import { DESKTOP_PROVIDER } from "./DesktopCaptureRefusals.js";
 import {
   planOutputTree,
   writeOutputTree,
   desktopOutputFailure,
 } from "./DesktopOutputTree.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const CHECK = "check_build_task";
 const RECORD = "witness.json";
@@ -82,9 +83,6 @@ export interface EndedWitness {
   readonly stages: WitnessStageRecord[];
 }
 
-const sha256 = (bytes: Buffer) =>
-  createHash("sha256").update(bytes).digest("hex");
-
 /** A recording fetch that can resume after the manifest is known. */
 type RecordingFetch =
   | {
@@ -113,7 +111,7 @@ const fetchRecording = async (
   try {
     manifest ??= await computer.endRecording(recordingId, signal);
   } catch (cause: unknown) {
-    return { ok: false, error: errorText(cause) };
+    return { ok: false, error: errorMessage(cause) };
   }
   try {
     const segments = await computer.recordingSegments(manifest, signal);
@@ -128,12 +126,12 @@ const fetchRecording = async (
             segment.path.split("/").at(-1) ?? segment.path,
           ),
           bytes: segment.bytes.length,
-          sha256: sha256(segment.bytes),
+          sha256: sha256Hex(segment.bytes),
         })),
       },
     };
   } catch (cause: unknown) {
-    return { ok: false, error: errorText(cause), manifest };
+    return { ok: false, error: errorMessage(cause), manifest };
   }
 };
 
@@ -160,7 +158,7 @@ const writeRecordFolder = async (
           await tree.write(
             file.path,
             Readable.from([file.bytes]),
-            { bytes: file.bytes.length, sha256: sha256(file.bytes) },
+            { bytes: file.bytes.length, sha256: sha256Hex(file.bytes) },
             signal,
           );
       },
@@ -189,7 +187,7 @@ const writeRecordFolder = async (
         cause instanceof AnalysisError
           ? cause
           : new ProviderAdapterError(AGENTENV_PROVIDER, CHECK, {
-              userMessage: `The witness record could not be written: ${errorText(cause)}`,
+              userMessage: `The witness record could not be written: ${errorMessage(cause)}`,
               cause,
               partialObservation: evidence,
             }),
@@ -318,22 +316,26 @@ export const writeWitnessRecord = async (
   const result = redact(
     recorded as unknown as JsonValue,
   ) as unknown as typeof recorded;
-  const evidence = createEvidence(undefined, DESKTOP_PROVIDER, {
-    predicateType: "rea.desktop-build-witness",
-    operation: CHECK,
-    parameters: { task: result.task.name, stages: witness.stages.length },
-    result: result as unknown as JsonValue,
-    confidence: "observed",
-    authority: "controlled-replay",
-    limitations: [
-      howChecked(witness.task),
-      ...("error" in recording
-        ? [`The recording is missing: ${recording.error}`]
-        : []),
-      ...logLimitations(actions, dropped),
-      ...unsettledLimitation(result.stages),
-    ],
-  });
+  const evidence = createEvidence(
+    unknownTarget("not-observed"),
+    DESKTOP_PROVIDER,
+    {
+      predicateType: "rea.desktop-build-witness",
+      operation: CHECK,
+      parameters: { task: result.task.name, stages: witness.stages.length },
+      result: result as unknown as JsonValue,
+      confidence: "observed",
+      authority: "controlled-replay",
+      limitations: [
+        howChecked(witness.task),
+        ...("error" in recording
+          ? [`The recording is missing: ${recording.error}`]
+          : []),
+        ...logLimitations(actions, dropped),
+        ...unsettledLimitation(result.stages),
+      ],
+    },
+  );
   const files = [
     ...("segments" in recording
       ? recording.segments.flatMap((target, index) => {

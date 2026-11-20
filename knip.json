@@ -3,6 +3,7 @@
   "entry": [
     "src/main.ts",
     "src/cli.ts",
+    "src/cliOneShot.ts",
     "src/cliOutput.ts",
     "src/cliBuiltinArguments.ts",
     "src/cli/cliResultOutput.ts",
@@ -10,6 +11,7 @@
     "src/composition/javascriptAnalysisWorkerProcess.ts",
     "src/composition/webBundleAnalysisWorkerProcess.ts",
     "src/contracts/errorSchemas.ts",
+    "scripts/read-authored-skill-manifest.mjs",
     "scripts/verify/fridaBindingsCompatibility.ts",
     "scripts/verify/termux/browser.mjs",
     "scripts/verify-real-ghidra-noreturn.mjs",

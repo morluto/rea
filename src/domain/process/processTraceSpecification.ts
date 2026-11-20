@@ -8,6 +8,7 @@ import {
   comparableProcessObservationPayload,
   processObservationSourceSchema,
 } from "./processObservation.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /**
  * A declared trace, event or variant identifier. The specification owns this
@@ -660,11 +661,7 @@ export const processTraceSpecificationSchema =
       ignoredFieldsBySource.set(event.source, ignoredKey);
       if (
         ignoredFields.some(
-          (field) =>
-            typeof event.exact === "object" &&
-            event.exact !== null &&
-            !Array.isArray(event.exact) &&
-            field in event.exact,
+          (field) => isRecord(event.exact) && field in event.exact,
         )
       )
         context.addIssue({

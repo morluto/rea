@@ -367,7 +367,7 @@ export const projectBrowserScenarioView = (
         network: summarizeBrowserScenarioNetwork(capture),
         limitation_count: shared.limitations.length,
       },
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   if (
     view.collection === "text" &&

@@ -1,3 +1,4 @@
+import { environmentEntityKey } from "../../domain/analysisView/environmentStateIdentity.js";
 import { types } from "node:util";
 import { z } from "zod";
 
@@ -28,7 +29,6 @@ import {
   type JsonValue,
 } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { compositeKey } from "../../domain/unicodeCodePointOrder.js";
 import type { EnvironmentState } from "./environmentState.js";
 import { ENVIRONMENT_SERVE_OPERATION } from "./environmentSource.js";
 import { REA_STATE_FORMAT } from "./environmentTools.js";
@@ -216,7 +216,7 @@ interface EntityCheck {
 }
 
 const entityKey = (entity: Pick<StateEntity, "type" | "collection" | "id">) =>
-  compositeKey([entity.type, entity.collection, entity.id]);
+  environmentEntityKey(entity.type, entity.collection, entity.id);
 
 /** The first problem with an entity's view values: each names an item or list view of its type once and keeps its identity. */
 const viewFieldsProblem = (

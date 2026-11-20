@@ -94,7 +94,7 @@ export const prepareProtobufBody = async (
 ): Promise<PreparedProtobufBody> => {
   if (body.length > captureBudgets().inputBytes)
     throw new CaptureFormatError(
-      "limit",
+      { name: "protobuf-body", maximum: captureBudgets().inputBytes },
       `Protobuf body exceeds max_input_bytes (${String(captureBudgets().inputBytes)} bytes)`,
     );
   const work = new ProtobufBudget(signal);

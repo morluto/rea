@@ -30,7 +30,7 @@ afterEach(() => {
   cleanup.denied = false;
   cleanup.onRemoval = undefined;
 });
-import { createJavaScriptSourceAnalysis } from "../../artifacts/javascript/JavaScriptSourceAnalysis.js";
+import { createJavaScriptSourceAnalysis } from "./JavaScriptSourceAnalysis.js";
 import { spawnOwnedProviderProcess } from "../../process/ProviderProcess.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 
@@ -45,6 +45,7 @@ it.each([
   "utf8-cleanup-retry",
 ] as const)(
   "authenticates the physical worker transfer at the source-analysis port: %s",
+  { tags: ["long-running"] },
   async (mode) => {
     const controller = new AbortController();
     const cancellation = { reason: "cancel after physical transfer failure" };
@@ -153,5 +154,4 @@ it.each([
     if (root === undefined) throw new Error("Worker root was not acquired");
     await expect(lstat(root)).rejects.toMatchObject({ code: "ENOENT" });
   },
-  40_000,
 );

@@ -1,3 +1,9 @@
+import {
+  fileIdentity,
+  fileSubjectDisplay,
+  fileSubjectTarget,
+  displayedEvidenceSubject,
+} from "../../../tests/fixtures/evidenceSubject.js";
 import { expect, it, vi } from "vitest";
 
 import {
@@ -52,14 +58,8 @@ it("keeps a static trace subject unknown when legacy graph root evidence is omit
     ...semanticInput,
     application_graph_id: graph.graph_id,
   });
-  if (original.subject === null)
-    throw new Error("Expected application subject");
   const legacy = createEvidence(
-    {
-      path: original.subject.local_path,
-      sha256: original.subject.digest.sha256,
-      format: original.subject.format,
-    },
+    fileSubjectTarget(original.subject),
     original.provider,
     {
       operation: original.operation,
@@ -75,7 +75,7 @@ it("keeps a static trace subject unknown when legacy graph root evidence is omit
     application: legacy,
   });
   if (!trace.ok) throw trace.error;
-  expect(trace.value.evidence.subject).toBeNull();
+  expect(trace.value.evidence.subject.identity.kind).toBe("unknown");
 });
 
 const native = createEvidence(
@@ -86,13 +86,11 @@ const native = createEvidence(
 
 it("preserves the verified application subject in both trace workflows", async () => {
   const original = JAVASCRIPT_FEATURE_TRACE_EXAMPLE.application;
-  if (original.subject === null)
-    throw new Error("Expected application subject");
   const application = createEvidence(
     {
-      path: original.subject.local_path,
-      sha256: original.subject.digest.sha256,
-      format: original.subject.format,
+      path: fileSubjectDisplay(original.subject).local_path,
+      sha256: fileIdentity(original.subject).sha256,
+      format: fileIdentity(original.subject).format,
       architecture: "x86_64",
       name: "caller-selected-name",
     },
@@ -120,9 +118,6 @@ it("preserves the verified application subject in both trace workflows", async (
   for (const result of [feature, semantic]) {
     if (!result.ok) throw result.error;
     expect(result.value.evidence.subject).toEqual(application.subject);
-    expect(result.value.evidence.limitations).not.toContain(
-      "Artifact identity is unavailable for this observation.",
-    );
   }
   if (!feature.ok) throw feature.error;
   const view = await inspectAnalysisView({
@@ -133,7 +128,9 @@ it("preserves the verified application subject in both trace workflows", async (
   expect(view.value.subject).toEqual(application.subject);
   const selected = parseEvidence({
     ...feature.value.evidence,
-    subject: { ...feature.value.evidence.subject, name: "selected display" },
+    subject: displayedEvidenceSubject(feature.value.evidence.subject, {
+      name: "selected display",
+    }),
   });
   const retained = projectRetainedAnalysis(
     selected,
@@ -147,9 +144,9 @@ it("preserves the verified application subject in both trace workflows", async (
   expect(retained.value.subject?.name).toBe("selected display");
   expect(
     rebindEvidenceToTargetPath(feature.value.evidence, {
-      path: application.subject!.local_path,
+      path: fileSubjectDisplay(application.subject).local_path,
       sha256: "f".repeat(64),
-      format: application.subject!.format,
+      format: fileIdentity(application.subject).format,
       architecture: "x86_64",
       name: "wrong artifact",
     }),
@@ -176,10 +173,7 @@ it("does not attribute a multi-source reconciliation graph to its envelope subje
     application: reconciliation,
   });
   if (!result.ok) throw result.error;
-  expect(result.value.evidence.subject).toBeNull();
-  expect(result.value.evidence.limitations).toContain(
-    "Artifact identity is unavailable for this observation.",
-  );
+  expect(result.value.evidence.subject.identity.kind).toBe("unknown");
 });
 
 it("resolves feature native arrays without changing source identity or unknowns", () => {

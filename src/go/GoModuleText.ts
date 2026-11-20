@@ -1,6 +1,7 @@
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 import type { GoModule, GoModuleMetadata } from "../domain/go/goBinary.js";
 
-const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const utf8 = strictUtf8Decoder("preserve");
 const escapes = new Map([
   ["a", 7],
   ["b", 8],
@@ -37,10 +38,16 @@ const quoted = (input: string): { value: string; end: number } | null => {
     }
     if (character === "\n") return null;
     if (character !== "\\") {
-      const point = input.codePointAt(index);
-      if (point === undefined) return null;
-      length += output.write(String.fromCodePoint(point), length, "utf8");
-      index += point > 0xffff ? 2 : 1;
+      const start = index;
+      do {
+        index += 1;
+      } while (
+        index < input.length &&
+        input[index] !== '"' &&
+        input[index] !== "\n" &&
+        input[index] !== "\\"
+      );
+      length += output.write(input.slice(start, index), length, "utf8");
       continue;
     }
     const escaped = input[index + 1];
