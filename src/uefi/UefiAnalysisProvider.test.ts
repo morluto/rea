@@ -25,7 +25,7 @@ import {
   buildSection,
   guidBytes,
 } from "../../tests/fixtures/uefiImage.js";
-import { FFS3_FILE_SYSTEM_GUID } from "./UefiGuid.js";
+import { FFS2_FILE_SYSTEM_GUID, FFS3_FILE_SYSTEM_GUID } from "./UefiGuid.js";
 import { UefiAnalysisProvider } from "./UefiAnalysisProvider.js";
 import {
   uefiRequestSchema,
@@ -1970,54 +1970,62 @@ it("skips a large file in FFS2 while preserving the next file for inspection and
   }
 });
 
-it("preserves a later FFS file across interrupted headers and unpublished data", async () => {
-  const incomplete = Buffer.alloc(32, 0xff);
-  incomplete[19] = 1;
-  incomplete[23] = 0x1f; // Header invalid, with an astronomically large ExtendedSize.
-  const pending = buildFfsFile({
-    guid: GUID_DRIVER,
-    typeCode: 1,
-    payload: Buffer.from([0x31]),
-  });
-  pending[23] = 0x3c; // Header valid, data validity not set.
-  const intact = buildFfsFile({
-    guid: GUID_RAW,
-    typeCode: 1,
-    payload: RAW_BODY,
-  });
-  const { buffer } = buildFv({
-    files: [incomplete, pending, intact],
-    fileSystemGuid: FFS3_FILE_SYSTEM_GUID,
-  });
-  const root = await createTestTempDirectory("rea-uefi-interrupted-ffs-");
-  const path = join(root, "image.fd");
-  await writeFile(path, buffer);
-  const provider = new UefiAnalysisProvider();
-  try {
-    const inspected = expectOk(await provider.execute(inspectRequest(path)))
-      .value.result as UefiInspectResult;
-    expect(inspected.coverage).toBe("partial");
-    expect(
-      inspected.firmware_volumes[0]?.ffs_files.map(({ offset, checksum }) => [
-        offset,
-        checksum,
-      ]),
-    ).toEqual([
-      [104, "unchecked"],
-      [136, "unchecked"],
-    ]);
-    const extracted = expectOk(
-      await provider.execute(extractRequest(path, join(root, "out"))),
-    ).value.result as UefiExtractResult;
-    expect(extracted.files).toMatchObject([{ sha256: sha256(RAW_BODY) }]);
-    expect(extracted.extraction_gaps).toMatchObject([
-      { kind: "unparsed-region", range: { offset: 72, length: 32 } },
-      { kind: "unparsed-region", range: { offset: 128, length: 1 } },
-    ]);
-  } finally {
-    await provider.close();
-  }
-});
+it.each([
+  ["FFS2", FFS2_FILE_SYSTEM_GUID, 0x100_0000n],
+  ["FFS3", FFS3_FILE_SYSTEM_GUID, 0xffff_ffff_ffff_ffffn],
+] as const)(
+  "preserves a later %s file across interrupted headers and unpublished data",
+  async (_, fileSystemGuid, size) => {
+    const incomplete = Buffer.alloc(32, 0xff);
+    incomplete[19] = 1;
+    incomplete.fill(0, 20, 23);
+    incomplete[23] = 0x1f; // Header invalid. Its ExtendedSize cannot establish an extent.
+    incomplete.writeBigUInt64LE(size, 24);
+    const pending = buildFfsFile({
+      guid: GUID_DRIVER,
+      typeCode: 1,
+      payload: Buffer.from([0x31]),
+    });
+    pending[23] = 0x3c; // Header valid, data validity not set.
+    const intact = buildFfsFile({
+      guid: GUID_RAW,
+      typeCode: 1,
+      payload: RAW_BODY,
+    });
+    const { buffer } = buildFv({
+      files: [incomplete, pending, intact],
+      fileSystemGuid,
+    });
+    const root = await createTestTempDirectory("rea-uefi-interrupted-ffs-");
+    const path = join(root, "image.fd");
+    await writeFile(path, buffer);
+    const provider = new UefiAnalysisProvider();
+    try {
+      const inspected = expectOk(await provider.execute(inspectRequest(path)))
+        .value.result as UefiInspectResult;
+      expect(inspected.coverage).toBe("partial");
+      expect(
+        inspected.firmware_volumes[0]?.ffs_files.map(({ offset, checksum }) => [
+          offset,
+          checksum,
+        ]),
+      ).toEqual([
+        [104, "unchecked"],
+        [136, "unchecked"],
+      ]);
+      const extracted = expectOk(
+        await provider.execute(extractRequest(path, join(root, "out"))),
+      ).value.result as UefiExtractResult;
+      expect(extracted.files).toMatchObject([{ sha256: sha256(RAW_BODY) }]);
+      expect(extracted.extraction_gaps).toMatchObject([
+        { kind: "unparsed-region", range: { offset: 72, length: 32 } },
+        { kind: "unparsed-region", range: { offset: 128, length: 1 } },
+      ]);
+    } finally {
+      await provider.close();
+    }
+  },
+);
 
 it.each([
   {

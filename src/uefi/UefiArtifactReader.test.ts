@@ -315,42 +315,72 @@ it("retains a file in the erased tail claimed by the FV extension and reports un
   }
 });
 
-it("retains FFS siblings in inventory after skipping an unrepresentable invalid header", async () => {
-  const invalid = Buffer.alloc(32, 0xff);
-  invalid[19] = 1;
-  invalid[23] = 0x1f;
-  const sibling = buildFfsFile({
-    guid: DRIVER_GUID,
-    typeCode: 1,
-    payload: Buffer.from([0x31]),
-  });
-  const reader = await openReader(
-    buildFv({
-      files: [invalid, sibling],
-      fileSystemGuid: FFS3_FILE_SYSTEM_GUID,
-    }).buffer,
-  );
-  const onOmission = vi.fn();
-  const onCoverage = vi.fn();
-  try {
-    const entries = await collectEntries(reader, { onOmission, onCoverage });
-    expect(
-      entries
-        .filter(({ kind }) => kind === "file")
-        .map(({ byteOffset }) => byteOffset),
-    ).toEqual([104]);
-    expect(onOmission).toHaveBeenCalledExactlyOnceWith({
-      kind: "unsupported",
-      path: "firmware-volume-0x0/ffs-header-0x48",
+it.each([
+  [
+    "FFS2 construction, representable size",
+    FFS2_FILE_SYSTEM_GUID,
+    0x01,
+    0x100_0000n,
+  ],
+  [
+    "FFS2 invalid, representable size",
+    FFS2_FILE_SYSTEM_GUID,
+    0x20,
+    0x100_0000n,
+  ],
+  [
+    "FFS2 invalid, unrepresentable size",
+    FFS2_FILE_SYSTEM_GUID,
+    0x20,
+    0xffff_ffff_ffff_ffffn,
+  ],
+  [
+    "FFS3 invalid, unrepresentable size",
+    FFS3_FILE_SYSTEM_GUID,
+    0x20,
+    0xffff_ffff_ffff_ffffn,
+  ],
+] as const)(
+  "retains FFS siblings in inventory after %s",
+  async (_, fileSystemGuid, state, size) => {
+    const invalid = Buffer.alloc(32, 0xff);
+    invalid[19] = 1;
+    invalid.fill(0, 20, 23);
+    invalid[23] = ~state & 0x3f;
+    invalid.writeBigUInt64LE(size, 24);
+    const sibling = buildFfsFile({
+      guid: DRIVER_GUID,
+      typeCode: 1,
+      payload: Buffer.from([0x31]),
     });
-    expect(onCoverage).toHaveBeenCalledWith({
-      status: "unknown",
-      limitations: [expect.stringContaining("0xffffffffffffffff")],
-    });
-  } finally {
-    await reader.close();
-  }
-});
+    const reader = await openReader(
+      buildFv({
+        files: [invalid, sibling],
+        fileSystemGuid,
+      }).buffer,
+    );
+    const onOmission = vi.fn();
+    const onCoverage = vi.fn();
+    try {
+      const entries = await collectEntries(reader, { onOmission, onCoverage });
+      expect(
+        entries
+          .filter(({ kind }) => kind === "file")
+          .map(({ byteOffset }) => byteOffset),
+      ).toEqual([104]);
+      expect(onOmission).toHaveBeenCalledExactlyOnceWith({
+        kind: "unsupported",
+        path: "firmware-volume-0x0/ffs-header-0x48",
+      });
+      expect(onCoverage).toHaveBeenCalledWith({
+        status: "unknown",
+        limitations: [expect.stringContaining("fixed header extent")],
+      });
+    } finally {
+      await reader.close();
+    }
+  },
+);
 
 it.each([
   [FFS2_FILE_SYSTEM_GUID, "unknown"],
