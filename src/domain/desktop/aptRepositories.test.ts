@@ -9,6 +9,7 @@ import {
 import {
   aptListFileName,
   dearmorPublicKeys,
+  deb822Paragraphs,
   declaredPackageFiles,
   entryForTarget,
   isArmoredKey,
@@ -803,3 +804,39 @@ it.each([
     ).toEqual(expected);
   },
 );
+
+it.each([
+  ["space", " ", "\n"],
+  ["tab", "\t", "\n"],
+  ["space before CRLF", " ", "\r\n"],
+])(
+  "keeps a %s-only continuation inside its deb822 source",
+  (_name, indent, eol) => {
+    const text = [
+      "Types: deb",
+      "URIs: https://disabled.invalid/deb",
+      "Suites: stable",
+      "Components: main",
+      indent,
+      "Enabled: no",
+      "",
+      "Types: deb",
+      "URIs: https://active.invalid/deb",
+      "Suites: next",
+      "Components: main",
+      "",
+    ].join(eol);
+    const stanzas = parseDeb822Sources(Buffer.from(text), "local.sources");
+    expect(
+      stanzas.map(({ position, suites }) => ({ position, suites })),
+    ).toEqual([{ position: 2, suites: ["next"] }]);
+  },
+);
+
+it("preserves interior blank continuations but trims them at the end of a deb822 field", () => {
+  const [fields] = deb822Paragraphs(
+    "Name: first\n \n second\n\t\nOther: value\n",
+  );
+  expect(fields?.get("name")).toBe("first\n\nsecond");
+  expect(fields?.get("other")).toBe("value");
+});
