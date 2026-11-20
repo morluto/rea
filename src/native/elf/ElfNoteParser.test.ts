@@ -1171,42 +1171,6 @@ it("decodes Linux core dump notes for 32-bit big-endian", () => {
   ]);
 });
 
-it("decodes a 32-bit prpsinfo whose ABI gives pr_uid 32 bits", () => {
-  // MIPS o32 uses 32-bit kernel UID/GID fields.
-  const report = parse(
-    elfNoteFixture({
-      bits: 32,
-      machine: 8,
-      type: 4,
-      ownership: "program",
-      notes: corePrpsinfoNote({
-        bits: 32,
-        idWidth: 4,
-        state: 1,
-        uid: 70_000,
-        gid: 80_000,
-        pid: 4242,
-        ppid: 1,
-        pgrp: 4242,
-        sid: 4242,
-        fname: "mips-proc",
-        psargs: "./mips-proc --serve",
-      }),
-    }),
-  );
-  expect(report.entries[0]?.core?.prpsinfo).toEqual({
-    state: 1,
-    pid: 4242,
-    ppid: 1,
-    pgrp: 4242,
-    sid: 4242,
-    uid: 70_000,
-    gid: 80_000,
-    filename: "mips-proc",
-    psargs: "./mips-proc --serve",
-  });
-});
-
 it.each([
   { name: "i386", machine: 3, little: true },
   { name: "s390 compat", machine: 22, little: false },

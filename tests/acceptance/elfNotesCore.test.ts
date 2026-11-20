@@ -186,7 +186,7 @@ cliTest(
   },
 );
 
-cliTest.for([
+const uid32CoreLayouts = [
   { name: "MIPS little", machine: 8, byteOrder: "little", coreFlags: 0 },
   { name: "MIPS big", machine: 8, byteOrder: "big", coreFlags: 0 },
   { name: "PowerPC big", machine: 20, byteOrder: "big", coreFlags: 0 },
@@ -231,19 +231,39 @@ cliTest.for([
     byteOrder: "little",
     coreFlags: 0,
   },
+] as const;
+
+cliTest.for([
+  ...uid32CoreLayouts.map((layout) => ({ ...layout, idWidth: 4 as const })),
+  {
+    name: "SuperH little",
+    machine: 42,
+    byteOrder: "little",
+    coreFlags: 0,
+    idWidth: 2,
+  },
+  {
+    name: "SuperH big",
+    machine: 42,
+    byteOrder: "big",
+    coreFlags: 0,
+    idWidth: 2,
+  },
 ] as const)(
   "decodes Linux ELF32 process identity through CLI and MCP ($name)",
-  async ({ machine, byteOrder, coreFlags }, { cli }) => {
+  async ({ machine, byteOrder, coreFlags, idWidth }, { cli }) => {
     const root = await createTestTempDirectory("rea-elf-prpsinfo32-core-");
     const path = join(root, "core.elf");
     const little = byteOrder === "little";
+    const uid = idWidth === 4 ? 70001 : 500;
+    const gid = idWidth === 4 ? 90002 : 600;
     const descriptor = corePrpsinfoDescriptor({
       bits: 32,
-      idWidth: 4,
+      idWidth,
       little,
       state: 1,
-      uid: 70001,
-      gid: 90002,
+      uid,
+      gid,
       pid: 1234,
       ppid: 12,
       pgrp: 4321,
@@ -251,6 +271,7 @@ cliTest.for([
       fname: "core-probe",
       psargs: "core-probe --flag",
     });
+    const shortened = descriptor.subarray(0, descriptor.length - 4);
     const bytes = elfNoteFixture({
       bits: 32,
       machine,
@@ -259,7 +280,7 @@ cliTest.for([
       ownership: "program",
       notes: Buffer.concat([
         elfNote("CORE", 3, descriptor, little),
-        elfNote("CORE", 3, descriptor.subarray(0, 124), little),
+        elfNote("CORE", 3, shortened, little),
       ]),
     });
     if (little) bytes.writeUInt32LE(coreFlags, 0x24);
@@ -290,8 +311,8 @@ cliTest.for([
       });
       expect(report.entries[0]?.core?.prpsinfo).toEqual({
         state: 1,
-        uid: 70001,
-        gid: 90002,
+        uid,
+        gid,
         pid: 1234,
         ppid: 12,
         pgrp: 4321,
@@ -302,8 +323,8 @@ cliTest.for([
       expect(report.entries[1]).toMatchObject({
         type_name: "core_prpsinfo",
         descriptor: {
-          bytes: 124,
-          sha256: descriptorHash(descriptor.subarray(0, 124)),
+          bytes: shortened.length,
+          sha256: descriptorHash(shortened),
         },
         core: null,
       });

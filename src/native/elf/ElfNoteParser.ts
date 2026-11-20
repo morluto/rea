@@ -345,6 +345,7 @@ const LINUX_ELF32_PRPSINFO_ID_WIDTH: Readonly<Partial<Record<number, 2 | 4>>> =
     20: 4, // EM_PPC
     22: 2, // EM_S390 (31-bit compatibility)
     40: 2, // EM_ARM
+    42: 2, // EM_SH
     62: 2, // EM_X86_64 (x32 compatibility)
     92: 4, // EM_OPENRISC
     93: 4, // EM_ARCOMPACT
