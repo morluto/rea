@@ -79,11 +79,7 @@ export const registerEvmCommands = (
             ]),
           ),
         );
-      const selectors = [
-        sourceUnit,
-        contractName,
-        bytecodeKind,
-      ] as const;
+      const selectors = [sourceUnit, contractName, bytecodeKind] as const;
       const selected = selectors.some((value) => value !== undefined);
       if (encoding !== "solc-json" && selected)
         return refused(
