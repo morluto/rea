@@ -43,6 +43,71 @@ const abruptObjectPatternSource = `
   box.sibling[0] = "later";
 `;
 
+const firstDefaultSource = `
+  const defined = [0, ["one"]];
+  const [used = (defined[1][0] = "dormant"), [inactiveDefaultElement]] = defined;
+  defined[1][0] = "later";
+  const missing = [undefined, ["one"]];
+  const [other = (missing[1][0] = "active"), [activeDefaultElement]] = missing;
+  missing[1][0] = "later";
+`;
+
+const immutableTargetSource = `
+  const fixed = 0;
+  let beforeImmutable, afterImmutable;
+  const values = ["before", 1, "unreached"];
+  [beforeImmutable, fixed, afterImmutable] = values;
+  values[0] = "later";
+`;
+
+const classNameTargetSource = `
+  class OuterFixed {}
+  let afterOuterClass;
+  const outer = [1, "reachable"];
+  [OuterFixed, afterOuterClass] = outer;
+  class Fixed {
+    static {
+      let beforeClassName, afterClassName;
+      const inner = ["before", 1, "unreached"];
+      [beforeClassName, Fixed, afterClassName] = inner;
+    }
+  }
+`;
+
+const uninitializedTargetSource = `
+  let beforeUninitialized, afterUninitialized;
+  const cells = ["before", 1, "unreached"];
+  [beforeUninitialized, pending, afterUninitialized] = cells;
+  let pending;
+`;
+
+const declaratorOrderSource = `
+  let initializedEarlier, uninitializedLater;
+  const cells = [1, "paired"];
+  let earlier, readEarlier = ([earlier, initializedEarlier] = cells);
+  let readLater = ([later, uninitializedLater] = cells), later;
+`;
+
+const outerDeclarationSource = `
+  let ready, afterReady, beforeOuterLet, afterOuterLet;
+  const cells = ["before", 1, "unreached"];
+  { [ready, afterReady] = cells; }
+  { [beforeOuterLet, pending, afterOuterLet] = cells; }
+  let pending;
+`;
+
+const additionalFixtures = [
+  ["iterator-close.js", iteratorCloseSource],
+  ["array-prototype-alias.js", arrayPrototypeAliasSource],
+  ["abrupt-object-pattern.js", abruptObjectPatternSource],
+  ["first-default.js", firstDefaultSource],
+  ["immutable-target.js", immutableTargetSource],
+  ["class-name-target.js", classNameTargetSource],
+  ["uninitialized-target.js", uninitializedTargetSource],
+  ["declarator-order.js", declaratorOrderSource],
+  ["outer-let.js", outerDeclarationSource],
+] as const;
+
 const expectedDependencies = [
   ["declared", ["a"]],
   ["a", ["a"]],
@@ -50,6 +115,18 @@ const expectedDependencies = [
   ["fallback", ["a", "0"]],
   ["scalar", ["b"]],
   ["ordinary", ["0"]],
+  ["beforeImmutable", ["0"]],
+  ["afterImmutable", ["2"], "candidate"],
+  ["beforeClassName", ["0"]],
+  ["afterClassName", ["2"], "candidate"],
+  ["afterOuterClass", ["1"]],
+  ["beforeUninitialized", ["0"]],
+  ["afterUninitialized", ["2"], "candidate"],
+  ["initializedEarlier", ["1"]],
+  ["uninitializedLater", ["1"], "candidate"],
+  ["afterReady", ["1"]],
+  ["beforeOuterLet", ["0"]],
+  ["afterOuterLet", ["2"], "candidate"],
   ["arrayAssigned", ["0"]],
   ["elided", ["1"]],
   ["projected", ["items", "0"]],
@@ -60,6 +137,8 @@ const expectedDependencies = [
   ["unreachedSibling", ["sibling", "0"], "candidate"],
   ["innerElement", ["0", "0"]],
   ["siblingInnerElement", ["1", "0"]],
+  ["inactiveDefaultElement", ["1", "0"]],
+  ["activeDefaultElement", ["1", "0"], "candidate"],
   ["spreadElement", ["1"]],
   ["aliasedPrototypeElement", ["0", "0"], "candidate"],
   ["selected", ["0"], "candidate"],
@@ -76,6 +155,18 @@ const expectedDependencies = [
 const tracedBindings = [
   "declared",
   "ordinary",
+  "beforeImmutable",
+  "afterImmutable",
+  "beforeClassName",
+  "afterClassName",
+  "afterOuterClass",
+  "beforeUninitialized",
+  "afterUninitialized",
+  "initializedEarlier",
+  "uninitializedLater",
+  "afterReady",
+  "beforeOuterLet",
+  "afterOuterLet",
   "arrayAssigned",
   "elided",
   "projected",
@@ -86,6 +177,8 @@ const tracedBindings = [
   "unreachedSibling",
   "innerElement",
   "siblingInnerElement",
+  "inactiveDefaultElement",
+  "activeDefaultElement",
   "spreadElement",
   "aliasedPrototypeElement",
   "selected",
@@ -141,7 +234,7 @@ cliTest(
     nestedSource.sibling[0] = "later";
     const numericSource = { pairs: [["read-time"]] };
     const { 0: [projectedNumericInnerElement] } = numericSource.pairs;
-    numericSource.pairs[0][0] = "later";
+    numericSource.pairs = [];
     const nestedPairs = [["read-time"], ["sibling"]];
     const [[innerElement] = ["fallback"], [siblingInnerElement]] = nestedPairs;
     nestedPairs[0][0] = "later";
@@ -160,15 +253,8 @@ cliTest(
     [selected] = after;
   `,
     );
-    await writeFile(join(root, "iterator-close.js"), iteratorCloseSource);
-    await writeFile(
-      join(root, "array-prototype-alias.js"),
-      arrayPrototypeAliasSource,
-    );
-    await writeFile(
-      join(root, "abrupt-object-pattern.js"),
-      abruptObjectPatternSource,
-    );
+    for (const [path, source] of additionalFixtures)
+      await writeFile(join(root, path), source);
     const output = await cli.run({
       arguments: ["analyze-javascript-application", root, "--json"],
     });

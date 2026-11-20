@@ -13,6 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi, onTestFinished } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
 import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 
@@ -47,7 +48,6 @@ const unusedInspection = async (): Promise<never> => {
   throw new Error("Inspection must not run after failed target binding");
 };
 const roots: string[] = [];
-const targets: string[] = [];
 const unusedRunner: NativeCommandRunner = {
   async run() {
     throw new Error("Changed target must be rejected before a command runs");
@@ -64,20 +64,16 @@ const unusedTracer: NativeCallTracer = {
 
 afterEach(async () => {
   await Promise.all(
-    [...roots, ...targets].map((path) =>
-      rm(path, { recursive: true, force: true }),
-    ),
+    roots.map((path) => rm(path, { recursive: true, force: true })),
   );
   roots.length = 0;
-  targets.length = 0;
 });
 
 const createTarget = async (
   bytes: string,
   digest = bytes,
 ): Promise<BinaryTarget> => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-signature-target-"));
-  targets.push(directory);
+  const directory = await createTestTempDirectory("rea-signature-target-");
   const path = join(directory, "target.bin");
   await writeFile(path, bytes);
   return {

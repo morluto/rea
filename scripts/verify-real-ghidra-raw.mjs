@@ -20,6 +20,7 @@ import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-ins
 import {
   requireMcpLifecycleResult,
   requireMcpOutput,
+  requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import {
@@ -387,7 +388,16 @@ await withVerifierFixture(workspaceFixture, async () => {
       name: "search_bytes",
       arguments: { pattern: "c3", cursor: page.normalized_result.next_cursor },
     });
-    assert.equal(wrongCursor.isError, true);
+    const cursorError = requireMcpToolError(wrongCursor);
+    assert.partialDeepStrictEqual(cursorError, {
+      code: "invalid_request",
+      details: {
+        operation: "search_bytes",
+        issues: [{ path: ["cursor"], reason: "invalid_value" }],
+        diagnostics: { remote_code: "byte_search_cursor_mismatch" },
+      },
+    });
+    assert.equal(cursorError.recovery, undefined);
     await call("close_binary");
     assert.deepEqual(await readFile(repeatedPath), repeatedBytes);
 

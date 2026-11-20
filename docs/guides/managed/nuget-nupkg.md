@@ -38,10 +38,11 @@ metadata namespace. Missing fields are `null`. In the `.nuspec` and OPC
 relationships, XML end-of-line handling maps CRLF and lone CR to LF. When no `.nuspec` can be
 selected, `identity` is `null`.
 
-`license` reports the `.nuspec` license element: `type` is `expression` or
-`file` when that attribute is present, otherwise `null`, and `value` is the
-element text. `repository` reports `type`, `url`, `commit`, and `branch`
-attributes when a repository element is present. Absent elements stay `null`.
+`license` reports the `.nuspec` license element. `type` is `expression` or
+`file` after a case-insensitive match, and `null` for missing or unrecognized
+types. `value` is the element text. `repository` reports `type`, `url`, `commit`,
+and `branch` attributes when a repository element is present. Absent elements
+stay `null`.
 Transport URL userinfo is excluded, with `url_credentials_redacted` marking
 that exclusion; a URL whose credential span cannot be located is `null` with
 that flag set. Other URL spelling and query values are preserved. OPC
@@ -74,13 +75,17 @@ not carry that uncertainty warning.
 `nuspec` names the selected manifest path, decoded byte length, and whether it
 came from an OPC `_rels/.rels` manifest relationship or a unique root `.nuspec`.
 When selection is missing or ambiguous, `nuspec` is `null` and the inventory
-still succeeds with a limitation.
+still succeeds with a limitation. OPC part names match without regard to ASCII
+case. Multiple equivalent ZIP member names leave the manifest ambiguous, even
+when the target exactly spells one member name.
 
 The `.nuspec` is chosen from a unique OPC relationship with Type
 `http://schemas.microsoft.com/packaging/2010/07/manifest` when that target
-exists in the ZIP. Both `Relationships` and `Relationship` must use the OPC
-relationships namespace. The inspector skips other child elements and still
-considers eligible relationships beside them. Without an eligible target, it
+exists in the ZIP. `TargetMode` must be omitted or exactly `Internal` for
+the relationship to select a package member. Both `Relationships` and
+`Relationship` must use the OPC relationships namespace. The inspector skips
+other child elements and considers eligible relationships beside them.
+Without an eligible target, it
 uses a unique `.nuspec` at the package root. Multiple conflicting manifests
 are not decoded.
 

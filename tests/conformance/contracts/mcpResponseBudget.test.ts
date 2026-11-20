@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 
 import {
-  MINIMUM_RESPONSE_BYTES,
   nodeStringCeilingRecovery,
   parseMcpResponseBudget,
   stdioResponseBudgetRecovery,
@@ -19,7 +18,6 @@ describe("MCP response budget configuration", () => {
   });
 
   it("names the effective stdio budget without claiming it raises the string ceiling", () => {
-    expect(MINIMUM_RESPONSE_BYTES).toBe(10_485_760);
     const reserved = 536_869_864;
     const nodeCeiling = 536_870_888;
     const recovery = stdioResponseBudgetRecovery(

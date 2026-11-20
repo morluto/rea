@@ -517,7 +517,11 @@ export function* collectSemanticMemberMutationsSteps(
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
   mayObserve: JavaScriptBindingIndex["mayObserve"],
-): Generator<void, void> {
+): Generator<void, ReadonlyMap<t.VariableDeclarator, t.AssignmentPattern>> {
+  const firstArrayDefaults = new Map<
+    t.VariableDeclarator,
+    t.AssignmentPattern
+  >();
   const deferredMapReceivers = new Set<
     t.CallExpression | t.OptionalCallExpression
   >();
@@ -1888,6 +1892,14 @@ export function* collectSemanticMemberMutationsSteps(
           for (const target of semanticWriteTargets(execution.target))
             writeOnlyMembers.add(target);
       for (const source of semanticIterationSources(node, parent)) {
+        const first = source.arrayPattern?.elements[0];
+        if (
+          source.kind === "iteration" &&
+          t.isVariableDeclarator(node) &&
+          node.id === source.arrayPattern &&
+          t.isAssignmentPattern(first)
+        )
+          firstArrayDefaults.set(node, first);
         // Local stores retain their sources on member writes. Only the ambient
         // identity owner can establish that storing itself exposes a reference.
         if (
@@ -2036,9 +2048,20 @@ export function* collectSemanticMemberMutationsSteps(
       pattern,
       receiverCaptures,
     );
-    // A later-only write can invalidate the merged lattice without changing
-    // this acquisition. Leave the original capture on its established route.
-    if (captured === undefined || captured.storedSources.length === 0)
+    if (captured === undefined || captured.sources.length === 0) return false;
+    const originalOnly = captured.storedSources.length === 0;
+    // A later receiver write can hide the original slot in the merged value.
+    // Reuse the captured own-data source when that original receiver is proved.
+    if (
+      originalOnly &&
+      (receiver.members.length === 0 ||
+        captured.sources.length !== 1 ||
+        !semanticBindingAtRead(binding, receiver.root, state)
+          .hasDefiniteInitializer ||
+        !t.isObjectExpression(
+          unwrapJavaScriptExpression(captured.sources[0]!.node).node,
+        ))
+    )
       return false;
     const contentsMayChange = bindingProjectedContentsMayChangeAt(
       state,
@@ -2075,6 +2098,9 @@ export function* collectSemanticMemberMutationsSteps(
         const selection = native
           ? semanticArrayPatternCloseSelection(pattern, mutation, value, state)
           : undefined;
+        // The original-source path can discharge acquisition only when it
+        // adds no effects. Keep the ordinary escape for a possible close.
+        if (originalOnly && (!native || selection !== undefined)) return false;
         if (!native || selection !== undefined)
           markValue(
             alternative,
@@ -2273,6 +2299,7 @@ export function* collectSemanticMemberMutationsSteps(
   // Gathering effects can evaluate a primitive projection before its object
   // escapes. Final values must use the completed mutation state.
   clearSemanticValueCaches(state);
+  return firstArrayDefaults;
 }
 
 interface ReferencedValue extends JavaScriptSemanticObjectReference {

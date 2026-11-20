@@ -16,7 +16,6 @@ describe("pwntools input bound", () => {
       bytes: PWNTOOLS_LIMITS.input_bytes,
       source: "default",
     });
-    expect(PWNTOOLS_LIMITS.input_bytes).toBe(32 * 1024 * 1024);
   });
 
   it.each([

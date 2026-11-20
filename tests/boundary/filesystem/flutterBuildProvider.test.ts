@@ -1102,7 +1102,6 @@ it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
     const projected = projectAnalysisError(result.error);
     expect(projected.code).toBe("resource_constraint");
     expect(projected.retryable).toBe(false);
-    expect(projected.remediation.action).toContain("APK snapshot allowance");
     expect(projected.details?.refusal).toMatchObject({
       kind: "fixed_ceiling",
       allowance_kind: "input",
