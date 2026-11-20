@@ -1,5 +1,5 @@
 <!--
-PR title: type(optional-scope): imperative outcome
+PR title: feat|fix|docs|refactor|perf|test|build|ci|chore|revert, optional lowercase scope [a-z0-9._/-], optional !, then ": outcome"
 The title becomes the squash-merge commit subject and generated changelog entry.
 -->
 
@@ -71,8 +71,8 @@ source, link, or rendered-document checks. -->
 - User-visible CLI/MCP output (if applicable):
 - Remaining proof gaps:
 
-For boundary fixes, identify the applicable [boundary regressions](https://github.com/morluto/rea/blob/main/docs/testing.md#boundary-regressions)
-and [lifecycle regressions](https://github.com/morluto/rea/blob/main/docs/testing.md#lifecycle-regressions)
+For boundary fixes, identify the applicable [boundary regressions](https://github.com/morluto/rea/blob/main/docs/development/testing.md#boundary-regressions)
+and [lifecycle regressions](https://github.com/morluto/rea/blob/main/docs/development/testing.md#lifecycle-regressions)
 covered by the evidence above, and explain relevant gaps.
 
 For evidence-bearing changes:
@@ -99,22 +99,14 @@ limits, security/privacy/containment implications, and meaningful proof gaps. --
   its new behavior and migration, and why compatibility/deprecation cannot
   preserve it. Every release increments minor, including breaking changes;
   keep breaking markers and migration notes so callers can assess compatibility.
-  See docs/releasing.md. -->
+  See docs/development/releasing.md. -->
 - Real Hopper/Ghidra, browser, or OS coverage:
 - Package or release metadata impact:
 - Security, privacy, process, or containment review:
 
 ## Author readiness
 
-<!-- The human owner completes these declarations before requesting review,
-unless the PR author is exempt as listed in CONTRIBUTING.md.
-The PR author is the owner by default. A different owner must explicitly accept
-ownership on this PR.
-AI agents must leave these declarations to a human to dictate to them or there could be catastrophic consequences for many users of REA.
-Draft PRs may leave them unchecked. These declarations record initial readiness
-when opening the PR for review; later pushes do not require a new human sign-off.
-Keep the description and validation evidence current as the work changes.
-See CONTRIBUTING.md#pull-request-ownership-and-readiness. -->
+<!-- See CONTRIBUTING.md#pull-request-ownership-and-readiness. -->
 
 Human owner: <!-- @GitHub-handle -->
 

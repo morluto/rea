@@ -32,7 +32,6 @@ import {
   type CommonJsExportSite,
 } from "./javascriptCommonJsExportReceivers.js";
 import type { JavaScriptReceiverIndex } from "./javascriptSemanticAnalysis.js";
-import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 import type { JavaScriptFindingContext } from "./javascriptStaticAnalysisState.js";
 
 interface NativeBindingInput {
@@ -86,8 +85,8 @@ export function* finishElectronNativeBindingsSteps(
     : new Map<CommonJsExportSite, CommonJsExportReceiverEffect>();
   for (const node of pending) {
     if (t.isVariableDeclarator(node))
-      inspectRequireBinding(node, context, index.bindings);
-    else inspectReExport(node, context, index.bindings, receivers.get(node));
+      inspectRequireBinding(node, context, index);
+    else inspectReExport(node, context, index, receivers.get(node));
   }
   pending.length = 0;
 }
@@ -184,9 +183,9 @@ const inspectExportAll = (
 const inspectRequireBinding = (
   node: t.VariableDeclarator,
   context: JavaScriptFindingContext,
-  bindings: JavaScriptSemanticAnalysisState,
+  index: JavaScriptReceiverIndex,
 ): void => {
-  const required = nativeRequire(node.init, context, bindings);
+  const required = nativeRequire(node.init, context, index);
   if (required === undefined) return;
   addBinding({
     context,
@@ -201,11 +200,15 @@ const inspectRequireBinding = (
 const inspectReExport = (
   node: t.AssignmentExpression,
   context: JavaScriptFindingContext,
-  bindings: JavaScriptSemanticAnalysisState,
+  index: JavaScriptReceiverIndex,
   receiver: CommonJsExportReceiverEffect | undefined,
 ): void => {
-  const exported = commonJsRuntimeExportValues(node, bindings)[0];
+  const exported = commonJsRuntimeExportValues(node, index.bindings)[0];
   if (exported === undefined) return;
+  if (exported.loaderAuthority === "candidate") {
+    context.accumulator.unknownFindings += 1;
+    return;
+  }
   const applicability = commonJsExportApplicability(
     receiver,
     exported.exportedName,
@@ -218,7 +221,7 @@ const inspectReExport = (
   // The export owner leaves arithmetic/logical stores without a selected RHS.
   const value = exported.value;
   if (value == null) return;
-  const required = nativeRequire(value, context, bindings);
+  const required = nativeRequire(value, context, index);
   if (required === undefined) return;
   addBinding({
     context,
@@ -274,7 +277,7 @@ const nativeCallReceiver = (
 const nativeRequire = (
   node: t.Node | null | undefined,
   context: JavaScriptFindingContext,
-  bindings: JavaScriptSemanticAnalysisState,
+  index: JavaScriptReceiverIndex,
 ):
   | {
       readonly specifier: string;
@@ -298,8 +301,9 @@ const nativeRequire = (
     return undefined;
   const call = semanticRequireCallAt(
     node,
-    bindings,
+    index.bindings,
     context.accumulator.factoryRequireBindingIds,
+    index,
   );
   if (
     call === undefined ||
@@ -359,5 +363,6 @@ const isNativeSpecifier = (
 ): boolean => {
   const path =
     moduleKind === "require" ? specifier : stripQueryAndFragment(specifier);
-  return path.toLowerCase().endsWith(".node");
+  // Extension dispatch uses exact spelling, independently of filesystem casing.
+  return path.endsWith(".node");
 };

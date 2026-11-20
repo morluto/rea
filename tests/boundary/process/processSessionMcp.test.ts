@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { fileURLToPath } from "node:url";
 import { access, chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -14,13 +15,24 @@ import {
 } from "../../fixtures/binarySession.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { silentLogger } from "../../../src/logger.js";
+import type { ProcessCapture } from "../../../src/domain/process/processCaptureParsing.js";
 import { itWithCaptureCapability } from "./processCaptureCapability.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const processFixture = fileURLToPath(
   new URL("../../fixtures/processFidelity.mjs", import.meta.url),
 );
 const resources: Array<{ close(): Promise<unknown> }> = [];
+
+const captureOutput = (value: unknown): ProcessCapture => {
+  const normalized = toolContract(
+    "capture_process_scenario",
+  ).outputSchema.parse(value).normalized_result;
+  if ("status" in normalized && normalized.status === "planned")
+    throw new Error("expected process capture output");
+  return normalized as ProcessCapture;
+};
 
 afterEach(async () => {
   await Promise.all(resources.splice(0).map((resource) => resource.close()));
@@ -36,7 +48,10 @@ it("rejects oversized initial and resize terminal buffers through MCP before lau
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const client = new Client({ name: "terminal-admission", version: "1" });
+  const client = new Client(
+    { name: "terminal-admission", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   resources.push(client, server, session);
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
@@ -71,6 +86,56 @@ it("rejects oversized initial and resize terminal buffers through MCP before lau
 });
 
 itWithCaptureCapability(
+  "returns a planned scenario without launching the target",
+  async () => {
+    const root = await createTestTempDirectory("rea-process-plan-");
+    const marker = join(root, "launched");
+    const session = createTestBinarySession(() => {
+      throw new Error("A dry run must not launch a binary provider");
+    });
+    const server = createServer(
+      { kind: "session", session },
+      { logger: silentLogger },
+    );
+    const client = new Client(
+      { name: "process-plan", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
+    resources.push(client, server, session);
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    const result = await client.callTool({
+      name: "capture_process_scenario",
+      arguments: {
+        executable: process.execPath,
+        working_directory: root,
+        arguments: [
+          "-e",
+          "require('node:fs').writeFileSync(process.argv[1], 'launched')",
+          marker,
+        ],
+        dry_run: true,
+      },
+    });
+
+    expect(result.isError, JSON.stringify(result.content)).not.toBe(true);
+    await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
+    const parsed = toolContract("capture_process_scenario").outputSchema.parse(
+      result.structuredContent,
+    );
+    expect(parsed.predicate_type).toBe("rea.process-scenario-plan");
+    expect(parsed.normalized_result).toMatchObject({
+      status: "planned",
+      ambient_environment: "inherited-at-run",
+      scenario: { executable: process.execPath },
+    });
+  },
+);
+
+itWithCaptureCapability(
   "bounds normalized PTY text and preserves equal-size output through MCP",
   async () => {
     const root = await createTestTempDirectory(
@@ -81,10 +146,13 @@ itWithCaptureCapability(
       { kind: "session", session },
       { logger: silentLogger },
     );
-    const client = new Client({
-      name: "process-normalized-budget",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "process-normalized-budget",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     resources.push(client, server, session);
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
@@ -109,9 +177,7 @@ itWithCaptureCapability(
         },
       });
       expect(result.isError, JSON.stringify(result.content)).not.toBe(true);
-      return toolContract("capture_process_scenario").outputSchema.parse(
-        result.structuredContent,
-      ).normalized_result;
+      return captureOutput(result.structuredContent);
     };
 
     const expanded = await capture("x".repeat(500));
@@ -186,7 +252,10 @@ itWithCaptureCapability(
         logger: silentLogger,
       },
     );
-    const mcp = new Client({ name: "process-unknown", version: "1.0.0" });
+    const mcp = new Client(
+      { name: "process-unknown", version: "1.0.0" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     resources.push(mcp, server);
@@ -205,11 +274,11 @@ itWithCaptureCapability(
     const wire = (await mcp.listTools()).tools.find(
       ({ name }) => name === contract.name,
     );
-    if (wire?.outputSchema === undefined)
+    if (wire === undefined)
       throw new Error("Missing process capture output schema");
     expect(
       new Ajv2020({ strict: false, validateFormats: false }).validate(
-        z.record(z.string(), z.unknown()).parse(wire.outputSchema),
+        canonicalOutputSchema(wire.name),
         captured.structuredContent,
       ),
     ).toBe(true);
@@ -270,7 +339,10 @@ itWithCaptureCapability(
         },
       },
     );
-    const client = new Client({ name: "process-mcp-env", version: "1" });
+    const client = new Client(
+      { name: "process-mcp-env", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     resources.push(client, server, session);
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
@@ -286,9 +358,7 @@ itWithCaptureCapability(
       },
     });
     expect(result.isError, JSON.stringify(result.content)).not.toBe(true);
-    const capture = toolContract("capture_process_scenario").outputSchema.parse(
-      result.structuredContent,
-    ).normalized_result;
+    const capture = captureOutput(result.structuredContent);
     expect(capture.frames.map(({ data }) => data).join("")).toContain(
       "injected-value|scenario-value",
     );

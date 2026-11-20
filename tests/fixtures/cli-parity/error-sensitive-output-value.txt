@@ -1,0 +1,7 @@
+$ rea inspect-web-network-capture <workspace>/capture.har --format secret-literal --sensitive-value secret-literal
+exit: 1
+--- stdout
+{"ok":false,"error":{"code":"INVALID_OUTPUT_VALUE","message":"Invalid format: \"[REDACTED]\". Expected one of: toon, json, yaml, md, jsonl, csv, tsv"}}
+<end>
+--- stderr
+<end>

@@ -11,7 +11,7 @@ incorrect user instructions warrant standalone corrections. Collect other
 cosmetic-only suggestions in an issue rather than separate PRs.
 
 For selected architectural owners and dependency paths, use the
-[architecture map](docs/architecture.mermaid). It is not a complete directory or
+[architecture map](docs/architecture/architecture.mermaid). It is not a complete directory or
 import inventory. For current provider wiring, start with
 [`src/composition/binary.ts`](src/composition/binary.ts) for deep candidates and
 the other `src/composition/` factories for tool services, including
@@ -23,6 +23,16 @@ Production factories construct fresh providers without starting engines or
 acquiring targets; optional adapter failures must preserve successful peers. Run
 `npm run verify:test-discovery` after adding or moving tests. Resolved import
 boundaries are checked by `npm run verify:module-boundaries`, included in lint.
+It also checks each top-level `src/` unit against its layer in
+[`scripts/lib/module-layers.mjs`](scripts/lib/module-layers.mjs) (a new
+directory must declare one) and against the counted outward, mutual,
+cross-provider and past-entry imports in
+`scripts/lib/module-layers.baseline.json`. Application, composition and the
+adapters import a provider through the entry files it declares in that table
+([decision](docs/adr/architecture/provider-entry-files.md)); a new entry file
+widens the provider's public surface. The baseline may only shrink: a
+change that removes such imports lowers it with
+`node scripts/verify-module-boundaries.mjs --shrink-layer-baseline`.
 
 Before retiring an alias or facade, trace runtime registration, dynamic imports,
 JavaScript verifiers, subprocess scripts, and packaged entrypoints as well as
@@ -32,7 +42,7 @@ removing it. Preserve validation, lazy loading, caller policy, and resource
 acquisition and cleanup supplied by the old boundary. Published APIs, persisted
 formats, and independently versioned bridges require an explicit compatibility
 decision; an internal representation alone does not establish that obligation.
-See [interpreting boundary facts once](docs/tool-design.md#interpret-boundary-facts-once)
+See [interpreting boundary facts once](docs/development/tool-design.md#interpret-boundary-facts-once)
 for admission ownership and the distinction between repeated validation and
 independent checks.
 
@@ -44,7 +54,7 @@ Use the [analysis optimization skill](.agents/skills/rea-analysis-optimization/S
 to locate provider and shared-workflow bottlenecks, preserve Evidence, and
 compare equivalent real tasks before claiming an improvement.
 
-When adding or changing an MCP tool, follow the [tool design guide](docs/tool-design.md) and preserve the canonical contracts and generated catalog.
+When adding or changing an MCP tool, follow the [tool design guide](docs/development/tool-design.md) and preserve the canonical contracts and generated catalog.
 When adding or changing an admission ceiling, budget, or deadline, follow
 [analysis settings, limits, and recovery](docs/design/limits-and-recovery.md)
 for ownership, operation snapshots, provider integration, and the steps for
@@ -103,6 +113,19 @@ Human ownership and review remain required when CI or an automated reviewer
 reports success. Readiness requests maintainer review; it does not grant scope
 approval or permission to merge.
 
+Pull request titles must match the Conventional Commits check in
+[`.github/workflows/pr-title.yml`](.github/workflows/pr-title.yml):
+
+```text
+/^(?:feat|fix|docs|refactor|perf|test|build|ci|chore|revert)(?:\([a-z0-9._/-]+\))?!?: .+/u
+```
+
+The type is `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`,
+`chore`, or `revert`. An optional scope, in parentheses, uses only lowercase
+`[a-z0-9._/-]`. An optional `!` may precede the colon. The title then has `: `
+and a non-empty outcome, for example `feat: add historical source import`.
+The type `style` fails, and an uppercase scope fails.
+
 Draft status is optional. Draft PRs may request early feedback with open questions
 and incomplete checks. Agents preserve the current draft status unless asked to
 change it; missing readiness declarations or later updates do not require a PR
@@ -114,21 +137,24 @@ it or require another human sign-off. Keep the PR description and affected
 validation current as work changes. AI agents must leave human declarations to
 the human owner and must not attest to a human review on their behalf.
 
-The `PR readiness` check reports pending for drafts and requires a named human
-owner and all three template declarations for non-drafts. PRs authored by
-@morluto, @kaoru0822-kitauji, @N0zoM1z0, or @gensokyo-dev are exempt from
-the declaration; their human ownership, review, and evidence responsibilities
-above still apply. The check identifies authors by GitHub account ID. It checks
-that the declaration is filled, not whether the code or evidence is correct.
-Existing PRs can copy the **Author readiness** section from the current template.
-Open PRs must have distinct head commits because GitHub shares commit statuses.
+Maintainers review the **Author readiness** declaration in the PR body. PRs
+authored by @morluto, @kaoru0822-kitauji, @N0zoM1z0, @gensokyo-dev, or
+@vincentkoc are exempt from the declaration. Their human ownership, review,
+and evidence responsibilities above still apply. Existing PRs can copy the
+**Author readiness** section from the current template.
 
-Maintainers enable merge enforcement after the workflow is merged: run
-`gh workflow run pr-readiness.yml -f pull_request_number=NUMBER` for existing
-open PRs, then add `PR readiness` from GitHub Actions to the branch's required
-status checks alongside its existing checks. Deploy the workflow to each
-protected target branch before requiring it there. The workflow reads PR
-metadata using trusted default-branch code and writes only a commit status.
+When an open PR may overlap another open change or a recently landed fix, note
+the related PR, issue, or commit in the description or a comment as soon as the
+overlap is known. Prefer one clear pointer over repeated status updates.
+
+If an overlapping change merges while a PR awaits review, link that commit on
+the open PR and state what remains useful. Rebase or otherwise align with the
+current base when the remaining work is still wanted, narrow the PR to the
+uncovered portion, or close it when the change is fully superseded. Keep the
+description and validation current after that update. Maintainers may also note
+the expected disposition (rebase, narrow, or close) when they land or recognize
+an overlapping fix. Readiness still does not grant merge permission or a review
+date.
 
 Maintainers may return a PR to the author or close it when the problem is
 unsupported, validation is missing, or the owner cannot explain the change.
@@ -234,7 +260,7 @@ guarantee.
 Use the development toolchain pinned in `.nvmrc` and
 `package.json#packageManager`. Run `nvm use` before installing dependencies;
 installed-package runtime support is documented in
-[installation](docs/installation.md#start-setup).
+[installation](docs/getting-started/installation.md#start-setup).
 Use Node.js and npm for source builds and verifier scripts; the installed
 package's Bun runtime support does not extend to those development scripts.
 
@@ -259,6 +285,12 @@ review upstream security advisories when updating or using them. Preserve source
 and version provenance, update license notices when needed, and report which
 verification was actually repeated. The lab requirements describe a recorded
 environment; a dependency update does not verify the revised environment.
+
+Commits that only move files or rewrite import paths are listed in
+`.git-blame-ignore-revs`; run
+`git config blame.ignoreRevsFile .git-blame-ignore-revs` once so `git blame`
+attributes lines to the change that wrote them. Move files with `git mv` and
+keep such a commit free of other edits.
 
 Repository invariants live in [AGENTS.md](AGENTS.md). Keep provider-specific
 protocols in adapters and shared CLI/MCP workflows in the application layer.
@@ -289,35 +321,34 @@ base revision, or run the suite on Linux or WSL, before attributing them to a
 change. The embedded-artifact parent-swap tests exercise the selected-path
 replacement when the rename succeeds; if Windows refuses it while the admitted
 file is open, they instead verify the refusal and cleanup. See
-[testing](docs/testing.md#developer-commands) for command scopes
+[testing](docs/development/testing.md#developer-commands) for command scopes
 and lane selection.
 
 `git submodule update --init --recursive` fails at the pinned Unblob submodule
 on Windows and can leave later submodules unchecked out. Apply the
-[Unblob checkout workaround](docs/firmware-analysis.md#windows-submodule-checkout),
+[Unblob checkout workaround](docs/guides/firmware/firmware-analysis.md#windows-submodule-checkout),
 then rerun the command.
 
 ## Documentation website
 
+Use the [documentation directory](docs/README.md) and
+[authoring guide](docs/development/documentation.md) for document ownership,
+domain-based feature specifications and architectural decision records.
+
 The VitePress site uses the Markdown files in `docs/`. Run `npm run docs:dev`
-for live editing, `npm run docs:build` to check the production build and
-links, and `npm run docs:preview` to preview that build at `/rea/`.
+for live editing and `npm run docs:preview` to serve an existing build at
+`/rea/`. Follow the [documentation checks](docs/development/documentation.md#generated-ownership-and-checks)
+to build and verify the rendered routes and anchors.
 
-Site navigation lives in `docs/.vitepress/config.ts`. Keep links to guides
-relative so they work on GitHub and the website; link to repository files
-outside `docs/` using their full GitHub URLs. Generated reference documents
-use `npm run docs:generate`; `docs:build` generates them before building the website.
+The [authoring guide](docs/development/documentation.md#links-and-public-routes)
+explains where to edit navigation and how to preserve public links. The
+`Documentation` CI job runs the documentation and rendered-route checks.
+The manual VitePress workflow in `.github/workflows/pages.yml` builds these
+guides for verification.
 
-Pull requests run `npm run docs:check`. `.github/workflows/pages.yml` is a
-manual VitePress build and does not publish. The public site at
-<https://rea.tools/> serves `website/public/` through Cloudflare Workers. See
-the [website README](website/README.md#cloudflare-workers) for previews and
-manual deployments.
-
-The separate GitHub Pages host uses only the manual
-`.github/workflows/website-pages.yml` workflow on `main`. The repository's
-**Settings → Pages → Build and deployment → Source** must be set to
-**GitHub Actions** before deploying there.
+The product website in `website/public/` has a separate
+[publishing workflow](website/README.md#synchronized-production-publishing) for
+`rea.tools` and GitHub Pages.
 
 ### Translation corrections
 
@@ -352,13 +383,13 @@ npm run check:fast
 `test:local` runs source tests without building. `check:changed` combines cached
 static checks with source tests affected since the merge base with `origin/main`.
 Import-graph selection can miss runtime registration, bridges, and generated data;
-select relevant boundary tests explicitly. See [testing](docs/testing.md#developer-commands)
+select relevant boundary tests explicitly. See [testing](docs/development/testing.md#developer-commands)
 for commands, test placement, pruning, and real-provider prerequisites.
 
 Before requesting review, run relevant tests and `npm run check`; add
 `npm run docs:check` when contracts or generated metadata change. Record the
 checks and unavailable coverage. CI owns the full deterministic suite and
-coverage. `npm run check:pr` is an optional full local gate for broad changes or
+coverage. `npm run check:pr` is an optional broad local suite for large changes or
 CI diagnosis. Packaging/setup/distribution changes additionally require
 `npm run verify:package` and `npm pack --dry-run`; provider changes require the
 matching real-provider lane. State which host/provider workflows ran.
@@ -385,8 +416,8 @@ installs that bundle with Skills 1.7.2 using default repository-root discovery
 and checks every installed file, alongside the packaged setup checks.
 CI validates generated outputs and retains them as artifacts; do not commit
 them. Reviewed source metadata, including
-`src/generatedPackageMetadata.ts` and `docs/error-contract.schema.json`, remains
-tracked and checked for freshness.
+`src/generatedPackageMetadata.ts`, `docs/error-contract.schema.json` and
+`docs/user-visible-errors.csv`, remains tracked and checked for freshness.
 
 The packaged skill contains instructions and inventory metadata, not runtime
 schema hashes. Its conformance commitment covers that exact bundle and portable
@@ -427,8 +458,8 @@ Run `npm run verify:hopper` on a supported macOS host or
 `npm run verify:hopper:linux` on the supported Linux demo runner. These build
 native fixtures and verify the installed engine through CLI/MCP; package or
 simulated-provider checks do not establish engine behavior. See
-[real-toolchain verification](docs/testing.md#end-to-end-integration-and-golden-evidence)
-for prerequisites and scope, and [Hopper setup](docs/installation.md#hopper)
+[real-toolchain verification](docs/development/testing.md#end-to-end-integration-and-golden-evidence)
+for prerequisites and scope, and [Hopper setup](docs/getting-started/installation.md#hopper)
 for supported hosts and unattended startup.
 
 Use the default `build/conformance/manifest.json` unless explicitly verifying
@@ -437,7 +468,7 @@ Generated fixtures and manifests remain ignored.
 
 ## Maintainer release checklist
 
-Use the [release guide](docs/releasing.md). Main pushes automatically refresh a
+Use the [release guide](docs/development/releasing.md). Main pushes automatically refresh a
 Release Please PR with the next version and changelog. Review its migration
 notes, wait for the current CI checks to pass, and merge it into main to publish.
 

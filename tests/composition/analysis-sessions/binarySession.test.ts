@@ -1,18 +1,24 @@
 import {
+  fileSubjectTarget,
+  displayedEvidenceSubject,
+} from "../../fixtures/evidenceSubject.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import {
   createAnalysisExecution,
   type AnalysisClient,
   type AnalysisProvider,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import type { RecordUnknownInput } from "../../../src/domain/residualUnknown.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-import { HopperStartError } from "../../../src/domain/hopperErrors.js";
+import { HopperStartError } from "../../../src/hopper/HopperErrors.js";
 import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
-import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../../src/resources/AnalysisCleanupLease.js";
 import { err, ok as resultOk } from "../../../src/domain/result.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
@@ -35,7 +41,8 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, extname, join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
 
 const client = (fail = false): AnalysisClient => ({
   execute: () => Promise.resolve(fail ? err(new HopperStartError()) : ok(null)),
@@ -235,7 +242,15 @@ it("drains session calls and retires analysis after an admitted external mutatio
     },
     (_value, error) => error,
   );
-  await started.promise;
+  onTestFinished(async () => {
+    release.resolve();
+    try {
+      await mutation;
+    } finally {
+      await session.close();
+    }
+  });
+  await awaitAcknowledgement(started.promise, mutation, "external mutation");
   const queuedAnalysis = session.execute("address_name", {});
   expect(calls).toEqual([]);
 
@@ -528,7 +543,6 @@ it("keeps an externally mutated session unbound until cleanup is retried", async
   );
 
   expect(closeAttempts).toBe(1);
-  expect(mutation.ok).toBe(false);
   if (mutation.ok) throw new Error("Expected cleanup failure");
   expect(mutation.error).toBeInstanceOf(ProviderCleanupError);
   expect(mutation.error.cleanupIncomplete).toBe(true);
@@ -656,17 +670,10 @@ describe("evidence metadata imports and snapshot cache", () => {
     const before = session.exportAnalysisSnapshot();
     if (!before.ok) throw before.error;
     const existing = session.exportEvidenceBundle().records[0];
-    if (existing === undefined || existing.subject === null)
+    if (existing === undefined)
       throw new Error("Expected artifact-bound Evidence");
     const addition = createEvidence(
-      {
-        path: existing.subject.local_path,
-        sha256: existing.subject.digest.sha256,
-        format: existing.subject.format,
-        ...(existing.subject.architecture === null
-          ? {}
-          : { architecture: existing.subject.architecture }),
-      },
+      fileSubjectTarget(existing.subject),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         predicateType: "rea.analysis",
@@ -734,7 +741,10 @@ describe("Evidence display metadata refresh", () => {
         const activeEvidence = baseline.value.evidence_bundle.records.find(
           ({ operation }) => operation === "address_name",
         );
-        if (activeEvidence === undefined || activeEvidence.subject === null)
+        if (
+          activeEvidence === undefined ||
+          activeEvidence.subject.identity.kind !== "file"
+        )
           throw new Error("Expected artifact-bound Evidence");
         const evidence =
           scope === "active"
@@ -745,14 +755,14 @@ describe("Evidence display metadata refresh", () => {
                 { operation: "health", parameters: {}, result: true },
               );
         expect(session.recordEvidence(evidence).ok).toBe(true);
-        if (evidence.subject === null) throw new Error("Expected a subject");
+        if (evidence.subject.identity.kind !== "file")
+          throw new Error("Expected a subject");
         const relocated = {
           ...evidence,
-          subject: {
-            ...evidence.subject,
+          subject: displayedEvidenceSubject(evidence.subject, {
             local_path: `${evidence.subject.local_path}.moved`,
             name: `${evidence.subject.name}.moved`,
-          },
+          }),
         };
         const changed = vi.fn();
         const unsubscribe = session.onAnalysisSnapshotChanged(changed);
@@ -772,7 +782,7 @@ describe("Evidence display metadata refresh", () => {
         const refreshed = session.exportAnalysisSnapshot();
         if (!refreshed.ok) throw refreshed.error;
         if (scope === "active") {
-          expect(refreshed.value.entries[0]?.execution.subject?.path).toBe(
+          expect(refreshed.value.entries[0]?.execution.subject.local_path).toBe(
             relocated.subject.local_path,
           );
           expect(refreshed.value.evidence_bundle.records).toContainEqual(
@@ -895,8 +905,8 @@ describe("snapshot invalidation at mutation dispatch", () => {
         ...parameters,
         name: "after",
       });
-      await started.promise;
       try {
+        await awaitAcknowledgement(started.promise, writing, "session write");
         const during = await session.execute("address_name", parameters);
         if (!during.ok) throw during.error;
         expect(during.value.result).toBe("after");
@@ -976,8 +986,10 @@ describe("replay of exact immutable calls", () => {
       expect(projectAnalysisError(opened.error).details).toMatchObject({
         binding_mismatch: {
           target: {
-            snapshot: { sha256: snapshot.value.target.sha256 },
-            selected: { sha256: expect.any(String) },
+            snapshot: {
+              identity: { sha256: snapshot.value.target.identity.sha256 },
+            },
+            selected: { identity: { sha256: expect.any(String) } },
           },
         },
       });
@@ -1148,7 +1160,7 @@ describe("snapshot cache eligibility", () => {
           ...(live ? { cachePolicy: "live" as const } : {}),
         }));
       const source = createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         provider.identity(),
         {
           operation: "health",
@@ -1201,11 +1213,15 @@ describe("snapshot cache eligibility", () => {
   it("rejects invalid source Evidence on a non-replayable observation", async () => {
     const [target] = await createBinarySessionTargets();
     const provider = createCacheProvider([]);
-    const source = createEvidence(undefined, provider.identity(), {
-      operation: "health",
-      parameters: {},
-      result: "original",
-    });
+    const source = createEvidence(
+      unknownTarget("not-observed"),
+      provider.identity(),
+      {
+        operation: "health",
+        parameters: {},
+        result: "original",
+      },
+    );
     provider.createClient = () => ({
       execute: async () =>
         resultOk(
@@ -1455,22 +1471,6 @@ describe("typed unavailability without dispatching", () => {
     expect(await closing).toEqual({ ok: true, value: null });
     expect(await session.close()).toEqual({ ok: true, value: null });
     expect(await session.close()).toEqual({ ok: true, value: null });
-  });
-
-  it("keeps the active client when a switch fails", async () => {
-    const [first, second] = await createBinarySessionTargets();
-    let created = 0;
-    const session = createTestBinarySession(() => client(created++ === 1));
-    expect((await session.open(first)).ok).toBe(true);
-    expect((await session.open(second)).ok).toBe(false);
-    expect(await session.status()).toMatchObject({
-      open: true,
-      sha256:
-        "7692c3ad3540bb803c020b3aee66cd8887123234ea0c6e7143c0add73ff431ed",
-      architecture: null,
-    });
-    expect(JSON.stringify(await session.status())).toContain("first.hop");
-    expect(created).toBe(3);
   });
 
   it("orders calls between queued transitions without deadlocking", async () => {
@@ -1730,14 +1730,19 @@ describe("cancellation during profile resolution", () => {
         openSettled = true;
         return result;
       });
-    await admitted.promise;
-    controller.abort(reason);
     let closeSettled = false;
-    const closing = session.close().then((result) => {
-      closeSettled = true;
-      return result;
-    });
+    let closing: ReturnType<typeof session.close> | undefined;
     try {
+      await awaitAcknowledgement(
+        admitted.promise,
+        opening,
+        "profile admission",
+      );
+      controller.abort(reason);
+      closing = session.close().then((result) => {
+        closeSettled = true;
+        return result;
+      });
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(observedSignal?.reason).toBe(reason);
       expect(openSettled).toBe(false);
@@ -1752,9 +1757,13 @@ describe("cancellation during profile resolution", () => {
       expect(created).toBe(0);
       expect(await session.status()).toMatchObject({ cleanup_pending: false });
     } finally {
+      controller.abort(reason);
       release.resolve();
-      await Promise.all([opening, closing]);
-      await session.close();
+      try {
+        await Promise.all([opening, closing]);
+      } finally {
+        await session.close();
+      }
     }
   });
 });
@@ -1800,6 +1809,13 @@ describe("cancellation during client transitions", () => {
     expect(clients[1]?.closed).toBe(1);
     expect(clients[0]?.closed).toBe(1);
     expect(clients[2]?.closed).toBe(0);
+    expect(await session.status()).toMatchObject({
+      open: true,
+      sha256:
+        "7692c3ad3540bb803c020b3aee66cd8887123234ea0c6e7143c0add73ff431ed",
+      architecture: null,
+    });
+    expect(clients).toHaveLength(3);
     expect(JSON.stringify(await session.status())).toContain("first.hop");
     await session.close();
     await session.close();
@@ -1951,7 +1967,7 @@ it("blocks analysis rebinding until the external writer cleanup settles", async 
   ).toEqual(err(failure));
   expect(anotherMutation).not.toHaveBeenCalled();
   // Only the resource owner may acknowledge completed cleanup.
-  failure.resolveCleanup();
+  releaseOwnedCleanup(failure);
   expect((await session.open(target)).ok).toBe(true);
   await session.close();
 });

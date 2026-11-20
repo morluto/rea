@@ -1,6 +1,7 @@
 import { expect, it as test } from "vitest";
 
 import { functionDossierSchema } from "../../../../src/domain/native/functionDossier.js";
+import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { fakeKunaCalls } from "./fakeKuna.js";
 import {
   MACHO_FUNCTIONS,
@@ -37,7 +38,7 @@ const PROCEDURES = [
 ];
 
 const OMITTED =
-  "Kuna's inventory also lists 5 entries in Mach-O data regions (Mach-O header and load commands: 1; __TEXT,__const: 1; __DATA,__data: 2; __DATA,__bss: 1): the header, or sections whose attributes declare no instructions. REA omits them as data rather than procedure entries; address_name and xrefs still accept their addresses.";
+  "Kuna's inventory also lists 5 entries in Mach-O data regions (Mach-O header and load commands: 1; __TEXT,__const: 1; __DATA,__data: 2; __DATA,__bss: 1): the header, or sections whose attributes declare no instructions. REA leaves them out of the procedure inventory. For entries in sections mapped by executable segments, the absence of instruction flags leaves code status uncertain. address_name and xrefs still accept their addresses.";
 const UNPLACED =
   "1 Kuna inventory entry lies outside every Mach-O section and the header, so REA cannot tell whether it is code or data and keeps it.";
 
@@ -61,9 +62,16 @@ it("keeps code, stubs and import slots but omits Mach-O data symbols from proced
       { address: "0x100000400", value: "main" },
     ]);
     expect(searched.limitations).toContain(
-      "Kuna's inventory also lists 1 entry in Mach-O data regions (__DATA,__data: 1): the header, or sections whose attributes declare no instructions. REA omits it as data rather than a procedure entry; address_name and xrefs still accept its address.",
+      "Kuna's inventory also lists 1 entry in Mach-O data regions (__DATA,__data: 1): the header, or sections whose attributes declare no instructions. REA classifies it as data and leaves it out of the procedure inventory. address_name and xrefs still accept its address.",
     );
     expect(searched.limitations).not.toContain(UNPLACED);
+    const executableSearch = await run(client, "search_procedures", {
+      pattern: "table",
+    });
+    expect(executableSearch.result).toEqual([]);
+    expect(executableSearch.limitations).toContain(
+      "Kuna's inventory also lists 1 entry in Mach-O data regions (__TEXT,__const: 1): the header, or sections whose attributes declare no instructions. REA leaves it out of the procedure inventory. For entries in sections mapped by executable segments, the absence of instruction flags leaves code status uncertain. address_name and xrefs still accept its address.",
+    );
     const unmatched = await run(client, "search_procedures", {
       pattern: "helper",
     });
@@ -110,6 +118,35 @@ it("keeps code, stubs and import slots but omits Mach-O data symbols from proced
       ok: false,
       error: { userMessage: expect.stringContaining("__TEXT,__const") },
     });
+    // In the executable __TEXT segment, a section that declares no
+    // instructions does not by itself prove the bytes are not code.
+    const executableData = await client.execute("procedure_address", {
+      procedure: "table",
+    });
+    if (executableData.ok) throw new Error("Expected a data refusal");
+    expect(executableData.error).toMatchObject({
+      userMessage:
+        "table (0x1000004a0) lies in __TEXT,__const, a Mach-O section whose attributes declare no instructions, so REA's Kuna lane does not treat it as a procedure. Its segment is executable, so that declaration alone does not prove the bytes are not code. address_name and xrefs accept its address.",
+    });
+    expect(
+      projectAnalysisError(executableData.error).remediation.action,
+    ).toContain(
+      "To decode it as code, open the target with the Ghidra provider.",
+    );
+    expect(
+      (await run(client, "address_name", { address: "0x1000004a0" }))
+        .limitations,
+    ).toContain(
+      "Kuna lists table in its function inventory, but 0x1000004a0 lies in __TEXT,__const, a Mach-O section whose attributes declare no instructions, so REA treats the name as a data label. Its segment is executable, so that declaration alone does not prove the bytes are not code.",
+    );
+    // Non-executable data keeps the categorical wording and no Ghidra route.
+    const plainData = await client.execute("procedure_address", {
+      procedure: "global_count",
+    });
+    if (plainData.ok) throw new Error("Expected a data refusal");
+    expect(
+      projectAnalysisError(plainData.error).remediation.action,
+    ).not.toContain("Ghidra");
     expect(
       (await fakeKunaCalls(kuna)).filter(
         ({ argv }) => argv[0] === "decompile" || argv[0] === "decompile-graph",
@@ -148,6 +185,55 @@ it("keeps code, stubs and import slots but omits Mach-O data symbols from proced
   }
 });
 
+it("keeps the executable-segment caveat when a refused name is shared by data entries", async () => {
+  const shared = (executable: boolean) =>
+    session(
+      "rea-kuna-macho-shared-data-",
+      {
+        functions: MACHO_FUNCTIONS,
+        inventoryEntries: MACHO_INVENTORY_ENTRIES.map((entry) =>
+          entry.name === "global_count" ||
+          entry.name === "message" ||
+          (executable && entry.name === "table")
+            ? { ...entry, name: "shared" }
+            : entry,
+        ),
+        inventoryImports: false,
+      },
+      {},
+      undefined,
+      undefined,
+      { bytes: machoInventoryImage(), format: "mach-o", architecture: "arm64" },
+    );
+  for (const executable of [true, false]) {
+    const { open } = await shared(executable);
+    const client = open();
+    try {
+      const refused = await client.execute("procedure_address", {
+        procedure: "shared",
+      });
+      if (refused.ok) throw new Error("Expected a data refusal");
+      const remediation = projectAnalysisError(refused.error).remediation
+        .action;
+      if (executable) {
+        expect(refused.error.userMessage).toBe(
+          "shared names 3 Kuna entries that lie in Mach-O data regions (0x1000004a0, 0x100008000, 0x100008008), so REA's Kuna lane treats none of them as a procedure. At least one lies in an executable segment, where a section declaration alone does not prove the bytes are not code. address_name and xrefs accept their addresses.",
+        );
+        expect(remediation).toContain(
+          "To decode one as code, open the target with the Ghidra provider.",
+        );
+      } else {
+        expect(refused.error.userMessage).toBe(
+          "shared names 2 Kuna entries that lie in Mach-O data regions (0x100008000, 0x100008008); they are data, not procedures.",
+        );
+        expect(remediation).not.toContain("Ghidra");
+      }
+    } finally {
+      expect(await client.close()).toEqual({ ok: true, value: null });
+    }
+  }
+});
+
 it("resolves a data symbol's name for xrefs, which accept data addresses", async () => {
   const { kuna, open } = await machoSession("rea-kuna-macho-xrefs-");
   const client = open();
@@ -160,6 +246,93 @@ it("resolves a data symbol's name for xrefs, which accept data addresses", async
     expect(
       (await fakeKunaCalls(kuna)).find(({ argv }) => argv[0] === "xrefs")?.argv,
     ).toContain("0x100008000");
+  } finally {
+    expect(await client.close()).toEqual({ ok: true, value: null });
+  }
+});
+
+it("guides valid ambiguous and missing procedure selectors without schema repair", async () => {
+  const { open } = await machoSession("rea-kuna-procedure-recovery-");
+  const client = open();
+  try {
+    for (const [procedure, expected] of [
+      ["puts", "exactly one of the 2 candidates"],
+      ["missing_procedure", "search_procedures"],
+      ["0x00000001", "list_procedures"],
+    ] as const) {
+      const result = await client.execute("procedure_address", { procedure });
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("Expected unresolved procedure");
+      const projected = projectAnalysisError(result.error);
+      expect(projected.recovery).toBeUndefined();
+      expect(projected.remediation.action).toContain(expected);
+      expect(projected.details?.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ observed: { procedure } }),
+        ]),
+      );
+      if (procedure === "puts") {
+        expect(projected.message).toContain("0x100000480");
+        expect(projected.message).toContain("0x100004000");
+        expect(projected.details?.refusal).toEqual({
+          kind: "ambiguous_selector",
+          operation: "procedure_address",
+          field: ["procedure"],
+          candidates: ["0x100000480", "0x100004000"],
+        });
+      }
+    }
+    expect(
+      (await run(client, "procedure_address", { procedure: "helper" })).result,
+    ).toBe("0x100000440");
+  } finally {
+    expect(await client.close()).toEqual({ ok: true, value: null });
+  }
+});
+
+it("reports missing and ambiguous xref names within Kuna's inventory", async () => {
+  const { open } = await machoSession("rea-kuna-macho-xref-recovery-");
+  const client = open();
+  try {
+    const missing = await client.execute("xrefs", { address: "missing_data" });
+    expect(missing.ok).toBe(false);
+    if (missing.ok) throw new Error("Expected missing inventory name");
+    const missingProjection = projectAnalysisError(missing.error);
+    expect(missingProjection).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringMatching(/no inventory entry.*missing_data/iu),
+      remediation: {
+        action: expect.stringMatching(
+          /symbols or exports.*xrefs.*address.*does not establish absence/iu,
+        ),
+      },
+    });
+    expect(missingProjection.recovery).toBeUndefined();
+
+    const ambiguous = await client.execute("xrefs", { address: "puts" });
+    expect(ambiguous.ok).toBe(false);
+    if (ambiguous.ok) throw new Error("Expected ambiguous inventory name");
+    const ambiguousProjection = projectAnalysisError(ambiguous.error);
+    expect(ambiguousProjection).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringMatching(/puts.*2 Kuna entries/iu),
+      remediation: {
+        action: expect.stringMatching(
+          /address.*exactly one of the 2 candidates.*retry xrefs/iu,
+        ),
+      },
+      details: {
+        refusal: {
+          kind: "ambiguous_selector",
+          operation: "xrefs",
+          field: ["address"],
+          candidates: ["0x100000480", "0x100004000"],
+        },
+      },
+    });
+    expect(ambiguousProjection.message).toContain("0x100000480");
+    expect(ambiguousProjection.message).toContain("0x100004000");
+    expect(ambiguousProjection.recovery).toBeUndefined();
   } finally {
     expect(await client.close()).toEqual({ ok: true, value: null });
   }

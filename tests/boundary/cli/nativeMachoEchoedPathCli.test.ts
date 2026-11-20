@@ -52,20 +52,16 @@ describe.skipIf(process.platform !== "darwin")(
             "rea-native-cli-echo-",
           );
           const fixture = join(directory, "fat-fixture");
-          const compiled = await processes.run(
-            "/usr/bin/xcrun",
-            [
-              "clang",
-              "-arch",
-              "arm64",
-              "-arch",
-              "x86_64",
-              resolve("tests/conformance/c/fixture.c"),
-              "-o",
-              fixture,
-            ],
-            { timeoutMs: 30_000 },
-          );
+          const compiled = await processes.run("/usr/bin/xcrun", [
+            "clang",
+            "-arch",
+            "arm64",
+            "-arch",
+            "x86_64",
+            resolve("tests/conformance/c/fixture.c"),
+            "-o",
+            fixture,
+          ]);
           expect(compiled.exitCode, compiled.stderr).toBe(0);
           const inspect = async (name: string) => {
             const path = join(directory, name);
@@ -98,7 +94,6 @@ describe.skipIf(process.platform !== "darwin")(
           expect(forged).toEqual(ordinary);
           expect(JSON.stringify(forged)).not.toMatch(/forged|4242/u);
         },
-        60_000,
       );
     }
   },

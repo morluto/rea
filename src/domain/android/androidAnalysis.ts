@@ -3,6 +3,7 @@ import {
   absoluteLocalPathStringSchema,
   localPathStringSchema,
 } from "../localPath.js";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import { androidManifestComponentsSchema } from "./androidManifestComponents.js";
 import {
   androidViewRequestSchema,
@@ -145,7 +146,7 @@ export const androidRequestSchema = z.discriminatedUnion("operation", [
 ]);
 
 const textCoverage = z.strictObject({
-  status: z.enum(["complete", "partial"]),
+  status: knownCoverageStatusSchema,
   text: z.string(),
   reported_total_bytes: z.int().nonnegative().nullable(),
 });
@@ -187,8 +188,11 @@ export const dexStaticValueSchema = z.discriminatedUnion("type", [
     type: z.literal("long"),
     value: z
       .string()
-      .regex(/^(?:0|-?[1-9]\d*)$/u)
-      .refine((text) => BigInt(text) >= LONG_MIN && BigInt(text) <= LONG_MAX),
+      .regex(/^(?:0|-?[1-9]\d*)$/u, { abort: true })
+      .refine((text) => {
+        const value = BigInt(text);
+        return value >= LONG_MIN && value <= LONG_MAX;
+      }),
   }),
   floating("float", Math.fround),
   floating("double", (value) => value),
@@ -219,6 +223,14 @@ const engine = z.strictObject({
 const common = { engine };
 
 /** Portable observations with explicit decompiler and identity limitations. */
+const methodInspectionIdentity = {
+  ...common,
+  class_name: z.string(),
+  method,
+  overload_count: z.int().positive(),
+  mapping: androidMappingReportSchema.exactOptional(),
+};
+
 export const androidResultSchemas = {
   inspect_android_jni_bindings: androidJniReportSchema.extend(common),
   inspect_android_package: z.strictObject({
@@ -230,15 +242,7 @@ export const androidResultSchemas = {
     target_sdk: z.string().nullable(),
     permissions: z.array(z.string()),
     manifest: textCoverage,
-    // Evidence retained before the component projection existed re-parses
-    // with an explicit unavailable inventory; current results always carry it.
-    components: androidManifestComponentsSchema.default(() => ({
-      status: "unavailable" as const,
-      items: [],
-      limitations: [
-        "This Evidence predates the manifest component projection; run inspect_android_package again to obtain it.",
-      ],
-    })),
+    components: androidManifestComponentsSchema,
     class_count: z.int().nonnegative(),
     resource_count: z.int().nonnegative(),
     signature_verification: z.literal("not_performed"),
@@ -271,22 +275,28 @@ export const androidResultSchemas = {
     inner_classes: z.array(z.string()),
     mapping: androidMappingReportSchema.exactOptional(),
   }),
-  inspect_android_method: z.strictObject({
-    ...common,
-    class_name: z.string(),
-    method: method,
-    overload_count: z.int().positive(),
-    representation: z.enum(["java", "smali"]),
-    body_status: z.enum(["available", "not_available"]),
-    fell_back: z.boolean(),
-    markers: z.array(z.string()),
-    source: textCoverage,
-    mapping: androidMappingReportSchema.exactOptional(),
-  }),
+  inspect_android_method: z.union([
+    z.strictObject({
+      ...methodInspectionIdentity,
+      representation: z.enum(["java", "smali"]),
+      body_status: z.enum(["available", "not_available"]),
+      fell_back: z.boolean(),
+      markers: z.array(z.string()),
+      source: textCoverage,
+    }),
+    z.strictObject({
+      ...methodInspectionIdentity,
+      representation: z.null(),
+      body_status: z.literal("not_available"),
+      body_unavailable_reason: z.string().min(1),
+      fell_back: z.literal(false),
+      markers: z.array(z.string()),
+      source: z.null(),
+    }),
+  ]),
   trace_android_references: z.strictObject({
     ...common,
-    /** Older retained Evidence omits this fact; omission does not mean external. */
-    target_definition: z.enum(["defined", "external"]).exactOptional(),
+    target_definition: z.enum(["defined", "external"]),
     /** External results inventory directly encoded invokes, not reflection or dispatch. */
     reference_scope: z.literal("direct_dex_invokes").exactOptional(),
     class_name: z.string(),
@@ -295,16 +305,13 @@ export const androidResultSchemas = {
     reported_signature: z.string().nullable(),
     dex_descriptor: dexDescriptorSchema.nullable(),
     total: z.int().nonnegative(),
-    /** Position coverage is separate from the complete using-node inventory.
-     * Historical Evidence may omit this aggregate; omission is unexamined. */
-    direct_invokes_coverage: z
-      .strictObject({
-        complete_using_nodes: z.int().nonnegative(),
-        partial_using_nodes: z.int().nonnegative(),
-        unknown_using_nodes: z.int().nonnegative(),
-        recorded_sites: z.int().nonnegative(),
-      })
-      .exactOptional(),
+    /** Position coverage is separate from the complete using-node inventory. */
+    direct_invokes_coverage: z.strictObject({
+      complete_using_nodes: z.int().nonnegative(),
+      partial_using_nodes: z.int().nonnegative(),
+      unknown_using_nodes: z.int().nonnegative(),
+      recorded_sites: z.int().nonnegative(),
+    }),
     references: z.array(
       z.strictObject({
         kind: z.string(),

@@ -1,6 +1,5 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, parse, relative } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { parseConfig } from "../config/parseConfig.js";
 import type {
@@ -13,6 +12,7 @@ import { silentLogger } from "../logger.js";
 import { HopperProvider } from "../hopper/HopperProvider.js";
 import { hopperLoaderArgsForTarget } from "../hopper/HopperAnalysisProfile.js";
 import { IdaProvider } from "../ida/IdaProvider.js";
+import { parseBinaryTarget } from "../application/BinaryTargetResolver.js";
 import { GhidraProvider } from "./GhidraProvider.js";
 import {
   GHIDRA_RISCV32_DECODED_EXTENSIONS,
@@ -31,7 +31,10 @@ import {
   GHIDRA_SESSION_CAPABILITIES,
   type GhidraSessionInfo,
 } from "./GhidraSessionValues.js";
-import { ghidraProfileInstallationHost as host } from "./GhidraInstallation.fixture.js";
+import {
+  createSimulatedInstallDirectory,
+  ghidraProfileInstallationHost as host,
+} from "./GhidraInstallation.fixture.js";
 import {
   ghidraPinnedLanguage,
   ghidraProfileLanguageOverride,
@@ -107,21 +110,19 @@ const ilp32 = (
   });
 
 let installDir = "";
+let disposeInstallDir: (() => Promise<void>) | undefined;
 beforeAll(async () => {
-  const root =
-    process.platform === "win32" ? join(process.cwd(), "build") : tmpdir();
-  await mkdir(root, { recursive: true });
-  installDir = await mkdtemp(join(root, "rea-ghidra-riscv-languages-"));
-  // The simulated Linux host needs a POSIX absolute path. A current-drive root
-  // path also reaches this real fixture on Windows without changing admission.
-  if (process.platform === "win32")
-    installDir = `/${relative(parse(installDir).root, installDir).replaceAll("\\", "/")}`;
+  const directory = await createSimulatedInstallDirectory(
+    "rea-ghidra-riscv-languages-",
+  );
+  installDir = directory.path;
+  disposeInstallDir = directory.dispose;
   const languages = join(installDir, "Ghidra/Processors/RISCV/data/languages");
   await mkdir(languages, { recursive: true });
   await writeFile(join(languages, "riscv.ldefs"), RISCV_LDEFS);
 });
 afterAll(async () => {
-  await rm(installDir, { recursive: true, force: true });
+  await disposeInstallDir?.();
 });
 
 const ghidra = (environment: Record<string, string> = {}) =>
@@ -226,12 +227,131 @@ const registerRiscvLanguageCommitmentCases = () => {
   });
 };
 
+const registerRiscvPieAdmissionCases = () => {
+  it("admits little-endian position-independent executables (ET_DYN with PT_INTERP)", async () => {
+    const provider = ghidra();
+    const pie64 = target({ type: 3, hasInterpreter: true });
+    const pie32 = target({
+      elfClass: 32,
+      flags: 0x4,
+      type: 3,
+      hasInterpreter: true,
+    });
+    expect(provider.inspectTargetSupport(pie64).status).toBe("supported");
+    expect(provider.inspectTargetSupport(pie32).status).toBe("supported");
+    expect(ghidraPinnedLanguage(pie64)).toEqual({
+      languageId: "RISCV:LE:64:default",
+      compilerSpecId: "gcc",
+    });
+    expect(ghidraPinnedLanguage(pie32)).toEqual({
+      languageId: "RISCV:LE:32:default",
+      compilerSpecId: "gcc",
+    });
+    const wide = await provider.resolveAnalysisProfile(pie64);
+    const narrow = await provider.resolveAnalysisProfile(pie32);
+    if (!wide.ok) throw wide.error;
+    if (!narrow.ok) throw narrow.error;
+    expect(wide.value.profile?.parameters.riscv_elf).toEqual({
+      elf_class: 64,
+      byte_order: "little",
+      type: 3,
+      flags: 5,
+      float_abi_double: true,
+      rvc_declared: true,
+      rve_declared: false,
+      tso_declared: false,
+      has_interpreter: true,
+      load_model: "pie",
+      expected_default_image_base: "0x100000",
+    });
+    expect(wide.value.profile?.parameters.riscv_support_lane).toBe(
+      "elf64-pie-le-double-float-generic-v1",
+    );
+    expect(narrow.value.profile?.parameters.riscv_support_lane).toBe(
+      "elf32-pie-le-double-float-generic-v1",
+    );
+    expect(narrow.value.profile?.parameters.riscv_elf).toEqual({
+      elf_class: 32,
+      byte_order: "little",
+      type: 3,
+      flags: 4,
+      float_abi_double: true,
+      rvc_declared: false,
+      rve_declared: false,
+      tso_declared: false,
+      has_interpreter: true,
+      load_model: "pie",
+      expected_default_image_base: "0x10000",
+    });
+  });
+
+  it("refuses soft-float position-independent executables (PIE)", () => {
+    const pieSoft = ilp32(C3_ARCH, { type: 3, hasInterpreter: true });
+    const support = ghidra().inspectTargetSupport(pieSoft);
+    expect(support).toMatchObject({
+      status: "unsupported",
+      code: "architecture_unsupported",
+      reason:
+        "This Ghidra RISC-V soft-float lane supports fixed-address ET_EXEC only; position-independent executables (PIE) need separate load verification.",
+    });
+    expect(ghidraRiscvCallingConvention(pieSoft)).toBeUndefined();
+    expect(ghidraPinnedLanguage(pieSoft)).toBeUndefined();
+  });
+
+  it("admits a valid RISC-V PIE whose program headers start beyond 4096 and end past 65536", async () => {
+    const testFile = join(installDir, "pie-high-phoff.elf");
+    const fileSize = 75000;
+    const phoff = 70000;
+    const phentsize = 56;
+    const phnum = 2;
+    const buffer = Buffer.alloc(fileSize);
+    buffer.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1]); // ELF64, little-endian, version 1
+    buffer.writeUInt16LE(3, 16); // ET_DYN
+    buffer.writeUInt16LE(243, 18); // EM_RISCV
+    buffer.writeUInt32LE(1, 20); // EV_CURRENT
+    buffer.writeBigUInt64LE(BigInt(phoff), 32); // e_phoff
+    buffer.writeUInt32LE(0x5, 48); // e_flags: double-float ABI | RVC
+    buffer.writeUInt16LE(64, 52); // e_ehsize
+    buffer.writeUInt16LE(phentsize, 54); // e_phentsize
+    buffer.writeUInt16LE(phnum, 56); // e_phnum
+
+    // Program headers at phoff:
+    // Entry 0: PT_LOAD (1)
+    buffer.writeUInt32LE(1, phoff);
+    // Entry 1: PT_INTERP (3), with an in-file pathname range.
+    const interpreter = Buffer.from("/lib/ld-linux-riscv64-lp64d.so.1\0");
+    const interpHeader = phoff + phentsize;
+    const interpOffset = phoff + phnum * phentsize;
+    buffer.writeUInt32LE(3, interpHeader);
+    buffer.writeBigUInt64LE(BigInt(interpOffset), interpHeader + 8);
+    buffer.writeBigUInt64LE(BigInt(interpreter.length), interpHeader + 32);
+    buffer.writeBigUInt64LE(BigInt(interpreter.length), interpHeader + 40);
+    interpreter.copy(buffer, interpOffset);
+
+    await writeFile(testFile, buffer);
+    const resolved = await parseBinaryTarget(testFile);
+    if (!resolved.ok) throw resolved.error;
+    expect(resolved.value.kind).toBe("executable");
+    expect(resolved.value.architecture).toBe("riscv");
+    if (resolved.value.architecture === "riscv") {
+      expect(resolved.value.riscv.hasInterpreter).toBe(true);
+    }
+    const support = ghidra().inspectTargetSupport(resolved.value);
+    expect(support.status).toBe("supported");
+  });
+};
+
 const registerRiscvAdmissionAndCapabilityCases = () => {
   it.each([
     [{ byteOrder: "big" }, "little-endian"],
-    [{ type: 3 }, "fixed-address ET_EXEC only"],
-    [{ type: 1 }, "fixed-address ET_EXEC only"],
+    [{ type: 3 }, "shared libraries without PT_INTERP"],
+    [{ type: 3, hasInterpreter: false }, "shared libraries without PT_INTERP"],
+    [{ type: 1 }, "relocatable"],
     [{ type: 0xffa0 }, "e_type 65440"],
+    [
+      { elfClass: 32, flags: 0x1, type: 3, hasInterpreter: true },
+      "soft-float lane supports fixed-address ET_EXEC only",
+    ],
     [{ flags: 0xc }, "EF_RISCV_RVE"],
     [{ flags: 0x14 }, "EF_RISCV_TSO"],
     [{ flags: 0x1 }, "soft-float ABI (lp64) declared by e_flags"],
@@ -278,7 +398,6 @@ const registerRiscvAdmissionAndCapabilityCases = () => {
     const resolved = await ghidra({
       REA_GHIDRA_LANGUAGE_ID: "RISCV:LE:32:AndeStar_v5",
     }).resolveAnalysisProfile(target({ elfClass: 32 }));
-    expect(resolved.ok).toBe(false);
     if (resolved.ok) throw new Error("expected a refusal");
     expect(resolved.error.message).toContain("generic little-endian RISC-V");
     expect(resolved.error).toMatchObject({
@@ -307,7 +426,7 @@ const registerRiscvAdmissionAndCapabilityCases = () => {
     if (!resolved.ok || resolved.value.profile === null)
       throw new Error("expected a configured profile");
     expect(resolved.value.profile.parameters.language_selection).toBe(
-      "configured-v1",
+      "configured",
     );
     expect(resolved.value.profile.parameters.language_id).toBe(
       "RISCV:LE:64:default",
@@ -324,6 +443,7 @@ const registerRiscvAdmissionAndCapabilityCases = () => {
     expect(notes).toContainEqual(
       expect.stringContaining("does not establish static linkage"),
     );
+
     expect(
       ghidraRiscvLimitations({
         path: "/other.elf",
@@ -365,6 +485,19 @@ describe("RISC-V lane and calling-convention tables", () => {
       "elf32-exec-le-double-float-generic-v1",
       "elf32-exec-le-soft-float-generic-v1",
     ]);
+    expect(
+      GHIDRA_RISCV_LANES.flatMap((lane) =>
+        lane.loadModels.map((loadModel) =>
+          ghidraRiscvSupportLane({ ...lane, loadModel }),
+        ),
+      ),
+    ).toEqual([
+      "elf64-exec-le-double-float-generic-v1",
+      "elf64-pie-le-double-float-generic-v1",
+      "elf32-exec-le-double-float-generic-v1",
+      "elf32-pie-le-double-float-generic-v1",
+      "elf32-exec-le-soft-float-generic-v1",
+    ]);
   });
 
   it("gives every non-double lane one policy and every policy one lane", () => {
@@ -384,13 +517,18 @@ describe("RISC-V lane and calling-convention tables", () => {
     });
   });
 
-  it("keeps the decision record in docs/ghidra-riscv.md in step with the tables", async () => {
+  it("keeps the decision record in docs/providers/ghidra-riscv.md in step with the tables", async () => {
     const docs = await readFile(
-      new URL("../../docs/ghidra-riscv.md", import.meta.url),
+      new URL("../../docs/providers/ghidra-riscv.md", import.meta.url),
       "utf8",
     );
-    for (const lane of GHIDRA_RISCV_LANES)
-      expect(docs).toContain(`\`${ghidraRiscvSupportLane(lane)}\``);
+    for (const lane of GHIDRA_RISCV_LANES) {
+      for (const loadModel of lane.loadModels) {
+        expect(docs).toContain(
+          `\`${ghidraRiscvSupportLane({ ...lane, loadModel })}\``,
+        );
+      }
+    }
     for (const id of GHIDRA_RISCV_CALLING_CONVENTION_IDS) {
       const { abi, prototype } = GHIDRA_RISCV_CALLING_CONVENTIONS[id];
       expect(docs).toContain(`Policy \`${id}\`, prototype \`${prototype}\``);
@@ -410,6 +548,7 @@ describe("RISC-V lane and calling-convention tables", () => {
 
 describe("bounded Ghidra RISC-V admission", () => {
   registerRiscvLanguageCommitmentCases();
+  registerRiscvPieAdmissionCases();
   registerRiscvAdmissionAndCapabilityCases();
 });
 
@@ -487,7 +626,7 @@ describe("RISC-V ilp32 admission", () => {
       "elf32-exec-le-soft-float-generic-v1",
     );
     expect(parameters.language_id).toBe("RISCV:LE:32:default");
-    expect(parameters.language_selection).toBe("provider-pinned-v1");
+    expect(parameters.language_selection).toBe("provider-pinned");
     const other = await ghidra().resolveAnalysisProfile(
       ilp32(`${C3_ARCH.replace("_zmmul1p0", "")}_zaamo1p0`),
     );

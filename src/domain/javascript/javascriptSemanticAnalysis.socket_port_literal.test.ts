@@ -16,7 +16,8 @@ import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
  *   net.connect("")                   -> THREW ERR_SOCKET_BAD_PORT
  *   net.connect("/tmp/x.sock")        -> Socket created (Unix socket path)
  *   net.connect({ port: 80 })         -> Socket created
- *   net.connect(undefined) / {} / []  -> THREW ERR_MISSING_ARGS (undecided here)
+ *   net.connect() / undefined / void 0 -> THREW ERR_MISSING_ARGS
+ *   net.connect({}) / []              -> THREW ERR_MISSING_ARGS (undecided here)
  */
 const socketAcquisitionsFor = (call: string) =>
   analyzeJavaScriptSemantics(
@@ -34,6 +35,10 @@ it.each([
   ["a boolean port", `net.connect(true)`],
   ["a null port", `net.connect(null)`],
   ["an empty path", `net.connect("")`],
+  ["an omitted argument", `net.connect()`],
+  ["an explicit undefined port", `net.connect(undefined)`],
+  ["a void port", `net.connect(void 0)`],
+  ["an omitted createConnection argument", `net.createConnection()`],
   ["a tls port above the range", `tls.connect(65536)`],
   ["a tls negative port", `tls.connect(-1)`],
   ["a tls NaN port", `tls.connect(NaN)`],
@@ -49,8 +54,12 @@ it.each([
   ["the highest port", `net.connect(65535)`, "connect"],
   ["a Unix socket path", `net.connect("/tmp/x.sock")`, "connect"],
   ["an options object", `net.connect({ port: 80 })`, "connect"],
-  ["an omitted argument", `net.connect()`, "connect"],
-  ["an explicit undefined port", `net.connect(undefined)`, "connect"],
+  ["a computed argument", `net.connect(p)`, "connect"],
+  [
+    "a TLS port supplied by later options",
+    `tls.connect(void 0, { port: 443 })`,
+    "connect",
+  ],
   ["a tls port", `tls.connect(80)`, "connect"],
   ["a createConnection port", `net.createConnection(80)`, "createConnection"],
 ] as const)("keeps the socket acquisition for %s", (_name, call, method) => {

@@ -81,3 +81,15 @@ configuration. Retrieval rewards demonstrate particular task outcomes.
 normalizations and omissions. Keep these claims separate, and retain the
 version and coverage limits when quoting any result. This index is a source
 and PR review; it does not constitute a new real-application or benchmark run.
+
+## Additional feature records
+
+These feature directories supplement the dated census above; this list does not
+assert merge or verification status.
+
+- [Saved values in browser scenarios](scenario-saved-values/spec.md)
+- [Serve the calls agents make and the values applications count](write-call-values/spec.md)
+- [Serve the writes callers make without recorded form fields](write-form-calls/spec.md)
+- [Serve the writes that later reads explain](write-later-reads/spec.md)
+- [Serve writes whose calls send different members](write-varied-calls/spec.md)
+- [Serve sorted creates, listed references and toggles](write-sorts-references-toggles/spec.md)

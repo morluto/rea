@@ -53,7 +53,12 @@ export interface FakeKunaBehavior {
   readonly asmPadding?: number;
   /** Extra C comment bytes inside each exported body, for buffered-read capacity. */
   readonly cPadding?: number;
+  /** Exact bytes inside the first exported C body, for text-admission tests. */
+  readonly cBodyComment?: readonly number[];
   readonly decompile?: "ok" | "hang";
+  readonly standaloneFunctions?: readonly FakeKunaFunction[];
+  /** Hold successful work until releaseFakeKunaCommand acknowledges the test phase. */
+  readonly gatedCommands?: readonly ("decompile" | "decompile-project")[];
   /** Milliseconds one `decompile --addr` run takes before printing. */
   readonly decompileDelayMs?: number;
   /** Extra comment bytes in each `decompile --addr` text, for retention budgets. */
@@ -71,11 +76,25 @@ export interface FakeKunaBehavior {
     | "with-bodies"
     | "noisy";
   readonly graphIndirectCalls?: boolean;
+  readonly graphDataFunction?: string;
   /** Bytes of an extra root member in the graph JSON. */
   readonly graphPadding?: number;
   readonly xrefs?: "ok" | "hang" | "not-json";
+  /** Include stored pointers to the selected target and its forwarding alias. */
+  readonly pointerAliasReferences?: boolean;
   /** Additional exact-target incoming call-site addresses. */
   readonly extraXrefSources?: readonly number[];
+  readonly incomingRows?: Readonly<
+    Record<
+      string,
+      readonly {
+        readonly from: number;
+        readonly caller: number;
+        readonly kind: "call" | "data";
+        readonly instruction: string;
+      }[]
+    >
+  >;
   readonly referenceDelayMs?: number;
   readonly referencePadding?: number;
   /** `invalid-then-hang` writes a contradictory first row, then never finishes. */
@@ -108,6 +127,14 @@ fs.appendFileSync(__filename + ".calls", JSON.stringify({ pid: process.pid, at: 
 const args = process.argv.slice(2);
 const functions = behavior.functions ?? [{ name: "main", addr: "0x1000" }, { name: "helper", addr: "0x1040" }];
 const hang = () => setInterval(() => {}, 1000);
+const whenReleased = (command, action) => {
+  if (!behavior.gatedCommands?.includes(command)) { action(); return; }
+  const waiting = setInterval(() => {
+    if (!fs.existsSync(__filename + ".release-" + command)) return;
+    clearInterval(waiting);
+    action();
+  }, 10);
+};
 if (args[0] === "--version") {
   const version = behavior.version ?? { stdout: "kuna 1.833\n" };
   if ("exit" in version) { process.stderr.write("version probe failed\n"); process.exit(version.exit); }
@@ -145,11 +172,11 @@ if (args[0] === "--version") {
   else {
     if (behavior.graph === "noisy") process.stderr.write(Buffer.alloc(9 * 1024 * 1024, 0x78));
     if (args[args.indexOf("--functions") + 1] !== "") throw new Error("graph must request no bodies");
-    const nodes = [...functions, { name: "puts", addr: "0x2000" }].map((fn) => ({ address: parseInt(fn.addr, 16), name: fn.name, kind: "normal", hasIndirectCalls: behavior.graphIndirectCalls !== false && fn === functions[0], forwardsTo: null, codeC: behavior.graph === "with-bodies" ? "unrequested code" : null, assembly: null, error: null }));
+    const nodes = [...functions, { name: "puts", addr: "0x2000" }].map((fn) => ({ address: parseInt(fn.addr, 16), name: fn.name, kind: fn.name === behavior.graphDataFunction ? "data" : "normal", hasIndirectCalls: behavior.graphIndirectCalls !== false && fn === functions[0], forwardsTo: null, codeC: behavior.graph === "with-bodies" ? "unrequested code" : null, assembly: null, error: null }));
     const edges = [];
     if (functions[1]) edges.push({ callerAddress: nodes[0].address, calleeAddress: nodes[1].address, kind: "call", calleeOrder: 0 });
     if (functions[2]) edges.push({ callerAddress: nodes[0].address, calleeAddress: nodes[2].address, kind: functions[2].error ? "jump" : "call", calleeOrder: 1 });
-    if (functions[1]?.name === "parse") edges.push({ callerAddress: nodes[1].address, calleeAddress: 8192, kind: "call", calleeOrder: 0 });
+    if (functions[1]?.name === "parse" && nodes[1].kind !== "data") edges.push({ callerAddress: nodes[1].address, calleeAddress: 8192, kind: "call", calleeOrder: 0 });
     setTimeout(() => process.stdout.write(JSON.stringify({ schemaVersion: 4, binary: { sourcePath: args[1], functionCount: nodes.length + (behavior.graph === "miscounted" ? 1 : 0), edgeCount: edges.length }, functions: nodes, edges, padding: "x".repeat(behavior.graphPadding ?? 0) })), behavior.referenceDelayMs ?? 0);
   }
 } else if (args[0] === "xrefs") {
@@ -160,9 +187,17 @@ if (args[0] === "--version") {
     const identity = (name, value) => ({ name, address: value, address_hex: "0x" + value.toString(16) });
     const aliases = target === "0x2000" ? [identity("puts.slot", 12288)] : [];
     const row = (from, to, kind) => ({ address: from, address_hex: "0x" + from.toString(16), from_address: from, from_address_hex: "0x" + from.toString(16), to_address: to, to_address_hex: "0x" + to.toString(16), kind, from_function: identity("main", 4096), to_function: null, instruction: "fixture reference" + "x".repeat(behavior.referencePadding ?? 0) });
-    const rows = [4100, ...(behavior.extraXrefSources ?? [])].map((source) => row(source, parseInt(target, 16), "call"));
+    const rows = behavior.incomingRows === undefined
+      ? [4100, ...(behavior.extraXrefSources ?? [])].map((source) => row(source, parseInt(target, 16), "call"))
+      : (behavior.incomingRows[target] ?? []).map(({ from, caller, kind, instruction }) => ({
+          ...row(from, parseInt(target, 16), kind),
+          from_function: identity("main", caller),
+          instruction,
+        }));
     if (aliases.length) rows.push(row(4164, 12288, "call"));
-    setTimeout(() => process.stdout.write(JSON.stringify({ binary: args[1], direction: "to", count: rows.length, target: { ...identity(null, parseInt(target, 16)), aliases }, xrefs: rows })), behavior.referenceDelayMs ?? 0);
+    const pointer = (from, to) => ({ kind: "pointer", from_address: from, from_address_hex: "0x" + from.toString(16), from_name: null, to_address: to, to_address_hex: "0x" + to.toString(16), to_name: null, width: 8, source: "dynamic-relocations" });
+    const pointers = behavior.pointerAliasReferences ? [pointer(4352, parseInt(target, 16)), pointer(4368, 12288)] : undefined;
+    setTimeout(() => process.stdout.write(JSON.stringify({ binary: args[1], direction: "to", count: rows.length, target: { ...identity(null, parseInt(target, 16)), aliases }, xrefs: rows, ...(pointers ? { data_refs: pointers, data_refs_count: pointers.length, data_refs_coverage: "dynamic-relocations" } : {}) })), behavior.referenceDelayMs ?? 0);
   }
 } else if (args[0] === "decompile-project") {
   const input = args[1];
@@ -171,7 +206,7 @@ if (args[0] === "--version") {
   const mode = behavior.project ?? "ok";
   if (mode === "hang") hang();
   else if (mode === "exit-failure") { process.stderr.write("error: not in recognized object file format\n"); process.exit(1); }
-  else setTimeout(() => {
+  else whenReleased("decompile-project", () => setTimeout(() => {
     fs.mkdirSync(output, { recursive: true });
     let c = '#include "' + stem + '.h"\n\n';
     functions.forEach((fn, index) => {
@@ -179,7 +214,15 @@ if (args[0] === "--version") {
         ? "// Function: " + fn.name + " @ " + fn.addr + "\nint " + fn.name + "(void)\n{\n  return " + index + ";\n" + (behavior.cPadding ? "  /*" + "x".repeat(behavior.cPadding) + "*/\n" : "") + "}\n\n"
         : "// Function: " + fn.name + " @ " + fn.addr + "  (error: " + fn.error + ")\n\n";
     });
-    fs.writeFileSync(path.join(output, stem + ".c"), c);
+    if (behavior.cBodyComment === undefined) fs.writeFileSync(path.join(output, stem + ".c"), c);
+    else {
+      const comment = c.indexOf("  return 0;");
+      if (comment === -1) throw new Error("fixture requires a successful first C body");
+      fs.writeFileSync(path.join(output, stem + ".c"), Buffer.concat([
+        Buffer.from(c.slice(0, comment) + "  /*"), Buffer.from(behavior.cBodyComment),
+        Buffer.from("*/\n" + c.slice(comment)),
+      ]));
+    }
     fs.writeFileSync(path.join(output, stem + ".h"), "#pragma once\n");
     let asm = "; kuna decompile-project — " + stem + "\n\n; --- code section 0x1000..0x2000 ---\n\n";
     functions.forEach((fn) => { asm += fn.name + ":  ; " + fn.addr + "\n  " + fn.addr.slice(2).padStart(8, "0") + ": c3     RET\n\n"; });
@@ -192,17 +235,17 @@ if (args[0] === "--version") {
     const reported = mode === "miscounted" ? functions.length + 1 : functions.length - failed;
     if (mode === "noisy") process.stdout.write(Buffer.alloc(9 * 1024 * 1024, 0x20));
     if (mode !== "silent") process.stdout.write("wrote " + output + ": " + stem + ".c (" + c.length + " bytes); functions: " + reported + " ok, " + failed + " failed\n");
-  }, behavior.delayMs ?? 0);
+  }, behavior.delayMs ?? 0));
 } else if (args[0] === "decompile") {
   // decompile <input> <0xaddr> --addr: the single-function path.
-  const fn = functions.find((candidate) => candidate.addr === args[2]);
+  const fn = (behavior.standaloneFunctions ?? functions).find((candidate) => candidate.addr === args[2]);
   if (behavior.decompile === "hang") hang();
   else if (fn === undefined) { process.stderr.write("error: no function at " + args[2] + "\n"); process.exit(1); }
-  else setTimeout(() => {
+  else whenReleased("decompile", () => setTimeout(() => {
     const padding = behavior.decompilePadding === undefined ? "" : "/*" + "x".repeat(behavior.decompilePadding) + "*/\n";
     process.stdout.write("int " + fn.name + "(void) // single-function\n" + padding + "{\n  return 0;\n}\n");
     fs.appendFileSync(__filename + ".exits", JSON.stringify({ pid: process.pid, at: Date.now() }) + "\n");
-  }, behavior.decompileDelayMs ?? 0);
+  }, behavior.decompileDelayMs ?? 0));
 } else {
   process.stderr.write("unexpected command\n");
   process.exit(2);
@@ -262,3 +305,9 @@ export const fakeKunaExits = async (
       }),
   );
 };
+
+/** Release a command only after the test has observed its required interleaving. */
+export const releaseFakeKunaCommand = (
+  path: string,
+  command: "decompile" | "decompile-project",
+): Promise<void> => writeFile(`${path}.release-${command}`, "released");

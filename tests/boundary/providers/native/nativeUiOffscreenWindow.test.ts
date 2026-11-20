@@ -61,7 +61,7 @@ const launch = async (bundle: string, name: string) => {
 // facts need no Accessibility or Screen Recording permission.
 it.skipIf(process.platform !== "darwin")(
   "selects a window that exists off screen and still refuses absent and foreign windows",
-  { timeout: 240_000 },
+  { tags: ["long-running"] },
   async () => {
     const root = await createTestTempDirectory("rea-native-ui-offscreen-");
     const bundle = join(root, "Fixture.app");

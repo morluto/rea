@@ -23,6 +23,40 @@ export const VENDOR_B = {
   ),
 };
 
+/** `gpg --armor --export A`, GnuPG 2.4.9. */
+export const A_ARMORED = `-----BEGIN PGP PUBLIC KEY BLOCK-----
+
+mDMEauuPaBYJKwYBBAHaRw8BAQdAU6pi/2EhXePFnrHKRH29KuHZHwAQElOjI9pN
+c4b8HbG0GFZlbmRvciBBIDxhQGV4YW1wbGUuY29tPoiZBBMWCgBBFiEEbBcWys4/
+mLGBw840ZwHP1biTA2wFAmrrj2gCGwMFCQXw8dgFCwkIBwICIgIGFQoJCAsCBBYC
+AwECHgcCF4AACgkQZwHP1biTA2x38AD/TyC+wrSKRFUaH3E/VTwobbbg5wZbGYMk
+n1ytPPD61xkA/j+dC/mvcEkT5YfMLx7KFPrlRnp+SAAWZBzW9ywLNo4A
+=Em8s
+-----END PGP PUBLIC KEY BLOCK-----
+`;
+
+/** `gpg --armor --export B`, GnuPG 2.4.9. */
+export const B_ARMORED = `-----BEGIN PGP PUBLIC KEY BLOCK-----
+
+mDMEauuPaBYJKwYBBAHaRw8BAQdA7npYbfFfwg0YB91jv2Ion9nZATrqRjMxfyoM
+zYbuIKW0GFZlbmRvciBCIDxiQGV4YW1wbGUuY29tPoiZBBMWCgBBFiEEwo1/MzfH
+muvX3Ul2+uUZIWP8omgFAmrrj2gCGwMFCQXw8dgFCwkIBwICIgIGFQoJCAsCBBYC
+AwECHgcCF4AACgkQ+uUZIWP8omi6wwEAwdUiyGmAnfqDDEbm5jx1LyKa7NtHEEcH
+FNiRbBi99DQBAJTsAHBzv2QhQ4t3tCelAnVI/u7T47wfKi3NgIp1MBkC
+=OjLx
+-----END PGP PUBLIC KEY BLOCK-----
+`;
+
+/** The Signed-By field `add-apt-repository ppa:…` writes for a key on Ubuntu 24.04: each line indented, an empty one as ` .`. */
+export const inlineSignedBy = (armored: string): string =>
+  [
+    "Signed-By: ",
+    ...armored
+      .trimEnd()
+      .split("\n")
+      .map((line) => (line === "" ? " ." : ` ${line}`)),
+  ].join("\n");
+
 /** `gpg --armor --export A B`: both keys in one armor block. */
 export const BOTH_ARMORED = `-----BEGIN PGP PUBLIC KEY BLOCK-----
 

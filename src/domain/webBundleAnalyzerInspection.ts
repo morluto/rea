@@ -1,11 +1,15 @@
+import type { JavaScriptMemberMutationAllowance } from "./javascript/javascriptSemanticWorkAllowance.js";
+import type { JavaScriptSemanticPrecisionInput } from "./javascript/javascriptSemanticPrecision.js";
 import {
   isBrowserNetworkRequest,
   createXhrOpenRequestQuery,
+  literalFetchRequestConstructorUrl,
 } from "./javascript/javascriptNetworkRequests.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascript/javascriptSemanticState.js";
-import type {
-  AnalysisAccumulator,
-  IncludedScript,
+import {
+  createWebBundleAnalysisAccumulator,
+  type AnalysisAccumulator,
+  type IncludedScript,
 } from "./webBundleAnalyzerState.js";
 import * as t from "@babel/types";
 import { JavaScriptRouteScan } from "./javascript/javascriptRouteScan.js";
@@ -19,11 +23,11 @@ import {
   completeSemanticSteps,
 } from "./javascript/javascriptSemanticTraversal.js";
 import { indexJavaScriptBindingsWithReceiversSteps } from "./javascript/javascriptSemanticAnalysis.js";
-import type { JavaScriptOpenReceiverFact } from "./javascript/javascriptSemanticAnalysis.js";
-import { isIntrinsicMapLookup } from "./javascript/javascriptSemanticMapOperations.js";
+import type { JavaScriptOpenReceiverFact } from "./javascript/javascriptSemanticReceiverFacts.js";
+import { isIntrinsicMapLookup } from "./javascript/javascriptSemanticIntrinsicInstances.js";
+import { isUnmodifiedGlobalReference } from "./javascript/javascriptSemanticGlobalReference.js";
 import {
   semanticStaticPropertyKey,
-  semanticStaticPropertyName,
   isNullishJavaScriptSyntax,
   staticObjectProperty,
   staticObjectPropertyNames,
@@ -44,7 +48,13 @@ import {
 } from "./webBundleAnalyzerAst.js";
 import { createJavaScriptRpcScan } from "./javascript/javascriptRpcEndpoints.js";
 import { semanticStaticModuleSource } from "./javascript/javascriptModuleDeclaration.js";
-import { parseJavaScriptSource } from "./javascript/javascriptSourceParser.js";
+import { parseCapturedJavaScriptSource } from "./javascript/javascriptSourceParser.js";
+import {
+  semanticPrecisionControl,
+  semanticResourceLimitFacts,
+  semanticResourceLimitReason,
+} from "./javascript/javascriptSemanticResourceLimits.js";
+import type { WebBundleSemanticLimit } from "./webBundleScriptAnalysis.js";
 
 type BundleObservations = WebBundleAnalysis["observations"];
 type ChunkEdge = BundleObservations["chunks"]["edges"][number];
@@ -54,18 +64,31 @@ type Inference = WebBundleAnalysis["inferences"][number];
 export const analyzeScript = (
   script: IncludedScript,
   accumulator: AnalysisAccumulator,
-): JavaScriptRouteSourceFacts | null => {
-  const file = parseJavaScriptSource(script.source.artifact.text);
+  precision?: JavaScriptSemanticPrecisionInput,
+  memberMutationAllowance?: JavaScriptMemberMutationAllowance,
+): {
+  readonly routeFacts: JavaScriptRouteSourceFacts | null;
+  readonly semanticLimits: readonly WebBundleSemanticLimit[];
+} => {
+  const file = parseCapturedJavaScriptSource(
+    script.source.artifact.text,
+    script.language,
+  );
   if (file === null) {
     accumulator.failedScripts.push(script.script_key);
-    return null;
+    return { routeFacts: null, semanticLimits: [] };
   }
   accumulator.parsedScripts += 1;
   if ((file.errors?.length ?? 0) > 0)
     accumulator.recoveredScripts.push(script.script_key);
   detectVendorFingerprints(script, accumulator);
   const index = completeSemanticSteps(
-    indexJavaScriptBindingsWithReceiversSteps(file.program),
+    indexJavaScriptBindingsWithReceiversSteps(
+      file.program,
+      undefined,
+      precision,
+      memberMutationAllowance,
+    ),
   );
   completeSemanticSteps(index.indexAmbientWritesSteps());
   const { receivers } = index;
@@ -137,7 +160,24 @@ export const analyzeScript = (
       });
   if (index.bindings.returnedReferenceWidenings.size > 0)
     accumulator.widenedScripts.push(script.script_key);
-  return completeSemanticSteps(routeScan.finishSteps());
+  // Finishing route recovery can itself exhaust a getter or alias budget.
+  // Snapshot the evaluator's facts only after every consumer has finished.
+  const routeFacts = completeSemanticSteps(routeScan.finishSteps());
+  const { bindings } = index;
+  const reached = new Set([
+    ...bindings.valueResourceLimits,
+    ...bindings.getterResourceLimits,
+  ]);
+  return {
+    routeFacts,
+    semanticLimits: [...reached].sort().map((resource) => ({
+      reason: semanticResourceLimitReason(resource, bindings.precision),
+      limit: semanticPrecisionControl(
+        semanticResourceLimitFacts(resource, bindings.precision).control,
+        bindings.precision,
+      ),
+    })),
+  };
 };
 
 const inspectNode = (
@@ -200,7 +240,10 @@ const inspectCall = (
 ): void => {
   const name = calleeName(node.callee);
   const first = stringValue(node.arguments[0]);
-  if ((name === "require" || name.endsWith(".require")) && first !== undefined)
+  if (
+    first !== undefined &&
+    isUnmodifiedGlobalReference(node.callee, bindings, "require")
+  )
     addEdge({
       script,
       specifier: first,
@@ -208,7 +251,13 @@ const inspectCall = (
       node,
       accumulator,
     });
-  if (name === "importScripts" || name.endsWith(".importScripts"))
+  if (
+    !t.isNewExpression(node) &&
+    (name === "importScripts" ||
+      name === "self.importScripts" ||
+      name === "globalThis.importScripts") &&
+    isUnmodifiedGlobalReference(node.callee, bindings, "importScripts")
+  )
     for (const argument of node.arguments) {
       const specifier = stringValue(argument);
       if (specifier === undefined) continue;
@@ -233,12 +282,21 @@ const inspectCall = (
     openReceiverFacts.get(node.start ?? -1),
   );
   const mapLookup = isMapLookup(node);
-  const knownRequest =
-    isBrowserNetworkRequest(node, bindings) || isXhrRequest(node);
+  const xhrRequest = isXhrRequest(node);
+  const knownRequest = isBrowserNetworkRequest(node, bindings) || xhrRequest;
   const networkEndpoint =
     endpoint !== undefined && !mapLookup
       ? { ...endpoint, kind: knownRequest ? "endpoint" : endpoint.kind }
       : undefined;
+  if (endpoint === undefined && knownRequest && !mapLookup)
+    addProvenRequestEndpoint(
+      script,
+      node,
+      name,
+      xhrRequest,
+      bindings,
+      accumulator,
+    );
   if (networkEndpoint?.kind === "candidate")
     addEndpointCandidate(
       script,
@@ -342,6 +400,50 @@ const addEndpointCandidate = (
   );
 };
 
+/**
+ * A proven browser request whose URL the callee spelling did not classify:
+ * the URL is XMLHttpRequest `open`'s second argument, otherwise the first.
+ * A recoverable URL literal is an endpoint. Other present arguments retain
+ * an unknown endpoint at their call site.
+ */
+const addProvenRequestEndpoint = (
+  script: IncludedScript,
+  node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
+  name: string,
+  xhrRequest: boolean,
+  bindings: JavaScriptSemanticAnalysisState,
+  accumulator: AnalysisAccumulator,
+): void => {
+  const url = xhrRequest ? node.arguments[1] : node.arguments[0];
+  if (url === undefined) return;
+  const mechanism = `call:${name}`;
+  const literal =
+    stringValue(url) ?? literalFetchRequestConstructorUrl(node, url, bindings);
+  if (literal !== undefined) {
+    addFinding({
+      collection: accumulator.endpoints,
+      script,
+      rawValue: literal,
+      mechanism,
+      node,
+      accumulator,
+    });
+    return;
+  }
+  const site = location(script.script_key, node);
+  addUnique(
+    accumulator,
+    compositeKey([
+      "unresolved-endpoint",
+      mechanism,
+      site.script_key,
+      String(site.line),
+      String(site.column),
+    ]),
+    () => accumulator.unresolvedEndpoints.push({ mechanism, location: site }),
+  );
+};
+
 const addFinding = (context: AddFindingContext): void => {
   const value = sanitizeEndpointCandidate(context.rawValue);
   const key = `finding\0${context.mechanism}\0${context.script.script_key}\0${value}`;
@@ -429,6 +531,15 @@ const addWebMcpDeclaration = (
       location: location(script.script_key, node),
     }),
   );
+};
+
+/** Inferences read from script text alone, without syntax or semantic facts. */
+export const scriptTextInferences = (
+  script: IncludedScript,
+): AnalysisAccumulator["inferences"] => {
+  const accumulator = createWebBundleAnalysisAccumulator();
+  detectVendorFingerprints(script, accumulator);
+  return accumulator.inferences;
 };
 
 const detectVendorFingerprints = (

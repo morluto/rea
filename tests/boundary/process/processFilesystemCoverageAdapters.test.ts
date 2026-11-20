@@ -74,7 +74,6 @@ it
   )
   .for(["cli", "mcp"] as const)(
   "preserves selected-root permission denial and earlier snapshot facts through %s",
-  { timeout: 20_000 },
   async (adapter, context) => {
     const root = await createTestTempDirectory("rea-fs-root-denial-adapter-");
     const denied = join(root, "denied");
@@ -188,7 +187,10 @@ it
 );
 
 it("documents a finalization scenario and exit record that match the contract", async () => {
-  const document = await readFile("docs/process-capture.md", "utf8");
+  const document = await readFile(
+    "docs/guides/runtime/process-capture.md",
+    "utf8",
+  );
   const blocks = [
     ...(document.split("### Finalization interval")[1] ?? "").matchAll(
       /```json\n([\s\S]*?)\n```/gu,
@@ -211,7 +213,10 @@ it("documents a finalization scenario and exit record that match the contract", 
 itWithCaptureCapability.each(["cli", "mcp"] as const)(
   "hashes the documented complete report despite omitted terminal output through %s",
   async (adapter) => {
-    const document = await readFile("docs/process-capture.md", "utf8");
+    const document = await readFile(
+      "docs/guides/runtime/process-capture.md",
+      "utf8",
+    );
     const example = document
       .split("## Hash a report independently of terminal output")[1]
       ?.match(/```json\n([\s\S]*?)\n```/u)?.[1];
@@ -440,7 +445,6 @@ it.skipIf(CAPTURE_SKIP_REASON || process.platform === "win32")(
     });
     expect(compareProcessCaptures(capture, capture).filesystem).toBe("unknown");
   },
-  20_000,
 );
 
 it
@@ -510,7 +514,6 @@ it
     });
     expect(compareProcessCaptures(capture, capture).filesystem).toBe("unknown");
   },
-  20_000,
 );
 
 itWithCaptureCapability.each(["cli", "mcp"] as const)(
@@ -619,7 +622,6 @@ it
       await chmod(join(root, "state"), 0o700);
     }
   },
-  20_000,
 );
 
 itWithCaptureCapability(

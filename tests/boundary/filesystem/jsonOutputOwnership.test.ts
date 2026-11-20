@@ -5,13 +5,13 @@ import * as fs from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { EvidenceFileError } from "../../../src/domain/evidenceErrors.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { OwnedStagedOutput } from "../../../src/filesystem/OwnedStagedOutput.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-import { writeTextParts } from "../../../src/application/JsonFiles.js";
+import { writeTextParts } from "../../../src/resources/TextFileWrite.js";
 import { StagedOutputError } from "../../../src/filesystem/StagedOutputError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 

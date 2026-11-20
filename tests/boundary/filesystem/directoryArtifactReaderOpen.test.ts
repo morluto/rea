@@ -4,9 +4,9 @@ import { buffer } from "node:stream/consumers";
 
 import { describe, expect, it } from "vitest";
 
-import type { ArtifactEntry } from "../../../src/artifacts/ArtifactReader.js";
-import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
+import type { ArtifactEntry } from "../../../src/resources/ArtifactReader.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { DirectoryArtifactReader } from "../../../src/resources/index.js";
 
 const sampleEntry = async (
   reader: DirectoryArtifactReader,
@@ -87,7 +87,7 @@ describe("DirectoryArtifactReader.open", () => {
         expect(after.ino).toBe(before.ino);
         await expect(reader.open(entry)).rejects.toMatchObject({
           reason: "integrity",
-          message: expect.stringContaining("changed before open"),
+          integrityCheck: "member-identity",
         });
       } finally {
         await reader.close();
@@ -129,7 +129,7 @@ describe("DirectoryArtifactReader.open", () => {
         }
         expect(failure).toMatchObject({
           reason: "integrity",
-          message: expect.stringContaining("changed during read"),
+          integrityCheck: "member-identity",
         });
         expect(observedBytes).toBeLessThanOrEqual(originalBytes + 1);
       } finally {
@@ -172,6 +172,7 @@ describe("DirectoryArtifactReader input identity", () => {
       const { sourceIdentity: _identity, ...entry } = await sampleEntry(reader);
       await expect(reader.open(entry)).rejects.toMatchObject({
         reason: "integrity",
+        integrityCheck: "entry-metadata",
       });
     } finally {
       await reader.close();

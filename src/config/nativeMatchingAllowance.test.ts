@@ -6,7 +6,6 @@ import { runtimeNativeMatchingAllowance } from "./runtimeAnalysisSettings.js";
 import {
   DEFAULT_NATIVE_MATCHING_ALLOWANCE,
   NATIVE_MATCHING_ALLOWANCE_SETTING,
-  nativeMatchingRepresentationBytesConstraint,
   parseNativeMatchingAllowance,
 } from "./nativeMatchingAllowance.js";
 import { launchAnalysisSetting } from "./analysisSettings.js";
@@ -56,9 +55,17 @@ it("refuses invalid launch values instead of falling back to the default", () =>
     expect(parsed.ok).toBe(false);
     if (parsed.ok) continue;
     expect(parsed.error).toBeInstanceOf(ConfigurationError);
-    expect(parsed.error.message).toBe(
-      nativeMatchingRepresentationBytesConstraint,
-    );
+    expect(parsed.error.message).toContain(NATIVE_MATCHING_ALLOWANCE_SETTING);
+    expect(parsed.error.message).toMatch(/positive decimal integer/i);
+    expect(parsed.error.message).toContain("1073741824");
+    expect(parsed.error.message).toContain("100663296");
+    expect(parsed.error.message).toMatch(/bytes/i);
+    expect(parsed.error.settings).toEqual([
+      {
+        setting: NATIVE_MATCHING_ALLOWANCE_SETTING,
+        constraint: parsed.error.message,
+      },
+    ]);
     expect(
       launchAnalysisSetting("native.matching_representation_bytes", environment)
         .ok,

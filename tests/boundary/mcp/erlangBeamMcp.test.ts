@@ -1,6 +1,6 @@
 import pino from "pino";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
-import { registerErlangTools } from "../../../src/server/registerErlangTools.js";
+import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { BeamService } from "../../../src/application/erlang/BeamService.js";
 import { BeamProvider } from "../../../src/erlang/BeamProvider.js";
@@ -16,7 +16,9 @@ import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
+  erlangBeamChunksFixture,
   erlangBeamDeclaredRowsFixture,
+  erlangBeamRowsFixture,
   erlangBeamFixture,
 } from "../../../src/erlang/Beam.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -91,10 +93,11 @@ mcpTest(
     const { client, session } = await connect(mcp);
     const root = await createTestTempDirectory("rea-beam-capacity-");
     try {
-      for (const [label, bytes, settings, remediation] of [
+      for (const [label, bytes, settings, budget, remediation] of [
         [
           "atoms",
           erlangBeamFixture(),
+          { max_atoms: 1 },
           { max_atoms: 1 },
           "Raise max_atoms above 1",
         ],
@@ -102,14 +105,16 @@ mcpTest(
           "chunks",
           erlangBeamFixture(),
           { max_chunks: 1 },
+          { max_chunks: 1 },
           "Raise max_chunks above 1",
         ],
         [
           "rows",
-          erlangBeamDeclaredRowsFixture([
+          erlangBeamRowsFixture([
             ["ExpT", MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS + 1],
           ]),
           {},
+          { max_table_rows: MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS },
           `${String(MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS)}-row ceiling`,
         ],
       ] as const) {
@@ -125,7 +130,53 @@ mcpTest(
           code: "resource_constraint",
           retryable: false,
           remediation: { action: expect.stringContaining(remediation) },
+          details: { reported_limits: budget },
         });
+      }
+    } finally {
+      await session.close();
+    }
+  },
+);
+
+mcpTest(
+  "checks admitted atom lengths before reporting capacity",
+  async ({ mcp }) => {
+    const { client, session } = await connect(mcp);
+    const root = await createTestTempDirectory("rea-beam-atom-framing-");
+    try {
+      for (const [chunk, count, validLength, invalidLength] of [
+        ["Atom", [0, 0, 0, 2], 1, 2],
+        ["AtU8", [0, 0, 0, 2], 1, 2],
+        ["AtU8", [0xff, 0xff, 0xff, 0xfe], 0x10, 0x20],
+      ] as const) {
+        for (const [length, finalByte, malformedPrefix] of [
+          [validLength, 0, false],
+          [validLength, validLength, false], // The truncated second name is outside the scan.
+          [invalidLength, 0x62, true],
+        ] as const) {
+          const path = join(root, "atoms.beam");
+          const payload = Buffer.from([...count, length, 0x61, finalByte]);
+          await writeFile(path, erlangBeamChunksFixture([[chunk, payload]]));
+          const response = await client.callTool({
+            name: "inspect_erlang_beam",
+            arguments: { path, max_atoms: 1 },
+          });
+          expect(response.isError).toBe(true);
+          expect(parseMcpToolError(response).error).toMatchObject(
+            malformedPrefix
+              ? {
+                  code: "invalid_request",
+                  details: {
+                    issues: [{ path: ["path"], reason: "invalid_format" }],
+                  },
+                }
+              : {
+                  code: "resource_constraint",
+                  details: { reported_limits: { max_atoms: 1 } },
+                },
+          );
+        }
       }
     } finally {
       await session.close();
@@ -144,7 +195,11 @@ mcpTest(
       undefined,
       createToolResultDelivery(2 * 1024 * 1024),
     );
-    registerErlangTools(server, service, pino({ enabled: false }));
+    registerServiceTools(
+      server,
+      { erlangBeam: service },
+      { logger: pino({ enabled: false }) },
+    );
     const client = await mcp.connect(server);
     try {
       for (const delivery of [
@@ -174,6 +229,35 @@ mcpTest(
       ).toBe("without_retention");
     } finally {
       await service.close();
+    }
+  },
+);
+
+mcpTest(
+  "reports impossible BEAM table counts as malformed input",
+  async ({ mcp }) => {
+    const { client, session } = await connect(mcp);
+    const root = await createTestTempDirectory("rea-beam-malformed-rows-");
+    try {
+      for (const chunk of ["ExpT", "ImpT", "FunT"]) {
+        const path = join(root, `${chunk}.beam`);
+        await writeFile(
+          path,
+          erlangBeamDeclaredRowsFixture([
+            [chunk, MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS + 1],
+          ]),
+        );
+        const response = await client.callTool({
+          name: "inspect_erlang_beam",
+          arguments: { path },
+        });
+        expect(response.isError).toBe(true);
+        expect(parseMcpToolError(response).error).toMatchObject({
+          code: "invalid_request",
+        });
+      }
+    } finally {
+      await session.close();
     }
   },
 );

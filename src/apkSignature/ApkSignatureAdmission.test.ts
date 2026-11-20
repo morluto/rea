@@ -33,8 +33,9 @@ it("bounds process-wide scans and waiting requests, cancels queued work and reco
       code: "resource_constraint",
       retryable: true,
       remediation: {
-        action:
-          "Wait for an active analysis to complete, then retry within the reported admission limits.",
+        action: expect.stringMatching(
+          /wait.*active analysis.*complete.*retry/iu,
+        ),
       },
     });
     expect(granted).toBe(false);

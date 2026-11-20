@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, it } from "vitest";
 import { fileURLToPath } from "node:url";
 import { RuleTester } from "oxlint/plugins-dev";
 

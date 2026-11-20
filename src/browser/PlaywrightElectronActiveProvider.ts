@@ -1,12 +1,20 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import {
+  retainProcessInspectionCleanup,
+  processInspectionCancellationError,
+} from "../providers/OwnedCommandCleanup.js";
 import { runWithExecutionLimits } from "./PlaywrightElectronExecution.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import {
+  ArtifactReaderFailure,
+  bindArtifactFileCleanup,
+  ArtifactResourceScope,
+} from "../resources/index.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { ElectronCaptureCleanup } from "./ElectronCaptureCleanup.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { electronFuseFailure } from "../electron/ElectronFuseFailures.js";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 import type { _electron as electron } from "playwright-core";
@@ -14,14 +22,20 @@ import type { _electron as electron } from "playwright-core";
 import type {
   ExecutionOptions,
   ProviderIdentity,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import type {
   CanonicalElectronActiveObservationInput,
   ElectronActiveObservationPort,
-} from "../application/javascript/ElectronActiveObservationPort.js";
+} from "../ports/javascript/ElectronActiveObservationPort.js";
 import type { ElectronActiveObservationResult } from "../domain/javascript/electronActiveObservation.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisError,
+  primaryAnalysisError,
+} from "../domain/analysisErrorBase.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+} from "../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -39,6 +53,8 @@ import {
   runElectronActions,
   readApplicationState,
   readFinalApplicationState,
+  watchSingleInstanceLockRefusal,
+  type ElectronHookSnapshot,
 } from "./PlaywrightElectronActiveActions.js";
 import { projectElectronActiveCapture } from "./PlaywrightElectronActiveProjection.js";
 import { readElectronFuseImage } from "../electron/ElectronFuseReader.js";
@@ -48,6 +64,8 @@ const OPERATION = "capture_electron_scenario" as const;
 const STARTUP_TIMEOUT_MS = 60_000;
 
 import { PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY } from "./providerIdentities.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const hookPath = fileURLToPath(
   new URL("../../scripts/electron-active-hook.cjs", import.meta.url),
@@ -81,6 +99,8 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
     private readonly launch: typeof electron.launch = async (options) =>
       (await import("playwright-core"))._electron.launch(options),
     private readonly readFuseImage: typeof readElectronFuseImage = readElectronFuseImage,
+    // The host the application launches and is cleaned up on.
+    private readonly platform: NodeJS.Platform = HOST_PLATFORM.platform,
   ) {}
 
   identity(): ProviderIdentity {
@@ -113,16 +133,25 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
     let lineage: ProcessLineageObservation | undefined;
     let capture: ElectronActiveObservationResult | undefined;
     let paths: ElectronPaths | undefined;
-    let initialState:
-      | Awaited<ReturnType<typeof readApplicationState>>
+    // The latest completed snapshot, retained when a later stage fails.
+    let retained:
+      | {
+          readonly stage: "initial" | "final";
+          readonly state: Awaited<ReturnType<typeof readApplicationState>>;
+        }
       | undefined;
     let actions: ElectronActiveObservationResult["actions"] = [];
     let outcome: Result<ElectronActiveObservationResult, AnalysisError>;
     const runId = randomUUID();
     try {
       if (options.signal?.aborted === true)
-        throw new BrowserObservationError(OPERATION, "cancelled");
-      await prepareProcessOwnershipInspection(options.signal);
+        throw new BrowserObservationError(OPERATION, "cancelled", {
+          cause: options.signal.reason,
+        });
+      await inspectOwnership(
+        () => prepareProcessOwnershipInspection(options.signal),
+        this.#resources,
+      );
       const startupDeadline = performance.now() + STARTUP_TIMEOUT_MS;
       paths = {
         executable: input.executable_path,
@@ -151,10 +180,14 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         await preflight;
         throw interruption;
       }
-      const captureBaseline =
-        await systemProcessOwnershipHost.captureBaseline?.(options.signal);
+      const captureBaseline = await inspectOwnership(
+        () => systemProcessOwnershipHost.captureBaseline?.(options.signal),
+        this.#resources,
+      );
       if (options.signal?.aborted)
-        throw new BrowserObservationError(OPERATION, "cancelled");
+        throw new BrowserObservationError(OPERATION, "cancelled", {
+          cause: options.signal.reason,
+        });
       const applicationArgs = [
         "-r",
         hookPath,
@@ -165,19 +198,20 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         executablePath: paths.executable,
         cwd: paths.root,
         env: {
-          ...safeElectronEnvironment(this.environment, runId),
+          ...safeElectronEnvironment(this.environment, runId, this.platform),
           REA_ELECTRON_CAPTURE_ARGV: JSON.stringify({
             length: applicationArgs.length,
-            sha256: createHash("sha256")
-              .update(JSON.stringify(applicationArgs))
-              .digest("hex"),
+            sha256: sha256Hex(JSON.stringify(applicationArgs)),
           }),
         },
         args: applicationArgs,
         timeout: Math.max(1, startupDeadline - performance.now()),
       };
       application = await containLaunchRejections(() => {
-        options.signal?.throwIfAborted();
+        if (options.signal?.aborted === true)
+          throw new BrowserObservationError(OPERATION, "cancelled", {
+            cause: options.signal.reason,
+          });
         return this.launch(launchOptions);
       });
       const leaderPid = application.process().pid;
@@ -201,15 +235,27 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         ...(captureBaseline === undefined ? {} : { captureBaseline }),
       };
       lineage = await observeOwnedProcessLineage(ownership);
-      initialState = await runWithExecutionLimits(
+      const initialState = await runWithExecutionLimits(
         readApplicationState(application),
         options.signal,
         startupDeadline,
       );
+      retained = { stage: "initial", state: initialState };
+      refuseHandedOffInstance(initialState.hookSnapshot);
+      // A lock refused while actions run stops the path that would open their
+      // windows, so the refusal also ends pending actions; the final snapshot
+      // then reports it.
+      const handedOff = watchSingleInstanceLockRefusal(application);
       const actionOutcome = await runElectronActions(
         application,
         input,
-        options,
+        {
+          ...options,
+          signal:
+            options.signal === undefined
+              ? handedOff
+              : AbortSignal.any([options.signal, handedOff]),
+        },
         this.#resources,
       );
       actions = actionOutcome.actions;
@@ -219,64 +265,47 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         application,
         options.signal,
       );
-      capture = projectElectronActiveCapture(paths, actions, state);
-      // Preserve a cancellation already observed before finalization so a
-      // later cleanup failure keeps its cause. Late cancellation is checked below.
-      outcome = options.signal?.aborted
-        ? err(cancelledCapture(capture, options.signal.reason))
-        : ok(capture);
+      const finalCapture = projectElectronActiveCapture(paths, actions, state);
+      retained = { stage: "final", state };
+      refuseHandedOffInstance(state.hookSnapshot);
+      capture = finalCapture;
+      outcome = ok(capture);
     } catch (cause: unknown) {
-      if (paths !== undefined && initialState !== undefined) {
+      if (paths !== undefined && retained !== undefined) {
         const retainedCapture = projectElectronActiveCapture(
           paths,
           actions,
-          initialState,
+          retained.state,
         );
+        const reason = errorMessage(cause);
         capture = {
           ...retainedCapture,
           limitations: [
             ...retainedCapture.limitations,
-            `Capture stopped after the initial pre-action snapshot: ${cause instanceof Error ? cause.message : String(cause)}. Final Windows, metrics, IPC, and timeline state is unknown; the retained snapshot may omit action effects.`,
+            retained.stage === "initial"
+              ? `Capture stopped after the initial pre-action snapshot: ${reason}. Final Windows, metrics, IPC, and timeline state is unknown; the retained snapshot may omit action effects.`
+              : `Capture failed after its final snapshot: ${reason}. The retained final snapshot includes action effects.`,
           ],
         };
       }
-      if (cause instanceof AnalysisError && cause.cleanupIncomplete) {
-        if (capture !== undefined)
-          cause.retainPartialObservation({
-            kind: "electron-active-observation",
-            capture,
-          });
-        outcome = err(cause);
-      } else if (options.signal?.aborted === true)
-        outcome = err(
-          new BrowserObservationError(OPERATION, "cancelled", {
-            ...cancellationCause(cause, options.signal),
-            ...(capture === undefined
-              ? {}
-              : {
-                  partialObservation: {
-                    kind: "electron-active-observation" as const,
-                    capture,
-                  },
-                }),
-          }),
-        );
-      else {
-        const error = providerError(cause);
-        if (capture !== undefined)
-          error.retainPartialObservation({
-            kind: "electron-active-observation",
-            capture,
-          });
-        outcome = err(error);
-      }
+      const error = providerError(cause);
+      if (capture !== undefined)
+        error.retainPartialObservation({
+          kind: "electron-active-observation",
+          capture,
+        });
+      outcome = err(error);
     }
     if (application !== undefined) {
-      const owner = new ElectronCaptureCleanup(application, ownership, lineage);
+      const owner = new ElectronCaptureCleanup(
+        application,
+        ownership,
+        lineage,
+        this.platform,
+      );
       const released = await owner.release(this.#resources);
       const cleanup = owner.processResult;
-      if (outcome.ok && options.signal?.aborted === true)
-        outcome = err(cancelledCapture(outcome.value, options.signal.reason));
+      outcome = captureOutcomeWithCancellation(outcome, options.signal);
       if (
         released.processes.kind === "failed" ||
         released.transport.kind === "failed"
@@ -293,9 +322,7 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
                 "Electron process and transport cleanup failed",
               );
         const reason = failures
-          .map((failure) =>
-            failure instanceof Error ? failure.message : String(failure),
-          )
+          .map((failure) => errorMessage(failure))
           .join("; ");
         const failure = new BrowserObservationError(
           OPERATION,
@@ -324,11 +351,11 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         );
         owner.bind(failure);
         if (outcome.ok) return err(failure);
-        const composed = analysisErrorWithCleanupFailure(
+        const composed = analysisErrorWithCleanupDependencies(
           outcome.error,
           failure,
           OPERATION,
-        ).bindCleanupDependencies([outcome.error, failure]);
+        );
         if (failure.partialObservation !== undefined)
           composed.partialObservation = failure.partialObservation;
         return err(composed);
@@ -347,11 +374,64 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
     }
     // Cleanup failures returned above keep precedence; a completed capture
     // observed under late cancellation is retained as partial Evidence.
-    if (outcome.ok && options.signal?.aborted === true)
-      return err(cancelledCapture(outcome.value, options.signal.reason));
-    return outcome;
+    return captureOutcomeWithCancellation(outcome, options.signal);
   }
 }
+
+/**
+ * A launch that was refused the app's single-instance lock was handed to the
+ * instance holding it; the launched process is not the target, so stop.
+ */
+const refuseHandedOffInstance = (snapshot: ElectronHookSnapshot): void => {
+  if (snapshot.single_instance_lock_refused === true)
+    throw new BrowserObservationError(
+      OPERATION,
+      "application_already_running",
+      {
+        detail:
+          "The application is already running: the launched instance did not obtain the app's single-instance lock, so Electron handed this launch and its arguments to the running instance. REA stopped the launched instance at that call and failed the capture; it did not observe or drive the running instance.",
+        remediationAction:
+          "Close the running application, or wait for another capture of the same application to finish, then retry.",
+      },
+    );
+};
+
+/** Normalize only explicit facts emitted by the inspection owner. */
+const inspectOwnership = async <T>(
+  inspect: () => Promise<T> | undefined,
+  resources: ArtifactResourceScope,
+): Promise<T | undefined> => {
+  try {
+    return await inspect();
+  } catch (cause: unknown) {
+    const cancellation = processInspectionCancellationError(cause, OPERATION);
+    const primary =
+      cancellation === undefined ? providerError(cause) : cancellation;
+    throw retainProcessInspectionCleanup(cause, primary, resources, OPERATION);
+  }
+};
+
+/** Keep existing failures and their cleanup owners when cancellation arrives later. */
+const captureOutcomeWithCancellation = (
+  outcome: Result<ElectronActiveObservationResult, AnalysisError>,
+  signal: AbortSignal | undefined,
+): Result<ElectronActiveObservationResult, AnalysisError> => {
+  if (signal?.aborted !== true) return outcome;
+  if (outcome.ok) return err(cancelledCapture(outcome.value, signal.reason));
+  const primary = primaryAnalysisError(outcome.error);
+  if (
+    (primary instanceof AnalysisCancelledError ||
+      primary.userCategory === "cancelled") &&
+    Object.is(primary.cause, signal.reason)
+  )
+    return outcome;
+  return err(
+    analysisErrorWithCancellation(
+      outcome.error,
+      cancelledBy(OPERATION, signal),
+    ),
+  );
+};
 
 const cancelledCapture = (
   capture: ElectronActiveObservationResult,
@@ -362,32 +442,10 @@ const cancelledCapture = (
     partialObservation: { kind: "electron-active-observation", capture },
   });
 
-/**
- * A cancellation wrapper stands in for the caller's abort reason and keeps its
- * producer diagnostics; any other failure observed with cancellation stays the
- * primary cause.
- */
-const cancellationCause = (
-  cause: unknown,
-  signal: AbortSignal,
-): {
-  readonly cause: unknown;
-  readonly diagnostics?: AnalysisError["diagnostics"];
-} =>
-  cause instanceof AnalysisCancelledError ||
-  (cause instanceof AnalysisError && cause.userCategory === "cancelled")
-    ? {
-        cause: signal.reason,
-        ...(cause.diagnostics === undefined
-          ? {}
-          : { diagnostics: cause.diagnostics }),
-      }
-    : { cause };
-
 export const safeElectronEnvironment = (
   environment: Readonly<Record<string, string | undefined>>,
   runId: string,
-  platform = process.platform,
+  platform: NodeJS.Platform,
 ): Record<string, string> =>
   Object.fromEntries([
     ...[
@@ -525,7 +583,7 @@ const providerError = (cause: unknown): AnalysisError => {
     {
       cause,
       diagnostics: {
-        message: cause instanceof Error ? cause.message : String(cause),
+        message: errorMessage(cause),
       },
     },
   );

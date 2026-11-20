@@ -7,9 +7,9 @@ import {
 } from "../../../src/artifacts/apple/MachoImage.fixture.js";
 import { readGoBinaryImage } from "../../../src/go/GoBinaryImage.js";
 import { goBuildInfoSearch } from "../../../src/go/GoBuildInfoSearch.js";
-import { BinaryResourceFailure } from "../../../src/native/metadata/BinaryContainer.js";
-import { readMachoImage } from "../../../src/native/metadata/MachoImage.js";
-import { readBinaryContainer } from "../../../src/native/metadata/readBinaryContainer.js";
+import { BinaryResourceFailure } from "../../../src/domain/binaryContainer.js";
+import { readMachoImage } from "../../../src/domain/apple/machoImage.js";
+import { readBinaryContainer } from "../../../src/domain/native/readBinaryContainer.js";
 import {
   createGoBinaryFixture,
   createGoBinaryByteStringFixture,
@@ -50,7 +50,7 @@ it("preserves exact Mach-O protection masks for Go fallback selection", () => {
   bytes.writeUInt32LE(3, secondSegment + 56);
   bytes.writeUInt32LE(3, secondSegment + 60);
 
-  const container = readBinaryContainer(bytes);
+  const container = readBinaryContainer(bytes, "elf-directory");
   expect(
     container.load_regions?.map((region) => region.protection_masks),
   ).toEqual([
@@ -66,7 +66,9 @@ it("preserves exact Mach-O protection masks for Go fallback selection", () => {
 it("bounds cumulative header searches across overlapping ELF file spans", () => {
   const bytes = createGoOverlappingElfFixture();
   expect(() => readGoBinaryImage(bytes)).toThrow(BinaryResourceFailure);
-  expect(() => readGoBinaryImage(bytes)).toThrow(/256 MiB.*search/);
+  expect(() => readGoBinaryImage(bytes)).toThrow(
+    /max_header_search_bytes=268435456/,
+  );
 });
 
 it("does not charge duplicate ELF search spans repeatedly", () => {
@@ -156,7 +158,10 @@ it("does not skip malformed earlier metadata to report a later valid record", ()
   );
   fixture.bytes[512 + 15] = 0xff;
   expect(() => readGoBinaryImage(fixture.bytes)).toThrow(
-    /unsupported format bit/,
+    expect.objectContaining({
+      message: expect.stringMatching(/unsupported format bit/u),
+      undecodedContent: true,
+    }),
   );
 });
 
@@ -279,6 +284,48 @@ it("refuses mapped pointer lengths outside the file instead of rounding 64-bit a
   length.bytes.writeBigUInt64LE(0xffffffffffffffffn, 1544);
   expect(() => readGoBinaryImage(length.bytes)).toThrowError(/limit|length/i);
 });
+
+it.each(["inline", "pointer"] as const)(
+  "classifies impossible %s string extents before the decoding allowance",
+  (encoding) => {
+    for (const length of [1048577n, 0xffffffffffffffffn]) {
+      const fixture = createGoBinaryFixture({ encoding });
+      if (encoding === "pointer") fixture.bytes.writeBigUInt64LE(length, 1544);
+      else {
+        let value = length;
+        let at = fixture.headerOffset + 32;
+        do {
+          const byte = Number(value & 127n);
+          value >>= 7n;
+          fixture.bytes[at++] = byte | (value === 0n ? 0 : 128);
+        } while (value !== 0n);
+      }
+      expect(() => readGoBinaryImage(fixture.bytes)).toThrowError(
+        expect.objectContaining({ kind: "malformed" }),
+      );
+    }
+  },
+);
+
+it("validates pointer mapping before a smaller caller allowance", () => {
+  const fixture = createGoBinaryFixture({ encoding: "pointer" });
+  fixture.bytes.writeBigUInt64LE(0x10fffn, 1536);
+  expect(() =>
+    readGoBinaryImage(fixture.bytes, { budgets: { max_build_info_bytes: 1 } }),
+  ).toThrowError(expect.objectContaining({ kind: "malformed" }));
+});
+
+it.each(["inline", "pointer"] as const)(
+  "preserves resource refusal for physically valid %s strings",
+  (encoding) => {
+    const fixture = createGoBinaryFixture({ encoding });
+    expect(() =>
+      readGoBinaryImage(fixture.bytes, {
+        budgets: { max_build_info_bytes: 1 },
+      }),
+    ).toThrowError(BinaryResourceFailure);
+  },
+);
 
 it.each(["file bytes", "zero-fill"])(
   "refuses a header-backed PE module descriptor contradicted by %s",
@@ -717,7 +764,8 @@ it("rejects oversized Mach-O file contents when initial protection is set", () =
   );
 });
 
-it("rejects build-info declared inside an unmapped Mach-O segment", () => {
+/** A Mach-O fixture with a second `__go_buildinfo` in an unmapped segment. */
+const unmappedBuildInfoFixture = (keepMapped: boolean) => {
   const fixture = createGoBinaryFixture({ format: "macho" });
   const command = 32 + 72 + 80;
   const size = 72;
@@ -733,13 +781,29 @@ it("rejects build-info declared inside an unmapped Mach-O segment", () => {
   fixture.bytes.writeUInt32LE(3, command + 56);
   fixture.bytes.writeUInt32LE(0, command + 60);
   fixture.bytes.writeUInt32LE(1, command + 64);
+  // Without the mapped declaration, the unmapped one is the only one.
+  if (!keepMapped) fixture.bytes.write("__go_buildinfx", 32 + 72);
   const section = command + size;
   fixture.bytes.write("__go_buildinfo", section);
   fixture.bytes.write("__DWARF", section + 16);
   fixture.bytes.writeBigUInt64LE(0x10000n, section + 32);
   fixture.bytes.writeBigUInt64LE(0n, section + 40);
   fixture.bytes.writeUInt32LE(3072, section + 48);
-  expect(() => readGoBinaryImage(fixture.bytes)).toThrowError(/unmapped/i);
+  return fixture.bytes;
+};
+
+it("rejects build-info declared inside an unmapped Mach-O segment", () => {
+  expect(() => readGoBinaryImage(unmappedBuildInfoFixture(false))).toThrowError(
+    /unmapped/i,
+  );
+});
+
+it("rejects a repeated Mach-O build-info section before reading either", () => {
+  // Previously the first declaration was read before the repeat was noticed,
+  // so the unmapped second one decided the failure.
+  expect(() => readGoBinaryImage(unmappedBuildInfoFixture(true))).toThrowError(
+    "Mach-O has ambiguous build-info sections",
+  );
 });
 
 it("does not mark Mach-O section bytes outside their owning segment as read-only", () => {

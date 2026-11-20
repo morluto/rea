@@ -1,7 +1,7 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 
-import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../../../src/ports/AnalysisProvider.js";
 import {
   JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,
   JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
@@ -18,6 +18,7 @@ import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 // These authenticated catalog examples are authored fixtures, not real-provider
 // verification. Their complete requests fit the default 1,024-element policy;
@@ -35,7 +36,7 @@ const scenarios = [
     name: "trace_application_feature",
     input: JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
     sourceIds: [application.evidence_id],
-    facts: { summary: { matched_seeds: 1, traced_nodes: 1 } },
+    facts: { summary: { matched_seeds: 1, traced_nodes: 2, traced_edges: 1 } },
   },
   {
     name: "trace_javascript_semantics",
@@ -151,7 +152,10 @@ const server = createServer(
     },
   },
 );
-const client = new Client({ name: "fixed-evidence-fixtures", version: "1" });
+const client = new Client(
+  { name: "fixed-evidence-fixtures", version: "1" },
+  { jsonSchemaValidator: createMcpSchemaValidation() },
+);
 
 beforeAll(async () => {
   const [clientTransport, serverTransport] =

@@ -1,3 +1,4 @@
+import { unknownTarget } from "./domain/targetIdentity.js";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -52,7 +53,11 @@ it("inspects a keyless app bundle through the public CLI and preserves resource 
   );
   expect(exitCode, stdout).toBe(0);
   expect(parseEvidence(JSON.parse(stdout))).toMatchObject({
-    subject: null,
+    subject: {
+      identity: unknownTarget("not-observed"),
+      name: null,
+      local_path: null,
+    },
     normalized_result: {
       archive_path: "Resources/Archive.plist",
       target_sha256: null,

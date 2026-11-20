@@ -58,6 +58,76 @@ nothing to the output folder. Before that refusal existed, the same setup
 showed Mousepad handing the launch to the running instance, which opened a new
 tab in its existing window while the launched process exited at once.
 
+## Fixes after the five-application test
+
+Run on 2026-11-05 on macOS 26.5 with Node v22.23.1. A test that captured and
+exported five applications found two inventory gaps:
+
+- LibreOffice Writer, captured with `--desktop-entry libreoffice-writer`,
+  recorded `libreoffice-common`, the owner of the `/usr/bin/libreoffice` its
+  entry runs, which does not depend on Writer. The exported computer installed
+  only that package and failed its readiness check with
+  `no window with class 'libreoffice-writer'`. The package is now the entry's
+  owner, with the executable's in `executable_package`. Adapter tests on a
+  fake dpkg host whose entry and program have different owners cover an entry
+  launch, an `--executable` launch, an entry no package owns and a
+  `--package-file` matched against the entry's package.
+- GIMP 2.10 keeps its profile in `~/.config/GIMP/2.10`, which no candidate
+  name (`gimp`) matched, so it was neither seeded nor reset. A folder in the
+  XDG folders or the home whose name is one of the candidate names in another
+  letter case is now a state directory, and the state view counts a path in a
+  folder beside a state directory that differs from it only in case as in it.
+  An adapter test with GIMP's layout and a domain test cover both, and leave
+  out `GIMPshop`, `MyGIMP` and a nested `Other/GIMP`.
+
+Review of those fixes found three more gaps, each now covered by a test that
+failed on the first fix:
+
+- The entry's package need not depend on the program's (`vim-common` owns
+  Vim's entry, `vim` its program), so the export now installs
+  `executable_package` by name beside the app's package, for archive, vendor
+  repository and package-file installs alike. The capture checks it by the
+  library packages' rule and records `executable_package_reason` when neither
+  the archive nor a declared repository offers it, or apt could not say; the
+  export then refuses. Adapter, domain and export service tests cover the
+  record, the three install paths, the refusal and the rendered
+  `Packages(apt=[...])`.
+- A profile folder created during the capture in another letter case than its
+  candidate was application state but owned as the folder of its first file
+  (`.config/GIMP/2.10`), so later files elsewhere in it escaped `data/get` and
+  `data/reset`. Owned paths now use the same match as roles and own
+  `.config/GIMP` in the files' spelling; a domain test and an export service
+  test of a created profile cover it.
+- A `dpkg-query -S` that timed out or exited with an error counted as "no
+  owner", so a failed entry lookup quietly recorded the program's package. It
+  now leaves the package `unknown` with a limitation naming the path, for the
+  entry and the executable, after a timeout or an exit status of 2.
+
+A later review found that both the program's package and library packages
+were approved at capture against every repository with a verified key, while
+the content budget can then drop a repository's key and the export leaves that
+repository out. Repositories now record what they `supply`, and the export
+leaves out library packages, and refuses a program's package, that only
+repositories it leaves out supply. A capture adapter test, two export domain
+tests and a key-retention service test that drops one of two keys under the
+per-file limit cover it.
+
+A third review found that an entry owned by a package whose program no
+package owns, such as a `~/.local/bin` program found first on `PATH`, was
+recorded as the entry's package alone, which the export then installed though
+it does not bring that program. The capture now records that no package owns
+the program, and the export refuses it. An adapter test, an export domain test
+and an export service test cover it, and an adapter test keeps a program link
+whose resolved file dpkg owns counted as owned.
+
+Each new test failed on the code before its fix, run in a copy of that commit
+with only the new tests added. `npm run typecheck`, `lint`, `lint:typed`
+(no diagnostics in the touched files), `format:check`, `build:cached`,
+`knip`, `jscpd`, `docs:check`, `docs:build`, `verify:test-discovery` and
+`verify:architecture-guards` passed, and
+`npx vitest run src/domain/desktop src/application/desktop src/desktop tests/boundary/cli/cliStartupImports.test.ts`
+ran 351 passed and 18 skipped. Neither application was captured again.
+
 ## Limits of this verification
 
 - Only Mousepad was captured end to end, on arm64 in a container. GnuCash,

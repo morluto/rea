@@ -14,6 +14,16 @@ afterEach(async () => {
 });
 
 describe("real Hopper fixture binding", () => {
+  it("refuses the retired unversioned manifest before artifact admission", async () => {
+    const manifest = await fixtureManifest();
+    const parsed = JSON.parse(await readFile(manifest, "utf8"));
+    delete parsed.schemaVersion;
+    await writeFile(manifest, JSON.stringify(parsed));
+    await expect(loadRealHopperFixtureTargets(manifest)).rejects.toThrow(
+      "regenerate with npm run build:fixtures",
+    );
+  });
+
   it("binds exact source-owned artifacts and their semantic oracle", async () => {
     const manifest = await fixtureManifest();
     await expect(loadRealHopperFixtureTargets(manifest)).resolves.toMatchObject(
@@ -92,6 +102,8 @@ const fixtureManifest = async (): Promise<string> => {
   await writeFile(
     manifest,
     JSON.stringify({
+      schemaVersion: 2,
+      platform: "darwin",
       fixtures: [
         {
           name: "c",

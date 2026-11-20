@@ -27,7 +27,7 @@ import { immutableArtifactGraph } from "../../../fixtures/javascriptArtifactGrap
 import { createJavaScriptSemanticGraphProjection } from "../../../../src/application/javascript/JavaScriptSemanticGraphBuilder.js";
 import type { JavaScriptModuleSemanticIr } from "../../../../src/domain/javascript/javascriptModuleSemanticIr.js";
 import type { JavaScriptStaticAnalysis } from "../../../../src/domain/javascript/javascriptStaticAnalysisTypes.js";
-import { analyzeJavaScriptStaticSource } from "../../../../src/domain/javascript/javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../fixtures/javascriptStaticAnalysis.js";
 import type { JavaScriptArtifactFile } from "../../../../src/domain/javascript/javascriptArtifactFiles.js";
 import { completeJavaScriptAnalysisSteps } from "../../../../src/application/javascript/JavaScriptAnalysisControl.js";
 import { buildImmutableJavaScriptArtifactGraphSteps } from "../../../../src/application/javascript/JavaScriptArtifactGraphBuilder.js";
@@ -37,7 +37,7 @@ import {
 } from "../../../../src/javascript/analysis/JavaScriptAnalysisTransfer.js";
 import { javaScriptWorkerStaticAnalysisSchema } from "../../../../src/javascript/analysis/JavaScriptAnalysisWorkerSchemas.js";
 import { createJavaScriptArtifactReader } from "../../../../src/artifacts/javascript/JavaScriptArtifactReader.js";
-import { createJavaScriptSourceAnalysis } from "../../../../src/artifacts/javascript/JavaScriptSourceAnalysis.js";
+import { createJavaScriptSourceAnalysis } from "../../../../src/javascript/analysis/JavaScriptSourceAnalysis.js";
 import {
   scanCanonicalArtifactInventory,
   withArtifactResourceScope,
@@ -576,17 +576,15 @@ it("keeps IPC pairings uncertain when source examination is incomplete", async (
     const hiddenSource = analysis.files.find(
       ({ file }) => file.path === hidden.path,
     );
-    if (hiddenSource?.javascript?.analysis_coverage === undefined)
-      throw new Error("Missing hidden source coverage");
+    if (hiddenSource?.javascript == null)
+      throw new Error("Missing hidden source analysis");
     const hiddenStatic = hiddenSource.javascript;
-    const { analysis_coverage: _ignoredCoverage, ...historicalStatic } =
-      hiddenStatic;
     const limitedStatic = {
       ...hiddenStatic,
       analysis_coverage: {
-        ...hiddenStatic.analysis_coverage!,
+        ...hiddenStatic.analysis_coverage,
         examination: {
-          ...hiddenStatic.analysis_coverage!.examination,
+          ...hiddenStatic.analysis_coverage.examination,
           status: "limited" as const,
           semantic_resource_limits: ["alias-selections" as const],
         },
@@ -595,19 +593,15 @@ it("keeps IPC pairings uncertain when source examination is incomplete", async (
     const wrapperLimitedStatic = {
       ...hiddenStatic,
       analysis_coverage: {
-        ...hiddenStatic.analysis_coverage!,
+        ...hiddenStatic.analysis_coverage,
         examination: {
-          ...hiddenStatic.analysis_coverage!.examination,
+          ...hiddenStatic.analysis_coverage.examination,
           status: "limited" as const,
           electron_call_paths_limited: true,
         },
       },
     };
-    for (const javascript of [
-      historicalStatic,
-      limitedStatic,
-      wrapperLimitedStatic,
-    ]) {
+    for (const javascript of [limitedStatic, wrapperLimitedStatic]) {
       const partialAnalysis = {
         ...analysis,
         files: analysis.files.map((item) =>
@@ -649,7 +643,7 @@ it("keeps IPC pairings uncertain when source examination is incomplete", async (
           parse_status: "partial" as const,
           parse_error_count: 1,
           analysis_coverage: {
-            ...hiddenStatic.analysis_coverage!,
+            ...hiddenStatic.analysis_coverage,
             syntax: { status: "recovered" as const, error_count: 1 },
           },
         },
@@ -728,7 +722,7 @@ it("does not pair IPC when the Electron wrapper walk hits its depth limit", asyn
     const limited = analysis.files.find(
       ({ file }) => file.path === "limited.js",
     );
-    expect(limited?.javascript?.analysis_coverage?.examination).toMatchObject({
+    expect(limited?.javascript?.analysis_coverage.examination).toMatchObject({
       electron_call_paths_limited: true,
       semantic_resource_limits: [],
     });
@@ -1268,8 +1262,12 @@ it("reports semantic value resource limits in application graph coverage", async
         }),
       ]),
     );
-    expect(graph.limitations).toContain(
-      "Primitive candidate budget exceeded (maximum 256 alternatives).",
+    expect(graph.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          "Primitive candidate budget exceeded (maximum 256 alternatives).",
+        ),
+      ]),
     );
     expect(graph.limitations).toEqual(
       expect.arrayContaining([
