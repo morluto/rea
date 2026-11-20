@@ -2,6 +2,8 @@ import {
   canonicalOutputSchema,
   withCanonicalOutputSchema,
 } from "../fixtures/canonicalOutputSchema.js";
+import { parseZipTail } from "../../src/domain/apkSignature/apkSigningBlock.js";
+import { centralDirectoryV1SignatureEntries } from "../../src/domain/apkSignature/apkV1Signature.js";
 import { apkSignatureResultSchema } from "../../src/domain/apkSignature/apkSignatureReport.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -776,6 +778,19 @@ cliTest(
       stored: true,
     }));
     const bytes = await zipWith(entries, { dataDescriptor: false });
+    const tail = parseZipTail(bytes);
+    if (!tail.ok) throw new Error("Expected a framed ZIP tail");
+    const { centralDirectoryOffset, centralDirectorySize, totalEntries } =
+      tail.value;
+    const parsed = centralDirectoryV1SignatureEntries(
+      bytes,
+      centralDirectoryOffset,
+      centralDirectorySize,
+      totalEntries,
+    );
+    if (parsed.ok || parsed.error.kind !== "limit")
+      throw new Error("Expected a v1 central-directory limit");
+    const parserReason = parsed.error.failure.detail;
     const malformed = Buffer.from(bytes);
     const { central } = zipEntryOffsets(bytes, "META-INF/F4096.SF");
     malformed.writeUInt16LE(0xffff, central + 28);
@@ -790,8 +805,7 @@ cliTest(
           retryable: false,
           details: {
             resource: "capacity",
-            reason:
-              "The central directory holds more than 4096 META-INF v1 signing entries.",
+            reason: parserReason,
             reported_limits: { max_v1_signature_entries: 4096 },
           },
           remediation: {
