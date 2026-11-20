@@ -1044,6 +1044,10 @@ it.each([
   // The darwin package baseline is the CI run of packaged Hopper commands
   // against the fake bridge and the reply contracts.
   [
+    "tests/process-global/curatedWindowsLane.test.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  [
     "tests/fixtures/fakeHopper.mjs",
     { code: true, runtime: true, package: true },
   ],

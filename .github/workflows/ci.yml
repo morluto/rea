@@ -971,7 +971,7 @@ jobs:
         id: npm-cache
         uses: ./.github/actions/npm-cache
         with:
-          save: ${{ matrix.suite == 'capabilities' && 'true' || 'false' }}
+          save: ${{ matrix.suite == 'capabilities' }}
       - run: npm ci
       - name: Restore Windows Turbo build cache
         id: windows-build-cache
