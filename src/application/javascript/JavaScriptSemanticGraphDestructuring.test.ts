@@ -768,7 +768,11 @@ it.each([
     "Object.setPrototypeOf(config, { *[Symbol.iterator]() { yield 2; } }); const [selected] = config;",
     "candidate",
   ],
-  ["earlier default", "const [value = 0, selected] = config;", "candidate"],
+  [
+    "earlier inactive default",
+    "const [value = 0, selected] = config;",
+    "resolved",
+  ],
   [
     "earlier setter",
     "let selected; const target = { set value(_) { config[1] = 2; } }; [target.value, selected] = config;",
@@ -2062,6 +2066,12 @@ it.each([
     "candidate",
   ],
   [
+    "a defined own object property skips a default",
+    'let touched=0;const box={first:false,items:["one"]};const {first:used=(touched=1),items:[selected]}=box;box.items[0]="later";',
+    ["items", "0"],
+    "resolved",
+  ],
+  [
     "second nested iterator after an effectful first default",
     'const box={first:[undefined],items:["one"]};const {first:[used=(box.items[0]="default")],items:[selected]}=box;box.items[0]="later";',
     ["items", "0"],
@@ -2205,6 +2215,48 @@ it.each([
     "prior write through alias",
     'const pairs=[["first"]];const alias=pairs;alias[0][0]="earlier";const [[selected]]=pairs;',
     ["0", "0"],
+    "candidate",
+  ],
+  [
+    "a defined scalar skips a default before an inner array",
+    'let touched=0;const pairs=[0,["first"]];const [unused=(touched=1),[selected]]=pairs;pairs[1][0]="later";',
+    ["1", "0"],
+    "resolved",
+  ],
+  [
+    "null skips a default and keeps the next inner array read",
+    'const pairs=[null,["first"]];const [unused="default",[selected]]=pairs;pairs[1][0]="later";',
+    ["1", "0"],
+    "resolved",
+  ],
+  [
+    "a present inner array skips its fallback",
+    'const pairs=[[0],["first"]];const [[unused]=[],[selected]]=pairs;pairs[1][0]="later";',
+    ["1", "0"],
+    "resolved",
+  ],
+  [
+    "an unknown value may activate the default before an inner array",
+    'const pairs=[unknown(),["first"]];const [unused="default",[selected]]=pairs;pairs[1][0]="later";',
+    ["1", "0"],
+    "candidate",
+  ],
+  [
+    "void activates the default before an inner array",
+    'const pairs=[void 0,["first"]];const [unused="default",[selected]]=pairs;pairs[1][0]="later";',
+    ["1", "0"],
+    "candidate",
+  ],
+  [
+    "an earlier replacement may activate the default",
+    'const pairs=[0,["first"]];pairs[0]=undefined;const [unused="default",[selected]]=pairs;pairs[1][0]="later";',
+    ["1", "0"],
+    "candidate",
+  ],
+  [
+    "a default inside a destructuring assignment",
+    'const pairs=[0,["first"]];let unused,selected;[unused="default",[selected]]=pairs;pairs[1][0]="later";',
+    ["1", "0"],
     "candidate",
   ],
   [
