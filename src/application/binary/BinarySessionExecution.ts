@@ -10,8 +10,6 @@ import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import type { EvidenceSubjectTarget } from "../../domain/evidence.js";
 import { binaryTargetSelection } from "../../domain/targetIdentity.js";
-import { bundleExecutableProvenance } from "../../domain/apple/bundleExecutableProvenance.js";
-import { isRecord } from "../../kernel/isRecord.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import type {
   AnalysisClient,
@@ -204,23 +202,6 @@ export const commitExecutionProfile = (
   });
 };
 
-/** Attach bundle facts from the latest admission of the session's executable. */
-const withBundleExecutableProvenance = (
-  execution: AnalysisExecution,
-  operation: AnalysisOperation,
-  target: BinaryTarget,
-): AnalysisExecution => {
-  if (operation !== "inspect_macho" && operation !== "inspect_signature")
-    return execution;
-  const provenance = bundleExecutableProvenance(target);
-  return provenance !== undefined && isRecord(execution.result)
-    ? {
-        ...execution,
-        result: { ...execution.result, bundle_provenance: provenance },
-      }
-    : execution;
-};
-
 /** Bind an execution to the selected target, preserving valid artifact subjects. */
 export const bindExecutionTarget = (
   result: Result<AnalysisExecution, AnalysisError>,
@@ -228,11 +209,6 @@ export const bindExecutionTarget = (
   target: BinaryTarget,
 ): Result<AnalysisExecution, AnalysisError> => {
   if (!result.ok) return result;
-  const execution = withBundleExecutableProvenance(
-    result.value,
-    operation,
-    target,
-  );
   const selection = binaryTargetSelection(target);
   const subject: EvidenceSubjectTarget = {
     path: target.path,
@@ -244,16 +220,19 @@ export const bindExecutionTarget = (
     ...(selection === null ? {} : { selection }),
   };
   if (
-    execution.subject !== undefined &&
-    execution.subject !== null &&
-    execution.subject.sha256 !== target.sha256 &&
-    !isArtifactBundleSubject(operation, execution.subject, target)
+    result.value.subject !== undefined &&
+    result.value.subject !== null &&
+    result.value.subject.sha256 !== target.sha256 &&
+    !isArtifactBundleSubject(operation, result.value.subject, target)
   )
     return err(
-      new ProviderAdapterError(execution.provider.id, `${operation}:subject`),
+      new ProviderAdapterError(
+        result.value.provider.id,
+        `${operation}:subject`,
+      ),
     );
-  const provided = execution.subject;
-  if (provided === undefined) return ok({ ...execution, subject });
+  const provided = result.value.subject;
+  if (provided === undefined) return ok({ ...result.value, subject });
   // A provider subject naming the target's own bytes and format is the
   // target, so it makes the target's selection, unless the provider stated
   // one; a null selection is an observation of the whole file.
@@ -262,8 +241,8 @@ export const bindExecutionTarget = (
     selection !== null &&
     provided.sha256 === target.sha256 &&
     provided.format === target.format
-    ? ok({ ...execution, subject: { ...provided, selection } })
-    : ok(execution);
+    ? ok({ ...result.value, subject: { ...provided, selection } })
+    : result;
 };
 
 const isArtifactBundleSubject = (

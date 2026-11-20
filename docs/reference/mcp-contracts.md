@@ -1328,6 +1328,7 @@ whether it exactly matches the declared name. A mismatch does not override
 `summary.bundle_provenance`. The binary is still the Evidence subject.
 These facts describe the selection at open time. Reopening refreshes them
 from the new admission, including when the executable bytes stay the same.
+A retained report includes those facts when a later inspection or cleanup step fails.
 Direct file selections and older Evidence can omit this object.
 
 `open_bundle_resources` selects a separate read-only app resource session

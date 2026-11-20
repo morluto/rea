@@ -20,9 +20,13 @@ export const bundleExecutableProvenanceSchema = z.strictObject({
     .exactOptional(),
 });
 
+export type BundleExecutableProvenance = z.output<
+  typeof bundleExecutableProvenanceSchema
+>;
+
 /** The plist lookup path is already carried by BinaryTarget.bundleInfoPlist. */
 export type BundleExecutableSelection = Omit<
-  z.output<typeof bundleExecutableProvenanceSchema>,
+  BundleExecutableProvenance,
   "info_plist_path"
 >;
 
