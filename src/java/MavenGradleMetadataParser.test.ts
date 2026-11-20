@@ -848,8 +848,8 @@ it("reports the repeated variant-name refusal as a fixed report allowance", asyn
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "resource_constraint",
       retryable: false,
-      remediation: {
-        action: expect.stringContaining("fixed report allowance"),
+      details: {
+        refusal: { kind: "fixed_ceiling", allowance_kind: "report" },
       },
     });
   } finally {

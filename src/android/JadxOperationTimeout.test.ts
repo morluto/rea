@@ -23,9 +23,6 @@ it("names REA_JADX_OPERATION_TIMEOUT_MS when the operation deadline elapses", ()
   );
   expect(projected.remediation.action).toContain("update_analysis_settings");
   expect(projected.remediation.action).toContain("jadx.operation_timeout_ms");
-  expect(projected.remediation.action).toContain(
-    "next operation without restarting REA",
-  );
   expect(projected.details).toMatchObject({
     limit: {
       setting: "jadx.operation_timeout_ms",

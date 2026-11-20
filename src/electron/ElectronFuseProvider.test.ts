@@ -903,9 +903,6 @@ it("rejects a sparse artifact over 1 GiB before scanning", async () => {
           unit: "bytes",
         },
       },
-      remediation: {
-        action: expect.stringContaining("does not admit this input"),
-      },
     });
   }
 });

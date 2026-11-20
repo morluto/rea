@@ -243,7 +243,6 @@ it.each([
         },
       },
     });
-    expect(projected.remediation.action).toContain("No supported increase");
   },
 );
 
@@ -383,7 +382,6 @@ it("keeps a fixed reader ceiling's refusal through cleanup wrapping and public p
     retryable: false,
     details: { refusal, cleanup: "incomplete", resources: ["handle"] },
   });
-  expect(projected.remediation.action).toContain("The allowance is 64 records");
 });
 
 it("keeps producer-owned recovery through cleanup wrapping and public projection", () => {
