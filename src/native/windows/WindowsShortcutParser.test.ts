@@ -460,9 +460,16 @@ it("reports truncated StringData as partial coverage with a failing offset", asy
   expect(windowsShortcutSchema.safeParse(report).success).toBe(true);
 });
 
-it.each([12, 16, 20, 24, 28, 32])(
+it.each([
+  [12, "truncated"],
+  [16, "malformed_structure"],
+  [20, "truncated"],
+  [24, "malformed_structure"],
+  [28, "malformed_structure"],
+  [32, "malformed_structure"],
+] as const)(
   "points an out-of-range LinkInfo offset at its field at byte %i",
-  async (field) => {
+  async (field, code) => {
     const bytes = windowsShortcutBytes({
       idList: null,
       linkInfo: {
@@ -474,6 +481,9 @@ it.each([12, 16, 20, 24, 28, 32])(
     const report = await parse(bytes);
     expect(report.coverage.status).toBe("partial");
     expect(report.coverage.failing_offset).toBe(76 + field);
+    expect(report.issues).toContainEqual(
+      expect.objectContaining({ code, offset: 76 + field }),
+    );
     expect(report.issues.every((issue) => issue.offset < bytes.length)).toBe(
       true,
     );
