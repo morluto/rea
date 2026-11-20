@@ -58,6 +58,8 @@ export const VSIX_LIMITATIONS = {
   noPackageJson: "No extension/package.json was selected.",
   malformedPackageJson:
     "The selected extension/package.json is not well-formed JSON.",
+  emptyContributesKey:
+    "extension/package.json contributes has an empty key; it is not listed in contributes.keys.",
   duplicatePath: (path: string): string =>
     `ZIP member ${JSON.stringify(path)} appears more than once; later copies were inventoried and not used as the unique manifest path.`,
   traverses: (name: string): string =>
@@ -481,13 +483,14 @@ const parsePackageJsonDocument = (
     !Array.isArray(record.contributes)
       ? (record.contributes as Record<string, unknown>)
       : undefined;
-  const keys =
-    contributesRaw === undefined
-      ? []
-      : Object.entries(contributesRaw).map(([name, item]) => ({
-          name,
-          count: contributeCount(item),
-        }));
+  const entries =
+    contributesRaw === undefined ? [] : Object.entries(contributesRaw);
+  // A contribution point is named by its key; an empty key names none.
+  if (entries.some(([name]) => name.length === 0))
+    limitations.push(VSIX_LIMITATIONS.emptyContributesKey);
+  const keys = entries
+    .filter(([name]) => name.length > 0)
+    .map(([name, item]) => ({ name, count: contributeCount(item) }));
   const commandRows = Array.isArray(contributesRaw?.commands)
     ? contributesRaw.commands
     : [];

@@ -232,6 +232,23 @@ it("caps contributed commands and keeps the omitted count", async () => {
   expect(report.contributes.commands_omitted).toBe(3);
 });
 
+it("reports an empty contributes key as a limitation and keeps the report", async () => {
+  const bytes = await vsixPackageFixture({
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      engines: { vscode: "^1.74.0" },
+      contributes: { "": [], commands: [] },
+    }),
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.contributes.keys).toEqual([{ name: "commands", count: 0 }]);
+  expect(report.limitations).toContain(VSIX_LIMITATIONS.emptyContributesKey);
+});
+
 it("inventories a package with no vsixmanifest and leaves vsix identity unknown", async () => {
   const bytes = await vsixPackageMissingManifestFixture();
   const report = vsixPackageSchema.parse(
