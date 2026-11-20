@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { testWaitDeadline } from "../../tests/support/testWait.js";
 
 import {
   execFileBytes,
@@ -15,7 +16,8 @@ import {
 const realSetTimeout = globalThis.setTimeout;
 
 const waitForFile = async (path: string): Promise<boolean> => {
-  for (let attempt = 0; attempt < 500; attempt += 1) {
+  const deadline = performance.now() + testWaitDeadline();
+  while (performance.now() < deadline) {
     if (
       await access(path).then(
         () => true,
@@ -547,6 +549,9 @@ describe.skipIf(process.platform === "win32")(
       try {
         expect(await waitForFile(reaped)).toBe(true);
         await vi.advanceTimersByTimeAsync(200);
+        expect(completed).toBe(false);
+        await expect(access(scratch)).resolves.toBeUndefined();
+        await vi.advanceTimersByTimeAsync(5_000);
         expect(completed).toBe(false);
         await expect(access(scratch)).resolves.toBeUndefined();
         await writeFile(release, "");
