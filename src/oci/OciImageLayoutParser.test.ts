@@ -9,7 +9,10 @@ import {
 } from "../domain/oci/imageLayout.js";
 import { ParseFailureError } from "../domain/parseFailure.js";
 import { primaryAnalysisError } from "../domain/analysisErrorBase.js";
-import { DirectoryArtifactReader } from "../resources/index.js";
+import {
+  ArtifactReaderFailure,
+  DirectoryArtifactReader,
+} from "../resources/index.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import {
   putOciBlob,
@@ -688,5 +691,28 @@ it("keeps the directory reader's unknown coverage and its limitation", async () 
     expect(report.limitations).toContain(skipped);
   } finally {
     await reader.close();
+  }
+});
+
+it("keeps a reader failure on a referenced blob instead of a JSON finding", async () => {
+  const root = await createTestTempDirectory("rea-oci-blob-close-");
+  const written = await writeOciImageLayoutFixture(root);
+  const manifestHex = written.manifestDigest.slice("sha256:".length);
+  const nativeInspect = DirectoryArtifactReader.prototype.inspectFile;
+  const failure = new ArtifactReaderFailure("io", "controlled close failure");
+  const inspectFile = vi
+    .spyOn(DirectoryArtifactReader.prototype, "inspectFile")
+    .mockImplementation(async function (
+      this: DirectoryArtifactReader,
+      ...args: Parameters<DirectoryArtifactReader["inspectFile"]>
+    ) {
+      const value: unknown = await nativeInspect.apply(this, args);
+      if (args[0].path.endsWith(manifestHex)) throw failure;
+      return value;
+    });
+  try {
+    await expect(inspectLayout(root)).rejects.toBe(failure);
+  } finally {
+    inspectFile.mockRestore();
   }
 });

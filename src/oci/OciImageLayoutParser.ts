@@ -678,14 +678,15 @@ export const parseOciImageLayout = async (
       jsonBytesRead += document.bytes;
       return document;
     } catch (cause: unknown) {
-      if (cause instanceof ParseFailureError && cause.kind === "limit")
+      // Only a format failure is a finding about the blob. Reader failures,
+      // including a close failure after a complete read, keep their own
+      // facts and reach the caller.
+      if (!(cause instanceof ParseFailureError) || cause.kind === "limit")
         throw cause;
       recordFinding(
         findings,
         "malformed_blob_json",
-        cause instanceof ParseFailureError
-          ? cause.failure.detail
-          : `${label} could not be decoded.`,
+        cause.failure.detail,
         digest,
         path,
       );
