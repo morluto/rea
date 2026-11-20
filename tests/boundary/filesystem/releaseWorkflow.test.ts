@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import { promisify } from "node:util";
+import { runInNewContext } from "node:vm";
 import { expect, it } from "vitest";
 import { parse } from "yaml";
 import { z } from "zod";
@@ -504,16 +505,6 @@ it("binds npm and MCP publication to the same immutable release SHA", async () =
   expect(workflow.jobs["verify-npm"].needs).toBe("publish");
   expect(tag.needs).toBe("verify-npm");
   expect(workflow.jobs["publish-mcp"].needs).toBe("tag-release");
-  for (const [job, dependency] of [
-    [publish, "authorize-npm"],
-    [workflow.jobs["verify-npm"], "publish"],
-    [tag, "verify-npm"],
-    [workflow.jobs["publish-mcp"], "tag-release"],
-  ] as const) {
-    expect(job.if).toContain(
-      `always() && !cancelled() && needs.${dependency}.result == 'success'`,
-    );
-  }
   for (const job of [
     authorization,
     publish,
@@ -552,6 +543,115 @@ it("binds npm and MCP publication to the same immutable release SHA", async () =
     '--registry=https://registry.npmjs.org --access=public --tag="$NPM_RELEASE_TAG"',
   );
 });
+
+const releaseChain = [
+  "qualification",
+  "rehearsal",
+  "authorize-npm",
+  "publish",
+  "verify-npm",
+  "tag-release",
+  "publish-mcp",
+] as const;
+
+type ReleaseJob = (typeof releaseChain)[number];
+type JobResult = "success" | "failure" | "skipped" | "cancelled";
+
+it.each([
+  { route: "main", runs: releaseChain },
+  { route: "publish", runs: releaseChain },
+  { route: "prepare", runs: [] },
+  { route: "main", stop: "qualification", runs: releaseChain.slice(0, 1) },
+  { route: "main", stop: "rehearsal", runs: releaseChain.slice(0, 2) },
+  { route: "main", stop: "authorize-npm", runs: releaseChain.slice(0, 3) },
+  { route: "publish", stop: "publish", runs: releaseChain.slice(0, 4) },
+  { route: "main", stop: "verify-npm", runs: releaseChain.slice(0, 5) },
+  { route: "publish", stop: "tag-release", runs: releaseChain.slice(0, 6) },
+  {
+    route: "main",
+    stop: "verify-npm",
+    cancelled: true,
+    runs: releaseChain.slice(0, 5),
+  },
+] satisfies {
+  route: "main" | "publish" | "prepare";
+  stop?: ReleaseJob;
+  cancelled?: boolean;
+  runs: readonly ReleaseJob[];
+}[])(
+  "selects the publishing jobs for $route with stop=$stop and cancelled=$cancelled",
+  async (scenario) => {
+    const { jobs } = await readReleaseWorkflow();
+    const results = new Map<string, JobResult>([
+      ["merged-release", scenario.route === "main" ? "success" : "skipped"],
+      ["release-please", scenario.route === "main" ? "skipped" : "success"],
+    ]);
+    const ancestry = new Map<string, Set<string>>();
+    const ran: ReleaseJob[] = [];
+    let cancelled = false;
+    for (const id of releaseChain) {
+      const job = jobs[id];
+      const dependencies = [job.needs ?? []].flat();
+      const ancestors = new Set(
+        dependencies.flatMap((dependency) => [
+          dependency,
+          ...(ancestry.get(dependency) ?? []),
+        ]),
+      );
+      ancestry.set(id, ancestors);
+      const success = () =>
+        [...ancestors].every(
+          (dependency) => results.get(dependency) === "success",
+        );
+      const expression = (job.if ?? "success()")
+        .replace(/^\s*\$\{\{([\s\S]*)\}\}\s*$/u, "$1")
+        .replace(/needs\.([\w-]+)/gu, 'needs["$1"]');
+      // A condition without a status check also requires successful ancestry.
+      const condition = /\b(?:always|cancelled|failure|success)\(/u.test(
+        expression,
+      )
+        ? expression
+        : `success() && (${expression})`;
+      const enabled = z.boolean().parse(
+        runInNewContext(
+          condition,
+          {
+            always: () => true,
+            cancelled: () => cancelled,
+            success,
+            failure: () =>
+              [...ancestors].some(
+                (dependency) => results.get(dependency) === "failure",
+              ),
+            inputs: { phase: scenario.route === "main" ? "" : scenario.route },
+            needs: Object.fromEntries(
+              dependencies.map((dependency) => [
+                dependency,
+                { result: results.get(dependency) },
+              ]),
+            ),
+          },
+          { timeout: 1_000 },
+        ),
+      );
+      if (!enabled) {
+        results.set(id, "skipped");
+        continue;
+      }
+      ran.push(id);
+      cancelled ||= id === scenario.stop && scenario.cancelled === true;
+      results.set(
+        id,
+        id === scenario.stop
+          ? cancelled
+            ? "cancelled"
+            : "failure"
+          : "success",
+      );
+    }
+    expect(ran).toEqual(scenario.runs);
+  },
+);
 
 it
   .skipIf(process.platform === "win32")
