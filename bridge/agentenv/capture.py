@@ -251,11 +251,23 @@ def _sleep_until(attempt: int, deadline: float) -> bool:
     return True
 
 
+def _absent_marker(capture: str) -> str:
+    return os.path.join(capture, "absent")
+
+
+def _stop_claimed_absent(capture: str) -> bool:
+    return os.path.exists(_absent_marker(capture))
+
+
 def _wait_for_capture_handoff(capture: str, deadline: float) -> None:
-    """start() already owns this directory. Wait until its FIFO or exit file appears."""
+    """start() already owns this directory. Wait until its FIFO, exit file, or stop claim appears."""
     attempt = 0
     control = os.path.join(capture, "control")
-    while _exit_code(capture) is None and not os.path.exists(control):
+    while (
+        _exit_code(capture) is None
+        and not os.path.exists(control)
+        and not _stop_claimed_absent(capture)
+    ):
         if not _sleep_until(attempt, deadline):
             return
         attempt += 1
@@ -308,8 +320,15 @@ def stop(arguments: dict) -> int:
         try:
             os.mkdir(capture, 0o700)
         except FileExistsError:
-            _wait_for_capture_handoff(capture, deadline)
+            if not _stop_claimed_absent(capture):
+                _wait_for_capture_handoff(capture, deadline)
+            if _stop_claimed_absent(capture):
+                return _say({"absent": True})
         else:
+            # Publish the claim before the reply. A retry must see it and
+            # return absent instead of waiting for a FIFO start() will not create.
+            descriptor = os.open(_absent_marker(capture), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            os.close(descriptor)
             return _say({"absent": True})
     if _exit_code(capture) is None and os.path.exists(control):
         _request_until(capture, "stop", deadline)

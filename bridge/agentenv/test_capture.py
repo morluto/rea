@@ -182,6 +182,48 @@ class CaptureHandoffTest(unittest.TestCase):
             self.assertGreaterEqual(elapsed, 0.3)
             self.assertLess(elapsed, 0.55)
 
+    def test_stop_returns_absent_again_after_it_claimed_the_directory(self):
+        with tempfile.TemporaryDirectory() as parent:
+            capture_dir = os.path.join(parent, "cap")
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                first = capture.stop({"capture": capture_dir, "timeout_s": 2})
+            self.assertEqual(first, 0)
+            self.assertEqual(json.loads(stdout.getvalue()), {"absent": True})
+            started = time.monotonic()
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                second = capture.stop({"capture": capture_dir, "timeout_s": 2})
+            elapsed = time.monotonic() - started
+            self.assertEqual(second, 0)
+            self.assertEqual(json.loads(stdout.getvalue()), {"absent": True})
+            self.assertLess(elapsed, 0.5)
+
+    def test_stop_returns_absent_when_the_claim_appears_while_it_waits(self):
+        with tempfile.TemporaryDirectory() as parent:
+            capture_dir = os.path.join(parent, "cap")
+            os.mkdir(capture_dir)
+
+            def publish():
+                time.sleep(0.05)
+                descriptor = os.open(
+                    os.path.join(capture_dir, "absent"),
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                    0o600,
+                )
+                os.close(descriptor)
+
+            thread = threading.Thread(target=publish)
+            thread.start()
+            started = time.monotonic()
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                code = capture.stop({"capture": capture_dir, "timeout_s": 2})
+            thread.join()
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(stdout.getvalue()), {"absent": True})
+            self.assertLess(time.monotonic() - started, 1)
+
 
 @unittest.skipIf(sys.platform == "win32", "desktop build computers use Linux")
 class LongRunTest(unittest.TestCase):
