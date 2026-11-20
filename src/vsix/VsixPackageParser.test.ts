@@ -608,6 +608,30 @@ it("keeps an oversize mode-executable member in the executable inventory", async
   );
 });
 
+it("does not infer an executable from an unread symlink's mode", async () => {
+  const target = new Uint8Array(2048);
+  const bytes = await vsixPackageFixture({
+    extraBinaryMembers: { "extension/bin/link": target },
+    binaryMemberModes: { "extension/bin/link": 0o120777 },
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), {
+      ...defaults,
+      max_member_bytes: 16,
+    }),
+  );
+  expect(
+    report.interesting_members.some(
+      (member) => member.path === "extension/bin/link",
+    ),
+  ).toBe(false);
+  expect(
+    report.contents.find((member) => member.path === "extension/bin/link")
+      ?.kind,
+  ).toBe("unknown");
+  expect(report.member_kind_counts.executable).toBe(0);
+});
+
 it("reports cancellation during a member read with the caller's reason", async () => {
   const bytes = await vsixPackageFixture();
   const controller = new AbortController();

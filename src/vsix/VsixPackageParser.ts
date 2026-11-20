@@ -506,6 +506,10 @@ const unixExecutable = (entry: FileEntry): boolean => {
         : NaN;
   if (!Number.isSafeInteger(attributes) || attributes < 0) return false;
   const mode = (attributes >>> 16) & 0xffff;
+  // Only regular files (or entries with no recorded type) count; a symlink's
+  // 0o120777 mode carries permission bits that say nothing about its target.
+  const type = mode & 0o170000;
+  if (type !== 0 && type !== 0o100000) return false;
   return (mode & 0o111) !== 0;
 };
 
