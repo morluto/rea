@@ -117,11 +117,13 @@ async function verifyFixture(byteOrder, kernelModule) {
     workspace,
     byteOrder,
     kernelModule,
+    execOwned,
   );
   const independent = await inspectMipsRelocatableReadelf(
     fixture.path,
     byteOrder,
     fixture.float_abi,
+    execOwned,
   );
   const resolved = await parseBinaryTarget(fixture.path);
   if (!resolved.ok) throw resolved.error;
@@ -396,6 +398,7 @@ if (interrupted !== undefined)
     `MIPS relocatable verification interrupted; retained diagnostic workspace: ${workspace}`,
     { cause: interrupted },
   );
+commandInterruption.retainWorkspaceIfInterrupted(workspaceFixture);
 await workspaceFixture.release();
 const releaseInterrupted = finishCommandInterruption();
 if (releaseInterrupted !== undefined) throw releaseInterrupted;

@@ -157,6 +157,7 @@ workspaceFixture.releaseAfter(async () => {
   lifecycle = await completeVerifierRun(run);
   assertVerifierCleanupComplete(lifecycle.process_lineage);
 });
+commandInterruption.retainWorkspaceIfInterrupted(workspaceFixture);
 await withVerifierFixture(workspaceFixture, async () => {
   let primaryFailure;
   try {

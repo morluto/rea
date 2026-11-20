@@ -168,16 +168,19 @@ try {
     );
   }
 
-  const typedSoft = await buildRiscvFixture(workspace, 32, "soft");
-  const callSites = await inspectRiscvCallSites(typedSoft.path);
+  const typedSoft = await buildRiscvFixture(workspace, 32, {
+    floatAbi: "soft",
+    execute: execOwned,
+  });
+  const callSites = await inspectRiscvCallSites(typedSoft.path, execOwned);
   assertRiscvIlp32CallSites(callSites.calls);
   const fixtures = [
-    await buildRiscvFixture(workspace, 32),
-    await buildRiscvFixture(workspace, 64),
-    await buildRiscvFixture(workspace, 32, { pie: true }),
-    await buildRiscvFixture(workspace, 64, { pie: true }),
+    await buildRiscvFixture(workspace, 32, { execute: execOwned }),
+    await buildRiscvFixture(workspace, 64, { execute: execOwned }),
+    await buildRiscvFixture(workspace, 32, { pie: true, execute: execOwned }),
+    await buildRiscvFixture(workspace, 64, { pie: true, execute: execOwned }),
     typedSoft,
-    await stripRiscvFixture(workspace, typedSoft),
+    await stripRiscvFixture(workspace, typedSoft, execOwned),
   ];
   for (const fixture of fixtures) {
     const bits = fixture.riscv.elfClass;
@@ -715,6 +718,7 @@ if (interrupted !== undefined)
     `RISC-V verification interrupted; retained diagnostic workspace: ${workspace}`,
     { cause: interrupted },
   );
+commandInterruption.retainWorkspaceIfInterrupted(workspaceFixture);
 await workspaceFixture.release();
 const releaseInterrupted = finishCommandInterruption();
 if (releaseInterrupted !== undefined) throw releaseInterrupted;

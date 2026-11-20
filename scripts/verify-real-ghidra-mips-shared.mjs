@@ -79,6 +79,7 @@ try {
         workspace,
         byteOrder,
         variant,
+        execOwned,
       );
       const resolved = await parseBinaryTarget(fixture.path);
       if (!resolved.ok) throw resolved.error;
@@ -406,6 +407,7 @@ if (interrupted !== undefined)
     `MIPS16 shared verification interrupted; retained diagnostic workspace: ${workspace}`,
     { cause: interrupted },
   );
+commandInterruption.retainWorkspaceIfInterrupted(workspaceFixture);
 await workspaceFixture.release();
 const releaseInterrupted = finishCommandInterruption();
 if (releaseInterrupted !== undefined) throw releaseInterrupted;

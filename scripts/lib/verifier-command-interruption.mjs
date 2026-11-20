@@ -45,6 +45,16 @@ export function bindVerifierCommandInterruption(commands) {
       process.off("SIGTERM", interrupt);
       return signal.aborted ? signal.reason : undefined;
     },
+    /**
+     * Register this after every other release callback. It runs after those
+     * checks and before the fixture root is removed, so a signal during
+     * finalization keeps the diagnostic workspace.
+     */
+    retainWorkspaceIfInterrupted: (fixture) => {
+      fixture.releaseAfter(() => {
+        if (signal.aborted) throw signal.reason;
+      });
+    },
     untilInterrupted: (promise) =>
       new Promise((resolve, reject) => {
         let settled = false;

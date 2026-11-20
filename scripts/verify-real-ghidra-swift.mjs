@@ -110,6 +110,7 @@ rootFixture.releaseAfter(async () => {
   verifierRun = await completeVerifierRun(run);
   assertVerifierCleanupComplete(verifierRun.process_lineage);
 });
+commandInterruption.retainWorkspaceIfInterrupted(rootFixture);
 await withVerifierFixture(rootFixture, async () => {
   let primaryFailure;
   try {

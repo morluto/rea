@@ -117,11 +117,17 @@ async function loadedWords(call, independent, delta, byteOrder) {
 }
 
 async function verifyFixture(byteOrder, softFloat) {
-  const fixture = await buildMipsSharedFixture(workspace, byteOrder, softFloat);
+  const fixture = await buildMipsSharedFixture(
+    workspace,
+    byteOrder,
+    softFloat,
+    execOwned,
+  );
   const independent = await inspectMipsSharedReadelf(
     fixture.path,
     byteOrder,
     fixture.float_abi,
+    execOwned,
   );
   const resolved = await parseBinaryTarget(fixture.path);
   if (!resolved.ok) throw resolved.error;
@@ -402,6 +408,7 @@ if (interrupted !== undefined)
     `MIPS32 shared-library verification interrupted; retained diagnostic workspace: ${workspace}`,
     { cause: interrupted },
   );
+commandInterruption.retainWorkspaceIfInterrupted(workspaceFixture);
 await workspaceFixture.release();
 const releaseInterrupted = finishCommandInterruption();
 if (releaseInterrupted !== undefined) throw releaseInterrupted;
