@@ -679,6 +679,53 @@ it("resolves an extension-less CommonJS main the way Node does", async () => {
   });
 });
 
+it("resolves a directory main through that directory's package.json", async () => {
+  const bytes = await vsixPackageFixture({
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      engines: { vscode: "^1.74.0" },
+      main: "./out",
+    }),
+    extraMembers: {
+      "extension/out/package.json": JSON.stringify({ main: "./start.js" }),
+      "extension/out/start.js": "exports.activate = () => {};",
+      "extension/out/index.js": "exports.activate = () => {};",
+    },
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.entry_points.main).toEqual({
+    path: "extension/out/start.js",
+    present: true,
+  });
+});
+
+it("falls back to the directory index when its package.json main is missing", async () => {
+  const bytes = await vsixPackageFixture({
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      engines: { vscode: "^1.74.0" },
+      main: "./out",
+    }),
+    extraMembers: {
+      "extension/out/package.json": JSON.stringify({ main: "./gone.js" }),
+      "extension/out/index.js": "exports.activate = () => {};",
+    },
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.entry_points.main).toEqual({
+    path: "extension/out/index.js",
+    present: true,
+  });
+});
+
 it("marks a missing main entry as absent without treating it as a format error", async () => {
   const bytes = await vsixPackageFixture({ includeMain: false });
   const report = vsixPackageSchema.parse(

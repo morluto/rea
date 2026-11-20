@@ -309,11 +309,8 @@ const packageJsonEntryPath = (value: unknown): string | null => {
  * through Node's CommonJS file and directory lookup, and the web extension
  * host adds `.js` to a `browser` entry that lacks it.
  */
-const NODE_ENTRY_CANDIDATES = [
-  "",
-  ".js",
-  ".json",
-  ".node",
+const NODE_FILE_CANDIDATES = ["", ".js", ".json", ".node"] as const;
+const NODE_INDEX_CANDIDATES = [
   "/index.js",
   "/index.json",
   "/index.node",
@@ -331,6 +328,58 @@ const resolveEntryPoint = (
     if (member !== undefined) return { path: member, present: true };
   }
   return { path: declared, present: false };
+};
+
+/**
+ * `main` of a directory's own package.json, joined onto that directory with
+ * its `.` and `..` segments resolved, or null when it names nothing or climbs
+ * out of the package.
+ */
+const directoryManifestMain = (
+  directory: string,
+  text: string,
+): string | null => {
+  let record: unknown;
+  try {
+    record = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (record === null || typeof record !== "object" || Array.isArray(record))
+    return null;
+  const main = (record as Record<string, unknown>).main;
+  if (typeof main !== "string" || main.trim() === "") return null;
+  const segments: string[] = [];
+  const joined = `${directory}/${vsixPackageLogicalPath(main.trim())}`;
+  for (const segment of joined.split("/")) {
+    if (segment === "" || segment === ".") continue;
+    if (segment !== "..") segments.push(segment);
+    else if (segments.pop() === undefined) return null;
+  }
+  return segments.length === 0 ? null : segments.join("/");
+};
+
+/**
+ * The member a `main` entry resolves to under Node's CommonJS lookup: the
+ * file itself or with an added extension, then the directory's package.json
+ * `main`, then the directory's `index.*`.
+ */
+const resolveNodeEntryPoint = (
+  declared: string,
+  memberPaths: ReadonlyMap<string, string>,
+  directoryMain: string | null,
+): { path: string; present: boolean } => {
+  const asFile = resolveEntryPoint(declared, NODE_FILE_CANDIDATES, memberPaths);
+  if (asFile.present) return asFile;
+  if (directoryMain !== null) {
+    const viaManifest = resolveEntryPoint(
+      directoryMain,
+      [...NODE_FILE_CANDIDATES, ...NODE_INDEX_CANDIDATES],
+      memberPaths,
+    );
+    if (viaManifest.present) return viaManifest;
+  }
+  return resolveEntryPoint(declared, NODE_INDEX_CANDIDATES, memberPaths);
 };
 
 const sameIdSet = (
@@ -941,6 +990,52 @@ export const parseVsixPackage = async (
     const memberPaths = new Map(
       files.map((file) => [file.path.toLowerCase(), file.path]),
     );
+    // A `main` naming a directory resolves through that directory's own
+    // package.json before its index files, as Node's loader does.
+    let mainDirectoryMain: string | null = null;
+    const mainManifest =
+      mainPath === null ? undefined : uniqueByPath(`${mainPath}/package.json`);
+    if (
+      mainManifest !== undefined &&
+      !mainManifest.traverses &&
+      !mainManifest.encrypted &&
+      mainPath !== null &&
+      !resolveEntryPoint(mainPath, NODE_FILE_CANDIDATES, memberPaths).present
+    ) {
+      let decoded: Uint8Array | undefined;
+      try {
+        decoded = await readMemberBytes(
+          mainManifest.entry,
+          signal,
+          input.max_manifest_bytes,
+          `Member ${mainManifest.path}`,
+          "max_manifest_bytes",
+        );
+      } catch (cause: unknown) {
+        if (
+          !(
+            cause instanceof ParseFailureError &&
+            cause.failure.kind === "limit" &&
+            cause.failure.limit?.name === "max_manifest_bytes"
+          )
+        )
+          throw cause;
+        limitations.push(
+          `Member ${JSON.stringify(mainManifest.path)} exceeds the ${String(input.max_manifest_bytes)}-byte manifest budget and was not read to resolve main.`,
+        );
+      }
+      if (decoded !== undefined) {
+        examined += decoded.length;
+        let text: string | undefined;
+        try {
+          text = decodeXmlPlistText(decoded);
+        } catch {
+          text = undefined;
+        }
+        if (text !== undefined)
+          mainDirectoryMain = directoryManifestMain(mainPath, text);
+      }
+    }
     const extensionDependencies = {
       vsixmanifest: vsixParsed?.extensionDependencies ?? [],
       package_json: packageParsed?.extensionDependencies ?? [],
@@ -988,7 +1083,7 @@ export const parseVsixPackage = async (
         main:
           mainPath === null
             ? null
-            : resolveEntryPoint(mainPath, NODE_ENTRY_CANDIDATES, memberPaths),
+            : resolveNodeEntryPoint(mainPath, memberPaths, mainDirectoryMain),
         browser:
           browserPath === null
             ? null
