@@ -20,7 +20,10 @@ import {
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import { createSemanticReadPresenceQuery } from "./javascriptSemanticReadPresence.js";
-import { semanticArrayPatternCanResumeAfterClose } from "./javascriptSemanticReferenceSources.js";
+import {
+  isLexicalPatternDeclaration,
+  semanticArrayPatternCanResumeAfterClose,
+} from "./javascriptSemanticReferenceSources.js";
 
 /** Recover bounded static property reads, writes, spreads, and destructuring. */
 export const collectJavaScriptSemanticObjects = (
@@ -140,10 +143,10 @@ const collectMember = (
   );
 };
 
-/** An empty object pattern still applies RequireObjectCoercible to its input. */
-const isKnownCoercibleReceiver = (node: t.Node | undefined): boolean =>
+/** A proved own slot yields its initializer's result, even if that result is null. */
+const isKnownDefinedSource = (node: t.Node | undefined): boolean =>
   node !== undefined &&
-  ((t.isLiteral(node) && !t.isNullLiteral(node)) ||
+  (t.isLiteral(node) ||
     t.isObjectMethod(node) ||
     staticJavaScriptTruthiness(node) === true);
 
@@ -203,10 +206,15 @@ const collectDestructuring = (
     // contributes no binding once the shared slot check has run.
     if (next.pattern === undefined) continue;
     const occurrence = unwrapJavaScriptExpression(next.pattern).node;
-    const plainObjectPath =
-      next.plainObjectPath === true && !t.isAssignmentPattern(occurrence);
-    if (t.isAssignmentPattern(occurrence)) ownSlot = undefined;
-    const pattern = t.isAssignmentPattern(occurrence)
+    const hasDefault = t.isAssignmentPattern(occurrence);
+    const plainObjectPath = next.plainObjectPath === true && !hasDefault;
+    if (
+      hasDefault &&
+      (!isKnownDefinedSource(selected) ||
+        !isLexicalPatternDeclaration(state.parentsByNode.get(root), state))
+    )
+      ownSlot = undefined;
+    const pattern = hasDefault
       ? unwrapJavaScriptExpression(occurrence.left).node
       : occurrence;
     if (t.isObjectPattern(pattern)) {
@@ -217,7 +225,8 @@ const collectDestructuring = (
           !t.isObjectExpression(selected) &&
           (rootArray ||
             pattern.properties.length !== 0 ||
-            !isKnownCoercibleReceiver(selected)))
+            t.isNullLiteral(selected) ||
+            !isKnownDefinedSource(selected)))
       )
         ownSlot = undefined;
       for (const property of pattern.properties.toReversed()) {
