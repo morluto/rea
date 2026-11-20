@@ -16,6 +16,10 @@ import {
 } from "../../fixtures/zipNames.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
+import {
+  unicodePathExtra,
+  zipArchive,
+} from "../../../src/domain/desktop/zipArchive.fixture.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { withArtifactClient } from "../../support/artifactClientScope.js";
 import {
@@ -303,19 +307,9 @@ it("preserves valid Info-ZIP Unicode Path overrides", async () => {
   const root = await createTestTempDirectory("rea-zip-unicode-path-");
   const path = join(root, "unicode-path.zip");
   const rawName = Buffer.from([0xc7, 0xd1, 0xb1, 0xdb, 0x2e, 0x74, 0x78, 0x74]);
-  const unicodeName = Buffer.from("café.txt", "utf8");
-  const field = Buffer.alloc(5 + unicodeName.length);
-  field[0] = 1;
-  field.writeUInt32LE(zipCrc32(rawName), 1);
-  unicodeName.copy(field, 5);
-  const writer = new ZipWriter(new Uint8ArrayWriter());
-  await writer.add("name.txt", new TextReader("unicode path"), {
-    extraField: new Map([[0x7075, field]]),
-  });
-  const archive = Buffer.from(await writer.close());
   await writeFile(
     path,
-    rewriteSingleEntryZipName(archive, "name.txt", rawName, false),
+    zipWithUnicodePath(rawName, unicodePathExtra(rawName, "café.txt")),
   );
 
   const inventory = await inventoryArtifact(path);
@@ -334,20 +328,9 @@ it("falls back to the stored name and reports bytes when a Unicode Path field CR
   );
   const path = join(root, "invalid-unicode-extra-crc.zip");
   const rawName = Buffer.from([0x82, 0x2e, 0x74, 0x78, 0x74]);
-  const unicodeName = Buffer.from("café.txt", "utf8");
-  const field = Buffer.alloc(5 + unicodeName.length);
-  field[0] = 1;
-  field.writeUInt32LE((zipCrc32(rawName) ^ 1) >>> 0, 1);
-  unicodeName.copy(field, 5);
-  const writer = new ZipWriter(new Uint8ArrayWriter());
-  await writer.add("x.txt", new TextReader("malformed extra"), {
-    extraField: new Map([[0x7075, field]]),
-  });
-  const archive = Buffer.from(await writer.close());
-  await writeFile(
-    path,
-    rewriteSingleEntryZipName(archive, "x.txt", rawName, false),
-  );
+  const field = unicodePathExtra(rawName, "café.txt");
+  field.writeUInt8(field.readUInt8(5) ^ 1, 5);
+  await writeFile(path, zipWithUnicodePath(rawName, field));
 
   const inventory = await inventoryArtifact(path);
   expect(inventory.occurrences).toContainEqual(
@@ -358,12 +341,13 @@ it("falls back to the stored name and reports bytes when a Unicode Path field CR
   );
 });
 
+const malformedName = Buffer.from([0xc3, 0x28, 0x2e, 0x74, 0x78]);
+
 it("rejects malformed UTF-8 in flagged ZIP member names", async () => {
   const root = await createTestTempDirectory("rea-zip-invalid-utf8-name-");
   const path = join(root, "invalid-utf8.zip");
   await writeSingleEntryZip(path, "x.txt");
   const archive = await readFile(path);
-  const malformedName = Buffer.from([0xc3, 0x28, 0x2e, 0x74, 0x78]);
   await writeFile(
     path,
     rewriteSingleEntryZipName(archive, "x.txt", malformedName, true),
@@ -380,19 +364,9 @@ it("rejects malformed UTF-8 in a CRC-valid Unicode Path extra field", async () =
   const root = await createTestTempDirectory("rea-zip-invalid-unicode-extra-");
   const path = join(root, "invalid-unicode-extra.zip");
   const rawName = Buffer.from("legacy.txt");
-  const malformedName = Buffer.from([0xc3, 0x28, 0x2e, 0x74, 0x78]);
-  const field = Buffer.alloc(5 + malformedName.length);
-  field[0] = 1;
-  field.writeUInt32LE(zipCrc32(rawName), 1);
-  malformedName.copy(field, 5);
-  const writer = new ZipWriter(new Uint8ArrayWriter());
-  await writer.add("legacy.txt", new TextReader("malformed extra"), {
-    extraField: new Map([[0x7075, field]]),
-  });
-  const archive = Buffer.from(await writer.close());
   await writeFile(
     path,
-    rewriteSingleEntryZipName(archive, "legacy.txt", rawName, false),
+    zipWithUnicodePath(rawName, unicodePathExtra(rawName, malformedName)),
   );
 
   await expect(inventoryArtifact(path)).rejects.toMatchObject({
@@ -801,13 +775,15 @@ const writeSingleEntryZip = async (
   await writeFile(path, await createSingleEntryZip(name));
 };
 
-const zipCrc32 = (bytes: Uint8Array): number => {
-  let checksum = 0xffffffff;
-  for (const byte of bytes) {
-    checksum ^= byte;
-    for (let bit = 0; bit < 8; bit += 1)
-      checksum =
-        (checksum & 1) === 1 ? (checksum >>> 1) ^ 0xedb88320 : checksum >>> 1;
-  }
-  return (checksum ^ 0xffffffff) >>> 0;
+const zipWithUnicodePath = (
+  rawName: Buffer,
+  centralExtra: Uint8Array,
+): Buffer => {
+  const placeholder = "x".repeat(rawName.length);
+  return rewriteSingleEntryZipName(
+    zipArchive([{ name: placeholder, data: "member bytes", centralExtra }]),
+    placeholder,
+    rawName,
+    false,
+  );
 };
