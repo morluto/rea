@@ -2,24 +2,39 @@
 
 import base64
 import importlib.util
+import json
 import os
 import sys
+import tempfile
 import types
 import unittest
 from unittest import mock
 
 
-def load_capture():
+def load_capture(resource_module=None):
     """Load the adapter with fresh mitmproxy stand-ins scoped to its import."""
     fake_mitmproxy = types.ModuleType("mitmproxy")
     fake_mitmproxy.ctx = types.SimpleNamespace()
     fake_mitmproxy.version = types.SimpleNamespace(VERSION="12.2.3")
     fake_io = types.ModuleType("mitmproxy.io")
     fake_io.tnetstring = types.ModuleType("mitmproxy.io.tnetstring")
+    if resource_module is None:
+        try:
+            import resource as resource_module
+        except ImportError:
+            resource_module = types.ModuleType("resource")
+            resource_module.RLIM_INFINITY = -1
+            resource_module.RLIMIT_AS = 9
+            resource_module.RLIMIT_CPU = 0
+            resource_module.RLIMIT_CORE = 4
+            resource_module.RLIMIT_FSIZE = 1
+            resource_module.getrlimit = lambda kind: (resource_module.RLIM_INFINITY, resource_module.RLIM_INFINITY)
+            resource_module.setrlimit = lambda kind, limits: None
     stand_ins = {
         "mitmproxy": fake_mitmproxy,
         "mitmproxy.io": fake_io,
         "mitmproxy.io.tnetstring": fake_io.tnetstring,
+        "resource": resource_module,
     }
     spec = importlib.util.spec_from_file_location(
         "rea_mitmproxy_capture", os.path.join(os.path.dirname(__file__), "capture.py")
@@ -253,6 +268,76 @@ class TransportUserinfoTests(unittest.TestCase):
     def test_non_special_schemes_keep_backslashes_in_the_authority(self):
         self.assertEqual(capture.without_userinfo("foo://a\\b@host/x"), "foo://host/x")
         self.assertEqual(capture.without_userinfo(b"//a\\b@host"), b"//a\\b@host")
+
+
+class OfflineLimitTests(unittest.TestCase):
+    def load_limited(self, limits, setrlimit):
+        resource = types.ModuleType("resource")
+        resource.RLIM_INFINITY = 2 ** 62
+        resource.RLIMIT_AS = 1
+        resource.RLIMIT_CPU = 2
+        resource.RLIMIT_CORE = 3
+        resource.RLIMIT_FSIZE = 4
+        resource.getrlimit = lambda kind: limits[kind]
+        resource.setrlimit = setrlimit
+        return load_capture(resource)
+
+    def test_tighter_hard_limits_are_kept_and_shutdown_still_runs(self):
+        infinity = 2 ** 62
+        limits = {
+            1: (infinity, 1024),
+            2: (infinity, 5),
+            3: (infinity, infinity),
+            4: (infinity, 32),
+        }
+        calls = []
+
+        def setrlimit(kind, pair):
+            _soft, hard = limits[kind]
+            if hard != infinity and pair[1] > hard:
+                raise ValueError("not allowed to raise maximum limit")
+            calls.append((kind, pair))
+            limits[kind] = pair
+
+        module = self.load_limited(limits, setrlimit)
+        shutdowns = []
+        module.ctx.master = types.SimpleNamespace(shutdown=lambda: shutdowns.append("down"))
+        with tempfile.TemporaryDirectory() as parent:
+            request_path = os.path.join(parent, "request.json")
+            reply_path = os.path.join(parent, "reply.json")
+            with open(request_path, "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "budgets": {"inputBytes": 8, "outputBytes": 1000, "depth": 2},
+                        "reply_path": reply_path,
+                    },
+                    handle,
+                )
+            module.ctx.options = types.SimpleNamespace(rea_request_path=request_path)
+            module.addons[0].running()
+            with open(reply_path, encoding="ascii") as handle:
+                reply = json.loads(handle.read())
+        self.assertEqual(
+            calls,
+            [(1, (1024, 1024)), (2, (5, 5)), (3, (0, 0)), (4, (32, 32))],
+        )
+        self.assertEqual(shutdowns, ["down"])
+        self.assertFalse(reply["ok"])
+
+    def test_limit_setup_failure_still_shuts_down(self):
+        infinity = 2 ** 62
+        limits = {kind: (infinity, infinity) for kind in (1, 2, 3, 4)}
+
+        def setrlimit(_kind, _pair):
+            raise ValueError("not allowed to raise maximum limit")
+
+        module = self.load_limited(limits, setrlimit)
+        shutdowns = []
+        module.ctx.master = types.SimpleNamespace(shutdown=lambda: shutdowns.append("down"))
+        module.ctx.options = types.SimpleNamespace(rea_request_path="")
+        with self.assertRaisesRegex(ValueError, "not allowed to raise maximum limit"):
+            module.addons[0].running()
+        self.assertEqual(shutdowns, ["down"])
 
 
 if __name__ == "__main__":
