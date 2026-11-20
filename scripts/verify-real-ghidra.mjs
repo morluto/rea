@@ -149,9 +149,18 @@ try {
       "Ghidra verification and command cleanup both failed",
     );
   }
-  fixtures.retain(
-    `Ghidra verification failed; retained workspace: ${fixtureRoot}`,
-  );
+  // The preflight never used the fixture. Release it when the command owner
+  // closed. A failed close stays registered, so release keeps the root, names
+  // it, and leaves the fixture as a cleanup lease.
+  try {
+    await fixtures.release();
+  } catch (releaseCause) {
+    failure = new AggregateError(
+      [failure, releaseCause],
+      `Ghidra preflight failed; retained workspace: ${fixtureRoot}`,
+    );
+    if (!fixtures.released) failure.cleanupLeases = [fixtures];
+  }
   throw failure;
 }
 await withVerifierFixture(fixtures, async () => {
