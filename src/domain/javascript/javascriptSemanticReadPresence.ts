@@ -35,7 +35,7 @@ type ReadOwnData = (
 
 interface ReadPresence {
   readonly read: ReadOwnData;
-  readonly readNestedArray?: (
+  readonly readNestedArray: (
     literal: t.ArrayExpression,
     path: readonly string[],
     fromRhs: readonly string[],
@@ -231,12 +231,7 @@ export const createSemanticReadPresenceQuery = (
       );
       return read === undefined
         ? undefined
-        : {
-            read,
-            ...(iterationPath === undefined
-              ? {}
-              : { readNestedArray: arraySlots }),
-          };
+        : { read, readNestedArray: arraySlots };
     }
     if (!t.isObjectExpression(value)) return undefined;
     const read: ReadOwnData = (path, beforeIterator) => {
