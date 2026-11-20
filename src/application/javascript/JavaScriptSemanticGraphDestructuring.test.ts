@@ -2092,13 +2092,61 @@ it.each([
       ] as const,
   ),
   [
+    "a numeric own slot on an array RHS",
+    'const pairs=[["one"]];const {0:[selected]}=pairs;pairs[0][0]="later";',
+    ["0", "0"],
+    "resolved",
+  ],
+  [
+    "a quoted own array slot captured through a const alias",
+    'const pairs=[["one"]];const alias=pairs;let selected;({"0":[selected]}=alias);pairs[0][0]="later";',
+    ["0", "0"],
+    "resolved",
+  ],
+  [
+    "the second numeric own slot without acquiring the outer iterator",
+    'const pairs=[[0],["one"]];const {0:[used],1:[selected]}=pairs;pairs[1][0]="later";',
+    ["1", "0"],
+    "resolved",
+  ],
+  [
+    "an unresolved computed write on the outer array",
+    'const pairs=[["one"]];pairs[Symbol.iterator]=function*(){};const {0:[selected]}=pairs;pairs[0][0]="later";',
+    ["0", "0"],
+    "candidate",
+  ],
+  [
+    "an absent numeric own array slot",
+    'const pairs=[,["one"]];const {0:[selected]}=pairs;pairs[0]=["later"];',
+    ["0", "0"],
+    "candidate",
+  ],
+  [
+    "an earlier replacement of the numeric array slot",
+    'const pairs=[["one"]];pairs[0]=["earlier"];const {0:[selected]}=pairs;pairs[0][0]="later";',
+    ["0", "0"],
+    "candidate",
+  ],
+  [
+    "an overridden inner iterator selected from a numeric property",
+    'const pairs=[["one"]];pairs[0][Symbol.iterator]=function*(){};const {0:[selected]}=pairs;pairs[0][0]="later";',
+    ["0", "0"],
+    "candidate",
+  ],
+  [
+    "an earlier return hook before selecting the second numeric property",
+    'const pairs=[[0],["one"]];Object.prototype.return=()=>({});const {0:[used],1:[selected]}=pairs;pairs[1][0]="later";',
+    ["1", "0"],
+    "candidate",
+  ],
+  [
     "second nested iterator after a prior assignment target",
     'const box={first:[0],items:["one"]};let used,selected;({first:[used],items:[selected]}=box);box.items[0]="later";',
     ["items", "0"],
     "candidate",
   ],
 ] as const)(
-  "owns native iterators below an object for %s",
+  "owns nested native arrays through an object pattern for %s",
   (_name, code, path, resolution) => {
     const graph = graphForJavaScript(code);
     const selected = graph.nodes.find(

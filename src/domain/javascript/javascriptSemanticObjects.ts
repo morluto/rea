@@ -248,7 +248,7 @@ const collectDestructuring = (
           (!rootArray || path.length === 1) &&
           t.isArrayExpression(selected) &&
           propertyPath !== null
-            ? sourcePresence?.readNestedArray?.(
+            ? sourcePresence?.readNestedArray(
                 selected,
                 propertyPath,
                 path,

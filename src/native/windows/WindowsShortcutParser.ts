@@ -560,11 +560,10 @@ const observationsOf = (
 };
 
 const decodeIdListItem = (
-  bytes: Buffer,
+  data: Buffer,
   offset: number,
   size: number,
 ): WindowsShortcutIdListItem => {
-  const data = bytes.subarray(offset + 2, offset + size);
   const typeByte = data.length === 0 ? 0 : (data[0] ?? 0);
   const raw = (): WindowsShortcutIdListItem => ({
     kind: "raw",
@@ -606,7 +605,7 @@ const decodeIdListItem = (
       size,
       type_byte: typeByte,
       entry_class: (typeByte & 0x01) !== 0 ? "directory" : "file",
-      file_size: data.readUInt32LE(2),
+      file_size: new BinaryReader(data, true, "windows-shortcut").u32(2),
       short_name: name,
     };
   }
@@ -1155,11 +1154,12 @@ const decodeExtra = (
 };
 
 const parseIdList = async (
-  bytes: Buffer,
+  file: BinaryReader,
   walk: Walk,
   maxItems: number,
   signal?: AbortSignal,
 ): Promise<WindowsShortcut["id_list"]> => {
+  const { bytes } = file;
   if (!fits(bytes, walk.offset, 2)) {
     note(
       walk,
@@ -1170,7 +1170,7 @@ const parseIdList = async (
     );
     return null;
   }
-  const byteSize = bytes.readUInt16LE(walk.offset);
+  const byteSize = file.u16(walk.offset);
   const start = walk.offset;
   if (!fits(bytes, walk.offset + 2, byteSize)) {
     note(
@@ -1182,27 +1182,39 @@ const parseIdList = async (
     );
     return null;
   }
-  const end = walk.offset + 2 + byteSize;
-  let cursor = walk.offset + 2;
+  const itemStart = start + 2;
+  const list = new BinaryReader(
+    file.range(itemStart, byteSize, "LinkTargetIDList"),
+    file.little,
+    file.format,
+  );
+  let cursor = 0;
   const items: WindowsShortcutIdListItem[] = [];
   let terminated = false;
   let malformed = false;
-  while (cursor + 2 <= end) {
+  while (cursor + 2 <= byteSize) {
     if (items.length > 0 && items.length % ENTRIES_PER_YIELD === 0) {
       await setImmediate();
       assertArtifactReadActive(signal);
     }
-    const size = bytes.readUInt16LE(cursor);
+    const size = list.u16(cursor);
     if (size === 0) {
       cursor += 2;
+      if (cursor < byteSize)
+        note(
+          walk,
+          "malformed_structure",
+          itemStart + cursor,
+          "Bytes follow TerminalID inside the declared LinkTargetIDList",
+        );
       terminated = true;
       break;
     }
-    if (size < 2 || cursor + size > end) {
+    if (size < 2 || cursor + size > byteSize) {
       note(
         walk,
         "malformed_structure",
-        cursor,
+        itemStart + cursor,
         "ItemID size overruns the IDList",
       );
       malformed = true;
@@ -1214,17 +1226,23 @@ const parseIdList = async (
         maxItems,
         `LinkTargetIDList declares more than the ${String(maxItems)}-item allowance`,
       );
-    items.push(decodeIdListItem(bytes, cursor, size));
+    items.push(
+      decodeIdListItem(
+        list.range(cursor + 2, size - 2, "ItemID data"),
+        itemStart + cursor,
+        size,
+      ),
+    );
     cursor += size;
   }
   if (!terminated && !malformed)
     note(
       walk,
       "malformed_structure",
-      cursor,
+      itemStart + cursor,
       "LinkTargetIDList has no TerminalID inside its declared size",
     );
-  walk.offset = end;
+  walk.offset = itemStart + byteSize;
   return {
     location: { offset: start, bytes: 2 + byteSize },
     byte_size: byteSize,
@@ -1321,7 +1339,8 @@ export const parseWindowsShortcut = async (
       "windows-shortcut",
       `File is ${String(bytes.length)} bytes, below the 76-byte ShellLinkHeader`,
     );
-  const headerSize = bytes.readUInt32LE(0);
+  const reader = new BinaryReader(bytes, true, "windows-shortcut");
+  const headerSize = reader.u32(0);
   if (headerSize !== HEADER_BYTES)
     throw malformedInput(
       "windows-shortcut",
@@ -1335,21 +1354,21 @@ export const parseWindowsShortcut = async (
       `LinkCLSID ${clsid} is not ${SHELL_LINK_CLSID}`,
       { offset: 4, field: "LinkCLSID" },
     );
-  const flags = bytes.readUInt32LE(20);
+  const flags = reader.u32(20);
   const unicode = (flags & 0x00000080) !== 0;
   const header: WindowsShortcut["header"] = {
     location: { offset: 0, bytes: HEADER_BYTES },
     header_size: headerSize,
     clsid,
     link_flags: namedBits(flags, LINK_FLAG_NAMES),
-    file_attributes: namedBits(bytes.readUInt32LE(24), FILE_ATTRIBUTE_NAMES),
-    creation_time: fileTime(bytes.readBigUInt64LE(28)),
-    access_time: fileTime(bytes.readBigUInt64LE(36)),
-    write_time: fileTime(bytes.readBigUInt64LE(44)),
-    file_size: bytes.readUInt32LE(52),
-    icon_index: bytes.readInt32LE(56),
-    show_command: showCommand(bytes.readUInt32LE(60)),
-    hotkey: hotKey(bytes.readUInt16LE(64)),
+    file_attributes: namedBits(reader.u32(24), FILE_ATTRIBUTE_NAMES),
+    creation_time: fileTime(reader.word(28, 64)),
+    access_time: fileTime(reader.word(36, 64)),
+    write_time: fileTime(reader.word(44, 64)),
+    file_size: reader.u32(52),
+    icon_index: reader.i32(56),
+    show_command: showCommand(reader.u32(60)),
+    hotkey: hotKey(reader.u16(64)),
   };
   const walk: Walk = {
     offset: HEADER_BYTES,
@@ -1367,9 +1386,8 @@ export const parseWindowsShortcut = async (
   };
   const idList =
     (flags & 0x00000001) !== 0
-      ? await parseIdList(bytes, walk, input.max_id_list_items, signal)
+      ? await parseIdList(reader, walk, input.max_id_list_items, signal)
       : null;
-  const reader = new BinaryReader(bytes, true, "windows-shortcut");
   const linkInfo =
     (flags & 0x00000002) !== 0 && !walk.stopped
       ? parseLinkInfo(reader, walk)
