@@ -3080,7 +3080,6 @@ html[dir="rtl"] .brand-name {
   --header-glass: rgba(255, 255, 255, 0.82);
   --header-border: rgba(224, 229, 233, 0.7);
   --cursor-glow: rgba(41, 79, 130, 0.08);
-  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 :root[data-theme="dark"] {
@@ -3094,6 +3093,28 @@ html[dir="rtl"] .brand-name {
   --header-glass: rgba(30, 30, 46, 0.85);
   --header-border: rgba(69, 71, 90, 0.5);
   --cursor-glow: rgba(137, 180, 250, 0.08);
+}
+
+/* Page & Surface Theme Transition */
+@media (prefers-reduced-motion: no-preference) {
+  body,
+  .site-header,
+  .site-footer,
+  .home-case-card,
+  .home-reading-links > div,
+  .home-setup,
+  .contributor-card,
+  .home-page-nav,
+  .home-page-nav > summary,
+  .home-workflow li,
+  .agent-terminal,
+  .code-block,
+  .brand,
+  .button,
+  .theme-toggle,
+  .navigation a {
+    transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+  }
 }
 
 #neu-cursor-glow {
@@ -3118,19 +3139,9 @@ html[dir="rtl"] .brand-name {
 }
 
 .site-header {
-  position: sticky;
-  top: 0;
-  z-index: 10;
   background: var(--header-glass);
-  -webkit-backdrop-filter: blur(16px) saturate(1.4);
-  backdrop-filter: blur(16px) saturate(1.4);
   border-bottom: 1px solid var(--header-border);
   box-shadow: 0 1px 16px rgba(0, 0, 0, 0.04);
-  transition: background-color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
-}
-
-.site-header.neu-scrolled {
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08), 0 1px 4px rgba(0, 0, 0, 0.04);
 }
 
 .brand {
@@ -3172,7 +3183,7 @@ html[dir="rtl"] .brand-name {
 .nav-discord,
 .nav-x {
   border-radius: 8px;
-  transition: box-shadow 0.22s ease, background 0.22s ease, transform 0.18s ease;
+  transition: box-shadow 0.22s ease, background 0.22s ease;
 }
 .theme-toggle:hover,
 .nav-github:hover,
@@ -3180,25 +3191,22 @@ html[dir="rtl"] .brand-name {
 .nav-x:hover {
   background: var(--page);
   box-shadow: var(--neu-raised-sm);
-  transform: translateY(-1px);
 }
 .theme-toggle:active,
 .nav-github:active,
 .nav-discord:active,
 .nav-x:active {
   box-shadow: var(--neu-pressed);
-  transform: translateY(0);
 }
 
 .home-case-card {
   border-radius: 12px;
   background: var(--page);
   box-shadow: var(--neu-raised-sm);
-  transition: box-shadow 0.25s ease, transform 0.2s ease, border-color 0.2s ease;
+  transition: box-shadow 0.25s ease, border-color 0.2s ease;
 }
 .home-case-card:hover {
   box-shadow: var(--neu-raised-hover);
-  transform: translateY(-3px);
   border-color: var(--accent);
 }
 
@@ -3215,16 +3223,14 @@ html[dir="rtl"] .brand-name {
 .button {
   border-radius: 8px;
   box-shadow: var(--neu-raised-sm);
-  transition: box-shadow 0.22s ease, transform 0.18s ease, background 0.22s ease;
+  transition: box-shadow 0.22s ease, background 0.22s ease;
 }
 .button:hover {
   box-shadow: var(--neu-raised-hover);
-  transform: translateY(-2px);
   text-decoration: none;
 }
 .button:active {
   box-shadow: var(--neu-pressed);
-  transform: translateY(0);
 }
 
 .home-reading-links > div {
@@ -3232,11 +3238,10 @@ html[dir="rtl"] .brand-name {
   border-radius: 10px;
   background: var(--page);
   box-shadow: var(--neu-raised-sm);
-  transition: box-shadow 0.25s ease, transform 0.2s ease;
+  transition: box-shadow 0.25s ease;
 }
 .home-reading-links > div:hover {
   box-shadow: var(--neu-raised);
-  transform: translateY(-2px);
 }
 
 .home-setup {
@@ -3249,28 +3254,79 @@ html[dir="rtl"] .brand-name {
 .contributor-card {
   border-radius: 8px;
   box-shadow: var(--neu-raised-sm);
-  transition: box-shadow 0.22s ease, transform 0.18s ease;
+  transition: box-shadow 0.22s ease;
 }
 .contributor-card:hover {
   box-shadow: var(--neu-raised);
-  transform: translateY(-2px);
 }
 
 .back-to-top {
   border-radius: 8px;
   box-shadow: var(--neu-raised-sm);
-  transition: box-shadow 0.22s ease, transform 0.18s ease;
+  transition: box-shadow 0.22s ease;
 }
 .back-to-top:hover {
   box-shadow: var(--neu-raised-hover);
-  transform: translateY(-2px);
+}
+
+/* Hover elevation movements gated strictly to users with no motion reduction preference */
+@media (prefers-reduced-motion: no-preference) {
+  .theme-toggle,
+  .nav-github,
+  .nav-discord,
+  .nav-x,
+  .home-case-card,
+  .button,
+  .home-reading-links > div,
+  .contributor-card,
+  .back-to-top {
+    transition-property: box-shadow, background, transform, border-color;
+    transition-duration: 0.2s;
+    transition-timing-function: ease;
+  }
+  .theme-toggle:hover,
+  .nav-github:hover,
+  .nav-discord:hover,
+  .nav-x:hover {
+    transform: translateY(-1px);
+  }
+  .theme-toggle:active,
+  .nav-github:active,
+  .nav-discord:active,
+  .nav-x:active {
+    transform: translateY(0);
+  }
+  .home-case-card:hover {
+    transform: translateY(-3px);
+  }
+  .button:hover {
+    transform: translateY(-2px);
+  }
+  .button:active {
+    transform: translateY(0);
+  }
+  .home-reading-links > div:hover {
+    transform: translateY(-2px);
+  }
+  .contributor-card:hover {
+    transform: translateY(-2px);
+  }
+  .back-to-top:hover {
+    transform: translateY(-2px);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0s !important;
+    transform: none !important;
+  }
+  #neu-cursor-glow {
+    display: none !important;
   }
 }
 

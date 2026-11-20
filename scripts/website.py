@@ -280,11 +280,7 @@ def preview_handler(site, prefix):
             return super().send_head()
 
         def end_headers(self):
-            path_part = urlsplit(self.path).path
-            if "/assets/" in path_part:
-                self.send_header("Cache-Control", "public, max-age=31536000, immutable")
-            else:
-                self.send_header("Cache-Control", "public, max-age=0, must-revalidate")
+            self.send_header("Cache-Control", "public, max-age=0, must-revalidate")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
             super().end_headers()

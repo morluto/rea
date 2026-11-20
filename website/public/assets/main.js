@@ -166,12 +166,16 @@ async function initializeWebsite() {
   }
 
   function initializeInteractions() {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
 
     // Ambient cursor glow (pointer only)
+    let glow = null;
     if (window.matchMedia("(pointer: fine)").matches) {
-      const glow = document.createElement("div");
+      glow = document.createElement("div");
       glow.id = "neu-cursor-glow";
+      if (motionQuery.matches) {
+        glow.hidden = true;
+      }
       document.body.appendChild(glow);
 
       let rafId = null;
@@ -180,6 +184,7 @@ async function initializeWebsite() {
       window.addEventListener(
         "mousemove",
         (e) => {
+          if (motionQuery.matches) return;
           cx = e.clientX;
           cy = e.clientY;
           if (rafId !== null) return;
@@ -193,16 +198,6 @@ async function initializeWebsite() {
       );
     }
 
-    // Header scroll elevation
-    const header = document.querySelector(".site-header");
-    if (header) {
-      const onScroll = () => {
-        header.classList.toggle("neu-scrolled", window.scrollY > 8);
-      };
-      window.addEventListener("scroll", onScroll, { passive: true });
-      onScroll();
-    }
-
     // Card hover 3D tilt
     const cards = document.querySelectorAll(
       ".home-case-card, .contributor-card, .home-workflow li",
@@ -210,6 +205,10 @@ async function initializeWebsite() {
     const MAX_TILT = 3;
     cards.forEach((card) => {
       card.addEventListener("mousemove", (e) => {
+        if (motionQuery.matches) {
+          card.style.transform = "";
+          return;
+        }
         const rect = card.getBoundingClientRect();
         const x = (e.clientX - rect.left) / rect.width - 0.5;
         const y = (e.clientY - rect.top) / rect.height - 0.5;
@@ -218,6 +217,17 @@ async function initializeWebsite() {
       card.addEventListener("mouseleave", () => {
         card.style.transform = "";
       });
+    });
+
+    motionQuery.addEventListener("change", (e) => {
+      if (glow !== null) {
+        glow.hidden = e.matches;
+      }
+      if (e.matches) {
+        cards.forEach((card) => {
+          card.style.transform = "";
+        });
+      }
     });
   }
 
