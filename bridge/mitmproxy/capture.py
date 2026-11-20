@@ -346,13 +346,19 @@ def decode(request):
     return {"decoder": {"id": "mitmproxy-native-tnetstring", "name": "REA offline native mitmproxy adapter", "version": PROFILE}, "container": {"reported": None, "numeric_literals": [], "redactions": [], "records_pointer": None}, "total_records": len(records), "records": records}
 
 
-def failure_reply(error):
+ADDRESS_BUDGET = 768 * 1024 * 1024
+
+
+def failure_reply(error, address_limit=None):
     """Keep producer constraints, resource exhaustion and adapter defects distinct."""
     if isinstance(error, CaptureFailure):
         return {"ok": False, "reason": error.reason, "message": str(error), "pointer": error.pointer}
     if isinstance(error, RecursionError):
         return {"ok": False, "reason": "unsupported", "message": "Native projection reached Python's recursion limit; max_nesting_depth does not raise that upstream limit.", "pointer": ""}
     if isinstance(error, MemoryError):
+        # The requested 768 MiB budget is not the ceiling when an inherited limit is tighter.
+        if address_limit is not None and address_limit < ADDRESS_BUDGET:
+            return _address_limit_reply(address_limit)
         return {"ok": False, "reason": "resource-limit", "message": "Native decoder exhausted its 768 MiB address-space budget.", "pointer": ""}
     return {"ok": False, "reason": "decoder", "message": "Offline native decoder failed unexpectedly: " + type(error).__name__ + ".", "pointer": ""}
 
@@ -364,6 +370,24 @@ def _clamp_resource_limit(kind, requested):
     effective = min(finite)
     resource.setrlimit(kind, (effective, hard))
     return effective
+
+
+def _address_limit_reply(effective):
+    """A memory refusal that names the inherited address-space ceiling."""
+    return {
+        "ok": False,
+        "reason": "fixed-limit",
+        "message": "The effective RLIMIT_AS of " + str(effective) + " bytes stopped the decoder. The requested 768 MiB address-space budget does not raise an inherited limit.",
+        "pointer": "",
+        "boundary": "memory",
+        "ceiling": {
+            "name": "The inherited address-space limit of " + str(effective) + " bytes",
+            "kind": "bytes",
+            "limit": effective,
+            "unit": "bytes",
+            "narrowing": "Raise the process RLIMIT_AS above this capture, or select a smaller capture.",
+        },
+    }
 
 
 def _file_limit_reply(effective):
@@ -395,7 +419,7 @@ class OfflineCapture:
 
     def running(self):
         try:
-            _clamp_resource_limit(resource.RLIMIT_AS, 768 * 1024 * 1024)
+            address_limit = _clamp_resource_limit(resource.RLIMIT_AS, ADDRESS_BUDGET)
             _clamp_resource_limit(resource.RLIMIT_CPU, 30)
             # Zero never raises the inherited hard core limit, and it stops descendants from raising it.
             resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
@@ -408,11 +432,11 @@ class OfflineCapture:
             try:
                 response = {"ok": True, "value": decode(request)}
             except Exception as error:
-                response = failure_reply(error)
+                response = failure_reply(error, address_limit)
             try:
                 output = json.dumps(response, ensure_ascii=True, allow_nan=False, separators=(",", ":")).encode("ascii")
             except Exception as error:
-                output = json.dumps(failure_reply(error), separators=(",", ":")).encode("ascii")
+                output = json.dumps(failure_reply(error, address_limit), separators=(",", ":")).encode("ascii")
             if len(output) > file_limit:
                 # file_limit is never above the requested budget. A lower value is the inherited cap.
                 output = (

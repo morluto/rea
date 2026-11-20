@@ -414,6 +414,71 @@ class OfflineLimitTests(unittest.TestCase):
         self.assertEqual(calls[-1], (4, (file_limit, 8192)))
         self.assertEqual(shutdowns, ["down"])
 
+    def _memory_failure(self, address_soft, address_hard):
+        infinity = 2 ** 62
+        limits = {kind: (infinity, infinity) for kind in (2, 3, 4)}
+        limits[1] = (address_soft, address_hard)
+        calls = []
+
+        def setrlimit(kind, pair):
+            _soft, hard = limits[kind]
+            if hard != infinity and pair[1] > hard:
+                raise ValueError("not allowed to raise maximum limit")
+            calls.append((kind, pair))
+            limits[kind] = pair
+
+        module = self.load_limited(limits, setrlimit)
+
+        def exhausted(_request):
+            raise MemoryError("payload must not enter diagnostics")
+
+        module.decode = exhausted
+        shutdowns = []
+        module.ctx.master = types.SimpleNamespace(shutdown=lambda: shutdowns.append("down"))
+        with tempfile.TemporaryDirectory() as parent:
+            request_path = os.path.join(parent, "request.json")
+            reply_path = os.path.join(parent, "reply.json")
+            with open(request_path, "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "budgets": {"inputBytes": 8, "outputBytes": 10000, "depth": 2},
+                        "reply_path": reply_path,
+                    },
+                    handle,
+                )
+            module.ctx.options = types.SimpleNamespace(rea_request_path=request_path)
+            module.addons[0].running()
+            with open(reply_path, "rb") as handle:
+                reply_bytes = handle.read()
+        return json.loads(reply_bytes.decode("ascii")), reply_bytes, calls, shutdowns, module
+
+    def test_tighter_inherited_address_limit_names_the_memory_ceiling(self):
+        soft = 512 * 1024 * 1024
+        hard = 1024 * 1024 * 1024
+        reply, reply_bytes, calls, shutdowns, _module = self._memory_failure(soft, hard)
+        self.assertNotIn(b"payload must not enter diagnostics", reply_bytes)
+        self.assertEqual(reply["reason"], "fixed-limit")
+        self.assertEqual(reply["boundary"], "memory")
+        self.assertEqual(reply["ceiling"]["limit"], soft)
+        self.assertEqual(reply["ceiling"]["kind"], "bytes")
+        self.assertIn(str(soft), reply["message"])
+        self.assertNotIn("exhausted its 768 MiB", reply["message"])
+        self.assertEqual(calls[0], (1, (soft, hard)))
+        self.assertEqual(shutdowns, ["down"])
+
+    def test_requested_address_budget_stays_a_resource_limit(self):
+        budget = 768 * 1024 * 1024
+        reply, reply_bytes, calls, shutdowns, module = self._memory_failure(budget * 2, budget * 4)
+        self.assertNotIn(b"payload must not enter diagnostics", reply_bytes)
+        self.assertEqual(reply["reason"], "resource-limit")
+        self.assertEqual(reply["message"], "Native decoder exhausted its 768 MiB address-space budget.")
+        self.assertNotIn("ceiling", reply)
+        self.assertEqual(calls[0], (1, (budget, budget * 4)))
+        self.assertEqual(shutdowns, ["down"])
+        direct = module.failure_reply(MemoryError("payload must not enter diagnostics"))
+        self.assertEqual(direct["reason"], "resource-limit")
+        self.assertNotIn("payload must not enter diagnostics", json.dumps(direct))
+
     def test_limit_setup_failure_still_shuts_down(self):
         infinity = 2 ** 62
         limits = {kind: (infinity, infinity) for kind in (1, 2, 3, 4)}
