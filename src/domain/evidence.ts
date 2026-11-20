@@ -245,8 +245,13 @@ export interface EvidenceSubjectTarget {
   readonly sha256: string;
   readonly format: z.infer<typeof subjectIdentitySchema>["format"];
   readonly architecture?: BinaryArchitecture;
-  /** What the observation selected inside the bytes; absent selects nothing. */
-  readonly selection?: FileTargetSelection;
+  /**
+   * What the observation selected inside the bytes. Null selects nothing: the
+   * observation covers the whole file even when a session opened one slice of
+   * it. Absent also selects nothing, except that a session binds a subject
+   * naming its open target's bytes to that target's selection.
+   */
+  readonly selection?: FileTargetSelection | null;
   /** Preserve an existing Evidence subject's display name when deriving observations. */
   readonly name?: string;
 }
@@ -529,6 +534,8 @@ const rememberImmutableEvidence = (evidence: Evidence): Evidence => {
 /** Ownership policy for the freshly parsed Evidence snapshot. */
 export interface EvidenceCreationOptions {
   readonly immutable?: boolean;
+  /** Selected spelling is recorded only when this target matches the subject. */
+  readonly callerTarget?: BinaryTarget | null | undefined;
 }
 
 /** Admit payloads into deterministic Evidence bound to an immutable artifact subject. */
@@ -542,6 +549,7 @@ export const createEvidence = (
     target,
     provider,
     observation,
+    options?.callerTarget,
   );
   const evidence = {
     ...normalized,
@@ -590,9 +598,20 @@ export const evidenceEnvelopeForAdmission = (
   target: EvidenceSubjectInput,
   provider: EvidenceProvider,
   observation: EvidenceObservationInput,
+  callerTarget?: EvidenceCreationOptions["callerTarget"],
 ) => {
   const subject = evidenceSubject(target);
+  const callerInputPath =
+    callerTarget?.callerInputPath !== undefined &&
+    isFileSubject(subject) &&
+    subject.local_path === callerTarget.path &&
+    sameTargetIdentity(subject.identity, binaryTargetIdentity(callerTarget))
+      ? callerTarget.callerInputPath
+      : undefined;
   return {
+    ...(callerInputPath === undefined
+      ? {}
+      : { caller_input_path: callerInputPath }),
     evidence_id: `ev_${"0".repeat(64)}`,
     evidence_format: EVIDENCE_FORMAT_REVISION,
     subject,
@@ -629,8 +648,14 @@ const normalizeEvidenceObservation = (
   target: EvidenceSubjectInput,
   provider: EvidenceProvider,
   observation: EvidenceObservationInput,
+  callerTarget?: EvidenceCreationOptions["callerTarget"],
 ) => {
-  const envelope = evidenceEnvelopeForAdmission(target, provider, observation);
+  const envelope = evidenceEnvelopeForAdmission(
+    target,
+    provider,
+    observation,
+    callerTarget,
+  );
   const sharedResult =
     typeof observation.result === "object" &&
     observation.result !== null &&

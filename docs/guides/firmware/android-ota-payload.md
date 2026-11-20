@@ -46,8 +46,16 @@ and `estimate_cow_size`. Operation types include REPLACE, ZERO,
 REPLACE_BZ/XZ/ZSTD, SOURCE_COPY, BSDIFF family, PUFFDIFF, ZUCCHINI and
 LZ4DIFF.
 
+Repeated encodings of the singular old/new `PartitionInfo` messages merge
+their fields under Protobuf rules. A later size-only or empty message does
+not erase an earlier declared hash; a repeated scalar field keeps its last
+value. The resulting size and hash feed both inventory and extraction.
+
 Metadata and payload signature blobs are counted from the `Signatures`
-protobuf. `signatures_verified` is always `false`: sizes and counts are
+protobuf. A payload signature is declared when both `signatures_offset` and
+`signatures_size` are present. Inventory preserves a lone field as manifest
+metadata and leaves the payload signature blob size and count null.
+`signatures_verified` is always `false`: sizes and counts are
 facts, not a cryptographic check. `payload_properties.txt` and
 `META-INF/com/android/metadata` beside a zip member are out of scope. A zip
 that already lists `payload.bin` still classifies that member by `CrAU`
@@ -66,8 +74,9 @@ present. Any other operation type leaves the occurrence inventoried with
 Delta payloads therefore inventory completely and fail a full extract.
 
 A truncated file whose header and manifest still fit keeps the partition
-table and records that the blob was truncated. Bytes past end of file are
-not invented as zeros.
+table and records that the blob was truncated. An incomplete signature is
+skipped, with its declared size retained and its count left unknown. Manifest
+and signature size limits apply only when those regions fit in the file.
 
 ## Bounded work
 

@@ -24,6 +24,7 @@ it.each([129, 3000])(
     // exhausts the call stack.
     expect(rejected).toMatchObject({
       reason: "limit",
+      parserLimit: { name: "plist-nesting-depth", maximum: 128 },
       message: expect.stringMatching(
         /keyed archive.*128 nesting levels.*no runtime override/iu,
       ),

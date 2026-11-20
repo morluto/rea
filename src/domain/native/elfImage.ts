@@ -1,5 +1,5 @@
 import type { FileMapping, ZeroFillMapping } from "../virtualFileMapping.js";
-import { admitElfLoadSegment } from "../elfProgramHeader.js";
+import { admitElfLoadSegment, elfLoadSpans } from "../elfProgramHeader.js";
 import {
   declaredFileRange,
   BinaryFormatFailure,
@@ -10,13 +10,18 @@ import {
   type LoadRegion,
 } from "../binaryContainer.js";
 import { elfArchitecture } from "../elfFixedHeader.js";
-import { readElfDirectoryFromBuffer } from "./nativeSectionDirectory.js";
+import type { ZstandardFramePause } from "../compression/zstandardExactFrame.js";
+import type { CooperativeElfSectionNameDecoder } from "./elfSectionNameTable.js";
+import {
+  readElfDirectoryFromBuffer,
+  readElfDirectoryFromBufferCooperative,
+  type ElfSectionDirectory,
+} from "./nativeSectionDirectory.js";
 
-/** Read ELF sections and file-backed program mappings without interpreting language metadata. */
-export const readElfImage = (
+export const readElfImageFromDirectory = (
   bytes: Buffer,
+  directory: ElfSectionDirectory,
 ): Extract<BinaryContainer, { format: "elf" }> => {
-  const directory = readElfDirectoryFromBuffer(bytes);
   const { bits } = directory;
   const reader = new BinaryReader(bytes, directory.little, "elf");
   const mappings: FileMapping[] = [];
@@ -39,19 +44,18 @@ export const readElfImage = (
       file_size: size,
       memory_size: memorySize,
     } = program;
-    const admitted = admitElfLoadSegment(
-      { virtualAddress: address, memorySize, fileSize: size },
-      bits,
-    );
+    const span = {
+      virtualAddress: address,
+      offset: fileOffset,
+      memorySize,
+      fileSize: size,
+    };
+    const admitted = admitElfLoadSegment(span, bits);
     if (!admitted.ok)
       throw new BinaryFormatFailure("malformed", admitted.error.message);
-    const mapping = {
-      ...(size === 0n
-        ? { offset: 0, size: 0 }
-        : reader.fileRange(fileOffset, size, "ELF load segment")),
-      address,
-    };
-    if (mapping.size !== 0) {
+    if (size !== 0n) reader.fileRange(fileOffset, size, "ELF load segment");
+    const { fileBacked: mapping, zeroFill } = elfLoadSpans(span);
+    if (mapping !== undefined) {
       mappings.push(mapping);
       loadRegions.push({
         mapping,
@@ -62,8 +66,7 @@ export const readElfImage = (
       });
       if ((flags & 1) !== 0) executableMappings.push(mapping);
     }
-    if (memorySize > size)
-      zeroFills.push({ address: address + size, size: memorySize - size });
+    if (zeroFill !== undefined) zeroFills.push(zeroFill);
   }
   for (const section of directory.sections) {
     const range = declaredFileRange(bytes.length, section.offset, section.size);
@@ -136,3 +139,37 @@ export const architectureForElfMachine = (machine: number): string => {
       return `elf-machine-${machine}`;
   }
 };
+
+/** Read ELF sections and file-backed program mappings without interpreting language metadata. */
+export const readElfImage = (
+  bytes: Buffer,
+  operation: string,
+  maximumSourceAndDecodedNamesBytes?: number,
+): Extract<BinaryContainer, { format: "elf" }> =>
+  readElfImageFromDirectory(
+    bytes,
+    readElfDirectoryFromBuffer(
+      bytes,
+      operation,
+      maximumSourceAndDecodedNamesBytes,
+    ),
+  );
+
+/** Same image as {@link readElfImage}. Section names yield through `pause`. */
+export const readElfImageCooperative = async (
+  bytes: Buffer,
+  operation: string,
+  pause: ZstandardFramePause,
+  maximumSourceAndDecodedNamesBytes?: number,
+  decode?: CooperativeElfSectionNameDecoder,
+): Promise<Extract<BinaryContainer, { format: "elf" }>> =>
+  readElfImageFromDirectory(
+    bytes,
+    await readElfDirectoryFromBufferCooperative(
+      bytes,
+      pause,
+      operation,
+      maximumSourceAndDecodedNamesBytes,
+      decode,
+    ),
+  );

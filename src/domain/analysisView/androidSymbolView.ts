@@ -127,7 +127,10 @@ export const projectAndroidSymbolSummary = (
     summary: parsed.value,
     unknowns: [
       ...shared.unknowns,
-      ...(parsed.value.source.status === "partial"
+      ...(parsed.value.source === null
+        ? [parsed.value.body_unavailable_reason]
+        : []),
+      ...(parsed.value.source?.status === "partial"
         ? [
             "The selected method source is partial; retained text does not establish a complete method body.",
           ]

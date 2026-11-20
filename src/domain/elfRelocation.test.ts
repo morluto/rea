@@ -31,18 +31,18 @@ it.each(formats)(
       view.setInt32(8, Number(addend), littleEndian);
     }
     const before = Buffer.from(backing);
+    const input = new Uint8Array(
+      bytes.buffer,
+      bytes.byteOffset,
+      bytes.byteLength,
+    );
     const rel = readElfRelocationEntry(
-      backing.subarray(7),
+      bytes.subarray(0, wordBytes * 2),
       bits,
       littleEndian,
       "rel",
     );
-    const rela = readElfRelocationEntry(
-      backing.subarray(7),
-      bits,
-      littleEndian,
-      "rela",
-    );
+    const rela = readElfRelocationEntry(input, bits, littleEndian, "rela");
     expect(backing.equals(before)).toBe(true);
     backing.fill(0);
     expect(rel).toEqual({

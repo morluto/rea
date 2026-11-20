@@ -368,6 +368,8 @@ export type CapabilityDescriptor = CapabilityAvailability & {
    */
   readonly cachePolicy?: "snapshot" | "live";
   readonly independentDecompile?: true;
+  /** Standalone decompilation of an evidenced exact direct-call destination. */
+  readonly callDestinationDecompile?: true;
   /** Exact source profile for an operation implemented by a versioned local reader. */
   readonly analysisProfile?: AnalysisProfileCommitment;
   readonly provider: ProviderIdentity;

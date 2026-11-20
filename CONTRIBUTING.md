@@ -10,15 +10,14 @@ and maintenance cost. Keep cosmetic polish with useful fixes; confusing or
 incorrect user instructions warrant standalone corrections. Collect other
 cosmetic-only suggestions in an issue rather than separate PRs.
 
-For selected architectural owners and dependency paths, use the
-[architecture map](docs/architecture/architecture.mermaid). It is not a complete directory or
-import inventory. For current provider wiring, start with
+For provider wiring, start with
 [`src/composition/binary.ts`](src/composition/binary.ts) for deep candidates and
 the other `src/composition/` factories for tool services, including
 [`gpu.ts`](src/composition/gpu.ts) and [`model.ts`](src/composition/model.ts).
 Live Frida, Cutter, GDB and Rizin construction also uses shared composition
-factories. For service ownership, availability and catalog declarations, follow
-the [capability composition guide](docs/capability-composition.md).
+factories. Start with [capability declarations](src/composition/capabilityDeclarations.ts)
+for catalog metadata and [service bindings](src/composition/capabilityServices.ts)
+for construction, availability and cleanup.
 Production factories construct fresh providers without starting engines or
 acquiring targets; optional adapter failures must preserve successful peers. Run
 `npm run verify:test-discovery` after adding or moving tests. Resolved import
@@ -28,9 +27,8 @@ It also checks each top-level `src/` unit against its layer in
 directory must declare one) and against the counted outward, mutual,
 cross-provider and past-entry imports in
 `scripts/lib/module-layers.baseline.json`. Application, composition and the
-adapters import a provider through the entry files it declares in that table
-([decision](docs/adr/architecture/provider-entry-files.md)); a new entry file
-widens the provider's public surface. The baseline may only shrink: a
+adapters import a provider through the entry files it declares in that table.
+A new entry file widens the provider's public surface. The baseline may only shrink: a
 change that removes such imports lowers it with
 `node scripts/verify-module-boundaries.mjs --shrink-layer-baseline`.
 
@@ -56,9 +54,8 @@ compare equivalent real tasks before claiming an improvement.
 
 When adding or changing an MCP tool, follow the [tool design guide](docs/development/tool-design.md) and preserve the canonical contracts and generated catalog.
 When adding or changing an admission ceiling, budget, or deadline, follow
-[analysis settings, limits, and recovery](docs/design/limits-and-recovery.md)
-for ownership, operation snapshots, provider integration, and the steps for
-adding a runtime setting.
+[analysis settings, limits, and recovery](docs/reference/limits-and-recovery.md)
+for the steps for adding a runtime setting and documenting recovery.
 
 ## Reporting issues
 
@@ -113,6 +110,19 @@ Human ownership and review remain required when CI or an automated reviewer
 reports success. Readiness requests maintainer review; it does not grant scope
 approval or permission to merge.
 
+Pull request titles must match the Conventional Commits check in
+[`.github/workflows/pr-title.yml`](.github/workflows/pr-title.yml):
+
+```text
+/^(?:feat|fix|docs|refactor|perf|test|build|ci|chore|revert)(?:\([a-z0-9._/-]+\))?!?: .+/u
+```
+
+The type is `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`,
+`chore`, or `revert`. An optional scope, in parentheses, uses only lowercase
+`[a-z0-9._/-]`. An optional `!` may precede the colon. The title then has `: `
+and a non-empty outcome, for example `feat: add historical source import`.
+The type `style` fails, and an uppercase scope fails.
+
 Draft status is optional. Draft PRs may request early feedback with open questions
 and incomplete checks. Agents preserve the current draft status unless asked to
 change it; missing readiness declarations or later updates do not require a PR
@@ -124,21 +134,11 @@ it or require another human sign-off. Keep the PR description and affected
 validation current as work changes. AI agents must leave human declarations to
 the human owner and must not attest to a human review on their behalf.
 
-The `PR readiness` check reports pending for drafts and requires a named human
-owner and all three template declarations for non-drafts. PRs authored by
-@morluto, @kaoru0822-kitauji, @N0zoM1z0, @gensokyo-dev, or @vincentkoc are
-exempt from the declaration. Their human ownership, review, and evidence
-responsibilities above still apply. The check identifies authors by GitHub
-account ID and verifies that they filled in the declaration.
-Existing PRs can copy the **Author readiness** section from the current template.
-Open PRs must have distinct head commits because GitHub shares commit statuses.
-
-Maintainers enable merge enforcement after the workflow is merged: run
-`gh workflow run pr-readiness.yml -f pull_request_number=NUMBER` for existing
-open PRs, then add `PR readiness` from GitHub Actions to the branch's required
-status checks alongside its existing checks. Deploy the workflow to each
-protected target branch before requiring it there. The workflow reads PR
-metadata using trusted default-branch code and writes only a commit status.
+Maintainers review the **Author readiness** declaration in the PR body. PRs
+authored by @morluto, @kaoru0822-kitauji, @N0zoM1z0, @gensokyo-dev, or
+@vincentkoc are exempt from the declaration. Their human ownership, review,
+and evidence responsibilities above still apply. Existing PRs can copy the
+**Author readiness** section from the current template.
 
 When an open PR may overlap another open change or a recently landed fix, note
 the related PR, issue, or commit in the description or a comment as soon as the
@@ -329,28 +329,22 @@ then rerun the command.
 ## Documentation website
 
 Use the [documentation directory](docs/README.md) and
-[authoring guide](docs/development/documentation.md) for document ownership,
-domain-based feature specifications and architectural decision records.
+[authoring guide](docs/development/documentation.md) for document ownership.
 
 The VitePress site uses the Markdown files in `docs/`. Run `npm run docs:dev`
-for live editing, `npm run docs:build` to check the production build and
-links, and `npm run docs:preview` to preview that build at `/rea/`.
+for live editing and `npm run docs:preview` to serve an existing build at
+`/rea/`. Follow the [documentation checks](docs/development/documentation.md#generated-ownership-and-checks)
+to build and verify the rendered routes and anchors.
 
-Site navigation lives in `docs/.vitepress/config.ts`. Keep links to guides
-relative so they work on GitHub and the website; link to repository files
-outside `docs/` using their full GitHub URLs. Generated reference documents
-use `npm run docs:generate`; `docs:build` generates them before building the website.
+The [authoring guide](docs/development/documentation.md#links-and-public-routes)
+explains where to edit navigation and how to preserve public links. The
+`Documentation` CI job runs the documentation and rendered-route checks.
+The manual VitePress workflow in `.github/workflows/pages.yml` builds these
+guides for verification.
 
-Pull requests run `npm run docs:check`. `.github/workflows/pages.yml` is a
-manual VitePress build and does not publish. The public site at
-<https://rea.tools/> serves `website/public/` through Cloudflare Workers. See
-the [website README](website/README.md#cloudflare-workers) for previews and
-manual deployments.
-
-The separate GitHub Pages host uses only the manual
-`.github/workflows/website-pages.yml` workflow on `main`. The repository's
-**Settings → Pages → Build and deployment → Source** must be set to
-**GitHub Actions** before deploying there.
+The product website in `website/public/` has a separate
+[publishing workflow](website/README.md#synchronized-production-publishing) for
+`rea.tools` and GitHub Pages.
 
 ### Translation corrections
 
@@ -391,7 +385,7 @@ for commands, test placement, pruning, and real-provider prerequisites.
 Before requesting review, run relevant tests and `npm run check`; add
 `npm run docs:check` when contracts or generated metadata change. Record the
 checks and unavailable coverage. CI owns the full deterministic suite and
-coverage. `npm run check:pr` is an optional full local gate for broad changes or
+coverage. `npm run check:pr` is an optional broad local suite for large changes or
 CI diagnosis. Packaging/setup/distribution changes additionally require
 `npm run verify:package` and `npm pack --dry-run`; provider changes require the
 matching real-provider lane. State which host/provider workflows ran.

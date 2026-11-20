@@ -12,10 +12,12 @@ const workflowSchema = z.object({
   jobs: z.record(
     z.string(),
     z.object({
+      strategy: z.unknown().optional(),
       steps: z
         .array(
           z.object({
             id: z.string().optional(),
+            if: z.unknown().optional(),
             run: z.string().optional(),
             with: z.object({ name: z.string().optional() }).optional(),
           }),
@@ -233,4 +235,30 @@ it("checks the complete source with the fallback compiler before Windows build r
       "tests/boundary/filesystem/javascriptArtifactContentIdentity.test.ts",
     );
   }
+});
+
+it("schedules the curated Windows tests and fresh package verification independently", async () => {
+  const workflow = workflowSchema.parse(
+    parse(await readFile(WORKFLOW, "utf8")),
+  );
+  const job = workflow.jobs["windows-curated"];
+  expect(job?.strategy).toMatchObject({
+    "fail-fast": false,
+    matrix: { suite: ["capabilities", "package"] },
+  });
+  const steps = job?.steps ?? [];
+  const conditionOf = (command: string) =>
+    steps.find((step) => step.run?.includes(command))?.if;
+  expect(conditionOf("tests/process-global/runnerCancellation.test.ts")).toBe(
+    "matrix.suite == 'capabilities'",
+  );
+  expect(conditionOf("node scripts/verify-windows-package.mjs")).toBe(
+    "matrix.suite == 'package'",
+  );
+  expect(conditionOf("tests/boundary/process/sourceMapUncHosts.test.ts")).toBe(
+    "matrix.suite == 'package'",
+  );
+  expect(
+    steps.find((step) => step.with?.name === "windows-capabilities")?.if,
+  ).toContain("matrix.suite == 'capabilities'");
 });

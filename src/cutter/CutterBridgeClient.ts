@@ -1,5 +1,8 @@
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
-import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  providerCleanupErrorFromFailures,
+} from "../domain/analysisErrorCleanup.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import {
   ArtifactResourceScope,
@@ -53,6 +56,7 @@ import {
   cutterBridgeSourceRecovery,
 } from "./CutterBridgeSource.js";
 import { CutterBridgeResponseFrames } from "./cutterAuthenticatedResponse.js";
+import { parseCutterCommandResponse } from "./cutterCommandResponse.js";
 import { requireWindowsNativeAuthority } from "../windows/WindowsNativeLoader.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
@@ -553,8 +557,11 @@ export class CutterBridgeClient {
           descriptor,
           commandRequest,
           input.signal,
-          (ordinal) => {
-            completionToken = ordinal;
+          {
+            json: input.json,
+            onAuthenticated: (ordinal) => {
+              completionToken = ordinal;
+            },
           },
         );
       } catch (cause) {
@@ -1136,7 +1143,10 @@ export class CutterBridgeClient {
     descriptor: z.infer<typeof descriptorSchema>,
     requestBytes: AuthenticatedRequestBytes,
     signal?: AbortSignal,
-    onAuthenticated?: (connectionOrdinal: string) => void,
+    command?: {
+      readonly json: boolean;
+      readonly onAuthenticated: (connectionOrdinal: string) => void;
+    },
   ): Promise<unknown> {
     return new Promise((resolve, reject) => {
       const connection = createConnection({
@@ -1203,7 +1213,7 @@ export class CutterBridgeClient {
                 frame.value,
               );
               connectionOrdinal = serverNonce.slice(0, 16);
-              onAuthenticated?.(connectionOrdinal);
+              command?.onAuthenticated(connectionOrdinal);
               const proof = cutterBridgeMac(descriptor.token, [
                 `rea-cutter-client-v2:${descriptor.session_id}:${clientNonce}:${serverNonce}:`,
                 requestBytes,
@@ -1222,7 +1232,9 @@ export class CutterBridgeClient {
             ]);
             if (!timingSafeEqual(expected, Buffer.from(frame.proof, "hex")))
               throw new Error("response proof failed");
-            const response: unknown = JSON.parse(frame.response);
+            const response: unknown = command?.json
+              ? parseCutterCommandResponse(frame.response)
+              : JSON.parse(frame.response);
             finish(() => resolve(response));
             return false;
           });
@@ -1293,12 +1305,12 @@ const discoveryFailure = (
     });
     const cleanup = failures.filter((failure) => failure.cleanupIncomplete);
     if (cleanup.length === 0) return failures[0];
-    return new ProviderCleanupError(
+    return providerCleanupErrorFromFailures(
       "cutter",
-      cleanup.flatMap((failure) => failure.cleanupResources),
-      { reason: "Cutter descriptor discovery failed with unconfirmed closes" },
-      { operation, cause: new AggregateError(failures, cause.message) },
-    ).bindCleanupDependencies(cleanup);
+      cleanup,
+      "Cutter descriptor discovery failed with unconfirmed closes",
+      { operation, causes: failures, message: cause.message },
+    );
   }
   if (!(cause instanceof ArtifactReaderFailure)) return cause;
   if (cause.cleanup !== undefined) {

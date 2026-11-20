@@ -9,8 +9,43 @@ import {
   tokenizeDesktopExec,
   unwrapDesktopCommand,
 } from "./desktopEntry.js";
+import { DESKTOP_LAUNCH_CASES } from "./desktopLaunchSyntax.fixture.js";
 
 describe("parseDesktopEntry", () => {
+  it("uses the last main-group declarations, including repeated groups and empty values", () => {
+    const text = `[Desktop Entry]
+Type=Link
+Name=Earlier
+Exec=old-app
+Path=/old
+Icon=old-icon
+Categories=Old;
+Terminal=false
+[Desktop Action New]
+Name=Action
+Exec=action-app
+[Desktop Entry]
+Type=Application
+Name=Current
+Exec=current-app %F
+Path=
+Icon=current-icon
+Categories=A\\;B;Current;
+Terminal=true
+`;
+    expect(parseDesktopEntry(text)).toMatchObject({
+      ok: true,
+      value: {
+        type: "Application",
+        name: "Current",
+        exec: "current-app %F",
+        path: "",
+        icon: "current-icon",
+        categories: ["A;B", "Current"],
+        terminal: true,
+      },
+    });
+  });
   it("reads the main group and ignores localized keys and other groups", () => {
     const parsed = parseDesktopEntry(
       [
@@ -42,6 +77,7 @@ describe("parseDesktopEntry", () => {
         categories: ["Utility", "TextEditor", "GTK"],
         mime_types: ["text/plain"],
         terminal: false,
+        hidden: false,
       },
     });
   });
@@ -177,17 +213,36 @@ describe("expandDesktopExec", () => {
 });
 
 describe("unwrapDesktopCommand", () => {
-  it("keeps an env operand named -- after an assignment distinct from the option terminator", () => {
-    expect(
-      unwrapDesktopCommand(["env", "MODE=selected", "--", "notes"]),
-    ).toEqual({
-      kind: "direct",
-      program: "--",
-      environment: { MODE: "selected" },
-      index: 2,
-      argumentIndex: 3,
-    });
-  });
+  it.each(DESKTOP_LAUNCH_CASES)(
+    "reads $name from an authored Exec value",
+    ({
+      prefix,
+      program,
+      suffix,
+      decodedProgram,
+      environment,
+      clear,
+      unsets,
+      chdir,
+    }) => {
+      const parsed = parseDesktopEntry(
+        `[Desktop Entry]\nExec=${prefix}${program}${suffix}\n`,
+      );
+      if (!parsed.ok) throw new Error(parsed.error);
+      const tokens = tokenizeDesktopExec(parsed.value.exec ?? "");
+      if (!tokens.ok) throw new Error(tokens.error);
+      const command = unwrapDesktopCommand(tokens.value);
+      expect(command.kind).toBe("direct");
+      expect(command.program).toBe(decodedProgram);
+      expect(tokens.value[command.index]).toBe(decodedProgram);
+      expect(command.argumentIndex).toBe(command.index + 1);
+      expect(command.environment).toEqual(environment);
+      expect(command.clearEnvironment).toBe(clear);
+      expect(command.unsetEnvironment).toEqual(unsets);
+      expect(command.invalidUnset).toBeUndefined();
+      expect(command.chdir).toEqual(chdir);
+    },
+  );
   it("keeps env assignments as the program's environment", () => {
     expect(
       unwrapDesktopCommand([
@@ -228,6 +283,7 @@ describe("unwrapDesktopCommand", () => {
     ).toEqual({
       kind: "flatpak",
       program: "/usr/bin/flatpak",
+      index: 0,
       argumentIndex: 5,
       environment: {},
       application_id: "net.cozic.joplin_desktop",
@@ -256,4 +312,21 @@ describe("unwrapDesktopCommand", () => {
       unwrapDesktopCommand(["flatpak", "run", "--branch", "stable"]),
     ).toMatchObject({ kind: "flatpak", application_id: null });
   });
+});
+
+it.each([
+  ["1", true],
+  ["0", false],
+  ["\f1\t", true],
+  ["1\r ", true],
+  ["1\u00a0", false],
+  ["1\v", false],
+  ["true\u2028", false],
+  [String.raw`1\s`, false],
+] as const)("reads GLib's terminal flag %j as %s", (flag, terminal) => {
+  expect(
+    parseDesktopEntry(
+      `[Desktop Entry]\nName=Editor\nType=Application\nExec=editor\nTerminal=${flag}\n`,
+    ),
+  ).toMatchObject({ ok: true, value: { terminal } });
 });

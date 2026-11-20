@@ -191,11 +191,64 @@ cliTest(
       files: expect.arrayContaining([
         expect.objectContaining({
           path: "assets/content.bundle",
+          ranges: [{ offset: 0, bytes: 64, sha256: expect.any(String) }],
           facts: expect.arrayContaining([
             expect.objectContaining({
               kind: "unityfs-header",
               value: expect.objectContaining({ declared_size: null }),
             }),
+          ]),
+        }),
+      ]),
+    });
+  },
+);
+
+cliTest(
+  "retains the same UnityFS header facts when the version strings extend past the desktop prefix",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-unity-desktop-header-");
+    const assets = join(root, "assets");
+    await mkdir(assets);
+    const engineVersion = "2022.3.1f1";
+    const bytes = buildUnityFs([{ path: "CAB", data: Buffer.alloc(3_000) }], {
+      playerVersion: "game-player-build-" + "x".repeat(72),
+      engineVersion,
+      blockCompression: 0,
+    });
+    const path = join(assets, "content.bundle");
+    await writeFile(path, bytes);
+    const inventory = await cli.run({
+      arguments: ["inspect-artifact", path, "--json"],
+    });
+    expect(inventory.exitCode, inventory.stderr).toBe(0);
+    const artifact = artifactInspectionResultSchema.parse(
+      parseEvidence(inventory.json).normalized_result,
+    ).substeps[0]!.evidence.normalized_result;
+    const facts = {
+      format_version: 8,
+      engine_version: engineVersion,
+      declared_size: bytes.length,
+    };
+    expect(artifact.occurrences[0]!.format_metadata).toMatchObject(facts);
+
+    const scan = await cli.run({
+      arguments: ["inspect-desktop-application", root, "--json"],
+    });
+    expect(scan.exitCode, scan.stderr).toBe(0);
+    expect(parseEvidence(scan.json).normalized_result).toMatchObject({
+      files: expect.arrayContaining([
+        expect.objectContaining({
+          path: "assets/content.bundle",
+          facts: expect.arrayContaining([
+            expect.objectContaining({
+              kind: "unityfs-header",
+              value: expect.objectContaining(facts),
+            }),
+          ]),
+          ranges: expect.arrayContaining([
+            expect.objectContaining({ offset: 0, bytes: 64 }),
+            expect.objectContaining({ offset: 64, bytes: 2_016 }),
           ]),
         }),
       ]),

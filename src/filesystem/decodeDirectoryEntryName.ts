@@ -1,3 +1,5 @@
+import { isStrictUtf8 } from "../domain/strictUtf8.js";
+
 /** A filesystem basename is usable as a logical path only after UTF-8 validity is established. */
 export type DirectoryEntryName =
   | { readonly kind: "decoded"; readonly name: string }
@@ -8,8 +10,7 @@ export const decodeDirectoryEntryName = (
   raw: string | Buffer,
 ): DirectoryEntryName => {
   if (typeof raw === "string") return { kind: "decoded", name: raw };
-  const name = raw.toString("utf8");
-  return Buffer.from(name, "utf8").equals(raw)
-    ? { kind: "decoded", name }
+  return isStrictUtf8(raw)
+    ? { kind: "decoded", name: raw.toString("utf8") }
     : { kind: "unrepresentable", rawHex: raw.toString("hex") };
 };

@@ -28,6 +28,7 @@ import { V8InspectorProvider } from "../../../src/inspector/V8InspectorProvider.
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import { startRuntimeBrowser } from "../../fixtures/webRuntime.js";
 import { startFakeV8Inspector } from "../../fixtures/inspector/fakeV8Inspector.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 import { waitFor } from "../../support/testWait.js";
 
 // Keep real socket scheduling; expire only a timer whose owning phase is ready.
@@ -336,27 +337,39 @@ it("keeps a short command deadline off HTTP discovery and names Page.getFrameTre
 });
 
 it("gives browser-socket attach its own command deadline after the handshake", async () => {
-  const commandTimeoutMs = 80;
+  const commandTimeoutMs = 25_000;
+  const handshake = phaseGate<string>();
+  const controller = new AbortController();
   const browser = await startFakeCdpBrowser({
-    handshakeDelayMs: 50,
+    handshakeGate: handshake,
     hangOnMethod: "Target.attachToTarget",
   });
   const provider = new CdpWebRuntimeProvider();
+  const pending = provider.observeExecution(
+    observeWebExecutionInputSchema.parse({
+      cdp_endpoint: browser.endpoint,
+      target_id: "allowed-page",
+      observation_ms: 1,
+      command_timeout_ms: commandTimeoutMs,
+    }),
+    { signal: controller.signal },
+  );
   try {
-    const pending = provider.observeExecution(
-      observeWebExecutionInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        target_id: "allowed-page",
-        observation_ms: 1,
-        command_timeout_ms: commandTimeoutMs,
-      }),
-      { signal: AbortSignal.timeout(10_000) },
+    expect(await handshake.reached(pending, "target WebSocket handshake")).toBe(
+      "/devtools/browser/fake",
     );
+    const handshakeTimers = activeTimers(commandTimeoutMs);
+    expect(handshakeTimers).toHaveLength(1);
+    expect(browser.commands).toHaveLength(0);
+    handshake.release();
     await waitFor(() =>
       expect(browser.commands.map(({ method }) => method)).toContain(
         "Target.attachToTarget",
       ),
     );
+    const attachTimers = activeTimers(commandTimeoutMs);
+    expect(attachTimers).toHaveLength(1);
+    expect(attachTimers[0]?.timer).not.toBe(handshakeTimers[0]?.timer);
     expireTimer(commandTimeoutMs);
     const result = await pending;
     if (result.ok) throw new Error("Expected an attach deadline");
@@ -367,6 +380,9 @@ it("gives browser-socket attach its own command deadline after the handshake", a
     expect(text).not.toContain("WebSocket handshake exceeded");
     await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   } finally {
+    controller.abort();
+    handshake.release();
+    await pending.catch(() => undefined);
     await provider.close();
     await browser.close();
   }
@@ -688,14 +704,12 @@ it("applies caller-selected discovery_timeout_ms to browser-socket discovery", a
     expect(projected.message).toContain(
       `${String(discoveryTimeoutMs)} ms discovery_timeout_ms`,
     );
-    expect(projected.remediation?.action).toContain(
-      `Increase discovery_timeout_ms above ${String(discoveryTimeoutMs)}`,
-    );
     expect(projected.remediation?.action).not.toContain("--");
     expect(projected.details?.limit).toMatchObject({
       control_kind: "parameter",
       parameter: "discovery_timeout_ms",
       effective_value: discoveryTimeoutMs,
+      applies_at: "next_call",
     });
     await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   } finally {
@@ -756,17 +770,19 @@ it("applies caller-selected discovery_timeout_ms to HTTP discovery independently
 });
 
 it("clamps browser-socket handshake timers at MAX_NODE_TIMER_DELAY_MS without 32-bit timer overflow", async () => {
-  const browser = await startFakeCdpBrowser({ handshakeDelayMs: 60 });
+  const handshake = phaseGate<string>();
+  const browser = await startFakeCdpBrowser({ handshakeGate: handshake });
   const provider = new CdpBrowserProvider();
+  const controller = new AbortController();
+  const pending = provider.listTargets(
+    listBrowserTargetsInputSchema.parse({
+      cdp_endpoint: browser.browserWebSocketUrl,
+      discovery_timeout_ms: MAX_NODE_TIMER_DELAY_MS,
+    }),
+    { signal: controller.signal },
+  );
   try {
-    const listed = await provider.listTargets(
-      listBrowserTargetsInputSchema.parse({
-        cdp_endpoint: browser.browserWebSocketUrl,
-        discovery_timeout_ms: MAX_NODE_TIMER_DELAY_MS,
-      }),
-    );
-    if (!listed.ok) throw listed.error;
-    expect(listed.value.targets.length).toBeGreaterThan(0);
+    await handshake.reached(pending, "maximum-deadline browser handshake");
     const scheduledDelays = vi
       .mocked(globalThis.setTimeout)
       .mock.calls.flatMap(([, delay]) =>
@@ -776,7 +792,14 @@ it("clamps browser-socket handshake timers at MAX_NODE_TIMER_DELAY_MS without 32
     expect(Math.max(...scheduledDelays)).toBeLessThanOrEqual(
       MAX_NODE_TIMER_DELAY_MS,
     );
+    handshake.release();
+    const listed = await pending;
+    if (!listed.ok) throw listed.error;
+    expect(listed.value.targets.length).toBeGreaterThan(0);
   } finally {
+    controller.abort();
+    handshake.release();
+    await pending.catch(() => undefined);
     await provider.close();
     await browser.close();
   }

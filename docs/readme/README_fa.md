@@ -347,7 +347,6 @@ npx rea-agents@latest setup
 - [CLI و شواهد](../getting-started/cli.md): دستورات، انتخاب ارائه‌دهنده، snapshotها، ورود/خروج داده و وضعیت‌های خروج.
 - [قراردادهای MCP](../reference/mcp-contracts.md) و [پرامپت‌های ایجنت](../getting-started/mcp-prompts.md): نتایج ابزارها، نشست‌ها و بررسی‌های هدایت‌شده.
 - [فهرست ابزارها](../reference/mcp-contracts.md#generated-catalog): فهرست تولیدشده هنگام build از ابزارها، ارائه‌دهندگان و دستورات CLI.
-- [نقشهٔ راه](../development/roadmap.md): برنامه‌های آینده و پیگیری قابلیت‌ها.
 
 آسیب‌پذیری‌ها را از طریق [SECURITY.md](../../SECURITY.md) گزارش کنید.
 
@@ -373,7 +372,7 @@ applicable licenses.
 
 از کمک شما به REA استقبال می‌کنیم! برای گزارش خطا یا پیشنهاد قابلیت، یک [issue باز کنید](https://github.com/morluto/rea/issues) یا برای بهبود کد و مستندات [pull request بفرستید](https://github.com/morluto/rea/pulls).
 
-برای راه‌اندازی محیط توسعه و بررسی‌ها، [CONTRIBUTING.md](../../CONTRIBUTING.md)، برای مراحل اعتبارسنجی [آزمایش‌ها](../development/testing.md) و برای ساختار پروژه [نقشهٔ معماری](../architecture/architecture.mermaid) را ببینید.
+برای راه‌اندازی محیط توسعه و بررسی‌ها، [CONTRIBUTING.md](../../CONTRIBUTING.md)، برای مراحل اعتبارسنجی [آزمایش‌ها](../development/testing.md) را ببینید.
 
 ## مجوز
 

@@ -37,6 +37,7 @@ import {
 import {
   SUPPORTED_GHIDRA_JAVA_MAJOR,
   SUPPORTED_GHIDRA_VERSION,
+  ghidraVersionDetail,
 } from "./GhidraReleasePolicy.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
@@ -62,9 +63,9 @@ const headerProbe = (bytes: Buffer) =>
 const JAVA: GhidraJavaObservation = {
   osArch: "amd64",
   osName: "Linux",
-  version: "21.0.11",
+  version: `${String(SUPPORTED_GHIDRA_JAVA_MAJOR)}.0.1`,
   major: SUPPORTED_GHIDRA_JAVA_MAJOR,
-  home: "/usr/lib/jvm/jdk-21",
+  home: `/usr/lib/jvm/jdk-${String(SUPPORTED_GHIDRA_JAVA_MAJOR)}`,
   bits: 64,
   runtime: "jdk",
 };
@@ -446,15 +447,15 @@ describe("Ghidra installation inspection", () => {
       status: "available",
       providerVersion: SUPPORTED_GHIDRA_VERSION,
       analyzeHeadlessPath: HEADLESS,
-      javaVersion: "21.0.11",
+      javaVersion: JAVA.version,
     });
   });
 
   it.each([
-    ["12.1.2", "27", 27],
-    ["12.1.2-2.1", "27", 27],
-    ["12.1.0", "21.0.2", 21],
-    [SUPPORTED_GHIDRA_VERSION, "25.0.1", 25],
+    ["12.3", "27", 27],
+    ["12.2.1-2.1", "27", 27],
+    ["12.2.1", "21.0.2", 21],
+    [SUPPORTED_GHIDRA_VERSION, JAVA.version, SUPPORTED_GHIDRA_JAVA_MAJOR],
   ])(
     "accepts Ghidra %s with JDK %s on the verified release line",
     async (providerVersion, javaVersion, major) => {
@@ -483,10 +484,7 @@ describe("Ghidra installation inspection", () => {
         result.checks.find(({ name }) => name === "version"),
       ).toMatchObject({
         status: "passed",
-        detail:
-          providerVersion === SUPPORTED_GHIDRA_VERSION
-            ? SUPPORTED_GHIDRA_VERSION
-            : expect.stringContaining("verified build"),
+        detail: ghidraVersionDetail(providerVersion),
       });
     },
   );
@@ -537,16 +535,23 @@ describe("Ghidra Windows installation commitment", () => {
       architecture: "x64",
       readText: (path) =>
         path === WINDOWS_PROPERTIES
-          ? `application.version=${SUPPORTED_GHIDRA_VERSION}\napplication.java.min=21\n`
+          ? `application.version=${SUPPORTED_GHIDRA_VERSION}\napplication.java.min=${String(SUPPORTED_GHIDRA_JAVA_MAJOR)}\n`
           : undefined,
       executable: (path) =>
         path === WINDOWS_HEADLESS || path === WINDOWS_DECOMPILER,
       probeJava: (command, environment) => {
-        expect(command).toBe("C:\\Java\\jdk-21\\bin\\java.exe");
-        expect(environment.PATH).toMatch(/^C:\\Java\\jdk-21\\bin;/u);
+        expect(command).toBe(
+          `C:\\Java\\jdk-${String(SUPPORTED_GHIDRA_JAVA_MAJOR)}\\bin\\java.exe`,
+        );
+        expect(environment.PATH).toMatch(
+          new RegExp(
+            `^C:\\\\Java\\\\jdk-${String(SUPPORTED_GHIDRA_JAVA_MAJOR)}\\\\bin;`,
+            "u",
+          ),
+        );
         return javaProbeOk<GhidraJavaObservation>({
           ...JAVA,
-          home: "C:\\Java\\jdk-21",
+          home: `C:\\Java\\jdk-${String(SUPPORTED_GHIDRA_JAVA_MAJOR)}`,
           osName: "Windows 11",
         });
       },
@@ -558,7 +563,7 @@ describe("Ghidra Windows installation commitment", () => {
           resourceOwner: inspectionResources.owner,
           environment: {},
           installDir: WINDOWS_INSTALL,
-          javaHome: "C:\\Java\\jdk-21",
+          javaHome: `C:\\Java\\jdk-${String(SUPPORTED_GHIDRA_JAVA_MAJOR)}`,
           platform: "win32",
           architecture: "x64",
         },
@@ -569,7 +574,7 @@ describe("Ghidra Windows installation commitment", () => {
       platform: "win32",
       architecture: "x64",
       analyzeHeadlessPath: WINDOWS_HEADLESS,
-      javaCommand: "C:\\Java\\jdk-21\\bin\\java.exe",
+      javaCommand: `C:\\Java\\jdk-${String(SUPPORTED_GHIDRA_JAVA_MAJOR)}\\bin\\java.exe`,
       providerVersion: SUPPORTED_GHIDRA_VERSION,
     });
   });
@@ -768,10 +773,13 @@ describe("Ghidra configuration directory identity", () => {
 
   it.each([
     [
-      "application.version=12.1.4\napplication.release.name=PUBLIC\napplication.java.min=21\n",
-      "ghidra_12.1.4_PUBLIC",
+      `application.version=${SUPPORTED_GHIDRA_VERSION}\napplication.release.name=PUBLIC\napplication.java.min=${String(SUPPORTED_GHIDRA_JAVA_MAJOR)}\n`,
+      `ghidra_${SUPPORTED_GHIDRA_VERSION}_PUBLIC`,
     ],
-    ["application.version=12.1.4\napplication.java.min=21\n", null],
+    [
+      `application.version=${SUPPORTED_GHIDRA_VERSION}\napplication.java.min=${String(SUPPORTED_GHIDRA_JAVA_MAJOR)}\n`,
+      null,
+    ],
   ])(
     "preserves the inspected identity independently of the installation basename",
     async (content, expected) => {
@@ -794,6 +802,20 @@ describe("Ghidra configuration directory identity", () => {
 });
 
 describe("Ghidra release line and JDK bounds", () => {
+  it.each(["#", "!"])(
+    "keeps the version after a Java Properties %s comment following an empty continuation",
+    (marker) => {
+      const properties = ghidraApplicationProperties(
+        [
+          "   " + "\\",
+          `  ${marker} comment ` + "\\",
+          "application.version=12.1.4",
+        ].join("\n"),
+      );
+      expect(properties.providerVersion).toBe("12.1.4");
+    },
+  );
+
   it("uses Java Properties last-key, delimiter, escape, and continuation rules", () => {
     const properties = ghidraApplicationProperties(
       [
@@ -961,7 +983,7 @@ describe("Ghidra installation version admission", () => {
     {
       name: "JDK above the installation maximum",
       readText: () =>
-        "application.version=12.1.4\napplication.java.min=21\napplication.java.max=25\n",
+        `application.version=${SUPPORTED_GHIDRA_VERSION}\napplication.java.min=21\napplication.java.max=25\n`,
       probeJava: () =>
         javaProbeOk<GhidraJavaObservation>({
           ...JAVA,
@@ -974,14 +996,14 @@ describe("Ghidra installation version admission", () => {
     {
       name: "unreadable Java minimum",
       readText: () =>
-        "application.version=12.1.4\napplication.java.min=latest\n",
+        `application.version=${SUPPORTED_GHIDRA_VERSION}\napplication.java.min=latest\n`,
       probeJava: () => javaProbeOk<GhidraJavaObservation>(JAVA),
       failed: "java",
       code: "version_unresolved",
     },
     {
       name: "missing Java minimum",
-      readText: () => "application.version=12.1.4\n",
+      readText: () => `application.version=${SUPPORTED_GHIDRA_VERSION}\n`,
       probeJava: () => javaProbeOk<GhidraJavaObservation>(JAVA),
       failed: "java",
       code: "version_unresolved",
@@ -1057,12 +1079,14 @@ describe("Ghidra JDK version admission", () => {
       }),
     );
     expect(result.status).toBe("unavailable");
-    if (result.status !== "unavailable") return;
-    expect(result.rejection.reason).toContain("12.x (>=12.1)");
-    expect(result.rejection.reason).toContain(SUPPORTED_GHIDRA_VERSION);
+    expect(result.checks.find(({ name }) => name === "version")).toMatchObject({
+      status: "failed",
+      code: "unsupported_version",
+      detail: ghidraVersionDetail("12.0.4"),
+    });
     expect(result.checks.find(({ name }) => name === "java")).toMatchObject({
       status: "failed",
-      remediation: expect.stringContaining("JDK 21 or newer"),
+      code: "unsupported_version",
     });
   });
 
@@ -1091,7 +1115,7 @@ describe("Ghidra JDK version admission", () => {
   });
 
   it.each([21, 25])(
-    "admits Ghidra 12.2 independently of its declared Java 25 minimum (JDK %s)",
+    "keeps verified Ghidra 12.2 admission separate from its declared Java minimum (JDK %s)",
     async (major) => {
       const result = await inspectGhidraInstallation(
         {
@@ -1117,16 +1141,36 @@ describe("Ghidra JDK version admission", () => {
         result.checks.find(({ name }) => name === "version"),
       ).toMatchObject({
         status: "passed",
-        detail: expect.stringMatching(
-          /\b12\.2\b.*\bcompatible\b.*\b12\.1\.4\b/u,
-        ),
+        detail: ghidraVersionDetail("12.2"),
       });
       expect(result.checks.find(({ name }) => name === "java")).toMatchObject({
         status: major === 25 ? "passed" : "failed",
+        ...(major === 25 ? {} : { code: "unsupported_version" }),
       });
       expect(result.status).toBe(major === 25 ? "available" : "unavailable");
     },
   );
+
+  it("rejects Ghidra 12.1 because the bridge no longer compiles there", async () => {
+    const result = await inspectGhidraInstallation(
+      {
+        resourceOwner: inspectionResources.owner,
+        environment: {},
+        installDir: INSTALL,
+        platform: "linux",
+        architecture: "x64",
+      },
+      host({
+        readText: () => "application.version=12.1.4\napplication.java.min=21\n",
+      }),
+    );
+    expect(result.status).toBe("unavailable");
+    expect(result.checks.find(({ name }) => name === "version")).toMatchObject({
+      status: "failed",
+      code: "unsupported_version",
+      detail: ghidraVersionDetail("12.1.4"),
+    });
+  });
 });
 
 describe("Ghidra absent installation admission", () => {
@@ -1800,7 +1844,7 @@ it.each(["arm64", "x64"] as const)(
   "discovers installed versioned Homebrew Java on macOS %s",
   async (architecture) => {
     const prefix = architecture === "arm64" ? "/opt/homebrew" : "/usr/local";
-    const command = `${prefix}/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home/bin/java`;
+    const command = `${prefix}/opt/openjdk@${String(SUPPORTED_GHIDRA_JAVA_MAJOR)}/libexec/openjdk.jdk/Contents/Home/bin/java`;
     const commands: string[] = [];
     const inspection = await inspectGhidraInstallation(
       {
@@ -1813,7 +1857,11 @@ it.each(["arm64", "x64"] as const)(
       host({
         directoryEntries: (directory) =>
           directory === `${prefix}/opt`
-            ? ["openjdk@21", "unrelated", "openjdk@21/../foreign"]
+            ? [
+                `openjdk@${String(SUPPORTED_GHIDRA_JAVA_MAJOR)}`,
+                "unrelated",
+                `openjdk@${String(SUPPORTED_GHIDRA_JAVA_MAJOR)}/../foreign`,
+              ]
             : [],
         executable: (candidate) =>
           candidate === "/usr/bin/java" ||
@@ -1868,7 +1916,7 @@ it.each([
         },
         host({
           readText: () =>
-            "application.version=12.1.4\napplication.java.min=21\napplication.java.max=25\n",
+            `application.version=${SUPPORTED_GHIDRA_VERSION}\napplication.java.min=21\napplication.java.max=25\n`,
           directoryEntries: () => ["openjdk@25", "openjdk@21"],
           executable: (candidate) =>
             (pathJava && candidate === "/usr/bin/java") ||
@@ -1938,7 +1986,7 @@ it.each([
       },
       host({
         readText: () =>
-          "application.version=12.1.4\napplication.java.min=21\napplication.java.max=21\n",
+          `application.version=${SUPPORTED_GHIDRA_VERSION}\napplication.java.min=21\napplication.java.max=21\n`,
         directoryEntries,
         executable: (candidate) =>
           candidate === "/usr/bin/java" ||

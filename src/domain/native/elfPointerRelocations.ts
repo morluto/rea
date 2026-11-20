@@ -1,11 +1,17 @@
 import type { FileMapping, ZeroFillMapping } from "../virtualFileMapping.js";
-import { readElfDynamicEntry } from "../elfDynamicEntry.js";
+import {
+  admitElfDynamicDirectory,
+  readElfDynamicEntry,
+} from "../elfDynamicEntry.js";
 import {
   decodeElfRelocationInfo,
+  ELF_ANDROID_PACKED_RELOCATION_TABLES,
+  ELF_ANDROID_PACKED_RELOCATION_TAGS,
+  ELF_RELR_DYNAMIC_TAGS,
   readElfRelocationEntry,
 } from "../elfRelocation.js";
 import { readLeb128, SLEB64 } from "../leb128.js";
-import { readElfSymbol } from "../elfSymbol.js";
+import { elfSymbolSize, readElfSymbol } from "../elfSymbol.js";
 import {
   readElfHashSymbolCount,
   readElfGnuHashSymbolCount,
@@ -136,32 +142,24 @@ const DT_REL = 17n,
 const DT_PLTRELSZ = 2n,
   DT_PLTREL = 20n,
   DT_JMPREL = 23n;
-const DT_RELRSZ = 35n,
-  DT_RELR = 36n,
-  DT_RELRENT = 37n;
+const {
+  address: DT_RELR,
+  size: DT_RELRSZ,
+  entry: DT_RELRENT,
+} = ELF_RELR_DYNAMIC_TAGS.standard;
 const DT_SYMTAB = 6n,
   DT_SYMENT = 11n,
   DT_HASH = 4n,
   DT_GNU_HASH = 0x6ffffef5n;
-const DT_ANDROID_REL = 0x6000000fn,
-  DT_ANDROID_RELSZ = 0x60000010n,
-  DT_ANDROID_RELA = 0x60000011n,
-  DT_ANDROID_RELASZ = 0x60000012n;
-const PACKED_TAGS = [
-  DT_ANDROID_REL,
-  DT_ANDROID_RELSZ,
-  DT_ANDROID_RELA,
-  DT_ANDROID_RELASZ,
-];
 // Android's pre-standard RELR uses the same address/bitmap encoding. Resolve
 // its dynamic-tag aliases here so every consumer shares validation, duplicate
 // detection and relocation provenance with standard RELR.
-const RELR_TAG_ALIASES = new Map([
-  [0x6fffe000n, DT_RELR],
-  [0x6fffe001n, DT_RELRSZ],
-  [0x6fffe003n, DT_RELRENT],
+const RELR_TAG_ALIASES = new Map<bigint, bigint>([
+  [ELF_RELR_DYNAMIC_TAGS.android.address, DT_RELR],
+  [ELF_RELR_DYNAMIC_TAGS.android.size, DT_RELRSZ],
+  [ELF_RELR_DYNAMIC_TAGS.android.entry, DT_RELRENT],
 ]);
-const RELR_TAGS = new Set([DT_RELR, DT_RELRSZ, DT_RELRENT]);
+const RELR_TAGS = new Set<bigint>([DT_RELR, DT_RELRSZ, DT_RELRENT]);
 const UNIQUE_TAGS = new Set([
   DT_RELA,
   DT_RELASZ,
@@ -173,7 +171,7 @@ const UNIQUE_TAGS = new Set([
   DT_JMPREL,
   DT_PLTRELSZ,
   DT_PLTREL,
-  ...PACKED_TAGS,
+  ...ELF_ANDROID_PACKED_RELOCATION_TAGS,
 ]);
 // Ambiguous symbol declarations leave symbolic writes unknown without
 // rejecting independently decoded relative relocations.
@@ -181,7 +179,6 @@ const SYMBOL_TABLE_TAGS = new Set([DT_SYMTAB, DT_SYMENT, DT_HASH, DT_GNU_HASH]);
 const malformed = (message: string): never => {
   throw new ElfPointerRelocationFailure("malformed-container", message);
 };
-
 /** Bound packed input and equivalent expanded REL/RELA work before iteration. */
 const ANDROID_PACKED_TABLE_BYTES = 16 * 1024 * 1024;
 type PackedRelocation = {
@@ -288,133 +285,200 @@ function* androidPackedRelocations(
       return malformed("Nonzero bytes follow the Android APS2 records");
   }
 }
-const RELOCATION_KINDS = new Map([
-  [
-    183,
-    {
-      absolute: 257,
-      bits: 64,
-      relative: 1027,
-      copy: 1024,
-      widths: new Map([
-        [257, 8],
-        [258, 4],
-        [259, 2],
-        [260, 8],
-        [261, 4],
-        [262, 2],
-        [1025, 8],
-        [1026, 8],
-        [1028, 8],
-        [1029, 8],
-        [1030, 8],
-        [1031, 16],
-        [1032, 8],
-      ]),
-    },
-  ],
-  [
-    62,
-    {
-      absolute: 1,
-      bits: 64,
-      relative: 8,
-      copy: 5,
-      widths: new Map([
-        [1, 8],
-        [2, 4],
-        [6, 8],
-        [7, 8],
-        [10, 4],
-        [11, 4],
-        [16, 8],
-        [17, 8],
-        [18, 8],
-        [24, 8],
-        [36, 16],
-        [37, 8],
-      ]),
-    },
-  ],
-  [
-    40,
-    {
-      absolute: 2,
-      bits: 32,
-      relative: 23,
-      copy: 20,
-      widths: new Map([
-        [2, 4],
-        [3, 4],
-        [13, 8],
-        [17, 4],
-        [18, 4],
-        [19, 4],
-        [21, 4],
-        [22, 4],
-        [160, 4],
-      ]),
-    },
-  ],
-  [
-    3,
-    {
-      absolute: 1,
-      bits: 32,
-      relative: 8,
-      copy: 5,
-      widths: new Map([
-        [1, 4],
-        [2, 4],
-        [3, 4],
-        [4, 4],
-        [6, 4],
-        [7, 4],
-        [9, 4],
-        [10, 4],
-        [11, 4],
-        [14, 4],
-        [15, 4],
-        [16, 4],
-        [17, 4],
-        [18, 4],
-        [19, 4],
-        [20, 2],
-        [21, 2],
-        [22, 1],
-        [23, 1],
-        [35, 4],
-        [36, 4],
-        [37, 4],
-        [38, 4],
-        [41, 8],
-        [42, 4],
-        [43, 4],
-      ]),
-    },
-  ],
-]);
+const RELOCATION_KINDS = [
+  {
+    machine: 183,
+    globalData: 1025,
+    absolute: 257,
+    bits: 64,
+    relative: 1027,
+    copy: 1024,
+    widths: new Map([
+      [257, 8],
+      [258, 4],
+      [259, 2],
+      [260, 8],
+      [261, 4],
+      [262, 2],
+      // Link-time kinds that patch one 32-bit instruction.
+      [273, 4], // LD_PREL_LO19
+      [274, 4], // ADR_PREL_LO21
+      [275, 4], // ADR_PREL_PG_HI21
+      [277, 4], // ADD_ABS_LO12_NC
+      [278, 4], // LDST8_ABS_LO12_NC
+      [282, 4], // JUMP26
+      [283, 4], // CALL26
+      [284, 4], // LDST16_ABS_LO12_NC
+      [285, 4], // LDST32_ABS_LO12_NC
+      [286, 4], // LDST64_ABS_LO12_NC
+      [299, 4], // LDST128_ABS_LO12_NC
+      [309, 4], // GOT_LD_PREL19
+      [311, 4], // ADR_GOT_PAGE
+      [312, 4], // LD64_GOT_LO12_NC
+      [541, 4], // TLSIE_ADR_GOTTPREL_PAGE21
+      [542, 4], // TLSIE_LD64_GOTTPREL_LO12_NC
+      [543, 4], // TLSIE_LD_GOTTPREL_PREL19
+      [549, 4], // TLSLE_ADD_TPREL_HI12
+      [551, 4], // TLSLE_ADD_TPREL_LO12_NC
+      [562, 4], // TLSDESC_ADR_PAGE21
+      [563, 4], // TLSDESC_LD64_LO12
+      [564, 4], // TLSDESC_ADD_LO12
+      [1025, 8],
+      [1026, 8],
+      [1028, 8],
+      [1029, 8],
+      [1030, 8],
+      [1031, 16],
+      [1032, 8],
+    ]),
+  },
+  {
+    machine: 62,
+    globalData: 6,
+    absolute: 1,
+    bits: 64,
+    relative: 8,
+    copy: 5,
+    widths: new Map([
+      [1, 8],
+      [2, 4],
+      [4, 4], // PLT32
+      [6, 8],
+      [7, 8],
+      [9, 4], // GOTPCREL
+      [10, 4],
+      [11, 4],
+      [16, 8],
+      [17, 8],
+      [18, 8],
+      [19, 4], // TLSGD
+      [20, 4], // TLSLD
+      [21, 4], // DTPOFF32
+      [22, 4], // GOTTPOFF
+      [23, 4], // TPOFF32
+      [24, 8],
+      [25, 8], // GOTOFF64
+      [27, 8], // GOT64
+      [29, 8], // GOTPC64
+      [34, 4], // GOTPC32_TLSDESC
+      [36, 16],
+      [37, 8],
+      [41, 4], // GOTPCRELX
+      [42, 4], // REX_GOTPCRELX
+    ]),
+  },
+  {
+    machine: 40,
+    globalData: 21,
+    absolute: 2,
+    bits: 32,
+    relative: 23,
+    copy: 20,
+    widths: new Map([
+      [2, 4],
+      [3, 4],
+      [13, 8],
+      [17, 4],
+      [18, 4],
+      [19, 4],
+      [21, 4],
+      [22, 4],
+      [160, 4],
+    ]),
+  },
+  {
+    machine: 3,
+    globalData: 6,
+    absolute: 1,
+    bits: 32,
+    relative: 8,
+    copy: 5,
+    widths: new Map([
+      [1, 4],
+      [2, 4],
+      [3, 4],
+      [4, 4],
+      [6, 4],
+      [7, 4],
+      [9, 4],
+      [10, 4],
+      [11, 4],
+      [14, 4],
+      [15, 4],
+      [16, 4],
+      [17, 4],
+      [18, 4],
+      [19, 4],
+      [20, 2],
+      [21, 2],
+      [22, 1],
+      [23, 1],
+      [35, 4],
+      [36, 4],
+      [37, 4],
+      [38, 4],
+      [41, 8],
+      [42, 4],
+      [43, 4],
+    ]),
+  },
+  ...([32, 64] as const).map((bits) => ({
+    machine: 243, // EM_RISCV: its pointer relocation kinds depend on ELF class.
+    bits,
+    absolute: bits === 64 ? 2 : 1,
+    relative: 3,
+    copy: 4,
+    // RISC-V has no GLOB_DAT. In particular, type 6 is TLS_DTPMOD32.
+    globalData: null,
+    widths: new Map([
+      [1, 4], // R_RISCV_32
+      [2, 8], // R_RISCV_64
+      [5, bits / 8], // JUMP_SLOT
+      [6, 4],
+      [7, 8], // TLS_DTPMOD32/64
+      [8, 4],
+      [9, 8], // TLS_DTPREL32/64
+      [10, 4],
+      [11, 8], // TLS_TPREL32/64
+      [12, bits / 4], // TLSDESC: two pointer words
+      [18, 8],
+      [19, 8], // CALL/CALL_PLT: two instructions
+      [57, 4], // 32_PCREL
+      [58, bits / 8], // IRELATIVE: resolver result is unknown
+    ]),
+  })),
+];
+
+const relocationKinds = (machine: number, bits: 32 | 64) =>
+  RELOCATION_KINDS.find(
+    (kinds) => kinds.machine === machine && kinds.bits === bits,
+  );
 
 /** R_*_RELATIVE type for a supported ELF machine, or undefined when unsupported. */
 export const elfRelativeRelocationType = (
   machine: number,
-): number | undefined => RELOCATION_KINDS.get(machine)?.relative;
+  bits: 32 | 64,
+): number | undefined => relocationKinds(machine, bits)?.relative;
 
 /** Word-sized absolute (S + A) relocation type for a supported ELF machine. */
 export const elfAbsoluteRelocationType = (
   machine: number,
-): number | undefined => RELOCATION_KINDS.get(machine)?.absolute;
+  bits: 32 | 64,
+): number | undefined => relocationKinds(machine, bits)?.absolute;
 
 /** COPY relocation type, whose write is as wide as its symbol's `st_size`. */
-export const elfCopyRelocationType = (machine: number): number | undefined =>
-  RELOCATION_KINDS.get(machine)?.copy;
+export const elfCopyRelocationType = (
+  machine: number,
+  bits: 32 | 64,
+): number | undefined => relocationKinds(machine, bits)?.copy;
 
 /** Bytes written by a relocation; type zero is a no-op and unknown types remain undefined. */
 export const elfRelocationWidth = (
   machine: number,
   type: number,
+  bits: 32 | 64,
 ): number | undefined =>
-  type === 0 ? 0 : RELOCATION_KINDS.get(machine)?.widths.get(type);
+  type === 0 ? 0 : relocationKinds(machine, bits)?.widths.get(type);
 
 type DynamicTags = {
   readonly values: ReadonlyMap<bigint, bigint>;
@@ -432,25 +496,21 @@ function* dynamicTags(
   const declaration = input.dynamicSegments[0];
   if (declaration === undefined)
     return { values: new Map(), ambiguous: new Set() };
-  const width = input.bits / 4;
-  if (declaration.size > 16n * 1024n * 1024n)
+  const table = admitElfDynamicDirectory(bytes.length, declaration, input.bits);
+  if (!table.ok) {
+    if (table.error.kind === "malformed") return malformed(table.error.message);
     throw new ElfPointerRelocationFailure(
       "native-index-capacity",
-      "ELF dynamic directory exceeds the 16 MiB structural allowance",
-      16 * 1024 * 1024,
+      table.error.message,
+      table.error.maximum,
       "bytes",
     );
-  if (
-    declaration.size % BigInt(width) !== 0n ||
-    declaration.offset > BigInt(bytes.length) ||
-    declaration.size > BigInt(bytes.length) - declaration.offset
-  )
-    malformed("PT_DYNAMIC is truncated or outside the file");
+  }
+  const { offset: start, size, width } = table.value;
   const tags = new Map<bigint, bigint>();
   const redeclared = new Set<bigint>();
   let relrFamily: "standard" | "android" | undefined;
-  const start = Number(declaration.offset),
-    end = start + Number(declaration.size);
+  const end = start + size;
   for (let at = start; at < end; at += width) {
     if ((at - start) % 65_536 === 0) yield;
     const parsed = readElfDynamicEntry(
@@ -514,14 +574,15 @@ export function* readElfRelocationWritesSteps(
   input: ElfPointerRelocationInput,
   options: RelocationOptions = {},
 ): Generator<ElfPointerWrite | undefined, ElfRelocationStreamResult> {
-  const kinds = RELOCATION_KINDS.get(input.machine);
-  if (kinds === undefined || kinds.bits !== input.bits)
+  const kinds = relocationKinds(input.machine, input.bits);
+  if (kinds === undefined)
     throw new ElfPointerRelocationFailure(
       "unsupported-container",
-      "ELF relative pointers require a matching AArch64, x86-64, ARM or i386 image",
+      "ELF relative pointers require a matching AArch64, x86-64, ARM, i386 or RISC-V image",
     );
   const relative = kinds.relative;
   const absolute = kinds.absolute;
+  const globalData = kinds.globalData;
   const wholeExtents = options.wholeExtents === true;
   const copy = wholeExtents ? kinds.copy : undefined;
   const unknownWidths = kinds.widths;
@@ -535,6 +596,7 @@ export function* readElfRelocationWritesSteps(
     input,
   );
   const word = input.bits === 64 ? 8 : 4;
+  const reader = new BinaryReader(bytes, input.little, "elf");
   const index = createFileMappingIndex(input.mappings, input.zeroFills);
   const fileOffset = (address: bigint, width: number): number | null => {
     try {
@@ -545,16 +607,7 @@ export function* readElfRelocationWritesSteps(
       throw cause;
     }
   };
-  const rawWord = (offset: number): bigint =>
-    input.bits === 64
-      ? input.little
-        ? bytes.readBigUInt64LE(offset)
-        : bytes.readBigUInt64BE(offset)
-      : BigInt(
-          input.little
-            ? bytes.readUInt32LE(offset)
-            : bytes.readUInt32BE(offset),
-        );
+  const rawWord = (offset: number): bigint => reader.word(offset, input.bits);
   const target = (address: bigint, width: number): number | null => {
     const at = fileOffset(address, width);
     if (
@@ -594,7 +647,7 @@ export function* readElfRelocationWritesSteps(
       value === null ? fileOffset(address, width) : target(address, width),
     ...record,
   });
-  const symbolBytes = input.bits === 64 ? 24 : 16;
+  const symbolBytes = elfSymbolSize(input.bits);
   const symbolTable =
     tags.get(DT_SYMENT) === BigInt(symbolBytes)
       ? tags.get(DT_SYMTAB)
@@ -618,14 +671,13 @@ export function* readElfRelocationWritesSteps(
     );
     return parsed.ok ? parsed.value : undefined;
   };
-  const hashReader = new BinaryReader(bytes, input.little, "elf");
   const hashWords =
     (address: bigint): ElfHashWordReader =>
     (offset) => {
       try {
         // Hash walks skip bloom/bucket words; their whole prefix must be mapped.
         const at = index.offset(address, offset + 4) + offset;
-        return ok(hashReader.u32(at));
+        return ok(reader.u32(at));
       } catch (cause) {
         if (cause instanceof BinaryMappingFailure) return err(cause.message);
         throw cause;
@@ -723,7 +775,7 @@ export function* readElfRelocationWritesSteps(
     source: ElfPointerRelocationSource,
   ): Generator<ElfPointerWrite | undefined> {
     const { type: kind, offset: destination, symbolIndex } = parsed;
-    if (elfRelocationWidth(input.machine, kind) === 0) return;
+    if (elfRelocationWidth(input.machine, kind, input.bits) === 0) return;
     const explicitAddend = parsed.addend;
     if (source.encoding === "rela" && explicitAddend === undefined)
       return malformed("RELA relocation has no decoded addend");
@@ -747,10 +799,9 @@ export function* readElfRelocationWritesSteps(
       return;
     }
     if (kind !== relative || symbolIndex !== 0) {
-      const globalData = input.machine === 183 ? 1025 : 6;
       if (
         options.symbolResolution === "image-definitions" &&
-        input.bits === 64 &&
+        (input.bits === 64 || input.machine === 243) &&
         (kind === absolute || kind === globalData)
       ) {
         const value = yield* symbolLinkValue(symbolIndex);
@@ -847,10 +898,11 @@ export function* readElfRelocationWritesSteps(
         `DT_${encoding.toUpperCase()}SZ has no DT_${encoding.toUpperCase()}`,
       );
   }
-  for (const [addressTag, sizeTag, encoding] of [
-    [DT_ANDROID_REL, DT_ANDROID_RELSZ, "rel"],
-    [DT_ANDROID_RELA, DT_ANDROID_RELASZ, "rela"],
-  ] as const) {
+  for (const [
+    addressTag,
+    sizeTag,
+    encoding,
+  ] of ELF_ANDROID_PACKED_RELOCATION_TABLES) {
     const address = tags.get(addressTag),
       size = tags.get(sizeTag);
     if (address === undefined) {
@@ -954,14 +1006,7 @@ export function* readElfRelocationWritesSteps(
       return at === null
         ? undefined
         : {
-            value:
-              width === word
-                ? rawWord(at)
-                : BigInt(
-                    input.little
-                      ? bytes.readUInt32LE(at)
-                      : bytes.readUInt32BE(at),
-                  ),
+            value: reader.word(at, width === 4 ? 32 : input.bits),
             file_offset: at,
             relocation: null,
           };

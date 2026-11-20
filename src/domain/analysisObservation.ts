@@ -67,12 +67,13 @@ export const analysisExecutionEnvelopeForAdmission = (
   operation: string,
   input: unknown,
   execution: AnalysisObservation,
-  confidence: "observed" | "derived",
+  callerTarget?: EvidenceCreationOptions["callerTarget"],
 ) =>
   evidenceEnvelopeForAdmission(
     execution.subject ?? unknownTarget("not-observed"),
     execution.provider,
-    analysisExecutionEvidenceInput(operation, input, execution, confidence),
+    analysisExecutionEvidenceInput(operation, input, execution, "observed"),
+    callerTarget,
   );
 
 /** Commit identical facts on success and when retaining a completed observation after cancellation. */

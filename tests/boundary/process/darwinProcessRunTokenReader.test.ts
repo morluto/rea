@@ -850,8 +850,8 @@ it.skipIf(!onDarwin)(
 it.skipIf(process.platform === "win32")(
   "rethrows compile cancellation, removes its temporary root, and permits retry",
   async () => {
-    const directory = await mkdtemp(
-      join(tmpdir(), "rea-process-token-abort-test-"),
+    const directory = await createTestTempDirectory(
+      "rea-process-token-abort-test-",
     );
     const fakeCompiler = await writeBlockingCompiler(directory);
     const reader = createDarwinProcessRunTokenReader({
@@ -894,7 +894,6 @@ it.skipIf(process.platform === "win32")(
       if (!controller.signal.aborted) controller.abort();
       await compilation;
       await reader.close();
-      await rm(directory, { recursive: true, force: true });
     }
   },
 );
@@ -994,8 +993,8 @@ it.skipIf(process.platform === "win32")(
 it.skipIf(process.platform === "win32").each(["first", "second"] as const)(
   "keeps shared compilation alive when the %s waiter cancels",
   async (cancelledWaiter) => {
-    const directory = await mkdtemp(
-      join(tmpdir(), "rea-process-token-shared-compile-test-"),
+    const directory = await createTestTempDirectory(
+      "rea-process-token-shared-compile-test-",
     );
     const fakeCompiler = await writeBlockingCompiler(directory);
     const reader = createDarwinProcessRunTokenReader({
@@ -1048,7 +1047,6 @@ it.skipIf(process.platform === "win32").each(["first", "second"] as const)(
       if (!secondController.signal.aborted) secondController.abort();
       await Promise.allSettled([firstWaiter, secondWaiterPromise]);
       await reader.close();
-      await rm(directory, { recursive: true, force: true });
     }
   },
 );
@@ -1058,8 +1056,8 @@ it
   .each(["reader-close", "exact-root"] as const)(
   "retains a failed compilation cleanup for a later %s retry",
   async (retry) => {
-    const directory = await mkdtemp(
-      join(tmpdir(), "rea-process-token-cleanup-retry-test-"),
+    const directory = await createTestTempDirectory(
+      "rea-process-token-cleanup-retry-test-",
     );
     const fakeCompiler = await writeBlockingCompiler(directory);
     const reader = createDarwinProcessRunTokenReader({
@@ -1118,7 +1116,6 @@ it
       if (compilationRoot !== undefined)
         await chmod(compilationRoot, 0o700).catch(() => undefined);
       await reader.close();
-      await rm(directory, { recursive: true, force: true });
     }
   },
 );
@@ -1126,8 +1123,8 @@ it
 it.skipIf(process.platform === "win32")(
   "aborts and cleans an active compilation when the reader closes",
   async () => {
-    const directory = await mkdtemp(
-      join(tmpdir(), "rea-process-token-close-compile-test-"),
+    const directory = await createTestTempDirectory(
+      "rea-process-token-close-compile-test-",
     );
     const fakeCompiler = await writeBlockingCompiler(directory);
     const reader = createDarwinProcessRunTokenReader({
@@ -1160,7 +1157,6 @@ it.skipIf(process.platform === "win32")(
     } finally {
       await Promise.allSettled([preparation]);
       await reader.close();
-      await rm(directory, { recursive: true, force: true });
     }
   },
 );
@@ -1168,8 +1164,8 @@ it.skipIf(process.platform === "win32")(
 it.skipIf(process.platform === "win32")(
   "maps cancellation during native preparation before Electron launch",
   async () => {
-    const directory = await mkdtemp(
-      join(tmpdir(), "rea-electron-token-abort-test-"),
+    const directory = await createTestTempDirectory(
+      "rea-electron-token-abort-test-",
     );
     const fakeCompiler = await writeBlockingCompiler(directory);
     const reader = createDarwinProcessRunTokenReader({
@@ -1215,7 +1211,6 @@ it.skipIf(process.platform === "win32")(
       prepareSpy.mockRestore();
       launchSpy.mockRestore();
       await reader.close();
-      await rm(directory, { recursive: true, force: true });
     }
   },
 );
@@ -1223,8 +1218,8 @@ it.skipIf(process.platform === "win32")(
 it.skipIf(process.platform === "win32").each(["baseline", "tokens"] as const)(
   "preserves cancellation through system-host %s inspection",
   async (kind) => {
-    const directory = await mkdtemp(
-      join(tmpdir(), "rea-process-baseline-abort-test-"),
+    const directory = await createTestTempDirectory(
+      "rea-process-baseline-abort-test-",
     );
     const fakeCompiler = await writeBlockingIdentityCompiler(directory);
     const host = createSystemProcessOwnershipHost("darwin", process.env, {
@@ -1269,7 +1264,6 @@ it.skipIf(process.platform === "win32").each(["baseline", "tokens"] as const)(
       await host.close?.();
       if (helperRoot !== undefined)
         await expect(access(helperRoot)).rejects.toThrow();
-      await rm(directory, { recursive: true, force: true });
     }
   },
 );
@@ -1277,8 +1271,8 @@ it.skipIf(process.platform === "win32").each(["baseline", "tokens"] as const)(
 it.skipIf(process.platform === "win32")(
   "passes Electron cancellation into capture-local baseline inspection",
   async () => {
-    const directory = await mkdtemp(
-      join(tmpdir(), "rea-electron-baseline-abort-test-"),
+    const directory = await createTestTempDirectory(
+      "rea-electron-baseline-abort-test-",
     );
     const fakeCompiler = await writeBlockingIdentityCompiler(directory);
     const reader = createDarwinProcessRunTokenReader({
@@ -1343,7 +1337,6 @@ it.skipIf(process.platform === "win32")(
       baselineSpy.mockRestore();
       launchSpy.mockRestore();
       await reader.close();
-      await rm(directory, { recursive: true, force: true });
     }
   },
 );
@@ -1352,8 +1345,8 @@ it.skipIf(!onDarwin)(
   "parses exact NUL-delimited token records and rejects truncated argv",
   { tags: ["long-running"] },
   async () => {
-    const root = await mkdtemp(
-      join(tmpdir(), "rea-process-token-parser-test-"),
+    const root = await createTestTempDirectory(
+      "rea-process-token-parser-test-",
     );
     const executable = join(root, "parser-test");
     const core = fileURLToPath(
@@ -1368,125 +1361,121 @@ it.skipIf(!onDarwin)(
         import.meta.url,
       ),
     );
-    try {
-      await execFileOutput(
-        "/usr/bin/xcrun",
-        ["swiftc", core, fixture, "-o", executable],
-        { timeout: 120_000, stopSignal: SWIFTC_INTERRUPT },
-      );
-      const { stdout } = await execFileAsync(executable, [], {
-        encoding: "utf8",
-        timeout: 10_000,
-      });
-      expect(JSON.parse(stdout)).toEqual({
-        argvDecoyFailsClosed: true,
-        readableEnvironmentWithoutToken: {
-          runId: null,
-          environmentEntryCount: 1,
-        },
-        restrictedReadableEnvironmentWithoutToken: {
-          state: "readable",
-          reason: null,
-        },
-        restrictedEmptyEnvironment: {
-          state: "unavailable",
-          reason: "restricted_process_environment_withheld",
-        },
-        platformEmptyEnvironment: {
+    await execFileOutput(
+      "/usr/bin/xcrun",
+      ["swiftc", core, fixture, "-o", executable],
+      { timeout: 120_000, stopSignal: SWIFTC_INTERRUPT },
+    );
+    const { stdout } = await execFileAsync(executable, [], {
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    expect(JSON.parse(stdout)).toEqual({
+      argvDecoyFailsClosed: true,
+      readableEnvironmentWithoutToken: {
+        runId: null,
+        environmentEntryCount: 1,
+      },
+      restrictedReadableEnvironmentWithoutToken: {
+        state: "readable",
+        reason: null,
+      },
+      restrictedEmptyEnvironment: {
+        state: "unavailable",
+        reason: "restricted_process_environment_withheld",
+      },
+      platformEmptyEnvironment: {
+        state: "unavailable",
+        reason: "platform_binary_environment_withheld",
+      },
+      restrictedUnavailableEnvironment: {
+        state: "unavailable",
+        reason: "restricted_process_environment_withheld",
+      },
+      restrictedAmbiguousEnvironment: {
+        state: "unavailable",
+        reason: "restricted_process_environment_withheld",
+      },
+      ordinaryAmbiguousEnvironment: {
+        state: "unavailable",
+        reason: "ambiguous_environment_boundary",
+      },
+      ordinaryUnavailableEnvironment: {
+        state: "unavailable",
+        reason: "environment_unavailable",
+      },
+      alternatePaddingRead: true,
+      appleVectorTokenFailsClosed: true,
+      clearedAppleVectorTokenFailsClosed: true,
+      callerPfzBeforeTokenRead: true,
+      emptyLaterArgumentRead: true,
+      emptyArgv0Read: true,
+      emptyEnvironmentRecordsBeforeTokenFailClosed: true,
+      duplicateTokenFailsClosed: true,
+      invalidTokenEncodingFailsClosed: true,
+      finalAssignmentArgumentRead: true,
+      missingAppleBoundaryFailsClosed: true,
+      malformedBuffersRejected: true,
+      invalidPointerSizeFailsClosed: true,
+      incompleteRestrictedArguments: [
+        "malformed_procargs_path_padding",
+        "malformed_procargs_arguments",
+        "apple_vector_unavailable",
+      ].map((reason) => [
+        {
           state: "unavailable",
           reason: "platform_binary_environment_withheld",
         },
-        restrictedUnavailableEnvironment: {
+        {
           state: "unavailable",
           reason: "restricted_process_environment_withheld",
         },
-        restrictedAmbiguousEnvironment: {
+        { state: "unavailable", reason },
+      ]),
+      signedReadableTokens: [true, true],
+      signedInvalidTokens: [
+        "duplicate_run_token",
+        "invalid_run_token_encoding",
+      ].map((reason) => [
+        { state: "unavailable", reason },
+        { state: "unavailable", reason },
+      ]),
+      malformedStages: [
+        { state: "unavailable", reason: "malformed_procargs_header" },
+        { state: "unavailable", reason: "malformed_procargs_argument_count" },
+        {
           state: "unavailable",
-          reason: "restricted_process_environment_withheld",
+          reason: "malformed_procargs_executable_path",
         },
-        ordinaryAmbiguousEnvironment: {
+        { state: "unavailable", reason: "malformed_procargs_pointer_size" },
+        { state: "unavailable", reason: "malformed_procargs_path_padding" },
+        { state: "unavailable", reason: "malformed_procargs_arguments" },
+        { state: "unavailable", reason: "malformed_procargs_terminator" },
+        {
           state: "unavailable",
-          reason: "ambiguous_environment_boundary",
+          reason: "malformed_procargs_trailing_entries",
         },
-        ordinaryUnavailableEnvironment: {
-          state: "unavailable",
-          reason: "environment_unavailable",
-        },
-        alternatePaddingRead: true,
-        appleVectorTokenFailsClosed: true,
-        clearedAppleVectorTokenFailsClosed: true,
-        callerPfzBeforeTokenRead: true,
-        emptyLaterArgumentRead: true,
-        emptyArgv0Read: true,
-        emptyEnvironmentRecordsBeforeTokenFailClosed: true,
-        duplicateTokenFailsClosed: true,
-        invalidTokenEncodingFailsClosed: true,
-        finalAssignmentArgumentRead: true,
-        missingAppleBoundaryFailsClosed: true,
-        malformedBuffersRejected: true,
-        invalidPointerSizeFailsClosed: true,
-        incompleteRestrictedArguments: [
-          "malformed_procargs_path_padding",
-          "malformed_procargs_arguments",
-          "apple_vector_unavailable",
-        ].map((reason) => [
-          {
-            state: "unavailable",
-            reason: "platform_binary_environment_withheld",
-          },
-          {
-            state: "unavailable",
-            reason: "restricted_process_environment_withheld",
-          },
-          { state: "unavailable", reason },
-        ]),
-        signedReadableTokens: [true, true],
-        signedInvalidTokens: [
-          "duplicate_run_token",
-          "invalid_run_token_encoding",
-        ].map((reason) => [
-          { state: "unavailable", reason },
-          { state: "unavailable", reason },
-        ]),
-        malformedStages: [
-          { state: "unavailable", reason: "malformed_procargs_header" },
-          { state: "unavailable", reason: "malformed_procargs_argument_count" },
-          {
-            state: "unavailable",
-            reason: "malformed_procargs_executable_path",
-          },
-          { state: "unavailable", reason: "malformed_procargs_pointer_size" },
-          { state: "unavailable", reason: "malformed_procargs_path_padding" },
-          { state: "unavailable", reason: "malformed_procargs_arguments" },
-          { state: "unavailable", reason: "malformed_procargs_terminator" },
-          {
-            state: "unavailable",
-            reason: "malformed_procargs_trailing_entries",
-          },
-        ],
-        malformedObservation: {
-          state: "unavailable",
-          reason: "malformed_procargs",
-        },
-        nonAsciiPathRead: true,
-        realTokenRead: true,
-        reservedArgumentWithRealTokenFailsClosed: true,
-        titleOverwriteFailsClosed: true,
-        truncatedArgvFailsClosed: true,
-        zeroArgumentsRead: true,
-      });
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+      ],
+      malformedObservation: {
+        state: "unavailable",
+        reason: "malformed_procargs",
+      },
+      nonAsciiPathRead: true,
+      realTokenRead: true,
+      reservedArgumentWithRealTokenFailsClosed: true,
+      titleOverwriteFailsClosed: true,
+      truncatedArgvFailsClosed: true,
+      zeroArgumentsRead: true,
+    });
   },
 );
 
 it.skipIf(!onDarwin)(
-  "retries a growing process table after ENOMEM and preserves other sysctl errors",
+  "preserves process-table failures and confirms run-token identity",
   { tags: ["long-running"] },
   async () => {
-    const root = await mkdtemp(
-      join(tmpdir(), "rea-process-snapshot-retry-test-"),
+    const root = await createTestTempDirectory(
+      "rea-process-snapshot-retry-test-",
     );
     const executable = join(root, "snapshot-probe");
     const core = fileURLToPath(
@@ -1501,30 +1490,44 @@ it.skipIf(!onDarwin)(
         import.meta.url,
       ),
     );
-    try {
-      await execFileOutput(
-        "/usr/bin/xcrun",
-        ["swiftc", core, fixture, "-o", executable],
-        { timeout: 120_000, stopSignal: SWIFTC_INTERRUPT },
-      );
-      const { stdout } = await execFileAsync(executable, [], {
-        encoding: "utf8",
-        timeout: 10_000,
-      });
-      expect(JSON.parse(stdout)).toEqual({
-        preservedOtherErrno: true,
-        retriedAfterFreshSize: true,
-        successfulSnapshotMissingPidIsAbsent: true,
-        failedSnapshotMissingPidIsUnavailable: true,
-        invalidPidIsUnavailable: true,
-        zombieLifecycleIsSeparateFromIdentity: true,
-        effectiveUidComesFromNativeIdentity: true,
-        nativeRelationIsSeparateFromIdentity: true,
-        nativeNameIsSeparateFromIdentity: true,
-      });
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+    await execFileOutput(
+      "/usr/bin/xcrun",
+      ["swiftc", core, fixture, "-o", executable],
+      { timeout: 120_000, stopSignal: SWIFTC_INTERRUPT },
+    );
+    const { stdout } = await execFileAsync(executable, [], {
+      encoding: "utf8",
+      env: { ...process.env, REA_PROCESS_RUN_ID: "rea-snapshot-probe" },
+      timeout: 10_000,
+    });
+    expect(JSON.parse(stdout)).toEqual({
+      preservedOtherErrno: true,
+      retriedAfterFreshSize: true,
+      openingRunTokenSnapshotReads: 1,
+      failedOpeningRunTokens: [42, 43].map((pid) => ({
+        pid,
+        state: "unavailable",
+        reason: "process_table_failed_13",
+      })),
+      absentRunTokens: [
+        { pid: 42, state: "unavailable", reason: "process_not_in_snapshot" },
+      ],
+      failedConfirmingRunTokens: [
+        {
+          state: "unavailable",
+          reason: "process_table_failed_5",
+          tokenPresent: false,
+        },
+      ],
+      confirmedRunTokens: [{ state: "readable", matchesFixtureToken: true }],
+      successfulSnapshotMissingPidIsAbsent: true,
+      failedSnapshotMissingPidIsUnavailable: true,
+      invalidPidIsUnavailable: true,
+      zombieLifecycleIsSeparateFromIdentity: true,
+      effectiveUidComesFromNativeIdentity: true,
+      nativeRelationIsSeparateFromIdentity: true,
+      nativeNameIsSeparateFromIdentity: true,
+    });
   },
 );
 
@@ -1667,7 +1670,7 @@ it.skipIf(!onDarwin)(
 it.skipIf(!onDarwin)(
   "reads owned tokens across executable padding and distinguishes a real empty environment",
   async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-process-token-padding-"));
+    const root = await createTestTempDirectory("rea-process-token-padding-");
     const host = createSystemProcessOwnershipHost("darwin");
     const children: Awaited<ReturnType<typeof startNodeChild>>[] = [];
     try {
@@ -1708,7 +1711,6 @@ it.skipIf(!onDarwin)(
     } finally {
       for (const { child } of children) await stopNodeChild(child);
       await host.close?.();
-      await rm(root, { recursive: true, force: true });
     }
   },
 );
