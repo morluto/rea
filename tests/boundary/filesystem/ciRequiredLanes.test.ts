@@ -79,7 +79,7 @@ it("opts only the Noble binary-layout toolchain into the Ubuntu Azure archive fa
   ).toBe("false");
 });
 
-const recordedCrashRefresh = "refresh --kill-after=5s 90s";
+const recordedCrashRefresh = "refresh --kill-after=5s 150s";
 const recordedCrashDownload = "download --kill-after=5s 180s";
 
 it.skipIf(process.platform === "win32").each([
@@ -111,6 +111,8 @@ it.skipIf(process.platform === "win32").each([
         case " $* " in
           *" update "*)
             record_stage refresh
+            [[ " $* " == *" Acquire::Languages=none "* ]] || return 98
+            [[ " $* " != *" -qq "* ]] || return 99
             if [[ $mode == refresh && " $* " == *" --error-on=any "* ]]; then
               return 100
             fi
