@@ -14,14 +14,17 @@ import {
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 const execute = promisify(execFile);
+const group = fileURLToPath(
+  new URL("../../scripts/ci/test-group.mjs", import.meta.url),
+);
 
-const selectedEnvironment = (file: string) => ({
+const selectedEnvironment = (...files: string[]) => ({
   ...process.env,
   CI_TEST_SELECTION: JSON.stringify({
     version: 3,
     mode: "selected",
-    reason: "Affected tests: 1 changed",
-    files: [file],
+    reason: "Explicitly selected test files",
+    files,
     shards: 1,
   }),
 });
@@ -465,30 +468,34 @@ it("parses only well-formed plans and derives the selected shard count", () => {
 });
 
 it("runs only a shard the plan defines", async () => {
-  const group = fileURLToPath(
-    new URL("../../scripts/ci/test-group.mjs", import.meta.url),
+  const environment = selectedEnvironment(
+    "tests/evaluation/reasonMarker.test.ts",
+    "tests/evaluation/recordPredicateGuard.test.ts",
   );
-  const selection = JSON.stringify({
-    version: 3,
-    mode: "selected",
-    reason: "Affected tests: 1 changed",
-    files: ["src/a.test.ts"],
-    shards: 1,
-  });
-  for (const [shard, environment] of [
-    ["2/2", selection],
-    ["1/2", selection],
-    ["1/1", JSON.stringify({ version: 3, mode: "full", reason: "x" })],
-    ["1/1", ""],
+  for (const [shard, selection, diagnostic] of [
+    [
+      "1/2",
+      environment.CI_TEST_SELECTION,
+      "No selected test group 1/2 in this plan",
+    ],
+    [
+      "1/1",
+      JSON.stringify({ version: 3, mode: "full", reason: "x" }),
+      "No selected test group 1/1 in this plan",
+    ],
+    ["1/1", "", "Unexpected end of JSON input"],
   ] as const)
     await expect(
       execute(process.execPath, [group, "selected", shard], {
-        env: { ...process.env, CI_TEST_SELECTION: environment },
+        env: { ...environment, CI_TEST_SELECTION: selection },
       }),
-    ).rejects.toMatchObject({ code: 1 });
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining(diagnostic),
+    });
   await expect(
     execute(process.execPath, [group, "selected", "1/1", "--shard=1/2"], {
-      env: { ...process.env, CI_TEST_SELECTION: selection },
+      env: environment,
     }),
   ).rejects.toMatchObject({
     stderr: expect.stringContaining("already sharded"),
@@ -504,9 +511,6 @@ it.each([
   ["--tagsFilter=long-running"],
   ["--tags-filter", "long-running"],
 ])("rejects a case filter in a selected shard: %j", async (...filter) => {
-  const group = fileURLToPath(
-    new URL("../../scripts/ci/test-group.mjs", import.meta.url),
-  );
   await expect(
     execute(process.execPath, [group, "selected", "1/1", ...filter], {
       env: selectedEnvironment("tests/evaluation/reasonMarker.test.ts"),
@@ -519,9 +523,6 @@ it.each([
 });
 
 it("runs every selected case and still permits developer name and tag filters", async () => {
-  const group = fileURLToPath(
-    new URL("../../scripts/ci/test-group.mjs", import.meta.url),
-  );
   const exact = fileURLToPath(
     new URL("../../scripts/run-exact-tests.mjs", import.meta.url),
   );
