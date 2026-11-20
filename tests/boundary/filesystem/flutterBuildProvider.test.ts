@@ -2137,6 +2137,14 @@ it("retains mixed-root cleanup diagnostics and releases aggregate errors only af
     aggregate = cause;
   }
   expect(aggregate).toMatchObject({
+    operation: "close_flutter_build",
+    cause: expect.objectContaining({
+      errors: expect.arrayContaining(
+        roots.map((root) =>
+          expect.objectContaining({ cleanupResources: [root] }),
+        ),
+      ),
+    }),
     cleanupIncomplete: true,
     cleanupResources: expect.arrayContaining(roots),
     diagnostics: {

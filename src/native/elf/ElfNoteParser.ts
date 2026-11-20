@@ -269,19 +269,16 @@ const decodeGnu = (
     };
   }
   if (type === 1 && descriptor.length === 16) {
-    const read = (offset: number) =>
-      little
-        ? descriptor.readUInt32LE(offset)
-        : descriptor.readUInt32BE(offset);
-    const os = read(0);
+    const reader = new BinaryReader(descriptor, little, "elf-notes");
+    const os = reader.u32(0);
     return {
       build_id_hex: null,
       abi_tag: {
         os,
         os_name: GNU_OS_NAMES[os] ?? null,
-        major: read(4),
-        minor: read(8),
-        subminor: read(12),
+        major: reader.u32(4),
+        minor: reader.u32(8),
+        subminor: reader.u32(12),
       },
       gold_version: null,
     };
@@ -501,12 +498,11 @@ const decodeCoreSiginfo = (
   machine: number,
 ): ElfNotes["entries"][number]["core"] => {
   if (descriptor.length < 12) return null;
-  const i32 = (off: number) =>
-    little ? descriptor.readInt32LE(off) : descriptor.readInt32BE(off);
+  const reader = new BinaryReader(descriptor, little, "elf-notes");
   const isMips = machine === 8 || machine === 10;
-  const signo = i32(0);
-  const errno = isMips ? i32(8) : i32(4);
-  const code = isMips ? i32(4) : i32(8);
+  const signo = reader.i32(0);
+  const errno = reader.i32(isMips ? 8 : 4);
+  const code = reader.i32(isMips ? 4 : 8);
   return {
     prpsinfo: null,
     file: null,
@@ -643,11 +639,10 @@ const decodeAndroid = (
   text: TextBudget,
 ): ElfNotes["entries"][number]["android"] => {
   if (owner !== "Android" || type !== 1) return null;
-  const readUInt32 = (offset: number): number =>
-    little ? descriptor.readUInt32LE(offset) : descriptor.readUInt32BE(offset);
+  const reader = new BinaryReader(descriptor, little, "elf-notes");
   if (descriptor.length === 4) {
     return {
-      android_api: readUInt32(0),
+      android_api: reader.u32(0),
       ndk_version: null,
       ndk_build_number: null,
     };
@@ -677,7 +672,7 @@ const decodeAndroid = (
   chargeText(text, versionLen + buildLen);
 
   return {
-    android_api: readUInt32(0),
+    android_api: reader.u32(0),
     ndk_version: descriptor.toString("latin1", 4, 4 + versionLen),
     ndk_build_number: descriptor.toString(
       "latin1",
