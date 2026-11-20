@@ -1,3 +1,4 @@
+import { isParseLimit } from "../parseFailureAnalysisError.js";
 import { describe, expect, it } from "vitest";
 import { zip64Tail } from "../../../tests/fixtures/apkSignature/zip64Tail.js";
 
@@ -110,6 +111,22 @@ describe("APK signing block locator", () => {
       APK_BLOCK_ID.signatureV3,
     ]);
     expect([...block.value.pairs[0]!.value]).toEqual([0xaa, 0xbb, 0xcc, 0xdd]);
+  });
+
+  it("names the enforced limit for a physically framed extra pair", () => {
+    const bytes = apkWithBlock(
+      Array.from({ length: 4097 }, () => ({ id: 0xffffffff, value: [] })),
+    );
+    const tail = parseZipTail(bytes);
+    if (!tail.ok) throw new Error("Expected a framed ZIP tail");
+    const result = locateApkSigningBlock(bytes, tail.value);
+    if (result.ok) throw new Error("Expected a signing-block pair refusal");
+    expect(isParseLimit(result.error, "apk-signing-block")).toBe(true);
+    expect(result.error).toMatchObject({
+      failure: {
+        limit: { name: "max_signing_block_pairs", maximum: 4096 },
+      },
+    });
   });
 
   it("returns null when no block magic precedes the central directory", () => {

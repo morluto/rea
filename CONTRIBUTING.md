@@ -113,6 +113,19 @@ Human ownership and review remain required when CI or an automated reviewer
 reports success. Readiness requests maintainer review; it does not grant scope
 approval or permission to merge.
 
+Pull request titles must match the Conventional Commits check in
+[`.github/workflows/pr-title.yml`](.github/workflows/pr-title.yml):
+
+```text
+/^(?:feat|fix|docs|refactor|perf|test|build|ci|chore|revert)(?:\([a-z0-9._/-]+\))?!?: .+/u
+```
+
+The type is `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`,
+`chore`, or `revert`. An optional scope, in parentheses, uses only lowercase
+`[a-z0-9._/-]`. An optional `!` may precede the colon. The title then has `: `
+and a non-empty outcome, for example `feat: add historical source import`.
+The type `style` fails, and an uppercase scope fails.
+
 Draft status is optional. Draft PRs may request early feedback with open questions
 and incomplete checks. Agents preserve the current draft status unless asked to
 change it; missing readiness declarations or later updates do not require a PR
@@ -323,24 +336,19 @@ Use the [documentation directory](docs/README.md) and
 domain-based feature specifications and architectural decision records.
 
 The VitePress site uses the Markdown files in `docs/`. Run `npm run docs:dev`
-for live editing, `npm run docs:build` to check the production build and
-links, and `npm run docs:preview` to preview that build at `/rea/`.
+for live editing and `npm run docs:preview` to serve an existing build at
+`/rea/`. Follow the [documentation checks](docs/development/documentation.md#generated-ownership-and-checks)
+to build and verify the rendered routes and anchors.
 
-Site navigation lives in `docs/.vitepress/config.ts`. Keep links to guides
-relative so they work on GitHub and the website; link to repository files
-outside `docs/` using their full GitHub URLs. Generated reference documents
-use `npm run docs:generate`; `docs:build` generates them before building the website.
+The [authoring guide](docs/development/documentation.md#links-and-public-routes)
+explains where to edit navigation and how to preserve public links. The
+`Documentation` CI job runs the documentation and rendered-route checks.
+The manual VitePress workflow in `.github/workflows/pages.yml` builds these
+guides for verification.
 
-Pull requests run `npm run docs:check`. `.github/workflows/pages.yml` is a
-manual VitePress build and does not publish. The public site at
-<https://rea.tools/> serves `website/public/` through Cloudflare Workers. See
-the [website README](website/README.md#cloudflare-workers) for previews and
-manual deployments.
-
-The separate GitHub Pages host uses only the manual
-`.github/workflows/website-pages.yml` workflow on `main`. The repository's
-**Settings → Pages → Build and deployment → Source** must be set to
-**GitHub Actions** before deploying there.
+The product website in `website/public/` has a separate
+[publishing workflow](website/README.md#synchronized-production-publishing) for
+`rea.tools` and GitHub Pages.
 
 ### Translation corrections
 
@@ -381,7 +389,7 @@ for commands, test placement, pruning, and real-provider prerequisites.
 Before requesting review, run relevant tests and `npm run check`; add
 `npm run docs:check` when contracts or generated metadata change. Record the
 checks and unavailable coverage. CI owns the full deterministic suite and
-coverage. `npm run check:pr` is an optional full local gate for broad changes or
+coverage. `npm run check:pr` is an optional broad local suite for large changes or
 CI diagnosis. Packaging/setup/distribution changes additionally require
 `npm run verify:package` and `npm pack --dry-run`; provider changes require the
 matching real-provider lane. State which host/provider workflows ran.

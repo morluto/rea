@@ -36,6 +36,38 @@ const classify = (bytes: Uint8Array) => {
 };
 
 describe("FAT declaration facts", () => {
+  it.each([false, true])(
+    "bounds 64-bit ranges to the supplied table view (littleEndian=%s)",
+    (littleEndian) => {
+      const backing = new Uint8Array(40).fill(0xff);
+      const table = backing.subarray(3, 35);
+      const fields = new DataView(
+        table.buffer,
+        table.byteOffset,
+        table.byteLength,
+      );
+      const options = { count: 1, wide: true, littleEndian };
+      const offset = 0x1_0000_0008n;
+      fields.setBigUint64(8, offset, littleEndian);
+      fields.setBigUint64(16, 0x1_0000_0010n, littleEndian);
+      expect(readFatSliceDeclarations(table, options)).toMatchObject({
+        status: "parsed",
+        slices: [{ offset: Number(offset), size: 0x1_0000_0010 }],
+      });
+      expect(
+        readFatSliceDeclarations(table.subarray(0, 31), options),
+      ).toMatchObject({
+        status: "malformed",
+        reason: "FAT table is truncated",
+      });
+      fields.setBigUint64(16, 1n << 53n, littleEndian);
+      expect(readFatSliceDeclarations(table, options)).toMatchObject({
+        status: "malformed",
+        reason: "FAT offset or size exceeds the safe range",
+      });
+    },
+  );
+
   it.each([
     { wide: false, littleEndian: false },
     { wide: false, littleEndian: true },

@@ -161,8 +161,8 @@ export const dotnetBundleEntryMetadataSchema = z.strictObject({
 });
 
 /**
- * Node.js single-executable blob facts. Lengths follow the Node 24 64-bit
- * little-endian `size_t` reader. The fuse sentinel is a separate carrier scan.
+ * Node.js single-executable blob facts. Lengths use 64-bit little-endian
+ * `size_t`. The fuse sentinel is a separate carrier scan.
  */
 export const nodeSeaMetadataSchema = z.strictObject({
   kind: z.literal("node-sea"),
@@ -175,6 +175,7 @@ export const nodeSeaMetadataSchema = z.strictObject({
   include_exec_argv: z.boolean(),
   exec_argv_extension: z.enum(["none", "env", "cli"]),
   exec_argv: z.array(z.string()),
+  main_code_format: z.enum(["commonjs", "module"]).exactOptional(),
   code_path: z.string(),
   carrier: z.enum(["mach-o", "elf", "pe"]),
   blob_offset: offset,
@@ -184,6 +185,9 @@ export const nodeSeaMetadataSchema = z.strictObject({
   fuse_contradiction: z.string().nullable(),
 });
 export type NodeSeaMetadata = z.infer<typeof nodeSeaMetadataSchema>;
+export type NodeSeaMainCodeFormat = NonNullable<
+  NodeSeaMetadata["main_code_format"]
+>;
 
 /** One injected script, snapshot, code cache, or asset. Bytes stay opaque. */
 export const nodeSeaEntryMetadataSchema = z.strictObject({
@@ -697,6 +701,13 @@ export const espFlashImageMetadataSchema = z.strictObject({
         .string()
         .regex(/^[0-9a-f]{32}$/u)
         .nullable(),
+      /**
+       * Partition entries after the MD5 record, outside its digest. New
+       * inventories emit 0 when the record is absent or every partition
+       * entry precedes it. Omission is Evidence saved before this field
+       * and leaves the count unknown.
+       */
+      entries_after_checksum: uint8.exactOptional(),
     }),
   }),
   /**

@@ -320,8 +320,16 @@ it("reports cancellation during a member read with the caller's reason", async (
   const enumeration = vi
     .spyOn(ZipReader.prototype, "getEntriesGenerator")
     .mockImplementation(async function* (this: ZipReader<unknown>, options) {
-      yield* original.call(this, options);
-      controller.abort(reason);
+      for await (const entry of original.call(this, options)) {
+        if (!entry.directory && entry.filename === "_rels/.rels") {
+          const getData = entry.getData.bind(entry);
+          entry.getData = (writer, options) => {
+            controller.abort(reason);
+            return getData(writer, options);
+          };
+        }
+        yield entry;
+      }
       return true;
     });
   try {
@@ -335,6 +343,74 @@ it("reports cancellation during a member read with the caller's reason", async (
     expect(failure).toMatchObject({ reason: "cancelled" });
     expect((failure as ArtifactReaderFailure).cancellation?.reason).toBe(
       reason,
+    );
+  } finally {
+    enumeration.mockRestore();
+  }
+});
+
+it.each(["before a visible row", "at enumeration completion"] as const)(
+  "reports cancellation %s without a metadata member read",
+  async (phase) => {
+    const bytes = await nugetNupkgMissingNuspecFixture();
+    const controller = new AbortController();
+    const reason = { caller: "stop ZIP inventory" };
+    const original = ZipReader.prototype.getEntriesGenerator;
+    const enumeration = vi
+      .spyOn(ZipReader.prototype, "getEntriesGenerator")
+      .mockImplementation(async function* (this: ZipReader<unknown>, options) {
+        for await (const entry of original.call(this, options)) {
+          if (phase === "before a visible row") controller.abort(reason);
+          yield entry;
+        }
+        if (phase === "at enumeration completion") controller.abort(reason);
+        return true;
+      });
+    try {
+      const failure: unknown = await parseNugetNupkg(
+        bytes,
+        artifactOf(bytes),
+        defaults,
+        controller.signal,
+      ).catch((cause: unknown) => cause);
+      if (!(failure instanceof ArtifactReaderFailure))
+        throw new Error("expected inventory cancellation");
+      expect(failure.reason).toBe("cancelled");
+      expect(failure.cancellation?.reason).toBe(reason);
+    } finally {
+      enumeration.mockRestore();
+    }
+  },
+);
+
+it("keeps the ZIP directory failure when cancellation reuses that error", async () => {
+  // A local header signature without a central directory is not a valid ZIP.
+  const bytes = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+  const controller = new AbortController();
+  const original = ZipReader.prototype.getEntriesGenerator;
+  const enumeration = vi
+    .spyOn(ZipReader.prototype, "getEntriesGenerator")
+    .mockImplementation(async function* (this: ZipReader<unknown>, options) {
+      try {
+        return yield* original.call(this, options);
+      } catch (cause: unknown) {
+        controller.abort(cause);
+        throw cause;
+      }
+    });
+  try {
+    const failure: unknown = await parseNugetNupkg(
+      bytes,
+      artifactOf(bytes),
+      defaults,
+      controller.signal,
+    ).catch((cause: unknown) => cause);
+    if (!(failure instanceof ParseFailureError))
+      throw new Error("expected malformed ZIP failure", { cause: failure });
+    expect(failure.failure.kind).toBe("malformed");
+    expect(failure.cause).toBeInstanceOf(ArtifactReaderFailure);
+    expect((failure.cause as ArtifactReaderFailure).cause).toBe(
+      controller.signal.reason,
     );
   } finally {
     enumeration.mockRestore();
@@ -393,30 +469,46 @@ it("stops expanding an OPC relationships member at the budget when its declared 
   }
 });
 
-it("leaves an external manifest relationship unfollowed even when it names a ZIP member", async () => {
-  const bytes = await nugetNupkgFixture({
-    includeRels: false,
-    extraMembers: {
-      "_rels/.rels": `<?xml version="1.0" encoding="utf-8"?>
+it.each([
+  { mode: "External", selected: false, limitation: "is external" },
+  { mode: "Internal", selected: true, limitation: null },
+  { mode: "Unknown", selected: false, limitation: "has an invalid TargetMode" },
+  { mode: "", selected: false, limitation: "has an invalid TargetMode" },
+  {
+    mode: "internal",
+    selected: false,
+    limitation: "has an invalid TargetMode",
+  },
+])(
+  "uses the declared OPC manifest TargetMode $mode",
+  async ({ mode, selected, limitation }) => {
+    const bytes = await nugetNupkgFixture({
+      includeRels: false,
+      extraMembers: {
+        "_rels/.rels": `<?xml version="1.0" encoding="utf-8"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Type="http://schemas.microsoft.com/packaging/2010/07/manifest" Target="content/Other.nuspec" TargetMode="External" Id="R1" />
+  <Relationship Type="http://schemas.microsoft.com/packaging/2010/07/manifest" Target="content/Other.nuspec" TargetMode="${mode}" Id="R1" />
 </Relationships>
 `,
-      "content/Other.nuspec": ungroupedNuspec,
-    },
-  });
-  const report = nugetNupkgSchema.parse(
-    await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
-  );
-  expect(report.nuspec).toMatchObject({
-    path: "Demo.Package.nuspec",
-    source: "root-nuspec",
-  });
-  expect(report.identity?.id).toBe("Demo.Package");
-  expect(report.limitations).toContain(
-    'OPC manifest relationship Target "content/Other.nuspec" is external and was not followed.',
-  );
-});
+        "content/Other.nuspec": ungroupedNuspec,
+      },
+    });
+    const report = nugetNupkgSchema.parse(
+      await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+    );
+    expect(report.nuspec).toMatchObject({
+      path: selected ? "content/Other.nuspec" : "Demo.Package.nuspec",
+      source: selected ? "opc-relationship" : "root-nuspec",
+    });
+    expect(report.identity?.id).toBe(
+      selected ? "Ungrouped.Package" : "Demo.Package",
+    );
+    if (limitation !== null)
+      expect(report.limitations).toContain(
+        `OPC manifest relationship Target "content/Other.nuspec" ${limitation} and was not followed.`,
+      );
+  },
+);
 
 const manifestRels = (target: string) => `<?xml version="1.0" encoding="utf-8"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
@@ -442,6 +534,73 @@ it("uses the root nuspec when an unrelated relationship ends in /manifest", asyn
   });
   expect(report.identity?.id).toBe("Demo.Package");
 });
+
+const opcRelationshipNamespace =
+  "http://schemas.openxmlformats.org/package/2006/relationships";
+const nestedManifestRels = manifestRels("content/Other.nuspec");
+
+it.each([
+  {
+    label: "foreign root namespace",
+    rels: nestedManifestRels.replace(
+      opcRelationshipNamespace,
+      "urn:sample:foreign",
+    ),
+    selected: false,
+  },
+  {
+    label: "unqualified root and relationship",
+    rels: nestedManifestRels.replace(
+      ` xmlns="${opcRelationshipNamespace}"`,
+      "",
+    ),
+    selected: false,
+  },
+  {
+    label: "foreign child namespace",
+    rels: nestedManifestRels.replace(
+      "<Relationship Type=",
+      '<Relationship xmlns="urn:sample:foreign" Type=',
+    ),
+    selected: false,
+  },
+  {
+    label: "prefixed OPC elements",
+    rels: nestedManifestRels
+      .replace("xmlns=", "xmlns:opc=")
+      .replaceAll("<Relationships", "<opc:Relationships")
+      .replaceAll("</Relationships", "</opc:Relationships")
+      .replace("<Relationship Type=", "<opc:Relationship Type="),
+    selected: true,
+  },
+  {
+    label: "valid relationship beside a foreign child",
+    rels: nestedManifestRels.replace(
+      "</Relationships>",
+      '<Relationship xmlns="urn:sample:foreign" Type="http://schemas.microsoft.com/packaging/2010/07/manifest" Target="Demo.Package.nuspec" Id="Foreign"/></Relationships>',
+    ),
+    selected: true,
+  },
+])(
+  "recognizes OPC manifest authority by expanded XML name ($label)",
+  async ({ rels, selected }) => {
+    const bytes = await nugetNupkgFixture({
+      includeRels: false,
+      extraMembers: {
+        "_rels/.rels": rels,
+        "content/Other.nuspec": ungroupedNuspec,
+      },
+    });
+    const report = await parseNugetNupkg(bytes, artifactOf(bytes), defaults);
+    expect(report.nuspec).toMatchObject({
+      path: selected ? "content/Other.nuspec" : "Demo.Package.nuspec",
+      source: selected ? "opc-relationship" : "root-nuspec",
+    });
+    expect(report.identity?.id).toBe(
+      selected ? "Ungrouped.Package" : "Demo.Package",
+    );
+  },
+);
 
 it.for(["manifests/./Actual.nuspec", "/manifests/extra/../Actual.nuspec"])(
   "resolves dot segments in the manifest relationship Target %s",
@@ -619,24 +778,57 @@ it.for(["constructor/file.txt", "__proto__/file.txt", "toString/file.txt"])(
   },
 );
 
-it("leaves identity unknown when the manifest relationship matches case-variant members", async () => {
-  const bytes = await nugetNupkgFixture({
-    includeRels: false,
-    nuspecName: "First.nuspec",
-    extraMembers: {
-      "_rels/.rels": manifestRels("/FIRST.nuspec"),
-      "first.nuspec": ungroupedNuspec,
-    },
-  });
-  const report = nugetNupkgSchema.parse(
-    await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
-  );
-  expect(report.identity).toBeNull();
-  expect(report.nuspec).toBeNull();
-  expect(report.limitations).toContain(
-    "OPC manifest relationships resolve to more than one .nuspec ZIP member; identity was not decoded.",
-  );
-});
+it.each(["/FIRST.nuspec", "/First.nuspec", "/first.nuspec"])(
+  "leaves identity unknown when OPC target %s matches case-variant members",
+  async (target) => {
+    const bytes = await nugetNupkgFixture({
+      includeRels: false,
+      nuspecName: "First.nuspec",
+      extraMembers: {
+        "_rels/.rels": manifestRels(target),
+        "first.nuspec": ungroupedNuspec,
+      },
+    });
+    const report = nugetNupkgSchema.parse(
+      await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+    );
+    expect(report.identity).toBeNull();
+    expect(report.nuspec).toBeNull();
+    expect(report.coverage).toMatchObject({
+      status: "complete",
+      examined_nuspec_bytes: 0,
+    });
+    expect(report.contents.map((entry) => entry.name)).toEqual(
+      expect.arrayContaining(["First.nuspec", "first.nuspec"]),
+    );
+    expect(report.limitations).toContain(
+      "OPC manifest relationships resolve to more than one .nuspec ZIP member; identity was not decoded.",
+    );
+  },
+);
+
+it.each([
+  {
+    target: "/CONTENT/É.nuspec",
+    source: "opc-relationship",
+    id: "Ungrouped.Package",
+  },
+  { target: "/CONTENT/é.nuspec", source: "root-nuspec", id: "Demo.Package" },
+])(
+  "matches only ASCII case variants in an OPC target $target",
+  async ({ target, source, id }) => {
+    const bytes = await nugetNupkgFixture({
+      includeRels: false,
+      extraMembers: {
+        "_rels/.rels": manifestRels(target),
+        "content/É.nuspec": ungroupedNuspec,
+      },
+    });
+    const report = await parseNugetNupkg(bytes, artifactOf(bytes), defaults);
+    expect(report.nuspec?.source).toBe(source);
+    expect(report.identity?.id).toBe(id);
+  },
+);
 
 it("reports an encrypted manifest above the metadata budget without decoding it", async () => {
   const writer = new ZipWriter(new Uint8ArrayWriter());
@@ -722,4 +914,61 @@ it("keeps one member when every manifest target resolves to it", () => {
   const targets = Array.from({ length: 1_000 }, () => "ONLY.nuspec");
   expect(distinctTargetMatches(targets, match)).toEqual([member]);
   expect(match).toHaveBeenCalledTimes(1_000);
+});
+
+it("keeps a foreign group from suppressing ungrouped NuGet dependencies", async () => {
+  const bytes = await nugetNupkgFixture({
+    nuspec: `<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd" xmlns:ext="urn:example">
+      <metadata>
+        <id>Demo.Package</id><version>1.0.0</version>
+        <dependencies>
+          <ext:group targetFramework="net8.0"><ext:dependency id="Extension" /></ext:group>
+          <dependency id="Declared" version="1.0" />
+        </dependencies>
+      </metadata>
+    </package>`,
+  });
+  const result = await parseNugetNupkg(bytes, artifactOf(bytes), defaults);
+  expect(result.dependency_groups).toMatchObject([
+    { target_framework: null, dependencies: [{ id: "Declared" }] },
+  ]);
+});
+
+it("selects the first nonempty leaf for indexed publisher metadata", async () => {
+  const bytes = await nugetNupkgFixture({
+    nuspec: ungroupedNuspec
+      .replace(
+        "<authors>Casey</authors>",
+        '<authors>Wrong <team>nested</team></authors><authors/><x:Authors xmlns:x="urn:extension">First publisher</x:Authors><authors>Later publisher</authors>',
+      )
+      .replace(
+        "<description>Ungrouped dependencies.</description>",
+        "<Description>Published description</Description>",
+      )
+      .replace(
+        "<id>Ungrouped.Package</id>",
+        "<ID>Ignored</ID><id>Ungrouped.Package</id>",
+      ),
+  });
+  const report = await parseNugetNupkg(bytes, artifactOf(bytes), defaults);
+  expect(report.identity).toMatchObject({
+    id: "Ungrouped.Package",
+    authors: "First publisher",
+    description: "Published description",
+  });
+});
+
+it.each([
+  ["<authors> </authors>", "Later"],
+  ["<authors><![CDATA[ ]]></authors>", null],
+  ['<authors xml:space="preserve"> </authors>', null],
+])("keeps NuGet's first eligible publisher for %s", async (first, expected) => {
+  const bytes = await nugetNupkgFixture({
+    nuspec: ungroupedNuspec.replace(
+      "<authors>Casey</authors>",
+      first + "<authors>Later</authors>",
+    ),
+  });
+  const report = await parseNugetNupkg(bytes, artifactOf(bytes), defaults);
+  expect(report.identity?.authors).toBe(expected);
 });

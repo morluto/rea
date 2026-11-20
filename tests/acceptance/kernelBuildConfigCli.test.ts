@@ -8,6 +8,7 @@ import { toolContract } from "../../src/contracts/toolContracts.js";
 import {
   bzImageGzipFixture,
   bzImageXzFixture,
+  embeddedKernelConfig,
   kernelBuildConfigFixture,
 } from "../../src/native/elf/KernelBuildConfig.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -149,6 +150,53 @@ cliTest(
         { name: "CONFIG_LOCALVERSION", kind: "string", value },
         { name: "CONFIG_OK", kind: "y", value: "y" },
       ],
+    });
+  },
+);
+
+cliTest(
+  "preserves the spelling of Kconfig hex values without a 0x prefix",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-kconfig-hex-cli-");
+    const path = join(root, "vmlinux");
+    const prefix = kernelBuildConfigFixture().subarray(0, 64);
+    const entries = [
+      { name: "CONFIG_BARE_HEX", kind: "number", value: "AbCd" },
+      { name: "CONFIG_PADDED_HEX", kind: "number", value: "00042" },
+      { name: "CONFIG_PREFIXED_HEX", kind: "number", value: "0xABcd" },
+      { name: "CONFIG_NEGATIVE_INT", kind: "number", value: "-42" },
+    ];
+    const text = entries
+      .map(({ name, value }) => `${name}=${value}\n`)
+      .join("");
+    await writeFile(path, Buffer.concat([prefix, embeddedKernelConfig(text)]));
+
+    const result = await cli.run({
+      arguments: ["inspect-kernel-build-config", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(
+      contract.outputSchema.parse(result.json).normalized_result.config,
+    ).toMatchObject({
+      status: "present",
+      option_count: entries.length,
+      entries,
+    });
+
+    await writeFile(
+      path,
+      Buffer.concat([prefix, embeddedKernelConfig("CONFIG_NOT_HEX=xyz\n")]),
+    );
+    const invalid = await cli.run({
+      arguments: ["inspect-kernel-build-config", path, "--json"],
+    });
+    expect(invalid.exitCode, invalid.stderr).toBe(0);
+    expect(
+      contract.outputSchema.parse(invalid.json).normalized_result.config,
+    ).toMatchObject({
+      status: "malformed",
+      reason: "config_text_invalid",
+      entries: [],
     });
   },
 );

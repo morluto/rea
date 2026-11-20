@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
+import { mkdir, symlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { tmpdir } from "node:os";
 
 import { describe, expect, it } from "vitest";
+import { createTestTempDirectory } from "../tests/fixtures/temporaryDirectory.js";
 
 import {
   cliJsonCallerPathSchema,
@@ -74,7 +74,7 @@ describe("CLI JSON path normalization", () => {
   it.skipIf(process.platform === "win32")(
     "keeps POSIX symlink-parent traversal for each selected JSON path",
     async () => {
-      const root = await mkdtemp(join(tmpdir(), "rea-json-caller-path-"));
+      const root = await createTestTempDirectory("rea-json-caller-path-");
       const originalCwd = process.cwd();
       try {
         await mkdir(join(root, "real/inner"), { recursive: true });
@@ -110,7 +110,6 @@ describe("CLI JSON path normalization", () => {
         expect(browserInput.browser.executable_path).toBe("link/../browser");
       } finally {
         process.chdir(originalCwd);
-        await rm(root, { recursive: true, force: true });
       }
     },
   );

@@ -7,6 +7,7 @@ import { Uf2ArtifactReader } from "./Uf2ArtifactReader.js";
 import {
   RP2040_FAMILY,
   RP2XXX_ABSOLUTE_FAMILY,
+  UF2_FLAGS,
   patternBytes,
   uf2Block,
   uf2File,
@@ -111,6 +112,116 @@ it("inventories each family's regions with family and block facts", async () => 
     ],
   ]);
 });
+
+it.each([
+  [[0x1000], [0, 0xffff_ffff]],
+  [[0x1000, 0x2000], [0]],
+] as const)(
+  "keeps addressless UF2 comments out of copy counting (%j, %j)",
+  async (flash, comments) => {
+    const blocks = [
+      ...flash.map((address) =>
+        uf2Block({ address, payload: [1, 2, 3, 4], blockNo: 0, numBlocks: 2 }),
+      ),
+      ...comments.map((address) =>
+        uf2Block({
+          address,
+          payload: [9, 9],
+          blockNo: 1,
+          numBlocks: 2,
+          flags: UF2_FLAGS.notMainFlash,
+        }),
+      ),
+    ];
+    const snapshot = await scanCanonicalArtifactInventory(
+      await writeImage("comments.uf2", uf2File(blocks)),
+    );
+    expect(snapshot.coverage).toEqual({
+      scope: "container-entries",
+      status: "complete",
+    });
+    expect(
+      snapshot.occurrences.find((row) => row.logical_path === ".")
+        ?.format_metadata,
+    ).toMatchObject({
+      kind: "uf2",
+      ambiguous_numbering_group_count: 0,
+      missing_block_count: 0,
+      repeated_block_count: 1,
+      not_main_flash_block_count: comments.length,
+      flash_block_count: flash.length,
+      region_count: flash.length,
+      data_bytes: 4 * flash.length,
+    });
+  },
+);
+
+it.each([
+  {
+    order: "first",
+    secondAddress: 0x2000,
+    coverage: "complete",
+    regionCount: 4,
+  },
+  {
+    order: "second",
+    secondAddress: 0x2000,
+    coverage: "complete",
+    regionCount: 4,
+  },
+  {
+    order: "first",
+    secondAddress: 0x1000,
+    coverage: "unknown",
+    regionCount: 3,
+  },
+  {
+    order: "second",
+    secondAddress: 0x1000,
+    coverage: "unknown",
+    regionCount: 3,
+  },
+] as const)(
+  "reports $coverage UF2 coverage when the shared-number comment comes $order",
+  async ({ order, secondAddress, coverage, regionCount }) => {
+    const flash = (blockNo: number, address: number) =>
+      uf2Block({ address, payload: [1, 2, 3, 4], blockNo, numBlocks: 2 });
+    const comment = uf2Block({
+      address: 0xffff_ffff,
+      payload: [9, 9],
+      blockNo: 0,
+      numBlocks: 2,
+      flags: UF2_FLAGS.notMainFlash,
+    });
+    const first = flash(0, 0x1000);
+    const blocks = [
+      ...(order === "first" ? [comment, first] : [first, comment]),
+      flash(0, secondAddress),
+      flash(1, 0x3000),
+      flash(1, 0x4000),
+    ];
+    const snapshot = await scanCanonicalArtifactInventory(
+      await writeImage("shared-number.uf2", uf2File(blocks)),
+    );
+    expect(snapshot.coverage).toEqual({
+      scope: "container-entries",
+      status: coverage,
+    });
+    expect(
+      snapshot.occurrences.find((row) => row.logical_path === ".")
+        ?.format_metadata,
+    ).toMatchObject({
+      kind: "uf2",
+      ambiguous_numbering_group_count: coverage === "complete" ? 0 : 1,
+      missing_block_count: 0,
+      repeated_block_count: 3,
+      not_main_flash_block_count: 1,
+      flash_block_count: 4,
+      region_count: regionCount,
+      data_bytes: 4 * regionCount,
+    });
+  },
+);
 
 it("leaves short files unrecognized", async () => {
   const truncated = await scanCanonicalArtifactInventory(

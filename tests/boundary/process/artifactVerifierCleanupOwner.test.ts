@@ -8,9 +8,10 @@ import { createPackageVerifierCommands } from "../../../scripts/lib/verify-packa
 import { OwnedMcpStdioTransport } from "../../../src/process/OwnedMcpStdioTransport.js";
 import { resolveSwiftcCompileTimeoutMs } from "../../../src/process/DarwinProcessRunTokenReader.js";
 import { processHasStopped } from "../../support/process/observePosixProcess.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 it("retains the workspace until an owned protocol cleanup can be retried", async () => {
-  const path = await mkdtemp(join(tmpdir(), "rea-verifier-transport-"));
+  const path = await createTestTempDirectory("rea-verifier-transport-");
   const process = Object.assign(new EventEmitter(), {
     pid: 1,
     stdout: new PassThrough(),
@@ -50,21 +51,17 @@ it("retains the workspace until an owned protocol cleanup can be retried", async
     },
   });
   commands.adopt(transport, "protocol child");
-  try {
-    await transport.start();
-    // The group can still contain work after the leader's exit.
-    process.emit("exit", 0, null);
-    await expect(commands.close()).rejects.toMatchObject({
-      path,
-      cleanupOwner: commands,
-    });
-    await expect(access(path)).resolves.toBeUndefined();
-    refuse = false;
-    await commands.close();
-    await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
-  } finally {
-    await rm(path, { recursive: true, force: true });
-  }
+  await transport.start();
+  // The group can still contain work after the leader's exit.
+  process.emit("exit", 0, null);
+  await expect(commands.close()).rejects.toMatchObject({
+    path,
+    cleanupOwner: commands,
+  });
+  await expect(access(path)).resolves.toBeUndefined();
+  refuse = false;
+  await commands.close();
+  await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
 it(
@@ -73,7 +70,7 @@ it(
     const { writeFile, readFile } = await import("node:fs/promises");
     const { createOwnedMcpStdioTransport } =
       await import("../../../scripts/lib/owned-mcp-stdio.mjs");
-    const path = await mkdtemp(join(tmpdir(), "rea-verifier-real-transport-"));
+    const path = await createTestTempDirectory("rea-verifier-real-transport-");
     const fixture = join(path, "child.cjs");
     const marker = join(path, "pids.json");
     await writeFile(
@@ -110,7 +107,6 @@ setInterval(()=>{},1000);`,
       for (const pid of pids) expect(await processHasStopped(pid)).toBe(true);
     } finally {
       await transport.close();
-      await rm(path, { recursive: true, force: true });
     }
   },
   Math.min(
