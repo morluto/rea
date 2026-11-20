@@ -92,6 +92,9 @@ mcpTest(
   async ({ mcp }) => {
     const { client, session } = await connect(mcp);
     const root = await createTestTempDirectory("rea-beam-capacity-");
+    const rowLimit = MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS;
+    const halfRowLimit = Math.floor(rowLimit / 2);
+    const rowRemediation = `The file exceeds the ${String(rowLimit)}-row ceiling this operation accepts; select a smaller artifact.`;
     try {
       for (const [label, bytes, settings, budget, remediation] of [
         [
@@ -109,13 +112,22 @@ mcpTest(
           "Raise max_chunks above 1",
         ],
         [
-          "rows",
+          "single-table-rows",
+          erlangBeamRowsFixture([["ExpT", rowLimit + 1]]),
+          {},
+          { max_table_rows: rowLimit },
+          rowRemediation,
+        ],
+        [
+          "combined-table-rows",
           erlangBeamRowsFixture([
-            ["ExpT", MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS + 1],
+            ["ExpT", halfRowLimit],
+            ["ImpT", halfRowLimit],
+            ["FunT", rowLimit - halfRowLimit * 2 + 1],
           ]),
           {},
-          { max_table_rows: MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS },
-          `${String(MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS)}-row ceiling`,
+          { max_table_rows: rowLimit },
+          rowRemediation,
         ],
       ] as const) {
         const path = join(root, `${label}.beam`);
@@ -124,13 +136,13 @@ mcpTest(
           name: "inspect_erlang_beam",
           arguments: { path, ...settings },
         });
-        expect(response.isError).toBe(true);
+        expect(response.isError, label).toBe(true);
         const error = parseMcpToolError(response).error;
-        expect(error).toMatchObject({
+        expect(error, label).toMatchObject({
           code: "resource_constraint",
           retryable: false,
           remediation: { action: expect.stringContaining(remediation) },
-          details: { reported_limits: budget },
+          details: { resource: "capacity", reported_limits: budget },
         });
       }
     } finally {
