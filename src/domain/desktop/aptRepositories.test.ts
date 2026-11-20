@@ -567,6 +567,39 @@ describe("APT source URI lookup", () => {
   });
 });
 
+it("matches APT's deb822 URI and suite without splitting non-ASCII whitespace", () => {
+  const file = "/etc/apt/sources.list.d/spacing.sources";
+  const uri = "https://vendor.invalid/a\u00a0b";
+  const suite = "stable\u00a0testing/";
+  const mirror = "https://mirror.invalid/archive";
+  const stanzas = parseDeb822Sources(
+    `Types: deb\nURIs: ${uri}\t ${mirror}\nSuites: ${suite} fallback/\n`,
+    file,
+  );
+  // Offline indextargets preserves the NBSP bytes, but splits the ASCII tab.
+  for (const [repoUri, release] of [
+    [uri, suite],
+    [mirror, "fallback/"],
+  ] as const) {
+    const [target] = parseAptIndexTargets(
+      [
+        `Description: ${repoUri} ${release} Packages`,
+        "Filename: /var/lib/apt/lists/vendor",
+        `Base-URI: ${repoUri}/${release}`,
+        `Repo-URI: ${repoUri}/`,
+        `Release: ${release}`,
+        `Sourcesentry: ${file}:1`,
+      ].join("\n"),
+    );
+    if (target === undefined) throw new Error("Missing APT target");
+    expect(entryForTarget(target, stanzas)).toMatchObject({
+      uri: repoUri,
+      suite: release,
+      components: [],
+    });
+  }
+});
+
 describe("credentials in a source URI", () => {
   const ONE_LINE_FILE = "/etc/apt/sources.list.d/private.list";
   const DEB822_FILE = "/etc/apt/sources.list.d/private.sources";
