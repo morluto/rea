@@ -3,9 +3,6 @@
 For a first environment, start with the
 [quickstart](agent-environments-quickstart.md): record an app or use a saved
 session, build and run the environment, and add tasks and reward checks.
-The [implementation index](specs/agent-environments/README.md) links
-the contributing PRs and their verification records. This page is the detailed
-command and behavior reference.
 
 Use `rea environment-build` to turn one recorded capture into an agent
 environment bundle in one offline step: a folder `agent-env run` builds and

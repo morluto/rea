@@ -367,7 +367,6 @@ npx rea-agents@latest setup
 - [CLI and Evidence](../getting-started/cli.md): commands, provider തിരഞ്ഞെടുക്കൽ, snapshots, import/export, exit statuses.
 - [MCP contracts](../reference/mcp-contracts.md), [agent prompts](../getting-started/mcp-prompts.md): tool results, sessions, guided investigations.
 - [Tool catalog](../reference/mcp-contracts.md#generated-catalog): tools, providers, CLI commands എന്നിവയുടെ സ്വയമേവ സൃഷ്ടിച്ച പട്ടിക.
-- [Roadmap](../development/roadmap.md): ആസൂത്രണം ചെയ്ത പ്രവർത്തനങ്ങളും capability trackers-ഉം.
 
 സുരക്ഷാ ദുർബലതകൾ [SECURITY.md](../../SECURITY.md) വഴി റിപ്പോർട്ട് ചെയ്യുക.
 
@@ -397,7 +396,7 @@ REA ഉപയോഗിക്കുന്നവർക്കും, bugs റിപ
 
 REA-യ്ക്കായി നിങ്ങളുടെ സഹായം ഞങ്ങൾ സ്വാഗതം ചെയ്യുന്നു! bug റിപ്പോർട്ട് ചെയ്യാനോ feature നിർദ്ദേശിക്കാനോ [issue തുറക്കുക](https://github.com/morluto/rea/issues), code അല്ലെങ്കിൽ docs മെച്ചപ്പെടുത്താൻ [pull request അയയ്ക്കുക](https://github.com/morluto/rea/pulls).
 
-Development setup-നും checks-നും [CONTRIBUTING.md](../../CONTRIBUTING.md), verification lanes-നായി [testing](../development/testing.md), project ഘടനയ്ക്കായി [architecture map](../architecture/architecture.mermaid) എന്നിവ കാണുക.
+Development setup-നും checks-നും [CONTRIBUTING.md](../../CONTRIBUTING.md), verification lanes-നായി [testing](../development/testing.md) എന്നിവ കാണുക.
 
 ## ലൈസൻസ്
 

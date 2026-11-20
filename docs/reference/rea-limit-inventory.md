@@ -32,23 +32,9 @@ The other values reported here are in force, so `pending_restart` is false. Pros
 restart REA is marked `prose`. `mcp_server_restart_required` is a
 server-identity alignment state in `src/process/ServerIdentity.ts`, not a setting field.
 
-None pending. No numeric `REA_` limit is absent from this tree.
-
-## Counts
-
-| Category                                                              |                                                                        Count |
-| --------------------------------------------------------------------- | ---------------------------------------------------------------------------: |
-| Runtime analysis settings                                             |   32 (29 have an `REA_` seed; 3 have a per-call override and no launch seed) |
-| Per-call numeric `REA_` limits still read from the launch environment |                                                                            0 |
-| Restart-only numeric `REA_` limits                                    |                                                                           15 |
-| Numeric `REA_` candidates recognized in TypeScript source             |                                                                           41 |
-| Numeric `REA_` controls with external or generated-reader provenance  |                                                                            2 |
-| Non-numeric `REA_` settings kept restart-only                         | 52 caller settings, plus process-protocol names that are not caller settings |
-| Hardcoded ceilings left for follow-up                                 |                        grouped below; none converted in the inventory change |
-
 ## Runtime analysis settings
 
-Both runtime tables cover the 32 `ANALYSIS_SETTINGS` entries adjustable with
+These tables cover the `ANALYSIS_SETTINGS` entries adjustable with
 `update_analysis_settings`. Each call reads the snapshot
 accepted for that operation. Launch source is `default` or `setting`; a runtime
 override is `source: "runtime"`. The structured field is `update_mode: "runtime"` and `pending_restart: false`.
@@ -203,29 +189,6 @@ such as `REA_COMMAND_COMPLETE_`, and the `ERR_REA_WINDOWS_NATIVE` code.
 `HOPPER_TARGET_KIND`, and `HOPPER_LOADER_ARGS_JSON` are launch configuration
 without the `REA_` prefix. Paths and the provider choice among them stay
 restart-only for the same reason as the table above.
-
-## Hardcoded ceilings left for follow-up
-
-These are checked per call and tell the caller this release has no runtime
-override. They are not `REA_` settings, so the numeric-limit check does not
-list them. Each family has its own owner. Turning one into a setting needs that
-owner's default, floor, maximum, and an error that carries the setting id,
-value, source, and range. Format and protocol ceilings that the
-[limits guide](limits-and-recovery.md) already calls fixed stay fixed. In
-particular, JSON nesting stops at `MAX_JSON_DEPTH` (1000) and the debugger
-control-reply budget stays separate from
-`REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES`.
-
-| Family                                           | Examples                                                                                                     | Follow-up                                                                                   |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
-| Native structural input ceilings                 | PE resources, imports, load config, certificates, exports, initializers, binary hardening, Windows shortcuts | One setting per ceiling, or a shared input budget only where the owners match.              |
-| Native plist                                     | `MAX_NATIVE_PLIST_BYTES`, decode bytes, nesting depth                                                        | Separate from JSON depth.                                                                   |
-| SQLite inspection                                | concurrent inspections, input bytes, diagnostic bytes                                                        | Pool width stays restart-only if it sizes the worker set; byte budgets can become settings. |
-| Producer command allowances                      | fixed command deadline and retained output where the text says there is no runtime override                  | Distinct from per-call `producer_limits`.                                                   |
-| Hopper caller-scan retention and page allowances | `HOPPER_CALLER_SCAN_RETENTION_BYTES`, `HOPPER_CALLER_PAGE_ALLOWANCE_BYTES`                                   | Explicitly not raised by the scan time budget.                                              |
-| Rizin frame protocol                             | `MAX_FRAME_BYTES`, queued frames                                                                             | Protocol bounds, not caller budgets.                                                        |
-| Debugger detach and control replies              | `DETACH_TIMEOUT_MS`, `DEBUGGER_CONTROL_REPLY_BYTES`                                                          | Ownership deadlines, not the shared command deadline.                                       |
-| Web network capture nesting                      | `max_nesting_depth` already has a per-call parameter                                                         | The fixed depth maximum is the follow-up, not the parameter.                                |
 
 ## Static check
 

@@ -119,8 +119,8 @@ it("lets checker-only inputs and prose select nothing by themselves", () => {
   const sources = {
     "src/domain/Value.test.ts": "",
     "tests/boundary/filesystem/docs.test.ts": 'read("docs/guide.md");',
-    "tests/boundary/filesystem/mermaid.test.ts":
-      'read("docs/architecture/architecture.mermaid");',
+    "tests/boundary/filesystem/docsAsset.test.ts":
+      'read("docs/assets/example.png");',
     "tests/boundary/filesystem/licenses.test.ts":
       'read("licenses/npm-dependencies.txt"); read("LICENSE");',
     "tests/boundary/filesystem/issueTemplate.test.ts":
@@ -146,9 +146,9 @@ it("lets checker-only inputs and prose select nothing by themselves", () => {
   expect(selectedFiles(plan(["docs/guide.md"], sources))).toEqual([
     "tests/boundary/filesystem/docs.test.ts",
   ]);
-  expect(
-    selectedFiles(plan(["docs/architecture/architecture.mermaid"], sources)),
-  ).toEqual(["tests/boundary/filesystem/mermaid.test.ts"]);
+  expect(selectedFiles(plan(["docs/assets/example.png"], sources))).toEqual([
+    "tests/boundary/filesystem/docsAsset.test.ts",
+  ]);
   expect(
     selectedFiles(plan(["licenses/npm-dependencies.txt"], sources)),
   ).toEqual(["tests/boundary/filesystem/licenses.test.ts"]);
