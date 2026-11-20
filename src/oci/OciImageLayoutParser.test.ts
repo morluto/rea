@@ -265,6 +265,28 @@ it("records a symlinked blob as a finding and does not follow it", async () => {
   });
 });
 
+it("reports partial coverage when a referenced config is a symlink", async () => {
+  const root = await createTestTempDirectory("rea-oci-symlink-config-");
+  const written = await writeOciImageLayoutFixture(root);
+  const parsed = parseOciDigest(written.configDigest);
+  if (parsed === undefined) throw new Error("expected sha256 config digest");
+  const blobPath = join(root, "blobs", parsed.algorithm, parsed.hex);
+  const target = join(root, "blobs", parsed.algorithm, `${parsed.hex}.real`);
+  await writeFile(target, await readFile(blobPath));
+  await unlink(blobPath);
+  await symlink(target, blobPath);
+  const report = await inspectLayout(root);
+  expect(report.findings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "symlink_blob",
+        digest: written.configDigest,
+      }),
+    ]),
+  );
+  expect(report.coverage.status).toBe("partial");
+});
+
 it("refuses an oversize index.json and preserves the oci-layout snapshot", async () => {
   const root = await createTestTempDirectory("rea-oci-oversize-");
   await writeOciImageLayoutFixture(root);

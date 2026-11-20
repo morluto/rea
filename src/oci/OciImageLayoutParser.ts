@@ -584,7 +584,18 @@ export const parseOciImageLayout = async (
       );
   };
 
+  // A referenced index, manifest or config that could not be read leaves its
+  // facts unexamined, whatever finding explains why.
+  let referencedJsonSkipped = false;
   const readReferencedJson = async (
+    digest: string,
+    label: string,
+  ): Promise<JsonDocument | undefined> => {
+    const document = await readReferencedJsonDocument(digest, label);
+    if (document === undefined) referencedJsonSkipped = true;
+    return document;
+  };
+  const readReferencedJsonDocument = async (
     digest: string,
     label: string,
   ): Promise<JsonDocument | undefined> => {
@@ -1098,17 +1109,16 @@ export const parseOciImageLayout = async (
     "OCI image layout snapshot",
   );
   const coverageStatus =
-    findings.length === 0
-      ? ("complete" as const)
-      : findings.some(
-            (finding) =>
-              finding.kind === "missing_blob" ||
-              finding.kind === "nested_index_depth_exceeded" ||
-              finding.kind === "blob_oversize" ||
-              finding.kind === "malformed_blob_json",
-          )
-        ? ("partial" as const)
-        : ("complete" as const);
+    referencedJsonSkipped ||
+    findings.some(
+      (finding) =>
+        finding.kind === "missing_blob" ||
+        finding.kind === "nested_index_depth_exceeded" ||
+        finding.kind === "blob_oversize" ||
+        finding.kind === "malformed_blob_json",
+    )
+      ? ("partial" as const)
+      : ("complete" as const);
 
   return {
     artifact: {
