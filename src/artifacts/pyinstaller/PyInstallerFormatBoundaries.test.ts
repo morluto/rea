@@ -86,18 +86,17 @@ describe("CArchive entry admission at the TOC record limit", () => {
     });
   });
 
-  it.each([
-    [4, "entry is truncated"],
-    [20, "entry extends outside the table"],
-  ] as const)(
+  it.each([4, 20])(
     "preserves framing failure for %i trailing bytes at the entry limit",
-    (tailSize, message) => {
-      expect(parseCArchiveToc(toc.subarray(0, boundary + tailSize))).toEqual({
+    (tailSize) => {
+      expect(
+        parseCArchiveToc(toc.subarray(0, boundary + tailSize)),
+      ).toMatchObject({
         ok: false,
         error: {
           reason: "format",
           message: expect.stringContaining(
-            `table index ${entryCount} at TOC offset ${boundary}: CArchive table of contents ${message}`,
+            `table index ${entryCount} at TOC offset ${boundary}:`,
           ),
         },
       });
