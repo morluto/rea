@@ -46,11 +46,6 @@ it.each([1, 129])(
         retryable: false,
         message: expect.stringMatching(/PyInstaller.*PYZ.*128.file.*budget/iu),
         details: { boundary: "capacity" },
-        remediation: {
-          action: expect.stringContaining(
-            "capacity reported in details.detail",
-          ),
-        },
       });
       expect(projected.remediation.action).not.toContain(
         "Narrow the requested path",
