@@ -359,6 +359,39 @@ it("refuses an oversize index.json and preserves the oci-layout snapshot", async
   }
 });
 
+it("refuses an oversize config and preserves the oci-layout snapshot", async () => {
+  const root = await createTestTempDirectory("rea-oci-oversize-config-");
+  await writeOciImageLayoutFixture(root, {
+    config: { labels: { padding: "x".repeat(4000) } },
+  });
+  const reader = new DirectoryArtifactReader(root);
+  try {
+    await expect(
+      parseOciImageLayout(
+        reader,
+        inspectOciImageLayoutInputSchema.parse({
+          path: root,
+          max_json_bytes: 2048,
+        }),
+      ),
+    ).rejects.toSatisfy((cause: unknown) => {
+      expect(cause).toBeInstanceOf(OciImageLayoutRefusal);
+      if (!(cause instanceof OciImageLayoutRefusal)) return false;
+      expect(cause.failure).toMatchObject({
+        kind: "limit",
+        limit: { name: "max_json_bytes", maximum: 2048 },
+      });
+      expect(cause.layoutObservation).toMatchObject({
+        kind: "file-snapshot-hash",
+        path: "oci-layout",
+      });
+      return true;
+    });
+  } finally {
+    await reader.close();
+  }
+});
+
 it("records nested index depth as a finding once the bound is exceeded", async () => {
   const root = await createTestTempDirectory("rea-oci-nested-");
   await writeNestedOciIndexFixture(root, 2);
@@ -966,11 +999,15 @@ it("refuses a layout past max_descriptors and names that allowance", async () =>
         }),
       ),
     ).rejects.toSatisfy((cause: unknown) => {
-      expect(cause).toBeInstanceOf(ParseFailureError);
-      if (!(cause instanceof ParseFailureError)) return false;
+      expect(cause).toBeInstanceOf(OciImageLayoutRefusal);
+      if (!(cause instanceof OciImageLayoutRefusal)) return false;
       expect(cause.failure).toMatchObject({
         kind: "limit",
         limit: { name: "max_descriptors", maximum: 20, required: 21 },
+      });
+      expect(cause.layoutObservation).toMatchObject({
+        kind: "file-snapshot-hash",
+        path: "oci-layout",
       });
       return true;
     });
@@ -987,9 +1024,12 @@ it("refuses a layout past max_descriptors and names that allowance", async () =>
     );
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(JSON.stringify(primaryAnalysisError(result.error))).toContain(
-      "max_descriptors",
-    );
+    const primary = primaryAnalysisError(result.error);
+    expect(JSON.stringify(primary)).toContain("max_descriptors");
+    expect(primary.partialObservation).toMatchObject({
+      kind: "file-snapshot-hash",
+      path: "oci-layout",
+    });
   } finally {
     await provider.close();
   }

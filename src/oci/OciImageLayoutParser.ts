@@ -452,6 +452,28 @@ export const parseOciImageLayout = async (
   input: InspectOciImageLayoutInput,
   signal?: AbortSignal,
 ): Promise<OciImageLayout> => {
+  const observed: { layout?: FileSnapshotPartialObservation } = {};
+  try {
+    return await inventoryOciImageLayout(reader, input, observed, signal);
+  } catch (cause: unknown) {
+    // A refusal after oci-layout was hashed, such as a later manifest, config
+    // or descriptor budget, keeps that completed observation.
+    if (
+      cause instanceof ParseFailureError &&
+      !(cause instanceof OciImageLayoutRefusal) &&
+      observed.layout !== undefined
+    )
+      refuse(cause.failure, observed.layout, cause);
+    throw cause;
+  }
+};
+
+const inventoryOciImageLayout = async (
+  reader: DirectoryArtifactReader,
+  input: InspectOciImageLayoutInput,
+  observed: { layout?: FileSnapshotPartialObservation },
+  signal?: AbortSignal,
+): Promise<OciImageLayout> => {
   const findings: OciImageLayoutFinding[] = [];
   const limitations: string[] = [...BASE_LIMITATIONS];
   if (!input.include_env_values)
@@ -532,6 +554,7 @@ export const parseOciImageLayout = async (
     sha256: layoutDocument.sha256,
     bytes: layoutDocument.bytes,
   };
+  observed.layout = layoutObservation;
   const layoutVersion = isRecord(layoutDocument.value)
     ? nonempty(layoutDocument.value.imageLayoutVersion)
     : null;
