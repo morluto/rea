@@ -1615,7 +1615,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       cleanup: covered(
         test(
           "src/browser/PlaywrightElectronActiveProvider.test.ts",
-          "keeps cleanup failure precedence over cancellation observed during cleanup",
+          "retains cancellation first observed during failed %s cleanup through retry",
         ),
       ),
       retry: covered(
