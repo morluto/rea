@@ -1,6 +1,10 @@
 import { expect, it } from "vitest";
+import { readFile } from "node:fs/promises";
 import {
+  compareDocumentedNumericLimits,
   discoverNumericLimitUses,
+  loadExportedNumericLimitBounds,
+  parseDocumentedNumericLimits,
   parseNumericLimitRegistry,
   parseRuntimeSettingEnvironments,
   requiredRuntimeLimitFailure,
@@ -537,4 +541,79 @@ it("reports a required limit absent from src as a typed missing result", () => {
       inRegistry: false,
     }),
   ).toBeUndefined();
+});
+
+const documentedLimits = `
+## Runtime analysis settings
+
+| Setting | Default | Floor | Maximum |
+| --- | --- | --- | --- |
+| \`sample.bytes\` | 10 | 1 | 20 |
+
+## Per-call limits in the runtime system
+
+| Environment | Default | Floor | Maximum |
+| --- | --- | --- | --- |
+| \`REA_SAMPLE_BYTES\` | unset (\`null\`, none) | 1 | \`Number.MAX_SAFE_INTEGER\` |
+
+## Restart-only numeric limits
+
+| Environment | Default | Floor | Maximum |
+| --- | --- | --- | --- |
+| \`REA_FIXED\` | 30 | 30 | 30 |
+`;
+
+it("names the limit and both values when a documented default drifts", () => {
+  const failures = compareDocumentedNumericLimits(
+    parseDocumentedNumericLimits(documentedLimits),
+    [
+      { name: "sample.bytes", defaultValue: 11, minimum: 1, maximum: 20 },
+      {
+        name: "sample.launch",
+        aliases: ["REA_SAMPLE_BYTES"],
+        defaultValue: null,
+        minimum: 1,
+        maximum: Number.MAX_SAFE_INTEGER,
+      },
+      { name: "REA_FIXED", defaultValue: 30, minimum: 30, maximum: 30 },
+    ],
+    { "Number.MAX_SAFE_INTEGER": Number.MAX_SAFE_INTEGER },
+  );
+  expect(failures).toEqual(["sample.bytes default: documented 10, code 11"]);
+});
+
+it("names a documented limit the code does not export", () => {
+  const failures = compareDocumentedNumericLimits(
+    parseDocumentedNumericLimits(documentedLimits),
+    [
+      { name: "sample.bytes", defaultValue: 10, minimum: 1, maximum: 20 },
+      {
+        name: "sample.launch",
+        aliases: ["REA_SAMPLE_BYTES"],
+        defaultValue: null,
+        minimum: 1,
+        maximum: Number.MAX_SAFE_INTEGER,
+      },
+    ],
+    { "Number.MAX_SAFE_INTEGER": Number.MAX_SAFE_INTEGER },
+  );
+  expect(failures).toEqual([
+    'REA_FIXED: documented Restart-only numeric limits default "30", floor "30", maximum "30", but code exports no bound',
+  ]);
+});
+
+it("matches the inventory to the exported analysis settings and owner bounds", async () => {
+  const inventory = await readFile(
+    new URL("../../docs/design/rea-limit-inventory.md", import.meta.url),
+    "utf8",
+  );
+  const exported = await loadExportedNumericLimitBounds();
+  expect(exported.failures).toEqual([]);
+  expect(
+    compareDocumentedNumericLimits(
+      parseDocumentedNumericLimits(inventory),
+      exported.bounds,
+      exported.names,
+    ),
+  ).toEqual([]);
 });

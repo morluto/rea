@@ -63,3 +63,46 @@ export function requiredRuntimeLimitFailure(
     readonly inRegistry: boolean;
   },
 ): RequiredRuntimeLimitFailure | undefined;
+
+/** One default, floor, and maximum from the numeric inventory tables. */
+export type DocumentedNumericLimit = {
+  readonly name: string;
+  readonly section: string;
+  readonly defaultCell: string;
+  readonly floorCell: string;
+  readonly maximumCell: string;
+};
+
+/** Default, floor, and maximum exported by the analysis-setting registry or an owner. */
+export type ExportedNumericLimit = {
+  readonly name: string;
+  readonly aliases?: readonly string[];
+  readonly defaultValue: number | null;
+  readonly minimum: number;
+  readonly maximum: number;
+};
+
+/** Read default, floor, and maximum from the three numeric inventory tables. */
+export function parseDocumentedNumericLimits(
+  markdown: string,
+): DocumentedNumericLimit[];
+
+/**
+ * Compare documented limits with exported bounds.
+ * Each failure names the limit and both values.
+ */
+export function compareDocumentedNumericLimits(
+  rows: readonly DocumentedNumericLimit[],
+  bounds: readonly ExportedNumericLimit[],
+  names: Readonly<Record<string, number>>,
+): string[];
+
+/**
+ * Bounds ANALYSIS_SETTINGS and the restart-only owners export.
+ * `failures` names a registry entry that has no exported bound.
+ */
+export function loadExportedNumericLimitBounds(): Promise<{
+  readonly bounds: readonly ExportedNumericLimit[];
+  readonly names: Readonly<Record<string, number>>;
+  readonly failures: readonly string[];
+}>;
