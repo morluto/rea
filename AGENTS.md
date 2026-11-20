@@ -24,15 +24,19 @@ For lifecycle changes, follow [ownership and completion invariants](docs/develop
 
 Before adding complexity for a speculative or vanishingly unlikely race or security edge case, explain the concrete failure mode, likelihood, and complexity cost to the user and get their buy-in. Do not silently expand scope for theoretical robustness.
 
-Assess brittleness in touched code during implementation, debugging, review, and maintenance. Fix the producing representation or ownership rule before adding downstream repairs. Normalize once at the owning boundary using format-aware parsers. Remove superseded representations, aliases, wrappers, and redundant tests after verifying affected consumers. Introduce abstractions only when they remove observed complexity.
+When implementing, debugging, or reviewing a change, trace the affected facts
+from their producer through their consumers. Fix duplicated interpretation at
+the owner using [format-aware boundary rules](docs/development/tool-design.md#interpret-boundary-facts-once).
+Check sibling paths for the same failure, verify suspected matches with working
+controls, and group findings by root cause.
 
-When fixing a bug, inspect the producing boundary and affected consumers for duplicated interpretation or unclear ownership. Complete any directly related refactor in the same change and remove superseded code. Passing regression tests alone does not establish that the brittleness is resolved. If related cleanup remains, explain what remains and why.
+Include directly related refactoring in the fix. Verify affected consumers
+before removing superseded representations, aliases, wrappers, or tests.
+Introduce abstractions only when they remove observed complexity. Explain any
+remaining cleanup and why it remains.
 
-After confirming a bug, search sibling adapters, consumers and similar workflows
-for the same failure. Verify suspected matches, record working comparisons, and
-group findings by root cause instead of filing duplicate reports.
-
-When addressing a review thread, inspect the producing boundary and affected consumers for brittleness. Complete directly related refactoring in the same change. Before resolving the thread, explain the root cause, structural fix, validation, and any remaining cleanup.
+Before resolving a review thread, explain the root cause, structural fix,
+validation, and any remaining cleanup.
 
 Parse unknown boundary values and model expected failures with the tagged error algebra and `Result`. Preserve partial facts and meaningful failure reasons. Keep identity and lookup values separate from display formatting; preserve source values and explicit unknowns when normalization loses information. Absolute paths, file URLs, and HTTP paths have different semantics.
 
@@ -68,11 +72,11 @@ do not establish fewer tokens or faster analysis.
 
 ## Development
 
-Documentation ownership and authoring conventions live in
-[docs/development/documentation.md](docs/development/documentation.md). A feature
-uses `docs/specs/<domain>/<feature-slug>/spec.md`, one `plan.md` and `tasks.md`;
-individual architectural decisions use `docs/adr/<domain>/<decision-slug>.md`.
-Consult the [documentation directory](docs/README.md) before adding a guide.
+Use the [documentation directory](docs/README.md) and
+[authoring guide](docs/development/documentation.md) to find the owning page.
+Follow the [feature lifecycle](docs/development/documentation.md#feature-lifecycle)
+to decide whether a change needs a feature record. The authoring guide defines
+the paths for feature records and architecture decisions.
 
 Use [.nvmrc](.nvmrc) and `package.json#packageManager` for the pinned toolchain. Cursor Cloud may place older Node.js first on `PATH`; environment setup installs the pinned toolchain under `/usr/local/bin`. Prefix `PATH="/usr/local/bin:$PATH"` before `node` and `npm`.
 
@@ -80,7 +84,7 @@ Use [.nvmrc](.nvmrc) and `package.json#packageManager` for the pinned toolchain.
 - `npm run build:cached`: build the runtime and packaged skill.
 - `npm run test:local -- PATH...`: source tests without building.
 - `npm run test:focused -- PATH...`: exact tests with their required artifacts.
-- `npm run check:fast`: cached typecheck/lint and the pre-push check.
+- `npm run check:fast`: cached typecheck and lint, plus architecture guards.
 - `npm run docs:check`: validate generated documentation.
 
 Use relevant checks for the change. The complete local gate, `npm run check:pr`, is optional for broad changes or CI diagnosis. See [CONTRIBUTING.md](CONTRIBUTING.md) for development, generated-file ownership, and release conventions.
@@ -114,9 +118,6 @@ Use structured facts to test behavior and assert wording when wording is part
 of the contract. Follow [test design and pruning](docs/development/testing.md#test-design-and-pruning)
 and use the [supervised command owner](docs/development/testing.md#verifier-scripts)
 for commands launched by a verifier.
-
-Follow the [feature lifecycle](docs/development/documentation.md#feature-lifecycle)
-to decide when a new capability needs a feature record.
 
 Use Conventional Commit subjects and PR titles as specified under [pull request ownership and readiness](CONTRIBUTING.md#pull-request-ownership-and-readiness). Mark breaking changes with `!` or a `BREAKING CHANGE:` footer. Describe behavior changes, relevant validation, and real-provider verification scope.
 
