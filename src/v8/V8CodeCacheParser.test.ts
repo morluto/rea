@@ -13,6 +13,7 @@ import {
   v8CodeCacheFixture,
   v8FunctionCodeCacheFixture,
   withHeaderWord,
+  withSyntheticNarrowHeader,
 } from "./V8CodeCache.fixture.js";
 
 const defaults = inspectV8CodeCacheInputSchema.parse({
@@ -263,15 +264,9 @@ it("raises min_string_bytes and reports only runs that long", () => {
 const realSlice = (bytes: Buffer, offset: number, length: number): string =>
   bytes.subarray(offset, offset + length).toString("latin1");
 
-it("admits the 28-byte header a 32-bit producer writes", () => {
-  // `kHeaderSize` is `POINTER_SIZE_ALIGN(kUnalignedHeaderSize)` and `kUnalignedHeaderSize` is
-  // 28, so the header is padded after its words: a 64-bit build writes 32 header bytes and a
-  // 32-bit build writes 28. Only the trailing padding differs, and the declared payload length
-  // states which one the container carries.
-  const narrow = Buffer.concat([
-    real.subarray(0, V8_CODE_CACHE_NARROW_HEADER_BYTES),
-    real.subarray(V8_CODE_CACHE_HEADER_BYTES),
-  ]);
+it("inspects a synthetic narrow layout derived from a 64-bit cache", () => {
+  // Removing the alignment word preserves the retained payload bytes.
+  const narrow = withSyntheticNarrowHeader(real);
   const report = parse(narrow);
 
   expect(narrow.readUInt32LE(20)).toBe(
@@ -302,19 +297,16 @@ it("fails closed when the declared payload leaves no admitted header size", () =
 
 it("refuses a wide container that is only four bytes short", () => {
   // Truncating a 32-byte-header cache by four bytes makes `bytes.length - declaredPayload`
-  // equal 28, which is the narrow header size. The wide header's alignment word sits exactly
-  // there and V8 leaves it zero, so the zero word is the only evidence that the container is
-  // short and its payload is one word shorter than it claims.
+  // equal 28. The padding then occupies the same position as a zero first
+  // payload word in a narrow container, so the reader refuses the ambiguity.
   const short = real.subarray(0, real.length - 4);
   expect(short.readUInt32LE(28)).toBe(0);
   expect(() => parse(short)).toThrow(
     expect.objectContaining({ kind: "malformed" }),
   );
-  // A real narrow container has payload where that padding would sit.
-  const narrow = Buffer.concat([
-    real.subarray(0, V8_CODE_CACHE_NARROW_HEADER_BYTES),
-    real.subarray(V8_CODE_CACHE_HEADER_BYTES),
-  ]);
+  expect(() => parse(short)).toThrow(/ambiguous/u);
+  // A synthetic narrow fixture has payload at the same byte offset.
+  const narrow = withSyntheticNarrowHeader(real);
   expect(narrow.readUInt32LE(V8_CODE_CACHE_NARROW_HEADER_BYTES)).not.toBe(0);
   expect(parse(narrow).header.header_bytes).toBe(
     V8_CODE_CACHE_NARROW_HEADER_BYTES,
@@ -379,4 +371,28 @@ it("rejects a reported word table that does not cover the header it declares", (
       label,
     ).toBe(!accepted);
   }
+});
+
+it("rejects retained header and payload coordinates that disagree", () => {
+  const report = parse(real);
+  const disordered = {
+    ...report,
+    header: {
+      ...report.header,
+      fields: report.header.fields.map((field, index) =>
+        index === 0 ? { ...field, offset: 4 } : field,
+      ),
+    },
+  };
+  const shiftedPayload = {
+    ...report,
+    artifact: { ...report.artifact, bytes: report.artifact.bytes + 4 },
+    payload: { ...report.payload, offset: report.payload.offset + 4 },
+  };
+  expect(
+    v8CodeCacheSchema.safeParse(disordered).error?.issues ?? [],
+  ).toContainEqual(expect.objectContaining({ path: ["header", "fields"] }));
+  expect(
+    v8CodeCacheSchema.safeParse(shiftedPayload).error?.issues ?? [],
+  ).toContainEqual(expect.objectContaining({ path: ["payload", "offset"] }));
 });

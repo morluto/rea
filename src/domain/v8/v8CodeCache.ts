@@ -12,23 +12,15 @@ const offset = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
  * process; it matches the pinned CPython pyc reader's 64 MiB ceiling.
  */
 export const MAX_INSPECT_V8_CODE_CACHE_FILE_BYTES = 67108864;
-/**
- * Header size a 64-bit V8 producer writes.
- *
- * `kHeaderSize` is `POINTER_SIZE_ALIGN(kUnalignedHeaderSize)` and `kUnalignedHeaderSize` is 28,
- * so the header is padded after its words rather than between them: a 64-bit build pads to 32
- * while a 32-bit build leaves 28. Both carry the same words in the same order, so the trailing
- * padding is the only difference, and the container states which it carries through its own
- * declared payload length.
- */
+/** The 28-byte word area after alignment to an eight-byte pointer. */
 export const V8_CODE_CACHE_HEADER_BYTES = 32;
-/** Header size a 32-bit V8 producer writes, with no trailing alignment padding. */
+/** The same word area with four-byte pointer alignment. */
 export const V8_CODE_CACHE_NARROW_HEADER_BYTES = 28;
-/** Every container header size this reader admits. */
-export const V8_CODE_CACHE_HEADER_SIZES = [
+/** Every container header size admitted by the pinned layout. */
+export const V8_CODE_CACHE_HEADER_SIZES: readonly number[] = [
   V8_CODE_CACHE_NARROW_HEADER_BYTES,
   V8_CODE_CACHE_HEADER_BYTES,
-] as const;
+];
 /** Shortest admitted header, so no selected file is smaller than this. */
 export const V8_CODE_CACHE_MIN_HEADER_BYTES = Math.min(
   ...V8_CODE_CACHE_HEADER_SIZES,
@@ -197,11 +189,7 @@ export const v8CodeCacheSchema = z
     limitations: z.array(z.string().min(1)).min(1),
   })
   .superRefine((report, context) => {
-    if (
-      !(V8_CODE_CACHE_HEADER_SIZES as readonly number[]).includes(
-        report.header.header_bytes,
-      )
-    )
+    if (!V8_CODE_CACHE_HEADER_SIZES.includes(report.header.header_bytes))
       context.addIssue({
         code: "custom",
         path: ["header", "header_bytes"],
@@ -209,12 +197,15 @@ export const v8CodeCacheSchema = z
           "This reader only accepts the container header sizes it admits.",
       });
     // The word table describes the container's own header, so it cannot disagree with it.
-    if (report.header.fields.length * 4 !== report.header.header_bytes)
+    if (
+      report.header.fields.length * 4 !== report.header.header_bytes ||
+      report.header.fields.some(({ offset }, index) => offset !== index * 4)
+    )
       context.addIssue({
         code: "custom",
         path: ["header", "fields"],
         message:
-          "The reported header words must cover exactly the declared container header.",
+          "The reported words must cover the declared header in byte order.",
       });
     if (report.header.magic_build_stable !== V8_CODE_CACHE_MAGIC_HIGH)
       context.addIssue({
@@ -222,6 +213,12 @@ export const v8CodeCacheSchema = z
         path: ["header", "magic_build_stable"],
         message:
           "The admitted magic must carry the stable V8 code cache high half.",
+      });
+    if (report.payload.offset !== report.header.header_bytes)
+      context.addIssue({
+        code: "custom",
+        path: ["payload", "offset"],
+        message: "The payload must start at the end of the declared header.",
       });
     if (report.payload.offset + report.payload.bytes !== report.artifact.bytes)
       context.addIssue({

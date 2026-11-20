@@ -3,34 +3,44 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { toolContract } from "../../src/contracts/toolContracts.js";
-import { v8CodeCacheFixture } from "../../src/v8/V8CodeCache.fixture.js";
+import {
+  v8CodeCacheFixture,
+  withSyntheticNarrowHeader,
+} from "../../src/v8/V8CodeCache.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 const outputSchema = toolContract("inspect_v8_code_cache").outputSchema;
 
 cliTest(
-  "reports the observed header and payload through the public CLI",
+  "reports wide and synthetic narrow header extents through the public CLI",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-v8-cli-");
-    const path = join(root, "module.jsc");
-    const bytes = v8CodeCacheFixture(
-      "function add(a, b) { return a + b; } add(1, 2);",
-    );
-    await writeFile(path, bytes);
-    const result = await cli.run({
-      arguments: ["inspect-v8-code-cache", path, "--json"],
-    });
-    expect(result.exitCode, result.stderr).toBe(0);
-    const evidence = outputSchema.parse(result.json);
-    const report = evidence.normalized_result;
-    expect(report.header.magic).toBe(bytes.readUInt32LE(0));
-    expect(report.header.magic_build_stable).toBe(0xc0de);
-    expect(report.header.fields).toHaveLength(8);
-    expect(report.payload.offset).toBe(32);
-    expect(report.payload.bytes).toBe(bytes.length - 32);
-    expect(report.payload.sha256).toMatch(/^[0-9a-f]{64}$/u);
-    expect(report.coverage.status).toBe("complete");
+    const wide = v8CodeCacheFixture();
+    const narrow = withSyntheticNarrowHeader(wide);
+    const payloadDigest = createHash("sha256")
+      .update(wide.subarray(32))
+      .digest("hex");
+    for (const [bytes, headerBytes] of [
+      [wide, 32],
+      [narrow, 28],
+    ] as const) {
+      const path = join(root, `header-${String(headerBytes)}.jsc`);
+      await writeFile(path, bytes);
+      const result = await cli.run({
+        arguments: ["inspect-v8-code-cache", path, "--json"],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      const report = outputSchema.parse(result.json).normalized_result;
+      expect(report.header.magic).toBe(bytes.readUInt32LE(0));
+      expect(report.header.magic_build_stable).toBe(0xc0de);
+      expect(report.header.header_bytes).toBe(headerBytes);
+      expect(report.header.fields).toHaveLength(headerBytes / 4);
+      expect(report.payload.offset).toBe(headerBytes);
+      expect(report.payload.bytes).toBe(bytes.length - headerBytes);
+      expect(report.payload.sha256).toBe(payloadDigest);
+      expect(report.coverage.status).toBe("complete");
+    }
   },
 );
 
