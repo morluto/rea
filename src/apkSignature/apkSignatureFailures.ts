@@ -20,6 +20,7 @@ import {
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
+import { parseLimitConstraint } from "../domain/parseFailureAnalysisError.js";
 import type { ApkSchemeError } from "../domain/apkSignature/apkSignatureSchemes.js";
 import type { ApkSigningBlockError } from "../domain/apkSignature/apkSigningBlock.js";
 import type { ApkCentralDirectoryError } from "../domain/apkSignature/apkV1Signature.js";
@@ -89,21 +90,20 @@ export const mapApkBlockError = (
 export const mapApkSchemeError = (
   error: ApkSchemeError,
   scheme: string,
-): AnalysisError =>
-  error.kind === "malformed-signer"
-    ? inputError(
-        `Malformed APK Signature Scheme ${scheme} block: ${error.detail}.`,
-      )
-    : new AnalysisResourceConstraintError(
-        OPERATION,
-        "capacity",
-        `APK Signature Scheme ${scheme} holds more ${error.resource} than the ${String(error.limit)} limit.`,
-        { [`max_${error.resource.replace(/-/g, "_")}`]: error.limit },
-        fixedAllowanceOptions(
-          `The APK Signature Scheme ${scheme} allowance of ${String(error.limit)} ${error.resource} (this release has no runtime override)`,
-          "count",
-        ),
-      );
+): AnalysisError => {
+  if (error.kind === "malformed-signer")
+    return inputError(
+      `Malformed APK Signature Scheme ${scheme} block: ${error.detail}.`,
+    );
+  const { name, maximum } = error.failure.limit;
+  return parseLimitConstraint(OPERATION, "capacity", error, {
+    legacyMaximumKey: `max_${name.replace(/-/g, "_")}`,
+    ...fixedAllowanceOptions(
+      `The APK Signature Scheme ${scheme} allowance of ${String(maximum)} ${name} (this release has no runtime override)`,
+      "count",
+    ),
+  });
+};
 
 /** A central directory that cannot be walked leaves v1 presence unknown: refuse. */
 export const mapCentralDirectoryError = (

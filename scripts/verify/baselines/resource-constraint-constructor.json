@@ -6,7 +6,7 @@
   "src/android/JadxFailure.ts": 2,
   "src/android/JadxSession.ts": 2,
   "src/apkSignature/ApkSignatureAdmission.ts": 1,
-  "src/apkSignature/apkSignatureFailures.ts": 6,
+  "src/apkSignature/apkSignatureFailures.ts": 5,
   "src/apktool/ApktoolConfiguration.ts": 1,
   "src/application/JsonAuthenticationHeadroom.ts": 2,
   "src/application/JsonInputFile.ts": 3,
