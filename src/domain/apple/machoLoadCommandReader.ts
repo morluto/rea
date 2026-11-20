@@ -12,6 +12,7 @@ import { readMachoSegmentHeader } from "./machoSegmentHeader.js";
 import {
   MachoLoadCommandCursor,
   machoCommandTableIssue,
+  machoWordReader,
   readMachoHeaderDeclarations,
   readMachoCommandStringBytes,
   readMachoLinkeditDataCommand,
@@ -28,7 +29,7 @@ import type {
 } from "./dylibResolution.js";
 import { machoArchitectureName } from "./machoCpuIdentity.js";
 import {
-  MACHO_VERSION_MIN_PLATFORMS,
+  classifyMachoVersionMinCommand,
   legacyMachoPlatform,
 } from "./machoPlatform.js";
 import {
@@ -235,7 +236,7 @@ const readSliceMagic = async (
   offset: number,
 ): Promise<number | null> => {
   const bytes = await readAt(offset, 4);
-  return bytes.byteLength < 4 ? null : viewOf(bytes).getUint32(0, false);
+  return readMachoHeaderPrefixFacts(bytes).magic;
 };
 
 /** Decode every slice's dylib-loading load commands without reading code. */
@@ -764,14 +765,18 @@ const decodeCommand = (
     slice.platforms.push(platform);
     return;
   }
-  const legacyPlatform = MACHO_VERSION_MIN_PLATFORMS.get(command);
-  if (legacyPlatform !== undefined) {
-    if (body.byteLength < 16)
+  const versionMin = classifyMachoVersionMinCommand(command, body.byteLength);
+  if (versionMin !== null) {
+    if (versionMin.kind !== "exact")
       throw machoIssue(
         "malformed",
-        `load command ${index} is too short for a version-min command`,
+        versionMin.kind === "truncated"
+          ? `load command ${index} is too short for a version-min command`
+          : `load command ${index} is too long for a version-min command`,
       );
-    slice.platforms.push(legacyMachoPlatform(legacyPlatform, slice.cpu_type));
+    slice.platforms.push(
+      legacyMachoPlatform(versionMin.platform, slice.cpu_type),
+    );
     return;
   }
   if (command === LC.LAZY_LOAD_DYLIB_INFO)
@@ -793,14 +798,17 @@ const decodeLazyLoadDylibInfoCommand = (
   body: Uint8Array,
   index: number,
 ): LazyLoadDylibInfoCommand => {
-  if (body.byteLength < 16)
+  const data = readMachoLinkeditDataCommand(
+    LC.LAZY_LOAD_DYLIB_INFO,
+    body,
+    true,
+  );
+  if (data === null)
     throw machoIssue(
       "malformed",
       `load command ${index} is too short for LC_LAZY_LOAD_DYLIB_INFO`,
     );
-  const view = viewOf(body);
-  const dataOffset = view.getUint32(8, true);
-  const dataSize = view.getUint32(12, true);
+  const { dataOffset, dataSize } = data;
   if (dataSize < LAZY_INFO_HEADER_BYTES)
     throw machoIssue(
       "malformed",
@@ -884,13 +892,13 @@ const decodeLazyLoadDylibInfoPayload = (
   maxVmOffset: bigint,
   work: LazyPayloadWork,
 ): MachoDependency => {
-  const view = viewOf(payload);
-  const pathOffset = view.getUint32(0, true);
-  const flagImageOffset = view.getUint32(4, true);
-  const flags = view.getUint16(8, true);
-  const chainStartImageOffset = view.getUint32(12, true);
-  const symbolCount = view.getUint32(16, true);
-  const symbolArrayOffset = view.getUint32(20, true);
+  const reader = machoWordReader(payload, true);
+  const pathOffset = reader.u32(0);
+  const flagImageOffset = reader.u32(4);
+  const flags = reader.u16(8);
+  const chainStartImageOffset = reader.u32(12);
+  const symbolCount = reader.u32(16);
+  const symbolArrayOffset = reader.u32(20);
   if (BigInt(flagImageOffset) > maxVmOffset)
     throw machoIssue(
       "malformed",
@@ -931,7 +939,7 @@ const decodeLazyLoadDylibInfoPayload = (
     );
   work.symbolReferences = symbolReferences;
   for (let symbol = 0; symbol < symbolCount; symbol += 1) {
-    const offset = view.getUint32(symbolArrayOffset + symbol * 4, true);
+    const offset = reader.u32(symbolArrayOffset + symbol * 4);
     payloadString(
       payload,
       offset,

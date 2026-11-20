@@ -164,7 +164,7 @@ const registerNativeCommands = (
         path: {
           name: "relativePath",
           description:
-            "Plist path relative to the app root, or an absolute path (default: the bundle's Info.plist)",
+            "Plist path relative to the app root, or an absolute path within the opened bundle (default: its Info.plist)",
         },
       },
     },

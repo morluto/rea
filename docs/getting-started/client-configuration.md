@@ -94,7 +94,8 @@ raising a REA startup or operation deadline, separately ensure the client allows
 enough time for the full request. Use `inspect_analysis_settings` for the running
 server's defaults; `rea doctor` checks launch configuration and cannot observe
 another process's runtime overrides. See the
-[settings design](../design/limits-and-recovery.md) for ownership and lifetime.
+[analysis settings and recovery](../reference/limits-and-recovery.md#precedence-and-lifetime)
+for precedence and lifetime.
 
 ## Client tool names and discovery
 
@@ -400,7 +401,7 @@ This headroom is a practical default, not a guarantee for every analysis
 duration. Setup preserves positive timeout values already in the `rea` entry.
 
 Setup also forwards explicitly selected input/output schema profiles,
-`REA_MCP_MAX_RESPONSE_BYTES`, `REA_MCP_MAX_INPUT_ELEMENTS`, the Windows ChangeTime settle settings `REA_WINDOWS_CHANGE_TIME_DRIFT_MS`, `REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS`, and `REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS`, provider paths and supported Ghidra, JADX and Kuna
+`REA_MCP_MAX_RESPONSE_BYTES`, `REA_MCP_MAX_INPUT_ELEMENTS`, the Windows ChangeTime runtime settings `windows.change_time_drift_ms` (`REA_WINDOWS_CHANGE_TIME_DRIFT_MS`), `windows.change_time_settle_poll_ms` (`REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS`), and `windows.change_time_settle_max_polls` (`REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS`), provider paths and supported Ghidra, JADX and Kuna
 settings. It also forwards explicit executable and resource selections for ADB,
 apktool, packet capture, GDB/Rizin/objdump, Cutter, WABT, Wakaru, firmware and
 signal tools, browser inspection, and pwntools/pwndbg. This includes their

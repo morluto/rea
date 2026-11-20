@@ -156,9 +156,20 @@ FileBytes digests, every source mapping and its memory digest, relocation record
 module partitions, relocation fixups and linear coordinates rather than relying
 on the imported executable SHA alone.
 
-Expected DOS relocation records retain each fixup's pre-application bytes and
-applied value. Their memory-byte windows come from the final relocated image,
-including changes made by later overlapping fixups.
+REA derives each Ghidra MZ relocation value from its original file word.
+Exact duplicate writes and equivalent segment:offset locations retain separate
+records and produce the same final word. When adjacent relocation words propose
+different values for their shared byte, verification returns `unsupported` with
+the measured relocation records, byte windows and mapping digests. Ghidra
+applies these writes without an established order.
+
+In three paired Ghidra 12.2 imports on macOS ARM64 with Temurin 25.0.5.1,
+the authored table order gave final bytes `00 14 10` and the reversed table
+gave `00 04 10`. A separate original-order import also gave `00 04 10`.
+The paired results agreed on both original-word relocation values and a direct
+read confirmed each final window. The run used the release archive with
+locally built macOS ARM64 native helpers. This evidence covers the authored
+fixtures and this runtime. [Verification issue](https://github.com/morluto/rea/issues/12590)
 
 The result is `verified`, `mismatch`, or `unsupported`. Every check retains its
 expected and observed values. A memory-digest mismatch identifies the source
@@ -206,15 +217,8 @@ there, and explicit COM is not admitted. macOS x64 DOS verification remains unve
 npm run verify:ghidra:dos
 ```
 
-The lane generates a small public fixture from source at runtime. It verifies
-16-bit instruction bytes, a near call, a segment-relocated far call, actual
-decompilation, disjoint function ranges, stable CLI/MCP observations, unchanged
-input bytes, and session/process cleanup. It does not require external
-executable fixtures, an emulator, or an existing analysis database.
-
-Provider p-code representations can contain process-specific address-space selector
-tokens. The lane preserves those reported values and compares stable dossier
-observations rather than asserting cross-process identity of raw p-code.
+See the [DOS verification lane](../testing-lanes.md#dos-ghidra-analysis) for
+fixtures, platform coverage, and provider checks.
 
 ## Function annotations
 

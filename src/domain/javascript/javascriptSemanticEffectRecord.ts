@@ -8,8 +8,7 @@ import type {
  * Storage of the opaque effects (`eval`, `Function`) recorded for one source.
  * Only this module and the effect log (javascriptSemanticEffectLog.ts) read
  * the recorded sites; the timing producer, which the effect log builds on,
- * asks the accessors below
- * (docs/adr/javascript/pushed-effect-invalidation.md).
+ * asks the accessors below.
  */
 export const createSemanticOpaqueEffects =
   (): JavaScriptOpaqueScopeEffects => ({

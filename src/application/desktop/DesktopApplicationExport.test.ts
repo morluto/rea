@@ -35,6 +35,7 @@ import type {
   DesktopApplicationCapture,
 } from "../../domain/desktop/desktopCapture.js";
 import { renderBuildBundle } from "../../domain/desktop/appBuild.js";
+import { parseOneLineSources } from "../../domain/desktop/aptRepositories.js";
 import { readDownloadInstall } from "./DesktopExportInstall.js";
 import { exportDesktopApplication } from "./DesktopApplicationExport.js";
 import {
@@ -1583,6 +1584,43 @@ describe("exportDesktopApplication of a program in another package", () => {
     );
     expect(await exists(directory)).toBe(false);
   });
+});
+
+it("exports APT's architecture-independent package after all explicit architectures were removed", async () => {
+  const [entry] = parseOneLineSources(
+    "deb [arch=arm64 arch-=arm64] https://downloads.typora.io/linux ./",
+    "vendor.list",
+  );
+  if (entry === undefined) throw new Error("APT source did not parse");
+  expect(entry.architectures).toEqual(["all"]);
+  const recorded = vendorCapture(VERIFIED_KEY);
+  const installed = recorded.application.package;
+  const repositories = installed.apt_repositories?.map((repository) => ({
+    ...repository,
+    architectures: [...entry.architectures],
+  }));
+  const exportFor = (architecture: string) =>
+    exportVendorCapture({
+      ...recorded,
+      application: {
+        ...recorded.application,
+        package: { ...installed, architecture, apt_repositories: repositories },
+      },
+    });
+
+  const admitted = await exportFor("all");
+  if (admitted.result instanceof Error) throw admitted.result;
+  expect(
+    await readFile(
+      join(admitted.directory, "envs/typora/typora_app.py"),
+      "utf8",
+    ),
+  ).toContain('AptSource(apt="https://downloads.typora.io/linux"');
+
+  const refused = await exportFor("arm64");
+  expect(refused.result).toMatchObject({ _tag: "AnalysisInputError" });
+  expect(JSON.stringify(refused.result)).toContain("it serves only all");
+  expect(await exists(refused.directory)).toBe(false);
 });
 
 describe("exportDesktopApplication from a vendor repository", () => {

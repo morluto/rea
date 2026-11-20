@@ -28,11 +28,16 @@ export const compareDosFixture = (
     {
       sha256,
       fileBytes: bytes.length,
-      modifiedSha256: createHash("sha256")
-        .update(image.value.modified)
-        .update(bytes.subarray(image.value.header.imageBytes))
-        .digest("hex"),
-      image: image.value,
+      image:
+        image.value.kind === "exact"
+          ? {
+              ...image.value,
+              modifiedSha256: createHash("sha256")
+                .update(image.value.modified)
+                .update(bytes.subarray(image.value.header.imageBytes))
+                .digest("hex"),
+            }
+          : image.value,
     },
     sha256,
     observations,
@@ -155,7 +160,13 @@ export const fixtureDosLoadImage = (
 };
 
 /** Authored overlapping-word control adapted from #4156; no engine is run here. */
-export const fixtureDosOverlapLoadImage = () => {
+export const fixtureDosOverlapLoadImage = ({
+  reverseTable = false,
+  observedWindow = "001410",
+}: {
+  reverseTable?: boolean;
+  observedWindow?: "001410" | "000410";
+} = {}) => {
   const fixture = fixtureDosLoadImage();
   const bytes = Buffer.concat([
     fixture.bytes.subarray(0, 32),
@@ -165,11 +176,11 @@ export const fixtureDosOverlapLoadImage = () => {
   bytes.writeUInt16LE(176, 2);
   bytes.writeUInt16LE(2, 6);
   bytes.writeUInt16LE(3, 8);
-  bytes.writeUInt32LE(9, 28);
-  bytes.writeUInt32LE(8, 32);
+  bytes.writeUInt32LE(reverseTable ? 8 : 9, 28);
+  bytes.writeUInt32LE(reverseTable ? 9 : 8, 32);
   const modified = Buffer.from(bytes);
-  // Independent final-byte oracle: source 00 04 00 becomes 00 14 10.
-  modified.write("001410", 56, "hex");
+  // The reported final bytes are independent of the table order.
+  modified.write(observedWindow, 56, "hex");
   const observation = fixture.observation;
   const source = observation.source_files[0];
   const headerMapping = observation.mappings[0];
@@ -204,7 +215,7 @@ export const fixtureDosOverlapLoadImage = () => {
       symbol: null,
       values: [0, 9, 0x1004],
       original_bytes_hex: "0400",
-      memory_bytes_hex: "1410",
+      memory_bytes_hex: observedWindow.slice(2),
     },
     {
       address: "0x10008",
@@ -215,7 +226,7 @@ export const fixtureDosOverlapLoadImage = () => {
       symbol: null,
       values: [0, 8, 0x1400],
       original_bytes_hex: "0004",
-      memory_bytes_hex: "0014",
+      memory_bytes_hex: observedWindow.slice(0, 4),
     },
   ];
   return { bytes, sha256: hash(bytes), observation };

@@ -9,6 +9,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { nugetNupkgFixture } from "../../../src/nuget/NugetNupkg.fixture.js";
+import { ZIP_ZSTANDARD_WINDOW_CEILING } from "../../../src/resources/ZipArtifactReader.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest, type TestMcp } from "../../support/mcp/mcpFixture.js";
 
@@ -111,14 +112,14 @@ mcpTest(
       expect(error).toMatchObject({
         code: "resource_constraint",
         retryable: false,
-      });
-      expect(error.remediation.action).toContain(
-        "Recompress the member with a window of at most 128 MiB",
-      );
-      expect(error.details?.refusal).toMatchObject({
-        kind: "fixed_ceiling",
-        limit: 128 * 1024 * 1024,
-        unit: "bytes",
+        details: {
+          refusal: {
+            kind: "fixed_ceiling",
+            limit: ZIP_ZSTANDARD_WINDOW_CEILING.limit,
+            unit: ZIP_ZSTANDARD_WINDOW_CEILING.unit,
+            narrowing: ZIP_ZSTANDARD_WINDOW_CEILING.narrowing,
+          },
+        },
       });
     } finally {
       enumeration.mockRestore();

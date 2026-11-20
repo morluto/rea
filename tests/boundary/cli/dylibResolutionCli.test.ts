@@ -13,6 +13,7 @@ import {
   fatImage,
   machoImage,
   rpathCommand,
+  versionMinCommand,
 } from "../../../src/artifacts/apple/MachoImage.fixture.js";
 import { dylibResolutionResultSchema } from "../../../src/domain/apple/dylibResolution.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
@@ -710,6 +711,46 @@ cliTest(
       }
     }
     expect(trace.coverage.status).toBe("partial");
+  },
+);
+
+cliTest(
+  "rejects oversized legacy minimum-version commands before admitting platform",
+  async ({ cli }) => {
+    const app = await fixtureApp();
+    const exact = versionMinCommand(LC.VERSION_MIN_IPHONEOS);
+    const oversized = Buffer.concat([exact, Buffer.alloc(8)]);
+    oversized.writeUInt32LE(oversized.length, 4);
+    const validPath = "Contents/Helpers/minimum-version";
+    const invalidPath = "Contents/Helpers/oversized-minimum-version";
+    await writeFiles(app, {
+      [validPath]: machoImage({ commands: [exact] }),
+      [invalidPath]: machoImage({ commands: [oversized] }),
+    });
+
+    const result = await cli.run({
+      arguments: ["trace-dylib-resolution", app, "--json"],
+      environment: ENVIRONMENT,
+    });
+    expect(result.exitCode, JSON.stringify(result.json)).toBe(0);
+    const trace = dylibResolutionResultSchema.parse(
+      (result.json as { normalized_result: unknown }).normalized_result,
+    );
+    expect(trace.images.find(({ path }) => path === validPath)).toMatchObject({
+      parse_status: "parsed",
+      slices: [{ platforms: [2] }],
+    });
+    expect(trace.images.find(({ path }) => path === invalidPath)).toMatchObject(
+      {
+        parse_status: "malformed",
+        reason: expect.stringContaining("version-min"),
+        slices: [],
+      },
+    );
+    expect(trace.coverage).toMatchObject({
+      status: "partial",
+      unparsed_images: expect.arrayContaining([invalidPath]),
+    });
   },
 );
 

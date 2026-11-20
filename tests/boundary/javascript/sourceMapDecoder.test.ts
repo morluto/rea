@@ -8,6 +8,7 @@ import { projectAnalysisError } from "../../../src/domain/analysisErrorProjectio
 import { SourceMapDecoder } from "../../../src/javascript/sourceMaps/SourceMapDecoder.js";
 import type { SourceMapDecoderDependencies } from "../../../src/javascript/sourceMaps/SourceMapCommand.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
+import { assertProcessOwnershipInspectionActive } from "../../../src/process/ProcessInspectionCancellation.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { waitForProviderProcessReady } from "../../fixtures/providerProcess.js";
 import {
@@ -69,7 +70,7 @@ it.each([
     const decoder = realDecoder({
       prepareOwnership: async (signal) => {
         controller.abort(reason);
-        signal?.throwIfAborted();
+        assertProcessOwnershipInspectionActive(signal);
       },
       createRuntime,
       launcher,

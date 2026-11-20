@@ -155,6 +155,7 @@ export async function buildMipsRelocatableFixture(
   directory,
   byteOrder,
   kernelModule = false,
+  run = execute,
 ) {
   if (byteOrder !== "little" && byteOrder !== "big")
     throw new Error("MIPS fixture byte order must be little or big");
@@ -180,7 +181,7 @@ export async function buildMipsRelocatableFixture(
     path,
   ];
   return {
-    ...(await compileMipsFixture(path, byteOrder, 1, args)),
+    ...(await compileMipsFixture(path, byteOrder, 1, args, {}, run)),
     float_abi: kernelModule ? "soft" : "hard",
     kernel_module_options: kernelModule,
     source_sha256: createHash("sha256")
@@ -200,6 +201,7 @@ export async function buildMipsSharedFixture(
   directory,
   byteOrder,
   softFloat = false,
+  run = execute,
 ) {
   if (byteOrder !== "little" && byteOrder !== "big")
     throw new Error("MIPS fixture byte order must be little or big");
@@ -224,9 +226,14 @@ export async function buildMipsSharedFixture(
     path,
   ];
   return {
-    ...(await compileMipsFixture(path, byteOrder, 3, args, {
-      expectedFlags: 0x70001007,
-    })),
+    ...(await compileMipsFixture(
+      path,
+      byteOrder,
+      3,
+      args,
+      { expectedFlags: 0x70001007 },
+      run,
+    )),
     float_abi: softFloat ? "soft" : "hard",
     source_sha256: createHash("sha256")
       .update(await readFile(source))
@@ -241,10 +248,11 @@ async function compileMipsFixture(
   objectType,
   args,
   options = {},
+  run = execute,
 ) {
   const compiler = fixtureCommand(FIXTURE_TOOLS.mipsClang);
-  const version = await execute(compiler, ["--version"], { timeout: 10000 });
-  await execute(compiler, args, { timeout: 60000 });
+  const version = await run(compiler, ["--version"], { timeout: 10000 });
+  await run(compiler, args, { timeout: 60000 });
   const bytes = await readFile(path);
   const read16 =
     byteOrder === "little"

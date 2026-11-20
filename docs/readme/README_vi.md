@@ -362,7 +362,6 @@ Bắt đầu với [hướng dẫn thực hành](https://rea.tools/vi/guides/) t
 - [CLI và Evidence](../getting-started/cli.md): lệnh, lựa chọn trình phân tích, ảnh chụp trạng thái, nhập/xuất và trạng thái thoát.
 - [Hợp đồng MCP](../reference/mcp-contracts.md) và [prompt cho tác nhân](../getting-started/mcp-prompts.md): kết quả công cụ, phiên làm việc và điều tra có hướng dẫn.
 - [Danh mục công cụ](../reference/mcp-contracts.md#generated-catalog): danh sách công cụ, trình phân tích và lệnh CLI được tạo khi dựng dự án.
-- [Lộ trình](../development/roadmap.md): công việc dự kiến và theo dõi các khả năng.
 
 Báo cáo lỗ hổng theo [SECURITY.md](../../SECURITY.md).
 
@@ -394,7 +393,7 @@ applicable licenses.
 
 Chúng tôi hoan nghênh bạn giúp phát triển REA! [Mở issue](https://github.com/morluto/rea/issues) để báo lỗi hoặc đề xuất tính năng, hoặc [gửi pull request](https://github.com/morluto/rea/pulls) để cải thiện mã hay tài liệu.
 
-Xem [CONTRIBUTING.md](../../CONTRIBUTING.md) về thiết lập môi trường phát triển và các bước kiểm tra, [hướng dẫn kiểm thử](../development/testing.md) về các luồng xác minh và [sơ đồ kiến trúc](../architecture/architecture.mermaid) về cấu trúc dự án.
+Xem [CONTRIBUTING.md](../../CONTRIBUTING.md) về thiết lập môi trường phát triển và các bước kiểm tra, [hướng dẫn kiểm thử](../development/testing.md) về các luồng xác minh.
 
 ## Giấy phép
 

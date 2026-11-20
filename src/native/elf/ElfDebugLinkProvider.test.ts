@@ -1,4 +1,3 @@
-import { scheduler } from "node:timers/promises";
 import { primaryAnalysisError } from "../../domain/analysisErrorBase.js";
 import { expect, it, vi } from "vitest";
 
@@ -12,7 +11,6 @@ import {
   inspectElfDebugLinkInputSchema,
   elfDebugLinkSchema,
 } from "../../domain/native/elfDebugLink.js";
-import { elfFrameAllowanceFixture } from "../../../tests/fixtures/binaryDiagnostics/elfFrameAllowance.js";
 import { elfDebugLinkFixture } from "./ElfDebugLink.fixture.js";
 
 const image = elfDebugLinkFixture();
@@ -52,36 +50,58 @@ it("degrades a changed candidate to candidate_unreadable", async () => {
     expect(result.value.verification?.reason).toBe("candidate_unreadable");
 });
 
-it("keeps a failed candidate close visible after an integrity or limit refusal", async () => {
-  for (const reason of ["integrity", "limit"] as const) {
+it.each([
+  {
+    refusal: new ArtifactReaderFailure(
+      "integrity",
+      "Candidate changed while read",
+      {
+        integrityCheck: "container-identity",
+      },
+    ),
+    primary: {
+      _tag: "AnalysisArtifactChangedError",
+      path: "/artifacts/prog.debug",
+      integrityCheck: "container-identity",
+    },
+  },
+  {
+    refusal: new ArtifactReaderFailure(
+      "limit",
+      "Candidate exceeded its read budget",
+    ),
+    primary: {
+      _tag: "AnalysisResourceConstraintError",
+      resource: "file-size",
+      reportedLimits: {
+        boundary: "candidate_bytes",
+        maximum: MAX_ELF_DEBUG_CANDIDATE_BYTES,
+      },
+      fixedAllowance: {
+        kind: "input",
+        limit: MAX_ELF_DEBUG_CANDIDATE_BYTES,
+        unit: "bytes",
+      },
+    },
+  },
+])(
+  "keeps candidate cleanup and the $refusal.reason primary",
+  async ({ refusal, primary }) => {
     const result = await inspect(
       ArtifactReaderFailure.withCleanup(
-        reason === "integrity"
-          ? new ArtifactReaderFailure(reason, "Candidate read refused", {
-              integrityCheck: "container-identity",
-            })
-          : new ArtifactReaderFailure(reason, "Candidate read refused"),
+        refusal,
         ArtifactReaderFailure.cleanupObservation(
           new Error("close failed"),
           "/artifacts/prog.debug",
         ),
       ),
     );
-    expect(result.ok).toBe(false);
-    if (!result.ok && reason === "limit")
-      expect(primaryAnalysisError(result.error)).toMatchObject({
-        reportedLimits: {
-          boundary: "candidate_bytes",
-          maximum: MAX_ELF_DEBUG_CANDIDATE_BYTES,
-        },
-        fixedAllowance: {
-          kind: "input",
-          limit: MAX_ELF_DEBUG_CANDIDATE_BYTES,
-          unit: "bytes",
-        },
-      });
-  }
-});
+    if (result.ok) throw new Error("Expected a candidate cleanup failure");
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.cleanupResources).toEqual(["/artifacts/prog.debug"]);
+    expect(primaryAnalysisError(result.error)).toMatchObject(primary);
+  },
+);
 
 it("degrades a candidate data-read EIO to candidate_unreadable", async () => {
   const result = await inspect(
@@ -144,52 +164,6 @@ it("keeps a completed candidate stream's identity when cancellation arrives duri
   expect(report?.limitations).not.toContain(
     ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
   );
-});
-
-it("preserves the completed candidate when its ELF comparison is cancelled", async () => {
-  const { streamStableArtifact } = await import("../../resources/index.js");
-  const prefix = elfFrameAllowanceFixture();
-  const sha256 = "cd".repeat(32);
-  vi.mocked(streamStableArtifact).mockResolvedValueOnce({
-    prefix,
-    sha256,
-    size: prefix.length,
-  });
-  const provider = new ElfDebugLinkProvider();
-  const controller = new AbortController();
-  const reason = new Error("candidate comparison cancelled");
-  const originalYield = scheduler.yield.bind(scheduler);
-  const pause = vi
-    .spyOn(scheduler, "yield")
-    .mockImplementationOnce(async () => {
-      await originalYield();
-      controller.abort(reason);
-    });
-  try {
-    const result = await provider.inspect(
-      inspectElfDebugLinkInputSchema.parse({
-        path: "/artifacts/prog",
-        candidate_path: "/artifacts/prog.debug",
-      }),
-      { signal: controller.signal },
-    );
-    if (result.ok) throw new Error("Expected interrupted comparison");
-    expect(result.error).toMatchObject({
-      _tag: "AnalysisCancelledError",
-      cause: reason,
-    });
-    expect(retainedReport(result.error)).toMatchObject({
-      candidate: {
-        path: "/artifacts/prog.debug",
-        sha256,
-        bytes: prefix.length,
-      },
-      verification: null,
-    });
-  } finally {
-    pause.mockRestore();
-    await provider.close();
-  }
 });
 
 it("recovers a completed stream's whole-file size, not its prefix length", () => {

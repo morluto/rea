@@ -43,7 +43,7 @@ guessing a compatible profile:
 | ELF32 soft-float ABI without `Tag_RISCV_arch`, or with any other extension | refused; the reason names the extensions outside the decoded set                                                                |
 | ELF32 single-float ABI (ilp32f)                                            | refused until its [written policy](#ilp32f) is implemented and verified                                                         |
 | ELF64 soft- or single-float ABI (lp64, lp64f), or the quad-float ABI       | refused; no verified calling-convention policy                                                                                  |
-| Big-endian                                                                 | refused; Ghidra 12.1.4 ships no big-endian RISC-V language                                                                      |
+| Big-endian                                                                 | refused; no big-endian RISC-V language (observed on 12.1.4; unverified on 12.2)                                                 |
 | `ET_DYN` without `PT_INTERP` (shared library)                              | refused; shared libraries without PT_INTERP need separate load verification                                                     |
 | `ET_REL`, other `e_type`                                                   | refused with the declared value                                                                                                 |
 | `EF_RISCV_RVE`                                                             | refused; the embedded 16-register profile (x0–x15) needs its own processor specification                                        |
@@ -60,29 +60,31 @@ and dynamic linker relocations are not executed or verified.
 
 ## Why the language is pinned
 
-Ghidra's header-based selection is not reliable for RV32. The 12.1.4
-`riscv.opinion` pins `variant="default"` for the 64-bit constraint and leaves the
-32-bit constraint unpinned with the comment that the loader "must choose between
-'default' and 'AndeStar' variants". Measured against the installed release tree:
+Ghidra's header-based selection is not reliable for RV32. Observed on 12.1.4;
+unverified on 12.2: `riscv.opinion` pins `variant="default"` for the 64-bit
+constraint and leaves the 32-bit constraint unpinned with the comment that the
+loader "must choose between 'default' and 'AndeStar' variants". Measured against
+that 12.1.4 release tree:
 
 | Fixture                                         | Ghidra auto-selection         |
 | ----------------------------------------------- | ----------------------------- |
 | RV64 ELF, `e_flags 0x5` (RVC, double-float ABI) | `RISCV:LE:64:default:gcc`     |
 | RV32 ELF, `e_flags 0x5`, no Andes declaration   | `RISCV:LE:32:AndeStar_v5:gcc` |
 
-So an ordinary RV32 image lands on an Andes processor model unless the language
-is stated. REA therefore pins `RISCV:LE:32:default` or `RISCV:LE:64:default`
-with the `gcc` compiler specification per class, records
+So, on that 12.1.4 tree, an ordinary RV32 image lands on an Andes processor
+model unless the language is stated. REA therefore pins `RISCV:LE:32:default` or
+`RISCV:LE:64:default` with the `gcc` compiler specification per class, records
 `language_selection: provider-pinned`, and refuses a caller-selected
 `REA_GHIDRA_LANGUAGE_ID` or `REA_GHIDRA_COMPILER_SPEC_ID` that disagrees with the
 pin without changing the requested override. An override that matches the pin is
 accepted and recorded as `configured`.
 
-The soft-float lane pins the same `RISCV:LE:32:default` language. Every RV32
-language in Ghidra 12.1.4, including the deprecated soft-float `RV32I`, `RV32IC`
-and `RV32IMC` variants in `old/riscv_deprecated.ldefs`, uses the same
-`riscv.ilp32d.sla` decoder; only the compiler specification differs. REA keeps
-the generic language and corrects the calling convention instead.
+The soft-float lane pins the same `RISCV:LE:32:default` language. Observed on
+12.1.4; unverified on 12.2: every RV32 language, including the deprecated
+soft-float `RV32I`, `RV32IC` and `RV32IMC` variants in
+`old/riscv_deprecated.ldefs`, uses the same `riscv.ilp32d.sla` decoder; only the
+compiler specification differs. REA keeps the generic language and corrects the
+calling convention instead.
 
 ## Calling conventions
 
@@ -90,9 +92,10 @@ Ghidra's generic RV32 compiler specification, `riscv32-fp.cspec`, models the
 ilp32d ABI. Its default prototype passes `float` and `double` values in
 `fa0`–`fa7` and returns them in `fa0`, and it passes a structure of one or two
 floating-point members in floating-point registers. An ilp32 image passes all
-of these in integer registers. Measured on Ghidra 12.1.4 with an ilp32 build of
-the fixture in `tests/conformance/c/riscv-float-abi.c`, the stock model
-decompiles `rea_riscv_abi_pick(1.5f, 2.5f, sel)` as
+of these in integer registers. Recorded on Ghidra 12.1.4 (no longer accepted);
+not yet re-run on 12.2. With an ilp32 build of the fixture in
+`tests/conformance/c/riscv-float-abi.c`, the stock model decompiled
+`rea_riscv_abi_pick(1.5f, 2.5f, sel)` as
 `rea_riscv_abi_pick(in_fa0,in_fa1,0x3fc00000)`.
 
 ### Decision record: D3, RISC-V float ABIs
@@ -120,8 +123,9 @@ Decided in [#7477](https://github.com/morluto/rea/issues/7477).
     bridge reports the policy and its function and definition counts, and REA
     requires that report exactly when the profile commits the policy.
   - Admission requires a `Tag_RISCV_arch` declaration with an RV32I base and
-    only extensions that Ghidra 12.1.4's generic RV32 language implements with
-    p-code ([ISA declarations](#isa-declarations)).
+    only extensions that the generic RV32 language implements with p-code
+    (observed on 12.1.4; unverified on 12.2;
+    [ISA declarations](#isa-declarations)).
   - Soft-float profiles add `float_abi` and `arch` to `riscv_elf`. Double-float
     profiles keep their exact parameters, so their digests, sessions and
     snapshots are unchanged.
@@ -217,11 +221,11 @@ yet. ABI_FLEN is 32 bits.
 
 The planned prototype limits the default floating-point entries to 4 bytes and
 keeps the shared rule that passes values of 9 bytes or more by reference.
-Observed on Ghidra 12.1.4, a `double` then takes an integer pair and a structure
-of two floats takes `fa0` and `fa1`. Ghidra's model has no rule for a structure
-of one float and one integer: it joins `struct { float; int; }` into `a1:a0`
-instead of `fa0` and `a0`. The ilp32f policy needs that rule and its own
-fixtures before it is admitted.
+Observed on 12.1.4; unverified on 12.2: a `double` then takes an integer pair
+and a structure of two floats takes `fa0` and `fa1`, and Ghidra's model has no
+rule for a structure of one float and one integer: it joins
+`struct { float; int; }` into `a1:a0` instead of `fa0` and `a0`. The ilp32f
+policy needs that rule and its own fixtures before it is admitted.
 
 ### ilp32d and lp64d
 
@@ -238,12 +242,13 @@ when the section is malformed, declares other vendors or scopes, or uses a
 non-canonical string. A missing section or tag is recorded as absent.
 
 Calling-convention lanes admit an image only when it declares an RV32I base
-and only extensions that Ghidra 12.1.4's generic RV32 language implements with
-p-code: `m`, `a`, `f`, `d`, `c`, `zicsr`, `zifencei`, and the subset names
-toolchains record, `zmmul`, `zaamo`, `zalrsc`, `zca`, `zcf` and `zcd`. Any
-other extension is refused. In particular:
+and only extensions the generic RV32 language was observed on 12.1.4 to
+implement with p-code; unverified on 12.2: `m`, `a`, `f`, `d`, `c`, `zicsr`,
+`zifencei`, and the subset names toolchains record, `zmmul`, `zaamo`, `zalrsc`,
+`zca`, `zcf` and `zcd`. Any other extension is refused. In particular, observed
+on 12.1.4; unverified on 12.2:
 
-- Ghidra 12.1.4 decodes no Zcb, Zcmp or Zcmt instruction.
+- Ghidra decodes no Zcb, Zcmp or Zcmt instruction.
 - Its bit-manipulation, cryptography and packed-SIMD files follow draft
   encodings and mark nearly every instruction unimplemented.
 - Vendor extensions, such as Espressif's `xesploop`, `xespv` and `xespdsp`,
@@ -271,17 +276,17 @@ definitions use it.
 
 ## Verification and limits
 
-Ghidra 12.2 PUBLIC with a 64-bit JDK 25+ is required, and on macOS the official
-release zip ships no host decompiler binary, so `Decompiler/os/<platform>/decompile` and
-`sleigh` must come from your own build; see
-[installation](../getting-started/installation.md#ghidra) and
+Use the [supported Ghidra and JDK range](../getting-started/installation.md#ghidra).
+On macOS the official release zip ships no host decompiler binary, so
+`Decompiler/os/<platform>/decompile` and `sleigh` must come from your own build;
+see that page and
 [#7018](https://github.com/morluto/rea/issues/7018) /
 [#7019](https://github.com/morluto/rea/issues/7019).
 
-Run `npm run verify:ghidra:riscv` with an existing Ghidra 12.2 installation,
-JDK 25+, and a RISC-V-capable Clang, LLD, LLVM readelf and LLVM objdump. The
-verifier acquires no tools and never executes target code. Select installed
-tools explicitly when they are not on `PATH`:
+Run `npm run verify:ghidra:riscv` with that installation and a RISC-V-capable
+Clang, LLD, LLVM readelf and LLVM objdump. The verifier acquires no tools and
+never executes target code. Select installed tools explicitly when they are not
+on `PATH`:
 
 ```sh
 GHIDRA_INSTALL_DIR=/path/to/ghidra_12.2_PUBLIC \

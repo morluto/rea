@@ -109,7 +109,7 @@ function* readNamed<
     if (index % 256 === 0) yield;
     const row = makeRow(
       tables.readString(
-        tables.bytes.readInt32LE(
+        tables.reader.i32(
           section.offset + index * tables.members.recordBytes[name],
         ),
         `${name} ${index} name`,
@@ -125,7 +125,7 @@ function* readNamed<
           ? tables.linkFacts.fieldTypes
           : tables.linkFacts.parameterTypes;
       column[index] = readIndex(
-        tables.bytes,
+        tables.reader,
         section.offset +
           index * tables.members.recordBytes[name] +
           (name === "fields" ? 4 : 8),
@@ -141,7 +141,7 @@ function* readNamed<
 function* readStringLiterals(
   tables: MetadataTables,
 ): Generator<void, Members["string_literals"]> {
-  const { bytes, section, indexing, members } = tables;
+  const { reader, section, indexing, members } = tables;
   const literals = section("stringLiterals"),
     data = section("stringLiteralData");
   const decoder = strictUtf8Decoder("preserve");
@@ -149,7 +149,7 @@ function* readStringLiterals(
   const decoded = new Map<string, Members["string_literals"][number]>();
   const rows: Members["string_literals"] = [];
   if (indexing === "counted" && members.literalRecords === 1) {
-    const sentinel = bytes.readInt32LE(literals.offset);
+    const sentinel = reader.i32(literals.offset);
     if (sentinel < 0 || sentinel > data.size)
       throw new Il2cppMetadataFormatFailure(
         "index-out-of-range",
@@ -159,11 +159,9 @@ function* readStringLiterals(
   for (let index = 0; index < members.counts.string_literals; index++) {
     if (index % 256 === 0) yield;
     const at = literals.offset + index * members.recordBytes.stringLiterals;
-    const start = bytes.readInt32LE(at + (indexing === "counted" ? 0 : 4));
+    const start = reader.i32(at + (indexing === "counted" ? 0 : 4));
     const length =
-      indexing === "counted"
-        ? bytes.readInt32LE(at + 4) - start
-        : bytes.readUInt32LE(at);
+      indexing === "counted" ? reader.i32(at + 4) - start : reader.u32(at);
     if (start < 0 || length < 0 || start + length > data.size)
       throw new Il2cppMetadataFormatFailure(
         "index-out-of-range",
@@ -175,7 +173,7 @@ function* readStringLiterals(
       // Strict UTF-8 round trips preserve at least these bytes; base64 is larger.
       // Refuse impossible output before allocating either representation.
       tables.beforeText?.(length);
-      const value = bytes.subarray(
+      const value = reader.bytes.subarray(
         data.offset + start,
         data.offset + start + length,
       );

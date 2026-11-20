@@ -1,11 +1,11 @@
 import { createServer } from "node:http";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { afterEach, expect, it, vi } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 const handleState = vi.hoisted(() => ({
   archive: undefined as string | undefined,
@@ -82,13 +82,10 @@ import {
   retryElectronFileCleanup,
 } from "./ElectronFileScope.js";
 
-const roots: string[] = [];
+let scopeRoot: string;
 
 afterEach(async () => {
   await retryElectronFileCleanup();
-  await Promise.all(
-    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
-  );
   handleState.archive = undefined;
   handleState.failCloseCount = 0;
   handleState.closeController = undefined;
@@ -102,10 +99,8 @@ afterEach(async () => {
 });
 
 const asarPage = async (): Promise<string> => {
-  const root = await realpath(
-    await mkdtemp(join(tmpdir(), "rea-electron-file-scope-")),
-  );
-  roots.push(root);
+  const root = await createTestTempDirectory("rea-electron-file-scope-");
+  scopeRoot = root;
   const archive = join(root, "app.asar");
   const json = Buffer.from(
     JSON.stringify({ files: { "index.html": { size: 1, offset: "0" } } }),
@@ -360,7 +355,7 @@ it.each(["completed", "read-failed", "cancelled"] as const)(
   "retains the completed listing prefix after ASAR finalization: %s",
   async (mode) => {
     const archiveUrl = await asarPage();
-    const page = join(roots.at(-1)!, "first.html");
+    const page = join(scopeRoot, "first.html");
     await writeFile(page, "first");
     const controller = new AbortController();
     handleState.failCloseCount = 1;
