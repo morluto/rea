@@ -1,4 +1,5 @@
-import { AnalysisWorkScope } from "./AnalysisWorkScope.js";
+import { unknownTarget } from "../domain/targetIdentity.js";
+import { AnalysisWorkScope } from "../ports/AnalysisWorkScope.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
@@ -10,7 +11,7 @@ import {
 import type {
   AnalysisOperation,
   AnalysisOperationPort,
-} from "./AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { err, ok } from "../domain/result.js";
 import type { EnhancedResult } from "./EnhancedToolTypes.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
@@ -23,7 +24,6 @@ import {
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
   createEvidence,
-  MISSING_EVIDENCE_SUBJECT_LIMITATION,
   evidenceEnvelopeForAdmission,
   type Evidence,
   type EvidenceLocation,
@@ -217,7 +217,7 @@ export const executeComposedWorkflow = async (
 };
 
 /** Scope of the exact-address reference lookups composed by trace_feature. */
-export const TRACE_FEATURE_REFERENCE_LIMITATION =
+const TRACE_FEATURE_REFERENCE_LIMITATION =
   "Reference queries cover only each matched start address, not interior bytes of strings and procedures. Empty references and truncated: false do not establish complete reference coverage.";
 
 /** Build the shared Evidence record for a successful composed binary workflow. */
@@ -240,33 +240,42 @@ const workflowLimitations = (
     ? [WORKFLOW_DERIVATION_LIMITATION, TRACE_FEATURE_REFERENCE_LIMITATION]
     : [WORKFLOW_DERIVATION_LIMITATION];
 
+/** A workflow without an open target derives only from the Evidence it links. */
+const workflowSubject = (target: BinaryTarget | undefined) =>
+  target ?? unknownTarget("derived-from-linked-evidence");
+
 export const createWorkflowEvidence = (
   input: WorkflowEvidenceInput,
 ): Evidence =>
-  createEvidence(input.target, REA_WORKFLOW_PROVIDER, {
-    operation: input.operation,
-    parameters: input.parameters,
-    result: input.result,
-    ...(input.upstreamProfile === undefined
-      ? {}
-      : {
-          analysisProfile: workflowAnalysisProfile(
-            input.upstreamProfile,
-            input.operation,
-          ),
-        }),
-    confidence: "derived",
-    ...(input.upstreamEvidenceLinks === undefined
-      ? {}
-      : { evidenceLinks: input.upstreamEvidenceLinks }),
-    limitations: [
-      ...workflowLimitations(input.operation),
-      ...input.upstreamLimitations,
-    ],
-    ...(input.operation === "batch_decompile"
-      ? { locations: batchProcedureLocations(input.result) }
-      : {}),
-  });
+  createEvidence(
+    workflowSubject(input.target),
+    REA_WORKFLOW_PROVIDER,
+    {
+      operation: input.operation,
+      parameters: input.parameters,
+      result: input.result,
+      ...(input.upstreamProfile === undefined
+        ? {}
+        : {
+            analysisProfile: workflowAnalysisProfile(
+              input.upstreamProfile,
+              input.operation,
+            ),
+          }),
+      confidence: "derived",
+      ...(input.upstreamEvidenceLinks === undefined
+        ? {}
+        : { evidenceLinks: input.upstreamEvidenceLinks }),
+      limitations: [
+        ...workflowLimitations(input.operation),
+        ...input.upstreamLimitations,
+      ],
+      ...(input.operation === "batch_decompile"
+        ? { locations: batchProcedureLocations(input.result) }
+        : {}),
+    },
+    { callerTarget: input.target },
+  );
 
 const admitWorkflowRecovery = (
   observation: ComposedWorkflowObservation,
@@ -297,7 +306,7 @@ const admitWorkflowRecovery = (
   // the workflow profile embeds the upstream profile. Admit these copies
   // before constructing or hashing the recovery Evidence.
   const shell = evidenceEnvelopeForAdmission(
-    evidenceInput.target,
+    workflowSubject(evidenceInput.target),
     REA_WORKFLOW_PROVIDER,
     {
       operation: evidenceInput.operation,
@@ -320,14 +329,12 @@ const admitWorkflowRecovery = (
       locations: [],
       evidenceLinks: [],
     },
+    evidenceInput.target,
   );
   const additional = estimateJsonStorage([
     observation.result,
     evidenceInput.upstreamProfile ?? null,
     shell,
-    ...(evidenceInput.target === undefined
-      ? [MISSING_EVIDENCE_SUBJECT_LIMITATION]
-      : []),
   ]);
   return admitRecovery(admissionInput, evidenceInput.operation, additional);
 };
@@ -482,17 +489,7 @@ export const workflowSnapshotRecord = (
       analysisProfile: analysisProfileSchema.parse(evidence.analysis_profile),
       limitations: evidence.limitations,
       locations: evidence.locations,
-      subject:
-        evidence.subject === null
-          ? null
-          : {
-              path: evidence.subject.local_path,
-              sha256: evidence.subject.digest.sha256,
-              format: evidence.subject.format,
-              ...(evidence.subject.architecture === null
-                ? {}
-                : { architecture: evidence.subject.architecture }),
-            },
+      subject: evidence.subject,
     },
   };
 };

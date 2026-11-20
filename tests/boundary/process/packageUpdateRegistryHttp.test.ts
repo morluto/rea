@@ -167,3 +167,19 @@ it("returns upstream failures as plain text and preserves the original failure",
     body: String(failure),
   });
 });
+
+it("lets npm retry a registry connection reset without aborting the verifier", async () => {
+  const reset = new TypeError("fetch failed", {
+    cause: Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }),
+  });
+  const upstream = vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(reset);
+  onTestFinished(() => upstream.mockRestore());
+
+  const reply = await registryRequest("/unlisted");
+
+  expect(reply).toMatchObject({
+    status: 502,
+    headers: { "content-type": "text/plain; charset=utf-8" },
+    body: "npm registry connection reset",
+  });
+});

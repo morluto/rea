@@ -3,17 +3,18 @@ import { spawnSync } from "node:child_process";
 import {
   access,
   mkdir,
-  mkdtemp,
   readFile,
   readdir,
-  rm,
   stat,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { prepareWindowsNativeInspectionWorkspace } from "./lib/windows-native-inspection-workspace.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 if (process.platform !== "win32")
   throw new Error(
@@ -23,8 +24,13 @@ const root = resolve(process.argv[2] ?? ".");
 const artifact = resolve(
   process.argv[3] ?? ".cache/windows-native-inspection-fixture",
 );
-const workspace = await mkdtemp(join(tmpdir(), "rea-inspection-conformance-"));
-try {
+// Windows children write beneath the root; a private root's DELETE handle would block them.
+const fixture = await VerifierFixture.open({
+  prefix: "rea-inspection-conformance-",
+  private: false,
+});
+const workspace = fixture.path;
+await withVerifierFixture(fixture, async () => {
   const loader = await prepareWindowsNativeInspectionWorkspace({
     root,
     artifact,
@@ -126,6 +132,4 @@ console.log(JSON.stringify({mode,firstFailed:true,retainedOwner:true,name,rename
   process.stdout.write(
     `${JSON.stringify({ ok: true, inspectionPostCreateValidationFailure: true, runtimeCreatePostCreateValidationFailure: true, controlledRollbackDispositionFailure: true, retainedOwner: true, renamedOwnerCleansChildren: true, unrelatedReplacementPreserved: true, retryRecoversByInspectionAndCreation: true, successfulAdmissionCached: true, environmentTeardownCleansProbeAndCreation: true, issue1701HostCauseReproduced: false })}\n`,
   );
-} finally {
-  await rm(workspace, { recursive: true, force: true });
-}
+});

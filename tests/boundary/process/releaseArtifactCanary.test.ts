@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import {
   copyFile,
   cp,
@@ -17,7 +18,7 @@ import { resolveSwiftcCompileTimeoutMs } from "../../../src/process/DarwinProces
 const preparationBudget =
   process.platform === "darwin" ? resolveSwiftcCompileTimeoutMs() : 0;
 
-async function prepareController(controller: string, version: string) {
+async function prepareController(controller: string) {
   // The verifier loads its production-owned TypeScript source graph at runtime.
   // Keep that graph in the isolated controller so imports cannot drift from a hand-maintained list.
   await mkdir(join(controller, "scripts"), { recursive: true });
@@ -36,10 +37,9 @@ async function prepareController(controller: string, version: string) {
     recursive: true,
     filter: (source) => !/\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(source),
   });
-  await writeFile(
-    join(controller, "package.json"),
-    JSON.stringify({ name: "rea-agents", version, type: "module" }),
-  );
+  // These scripts execute as this package, including its private runtime
+  // imports. Copy the owning manifest instead of reconstructing its resolver.
+  await copyFile("package.json", join(controller, "package.json"));
   await symlink(
     resolve("node_modules"),
     join(controller, "node_modules"),
@@ -73,7 +73,7 @@ processTest.skipIf(process.platform === "win32")(
         tools,
         reply: await harness.client.callTool(
           { name: "binary_session", arguments: {} },
-          { toolDefinition: sessionDefinition },
+          { toolDefinition: withCanonicalOutputSchema(sessionDefinition) },
         ),
       };
     } finally {
@@ -87,6 +87,7 @@ processTest.skipIf(process.platform === "win32")(
         version,
         type: "module",
         files: ["scripts"],
+        scripts: { preinstall: 'node -e "process.exit(42)"' },
       }),
     );
     await copyFile(
@@ -113,7 +114,7 @@ if (process.argv[2] === "mcp") {
       const result = await processes.run(
         "npm",
         ["pack", "--ignore-scripts", "--json"],
-        { cwd: candidate, timeoutMs: 30_000 },
+        { cwd: candidate },
       );
       expect(result.exitCode, result.stderr).toBe(0);
       return result;
@@ -123,7 +124,7 @@ if (process.argv[2] === "mcp") {
       .tuple([z.object({ filename: z.string() })])
       .parse(JSON.parse(packed.stdout));
     const tarball = join(candidate, filename);
-    await prepareController(controller, version);
+    await prepareController(controller);
     const invoke = (selected = tarball) =>
       processes.run(
         process.execPath,
@@ -134,13 +135,16 @@ if (process.argv[2] === "mcp") {
         ],
         {
           cwd: controller,
+          env: { ...process.env, npm_config_allow_scripts: "rea-test-control" },
           timeoutMs: Math.min(2_147_483_647, preparationBudget + 30_000),
         },
       );
     const missing = await invoke();
     expect(missing.exitCode).toBe(1);
     expect(missing.stderr).toContain("ERR_MODULE_NOT_FOUND");
-    expect(missing.stderr).toMatch(/dist[/\\]catalogIdentity\.js/u);
+    expect(missing.stderr).toMatch(
+      /dist[/\\]contracts[/\\]catalog[/\\]catalogIdentity\.js/u,
+    );
     await symlink(
       resolve("dist"),
       join(controller, "dist"),

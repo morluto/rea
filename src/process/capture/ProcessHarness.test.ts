@@ -1,14 +1,18 @@
 import { createTestProcessCaptureResourceScope } from "../../../tests/fixtures/processCaptureResourceScope.js";
+import { failedInspectionDescriptor } from "../../../tests/fixtures/processInspectionCleanup.js";
 import { assertProcessOwnershipInspectionActive } from "../ProcessInspectionCancellation.js";
 import { expect, it, vi, onTestFinished } from "vitest";
 import { processScenarioSchema } from "../../domain/process/processScenario.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 import {
   captureProcessScenario,
+  capturedRootProcess,
+  retainRootIdentity,
   retainRootSignaller,
 } from "./ProcessHarness.js";
 import {
   settleProcessCaptureJournal,
+  PROCESS_CAPTURE_CLEANUP_INTERVENTION_UNKNOWN,
   ProcessCaptureResourceScope,
   createProcessCaptureObservationBuffer,
   prepareProcessCapture,
@@ -17,23 +21,19 @@ import {
   type ProcessCaptureCleanupHost,
 } from "./ProcessCaptureLifecycle.js";
 import { parseProcessCapture } from "../../domain/process/processCaptureParsing.js";
-import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../domain/process/processCaptureExample.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import {
   accountFullyObservedProcessCapture,
   emptyProcessCapture,
 } from "../../domain/process/processCapture.fixture.js";
-import { analysisErrorProjectionSchema } from "../../contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../domain/analysisErrorProjectionSchema.js";
 import {
   ProcessCaptureError,
-  normalizeCaptureFailure,
   processCaptureCancelled,
 } from "./ProcessCaptureError.js";
-import { DarwinProcessOwnershipInspectionError } from "../DarwinProcessRunTokenReader.js";
 
 import {
   partialProcessCaptureObservationSchema,
-  processCaptureSchema,
   type ProcessCaptureCleanupReport,
 } from "../../domain/process/processCapture.js";
 const emptyFilesystemCoverage =
@@ -239,29 +239,6 @@ it("projects complete after-snapshot metadata when a later capture stage fails",
         },
       },
     },
-  });
-});
-
-it("rejects legacy replay output instead of silently discarding it", () => {
-  expect(
-    processCaptureSchema.safeParse({
-      ...EMPTY_PROCESS_CAPTURE_EXAMPLE,
-      protocol_events: [],
-    }).success,
-  ).toBe(false);
-});
-
-it("preserves the actionable Darwin ownership compiler prerequisite", () => {
-  const normalized = normalizeCaptureFailure(
-    new DarwinProcessOwnershipInspectionError(
-      "macOS process ownership inspection requires the Apple Swift compiler via xcrun",
-    ),
-  );
-
-  expect(normalized).toBeInstanceOf(ProcessCaptureError);
-  expect(normalized).toMatchObject({
-    message:
-      "macOS process ownership inspection requires the Apple Swift compiler via xcrun",
   });
 });
 
@@ -479,6 +456,7 @@ it("retains unrelated withheld processes through cleanup, capture, and JSON", as
     });
     expect(capture.residual_unknowns).toEqual([
       ...original.residual_unknowns,
+      PROCESS_CAPTURE_CLEANUP_INTERVENTION_UNKNOWN,
       {
         scope: "process",
         reason: expect.stringContaining("900 could not be verified"),
@@ -712,45 +690,67 @@ it("retains completed observations when finalization fails after clean cleanup",
   ).toBe(true);
 });
 
-it("preserves cancellation while projecting observations and successful cleanup", () => {
-  const capture = parseProcessCapture({
-    ...accountFullyObservedProcessCapture({
-      ...emptyProcessCapture(),
-      frames: [{ sequence: 0, at_ms: 0, data: "observed before cancellation" }],
-    }),
-    event_journal: [],
-  });
-  const cleanup = {
-    owned_process_group: { state: "cleaned" as const, reason: null },
-    terminal_renderer: { state: "cleaned" as const, reason: null },
-    temporary_root: { state: "cleaned" as const, reason: null },
-  };
-  let error: ProcessCaptureError | undefined;
-  try {
-    resolveProcessResult(
-      capture,
-      processCaptureCancelled(),
-      historicalCleanupOutcome(cleanup),
-    );
-  } catch (cause: unknown) {
-    if (!(cause instanceof ProcessCaptureError)) throw cause;
-    error = cause;
-  }
-  if (error === undefined) throw new Error("expected cancellation");
-
-  expect(projectAnalysisError(error)).toMatchObject({
-    code: "cancelled",
-    message: expect.stringMatching(/process capture.*cancelled.*again/iu),
-    details: {
-      operation: "process_capture",
-      cleanup: "complete",
-      cleanup_report: cleanup,
-      partial_observation: {
-        capture: { frames: [{ data: "observed before cancellation" }] },
+it.each([false, true])(
+  "preserves finalization cancellation alongside cleanup intervention=%s",
+  async (signaled) => {
+    const capture = parseProcessCapture({
+      ...accountFullyObservedProcessCapture({
+        ...emptyProcessCapture(),
+        frames: [
+          { sequence: 0, at_ms: 0, data: "observed before cancellation" },
+        ],
+      }),
+      event_journal: [],
+    });
+    const cleanup = await new ProcessCaptureResourceScope().release({
+      timers: new Set(),
+      terminal: { pid: 321 },
+      renderer: undefined,
+      runId: "finalization-cancellation",
+      temporaryRoot: "/fixture/root",
+      host: {
+        platform: "linux",
+        cleanupProcessGroup: async () => ({ cleaned: true, signaled }),
+        removeTemporaryRoot: async () => undefined,
       },
-    },
-  });
-});
+    });
+    const reason = { request: "cancel after resource cleanup" };
+    let error: ProcessCaptureError | undefined;
+    try {
+      resolveProcessResult(capture, processCaptureCancelled(reason), cleanup);
+    } catch (cause: unknown) {
+      if (!(cause instanceof ProcessCaptureError)) throw cause;
+      error = cause;
+    }
+    if (error === undefined) throw new Error("expected cancellation");
+
+    expect(error.cause).toBe(reason);
+    expect(projectAnalysisError(error)).toMatchObject({
+      code: "cancelled",
+      message: expect.stringMatching(/process capture.*cancelled.*again/iu),
+      details: {
+        operation: "process_capture",
+        cleanup: "complete",
+        cleanup_report: cleanup.report,
+        partial_observation: {
+          capture: {
+            frames: [{ data: "observed before cancellation" }],
+            settlement: {
+              cleanup_outcome: signaled ? "cleaned" : "not_required",
+            },
+            ...(signaled
+              ? {
+                  residual_unknowns: expect.arrayContaining([
+                    PROCESS_CAPTURE_CLEANUP_INTERVENTION_UNKNOWN,
+                  ]),
+                }
+              : {}),
+          },
+        },
+      },
+    });
+  },
+);
 
 it("fails closed on Windows before resolving or launching scenario paths", async () => {
   const scenario = processScenarioSchema.parse({
@@ -776,42 +776,6 @@ it("fails closed on Windows before resolving or launching scenario paths", async
   });
 });
 
-it("retains the root start identity once at launch and signals only with it", async () => {
-  const observe = vi.fn(async () => ({
-    state: "readable" as const,
-    identity: "id-launch",
-  }));
-  const signal = vi.fn(async () => "signaled" as const);
-  const signalRoot = retainRootSignaller(4242, 500, "captured-run", {
-    observe,
-    signal,
-  });
-
-  expect(
-    observe,
-    "the identity is read at launch, before any signal",
-  ).toHaveBeenCalledTimes(1);
-  expect(
-    await signalRoot("SIGTERM"),
-    "a matching identity is signalled",
-  ).toEqual({
-    delivery: "signaled",
-  });
-  await signalRoot("SIGKILL");
-
-  expect(
-    observe,
-    "later signals never re-read the identity",
-  ).toHaveBeenCalledTimes(1);
-  expect(
-    signal.mock.calls,
-    "both signals carry the pid and the identity retained at launch",
-  ).toEqual([
-    [4242, "id-launch", "SIGTERM"],
-    [4242, "id-launch", "SIGKILL"],
-  ]);
-});
-
 it.each([
   ["a vanished root", async () => undefined, { delivery: "gone" }],
   [
@@ -830,49 +794,103 @@ it.each([
   "never signals without a retained identity: %s",
   async (_label, read, delivery) => {
     const signal = vi.fn(async () => "signaled" as const);
-    const signalRoot = retainRootSignaller(4242, 500, "captured-run", {
-      observe: read,
+    const signalRoot = retainRootSignaller(
+      4242,
+      retainRootIdentity(4242, "captured-run", read),
       signal,
-    });
+    );
 
     expect(
-      await signalRoot("SIGTERM"),
+      await signalRoot.signal("SIGTERM"),
       "the delivery result is recorded",
     ).toEqual(delivery);
     expect(signal, "no identity means no signal at all").not.toHaveBeenCalled();
   },
 );
 
-it("does not read an identity when there is no finalization interval", async () => {
-  const observe = vi.fn(async () => undefined);
-  const signalRoot = retainRootSignaller(4242, 0, "captured-run", {
-    observe,
-    signal: vi.fn(async () => "signaled" as const),
+it.each([
+  [
+    "a readable identity",
+    { state: "identity", identity: "id-launch" } as const,
+    false,
+    { state: "observed", pid: 4242, start_time: "id-launch" },
+  ],
+  [
+    "PID normalization",
+    { state: "identity", identity: "id-launch" } as const,
+    true,
+    { state: "withheld-by-caller" },
+  ],
+  [
+    "a vanished root",
+    { state: "gone" } as const,
+    false,
+    {
+      state: "unknown",
+      reason: "the root process exited before its start identity was read",
+    },
+  ],
+  [
+    "an unverified identity",
+    { state: "unverified", reason: "token mismatch" } as const,
+    false,
+    { state: "unknown", reason: "token mismatch" },
+  ],
+])(
+  "records the root process from the launch identity: %s",
+  (_label, identity, pidsNormalized, expected) => {
+    expect(
+      capturedRootProcess(4242, identity, pidsNormalized),
+      "a PID is recorded only with its start identity, and never when the caller normalized PIDs",
+    ).toEqual(expected);
+  },
+);
+
+it("keeps the inspection failure of a delivery that settles after the caller stopped waiting", async () => {
+  const file = await failedInspectionDescriptor();
+  let rejectDelivery: (cause: unknown) => void = () => undefined;
+  const delivery = new Promise<never>((_resolve, reject) => {
+    rejectDelivery = reject;
   });
+  // The signaller awaits it; this only keeps the early rejection handled.
+  delivery.catch(() => undefined);
+  const signalRoot = retainRootSignaller(
+    4242,
+    retainRootIdentity(4242, "captured-run", async () => ({
+      state: "readable",
+      identity: "id-launch",
+    })),
+    () => delivery,
+  );
+
+  void signalRoot.signal("SIGTERM");
+  const settled = signalRoot.settled();
+  rejectDelivery(file.failure);
 
   expect(
-    observe,
-    "the zero-interval path never inspects the root",
-  ).not.toHaveBeenCalled();
+    await settled,
+    "the late identity-check failure is handed to the run, not dropped",
+  ).toHaveLength(1);
   expect(
-    await signalRoot("SIGKILL"),
-    "an unretained identity stays unverified",
-  ).toEqual({
-    delivery: "unverified",
-    reason: "root identity was not retained",
-  });
+    await signalRoot.settled(),
+    "each failure is handed over once",
+  ).toEqual([]);
 });
 
 it.each(["signaled", "gone", "identity-changed", "unverified"] as const)(
   "reports the identity-checked delivery result %s unchanged",
   async (delivery) => {
-    const signalRoot = retainRootSignaller(4242, 500, "captured-run", {
-      observe: async () => ({ state: "readable", identity: "id-launch" }),
-      signal: async () => delivery,
-    });
+    const signalRoot = retainRootSignaller(
+      4242,
+      retainRootIdentity(4242, "captured-run", async () => ({
+        state: "readable",
+        identity: "id-launch",
+      })),
+      async () => delivery,
+    );
 
     expect(
-      await signalRoot("SIGKILL"),
+      await signalRoot.signal("SIGKILL"),
       "the signaller result is not coerced",
     ).toEqual(
       delivery === "unverified"
@@ -886,44 +904,16 @@ it.each(["signaled", "gone", "identity-changed", "unverified"] as const)(
   },
 );
 
-it("seeds a finalization observation only for a scenario with an interval", () => {
-  const seed = {
-    frames: [],
-    interactions: [],
-    samples: [],
-    eventJournal: [],
-    before: {
-      files: [],
-      truncated: false,
-      completeRoots: [],
-      coverage: emptyFilesystemCoverage,
-    },
-  };
-
-  expect(
-    Object.keys(createProcessCaptureObservationBuffer(seed)),
-    "a default scenario keeps the base observation keys",
-  ).not.toContain("finalization");
-  expect(
-    Object.keys(
-      createProcessCaptureObservationBuffer({
-        ...seed,
-        finalizationEnabled: true,
-      }),
-    ),
-    "a scenario with an interval carries the finalization observation",
-  ).toContain("finalization");
-});
-
 it("keeps a non-empty reason when the identity inspection fails without a message", async () => {
-  const signalRoot = retainRootSignaller(4242, 500, "captured-run", {
-    observe: async () => {
+  const signalRoot = retainRootSignaller(
+    4242,
+    retainRootIdentity(4242, "captured-run", async () => {
       throw new Error();
-    },
-    signal: vi.fn(async () => "signaled" as const),
-  });
+    }),
+    vi.fn(async () => "signaled" as const),
+  );
 
-  const result = await signalRoot("SIGTERM");
+  const result = await signalRoot.signal("SIGTERM");
 
   expect(result.delivery, "the attempt is unverified").toBe("unverified");
   expect(
@@ -933,12 +923,16 @@ it("keeps a non-empty reason when the identity inspection fails without a messag
 });
 
 it("keeps a non-empty reason when the identity diagnostic is empty", async () => {
-  const signalRoot = retainRootSignaller(4242, 500, "captured-run", {
-    observe: async () => ({ state: "unavailable" as const, reason: "" }),
-    signal: vi.fn(async () => "signaled" as const),
-  });
+  const signalRoot = retainRootSignaller(
+    4242,
+    retainRootIdentity(4242, "captured-run", async () => ({
+      state: "unavailable" as const,
+      reason: "",
+    })),
+    vi.fn(async () => "signaled" as const),
+  );
 
-  const result = await signalRoot("SIGTERM");
+  const result = await signalRoot.signal("SIGTERM");
 
   expect(
     result.reason?.length,

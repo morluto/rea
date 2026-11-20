@@ -5,13 +5,13 @@ import { expect, it, onTestFinished, vi } from "vitest";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../../../src/artifacts/AnalysisCleanupLease.js";
+} from "../../../src/resources/AnalysisCleanupLease.js";
 import type {
   AnalysisClient,
   AnalysisProvider,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
-import { HopperStartError } from "../../../src/domain/hopperErrors.js";
+import { HopperStartError } from "../../../src/hopper/HopperErrors.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { err, ok as resultOk } from "../../../src/domain/result.js";
@@ -23,6 +23,7 @@ import {
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 const CLOSE_RETRY = { operation: "close_binary" } as const;
 
@@ -512,7 +513,7 @@ it("does not start a replacement cancelled while pending cleanup completes", asy
   allowed = true;
   const controller = new AbortController();
   const opening = session.open(second, { signal: controller.signal });
-  await entered.promise;
+  await awaitAcknowledgement(entered.promise, opening, "session cleanup retry");
   controller.abort();
   release.resolve();
   expect(await opening).toMatchObject({
@@ -521,4 +522,34 @@ it("does not start a replacement cancelled while pending cleanup completes", asy
   });
   expect(created).toBe(1);
   await expect(access(runtime)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("lets an unowned close failure read the later successful close", async () => {
+  const [first] = await createBinarySessionTargets();
+  let allowed = false;
+  const session = createTestBinarySession(() => ({
+    execute: () => Promise.resolve(ok(null)),
+    close: () =>
+      Promise.resolve(
+        allowed
+          ? resultOk(null)
+          : err(
+              new ProviderCleanupError("fixture", ["owned-runtime"], {
+                reason: "cleanup denied",
+              }),
+            ),
+      ),
+  }));
+  onTestFinished(async () => {
+    allowed = true;
+    await session.close();
+  });
+  expect((await session.open(first)).ok).toBe(true);
+  const failed = await session.close();
+  if (failed.ok) throw new Error("Expected retained close failure");
+  expect(failed.error.hasCleanupOwner).toBe(false);
+  expect(failed.error.cleanupIncomplete).toBe(true);
+  allowed = true;
+  expect((await session.close()).ok).toBe(true);
+  expect(failed.error.cleanupIncomplete).toBe(false);
 });

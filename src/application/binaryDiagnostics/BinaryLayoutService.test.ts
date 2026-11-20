@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../../tests/fixtures/evidenceSubject.js";
 import { expect, it } from "vitest";
 import { BinaryLayoutService } from "./BinaryLayoutService.js";
 import {
@@ -75,7 +76,9 @@ it.each([
     });
     const result = await service.inspect({ path: layout.artifact.path });
     if (!result.ok) throw result.error;
-    expect(parseEvidence(result.value).subject?.architecture).toBe(expected);
+    expect(fileIdentity(parseEvidence(result.value).subject).architecture).toBe(
+      expected,
+    );
   },
 );
 

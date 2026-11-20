@@ -34,6 +34,7 @@ const commonLimits = [
 ];
 const testFile = (path: string, names: string[]) => ({
   name: resolve(path),
+  status: "passed",
   assertionResults: names.map((fullName) => ({ fullName, status: "passed" })),
 });
 const report = (lane: "packet" | "signal") => ({
@@ -100,6 +101,7 @@ it.each(["packet", "signal"] as const)(
     const result = report(lane);
     result.testResults.push({
       name: resolve("tests/unrelated.test.ts"),
+      status: "passed",
       assertionResults: [{ fullName: "host-specific", status: "pending" }],
     });
     expect(run(lane, result)).toContain("cases passed");
@@ -134,6 +136,17 @@ it.each(["packet", "signal"] as const)(
     );
     expect(() => run(lane, { success: true, testResults: [] })).toThrow();
     expect(() => run(lane, { success: false, testResults: [] })).toThrow();
+  },
+);
+
+it.each(["packet", "signal"] as const)(
+  "rejects a failed %s file despite passing required assertions",
+  (lane) => {
+    const result = report(lane);
+    result.testResults[0]!.status = "failed";
+    expect(() => run(lane, result)).toThrow(
+      "Required provider test file did not pass",
+    );
   },
 );
 

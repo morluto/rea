@@ -1,101 +1,74 @@
 import { expect, it } from "vitest";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { discoverWebMcpToolsInputSchema } from "../../../src/domain/webMcpDiscovery.js";
-import { digestCanonicalValue } from "../../../src/domain/canonicalDigest.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import { trackBrowser } from "./cdpBrowserProvider.support.js";
 
-it.each(["initial", "final"])(
-  "explains WebMCP %s current-document origin refusal",
+it.each(["initial", "final"] as const)(
+  "distinguishes an unreadable URL from known foreign scope at the $0 root read",
   async (stage) => {
+    let fault: "foreign" | "malformed-approved" | "malformed-foreign" =
+      "foreign";
+    let replayStarted = false;
     const browser = await startFakeCdpBrowser({
       webMcpTools: true,
-      commandResult: ({ method }, origin, frameReads) =>
-        method === "Page.getFrameTree"
-          ? {
-              frameTree: {
-                frame: {
-                  id: "frame-main",
-                  url:
-                    stage === "initial" || frameReads > 1
-                      ? "https://outside.example/page"
-                      : origin + "/app",
-                },
-              },
-            }
-          : undefined,
-    });
-    trackBrowser(browser);
-    const result = await new CdpBrowserProvider().discoverWebMcpTools(
-      discoverWebMcpToolsInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        target_id: "allowed-page",
-        observation_ms: 0,
-      }),
-    );
-    if (result.ok) throw new Error("Expected WebMCP origin refusal");
-    expect(projectAnalysisError(result.error)).toMatchObject({
-      code: "target_unavailable",
-      message: expect.stringContaining("permitted HTTP(S) origin scope"),
-      remediation: { action: expect.stringContaining("allowed_origins") },
-      details: {
-        operation: "discover_webmcp_tools",
-        reason: "target_not_allowed",
+      commandResult: ({ method }, origin) => {
+        if (method !== "Page.getFrameTree") return undefined;
+        const changed = stage === "initial" || replayStarted;
+        return {
+          frameTree: {
+            frame: {
+              id: "frame-main",
+              loaderId: "loader-main",
+              url:
+                changed && fault !== "malformed-approved"
+                  ? "https://outside.example/page"
+                  : origin + "/app",
+              ...(changed && fault !== "foreign" ? { urlFragment: 7 } : {}),
+            },
+          },
+        };
+      },
+      commandEvents: ({ method }) => {
+        if (method === "WebMCP.enable") replayStarted = true;
+        return undefined;
       },
     });
-    expect(
-      browser.commands.some(({ method }) => method === "WebMCP.enable"),
-    ).toBe(stage === "final");
-  },
-);
-
-it.each([false, true])(
-  "accepts optional WebMCP input schema (declared=%s)",
-  async (declared) => {
-    const browser = await startFakeCdpBrowser({
-      commandEvents: ({ method, sessionId }) =>
-        method === "WebMCP.enable"
-          ? [
-              {
-                method: "WebMCP.toolsAdded",
-                sessionId,
-                params: {
-                  tools: [
-                    {
-                      name: "parameterless",
-                      frameId: "frame-main",
-                      ...(declared ? { inputSchema: {} } : {}),
-                    },
-                  ],
-                },
-              },
-            ]
-          : undefined,
-    });
     trackBrowser(browser);
-    const result = await new CdpBrowserProvider().discoverWebMcpTools(
-      discoverWebMcpToolsInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        target_id: "allowed-page",
-        observation_ms: 0,
-      }),
-    );
-    if (!result.ok) throw result.error;
-    expect(result.value.tools.items[0]).toMatchObject({
-      name: "parameterless",
-      input_schema: declared ? {} : null,
-      input_schema_sha256: declared ? digestCanonicalValue({}) : null,
+    const provider = new CdpBrowserProvider();
+    const input = discoverWebMcpToolsInputSchema.parse({
+      cdp_endpoint: browser.endpoint,
+      target_id: "allowed-page",
+      observation_ms: 0,
     });
-    expect(result.value.completeness.unavailable_sections).not.toContain(
-      "webmcp_tools",
-    );
-    expect(result.value.completeness.excluded).not.toContainEqual(
-      expect.objectContaining({
-        section: "webmcp_tools",
-        reason: "invalid_protocol_value",
-      }),
-    );
+    for (const mode of [
+      "foreign",
+      "malformed-approved",
+      "malformed-foreign",
+    ] as const) {
+      fault = mode;
+      replayStarted = false;
+      const result = await provider.discoverWebMcpTools(input);
+      if (result.ok) throw new Error(`Expected WebMCP refusal for ${mode}`);
+      expect(replayStarted, mode).toBe(stage === "final");
+      if (mode === "malformed-approved") {
+        expect(result.error, mode).toMatchObject({
+          _tag: "BrowserObservationError",
+          reason: "protocol_error",
+        });
+      } else {
+        expect(projectAnalysisError(result.error), mode).toMatchObject({
+          code: "target_unavailable",
+          message: expect.stringContaining("permitted HTTP(S) origin scope"),
+          remediation: { action: expect.stringContaining("allowed_origins") },
+          details: {
+            operation: "discover_webmcp_tools",
+            reason: "target_not_allowed",
+          },
+        });
+      }
+    }
   },
 );
 
@@ -129,7 +102,20 @@ it("retains a valid parameterless registration while rejecting malformed annotat
     }),
   );
   if (!result.ok) throw result.error;
-  expect(result.value.tools.items).toHaveLength(1);
+  expect(result.value.tools.items).toMatchObject([
+    {
+      name: "parameterless",
+      frame_id: "frame-main",
+      input_schema: null,
+      input_schema_sha256: null,
+      annotations: { read_only: null },
+    },
+  ]);
+  expect(result.value.completeness.excluded).toContainEqual({
+    section: "webmcp_tools",
+    reason: "invalid_protocol_value",
+    count: 1,
+  });
   expect(result.value.completeness.unavailable_sections).toContain(
     "webmcp_tools",
   );

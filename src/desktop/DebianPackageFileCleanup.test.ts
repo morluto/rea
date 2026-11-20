@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { ArtifactFileCleanupFailure } from "../artifacts/ArtifactFileOperation.js";
+import { ArtifactFileCleanupFailure } from "../resources/ArtifactFileOperation.js";
 import { DPKG_DEB_OUTPUT } from "../domain/desktop/debianPackageFile.fixture.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { observeStableFile } from "../filesystem/StableFileHash.js";

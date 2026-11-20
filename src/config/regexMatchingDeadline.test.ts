@@ -1,3 +1,4 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { expect, it, vi } from "vitest";
 
 import { HopperProvider } from "../hopper/HopperProvider.js";
@@ -18,7 +19,6 @@ import {
   regexMatchingDeadlineContinuingRecovery,
   regexMatchingDeadlineRecovery,
 } from "./regexMatchingDeadline.js";
-import { MAXIMUM_REGEX_MATCHING_DEADLINE_MS } from "../domain/analysisResourceLimits.js";
 
 const configured = (deadlineMs: number) =>
   ({ deadlineMs, source: "setting" }) as const;
@@ -48,7 +48,7 @@ it("keeps the 5000 ms deadline when the setting is unset", () => {
         effective_value: 5000,
         unit: "ms",
         minimum: 1,
-        maximum: MAXIMUM_REGEX_MATCHING_DEADLINE_MS,
+        maximum: MAX_NODE_TIMER_DELAY_MS,
         source: "default",
         applies_at: "next_operation",
         agent_editable: true,
@@ -87,11 +87,9 @@ it("uses a valid REA_REGEX_MATCHING_DEADLINE_MS override", () => {
     ok: true,
     value: configured(10_000),
   });
-  expect(
-    parseRegexMatchingDeadline(String(MAXIMUM_REGEX_MATCHING_DEADLINE_MS)),
-  ).toEqual({
+  expect(parseRegexMatchingDeadline(String(MAX_NODE_TIMER_DELAY_MS))).toEqual({
     ok: true,
-    value: configured(MAXIMUM_REGEX_MATCHING_DEADLINE_MS),
+    value: configured(MAX_NODE_TIMER_DELAY_MS),
   });
   const parsed = parseConfig({ REA_REGEX_MATCHING_DEADLINE_MS: "10000" });
   if (!parsed.ok) throw new Error("valid deadline was rejected");
@@ -138,7 +136,7 @@ it.each([
   " 5000",
   "5000 ",
   "1.5",
-  String(MAXIMUM_REGEX_MATCHING_DEADLINE_MS + 1),
+  String(MAX_NODE_TIMER_DELAY_MS + 1),
   "9".repeat(40),
 ])("rejects invalid %j as a configuration error", (value) => {
   const parsed = parseRegexMatchingDeadline(value);

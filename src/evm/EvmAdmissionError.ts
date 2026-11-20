@@ -14,7 +14,7 @@ const EVM_ADMISSION_CODES = [
   "root_not_map",
 ] as const;
 
-export type EvmAdmissionCode = (typeof EVM_ADMISSION_CODES)[number];
+type EvmAdmissionCode = (typeof EVM_ADMISSION_CODES)[number];
 
 /** EVM limiter, worker, or metadata admission failure. `code` is the stable identity. */
 export class EvmAdmissionError extends Error {

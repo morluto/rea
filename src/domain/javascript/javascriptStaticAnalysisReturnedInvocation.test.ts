@@ -6,6 +6,7 @@ import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { indexJavaScriptBindingsWithReceiversSteps } from "./javascriptSemanticAnalysis.js";
 import { completeSemanticSteps } from "./javascriptSemanticTraversal.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
+import { retainSemanticAmbientEffect } from "./javascriptSemanticAmbientWrites.js";
 
 it.each([
   ["const get=()=>module;get.call(null)", true],
@@ -98,6 +99,41 @@ it.each([
     false,
   ],
   ["Function.prototype.extra=unknown;const get=()=>({});get.call(null)", false],
+  ["patch(Function.prototype);const get=()=>({});get.call(null)", true],
+  ["patch(Function.prototype);const get=()=>({});get.apply(null,[])", true],
+  ["patch(Function);const get=()=>({});get.call(null)", true],
+  [
+    "patch(Function.prototype);const get=()=>module;get.call=()=>({});get.call(null)",
+    false,
+  ],
+  // A native static method does not expose its constructor receiver.
+  ["Object.freeze({});const get=()=>({});get.call(null)", false],
+  [
+    'Object.defineProperty(o,"a",{value:1});const get=()=>({});get.call(null)',
+    false,
+  ],
+  ["Reflect.ownKeys({});const get=()=>({});get.call(null)", false],
+  // A replaced static method is user code that receives the constructor.
+  [
+    'Object.defineProperty=custom;Object.defineProperty(o,"a",{value:1});const get=()=>({});get.call(null)',
+    true,
+  ],
+  [
+    "Object.custom=custom;Object.custom({});const get=()=>({});get.call(null)",
+    true,
+  ],
+  // A member Object inherits is user code that receives the constructor.
+  [
+    "Function.prototype.custom=custom;Object.custom();const get=()=>({});get.call(null)",
+    true,
+  ],
+  ["Object.custom();const get=()=>({});get.call(null)", true],
+  // An owner named like an Object.prototype key is looked up safely.
+  ["globalThis.constructor.keys({});const get=()=>({});get.call(null)", false],
+  [
+    "const get=()=>({});get.call(null);Object.defineProperty=custom;Object.defineProperty(o,'a',{})",
+    false,
+  ],
 ])(
   "retains inherited invocation uncertainty without revoking own slots: %s",
   (receiver, expected) => {
@@ -132,6 +168,15 @@ it("keeps an earlier native invocation before a later prototype write", () => {
   expect(analysis.references).toEqual([]);
 });
 
+it("keeps an earlier native invocation before a later prototype escape", () => {
+  const analysis = analyzeJavaScriptStaticSource(`
+    const get=()=>({});
+    get.call(null).require('./unused.cjs');
+    patch(Function.prototype);
+  `);
+  expect(analysis.references).toEqual([]);
+});
+
 it("does not treat a shadowed Function namespace as native prototype mutation", () => {
   const analysis = analyzeJavaScriptStaticSource(`
     function local(Function){
@@ -141,6 +186,35 @@ it("does not treat a shadowed Function namespace as native prototype mutation", 
     }
   `);
   expect(analysis.references).toEqual([]);
+});
+
+it("recomputes a cached invocation after a later recorded prototype escape", () => {
+  const parsed = parseJavaScriptSource("const get=()=>({});get.call(null);");
+  if (parsed === null) throw new Error("Expected valid fixture");
+  const index = completeSemanticSteps(
+    indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+  );
+  completeSemanticSteps(index.indexAmbientWritesSteps());
+  completeSemanticSteps(index.indexMemberMutationFactsSteps());
+  const statement = parsed.program.body.at(-1);
+  if (
+    !t.isExpressionStatement(statement) ||
+    !t.isCallExpression(statement.expression)
+  )
+    throw new Error("Expected final invocation");
+  const call = statement.expression;
+  const returned = createSemanticReturnedReferences(
+    index.bindings,
+    "direct-call",
+  );
+  expect(returned(call.callee, call).unresolvedInvocation).toBeUndefined();
+  retainSemanticAmbientEffect(
+    index.bindings,
+    "escape",
+    ["global", "Function", "prototype"],
+    parsed.program,
+  );
+  expect(returned(call.callee, call).unresolvedInvocation).toBe(true);
 });
 
 it("retains a finite shared callable alias graph", () => {

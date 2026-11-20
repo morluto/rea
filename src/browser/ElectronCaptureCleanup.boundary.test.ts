@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { expect, it, vi } from "vitest";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   spawnOwnedProviderProcess,

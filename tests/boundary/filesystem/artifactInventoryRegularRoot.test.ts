@@ -82,7 +82,7 @@ it("rejects a root path replaced between its initial stat and open", async () =>
     classifyAndHashRoot(path, false, expectedMetadata),
   ).rejects.toMatchObject({
     reason: "integrity",
-    message: `Root artifact changed before inventory: ${path}`,
+    integrityCheck: "container-identity",
   });
 });
 

@@ -3,14 +3,18 @@ import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";
 
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
 import { NtfsMftArtifactReader } from "./NtfsMftArtifactReader.js";
 
-import { MFT_DEFAULT_RECORD_BYTES } from "../domain/windows/ntfsMft.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
+
+// The constructed FILE records intentionally use the 1024-byte default.
+const MFT_DEFAULT_RECORD_BYTES = 1024;
 import { linkedMftFixture } from "../../tests/fixtures/ntfsMftExtension.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
+import { ArtifactFileSource } from "../resources/index.js";
 
 /** A 1 KiB FILE record whose update sequence array covers both sectors. */
 const recordBytes = (options: {
@@ -212,7 +216,7 @@ it("retries a shared preparation cancelled by another traversal", async () => {
     const cancelledResult = expect(cancelled).rejects.toMatchObject({
       reason: "cancelled",
     });
-    await started;
+    await awaitAcknowledgement(started, cancelled, "NTFS traversal read");
     const other = reader.entries()[Symbol.asyncIterator]().next();
     controller.abort("cancelled first traversal");
     await cancelledResult;
@@ -221,6 +225,22 @@ it("retries a shared preparation cancelled by another traversal", async () => {
   } finally {
     controller.abort();
     spy.mockRestore();
+    await reader.close();
+  }
+});
+
+it("reports cancellation during MFT coverage", async () => {
+  const path = await writeMft("$MFT", recordBytes({}));
+  const reader = new NtfsMftArtifactReader(path);
+  const controller = new AbortController();
+  try {
+    const entries = reader
+      .entries(controller.signal, {
+        onCoverage: () => controller.abort(),
+      })
+      [Symbol.asyncIterator]();
+    await expect(entries.next()).rejects.toMatchObject({ reason: "cancelled" });
+  } finally {
     await reader.close();
   }
 });
@@ -280,21 +300,13 @@ it("does not finish a traversal when close begins during final source verificati
   );
   const read = ArtifactFileSource.prototype.read;
   let calls = 0;
-  let entered!: () => void;
-  let resume!: () => void;
-  const started = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
-  const gate = new Promise<void>((resolve) => {
-    resume = resolve;
-  });
+  const closeRead = phaseGate();
   const spy = vi
     .spyOn(ArtifactFileSource.prototype, "read")
     .mockImplementation(async function (this: ArtifactFileSource, signal) {
       const result = await read.call(this, signal);
       if (++calls === 2) {
-        entered();
-        await gate;
+        await closeRead.hold();
       }
       return result;
     });
@@ -303,14 +315,14 @@ it("does not finish a traversal when close begins during final source verificati
     const rejected = expect(traversal).rejects.toMatchObject({
       reason: "unavailable",
     });
-    await started;
+    await closeRead.reached(traversal, "NTFS close read");
     const closing = reader.close();
-    resume();
+    closeRead.release();
     await rejected;
     await closing;
     expect(calls).toBe(2);
   } finally {
-    resume();
+    closeRead.release();
     spy.mockRestore();
     await reader.close();
   }

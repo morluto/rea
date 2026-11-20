@@ -1,7 +1,7 @@
 import { once } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 
-import { RuntimeControlUnavailableError } from "../process/RuntimeControlUnavailableError.js";
+import { RuntimeControlUnavailableError } from "../domain/runtimeControlUnavailableError.js";
 import type { WindowsNativeAuthority } from "./WindowsNativeLoader.js";
 import {
   quoteWindowsProcessArgument,

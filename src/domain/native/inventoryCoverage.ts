@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /**
  * Whether a provider inventory discovered every procedure, string or name in
@@ -22,7 +23,7 @@ export const overviewInventoryCoverageSchema = z.strictObject({
  * produced them.
  */
 export const withOverviewInventoryCoverage = <Value>(overview: Value): Value =>
-  typeof overview === "object" && overview !== null && !Array.isArray(overview)
+  isRecord(overview)
     ? {
         ...overview,
         inventory_coverage: {

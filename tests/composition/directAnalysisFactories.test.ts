@@ -87,59 +87,6 @@ const admittedNativeSessionInput = {
   },
 };
 
-it("requires a durable summary destination before acquiring a managed session", async () => {
-  const factories = recordingFactories();
-  const result = await runProviderAnalysis(
-    factories.dependencies,
-    "/fixture/missing.dll",
-    "inspect_managed_members",
-    {},
-    undefined,
-    undefined,
-    { detail: "summary" },
-  ).then(projectCliAnalysisResult);
-  expect(result).toMatchObject({
-    code: "invalid_request",
-    details: {
-      operation: "inspect_managed_members",
-      issues: [{ path: ["evidence_bundle"], reason: "missing_argument" }],
-    },
-  });
-  expect(factories.sessions).toEqual([]);
-});
-
-it.each([
-  "inspect_macho",
-  "inventory_artifact",
-  "inspect_managed_artifact",
-] as const)(
-  "rejects delivery options for %s before selecting a provider",
-  async (tool) => {
-    const factories = recordingFactories();
-    const invocation = [
-      factories.dependencies,
-      "/fixture/missing",
-      tool,
-      {},
-      undefined,
-      undefined,
-      { detail: "summary", evidenceBundlePath: "/fixture/bundle.json" },
-    ] as const;
-    // @ts-expect-error JavaScript callers can bypass managed-members-only delivery.
-    const result = await runProviderAnalysis(...invocation).then(
-      projectCliAnalysisResult,
-    );
-    expect(result).toMatchObject({
-      code: "invalid_request",
-      details: {
-        operation: tool,
-        issues: [{ path: ["delivery"], reason: "invalid_value" }],
-      },
-    });
-    expect(factories.sessions).toEqual([]);
-  },
-);
-
 describe("one-shot analysis factory boundary", () => {
   it("preserves thrown failures while releasing clients and cancellation listeners", async () => {
     const [path] = await createBinarySessionTargets();
@@ -356,8 +303,8 @@ it("direct analysis snapshot target mismatch retains actionable snapshot recover
     details: {
       binding_mismatch: {
         target: {
-          snapshot: { sha256: await sha(path) },
-          selected: { sha256: await sha(other) },
+          snapshot: { identity: { sha256: await sha(path) } },
+          selected: { identity: { sha256: await sha(other) } },
         },
         profile_comparison: "not_compared",
       },

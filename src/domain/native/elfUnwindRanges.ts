@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { knownCoverageStatusSchema } from "../coverage.js";
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { ELF_OBJECT_TYPE_NAMES } from "./elfNotes.js";
@@ -221,7 +222,7 @@ export const elfUnwindRangesSchema = z.strictObject({
     next_offset: uint.nullable(),
   }),
   coverage: z.strictObject({
-    status: z.enum(["complete", "incomplete"]),
+    status: knownCoverageStatusSchema,
     total_ranges: uint,
     /** Every decoded CIE, including ones this page does not return. */
     total_cies: uint,

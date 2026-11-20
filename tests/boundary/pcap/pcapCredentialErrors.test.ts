@@ -1,3 +1,5 @@
+import { UnclassifiedProviderFailure } from "../../../src/domain/unclassifiedProviderFailure.js";
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { z } from "zod";
 import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
@@ -9,7 +11,6 @@ import {
 } from "../../../src/pcap/PcapCommand.js";
 import {
   AnalysisCancelledError,
-  AnalysisProtocolError,
   AnalysisResourceConstraintError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
@@ -39,6 +40,7 @@ const ownedCommand = (
 ) =>
   runPcapCommand({
     operation: "inspect_pcap_capture",
+    platform: HOST_PLATFORM.platform,
     command: process.execPath,
     arguments: ["-e", code],
     redactHttpTransportCredentials: true,
@@ -66,14 +68,19 @@ it("keeps complete parser input while exposing safe late-failure diagnostics", a
     exit_code: 0,
     truncated: false,
   });
-}, 20_000);
+});
 
 it("preserves producer failure facts while excluding HTTP credentials", async () => {
   const failure: unknown = await ownedCommand(
     `${print}process.exitCode = 7;`,
   ).catch((cause: unknown) => cause);
-  expect(failure).toBeInstanceOf(AnalysisProtocolError);
-  if (!(failure instanceof AnalysisProtocolError)) throw failure;
+  expect(failure).toBeInstanceOf(UnclassifiedProviderFailure);
+  if (!(failure instanceof UnclassifiedProviderFailure)) throw failure;
+  expect(failure.examined).toMatchObject({
+    failure_kind: "exited",
+    exit_code: 7,
+  });
+  expect(projectAnalysisError(failure).code).toBe("execution_failure");
   expect(failure.capturedOutput).toMatchObject({
     exit_code: 7,
     truncated: false,
@@ -82,7 +89,7 @@ it("preserves producer failure facts while excluding HTTP credentials", async ()
     credential,
   );
   expect(failure.capturedOutput?.stdout).toContain("http://caller:keep@label");
-}, 20_000);
+});
 
 it("excludes HTTP credentials after output-observed cancellation and preserves its reason", async () => {
   const controller = new AbortController();
@@ -110,13 +117,14 @@ it("excludes HTTP credentials after output-observed cancellation and preserves i
   expect(JSON.stringify(projectAnalysisError(failure))).not.toContain(
     credential,
   );
-}, 20_000);
+});
 
 it("retains safe cleanup observations and retries their original owner", async () => {
   let mayClean = false;
   let retained = false;
   const output = await runPcapCommand({
     operation: "inspect_pcap_capture",
+    platform: HOST_PLATFORM.platform,
     command: process.execPath,
     arguments: ["-e", print],
     redactHttpTransportCredentials: true,
@@ -154,12 +162,13 @@ it("retains safe cleanup observations and retries their original owner", async (
   expect(output.cleanup?.capturedOutput.stdout).toContain(
     "http://caller:keep@label",
   );
-}, 20_000);
+});
 
 const nativeOptions = (
   path: string,
 ): Omit<Parameters<typeof runPcapCommand>[0], "limits"> => ({
   operation: "inspect_pcap_capture",
+  platform: HOST_PLATFORM.platform,
   command: "/usr/bin/tshark",
   arguments: [
     "-n",
@@ -224,7 +233,6 @@ it.skipIf(process.platform !== "linux" || !existsSync("/usr/bin/tshark"))(
       credential,
     );
   },
-  20_000,
 );
 
 it.skipIf(process.platform !== "linux" || !existsSync("/usr/bin/tshark"))(
@@ -250,5 +258,4 @@ it.skipIf(process.platform !== "linux" || !existsSync("/usr/bin/tshark"))(
     expect(frames[0]?._source.layers["http.request.uri"]).toEqual([target]);
     expect(result.capturedOutput.truncated).toBe(false);
   },
-  20_000,
 );

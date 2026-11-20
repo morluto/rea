@@ -1,3 +1,7 @@
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, expect } from "vitest";
@@ -11,7 +15,7 @@ import { goBinarySchema } from "../../../src/domain/go/goBinary.js";
 import {
   analysisViewResultSchema,
   goBinarySummaryViewResultSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import {
@@ -67,7 +71,7 @@ const goViewTest = mcpTest.extend<{
               tool.name === "inspect_analysis_view",
           )
           .map((tool) => {
-            const output = tool.outputSchema;
+            const output = canonicalOutputSchema(tool.name);
             if (output === undefined)
               throw new Error(`Missing ${tool.name} output schema`);
             expect(output.$schema).toBe(
@@ -91,7 +95,7 @@ const goViewTest = mcpTest.extend<{
         ).toBe(true);
         const reply = await client.callTool(
           { name, arguments: input },
-          { toolDefinition: tool },
+          { toolDefinition: withCanonicalOutputSchema(tool) },
         );
         expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
         return parseEvidence(reply.structuredContent);

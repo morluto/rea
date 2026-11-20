@@ -7,6 +7,7 @@ import {
   knownArgumentMistakeGuidance,
   knownViewMistakeGuidance,
 } from "./inputArgumentGuidance.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 const isRootArgument = (path: readonly unknown[]): boolean =>
   path.length === 0 || (path.length === 1 && path[0] === "input");
@@ -532,11 +533,7 @@ const projectUnionIssue = (
 
   const targetValue = valueAtPath(input, path);
   let activeErrors: readonly (readonly z.core.$ZodIssue[])[] = issue.errors;
-  if (
-    typeof targetValue === "object" &&
-    targetValue !== null &&
-    !Array.isArray(targetValue)
-  ) {
+  if (isRecord(targetValue)) {
     const candidateKeys = candidateDiscriminatorKeys(targetValue, budget);
     let narrowed = narrowUnionBranches(
       issue.errors,

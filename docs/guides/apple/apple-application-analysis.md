@@ -166,6 +166,13 @@ including when `inspect_plist.path` is explicit. For a bundle without a resolved
 executable, open its resource session first. The CLI `rea inspect-plist <path>`
 opens the selected artifact for its one invocation.
 Use `inspect_signature` on an executable candidate for code-signing claims.
+Its identity, hashes, designated requirement, entitlements and runtime state
+describe one slice, `slices.described`, whose signing state is the top-level
+`signed`. For a universal file, `slices.architectures` lists every slice
+codesign can select, `slices.checked` the ones whose own signing state was
+read, and `slices.unsigned` those reported unsigned. Any other slice in
+`architectures` that is not in `checked`, and any slice behind
+`unmapped: true`, has an unknown signing state.
 
 ## Dylib load resolution
 

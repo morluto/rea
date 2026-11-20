@@ -149,6 +149,6 @@ non-retryable `resource_constraint` with `resource: "file-size"` and
 valid UTF-8 is an `invalid_format` request issue. These limits apply per
 operation and do not claim aggregate host containment across concurrent callers.
 
-See [testing.md](../../development/testing.md#javascript-source-recovery) for the focused real
+See [source recovery verification](../../testing-lanes.md#javascript-source-recovery) for the focused real
 Wakaru CLI/MCP lane and its source-owned compiler fixtures. Other host platforms
 and Bun/Vue recovery are not claimed by this adapter.

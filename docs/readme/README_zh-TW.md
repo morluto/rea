@@ -82,11 +82,11 @@ npx rea-agents setup
 
 設定流程支援 Claude Code、Codex、Cursor、Gemini CLI、Grok Build 和[其他 AI 代理](../getting-started/installation.md#supported-agents)。提供者組態和手動註冊 MCP 的方法見[安裝與設定](../getting-started/installation.md)。
 
-MCP 預設使用精簡輸入 Schema，以減少上下文開銷。需要完整欄位說明和巢狀驗證細節時，請在 MCP 註冊中設定 `REA_MCP_INPUT_SCHEMA_PROFILE=full`。兩種設定都保留完整工具集和標準的伺服器驗證；見 MCP 合約指南。
+MCP 預設使用精簡輸入 Schema，以減少上下文開銷。精簡 Schema 省略的說明會接在工具描述之後。完整工具集和標準的伺服器驗證維持不變；見 MCP 合約指南。
 
 設定會直接登記所選執行環境和 REA 入口指令碼。使用套件執行器時，請保留其快取項目及執行環境，並從目標專案以外的可信任目錄取得套件。 請參閱安裝指南。
 
-預設會公布完整輸出 Schema。若用戶端限制 `tools/list` 的大小，請在 MCP 登記中設定 `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` 或 `off`。伺服器驗證和結構化結果仍保持完整。 請參閱 MCP 合約指南中的「Output schemas」。
+預設會從 `tools/list` 省略輸出 Schema：沒有任何模型 API 會讀取它們，且 REA 會自行驗證每個結果。在 MCP 登記中設定 `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` 可在 4096 位元組內公布每個輸出 Schema。所有設定下，伺服器驗證和結構化結果仍保持完整。 請參閱 MCP 合約指南中的「Output schemas」。
 
 ### 詢問 AI 代理
 
@@ -158,6 +158,7 @@ REA 需要 Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）或 26+ (>=26.12.1)�
 | 原生二進位檔案        | 偽程式碼、組合語言、字串、符號、呼叫和引用                                   | Hopper、Ghidra、IDA 或 Kuna；[原生分析](../guides/native/native-investigation.md)                                                                 |
 | 離線 ELF 佈局         | 節、段、原始符號/重定位資訊及靜態防護機制候選項                              | Linux x64 上由呼叫方提供的 pwntools；[二進位診斷](../guides/native/binary-diagnostics.md)                                                         |
 | Go 二進位檔案         | 內嵌編譯器版本、模組、替換項和建置設定                                       | 內建靜態 ELF/PE/thin Mach-O 檢查；無需安裝 Go                                                                                                     |
+| NuGet 套件            | 套件識別、相依性群組、授權、儲存庫及 ZIP 內容                                | 內建靜態 .nupkg 檢查；[NuGet 套件](../guides/managed/nuget-nupkg.md)                                                                              |
 | WASM 工件             | 驗證、節、精確的匯入/匯出 WAT 形式及解碼後的 WAT                             | 呼叫方提供的 WABT 1.0.42；`inspect_wasm_artifact`                                                                                                 |
 | EVM 位元組碼          | 分派選擇器、位元組偏移、推斷的參數和狀態可變性                               | Linux x64 上的本地原始位元組/十六進位輸入載體；[離線 EVM 指南](../guides/evm/evm-bytecode.md)                                                     |
 | Rust binaries         | Embedded cargo-auditable dependency list                                     | [Rust binaries](../rust-binaries.md)                                                                                                              |
@@ -166,6 +167,8 @@ REA 需要 Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）或 26+ (>=26.12.1)�
 | PE imports            | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash   | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                     |
 | Windows shortcuts     | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                         |
 | ELF notes             | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields              | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                      |
+| DWARF compile units   | Compile-unit name, directory, producer, language, and dwo_name               | Built-in static ELF, Mach-O, and PE inspection; [DWARF compile units](../guides/native/dwarf-units.md)                                            |
+| ELF dependencies      | DT_NEEDED, SONAME, RPATH/RUNPATH, GNU versions, and undefined imports        | Built-in static ELF inspection; [ELF dependencies](../elf-dependencies.md)                                                                        |
 | Binary hardening      | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O          | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                     |
 | Apple IPS crashes     | .ips metadata, threads, images, registers and crash classes                  | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                                     |
 | Linux kernel modules  | .modinfo keys, __versions CRCs, this_module presence, and signature trailer  | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                            |
@@ -174,7 +177,7 @@ REA 需要 Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）或 26+ (>=26.12.1)�
 | JavaScript / Electron | 模組、匯入、source map、路由、IPC 和原生附加元件關係                         | Node.js 和 npm；[應用分析](../guides/javascript/javascript-application-workflows.md); Linux: procps `ps`                                          |
 | 網站                  | 頁面結構、腳本、網路觀察結果和按請求獲取的螢幕擷取畫面                       | Chrome 系瀏覽器；[瀏覽器分析](../guides/web/browser-observation.md)                                                                               |
 | 已保存的網路擷取      | 請求、回應、可訪問的酬載和來源位置                                           | HAR / Fiddler Everywhere SAZ；原生 mitmproxy 擷取需要 Linux 上的 mitmdump；[擷取指南](../guides/web/web-network-captures.md)                      |
-| 封包擷取              | 端點、DNS、TLS SNI、通訊協定分佈和 HTTP 請求                                 | 呼叫端提供的 tshark 和 capinfos；[pcap 指南](../guides/data/pcap-analysis.md)                                                                     |
+| 封包擷取              | 端點、DNS、TLS SNI、通訊協定分佈和 HTTP 請求                                 | 呼叫端提供的 tshark 和 capinfos （已在 Linux 驗證）；[pcap 指南](../guides/data/pcap-analysis.md)                                                 |
 | .NET 程式集           | 中繼資料、CIL 指令、聲明的原生依賴和建置對比                                 | 靜態檢查；[托管程式碼指南](../guides/managed/managed-code-analysis.md)                                                                            |
 | PyInstaller           | CArchive, PYZ, Python bytecode                                               | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                             |
 | Deno compile binaries | Virtual files, entry point, recorded options, npm snapshot length            | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                              |

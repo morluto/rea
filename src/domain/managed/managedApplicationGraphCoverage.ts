@@ -1,12 +1,13 @@
+import { joinCoverageStatus, type CoverageStatus } from "../coverage.js";
 import type { ApplicationGraphEvidence } from "../javascript/javascriptApplicationEvidenceSchemas.js";
-import type {
-  ManagedArtifactInspection,
-  ManagedMemberInspection,
-  ManagedNativeBoundaryInspection,
+import {
+  managedInspectionCoverage,
+  type ManagedArtifactInspection,
+  type ManagedInspectionState,
+  type ManagedMemberInspection,
+  type ManagedNativeBoundaryInspection,
 } from "./managedArtifact.js";
 import { managedTokenScopesMatch } from "./managedInspectionEvidence.js";
-
-type ManagedCoverageState = "complete" | "partial" | "unavailable";
 
 /** Why a call site did not become a `calls` edge. */
 export type OmittedCallReason =
@@ -44,9 +45,10 @@ export interface ManagedGraphCoverageSources {
   readonly boundaries: ManagedNativeBoundaryInspection | null;
 }
 
-/** Whether any supplied source has incomplete coverage. */
+/** What the supplied sources and the projection left out. */
 export interface ManagedGraphProjectionOmissions {
-  readonly partialInput: boolean;
+  /** Parser states of the supplied sources; absent sources are not listed. */
+  readonly inputStates: readonly ManagedInspectionState[];
   readonly unscopedTokenRelationships: boolean;
   /** Declaring types the member Evidence selected; null when it inspected every type. */
   readonly selectedTypes: readonly string[] | null;
@@ -56,9 +58,21 @@ export interface ManagedGraphProjectionOmissions {
   readonly relations: ManagedRelationOmissions | null;
 }
 
+/**
+ * Coverage the supplied sources allow: an unavailable source examined nothing,
+ * so the graph cannot tell what it omits, even beside a known gap.
+ */
+const inputCoverage = (
+  omissions: ManagedGraphProjectionOmissions,
+): CoverageStatus =>
+  joinCoverageStatus([
+    "complete",
+    ...omissions.inputStates.map(managedInspectionCoverage),
+  ]);
+
 /** Omissions whose size is unknown, unlike counted relation sites. */
 const omitsUncounted = (omissions: ManagedGraphProjectionOmissions): boolean =>
-  omissions.partialInput ||
+  inputCoverage(omissions) !== "complete" ||
   omissions.unscopedTokenRelationships ||
   omissions.selectedTypes !== null ||
   omissions.methodRows !== undefined;
@@ -75,7 +89,7 @@ const completeCoverage = (): ApplicationGraphEvidence["coverage"] => ({
 
 /** Preserve the source parser's coverage state on projected observations. */
 export const managedSourceCoverage = (
-  state: ManagedCoverageState,
+  state: ManagedInspectionState,
 ): ApplicationGraphEvidence["coverage"] =>
   state === "complete"
     ? completeCoverage()
@@ -103,11 +117,9 @@ export const assessManagedGraphOmissions = (
       sources.members.identity_scope.requires_mvid,
       sources.boundaries.identity_scope.requires_mvid,
     ),
-  partialInput: [
-    sources.members?.coverage.state,
-    sources.boundaries?.coverage.state,
-    sources.artifact?.coverage.state,
-  ].some((state) => state !== undefined && state !== "complete"),
+  inputStates: [sources.members, sources.boundaries, sources.artifact].flatMap(
+    (source) => (source === null ? [] : [source.coverage.state]),
+  ),
   selectedTypes: sources.members?.selection?.type_names ?? null,
   methodRows:
     sources.members === null ||
@@ -122,22 +134,27 @@ export const assessManagedGraphOmissions = (
 export const managedGraphEvidenceCoverage = (
   omissions: ManagedGraphProjectionOmissions,
 ): ApplicationGraphEvidence["coverage"] =>
-  omitsAny(omissions)
-    ? {
-        status: "partial",
-        truncated: false,
-        omitted_count: omitsUncounted(omissions)
-          ? null
-          : omittedRelationSites(omissions.relations),
-        limits: [],
-      }
-    : completeCoverage();
+  inputCoverage(omissions) === "unknown"
+    ? { status: "unknown", truncated: false, omitted_count: null, limits: [] }
+    : omitsAny(omissions)
+      ? {
+          status: "partial",
+          truncated: false,
+          omitted_count: omitsUncounted(omissions)
+            ? null
+            : omittedRelationSites(omissions.relations),
+          limits: [],
+        }
+      : completeCoverage();
 
 /** Report whether all supplied source evidence was complete. */
 export const managedGraphResultCoverage = (
   omissions: ManagedGraphProjectionOmissions,
 ) => ({
-  status: omitsAny(omissions)
-    ? ("partial" as const)
-    : ("complete-within-inputs" as const),
+  status:
+    inputCoverage(omissions) === "unknown"
+      ? ("unknown" as const)
+      : omitsAny(omissions)
+        ? ("partial" as const)
+        : ("complete-within-inputs" as const),
 });

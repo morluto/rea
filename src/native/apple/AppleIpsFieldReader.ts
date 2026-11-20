@@ -3,7 +3,8 @@ import {
   type AppleIpsTypeMismatch,
   type RecordedInteger,
 } from "../../domain/native/appleIps.js";
-import { AppleIpsResourceFailure } from "./AppleIps.errors.js";
+import { invariantViolation } from "../../domain/internalInvariant.js";
+import { appleIpsLimit } from "./AppleIps.errors.js";
 import type { LosslessJson } from "./losslessJson.js";
 
 export type Members = Readonly<Record<string, LosslessJson>>;
@@ -37,7 +38,7 @@ export class FieldReader {
       : 0;
     const bytes = 2 * (decimalCharacters + hexCharacters);
     if (bytes > this.maximumIntegerTextBytes - this.#integerTextBytes)
-      throw new AppleIpsResourceFailure(
+      throw appleIpsLimit(
         "integer_text",
         this.maximumIntegerTextBytes,
         `IPS integer text reservation exceeds the ${String(this.maximumIntegerTextBytes)}-byte UTF-16 allowance`,
@@ -72,7 +73,9 @@ export class FieldReader {
     const a = this.#integers.get(left);
     const b = this.#integers.get(right);
     if (a === undefined || b === undefined)
-      throw new Error("IPS integer facts do not belong to this field reader");
+      throw invariantViolation(
+        "IPS integer facts do not belong to this field reader",
+      );
     const reserved = this.#reserve(
       Math.max(left.decimal.length, right.decimal.length) + 1,
       true,
@@ -87,7 +90,7 @@ export class FieldReader {
   ): RecordedInteger | null {
     const bytes = appleIpsIntegerTextBytes(value);
     if (bytes > this.maximumIntegerTextBytes - this.#integerTextBytes)
-      throw new AppleIpsResourceFailure(
+      throw appleIpsLimit(
         "integer_text",
         this.maximumIntegerTextBytes,
         "Repeated join integer exceeds the retained text allowance",
@@ -200,10 +203,13 @@ export class FieldReader {
   }
 
   /** An array element is always recorded, so `null` there is a mismatch too. */
-  row(value: LosslessJson, path: string): Members {
-    if (value.kind === "object") return value.members;
+  row(
+    value: LosslessJson,
+    path: string,
+  ): { members: Members; unlisted: readonly string[] } {
+    if (value.kind === "object") return value;
     this.mismatch(path, "object", value);
-    return {};
+    return { members: {}, unlisted: [] };
   }
 
   array(

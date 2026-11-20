@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import { inspectAndroidJniLibrary } from "../../../src/native/android/AndroidJniLibrary.js";
+import { inspectAndroidJniLibrary } from "../../../src/domain/android/androidJniLibrary.js";
 import { androidJniLibraryFactsSchema } from "../../../src/domain/android/androidJniLibraryFacts.js";
 import { projectAndroidJniBindings } from "../../../src/domain/android/androidJniBindings.js";
 import { jniElfFixture } from "../../fixtures/android/jniElf.js";
@@ -57,6 +57,11 @@ it.each(["name", "descriptor"] as const)(
           examined_methods: 1,
         },
         unknowns: [],
+        manifest_splits: {
+          status: "observed",
+          required_split_types: [],
+          split_required: false,
+        },
       },
       libraries: [
         {
@@ -91,18 +96,32 @@ it.each(["name", "descriptor"] as const)(
 );
 
 it.each([
-  [64, 183, "rela"],
-  [64, 62, "rela"],
-  [32, 40, "rel"],
-  [32, 3, "rel"],
-  [64, 183, "relr"],
-  [64, 62, "relr"],
-  [32, 40, "relr"],
-  [32, 3, "relr"],
+  [64, 183, "rela", false],
+  [64, 62, "rela", false],
+  [32, 40, "rel", false],
+  [32, 3, "rel", false],
+  [64, 183, "relr", false],
+  [64, 62, "relr", false],
+  [32, 40, "relr", false],
+  [32, 3, "relr", false],
+  [64, 183, "rela", true],
+  [64, 62, "rela", true],
+  [32, 40, "rel", true],
+  [32, 3, "rel", true],
+  [64, 183, "relr", false, "android"],
+  [64, 62, "relr", false, "android"],
+  [32, 40, "relr", false, "android"],
+  [32, 3, "relr", false, "android"],
 ] as const)(
-  "decodes %s-bit machine %s %s static tables with complete slot provenance",
-  async (bits, machine, encoding) => {
-    const fixture = jniElfFixture({ bits, machine, encoding });
+  "decodes %s-bit machine %s %s static tables (APS2: %s) with complete slot provenance",
+  async (bits, machine, encoding, packed, relrTags?: "android") => {
+    const fixture = jniElfFixture({
+      bits,
+      machine,
+      encoding,
+      ...(relrTags ? { relrTags } : {}),
+      ...(packed ? { packing: "aps2" } : {}),
+    });
     const original = Buffer.from(fixture.bytes);
     const result = await inspectAndroidJniLibrary(fixture.bytes);
     if (!result.ok) throw new Error(result.error.message);
@@ -156,6 +175,15 @@ it.each([
       ],
     ]);
     const first = result.value.tables[0]?.entries[0];
+    if (packed)
+      expect(first?.slots.map((slot) => slot.relocation)).toEqual(
+        [0, 1, 2].map((index) => ({
+          encoding,
+          record_file_offset: 0x806,
+          kind: machine === 183 ? 1027 : machine === 40 ? 23 : 8,
+          packing: { format: "aps2", group_entry_index: index },
+        })),
+      );
     expect(
       first?.slots.map((slot) => [
         slot.role,
@@ -196,11 +224,20 @@ it("does not limit the writable scan to named or read-only relocation data", asy
   });
 });
 
-it.each([32, 64] as const)(
-  "keeps later valid entries after a %s-bit unresolved function relocation",
-  async (bits) => {
+it.each([
+  [32, undefined],
+  [64, undefined],
+  [32, "aps2"],
+  [64, "aps2"],
+] as const)(
+  "keeps later valid entries after a %s-bit unresolved function relocation (packing: %s)",
+  async (bits, packing) => {
     const result = await inspectAndroidJniLibrary(
-      jniElfFixture({ bits, symbolicFirstFunction: true }).bytes,
+      jniElfFixture({
+        bits,
+        symbolicFirstFunction: true,
+        ...(packing === undefined ? {} : { packing }),
+      }).bytes,
     );
     if (!result.ok) throw new Error(result.error.message);
     expect(result.value.coverage).toMatchObject({
@@ -216,9 +253,9 @@ it.each([32, 64] as const)(
   },
 );
 
-it("keeps exports and explicit unknown table coverage for Android packed relocations", async () => {
+it("keeps exports and explicit unknown table coverage for unsupported APS1 relocations", async () => {
   const result = await inspectAndroidJniLibrary(
-    jniElfFixture({ packed: true }).bytes,
+    jniElfFixture({ packing: "aps1" }).bytes,
   );
   if (!result.ok) throw new Error(result.error.message);
   expect(result.value.exports).toHaveLength(2);
@@ -228,20 +265,23 @@ it("keeps exports and explicit unknown table coverage for Android packed relocat
     relocations_status: "unknown",
     tables_status: "unknown",
   });
-  expect(result.value.unknowns.join("\n")).toContain("APS2");
+  expect(result.value.unknowns.join("\n")).toContain("APS1");
 });
 
-it("rejects a leading RELR bitmap rather than interpreting it as an address", async () => {
-  const { bytes } = jniElfFixture({ encoding: "relr" });
-  bytes.writeBigUInt64LE(7n, 0x800);
-  expect(await inspectAndroidJniLibrary(bytes)).toMatchObject({
-    ok: false,
-    error: {
-      kind: "malformed",
-      message: "RELR bitmap has no preceding address",
-    },
-  });
-});
+it.each(["standard", "android"] as const)(
+  "rejects a leading RELR bitmap with %s tags rather than interpreting it as an address",
+  async (relrTags) => {
+    const { bytes } = jniElfFixture({ encoding: "relr", relrTags });
+    bytes.writeBigUInt64LE(7n, 0x800);
+    expect(await inspectAndroidJniLibrary(bytes)).toMatchObject({
+      ok: false,
+      error: {
+        kind: "malformed",
+        message: "RELR bitmap has no preceding address",
+      },
+    });
+  },
+);
 
 it("preserves later candidates after malformed Modified UTF-8 and a malformed JNI descriptor", async () => {
   const { bytes } = jniElfFixture();

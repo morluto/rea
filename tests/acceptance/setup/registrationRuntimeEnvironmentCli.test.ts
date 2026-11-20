@@ -1,6 +1,13 @@
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { expect } from "vitest";
+import { afterAll, beforeAll, beforeEach, expect } from "vitest";
 import { Scalar, stringify } from "yaml";
 
 import {
@@ -8,8 +15,29 @@ import {
   parseClientConfiguration,
   clientRegistrationEntry,
 } from "../../../src/application/ClientConfigurationDocument.js";
-import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import {
+  createTestWorkspace,
+  removeTestWorkspace,
+} from "../../support/workspace/workspaceFixture.js";
+
+let home = "";
+
+beforeAll(async () => {
+  home = (await createTestWorkspace("rea-registration-runtime-")).root;
+});
+
+beforeEach(async () => {
+  await Promise.all(
+    (await readdir(home)).map((entry) =>
+      rm(join(home, entry), { recursive: true, force: true }),
+    ),
+  );
+});
+
+afterAll(async () => {
+  if (home !== "") await removeTestWorkspace(home);
+});
 
 // Registration configuration tests must not discover installed providers or
 // plan provider-environment edits based on the machine running the suite.
@@ -22,7 +50,6 @@ const missingHopperAndGhidraEnvironment = (home: string) => ({
 cliTest(
   "retains selected MCP settings and unavailable provider paths in a new registration",
   async ({ cli }) => {
-    const home = await createTestTempDirectory("rea-selected-registration-");
     const config = join(home, ".qwen/settings.json");
     const selected = {
       HOPPER_LAUNCHER_PATH: join(home, "missing-hopper"),
@@ -139,13 +166,11 @@ cliTest(
     });
     expect(await readFile(config, "utf8")).toBe(updatedConfiguration);
   },
-  120_000,
 );
 
 cliTest(
   "persists, updates and validates tool-family scopes without losing client configuration",
   async ({ cli }) => {
-    const home = await createTestTempDirectory("rea-family-registration-");
     const config = join(home, ".qwen/settings.json");
     const foreign = { command: "foreign-tool", args: ["keep"] };
     const original = JSON.stringify({ mcpServers: { foreign } });
@@ -213,7 +238,6 @@ cliTest(
 cliTest.skipIf(process.platform !== "win32")(
   "rejects lowercase Windows provider settings in doctor and setup without writing",
   async ({ cli }) => {
-    const home = await createTestTempDirectory("rea-registration-case-");
     const config = join(home, ".cursor/mcp.json");
     await mkdir(dirname(config), { recursive: true });
     const original = JSON.stringify({
@@ -330,7 +354,6 @@ cliTest.for([
 ] as const)(
   "refuses a NUL environment $position in $client before setup writes",
   async (scenario, { cli }) => {
-    const home = await createTestTempDirectory("rea-registration-nul-");
     const config = join(home, scenario.path);
     await mkdir(dirname(config), { recursive: true });
     const environment = {
@@ -346,6 +369,9 @@ cliTest.for([
         [process.execPath, resolve("scripts/rea.mjs"), "mcp"],
         env,
       );
+      // A current dsh registration records its tool call deadline; without
+      // it doctor reports the registration stale rather than healthy.
+      if (scenario.format === "dsh") entry.toolCallTimeoutMs = 3_600_000;
       if (scenario.position === "expression name")
         entry.env = Object.fromEntries(
           Object.entries(env).map(([key, value]) => {
@@ -449,7 +475,6 @@ for (const scenario of scenarios)
   cliTest(
     `setup and doctor reject ${scenario.client} overrides rejected by MCP startup`,
     async ({ cli }) => {
-      const home = await createTestTempDirectory("rea-registration-runtime-");
       const config = join(home, scenario.path);
       await mkdir(dirname(config), { recursive: true });
       const environment = {
@@ -571,7 +596,6 @@ for (const scenario of scenarios)
 cliTest(
   "OpenCode CLI validates dependent settings after merging JSON and JSONC",
   async ({ cli }) => {
-    const home = await createTestTempDirectory("rea-layered-runtime-cli-");
     const directory = join(home, ".config/opencode");
     await mkdir(directory, { recursive: true });
     const lower = join(directory, "opencode.json");
@@ -662,9 +686,6 @@ cliTest(
 cliTest(
   "public setup propagates selected provider deadlines and input profile to Codex and Kimi",
   async ({ cli }) => {
-    const home = await createTestTempDirectory(
-      "rea-selected-registration-env-",
-    );
     const codexHome = join(home, "codex");
     const kimiHome = join(home, "kimi");
     await Promise.all(
@@ -682,7 +703,7 @@ cliTest(
       REA_GHIDRA_STARTUP_TIMEOUT_MS: "2700001",
       REA_HOPPER_STARTUP_TIMEOUT_MS: "2800002",
       REA_JEB_MCP_TIMEOUT_MS: "2900003",
-      REA_MCP_INPUT_SCHEMA_PROFILE: "full",
+      REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
       REA_CAPTURE_DECODER_OLD_GENERATION_MIB: "256",
       REA_REGEX_MATCHING_DEADLINE_MS: "10000",
       REA_REGEX_WORKER_HEAP_REQUEST_MIB: "256",
@@ -743,7 +764,7 @@ cliTest(
         REA_GHIDRA_STARTUP_TIMEOUT_MS: "2700001",
         REA_HOPPER_STARTUP_TIMEOUT_MS: "2800002",
         REA_JEB_MCP_TIMEOUT_MS: "2900003",
-        REA_MCP_INPUT_SCHEMA_PROFILE: "full",
+        REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
         REA_CAPTURE_DECODER_OLD_GENERATION_MIB: "256",
         REA_REGEX_MATCHING_DEADLINE_MS: "10000",
         REA_REGEX_WORKER_HEAP_REQUEST_MIB: "256",
@@ -767,7 +788,6 @@ cliTest(
       },
     });
   },
-  120_000,
 );
 
 for (const [client, provider] of [
@@ -778,9 +798,6 @@ for (const [client, provider] of [
   cliTest(
     `public ${client} setup and doctor use the effective IDA registration request budget with ${provider} selection`,
     async ({ cli }) => {
-      const home = await createTestTempDirectory(
-        "rea-ida-registration-budget-",
-      );
       const clientHome = join(home, client);
       await mkdir(clientHome, { recursive: true });
       const idaConfig = join(home, "ida.json");
@@ -789,6 +806,7 @@ for (const [client, provider] of [
           idaConfig,
           JSON.stringify({
             url: "http://127.0.0.1:12345/mcp",
+            protocol: "native",
             headers: { Authorization: "Bearer fixture-credential" },
             timeoutMs,
           }),
@@ -903,7 +921,6 @@ for (const [client, provider] of [
         });
       }
     },
-    120_000,
   );
 
 for (const invalidSetting of [
@@ -914,9 +931,6 @@ for (const invalidSetting of [
   cliTest(
     `setup rejects malformed selected ${invalidSetting.setting} before writing`,
     async ({ cli }) => {
-      const home = await createTestTempDirectory(
-        "rea-invalid-selected-registration-env-",
-      );
       const kimiHome = join(home, "kimi");
       await mkdir(kimiHome, { recursive: true });
       const config = join(kimiHome, "mcp.json");
@@ -955,13 +969,11 @@ for (const invalidSetting of [
         code: "ENOENT",
       });
     },
-    120_000,
   );
 
 cliTest(
   "public VS Code setup registers in VSCODE_APPDATA without changing the default configuration",
   async ({ cli }) => {
-    const home = await createTestTempDirectory("rea-vscode-appdata-cli-");
     const selectedData = join(home, "selected data");
     const config = join(selectedData, "Code", "User", "mcp.json");
     const defaultData =
@@ -1018,5 +1030,4 @@ cliTest(
       code: "ENOENT",
     });
   },
-  120_000,
 );

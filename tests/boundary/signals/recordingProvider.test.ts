@@ -1,3 +1,5 @@
+import { createCommandCli } from "../../support/cli/commandCli.js";
+import { spawnFailure } from "../../support/process/spawnFailure.js";
 import {
   AnalysisOutputError,
   AnalysisResourceConstraintError,
@@ -9,7 +11,7 @@ import { it, expect, onTestFinished } from "vitest";
 import { writeFile, readFile, readdir, chmod, symlink } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { basename, join } from "node:path";
-import { readStableArtifact } from "../../../src/artifacts/readStableArtifact.js";
+import { readStableArtifact } from "../../../src/resources/readStableArtifact.js";
 import { SigrokRecordingProvider } from "../../../src/signals/SigrokRecordingProvider.js";
 import { SignalRecordingService } from "../../../src/application/signals/SignalRecordingService.js";
 import {
@@ -23,7 +25,6 @@ import { createDeferred } from "../../fixtures/binarySession.js";
 import { analysisErrorRemediationAction } from "../../../src/domain/analysisErrorPresentation.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { Cli } from "incur";
 import { registerSignalCommands } from "../../../src/cli/signalCommands.js";
 import { silentLogger } from "../../../src/logger.js";
 
@@ -107,6 +108,7 @@ const fixture = async (
   const controller = new AbortController();
   let calls = 0;
   let mayClean = !failCleanup;
+  let mayStopDecoder = mode !== "process-cleanup";
   const acquired = createDeferred<void>();
   const release = createDeferred<void>();
   const provider = new SigrokRecordingProvider(
@@ -119,7 +121,7 @@ const fixture = async (
     async (input) => {
       calls++;
       if (mode === "launch-failure" && !input.arguments.includes("--version"))
-        throw Object.assign(new Error("spawn E2BIG"), { code: "E2BIG" });
+        throw spawnFailure("E2BIG", input.command);
       if (mode === "file-limit" && !input.arguments.includes("--version")) {
         const stdout = { text: "", bytes: 0, observedBytes: 0 };
         const stderr = {
@@ -145,6 +147,15 @@ const fixture = async (
       });
       if (mode === "wait" && !input.arguments.includes("--version"))
         spawned.process.stdout?.once("data", () => controller.abort());
+      if (mode === "process-cleanup" && !input.arguments.includes("--version"))
+        return {
+          ...spawned,
+          // The decoder exits by itself; only the cleanup proof is withheld.
+          cleanup: async () =>
+            mayStopDecoder
+              ? { cleaned: true, signaled: false }
+              : { cleaned: false, reason: "decoder owner remains unverified" },
+        };
       return spawned;
     },
     async () => {
@@ -184,6 +195,7 @@ const fixture = async (
   onTestFinished(async () => {
     release.resolve();
     mayClean = true;
+    mayStopDecoder = true;
     await provider.close();
   });
   const service = new SignalRecordingService(provider);
@@ -197,6 +209,7 @@ const fixture = async (
     release: () => release.resolve(),
     allowCleanup: () => {
       mayClean = true;
+      mayStopDecoder = true;
     },
   };
 };
@@ -566,7 +579,7 @@ it.each([
       "fixture: selected input format was not forwarded",
     );
 
-    const cli = Cli.create("signal-input-format-refusal-test", { sync: false });
+    const cli = createCommandCli();
     registerSignalCommands(cli, silentLogger, {}, f.service);
     let stdout = "";
     let commandExitCode: typeof process.exitCode;
@@ -730,7 +743,7 @@ it("projects sigrok's zero-exit missing-channel refusal through CLI and MCP with
   const previousExitCode = process.exitCode;
   process.exitCode = 0;
   try {
-    const cli = Cli.create("signal-channel-refusal-test", { sync: false });
+    const cli = createCommandCli();
     registerSignalCommands(cli, silentLogger, {}, f.service);
     let stdout = "";
     await cli.serve(
@@ -780,7 +793,7 @@ it("projects a missing bare channel target as invalid decoder input through the 
   const previousExitCode = process.exitCode;
   process.exitCode = 0;
   try {
-    const cli = Cli.create("signal-channel-target-test", { sync: false });
+    const cli = createCommandCli();
     registerSignalCommands(cli, silentLogger, {}, f.service);
     let stdout = "";
     await cli.serve(
@@ -943,7 +956,7 @@ it("reports an unknown decoder help selection as CLI invalid input", async () =>
   const previousExitCode = process.exitCode;
   process.exitCode = 0;
   try {
-    const cli = Cli.create("signal-refusal-test", { sync: false });
+    const cli = createCommandCli();
     registerSignalCommands(cli, silentLogger, {}, f.service);
     let stdout = "";
     await cli.serve(
@@ -1010,7 +1023,13 @@ it.each(["decode", "discovery"] as const)(
         : await f.service.inspectDecoders({});
     if (result.ok) throw new Error("Expected launch failure");
     expect(f.calls()).toBe(2);
-    expect(result.error.message).toContain("spawn E2BIG");
+    // A launch failure is not tool output: the shared owner reports the
+    // oversized argument list as a resource constraint.
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      resource: "transport",
+      reportedLimits: { spawn_error: "E2BIG" },
+    });
     expect(result.error.capturedOutput).toBeUndefined();
   },
 );
@@ -1031,6 +1050,27 @@ it("retains a completed observation and cleanup ownership for retry", async () =
   expect(
     (await readdir(f.directory)).filter((name) => name.startsWith("decoder-")),
   ).toEqual([]);
+});
+
+it("releases a retained decoder process cleanup before the next decode completes", async () => {
+  const f = await fixture("process-cleanup");
+  const input = { path: f.path, decoders: "uart" };
+  const first = await f.service.decode(input);
+  if (first.ok) throw new Error("Expected retained process cleanup");
+  expect(first.error.cleanupIncomplete).toBe(true);
+  expect(first.error.cleanupResources).toContainEqual(
+    expect.stringMatching(/^process-group:\d+$/),
+  );
+  const launches = f.calls();
+  const blocked = await f.service.decode(input);
+  if (blocked.ok) throw new Error("Expected the retained owner to block");
+  expect(blocked.error.cleanupIncomplete).toBe(true);
+  expect(f.calls()).toBe(launches);
+  f.allowCleanup();
+  const retried = await f.service.decode(input);
+  expect(retried.ok).toBe(true);
+  expect(first.error.cleanupIncomplete).toBe(false);
+  expect(f.calls()).toBeGreaterThan(launches);
 });
 
 it("rejects cancelled and invalid requests before any provider work", async () => {
@@ -1338,6 +1378,10 @@ it.each([
   if (mode === "line-budget") {
     expect(result.error).toMatchObject({
       _tag: "AnalysisResourceConstraintError",
+      resource: "memory",
+      reason: "Decoder discovery exceeds the 65,536-line representation budget",
+      reportedLimits: { boundary: "line_budget", maximum: 65536 },
+      fixedAllowance: { kind: "capture" },
     });
     expect(result.error.capturedOutput?.stdout).toBe(
       "ID: uart" + "\n".repeat(65536),

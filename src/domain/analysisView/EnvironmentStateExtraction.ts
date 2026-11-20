@@ -1,10 +1,8 @@
 import { StateRecordChronology } from "./StateRecordChronology.js";
 import { jsonByteLength } from "../jsonSerialization.js";
 import type { JsonValue } from "../jsonValue.js";
-import {
-  compareUnicodeCodePoints as compare,
-  compositeKey,
-} from "../unicodeCodePointOrder.js";
+import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
+import { environmentEntityKey } from "./environmentStateIdentity.js";
 import {
   ownMember,
   apiBaseLengths,
@@ -94,9 +92,6 @@ interface ObservedMembership {
   readonly ids: Set<string>;
   capacity: number;
 }
-
-const entityKey = (type: string, collection: string, id: string): string =>
-  compositeKey([type, collection, id]);
 
 const requestLine = (record: StateRecordFacts): string =>
   record.path + (record.query ?? "");
@@ -772,7 +767,7 @@ export class EnvironmentStateExtraction {
     const id = scalarText(ownMember(object, field));
     if (id === undefined) return;
     const collection = collectionPathOf(record, plan.item);
-    const key = entityKey(plan.type, collection, id);
+    const key = environmentEntityKey(plan.type, collection, id);
     const position = this.#chronology.positions.get(record.ordinal)!;
     let entity = this.#entities.get(key);
     if (entity === undefined) {
@@ -823,7 +818,7 @@ export class EnvironmentStateExtraction {
       compareObservedEntities,
     ))
       this.#merged.set(
-        entityKey(entity.type, entity.collection, entity.id),
+        environmentEntityKey(entity.type, entity.collection, entity.id),
         mergeObservedEntity(entity),
       );
   }
@@ -841,7 +836,7 @@ export class EnvironmentStateExtraction {
       withBody: (ordinal, use) => this.#withBody(ordinal, use),
       retain: (bytes) => this.#retain(bytes),
       entity: (type, collection, id) =>
-        this.#merged.get(entityKey(type, collection, id)),
+        this.#merged.get(environmentEntityKey(type, collection, id)),
       inCollection: (type, collection) => this.#inCollection(type, collection),
       heldFields: (type) => {
         const fields = new Set<string>();
