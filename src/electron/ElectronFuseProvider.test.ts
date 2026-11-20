@@ -837,6 +837,11 @@ it("enforces the 32 sentinel boundary with typed and public limit details", asyn
     } else {
       await expect(readElectronFuseImage(path)).rejects.toMatchObject({
         limit: { name: "maximum_sentinels_per_slice", maximum: 32 },
+        failure: {
+          kind: "limit",
+          format: "electron-fuses",
+          limit: { name: "maximum_sentinels_per_slice", maximum: 32 },
+        },
       });
       expect(result.ok).toBe(false);
       if (!result.ok) {
@@ -872,6 +877,15 @@ it("rejects a sparse artifact over 1 GiB before scanning", async () => {
   await truncate(path, 1024 * 1024 * 1024 + 1);
   await expect(readElectronFuseImage(path)).rejects.toMatchObject({
     limit: { name: "maximum_input_bytes", maximum: 1024 * 1024 * 1024 },
+    failure: {
+      kind: "limit",
+      format: "electron-fuses",
+      limit: {
+        name: "maximum_input_bytes",
+        maximum: 1024 * 1024 * 1024,
+        required: 1_073_741_825n,
+      },
+    },
   });
   const result = await provider.inspect({ path });
   expect(result.ok).toBe(false);

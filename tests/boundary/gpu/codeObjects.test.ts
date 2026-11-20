@@ -3,6 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { deflateSync, zstdCompressSync } from "node:zlib";
 import { createHash } from "node:crypto";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { runWithAnalysisOperationSnapshot } from "../../../src/domain/analysisOperationSnapshot.js";
 import {
   MAXIMUM_ZSTD_MAX_FRAMES,
@@ -1495,6 +1496,14 @@ it("refuses escaped PTX report expansion while preserving bounded interrupted fa
     error: { _tag: "AnalysisResourceConstraintError" },
   });
   if (result.ok) throw new Error("expected representation capacity refusal");
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    details: {
+      reported_limits: {
+        boundary: "gpu-retained-report-bytes",
+        maximum: 16_777_216,
+      },
+    },
+  });
   const partial = gpuCodeObjectsPartialSchema.parse(
     parseEvidence(result.error.partialObservation).normalized_result,
   );
@@ -1531,7 +1540,14 @@ it("distinguishes impossible Clang bundle counts from a framed over-capacity dir
   }
   const result = await inspect(framed, { analysis: "inventory" });
   if (result.ok) throw new Error("Expected directory capacity failure");
-  expect(result.error._tag).toBe("AnalysisResourceConstraintError");
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: {
+      resource: "memory",
+      reported_limits: { boundary: "hip-bundle-entries", maximum: 65_536 },
+    },
+  });
 });
 
 it("checks Clang bundle ID bounds before the retained directory allowance", async () => {
@@ -1545,7 +1561,19 @@ it("checks Clang bundle ID bounds before the retained directory allowance", asyn
   const framed = Buffer.concat([header, Buffer.from(name), Buffer.alloc(1)]);
   const limited = await inspect(framed, { analysis: "inventory" });
   if (limited.ok) throw new Error("Expected a directory capacity failure");
-  expect(limited.error._tag).toBe("AnalysisResourceConstraintError");
+  expect(projectAnalysisError(limited.error)).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: {
+      resource: "memory",
+      reported_limits: {
+        boundary: "hip-bundle-id-bytes",
+        maximum: 65_536,
+        maximum_object_bytes: 134_217_728,
+        maximum_report_bytes: 16_777_216,
+      },
+    },
+  });
 
   const short = Buffer.from(header);
   short.writeBigUInt64LE(BigInt(short.length), 32);
@@ -1560,4 +1588,30 @@ it("checks Clang bundle ID bounds before the retained directory allowance", asyn
       issues: [{ path: ["path"], reason: "invalid_format" }],
     });
   }
+});
+
+it("reports aggregate Clang directory capacity when every ID fits", async () => {
+  const count = 256;
+  const idBytes = 65_536;
+  const entryBytes = 24 + idBytes;
+  const directoryEnd = 32 + count * entryBytes;
+  const framed = Buffer.alloc(directoryEnd + 1, 0x78);
+  framed.write("__CLANG_OFFLOAD_BUNDLE__");
+  framed.writeBigUInt64LE(BigInt(count), 24);
+  for (let index = 0; index < count; index++) {
+    const row = 32 + index * entryBytes;
+    framed.writeBigUInt64LE(BigInt(directoryEnd), row);
+    framed.writeBigUInt64LE(1n, row + 8);
+    framed.writeBigUInt64LE(BigInt(idBytes), row + 16);
+  }
+  const result = await inspect(framed, { analysis: "inventory" });
+  if (result.ok) throw new Error("Expected directory capacity failure");
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    details: {
+      reported_limits: {
+        boundary: "hip-bundle-directory-bytes",
+        maximum: 16_777_216,
+      },
+    },
+  });
 });

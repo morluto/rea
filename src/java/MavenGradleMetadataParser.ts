@@ -33,6 +33,8 @@ const BASE_LIMITATIONS = [
   "Requested versions, ranges, and property spellings are recorded as written; interpolation and parent/BOM inheritance are not performed.",
 ] as const;
 
+const GRADLE_MODULE_METADATA_VERSION = "1.1";
+
 const isElement = (node: Node | null): node is Element =>
   node !== null && node.nodeType === 1;
 
@@ -498,11 +500,8 @@ const parseGradle = (
     );
   const component = gradleObject(parsed.component, "component");
   const variantsValue = parsed.variants;
-  if (
-    parsed.formatVersion !== "1.1" &&
-    component === null &&
-    !Array.isArray(variantsValue)
-  )
+  const knownVersion = parsed.formatVersion === GRADLE_MODULE_METADATA_VERSION;
+  if (!knownVersion && component === null && !Array.isArray(variantsValue))
     throw unsupportedInput(
       MAVEN_GRADLE_METADATA_FORMAT,
       "Unrecognized Gradle module metadata formatVersion without component or variants.",
@@ -512,6 +511,10 @@ const parseGradle = (
     "Gradle variant attributes other than category and usage are not decoded.",
     "available-at coordinates are recorded as spelled; the named module file was not fetched.",
   ];
+  if (!knownVersion)
+    limitations.push(
+      `Recognized fields in this unfamiliar format version were interpreted using Gradle module metadata ${GRADLE_MODULE_METADATA_VERSION}. Version-specific declarations may be unreported.`,
+    );
   const unresolved = new MavenGradleUnresolvedCollector();
   const coordinates = {
     group_id: component === null ? null : textOf(component.group),

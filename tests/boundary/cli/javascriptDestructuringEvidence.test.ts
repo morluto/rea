@@ -141,7 +141,7 @@ cliTest(
     nestedSource.sibling[0] = "later";
     const numericSource = { pairs: [["read-time"]] };
     const { 0: [projectedNumericInnerElement] } = numericSource.pairs;
-    numericSource.pairs[0][0] = "later";
+    numericSource.pairs = [];
     const nestedPairs = [["read-time"], ["sibling"]];
     const [[innerElement] = ["fallback"], [siblingInnerElement]] = nestedPairs;
     nestedPairs[0][0] = "later";
