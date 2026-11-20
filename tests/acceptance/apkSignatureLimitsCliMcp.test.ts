@@ -1,8 +1,12 @@
 import { createHash } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 
+import {
+  locateApkSigningBlock,
+  parseZipTail,
+} from "../../src/domain/apkSignature/apkSigningBlock.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { analysisErrorProjectionSchema } from "../../src/domain/analysisErrorProjectionSchema.js";
 import { apkSignatureSummaryViewResultSchema } from "../../src/domain/analysisView/analysisViewResult.js";
@@ -48,6 +52,12 @@ cliTest(
         await writeFile(malformedPath, malformed);
       }
     }
+    const bytes = await readFile(paths.get(4097)!);
+    const tail = parseZipTail(bytes);
+    if (!tail.ok) throw new Error("Expected a framed ZIP tail");
+    const parsed = locateApkSigningBlock(bytes, tail.value);
+    if (parsed.ok || parsed.error.kind !== "limit")
+      throw new Error("Expected a signing-block pair limit");
     const expected = {
       code: "resource_constraint",
       category: "resource_constraint",
@@ -55,8 +65,7 @@ cliTest(
       details: {
         operation: "inspect_apk_signature",
         resource: "capacity",
-        reason:
-          "APK Signing Block holds more signing-block-pairs than the 4096 limit.",
+        reason: parsed.error.failure.detail,
         reported_limits: { max_signing_block_pairs: 4096 },
       },
     };
