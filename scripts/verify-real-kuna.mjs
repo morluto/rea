@@ -85,15 +85,24 @@ const resourceScope = {
     }),
   run: (operation) => inspectionResources.run(operation),
 };
+// nm, ps, cc and strip share one owner, created before the workspace. If
+// allocation fails, the owner is still closed and no root is left behind.
+const commands = await createVerifierCommands();
 // Kuna children cache under the root; a plain root admits them on every host.
 const workspaceFixture = await VerifierFixture.open({
   prefix: "rea-kuna-lane-",
   private: false,
+}).catch(async (cause) => {
+  await commands.close().catch((closeCause) => {
+    throw new AggregateError(
+      [cause, closeCause],
+      "Kuna workspace allocation and command cleanup both failed",
+    );
+  });
+  throw cause;
 });
 const workspace = workspaceFixture.path;
 const cacheRoot = join(workspace, "cache");
-// nm, ps, cc and strip share one owner, created before any of them starts.
-const commands = await createVerifierCommands();
 // A server retains its workspace until both provider and transport cleanup
 // have positively completed, even if later lineage observation is empty.
 const pendingServers = new Set();

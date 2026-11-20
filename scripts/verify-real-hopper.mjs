@@ -53,10 +53,19 @@ import { startUnrelatedHopperSentinel } from "./lib/unrelated-hopper-sentinel.mj
 import { snapshotHopperRuntime } from "./lib/real-hopper-cleanup.mjs";
 import { verifyLinuxHopperOwnerExit } from "./lib/real-hopper-owner-exit.mjs";
 const verifierRun = createVerifierRun();
-// ps and any later host commands share one owner, created before a tool starts.
+// ps and any later host commands share one owner, created before a tool or
+// workspace exists. A failed workspace allocation still closes the owner.
 const commands = await createVerifierCommands();
 const workspaceFixture = await VerifierFixture.open({
   prefix: "rea-real-hopper-",
+}).catch(async (cause) => {
+  await commands.close().catch((closeCause) => {
+    throw new AggregateError(
+      [cause, closeCause],
+      "Hopper workspace allocation and command cleanup both failed",
+    );
+  });
+  throw cause;
 });
 const workspace = workspaceFixture.path;
 const retainWorkspace = (message, options) => {

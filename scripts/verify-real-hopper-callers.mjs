@@ -73,14 +73,23 @@ const clang = (await probeOwnedCommand("xcrun", ["--find", "clang"])).trim();
 const sdk = (
   await probeOwnedCommand("xcrun", ["--sdk", "macosx", "--show-sdk-path"])
 ).trim();
-// A plain root under /tmp, where this verifier has always built its fixtures.
+// The command owner is created before the workspace. If allocation fails,
+// the owner is still closed and no root is left behind.
+const commands = await createVerifierCommands();
 const workspace = await VerifierFixture.open({
   prefix: "rea-hopper-callers-verifier-",
   parent: "/tmp",
   private: false,
+}).catch(async (cause) => {
+  await commands.close().catch((closeCause) => {
+    throw new AggregateError(
+      [cause, closeCause],
+      "Hopper caller workspace allocation and command cleanup both failed",
+    );
+  });
+  throw cause;
 });
 const directory = workspace.path;
-const commands = await createVerifierCommands();
 const retainWorkspace = (message, options) => {
   workspace.retain(message);
   return new Error(message, options);
