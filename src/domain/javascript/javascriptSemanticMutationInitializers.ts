@@ -41,7 +41,7 @@ import {
 } from "./javascriptSemanticState.js";
 
 interface StatementPosition {
-  readonly body: readonly t.Statement[];
+  readonly owner: t.Program | t.BlockStatement;
   readonly index: number;
   readonly declaratorIndex: number;
 }
@@ -158,7 +158,7 @@ const statementPosition = (
   return index < 0
     ? null
     : {
-        body: parent.body,
+        owner: parent,
         index,
         declaratorIndex:
           t.isVariableDeclaration(statement) && declarator !== undefined
@@ -171,7 +171,7 @@ const positionPrecedes = (
   left: StatementPosition,
   right: StatementPosition,
 ): boolean =>
-  left.body === right.body &&
+  left.owner === right.owner &&
   (left.index < right.index ||
     (left.index === right.index &&
       left.declaratorIndex >= 0 &&
@@ -181,7 +181,7 @@ const sameStatementPosition = (
   left: StatementPosition,
   right: StatementPosition,
 ): boolean =>
-  left.body === right.body &&
+  left.owner === right.owner &&
   left.index === right.index &&
   left.declaratorIndex === right.declaratorIndex;
 
@@ -777,7 +777,7 @@ const computeReferenceInitializerPosition = (
       return directMutationPosition(parent, parents);
     if (t.isFunction(parent))
       return t.isBlockStatement(parent.body)
-        ? { body: parent.body.body, index: -1, declaratorIndex: -1 }
+        ? { owner: parent.body, index: -1, declaratorIndex: -1 }
         : null;
     if (
       parent === undefined ||
@@ -814,7 +814,7 @@ const initializerPosition = (
   reference = false,
 ): StatementPosition | null => {
   if (initializer.entryBody !== undefined)
-    return { body: initializer.entryBody.body, index: -1, declaratorIndex: -1 };
+    return { owner: initializer.entryBody, index: -1, declaratorIndex: -1 };
   return reference
     ? referenceInitializerPosition(initializer.node, parents)
     : directInitializerPosition(initializer.node, parents);
@@ -986,7 +986,16 @@ export const semanticBindingMayRejectAssignmentAt = (
   if (position === null || end === null) return false;
   // The RHS runs before any binding is initialized. Defaults inside the
   // binding pattern itself can run after earlier targets are initialized.
-  return initializer === declarator || positionPrecedes(position, end);
+  if (initializer === declarator) return true;
+  // A standalone block executes at its own position in the parent list.
+  // Stop at scopes that are not themselves statements in an ordered list.
+  let before: StatementPosition | null = position;
+  while (before !== null && before.owner !== end.owner) {
+    before = t.isBlockStatement(before.owner)
+      ? statementPosition(before.owner, parentsByNode)
+      : null;
+  }
+  return before !== null && positionPrecedes(before, end);
 };
 
 /** Repeated member reads share unknown ordering, while retaining their source sites. */
@@ -1257,7 +1266,7 @@ const moduleFunctionFirstRead = (
               if (
                 effect.node === undefined ||
                 position === null ||
-                position.body !== body
+                position.owner.body !== body
               ) {
                 bound = null;
                 break;
@@ -1320,7 +1329,7 @@ const moduleFunctionFirstRead = (
       for (const effect of state?.prototypeMutationSites ?? []) {
         if (effect.owner !== owner && effect.owner !== "Object") continue;
         const position = directMutationPosition(effect.node, parents);
-        if (position === null || position.body !== body) {
+        if (position === null || position.owner.body !== body) {
           bound = null;
           break;
         }
@@ -1346,7 +1355,7 @@ const moduleFunctionFirstRead = (
           if (
             position.position === null ||
             position.repeatingLoop ||
-            position.position.body !== body
+            position.position.owner.body !== body
           )
             return null;
           if (position.position.index > bound.index) return null;
@@ -1373,7 +1382,7 @@ const moduleFunctionFirstRead = (
       if (
         position.position === null ||
         position.repeatingLoop ||
-        position.position.body !== body
+        position.position.owner.body !== body
       )
         return null;
       if (position.position.index < bound.index) return identity;
@@ -1757,11 +1766,11 @@ export const semanticBindingAtRead = (
     moduleConstBinding &&
     sourcePosition !== null &&
     functionPosition !== null &&
-    sourcePosition.body === functionPosition.body &&
+    sourcePosition.owner === functionPosition.owner &&
     t.isFunctionDeclaration(enclosingFunction)
       ? moduleFunctionFirstRead(
           enclosingFunction,
-          sourcePosition.body,
+          sourcePosition.owner.body,
           parents,
           state,
         )
@@ -1770,7 +1779,7 @@ export const semanticBindingAtRead = (
     moduleConstBinding &&
     sourcePosition !== null &&
     functionPosition !== null &&
-    sourcePosition.body === functionPosition.body &&
+    sourcePosition.owner === functionPosition.owner &&
     (t.isFunctionDeclaration(enclosingFunction)
       ? firstFunctionRead !== null && sourcePosition.index < firstFunctionRead
       : positionPrecedes(sourcePosition, functionPosition));
@@ -1778,7 +1787,7 @@ export const semanticBindingAtRead = (
     repeatingLoop ||
     sourcePosition === null ||
     position === null ||
-    sourcePosition.body !== position.body;
+    sourcePosition.owner !== position.owner;
   if (uncertainOrder && moduleConstInitializedBeforeActivation)
     // Initialization coverage does not order a capture in another activation.
     return { status: "unresolved", binding, hasDefiniteInitializer: true };
@@ -1837,7 +1846,7 @@ const selectInitializers = (
   const preceding: typeof origins = [];
   for (const origin of origins) {
     const source = origin.position;
-    if (source === null || source.body !== position.body) return undefined;
+    if (source === null || source.owner !== position.owner) return undefined;
     if (positionPrecedes(source, position)) preceding.push(origin);
     else if (!positionPrecedes(position, source)) {
       if (

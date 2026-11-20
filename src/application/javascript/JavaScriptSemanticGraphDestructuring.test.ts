@@ -2760,6 +2760,30 @@ it.each([
     "candidate",
   ],
   [
+    "let target in a standalone block before an outer declaration",
+    'let selected;const xs=[1,"one"];{[fixed,selected]=xs;}let fixed;',
+    ["1"],
+    "candidate",
+  ],
+  [
+    "let target in multiple standalone blocks before a function-local declaration",
+    'function run(){let selected;const xs=[1,"one"];{{[fixed,selected]=xs;}}let fixed;}',
+    ["1"],
+    "candidate",
+  ],
+  [
+    "let target in a standalone block after the outer declaration",
+    'let selected;let fixed;const xs=[1,"one"];{[fixed,selected]=xs;}',
+    ["1"],
+    "resolved",
+  ],
+  [
+    "deferred callable declared inside an earlier standalone block",
+    'let read;{read=()=>{let selected;const xs=[1,"one"];[fixed,selected]=xs;};}let fixed;read();',
+    ["1"],
+    "resolved",
+  ],
+  [
     "read before an uninitialized target",
     "let selected;let later;const xs=[1,2,3];[selected,fixed,later]=xs;let fixed;",
     ["0"],
