@@ -2,6 +2,7 @@ import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { createTestProcessRegistry } from "../../support/process/processFixture.js";
 import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
@@ -3616,96 +3617,84 @@ it("preserves fatal process termination after recording uncaught exceptions", as
   expect(result.stderr).toContain("fatal-hook-secret");
 });
 
-it.each([{ sandboxPrefix: [] }, { sandboxPrefix: ["--no-sandbox"] }])(
-  "restores the exact application argv with Playwright prefix %j",
-  async ({ sandboxPrefix }) => {
-    const root = await createTestTempDirectory("rea-electron-argv-");
-    await writeElectronFixture(root);
-    const hook = join(root, "electron-active-hook.cjs");
-    const callerArguments = [
-      "--",
-      "/caller/plugin.asar",
-      "--config=/caller/app.asar/settings",
-      "-r",
-      hook,
-      `--require=${hook}`,
-      "--inspect=0",
-      "--remote-debugging-port=0",
-      "/caller/electron-active-hook.cjs",
-      "",
-      "中文",
-    ];
-    const plan = ["-r", hook, "/selected/app.asar", ...callerArguments];
-    const script = join(root, "argv.cjs");
-    await writeFile(
-      script,
-      `
-      const argv = ["/runner/electron", ...${JSON.stringify(sandboxPrefix)},
-        "--inspect=0", "--remote-debugging-port=0", ...${JSON.stringify(plan)}];
-      process.argv = argv;
-      const plan = ${JSON.stringify(plan)};
-      process.env.REA_ELECTRON_CAPTURE_ARGV = JSON.stringify({ length: plan.length,
-        sha256: require("node:crypto").createHash("sha256").update(JSON.stringify(plan)).digest("hex") });
-      require("./electron-active-hook.cjs");
-      console.log(JSON.stringify({ argv: process.argv, same: process.argv === argv,
-        handoff_present: "REA_ELECTRON_CAPTURE_ARGV" in process.env,
-        hook_error: globalThis.__reaElectronActiveSnapshot().hook_error }));
-    `,
-    );
-    // The bootstrap script establishes Electron's observed argv before loading the hook.
-    const result = await runNode(script, root, undefined, [], false);
-    expect(result.code, result.stderr).toBe(0);
-    expect(JSON.parse(result.stdout.trim())).toEqual({
-      argv: ["/runner/electron", "/selected/app.asar", ...callerArguments],
-      same: true,
-      handoff_present: false,
-      hook_error: false,
-    });
-  },
-);
-
 it.each([
+  "standard-prefix",
+  "sandbox-prefix",
   "absent",
   "invalid-json",
   "mismatch",
   "foreign-hook",
   "unknown-prefix",
   "no-entry",
-])("preserves observed argv for an %s capture handoff", async (mode) => {
-  const root = await createTestTempDirectory("rea-electron-argv-guard-");
+  "empty-entry",
+])("preserves caller-owned argv for the %s capture handoff", async (mode) => {
+  const root = await createTestTempDirectory("rea-electron-argv-");
   await writeElectronFixture(root);
   const hook = join(root, "electron-active-hook.cjs");
-  const plan = ["-r", hook, "/selected/app", "caller-document"];
-  const script = join(root, "guard.cjs");
+  const callerArguments = [
+    "--",
+    "/caller/plugin.asar",
+    "--config=/caller/app.asar/settings",
+    "-r",
+    hook,
+    `--require=${hook}`,
+    "--inspect=0",
+    "--remote-debugging-port=0",
+    "/caller/electron-active-hook.cjs",
+    "",
+    "中文",
+  ];
+  const plan = [
+    "-r",
+    mode === "foreign-hook" ? join(root, "foreign-hook.cjs") : hook,
+    ...(mode === "no-entry"
+      ? []
+      : [
+          mode === "empty-entry" ? "" : "/selected/app.asar",
+          ...callerArguments,
+        ]),
+  ];
+  const argv = [
+    "/runner/electron",
+    ...(mode === "sandbox-prefix" ? ["--no-sandbox"] : []),
+    mode === "unknown-prefix" ? "--inspect=1234" : "--inspect=0",
+    "--remote-debugging-port=0",
+    ...plan,
+  ];
+  const handoff = JSON.stringify({
+    length: plan.length,
+    sha256: createHash("sha256").update(JSON.stringify(plan)).digest("hex"),
+  });
+  if (mode === "mismatch") argv[argv.length - 1] = "another-document";
+  const restored = mode === "standard-prefix" || mode === "sandbox-prefix";
+  const script = join(root, "argv.cjs");
   await writeFile(
     script,
     `
-      const mode = ${JSON.stringify(mode)};
-      const plan = ${JSON.stringify(plan)};
-      const argv = ["/runner/electron", "--inspect=0", "--remote-debugging-port=0", ...plan];
-      process.argv = argv;
-      if (mode === "unknown-prefix") argv[1] = "--inspect=1234";
-      if (mode === "mismatch") argv[argv.length - 1] = "another-document";
-      if (mode === "foreign-hook") plan[1] = "/other/electron-active-hook.cjs";
-      if (mode === "no-entry") plan.length = 2;
-      if (mode === "absent") delete process.env.REA_ELECTRON_CAPTURE_ARGV;
-      else process.env.REA_ELECTRON_CAPTURE_ARGV = mode === "invalid-json" ? "{" : JSON.stringify({
-        length: plan.length,
-        sha256: require("node:crypto").createHash("sha256").update(JSON.stringify(plan)).digest("hex") });
-      const before = JSON.stringify(argv);
-      require("./electron-active-hook.cjs");
-      console.log(JSON.stringify({ unchanged: JSON.stringify(process.argv) === before,
-        same: process.argv === argv, handoff_present: "REA_ELECTRON_CAPTURE_ARGV" in process.env,
-        hook_error: globalThis.__reaElectronActiveSnapshot().hook_error }));
-    `,
+    const argv = ${JSON.stringify(argv)};
+    process.argv = argv;
+    delete process.env.REA_ELECTRON_CAPTURE_ARGV;
+    const handoff = ${JSON.stringify(
+      mode === "absent" ? null : mode === "invalid-json" ? "{" : handoff,
+    )};
+    if (handoff !== null) process.env.REA_ELECTRON_CAPTURE_ARGV = handoff;
+    require("./electron-active-hook.cjs");
+    console.log(JSON.stringify({ argv: process.argv, same: process.argv === argv,
+      handoff_present: "REA_ELECTRON_CAPTURE_ARGV" in process.env,
+      hook_error: globalThis.__reaElectronActiveSnapshot().hook_error }));
+  `,
   );
+
+  // Establish Electron's observed argv before loading the hook.
   const result = await runNode(script, root, undefined, [], false);
   expect(result.code, result.stderr).toBe(0);
-  expect(JSON.parse(result.stdout.trim())).toEqual({
-    unchanged: true,
+  expect(JSON.parse(result.stdout)).toEqual({
+    argv: restored
+      ? ["/runner/electron", "/selected/app.asar", ...callerArguments]
+      : argv,
     same: true,
     handoff_present: false,
-    hook_error: mode !== "absent",
+    hook_error: !restored && mode !== "absent",
   });
 });
 
