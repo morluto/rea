@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { analyzeJavaScriptSemantics } from "../../domain/javascript/javascriptSemanticAnalysis.js";
 import { graphForJavaScript } from "../../../tests/fixtures/javascriptSemanticGraph.js";
 
 it.each([
@@ -2513,3 +2514,70 @@ it("keeps a retained alias unknown after a possible close on a captured receiver
     ),
   ).toBe(false);
 });
+
+it.each([
+  [
+    "defined guard",
+    'const xs=[0,["one"]];const [used=(xs[1][0]="dormant"),[selected]]=xs;xs[1][0]="later";',
+    "resolved",
+    "literal",
+  ],
+  [
+    "undefined guard",
+    'const xs=[undefined,["one"]];const [used=(xs[1][0]="active"),[selected]]=xs;xs[1][0]="later";',
+    "candidate",
+    "unknown",
+  ],
+  [
+    "default can change the guard",
+    'const xs=[0,["one"]];const [used=(xs[0]=undefined),[selected]]=xs;xs[1][0]="later";',
+    "candidate",
+    "literal",
+  ],
+  [
+    "default can change the guard and later slot",
+    'const xs=[0,["one"]];const [used=(xs[0]=undefined,xs[1][0]="dormant"),[selected]]=xs;xs[1][0]="later";',
+    "candidate",
+    "unknown",
+  ],
+  [
+    "unknown guard",
+    'const xs=[unknown(),["one"]];const [used=(xs[1][0]="maybe"),[selected]]=xs;xs[1][0]="later";',
+    "candidate",
+    "unknown",
+  ],
+  [
+    "earlier guard write",
+    'const xs=[0,["one"]];xs[0]=undefined;const [used=(xs[1][0]="active"),[selected]]=xs;xs[1][0]="later";',
+    "candidate",
+    "unknown",
+  ],
+  [
+    "custom iterator",
+    'const xs=[0,["one"]];xs[Symbol.iterator]=function*(){yield undefined;yield xs[1]};const [used=(xs[1][0]="active"),[selected]]=xs;xs[1][0]="later";',
+    "candidate",
+    "unknown",
+  ],
+] as const)(
+  "applies a first default's possible effects with %s",
+  (_name, source, resolution, status) => {
+    const semantics = analyzeJavaScriptSemantics(source);
+    const graph = graphForJavaScript(source, semantics);
+    const selected = graph.nodes.find(
+      ({ kind, label }) => kind === "binding" && label === "selected",
+    );
+    expect(selected).toBeDefined();
+    expect(
+      graph.relations.find(
+        (edge) =>
+          edge.relation === "destructures" &&
+          edge.target_node_id === selected?.node_id,
+      ),
+    ).toMatchObject({ resolution });
+    expect(
+      semantics.bindings.find(({ name }) => name === "selected")?.value,
+    ).toMatchObject(
+      status === "literal" ? { status, value: "one" } : { status },
+    );
+  },
+);
