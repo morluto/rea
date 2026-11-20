@@ -20,6 +20,8 @@ import {
 } from "./machoSegmentHeader.js";
 import {
   MachoLoadCommandCursor,
+  decodeMachoFixedWordFields,
+  readMachoLinkeditDataCommand,
   machoCommandTableIssue,
   readMachoLoadCommandDeclarations,
 } from "./machoLoadCommands.js";
@@ -303,9 +305,8 @@ const collectFixupCommand = (
   { cursor, kind, size }: LoadCommand,
   state: LayoutState,
 ): void => {
-  const range = (at: number): { offset: number; size: number } => {
-    const offset = state.slice + bytes.readUInt32LE(at);
-    const length = bytes.readUInt32LE(at + 4);
+  const range = (relativeOffset: number, length: number) => {
+    const offset = state.slice + relativeOffset;
     if (offset + length > state.sliceEnd)
       throw malformedInput("macho", "Fixup data exceeds the Mach-O slice");
     return { offset, size: length };
@@ -313,30 +314,37 @@ const collectFixupCommand = (
   // An image has one fixup table of each kind; with a repeat, neither table
   // is the image's, so the slice is refused rather than read by position.
   if (kind === LC.DYLD_CHAINED_FIXUPS) {
-    if (size < 16)
+    const data = readMachoLinkeditDataCommand(
+      kind,
+      bytes.subarray(cursor, cursor + size),
+      true,
+    );
+    if (data === null)
       throw truncatedInput("macho", "Truncated chained-fixups command");
     if (state.chained !== null)
       throw malformedInput(
         "macho",
         "Mach-O slice declares more than one LC_DYLD_CHAINED_FIXUPS command",
       );
-    state.chained = range(cursor + 8);
+    state.chained = range(data.dataOffset, data.dataSize);
   } else if (kind === LC.DYLD_INFO || kind === LC.DYLD_INFO_ONLY) {
-    if (size < 48) throw truncatedInput("macho", "Truncated dyld-info command");
+    const fields = decodeMachoFixedWordFields(
+      kind,
+      bytes.subarray(cursor + 8, cursor + size),
+      true,
+    );
+    if (fields === null || fields === undefined)
+      throw truncatedInput("macho", "Truncated dyld-info command");
     if (state.dyldInfo)
       throw malformedInput(
         "macho",
         "Mach-O slice declares more than one LC_DYLD_INFO or LC_DYLD_INFO_ONLY command",
       );
     state.dyldInfo = true;
-    const rebase = range(cursor + 8);
+    const rebase = range(fields.rebase_off!, fields.rebase_size!);
     if (rebase.size > 0) state.rebases.push(rebase);
-    for (const [at, stream] of [
-      [cursor + 16, "bind"],
-      [cursor + 24, "weak"],
-      [cursor + 32, "lazy"],
-    ] as const) {
-      const bound = range(at);
+    for (const stream of ["bind", "weak", "lazy"] as const) {
+      const bound = range(fields[`${stream}_off`]!, fields[`${stream}_size`]!);
       if (bound.size > 0) state.binds.push({ ...bound, stream });
     }
   } else if (machoDependencyCommand(kind) !== null) {
