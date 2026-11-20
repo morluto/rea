@@ -191,8 +191,10 @@ export const inspectOciImageLayoutInputSchema = z.strictObject({
 
 const nullableText = z.string().min(1).nullable();
 
+// Annotation and label keys are reported as written; OCI does not forbid an
+// empty key, so one must not fail the whole report.
 const annotationSchema = z.strictObject({
-  name: z.string().min(1),
+  name: z.string(),
   value: z.string(),
 });
 

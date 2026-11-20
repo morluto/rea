@@ -135,7 +135,24 @@ const descriptorSizeDefect = (value: unknown): string | undefined => {
     return undefined;
   return size === undefined
     ? "lacks a size"
-    : `size ${JSON.stringify(size) ?? String(size)} is not a non-negative integer`;
+    : `size ${describeSizeValue(size)} is not a non-negative integer`;
+};
+
+/**
+ * A bounded description of an unusable size member. The value is untrusted,
+ * so containers and long strings are named by type and length, never
+ * serialized.
+ */
+const describeSizeValue = (size: unknown): string => {
+  if (typeof size === "number" || typeof size === "boolean")
+    return String(size);
+  if (size === null) return "null";
+  if (typeof size === "string")
+    return size.length <= 32
+      ? JSON.stringify(size)
+      : `(a ${String(size.length)}-character string)`;
+  if (Array.isArray(size)) return `(an array of ${String(size.length)} items)`;
+  return "(an object)";
 };
 
 /** What a descriptor that `descriptorOf` cannot model is missing. */
@@ -350,10 +367,7 @@ const historyOf = (value: unknown): OciImageLayoutImage["history"] => {
   return history;
 };
 
-const parseConfig = (
-  value: unknown,
-  includeEnvValues: boolean,
-): Pick<
+type ConfigFacts = Pick<
   OciImageLayoutImage,
   | "architecture"
   | "os"
@@ -371,48 +385,112 @@ const parseConfig = (
   | "stop_signal"
   | "rootfs_diff_ids"
   | "history"
-> => {
-  if (!isRecord(value))
-    return {
-      architecture: null,
-      os: null,
-      variant: null,
-      created: null,
-      author: null,
-      user: null,
-      env: [],
-      entrypoint: null,
-      cmd: null,
-      working_dir: null,
-      exposed_ports: [],
-      volumes: [],
-      labels: [],
-      stop_signal: null,
-      rootfs_diff_ids: [],
-      history: [],
-    };
+>;
+
+const EMPTY_CONFIG_FACTS: ConfigFacts = {
+  architecture: null,
+  os: null,
+  variant: null,
+  created: null,
+  author: null,
+  user: null,
+  env: [],
+  entrypoint: null,
+  cmd: null,
+  working_dir: null,
+  exposed_ports: [],
+  volumes: [],
+  labels: [],
+  stop_signal: null,
+  rootfs_diff_ids: [],
+  history: [],
+};
+
+/**
+ * Keys of a config set such as ExposedPorts. An empty key names nothing, so
+ * it is omitted and reported as a defect instead of becoming an empty fact.
+ */
+const configKeys = (
+  value: unknown,
+  label: string,
+  defects: string[],
+): string[] => {
+  const keys = objectKeys(value);
+  const named = keys.filter((key) => key !== "");
+  if (named.length !== keys.length)
+    defects.push(`${label} has an empty key; it is omitted`);
+  return named;
+};
+
+/**
+ * rootfs.diff_ids as nonempty strings. Members that are not are omitted and
+ * reported, so a damaged config keeps its other facts.
+ */
+const diffIdsOf = (rootfs: Record<string, unknown>, defects: string[]) => {
+  const value = rootfs.diff_ids;
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    defects.push("rootfs.diff_ids is not an array; it is not modeled");
+    return [];
+  }
+  const diffIds: string[] = [];
+  let invalid = 0;
+  let first = -1;
+  for (const [position, item] of value.entries()) {
+    if (typeof item === "string" && item !== "") {
+      diffIds.push(item);
+      continue;
+    }
+    invalid += 1;
+    if (first === -1) first = position;
+  }
+  if (invalid > 0)
+    defects.push(
+      `rootfs.diff_ids has ${String(invalid)} member${invalid === 1 ? "" : "s"} that ${invalid === 1 ? "is" : "are"} not a nonempty string, first at [${String(first)}]; ${invalid === 1 ? "it is" : "they are"} omitted`,
+    );
+  return diffIds;
+};
+
+/**
+ * Image facts from one config document, with the defects that left any of
+ * them out. Defects are reported once per config blob by the caller.
+ */
+const parseConfig = (
+  value: unknown,
+  includeEnvValues: boolean,
+): { facts: ConfigFacts; defects: string[] } => {
+  if (!isRecord(value)) return { facts: EMPTY_CONFIG_FACTS, defects: [] };
+  const defects: string[] = [];
   const config = isRecord(value.config) ? value.config : {};
   const rootfs = isRecord(value.rootfs) ? value.rootfs : {};
-  const diffIds = Array.isArray(rootfs.diff_ids)
-    ? rootfs.diff_ids.filter((item): item is string => typeof item === "string")
-    : [];
   return {
-    architecture: nonempty(value.architecture),
-    os: nonempty(value.os),
-    variant: nonempty(value.variant),
-    created: nonempty(value.created),
-    author: nonempty(value.author),
-    user: nonempty(config.User) ?? nonempty(config.user),
-    env: envBindings(config.Env ?? config.env, includeEnvValues),
-    entrypoint: asStringArray(config.Entrypoint ?? config.entrypoint),
-    cmd: asStringArray(config.Cmd ?? config.cmd),
-    working_dir: nonempty(config.WorkingDir) ?? nonempty(config.workingDir),
-    exposed_ports: objectKeys(config.ExposedPorts ?? config.exposedPorts),
-    volumes: objectKeys(config.Volumes ?? config.volumes),
-    labels: annotationsOf(config.Labels ?? config.labels),
-    stop_signal: nonempty(config.StopSignal) ?? nonempty(config.stopSignal),
-    rootfs_diff_ids: diffIds,
-    history: historyOf(value.history),
+    facts: {
+      architecture: nonempty(value.architecture),
+      os: nonempty(value.os),
+      variant: nonempty(value.variant),
+      created: nonempty(value.created),
+      author: nonempty(value.author),
+      user: nonempty(config.User) ?? nonempty(config.user),
+      env: envBindings(config.Env ?? config.env, includeEnvValues),
+      entrypoint: asStringArray(config.Entrypoint ?? config.entrypoint),
+      cmd: asStringArray(config.Cmd ?? config.cmd),
+      working_dir: nonempty(config.WorkingDir) ?? nonempty(config.workingDir),
+      exposed_ports: configKeys(
+        config.ExposedPorts ?? config.exposedPorts,
+        "config.ExposedPorts",
+        defects,
+      ),
+      volumes: configKeys(
+        config.Volumes ?? config.volumes,
+        "config.Volumes",
+        defects,
+      ),
+      labels: annotationsOf(config.Labels ?? config.labels),
+      stop_signal: nonempty(config.StopSignal) ?? nonempty(config.stopSignal),
+      rootfs_diff_ids: diffIdsOf(rootfs, defects),
+      history: historyOf(value.history),
+    },
+    defects,
   };
 };
 
@@ -478,6 +556,14 @@ export const parseOciImageLayout = async (
       observed.layout !== undefined
     )
       refuse(cause.failure, observed.layout, cause);
+    // A reader failure after that point, such as an unreadable blob, keeps
+    // the observation too unless the reader already attached its own.
+    if (
+      cause instanceof ArtifactReaderFailure &&
+      cause.partialObservation === undefined &&
+      observed.layout !== undefined
+    )
+      cause.partialObservation = observed.layout;
     throw cause;
   }
 };
@@ -700,7 +786,7 @@ const inventoryOciImageLayout = async (
   // image is added.
   const configs = new Map<
     string,
-    { facts: ReturnType<typeof parseConfig>; bytes: number } | undefined
+    { facts: ConfigFacts; bytes: number } | undefined
   >();
   let configBytesExpanded = 0;
   const chargeConfigBytes = (bytes: number): void => {
@@ -804,16 +890,47 @@ const inventoryOciImageLayout = async (
     }
   };
 
+  // Indexes are walked breadth-first so each one is first reached at the
+  // shallowest depth any path gives it; a deeper first visit through a shared
+  // index would otherwise hide what it reaches within max_index_depth.
+  const queuedIndexes = new Set<string>();
+  const indexQueue: { digest: string; mediaType: string; depth: number }[] = [];
+  const enqueueIndex = (
+    digest: string,
+    mediaType: string,
+    depth: number,
+  ): void => {
+    // Breadth-first, an index already queued was reached at this depth or a
+    // shallower one.
+    if (queuedIndexes.has(digest)) return;
+    if (depth > input.max_index_depth) {
+      referenceGraphTruncated = true;
+      recordFinding(
+        findings,
+        "nested_index_depth_exceeded",
+        `Nested index ${digest} exceeds max_index_depth ${String(input.max_index_depth)}.`,
+        digest,
+      );
+      return;
+    }
+    queuedIndexes.add(digest);
+    indexQueue.push({ digest, mediaType, depth });
+  };
+
   // An OCI 1.1 subject names the manifest an index or manifest refers to.
   // The subject may legitimately be absent from the layout, so only a
   // subject blob present at its layout path joins the referenced set, where
-  // it is hashed and no longer reported as unreferenced. A present subject
-  // with an unfamiliar media type is still reported as unknown.
-  const rememberSubject = (
+  // it is hashed and no longer reported as unreferenced. A present subject is
+  // walked like any other reference: a manifest through walkManifest, an
+  // index through the breadth-first queue one level below its owner, so the
+  // blobs it names are not reported as unreferenced either. A present
+  // subject with an unfamiliar media type is still reported as unknown.
+  const rememberSubject = async (
     owner: string,
     ownerDigest: string,
     value: unknown,
-  ): void => {
+    ownerDepth: number,
+  ): Promise<void> => {
     if (value === undefined) return;
     chargeDescriptor();
     const descriptor = descriptorOf(value);
@@ -835,20 +952,23 @@ const inventoryOciImageLayout = async (
         : ociBlobPath(parsed);
     if (path === undefined || !byPath.has(path)) return;
     remember(descriptor.digest, descriptor.media_type, descriptor.size);
-    if (!isOciKnownMediaType(descriptor.media_type))
+    if (!isOciKnownMediaType(descriptor.media_type)) {
       recordFinding(
         findings,
         "unknown_media_type",
         `${owner} ${ownerDigest} subject media type ${JSON.stringify(descriptor.media_type)} is unknown.`,
         descriptor.digest,
       );
+      return;
+    }
+    // A digest this parser cannot verify is not read; the blob pass reports
+    // the unsupported algorithm.
+    if (parsed === undefined) return;
+    if (isOciIndexMediaType(descriptor.media_type))
+      enqueueIndex(descriptor.digest, descriptor.media_type, ownerDepth + 1);
+    else if (isOciManifestMediaType(descriptor.media_type))
+      await walkManifest(descriptor.digest, descriptor.media_type, ownerDepth);
   };
-
-  // Indexes are walked breadth-first so each one is first reached at the
-  // shallowest depth any path gives it; a deeper first visit through a shared
-  // index would otherwise hide what it reaches within max_index_depth.
-  const queuedIndexes = new Set<string>();
-  const indexQueue: { digest: string; mediaType: string; depth: number }[] = [];
 
   const walkIndex = async (
     digest: string,
@@ -879,7 +999,7 @@ const inventoryOciImageLayout = async (
       );
       return;
     }
-    rememberSubject("Index", digest, document.value.subject);
+    await rememberSubject("Index", digest, document.value.subject, depth);
     const schemaVersion =
       typeof document.value.schemaVersion === "number" &&
       Number.isSafeInteger(document.value.schemaVersion)
@@ -941,36 +1061,18 @@ const inventoryOciImageLayout = async (
       entries: indexEntries,
     });
     for (const descriptor of indexEntries) {
-      if (isOciIndexMediaType(descriptor.media_type)) {
-        // Breadth-first, an index already queued was reached at this depth
-        // or a shallower one.
-        if (queuedIndexes.has(descriptor.digest)) continue;
-        if (depth + 1 > input.max_index_depth) {
-          referenceGraphTruncated = true;
-          recordFinding(
-            findings,
-            "nested_index_depth_exceeded",
-            `Nested index ${descriptor.digest} exceeds max_index_depth ${String(input.max_index_depth)}.`,
-            descriptor.digest,
-          );
-          continue;
-        }
-        queuedIndexes.add(descriptor.digest);
-        indexQueue.push({
-          digest: descriptor.digest,
-          mediaType: descriptor.media_type,
-          depth: depth + 1,
-        });
-        continue;
-      }
-      if (isOciManifestMediaType(descriptor.media_type))
-        await walkManifest(descriptor.digest, descriptor.media_type);
+      if (isOciIndexMediaType(descriptor.media_type))
+        enqueueIndex(descriptor.digest, descriptor.media_type, depth + 1);
+      else if (isOciManifestMediaType(descriptor.media_type))
+        await walkManifest(descriptor.digest, descriptor.media_type, depth);
     }
   };
 
+  /** `depth` is that of the index whose walk reached this manifest. */
   const walkManifest = async (
     digest: string,
     mediaType: string,
+    depth: number,
   ): Promise<void> => {
     if (visited.has(`manifest:${digest}`)) return;
     visited.add(`manifest:${digest}`);
@@ -990,14 +1092,18 @@ const inventoryOciImageLayout = async (
       );
       return;
     }
-    rememberSubject("Manifest", digest, document.value.subject);
+    await rememberSubject("Manifest", digest, document.value.subject, depth);
+    // config is required; a manifest without one is as damaged as one whose
+    // config descriptor cannot be modeled.
     const configDescriptor = descriptorOf(document.value.config);
-    if (configDescriptor === undefined && document.value.config !== undefined) {
+    if (configDescriptor === undefined) {
       referenceGraphTruncated = true;
       recordFinding(
         findings,
         "malformed_blob_json",
-        `Manifest ${digest} config ${descriptorDefect(document.value.config)}; the config is not modeled.`,
+        document.value.config === undefined
+          ? `Manifest ${digest} lacks a config descriptor; the config is not modeled.`
+          : `Manifest ${digest} config ${descriptorDefect(document.value.config)}; the config is not modeled.`,
         digest,
       );
     }
@@ -1050,10 +1156,7 @@ const inventoryOciImageLayout = async (
         present: entry?.kind === "file",
       });
     }
-    let configFacts: ReturnType<typeof parseConfig> = parseConfig(
-      {},
-      input.include_env_values,
-    );
+    let configFacts = EMPTY_CONFIG_FACTS;
     if (configDescriptor !== undefined) {
       reportSizeDefect(
         `Manifest ${digest} config`,
@@ -1097,16 +1200,23 @@ const inventoryOciImageLayout = async (
             `Config ${configDescriptor.digest} root is not a JSON object; its facts are not modeled.`,
             configDescriptor.digest,
           );
-        config =
-          configDocument === undefined
-            ? undefined
-            : {
-                facts: parseConfig(
-                  configDocument.value,
-                  input.include_env_values,
-                ),
-                bytes: configDocument.bytes,
-              };
+        if (configDocument === undefined) config = undefined;
+        else {
+          const parsedConfig = parseConfig(
+            configDocument.value,
+            input.include_env_values,
+          );
+          // A defective member is omitted from the facts rather than
+          // failing the whole inventory, and the config is reported once.
+          for (const defect of parsedConfig.defects)
+            recordFinding(
+              findings,
+              "malformed_blob_json",
+              `Config ${configDescriptor.digest} ${defect}.`,
+              configDescriptor.digest,
+            );
+          config = { facts: parsedConfig.facts, bytes: configDocument.bytes };
+        }
         configs.set(configDescriptor.digest, config);
       }
       if (config !== undefined) {
@@ -1404,6 +1514,7 @@ const inventoryOciImageLayout = async (
     findings.some(
       (finding) =>
         finding.kind === "missing_blob" ||
+        finding.kind === "symlink_blob" ||
         finding.kind === "unsupported_digest_algorithm" ||
         finding.kind === "nested_index_depth_exceeded" ||
         finding.kind === "blob_oversize" ||

@@ -275,6 +275,8 @@ it("records a symlinked blob as a finding and does not follow it", async () => {
     present: false,
     hashed: false,
   });
+  // The layer was not hashed, so the inventory is not complete.
+  expect(report.coverage.status).toBe("partial");
 });
 
 it("reports partial coverage when a referenced layer is a directory", async () => {
@@ -890,26 +892,71 @@ it("records unreferenced blobs, unknown media types and unsupported digests", as
   );
 });
 
-it("counts local subject blobs as referenced and hashes them", async () => {
+const OCI_EMPTY_CONFIG = {
+  mediaType: "application/vnd.oci.empty.v1+json",
+  size: 2,
+};
+
+/** A manifest with the empty config and one layer, as written bytes. */
+const putLayerManifest = async (
+  root: string,
+  layerBody: string,
+): Promise<{ digest: string; layer: string; json: string }> => {
+  const emptyConfig = await putOciBlob(root, "{}");
+  const layer = await putOciBlob(root, layerBody);
+  const json = JSON.stringify({
+    schemaVersion: 2,
+    mediaType: "application/vnd.oci.image.manifest.v1+json",
+    config: { ...OCI_EMPTY_CONFIG, digest: emptyConfig },
+    layers: [
+      {
+        mediaType: "application/vnd.oci.image.layer.v1.tar+gzip",
+        digest: layer,
+        size: Buffer.byteLength(layerBody),
+      },
+    ],
+  });
+  return { digest: await putOciBlob(root, json), layer, json };
+};
+
+/** An index whose manifests are `entries`, as written bytes. */
+const putIndex = async (
+  root: string,
+  entries: unknown[],
+  subject?: unknown,
+): Promise<{ digest: string; json: string }> => {
+  const json = JSON.stringify({
+    schemaVersion: 2,
+    mediaType: "application/vnd.oci.image.index.v1+json",
+    manifests: entries,
+    ...(subject === undefined ? {} : { subject }),
+  });
+  return { digest: await putOciBlob(root, json), json };
+};
+
+it("walks local subjects as references and hashes them", async () => {
   const root = await createTestTempDirectory("rea-oci-subject-");
   await writeOciImageLayoutFixture(root);
-  const manifestSubject = await putOciBlob(root, '{"subject":"manifest"}');
-  const indexSubject = await putOciBlob(root, '{"subject":"index"}');
+  const manifestSubject = await putLayerManifest(root, "manifest-subject");
+  const nested = await putLayerManifest(root, "index-subject-entry");
+  const indexSubject = await putIndex(root, [
+    {
+      mediaType: "application/vnd.oci.image.manifest.v1+json",
+      digest: nested.digest,
+      size: Buffer.byteLength(nested.json),
+    },
+  ]);
   const emptyConfig = await putOciBlob(root, "{}");
   const referrer = JSON.stringify({
     schemaVersion: 2,
     mediaType: "application/vnd.oci.image.manifest.v1+json",
     artifactType: "application/vnd.example.sbom",
-    config: {
-      mediaType: "application/vnd.oci.empty.v1+json",
-      digest: emptyConfig,
-      size: 2,
-    },
+    config: { ...OCI_EMPTY_CONFIG, digest: emptyConfig },
     layers: [],
     subject: {
       mediaType: "application/vnd.oci.image.manifest.v1+json",
-      digest: manifestSubject,
-      size: 22,
+      digest: manifestSubject.digest,
+      size: Buffer.byteLength(manifestSubject.json),
     },
   });
   const referrerDigest = await putOciBlob(root, referrer);
@@ -924,22 +971,73 @@ it("counts local subject blobs as referenced and hashes them", async () => {
     size: Buffer.byteLength(referrer),
   });
   index.subject = {
-    mediaType: "application/vnd.oci.image.manifest.v1+json",
-    digest: indexSubject,
-    size: 19,
+    mediaType: "application/vnd.oci.image.index.v1+json",
+    digest: indexSubject.digest,
+    size: Buffer.byteLength(indexSubject.json),
   };
   await writeFile(indexPath, `${JSON.stringify(index)}\n`);
   const report = await inspectLayout(root);
-  expect(
-    report.findings.filter((finding) => finding.kind === "unreferenced_blob"),
-  ).toEqual([]);
-  for (const digest of [manifestSubject, indexSubject]) {
+  expect(report.findings).toEqual([]);
+  for (const digest of [
+    manifestSubject.digest,
+    manifestSubject.layer,
+    indexSubject.digest,
+    nested.digest,
+    nested.layer,
+  ]) {
     const row = report.blobs.find((entry) => entry.digest === digest);
     expect(row?.referenced).toBe(true);
     expect(row?.hashed).toBe(true);
     expect(row?.sha256).toBe(digest.slice("sha256:".length));
   }
+  expect(report.images.map((image) => image.digest)).toEqual(
+    expect.arrayContaining([manifestSubject.digest, nested.digest]),
+  );
+  expect(
+    report.indexes.find((entry) => entry.digest === indexSubject.digest)?.depth,
+  ).toBe(1);
   expect(report.coverage.status).toBe("complete");
+});
+
+it("keeps a present subject index within max_index_depth", async () => {
+  const root = await createTestTempDirectory("rea-oci-subject-depth-");
+  await writeOciImageLayoutFixture(root);
+  const deepest = await putLayerManifest(root, "past-the-depth-bound");
+  const deeper = await putIndex(root, [
+    {
+      mediaType: "application/vnd.oci.image.manifest.v1+json",
+      digest: deepest.digest,
+      size: Buffer.byteLength(deepest.json),
+    },
+  ]);
+  const subject = await putIndex(root, [], {
+    mediaType: "application/vnd.oci.image.index.v1+json",
+    digest: deeper.digest,
+    size: Buffer.byteLength(deeper.json),
+  });
+  const indexPath = join(root, "index.json");
+  const index = JSON.parse(await readFile(indexPath, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  index.subject = {
+    mediaType: "application/vnd.oci.image.index.v1+json",
+    digest: subject.digest,
+    size: Buffer.byteLength(subject.json),
+  };
+  await writeFile(indexPath, `${JSON.stringify(index)}\n`);
+  const report = await inspectLayout(root, { max_index_depth: 1 });
+  expect(report.findings).toEqual([
+    expect.objectContaining({
+      kind: "nested_index_depth_exceeded",
+      digest: deeper.digest,
+    }),
+  ]);
+  expect(report.indexes.map((entry) => entry.depth)).toEqual([0, 1]);
+  expect(
+    report.blobs.find((entry) => entry.digest === deepest.layer)?.referenced,
+  ).toBeNull();
+  expect(report.coverage.status).toBe("partial");
 });
 
 it("reports a present subject with an unknown media type", async () => {
@@ -1339,8 +1437,46 @@ it("keeps a reader failure on a referenced blob instead of a JSON finding", asyn
     });
   try {
     await expect(inspectLayout(root)).rejects.toBe(failure);
+    // The oci-layout observation completed before the failed read.
+    expect(failure.partialObservation).toMatchObject({
+      kind: "file-snapshot-hash",
+      path: "oci-layout",
+    });
   } finally {
     inspectFile.mockRestore();
+  }
+});
+
+it("keeps the oci-layout snapshot when hashing a referenced blob fails", async () => {
+  const root = await createTestTempDirectory("rea-oci-blob-open-");
+  const written = await writeOciImageLayoutFixture(root);
+  const layerHex = written.layerDigest.slice("sha256:".length);
+  const nativeOpen = DirectoryArtifactReader.prototype.open;
+  const open = vi
+    .spyOn(DirectoryArtifactReader.prototype, "open")
+    .mockImplementation(async function (
+      this: DirectoryArtifactReader,
+      ...args: Parameters<DirectoryArtifactReader["open"]>
+    ) {
+      if (args[0].path.endsWith(layerHex))
+        throw new ArtifactReaderFailure("io", "controlled open failure");
+      return nativeOpen.apply(this, args);
+    });
+  const provider = new OciImageLayoutProvider();
+  try {
+    const result = await provider.inspect(
+      inspectOciImageLayoutInputSchema.parse({ path: root }),
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    const primary = primaryAnalysisError(result.error);
+    expect(primary.partialObservation).toMatchObject({
+      kind: "file-snapshot-hash",
+      path: "oci-layout",
+    });
+  } finally {
+    open.mockRestore();
+    await provider.close();
   }
 });
 
@@ -1538,5 +1674,148 @@ it("refuses a layout whose shared config expands past max_config_bytes", async (
     );
   } finally {
     await provider.close();
+  }
+});
+
+it("reports invalid rootfs.diff_ids members and keeps the other image facts", async () => {
+  const root = await createTestTempDirectory("rea-oci-diff-ids-");
+  const written = await writeOciImageLayoutFixture(root, {
+    config: { diffIds: ["", "sha256:kept", 7 as unknown as string, ""] },
+  });
+  const report = await inspectLayout(root);
+  expect(report.findings).toEqual([
+    {
+      kind: "malformed_blob_json",
+      digest: written.configDigest,
+      path: null,
+      message: `Config ${written.configDigest} rootfs.diff_ids has 3 members that are not a nonempty string, first at [0]; they are omitted.`,
+    },
+  ]);
+  expect(report.images[0]).toMatchObject({
+    architecture: "amd64",
+    rootfs_diff_ids: ["sha256:kept"],
+    layers: [expect.objectContaining({ digest: written.layerDigest })],
+  });
+  expect(report.coverage.status).toBe("partial");
+  const provider = new OciImageLayoutProvider();
+  try {
+    const result = await provider.inspect(
+      inspectOciImageLayoutInputSchema.parse({ path: root }),
+    );
+    expect(result.ok).toBe(true);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("omits empty ExposedPorts and Volumes keys with a finding", async () => {
+  const root = await createTestTempDirectory("rea-oci-empty-keys-");
+  const written = await writeOciImageLayoutFixture(root, {
+    config: {
+      exposedPorts: { "": {}, "80/tcp": {} },
+      volumes: { "": {} },
+    },
+  });
+  const report = await inspectLayout(root);
+  expect(report.images[0]).toMatchObject({
+    exposed_ports: ["80/tcp"],
+    volumes: [],
+  });
+  expect(report.findings.map((finding) => finding.message)).toEqual([
+    `Config ${written.configDigest} config.ExposedPorts has an empty key; it is omitted.`,
+    `Config ${written.configDigest} config.Volumes has an empty key; it is omitted.`,
+  ]);
+});
+
+it("reports empty annotation and label keys as written", async () => {
+  const root = await createTestTempDirectory("rea-oci-empty-annotation-");
+  await writeOciImageLayoutFixture(root, {
+    config: { labels: { "": "label-value" } },
+    extraIndexAnnotations: { "": "annotation-value" },
+  });
+  const report = await inspectLayout(root);
+  expect(report.indexes[0]?.entries[0]?.annotations).toContainEqual({
+    name: "",
+    value: "annotation-value",
+  });
+  expect(report.images[0]?.labels).toEqual([
+    { name: "", value: "label-value" },
+  ]);
+  expect(report.coverage.status).toBe("complete");
+});
+
+it("reports a manifest without a config as damaged", async () => {
+  const root = await createTestTempDirectory("rea-oci-no-config-");
+  const written = await writeOciImageLayoutFixture(root);
+  const orphan = await putOciBlob(root, "unknown-reference-status");
+  const manifest = JSON.stringify({
+    schemaVersion: 2,
+    mediaType: "application/vnd.oci.image.manifest.v1+json",
+    layers: [],
+  });
+  const manifestDigest = await putOciBlob(root, manifest);
+  const indexPath = join(root, "index.json");
+  const index = JSON.parse(await readFile(indexPath, "utf8")) as {
+    manifests: Record<string, unknown>[];
+  };
+  index.manifests.push({
+    mediaType: "application/vnd.oci.image.manifest.v1+json",
+    digest: manifestDigest,
+    size: Buffer.byteLength(manifest),
+  });
+  await writeFile(indexPath, `${JSON.stringify(index)}\n`);
+  const report = await inspectLayout(root);
+  expect(report.findings).toEqual([
+    expect.objectContaining({
+      kind: "malformed_blob_json",
+      digest: manifestDigest,
+      message: `Manifest ${manifestDigest} lacks a config descriptor; the config is not modeled.`,
+    }),
+  ]);
+  expect(
+    report.images.find((image) => image.digest === manifestDigest)
+      ?.config_digest,
+  ).toBeNull();
+  expect(
+    report.images.find((image) => image.digest === written.manifestDigest),
+  ).toBeDefined();
+  expect(
+    report.blobs.find((entry) => entry.digest === orphan)?.referenced,
+  ).toBeNull();
+  expect(report.coverage.status).toBe("partial");
+});
+
+it("describes an unusable descriptor size without serializing it", async () => {
+  const root = await createTestTempDirectory("rea-oci-size-value-");
+  await writeOciImageLayoutFixture(root);
+  const indexPath = join(root, "index.json");
+  const index = JSON.parse(await readFile(indexPath, "utf8")) as {
+    manifests: Record<string, unknown>[];
+  };
+  const first = index.manifests[0];
+  if (first === undefined) throw new Error("expected an index descriptor");
+  const marker = "do-not-echo-".repeat(1000);
+  index.manifests.push(
+    { ...first, size: [marker, { nested: [marker] }] },
+    { ...first, size: { value: marker } },
+    { ...first, size: marker },
+    { ...first, size: -1 },
+  );
+  await writeFile(indexPath, `${JSON.stringify(index)}\n`);
+  const report = await inspectLayout(root);
+  const messages = report.findings
+    .filter((finding) => finding.kind === "malformed_blob_json")
+    .map((finding) => finding.message);
+  expect(messages).toEqual([
+    expect.stringContaining("size (an array of 2 items) is not"),
+    expect.stringContaining("size (an object) is not"),
+    expect.stringContaining(
+      `size (a ${String(marker.length)}-character string) is not`,
+    ),
+    expect.stringContaining("size -1 is not"),
+  ]);
+  for (const message of messages) {
+    expect(message).not.toContain("do-not-echo");
+    expect(message.length).toBeLessThan(300);
   }
 });
