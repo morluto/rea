@@ -1,4 +1,4 @@
-import { mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -6,7 +6,7 @@ import { createPackage } from "@electron/asar";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { phaseGate } from "../../support/lifecycleHarness.js";
 
 import { CdpConnection } from "../../../src/browser/CdpConnection.js";
@@ -22,16 +22,12 @@ import {
 } from "../../fixtures/fakeCdpBrowser.js";
 
 const browsers: FakeCdpBrowser[] = [];
-const temporary: string[] = [];
 
-afterEach(async () => {
-  await Promise.all(browsers.splice(0).map(async (browser) => browser.close()));
-  await Promise.all(
-    temporary
-      .splice(0)
-      .map(async (path) => rm(path, { recursive: true, force: true })),
-  );
-});
+afterEach(() =>
+  closeVerifierResources(
+    browsers.splice(0).map((browser) => () => browser.close()),
+  ),
+);
 
 it.each(["late", "initial", "destroyed", "final-malformed", "out-of-scope"])(
   "captures the current authorized frame inventory: %s",
@@ -494,7 +490,9 @@ describe("CdpElectronProvider target access", () => {
     });
     browsers.push(browser);
 
-    const result = await new CdpElectronProvider().inspectPage(
+    const provider = new CdpElectronProvider();
+    onTestFinished(() => provider.close());
+    const result = await provider.inspectPage(
       inspectElectronPageInputSchema.parse({
         cdp_endpoint: browser.endpoint,
         target_id: "electron-page",
@@ -513,10 +511,7 @@ describe("CdpElectronProvider target access", () => {
     expect(browser.commands.map(({ method }) => method)).toContain(
       "Target.detachFromTarget",
     );
-    const closeDeadline = Date.now() + 1_000;
-    while (browser.activeConnectionCount() !== 0 && Date.now() < closeDeadline)
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    expect(browser.activeConnectionCount()).toBe(0);
+    await expect.poll(() => browser.activeConnectionCount()).toBe(0);
   });
 
   // Resource count has no ceiling; only an exhausted resource budget
@@ -574,15 +569,6 @@ describe("CdpElectronProvider transport lifecycle", () => {
       target_id: "electron-page",
       observation_ms: 0,
     });
-  const connectionsClosed = (browser: FakeCdpBrowser): Promise<void> =>
-    new Promise((resolve) => {
-      const poll = (): void => {
-        if (browser.activeConnectionCount() === 0) resolve();
-        else setTimeout(poll, 5);
-      };
-      poll();
-    });
-
   it("cancels a held Electron CDP handshake and admits the next inspection", async () => {
     const root = await electronFixture();
     const handshake = phaseGate<string>();
@@ -619,11 +605,7 @@ describe("CdpElectronProvider transport lifecycle", () => {
     );
     if (!inspected.ok) throw inspected.error;
     await provider.close();
-    await awaitAcknowledgement(
-      connectionsClosed(browser),
-      new Promise(() => undefined),
-      "Electron transports closed",
-    );
+    await expect.poll(() => browser.activeConnectionCount()).toBe(0);
   });
 
   it("retains a failed Electron transport close and retries it before the next inspection", async () => {
@@ -680,11 +662,7 @@ describe("CdpElectronProvider transport lifecycle", () => {
       expect(closes).toBeGreaterThan(failedCloses + 1);
       expect(first.error.cleanupIncomplete).toBe(false);
       await provider.close();
-      await awaitAcknowledgement(
-        connectionsClosed(browser),
-        new Promise(() => undefined),
-        "Electron transports closed",
-      );
+      await expect.poll(() => browser.activeConnectionCount()).toBe(0);
     } finally {
       denyClose = false;
       retriedClose.release();
@@ -836,7 +814,6 @@ describe("CdpElectronProvider target selection", () => {
 describe("CdpElectronProvider packaged pages", () => {
   it("lists and inspects packaged pages served from inside app.asar", async () => {
     const root = await createTestTempDirectory("rea-electron-asar-provider-");
-    temporary.push(root);
     const source = join(root, "source");
     await mkdir(source);
     await writeFile(
@@ -1244,7 +1221,6 @@ describe("CdpElectronProvider script source capture", () => {
 
 const electronFixture = async (): Promise<string> => {
   const root = await createTestTempDirectory("rea-electron-provider-");
-  temporary.push(root);
   await writeFile(join(root, "index.html"), "<script src='app.js'></script>");
   await writeFile(join(root, "app.js"), "export const app = true;");
   await writeFile(join(root, "child.html"), "<div>child</div>");
