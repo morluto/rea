@@ -122,6 +122,19 @@ const descriptorOf = (
   };
 };
 
+/** What a descriptor that `descriptorOf` cannot model is missing. */
+const descriptorDefect = (value: unknown): string => {
+  if (!isRecord(value)) return "is not a JSON object";
+  const missing = [
+    ...((nonempty(value.mediaType) ?? nonempty(value.media_type))
+      ? []
+      : ["a string mediaType"]),
+    ...(nonempty(value.digest) ? [] : ["a string digest"]),
+  ];
+  const digest = nonempty(value.digest);
+  return `lacks ${missing.join(" and ")}${digest === null ? "" : ` (digest ${digest})`}`;
+};
+
 interface JsonDocument {
   readonly value: unknown;
   readonly sha256: string;
@@ -666,10 +679,18 @@ export const parseOciImageLayout = async (
       ? document.value.manifests
       : [];
     const indexEntries: OciImageLayoutIndex["entries"] = [];
-    for (const item of manifests) {
+    for (const [position, item] of manifests.entries()) {
       chargeEntry();
       const descriptor = descriptorOf(item);
-      if (descriptor === undefined) continue;
+      if (descriptor === undefined) {
+        recordFinding(
+          findings,
+          "malformed_blob_json",
+          `Index ${digest} manifests[${String(position)}] ${descriptorDefect(item)}; the entry is not modeled.`,
+          digest,
+        );
+        continue;
+      }
       indexEntries.push(descriptor);
       remember(descriptor.digest, descriptor.media_type, descriptor.size);
       if (!isOciKnownMediaType(descriptor.media_type))
@@ -742,14 +763,29 @@ export const parseOciImageLayout = async (
       return;
     }
     const configDescriptor = descriptorOf(document.value.config);
+    if (configDescriptor === undefined && document.value.config !== undefined)
+      recordFinding(
+        findings,
+        "malformed_blob_json",
+        `Manifest ${digest} config ${descriptorDefect(document.value.config)}; the config is not modeled.`,
+        digest,
+      );
     const layers: OciImageLayoutImage["layers"] = [];
     const layerItems = Array.isArray(document.value.layers)
       ? document.value.layers
       : [];
-    for (const item of layerItems) {
+    for (const [position, item] of layerItems.entries()) {
       chargeEntry();
       const descriptor = descriptorOf(item);
-      if (descriptor === undefined) continue;
+      if (descriptor === undefined) {
+        recordFinding(
+          findings,
+          "malformed_blob_json",
+          `Manifest ${digest} layers[${String(position)}] ${descriptorDefect(item)}; the layer is not modeled.`,
+          digest,
+        );
+        continue;
+      }
       remember(descriptor.digest, descriptor.media_type, descriptor.size);
       if (!isOciKnownMediaType(descriptor.media_type))
         recordFinding(

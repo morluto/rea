@@ -373,6 +373,29 @@ it("records unreferenced blobs, unknown media types and unsupported digests", as
   );
 });
 
+it("reports a descriptor it cannot model instead of dropping it silently", async () => {
+  const root = await createTestTempDirectory("rea-oci-malformed-descriptor-");
+  await writeOciImageLayoutFixture(root);
+  const orphan = await putOciBlob(root, "descriptor-without-media-type");
+  const indexPath = join(root, "index.json");
+  const index = JSON.parse(await readFile(indexPath, "utf8")) as {
+    manifests: unknown[];
+  };
+  index.manifests.push({ digest: orphan, size: 29 }, "not-a-descriptor");
+  await writeFile(indexPath, `${JSON.stringify(index)}\n`);
+  const report = await inspectLayout(root);
+  const malformed = report.findings.filter(
+    (finding) => finding.kind === "malformed_blob_json",
+  );
+  expect(malformed.map((finding) => finding.message)).toEqual([
+    expect.stringContaining(
+      `manifests[1] lacks a string mediaType (digest ${orphan})`,
+    ),
+    expect.stringContaining("manifests[2] is not a JSON object"),
+  ]);
+  expect(report.indexes[0]?.entries).toHaveLength(1);
+});
+
 it("refuses a missing oci-layout as malformed input", async () => {
   const root = await createTestTempDirectory("rea-oci-empty-");
   await mkdir(root, { recursive: true });
