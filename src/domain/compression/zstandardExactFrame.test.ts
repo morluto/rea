@@ -61,9 +61,13 @@ it("yields again after the last frame-by-frame decode before success", async () 
 });
 
 it("observes cancellation while admitting a multi-block frame", async () => {
-  const first = zstdCompressSync(Buffer.alloc(8 * 1024 * 1024, "read me\n"));
-  const second = zstdCompressSync(Buffer.from("another frame"));
-  const bytes = Buffer.concat([first, second]);
+  // A windowed frame of 33 one-byte raw blocks reaches a pause during framing.
+  const first = Buffer.concat([
+    Buffer.from("28b52ffd0050", "hex"),
+    repeat(Buffer.of(0x08, 0, 0, 0x61), 32),
+    Buffer.of(0x09, 0, 0, 0x61),
+  ]);
+  const bytes = Buffer.concat([first, rawFrame(0x62)]);
   const options = { allowance: allowance(1, "runtime") };
   const stopped = new Error("cancelled");
   await expect(

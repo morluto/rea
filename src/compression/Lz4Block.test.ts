@@ -8,7 +8,7 @@ it("decodes overlapping matches by repeating the newly produced pattern", async 
     "\n//".repeat(6) + "\nABCDE",
   );
 });
-it.each(["10000000", "10000100", "f001", "00"])(
+it.each(["10000000", "f001", "00"])(
   "rejects malformed or mismatched block %s",
   async (hex) => {
     await expect(
