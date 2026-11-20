@@ -24,16 +24,18 @@ For lifecycle changes, follow [ownership and completion invariants](docs/develop
 
 Before adding complexity for a speculative or vanishingly unlikely race or security edge case, explain the concrete failure mode, likelihood, and complexity cost to the user and get their buy-in. Do not silently expand scope for theoretical robustness.
 
-When implementing, debugging, or reviewing a change, trace the affected facts
-from their producer through their consumers. Fix duplicated interpretation at
-the owner using [format-aware boundary rules](docs/development/tool-design.md#interpret-boundary-facts-once).
+Check touched code for brittleness during implementation, debugging, review,
+and maintenance. Trace affected facts from producer to consumers. Fix the
+representation or ownership rule at the source and
+[normalize once with a format-aware parser](docs/development/tool-design.md#interpret-boundary-facts-once).
+
+Include directly related refactoring in the fix. Passing regressions alone
+cannot establish that the root cause is gone. Verify consumers before removing
+superseded representations, aliases, wrappers, or redundant tests. Add
+abstractions only to remove observed complexity. Explain any remaining cleanup.
+
 Check sibling paths for the same failure, verify suspected matches with working
 controls, and group findings by root cause.
-
-Include directly related refactoring in the fix. Verify affected consumers
-before removing superseded representations, aliases, wrappers, or tests.
-Introduce abstractions only when they remove observed complexity. Explain any
-remaining cleanup and why it remains.
 
 Before resolving a review thread, explain the root cause, structural fix,
 validation, and any remaining cleanup.
