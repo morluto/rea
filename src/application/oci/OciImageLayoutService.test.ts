@@ -125,3 +125,67 @@ it.each([undefined, true, false])(
     expect(result.value.parameters).toEqual(input);
   },
 );
+
+it("accepts JSON reads up to the per-document budget for every manifest and config", async () => {
+  // oci-layout, index.json, then a manifest and a config for each of three
+  // images, every document at max_json_bytes.
+  const jsonBytes = 1024;
+  const images: OciImageLayout["images"] = [1, 2, 3].map((n) => ({
+    digest: "sha256:" + String(n).repeat(64),
+    media_type: "application/vnd.oci.image.manifest.v1+json",
+    config_digest: "sha256:" + String(n + 3).repeat(64),
+    architecture: null,
+    os: null,
+    variant: null,
+    created: null,
+    author: null,
+    user: null,
+    env: [],
+    entrypoint: null,
+    cmd: null,
+    working_dir: null,
+    exposed_ports: [],
+    volumes: [],
+    labels: [],
+    stop_signal: null,
+    rootfs_diff_ids: [],
+    history: [],
+    layers: [],
+  }));
+  const service = new OciImageLayoutService({
+    close: async () => {},
+    identity,
+    inspect: async () =>
+      ok({
+        ...report,
+        images,
+        coverage: { ...report.coverage, json_bytes_read: jsonBytes * 8 },
+      }),
+  });
+  // The root index, its three entries and three manifests decode seven
+  // descriptors.
+  const result = await service.inspect({
+    path: report.artifact.path,
+    max_json_bytes: jsonBytes,
+    max_descriptors: 7,
+  });
+  if (!result.ok) throw result.error;
+});
+
+it("rejects JSON reads beyond what the descriptor budget allows", async () => {
+  const service = new OciImageLayoutService({
+    close: async () => {},
+    identity,
+    inspect: async () =>
+      ok({
+        ...report,
+        coverage: { ...report.coverage, json_bytes_read: 1024 * 8 + 1 },
+      }),
+  });
+  const result = await service.inspect({
+    path: report.artifact.path,
+    max_json_bytes: 1024,
+    max_descriptors: 3,
+  });
+  expect(result.ok).toBe(false);
+});

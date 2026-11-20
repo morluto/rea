@@ -82,14 +82,19 @@ const validReport = (
     readonly max_json_bytes: number;
     readonly max_blob_bytes: number;
     readonly max_entries: number;
+    readonly max_descriptors: number;
     readonly max_index_depth: number;
   },
 ): boolean => {
+  // The report does not count document reads, and failed or truncated
+  // manifests and nested indexes are read without appearing in it. Every
+  // nested index or manifest read is charged one descriptor, and each
+  // manifest reads at most one config, so oci-layout, index.json and two
+  // documents per descriptor bound how many JSON documents were read.
   if (
     report.coverage.entries_examined > input.max_entries ||
     report.coverage.json_bytes_read >
-      input.max_json_bytes *
-        Math.max(1, report.indexes.length + report.images.length + 2)
+      input.max_json_bytes * (2 + 2 * input.max_descriptors)
   )
     return false;
   if (report.indexes.some((index) => index.depth > input.max_index_depth))
