@@ -608,6 +608,32 @@ it("keeps an oversize mode-executable member in the executable inventory", async
   );
 });
 
+it("keeps a read mode-executable member with no known magic in the executable inventory", async () => {
+  const helper = new Uint8Array(2048);
+  const bytes = await vsixPackageFixture({
+    extraBinaryMembers: { "extension/bin/server": helper },
+    binaryMemberModes: { "extension/bin/server": 0o100755 },
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), {
+      ...defaults,
+      max_member_bytes: 4096,
+    }),
+  );
+  expect(report.interesting_members).toContainEqual({
+    path: "extension/bin/server",
+    kind: "executable",
+    bytes: helper.length,
+    sha256: createHash("sha256").update(helper).digest("hex"),
+    classification: "inferred",
+  });
+  expect(
+    report.contents.find((member) => member.path === "extension/bin/server")
+      ?.kind,
+  ).toBe("executable");
+  expect(report.member_kind_counts.executable).toBe(1);
+});
+
 it("does not infer an executable from an unread symlink's mode", async () => {
   const target = new Uint8Array(2048);
   const bytes = await vsixPackageFixture({

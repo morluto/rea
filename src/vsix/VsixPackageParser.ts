@@ -1077,7 +1077,13 @@ export const parseVsixPackage = async (
         );
       }
       if (hashed !== undefined) {
-        const resolved = resolveKind(kind, vsixMemberMagicKind(hashed));
+        // Read bytes with no known magic keep the executable kind the Unix
+        // mode implies, so raising the hash budget never drops a helper.
+        const magicKind = vsixMemberMagicKind(hashed);
+        const resolved = resolveKind(
+          modeExecutable && magicKind === undefined ? "executable" : kind,
+          magicKind,
+        );
         kind = resolved.kind;
         classification = resolved.classification;
         contents[index] = { ...contents[index]!, kind };
