@@ -10,7 +10,6 @@ import {
   semanticWriteSiteReadsFirst,
   semanticWriteSiteTarget,
   semanticWriteTargets,
-  staticJavaScriptTruthiness,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
@@ -19,7 +18,10 @@ import {
 } from "./javascriptSemanticState.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
-import { createSemanticReadPresenceQuery } from "./javascriptSemanticReadPresence.js";
+import {
+  createSemanticReadPresenceQuery,
+  isKnownDefinedSource,
+} from "./javascriptSemanticReadPresence.js";
 import {
   isLexicalPatternDeclaration,
   semanticArrayPatternCanResumeAfterClose,
@@ -142,13 +144,6 @@ const collectMember = (
     output,
   );
 };
-
-/** A proved own slot yields its initializer's result, even if that result is null. */
-const isKnownDefinedSource = (node: t.Node | undefined): boolean =>
-  node !== undefined &&
-  (t.isLiteral(node) ||
-    t.isObjectMethod(node) ||
-    staticJavaScriptTruthiness(node) === true);
 
 const collectDestructuring = (
   root: t.Node,

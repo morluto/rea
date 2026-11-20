@@ -1030,15 +1030,33 @@ const opaqueCodeMayReachBindingReference = (
 ): boolean =>
   semanticBindingMayHaveOpaqueEffect(binding, state, capturePoint, "reference");
 
+const inactiveMemberWriteNodes = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  WeakSet<t.Node>
+>();
+
+export const retainSemanticInactiveMemberWrites = (
+  state: JavaScriptSemanticAnalysisState,
+  nodes: readonly t.Node[],
+): void => {
+  inactiveMemberWriteNodes.set(state, new WeakSet(nodes));
+};
+
 const observesCapturedWrite = (
   binding: JavaScriptSemanticBindingState,
   capture: t.Node | undefined,
   node: t.Node | undefined,
-  parents: JavaScriptSemanticAnalysisState["parentsByNode"],
+  state: JavaScriptSemanticAnalysisState,
 ): boolean =>
-  capture === undefined ||
   node === undefined ||
-  !semanticBindingEffectFollowsCapture(binding, capture, node, parents);
+  (inactiveMemberWriteNodes.get(state)?.has(node) !== true &&
+    (capture === undefined ||
+      !semanticBindingEffectFollowsCapture(
+        binding,
+        capture,
+        node,
+        state.parentsByNode,
+      )));
 
 const observesCapturedEscape = (
   binding: JavaScriptSemanticBindingState,
@@ -1064,12 +1082,7 @@ export const capturedBindingPathMayHaveChanged = (
       path,
       (effect) =>
         semanticEffectPathMatches(effect.path, path) &&
-        observesCapturedWrite(
-          binding,
-          capture,
-          effect.node,
-          state.parentsByNode,
-        ),
+        observesCapturedWrite(binding, capture, effect.node, state),
     ) ||
     semanticSomeEffectPathCandidate(
       binding.escapedPaths,
@@ -1134,7 +1147,7 @@ export const applySemanticBindingReferenceEffects = (
     value,
     binding.memberWrites
       .filter(({ node }) =>
-        observesCapturedWrite(binding, capturePoint, node, state.parentsByNode),
+        observesCapturedWrite(binding, capturePoint, node, state),
       )
       .map(({ path }) => path),
   );
