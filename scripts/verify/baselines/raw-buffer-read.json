@@ -14,7 +14,7 @@
   "src/native/AppleDispatchMetadata.ts": 4,
   "src/native/AppleObjcDispatchFacets.ts": 1,
   "src/native/AppleSwiftDispatchFacets.ts": 1,
-  "src/native/elf/ElfNoteParser.ts": 19,
+  "src/native/elf/ElfNoteParser.ts": 13,
   "src/native/pe/PeCertificateAsn1.ts": 2,
   "src/native/pwntools/RecordedCrashSourceBindings.ts": 6,
   "src/v8/V8CodeCacheParser.ts": 1
