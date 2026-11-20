@@ -1073,6 +1073,64 @@ it("uses a later module target when selecting standalone PTX", async () => {
   expect(inventory.value.objects[0]!.target).toBe("sm_90");
   expect(selected.value.kernels.map(({ name }) => name)).toEqual(["first"]);
 });
+it("reports invalid standalone PTX encoding in inventory and kernel inspection", async () => {
+  const header = Buffer.from(
+    ".version 8.0\n.target sm_80\n.address_size 64\n// ",
+  );
+  const entry = Buffer.from("\n.visible .entry hello() { ret; }\n");
+  const malformed = Buffer.concat([header, Buffer.from([0xff]), entry]);
+  const valid = Buffer.concat([header, Buffer.from("café"), entry]);
+  for (const analysis of ["inventory", "kernels"] as const) {
+    const result = await inspect(malformed, { analysis });
+    if (!result.ok) throw result.error;
+    expect(result.value).toMatchObject({
+      format: "ptx",
+      artifact: {
+        sha256: createHash("sha256").update(malformed).digest("hex"),
+      },
+      coverage: {
+        discovery: "partial",
+        payloads: analysis === "kernels" ? "partial" : "not-requested",
+      },
+      objects: [{ kind: "ptx", target: null, inspection: "malformed" }],
+      kernels: [],
+      ptx_artifacts: [],
+    });
+    expect(result.value.objects[0]!.limitations).toContain(
+      "PTX is not valid UTF-8 text",
+    );
+
+    const control = await inspect(valid, { analysis });
+    if (!control.ok) throw control.error;
+    expect(control.value.coverage.discovery).toBe("complete");
+    expect(control.value.objects[0]!.target).toBe("sm_80");
+    if (analysis === "kernels") {
+      expect(control.value.kernels.map(({ name }) => name)).toEqual(["hello"]);
+      expect(
+        Buffer.from(control.value.ptx_artifacts[0]!.text).equals(valid),
+      ).toBe(true);
+    }
+  }
+});
+
+it("keeps a UTF-8 character split by the standalone PTX scan budget unexamined", async () => {
+  const budget = 16 * 1024 * 1024;
+  const header = Buffer.from(".version 8.0\n.target sm_80\n// ");
+  const bytes = Buffer.concat([
+    header,
+    Buffer.alloc(budget - header.length - 1, 0x20),
+    Buffer.from("é\n"),
+  ]);
+  const result = await inspect(bytes, { analysis: "inventory" });
+  if (!result.ok) throw result.error;
+  expect(result.value.coverage.discovery).toBe("partial");
+  expect(result.value.objects).toMatchObject([
+    { kind: "ptx", target: null, inspection: "partial" },
+  ]);
+  expect(result.value.objects[0]!.limitations).toEqual([
+    "PTX target scan reached the 16 MiB text budget before all module directives were examined.",
+  ]);
+});
 it.each(["truncated", "invalid", "extension"] as const)(
   "retains earlier AMD kernel declarations after a later %s note",
   async (kind) => {
