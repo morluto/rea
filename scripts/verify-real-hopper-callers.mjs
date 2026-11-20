@@ -405,7 +405,15 @@ try {
 } catch (cause) {
   throw retainWorkspace(
     `Cleanup unverified; retained diagnostic workspace: ${directory}`,
-    { cause: primaryFailure ?? cause },
+    {
+      cause:
+        primaryFailure === undefined
+          ? cause
+          : new AggregateError(
+              [primaryFailure, cause],
+              "Hopper caller verification failed and cleanup was unverified",
+            ),
+    },
   );
 }
 if (primaryFailure !== undefined)
