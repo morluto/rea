@@ -366,7 +366,7 @@ const arMemberSchema = z.strictObject({
 const tarEntrySchema = z.strictObject({
   path: z.string().min(1),
   type: z.enum(DEB_TAR_ENTRY_TYPES),
-  mode: z.string().min(1),
+  mode: nullableText,
   size: uint,
   uid: z.number().int().nonnegative().nullable(),
   gid: z.number().int().nonnegative().nullable(),

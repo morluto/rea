@@ -312,6 +312,25 @@ it("reads only the first control paragraph however many follow", () => {
   expect(paragraphReads.largest).toBe(1);
 });
 
+it("reports an unreadable tar mode as null with a malformed issue", () => {
+  const report = parse(
+    debPackageFixture({
+      dataEntries: [
+        { name: "./", type: "5", mode: 0o755, content: "" },
+        { name: "./usr/bin/hello", content: "", modeField: "07x5\0" },
+      ],
+    }),
+  );
+  const entry = report.data_entries.find(({ path }) =>
+    path.endsWith("usr/bin/hello"),
+  );
+  expect(entry?.mode).toBeNull();
+  expect(report.issues).toContainEqual(
+    expect.objectContaining({ kind: "malformed", field: "mode" }),
+  );
+  expect(report.coverage.status).toBe("partial");
+});
+
 it("keeps missing optional control fields null rather than empty", () => {
   const report = parse(
     debPackageFixture({

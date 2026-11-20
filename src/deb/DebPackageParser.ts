@@ -727,7 +727,8 @@ const parseTar = (
     entries.push({
       path: path.length === 0 ? "." : path,
       type,
-      mode: (mode ?? 0).toString(8).padStart(4, "0"),
+      // An unreadable mode stays unknown rather than reading as 0000.
+      mode: mode === null ? null : mode.toString(8).padStart(4, "0"),
       size,
       uid,
       gid,
@@ -1268,6 +1269,21 @@ export const parseDebPackage = (
   for (const tar of [controlTar, dataTar])
     if (tar !== null && tar.undecodableNames > 0)
       limitations.push(undecodableTarNamesLimitation(tar.undecodableNames));
+  for (const [tar, member] of [
+    [controlTar, controlMember],
+    [dataTar, dataMember],
+  ] as const) {
+    if (tar === null || member === undefined) continue;
+    const unreadable = tar.entries.filter((entry) => entry.mode === null);
+    if (unreadable.length > 0)
+      issues.push({
+        kind: "malformed",
+        member: member.name,
+        field: "mode",
+        detail: `${String(unreadable.length)} tar entries in ${member.name} have a mode field that is not octal; their mode is reported as null.`,
+        offset: null,
+      });
+  }
   if (controlMember === undefined)
     limitations.push("No control.tar member was present.");
   if (dataMember === undefined)

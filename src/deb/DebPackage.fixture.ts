@@ -18,6 +18,8 @@ export type DebTarEntrySpec = {
   readonly content?: Uint8Array | string;
   readonly type?: string;
   readonly mode?: number;
+  /** Raw mode field text, written in place of `mode` when given. */
+  readonly modeField?: string;
   readonly uid?: number;
   readonly gid?: number;
   readonly uname?: string;
@@ -38,7 +40,7 @@ export const tarMember = (entry: DebTarEntrySpec): Buffer => {
     entry.type ?? (content.length === 0 && entry.linkname ? "2" : "0");
   if (entry.nameBytes === undefined) header.write(entry.name.slice(0, 100));
   else header.set(entry.nameBytes.subarray(0, 100));
-  header.write(octalField(entry.mode ?? 0o644, 8), 100);
+  header.write(entry.modeField ?? octalField(entry.mode ?? 0o644, 8), 100);
   header.write(octalField(entry.uid ?? 0, 8), 108);
   header.write(octalField(entry.gid ?? 0, 8), 116);
   header.write(octalField(content.length, 12), 124);
