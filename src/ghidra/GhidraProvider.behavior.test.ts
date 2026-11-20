@@ -5436,63 +5436,6 @@ const analyzerReport = (
 });
 
 describe("Ghidra disabled analyzer options", () => {
-  it("records the configured analyzer options in the analysis profile", async () => {
-    const ghidra = configuredProvider({
-      REA_GHIDRA_DISABLED_ANALYZERS:
-        "Objective-C Message Analyzer,Decompiler Switch Analysis",
-    });
-    const resolved = await ghidra.resolveAnalysisProfile(
-      executableTarget("elf", "x86_64"),
-    );
-    if (!resolved.ok || resolved.value.profile === null)
-      throw new Error("expected a bound Ghidra profile");
-    expect(resolved.value.profile.parameters).toMatchObject({
-      analyzer_preset:
-        "ghidra-default+disabled:Objective-C Message Analyzer,Decompiler Switch Analysis",
-      analysis_options: {
-        disabled_analyzers: [
-          "Objective-C Message Analyzer",
-          "Decompiler Switch Analysis",
-        ],
-      },
-    });
-  });
-
-  it("hands the configured analyzers to the launcher for a matching profile", async () => {
-    const launchers: GhidraHeadlessLauncher[] = [];
-    const ghidra = configuredProvider(
-      { REA_GHIDRA_DISABLED_ANALYZERS: "Objective-C Message Analyzer" },
-      (options) => {
-        launchers.push(options.launcher as GhidraHeadlessLauncher);
-        return {
-          start: () =>
-            Promise.resolve(
-              ok({
-                ...sessionInfo(),
-                disabled_analyzers: analyzerReport([
-                  "Objective-C Message Analyzer",
-                  "not_applicable",
-                ]),
-              }),
-            ),
-          callTool: () => Promise.resolve(ok(null)),
-          close: () => Promise.resolve(ok(null)),
-        };
-      },
-    );
-    const target = executableTarget("elf", "x86_64");
-    const resolved = await ghidra.resolveAnalysisProfile(target);
-    if (!resolved.ok || resolved.value.profile === null)
-      throw new Error("expected a bound Ghidra profile");
-    const client = ghidra.createClient(target, resolved.value.profile);
-    const health = await client.execute("health", {});
-    expect(health.ok).toBe(true);
-    expect(launchers).toHaveLength(1);
-    expect(launchers[0]?.options.disabledAnalyzers).toEqual([
-      "Objective-C Message Analyzer",
-    ]);
-  });
-
   it("binds analyzer overrides and raw import settings in one profile", async () => {
     const launchers: GhidraHeadlessLauncher[] = [];
     const ghidra = configuredProvider(
@@ -5535,6 +5478,9 @@ describe("Ghidra disabled analyzer options", () => {
       analysis_options: { disabled_analyzers: ["Decompiler Switch Analysis"] },
     });
     const client = ghidra.createClient(target, resolved.value.profile);
+    onTestFinished(async () => {
+      await client.close();
+    });
     expect(launchers).toHaveLength(0);
     expect((await client.execute("health", {})).ok).toBe(true);
     expect(launchers).toHaveLength(1);
@@ -5546,7 +5492,6 @@ describe("Ghidra disabled analyzer options", () => {
         baseAddr: "0x1000",
       },
     });
-    await client.close();
   });
 
   it("refuses a profile resolved without or with other analyzer options", async () => {
@@ -5595,39 +5540,45 @@ describe("Ghidra disabled analyzer applicability per program", () => {
     report: GhidraDisabledAnalyzerReport | undefined,
   ) => {
     const counts = { starts: 0, calls: 0, closes: 0 };
+    const launches: GhidraHeadlessLauncher[] = [];
     const ghidra = configuredProvider(
       setting === undefined ? {} : { REA_GHIDRA_DISABLED_ANALYZERS: setting },
-      () => ({
-        start: () => {
-          counts.starts++;
-          return Promise.resolve(
-            ok({
-              ...sessionInfo(),
-              ...(report === undefined ? {} : { disabled_analyzers: report }),
-            }),
-          );
-        },
-        callTool: () => {
-          counts.calls++;
-          return Promise.resolve(
-            ok([
-              {
-                address: "0x1000",
-                value: "fixture_main",
-                procedure: {
-                  external: false,
-                  thunk: false,
-                  thunk_target: null,
+      ({ launcher }) => {
+        if (!(launcher instanceof GhidraHeadlessLauncher))
+          throw new Error("Expected the Ghidra launcher");
+        launches.push(launcher);
+        return {
+          start: () => {
+            counts.starts++;
+            return Promise.resolve(
+              ok({
+                ...sessionInfo(),
+                ...(report === undefined ? {} : { disabled_analyzers: report }),
+              }),
+            );
+          },
+          callTool: () => {
+            counts.calls++;
+            return Promise.resolve(
+              ok([
+                {
+                  address: "0x1000",
+                  value: "fixture_main",
+                  procedure: {
+                    external: false,
+                    thunk: false,
+                    thunk_target: null,
+                  },
                 },
-              },
-            ]),
-          );
-        },
-        close: () => {
-          counts.closes++;
-          return Promise.resolve(ok(null));
-        },
-      }),
+              ]),
+            );
+          },
+          close: () => {
+            counts.closes++;
+            return Promise.resolve(ok(null));
+          },
+        };
+      },
     );
     const target = executableTarget("elf", "x86_64");
     const resolved = await ghidra.resolveAnalysisProfile(target);
@@ -5635,6 +5586,7 @@ describe("Ghidra disabled analyzer applicability per program", () => {
       throw new Error("expected a bound Ghidra profile");
     return {
       counts,
+      launches,
       profile: resolved.value.profile,
       client: ghidra.createClient(target, resolved.value.profile),
     };
@@ -5654,7 +5606,7 @@ describe("Ghidra disabled analyzer applicability per program", () => {
   });
 
   it("opens a program for which a configured analyzer is not applicable", async () => {
-    const { counts, profile, client } = await analyzerSession(
+    const { counts, launches, profile, client } = await analyzerSession(
       "Decompiler Switch Analysis,Objective-C Message Analyzer",
       analyzerReport(
         ["Decompiler Switch Analysis", "disabled"],
@@ -5663,10 +5615,19 @@ describe("Ghidra disabled analyzer applicability per program", () => {
     );
     const procedures = await client.execute("list_procedures", {});
     expect(counts.calls).toBe(1);
+    expect(
+      launches.map((launcher) => launcher.options.disabledAnalyzers),
+    ).toEqual([["Decompiler Switch Analysis", "Objective-C Message Analyzer"]]);
     if (!procedures.ok) throw procedures.error;
     expect(procedures.value.analysisProfile?.parameters).toMatchObject({
       analyzer_preset:
         "ghidra-default+disabled:Decompiler Switch Analysis,Objective-C Message Analyzer",
+      analysis_options: {
+        disabled_analyzers: [
+          "Decompiler Switch Analysis",
+          "Objective-C Message Analyzer",
+        ],
+      },
     });
     expect(procedures.value.analysisProfile?.digest).toBe(profile.digest);
     expect(procedures.value.limitations).toEqual(
@@ -5682,12 +5643,22 @@ describe("Ghidra disabled analyzer applicability per program", () => {
   it.each([
     ["no analyzer report", undefined],
     [
-      "a report for other analyzers",
-      analyzerReport(["Decompiler Switch Analysis", "not_applicable"]),
+      "a report replacing a configured analyzer",
+      analyzerReport(
+        ["Objective-C Message Analyzer", "not_applicable"],
+        ["Decompiler Switch Analysis", "disabled"],
+      ),
     ],
     [
       "a report missing a configured analyzer",
       analyzerReport(["Objective-C Message Analyzer", "not_applicable"]),
+    ],
+    [
+      "a reordered report",
+      analyzerReport(
+        ["Demangler Swift", "disabled"],
+        ["Objective-C Message Analyzer", "not_applicable"],
+      ),
     ],
   ])("fails closed on %s before any analysis call", async (_label, report) => {
     const { counts, client } = await analyzerSession(
