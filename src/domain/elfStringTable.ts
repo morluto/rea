@@ -45,6 +45,14 @@ export const observeElfStringTableEntry = (
 };
 
 /** Project admitted source bytes without inferring an original text encoding. */
-export const elfStringTableText = (
+export function elfStringTableText(
+  observed: Extract<ElfStringTableObservation, { state: "terminated" }>,
+): string;
+export function elfStringTableText(
   observed: ElfStringTableObservation,
-): string | null => observed.bytes?.toString("latin1") ?? null;
+): string | null;
+export function elfStringTableText(
+  observed: ElfStringTableObservation,
+): string | null {
+  return observed.bytes?.toString("latin1") ?? null;
+}

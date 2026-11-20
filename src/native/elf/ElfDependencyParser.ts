@@ -254,13 +254,22 @@ const typeName = (type: number): ElfDependencyImport["type"] => {
   }
 };
 
-interface CString {
-  readonly name: string | null;
-  readonly truncated: boolean;
-  readonly outside: boolean;
-  /** No NUL within the scan window; the string may continue past it. */
-  readonly limited: boolean;
-}
+type CString =
+  | {
+      readonly state: "terminated";
+      readonly name: string;
+      readonly location: number;
+    }
+  | {
+      readonly state: "unterminated" | "scan-limit";
+      readonly name: null;
+      readonly location: number;
+    }
+  | {
+      readonly state: "outside" | "table-unavailable";
+      readonly name: null;
+      readonly location: null;
+    };
 
 /**
  * Longest ELF string scanned for its terminator. Each string is hashed and
@@ -268,11 +277,26 @@ interface CString {
  */
 const ELF_STRING_SCAN_BYTES = 65536;
 
-/** Why an unreadable string has no name, short of being outside or empty. */
-const unreadString = (observed: Pick<CString, "limited">): string =>
-  observed.limited
+const unreadString = (limited: boolean): string =>
+  limited
     ? `has no terminator within the ${String(ELF_STRING_SCAN_BYTES)}-byte string scan limit`
     : "is unterminated";
+
+const unreadDynamicString = (
+  label: string,
+  observed: CString,
+  offset?: number,
+): string => {
+  const index = offset === undefined ? "" : ` ${String(offset)}`;
+  if (observed.state === "table-unavailable")
+    return `${label} string offset${index} could not be read because the dynamic string table is unavailable`;
+  if (observed.state === "outside")
+    return `${label} string offset${index} is outside the dynamic string table`;
+  const field = `${label} string${offset === undefined ? "" : ` at offset${index}`}`;
+  if (observed.state === "terminated") return `${field} is empty`;
+  const table = offset === undefined ? " in the dynamic string table" : "";
+  return `${field} ${unreadString(observed.state === "scan-limit")}${table}`;
+};
 
 /**
  * Dynamic string table reads share one scan and retained-text budget fixed by
@@ -285,7 +309,7 @@ class DynamicStrings {
   readonly #retained: Budget;
 
   constructor(
-    readonly table: Buffer,
+    readonly table: { readonly bytes: Buffer; readonly offset: number } | null,
     readonly limit: number,
   ) {
     this.#scanned = new Budget(limit);
@@ -309,34 +333,37 @@ class DynamicStrings {
   }
 
   read(offset: number): CString {
+    if (this.table === null)
+      return { state: "table-unavailable", name: null, location: null };
     const cached = this.#cache.get(offset);
     if (cached !== undefined) {
       this.retain(cached.name);
       return cached;
     }
     const observed = observeElfStringTableEntry(
-      this.table,
+      this.table.bytes,
       offset,
       ELF_STRING_SCAN_BYTES,
     );
     this.#charge("scanned", observed.examinedBytes);
     let entry: CString;
     if (observed.state === "outside")
-      entry = { name: null, truncated: false, outside: true, limited: false };
+      entry = { state: "outside", name: null, location: null };
     else if (observed.state === "truncated")
       entry = {
+        state:
+          observed.examinedBytes === ELF_STRING_SCAN_BYTES
+            ? "scan-limit"
+            : "unterminated",
         name: null,
-        truncated: true,
-        outside: false,
-        limited: observed.examinedBytes === ELF_STRING_SCAN_BYTES,
+        location: this.table.offset + offset,
       };
     else {
       this.#charge("retained", observed.contentBytes);
       entry = {
+        state: "terminated",
         name: elfStringTableText(observed),
-        truncated: false,
-        outside: false,
-        limited: false,
+        location: this.table.offset + offset,
       };
     }
     this.#cache.set(offset, entry);
@@ -359,9 +386,7 @@ const searchPath = (
     issues.push({
       code: "name_unreadable",
       location,
-      message: observed.outside
-        ? "Search-path string offset is outside the dynamic string table"
-        : `Search-path string ${unreadString(observed)} in the dynamic string table`,
+      message: unreadDynamicString("Search-path", observed),
     });
     return null;
   }
@@ -903,8 +928,15 @@ export const readElfDependenciesSteps = function* (
     });
   const dynstr = new DynamicStrings(
     dynstrTable === null
-      ? Buffer.alloc(0)
-      : reader.range(dynstrTable.offset, dynstrTable.size, "DT_STRTAB"),
+      ? null
+      : {
+          bytes: reader.range(
+            dynstrTable.offset,
+            dynstrTable.size,
+            "DT_STRTAB",
+          ),
+          offset: dynstrTable.offset,
+        },
     bytes.length,
   );
   const needed: ElfDependencyNeeded[] = neededEntries.map(
@@ -914,27 +946,12 @@ export const readElfDependenciesSteps = function* (
         observed.name === null || observed.name.length === 0
           ? null
           : observed.name;
-      if (name === null) {
-        // An unresolved index identifies only its referring dynamic entry.
-        const location =
-          dynstrTable === null || observed.outside
-            ? sourceOffset
-            : dynstrTable.offset + nameOffset;
-        const offset = String(nameOffset);
-        const unresolvedReason =
-          dynstrTable === null
-            ? "could not be read because the dynamic string table is unavailable"
-            : "is outside the dynamic string table";
+      if (name === null)
         issues.push({
           code: "name_unreadable",
-          location: hex(location),
-          message: observed.outside
-            ? `DT_NEEDED string offset ${offset} ${unresolvedReason}`
-            : observed.truncated || observed.name === null
-              ? `DT_NEEDED string at offset ${offset} ${unreadString(observed)}`
-              : `DT_NEEDED string at offset ${offset} is empty`,
+          location: hex(observed.location ?? sourceOffset),
+          message: unreadDynamicString("DT_NEEDED", observed, nameOffset),
         });
-      }
       return { index, name, name_offset: nameOffset };
     },
   );
@@ -1131,11 +1148,7 @@ const namedString = (
     issues.push({
       code: "name_unreadable",
       location: label,
-      message: observed.outside
-        ? `${label} string offset is outside the dynamic string table`
-        : observed.truncated || observed.name === null
-          ? `${label} string ${unreadString(observed)} in the dynamic string table`
-          : `${label} string is empty`,
+      message: unreadDynamicString(label, observed),
     });
     return null;
   }
@@ -1163,9 +1176,7 @@ const parseInterpreter = (
       issues.push({
         code: "name_unreadable",
         location: hex(interp.offset),
-        message: `PT_INTERP path ${unreadString({
-          limited: interp.bytes > ELF_STRING_SCAN_BYTES,
-        })}`,
+        message: `PT_INTERP path ${unreadString(interp.bytes > ELF_STRING_SCAN_BYTES)}`,
       });
       return { status: "unreadable", path: null, location: interp };
     }

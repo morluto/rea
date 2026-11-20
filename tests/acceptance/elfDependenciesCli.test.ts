@@ -174,6 +174,34 @@ for (const tableAvailable of [true, false]) {
       expect(diagnostics[1]?.location).toBe(
         `0x${(tableAvailable ? tableOffset : dynamicOffset + 16).toString(16)}`,
       );
+      if (tableAvailable) {
+        expect(report.issues).toContainEqual({
+          code: "name_unreadable",
+          location: "DT_SONAME",
+          message:
+            "DT_SONAME string offset is outside the dynamic string table",
+        });
+        expect(report.dynamic.runpath?.raw).toBe("$ORIGIN/../lib");
+      } else {
+        for (const location of [
+          "DT_SONAME",
+          "DT_RUNPATH",
+          "vn_file",
+          "vna_name",
+          "vda_name",
+          "dynsym[1]",
+        ]) {
+          expect(report.issues, location).toContainEqual(
+            expect.objectContaining({
+              code: "name_unreadable",
+              location,
+              message: expect.stringContaining(
+                "dynamic string table is unavailable",
+              ),
+            }),
+          );
+        }
+      }
     },
   );
 }
