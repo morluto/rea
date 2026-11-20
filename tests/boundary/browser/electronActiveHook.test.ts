@@ -1198,20 +1198,25 @@ it("matches native once dispatch and retains only established invocations", asyn
   }
 });
 
-it.each(["single-on", "multiple-on", "empty-once", "event-once"])(
-  "preserves native callable method reads during %s dispatch",
-  async (mode) => {
-    const root = await createTestTempDirectory(
-      "rea-electron-hook-ipc-dispatch-",
-    );
-    await writeElectronFixture(root);
-    const script = join(root, "ipc-native-dispatch.cjs");
-    await writeFile(
-      script,
-      `const { ipcMain } = require("electron");
+const runIpcDispatchFixture = async (scenario: string): Promise<unknown> => {
+  const root = await createTestTempDirectory("rea-electron-hook-ipc-dispatch-");
+  await writeElectronFixture(root);
+  const script = join(root, "ipc-dispatch.cjs");
+  await writeFile(
+    script,
+    `const { ipcMain } = require("electron");
 const { EventEmitter } = require("node:events");
-const mode = ${JSON.stringify(mode)};
-const scenario = (emitter) => {
+${scenario}`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  return JSON.parse(execution.stdout);
+};
+
+it("preserves native callable method reads for on and once dispatch", async () => {
+  const modes = ["single-on", "multiple-on", "empty-once", "event-once"];
+  const result =
+    await runIpcDispatchFixture(`const scenario = (emitter, mode) => {
   const calls = [];
   const reads = [];
   const listener = new Proxy(function() { calls.push("first"); }, {
@@ -1223,59 +1228,54 @@ const scenario = (emitter) => {
       return Reflect.get(target, key, receiver);
     },
   });
-  if (mode.endsWith("once")) emitter.once("ch", listener);
-  else emitter.on("ch", listener);
-  if (mode === "multiple-on") emitter.on("ch", () => calls.push("second"));
+  if (mode.endsWith("once")) emitter.once(mode, listener);
+  else emitter.on(mode, listener);
+  if (mode === "multiple-on") emitter.on(mode, () => calls.push("second"));
   let failure = null;
   try {
-    if (mode === "empty-once") emitter.emit("ch");
-    else emitter.emit("ch", { sender: { id: 9 } });
+    if (mode === "empty-once") emitter.emit(mode);
+    else emitter.emit(mode, { sender: { id: 9 } });
   } catch (cause) { failure = cause.message; }
-  return { calls, reads, failure, remaining: emitter.listenerCount("ch") };
+  return { calls, reads, failure, remaining: emitter.listenerCount(mode) };
 };
-console.log(JSON.stringify({ plain: scenario(new EventEmitter()), hooked: scenario(ipcMain) }));
-`,
-    );
-    const execution = await runNode(script, root);
-    expect(execution.code, execution.stderr).toBe(0);
-    const { plain, hooked } = JSON.parse(execution.stdout) as {
-      plain: Record<string, unknown>;
-      hooked: Record<string, unknown>;
-    };
-    // The native dependency owns whether it consults call/apply. Compare the
-    // complete trace rather than requiring one pinned Node implementation.
-    expect(plain.remaining).toBe(
+console.log(JSON.stringify(${JSON.stringify(modes)}.map(mode => ({
+  mode, plain: scenario(new EventEmitter(), mode), hooked: scenario(ipcMain, mode),
+}))));
+`);
+  const rows = result as {
+    mode: string;
+    plain: Record<string, unknown>;
+    hooked: Record<string, unknown>;
+  }[];
+  expect(rows.map(({ mode }) => mode)).toEqual(modes);
+  // Node owns whether it consults call/apply. Compare the whole trace.
+  for (const { mode, plain, hooked } of rows) {
+    expect(plain.remaining, mode).toBe(
       mode === "multiple-on" ? 2 : mode === "single-on" ? 1 : 0,
     );
-    expect(hooked).toEqual(plain);
-  },
-);
+    expect(hooked, mode).toEqual(plain);
+  }
+});
 
-it.each([
-  "arguments",
-  "array-like",
-  "null",
-  "undefined",
-  "missing",
-  "primitive",
-])("preserves raw callback apply with %s argument lists", async (mode) => {
-  const root = await createTestTempDirectory("rea-electron-hook-ipc-apply-");
-  await writeElectronFixture(root);
-  const script = join(root, "ipc-apply.cjs");
-  await writeFile(
-    script,
-    `const { ipcMain } = require("electron");
-const { EventEmitter } = require("node:events");
-const mode = ${JSON.stringify(mode)};
-const scenario = (emitter) => {
+it("preserves native raw callback apply semantics across argument-list types", async () => {
+  const modes = [
+    "arguments",
+    "array-like",
+    "null",
+    "undefined",
+    "missing",
+    "primitive",
+  ];
+  const result =
+    await runIpcDispatchFixture(`const scenario = (emitter, mode) => {
   let calls = 0, reads = 0, correctReceiver = false, arity = null;
   const event = { sender: { id: 9 } };
   let first = null;
-  emitter.on("ch", function(...args) {
+  emitter.on(mode, function(...args) {
     calls++; correctReceiver = this === emitter; arity = args.length;
     first = args.length ? args[0] === event : null;
   });
-  const listener = emitter.rawListeners("ch")[0];
+  const listener = emitter.rawListeners(mode)[0];
   let list;
   if (mode === "arguments") list = (function() { return arguments; })(event, 42);
   if (mode === "array-like") list = { length: 2, get 0() { reads++; return event; }, 1: 42 };
@@ -1288,25 +1288,28 @@ const scenario = (emitter) => {
   } catch (cause) { typeError = cause instanceof TypeError; }
   return { calls, reads, correctReceiver, arity, first, typeError };
 };
-console.log(JSON.stringify({ plain: scenario(new EventEmitter()), hooked: scenario(ipcMain) }));
-`,
-  );
-  const execution = await runNode(script, root);
-  expect(execution.code, execution.stderr).toBe(0);
-  const { plain, hooked } = JSON.parse(execution.stdout) as {
+console.log(JSON.stringify(${JSON.stringify(modes)}.map(mode => ({
+  mode, plain: scenario(new EventEmitter(), mode), hooked: scenario(ipcMain, mode),
+}))));
+`);
+  const rows = result as {
+    mode: string;
     plain: Record<string, unknown>;
     hooked: Record<string, unknown>;
-  };
-  const populated = mode === "arguments" || mode === "array-like";
-  expect(plain).toEqual({
-    calls: mode === "primitive" ? 0 : 1,
-    reads: mode === "array-like" ? 1 : 0,
-    correctReceiver: mode !== "primitive",
-    arity: mode === "primitive" ? null : populated ? 2 : 0,
-    first: populated ? true : null,
-    typeError: mode === "primitive",
-  });
-  expect(hooked).toEqual(plain);
+  }[];
+  expect(rows.map(({ mode }) => mode)).toEqual(modes);
+  for (const { mode, plain, hooked } of rows) {
+    const populated = mode === "arguments" || mode === "array-like";
+    expect(plain, mode).toEqual({
+      calls: mode === "primitive" ? 0 : 1,
+      reads: mode === "array-like" ? 1 : 0,
+      correctReceiver: mode !== "primitive",
+      arity: mode === "primitive" ? null : populated ? 2 : 0,
+      first: populated ? true : null,
+      typeError: mode === "primitive",
+    });
+    expect(hooked, mode).toEqual(plain);
+  }
 });
 
 it("preserves the native once argument-list object passed to custom apply", async () => {
@@ -1400,77 +1403,55 @@ console.log(JSON.stringify({ plain: scenario(new EventEmitter()), hooked: scenar
   expect(hooked).toEqual(plain);
 });
 
-it.each(["on", "multiple-on", "once"])(
-  "records %s invocations without consulting application Array species",
-  async (kind) => {
-    const root = await createTestTempDirectory(
-      "rea-electron-hook-ipc-species-",
-    );
-    await writeElectronFixture(root);
-    const script = join(root, "ipc-array-species.cjs");
-    await writeFile(
-      script,
-      `const { ipcMain } = require("electron");
-const { EventEmitter } = require("node:events");
-const kind = ${JSON.stringify(kind)};
-let retainedUnderSpecies = 0;
-const scenario = (emitter) => {
-  let calls = 0, reads = 0, failure = null;
-  emitter[kind === "once" ? "once" : "on"]("ch", () => { calls++; });
-  if (kind === "multiple-on") emitter.on("ch", () => { calls++; });
+it("records on and once invocations without consulting application Array species", async () => {
+  const kinds = ["on", "multiple-on", "once"];
+  const result =
+    await runIpcDispatchFixture(`const countInvocations = (kind) => {
+  let count = 0;
+  for (const event of globalThis.__reaElectronActiveSnapshot().events)
+    if (event.kind === "main-event-invocation" && event.channel === kind) count++;
+  return count;
+};
+const scenario = (emitter, kind) => {
+  let calls = 0, reads = 0, failure = null, retainedUnderSpecies;
+  emitter[kind === "once" ? "once" : "on"](kind, () => { calls++; });
+  if (kind === "multiple-on") emitter.on(kind, () => { calls++; });
   const prior = Object.getOwnPropertyDescriptor(Array, Symbol.species);
   Object.defineProperty(Array, Symbol.species, { configurable: true, get() {
     reads++; throw new Error("application array species");
   }});
   try {
-    emitter.emit("ch", { sender: { id: 9 } }, 42);
-    if (emitter === ipcMain) {
-      for (const event of globalThis.__reaElectronActiveSnapshot().events)
-        if (event.kind === "main-event-invocation") retainedUnderSpecies++;
-    }
+    emitter.emit(kind, { sender: { id: 9 } }, 42);
+    if (emitter === ipcMain) retainedUnderSpecies = countInvocations(kind);
   }
   catch (cause) { failure = cause.message; }
   finally { Object.defineProperty(Array, Symbol.species, prior); }
-  return { calls, reads, failure };
+  return { calls, reads, failure, retainedUnderSpecies };
 };
-const plain = scenario(new EventEmitter());
-const hooked = scenario(ipcMain);
-const invocations = globalThis.__reaElectronActiveSnapshot().events.filter(e => e.kind === "main-event-invocation").length;
-console.log(JSON.stringify({ plain, hooked, invocations, retainedUnderSpecies }));
-`,
-    );
-    const execution = await runNode(script, root);
-    expect(execution.code, execution.stderr).toBe(0);
-    const { plain, hooked, invocations, retainedUnderSpecies } = JSON.parse(
-      execution.stdout,
-    ) as {
-      plain: Record<string, unknown>;
-      hooked: Record<string, unknown>;
-      invocations: number;
-      retainedUnderSpecies: number;
-    };
+console.log(JSON.stringify(${JSON.stringify(kinds)}.map(kind => ({
+  kind, plain: scenario(new EventEmitter(), kind), hooked: scenario(ipcMain, kind),
+  invocations: countInvocations(kind),
+}))));
+`);
+  const rows = result as {
+    kind: string;
+    plain: Record<string, unknown>;
+    hooked: Record<string, unknown>;
+    invocations: number;
+  }[];
+  expect(rows.map(({ kind }) => kind)).toEqual(kinds);
+  for (const { kind, plain, hooked, invocations } of rows) {
     const expected = kind === "multiple-on" ? 2 : 1;
-    expect(plain).toEqual({ calls: expected, reads: 0, failure: null });
-    expect(hooked).toEqual(plain);
-    expect(invocations).toBe(expected);
-    expect(retainedUnderSpecies).toBe(expected);
-  },
-);
+    expect(plain, kind).toEqual({ calls: expected, reads: 0, failure: null });
+    expect(hooked, kind).toEqual({ ...plain, retainedUnderSpecies: expected });
+    expect(invocations, kind).toBe(expected);
+  }
+});
 
-it.each(["array", "arguments", "array-like", "null"])(
-  "preserves opaque custom apply inputs for raw %s lists",
-  async (mode) => {
-    const root = await createTestTempDirectory(
-      "rea-electron-hook-custom-apply-",
-    );
-    await writeElectronFixture(root);
-    const script = join(root, "ipc-custom-apply.cjs");
-    await writeFile(
-      script,
-      `const { ipcMain } = require("electron");
-const { EventEmitter } = require("node:events");
-const mode = ${JSON.stringify(mode)};
-const scenario = (emitter) => {
+it("preserves opaque custom apply inputs and records gaps without claiming dispatch", async () => {
+  const modes = ["array", "arguments", "array-like", "null"];
+  const result =
+    await runIpcDispatchFixture(`const scenario = (emitter, mode) => {
   let calls = 0, reads = 0, exact = false, methodThis = false, arity = null;
   const token = {};
   const listener = function(...args) { calls++; arity = args.length; return token; };
@@ -1484,31 +1465,32 @@ const scenario = (emitter) => {
     if (!exact) throw new Error("custom apply input was replaced");
     return Reflect.apply(listener, receiver, input ?? []);
   };
-  emitter.on("ch", listener);
+  emitter.on(mode, listener);
   let returned = false, failure = null;
-  try { returned = emitter.rawListeners("ch")[0].apply(emitter, list) === token; }
+  try { returned = emitter.rawListeners(mode)[0].apply(emitter, list) === token; }
   catch (cause) { failure = cause.message; }
   return { calls, reads, exact, methodThis, arity, returned, failure };
 };
-const plain = scenario(new EventEmitter());
-const hooked = scenario(ipcMain);
+const rows = ${JSON.stringify(modes)}.map(mode => ({
+  mode, plain: scenario(new EventEmitter(), mode), hooked: scenario(ipcMain, mode),
+}));
 const snapshot = globalThis.__reaElectronActiveSnapshot();
-console.log(JSON.stringify({ plain, hooked,
+console.log(JSON.stringify({ rows,
   invocations: snapshot.events.filter(e => e.kind === "main-event-invocation").length,
   gaps: snapshot.events.filter(e => e.kind === "ipc-observation-gap").map(e => ({channel: e.channel, event: e.event})) }));
-`,
-    );
-    const execution = await runNode(script, root);
-    expect(execution.code, execution.stderr).toBe(0);
-    const { plain, hooked, invocations, gaps } = JSON.parse(
-      execution.stdout,
-    ) as {
+`);
+  const { rows, invocations, gaps } = result as {
+    rows: {
+      mode: string;
       plain: Record<string, unknown>;
       hooked: Record<string, unknown>;
-      invocations: number;
-      gaps: unknown[];
-    };
-    expect(plain).toEqual({
+    }[];
+    invocations: number;
+    gaps: unknown[];
+  };
+  expect(rows.map(({ mode }) => mode)).toEqual(modes);
+  for (const { mode, plain, hooked } of rows) {
+    expect(plain, mode).toEqual({
       calls: 1,
       reads: mode === "array-like" ? 1 : 0,
       exact: true,
@@ -1517,46 +1499,47 @@ console.log(JSON.stringify({ plain, hooked,
       returned: true,
       failure: null,
     });
-    expect(hooked).toEqual(plain);
-    expect(invocations).toBe(0);
-    expect(gaps).toEqual([{ channel: "ch", event: "custom-apply" }]);
-  },
-);
+    expect(hooked, mode).toEqual(plain);
+  }
+  expect(invocations).toBe(0);
+  expect(gaps).toEqual(
+    modes.map((channel) => ({ channel, event: "custom-apply" })),
+  );
+});
 
-it.each([false, true])(
-  "preserves a borrowed raw apply method's receiver (custom: %s)",
-  async (custom) => {
-    const root = await createTestTempDirectory(
-      "rea-electron-hook-borrowed-apply-",
-    );
-    await writeElectronFixture(root);
-    const script = join(root, "ipc-borrowed-apply.cjs");
-    await writeFile(
-      script,
-      `const { ipcMain } = require("electron");
-const { EventEmitter } = require("node:events");
-const scenario = (emitter) => {
+it("preserves borrowed intrinsic and custom raw apply receivers", async () => {
+  const result =
+    await runIpcDispatchFixture(`const scenario = (emitter, custom) => {
   let originalCalls = 0, borrowedCalls = 0, sameList = false;
   const token = {}, list = [42, 43];
+  const channel = custom ? "custom" : "intrinsic";
   const listener = function() { originalCalls++; };
   const other = function(...args) { borrowedCalls++; return args[0] === 42 && args[1] === 43 ? token : null; };
-  if (${JSON.stringify(custom)}) listener.apply = function(receiver, input) {
+  if (custom) listener.apply = function(receiver, input) {
     sameList = input === list;
     return Reflect.apply(this, receiver, input);
   };
-  emitter.on("ch", listener);
-  const returned = emitter.rawListeners("ch")[0].apply.call(other, emitter, list) === token;
+  emitter.on(channel, listener);
+  const returned = emitter.rawListeners(channel)[0].apply.call(other, emitter, list) === token;
   return { originalCalls, borrowedCalls, sameList, returned };
 };
-const plain = scenario(new EventEmitter()), hooked = scenario(ipcMain);
+const rows = [false, true].map(custom => ({
+  custom, plain: scenario(new EventEmitter(), custom), hooked: scenario(ipcMain, custom),
+}));
 const snapshot = globalThis.__reaElectronActiveSnapshot();
-console.log(JSON.stringify({ plain, hooked,
+console.log(JSON.stringify({ rows,
   invocations: snapshot.events.filter(e => e.kind === "main-event-invocation").length }));
-`,
-    );
-    const execution = await runNode(script, root);
-    expect(execution.code, execution.stderr).toBe(0);
-    const { plain, hooked, invocations } = JSON.parse(execution.stdout);
+`);
+  const { rows, invocations } = result as {
+    rows: {
+      custom: boolean;
+      plain: Record<string, unknown>;
+      hooked: Record<string, unknown>;
+    }[];
+    invocations: number;
+  };
+  expect(rows.map(({ custom }) => custom)).toEqual([false, true]);
+  for (const { custom, plain, hooked } of rows) {
     expect(plain).toEqual({
       originalCalls: 0,
       borrowedCalls: 1,
@@ -1564,9 +1547,9 @@ console.log(JSON.stringify({ plain, hooked,
       returned: true,
     });
     expect(hooked).toEqual(plain);
-    expect(invocations).toBe(0);
-  },
-);
+  }
+  expect(invocations).toBe(0);
+});
 
 it("uses the captured Array.isArray intrinsic while selecting a native listener entry", async () => {
   const root = await createTestTempDirectory(
