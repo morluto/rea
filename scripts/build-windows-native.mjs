@@ -2,7 +2,15 @@
 
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -66,18 +74,33 @@ const fetchBytes = async (name) => {
     );
   return Buffer.from(await response.arrayBuffer());
 };
-const checksums = (await fetchBytes("SHASUMS256.txt")).toString("utf8");
 const verifiedDownload = async (name, path) => {
-  if (!(await exists(path))) await writeFile(path, await fetchBytes(name));
-  const digest = createHash("sha256")
-    .update(await readFile(path))
-    .digest("hex");
+  const checksums = (await fetchBytes("SHASUMS256.txt")).toString("utf8");
   const expected = checksums
     .split("\n")
     .find((line) => line.slice(66) === name)
     ?.slice(0, 64);
-  if (expected === undefined || digest !== expected)
-    throw new Error(`Node build prerequisite SHA-256 mismatch: ${name}`);
+  const mismatch = () =>
+    new Error(`Node build prerequisite SHA-256 mismatch: ${name}`);
+  if (expected === undefined) throw mismatch();
+  const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
+  const cached = await readFile(path).catch((cause) => {
+    if (cause?.code === "ENOENT") return undefined;
+    throw cause;
+  });
+  if (cached !== undefined && digest(cached) === expected) return;
+
+  const downloaded = await fetchBytes(name);
+  if (digest(downloaded) !== expected) throw mismatch();
+  // Publish verified bytes in one rename, so readers never see a partial write.
+  const staging = await mkdtemp(join(dirname(path), ".node-headers-"));
+  try {
+    const stagedArchive = join(staging, name);
+    await writeFile(stagedArchive, downloaded);
+    await rename(stagedArchive, path);
+  } finally {
+    await rm(staging, { recursive: true, force: true });
+  }
 };
 const cachedHeaders = join(
   homedir(),
