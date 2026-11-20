@@ -890,6 +890,39 @@ it("matches entry points by exact member case, reporting a case-only match", asy
   );
 });
 
+it("does not blame case when a malformed directory package.json stops main", async () => {
+  const bytes = await vsixPackageFixture({
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      engines: { vscode: "^1.74.0" },
+      main: "./out",
+    }),
+    includeMain: false,
+    extraMembers: {
+      "extension/out/package.json": "[",
+      "extension/out/index.js": "exports.activate = () => {};",
+      "extension/out/Index.json": "{}",
+    },
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.entry_points.main).toEqual({
+    path: "extension/out",
+    present: false,
+  });
+  expect(report.limitations).toContain(
+    VSIX_LIMITATIONS.malformedMainDirectoryPackageJson(
+      "extension/out/package.json",
+    ),
+  );
+  expect(
+    report.limitations.filter((line) => line.startsWith("Entry point ")),
+  ).toEqual([]);
+});
+
 it("marks a missing main entry as absent without treating it as a format error", async () => {
   const bytes = await vsixPackageFixture({ includeMain: false });
   const report = vsixPackageSchema.parse(

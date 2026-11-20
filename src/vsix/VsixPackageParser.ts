@@ -356,15 +356,20 @@ const resolveEntryPoint = (
   return { path: declared, present: false };
 };
 
-/** A member that matches an unresolved entry point only when case is ignored. */
+/**
+ * A member that matches an unresolved entry point only when case is ignored.
+ * A candidate spelled exactly as a member is skipped: the lookup failed for
+ * another reason, so its case is not the cause.
+ */
 const caseOnlyEntryPointMatch = (
   declared: string,
   suffixes: readonly string[],
   foldedMemberPaths: ReadonlyMap<string, string>,
 ): string | undefined => {
   for (const suffix of suffixes) {
-    const member = foldedMemberPaths.get(`${declared}${suffix}`.toLowerCase());
-    if (member !== undefined) return member;
+    const candidate = `${declared}${suffix}`;
+    const member = foldedMemberPaths.get(candidate.toLowerCase());
+    if (member !== undefined && member !== candidate) return member;
   }
   return undefined;
 };
@@ -1151,9 +1156,14 @@ export const parseVsixPackage = async (
     for (const [entry, suffixes] of [
       [
         mainEntry,
-        mainDirectoryOnly
-          ? NODE_INDEX_CANDIDATES
-          : [...NODE_FILE_CANDIDATES, ...NODE_INDEX_CANDIDATES],
+        // A malformed directory package.json stops the lookup before the
+        // index files, so their case cannot be the reason main is absent.
+        [
+          ...(mainDirectoryOnly ? [] : NODE_FILE_CANDIDATES),
+          ...(mainDirectoryMain.kind === "malformed"
+            ? []
+            : NODE_INDEX_CANDIDATES),
+        ],
       ],
       [browserEntry, BROWSER_ENTRY_CANDIDATES],
     ] as const) {
