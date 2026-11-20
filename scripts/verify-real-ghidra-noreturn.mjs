@@ -1,10 +1,8 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import { parseConfig } from "../dist/config/parseConfig.js";
@@ -18,13 +16,17 @@ import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
 } from "../dist/process/ProviderProcess.js";
-import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import {
+  assertVerifierCleanupComplete,
+  completeVerifierRun,
+  createVerifierRun,
+} from "./lib/verifier-run.mjs";
 import {
   VerifierFixture,
   withVerifierFixture,
 } from "./lib/verifier-fixture.mjs";
 
-const exec = promisify(execFile);
 const run = createVerifierRun();
 const procedureName = (name) =>
   process.platform === "darwin" ? `_${name}` : name;
@@ -53,187 +55,230 @@ const workspaceFixture = await VerifierFixture.open({
   prefix: "rea-ghidra-noreturn-",
 });
 const workspace = workspaceFixture.path;
+const retainWorkspace = (message, options) => {
+  workspaceFixture.retain(message);
+  return new Error(message, options);
+};
 let cleaned = true;
 let report;
+let verifierRun;
+// cc uses this command owner. A timeout stops its process group.
+const commands = await createVerifierCommands();
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 // The workspace stays while an owned Ghidra process or server may still use
 // it: this cleanup confirms only once their cleanup was verified.
-workspaceFixture.releaseAfter(() => {
+workspaceFixture.releaseAfter(async () => {
   if (!cleaned)
     throw new Error(
       `Owned Ghidra cleanup is unverified; retaining ${workspace}.`,
     );
+  verifierRun = await completeVerifierRun(run);
+  assertVerifierCleanupComplete(verifierRun.process_lineage);
 });
 await withVerifierFixture(workspaceFixture, async () => {
-  const targetPath = join(
-    workspace,
-    process.platform === "darwin" ? "noreturn.dylib" : "noreturn.so",
-  );
-  const targetOptions =
-    process.platform === "darwin"
-      ? [
-          "-dynamiclib",
-          "-undefined",
-          "dynamic_lookup",
-          "-U_FORTIFY_SOURCE",
-          "-D_FORTIFY_SOURCE=0",
-        ]
-      : ["-shared"];
-  await exec(process.env.REA_CC ?? "cc", [
-    ...targetOptions,
-    "-fPIC",
-    "-O0",
-    "-fno-builtin",
-    join(fixtures, "no-return.c"),
-    "-o",
-    targetPath,
-  ]);
-  const targetDigest = digest(await readFile(targetPath));
-  const sourceDigests = Object.fromEntries(
-    await Promise.all(
-      ["ReaGhidraBridge.java", "ReaGhidraNoReturnFix.java"].map(
-        async (name) => [name, digest(await readFile(join(bridge, name)))],
-      ),
-    ),
-  );
-  const project = join(workspace, "project");
-  await mkdir(project);
-  const launch = await spawnOwnedProviderProcess({
-    command: installation.analyzeHeadlessPath,
-    arguments: [
-      project,
-      "NoReturn",
-      "-import",
+  let primaryFailure;
+  try {
+    const targetPath = join(
+      workspace,
+      process.platform === "darwin" ? "noreturn.dylib" : "noreturn.so",
+    );
+    const targetOptions =
+      process.platform === "darwin"
+        ? [
+            "-dynamiclib",
+            "-undefined",
+            "dynamic_lookup",
+            "-U_FORTIFY_SOURCE",
+            "-D_FORTIFY_SOURCE=0",
+          ]
+        : ["-shared"];
+    await commands.exec(process.env.REA_CC ?? "cc", [
+      ...targetOptions,
+      "-fPIC",
+      "-O0",
+      "-fno-builtin",
+      join(fixtures, "no-return.c"),
+      "-o",
       targetPath,
-      "-readOnly",
-      "-deleteProject",
-      "-scriptPath",
-      `${fixtures};${bridge}`,
-      "-postScript",
-      join(fixtures, "ReaNoReturnProbe.java"),
-      bridge,
-    ],
-    runId: run.run_id,
-    expectedCommand: null,
-  });
-  const supervisor = new ProviderProcessSupervisor({
-    ...launch,
-    ownsProcessLifetime: true,
-    cleanup: () => cleanupOwnedProcessGroup(launch.ownership),
-  });
-  let probe;
-  try {
-    assert.ok(
-      await supervisor.waitForExit(120000),
-      "No-return probe timed out",
+    ]);
+    const targetDigest = digest(await readFile(targetPath));
+    const sourceDigests = Object.fromEntries(
+      await Promise.all(
+        ["ReaGhidraBridge.java", "ReaGhidraNoReturnFix.java"].map(
+          async (name) => [name, digest(await readFile(join(bridge, name)))],
+        ),
+      ),
     );
-    assert.ok(
-      await supervisor.waitForOutputClose(1000),
-      "No-return probe output did not close",
-    );
-    const snapshot = supervisor.snapshot();
-    const output = `${snapshot.stdout.text}\n${snapshot.stderr.text}`;
-    assert.equal(snapshot.exitCode, 0, output);
-    const reports = [
-      ...output.matchAll(/REA_NO_RETURN_PROBE_JSON (\{[^\r\n]*\})/gu),
-    ];
-    assert.equal(reports.length, 1, output);
-    probe = JSON.parse(reports[0][1]);
-    assert.equal(probe.status, "passed");
-    assert.equal(probe.ghidra_version, SUPPORTED_GHIDRA_VERSION);
-    assert.equal(probe.target_sha256, targetDigest);
-    for (const [name, expected] of Object.entries(sourceDigests))
-      assert.equal(probe[name], expected);
-    assert.ok(probe.checks.includes("independent_entry_preserved"));
-    assert.ok(probe.checks.includes("propagated_flag_repaired_rea_tls_outer"));
-    assert.ok(probe.checks.includes("recovered_pseudocode"));
-  } finally {
-    const stopped = await supervisor.stop();
-    cleaned = stopped.status === "verified-cleanup";
-    assert.ok(
-      cleaned,
-      `Owned cleanup incomplete; retained ${workspace}: ${JSON.stringify(stopped)}`,
-    );
-  }
-
-  // Exercise the actual Java server, authenticated transport, request queue and Evidence
-  // projection. This read-only TCP lane also runs where AF_UNIX is unavailable; it does
-  // not claim Windows authority or validation of the default Linux Unix-socket transport.
-  const provider = new GhidraProvider(
-    config.value,
-    silentLogger,
-    process.env,
-    undefined,
-    (options) =>
-      new GhidraClient({ ...options, transport: "authenticated-loopback-tcp" }),
-  );
-  const target = await parseBinaryTarget(targetPath);
-  if (!target.ok) throw target.error;
-  const profile = await provider.resolveAnalysisProfile(target.value);
-  if (!profile.ok) throw profile.error;
-  assert.ok(profile.value.profile);
-  assert.equal(
-    profile.value.profile.parameters.no_return_repair,
-    "returning-imports-decoded-return",
-  );
-  const client = provider.createClient(target.value, profile.value.profile);
-  cleaned = false;
-  const observations = [];
-  const failures = [];
-  try {
-    for (const operation of [
-      "procedure_pseudo_code",
-      "procedure_assembly",
-      "procedure_info",
-      "read_function_instructions",
-      "analyze_function",
-    ]) {
-      const result = await client.execute(operation, {
-        procedure: procedureName("rea_abort"),
-      });
-      if (!result.ok) throw result.error;
-      const warnings = result.value.limitations.filter((value) =>
-        /terminal call/u.test(value),
+    const project = join(workspace, "project");
+    await mkdir(project);
+    const launch = await spawnOwnedProviderProcess({
+      command: installation.analyzeHeadlessPath,
+      arguments: [
+        project,
+        "NoReturn",
+        "-import",
+        targetPath,
+        "-readOnly",
+        "-deleteProject",
+        "-scriptPath",
+        `${fixtures};${bridge}`,
+        "-postScript",
+        join(fixtures, "ReaNoReturnProbe.java"),
+        bridge,
+      ],
+      runId: run.run_id,
+      expectedCommand: null,
+    });
+    const supervisor = new ProviderProcessSupervisor({
+      ...launch,
+      ownsProcessLifetime: true,
+      cleanup: () => cleanupOwnedProcessGroup(launch.ownership),
+    });
+    let probe;
+    try {
+      assert.ok(
+        await supervisor.waitForExit(120000),
+        "No-return probe timed out",
       );
       assert.ok(
-        warnings.some(
-          (value) => /abort/u.test(value) && /fallthrough/u.test(value),
-        ),
-        operation,
+        await supervisor.waitForOutputClose(1000),
+        "No-return probe output did not close",
       );
-      observations.push({ operation, warnings });
+      const snapshot = supervisor.snapshot();
+      const output = `${snapshot.stdout.text}\n${snapshot.stderr.text}`;
+      assert.equal(snapshot.exitCode, 0, output);
+      const reports = [
+        ...output.matchAll(/REA_NO_RETURN_PROBE_JSON (\{[^\r\n]*\})/gu),
+      ];
+      assert.equal(reports.length, 1, output);
+      probe = JSON.parse(reports[0][1]);
+      assert.equal(probe.status, "passed");
+      assert.equal(probe.ghidra_version, SUPPORTED_GHIDRA_VERSION);
+      assert.equal(probe.target_sha256, targetDigest);
+      for (const [name, expected] of Object.entries(sourceDigests))
+        assert.equal(probe[name], expected);
+      assert.ok(probe.checks.includes("independent_entry_preserved"));
+      assert.ok(
+        probe.checks.includes("propagated_flag_repaired_rea_tls_outer"),
+      );
+      assert.ok(probe.checks.includes("recovered_pseudocode"));
+    } finally {
+      const stopped = await supervisor.stop();
+      cleaned = stopped.status === "verified-cleanup";
+      assert.ok(
+        cleaned,
+        `Owned cleanup incomplete; retained ${workspace}: ${JSON.stringify(stopped)}`,
+      );
     }
-    const healthy = await client.execute("procedure_pseudo_code", {
-      procedure: procedureName("rea_tls"),
-    });
-    if (!healthy.ok) throw healthy.error;
-    assert.ok(
-      !healthy.value.limitations.some((value) => /terminal call/u.test(value)),
+
+    // Exercise the actual Java server, authenticated transport, request queue and Evidence
+    // projection. This read-only TCP lane also runs where AF_UNIX is unavailable; it does
+    // not claim Windows authority or validation of the default Linux Unix-socket transport.
+    const provider = new GhidraProvider(
+      config.value,
+      silentLogger,
+      process.env,
+      undefined,
+      (options) =>
+        new GhidraClient({
+          ...options,
+          transport: "authenticated-loopback-tcp",
+        }),
     );
+    const target = await parseBinaryTarget(targetPath);
+    if (!target.ok) throw target.error;
+    const profile = await provider.resolveAnalysisProfile(target.value);
+    if (!profile.ok) throw profile.error;
+    assert.ok(profile.value.profile);
+    assert.equal(
+      profile.value.profile.parameters.no_return_repair,
+      "returning-imports-decoded-return",
+    );
+    const client = provider.createClient(target.value, profile.value.profile);
+    cleaned = false;
+    const observations = [];
+    const failures = [];
+    try {
+      for (const operation of [
+        "procedure_pseudo_code",
+        "procedure_assembly",
+        "procedure_info",
+        "read_function_instructions",
+        "analyze_function",
+      ]) {
+        const result = await client.execute(operation, {
+          procedure: procedureName("rea_abort"),
+        });
+        if (!result.ok) throw result.error;
+        const warnings = result.value.limitations.filter((value) =>
+          /terminal call/u.test(value),
+        );
+        assert.ok(
+          warnings.some(
+            (value) => /abort/u.test(value) && /fallthrough/u.test(value),
+          ),
+          operation,
+        );
+        observations.push({ operation, warnings });
+      }
+      const healthy = await client.execute("procedure_pseudo_code", {
+        procedure: procedureName("rea_tls"),
+      });
+      if (!healthy.ok) throw healthy.error;
+      assert.ok(
+        !healthy.value.limitations.some((value) =>
+          /terminal call/u.test(value),
+        ),
+      );
+    } catch (cause) {
+      failures.push(cause);
+    }
+    const closed = await client.close();
+    cleaned = closed.ok;
+    if (!closed.ok) failures.push(closed.error);
+    if (failures.length > 0)
+      throw new AggregateError(
+        failures,
+        "No-return Evidence verification failed",
+      );
+    assert.equal(digest(await readFile(targetPath)), targetDigest);
+    report = {
+      status: "passed",
+      probe,
+      observations,
+      scope:
+        "Real Ghidra ELF or Mach-O analysis with injected flags; real read-only TCP Evidence projection. No target execution; exact Amethyst artifact and Windows are unverified.",
+    };
   } catch (cause) {
-    failures.push(cause);
+    primaryFailure = cause;
   }
-  const closed = await client.close();
-  cleaned = closed.ok;
-  if (!closed.ok) failures.push(closed.error);
-  if (failures.length > 0)
-    throw new AggregateError(
-      failures,
-      "No-return Evidence verification failed",
+  // Close the command owner before release observes the parent tree.
+  let cleanupFailure;
+  try {
+    await workspaceFixture.closeEarly([() => commands.close()]);
+  } catch (cause) {
+    cleanupFailure = cause;
+  }
+  if (cleanupFailure !== undefined || primaryFailure !== undefined)
+    throw retainWorkspace(
+      `No-return verification failed; retained diagnostic workspace: ${workspace}`,
+      {
+        cause:
+          cleanupFailure === undefined
+            ? primaryFailure
+            : primaryFailure === undefined
+              ? cleanupFailure
+              : new AggregateError(
+                  [primaryFailure, cleanupFailure],
+                  "No-return verification and command cleanup both failed",
+                ),
+      },
     );
-  assert.equal(digest(await readFile(targetPath)), targetDigest);
-  report = {
-    status: "passed",
-    probe,
-    observations,
-    scope:
-      "Real Ghidra ELF or Mach-O analysis with injected flags; real read-only TCP Evidence projection. No target execution; exact Amethyst artifact and Windows are unverified.",
-  };
 });
 console.log(
   JSON.stringify({
     ...report,
     cleanup: "complete",
-    verifier_run: await completeVerifierRun(run),
+    verifier_run: verifierRun,
   }),
 );

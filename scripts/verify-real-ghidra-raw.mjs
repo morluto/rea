@@ -1,11 +1,9 @@
 import { withCanonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
@@ -22,7 +20,12 @@ import {
   requireMcpOutput,
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
 import {
   withVerifierCleanup,
   closeVerifierResources,
@@ -56,6 +59,10 @@ const workspaceFixture = await VerifierFixture.open({
   prefix: "rea-raw-proof-",
 });
 const workspace = workspaceFixture.path;
+const retainWorkspace = (message, options) => {
+  workspaceFixture.retain(message);
+  return new Error(message, options);
+};
 let fixtureCleaned = true;
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
@@ -95,6 +102,8 @@ const env = {
           process.env.REA_GHIDRA_DISABLED_ANALYZERS,
       }),
 };
+// The public CLI launch uses this command owner. A timeout stops its process group.
+const commands = await createVerifierCommands();
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
@@ -129,10 +138,10 @@ workspaceFixture.releaseAfter(async () => {
     "Owned Java fixture cleanup remains pending",
   );
   verifierRun = await completeVerifierRun(run);
-  assert.equal(verifierRun.process_lineage.status, "verified");
-  assert.deepEqual(verifierRun.process_lineage.descendants, []);
+  assertVerifierCleanupComplete(verifierRun.process_lineage);
 });
 await withVerifierFixture(workspaceFixture, async () => {
+  let primaryFailure;
   try {
     await client.connect(transport);
     connected = true;
@@ -230,14 +239,20 @@ await withVerifierFixture(workspaceFixture, async () => {
         entry_point: "0x8000001",
       },
     });
-    assert.equal(rejected.isError, true);
-    assert.match(JSON.stringify(rejected.content), /must be 4-byte aligned/);
-    const rejection = JSON.parse(rejected.content[0].text).error;
-    assert.equal(
-      rejection.details.target_at_open_completion.entry_point,
-      "0x9000000",
-    );
-    assert.equal(rejection.details.provider_id_at_open_completion, "ghidra");
+    const rejection = requireMcpToolError(rejected);
+    // admitRawBinary refuses an arm64 entry that is not a multiple of 4.
+    // The completion facts are the session that the failed open must leave in place.
+    assert.partialDeepStrictEqual(rejection, {
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
+        path,
+        reason: "raw-binary arm64 entry_point 0x8000001 must be 4-byte aligned",
+        constraint: "load_selection_rejected",
+        target_at_open_completion: { entry_point: "0x9000000" },
+        provider_id_at_open_completion: "ghidra",
+      },
+    });
     const unchanged = await call("binary_session");
     assert.equal(unchanged.analysis_run.run_id, sessions[2]);
     assert.equal(unchanged.entry_point, "0x9000000");
@@ -256,7 +271,7 @@ await withVerifierFixture(workspaceFixture, async () => {
     );
     await call("close_binary");
 
-    const { stdout } = await promisify(execFile)(
+    const { stdout } = await commands.exec(
       process.execPath,
       [
         entrypoint,
@@ -625,12 +640,31 @@ await withVerifierFixture(workspaceFixture, async () => {
     };
   } catch (error) {
     if (stderr.trim()) process.stderr.write(stderr);
-    throw error;
+    primaryFailure = error;
   }
+  // Close the command owner before release observes the parent tree.
+  let cleanupFailure;
+  try {
+    await workspaceFixture.closeEarly([() => commands.close()]);
+  } catch (cause) {
+    cleanupFailure = cause;
+  }
+  if (cleanupFailure !== undefined || primaryFailure !== undefined)
+    throw retainWorkspace(
+      `Raw-binary verification failed; retained workspace: ${workspace}`,
+      {
+        cause:
+          cleanupFailure === undefined
+            ? primaryFailure
+            : primaryFailure === undefined
+              ? cleanupFailure
+              : new AggregateError(
+                  [primaryFailure, cleanupFailure],
+                  "Raw-binary verification and command cleanup both failed",
+                ),
+      },
+    );
 });
-verifierRun = await completeVerifierRun(run);
-assert.equal(verifierRun.process_lineage.status, "verified");
-assert.deepEqual(verifierRun.process_lineage.descendants, []);
 process.stdout.write(
   JSON.stringify({
     verifier_run: verifierRun,

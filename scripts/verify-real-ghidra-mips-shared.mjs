@@ -1,9 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
@@ -14,7 +12,12 @@ import {
   requireMcpOperationResult,
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { requireLaneToolchain } from "../tests/conformance/ghidra/fixture-toolchain.mjs";
 
@@ -25,7 +28,6 @@ if (
   throw new Error(
     "This optional lane requires BYO Ghidra on Linux/macOS and GNU MIPS cross-binutils.",
   );
-const execute = promisify(execFile);
 const run = createVerifierRun();
 // Refuse a host without the fixture toolchain before allocating anything.
 await requireLaneToolchain("mips-shared");
@@ -56,6 +58,8 @@ const env = {
     ? {}
     : { GHIDRA_HEADLESS_MAXMEM: process.env.GHIDRA_HEADLESS_MAXMEM }),
 };
+// The public CLI launch uses this command owner. A timeout stops its process group.
+const commands = await createVerifierCommands();
 const reports = [];
 let failure;
 try {
@@ -292,7 +296,7 @@ try {
         );
         await call("close_binary");
         await client.ping();
-        const cli = await execute(
+        const cli = await commands.exec(
           process.execPath,
           [
             "scripts/rea.mjs",
@@ -336,15 +340,45 @@ try {
 } catch (cause) {
   failure = cause;
 }
+// Close the command owner before the parent-tree check. A failed close stays
+// registered for retry and the diagnostic workspace is retained.
+let cleanupFailure;
+try {
+  await workspaceFixture.closeEarly([() => commands.close()]);
+} catch (cause) {
+  cleanupFailure = cause;
+}
+if (cleanupFailure !== undefined)
+  throw retainWorkspace(
+    `MIPS16 shared command cleanup failed; retained diagnostic workspace: ${workspace}`,
+    {
+      cause:
+        failure === undefined
+          ? cleanupFailure
+          : new AggregateError(
+              [failure, cleanupFailure],
+              "MIPS16 shared verification and command cleanup both failed",
+            ),
+    },
+  );
 const completed = await completeVerifierRun(run);
-if (
-  completed.process_lineage.status !== "verified" ||
-  completed.process_lineage.descendants.length !== 0
-)
+let lineageFailure;
+try {
+  assertVerifierCleanupComplete(completed.process_lineage);
+} catch (cause) {
+  lineageFailure = cause;
+}
+if (lineageFailure !== undefined)
   throw retainWorkspace(
     `Cleanup unverified; retained workspace: ${workspace}`,
     {
-      cause: failure,
+      cause:
+        failure === undefined
+          ? lineageFailure
+          : new AggregateError(
+              [failure, lineageFailure],
+              "MIPS16 shared verification failed and cleanup was unverified",
+            ),
     },
   );
 if (failure !== undefined)

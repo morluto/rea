@@ -1,12 +1,10 @@
 #!/usr/bin/env node
 import { canonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import Ajv from "ajv/dist/2020.js";
@@ -34,7 +32,12 @@ import {
   requireMcpOutput,
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { requireLaneToolchain } from "../tests/conformance/ghidra/fixture-toolchain.mjs";
 
@@ -59,7 +62,6 @@ const installation = await inspectVerifierGhidraInstallation({
 assert.equal(installation.status, "available", JSON.stringify(installation));
 assert.equal(installation.providerVersion, SUPPORTED_GHIDRA_VERSION);
 
-const execute = promisify(execFile);
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const run = createVerifierRun();
 // Refuse a host without the fixture toolchain before allocating anything.
@@ -88,6 +90,8 @@ const env = {
 };
 for (const key of ["GHIDRA_HEADLESS_MAXMEM", "GHIDRA_MAXMEM"])
   if (process.env[key] !== undefined) env[key] = process.env[key];
+// Public CLI launches share one command owner. A timeout stops that process group.
+const commands = await createVerifierCommands();
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
@@ -382,7 +386,7 @@ try {
 
     const snapshotPath = join(
       workspace,
-      `${fixture.path.split(/[\/\\]/).at(-1)}.snapshot.json`,
+      `${fixture.path.split(/[/\\]/).at(-1)}.snapshot.json`,
     );
     const saved = await call("close_binary", { snapshot_path: snapshotPath });
     assert.ok(saved.evidence_records > 0);
@@ -422,7 +426,7 @@ try {
         [stripped ? addressFor("rea_riscv_entry") : "rea_riscv_entry"],
       ],
     ]) {
-      const cli = await execute(
+      const cli = await commands.exec(
         process.execPath,
         [
           entrypoint,
@@ -561,7 +565,11 @@ try {
               arch: fixture.riscv.isa.arch,
             },
           };
-          const cli = await execute(process.execPath, cliArguments, cliOptions);
+          const cli = await commands.exec(
+            process.execPath,
+            cliArguments,
+            cliOptions,
+          );
           assertProfile(
             parseEvidence(JSON.parse(cli.stdout)).analysis_profile,
             want,
@@ -575,11 +583,15 @@ try {
           JSON.stringify(error),
         );
         await assert.rejects(
-          execute(process.execPath, cliArguments, cliOptions),
-          (cause) =>
-            Number.isInteger(cause.code) &&
-            cause.code !== 0 &&
-            `${cause.stdout}\n${cause.stderr}`.includes(outcome),
+          commands.exec(process.execPath, cliArguments, cliOptions),
+          (cause) => {
+            const output = `${cause?.snapshot?.stdout?.text ?? ""}\n${cause?.snapshot?.stderr?.text ?? ""}`;
+            return (
+              Number.isInteger(cause?.code) &&
+              cause.code !== 0 &&
+              output.includes(outcome)
+            );
+          },
         );
         headers.push({ flags, outcome: "refused", reason: outcome });
       }
@@ -636,15 +648,45 @@ for (const close of [() => client.close(), () => transport.close()]) {
     );
   }
 }
+// Close the command owner before the parent-tree check. A failed close stays
+// registered for retry and the diagnostic workspace is retained.
+let cleanupFailure;
+try {
+  await workspaceFixture.closeEarly([() => commands.close()]);
+} catch (cause) {
+  cleanupFailure = cause;
+}
+if (cleanupFailure !== undefined)
+  throw retainWorkspace(
+    `RISC-V command cleanup failed; retained diagnostic workspace: ${workspace}`,
+    {
+      cause:
+        failure === undefined
+          ? cleanupFailure
+          : new AggregateError(
+              [failure, cleanupFailure],
+              "RISC-V verification and command cleanup both failed",
+            ),
+    },
+  );
 const completed = await completeVerifierRun(run);
-if (
-  completed.process_lineage.status !== "verified" ||
-  completed.process_lineage.descendants.length !== 0
-)
+let lineageFailure;
+try {
+  assertVerifierCleanupComplete(completed.process_lineage);
+} catch (cause) {
+  lineageFailure = cause;
+}
+if (lineageFailure !== undefined)
   throw retainWorkspace(
     `Cleanup unverified; retained workspace: ${workspace}`,
     {
-      cause: failure,
+      cause:
+        failure === undefined
+          ? lineageFailure
+          : new AggregateError(
+              [failure, lineageFailure],
+              "RISC-V verification failed and cleanup was unverified",
+            ),
     },
   );
 if (failure !== undefined)

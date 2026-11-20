@@ -5,19 +5,22 @@ import {
   requireMcpLifecycleResult,
   requireMcpOutput,
 } from "./lib/mcp-verifier-results.mjs";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { nativeDataTypeSchema } from "../dist/domain/native/nativeDataType.js";
 import { nativeLoadImageSchema } from "../dist/domain/native/nativeLoadImage.js";
 
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
 import {
   VerifierFixture,
   withVerifierFixture,
@@ -87,6 +90,10 @@ const workspaceFixture = await VerifierFixture.open({
   prefix: "rea-nativeaot-proof-",
 });
 const workspace = workspaceFixture.path;
+const retainWorkspace = (message, options) => {
+  workspaceFixture.retain(message);
+  return new Error(message, options);
+};
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const packageRoot = process.env.REA_NATIVEAOT_PROOF_PACKAGE_ROOT;
@@ -113,6 +120,8 @@ if (mode === "default-native") delete env.REA_GHIDRA_NATIVEAOT_JAR;
 // a simulated producer report. Its class/JAR exist only in the owned workspace.
 if (mode === "loader-failure")
   env.REA_GHIDRA_NATIVEAOT_JAR = join(workspace, "bad-extension.jar");
+// javac, jar, and the optional CLI share one command owner. A timeout stops that process group.
+const commands = await createVerifierCommands();
 async function prepareLoaderFailure() {
   const source = join(workspace, "NativeAotExtension.java");
   const classes = join(workspace, "classes");
@@ -131,12 +140,12 @@ public final class NativeAotExtension {
     process.env.JAVA_HOME === undefined
       ? name
       : join(process.env.JAVA_HOME, "bin", name);
-  await promisify(execFile)(
+  await commands.exec(
     command("javac"),
     ["-J-Xmx512m", "-J-XX:ActiveProcessorCount=1", "-d", classes, source],
     { timeout: 60000 },
   );
-  await promisify(execFile)(
+  await commands.exec(
     command("jar"),
     ["--create", "--file", env.REA_GHIDRA_NATIVEAOT_JAR, "-C", classes, "."],
     { timeout: 60000 },
@@ -171,10 +180,10 @@ workspaceFixture.releaseAfter(async () => {
     "Owned runtime/project/extension files leaked after close",
   );
   verifierRun = await completeVerifierRun(run);
-  assert.equal(verifierRun.process_lineage.status, "verified");
-  assert.deepEqual(verifierRun.process_lineage.descendants, []);
+  assertVerifierCleanupComplete(verifierRun.process_lineage);
 });
 await withVerifierFixture(workspaceFixture, async () => {
+  let primaryFailure;
   try {
     if (mode === "loader-failure") await prepareLoaderFailure();
     await client.connect(transport);
@@ -358,7 +367,7 @@ await withVerifierFixture(workspaceFixture, async () => {
         // One representative CLI boundary, selected explicitly to avoid repeated
         // full NativeAOT auto-analysis during each focused iteration.
         if (process.env.REA_NATIVEAOT_PROOF_CLI === "1") {
-          const { stdout } = await promisify(execFile)(
+          const { stdout } = await commands.exec(
             process.execPath,
             [
               entrypoint,
@@ -393,8 +402,30 @@ await withVerifierFixture(workspaceFixture, async () => {
     }
   } catch (error) {
     console.error(stderr);
-    throw error;
+    primaryFailure = error;
   }
+  // Close the command owner before release observes the parent tree.
+  let cleanupFailure;
+  try {
+    await workspaceFixture.closeEarly([() => commands.close()]);
+  } catch (cause) {
+    cleanupFailure = cause;
+  }
+  if (cleanupFailure !== undefined || primaryFailure !== undefined)
+    throw retainWorkspace(
+      `NativeAOT verification failed; retained diagnostic workspace: ${workspace}`,
+      {
+        cause:
+          cleanupFailure === undefined
+            ? primaryFailure
+            : primaryFailure === undefined
+              ? cleanupFailure
+              : new AggregateError(
+                  [primaryFailure, cleanupFailure],
+                  "NativeAOT verification and command cleanup both failed",
+                ),
+      },
+    );
 });
 const capture = process.env.REA_NATIVEAOT_PROOF_CAPTURE_DIR;
 if (capture !== undefined) {
