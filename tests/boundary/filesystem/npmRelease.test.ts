@@ -104,6 +104,7 @@ it("waits only for confirmed propagation absence and does not retry errors", asy
   );
   let calls = 0;
   const pauses: number[] = [];
+  const missing: number[][] = [];
   await expect(
     waitForNpmRelease(
       "6.5.0",
@@ -111,9 +112,11 @@ it("waits only for confirmed propagation absence and does not retry errors", asy
       async (milliseconds) => {
         pauses.push(milliseconds);
       },
+      (attempt, total) => missing.push([attempt, total]),
     ),
   ).resolves.toEqual(published);
   expect(calls).toBe(2);
+  expect(missing).toEqual([[1, 120]]);
   expect(pauses).toEqual([15_000]);
   let failures = 0;
   await expect(
