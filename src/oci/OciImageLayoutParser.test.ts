@@ -315,6 +315,44 @@ it("records nested index depth as a finding once the bound is exceeded", async (
   expect(report.coverage.status).toBe("partial");
 });
 
+it("inventories an index a deeper path reaches first at its shallowest depth", async () => {
+  const root = await createTestTempDirectory("rea-oci-shared-index-");
+  const written = await writeOciImageLayoutFixture(root);
+  const OCI_INDEX = "application/vnd.oci.image.index.v1+json";
+  const index = (manifests: unknown[]) =>
+    `${JSON.stringify({ schemaVersion: 2, mediaType: OCI_INDEX, manifests })}\n`;
+  const descriptor = async (body: string) => ({
+    mediaType: OCI_INDEX,
+    digest: await putOciBlob(root, body),
+    size: Buffer.byteLength(body),
+  });
+  // Root lists A then X; A also lists X, and X lists Y, which holds the image.
+  const y = await descriptor(
+    index([
+      {
+        mediaType: "application/vnd.oci.image.manifest.v1+json",
+        digest: written.manifestDigest,
+        size: written.manifestSize,
+      },
+    ]),
+  );
+  const x = await descriptor(index([y]));
+  const a = await descriptor(index([x]));
+  await writeFile(join(root, "index.json"), index([a, x]));
+  const report = await inspectLayout(root, { max_index_depth: 2 });
+  expect(report.images.map((image) => image.digest)).toEqual([
+    written.manifestDigest,
+  ]);
+  expect(report.indexes.find((entry) => entry.digest === x.digest)?.depth).toBe(
+    1,
+  );
+  expect(
+    report.findings.filter(
+      (finding) => finding.kind === "nested_index_depth_exceeded",
+    ),
+  ).toEqual([]);
+});
+
 it("refuses malformed index.json and preserves the oci-layout snapshot", async () => {
   const root = await createTestTempDirectory("rea-oci-malformed-");
   await writeOciImageLayoutFixture(root);

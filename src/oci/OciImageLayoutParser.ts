@@ -643,6 +643,12 @@ export const parseOciImageLayout = async (
     }
   };
 
+  // Indexes are walked breadth-first so each one is first reached at the
+  // shallowest depth any path gives it; a deeper first visit through a shared
+  // index would otherwise hide what it reaches within max_index_depth.
+  const queuedIndexes = new Set<string>();
+  const indexQueue: { digest: string; mediaType: string; depth: number }[] = [];
+
   const walkIndex = async (
     digest: string,
     mediaType: string,
@@ -717,6 +723,9 @@ export const parseOciImageLayout = async (
     });
     for (const descriptor of indexEntries) {
       if (isOciIndexMediaType(descriptor.media_type)) {
+        // Breadth-first, an index already queued was reached at this depth
+        // or a shallower one.
+        if (queuedIndexes.has(descriptor.digest)) continue;
         if (depth + 1 > input.max_index_depth) {
           recordFinding(
             findings,
@@ -726,17 +735,12 @@ export const parseOciImageLayout = async (
           );
           continue;
         }
-        const nested = await readReferencedJson(
-          descriptor.digest,
-          `index ${descriptor.digest}`,
-        );
-        if (nested !== undefined)
-          await walkIndex(
-            descriptor.digest,
-            descriptor.media_type,
-            nested,
-            depth + 1,
-          );
+        queuedIndexes.add(descriptor.digest);
+        indexQueue.push({
+          digest: descriptor.digest,
+          mediaType: descriptor.media_type,
+          depth: depth + 1,
+        });
         continue;
       }
       if (isOciManifestMediaType(descriptor.media_type))
@@ -848,12 +852,21 @@ export const parseOciImageLayout = async (
     nonempty(indexRoot.mediaType) ??
     nonempty(indexRoot.media_type) ??
     "application/vnd.oci.image.index.v1+json";
-  await walkIndex(
-    `sha256:${indexDocument.sha256}`,
-    topMediaType,
-    indexDocument,
-    0,
-  );
+  const rootDigest = `sha256:${indexDocument.sha256}`;
+  queuedIndexes.add(rootDigest);
+  await walkIndex(rootDigest, topMediaType, indexDocument, 0);
+  for (
+    let next = indexQueue.shift();
+    next !== undefined;
+    next = indexQueue.shift()
+  ) {
+    const nested = await readReferencedJson(
+      next.digest,
+      `index ${next.digest}`,
+    );
+    if (nested !== undefined)
+      await walkIndex(next.digest, next.mediaType, nested, next.depth);
+  }
 
   const blobs: OciImageLayoutBlob[] = [];
   let blobsHashed = 0;
