@@ -6964,31 +6964,54 @@ it("keeps saved project reports as shared historical Evidence without applying f
         { name: "Decompiler Parameter ID", status: "disabled" as const },
       ],
     },
+    riscv_calling_convention: {
+      policy: "ilp32-prototype-v1" as const,
+      functions: 11,
+      definitions: 8,
+    },
   };
   const close = vi.fn(async () => ok(null));
+  let options: GhidraHeadlessLauncher["options"] | undefined;
   const ghidra = provider(
     installationHost(),
-    () => ({
-      start: async () =>
-        ok({
-          ...sessionInfo(),
-          read_only: true,
-          existing_project: true as const,
-          analysis_complete: null,
-          ...prior,
-          capabilities: GHIDRA_SESSION_CAPABILITIES.filter(
-            (name) => !GHIDRA_MUTATING_OPERATIONS.has(name),
-          ),
-        }),
-      callTool: async () => ok([]),
-      close,
-    }),
+    ({ launcher }) => {
+      if (!(launcher instanceof GhidraHeadlessLauncher))
+        throw new Error("Expected the saved-project launcher");
+      options = launcher.options;
+      return {
+        start: async () =>
+          ok({
+            ...sessionInfo(),
+            target: {
+              ...sessionInfo().target,
+              language_id: "RISCV:LE:32:default",
+            },
+            read_only: true,
+            existing_project: true as const,
+            analysis_complete: null,
+            ...prior,
+            capabilities: GHIDRA_SESSION_CAPABILITIES.filter(
+              (name) => !GHIDRA_MUTATING_OPERATIONS.has(name),
+            ),
+          }),
+        callTool: async () => ok([]),
+        close,
+      };
+    },
     { REA_GHIDRA_PROJECT_PATH: join(root, "history.gpr") },
   );
   onTestFinished(async () => {
     await ghidra.closeOwnedResources();
   });
-  const target = executableTarget("elf", "x86_64");
+  const target: BinaryTarget = {
+    path: "/tmp/fixture",
+    sha256: "a".repeat(64),
+    kind: "executable",
+    format: "elf",
+    architecture: "riscv",
+    availableArchitectures: ["riscv"],
+    riscv: { elfClass: 32, byteOrder: "little", type: 2, flags: 1 },
+  };
   const resolved = await ghidra.resolveAnalysisProfile(target);
   if (!resolved.ok || resolved.value.profile === null)
     throw new Error("expected existing profile");
@@ -6999,16 +7022,31 @@ it("keeps saved project reports as shared historical Evidence without applying f
   const first = await client.execute("list_procedures", {});
   if (!first.ok) throw first.error;
   expect(close).not.toHaveBeenCalled();
+  expect(options).toMatchObject({
+    existingProject: { projectName: "history" },
+  });
+  for (const freshOverride of [
+    "analysisSeeds",
+    "disabledAnalyzers",
+    "riscvCallingConvention",
+  ])
+    expect(options).not.toHaveProperty(freshOverride);
+
   expect(first.value.sourceEvidence).toHaveLength(1);
-  expect(first.value.sourceEvidence?.[0]).toMatchObject({
+  const history = first.value.sourceEvidence?.[0];
+  if (history === undefined) throw new Error("Expected historical Evidence");
+  expect(history).toMatchObject({
     operation: "health",
+    confidence: "observed",
     normalized_result: { origin: "caller-project", ...prior },
   });
-  const repeated = await client.execute("list_procedures", {});
-  if (!repeated.ok) throw repeated.error;
-  expect(repeated.value.sourceEvidence?.[0]).toBe(
-    first.value.sourceEvidence?.[0],
-  );
+  const search = await client.execute("search_procedures", {
+    pattern: "fixture",
+  });
+  if (!search.ok) throw search.error;
+  expect(
+    search.value.sourceEvidence?.map((record) => record.evidence_id),
+  ).toEqual([history.evidence_id]);
 });
 
 it.each(["search_procedures", "search_strings"] as const)(

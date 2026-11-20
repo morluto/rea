@@ -25,11 +25,7 @@ import {
   ghidraRiscvUnsupportedReason,
   type GhidraRiscvCallingConventionReport,
 } from "./GhidraRiscvProfile.js";
-import { ghidraProjectHistoryEvidence } from "./GhidraProjectHistory.js";
-import {
-  GHIDRA_SESSION_CAPABILITIES,
-  type GhidraSessionInfo,
-} from "./GhidraSessionValues.js";
+import { GHIDRA_SESSION_CAPABILITIES } from "./GhidraSessionValues.js";
 import {
   createSimulatedInstallDirectory,
   ghidraProfileInstallationHost as host,
@@ -802,16 +798,5 @@ describe("RISC-V calling-convention handshake", () => {
       expect((await client.execute("health", {})).ok).toBe(false);
       expect(counts.starts).toBe(0);
     }
-  });
-
-  it("keeps a caller project's stored report as history", async () => {
-    const resolved = await ghidra().resolveAnalysisProfile(ilp32());
-    if (!resolved.ok || resolved.value.profile === null)
-      throw new Error("expected an ilp32 profile");
-    const info: GhidraSessionInfo = sessionInfo(report);
-    expect(
-      ghidraProjectHistoryEvidence(ilp32(), resolved.value.profile, info)
-        ?.normalized_result,
-    ).toEqual({ origin: "caller-project", riscv_calling_convention: report });
   });
 });
