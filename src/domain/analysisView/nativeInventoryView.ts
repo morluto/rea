@@ -3,7 +3,8 @@ import { analysisStringSchema } from "../native/nativeString.js";
 import { inventoryDiscoveryCoverageSchema } from "../native/inventoryCoverage.js";
 import { jsonValueSchema, type JsonValue } from "../jsonValue.js";
 import { jsonValueByteLength } from "../jsonValueByteLength.js";
-import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
+import { fixedCeilingConstraint } from "../analysisErrorCore.js";
+import { Budget } from "../budget.js";
 import {
   addressedValueSchema,
   isNativeInventoryOperation,
@@ -24,7 +25,7 @@ import {
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
 import {
-  ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
+  INSPECT_ANALYSIS_VIEW_OPERATION,
   analysisViewInputError,
 } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
@@ -218,31 +219,38 @@ export const projectNativeInventoryView = (
           ? null
           : pageViewCoverage(view.offset, count, names.length),
     };
-    const pageBytes = 1024 * 1024;
+    const budget = new Budget(1024 * 1024);
     const tooLarge = () =>
       err(
-        new AnalysisResourceConstraintError(
-          "inspect_analysis_view",
+        fixedCeilingConstraint(
+          INSPECT_ANALYSIS_VIEW_OPERATION,
           "transport",
           "The procedure alias page cannot fit the analysis-view byte allowance.",
-          { parent_evidence_id: parent.evidenceId, limit_bytes: pageBytes },
-          ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
+          {
+            name: "The analysis-view page allowance",
+            kind: "bytes",
+            limit: budget.maximum,
+            unit: "bytes",
+            narrowing:
+              "Select fewer aliases or read the complete retained parent Evidence.",
+          },
+          { diagnostics: { parent_evidence_id: parent.evidenceId } },
         ),
       );
-    // Measure the result header, including the future digest and empty alias
-    // array, then count only the requested aliases before retaining each row.
-    let bytes = jsonValueByteLength(
+    // Charge the result header, including the future digest and empty alias
+    // array, before adding any alias entries.
+    const headerBytes = jsonValueByteLength(
       { ...result, view_digest: "0".repeat(64) } as JsonValue,
-      pageBytes,
+      budget.remaining,
     );
-    if (bytes > pageBytes) return tooLarge();
+    if (!budget.tryCharge(headerBytes)) return tooLarge();
     if (names !== undefined && items.state === "recorded") {
       for (let index = 0; index < count; index++) {
         const aliasIndex = view.offset + index;
         const alias = { alias_index: aliasIndex, name: names[aliasIndex]! };
-        bytes +=
-          jsonValueByteLength(alias, pageBytes - bytes) + (index === 0 ? 0 : 1);
-        if (bytes > pageBytes) return tooLarge();
+        const entryBytes =
+          jsonValueByteLength(alias, budget.remaining) + (index === 0 ? 0 : 1);
+        if (!budget.tryCharge(entryBytes)) return tooLarge();
         items.aliases.push(alias);
       }
     }
