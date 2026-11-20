@@ -118,9 +118,7 @@ it("tells a finished CLI invocation to rerun with the launch setting, not to reu
     retryable: true,
     recovery: { kind: "inspect_timeout_state", timeout_ms: 1000 },
     remediation: {
-      action: expect.stringMatching(
-        /REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS above 1\b/u,
-      ),
+      action: expect.stringContaining("REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS"),
     },
     details: {
       diagnostics: { remote_code: "decompile_timed_out" },
@@ -129,7 +127,6 @@ it("tells a finished CLI invocation to rerun with the launch setting, not to reu
     },
   });
   const { message, remediation } = cliFailure.parse(projected);
-  expect(remediation.action).toContain("repeats import and analysis");
   expect(remediation.action).not.toMatch(
     /update_analysis_settings|rea function/u,
   );

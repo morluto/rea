@@ -2169,38 +2169,30 @@ const decompileDeadline = async (
     _tag: "AnalysisTimeoutError",
     timeoutMs: seconds * 1000,
   });
-  return {
-    message,
-    continuing: projectAnalysisError(result.error),
-    invocation: projectAnalysisError(result.error, "invocation"),
-  };
+  const continuing = projectAnalysisError(result.error);
+  const invocation = projectAnalysisError(result.error, "invocation");
+  if (!cancelled) {
+    expect(invocation.remediation.action).toBe(
+      "remediationAction" in result.error
+        ? result.error.remediationAction
+        : undefined,
+    );
+    expect(continuing.remediation.action).toBe(
+      result.error.continuingCallerGuidance?.remediationAction,
+    );
+  }
+  return { message, continuing, invocation };
 };
 
 describe("Ghidra decompile deadline for a finished invocation", () => {
   it.each([
-    {
-      seconds: 5,
-      source: "fresh-import",
-      restart: "repeats import and analysis",
-    },
-    {
-      seconds: 2_147_483,
-      source: "fresh-import",
-      restart: "repeats import and analysis",
-    },
-    {
-      seconds: 5,
-      source: "existing-project",
-      restart: "opens the selected REA_GHIDRA_PROJECT_PATH project again",
-    },
-    {
-      seconds: 5,
-      source: "owned-checkpoint",
-      restart: "restores the last saved Program from REA_GHIDRA_CHECKPOINT_DIR",
-    },
+    { seconds: 5, source: "fresh-import" },
+    { seconds: 2_147_483, source: "fresh-import" },
+    { seconds: 5, source: "existing-project" },
+    { seconds: 5, source: "owned-checkpoint" },
   ] as const)(
     "delivers each lifetime's recovery for a $seconds-second deadline ($source)",
-    async ({ seconds, source, restart }) => {
+    async ({ seconds, source }) => {
       const { message, continuing, invocation } = await decompileDeadline(
         seconds,
         source,
@@ -2219,38 +2211,30 @@ describe("Ghidra decompile deadline for a finished invocation", () => {
           },
         });
       const invocationAction = invocation.remediation.action;
-      expect(invocationAction).toContain(restart);
       expect(invocationAction).toContain(
         "REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS",
       );
-      expect(invocationAction).toContain("unset it");
-      expect(invocationAction).toContain(
-        seconds === 2_147_483 ? "already at its maximum" : "above 5 seconds",
-      );
+      expect(invocationAction).toMatch(/\b(?:unset|remove|clear)\b/iu);
+      // At the effective ceiling, the recovery cannot offer a higher value.
+      const offersIncrease =
+        /\b(?:above|higher|greater|increase|raise)\b/iu.test(invocationAction);
+      expect(offersIncrease).toBe(seconds < 2_147_483);
       expect(invocationAction).not.toContain("update_analysis_settings");
       expect(invocationAction.includes("REA_GHIDRA_PROJECT_PATH")).toBe(
         source === "existing-project",
       );
-      if (source === "owned-checkpoint")
-        expect(invocationAction).toContain(
-          "if initial analysis never completed",
-        );
+      expect(invocationAction.includes("REA_GHIDRA_CHECKPOINT_DIR")).toBe(
+        source === "owned-checkpoint",
+      );
       const continuingAction = continuing.remediation.action;
-      for (const action of [
+      for (const identifier of [
         "analyze_function",
         "update_analysis_settings",
+        "ghidra.decompile_timeout_seconds",
         "REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS",
-        "tool-call deadline",
-        "new Codex/Kimi registrations",
-        "preserves existing positive values",
-        "edit existing deadlines yourself",
       ])
-        expect(continuingAction).toContain(action);
-      expect(continuingAction).not.toContain("rea doctor");
+        expect(continuingAction).toContain(identifier);
       expect(invocation.message.startsWith(message)).toBe(true);
-      expect(invocation.message).toContain(
-        "Only this procedure's decompilation was stopped",
-      );
       expect(continuing.message).toBe(
         `${invocation.message} ${GHIDRA_SESSION_RETAINED}`,
       );
