@@ -42,8 +42,9 @@ other supported client, with the same plan-approve-apply flow and backups.
 - Validation of stored configuration cannot permanently block repair: an
   invalid legacy `REA_MCP_TOOL_FAMILIES` value is overridable by
   `rea setup --tool-families` rather than failing before the override applies
-  (covered by the tool-family environment and registration-status suites, not
-  the ggcode dialect suite).
+  (the caller-environment channel is covered by the tool-family environment
+  suite; repairing an invalid stored fallback value is covered by the ggcode
+  dialect suite).
 - Skill installs to `~/.ggcode/skills`, which ggcode discovers (it also reads
   the shared `~/.agents/skills` destination).
 - Setup writes only the standalone `~/.ggcode/mcp_servers.yaml` (with a
@@ -65,8 +66,11 @@ retention, unnamed-entry refusal, and never-reseed); duplicate and
 `__proto__` names; aliased names in edit and setup gates; empty-`type`
 normalization; ownership refusal from both fallback and superseded sources;
 fallback source-path reporting in doctor; tool-families override of invalid
-stored values (in `tests/boundary/filesystem/setupToolFamilyEnvironment.test.ts`
-and `tests/boundary/filesystem/clientRegistrationStatus.test.ts`); and
+stored values (the caller environment in
+`tests/boundary/filesystem/setupToolFamilyEnvironment.test.ts`, an invalid
+stored fallback value repaired while seeding in the ggcode dialect suite, and
+invalid stored scope detection in
+`tests/boundary/filesystem/clientRegistrationStatus.test.ts`); and
 uninstall removing only `rea`, including the legacy `ggcode.yaml` rewrite
 while the standalone file is absent.
 

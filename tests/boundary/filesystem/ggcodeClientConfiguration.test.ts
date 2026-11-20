@@ -554,6 +554,54 @@ mcp_servers:
   });
 });
 
+describe("ggcode legacy tool-family repair", () => {
+  it("repairs an invalid stored tool-family scope when seeding from the legacy file", async () => {
+    const home = await createTestTempDirectory("rea-ggcode-");
+    const client = ggcodePath(home, process.platform);
+    if (client?.markerPath === undefined)
+      throw new Error("missing ggcode client");
+    await mkdir(client.markerPath, { recursive: true });
+    await writeFile(
+      join(home, ".ggcode", "ggcode.yaml"),
+      `mcp_servers:
+  - name: rea
+    type: stdio
+    command: rea
+    args: ["mcp"]
+    env:
+      REA_MCP_TOOL_FAMILIES: typo
+  - name: legacy
+    command: legacy-cmd
+`,
+    );
+
+    // Without an override the invalid stored scope blocks setup before writing.
+    expect(
+      (await configureClientConfiguration(client, {}, command)).status,
+    ).toBe("failed");
+    await expect(readFile(client.configPath, "utf8")).rejects.toThrow();
+
+    // A proposed --tool-families override repairs the stored scope and seeds.
+    expect(
+      (
+        await configureClientConfiguration(
+          client,
+          { REA_MCP_TOOL_FAMILIES: "native" },
+          command,
+        )
+      ).status,
+    ).toBe("configured");
+    const servers = parse(await readFile(client.configPath, "utf8"));
+    expect(
+      servers.find(({ name }: { name: string }) => name === "rea"),
+    ).toMatchObject({
+      command: command[0],
+      args: command.slice(1),
+      env: { REA_MCP_TOOL_FAMILIES: "native" },
+    });
+  });
+});
+
 describe("ggcode standalone parsing guards", () => {
   const ggcodeClient = async () => {
     const home = await createTestTempDirectory("rea-ggcode-");
