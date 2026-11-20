@@ -52,3 +52,4 @@ for new work, roadmap granularity and producer-owned contracts.
 - [Windows ReFS filesystem authority](native/windows-refs/spec.md) ([plan](native/windows-refs/plan.md), [tasks](native/windows-refs/tasks.md))
 - [Historical capture admission budgets](web/historical-capture-budgets/spec.md) ([plan](web/historical-capture-budgets/plan.md), [tasks](web/historical-capture-budgets/tasks.md))
 - [Per-call source-map budget recovery](web/source-map-budget-recovery/spec.md) ([plan](web/source-map-budget-recovery/plan.md), [tasks](web/source-map-budget-recovery/tasks.md))
+- [Inspect a Debian .deb package](artifacts/deb-package-inspection/spec.md) ([plan](artifacts/deb-package-inspection/plan.md), [tasks](artifacts/deb-package-inspection/tasks.md))
