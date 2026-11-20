@@ -695,19 +695,19 @@ it("returns a procedure once with the exact-entry names its search matched", asy
     // Node owns Unicode folding: the bridge's non-ASCII candidates are kept
     // only when they match, for secondary names as for primary names.
     output = jsonValueSchema.parse([
-      row("0x1012a0", "ſource_item_alias", [
+      row("0x1012a0", "source_item_alias", [
         "source_item_primary",
         "Śource_item_label",
       ]),
       row("0x101300", "ŚOURCE_ITEM_only", ["ünrelated"]),
       row("0x101340", "FUN_00101340", ["SOURCE_İTEM_x", "SOURCE_ITEM_label"]),
-      row("0x101380", "Source_item_plain"),
+      row("0x101380", "ſource_item_plain"),
     ]);
     const folded = await search({ pattern: "source_item" });
     expect(folded.normalized_result).toEqual([
-      row("0x1012a0", "ſource_item_alias", ["source_item_primary"]),
+      row("0x1012a0", "source_item_alias", ["source_item_primary"]),
       row("0x101340", "FUN_00101340", ["SOURCE_ITEM_label"]),
-      row("0x101380", "Source_item_plain"),
+      row("0x101380", "ſource_item_plain"),
     ]);
     expect(folded.raw_result).toEqual(output);
     expect(folded.limitations).toContain(GHIDRA_LITERAL_CANDIDATES_LIMITATION);
@@ -722,9 +722,9 @@ it("returns a procedure once with the exact-entry names its search matched", asy
       }),
     ]);
 
-    output = jsonValueSchema.parse([row("0x101380", "Source_item_plain")]);
+    output = jsonValueSchema.parse([row("0x101380", "ſource_item_plain")]);
     const regex = await search({
-      pattern: "^Source_item_plain$",
+      pattern: "^ſource_item_plain$",
       mode: "regex",
     });
     expect(regex.normalized_result).toEqual(output);
