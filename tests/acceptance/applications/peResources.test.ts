@@ -96,6 +96,78 @@ const expectPeInputFailuresAcrossAdapters = async (input: {
 
 const contract = toolContract("inspect_pe_resources");
 
+const expectPeResourceNameExtentsAcrossAdapters = async (
+  cli: TestCli,
+  call: PeResourceCall,
+  root: string,
+): Promise<void> => {
+  const payload = Buffer.from("text");
+  const retainedName = "Evidence".repeat(5_000);
+  for (const [priorLeaves, backed] of [
+    [36, false],
+    [38, false],
+    [38, true],
+  ] as const) {
+    const fixture = peResourceFixture(
+      false,
+      [
+        ...Array.from({ length: priorLeaves }, (_, index) => ({
+          type: 10,
+          name: retainedName,
+          language: index + 1,
+          payload,
+        })),
+        {
+          type: 11,
+          name: backed ? "S".repeat(65_535) : "SECOND",
+          language: 1033,
+          payload,
+        },
+      ],
+      256 * 1024,
+    );
+    if (!backed) {
+      const resourceRoot = fixture.directoryOffsets[0];
+      const nameDirectory = fixture.directoryOffsets.at(-2);
+      if (resourceRoot === undefined || nameDirectory === undefined)
+        throw new Error("Missing fixture resource directory");
+      const nameOffset =
+        fixture.bytes.readUInt32LE(nameDirectory + 16) & 0x7fff_ffff;
+      // Only the length changes. The declared name cannot fit in the resource interval.
+      fixture.bytes.writeUInt16LE(65_535, resourceRoot + nameOffset);
+    }
+    const path = join(root, `resource-name-${priorLeaves}-${backed}.exe`);
+    await writeFile(path, fixture.bytes);
+    if (!backed) {
+      await expectPeInputFailureAcrossAdapters({
+        cli,
+        call,
+        path,
+        reason: "invalid_format",
+      });
+      continue;
+    }
+    const result = await cli.run({
+      arguments: ["inspect-pe-resources", path, "--json"],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        resource: "memory",
+        reported_limits: {
+          boundary: "pe_resource_metadata_bytes",
+          maximum: 8 * 1024 * 1024,
+          maximum_metadata_bytes: 8 * 1024 * 1024,
+        },
+      },
+    });
+    const response = await call({ path });
+    expect(response.isError).toBe(true);
+    expect(parseMcpToolError(response)).toEqual({ error: result.json });
+  }
+};
+
 const expectPeWordAlignedRecordsAcrossAdapters = async (input: {
   readonly cli: TestCli;
   readonly call: PeResourceCall;
@@ -467,6 +539,7 @@ cliTest(
       root,
     });
     await expectPeMappingOwnershipAcrossAdapters(cli, call, root);
+    await expectPeResourceNameExtentsAcrossAdapters(cli, call, root);
     await expectPePaddingFailureAcrossAdapters({
       cli,
       call,

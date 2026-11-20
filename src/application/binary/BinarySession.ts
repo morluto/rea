@@ -382,6 +382,9 @@ export class BinarySession
       const imported = this.importAnalysisSnapshot(options.snapshot);
       if (!imported.ok) return imported;
     }
+    // The same bytes can be selected through a different spelling without retiring the engine.
+    if (retained.target.callerInputPath !== target.callerInputPath)
+      this.#active = { ...retained, target };
     return ok(target);
   }
 
@@ -541,6 +544,9 @@ export class BinarySession
         kind: "binary",
         path: this.#active.target.path,
         sha256: this.#active.target.sha256,
+        ...(this.#active.target.callerInputPath === undefined
+          ? {}
+          : { caller_input_path: this.#active.target.callerInputPath }),
       };
     if (this.#activeBundleResources !== undefined)
       return {
@@ -1468,12 +1474,13 @@ export class BinarySession
       const execution = { ...result.value, subject: null };
       return ok(execution);
     }
+    const sessionBinding = this.#active;
     const prepared = prepareSessionExecution({
-      active: this.#active,
+      active: sessionBinding,
       operation: name,
       parameters: arguments_,
       snapshotContext: options?.snapshotContext,
-      nativeSourceAdmitted: this.#active?.nativeSourceAdmitted === true,
+      nativeSourceAdmitted: sessionBinding?.nativeSourceAdmitted === true,
       isOperationAvailable: (operation) => this.#currentlyAvailable(operation),
       isOperationAdvertised: options?.isOperationAdvertised,
       unboundOperationError: (operation, route) =>
@@ -1510,12 +1517,14 @@ export class BinarySession
         : profiled;
     // A successful Ghidra operation proves this client's native source snapshot
     // was admitted; a composite health response and parsed path do not.
+    const currentBinding = this.#active;
     if (
       execution.ok &&
       capability.provider.id === "ghidra" &&
-      this.#active === active
+      currentBinding !== undefined &&
+      currentBinding.runId === sessionBinding?.runId
     )
-      this.#active.nativeSourceAdmitted = true;
+      currentBinding.nativeSourceAdmitted = true;
     if (
       this.#runtimeAvailability.observe(
         dispatch,
@@ -1571,7 +1580,10 @@ export class BinarySession
         name,
         arguments_,
         evidenceExecution,
-        this.admitRecoveryObservation.bind(this),
+        {
+          callerTarget: active.target,
+          admit: this.admitRecoveryObservation.bind(this),
+        },
       );
       if (!admitted.ok) return admitted;
       const evidence = createAnalysisExecutionEvidence(
@@ -1579,6 +1591,7 @@ export class BinarySession
         arguments_,
         evidenceExecution,
         "observed",
+        { callerTarget: active.target },
       );
       const recorded = this.recordEvidence(evidence);
       if (!recorded.ok) {
@@ -1593,6 +1606,7 @@ export class BinarySession
           : bindSessionEvidenceExecution(
               { ...execution.value, evidenceId: evidence.evidence_id },
               authenticated,
+              active.target.callerInputPath,
             );
       if (cacheable && execution.value.cachePolicy !== "live")
         this.recordSnapshot({

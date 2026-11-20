@@ -91,6 +91,42 @@ it.each([
     expect(row!.coverage).toBe(coverage);
   },
 );
+it.each(["010", "0x8", "0B1000", "8U"])(
+  "uses the PTX integer literal %s in parameter layout",
+  (extent) => {
+    const [row] = [
+      ...readPtxKernels(
+        `.entry k(.param .b8 bytes[${extent}], .param .u32 count) { ret; }`,
+        "object",
+      ),
+    ];
+    expect(
+      row?.kernel.parameters.map(({ offset, size }) => [offset, size]),
+    ).toEqual([
+      [0, 8],
+      [8, 4],
+    ]);
+    expect(row?.coverage).toBe("complete");
+  },
+);
+
+it.each(["08", "0x", "0b2", "0x20000000000000"])(
+  "keeps parameter layout unknown for an invalid or unsafe extent %s",
+  (extent) => {
+    const [row] = [
+      ...readPtxKernels(
+        `.entry k(.param .b8 bytes[${extent}]) { ret; }`,
+        "object",
+      ),
+    ];
+    expect(row?.kernel.parameters[0]).toMatchObject({
+      name: "bytes",
+      size: null,
+    });
+    expect(row?.coverage).toBe("partial");
+  },
+);
+
 it("retains a parameter name when a qualifier is unknown", () => {
   const [row] = [
     ...readPtxKernels(

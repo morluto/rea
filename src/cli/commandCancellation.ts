@@ -7,28 +7,60 @@ export interface CommandCancellationHost {
   exitCode?: number | string | null | undefined;
 }
 
+/** Own process signals until both the operation and its resources settle. */
+export class CommandCancellationScope {
+  readonly #controller = new AbortController();
+  #exitStatus: 130 | 143 | undefined;
+  #finished = false;
+  #closed = false;
+
+  constructor(private readonly host: CommandCancellationHost = process) {
+    host.on("SIGINT", this.#interrupt);
+    host.on("SIGTERM", this.#terminate);
+  }
+
+  get signal(): AbortSignal {
+    return this.#controller.signal;
+  }
+
+  get exitStatus(): 130 | 143 | undefined {
+    return this.#exitStatus;
+  }
+
+  readonly #interrupt = () => this.#abort("SIGINT", 130);
+  readonly #terminate = () => this.#abort("SIGTERM", 143);
+
+  #abort(signal: "SIGINT" | "SIGTERM", status: 130 | 143): void {
+    this.#exitStatus ??= status;
+    this.#controller.abort(CallerAbort.forProcessSignal(signal));
+    if (this.#finished) this.finish();
+  }
+
+  /** Publish the disposition while a failed resource close still owns signals. */
+  finish(): void {
+    this.#finished = true;
+    if (this.#exitStatus !== undefined) this.host.exitCode = this.#exitStatus;
+  }
+
+  /** Release signal ownership only after the resource owner confirms cleanup. */
+  close(): void {
+    if (this.#closed) return;
+    this.#closed = true;
+    this.host.off("SIGINT", this.#interrupt);
+    this.host.off("SIGTERM", this.#terminate);
+    this.finish();
+  }
+}
+
 /** Translate one-shot CLI interrupts into awaited cleanup and conventional exit codes. */
 export const withCommandCancellation = async <Value>(
   operation: (signal: AbortSignal) => Promise<Value>,
   host: CommandCancellationHost = process,
 ): Promise<Value> => {
-  const controller = new AbortController();
-  let exitCode: number | undefined;
-  const interrupt = () => {
-    exitCode ??= 130;
-    controller.abort(CallerAbort.forProcessSignal("SIGINT"));
-  };
-  const terminate = () => {
-    exitCode ??= 143;
-    controller.abort(CallerAbort.forProcessSignal("SIGTERM"));
-  };
-  host.on("SIGINT", interrupt);
-  host.on("SIGTERM", terminate);
+  const scope = new CommandCancellationScope(host);
   try {
-    return await operation(controller.signal);
+    return await operation(scope.signal);
   } finally {
-    host.off("SIGINT", interrupt);
-    host.off("SIGTERM", terminate);
-    if (exitCode !== undefined) host.exitCode = exitCode;
+    scope.close();
   }
 };

@@ -248,6 +248,9 @@ it("classifies a pre-handoff Apple Events denial as not retryable from the same 
       launchRejection: {
         boundary: "apple_events_authorization",
         reason: "not_authorized",
+        responsibility: "client_or_disclaimed_runtime",
+        settings_pane: "privacy_security_automation",
+        entitlement_id: "com.apple.security.automation.apple-events",
       },
     },
   });
@@ -263,6 +266,9 @@ it("classifies a pre-handoff Apple Events denial as not retryable from the same 
       launch_rejection: {
         boundary: "apple_events_authorization",
         reason: "not_authorized",
+        responsibility: "client_or_disclaimed_runtime",
+        settings_pane: "privacy_security_automation",
+        entitlement_id: "com.apple.security.automation.apple-events",
       },
       launcher: { exit_code: 2, signal: null },
     },

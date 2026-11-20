@@ -1,7 +1,7 @@
 import type { Element, Node } from "@xmldom/xmldom";
 
 import { isExactJsonNumber } from "../exactJsonNumber.js";
-import type { JsonValue } from "../jsonValue.js";
+import { jsonValueExceedsDepth, type JsonValue } from "../jsonValue.js";
 import {
   DESKTOP_VIEW_DEFAULTS,
   desktopViewByteDisplay,
@@ -9,6 +9,8 @@ import {
 } from "./desktopViewPolicy.js";
 import { err, ok, type Result } from "../result.js";
 import { safeParseJson } from "../safeJson.js";
+import { hasZipLocalHeader, hasZipSignature } from "../zipPackageFormat.js";
+import { ZIP_EOCD_BYTES } from "../zipEndOfCentralDirectory.js";
 import {
   declaredDocumentType,
   isWellFormedXml,
@@ -16,6 +18,12 @@ import {
   parseXmlDocument,
 } from "../xmlDocument.js";
 import { expatXmlName } from "./expatXmlNames.js";
+import {
+  desktopLineBreak,
+  isKeyfile,
+  keyfileLines,
+} from "./desktopTextSyntax.js";
+import { decodeStateUtf16 } from "./stateTextEncoding.js";
 import { decodeStrictUtf8 } from "../strictUtf8.js";
 
 /** Formats the state view reads into JSON. */
@@ -36,8 +44,6 @@ export const SQLITE_SIDECARS = [
   { suffix: "-journal", label: "rollback journal" },
 ] as const;
 const GVDB_HEADER = "GVariant";
-/** A zip archive's local file header, which FreeCAD, ODF, OOXML, EPUB and JAR files begin with. */
-const ZIP_HEADER = "PK\u0003\u0004";
 const XML_EXTENSIONS = /\.(?:xml|xbel|plist|svg|ui)$/iu;
 /** A DOCTYPE that only names its DTD reads as XML; one with an internal subset, which can declare entities, does not. */
 export const XML_POLICY = {
@@ -46,51 +52,11 @@ export const XML_POLICY = {
   nameSupported: expatXmlName,
 } as const;
 
-type KeyfileLine =
-  | { readonly kind: "skip" }
-  | { readonly kind: "group"; readonly name: string }
-  | { readonly kind: "entry"; readonly key: string; readonly value: string }
-  | { readonly kind: "other" };
-
-/** One key file line: blank or comment, `[group]`, `key=value`, or anything else. */
-const keyfileLine = (raw: string): KeyfileLine => {
-  const line = raw.trim();
-  if (line.length === 0 || line.startsWith("#") || line.startsWith(";"))
-    return { kind: "skip" };
-  const name = /^\[(?<name>[^\]]+)\]$/u.exec(line)?.groups?.name;
-  if (name !== undefined) return { kind: "group", name };
-  const equals = raw.indexOf("=");
-  if (equals < 0) return { kind: "other" };
-  const key = raw.slice(0, equals).trim();
-  return key.length === 0
-    ? { kind: "other" }
-    : {
-        kind: "entry",
-        key,
-        // Only ASCII space and tab immediately after '=' are padding.
-        value: raw.slice(equals + 1).replace(/^[ \t]+/u, ""),
-      };
-};
-
-/**
- * A key file has at least one group and nothing a key file view would drop.
- * Lines are read one at a time, stopping at the first that is neither.
- */
-const isKeyfile = (text: string): boolean => {
-  let group = false;
-  for (let start = 0; start <= text.length;) {
-    const end = text.indexOf("\n", start);
-    const kind = keyfileLine(text.slice(start, end < 0 ? undefined : end)).kind;
-    if (kind === "other") return false;
-    if (kind === "group") group = true;
-    if (end < 0) break;
-    start = end + 1;
-  }
-  return group;
-};
-
-/** Decode bytes as UTF-8 text, or undefined for binary content. */
+/** Decode UTF-8 and BOM-marked UTF-16, or return undefined for binary content. */
 export const decodeStateText = (bytes: Uint8Array): string | undefined => {
+  const utf16 = decodeStateUtf16(bytes);
+  if (utf16 !== undefined)
+    return utf16.text.includes("\0") ? undefined : utf16.text;
   if (bytes.subarray(0, 8192).includes(0)) return undefined;
   try {
     return decodeStrictUtf8(bytes, "strip-signature");
@@ -340,7 +306,11 @@ export const detectStateFormat = (
   const header = new TextDecoder("latin1").decode(bytes.subarray(0, 16));
   if (header === SQLITE_HEADER) return "sqlite";
   if (header.startsWith(GVDB_HEADER)) return "dconf";
-  if (header.startsWith(ZIP_HEADER)) return "zip";
+  if (
+    hasZipLocalHeader(bytes) ||
+    (bytes.length >= ZIP_EOCD_BYTES && hasZipSignature(bytes))
+  )
+    return "zip";
   const text = decodeStateText(bytes);
   if (text === undefined) return "binary";
   const trimmed = text.trimStart();
@@ -359,29 +329,6 @@ export const detectStateFormat = (
 };
 
 /** An object's own values one at a time, without copying them into an array. */
-function* ownValues(record: Record<string, JsonValue>): Generator<JsonValue> {
-  for (const key in record)
-    if (Object.hasOwn(record, key)) yield record[key] ?? null;
-}
-
-/**
- * Whether a parsed JSON value nests deeper than a limit, checked without
- * recursion: a value's depth is the number of levels open above it, each
- * walked by one iterator, so no container's members are copied or queued.
- */
-export const deeperThan = (root: JsonValue, limit: number): boolean => {
-  const levels: Iterator<JsonValue>[] = [[root].values()];
-  for (let level = levels.at(-1); level !== undefined; level = levels.at(-1)) {
-    const next = level.next();
-    if (next.done === true) levels.pop();
-    else if (levels.length - 1 > limit) return true;
-    else if (Array.isArray(next.value)) levels.push(next.value.values());
-    else if (typeof next.value === "object" && next.value !== null)
-      levels.push(ownValues(next.value));
-  }
-  return false;
-};
-
 /** A JSON file's value, refused when a number would be rounded or it nests too deeply. */
 const jsonView = (
   text: string,
@@ -399,7 +346,7 @@ const jsonView = (
       "a number in it cannot be read exactly, such as an integer above 2^53",
     );
   const value = parsed.value as JsonValue;
-  return deeperThan(value, policy.json_depth)
+  return jsonValueExceedsDepth(value, policy.json_depth)
     ? err(
         `nested deeper than the ${String(policy.json_depth)} levels a JSON view keeps`,
       )
@@ -411,7 +358,7 @@ export const textView = (
   text: string,
   policy: DesktopViewPolicy = DESKTOP_VIEW_DEFAULTS,
 ): JsonValue => {
-  const lines = text.split(/\r?\n/u);
+  const lines = text.split(desktopLineBreak);
   if (lines.at(-1) === "") lines.pop();
   return {
     lines: lines.slice(0, policy.text_lines),
@@ -433,8 +380,7 @@ export const keyfileView = (
 ): Record<string, Record<string, string>> => {
   const groups = plainRecord<Record<string, string>>();
   let group = "";
-  for (const raw of text.split(/\r?\n/u)) {
-    const line = keyfileLine(raw);
+  for (const line of keyfileLines(text)) {
     if (line.kind === "group") {
       group = line.name;
       groups[group] ??= plainRecord();
@@ -566,7 +512,7 @@ export const xmlView = (
 /** Formats read from a file's bytes alone, without a tool or worker. */
 export type TextualStateFormat = "text" | "json" | "keyfile" | "xml";
 
-/** Whether a format is one of the text formats, read as UTF-8. */
+/** Whether a format is one of the text formats. */
 export const isTextualFormat = (
   format: string | null,
 ): format is TextualStateFormat =>

@@ -267,7 +267,12 @@ export class ComputerHelper {
       if (first !== undefined) continue;
       first = line.ok
         ? parseHandshake(line.value)
-        : { error: "the helper's handshake line is too long" };
+        : {
+            error:
+              line.error._tag === "ControlLineMalformedUtf8"
+                ? "the helper's handshake is not valid UTF-8"
+                : "the helper's handshake line is too long",
+          };
       if ("sandbox_id" in first) {
         this.#sandboxId = first.sandbox_id;
         this.#token = first.control_token;

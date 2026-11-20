@@ -1,3 +1,4 @@
+import type { UefiAnalysisService } from "../application/uefi/UefiAnalysisService.js";
 import type { StructuredRasterExportService } from "../application/binaryDiagnostics/StructuredRasterExportService.js";
 import type { RawRasterDiscoveryService } from "../application/binaryDiagnostics/RawRasterDiscoveryService.js";
 import type { StructuredRasterDiscoveryService } from "../application/binaryDiagnostics/StructuredRasterDiscoveryService.js";
@@ -724,6 +725,12 @@ const SERVICE_TOOL_BINDINGS = {
       "inspect_firmware_regions",
       "extract_firmware",
     ])) satisfies Bind<FirmwareAnalysisService>,
+  uefiAnalysis: ((service) =>
+    contractServiceBindings(service, [
+      "inspect_uefi_firmware",
+      "extract_uefi_firmware",
+      "inspect_uefi_nvram",
+    ])) satisfies Bind<UefiAnalysisService>,
   pcapAnalysis: ((service) => ({
     ...contractServiceBindings(service, ["inspect_pcap_client"]),
     inspect_pcap_capture: {

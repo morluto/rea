@@ -386,7 +386,12 @@ describe("CdpBrowserProvider: WebSocket connection projection", () => {
 describe("CdpBrowserProvider: malformed approved payloads", () => {
   it("fails closed on malformed approved response and binary payload encodings", async () => {
     const browser = await startFakeCdpBrowser({
-      invalidResponseBodyBase64: true,
+      eventsBeforeReply: ["Network.enable"],
+      commandResult: ({ method }) =>
+        method === "Network.getResponseBody"
+          ? // Permissive base64 decoding skips the invalid characters and yields JSON.
+            { body: "e%%3%0%=", base64Encoded: true }
+          : undefined,
       binaryWebSocketEvent: true,
       invalidBinaryWebSocketEvent: true,
     });
@@ -396,14 +401,7 @@ describe("CdpBrowserProvider: malformed approved payloads", () => {
         cdp_endpoint: browser.endpoint,
         allowed_origins: [browser.allowedOrigin],
         target_id: "allowed-page",
-        // Unlike the sibling cases, this scenario asserts outcomes produced
-        // *after* the observation window closes: the response-body fetch has to
-        // run and has to reject the malformed base64. A zero-length window
-        // races that phase, so the expected `partial` status and the
-        // `json_body_shapes` exclusion below depend on host speed. This window
-        // is long enough for the fetch to complete, which makes the assertions
-        // measure the malformed-body rejection instead of the machine's load.
-        observation_ms: 200,
+        observation_ms: 0,
         include_json_body_shapes: true,
         include_websocket_shapes: true,
       }),
@@ -423,15 +421,27 @@ describe("CdpBrowserProvider: malformed approved payloads", () => {
       payload_bytes: null,
       payload_shape: { format: "binary", json_shape: null },
     });
-    expect(result.value.completeness.unavailable_sections).toEqual(
-      expect.arrayContaining(["json_body_shapes", "websocket_frames"]),
+    expect(result.value.completeness.excluded).toEqual(
+      expect.arrayContaining([
+        {
+          section: "json_body_shapes",
+          reason: "invalid_protocol_value",
+          count: 1,
+        },
+        {
+          section: "websocket_frames",
+          reason: "invalid_protocol_value",
+          count: 1,
+        },
+      ]),
     );
   });
 
   it("records a malformed response body reply as a body-shape gap", async () => {
     const browser = await startFakeCdpBrowser({
-      commandResult: (command) =>
-        command.method === "Network.getResponseBody"
+      eventsBeforeReply: ["Network.enable"],
+      commandResult: ({ method }) =>
+        method === "Network.getResponseBody"
           ? { body: 7, base64Encoded: false }
           : undefined,
     });
@@ -441,8 +451,7 @@ describe("CdpBrowserProvider: malformed approved payloads", () => {
         cdp_endpoint: browser.endpoint,
         allowed_origins: [browser.allowedOrigin],
         target_id: "allowed-page",
-        // Long enough for the post-window body fetch, as in the case above.
-        observation_ms: 200,
+        observation_ms: 0,
         include_json_body_shapes: true,
       }),
     );

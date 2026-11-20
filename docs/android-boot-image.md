@@ -68,20 +68,23 @@ stays a file; extract it and run `inspect-devicetree` on the extracted file.
 
 ## AVB footer
 
-When bytes follow the page-aligned image, the last 64 bytes are compared with
-the `AVBf` footer. A matching footer records its version, original image size,
-and vbmeta offset and size. The footer and vbmeta are not children and are not
-verified. A shorter tail, or a tail that does not start with `AVBf`, is
-reported as undecoded trailing bytes. A vbmeta range that overlaps the header,
-a component, or the footer is malformed.
+The reader checks the final 64 bytes for an `AVBf` footer when those bytes
+begin at or after the end of the last declared image component, even if they
+start before the page-rounded image end. A matching footer records its version,
+original image size, and vbmeta offset and size. The footer and vbmeta remain
+unverified metadata. If no footer is recognized, the reader reports undecoded
+trailing bytes beyond the page-rounded image end. A vbmeta range that overlaps
+the header, a component, or the footer is malformed.
 
 ## Bounded work
 
 The reader admits at most 4,096 vendor ramdisk table entries and an entry size
-of at most 4,096 bytes. A vendor `header_size` above 1 MiB is the same kind of
-capacity limit. Those checks happen before the table is read. Unsupported
+of at most 4,096 bytes. It verifies that the table dimensions agree and the
+declared bytes fit in the image before applying those limits and reading the
+table. A vendor `header_size` above 1 MiB also exceeds a capacity limit. Unsupported
 header revisions return `unsupported_target`; truncated declared structures
-return `truncated`; malformed layouts return `invalid_request`. These refusals
+return `truncated`; malformed layouts return `invalid_request`. The page
+padding after the last component carries no data and may be absent. These refusals
 do not produce an empty successful inventory. Gaps inside a vendor ramdisk
 section, or bytes between the sequential layout and a recovery DTBO, are named
 in limitations instead of being invented as entries.

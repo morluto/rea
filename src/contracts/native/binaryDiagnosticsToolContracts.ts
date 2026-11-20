@@ -202,12 +202,12 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
     ...toolContractMetadata("inspect_elf_notes", evidenceEffects),
     kind: "native-provider",
     description:
-      "Inspect one explicit local ELF32/ELF64 image's PT_NOTE program headers and SHT_NOTE sections without executing it or opening a disassembler. Returns note-table file ranges, owners, types, descriptor SHA-256 and hex previews, plus GNU build-id, ABI-tag and gold-version fields, Linux CORE process, mapping, signal, and auxv notes, and Android .note.android.ident API-level and NDK version/build fields when those descriptors match. A missing table is observed absence of those declarations, not proof the image never carried notes in another container. Reads a stable regular file; malformed ELF headers, truncated notes and exhausted budgets return no partial success. Portable on supported Node hosts; no debug package or catalog is required.",
+      "Inspect one explicit local ELF32/ELF64 image's PT_NOTE program headers and SHT_NOTE sections without executing it or opening a disassembler. Returns note-table file ranges, owners, types, descriptor SHA-256 and hex previews, plus GNU build-id, ABI-tag and gold-version fields, Linux CORE process, mapping, signal, and auxv notes, Android .note.android.ident API-level and NDK version/build fields, and unverified FDO packaging and dlopen declarations when those descriptors match. A missing table is observed absence of those declarations, not proof the image never carried notes in another container. Reads a stable regular file. Malformed ELF structure and exhausted table-walk budgets return no partial success. An invalid or over-budget FDO descriptor retains raw note evidence with a decoding issue. Portable on supported Node hosts; no debug package or catalog is required.",
     inputSchema: inspectElfNotesInputSchema,
     outputSchema: evidenceResultOf(elfNotesSchema),
     examples: [
       {
-        title: "Inspect ELF GNU build-id and ABI-tag notes",
+        title: "Inspect ELF note tables",
         input: { path: "/artifacts/program" },
       },
     ],

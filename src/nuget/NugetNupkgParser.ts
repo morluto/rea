@@ -14,8 +14,9 @@ import {
 } from "@zip.js/zip.js";
 import type { Element, Node } from "@xmldom/xmldom";
 
-import { ArtifactReaderFailure } from "../resources/index.js";
 import {
+  assertArtifactReadActive,
+  ArtifactReaderFailure,
   decodeZipEntryText,
   zipEntryNameLimitations,
   typedZipFailure,
@@ -44,6 +45,8 @@ export const NUPKG_LIMITATIONS = {
   ambiguousRootNuspec:
     "Multiple root .nuspec members are present; identity was not decoded.",
   malformedNuspec: "The selected .nuspec is not well-formed XML.",
+  ungroupedBesideGroups: (count: number): string =>
+    `${String(count)} ungrouped <dependency> element(s) beside <group> elements were omitted: NuGet's restore-time NuspecReader reads only the groups when any group is present, and nuget pack refuses this mix.`,
 } as const;
 
 const BASE_LIMITATIONS = [
@@ -67,11 +70,22 @@ const childElements = (element: Element): Element[] => {
   return children;
 };
 
-const childrenNamed = (element: Element, local: string): Element[] =>
-  childElements(element).filter((child) => child.localName === local);
+const childrenNamed = (
+  element: Element,
+  local: string,
+  namespace?: string,
+): Element[] =>
+  childElements(element).filter(
+    (child) =>
+      child.localName === local &&
+      (namespace === undefined || (child.namespaceURI ?? "") === namespace),
+  );
 
-const firstNamed = (element: Element, local: string): Element | undefined =>
-  childrenNamed(element, local)[0];
+const firstNamed = (
+  element: Element,
+  local: string,
+  namespace?: string,
+): Element | undefined => childrenNamed(element, local, namespace)[0];
 
 const nonempty = (value: string | null | undefined): string | null => {
   if (value === null || value === undefined) return null;
@@ -100,20 +114,45 @@ const zipSize = (value: number | undefined): number | null =>
     ? value
     : null;
 
+/** NuGet indexes nonempty leaf metadata by local name and keeps its first value. */
+const indexedMetadataText = (
+  metadata: Element,
+  name: string,
+): string | null => {
+  for (const child of childElements(metadata)) {
+    if (
+      child.localName?.toLowerCase() !== name ||
+      childElements(child).length > 0
+    )
+      continue;
+    const text = child.textContent ?? "";
+    if (!text) continue;
+    // XDocument ignores ordinary XML whitespace. CDATA and xml:space can
+    // retain a whitespace-only value that occupies this key in NuGet's index.
+    if (/[^\t\r\n ]/u.test(text)) return nonempty(text);
+    if (
+      Array.from(child.childNodes).some(
+        (node) => node.nodeType === 4 && node.nodeValue,
+      )
+    )
+      return null;
+    for (
+      let scope: Node | null = child;
+      isElement(scope);
+      scope = scope.parentNode
+    ) {
+      const space = scope.getAttribute("xml:space");
+      if (space === "preserve") return null;
+      if (space === "default") break;
+    }
+  }
+  return null;
+};
+
 const asFileEntry = (entry: Entry): entry is FileEntry =>
   !entry.directory && "getData" in entry;
 
-const wrapZipFailure = (
-  cause: unknown,
-  signal: AbortSignal | undefined,
-  compressionMethod?: number,
-): never => {
-  // zip.js rejects with the caller's abort reason; keep it as cancellation
-  // rather than reporting the package as damaged.
-  if (signal?.aborted === true && Object.is(cause, signal.reason))
-    throw new ArtifactReaderFailure("cancelled", "Artifact read cancelled", {
-      cause: signal.reason,
-    });
+const wrapZipFailure = (cause: unknown, compressionMethod?: number): never => {
   if (
     cause instanceof ArtifactReaderFailure ||
     cause instanceof ParseFailureError
@@ -185,7 +224,7 @@ const readMemberBytes = async (
       ...(signal === undefined ? {} : { signal }),
     });
   } catch (cause: unknown) {
-    return wrapZipFailure(cause, signal, entry.compressionMethod);
+    return wrapZipFailure(cause, entry.compressionMethod);
   }
 };
 
@@ -214,13 +253,19 @@ interface OpcManifestTarget {
 const targetLabel = (display: string | null): string =>
   display === null ? "[URL withheld]" : JSON.stringify(display);
 
+const OPC_RELATIONSHIP_NAMESPACE =
+  "http://schemas.openxmlformats.org/package/2006/relationships";
+
+const NUGET_MANIFEST_RELATIONSHIP =
+  "http://schemas.microsoft.com/packaging/2010/07/manifest";
+
 const opcManifestTargets = (
   xml: string,
   limitations: string[],
 ): OpcManifestTarget[] => {
   const parsed = parseXmlDocument(xml, {
     doctype: "reject",
-    lineEndings: "preserve",
+    lineEndings: "normalize",
   });
   if (!parsed.ok) {
     limitations.push(
@@ -231,23 +276,35 @@ const opcManifestTargets = (
     return [];
   }
   const root = parsed.value.documentElement;
-  if (!isElement(root) || root.localName !== "Relationships") {
+  if (
+    !isElement(root) ||
+    root.localName !== "Relationships" ||
+    root.namespaceURI !== OPC_RELATIONSHIP_NAMESPACE
+  ) {
     limitations.push(
-      "OPC relationships root is not Relationships; the .nuspec was selected by ZIP name when possible.",
+      "OPC relationships root is not Relationships in the OPC namespace; the .nuspec was selected by ZIP name when possible.",
     );
     return [];
   }
   const targets = new Map<string, OpcManifestTarget>();
   for (const relationship of childrenNamed(root, "Relationship")) {
+    if (relationship.namespaceURI !== OPC_RELATIONSHIP_NAMESPACE) continue;
     const type = attribute(relationship, "Type");
-    if (type === null || !type.toLowerCase().endsWith("/manifest")) continue;
+    if (type !== NUGET_MANIFEST_RELATIONSHIP) continue;
     const target = attribute(relationship, "Target");
     if (target === null) continue;
     const displayedTarget = redactRecordedTransportUrl(target).url;
-    // OPC external targets may be relative, so the mode decides, not the URI shape.
-    if (attribute(relationship, "TargetMode")?.toLowerCase() === "external") {
+    // Only an absent mode defaults to Internal. External targets can be relative.
+    const mode = relationship.getAttributeNS(null, "TargetMode");
+    if (mode === "External") {
       limitations.push(
         `OPC manifest relationship Target ${targetLabel(displayedTarget)} is external and was not followed.`,
+      );
+      continue;
+    }
+    if (mode !== null && mode !== "Internal") {
+      limitations.push(
+        `OPC manifest relationship Target ${targetLabel(displayedTarget)} has an invalid TargetMode and was not followed.`,
       );
       continue;
     }
@@ -280,11 +337,18 @@ const parseBooleanAttribute = (value: string | null): boolean | null => {
 
 const parseDependencies = (
   metadata: Element,
+  namespace: string,
+  limitations: string[],
 ): NugetNupkg["dependency_groups"] => {
-  const container = firstNamed(metadata, "dependencies");
-  if (container === undefined) return [];
-  const groups = childrenNamed(container, "group");
-  const ungrouped = childrenNamed(container, "dependency");
+  // NuspecReader walks every <dependencies> element, with one decision about
+  // groups across all of them.
+  const containers = childrenNamed(metadata, "dependencies", namespace);
+  const groups = containers.flatMap((container) =>
+    childrenNamed(container, "group", namespace),
+  );
+  const ungrouped = containers.flatMap((container) =>
+    childrenNamed(container, "dependency", namespace),
+  );
   const readDependency = (
     element: Element,
   ): NugetNupkg["dependency_groups"][number]["dependencies"][number] => ({
@@ -300,20 +364,19 @@ const parseDependencies = (
     element: Element,
   ): NugetNupkg["dependency_groups"][number] => ({
     target_framework: attribute(element, "targetFramework"),
-    dependencies: childrenNamed(element, "dependency").map(readDependency),
+    dependencies: childrenNamed(element, "dependency", namespace).map(
+      readDependency,
+    ),
   });
-  if (groups.length > 0)
-    return [
-      ...groups.map(fromGroup),
-      ...(ungrouped.length === 0
-        ? []
-        : [
-            {
-              target_framework: null,
-              dependencies: ungrouped.map(readDependency),
-            },
-          ]),
-    ];
+  // NuGet's NuspecReader reads ungrouped dependencies only when no group is
+  // present, so those beside groups never reach restore.
+  if (groups.length > 0) {
+    if (ungrouped.length > 0)
+      limitations.push(
+        NUPKG_LIMITATIONS.ungroupedBesideGroups(ungrouped.length),
+      );
+    return groups.map(fromGroup);
+  }
   if (ungrouped.length === 0) return [];
   return [
     { target_framework: null, dependencies: ungrouped.map(readDependency) },
@@ -336,9 +399,11 @@ const parseNuspecDocument = (
     repository: null,
     dependency_groups: [],
   };
+  // NuGet reads the .nuspec with XDocument, which applies XML 1.0 end-of-line
+  // handling, so a description packed with CRLF reads with LF line breaks.
   const parsed = parseXmlDocument(xml, {
     doctype: "reject",
-    lineEndings: "preserve",
+    lineEndings: "normalize",
   });
   if (!parsed.ok) {
     limitations.push(
@@ -358,19 +423,28 @@ const parseNuspecDocument = (
     limitations.push("The selected .nuspec has no metadata element.");
     return empty;
   }
+  // NuGet's typed getters select children in the default namespace in scope.
+  // Authors and description come from its local-name metadata index.
+  const metadataNamespace = metadata.lookupNamespaceURI("") ?? "";
   const metadataText = (local: string): string | null => {
-    const element = firstNamed(metadata, local);
+    const element = firstNamed(metadata, local, metadataNamespace);
     return element === undefined ? null : elementText(element);
   };
-  const licenseElement = firstNamed(metadata, "license");
-  const licenseType = licenseElement ? attribute(licenseElement, "type") : null;
-  const repositoryElement = firstNamed(metadata, "repository");
+  const licenseElement = firstNamed(metadata, "license", metadataNamespace);
+  const licenseType = licenseElement
+    ? attribute(licenseElement, "type")?.toLowerCase()
+    : undefined;
+  const repositoryElement = firstNamed(
+    metadata,
+    "repository",
+    metadataNamespace,
+  );
   return {
     identity: {
       id: metadataText("id"),
       version: metadataText("version"),
-      authors: metadataText("authors"),
-      description: metadataText("description"),
+      authors: indexedMetadataText(metadata, "authors"),
+      description: indexedMetadataText(metadata, "description"),
     },
     license:
       licenseElement === undefined
@@ -391,7 +465,11 @@ const parseNuspecDocument = (
             commit: attribute(repositoryElement, "commit"),
             branch: attribute(repositoryElement, "branch"),
           },
-    dependency_groups: parseDependencies(metadata),
+    dependency_groups: parseDependencies(
+      metadata,
+      metadataNamespace,
+      limitations,
+    ),
   };
 };
 
@@ -413,6 +491,10 @@ export const distinctTargetMatches = <T>(
   return [...found];
 };
 
+/** OPC part-name equivalence folds ASCII case only. */
+const opcPartNameKey = (name: string): string =>
+  name.replace(/[A-Z]/gu, (letter) => letter.toLowerCase());
+
 const findNuspec = (
   files: readonly { readonly entry: FileEntry; readonly name: string }[],
   relsXml: string | undefined,
@@ -423,28 +505,22 @@ const findNuspec = (
     | undefined;
   readonly source: "opc-relationship" | "root-nuspec" | undefined;
 } => {
-  // Every ZIP occurrence stays distinct: duplicate or case-variant names must
-  // surface as ambiguity rather than collapse to an archive-order winner.
+  // Keep every ZIP occurrence in its OPC equivalence bucket. An exact
+  // spelling cannot resolve two occurrences with equivalent part names.
   // Index once: every target is then a constant-time lookup, however many
   // relationships the package declares.
-  const exactNames = new Map<string, (typeof files)[number][]>();
-  const foldedNames = new Map<string, (typeof files)[number][]>();
+  const partNames = new Map<string, (typeof files)[number][]>();
   for (const file of files) {
-    const exact = exactNames.get(file.name);
-    if (exact === undefined) exactNames.set(file.name, [file]);
-    else exact.push(file);
-    const lower = file.name.toLowerCase();
-    const folded = foldedNames.get(lower);
-    if (folded === undefined) foldedNames.set(lower, [file]);
-    else folded.push(file);
+    const key = opcPartNameKey(file.name);
+    const members = partNames.get(key);
+    if (members === undefined) partNames.set(key, [file]);
+    else members.push(file);
   }
-  const matchTarget = (target: string) =>
-    exactNames.get(target) ?? foldedNames.get(target.toLowerCase()) ?? [];
   if (relsXml !== undefined) {
     const targets = opcManifestTargets(relsXml, limitations);
     const resolved = distinctTargetMatches(
       targets.map((target) => target.lookup),
-      matchTarget,
+      (target) => partNames.get(opcPartNameKey(target)) ?? [],
     );
     if (resolved.length > 1) {
       limitations.push(
@@ -498,15 +574,29 @@ export const parseNugetNupkg = async (
     );
   const reader = new ZipReader(new Uint8ArrayReader(bytes), ZIP_READER_OPTIONS);
   const limitations: string[] = [...BASE_LIMITATIONS];
+  const zipAbort = signal === undefined ? undefined : new AbortController();
+  const zipSignal = zipAbort?.signal;
+  // zip.js throws its signal's reason. Give it an owned cancellation record
+  // so an independent ZIP failure cannot be confused with the caller's reason.
+  const onAbort = () =>
+    zipAbort?.abort(
+      new ArtifactReaderFailure("cancelled", "Artifact read cancelled", {
+        cause: signal?.reason,
+      }),
+    );
+  if (signal?.aborted) onAbort();
+  else signal?.addEventListener("abort", onAbort, { once: true });
   try {
+    assertArtifactReadActive(signal);
     // Count while enumerating so an oversized directory stops at the budget
     // instead of materializing and decoding every member first.
     const entries: Entry[] = [];
     try {
       for await (const entry of reader.getEntriesGenerator({
         decodeText: decodeZipEntryText,
-        ...(signal === undefined ? {} : { signal }),
       })) {
+        // zip.js observes cancellation for member reads, but not for directory enumeration.
+        assertArtifactReadActive(signal);
         if (entries.length >= input.max_entries)
           throw decodeLimit(
             NUGET_NUPKG_FORMAT,
@@ -520,8 +610,9 @@ export const parseNugetNupkg = async (
         entries.push(entry);
       }
     } catch (cause: unknown) {
-      return wrapZipFailure(cause, signal);
+      return wrapZipFailure(cause);
     }
+    assertArtifactReadActive(signal);
     // The inventory comes from the central directory; local entries it omits
     // are only visible as bytes no listed record accounts for.
     const directoryOffset = reader.directoryOffset;
@@ -565,7 +656,7 @@ export const parseNugetNupkg = async (
       });
     }
     const relsMembers = files.filter(
-      (file) => file.name.toLowerCase() === "_rels/.rels",
+      (file) => opcPartNameKey(file.name) === "_rels/.rels",
     );
     // Spellings such as "./_rels/.rels" normalize to the same logical path; with
     // more than one, ZIP order would choose the manifest, so follow none.
@@ -583,7 +674,7 @@ export const parseNugetNupkg = async (
       else {
         const relsBytes = await readMemberBytes(
           rels.entry,
-          signal,
+          zipSignal,
           input.max_nuspec_bytes,
           "OPC relationships member",
         );
@@ -648,7 +739,7 @@ export const parseNugetNupkg = async (
     }
     const nuspecBytes = await readMemberBytes(
       selected.member.entry,
-      signal,
+      zipSignal,
       input.max_nuspec_bytes,
       "Selected .nuspec",
     );
@@ -715,6 +806,7 @@ export const parseNugetNupkg = async (
       limitations,
     };
   } finally {
+    signal?.removeEventListener("abort", onAbort);
     await reader.close().catch(() => undefined);
   }
 };

@@ -412,7 +412,7 @@ describe("OpenStep plist owned depth", () => {
   });
 });
 
-it.each(["\u0085", "\u2028", "\u2029"])(
+it.each(["\r", "\r\n", "\u0085", "\u2028", "\u2029"])(
   "preserves key identity around inter-element separator %j",
   (separator) => {
     const parsed = parseXmlPropertyList(

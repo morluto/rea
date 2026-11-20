@@ -11,10 +11,9 @@ import {
   analysisProfilesEqual,
 } from "../domain/analysisProfile.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
-import {
-  isElfMetadataArchitecture,
-  type BinaryArchitecture,
-  type BinaryTarget,
+import type {
+  BinaryArchitecture,
+  BinaryTarget,
 } from "../domain/binaryTargetTypes.js";
 import { err, ok } from "../domain/result.js";
 import { cancelledBy } from "../domain/analysisErrorCore.js";
@@ -59,16 +58,23 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { ProviderInspectionScope } from "../ports/ProviderInspectionScope.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
-/**
- * Families IDA admits today. Every other family is refused, including families
- * that REA recognizes after this list was written.
- */
-const IDA_ARCHITECTURES = new Set<BinaryArchitecture>([
-  "x86",
-  "x86_64",
-  "arm",
-  "arm64",
-]);
+const IDA_ARCHITECTURES = {
+  x86: "supported",
+  x86_64: "supported",
+  arm: "supported",
+  arm64: "supported",
+  arm64_32: "unsupported",
+  mips: "ghidra",
+  "6502": "unsupported",
+  riscv: "ghidra",
+  powerpc: "ghidra",
+  m68k: "unsupported",
+  hexagon: "ghidra",
+  xtensa: "unsupported",
+} as const satisfies Record<
+  BinaryArchitecture,
+  "supported" | "unsupported" | "ghidra"
+>;
 
 /** Bring-your-own IDA MCP candidate; discovery performs no provider startup. */
 export class IdaProvider implements AnalysisProviderCandidate {
@@ -288,14 +294,14 @@ export class IdaProvider implements AnalysisProviderCandidate {
           "IDA does not admit headerless raw binaries. Open the target with Ghidra and supply architecture and entry_point.",
         diagnostics,
       };
-    if (!IDA_ARCHITECTURES.has(target.architecture))
+    const lane = IDA_ARCHITECTURES[target.architecture];
+    if (lane !== "supported")
       return {
         status: "unsupported",
         code: "architecture_unsupported",
         // Header-declared families that Ghidra admits keep the pointer there.
         reason:
-          isElfMetadataArchitecture(target.architecture) ||
-          target.architecture === "hexagon"
+          lane === "ghidra"
             ? `REA's IDA adapter has no verified ${target.architecture} lane. Select a supported Ghidra profile instead.`
             : `REA's IDA adapter has no verified ${target.architecture} lane.`,
         diagnostics,

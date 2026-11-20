@@ -15,6 +15,7 @@ import {
   artifactExtractionResultSchema,
   artifactInventoryResultSchema,
 } from "../../src/domain/artifactGraph.js";
+import { peResourceFixture } from "../../src/domain/pe/peResources.fixture.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
@@ -85,5 +86,55 @@ cliTest.for(carriers)(
     expect(await readFile(join(result.output_root, "main.ts"), "utf8")).toBe(
       contents,
     );
+  },
+);
+
+cliTest(
+  "distinguishes the fixed Deno PE entry allowance from malformed framing",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-deno-pe-entry-allowance-");
+    const payload = Buffer.from("opaque");
+    const fixture = peResourceFixture(
+      true,
+      Array.from({ length: 65_535 }, (_, language) => ({
+        type: 10,
+        name: "D3N0L4ND",
+        language,
+        payload,
+      })),
+      3 * 1024 * 1024,
+    );
+    const path = join(root, "large-table.exe");
+    await writeFile(path, fixture.bytes);
+    const capped = await cli.run({
+      arguments: ["inspect-artifact", path, "--json"],
+    });
+    expect(capped.exitCode).toBe(1);
+    expect(capped.json).toMatchObject({
+      code: "truncated",
+      details: {
+        reason: "limit",
+        boundary: "capacity",
+        reported_limits: { maximum: 65_536, required: 65_537 },
+      },
+    });
+
+    // The language directory declares one more row than the admitted interval holds.
+    const [resourceRoot, , languages] = fixture.directoryOffsets;
+    if (resourceRoot === undefined || languages === undefined)
+      throw new Error("Missing resource fixture directories");
+    fixture.bytes.writeUInt32LE(
+      languages - resourceRoot + 16 + 65_535 * 8 - 1,
+      fixture.directoryAt + 4,
+    );
+    await writeFile(path, fixture.bytes);
+    const malformed = await cli.run({
+      arguments: ["inspect-artifact", path, "--json"],
+    });
+    expect(malformed.exitCode).toBe(1);
+    expect(malformed.json).toMatchObject({
+      code: "invalid_request",
+      details: { reason: "malformed" },
+    });
   },
 );

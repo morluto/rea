@@ -511,7 +511,6 @@ export const registerContractTools = (
   server: EvidenceMcpServer,
   bindings: ContractToolBindings,
   dependencies: ContractToolDependencies,
-  contracts: readonly ToolContract[] = TOOL_CONTRACTS,
 ): void => {
   const {
     logger,
@@ -549,7 +548,7 @@ export const registerContractTools = (
     // The table's exact per-name types are checked where it is written.
   > = bindings as never;
   const unbound = new Set(Object.keys(table));
-  for (const contract of contracts) {
+  for (const contract of TOOL_CONTRACTS) {
     const binding = table[contract.name];
     if (binding === undefined) continue;
     unbound.delete(contract.name);

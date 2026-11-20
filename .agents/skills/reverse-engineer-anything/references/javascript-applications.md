@@ -23,6 +23,20 @@ question requires complete application analysis; `source_paths: []` is invalid,
 not an unfiltered request. `detail: "summary"` reduces delivery
 and does not by itself reduce analysis work.
 
+To locate member paths in a packaged `app.asar`, call `open_binary` and
+then `inspect_artifact` with `detail: "summary"`. Use
+`normalized_result.parent_evidence_id` with `inspect_analysis_view` to find
+member paths. Pass the selected paths as `source_paths` to
+`analyze_javascript_application`. Narrowing the source selection reduces
+analysis work. The inventory still examines the archive.
+
+If unpacked companions differ from their declared digests after re-signing
+and you intend to preserve those contradictions, pass
+`integrity_policy: "record-and-continue"` to `inspect_artifact`,
+`analyze_javascript_application`, and `extract_artifact` when you call them.
+The default `fail` policy returns `artifact_integrity_mismatch` when an
+operation encounters the contradiction, including the initial inventory.
+
 ASAR header/index admission defaults to 16 MiB / 16777216 bytes;
 an admission error names `asar.max_header_bytes` and its bounds (at most
 256 MiB). Call `update_analysis_settings` with that setting, `action: "set"`

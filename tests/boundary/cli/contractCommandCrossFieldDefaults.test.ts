@@ -1,15 +1,18 @@
 import { expect, it } from "vitest";
 import { registerCaptureCommands } from "../../../src/cli/captureCommands.js";
-import { contractCommandDescriptions } from "../../../src/cli/contractCommand.js";
 import { registerSignalCommands } from "../../../src/cli/signalCommands.js";
 import { registerSqliteCommands } from "../../../src/cli/sqliteCommands.js";
 import { silentLogger } from "../../../src/logger.js";
-import { createCommandCli } from "../../support/cli/commandCli.js";
+import {
+  createCommandCli,
+  registeredContractDescriptions,
+} from "../../support/cli/commandCli.js";
 
 const cli = createCommandCli();
 registerCaptureCommands(cli, silentLogger, {});
 registerSignalCommands(cli, silentLogger, {});
 registerSqliteCommands(cli, silentLogger, {});
+const { commands } = registeredContractDescriptions(cli);
 
 it.each([
   { command: "inspect-packet-capture", options: { fields: ["ip.addr"] } },
@@ -18,7 +21,7 @@ it.each([
 ])(
   "$command resolves defaults only for cross-field checks and preserves caller omission",
   ({ command, options }) => {
-    const description = contractCommandDescriptions(cli).find(
+    const description = commands.find(
       (candidate) => candidate.command === command,
     );
     if (description === undefined)

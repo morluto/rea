@@ -1,5 +1,7 @@
-import type { Element, Node } from "@xmldom/xmldom";
+import type { Node } from "@xmldom/xmldom";
+import { parseDecodedAndroidManifest } from "../domain/android/decodedAndroidManifest.js";
 import {
+  isUnqualifiedXmlElement,
   parseXmlDocument,
   type XmlParseFailure,
 } from "../domain/xmlDocument.js";
@@ -142,19 +144,14 @@ const apktool3String = (source: string): string => {
 
 /** Read the package attribute from the decoded Android manifest root. */
 export const parseManifestPackage = (manifest: string): string | null => {
-  const parsed = parseXmlDocument(manifest, {
-    doctype: "allow",
-    lineEndings: "preserve",
-  });
-  if (!parsed.ok)
-    throw new TypeError(
-      `AndroidManifest.xml is not well-formed XML: ${parsed.error.message}`,
-      { cause: parsed.error },
-    );
-  const root = parsed.value.documentElement;
-  if (root === null || root.nodeName !== "manifest")
+  const parsed = parseDecodedAndroidManifest(manifest, "allow");
+  if (parsed.ok) return parsed.value.packageName;
+  if (parsed.error.kind === "unexpected-root")
     throw new TypeError("AndroidManifest.xml root must be <manifest>");
-  return root.getAttribute("package") || null;
+  throw new TypeError(
+    `AndroidManifest.xml is not well-formed XML: ${parsed.error.message}`,
+    { cause: parsed.error },
+  );
 };
 
 export interface DecodedStringEntry {
@@ -184,7 +181,7 @@ export const parseDecodedStrings = (
   });
   if (!parsed.ok) return err(parsed.error);
   const root = parsed.value.documentElement;
-  if (root === null || root.nodeName !== "resources")
+  if (!isUnqualifiedXmlElement(root) || root.localName !== "resources")
     return err(
       malformedInput(
         "android-string-resources",
@@ -197,15 +194,14 @@ export const parseDecodedStrings = (
   let unparsedCount = 0;
   const offsets = sourceLineOffsets(stringsXml);
   for (const child of childNodes(root)) {
-    if (child.nodeType !== 1) continue;
-    const element = child as Element;
-    if (element.nodeName !== "string") continue;
-    const name = element.getAttribute("name");
+    if (!isUnqualifiedXmlElement(child) || child.localName !== "string")
+      continue;
+    const name = child.getAttributeNS(null, "name");
     if (name === null || name.length === 0) {
       unparsedCount += 1;
       continue;
     }
-    const content = childNodes(element);
+    const content = childNodes(child);
     if (content.some((node) => node.nodeType !== 3 && node.nodeType !== 8)) {
       unparsedCount += 1;
       continue;

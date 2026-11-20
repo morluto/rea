@@ -12,6 +12,7 @@ import {
   withArtifactMcp,
   withBundleResourcesMcp,
 } from "../../lib/artifact-e2e.mjs";
+import { requireMcpToolError } from "../../lib/mcp-verifier-results.mjs";
 import {
   VerifierFixture,
   withVerifierFixture,
@@ -106,7 +107,15 @@ await withVerifierFixture(fixture, async () => {
       name: "inspect_asset_catalog",
       arguments: { offset: -1 },
     });
-    assert.equal(invalid.isError, true);
+    // appleAssetCatalogInputSchema requires an inclusive offset minimum of 0.
+    // projectInputIssues reports that bound as out_of_range.
+    assert.partialDeepStrictEqual(requireMcpToolError(invalid), {
+      code: "invalid_request",
+      details: {
+        operation: "inspect_asset_catalog",
+        issues: [{ path: ["offset"], reason: "out_of_range", minimum: 0 }],
+      },
+    });
   });
   const { resource_root, target_sha256, ...resourcePayload } = cli;
   assert.equal(resource_root.executable_sha256, null);

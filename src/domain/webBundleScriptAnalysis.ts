@@ -20,7 +20,7 @@ const observationsSchema = z.strictObject({
   endpoints: webBundleAnalysisSchema.shape.observations.shape.endpoints,
   webmcp_declarations:
     webBundleAnalysisSchema.shape.observations.shape.webmcp_declarations,
-  /** Browser requests whose URL argument is not a string literal. */
+  /** Browser requests whose URL argument could not be resolved statically. */
   unresolved_endpoints: z.array(webBundleCallSiteSchema),
 });
 

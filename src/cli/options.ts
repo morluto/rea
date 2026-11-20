@@ -1,11 +1,15 @@
 import { z } from "zod";
 
+import { declaredTokenPattern } from "../domain/schemaConstraints.js";
+import { decimalTokenPattern } from "./decimalTokenPattern.js";
+
 import { OPEN_BINARY_TOOL_CONTRACT } from "../contracts/sessionToolContracts.js";
 import type { CliSessionTarget } from "./contractCliDescription.js";
 
 /** Decimal integer argv text. Leading zeros stay decimal; `0x` and exponent spellings do not. */
 const DECIMAL_INTEGER_TOKEN = /^[0-9]+$/u;
 const DECIMAL_NUMBER_TOKEN = /^[0-9]+(?:\.[0-9]+)?$/u;
+const UNIT_INTERVAL_TOKEN = /^(?:0+(?:\.[0-9]+)?|0*1(?:\.0+)?)$/u;
 
 type DecimalWrapper =
   | { readonly kind: "default"; readonly value: number | null }
@@ -15,12 +19,20 @@ type DecimalWrapper =
     };
 
 const decimalToken = (domain: z.ZodNumber) =>
-  z
-    .string()
-    .regex(
-      domain.isInt ? DECIMAL_INTEGER_TOKEN : DECIMAL_NUMBER_TOKEN,
-      domain.isInt ? "Expected a decimal integer" : "Expected a decimal number",
-    )
+  (domain.isInt
+    ? declaredTokenPattern(
+        z.string().regex(DECIMAL_INTEGER_TOKEN, "Expected a decimal integer"),
+        new RegExp(decimalTokenPattern(domain), "u"),
+      )
+    : z
+        .string()
+        .regex(
+          domain.minValue === 0 && domain.maxValue === 1
+            ? UNIT_INTERVAL_TOKEN
+            : DECIMAL_NUMBER_TOKEN,
+          "Expected a decimal number",
+        )
+  )
     .pipe(z.coerce.number<string>())
     .pipe(domain);
 

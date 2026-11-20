@@ -50,7 +50,8 @@ explicitly with the managed tools to establish PE/CLI facts.
 
 ## Admission and containment
 
-Metadata is range-read with a cache of at most 64 KiB, bounded by the remaining
+Metadata is range-read in 64 KiB windows, or a larger window when an admitted
+field requires it. Each read is bounded by the remaining file bytes and the
 selected metadata allowance. Default policy budgets are 16 MiB of
 manifest metadata, 100,000 files, 64 KiB per UTF-8 string, 512 MiB of stored or
 expanded bytes per file, 256 path parts per member, 250,000 distinct in-memory

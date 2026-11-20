@@ -718,9 +718,9 @@ export interface ContractCliDescription {
   /** The command adds `--detail` and `--evidence_output`. */
   readonly evidenceDelivery: boolean;
   /**
-   * Decode run-time JSON, then map parsed values to the contract input and
-   * the selected delivery. An input or delivery that is not admitted is
-   * refused before any target is opened.
+   * Map values decoded by `admitDeliveryOptions` and the JSON input reader
+   * to the contract input and selected delivery. An input or delivery that
+   * is not admitted is refused before any target is opened.
    */
   readonly admit: (
     values: Readonly<Record<string, unknown>>,
@@ -728,11 +728,12 @@ export interface ContractCliDescription {
   /**
    * Refuse inline JSON options and a delivery the options cannot select,
    * before any JSON input is read, so an invalid invocation never waits on a
-   * file or stdin. `admit` still checks the admitted view with the input.
+   * file or stdin. Return the decoded options for the input reader and `admit`;
+   * `admit` still checks the admitted view with the input.
    */
   readonly admitDeliveryOptions: (
     values: Readonly<Record<string, unknown>>,
-  ) => Result<void, AnalysisInputError>;
+  ) => Result<Record<string, unknown>, AnalysisInputError>;
 }
 
 /** One contract from a contract group, keeping its exact schema types. */
@@ -2561,7 +2562,7 @@ export const describeContractCommand = <
     admitDeliveryOptions: (values) => {
       const decoded = decodeInlineJson(contract.name, parameters, values);
       if (!decoded.ok) return decoded;
-      if (!evidenceDelivery) return ok(undefined);
+      if (!evidenceDelivery) return decoded;
       const view =
         viewDelivery === undefined
           ? undefined
@@ -2592,7 +2593,7 @@ export const describeContractCommand = <
         evidenceOutput: decoded.value.evidence_output as string | undefined,
         view,
       });
-      return refused === undefined ? ok(undefined) : err(refused);
+      return refused === undefined ? decoded : err(refused);
     },
   };
 };
@@ -2708,8 +2709,8 @@ const selectSpelledSelector = (
 };
 
 /**
- * Decode run-time JSON, then map the values to the contract input and the
- * selected delivery. When the projection decodes JSON at run time, the
+ * Map decoded values to the contract input and selected delivery.
+ * When the projection decodes JSON at run time, the
  * decoded input, delivery and view are admitted together by the contract
  * input schema, so the contract's own rules and messages apply. When argv
  * supplies the whole contract input, it is parsed once the same way and the
@@ -2745,9 +2746,7 @@ const admitInvocation = (
     wholeInput,
     checkedFields,
   } = command;
-  const inline = decodeInlineJson(contract.name, parameters, values);
-  if (!inline.ok) return inline;
-  const decoded = inline.value;
+  const decoded = values;
   const input = toContractInput(decoded);
   const detail = evidenceDelivery
     ? (decoded[rename("detail")] as "complete" | "summary" | undefined)
