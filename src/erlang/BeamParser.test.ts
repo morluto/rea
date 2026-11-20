@@ -295,12 +295,27 @@ it("rejects an AtU8 atom name that is not UTF-8", () => {
   ).toThrow(/BEAM atom name is not valid UTF-8/);
 });
 
-it("keeps a latin1 atom byte unchanged", () => {
+it("uses a one-byte length and preserves Latin-1 bytes in legacy Atom", () => {
   const report = parse(
-    erlangBeamChunksFixture([["Atom", Buffer.from([0, 0, 0, 1, 1, 0xff])]]),
+    erlangBeamChunksFixture([
+      ["Atom", Buffer.from([0, 0, 0, 1, 2, 0x61, 0xff])],
+    ]),
   );
-  expect(report.atom_encoding).toBe("latin1");
-  expect(report.module).toBe("ÿ");
+  expect(report).toMatchObject({
+    atom_encoding: "latin1",
+    module: "aÿ",
+    atoms: [{ index: 1, name: "aÿ" }],
+    coverage: { status: "complete" },
+  });
+});
+
+it.each([
+  ["a negative count", [0xff, 0xff, 0xff, 0xff, 0x20, 0x61, 0x62]],
+  ["a compact length", [0, 0, 0, 1, 0x20, 0x61, 0x62]],
+])("rejects %s in legacy Atom", (_name, payload) => {
+  expect(() =>
+    parse(erlangBeamChunksFixture([["Atom", Buffer.from(payload)]])),
+  ).toThrow(expect.objectContaining({ reason: "format" }));
 });
 
 it("rejects combined table rows before allocating them", () => {
