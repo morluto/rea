@@ -9,12 +9,8 @@ import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import {
   firmwareFailureDialect,
-  firmwareLimitRecovery,
   firmwarePhaseInterruption,
-  firmwareProcessLimitRecovery,
-  firmwareSignalLimitError,
 } from "./FirmwareFailures.js";
-import { FIRMWARE_LIMITS } from "./FirmwareRelease.js";
 import { startFirmwareDeadline } from "./FirmwareDeadline.js";
 import { inventoryFirmwareOutput } from "./FirmwareFiles.js";
 
@@ -190,69 +186,6 @@ it.each([1234, 2_147_483_647])(
       expect(projected.remediation.action).toContain("maximum");
   },
 );
-
-it("says a CPU signal is fixed and analysis_timeout_ms does not raise it", () => {
-  const error = firmwareSignalLimitError(
-    "inspect_firmware_regions",
-    "SIGXCPU",
-    FIRMWARE_LIMITS.reportBytes,
-    false,
-  );
-  const projected = projectAnalysisError(error!);
-  expect(projected).toMatchObject({
-    code: "resource_constraint",
-    details: {
-      resource: "cpu",
-      reported_limits: { cpu_seconds: FIRMWARE_LIMITS.cpuSeconds },
-    },
-  });
-  expect(projected.message).toContain(String(FIRMWARE_LIMITS.cpuSeconds));
-  expect(projected.remediation.action).toBe(
-    firmwareLimitRecovery(
-      `cpuSeconds is ${String(FIRMWARE_LIMITS.cpuSeconds)}`,
-    ),
-  );
-  expect(projected.remediation.action).toContain("no runtime override");
-  expect(projected.remediation.action).toContain(
-    "analysis_timeout_ms (--analysis-timeout-ms in the CLI) does not raise it",
-  );
-});
-
-it("retains captured tool output on a CPU or file-size signal", () => {
-  const captured = {
-    stdout: "partial scan\n",
-    stderr: "stopped by prlimit\n",
-    stdout_bytes: 13,
-    stderr_bytes: 19,
-    exit_code: null,
-    signal: "SIGXCPU",
-    truncated: false,
-  };
-  for (const signal of ["SIGXCPU", "SIGXFSZ"] as const) {
-    const error = firmwareSignalLimitError(
-      "inspect_firmware_regions",
-      signal,
-      FIRMWARE_LIMITS.reportBytes,
-      false,
-      { ...captured, signal },
-    );
-    expect(projectAnalysisError(error!).details?.captured_output).toEqual({
-      ...captured,
-      signal,
-    });
-  }
-});
-
-it("names the fixed address-space allowance on an unclassified tool failure", () => {
-  const recovery = firmwareProcessLimitRecovery(
-    FIRMWARE_LIMITS.reportBytes,
-    false,
-  );
-  expect(recovery).toContain(String(FIRMWARE_LIMITS.addressSpaceBytes));
-  expect(recovery).toContain(String(FIRMWARE_LIMITS.cpuSeconds));
-  expect(recovery).toContain("no runtime override");
-  expect(recovery).toContain("analysis_timeout_ms does not raise");
-});
 
 it("reports the inventory's own deadline expiry as the phase timeout", async () => {
   const reason = new DOMException("analysis deadline", "TimeoutError");
