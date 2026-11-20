@@ -1,5 +1,6 @@
 import { parseFailureFromCause } from "../domain/parseFailure.js";
 import { LC } from "../domain/apple/machoLoadCommandCodes.js";
+import { bundleExecutableProvenanceFields } from "../domain/apple/bundleExecutableProvenance.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { EvidenceLocation } from "../domain/evidence.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -472,7 +473,10 @@ export const inspectNativeMacho = async (
             limitations: [...normalized.limitations, ...locationLimitations],
           });
   return ok({
-    result: jsonValueSchema.parse(result),
+    result: jsonValueSchema.parse({
+      ...result,
+      ...bundleExecutableProvenanceFields(context.target),
+    }),
     limitations: result.limitations,
     locations: fileOffsetLocations(result, containerOffset, binary.sliceSize),
   });

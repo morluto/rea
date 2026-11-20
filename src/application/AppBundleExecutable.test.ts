@@ -53,9 +53,17 @@ it.each([
     await writeFile(executable, "inert fixture; never executed");
 
     const result = await resolveAppleBundleExecutable(bundle);
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       ok: true,
-      value: { executable, infoPlist: plistPath },
+      value: {
+        executable,
+        infoPlist: plistPath,
+        bundleExecutableSelection: {
+          canonical_path: bundle,
+          layout: plistDirectory.length === 0 ? "root" : "contents",
+          declared_executable: "Fixture",
+        },
+      },
     });
   },
 );
@@ -94,7 +102,7 @@ describe("app bundle Info.plist magic", () => {
     await writeFile(plistPath, binaryPlistExecutableWithThreeByteUid());
     await writeFile(executable, "inert fixture; never executed");
 
-    expect(await resolveAppleBundleExecutable(bundle)).toEqual({
+    expect(await resolveAppleBundleExecutable(bundle)).toMatchObject({
       ok: true,
       value: { executable, infoPlist: plistPath },
     });

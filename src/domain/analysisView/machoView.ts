@@ -73,6 +73,7 @@ const collectionCountSchema = z.strictObject({
 
 /** Slice identity and per-collection counts without the collections themselves. */
 export const machoSummarySchema = z.strictObject({
+  bundle_provenance: shape.bundle_provenance,
   format: shape.format,
   selected_architecture: shape.selected_architecture,
   endian: shape.endian,
@@ -139,6 +140,9 @@ const summarizeMacho = (
       0,
     ),
     summary: {
+      ...(report.bundle_provenance === undefined
+        ? {}
+        : { bundle_provenance: report.bundle_provenance }),
       format: report.format,
       selected_architecture: report.selected_architecture,
       endian: report.endian,
