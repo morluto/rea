@@ -244,6 +244,7 @@ const PATH_SCOPES = {
     "tests/process-global/runnerCancellation.test.ts",
     "tests/process-global/windowsOwnedCommand.test.ts",
     "tests/process-global/curatedWindowsLane.test.ts",
+    "src/desktop/AgentEnvBridgeSources.ts",
     "src/ghidra/GhidraBridgeSources.ts",
     "native/windows/**",
     "src/process/capture/FilesystemSnapshot.ts",
