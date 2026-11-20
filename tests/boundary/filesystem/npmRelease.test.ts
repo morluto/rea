@@ -153,6 +153,28 @@ it("retries transient npm HTTP failures before checking the published release", 
   expect(pauses).toEqual([15_000, 15_000]);
 });
 
+it("resets the consecutive gateway failures after observing absence", async () => {
+  const version = "6.5.0";
+  const statuses = [503, 503, 404, 503, 503];
+  let attempts = 0;
+  const pauses: number[] = [];
+  const lookup = () =>
+    readNpmRelease(version, async () => {
+      attempts++;
+      const status = statuses.shift();
+      return status === undefined
+        ? Response.json(metadata(version, "sha512-target", { latest: version }))
+        : new Response(null, { status });
+    });
+  await expect(
+    waitForNpmRelease(version, lookup, async (milliseconds) => {
+      pauses.push(milliseconds);
+    }),
+  ).resolves.toMatchObject({ status: "published", taggedVersion: version });
+  expect(attempts).toBe(6);
+  expect(pauses).toEqual(Array(5).fill(15_000));
+});
+
 it.each([
   [503, 3],
   [403, 1],
