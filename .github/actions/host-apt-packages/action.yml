@@ -34,4 +34,4 @@ runs:
           echo "::error::APT package download failed (exit ${status})"
           exit "$status"
         }
-        sudo apt-get --no-download install "${options[@]}" -- "${packages[@]}"
+        sudo DEBIAN_FRONTEND=noninteractive apt-get --no-download install "${options[@]}" -- "${packages[@]}"
