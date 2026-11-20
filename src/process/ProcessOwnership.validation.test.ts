@@ -1158,11 +1158,12 @@ describe("owned process-group cleanup validation: exited members", () => {
     expect(environment).not.toHaveBeenCalled();
   });
   it("is idempotent when the owned group has already exited", async () => {
-    const { adapter } = host({});
+    const { adapter, signalGroup } = host({});
     expect(await cleanupOwnedProcessGroup(ownership, adapter)).toEqual({
       cleaned: true,
       signaled: false,
     });
+    expect(signalGroup).not.toHaveBeenCalled();
   });
   it("fails closed when the launcher command identity changes", async () => {
     const { adapter, signalGroup } = host({
