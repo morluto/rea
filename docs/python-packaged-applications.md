@@ -35,9 +35,12 @@ inferring POSIX semantics.
 the decoded PYZ image for PYZ rows. A CArchive directory record starts at
 `archive_start + toc_offset + directory_record_offset`; its size is
 `directory_record_size`. PYZ row directory extents remain unknown.
-CArchive type `b` retains PyInstaller's executable-member declaration in the
-generic `executable` fact; type `x` remains non-executable. This comes from the
-archive type code, not the filename or member contents.
+In a POSIX carrier, CArchive type `b` retains PyInstaller's executable-member
+declaration in the generic `executable` fact; type `x` remains non-executable.
+The Windows bootloader sets no execute bit, so type `b` members of a PE carrier,
+usually DLLs and `.pyd` extensions, stay non-executable, as do those of an
+unconfirmed carrier. This comes from the carrier dialect and the archive type
+code, not the filename or member contents.
 Distinct CArchive rows retain their table-index identities even when they
 share a logical path. Inventory can preserve both a file and a decoded PYZ
 directory at that path, including the PYZ children; extraction refuses a
@@ -50,7 +53,8 @@ they do not claim a destination directory. Their `relative_offset` and
 Every declared span must end before the PYZ table of contents.
 Malformed CArchive TOC rows identify their zero-based table index and byte offset
 within the TOC, including truncated headers, invalid names, compression flags,
-and type codes. The failure retains its original format reason.
+and type codes. The failure retains its original format reason. A TOC name
+requires a NUL terminator, and all remaining bytes in the record must be zero.
 PYZ `compression_flag` is derived from storage: nonempty payloads are compressed,
 including legacy namespaces; an empty namespace has no compressed payload.
 

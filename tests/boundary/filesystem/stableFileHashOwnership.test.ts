@@ -706,7 +706,6 @@ it.each(["physical", "completed"] as const)(
     );
     try {
       const result = await publisher.inspectLauncher(path, controller.signal);
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Injected hash outcome passed");
       expect(result.error.reason).toBe(
         outcome === "physical" ? "verification_unavailable" : "cancelled",

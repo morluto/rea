@@ -1,15 +1,17 @@
-import { createHash } from "node:crypto";
-
 import { z } from "zod";
 import { utcDateTimeSchema } from "./offsetDateTime.js";
 
-import { webRuntimeCommandTimeoutSchema } from "./browserDeadline.js";
+import {
+  browserDiscoveryTimeoutSchema,
+  webRuntimeCommandTimeoutSchema,
+} from "./browserDeadline.js";
 import { browserCompletenessSchema } from "./browserCompleteness.js";
 import {
   browserAllowedOriginsSchema,
   browserObservationEndpointSchema,
 } from "./browserObservation.js";
 import { browserVersionSchema } from "./browserObservationSchemas.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 /** Self-verifying inline PNG artifact for CLI/MCP parity. */
 export const webScreenshotArtifactSchema = z
@@ -25,7 +27,7 @@ export const webScreenshotArtifactSchema = z
       context.addIssue({ code: "custom", message: "Invalid canonical base64" });
       return;
     }
-    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const sha256 = sha256Hex(bytes);
     if (bytes.byteLength !== artifact.bytes || sha256 !== artifact.sha256)
       context.addIssue({
         code: "custom",
@@ -38,6 +40,7 @@ export type WebScreenshotArtifact = z.infer<typeof webScreenshotArtifactSchema>;
 export const captureWebScreenshotInputSchema = z.strictObject({
   cdp_endpoint: browserObservationEndpointSchema,
   allowed_origins: browserAllowedOriginsSchema,
+  discovery_timeout_ms: browserDiscoveryTimeoutSchema,
   target_id: z.string().min(1),
   command_timeout_ms: webRuntimeCommandTimeoutSchema,
 });
@@ -144,7 +147,7 @@ export type WebScreenshotDiff = z.infer<typeof webScreenshotDiffSchema>;
 export const createWebScreenshotArtifact = (
   bytes: Buffer,
 ): WebScreenshotArtifact => {
-  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const sha256 = sha256Hex(bytes);
   return webScreenshotArtifactSchema.parse({
     sha256,
     bytes: bytes.byteLength,

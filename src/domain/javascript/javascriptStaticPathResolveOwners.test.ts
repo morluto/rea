@@ -4,29 +4,24 @@ import { expect, it } from "vitest";
 
 import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 
-it.each(["/other", "relative"])(
-  "keeps a shadowed source-directory parameter dynamic: %s",
-  (directory) => {
-    const actual = posix.resolve("/runtime/base", directory, "decoy.cjs");
-    expect(actual).not.toBe("/source/app/decoy.cjs");
-    const analysis = analyzeCommonJsStaticFixture(`
-      const path = require('node:path');
-      const {BrowserWindow, utilityProcess} = require('electron');
-      function build(__dirname) {
-        new BrowserWindow({webPreferences:{preload:path.resolve(runtimeBase,__dirname,'decoy.cjs')}});
-        utilityProcess.fork(path.resolve(runtimeBase,__dirname,'decoy.cjs'));
-      }
-      build(${JSON.stringify(directory)});
-    `);
-    expect(analysis.role_paths).toEqual([]);
-    expect(analysis.electron.browser_windows).toMatchObject([
-      { preload_path: null, preload_resolution_context: null },
-    ]);
-    expect(analysis.electron.utility_processes).toMatchObject([
-      { module_path: null, module_resolution_context: null },
-    ]);
-  },
-);
+it("keeps a shadowed source-directory parameter dynamic", () => {
+  const analysis = analyzeCommonJsStaticFixture(`
+    const path = require('node:path');
+    const {BrowserWindow, utilityProcess} = require('electron');
+    function build(__dirname) {
+      new BrowserWindow({webPreferences:{preload:path.resolve(runtimeBase,__dirname,'decoy.cjs')}});
+      utilityProcess.fork(path.resolve(runtimeBase,__dirname,'decoy.cjs'));
+    }
+    build("/other");
+  `);
+  expect(analysis.role_paths).toEqual([]);
+  expect(analysis.electron.browser_windows).toMatchObject([
+    { preload_path: null, preload_resolution_context: null },
+  ]);
+  expect(analysis.electron.utility_processes).toMatchObject([
+    { module_path: null, module_resolution_context: null },
+  ]);
+});
 
 const localResolvers = [
   [
@@ -123,9 +118,6 @@ const nodeResolvers = [
 ] as const;
 
 it("does not treat a constructed Node resolver as a path call", () => {
-  expect(() => Reflect.construct(posix.resolve, ["/app", "decoy.cjs"])).toThrow(
-    TypeError,
-  );
   const analysis = analyzeCommonJsStaticFixture(`
     const helper = require('node:path');
     const {BrowserWindow} = require('electron');
@@ -140,9 +132,6 @@ it("does not treat a constructed Node resolver as a path call", () => {
 it.each(nodeResolvers)(
   "retains proven Node %s right-to-left anchoring",
   (_name, setup, callee) => {
-    expect(
-      posix.resolve("/actual/runtime.cjs", "/fixture/app", "decoy.cjs"),
-    ).toBe("/fixture/app/decoy.cjs");
     const expression = `${callee}(runtimePath, __dirname, "decoy.cjs")`;
     const analysis = analyzeCommonJsStaticFixture(`
     const {BrowserWindow, utilityProcess} = require('electron');

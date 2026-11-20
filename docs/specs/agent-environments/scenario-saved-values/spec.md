@@ -47,10 +47,9 @@ values.
 - A value saved with `secret: true` is redacted from the selected source response
   before retention and from subsequent records. The environment build warns about saved values named like credentials
   that are not marked secret (`credential-named-saved-values`).
-- A scenario that saves nothing records the same Evidence parameters and
-  `scenario_sha256` as before: an empty `save` is left out of the recorded
-  step.
-- Earlier REA versions read captures that use saved values.
+- New Evidence records the current parsed request step, including an empty
+  `save` list, in its parameters and `scenario_sha256`. Retained Evidence keeps
+  its original representation and identity.
 - The compact MCP catalog stays under its measured one-megabyte frame.
 - The skill records writes the way the application's UI does and falls back to
   request steps when the UI cannot reach an operation or coverage withholds the

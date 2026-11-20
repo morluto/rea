@@ -1,5 +1,12 @@
+import {
+  expectNoUnmodeledGdbCommands,
+  FAKE_GDB_SESSION_REPLIES,
+  fakeGdbModeledReplies,
+  fakeGdbStartupPreamble,
+} from "./gdbTestHelpers.js";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+
 import { join } from "node:path";
 
 import { afterEach, expect, it } from "vitest";
@@ -33,9 +40,18 @@ it("bounds active and queued GDB commands, including cancelled placeholders", as
   const provider = join(directory, "fake-gdb-queue.mjs");
   const activePath = join(directory, "active-command");
   const releasePath = join(directory, "release-command");
+  const unmodeledPath = join(directory, "unmodeled");
+  const consoleReplies = Object.fromEntries(
+    ["hold", "admitted-after-drain", "after-drain"].map((command) => [
+      `-interpreter-exec console "${command}"`,
+      "^done",
+    ]),
+  );
   await writeFile(
     provider,
     `#!${process.execPath}
+${fakeGdbStartupPreamble}
+${fakeGdbModeledReplies(unmodeledPath, { ...FAKE_GDB_SESSION_REPLIES, ...consoleReplies })}
 import { access, writeFile } from "node:fs/promises";
 process.stdout.write("(gdb)\\n");
 let input = "";
@@ -57,7 +73,7 @@ process.stdin.on("data", async (chunk) => {
         catch { await new Promise((resolve) => setTimeout(resolve, 10)); }
       }
     }
-    process.stdout.write(match[1] + (line.includes("-list-thread-groups") ? "^done,groups=[]\\n" : "^done\\n"));
+    answerModeled(match[1], line.slice(match[1].length));
   }
 });
 `,
@@ -150,4 +166,5 @@ process.stdin.on("data", async (chunk) => {
     ok: true,
     value: { result: { completion_status: "complete" } },
   });
+  await expectNoUnmodeledGdbCommands(unmodeledPath);
 });

@@ -4,27 +4,28 @@ import {
   inspectPeCertificatesInputSchema,
   peCertificatesSchema,
 } from "../../domain/native/peCertificates.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
   peCertificateFixture,
   peWithoutCertificateTableFixture,
+  pkcs7DualSignedTimestampedFixture,
   pkcs7SignedDataFixture,
   pkcs7SignedDataIndefiniteEnvelopeFixture,
 } from "./PeCertificates.fixture.js";
 import {
-  ASN1_NODE_BUDGET,
-  MAX_DECODED_NAME_BYTES,
-  MAX_OID_ARC_BYTES,
-  MAX_OID_BYTES,
-  decodeOid,
   parseCertificate,
   PeCertificateAsn1Failure,
   readAsn1,
 } from "./PeCertificateAsn1.js";
-import {
-  parsePeCertificates,
-  UNSIGNED_ATTRIBUTES_LIMITATION,
-} from "./PeCertificateParser.js";
+import { parsePeCertificates } from "./PeCertificateParser.js";
+
+// Independent boundary examples: changing an allowance requires reviewing
+// both the admitted and rejected certificate shapes.
+const ASN1_NODE_BUDGET = 16_384;
+const ASN1_DEPTH_BUDGET = 64;
+const MAX_OID_BYTES = 256;
+const MAX_OID_ARC_BYTES = 32;
+const MAX_DECODED_NAME_BYTES = 65_536;
 
 const defaults = inspectPeCertificatesInputSchema.parse({
   path: "/artifacts/app.exe",
@@ -96,7 +97,9 @@ it("reports unsigned attribute OIDs and incomplete nested coverage", () => {
       status: "partial",
       certificates: 1,
     });
-    expect(report.limitations).toContain(UNSIGNED_ATTRIBUTES_LIMITATION);
+    expect(report.limitations).toContain(
+      "Signer unsigned attribute contents are not decoded; nested signatures and timestamp token certificates and times may be omitted.",
+    );
     const control = parse(peCertificateFixture(plus));
     expect(
       control.entries[0]?.pkcs7?.signers[0]?.unsigned_attribute_oids,
@@ -104,6 +107,42 @@ it("reports unsigned attribute OIDs and incomplete nested coverage", () => {
     expect(control.coverage.status).toBe("complete");
   }
 });
+
+// The parser always reports the field (null when absent), so a report that
+// omits it is refused at that field rather than read as unknown.
+it("refuses a signer that omits unsigned_attribute_oids", () => {
+  const report = parse(peCertificateFixture(false));
+  const [entry] = report.entries;
+  const [signer] = entry?.pkcs7?.signers ?? [];
+  if (entry?.pkcs7 === undefined || entry.pkcs7 === null || !signer)
+    throw new Error("Fixture has no PKCS#7 signer");
+  const { unsigned_attribute_oids: _omitted, ...withoutField } = signer;
+  const refused = peCertificatesSchema.safeParse({
+    ...report,
+    entries: [{ ...entry, pkcs7: { ...entry.pkcs7, signers: [withoutField] } }],
+  });
+  expect(refused.success).toBe(false);
+  expect(refused.error?.issues).toContainEqual(
+    expect.objectContaining({
+      path: ["entries", 0, "pkcs7", "signers", 0, "unsigned_attribute_oids"],
+    }),
+  );
+});
+
+it.each([false, true])(
+  "rejects a misaligned certificate table (PE32+ = %s)",
+  (plus) => {
+    const aligned = peCertificateFixture(plus, undefined, undefined, true);
+    expect(parse(aligned).coverage.status).toBe("complete");
+    const shifted = Buffer.concat([
+      aligned.subarray(0, 0x200),
+      Buffer.alloc(1),
+      aligned.subarray(0x200),
+    ]);
+    shifted.writeUInt32LE(0x201, 0x98 + (plus ? 112 : 96) + 4 * 8);
+    expect(() => parse(shifted)).toThrow(/certificate table offset.*aligned/u);
+  },
+);
 
 it("accepts only zero eight-byte alignment padding included in dwLength", () => {
   for (const plus of [false, true]) {
@@ -132,6 +171,42 @@ it("accepts only zero eight-byte alignment padding included in dwLength", () => 
     expect(report.entries[0]?.pkcs7?.signers).toHaveLength(1);
   }
 });
+
+it.each([false, true])(
+  "rejects incomplete final alignment without rejecting complete entries (PE32+ = %s)",
+  (plus) => {
+    for (const type of [0x0001, 0x0002]) {
+      const gaps = new Set<number>();
+      for (let size = 1; size <= 32; size += 1) {
+        const payload = pkcs7SignedDataFixture("x".repeat(size));
+        const bytes = peCertificateFixture(plus, payload, type);
+        const directoryAt = 0x98 + (plus ? 112 : 96) + 4 * 8;
+        const tableSize = bytes.readUInt32LE(directoryAt + 4);
+        const length = bytes.readUInt32LE(0x200);
+        const gap = tableSize - length;
+        if (gaps.has(gap)) continue;
+        gaps.add(gap);
+        const report = parse(bytes);
+        expect(report.coverage.status).toBe("complete");
+        expect(report.entries[0]?.length).toBe(length);
+        expect(report.entries[0]?.payload.bytes).toBe(payload.length);
+        for (let missing = 1; missing <= gap; missing += 1) {
+          const truncated = Buffer.from(bytes);
+          truncated.writeUInt32LE(tableSize - missing, directoryAt + 4);
+          // Every advertised entry byte still exists; only its final
+          // alignment range extends beyond the declared table.
+          expect(length).toBeLessThanOrEqual(tableSize - missing);
+          expect(() => parse(truncated)).toThrow(
+            expect.objectContaining({ reason: "format" }),
+          );
+        }
+      }
+      expect([...gaps].sort((left, right) => left - right)).toEqual([
+        0, 1, 2, 3, 4, 5, 6, 7,
+      ]);
+    }
+  },
+);
 
 it.each([false, true])(
   "reads all counted alignment gaps and consecutive entries (PE32+ = %s)",
@@ -226,8 +301,8 @@ it("retains certificate and signer facts for ASCII TeletexString names", () => {
   expect(report.entries[0]?.pkcs7?.signers[0]?.issuer?.text).toBe(
     "commonName=Plain Name, organizationName=Plain Org",
   );
-  expect(report.limitations).toContain(
-    "TeletexString values use OpenSSL's ISO-8859-1 compatibility mapping; this is not a full T.61 decoder.",
+  expect(report.limitations).toContainEqual(
+    expect.stringMatching(/TeletexString.*ISO.8859.1.*not a full T.61/iu),
   );
 });
 
@@ -515,6 +590,44 @@ it("keeps subjectKeyIdentifier bytes on the signer", () => {
   ).toThrow(/decoded budget/u);
 });
 
+it("rejects a SignerInfo version that does not match its sid", () => {
+  const payload = (version: number, sid: Buffer) =>
+    contentInfo(
+      derSeq(
+        derInt(1),
+        derSet(SHA256_ALG),
+        derSeq(DATA_OID),
+        derSet(
+          derSeq(
+            derInt(version),
+            sid,
+            SHA256_ALG,
+            SHA256_ALG,
+            der(0x04, Buffer.from([1])),
+          ),
+        ),
+      ),
+    );
+  const issuerAndSerial = derSeq(derSeq(), derInt(1));
+  const ski = der(0x80, Buffer.from([0xab]));
+  for (const [version, sid] of [
+    [3, issuerAndSerial],
+    [2, issuerAndSerial],
+    [1, ski],
+  ] as const)
+    expect(() =>
+      parse(peCertificateFixture(false, payload(version, sid))),
+    ).toThrow(/SignerInfo version must be [13] with/u);
+  for (const [version, sid] of [
+    [1, issuerAndSerial],
+    [3, ski],
+  ] as const)
+    expect(
+      parse(peCertificateFixture(false, payload(version, sid))).entries[0]
+        ?.pkcs7?.signers,
+    ).toHaveLength(1);
+});
+
 // X.690 8.3.1 and 8.3.2 apply under BER as well as DER.
 const malformedSerials = [
   [],
@@ -626,6 +739,93 @@ it("stops decoding a certificate payload at the ASN.1 node budget", () => {
   );
 });
 
+it("reads a dual-signed, timestamped signature as deep as signed Windows binaries", () => {
+  const report = parse(
+    peCertificateFixture(true, pkcs7DualSignedTimestampedFixture()),
+  );
+  expect(report.entries[0]?.pkcs7?.signers).toEqual([
+    expect.objectContaining({
+      serial_hex: "11223344",
+      unsigned_attribute_oids: ["1.3.6.1.4.1.311.2.4.1"],
+    }),
+  ]);
+  // The nested signature and its timestamp are not inventoried yet.
+  expect(report.coverage).toMatchObject({
+    status: "partial",
+    certificates: 1,
+  });
+  expect(report.limitations).toContain(
+    "Signer unsigned attribute contents are not decoded; nested signatures and timestamp token certificates and times may be omitted.",
+  );
+});
+
+it("stops decoding a certificate payload at the ASN.1 depth budget", () => {
+  let nested: Buffer = Buffer.from([0x05, 0x00]);
+  for (let level = 0; level <= ASN1_DEPTH_BUDGET; level += 1)
+    nested = der(0x30, nested);
+  expect(() => readAsn1(nested)).toThrow(
+    `ASN.1 nesting exceeds ${String(ASN1_DEPTH_BUDGET)} levels.`,
+  );
+});
+
+// Walks definite-length DER on its own, so the fixture's depth does not depend
+// on the reader under test. The outermost value is level 0, as in the reader.
+const derDepth = (bytes: Buffer, level = 0): number => {
+  let deepest = level;
+  let at = 0;
+  while (at < bytes.length) {
+    const constructed = ((bytes[at] ?? 0) & 0x20) !== 0;
+    const first = bytes[at + 1] ?? 0;
+    const lengthBytes = first < 0x80 ? 0 : first & 0x7f;
+    const length =
+      lengthBytes === 0 ? first : bytes.readUIntBE(at + 2, lengthBytes);
+    const content = bytes.subarray(
+      at + 2 + lengthBytes,
+      at + 2 + lengthBytes + length,
+    );
+    if (constructed) deepest = Math.max(deepest, derDepth(content, level + 1));
+    at += 2 + lengthBytes + length;
+  }
+  return deepest;
+};
+
+it("builds the dual-signed fixture one level past the shared reader's default", () => {
+  // The shared reader admits level 32 by default. A shallower fixture would
+  // pass without the PE depth budget and prove nothing.
+  expect(derDepth(pkcs7DualSignedTimestampedFixture())).toBe(33);
+});
+
+it("admits ASN.1 nesting at the depth budget and refuses one level more", () => {
+  const nestedTo = (depth: number): Buffer => {
+    let node: Buffer = Buffer.from([0x05, 0x00]);
+    for (let level = 0; level < depth; level += 1) node = der(0x30, node);
+    return node;
+  };
+  expect(derDepth(nestedTo(ASN1_DEPTH_BUDGET))).toBe(ASN1_DEPTH_BUDGET);
+  expect(() => readAsn1(nestedTo(ASN1_DEPTH_BUDGET))).not.toThrow();
+  let refusal: unknown;
+  try {
+    readAsn1(nestedTo(ASN1_DEPTH_BUDGET + 1));
+  } catch (cause: unknown) {
+    refusal = cause;
+  }
+  expect(refusal).toBeInstanceOf(PeCertificateAsn1Failure);
+  expect(refusal).toMatchObject({
+    exhausted: { allowance: "asn1-depth", limit: ASN1_DEPTH_BUDGET },
+  });
+});
+
+it("retains overlay certificate evidence with unrelated section bytes outside the file", () => {
+  const bytes = peCertificateFixture();
+  const section = 0x98 + 224;
+  bytes.writeUInt32LE(512, section + 16);
+  bytes.writeUInt32LE(bytes.length, section + 20);
+  expect(parse(bytes)).toMatchObject({
+    coverage: { status: "complete", certificates: 1 },
+    entries: [{ location: { offset: 0x200 } }],
+  });
+});
+
 it("rejects headers whose section table does not fit SizeOfHeaders", () => {
   const bytes = peWithoutCertificateTableFixture();
   bytes.writeUInt16LE(0xffff, 0x86);
@@ -634,11 +834,25 @@ it("rejects headers whose section table does not fit SizeOfHeaders", () => {
 });
 
 it("decodes OBJECT IDENTIFIER arcs without truncation", () => {
-  expect(decodeOid(Buffer.from([0x88, 0x37, 0x03]))).toBe("2.999.3");
-  expect(decodeOid(Buffer.from([0x69, 0x90, 0x80, 0x80, 0x80, 0x00]))).toBe(
-    "2.25.4294967296",
+  const algorithms = [
+    [0x88, 0x37, 0x03],
+    [0x69, 0x90, 0x80, 0x80, 0x80, 0x00],
+    [0x2a, 0x86, 0x48],
+  ].map((oid) => derSeq(der(0x06, Buffer.from(oid))));
+  const signer = derSeq(
+    derInt(1),
+    derSeq(derSeq(), derInt(1)),
+    SHA256_ALG,
+    SHA256_ALG,
+    der(0x04, Buffer.from([1])),
   );
-  expect(decodeOid(Buffer.from([0x2a, 0x86, 0x48]))).toBe("1.2.840");
+  const payload = contentInfo(
+    derSeq(derInt(1), derSet(...algorithms), derSeq(DATA_OID), derSet(signer)),
+  );
+  expect(
+    parse(peCertificateFixture(false, payload)).entries[0]?.pkcs7
+      ?.digest_algorithm_oids,
+  ).toEqual(["2.999.3", "2.25.4294967296", "1.2.840"]);
 });
 
 it("rejects an oversized OBJECT IDENTIFIER before growing an arc", () => {
@@ -651,7 +865,11 @@ it("rejects an oversized OBJECT IDENTIFIER before growing an arc", () => {
   const arc = Buffer.alloc(MAX_OID_ARC_BYTES + 1, 0x80);
   arc[0] = 0x81;
   arc[arc.length - 1] = 0x00;
-  expect(() => decodeOid(Buffer.concat([Buffer.from([0x2a]), arc]))).toThrow(
+  const arcOid = derSeq(
+    der(0x06, Buffer.concat([Buffer.from([0x2a]), arc])),
+    der(0xa0, derSeq(derInt(1))),
+  );
+  expect(() => parse(peCertificateFixture(false, arcOid))).toThrow(
     /arc exceeds/u,
   );
 });
@@ -670,6 +888,75 @@ const namedCertificate = (issuer: Buffer, subject: Buffer) =>
     der(0x03, Buffer.from([0])),
   );
 
+it.each(
+  (["issuer", "subject", "signerIssuer"] as const).flatMap((target) =>
+    (["extra-field", "empty-rdn"] as const).map((kind) => ({ target, kind })),
+  ),
+)("rejects a $kind in the $target name", ({ target, kind }) => {
+  const malformed =
+    kind === "empty-rdn"
+      ? derSeq(derSet())
+      : derSeq(
+          derSet(
+            derSeq(cn, der(0x0c, Buffer.from("A")), der(0x05, Buffer.alloc(0))),
+          ),
+        );
+  const payload = pkcs7SignedDataFixture(
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    { [target]: malformed },
+  );
+  expect(() => parse(peCertificateFixture(false, payload))).toThrow(
+    /Name RDN|AttributeTypeAndValue/u,
+  );
+});
+
+it.each([true, false])("preserves RDN boundaries (one set: %s)", (oneSet) => {
+  const commonName = derSeq(cn, der(0x0c, Buffer.from("A")));
+  const organization = derSeq(
+    Buffer.from([0x06, 0x03, 0x55, 0x04, 0x0a]),
+    der(0x0c, Buffer.from("B")),
+  );
+  const name = oneSet
+    ? derSeq(derSet(commonName, organization))
+    : derSeq(derSet(commonName), derSet(organization));
+  const payload = pkcs7SignedDataFixture(
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    { issuer: name, subject: name, signerIssuer: name },
+  );
+  const pkcs7 = parse(peCertificateFixture(true, payload)).entries[0]?.pkcs7;
+  for (const decoded of [
+    pkcs7?.certificates[0]?.issuer,
+    pkcs7?.certificates[0]?.subject,
+    pkcs7?.signers[0]?.issuer,
+  ]) {
+    expect(decoded?.attributes).toMatchObject([
+      { value: "A", rdn_index: 0 },
+      { value: "B", rdn_index: oneSet ? 0 : 1 },
+    ]);
+    expect(decoded?.text).toBe(
+      oneSet
+        ? "commonName=A+organizationName=B"
+        : "commonName=A, organizationName=B",
+    );
+  }
+});
+
+it("distinguishes an empty RDNSequence from an empty RDN", () => {
+  const certificate = readAsn1(
+    namedCertificate(directoryName(der(0x0c, Buffer.from("Issuer"))), derSeq()),
+  );
+  expect(parseCertificate(certificate).subject).toEqual({
+    text: "",
+    attributes: [],
+  });
+});
+
 it.each(["signature", "public-key", "issuer-id", "subject-id"] as const)(
   "validates BIT STRING padding for %s at the shared certificate boundary",
   (field) => {
@@ -678,6 +965,8 @@ it.each(["signature", "public-key", "issuer-id", "subject-id"] as const)(
       readAsn1(
         derSeq(
           derSeq(
+            // Unique identifiers need v2 or v3.
+            der(0xa0, derInt(2)),
             derInt(1),
             SHA256_ALG,
             name,
@@ -764,6 +1053,48 @@ it("rejects a certificate missing subjectPublicKeyInfo or signatureValue", () =>
       ),
     ),
   ).toThrow(/trailing fields/u);
+});
+
+it("accepts only RFC 5280 certificate versions and the fields each allows", () => {
+  const name = directoryName(der(0x0c, Buffer.from("Fixture")));
+  const version = (value: number) => der(0xa0, derInt(value));
+  const uniqueId = der(0x81, Buffer.from([0]));
+  const extensions = der(0xa3, derSeq());
+  const certificate = (head: Buffer[], tail: Buffer[]) =>
+    readAsn1(
+      derSeq(
+        derSeq(
+          ...head,
+          derInt(1),
+          SHA256_ALG,
+          name,
+          validity,
+          name,
+          spki,
+          ...tail,
+        ),
+        SHA256_ALG,
+        der(0x03, Buffer.from([0])),
+      ),
+    );
+  for (const [head, tail, message] of [
+    [[version(3)], [], /version is not v1, v2 or v3/u],
+    [[version(0xff)], [], /version is not v1, v2 or v3/u],
+    [[], [uniqueId], /issuerUniqueID requires version 2 or 3/u],
+    [[], [extensions], /extensions require version 3/u],
+    [[version(1)], [extensions], /extensions require version 3/u],
+  ] as const)
+    expect(() => parseCertificate(certificate([...head], [...tail]))).toThrow(
+      message,
+    );
+  for (const [head, tail] of [
+    [[], []],
+    [[version(1)], [uniqueId]],
+    [[version(2)], [uniqueId, extensions]],
+  ] as const)
+    expect(
+      parseCertificate(certificate([...head], [...tail])).subject.text,
+    ).toBe("commonName=Fixture");
 });
 
 it("rejects a UTF8String name that is not valid UTF-8", () => {
@@ -1060,3 +1391,109 @@ it("rejects a certificate whose signatureAlgorithm differs from its TBS signatur
     parseCertificate(certificate(SHA256_ALG)).signature_algorithm_oid,
   ).toBe("2.16.840.1.101.3.4.2.1");
 });
+
+it("rejects malformed and repeated certificate extensions", () => {
+  const name = directoryName(der(0x0c, Buffer.from("Fixture")));
+  const certificate = (...extensions: Buffer[]) =>
+    readAsn1(
+      derSeq(
+        derSeq(
+          der(0xa0, derInt(2)),
+          derInt(1),
+          SHA256_ALG,
+          name,
+          validity,
+          name,
+          spki,
+          der(0xa3, derSeq(...extensions)),
+        ),
+        SHA256_ALG,
+        der(0x03, Buffer.from([0])),
+      ),
+    );
+  const ski = der(0x06, Buffer.from([0x55, 0x1d, 0x0e]));
+  const skiValue = der(0x04, Buffer.from([0x04, 0x01, 0xaa]));
+  const basicConstraints = der(0x06, Buffer.from([0x55, 0x1d, 0x13]));
+  const basicConstraintsValue = der(0x04, Buffer.from([0x30, 0x00]));
+  const critical = (...content: number[]) => der(0x01, Buffer.from(content));
+  for (const extension of [
+    derInt(1),
+    derSeq(ski),
+    derSeq(skiValue),
+    derSeq(ski, derInt(1)),
+    derSeq(ski, derInt(1), skiValue),
+    derSeq(ski, critical(0xff, 0xff), skiValue),
+    // X.690 11.1 requires DER TRUE=0xff; 11.5 omits DEFAULT FALSE.
+    ...[0x00, 0x01, 0x7f, 0xfe].map((value) =>
+      derSeq(ski, critical(value), skiValue),
+    ),
+    derSeq(ski, skiValue, critical(0xff)),
+    derSeq(ski, skiValue, der(0x05, Buffer.alloc(0))),
+  ])
+    expect(() => parseCertificate(certificate(extension))).toThrow(
+      /TBSCertificate extension/u,
+    );
+  expect(() =>
+    parseCertificate(
+      certificate(
+        derSeq(ski, skiValue),
+        derSeq(basicConstraints, basicConstraintsValue),
+        derSeq(ski, skiValue),
+      ),
+    ),
+  ).toThrow(/repeats extension 2\.5\.29\.14/u);
+  expect(
+    parseCertificate(
+      certificate(
+        derSeq(ski, skiValue),
+        derSeq(basicConstraints, critical(0xff), basicConstraintsValue),
+      ),
+    ).subject.text,
+  ).toBe("commonName=Fixture");
+});
+
+it.each([[], [0x00, 0x01], [0xff, 0xff]].map((version) => ({ version })))(
+  "rejects malformed SignedData version INTEGER content $version",
+  ({ version }) => {
+    const original = pkcs7SignedDataFixture();
+    const signed = readAsn1(original).children[1]!.children[0]!;
+    const payload = contentInfo(
+      derSeq(
+        der(0x02, Buffer.from(version)),
+        ...signed.children
+          .slice(1)
+          .map((node) => original.subarray(node.start, node.end)),
+      ),
+    );
+    expect(() => parse(peCertificateFixture(false, payload))).toThrow(
+      /SignedData version INTEGER/u,
+    );
+  },
+);
+
+it.each([
+  { name: "short form", version: Buffer.from([0x02, 0x01, 0x01]) },
+  { name: "BER long form", version: Buffer.from([0x02, 0x81, 0x01, 0x01]) },
+])(
+  "retains a valid SignedData version with $name length encoding",
+  ({ version }) => {
+    const original = pkcs7SignedDataFixture();
+    const signed = readAsn1(original).children[1]!.children[0]!;
+    const payload = contentInfo(
+      derSeq(
+        version,
+        ...signed.children
+          .slice(1)
+          .map((node) => original.subarray(node.start, node.end)),
+      ),
+    );
+    const report = parse(peCertificateFixture(false, payload));
+    expect(report.coverage).toMatchObject({
+      status: "complete",
+      certificates: 1,
+    });
+    expect(report.entries[0]?.pkcs7?.signers[0]).toMatchObject({
+      serial_hex: "11223344",
+    });
+  },
+);

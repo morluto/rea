@@ -1,10 +1,13 @@
-import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
+import { mkdir, symlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { tmpdir } from "node:os";
 
 import { describe, expect, it } from "vitest";
+import { createTestTempDirectory } from "../tests/fixtures/temporaryDirectory.js";
 
-import { resolveCliJsonPaths } from "./cliJsonInput.js";
+import {
+  cliJsonCallerPathSchema,
+  resolveCliJsonPaths,
+} from "./cli/cliJsonInput.js";
 import { electronActiveObservationInputSchema } from "./domain/javascript/electronActiveObservation.js";
 
 const paths = [
@@ -14,6 +17,15 @@ const paths = [
 ] as const;
 
 describe("CLI JSON path normalization", () => {
+  it.each([" ", "\t\r\n", "\u00a0", "\u2003", "\ufeff"])(
+    "refuses blank caller path %j before normalization",
+    (path) => {
+      expect(cliJsonCallerPathSchema.safeParse(path).success).toBe(false);
+      expect(resolveCliJsonPaths({ executable_path: path }, paths)).toEqual({
+        executable_path: path,
+      });
+    },
+  );
   it.each([
     ["executable_path", ""],
     ["executable_path", " \t "],
@@ -62,7 +74,7 @@ describe("CLI JSON path normalization", () => {
   it.skipIf(process.platform === "win32")(
     "keeps POSIX symlink-parent traversal for each selected JSON path",
     async () => {
-      const root = await mkdtemp(join(tmpdir(), "rea-json-caller-path-"));
+      const root = await createTestTempDirectory("rea-json-caller-path-");
       const originalCwd = process.cwd();
       try {
         await mkdir(join(root, "real/inner"), { recursive: true });
@@ -98,7 +110,6 @@ describe("CLI JSON path normalization", () => {
         expect(browserInput.browser.executable_path).toBe("link/../browser");
       } finally {
         process.chdir(originalCwd);
-        await rm(root, { recursive: true, force: true });
       }
     },
   );
@@ -123,7 +134,7 @@ describe("CLI JSON path normalization", () => {
       expect.objectContaining({
         path: ["executable_path"],
         code: "invalid_format",
-        message: expect.stringContaining("absolute local filesystem path"),
+        format: "regex",
       }),
     ]);
   });

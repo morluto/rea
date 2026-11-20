@@ -1,6 +1,6 @@
 # Static GPU code-object verification
 
-The [receipts](gpu-code-objects-2026-10-21.json) pin the measured runtime tree,
+The [receipts](https://github.com/morluto/rea/blob/main/docs/verification/gpu-code-objects-2026-10-21.json) pin the measured runtime tree,
 publisher URLs/digests, actual commands, completed answers and resource costs.
 Downloaded binaries, toolchains and complete Evidence bundles remain outside Git.
 

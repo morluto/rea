@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { setImmediate } from "node:timers/promises";
 import { afterEach, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { phaseArrival } from "../../support/lifecycleHarness.js";
 
 const mock = vi.hoisted(() => ({ spawn: vi.fn(), port: vi.fn() }));
 vi.mock("../../../dist/process/ProviderProcess.js", () => ({
@@ -60,25 +60,17 @@ const startFixture = async (): Promise<StartFixture> =>
       ),
     ).startRuntimeFixtureBrowser;
 
-const deferred = () => {
-  let resolve!: () => void;
-  const promise = new Promise<void>((complete) => {
-    resolve = complete;
-  });
-  return { promise, resolve };
-};
-
 const fixture = async (
   mode: "empty targets" | "discovery timeout" | "malformed" | "exited",
 ) => {
   let ready = false;
   let requests = 0;
-  const listed = deferred();
-  const published = deferred();
+  const listed = phaseArrival();
+  const published = phaseArrival();
   const server = createServer((request, response) => {
     requests += 1;
     if (mode === "exited") {
-      listed.resolve();
+      listed.arrive();
       return;
     }
     if (mode === "malformed") {
@@ -107,7 +99,7 @@ const fixture = async (
             : [],
       ),
     );
-    if (request.url === "/json/list") listed.resolve();
+    if (request.url === "/json/list") listed.arrive();
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
@@ -130,13 +122,13 @@ const fixture = async (
     cleanup,
   });
   mock.port.mockImplementation(async () => {
-    published.resolve();
+    published.arrive();
     return port;
   });
   return {
     origin,
-    listed: listed.promise,
-    published: published.promise,
+    listed,
+    published,
     cleanup,
     exit: () => child.kill("SIGTERM"),
     makeReady: () => {
@@ -166,19 +158,11 @@ it.each(["empty targets", "discovery timeout"] as const)(
       },
     );
     try {
-      await awaitAcknowledgement(
-        server.published,
-        pending,
-        "fixture port publication",
-      );
+      await server.published.reached(pending, "fixture port publication");
       await setImmediate();
       expect(settled).toBe(false);
       if (mode === "empty targets") {
-        await awaitAcknowledgement(
-          server.listed,
-          pending,
-          "fixture target listing",
-        );
+        await server.listed.reached(pending, "fixture target listing");
         expect(settled).toBe(false);
         server.makeReady();
       }
@@ -216,11 +200,7 @@ it("interrupts pending discovery when the owned fixture exits", async () => {
     "exited before CDP discovery",
   );
   try {
-    await awaitAcknowledgement(
-      server.listed,
-      pending,
-      "fixture target listing",
-    );
+    await server.listed.reached(pending, "fixture target listing");
     server.exit();
     await rejected;
     expect(server.cleanup).toHaveBeenCalledTimes(1);

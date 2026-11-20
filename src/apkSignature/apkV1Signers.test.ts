@@ -75,8 +75,8 @@ describe("v1 signers identified by subjectKeyIdentifier", () => {
     expect(facts.certificate?.sha256_fingerprint).toMatch(/^[a-f0-9]{64}$/);
     expect(v1PostureFingerprint(facts)).toBeNull();
     expect(v1SignerNotes([keyIdentified])).toEqual([
-      expect.stringContaining(
-        "META-INF/CERT.RSA: a SignerInfo names its certificate by subjectKeyIdentifier",
+      expect.stringMatching(
+        /META-INF\/CERT\.RSA.*subjectKeyIdentifier.*apksig does not resolve/iu,
       ) as string,
     ]);
     const bySerial = v1SignerFacts(signerOf(LEAF_CERTIFICATE));

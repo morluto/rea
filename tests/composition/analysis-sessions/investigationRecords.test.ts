@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { expect, it, onTestFinished } from "vitest";
 
 import { BinarySession } from "../../../src/application/binary/BinarySession.js";
@@ -43,7 +44,7 @@ it("uses the composed record owner and preserves best-effort post-commit notific
     throw new Error("Synthetic async observer failure");
   });
   const evidence = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     { operation: "independent-app", parameters: {}, result: true },
   );

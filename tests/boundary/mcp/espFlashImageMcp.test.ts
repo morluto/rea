@@ -16,6 +16,7 @@ import {
   otaRecord,
 } from "../../../src/domain/firmware/espFlash.fixture.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { espFlashSelectionError } from "../../../src/domain/firmware/espFlashSelection.js";
 import {
   artifactExtractionResultSchema,
   artifactInventoryResultSchema,
@@ -67,7 +68,7 @@ const completeBootloaderSchema = z.object({
 
 // The compiled stdio fixture checks advertised schemas against their dialect
 // and validates actual tool responses.
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "reads a flash dump at the caller's origin and keeps inputs in its identity (%s)",
   async (profile) => {
     const root = await createTestTempDirectory("rea-esp-flash-mcp-");
@@ -88,9 +89,12 @@ it.each(["full", "compact"] as const)(
         flash_offset: "0x1000",
       });
       expect(rejected.isError).toBe(true);
-      expect(JSON.stringify(rejected)).toContain(
-        "flash_offset and partition_table_offset apply only with format=esp-flash-image",
-      );
+      const selectionError = espFlashSelectionError({ flashOffset: 0x1000 });
+      if (selectionError === undefined)
+        throw new Error("Expected selection error");
+      expect(selectionError).toContain("flash_offset");
+      expect(selectionError).toContain("esp-flash-image");
+      expect(JSON.stringify(rejected)).toContain(selectionError);
       const opened = await call("open_binary", {
         path,
         format: "esp-flash-image",

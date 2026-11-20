@@ -1,6 +1,16 @@
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "../../domain/javascript/javascriptStaticAnalysis.js";
+import {
+  analyzeJavaScriptStaticSource,
+  analyzeParsedJavaScriptStaticSource,
+} from "../../../tests/fixtures/javascriptStaticAnalysis.js";
+import { parseJavaScriptSource } from "../../domain/javascript/javascriptSourceParser.js";
+
+const analyzeCommonJsSource = (source: string) => {
+  const file = parseJavaScriptSource(source, "fixture.cjs");
+  if (file === null) throw new Error("Expected valid CommonJS fixture");
+  return analyzeParsedJavaScriptStaticSource(source, file);
+};
 import {
   javaScriptWorkerModuleHeaderSchema,
   javaScriptWorkerModuleRecordSchema,
@@ -10,17 +20,17 @@ import { analyzeJavaScriptSemantics } from "../../domain/javascript/javascriptSe
 import { getterExpansionSource } from "../../../tests/fixtures/javascriptGetterExpansion.js";
 import { aliasSelectionBudgetSource } from "../../../tests/fixtures/javascriptAliasSelectionBudget.js";
 
-it("preserves independent static coverage and historical unmeasured facts", () => {
+it("preserves independent static coverage and refuses facts without it", () => {
   const facts = analyzeJavaScriptStaticSource("require(moduleName);");
   expect(
     javaScriptWorkerStaticAnalysisSchema.parse(
       JSON.parse(JSON.stringify(facts)),
     ),
   ).toEqual(facts);
-  const { analysis_coverage: _coverage, ...historical } = facts;
-  expect(javaScriptWorkerStaticAnalysisSchema.parse(historical)).toEqual(
-    historical,
-  );
+  const { analysis_coverage: _coverage, ...unmeasured } = facts;
+  expect(
+    javaScriptWorkerStaticAnalysisSchema.safeParse(unmeasured).success,
+  ).toBe(false);
   expect(
     javaScriptWorkerStaticAnalysisSchema.safeParse({
       ...facts,
@@ -54,7 +64,7 @@ it("transfers bounded alias selection coverage across the worker boundary", () =
 });
 
 it("retains application path change identity and provenance across the worker boundary", () => {
-  const facts = analyzeJavaScriptStaticSource(`
+  const facts = analyzeCommonJsSource(`
     const { app } = require("electron");
     app.setAppPath("./other");
   `);
@@ -85,10 +95,66 @@ it("transfers getter expansion limits and unknown bindings across the worker bou
   expect(ir.coverage.resourceLimits).toEqual(["getter-expansion"]);
 });
 
+it("retains conditional CommonJS provenance and links across the worker boundary", () => {
+  const ir = analyzeJavaScriptSemantics(
+    'const { readFile } = require("node:fs");',
+  );
+  const binding = ir.bindings.find(({ name }) => name === "readFile");
+  const link = ir.moduleLinks.find(({ specifier }) => specifier === "node:fs");
+  expect(binding?.provenance).toMatchObject({
+    status: "ambiguous",
+    origins: [{ loaderAuthority: "candidate" }],
+  });
+  expect(link).toMatchObject({ loaderAuthority: "candidate" });
+  expect(
+    javaScriptWorkerModuleRecordSchema.safeParse({
+      kind: "binding",
+      value: {
+        ...binding,
+        provenance: { ...binding?.provenance, status: "module", reason: null },
+      },
+    }).success,
+  ).toBe(false);
+  for (const record of [
+    { kind: "binding", value: binding },
+    { kind: "module-link", value: link },
+  ]) {
+    expect(
+      javaScriptWorkerModuleRecordSchema.parse(
+        JSON.parse(JSON.stringify(record)),
+      ),
+    ).toEqual(record);
+  }
+});
+
+it("transfers conditional require requests without claiming a loader", () => {
+  const facts = analyzeJavaScriptStaticSource(
+    'require("./dep.cjs"); require.resolve("./config.json");',
+  );
+  expect(facts.references).toEqual([
+    expect.objectContaining({
+      specifier: "./dep.cjs",
+      operation: "load",
+      loader_authority: "candidate",
+    }),
+    expect.objectContaining({
+      specifier: "./config.json",
+      operation: "resolve",
+      loader_authority: "candidate",
+    }),
+  ]);
+  expect(
+    javaScriptWorkerStaticAnalysisSchema.parse(
+      JSON.parse(JSON.stringify(facts)),
+    ),
+  ).toEqual(facts);
+});
+
 it("retains candidate endpoint interpretation across the worker boundary", () => {
   const facts = analyzeJavaScriptStaticSource(`
     client.get("settingKey");
     fetch("/api");
+    http.request("POST", target);
   `);
   expect(facts.endpoints).toEqual([
     expect.objectContaining({
@@ -96,6 +162,11 @@ it("retains candidate endpoint interpretation across the worker boundary", () =>
       interpretation: "candidate",
     }),
     expect.objectContaining({ value: "/api" }),
+    expect.objectContaining({
+      kind: "network",
+      value: "POST",
+      interpretation: "candidate",
+    }),
   ]);
   expect(facts.endpoints[1]).not.toHaveProperty("interpretation");
   const serialized = JSON.parse(JSON.stringify(facts)) as unknown;
@@ -111,54 +182,33 @@ it("retains candidate endpoint interpretation across the worker boundary", () =>
   ).toBe(false);
 });
 
-it.each(["babel-ast-v1", "babel-ast-v2"])(
-  "versions fingerprints through the worker schema and rejects %s",
-  (oldAlgorithm) => {
-    const facts =
-      analyzeJavaScriptStaticSource(`globalThis.webpackChunkApp.push([[1], {
+it("admits the current fingerprint version and refuses an incompatible one", () => {
+  const facts =
+    analyzeJavaScriptStaticSource(`globalThis.webpackChunkApp.push([[1], {
     17(module, exports) { const key = selectKey(); exports.read = value[key]; }
   }]);`);
-    expect(facts.bundler_registrations[0]?.modules[0]).toMatchObject({
-      structural_fingerprint_algorithm: "babel-ast-v3",
-      structural_fingerprint_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
-    });
-    expect(
-      javaScriptWorkerStaticAnalysisSchema.safeParse(
-        JSON.parse(JSON.stringify(facts)) as unknown,
-      ).success,
-    ).toBe(true);
-    const old = {
-      ...facts,
-      bundler_registrations: facts.bundler_registrations.map(
-        (registration) => ({
-          ...registration,
-          modules: registration.modules.map((module) => ({
-            ...module,
-            structural_fingerprint_algorithm: oldAlgorithm,
-          })),
-        }),
-      ),
-    };
-    expect(javaScriptWorkerStaticAnalysisSchema.safeParse(old).success).toBe(
-      false,
-    );
-  },
-);
-
-it("accepts candidate endpoint interpretations from static analysis", () => {
-  const facts = analyzeJavaScriptStaticSource(`http.request("POST", target);`);
-  expect(facts.endpoints).toContainEqual(
-    expect.objectContaining({
-      kind: "network",
-      value: "POST",
-      interpretation: "candidate",
-    }),
-  );
+  expect(facts.bundler_registrations[0]?.modules[0]).toMatchObject({
+    structural_fingerprint_algorithm: "babel-ast-v3",
+    structural_fingerprint_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+  });
   expect(
     javaScriptWorkerStaticAnalysisSchema.safeParse(
       JSON.parse(JSON.stringify(facts)) as unknown,
     ).success,
   ).toBe(true);
+  const old = {
+    ...facts,
+    bundler_registrations: facts.bundler_registrations.map((registration) => ({
+      ...registration,
+      modules: registration.modules.map((module) => ({
+        ...module,
+        structural_fingerprint_algorithm: "babel-ast-v2",
+      })),
+    })),
+  };
+  expect(javaScriptWorkerStaticAnalysisSchema.safeParse(old).success).toBe(
+    false,
+  );
 });
 
 it("preserves partial request targets through the strict worker schema", () => {
@@ -176,7 +226,7 @@ it("preserves partial request targets through the strict worker schema", () => {
 
 it("preserves scoped IPC receiver provenance and rejects malformed scope metadata", () => {
   const facts =
-    analyzeJavaScriptStaticSource(`const {BrowserWindow} = require("electron");
+    analyzeCommonJsSource(`const {BrowserWindow} = require("electron");
     const window = new BrowserWindow(); window.webContents.mainFrame.ipc.handle("scoped", () => {});`);
   expect(facts.electron.ipc).toHaveLength(1);
   expect(facts.electron.ipc[0]?.receiver?.kind).toBe("main-frame");

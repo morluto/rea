@@ -18,26 +18,65 @@ import { parseCapinfosOutput, parseTsharkJsonOutput } from "./PcapOutput.js";
 describe("resolvePcapTools", () => {
   it("prefers absolute environment paths for both tools", () => {
     expect(
-      resolvePcapTools({
-        [TSHARK_COMMAND_ENV]: "/usr/bin/tshark",
-        [CAPINFOS_COMMAND_ENV]: "/usr/bin/capinfos",
-      }),
+      resolvePcapTools(
+        {
+          [TSHARK_COMMAND_ENV]: "/usr/bin/tshark",
+          [CAPINFOS_COMMAND_ENV]: "/usr/bin/capinfos",
+        },
+        "linux",
+      ),
     ).toEqual({
       tshark: { command: "/usr/bin/tshark", source: "environment" },
       capinfos: { command: "/usr/bin/capinfos", source: "environment" },
     });
   });
 
-  it("keeps bare PATH selections for the Windows PATH/PATHEXT launcher", () => {
-    expect(resolvePcapTools({}, "win32")).toEqual({
-      tshark: { command: "tshark", source: "path" },
-      capinfos: { command: "capinfos", source: "path" },
+  it("resolves Windows PATH selections to absolute images for the owned launcher", () => {
+    // The relative entry holds decoys; like POSIX, only absolute entries count.
+    const files = new Set([
+      "C:\\Wireshark\\tshark.EXE",
+      "C:\\Wireshark\\capinfos.EXE",
+    ]);
+    expect(
+      resolvePcapTools(
+        {
+          Path: "relative-bin;\\drive-relative;\\\\incomplete-unc;C:\\Wireshark",
+          PATHEXT: ".COM;.EXE;.BAT",
+        },
+        "win32",
+        (path) =>
+          files.has(path) ||
+          path.includes("relative-bin") ||
+          path.includes("drive-relative") ||
+          path.includes("incomplete-unc"),
+      ),
+    ).toEqual({
+      tshark: { command: "C:\\Wireshark\\tshark.EXE", source: "path" },
+      capinfos: { command: "C:\\Wireshark\\capinfos.EXE", source: "path" },
     });
+    expect(() =>
+      resolvePcapTools({ Path: "C:\\Empty" }, "win32", () => false),
+    ).toThrow(expect.objectContaining({ code: "tshark_missing" }));
+  });
+
+  it("reports invalid PATHEXT separately from a missing tool", () => {
+    expect(() =>
+      resolvePcapTools(
+        { Path: "C:\\Wireshark", PATHEXT: ".EXE;C:\\invalid" },
+        "win32",
+        () => true,
+      ),
+    ).toThrow(
+      expect.objectContaining({
+        code: "invalid_pathext",
+        diagnostics: { extension: "C:\\invalid" },
+      }),
+    );
   });
 
   it("fails closed when no absolute PATH entry holds the tool", () => {
     expect(() => resolvePcapTools({ PATH: "relative-only" }, "linux")).toThrow(
-      /tshark was not found in an absolute PATH entry/u,
+      expect.objectContaining({ code: "tshark_missing" }),
     );
   });
 
@@ -75,13 +114,20 @@ describe("resolvePcapTools", () => {
 
   it("rejects a relative tshark path explicitly", () => {
     expect(() =>
-      resolvePcapTools({ [TSHARK_COMMAND_ENV]: "bin/tshark" }),
+      resolvePcapTools({ [TSHARK_COMMAND_ENV]: "bin/tshark" }, "linux"),
+    ).toThrow(/must be an absolute path/u);
+    // Not absolute on POSIX either; on Windows it is rooted on the current drive.
+    expect(() =>
+      resolvePcapTools(
+        { [TSHARK_COMMAND_ENV]: "\\tools\\tshark.exe" },
+        "win32",
+      ),
     ).toThrow(/must be an absolute path/u);
   });
 
   it("rejects a relative capinfos path explicitly", () => {
     expect(() =>
-      resolvePcapTools({ [CAPINFOS_COMMAND_ENV]: "capinfos" }),
+      resolvePcapTools({ [CAPINFOS_COMMAND_ENV]: "capinfos" }, "linux"),
     ).toThrow(/must be an absolute path/u);
   });
 });
@@ -408,11 +454,11 @@ it.skipIf(process.platform === "win32")(
     for (const directory of [root, intended])
       for (const tool of ["tshark", "capinfos"])
         await writeFile(join(directory, tool), "", { mode: 0o755 });
-    const selected = resolvePcapTools({ PATH: `${root}/alias/..` });
+    const selected = resolvePcapTools({ PATH: `${root}/alias/..` }, "linux");
     for (const tool of ["tshark", "capinfos"] as const)
       expect(await realpath(selected[tool].command)).toBe(join(intended, tool));
-    expect(() => resolvePcapTools({ PATH: `${root}/missing/..` })).toThrow(
-      /tshark was not found/u,
-    );
+    expect(() =>
+      resolvePcapTools({ PATH: `${root}/missing/..` }, "linux"),
+    ).toThrow(/tshark was not found/u);
   },
 );

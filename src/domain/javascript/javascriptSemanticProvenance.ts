@@ -30,9 +30,16 @@ export const semanticOriginsProvenance = (
 ): JavaScriptBindingProvenance => {
   const unique = uniqueSemanticOrigins(origins);
   const origin = unique[0];
-  return unique.length === 1 && origin !== undefined
+  return unique.length === 1 &&
+    origin !== undefined &&
+    origin.loaderAuthority !== "candidate"
     ? { status: "module", origins: [origin], reason: null }
-    : semanticAmbiguousProvenance(unique, "Multiple module origins.");
+    : semanticAmbiguousProvenance(
+        unique,
+        unique.some(({ loaderAuthority }) => loaderAuthority === "candidate")
+          ? "CommonJS loader authority is unknown."
+          : "Multiple module origins.",
+      );
 };
 
 /** Deduplicate and canonically order module origins. */
@@ -52,6 +59,7 @@ const semanticOriginKey = (origin: JavaScriptModuleOrigin): string =>
     origin.specifier,
     origin.importedPath,
     origin.resolutionMode ?? "import",
+    origin.loaderAuthority ?? "proven",
   ]);
 
 /** Canonically distinguish primitive values across type boundaries. */

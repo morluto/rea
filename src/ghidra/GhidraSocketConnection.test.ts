@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/index.js";
 import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
 import {
   GHIDRA_STARTUP_DEADLINE_ELAPSED,
@@ -30,7 +30,12 @@ it("captures the live elapsed time in the real startup-deadline timeout", async 
       isClosed: () => false,
       processExited: () => false,
       startupTimeoutMs: timeoutMs,
-      handlers: { data: () => {}, error: () => {}, close: () => {} },
+      handlers: {
+        data: () => {},
+        end: () => {},
+        error: () => {},
+        close: () => {},
+      },
     });
     if (result.ok) throw new Error("Expected a Ghidra startup timeout");
     expect(result.error).toMatchObject({

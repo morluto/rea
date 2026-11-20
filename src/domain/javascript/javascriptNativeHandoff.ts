@@ -1,5 +1,5 @@
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-import type { Evidence } from "../evidence.js";
+import { evidenceFileTarget, type Evidence } from "../evidence.js";
 import type {
   ApplicationEdge,
   ApplicationNode,
@@ -30,7 +30,7 @@ export const buildJavaScriptNativeHandoffs = (
       if (node.identity.strategy !== "content-digest") return [];
       const digest = node.identity.sha256;
       const linked = nativeEvidence.filter(
-        ({ subject }) => subject?.digest.sha256 === digest,
+        (evidence) => evidenceFileTarget(evidence)?.sha256 === digest,
       );
       nodeById ??= new Map(
         graph.nodes.map((candidate) => [candidate.node_id, candidate]),
@@ -106,11 +106,7 @@ const requestedExports = (nodes: readonly ApplicationNode[]): string[] => {
   const values = nodes.flatMap((node) =>
     node.observations.flatMap((observation) => {
       const facts = nativeExportObservationFacts(observation);
-      return [
-        ...(facts.label === null ? [] : [facts.label]),
-        ...facts.requested,
-        ...facts.members,
-      ];
+      return [...facts.requested, ...facts.members];
     }),
   );
   return [...new Set(values)].sort(compareUnicodeCodePoints);

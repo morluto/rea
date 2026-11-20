@@ -31,7 +31,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 import { ModelArtifactProvider } from "../../src/model/ModelArtifactProvider.js";
 import { ModelArtifactService } from "../../src/application/model/ModelArtifactService.js";
 import { EvidenceMcpServer } from "../../src/server/EvidenceMcpServer.js";
-import { registerModelArtifactTools } from "../../src/server/registerModelArtifactTools.js";
+import { registerServiceTools } from "../../src/server/serviceToolBindings.js";
 import { createToolResultDelivery } from "../../src/server/toolResult.js";
 import { silentLogger } from "../../src/logger.js";
 import { ggufFixture, safetensorsFixture } from "../fixtures/model/model.js";
@@ -62,10 +62,11 @@ mcpTest.for(["gguf", "safetensors"] as const)(
       undefined,
       createToolResultDelivery(undefined),
     );
-    registerModelArtifactTools(
+    const service = new ModelArtifactService(provider);
+    registerServiceTools(
       server,
-      new ModelArtifactService(provider),
-      silentLogger,
+      { modelArtifact: service },
+      { logger: silentLogger },
     );
     const client = await mcp.connect(server);
     const call = (selected = path) =>

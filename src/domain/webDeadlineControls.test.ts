@@ -3,12 +3,14 @@ import { describe, expect, it } from "vitest";
 import {
   cdpCleanupGraceExpired,
   cdpCommandDeadlineRecovery,
+  cdpDiscoveryTimeoutRecovery,
 } from "./browserDeadline.js";
 import { listBrowserTargetsInputSchema } from "./browserObservation.js";
 import {
   analyzeWebBundleInputSchema,
   webBundleHeapExhaustedReason,
   webBundleHeapExhaustedRemediation,
+  webBundleHeapLimit,
   webBundleMemoryExhaustion,
   webBundleResultAdmissionFailure,
   webBundleScriptTimeoutRecovery,
@@ -47,6 +49,7 @@ describe("web deadline controls", () => {
     expect(parsed.total_analysis_timeout_ms).toBeUndefined();
     expect(parsed.max_heap_mb).toBeUndefined();
     expect(parsed.source_map_fetch_timeout_ms).toBeUndefined();
+    expect(parsed.discovery_timeout_ms).toBeUndefined();
     expect(parsed.command_timeout_ms).toBeUndefined();
   });
 
@@ -54,9 +57,22 @@ describe("web deadline controls", () => {
     expect(
       analyzeWebBundleInputSchema.safeParse({
         ...bundle,
+        discovery_timeout_ms: 2_147_483_647,
         command_timeout_ms: 2_147_483_647,
       }).success,
     ).toBe(true);
+    expect(
+      listBrowserTargetsInputSchema.safeParse({
+        cdp_endpoint: "http://127.0.0.1:9222",
+        discovery_timeout_ms: 15_000,
+      }).success,
+    ).toBe(true);
+    expect(
+      listBrowserTargetsInputSchema.safeParse({
+        cdp_endpoint: "http://127.0.0.1:9222",
+        discovery_timeout_ms: 0,
+      }).success,
+    ).toBe(false);
     expect(
       listBrowserTargetsInputSchema.safeParse({
         cdp_endpoint: "http://127.0.0.1:9222",
@@ -84,13 +100,21 @@ describe("web deadline controls", () => {
     ).toBe(true);
   });
 
-  it("names each deadline and the fixed budgets it does not raise", () => {
+  it("names each deadline and the independent budgets it does not raise", () => {
     expect(webBundleScriptTimeoutRecovery(30_000).userMessage).toContain(
       "analysis_timeout_ms",
     );
-    expect(
-      webNetworkCaptureTimeoutRecovery(30_000).remediationAction,
-    ).toContain("no runtime override");
+    const captureRecovery = webNetworkCaptureTimeoutRecovery(30_000);
+    for (const control of [
+      "max_input_bytes",
+      "max_reply_bytes",
+      "max_nesting_depth",
+    ]) {
+      expect(captureRecovery.remediationAction).toContain(control);
+    }
+    expect(captureRecovery.remediationAction).toContain(
+      "capture_timeout_ms does not raise them",
+    );
     expect(webSourceMapDecodeTimeoutRecovery(20_000).userMessage).toContain(
       "decode_timeout_ms",
     );
@@ -107,7 +131,42 @@ describe("web deadline controls", () => {
     );
     expect(inspector.userMessage).not.toContain("command_timeout_ms");
     expect(inspector.remediationAction).not.toContain("--command-timeout-ms");
+    // A fixed deadline binds no per-call control.
+    expect(inspector.limit).toBeUndefined();
     expect(inspector.remediationAction).toContain("no runtime override");
+    const selectableDiscovery = cdpDiscoveryTimeoutRecovery(
+      "inspect_web_page",
+      15_000,
+      "browser-socket",
+      "The 67108864-byte browser-socket message budget",
+    );
+    expect(selectableDiscovery.userMessage).toContain(
+      "15000 ms discovery_timeout_ms",
+    );
+    expect(selectableDiscovery.remediationAction).toContain(
+      "Increase discovery_timeout_ms above 15000",
+    );
+    expect(selectableDiscovery.remediationAction).not.toContain("--");
+    expect(selectableDiscovery.limit).toMatchObject({
+      control_kind: "parameter",
+      parameter: "discovery_timeout_ms",
+      effective_value: 15_000,
+    });
+    expect(selectableDiscovery.remediationAction).toContain(
+      "command_timeout_ms does not raise it",
+    );
+    const fixedDiscovery = cdpDiscoveryTimeoutRecovery(
+      "observe_web_execution",
+      10_000,
+      "response",
+      "The 8388608-byte discovery document budget",
+    );
+    expect(fixedDiscovery.userMessage).not.toContain("discovery_timeout_ms");
+    expect(fixedDiscovery.remediationAction).not.toContain(
+      "--discovery-timeout-ms",
+    );
+    expect(fixedDiscovery.limit).toBeUndefined();
+    expect(fixedDiscovery.remediationAction).toContain("no runtime override");
   });
 });
 
@@ -125,6 +184,13 @@ it("names web-bundle exhaustion by the runtime that enforced it", () => {
   expect(webBundleHeapExhaustedRemediation(node)).toContain(
     "Increase max_heap_mb above 1024",
   );
+  expect(webBundleHeapExhaustedRemediation(node)).not.toContain("--");
+  expect(webBundleHeapLimit(node)).toMatchObject({
+    control_kind: "parameter",
+    parameter: "max_heap_mb",
+    effective_value: 1024,
+    unit: "MiB",
+  });
 
   const commitBytes = 1024 * 1024 * 1024 + 512 * 1024 * 1024;
   const windows = webBundleMemoryExhaustion({
@@ -164,6 +230,8 @@ it("names web-bundle exhaustion by the runtime that enforced it", () => {
   expect(webBundleHeapExhaustedRemediation(bun)).not.toContain(
     "Increase max_heap_mb",
   );
+  // Raising max_heap_mb does not change a Bun allocation exit.
+  expect(webBundleHeapLimit(bun)).toBeUndefined();
   expect(webBundleHeapExhaustedRemediation(bun)).toContain(
     "does not change this exit",
   );

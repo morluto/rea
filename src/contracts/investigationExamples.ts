@@ -1,5 +1,9 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
 import { createEvidence } from "../domain/evidence.js";
-import { FUNCTION_COMPARISON_PROVIDER } from "../domain/comparisonEvidenceIdentity.js";
+import {
+  FUNCTION_COMPARISON_PROFILE,
+  FUNCTION_COMPARISON_PROVIDER,
+} from "../domain/comparisonEvidenceIdentity.js";
 import { compareProcessCaptureEvidence } from "../domain/process/processComparisonEvidence.js";
 import { PROCESS_PROVIDER } from "../domain/process/processEvidenceProvider.js";
 import { parseProcessCapture } from "../domain/process/processCaptureParsing.js";
@@ -21,11 +25,12 @@ if (!right.ok) throw right.error;
 const comparison = compareFunctions(left.value, right.value);
 
 export const FUNCTION_COMPARISON_EVIDENCE = createEvidence(
-  undefined,
+  unknownTarget("derived-from-linked-evidence"),
   FUNCTION_COMPARISON_PROVIDER,
   {
     predicateType: "rea.function-comparison",
     operation: "compare_functions",
+    analysisProfile: FUNCTION_COMPARISON_PROFILE,
     parameters: {
       left_evidence_id: left.value.evidence.evidence_id,
       right_evidence_id: right.value.evidence.evidence_id,
@@ -43,7 +48,7 @@ export const FUNCTION_COMPARISON_EVIDENCE = createEvidence(
 
 const capture = parseProcessCapture(EMPTY_PROCESS_CAPTURE_EXAMPLE);
 const captureEvidence = (scenario: string) =>
-  createEvidence(undefined, PROCESS_PROVIDER, {
+  createEvidence(unknownTarget("not-observed"), PROCESS_PROVIDER, {
     predicateType: "rea.process-capture",
     operation: "capture_process_scenario",
     parameters: { scenario },

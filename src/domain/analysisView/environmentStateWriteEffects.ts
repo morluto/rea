@@ -6,7 +6,6 @@ import {
   isObject,
   locateItem,
   at,
-  same,
   type JsonObject,
   type ParsedRequestBody,
   requestJson,
@@ -29,6 +28,7 @@ import {
   type SimulatedState,
 } from "./environmentStateWriteChecks.js";
 import {
+  compareValues,
   explainUpdate,
   responseShapeOf,
 } from "./environmentStateWriteExplain.js";
@@ -176,6 +176,10 @@ export interface EffectContext {
   readonly io: WriteIo;
   readonly records: readonly StateRecordFacts[];
   readonly chronology: StateRecordChronology;
+  readonly overlapsWrite: (
+    record: StateRecordFacts,
+    exclude?: number,
+  ) => boolean;
   /** Whether a record may change state: a write the capture does not show reading only. */
   readonly isWrite: (record: StateRecordFacts) => boolean;
   readonly viewOf: (ordinal: number) => StateView | undefined;
@@ -317,6 +321,7 @@ export const searchFrom = (context: EffectContext, step: WriteStep) => ({
   records: context.records,
   from: step.index,
   chronology: context.chronology,
+  overlapsWrite: context.overlapsWrite,
   viewOf: context.viewOf,
   withBody: context.io.withBody,
   queryOf: context.io.queryOf,
@@ -363,11 +368,12 @@ const updatedObservation = (
           step.record.ordinal,
           (body): Observed | undefined => {
             const located =
-              body === undefined ? undefined : locateItem(body, entity.id);
+              body === undefined
+                ? undefined
+                : locateItem(body, entity.id, entity.idField);
             const object =
               located === undefined ? undefined : at(body!, located.pointer);
-            return located?.keys.includes(entity.idField) === true &&
-              isObject(object)
+            return located !== undefined && isObject(object)
               ? {
                   ordinal: step.record.ordinal,
                   pointer: located.pointer,
@@ -653,6 +659,9 @@ export const updateEntity = (
     return UNKNOWN;
   }
   const { targets, target, recorded } = outcomes(context, entity, after.object);
+  // An unknown baseline cannot establish this call's changes. Keep its outcome
+  // without creating or refining rules from values another write may have changed.
+  if (context.unknown(type, collection, id)) return recorded();
   // Only confirmed absence makes a bodyless action; malformed or unretained content stays unknown.
   const body =
     "body" in named
@@ -666,7 +675,6 @@ export const updateEntity = (
     fail(draft, step, "body-unusable");
     return recorded();
   }
-  const unknown = context.unknown(type, collection, id);
   const call = { ...callOf(step, body), body };
   const fitted = fitUpdateClocks(
     draft,
@@ -700,7 +708,7 @@ export const updateEntity = (
   const explained = { ...fitted.explained, rules: later };
   for (const member of keptOrders(call.body, after.object))
     draft.kept.add(member);
-  if (explained.unexplained.length > 0 && !unknown) {
+  if (explained.unexplained.length > 0) {
     refuse(draft, step, "unexplained-change");
     return recorded();
   }
@@ -709,16 +717,15 @@ export const updateEntity = (
     searchFrom(context, step),
     itemReads(context, { type, idField, collection, id }),
   )?.object;
-  // Each call must agree with the plan; one on an unknown entity cannot be checked, so it adds nothing to the plan.
+  // Each call with a known baseline must agree with the plan.
   if (
     built(draft) &&
-    (unknown ||
-      contradictsPlan(
-        { ...draft, plan: { ...draft.plan, rules } },
-        entity.fields,
-        after.object,
-        explained,
-      ) ||
+    (contradictsPlan(
+      { ...draft, plan: { ...draft.plan, rules } },
+      entity.fields,
+      after.object,
+      explained,
+    ) ||
       // A member calls left out is cleared by every one or by none.
       // A reference this call or an earlier one showed counts its member as the field's, whichever came first.
       defaultsDisagree(explained.body.defaults, { earlier: draft.updates }, [
@@ -731,7 +738,7 @@ export const updateEntity = (
         [...rules, ...explained.rules],
       ))
   ) {
-    if (!unknown) refuse(draft, step, "unexplained-change");
+    refuse(draft, step, "unexplained-change");
     return recorded();
   }
   draft.plan.rules = rules;
@@ -774,9 +781,10 @@ export const updateEntity = (
       after: after.object,
       kept,
     });
-  if (!written.ok || (disagrees && !unknown))
+  if (!written.ok || disagrees) {
     refuse(draft, step, "unexplained-change");
-  if (!written.ok || disagrees || unknown) return recorded();
+    return recorded();
+  }
   rememberCall(
     context.io.retain,
     draft,
@@ -889,7 +897,7 @@ const contradictsGeneratedClock = (
           candidate.field === rule.field && candidate.rule === "clock",
       ) ||
       next === undefined ||
-      next.ms <= previous.ms
+      compareValues(after[rule.field], ownMember(before, rule.field))! <= 0
     );
   });
 

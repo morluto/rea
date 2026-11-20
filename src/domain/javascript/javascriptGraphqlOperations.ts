@@ -24,50 +24,40 @@ import type {
  * earlier strings still belong to this object and must not become standalone
  * operation findings during the string scan.
  */
-const graphqlSourceBodyLiterals = (
+const graphqlSourceOwnership = (
   node: t.ObjectExpression,
-): readonly t.StringLiteral[] | undefined => {
-  const hasLocationOffset = node.properties.some(
-    (property) =>
-      t.isObjectProperty(property) &&
-      semanticStaticPropertyKey(property.key, property.computed) ===
-        "locationOffset",
-  );
-  if (!hasLocationOffset) return undefined;
-
-  const bodyStrings = (object: t.ObjectExpression) =>
-    object.properties.flatMap((property) =>
-      t.isObjectProperty(property) &&
-      semanticStaticPropertyKey(property.key, property.computed) === "body" &&
-      t.isStringLiteral(property.value)
-        ? [property.value]
-        : [],
-    );
-  const bodies = bodyStrings(node);
-
-  // Inline object spreads can own additional body values which the surrounding
-  // Source object may select. Include only body-key string literals from those
-  // spread values; ordinary strings elsewhere in the object remain scannable.
-  const visited = new WeakSet<t.ObjectExpression>();
-  visited.add(node);
-  const pending = node.properties.flatMap((property) => {
-    if (!t.isSpreadElement(property)) return [];
-    const spread = unwrapJavaScriptExpression(property.argument).node;
-    return t.isObjectExpression(spread) ? [spread] : [];
-  });
+):
+  | {
+      readonly bodies: readonly t.StringLiteral[];
+      readonly objects: ReadonlySet<t.ObjectExpression>;
+    }
+  | undefined => {
+  const bodies: t.StringLiteral[] = [];
+  let hasLocationOffset = false;
+  // Own marker presence and body literals through the same inline-spread walk.
+  // Unknown spreads cannot remove a known own marker. Ordinary nested objects
+  // and non-body strings remain independently scannable.
+  const visited = new Set<t.ObjectExpression>();
+  const pending = [node];
   while (pending.length > 0) {
     const current = pending.pop();
     if (current === undefined || visited.has(current)) continue;
     visited.add(current);
-    bodies.push(...bodyStrings(current));
     for (const property of current.properties) {
-      if (t.isSpreadElement(property)) {
+      if (t.isObjectProperty(property)) {
+        const key = semanticStaticPropertyKey(property.key, property.computed);
+        if (key === "locationOffset") hasLocationOffset = true;
+        else if (key === "body" && t.isStringLiteral(property.value))
+          bodies.push(property.value);
+      } else if (t.isSpreadElement(property)) {
         const spread = unwrapJavaScriptExpression(property.argument).node;
         if (t.isObjectExpression(spread)) pending.push(spread);
       }
     }
   }
-  return bodies.length === 0 ? undefined : bodies;
+  return hasLocationOffset && bodies.length > 0
+    ? { bodies, objects: visited }
+    : undefined;
 };
 
 const GRAPHQL_OPERATION_TYPES: ReadonlySet<string> = new Set([
@@ -110,6 +100,30 @@ const graphqlNameAt = (
     : { value: name, end: index + name.length };
 };
 
+/** GraphQL selections may start with a field, named spread, or inline fragment. */
+const graphqlSelectionAt = (text: string, start: number): boolean => {
+  let index = skipGraphqlIgnored(text, start);
+  for (;;) {
+    if (graphqlNameAt(text, index) !== undefined) return true;
+    if (!text.startsWith("...", index)) return false;
+    index = skipGraphqlIgnored(text, index + 3);
+    const fragment = graphqlNameAt(text, index);
+    if (fragment !== undefined)
+      return (
+        fragment.value !== "on" ||
+        graphqlNameAt(text, skipGraphqlIgnored(text, fragment.end)) !==
+          undefined
+      );
+    if (text.charAt(index) === "@")
+      return (
+        graphqlNameAt(text, skipGraphqlIgnored(text, index + 1)) !== undefined
+      );
+    if (text.charAt(index) !== "{") return false;
+    // Untyped inline fragments can nest; scan their prefix without recursion.
+    index = skipGraphqlIgnored(text, index + 1);
+  }
+};
+
 /** Recover a named operation from GraphQL document text. */
 const graphqlOperationFromText = (
   text: string,
@@ -122,12 +136,13 @@ const graphqlOperationFromText = (
   const index = skipGraphqlIgnored(text, name.end);
   const next = text.charAt(index);
   // Keep the existing bounded recognition scope: a named operation followed
-  // by variable definitions, a directive, or a selection set with a field.
+  // by variable definitions, a directive, or a recognized selection prefix.
   const hasHeader =
     next === "("
       ? text.charAt(skipGraphqlIgnored(text, index + 1)) === "$"
-      : (next === "@" || next === "{") &&
-        graphqlNameAt(text, skipGraphqlIgnored(text, index + 1)) !== undefined;
+      : next === "@"
+        ? graphqlNameAt(text, skipGraphqlIgnored(text, index + 1)) !== undefined
+        : next === "{" && graphqlSelectionAt(text, index + 1);
   return hasHeader
     ? { value: name.value, mechanism: `graphql:${type.value}` }
     : undefined;
@@ -149,9 +164,10 @@ const graphqlOperationFromDocumentNode = (
   )
     return undefined;
   const value = semanticFinalObjectStringProperty(name, "value");
-  return value === undefined
-    ? undefined
-    : { value, mechanism: `graphql:${type}` };
+  if (value === undefined) return undefined;
+  return graphqlNameAt(value, 0)?.end === value.length
+    ? { value, mechanism: `graphql:${type}` }
+    : undefined;
 };
 
 interface GraphqlSourceDependency {
@@ -416,6 +432,7 @@ export const createJavaScriptGraphqlScan = (
   index: JavaScriptBindingIndex,
 ): JavaScriptRpcScan => {
   const bodies = new WeakSet<t.Node>();
+  const ownedSources = new WeakSet<t.ObjectExpression>();
   const copied = new WeakMap<t.ObjectExpression, Set<string>>();
   const copies: GraphqlSourceCopy[] = [];
   const sources: {
@@ -448,9 +465,14 @@ export const createJavaScriptGraphqlScan = (
           copies.push({ ...source, operations });
         }
       }
-      const owned = graphqlSourceBodyLiterals(node);
+      const owned = ownedSources.has(node)
+        ? undefined
+        : graphqlSourceOwnership(node);
       if (owned !== undefined) {
-        for (const body of owned) bodies.add(body);
+        for (const body of owned.bodies) bodies.add(body);
+        // The outer Source owns its inline spread objects too: they cannot
+        // later emit overwritten or unknown bodies as independent Sources.
+        for (const object of owned.objects) ownedSources.add(object);
         const body = semanticFinalObjectProperty(node, "body");
         const recovered = t.isStringLiteral(body)
           ? graphqlOperationFromText(body.value)

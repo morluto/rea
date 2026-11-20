@@ -1,5 +1,9 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { traceSourceMap } from "../../../src/javascript/sourceMaps/TraceSourceMap.js";
-import { webSourceLocationArgs as args } from "../../fixtures/webSourceLocation.js";
+import {
+  webSourceLocationArgs as args,
+  webSourceLocationFixture,
+} from "../../fixtures/webSourceLocation.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -10,11 +14,11 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import { webSourceLocationFixture } from "../../fixtures/webSourceLocation.js";
 import { SourceMapDecoder } from "../../../src/javascript/sourceMaps/SourceMapDecoder.js";
 import { createSystemProcessOwnershipHost } from "../../../src/process/ProcessOwnershipObservation.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("publishes valid SDK schemas and records the named module trace without a binary target", async () => {
   const service = new WebSourceLocationService(
@@ -35,7 +39,10 @@ it("publishes valid SDK schemas and records the named module trace without a bin
     { kind: "session", session },
     { webSourceLocation: service },
   );
-  const client = new Client({ name: "module-contract", version: "1" });
+  const client = new Client(
+    { name: "module-contract", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -48,21 +55,16 @@ it("publishes valid SDK schemas and records the named module trace without a bin
   const advertised = (await client.listTools()).tools.find(
     (tool) => tool.name === "trace_web_source_location",
   );
-  if (advertised?.outputSchema === undefined)
+  if (advertised === undefined)
     throw new Error("module trace must advertise both schemas");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   const inputSchema: Record<string, unknown> = advertised.inputSchema;
-  const outputSchema: Record<string, unknown> = advertised.outputSchema;
   expect(ajv.validate(inputSchema, args)).toBe(true);
-  const response = await client.callTool({
-    name: "trace_web_source_location",
-    arguments: args,
-  });
+  const response = await client.callTool(
+    { name: "trace_web_source_location", arguments: args },
+    { toolDefinition: withCanonicalOutputSchema(advertised) },
+  );
   expect(response.isError).not.toBe(true);
-  expect(
-    ajv.validate(outputSchema, response.structuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
   const parsed = toolContract("trace_web_source_location").outputSchema.parse(
     response.structuredContent,
   );
@@ -96,9 +98,12 @@ it("publishes valid SDK schemas and records the named module trace without a bin
 
 it("preserves missing Linux ps capability and recovery through source-map tracing", async () => {
   const directory = await createTestTempDirectory("source-map-missing-ps-");
-  const prepare = createSystemProcessOwnershipHost("linux", {
-    PATH: directory,
-  }).prepare;
+  // A Linux host with no ps at a fixed system location or on REA's PATH.
+  const prepare = createSystemProcessOwnershipHost(
+    "linux",
+    { PATH: directory },
+    { linuxPsLocations: [] },
+  ).prepare;
   if (prepare === undefined)
     throw new Error("Ownership preparation is required");
   const createRuntime = vi.fn(async () => {
@@ -143,4 +148,44 @@ it("preserves missing Linux ps capability and recovery through source-map tracin
   await harness.client.ping();
   expect(createRuntime).not.toHaveBeenCalled();
   expect(launcher).not.toHaveBeenCalled();
+});
+
+it("rejects malformed delivery controls before acquiring source-map artifacts", async () => {
+  const load = vi.fn(async () => ok(webSourceLocationFixture()));
+  const harness = await createApplicationMcpHarness({
+    serverOptions: {
+      webSourceLocation: new WebSourceLocationService(
+        { load },
+        {
+          trace: async (input) =>
+            ok(traceSourceMap(input.text, input.url, input.position)),
+        },
+      ),
+    },
+  });
+  for (const delivery of [
+    {
+      detail: "complete",
+      view: { kind: "source-location", collection: "matches" },
+    },
+    {
+      detail: "summary",
+      view: {
+        kind: "source-location",
+        collection: "source-text",
+        match_index: -1,
+      },
+    },
+    {
+      detail: "summary",
+      view: { kind: "source-location", collection: "matches", limit: 0 },
+    },
+  ]) {
+    const result = await harness.client.callTool({
+      name: "trace_web_source_location",
+      arguments: { ...args, ...delivery },
+    });
+    expect(parseMcpToolError(result).error.code).toBe("invalid_request");
+  }
+  expect(load).not.toHaveBeenCalled();
 });

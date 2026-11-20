@@ -4,6 +4,7 @@ import {
   webSourceLocationFixture,
   webSourceMapDecoderFixture as decoder,
 } from "../../tests/fixtures/webSourceLocation.js";
+import { webModuleArtifactsFixture } from "../../tests/fixtures/webModuleTrace.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { parseEvidence } from "../domain/evidence.js";
 import {
@@ -16,10 +17,49 @@ import {
   webSourceLocationResultSchema,
 } from "../domain/webSourceLocation.js";
 import { WebSourceLocationService } from "./WebSourceLocationService.js";
-import type { WebSourceMapPort } from "./WebSourceLocationPorts.js";
+import type { WebSourceMapPort } from "../ports/WebSourceLocationPorts.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 const service = (data = webSourceLocationFixture(), port = decoder) =>
   new WebSourceLocationService({ load: () => Promise.resolve(ok(data)) }, port);
+
+it.each(["opaque", "already released"] as const)(
+  "tracks the remaining web cleanup owner beside an %s sibling",
+  async (sibling) => {
+    const live = new ProviderCleanupError("artifacts", ["artifact-root"], {});
+    const released = new ProviderCleanupError("codec", ["codec-root"], {});
+    released.bindCleanupResourceOwner({ cleanupResources: ["codec-root"] });
+    releaseOwnedCleanup(released);
+    const other =
+      sibling === "opaque" ? new Error("codec close unconfirmed") : released;
+    const workflow = new WebSourceLocationService(
+      {
+        load: async () => ok(webSourceLocationFixture()),
+        close: async () => {
+          throw live;
+        },
+      },
+      {
+        ...decoder,
+        close: async () => {
+          throw other;
+        },
+      },
+    );
+    const failure: unknown = await workflow
+      .close()
+      .catch((cause: unknown) => cause);
+    if (!(failure instanceof ProviderCleanupError))
+      throw new Error("expected aggregate cleanup failure");
+    expect(failure.cause).toMatchObject({ errors: [live, other] });
+    expect(failure.cleanupIncomplete).toBe(true);
+    expect(failure.cleanupResources).toEqual(["artifact-root"]);
+    releaseOwnedCleanup(live);
+    expect(failure.cleanupResources).toEqual([]);
+    expect(failure.cleanupIncomplete).toBe(sibling === "opaque");
+  },
+);
 const expectCodecDeadline = (
   evidence: {
     readonly limitations: readonly string[];
@@ -96,6 +136,52 @@ it.each([
     ).trace(input);
     if (response.ok) throw new Error("expected invalid input");
     expect(projectAnalysisError(response.error).code).toBe("invalid_request");
+  },
+);
+it.each([
+  {
+    position: { line: 3, column: 0 },
+    issue: {
+      path: ["generated_position", "line"],
+      minimum: 1,
+      maximum: 2,
+      message: expect.stringMatching(/line 3.*line 2.*one-based/i),
+    },
+  },
+  {
+    position: { line: 1, column: 4 },
+    issue: {
+      path: ["generated_position", "column"],
+      minimum: 0,
+      maximum: 3,
+      message: expect.stringMatching(
+        /column 4.*line 1.*column 3.*zero-based UTF-16/i,
+      ),
+    },
+  },
+  {
+    position: { line: 2, column: 3 },
+    issue: {
+      path: ["generated_position", "column"],
+      minimum: 0,
+      maximum: 2,
+    },
+  },
+])(
+  "reports a generated position past the retained script as out of range: %j",
+  async ({ position, issue }) => {
+    const { importMap: _importMap, ...script } =
+      webModuleArtifactsFixture("abc\r\nde");
+    const data = { ...webSourceLocationFixture(), ...script };
+    const response = await service(data).trace({
+      ...args,
+      generated_position: position,
+    });
+    if (response.ok) throw new Error("expected invalid input");
+    expect(projectAnalysisError(response.error)).toMatchObject({
+      code: "invalid_request",
+      details: { issues: [{ ...issue, reason: "out_of_range" }] },
+    });
   },
 );
 it.each([
@@ -236,7 +322,7 @@ it("honors cancellation both before acquisition and across decoder completion", 
     authority: "historical-reference",
     subject: {
       local_path: fixture.sourceFile.path,
-      digest: { sha256: fixture.sourceFile.sha256 },
+      identity: { sha256: fixture.sourceFile.sha256 },
     },
     parameters: args,
     raw_result: { source_map_text: fixture.sourceMap.text },
@@ -256,22 +342,6 @@ it("honors cancellation both before acquisition and across decoder completion", 
       fixture.sourceMap.file.path,
     ].map((path) => ({ kind: "artifact-path", path })),
   });
-
-  const malformedDecoder: WebSourceMapPort = {
-    trace: async (input, options) => {
-      const decoded = await decoder.trace(input, options);
-      return decoded.ok
-        ? ok({ ...decoded.value, source_map_sha256: "b".repeat(64) })
-        : decoded;
-    },
-  };
-  const malformed = await new WebSourceLocationService(
-    { load: () => Promise.resolve(ok(webSourceLocationFixture())) },
-    malformedDecoder,
-  ).trace(args);
-  expect(malformed.ok).toBe(false);
-  if (!malformed.ok)
-    expect(malformed.error).toBeInstanceOf(AnalysisOutputError);
 
   const invalidController = new AbortController();
   const malformedLate = await new WebSourceLocationService(

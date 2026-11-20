@@ -6,7 +6,7 @@ For captured or bundled JavaScript that needs readable source recovery, use
 `additional_paths` when advertised, then analyze the returned `analysis_input`
 directory together. Each input retains its own snapshot, digest and byte-range
 provenance; inputs and recovered code are never executed. Recovery requires a
-caller-supplied Wakaru on Linux x64; see [the recovery guide](https://github.com/morluto/rea/blob/main/docs/javascript-recovery.md).
+caller-supplied Wakaru on Linux x64; see [the recovery guide](https://github.com/morluto/rea/blob/main/docs/guides/javascript/javascript-recovery.md).
 
 Use `analyze_javascript_application` directly on the operator-supplied ASAR or
 extracted tree. When the question concerns known source paths and the connected
@@ -22,6 +22,20 @@ file for selections too long for one command line. Omit the selection when the
 question requires complete application analysis; `source_paths: []` is invalid,
 not an unfiltered request. `detail: "summary"` reduces delivery
 and does not by itself reduce analysis work.
+
+To locate member paths in a packaged `app.asar`, call `open_binary` and
+then `inspect_artifact` with `detail: "summary"`. Use
+`normalized_result.parent_evidence_id` with `inspect_analysis_view` to find
+member paths. Pass the selected paths as `source_paths` to
+`analyze_javascript_application`. Narrowing the source selection reduces
+analysis work. The inventory still examines the archive.
+
+If unpacked companions differ from their declared digests after re-signing
+and you intend to preserve those contradictions, pass
+`integrity_policy: "record-and-continue"` to `inspect_artifact`,
+`analyze_javascript_application`, and `extract_artifact` when you call them.
+The default `fail` policy returns `artifact_integrity_mismatch` when an
+operation encounters the contradiction, including the initial inventory.
 
 ASAR header/index admission defaults to 16 MiB / 16777216 bytes;
 an admission error names `asar.max_header_bytes` and its bounds (at most

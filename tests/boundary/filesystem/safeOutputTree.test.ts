@@ -19,9 +19,9 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
-import { SafeOutputTreeCreationFailure } from "../../../src/artifacts/SafeOutputTreeCreationFailure.js";
-import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
+import { SafeOutputTree } from "../../../src/resources/SafeOutputTree.js";
+import { SafeOutputTreeCreationFailure } from "../../../src/resources/SafeOutputTreeCreationFailure.js";
+import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
 
 describe("safe artifact output cleanup", () => {
   it("adopts an empty caller directory without taking authority to remove it", async () => {
@@ -39,30 +39,24 @@ describe("safe artifact output cleanup", () => {
     expect(await readdir(output)).toEqual([]);
     await tree.closeHandles();
   });
-  it.skipIf(process.platform !== "linux")(
-    "closes the parent descriptor when the output disappears before commit",
-    async () => {
-      const parent = await createTestTempDirectory("rea-safe-output-");
-      const output = join(parent, "published");
-      const tree = await SafeOutputTree.create(output);
-      await rm(output, { recursive: true });
-      await expect(tree.commit()).rejects.toThrow();
-      const targets = await Promise.all(
-        (await readdir("/proc/self/fd")).map((fd) =>
-          readlink(`/proc/self/fd/${fd}`).catch(() => undefined),
-        ),
-      );
-      expect(targets.filter((target) => target === parent)).toEqual([]);
-      const failure = await tree.rollback().catch((cause: unknown) => cause);
-      expect(failure).toBeInstanceOf(ArtifactReaderFailure);
-      expect(failure).toMatchObject({ cleanup: { resources: [output] } });
-      expect(tree.cleanup).toEqual({
-        status: "incomplete",
-        residualPaths: ["published"],
-      });
-      await rm(parent, { recursive: true, force: true });
-    },
-  );
+  it("keeps cleanup incomplete when the owned root disappears before commit", async () => {
+    const parent = await createTestTempDirectory("rea-safe-output-");
+    const output = join(parent, "published");
+    const tree = await SafeOutputTree.create(output);
+    await rm(output, { recursive: true });
+
+    await expect(tree.commit()).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(tree.rollback()).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "output-lifecycle",
+      cause: { code: "ENOENT" },
+      cleanup: { resources: [output] },
+    });
+    expect(tree.cleanup).toEqual({
+      status: "incomplete",
+      residualPaths: ["published"],
+    });
+  });
 });
 
 describe("safe artifact output file identity admission", () => {

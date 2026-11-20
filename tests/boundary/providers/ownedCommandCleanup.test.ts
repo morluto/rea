@@ -4,7 +4,8 @@ import { expect, it } from "vitest";
 import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
 import { retainOwnedCommandCleanup } from "../../../src/providers/OwnedCommandCleanup.js";
 import { createInspectionResources } from "../../fixtures/inspectionResources.js";
-import { ArtifactResourceRetryFailure } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceRetryFailure } from "../../../src/resources/ArtifactResourceScope.js";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
 
 it("retains every owned label without inventing a missing cleanup capability", async () => {
   // Model unavailable capabilities only; these labels name no real resources.
@@ -25,16 +26,10 @@ it("retains every owned label without inventing a missing cleanup capability", a
     "inspect_jadx_configuration",
   );
   expect(cleanup?.cleanupResources).toEqual(labels);
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const error: unknown = await resources
-      .close()
-      .catch((failure: unknown) => failure);
-    expect(error).toBeInstanceOf(ArtifactResourceRetryFailure);
-    if (!(error instanceof ArtifactResourceRetryFailure))
-      throw new Error("Expected retained ownership");
-    expect(error.cleanup?.resources).toEqual(labels);
-    expect(cleanup?.cleanupIncomplete).toBe(true);
-  }
+  await expect(resources.close()).resolves.toBeUndefined();
+  expect(cleanup?.cleanupResources).toEqual(labels);
+  expect(cleanup?.cleanupIncomplete).toBe(true);
+  expect(cleanup?.cleanupRetry).toBeUndefined();
 });
 
 it("reports only live helper peers across partial cleanup and retry", async () => {
@@ -58,7 +53,7 @@ it("reports only live helper peers across partial cleanup and retry", async () =
             throw cleanup;
           }
           labels = [];
-          cleanup.resolveCleanup();
+          releaseOwnedCleanup(cleanup);
         },
       },
     },
@@ -81,7 +76,7 @@ it("reports only live helper peers across partial cleanup and retry", async () =
     expect(cleanup.cleanupIncomplete).toBe(false);
   } finally {
     labels = [];
-    cleanup.resolveCleanup();
+    releaseOwnedCleanup(cleanup);
     await resources.close();
   }
 });

@@ -22,26 +22,24 @@ export interface GhidraStartupHandshakeOptions {
     value: JsonValue,
   ) => Result<GhidraSessionInfo, GhidraSessionError>;
   readonly failure: GhidraSessionFailureFactory;
-  readonly startupTimeoutMs: number;
 }
 
 /** Ping and validate the bridge after its socket is attached. */
 export async function completeGhidraStartupHandshake(
   options: GhidraStartupHandshakeOptions,
 ): Promise<Result<GhidraSessionInfo, GhidraSessionError>> {
+  if (options.deadline.interruption !== undefined)
+    return err(interruptionFailure(options));
+  // The shared deadline rechecks monotonic time on early native timer wakes.
   const ping = await options.request(
     "ping",
     {},
-    {
-      signal: options.deadline.signal,
-      timeoutMs: options.deadline.remainingMs(),
-    },
+    { signal: options.deadline.signal },
   );
   if (!ping.ok) {
     const failure =
-      ping.error.kind === "timeout" ||
-      (ping.error.kind === "cancelled" &&
-        options.deadline.interruption !== undefined)
+      ping.error.kind === "cancelled" &&
+      options.deadline.interruption !== undefined
         ? interruptionFailure(options)
         : ping.error;
     if (
@@ -65,6 +63,8 @@ export async function completeGhidraStartupHandshake(
     }
     return err(failure);
   }
+  if (options.deadline.interruption !== undefined)
+    return err(interruptionFailure(options));
   const parsed = options.parseSessionInfo(ping.value);
   if (!parsed.ok || parsed.value.analysis_timed_out) {
     const failure = parsed.ok
@@ -89,6 +89,6 @@ const interruptionFailure = (
         { cancellation: { reason: options.deadline.signal.reason } },
       )
     : options.failure("timeout", GHIDRA_STARTUP_DEADLINE_ELAPSED, undefined, {
-        timeoutMs: options.startupTimeoutMs,
+        timeoutMs: options.deadline.timeoutMs,
         elapsedMs: options.deadline.elapsedMs(),
       });

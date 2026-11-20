@@ -1,6 +1,7 @@
 import type { Socket } from "node:net";
 import { afterEach, expect, it, vi } from "vitest";
 
+import { DEFAULT_BRIDGE_MAX_REPLY } from "../config/bridgeMaxReplyBytes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, type Result } from "../domain/result.js";
 import { silentLogger } from "../logger.js";
@@ -40,6 +41,7 @@ const startup = () => {
     logger: silentLogger,
     failure,
     bridgeMaxRequestBytes: { maximumBytes: 8192, source: "setting" },
+    bridgeMaxReplyBytes: DEFAULT_BRIDGE_MAX_REPLY,
   });
   const parseSessionInfo = vi.fn(() =>
     err(failure("protocol", "Unexpected successful ping")),
@@ -47,7 +49,6 @@ const startup = () => {
   const handshake = () =>
     completeGhidraStartupHandshake({
       deadline,
-      startupTimeoutMs: deadline.timeoutMs,
       failure,
       request: (method, params, options) =>
         wire.request(method, params, options),
@@ -65,7 +66,7 @@ const startup = () => {
 };
 
 it.each(["before ping", "while awaiting ping"] as const)(
-  "retains the full startup budget and diagnostics when it expires %s before the abort callback",
+  "retains the full startup budget and diagnostics when it expires %s",
   async (phase) => {
     const fixture = startup();
     try {
@@ -73,10 +74,11 @@ it.each(["before ping", "while awaiting ping"] as const)(
       const result = fixture.handshake();
       if (phase === "while awaiting ping") {
         fixture.clock.mockReturnValue(351);
-        await vi.advanceTimersByTimeAsync(1);
+        await vi.advanceTimersByTimeAsync(250);
       }
-      // Exercise the wire timeout, not cancellation from the startup timer.
-      expect(fixture.deadline.signal.aborted).toBe(false);
+      expect(fixture.deadline.signal.aborted).toBe(
+        phase === "while awaiting ping",
+      );
       expect(await result).toMatchObject({
         ok: false,
         error: {
@@ -97,6 +99,25 @@ it.each(["before ping", "while awaiting ping"] as const)(
     }
   },
 );
+
+it("keeps the startup ping pending when a native timer wakes before expiry", async () => {
+  const fixture = startup();
+  try {
+    fixture.clock.mockReturnValue(349);
+    const result = fixture.handshake();
+    fixture.clock.mockReturnValue(349.9);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(fixture.pending.has(1)).toBe(true);
+    fixture.clock.mockReturnValue(350);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await result).toMatchObject({
+      ok: false,
+      error: { kind: "timeout", timeoutMs: 250, elapsedMs: 250 },
+    });
+  } finally {
+    fixture.deadline.dispose();
+  }
+});
 
 it("preserves caller cancellation during the startup ping", async () => {
   const fixture = startup();

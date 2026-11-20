@@ -3689,13 +3689,9 @@ msgstr "Collegare Ghidra su Windows"
 msgctxt "page:get-started/index.html"
 msgid ""
 "Windows x64 has experimental, read-only support for native x86 and x64 PE "
-"applications and DLLs on fixed local NTFS drives. Use an existing Ghidra "
-"12.1.x installation and a 64-bit JDK 21 or newer:"
+"applications and DLLs on fixed local NTFS/ReFS drives. Use an existing "
+"Ghidra 12.2 installation and a 64-bit JDK 25 or newer:"
 msgstr ""
-"Windows x64 offre supporto sperimentale di sola lettura per applicazioni e "
-"DLL native x86 e x64 in formato PE su unità NTFS locali fisse. Usa "
-"un'installazione esistente di Ghidra 12.1.x e un JDK a 64 bit, versione 21 o"
-" successiva:"
 
 #: website/public/get-started/index.html:1182
 msgctxt "page:get-started/index.html"
@@ -5249,11 +5245,8 @@ msgstr "REA ha bisogno di uno di questi per leggere i programmi nativi:"
 msgctxt "page:guides/native/index.html"
 msgid ""
 "{ph0}Ghidra{ph1} (macOS or Linux; experimental on Windows): free, but needs "
-"an existing Ghidra 12.1.x installation and a 64-bit JDK 21 or newer."
+"an existing Ghidra 12.2 installation and a 64-bit JDK 25 or newer."
 msgstr ""
-"{ph0} Ghidra {ph1} (macOS o Linux ; sperimentale su Windows): gratuito, ma "
-"richiede un Ghidra 12.1 esistente.x installazione e un 64-bit JDK 21 o più "
-"recente."
 
 #. {ph0}: <a href="../../get-started/#native">
 #. {ph1}: </a>
@@ -11833,7 +11826,8 @@ msgctxt "runtime"
 msgid "Switch to dark mode"
 msgstr "Passa alla modalità scura"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/web-network-
+#. {ph0}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/guides/web/web-network-
 #. captures.md" >
 #. {ph1}: </a >
 #: website/public/guides/browser/index.html:487
@@ -13523,8 +13517,8 @@ msgstr "Claude Desktop · usa una chat desktop"
 
 #. {ph0}: <a href="https://claude.ai/download">
 #. {ph1}: </a>
-#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/client-
-#. configuration.md#claude-desktop" >
+#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/client-configuration.md#claude-desktop" >
 #. {ph3}: </a >
 #: website/public/get-started/index.html:597
 #, python-brace-format
@@ -13571,12 +13565,11 @@ msgctxt "page:get-started/index.html"
 msgid "Setup ID"
 msgstr "ID di configurazione"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/client-
-#. configuration.md" >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/client-configuration.md" >
 #. {ph1}: </a >
-#. {ph2}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#released-
-#. package-and-main" >
+#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#released-package-and-main" >
 #. {ph3}: </a >
 #: website/public/get-started/index.html:757
 #, python-brace-format
@@ -13604,8 +13597,8 @@ msgstr ""
 "Nella chat di Grok Bot, chiedigli di aggiungere un server MCP personalizzato"
 " chiamato {ph0} usando questo comando sul computer del Bot:"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/client-
-#. configuration.md#other-client-settings" >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/client-configuration.md#other-client-settings" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:788
 #, python-brace-format
@@ -13874,9 +13867,8 @@ msgstr ""
 "Se macOS chiede il permesso Automation, autorizza l'app che avvia REA in "
 "System Settings → Privacy & Security → Automation, poi riprova."
 
-#. {ph0}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#hopper"
-#. >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#hopper" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1099
 #, python-brace-format
@@ -13892,22 +13884,18 @@ msgstr "Ghidra · installa lo strumento di analisi gratuito e Java"
 #: website/public/get-started/index.html:1111
 msgctxt "page:get-started/index.html"
 msgid ""
-"Install a 64-bit JDK 21 or newer, including the Java compiler. Choose the "
+"Install a 64-bit JDK 25 or newer, including the Java compiler. Choose the "
 "package matching your computer's architecture."
 msgstr ""
-"Installa un JDK a 64 bit, versione 21 o successiva, incluso il compilatore "
-"Java. Scegli il pacchetto adatto all'architettura del tuo computer."
 
 #. {ph0}: <code>ghidra_…_PUBLIC_….zip</code>
 #: website/public/get-started/index.html:1116
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
-"Download Ghidra 12.1.4 from the release's Assets list and extract the {ph0} "
+"Download Ghidra 12.2 from the release's Assets list and extract the {ph0} "
 "archive. Choose the release archive, not “Source code”."
 msgstr ""
-"Scarica Ghidra 12.1.4 dall'elenco Assets della versione ed estrai l'archivio"
-" {ph0}. Scegli l'archivio della versione, non “Source code”."
 
 #. {ph0}: <code>ghidraRun</code>
 #. {ph1}: <code>ghidraRun.bat</code>
@@ -13922,17 +13910,17 @@ msgstr ""
 "Trova la cartella estratta che contiene {ph0} o {ph1}. Usa quella cartella "
 "per {ph2}."
 
-#. {ph0}: <a href="https://adoptium.net/temurin/releases/?version=21" >
+#. {ph0}: <a href="https://adoptium.net/temurin/releases/?version=25" >
 #. {ph1}: </a >
 #. {ph2}: <a
-#. href="https://github.com/NationalSecurityAgency/ghidra/releases/tag/Ghidra_12.1.4_build"
+#. href="https://github.com/NationalSecurityAgency/ghidra/releases/tag/Ghidra_12.2_build"
 #. >
 #. {ph3}: </a >
 #: website/public/get-started/index.html:1127
 #, python-brace-format
 msgctxt "page:get-started/index.html"
-msgid "{ph0}Download a JDK{ph1} · {ph2}Download Ghidra 12.1.4{ph3}"
-msgstr "{ph0}Scarica un JDK{ph1} · {ph2}Scarica Ghidra 12.1.4{ph3}"
+msgid "{ph0}Download a JDK{ph1} · {ph2}Download Ghidra 12.2{ph3}"
+msgstr ""
 
 #. {ph0}: <code>java.home</code>
 #. {ph1}: <code>JAVA_HOME</code>
@@ -13957,11 +13945,11 @@ msgstr ""
 "configurazione dopo aver impostato i percorsi, approva la configurazione "
 "aggiornata dell'applicazione e poi riavvia l'agente."
 
-#. {ph0}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#ghidra"
-#. >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#ghidra" >
 #. {ph1}: </a >
-#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/windows-
+#. {ph2}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/providers/windows-
 #. ghidra-p0.md" >
 #. {ph3}: </a >
 #: website/public/get-started/index.html:1258
@@ -14011,7 +13999,8 @@ msgstr ""
 "Usa il file di registrazione JSON preparato con la guida del provider, poi "
 "rilancia la configurazione e riavvia l'agente."
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/ida-
+#. {ph0}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/providers/ida-
 #. provider.md" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1376
@@ -14160,13 +14149,16 @@ msgctxt "page:get-started/index.html"
 msgid "Process behavior"
 msgstr "Comportamento dei processi"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/flutter-
+#. {ph0}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/guides/android/flutter-
 #. analysis.md" >
 #. {ph1}: </a >
-#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/javascript-
+#. {ph2}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/guides/javascript/javascript-
 #. artifact-reconstruction.md" >
 #. {ph3}: </a >
-#. {ph4}: <a href="https://github.com/morluto/rea/blob/main/docs/evm-
+#. {ph4}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/guides/evm/evm-
 #. bytecode.md" >
 #. {ph5}: </a >
 #. {ph6}: <a href="../guides/">
@@ -14270,9 +14262,8 @@ msgstr ""
 "Se hai installato la CLI globale, aggiornala con {ph0}. Usa {ph1} per "
 "rimuovere la configurazione delle applicazioni e la skill di REA."
 
-#. {ph0}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#diagnose-
-#. update-and-remove" >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#diagnose-update-and-remove" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1812
 #, python-brace-format
@@ -14501,9 +14492,8 @@ msgstr ""
 "Su macOS, la compilazione richiede Xcode Command Line Tools, make e bison. "
 "Usa la guida per il tuo computer:"
 
-#. {ph0}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#missing-
-#. macos-native-decompiler" >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#missing-macos-native-decompiler" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1216
 #, python-brace-format
@@ -14511,9 +14501,8 @@ msgctxt "page:get-started/index.html"
 msgid "{ph0}macOS · Intel{ph1}"
 msgstr "{ph0}macOS · Intel{ph1}"
 
-#. {ph0}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#macos-
-#. arm64-native-decompiler" >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#macos-arm64-native-decompiler" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1222
 #, python-brace-format
@@ -14522,7 +14511,7 @@ msgid "{ph0}macOS · Apple Silicon{ph1}"
 msgstr "{ph0}macOS · Apple Silicon{ph1}"
 
 #. {ph0}: <a
-#. href="https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.1.4_build/GhidraDocs/GettingStarted.md#building-
+#. href="https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.2_build/GhidraDocs/GettingStarted.md#building-
 #. native-components" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1228
@@ -15932,7 +15921,8 @@ msgstr ""
 
 #. {ph0}: <a href="../../get-started/">
 #. {ph1}: </a>
-#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/android-
+#. {ph2}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/guides/android/android-
 #. analysis.md" >
 #. {ph3}: </a >
 #: website/public/showcase/aegis/index.html:714
@@ -17659,3 +17649,14 @@ msgstr ""
 #~ msgctxt "page:showcase/th04/index.html"
 #~ msgid "{ph0}Angle and velocity · source excerpt{ph1}"
 #~ msgstr ""
+
+#~ msgctxt "page:get-started/index.html"
+#~ msgid ""
+#~ "Windows x64 has experimental, read-only support for native x86 and x64 PE "
+#~ "applications and DLLs on fixed local NTFS drives. Use an existing Ghidra "
+#~ "12.1.x installation and a 64-bit JDK 21 or newer:"
+#~ msgstr ""
+#~ "Windows x64 offre supporto sperimentale di sola lettura per applicazioni e "
+#~ "DLL native x86 e x64 in formato PE su unità NTFS locali fisse. Usa "
+#~ "un'installazione esistente di Ghidra 12.1.x e un JDK a 64 bit, versione 21 o"
+#~ " successiva:"

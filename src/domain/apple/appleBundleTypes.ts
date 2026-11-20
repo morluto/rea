@@ -44,3 +44,6 @@ export const isUnopenedAppleBundleExtension = (extension: string): boolean =>
 /** Caller-facing list of the bundle directories binary routes open. */
 export const OPENABLE_APPLE_BUNDLE_TYPES_TEXT =
   OPENABLE_APPLE_BUNDLE_EXTENSIONS.join(", ");
+
+/** Decoded representation allowance for a binary or XML Info.plist, in MiB. */
+export const INFO_PLIST_DECODE_MIB = 16;

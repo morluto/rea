@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createAnalysisExecution,
   type AnalysisOperationPort,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { DecompileExport } from "../../../src/application/decompileDirectory/exportTree.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
@@ -169,9 +169,26 @@ describe("decompile_all MCP caveats", () => {
     expect(evidence.normalized_result).toMatchObject({
       counts: { written: 20, failed: 0 },
     });
-    // 40 address-specific caveats plus one oversized caveat: 8 kept and 33 counted, beside the workflow
-    // line and this target-less fixture's identity caveat.
-    expect(evidence.limitations).toHaveLength(11);
+    // 40 address-specific caveats plus one oversized caveat: 8 kept and 33
+    // counted, beside the workflow line. Target uncertainty is in the subject.
+    expect(evidence.subject.identity).toEqual({
+      kind: "unknown",
+      reason: "derived-from-linked-evidence",
+    });
+    expect(evidence.limitations).toHaveLength(10);
+    expect(evidence.limitations).toContain(
+      "Derived by an REA composed workflow.",
+    );
+    expect(evidence.limitations).toEqual(
+      expect.arrayContaining(
+        addresses
+          .slice(0, 4)
+          .flatMap((address) => [
+            `Fixture (fixture 1) procedure_info: procedure_info caveat at ${address}`,
+            `Fixture (fixture 1) procedure_pseudo_code: terminal call at ${address}`,
+          ]),
+      ),
+    );
     expect(evidence.limitations.at(-1)).toMatch(
       /^33 per-item provider limitation observations were omitted/u,
     );

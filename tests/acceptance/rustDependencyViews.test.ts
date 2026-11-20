@@ -1,19 +1,96 @@
+import { fileSubjectArchitecture } from "../fixtures/evidenceSubject.js";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { parseEvidence, createEvidence } from "../../src/domain/evidence.js";
+import { metadataReportSubjectFormat } from "../../src/domain/apple/machoTargetSelection.js";
 import { createEvidenceBundle } from "../../src/domain/evidenceBundle.js";
 import { rustBinarySchema } from "../../src/domain/rust/rustBinary.js";
-import { analysisViewResultSchema } from "../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../src/domain/analysisView/analysisViewResult.js";
 import { readEvidenceBundle } from "../../src/application/EvidenceBundleFiles.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import {
   createRustImage,
+  createRustHashOverflowImage,
+  createRustWasmModule,
   rustDependencyPayload,
 } from "../fixtures/rust/image.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+
+/** One synthetic cargo-auditable artifact for each supported container. */
+const rustArtifact = (
+  format: "elf" | "pe" | "macho" | "wasm",
+  payload: Buffer,
+): Buffer =>
+  format === "wasm"
+    ? createRustWasmModule({ payload })
+    : createRustImage({ format, payload });
+
+cliTest(
+  "keeps compiler-prefix coverage in CLI summaries until the selected budget admits every hash",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-rust-compiler-summary-");
+    const path = join(root, "compiler-paths.elf");
+    await writeFile(path, createRustHashOverflowImage());
+    for (const maxHashes of [64, 65]) {
+      const output = join(root, `source-${String(maxHashes)}.json`);
+      const delivered = await cli.run({
+        arguments: [
+          "inspect-rust-binary",
+          path,
+          "--detail",
+          "summary",
+          "--evidence_output",
+          output,
+          "--max-rustc-hashes",
+          String(maxHashes),
+          "--full-output",
+          "--json",
+        ],
+      });
+      expect(delivered.exitCode, delivered.stderr).toBe(0);
+      const envelope = delivered.json as {
+        data: { summary: { normalized_result: unknown } };
+        meta: { cli_controls?: unknown };
+      };
+      // The summary wraps the view; the CLI still names the option for the
+      // control the complete Evidence records.
+      expect(envelope.meta.cli_controls).toEqual(
+        maxHashes === 64
+          ? { max_rustc_hashes: "--max-rustc-hashes" }
+          : undefined,
+      );
+      const summary = analysisViewResultSchema.parse(
+        envelope.data.summary.normalized_result,
+      );
+      if (
+        summary.kind !== "summary" ||
+        summary.parent_operation !== "inspect_rust_binary"
+      )
+        throw new Error("Expected a Rust summary");
+      expect(summary.summary.rustc_commit).toEqual({
+        evidence_kind: "inferred",
+        hashes_count: maxHashes,
+        ...(maxHashes === 64
+          ? {
+              coverage: {
+                status: "partial",
+                reason: "max_rustc_hashes",
+                effective_limit: 64,
+                limit: expect.objectContaining({
+                  parameter: "max_rustc_hashes",
+                  effective_value: 64,
+                }),
+              },
+            }
+          : {}),
+      });
+      expect(summary.summary.auditable_metadata?.counts.packages).toBe(2);
+    }
+  },
+);
 
 /** Both authenticated retention and portable imports query the same captured facts. */
 const assertRetainedPages = async (
@@ -109,12 +186,57 @@ const assertRetainedPages = async (
   }
 };
 
+type CycloneDxCliRun = {
+  exitCode: number | null;
+  stderr: string;
+  json: unknown;
+};
+
+const expectCycloneDxView = async (
+  call: Awaited<ReturnType<typeof connectLocalToolsMcp>>["call"],
+  cli: { run: (input: { arguments: string[] }) => Promise<CycloneDxCliRun> },
+  input: { exported: string; format: string; root: string },
+): Promise<void> => {
+  const { exported, format, root } = input;
+  const request = {
+    source: { kind: "evidence-file", path: exported },
+    view: { kind: "cyclonedx" },
+  } as const;
+  const cyclonedx = await call("inspect_analysis_view", request);
+  expect(cyclonedx.isError, JSON.stringify(cyclonedx)).not.toBe(true);
+  const result = analysisViewResultSchema.parse(
+    parseEvidence(cyclonedx.structuredContent).normalized_result,
+  );
+  if (result.kind !== "cyclonedx") throw new Error("Expected a CycloneDX view");
+  expect(result.document).toMatchObject({
+    bomFormat: "CycloneDX",
+    specVersion: "1.6",
+    compositions: [{ aggregate: "unknown" }],
+  });
+  const documentText = JSON.stringify(result.document);
+  expect(documentText).toContain("pkg:cargo/same@1");
+  expect(documentText).not.toContain("pkg:cargo/app@1");
+  if (format !== "elf") return;
+  const requestPath = join(root, "cyclonedx-view.json");
+  await writeFile(requestPath, JSON.stringify(request));
+  const cliView = await cli.run({
+    arguments: ["inspect-analysis-view", requestPath, "--json"],
+  });
+  expect(cliView.exitCode, cliView.stderr).toBe(0);
+  const cliResult = analysisViewResultSchema.parse(
+    parseEvidence(cliView.json).normalized_result,
+  );
+  if (cliResult.kind !== "cyclonedx")
+    throw new Error("Expected a CycloneDX view");
+  expect(cliResult.document).toEqual(result.document);
+};
+
 cliTest(
   "queries stable Rust packages and edges through real CLI/MCP and portable Evidence",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-rust-views-");
     const { call } = await connectLocalToolsMcp();
-    for (const format of ["elf", "pe", "macho"] as const) {
+    for (const format of ["elf", "pe", "macho", "wasm"] as const) {
       const path = join(root, `source.${format}`);
       const output = join(root, `${format}-source.json`);
       const payload = rustDependencyPayload({
@@ -142,7 +264,7 @@ cliTest(
           },
         ],
       });
-      await writeFile(path, createRustImage({ format, payload }));
+      await writeFile(path, rustArtifact(format, payload));
       const fullReply = await call("inspect_rust_binary", { path });
       expect(fullReply.isError).not.toBe(true);
       const full = parseEvidence(fullReply.structuredContent);
@@ -229,18 +351,15 @@ cliTest(
       await unlink(path);
 
       await assertRetainedPages(call, full.evidence_id, exported);
+      await expectCycloneDxView(call, cli, { exported, format, root });
       const malformed = structuredClone(report);
       malformed.auditable_metadata!.dependency_edges[0]!.to_index = 999;
-      if (full.subject == null)
-        throw new Error("Missing complete Rust subject");
       const invalid = createEvidence(
         {
           path,
           sha256: report.artifact.sha256,
-          format: format === "macho" ? "mach-o" : format,
-          ...(full.subject.architecture === null
-            ? {}
-            : { architecture: full.subject.architecture }),
+          format: metadataReportSubjectFormat({ format }),
+          ...fileSubjectArchitecture(full.subject),
         },
         full.provider,
         {
@@ -259,7 +378,6 @@ cliTest(
       ).toMatchObject({ code: "invalid_request" });
     }
   },
-  60000,
 );
 
 cliTest(
@@ -283,16 +401,12 @@ cliTest(
     const report = rustBinarySchema.parse(full.normalized_result);
     const metadata = report.auditable_metadata;
     if (metadata === null) throw new Error("Expected Rust dependency metadata");
-    if (full.subject == null)
-      throw new Error("Expected Rust artifact identity");
     const historical = createEvidence(
       {
         path,
         sha256: report.artifact.sha256,
         format: "elf",
-        ...(full.subject.architecture === null
-          ? {}
-          : { architecture: full.subject.architecture }),
+        ...fileSubjectArchitecture(full.subject),
       },
       full.provider,
       {
@@ -401,5 +515,4 @@ cliTest(
     }
     expect((await readFile(path)).length).toBeGreaterThan(0);
   },
-  30000,
 );

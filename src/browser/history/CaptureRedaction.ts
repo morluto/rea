@@ -1,26 +1,23 @@
+import { escapeJsonPointerToken } from "../../domain/jsonPointer.js";
 import { isSafeNumber, type LosslessNumber } from "lossless-json";
 import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js";
 import { parseRecordedTransportUrl } from "../../domain/recordedTransportUrl.js";
+import {
+  explicitUtf8Spellings,
+  explicitValuesOccurIn,
+  isTransportCredentialHeader,
+  TRANSPORT_CREDENTIAL_HEADERS,
+} from "../../domain/explicitSensitiveValues.js";
 
 type Redaction = WebNetworkCaptureRecord["redactions"][number];
 type TransportUrlContext = { readonly credentialBaseUrl?: string };
-const CREDENTIAL_HEADERS = new Set([
-  "authorization",
-  "proxy-authorization",
-  "cookie",
-  "set-cookie",
-]);
-/** HTTP credential names apply equally to recorded headers and gRPC-web trailers. */
-export const isCaptureCredentialHeader = (name: string): boolean =>
-  CREDENTIAL_HEADERS.has(name.toLowerCase());
-
 /** Match an ASCII header name without allocating a potentially enormous line. */
 export const isCaptureCredentialHeaderBytes = (
   bytes: Uint8Array,
   start: number,
   end: number,
 ): boolean => {
-  for (const name of CREDENTIAL_HEADERS) {
+  for (const name of TRANSPORT_CREDENTIAL_HEADERS) {
     if (end - start !== name.length) continue;
     let matches = true;
     for (let index = 0; index < name.length; index++) {
@@ -51,12 +48,7 @@ export class CaptureRedaction {
         : undefined;
     this.#requestUrl =
       typeof request?.url === "string" ? request.url : undefined;
-    // An unpaired surrogate has no UTF-8 representation. Buffer.from would
-    // invent replacement-character bytes and incorrectly discard real evidence.
-    this.#sensitiveByteValues = sensitiveValues.flatMap((value) => {
-      const encoded = Buffer.from(value, "utf8");
-      return encoded.toString("utf8") === value ? [encoded] : [];
-    });
+    this.#sensitiveByteValues = explicitUtf8Spellings(sensitiveValues);
   }
 
   /** Preserve exact text unless explicitly sensitive or known transport URL userinfo. */
@@ -75,9 +67,8 @@ export class CaptureRedaction {
       }
     }
     if (
-      this.sensitiveValues.some(
-        (literal) => value.includes(literal) || result.includes(literal),
-      )
+      explicitValuesOccurIn(value, this.sensitiveValues) ||
+      explicitValuesOccurIn(result, this.sensitiveValues)
     ) {
       this.redactions.push({ pointer, reason: "explicit-sensitive-value" });
       return null;
@@ -115,7 +106,7 @@ export class CaptureRedaction {
     return (
       (/^\/(request|response)\/headers\/\d+\/value$/.test(pointer) &&
         typeof parent.name === "string" &&
-        isCaptureCredentialHeader(parent.name)) ||
+        isTransportCredentialHeader(parent.name)) ||
       /^\/(request|response)\/cookies\/\d+\/value$/.test(pointer)
     );
   }
@@ -147,12 +138,11 @@ export class CaptureRedaction {
   }
 }
 
+import { isRecord } from "../../kernel/isRecord.js";
+
 /** Escape a producer property for an RFC 6901 location. */
 export const capturePointer = (parent: string, key: string): string =>
-  `${parent}/${key.replaceAll("~", "~0").replaceAll("/", "~1")}`;
+  `${parent}/${escapeJsonPointerToken(key)}`;
 
 /** Structural record guard does not duck-type number/byte sidecar markers. */
-export const captureObject = (
-  value: unknown,
-): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+export const captureObject = isRecord;

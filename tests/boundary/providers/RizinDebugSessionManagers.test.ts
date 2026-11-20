@@ -1,11 +1,11 @@
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, writeFile } from "node:fs/promises";
+
 import { join, resolve } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { evidenceSchema } from "../../../src/domain/evidence.js";
-import { RizinDebugSessionManager } from "../../../src/rizin/RizinDebugSessionManager.js";
 import {
   createRizinTestManager,
   rizinTestInferiorTty,
@@ -24,13 +24,11 @@ describe.skipIf(process.platform === "win32")(
           .splice(0)
           .map((manager) => manager.closeAll().catch(() => undefined)),
       );
-      if (directory !== undefined)
-        await rm(directory, { recursive: true, force: true });
       directory = undefined;
     });
 
     it("uses an absolute target path and waits for Rizin's completion marker", async () => {
-      directory = await mkdtemp(join(tmpdir(), "rea-rizin-manager-"));
+      directory = await createTestTempDirectory("rea-rizin-manager-");
       const provider = join(directory, "fake-rizin.mjs");
       const argsFile = join(directory, "args.json");
       await writeFile(
@@ -77,6 +75,8 @@ process.stdin.on("data", (chunk) => {
         "-0",
         "-d",
         "-R",
+        `stdin=${await rizinTestInferiorTty()}`,
+        "-R",
         `stdout=${await rizinTestInferiorTty()}`,
         "-R",
         `stderr=${await rizinTestInferiorTty()}`,
@@ -114,15 +114,13 @@ describe.skipIf(process.platform === "win32")(
           .splice(0)
           .map((manager) => manager.closeAll().catch(() => undefined)),
       );
-      if (directory !== undefined)
-        await rm(directory, { recursive: true, force: true });
       directory = undefined;
     });
 
     it.each(["stopped", "throw", "reject"] as const)(
       "retains timeout output and retryable cleanup when stop outcome is %s",
       async (stopOutcome) => {
-        directory = await mkdtemp(join(tmpdir(), "rea-rizin-timeout-"));
+        directory = await createTestTempDirectory("rea-rizin-timeout-");
         const provider = join(directory, "fake-rizin-stall.mjs");
         await writeFile(
           provider,
@@ -151,9 +149,11 @@ process.stdin.on("data", (chunk) => {
         await chmod(provider, 0o700);
         let stopRejected = false;
         const manager = createRizinTestManager(
-          { REA_RIZIN_COMMAND: provider },
           {
-            frameTimeoutMs: 50,
+            REA_RIZIN_COMMAND: provider,
+            REA_DEBUGGER_COMMAND_DEADLINE_MS: "50",
+          },
+          {
             stopProcess: (session, name, options) => {
               if (stopOutcome !== "stopped" && !stopRejected) {
                 stopRejected = true;
@@ -212,7 +212,7 @@ process.stdin.on("data", (chunk) => {
 it.skipIf(process.platform === "win32")(
   "stops Rizin when empty unsolicited NUL frames exhaust the bounded queue",
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-rizin-empty-frames-"));
+    const directory = await createTestTempDirectory("rea-rizin-empty-frames-");
     const provider = join(directory, "fake-rizin-empty.mjs");
     const manager = createRizinTestManager({
       REA_RIZIN_COMMAND: provider,
@@ -240,7 +240,6 @@ process.stdin.resume();
       expect((await manager.close(started.value.session_id)).ok).toBe(true);
     } finally {
       await manager.closeAll().catch(() => undefined);
-      await rm(directory, { recursive: true, force: true });
     }
   },
 );

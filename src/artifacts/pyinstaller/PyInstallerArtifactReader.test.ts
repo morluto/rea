@@ -5,7 +5,7 @@ import { buffer } from "node:stream/consumers";
 
 import { expect, it, vi } from "vitest";
 
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import {
   materializeArtifactInventory,
@@ -15,7 +15,7 @@ import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirect
 import { PyInstallerArtifactReader } from "../PyInstallerArtifactReader.js";
 import { reconstructedPycHeader } from "./PythonBytecode.js";
 import { parsePythonPyc } from "../../python/PythonPycParser.js";
-import { inspectPythonPycInputSchema } from "../../domain/python/pythonPyc.js";
+import { pythonPycLimitsSchema } from "../../domain/python/pythonPyc.js";
 import {
   PYTHON_39_MAGIC,
   cArchiveExecutable,
@@ -29,6 +29,41 @@ const sha256 = (bytes: Buffer): string =>
   createHash("sha256").update(bytes).digest("hex");
 
 const PYTHON_313_MAGIC = Buffer.from("f30d0d0a", "hex");
+
+it.each(["close", "cancel"] as const)(
+  "does not complete a PyInstaller inventory after %s while paused",
+  async (interruption) => {
+    const path = join(await createTestTempDirectory("rea-pyi-paused-"), "app");
+    await writeFile(
+      path,
+      cArchiveExecutable({
+        layout: "2.1",
+        pythonVersion: 311,
+        members: [
+          {
+            name: "data",
+            typeCode: "x",
+            payload: Buffer.from("x"),
+            compress: false,
+          },
+        ],
+      }),
+    );
+    const reader = new PyInstallerArtifactReader(path);
+    const controller = new AbortController();
+    try {
+      const entries = reader.entries(controller.signal)[Symbol.asyncIterator]();
+      expect((await entries.next()).done).toBe(false);
+      if (interruption === "close") await reader.close();
+      else controller.abort();
+      await expect(entries.next()).rejects.toMatchObject({
+        reason: interruption === "close" ? "unavailable" : "cancelled",
+      });
+    } finally {
+      await reader.close();
+    }
+  },
+);
 
 const derived = (payload: Buffer): Buffer =>
   Buffer.concat([reconstructedPycHeader(PYTHON_39_MAGIC), payload]);
@@ -117,7 +152,7 @@ it("preserves legacy pyc bytes and derives only modern headerless CArchive bytec
         parsePythonPyc(
           bytes,
           { path: module.name, bytes: bytes.length, sha256: sha256(bytes) },
-          inspectPythonPycInputSchema.parse({ path: module.name }),
+          pythonPycLimitsSchema.parse({}),
         ).coverage.status,
       ).toBe("complete");
       expect(await buffer(await reader.open(entry))).toEqual(module.bytes);
@@ -308,6 +343,36 @@ it("preserves the CArchive binary type as executable metadata", async () => {
   ).toMatchObject({
     executable: false,
     format_metadata: { type_code: "x" },
+  });
+});
+
+it("leaves binary members of a PE carrier unmarked", async () => {
+  // The Windows bootloader sets no execute bit.
+  const path = await writeArchive(
+    "executable-member-pe",
+    cArchiveExecutable({
+      carrier: "pe",
+      layout: "2.1",
+      pythonVersion: 314,
+      pythonLibrary: "python314.dll",
+      members: [
+        {
+          name: "helper.dll",
+          typeCode: "b",
+          payload: Buffer.from("MZ"),
+          compress: false,
+        },
+      ],
+    }),
+  );
+  const snapshot = await scanCanonicalArtifactInventory(path);
+  expect(
+    snapshot.occurrences.find(
+      ({ logical_path }) => logical_path === "helper.dll",
+    ),
+  ).toMatchObject({
+    executable: false,
+    format_metadata: { type_code: "b" },
   });
 });
 
@@ -560,12 +625,11 @@ it("rejects a truncated table of contents", async () => {
       tocBytes: Buffer.concat([Buffer.from([0, 0, 0, 64]), Buffer.alloc(16)]),
     }),
   );
-  await expect(scanCanonicalArtifactInventory(path)).rejects.toBeInstanceOf(
-    ArtifactReaderFailure,
+  const failure = await scanCanonicalArtifactInventory(path).catch(
+    (error: unknown) => error,
   );
-  await expect(scanCanonicalArtifactInventory(path)).rejects.toMatchObject({
-    reason: "format",
-  });
+  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+  expect(failure).toMatchObject({ reason: "format" });
 });
 
 it("rejects a cookie whose package range is outside the file", async () => {
@@ -892,7 +956,7 @@ it("retains the descriptor owner when admission cleanup fails", async () => {
       reader.entries()[Symbol.asyncIterator]().next(),
     ).rejects.toMatchObject({
       reason: "format",
-      message: `PyInstaller source is not a regular file: ${directory}`,
+      message: expect.stringContaining(directory),
       cleanup: {
         reason: closeFailure.message,
         resources: [directory],
@@ -1060,6 +1124,45 @@ it("reads a PE signature beyond the carrier prefix before projecting paths", asy
   }
 });
 
+it("requires DOS magic before a PE-like record can select Windows path semantics", async () => {
+  const storedName = String.raw`pkg\data.bin`;
+  const carrier = cArchiveExecutable({
+    carrier: "pe",
+    layout: "2.1",
+    pythonVersion: 309,
+    members: [
+      {
+        name: storedName,
+        typeCode: "x",
+        payload: Buffer.from("data"),
+        compress: false,
+      },
+    ],
+  });
+  const withoutDosMagic = Buffer.from(carrier);
+  withoutDosMagic.write("XX");
+  for (const [bytes, expectedPath] of [
+    [carrier, "pkg/data.bin"],
+    [withoutDosMagic, storedName],
+  ] as const) {
+    const reader = new PyInstallerArtifactReader(
+      await writeArchive("carrier", bytes),
+    );
+    try {
+      const entries = [];
+      for await (const entry of reader.entries()) entries.push(entry);
+      expect(entries).toContainEqual(
+        expect.objectContaining({
+          path: expectedPath,
+          formatMetadata: expect.objectContaining({ source_name: storedName }),
+        }),
+      );
+    } finally {
+      await reader.close();
+    }
+  }
+});
+
 it("rejects a stored member whose declared size disagrees with its bytes", async () => {
   const path = await writeArchive(
     "stored-size",
@@ -1080,9 +1183,7 @@ it("rejects a stored member whose declared size disagrees with its bytes", async
   );
   await expect(scanCanonicalArtifactInventory(path)).rejects.toMatchObject({
     reason: "integrity",
-    message: expect.stringContaining(
-      "Stored CArchive member size disagrees with its table entry",
-    ),
+    integrityCheck: "layout-consistency",
   });
 });
 

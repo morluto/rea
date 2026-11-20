@@ -12,7 +12,7 @@
 4. Share the 32-segment split between the three comparing passes and list the
    segment-limited rules once for the limitation.
 5. Document the rule in the view schema description and in
-   `docs/web-network-captures.md`.
+   `docs/guides/web/web-network-captures.md`.
 6. Tests: shared positions across methods and depths, the spelling condition,
    merges that keep a tool's own rule, pairs, format-rule positions and the
    segment limit.

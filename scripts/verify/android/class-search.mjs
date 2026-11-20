@@ -14,7 +14,7 @@ export const verifyAndroidClassSearch = async ({ client, path, sha256 }) => {
       requireMcpOutput(response, "search_android_classes"),
     );
     const result = evidence.normalized_result;
-    assert.equal(evidence.subject.digest.sha256, sha256);
+    assert.equal(evidence.subject.identity.sha256, sha256);
     assert.equal(evidence.parameters.query, query);
     assert.equal(result.query, query);
     return result;

@@ -62,7 +62,7 @@ export interface PeCodeViewFixture {
   readonly type?: "RSDS" | "NB10";
   readonly guid?: string;
   readonly age?: number;
-  readonly pdbPath?: string;
+  readonly pdbPath?: string | Buffer;
 }
 
 /** Build a bounded PE image with optional managed metadata or CodeView debug data. */
@@ -84,7 +84,10 @@ export const pe = (
     const type = codeView.type ?? "RSDS";
     const pdbPath = codeView.pdbPath ?? "app.pdb";
     const age = codeView.age ?? 1;
-    const pathBuf = Buffer.from(`${pdbPath}\0`, "utf8");
+    const pathBuf =
+      typeof pdbPath === "string"
+        ? Buffer.from(`${pdbPath}\0`, "utf8")
+        : Buffer.concat([pdbPath, Buffer.alloc(1)]);
     if (type === "RSDS") {
       codeViewData = Buffer.alloc(24 + pathBuf.length);
       codeViewData.write("RSDS", 0, "ascii");
@@ -169,5 +172,14 @@ export const dosMz = (moduleSize = 128): Buffer => {
   bytes.set([0xb8, 0x00, 0x4c, 0xcd, 0x21], 32);
   // This is module data, not an e_lfanew field in a Windows DOS stub.
   if (size >= 64) bytes.writeUInt32LE(0xfedcba98, 60);
+  return bytes;
+};
+
+/** MZ stub declaring a non-PE Windows signature; not a complete NE/LE/LX image. */
+export const nonPeWindowsMz = (signature: "NE" | "LE" | "LX"): Buffer => {
+  const bytes = dosMz(480);
+  bytes.writeUInt16LE(4, 8);
+  bytes.writeUInt32LE(128, 60);
+  bytes.write(signature, 128, "ascii");
   return bytes;
 };

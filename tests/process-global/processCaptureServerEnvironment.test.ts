@@ -6,6 +6,7 @@ import { err } from "../../src/domain/result.js";
 import { captureProcessScenario } from "../../src/process/capture/ProcessHarness.js";
 import { createServer } from "../../src/server/createServer.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 // Windows rejects capture before it reads the environment, so record the
 // environment the MCP adapter hands to the capture owner on every host.
@@ -43,7 +44,10 @@ it("captures MCP process scenarios with the server's selected environment", asyn
     { kind: "session", session },
     { environment: { REA_CAPTURE_SELECTION_MARKER: "selected" } },
   );
-  const client = new Client({ name: "capture-environment", version: "1" });
+  const client = new Client(
+    { name: "capture-environment", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   resources.push(client, server, session);
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();

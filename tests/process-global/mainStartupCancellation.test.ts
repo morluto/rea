@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { afterEach, expect, it, vi } from "vitest";
+import { phaseArrival, phaseGate } from "../support/lifecycleHarness.js";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import type { BinarySession } from "../../src/application/binary/BinarySession.js";
@@ -12,10 +13,7 @@ import { run } from "../../src/main.js";
 import { registerProcessShutdown } from "../../src/main/processShutdown.js";
 import { ownStdioStartupInput } from "../../src/main/StdioStartupInput.js";
 import { MCP_SHUTDOWN_FAILED } from "../../src/main/messages.js";
-import {
-  createDeferred,
-  createTestBinarySession,
-} from "../fixtures/binarySession.js";
+import { createTestBinarySession } from "../fixtures/binarySession.js";
 
 const control = vi.hoisted(() => ({
   session: undefined as BinarySession | undefined,
@@ -66,12 +64,12 @@ it.each([
     const session = sessionOwner();
     const input = new PassThrough();
     const signals = new EventEmitter();
-    const entered = createDeferred<AbortSignal>();
+    const initialOpen = phaseArrival<AbortSignal>();
     vi.spyOn(session, "open").mockImplementation(async (_path, options) => {
       const signal = options?.signal;
       if (signal === undefined)
         throw new Error("Initial open has no cancellation owner");
-      entered.resolve(signal);
+      initialOpen.arrive(signal);
       await new Promise<void>((resolve) =>
         signal.addEventListener("abort", () => resolve(), { once: true }),
       );
@@ -80,6 +78,8 @@ it.each([
         error: new AnalysisCancelledError("open_binary", {
           cause: signal.reason,
         }),
+        targetAtCompletion: null,
+        providerIdAtCompletion: null,
         selection: { kind: "none" },
       };
     });
@@ -105,37 +105,43 @@ it.each([
       registerShutdown: (handler) =>
         registerProcessShutdown(handler, { signals, stdin: input }),
     });
-    const signal = await entered.promise;
-    expect(signals.listenerCount("SIGINT")).toBe(1);
-    expect(signals.listenerCount("SIGTERM")).toBe(1);
-    if (trigger === "EOF") input.end();
-    else if (trigger === "CAPACITY")
-      input.write(Buffer.alloc(STDIO_DEFAULT_MAX_BUFFER_SIZE + 1));
-    else if (trigger === "READ_ERROR")
-      input.emit("error", new Error("controlled stdin read failure"));
-    else signals.emit(trigger);
-    expect(await pending).toBe(failedClose ? 1 : 0);
-    expect(signal.aborted).toBe(true);
-    expect(serve).not.toHaveBeenCalled();
-    expect(close).toHaveBeenCalledWith({ retainProviderDocuments: true });
-    if (failedClose) {
-      expect(output.join("")).toContain(MCP_SHUTDOWN_FAILED);
-      if (trigger === "CAPACITY" || trigger === "READ_ERROR") {
-        const primary =
-          trigger === "CAPACITY"
-            ? "MCP input exceeded"
-            : "MCP stdin could not be read";
-        expect(output.join("")).toContain(primary);
-        expect(output.join("").indexOf(primary)).toBeLessThan(
-          output.join("").indexOf(MCP_SHUTDOWN_FAILED),
-        );
-      }
+    try {
+      const signal = await initialOpen.reached(pending, "initial target open");
+      expect(signals.listenerCount("SIGINT")).toBe(1);
+      expect(signals.listenerCount("SIGTERM")).toBe(1);
+      if (trigger === "EOF") input.end();
+      else if (trigger === "CAPACITY")
+        input.write(Buffer.alloc(STDIO_DEFAULT_MAX_BUFFER_SIZE + 1));
+      else if (trigger === "READ_ERROR")
+        input.emit("error", new Error("controlled stdin read failure"));
+      else signals.emit(trigger);
+      expect(await pending).toBe(failedClose ? 1 : 0);
+      expect(signal.aborted).toBe(true);
+      expect(serve).not.toHaveBeenCalled();
+      expect(close).toHaveBeenCalledWith({ retainProviderDocuments: true });
+      if (failedClose) {
+        expect(output.join("")).toContain(MCP_SHUTDOWN_FAILED);
+        if (trigger === "CAPACITY" || trigger === "READ_ERROR") {
+          const primary =
+            trigger === "CAPACITY"
+              ? "MCP input exceeded"
+              : "MCP stdin could not be read";
+          expect(output.join("")).toContain(primary);
+          expect(output.join("").indexOf(primary)).toBeLessThan(
+            output.join("").indexOf(MCP_SHUTDOWN_FAILED),
+          );
+        }
+        closeFails = false;
+        signals.emit("SIGINT");
+        await expect.poll(() => signals.listenerCount("SIGINT")).toBe(0);
+      } else expect(output).toEqual([]);
+      expect(signals.listenerCount("SIGTERM")).toBe(0);
+    } finally {
       closeFails = false;
       signals.emit("SIGINT");
-      await expect.poll(() => signals.listenerCount("SIGINT")).toBe(0);
-    } else expect(output).toEqual([]);
-    expect(signals.listenerCount("SIGTERM")).toBe(0);
-    input.destroy();
+      input.destroy();
+      await pending.catch(() => undefined);
+    }
   },
 );
 
@@ -147,12 +153,10 @@ it.each(["optional", "late-handle"] as const)(
     const closeSession = vi.spyOn(session, "close").mockResolvedValue(ok(null));
     const input = new PassThrough();
     const signals = new EventEmitter();
-    const entered = createDeferred<void>();
-    const release = createDeferred<void>();
+    const startupStage = phaseGate();
     const closeHandle = vi.fn(async () => {});
     const serve = vi.fn(async () => {
-      entered.resolve();
-      await release.promise;
+      await startupStage.hold();
       return { close: closeHandle };
     });
     const pending = run({
@@ -161,8 +165,7 @@ it.each(["optional", "late-handle"] as const)(
       serve,
       loadOptionalProviders: async () => {
         if (stage === "optional") {
-          entered.resolve();
-          await release.promise;
+          await startupStage.hold();
         }
         return {};
       },
@@ -171,25 +174,31 @@ it.each(["optional", "late-handle"] as const)(
       registerShutdown: (handler) =>
         registerProcessShutdown(handler, { signals, stdin: input }),
     });
-    await entered.promise;
-    if (stage === "optional") {
-      await new Promise<void>((resolve) => {
-        input.once("end", resolve);
-        input.end();
+    try {
+      await startupStage.reached(pending, "startup stage");
+      if (stage === "optional") {
+        await new Promise<void>((resolve) => {
+          input.once("end", resolve);
+          input.end();
+        });
+      } else signals.emit("SIGTERM");
+      expect(closeHandle).not.toHaveBeenCalled();
+      expect(closeSession).not.toHaveBeenCalled();
+      startupStage.release();
+      expect(await pending).toBe(0);
+      expect(serve).toHaveBeenCalledTimes(stage === "optional" ? 0 : 1);
+      expect(closeHandle).toHaveBeenCalledTimes(stage === "optional" ? 0 : 1);
+      expect(closeSession).toHaveBeenCalledTimes(1);
+      expect(closeSession).toHaveBeenCalledWith({
+        retainProviderDocuments: true,
       });
-    } else signals.emit("SIGTERM");
-    expect(closeHandle).not.toHaveBeenCalled();
-    expect(closeSession).not.toHaveBeenCalled();
-    release.resolve();
-    expect(await pending).toBe(0);
-    expect(serve).toHaveBeenCalledTimes(stage === "optional" ? 0 : 1);
-    expect(closeHandle).toHaveBeenCalledTimes(stage === "optional" ? 0 : 1);
-    expect(closeSession).toHaveBeenCalledTimes(1);
-    expect(closeSession).toHaveBeenCalledWith({
-      retainProviderDocuments: true,
-    });
-    expect(signals.listenerCount("SIGINT")).toBe(0);
-    input.destroy();
+      expect(signals.listenerCount("SIGINT")).toBe(0);
+    } finally {
+      signals.emit("SIGTERM");
+      startupStage.release();
+      input.destroy();
+      await pending.catch(() => undefined);
+    }
   },
 );
 

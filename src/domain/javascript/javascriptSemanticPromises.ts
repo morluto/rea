@@ -19,7 +19,7 @@ import {
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
-import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
+import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
   assignedSemanticResultBindings,
@@ -488,7 +488,7 @@ const resolvePromiseExpression = (
   const binding = resolveSemanticBindingState(state, node, node.name);
   if (binding === undefined || seenBindings.has(binding.bindingId))
     return unresolvedPromise();
-  const read = semanticBindingAtRead(binding, node, state.parentsByNode);
+  const read = semanticBindingAtRead(binding, node, state);
   if (
     read.status !== "ordered" ||
     !read.hasDefiniteInitializer ||

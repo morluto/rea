@@ -9,6 +9,7 @@ import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 cliTest.skipIf(process.platform === "win32")(
   "migrates an owned shebang registration and starts its generated MCP command without a runtime on PATH",
@@ -108,7 +109,10 @@ cliTest.skipIf(process.platform === "win32")(
       env: { ...environment, ...registration.env },
       stderr: "pipe",
     });
-    const client = new Client({ name: "setup-interpreter", version: "1" });
+    const client = new Client(
+      { name: "setup-interpreter", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     try {
       await client.connect(transport);
       expect(
@@ -161,33 +165,32 @@ cliTest.skipIf(process.platform === "win32").for([
           XDG_CONFIG_HOME: join(home, ".config"),
           PATH: process.env.PATH ?? "",
         },
-        timeoutMs: 30_000,
       });
 
-    const setup = await run(registered, [
-      "setup",
-      "--client",
-      "cursor",
-      "--skill=false",
-      "--yes",
-      "--json",
-    ]);
+    const scope = ["--client", "cursor", "--skill=false", "--json"];
+    const setup = await run(registered, ["setup", "--yes", ...scope]);
     expect(setup.exitCode, setup.stderr).toBe(0);
-    for (const alias of [registered, alternate]) {
-      const doctor = await run(alias, [
-        "doctor",
-        "--client",
-        "cursor",
-        "--skill=false",
-        "--json",
-      ]);
-      expect(doctor.exitCode, doctor.stdout).toBe(0);
-      expect(JSON.parse(doctor.stdout)).toMatchObject({
-        scope_checks: expect.arrayContaining([
-          expect.objectContaining({ name: "registration:cursor", ok: true }),
-        ]),
-      });
-    }
+    expect(JSON.parse(setup.stdout)).toMatchObject({
+      doctor: {
+        healthy: true,
+        identity: {
+          registrations: [
+            {
+              client: "cursor",
+              state: "aligned",
+              command: [expect.any(String), join(root, registered), "mcp"],
+            },
+          ],
+        },
+      },
+    });
+    const doctor = await run(alternate, ["doctor", ...scope]);
+    expect(doctor.exitCode, doctor.stdout).toBe(0);
+    expect(JSON.parse(doctor.stdout)).toMatchObject({
+      scope_checks: expect.arrayContaining([
+        expect.objectContaining({ name: "registration:cursor", ok: true }),
+      ]),
+    });
     const uninstall = await run(alternate, ["uninstall", "--json"]);
     expect(uninstall.exitCode, uninstall.stderr).toBe(0);
     expect(JSON.parse(await readFile(config, "utf8"))).toEqual({
@@ -296,7 +299,6 @@ cliTest.skipIf(process.platform === "win32")(
           XDG_CONFIG_HOME: join(home, ".config"),
           PATH: process.env.PATH ?? "",
         },
-        timeoutMs: 30_000,
       });
     const uninstall = await run(["uninstall", "--json"]);
     expect(uninstall.exitCode, uninstall.stderr).toBe(0);

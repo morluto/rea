@@ -18,11 +18,9 @@ afterEach(async () => {
   for (const root of roots.splice(0))
     await rm(root, { recursive: true, force: true });
 });
-/** Pinned upstream tools that navigate an active IDA GUI as a side effect. */
-const GUI_NAVIGATING_TOOLS: ReadonlySet<string> = new Set([
-  "disassemble_function",
-  "decompile_function",
-]);
+/** Native GUI decompilation changes the active view; headless tools never do. */
+const guiNavigatingTool = (mode: "attached" | "headless", name: string) =>
+  mode === "attached" && name === "decompile";
 
 const parametersFor = (
   operation: string,
@@ -52,7 +50,7 @@ describe.each(["attached", "headless"] as const)(
         expect(operations).toContain("resolve_containing_procedure");
     });
     it.each(operations)(
-      "declares %s UI effects matching the upstream tools it reaches",
+      "serializes %s against its named advertised output contract",
       async (operation) => {
         const { root, target } = await createIdaTarget();
         roots.push(root);
@@ -63,6 +61,7 @@ describe.each(["attached", "headless"] as const)(
             args: [],
             env: {},
             mode,
+            protocol: mode === "attached" ? "native" : "modern",
             workspaceRoot: root,
             timeoutMs: 1000,
           },
@@ -70,50 +69,18 @@ describe.each(["attached", "headless"] as const)(
           producer,
         );
         try {
-          const execution = await client.execute(
-            operation,
-            parametersFor(operation),
-          );
-          if (mode === "headless" && operation === "procedure_callers")
-            expect(execution).toMatchObject({
-              ok: false,
-              error: { _tag: "AnalysisCapabilityUnavailableError" },
-            });
-          else if (!execution.ok) throw execution.error;
-        } finally {
-          expect((await client.close()).ok).toBe(true);
-        }
-        const descriptor = idaCapabilities(
-          IDA_COMPATIBILITY_PROFILES[mode === "attached" ? "legacy" : "modern"],
-          true,
-        ).find((capability) => capability.operation === operation);
-        expect(descriptor?.effects.mayShowUi).toBe(
-          producer.calls.some(({ name }) => GUI_NAVIGATING_TOOLS.has(name)),
-        );
-      },
-    );
-
-    it.each(operations)(
-      "serializes %s against its named advertised output contract",
-      async (operation) => {
-        const { root, target } = await createIdaTarget();
-        roots.push(root);
-        const client = new IdaSessionClient(
-          {
-            command: "fixture",
-            args: [],
-            env: {},
-            mode,
-            workspaceRoot: root,
-            timeoutMs: 1000,
-          },
-          target,
-          new RecordingIdaMcp(target, mode),
-        );
-        try {
           const parameters = parametersFor(operation);
           const execution = await client.execute(operation, parameters);
-          if (mode === "headless" && operation === "procedure_callers") {
+          const descriptor = idaCapabilities(
+            IDA_COMPATIBILITY_PROFILES[
+              mode === "attached" ? "native" : "modern"
+            ],
+            true,
+          ).find((capability) => capability.operation === operation);
+          expect(descriptor?.effects.mayShowUi).toBe(
+            producer.calls.some(({ name }) => guiNavigatingTool(mode, name)),
+          );
+          if (operation === "procedure_callers") {
             expect(execution.ok).toBe(false);
             if (!execution.ok)
               expect(execution.error._tag).toBe(

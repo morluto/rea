@@ -1,5 +1,6 @@
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { CdpCommandRejection } from "../CdpCommandRejection.js";
+import type { CdpCommandResult } from "../protocol/CdpCommands.js";
 import type { CdpRuntimeSession } from "./CdpRuntimeSession.js";
 
 /** Classify Chromium's selector syntax rejection without changing other command/transport failures. */
@@ -7,7 +8,7 @@ export const queryListenerSelector = async (
   session: CdpRuntimeSession,
   nodeId: number,
   selector: string,
-): Promise<unknown> => {
+): Promise<CdpCommandResult<"DOM.querySelector">> => {
   try {
     return await session.command("DOM.querySelector", { nodeId, selector });
   } catch (cause: unknown) {

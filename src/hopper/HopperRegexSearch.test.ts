@@ -1,17 +1,25 @@
 import { expect, it, vi } from "vitest";
 import { HopperRegexSearch } from "./HopperRegexSearch.js";
+import {
+  hopperReplySchemas,
+  parseHopperReply,
+} from "./HopperReplyContracts.js";
 import { err, ok } from "../domain/result.js";
-import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  OwnerCancellation,
+} from "../domain/analysisErrorCore.js";
 import {
   HopperRemoteError,
   HopperTimeoutError,
   HopperProcessError,
-} from "../domain/hopperErrors.js";
+} from "./HopperErrors.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { parseConfig } from "../config/parseConfig.js";
 import { silentLogger } from "../logger.js";
 import { HopperClient } from "./HopperClient.js";
 import { HopperProvider } from "./HopperProvider.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 const regexMatch = vi.hoisted(() => ({
   afterSettle: undefined as (() => void) | undefined,
@@ -100,17 +108,23 @@ it.each(["search_strings", "search_procedures"] as const)(
 it.each(["search_strings", "search_procedures"] as const)(
   "rejects malformed canonical metadata in the %s inventory",
   async (operation) => {
+    // The client validates each reply against its method contract.
     const search = new HopperRegexSearch({
-      callTool: async () =>
-        ok([
-          {
-            address: "0x1",
-            value: "matched",
-            ...(operation === "search_strings"
-              ? { string: { encoding: false } }
-              : { procedure: { external: "unknown" } }),
-          },
-        ]),
+      callTool: async (method, _arguments, options) =>
+        parseHopperReply(
+          hopperReplySchemas,
+          method,
+          [
+            {
+              address: "0x1",
+              value: "matched",
+              ...(operation === "search_strings"
+                ? { string: { encoding: false } }
+                : { procedure: { external: "unknown" } }),
+            },
+          ],
+          options?.operation ?? method,
+        ),
     });
     try {
       expect(
@@ -239,11 +253,50 @@ it.each(
           stage: "analysis",
         });
       expect(original.operation).toBe(inventory);
-      original.resolveCleanup();
+      releaseOwnedCleanup(original);
       expect(result.error.cleanupIncomplete).toBe(false);
     } finally {
       await search.close();
     }
+  },
+);
+
+it.each([false, true])(
+  "joins an active search on close and preserves earlier caller cancellation: %s",
+  async (callerFirst) => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const controller = new AbortController();
+    const search = new HopperRegexSearch({
+      callTool: async () => {
+        await gate;
+        return ok([]);
+      },
+    });
+    const pending = search.execute(
+      "search_strings",
+      { pattern: "fixture", mode: "regex", case_sensitive: false },
+      { signal: controller.signal },
+    );
+    if (callerFirst) controller.abort("caller stopped");
+    let finished = false;
+    const closing = search.close().then(() => {
+      finished = true;
+    });
+    await Promise.resolve();
+    expect(finished).toBe(false);
+    release();
+    expect(await pending).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCancelledError",
+        cause: callerFirst ? "caller stopped" : OwnerCancellation.ownerClosed,
+      },
+    });
+    await closing;
+    expect(finished).toBe(true);
   },
 );
 
@@ -322,8 +375,7 @@ it("returns cancellation when the caller aborts after the regex worker settles",
   const reason = { request: "stop search" };
   regexMatch.afterSettle = () => controller.abort(reason);
   const search = new HopperRegexSearch({
-    callTool: async () =>
-      ok([{ address: "0x1000", value: "fixture" }] as never),
+    callTool: async () => ok([{ address: "0x1000", value: "fixture" }]),
   });
   try {
     const result = await search.execute(

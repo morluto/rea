@@ -1,3 +1,8 @@
+import {
+  fileIdentity,
+  fileSubjectDisplay,
+} from "../../fixtures/evidenceSubject.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -187,12 +192,11 @@ it("projects a single inventory page as partial and links only that source", asy
     inventory.normalized_result,
   );
   const subject = inventory.subject;
-  if (subject === null) throw new Error("Expected an inventory subject");
   const page = createEvidence(
     {
-      path: subject.local_path,
-      sha256: subject.digest.sha256,
-      format: subject.format,
+      path: fileSubjectDisplay(subject).local_path,
+      sha256: fileIdentity(subject).sha256,
+      format: fileIdentity(subject).format,
     },
     inventory.provider,
     {
@@ -277,7 +281,7 @@ it("projects a single inventory page as partial and links only that source", asy
 it("rejects a valid non-inventory carrier as caller-selected input", async () => {
   const client = await connect();
   const wrongCarrier = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     { operation: "analyze_binary", parameters: {}, result: {} },
   );

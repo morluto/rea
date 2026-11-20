@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { zstdCompressSync } from "node:zlib";
 
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { expect, it, onTestFinished } from "vitest";
@@ -16,7 +17,6 @@ import {
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
-import { ZipArtifactReader } from "../../../src/artifacts/ZipArtifactReader.js";
 import { withArtifactClient } from "../../support/artifactClientScope.js";
 import {
   artifactExtractionResultSchema,
@@ -24,6 +24,7 @@ import {
 } from "../../../src/domain/artifactGraph.js";
 import { artifactInspectionResultSchema } from "../../../src/domain/artifactInspection.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { ZipArtifactReader } from "../../../src/resources/index.js";
 
 cliTest(
   "inventories and extracts method-93 Zstandard ZIP bytes through the public CLI",
@@ -83,6 +84,36 @@ cliTest(
     }
   },
 );
+
+it("does not publish a method-93 member with an incomplete final frame magic", async () => {
+  const root = await createTestTempDirectory("rea-zip-zstd-incomplete-");
+  const path = join(root, "method93.zip");
+  const outputRoot = join(root, "extracted");
+  const content = Buffer.from("first complete text frame\n");
+  const second = zstdCompressSync(Buffer.from("second text frame\n"));
+  const compressed = Buffer.concat([
+    zstdCompressSync(content),
+    second.subarray(0, 3),
+  ]);
+  const archive = zstandardZipFixture(content, { compressed });
+  await writeFile(path, archive);
+
+  const target = await parseBinaryTarget(path);
+  if (!target.ok) throw target.error;
+  const result = await withArtifactClient(target.value, (client) =>
+    client.execute("extract_artifact", { output_root: outputRoot }),
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "ArtifactOperationError",
+      reason: "format",
+      detail: "ZIP archive is malformed: Invalid compressed data",
+    },
+  });
+  expect(await readdir(root)).toEqual(["method93.zip"]);
+  expect((await readFile(path)).equals(archive)).toBe(true);
+});
 
 for (const zip64 of [false, true]) {
   cliTest(
@@ -160,7 +191,12 @@ const legacyControlNames = [
 ] as const;
 
 it.each([
-  ["legacy CP437", Buffer.from([0x82, 0x2e, 0x74, 0x78, 0x74]), false, "é.txt"],
+  [
+    "legacy CP437 mapping",
+    Buffer.from([0x82, 0x80, 0x9e, 0xe1, 0xff, 0x2e, 0x74, 0x78, 0x74]),
+    false,
+    "éÇ₧ß\u00a0.txt",
+  ],
   ["unflagged ASCII", Buffer.from("plain.txt"), false, "plain.txt"],
   ...legacyControlNames,
   [
@@ -297,29 +333,6 @@ it("preserves valid Info-ZIP Unicode Path overrides", async () => {
   );
 });
 
-it("reports unflagged high-byte ZIP names as CP437 readings with their source bytes", async () => {
-  const root = await createTestTempDirectory("rea-zip-legacy-name-limitation-");
-  const path = join(root, "legacy-name.zip");
-  const rawName = Buffer.from([0xc7, 0xd1, 0xb1, 0xdb, 0x2e, 0x74, 0x78, 0x74]);
-  await writeSingleEntryZip(path, "name.txt");
-  const archive = await readFile(path);
-  await writeFile(
-    path,
-    rewriteSingleEntryZipName(archive, "name.txt", rawName, false),
-  );
-
-  const inventory = await inventoryArtifact(path);
-  expect(inventory.occurrences).toContainEqual(
-    expect.objectContaining({
-      logical_path: "╟╤▒█.txt",
-      hash_status: "verified",
-      limitations: [
-        "ZIP name uses CP437 fallback; source encoding unverified; raw hex: c7d1b1db2e747874.",
-      ],
-    }),
-  );
-});
-
 it("falls back to the stored name and reports bytes when a Unicode Path field CRC is invalid", async () => {
   const root = await createTestTempDirectory(
     "rea-zip-invalid-unicode-extra-crc-",
@@ -345,9 +358,7 @@ it("falls back to the stored name and reports bytes when a Unicode Path field CR
   expect(inventory.occurrences).toContainEqual(
     expect.objectContaining({
       logical_path: "é.txt",
-      limitations: [
-        "ZIP name uses CP437 fallback; source encoding unverified; raw hex: 822e747874.",
-      ],
+      limitations: [expect.stringMatching(/CP437.*unverified.*822e747874/iu)],
     }),
   );
 });
@@ -436,15 +447,25 @@ it("binds ZIP opens to the emitted entry metadata", async () => {
     if (first === undefined || second === undefined)
       throw new Error("Expected both ZIP entries");
 
+    const changedMetadata = {
+      reason: "integrity",
+      integrityCheck: "entry-metadata",
+    };
+    await expect(
+      reader.open({ ...second, adapterKey: "not-inventoried" }),
+    ).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "foreign-entry",
+    });
     await expect(
       reader.open({ ...second, adapterKey: first.adapterKey }),
-    ).rejects.toMatchObject({ reason: "integrity" });
+    ).rejects.toMatchObject(changedMetadata);
     await expect(
       reader.open({ ...second, path: first.path }),
-    ).rejects.toMatchObject({ reason: "integrity" });
+    ).rejects.toMatchObject(changedMetadata);
     await expect(
       reader.open({ ...second, declaredSize: first.declaredSize }),
-    ).rejects.toMatchObject({ reason: "integrity" });
+    ).rejects.toMatchObject(changedMetadata);
     await expect(
       reader.open({
         ...second,
@@ -457,12 +478,10 @@ it("binds ZIP opens to the emitted entry metadata", async () => {
           ctimeNs: 6n,
         },
       }),
-    ).rejects.toMatchObject({ reason: "integrity" });
+    ).rejects.toMatchObject(changedMetadata);
     const originalKey = second.adapterKey;
     Reflect.set(second, "adapterKey", first.adapterKey);
-    await expect(reader.open(second)).rejects.toMatchObject({
-      reason: "integrity",
-    });
+    await expect(reader.open(second)).rejects.toMatchObject(changedMetadata);
     Reflect.set(second, "adapterKey", originalKey);
 
     const stream = await reader.open({ ...second });
@@ -632,7 +651,7 @@ it("rejects overlapping ZIP member data ranges through artifact inventory", asyn
   );
 });
 
-it("preserves encrypted-member and corrupt-CRC observations", async () => {
+it("preserves encrypted-member and malformed-compression observations", async () => {
   const root = await createTestTempDirectory("rea-zip-integrity-");
   const encryptedPath = join(root, "encrypted.zip");
   const encryptedWriter = new ZipWriter(new Uint8ArrayWriter());
@@ -674,7 +693,7 @@ it("preserves encrypted-member and corrupt-CRC observations", async () => {
     code: "ENOENT",
   });
 
-  const corruptPath = join(root, "corrupt-crc.zip");
+  const corruptPath = join(root, "corrupt-compression.zip");
   const corruptWriter = new ZipWriter(new Uint8ArrayWriter());
   await corruptWriter.add("data.txt", new TextReader("evidence\n"));
   await writeFile(corruptPath, await corruptWriter.close());
@@ -696,6 +715,31 @@ it("preserves encrypted-member and corrupt-CRC observations", async () => {
     corruptPath,
     "format",
     "ZIP archive is malformed: Invalid compressed data",
+  );
+});
+
+it("rejects a stored ZIP member whose payload disagrees with its CRC", async () => {
+  const root = await createTestTempDirectory("rea-zip-crc-");
+  const path = join(root, "corrupt-crc.zip");
+  const writer = new ZipWriter(new Uint8ArrayWriter());
+  await writer.add("data.txt", new TextReader("evidence\n"), { level: 0 });
+  const bytes = Buffer.from(await writer.close());
+  const localHeader = bytes.indexOf(Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+  if (localHeader < 0) throw new Error("Expected a ZIP local-file header");
+  expect(bytes.readUInt16LE(localHeader + 8)).toBe(0);
+  const dataOffset =
+    localHeader +
+    30 +
+    bytes.readUInt16LE(localHeader + 26) +
+    bytes.readUInt16LE(localHeader + 28);
+  const firstByte = bytes[dataOffset];
+  if (firstByte === undefined) throw new Error("Expected ZIP member bytes");
+  bytes[dataOffset] = firstByte ^ 1;
+  await writeFile(path, bytes);
+  await expectInventoryFailure(
+    path,
+    "format",
+    "ZIP archive is malformed: Invalid CRC32",
   );
 });
 
