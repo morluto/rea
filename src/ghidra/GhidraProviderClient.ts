@@ -149,6 +149,10 @@ import {
 } from "./GhidraProviderCapabilities.js";
 import { GHIDRA_PROVIDER_IDENTITY } from "./GhidraProviderMetadata.js";
 import {
+  ghidraMachoMainEntryHint,
+  isGhidraMainSelector,
+} from "./GhidraMachoEntryHint.js";
+import {
   GHIDRA_STARTUP_DEADLINE_ELAPSED,
   isGhidraInputFailureCode,
   type GhidraSessionError,
@@ -191,6 +195,7 @@ export type GhidraProviderClientFactory = (
       | "operationHealthSnapshot"
       | "runtimeLineage"
       | "readTargetSnapshot"
+      | "readTargetSnapshotRanges"
       | "hashTargetSnapshot"
       | "hashTargetSnapshotRanges"
       | "attestDosTargetSnapshot"
@@ -785,6 +790,28 @@ export const createGhidraProviderClient = (input: {
     riscvCallingConvention !== undefined;
   const lostProviderHealth = (): ProviderOperationHealth | undefined =>
     providerStarted ? client.operationHealthSnapshot?.() : undefined;
+  // Only a thin image REA imported itself has Ghidra's import at the declared
+  // vmaddrs; universal slices and caller projects are not established here.
+  const machoMainEntryHint = async (
+    failure: GhidraSessionError,
+    request: Readonly<Record<string, JsonValue>>,
+    signal: AbortSignal | undefined,
+  ): Promise<string | undefined> => {
+    if (
+      target.format !== "mach-o" ||
+      projection.source === "existing-project" ||
+      failure.kind !== "remote" ||
+      failure.remoteCode !== "procedure_not_found" ||
+      !isGhidraMainSelector(request.procedure) ||
+      client.readTargetSnapshotRanges === undefined
+    )
+      return undefined;
+    const hint = await client.readTargetSnapshotRanges(
+      ghidraMachoMainEntryHint,
+      signal,
+    );
+    return hint.ok ? hint.value : undefined;
+  };
   let projectHistory: Evidence | undefined;
   const checkSessionObservations = async (
     operation: AnalysisOperation,
@@ -1124,6 +1151,11 @@ export const createGhidraProviderClient = (input: {
             projection,
             lostProviderHealth(),
             input.value,
+            await machoMainEntryHint(
+              called.error,
+              input.value,
+              options?.signal,
+            ),
           ),
         );
       if (operation === "inspect_native_load_image")
@@ -1358,6 +1390,7 @@ const projectSessionError = (
   projection: GhidraProjection,
   health?: ProviderOperationHealth,
   request?: Readonly<Record<string, JsonValue>>,
+  entryHint?: string,
 ): AnalysisError => {
   const primary = projectPrimarySessionError(
     operation,
@@ -1365,6 +1398,7 @@ const projectSessionError = (
     projection,
     health,
     request,
+    entryHint,
   );
   return failure.cleanupFailure === undefined
     ? primary
@@ -1381,6 +1415,7 @@ const projectPrimarySessionError = (
   { limits, programName, source }: GhidraProjection,
   health?: ProviderOperationHealth,
   request?: Readonly<Record<string, JsonValue>>,
+  entryHint?: string,
 ): AnalysisError => {
   const context = {
     cause: failure,
@@ -1539,7 +1574,8 @@ const projectPrimarySessionError = (
           (source === "existing-project"
             ? " The selected project's previous analysis completeness is unknown. To explicitly request a separate fresh import, start a new REA process without REA_GHIDRA_PROJECT_PATH and REA_GHIDRA_PROGRAM_NAME; that analysis will not include the selected project's annotations or other edits."
             : "") +
-          ` ${ghidraFunctionSeedRecovery(source)}`;
+          ` ${ghidraFunctionSeedRecovery(source)}` +
+          (entryHint === undefined ? "" : ` ${entryHint}`);
         relatedOperations = ["list_procedures", "search_procedures"];
     }
     return new AnalysisInputError(
