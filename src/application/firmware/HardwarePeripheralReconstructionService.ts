@@ -414,12 +414,17 @@ const sortAttachments = (
     return 0;
   });
 
+interface EnrichBlockContext {
+  readonly activePlatform: SocPlatform | null;
+  readonly customProfile: CustomHardwareProfile | null;
+  readonly activeDevices: readonly BoardDeviceAttachment[];
+  readonly activeDrivers: readonly BoardDriver[];
+  readonly limitations: string[];
+}
+
 const enrichBlock = (
   block: HardwarePeripheralBlockSummary,
-  activePlatform: SocPlatform | null,
-  customProfile: CustomHardwareProfile | null,
-  activeDevices: readonly BoardDeviceAttachment[],
-  activeDrivers: readonly BoardDriver[],
+  ctx: EnrichBlockContext,
 ): ReconstructedPeripheralBlock => {
   const matchedNames = new Set<string>();
   let primaryBus: string | null = null;
@@ -427,19 +432,26 @@ const enrichBlock = (
 
   for (const addr of block.uniqueAddresses) {
     const customHit =
-      customProfile !== null
-        ? lookupCustomPeripheral(BigInt(addr), customProfile)
+      ctx.customProfile !== null
+        ? lookupCustomPeripheral(BigInt(addr), ctx.customProfile)
         : null;
-    if (customHit !== null) {
+    if (customHit !== null && customHit.kind === "matched") {
       matchedNames.add(customHit.peripheral.name);
       primaryBus = customHit.peripheral.bus;
       blockBasis = "explicit_profile";
       continue;
     }
-    if (activePlatform !== null) {
+    if (customHit !== null && customHit.kind === "ambiguous") {
+      const names = customHit.candidates.map((item) => item.name).join(", ");
+      ctx.limitations.push(
+        `Address ${addr} matches overlapping custom profile windows (${names}); controller name left unresolved.`,
+      );
+      continue;
+    }
+    if (ctx.activePlatform !== null) {
       const def =
-        lookupSocPeripheral(addr, activePlatform) ??
-        resolveSocRegisterAlias(addr, activePlatform)?.peripheral ??
+        lookupSocPeripheral(addr, ctx.activePlatform) ??
+        resolveSocRegisterAlias(addr, ctx.activePlatform)?.peripheral ??
         null;
       if (def !== null) {
         matchedNames.add(def.name);
@@ -456,13 +468,13 @@ const enrichBlock = (
     socPeripheralNameBasis: blockBasis,
     socPeripheralBus: primaryBus,
     boardDevices: sortAttachments(
-      activeDevices.filter(
+      ctx.activeDevices.filter(
         (device) =>
           device.peripheralName !== null &&
           matchedNames.has(device.peripheralName),
       ),
     ),
-    boardDrivers: boardDriversForControllers(activeDrivers, matchedNames),
+    boardDrivers: boardDriversForControllers(ctx.activeDrivers, matchedNames),
   };
 };
 
@@ -676,14 +688,15 @@ export const reconstructHardwareFromReferences = (
     attributions,
     architecture,
   );
+  const enrichCtx: EnrichBlockContext = {
+    activePlatform,
+    customProfile,
+    activeDevices,
+    activeDrivers,
+    limitations,
+  };
   const peripheralBlocks = summary.peripheralBlocks.map((block) =>
-    enrichBlock(
-      block,
-      activePlatform,
-      customProfile,
-      activeDevices,
-      activeDrivers,
-    ),
+    enrichBlock(block, enrichCtx),
   );
 
   const boardMemory: BoardMemoryAccess[] = memoryWindows.map((item) => ({

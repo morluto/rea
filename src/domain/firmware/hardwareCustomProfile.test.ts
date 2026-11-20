@@ -175,13 +175,17 @@ describe("Devicetree to CustomHardwareProfile conversion", () => {
 
     // /soc/serial@7e201000 (size 0x200) wins over parent /soc (size 0x01800000)
     const pl011 = lookupCustomPeripheral(0xfe201024n, profile);
-    expect(pl011?.peripheral).toMatchObject({
-      name: "SERIAL@0xfe201000",
-      baseAddress: "0xfe201000",
-      sizeBytes: 0x200,
-    });
+    expect(pl011?.kind).toBe("matched");
+    if (pl011?.kind === "matched") {
+      expect(pl011.peripheral).toMatchObject({
+        name: "SERIAL@0xfe201000",
+        baseAddress: "0xfe201000",
+        sizeBytes: 0x200,
+      });
+    }
     // Address outside child windows still resolves parent /soc container
-    expect(lookupCustomPeripheral(0xfe000010n, profile)?.peripheral.name).toBe(
+    const socHit = lookupCustomPeripheral(0xfe000010n, profile);
+    expect(socHit?.kind === "matched" ? socHit.peripheral.name : null).toBe(
       "SOC@0xfe000000",
     );
     expect(lookupCustomPeripheral(0x0n, profile)).toBeNull();
@@ -295,28 +299,25 @@ describe("CMSIS-SVD parser", () => {
     expect(parsed.value.sourceSha256).toBe("c".repeat(64));
 
     // Chained derivedFrom (TIMC -> TIMB -> TIMA) preserves registers and cluster offsets
-    expect(lookupCustomPeripheral(0x40000800n, parsed.value)?.register).toEqual(
-      {
-        mnemonic: "TIMC_CR1",
-        name: "TIMC Control register 1",
-        offset: 0n,
-      },
-    );
-    expect(lookupCustomPeripheral(0x40000838n, parsed.value)?.register).toEqual(
-      {
-        mnemonic: "TIMC_CCR2",
-        name: "TIMC Capture/compare register",
-        offset: 0x38n,
-      },
-    );
+    const cr1Hit = lookupCustomPeripheral(0x40000800n, parsed.value);
+    expect(cr1Hit?.kind === "matched" ? cr1Hit.register : null).toEqual({
+      mnemonic: "TIMC_CR1",
+      name: "TIMC Control register 1",
+      offset: 0n,
+    });
+    const ccr2Hit = lookupCustomPeripheral(0x40000838n, parsed.value);
+    expect(ccr2Hit?.kind === "matched" ? ccr2Hit.register : null).toEqual({
+      mnemonic: "TIMC_CCR2",
+      name: "TIMC Capture/compare register",
+      offset: 0x38n,
+    });
     // Cluster at 0x100 + register at 0x00 => offset 0x100 (does NOT overwrite CR1 at 0x00)
-    expect(lookupCustomPeripheral(0x40000900n, parsed.value)?.register).toEqual(
-      {
-        mnemonic: "TIMC_CH_CFG",
-        name: "TIMC Channel config",
-        offset: 0x100n,
-      },
-    );
+    const chCfgHit = lookupCustomPeripheral(0x40000900n, parsed.value);
+    expect(chCfgHit?.kind === "matched" ? chCfgHit.register : null).toEqual({
+      mnemonic: "TIMC_CH_CFG",
+      name: "TIMC Channel config",
+      offset: 0x100n,
+    });
   });
 
   it("rejects empty, cyclic derivedFrom, or missing-parent SVD documents", () => {
@@ -337,5 +338,96 @@ describe("CMSIS-SVD parser", () => {
         </peripherals></device>
       `).ok,
     ).toBe(false);
+  });
+});
+
+describe("CMSIS-SVD bounds, derived spans, and overlapping windows", () => {
+  it("preserves overridden child register spans when parent lacks addressBlock", () => {
+    const parsed = parseCmsisSvd(`
+      <device><name>SpanTest</name><peripherals>
+        <peripheral>
+          <name>TIM_BASE</name>
+          <baseAddress>0x40000000</baseAddress>
+          <registers>
+            <register><name>CR1</name><addressOffset>0x00</addressOffset></register>
+          </registers>
+        </peripheral>
+        <peripheral derivedFrom="TIM_BASE">
+          <name>TIM_EXT</name>
+          <baseAddress>0x40001000</baseAddress>
+          <registers>
+            <register><name>CR1</name><addressOffset>0x00</addressOffset></register>
+            <register><name>EXT_CFG</name><addressOffset>0x100</addressOffset></register>
+          </registers>
+        </peripheral>
+      </peripherals></device>
+    `);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    const extHit = lookupCustomPeripheral(0x40001100n, parsed.value);
+    expect(extHit?.kind).toBe("matched");
+    if (extHit?.kind === "matched") {
+      expect(extHit.peripheral.name).toBe("TIM_EXT");
+      expect(extHit.peripheral.sizeBytes).toBe(0x104);
+      expect(extHit.register?.mnemonic).toBe("TIM_EXT_EXT_CFG");
+    }
+  });
+
+  it("bounds nested cluster and register dim expansion without RangeError", () => {
+    const bomb = parseCmsisSvd(`
+      <device><name>DimBomb</name><peripherals>
+        <peripheral>
+          <name>BIG</name>
+          <baseAddress>0x40000000</baseAddress>
+          <registers>
+            <cluster>
+              <dim>128</dim>
+              <dimIncrement>0x1000</dimIncrement>
+              <name>BLK%s</name>
+              <addressOffset>0x0</addressOffset>
+              <register>
+                <dim>1024</dim>
+                <dimIncrement>0x4</dimIncrement>
+                <name>R%s</name>
+                <addressOffset>0x0</addressOffset>
+              </register>
+            </cluster>
+          </registers>
+        </peripheral>
+      </peripherals></device>
+    `);
+    expect(bomb.ok).toBe(false);
+    if (!bomb.ok) {
+      expect(bomb.error).toContain("exceeds maximum");
+    }
+  });
+
+  it("reports equal-sized overlapping peripheral windows as ambiguous", () => {
+    const parsed = parseCmsisSvd(`
+      <device><name>OverlapSoc</name><peripherals>
+        <peripheral>
+          <name>PINMUX</name>
+          <baseAddress>0xfe201000</baseAddress>
+          <addressBlock><offset>0x0</offset><size>0x200</size><usage>registers</usage></addressBlock>
+        </peripheral>
+        <peripheral>
+          <name>UART_ALT</name>
+          <baseAddress>0xfe201000</baseAddress>
+          <addressBlock><offset>0x0</offset><size>0x200</size><usage>registers</usage></addressBlock>
+        </peripheral>
+      </peripherals></device>
+    `);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    const hit = lookupCustomPeripheral(0xfe201010n, parsed.value);
+    expect(hit).toMatchObject({
+      kind: "ambiguous",
+      baseAddress: "0xfe201000",
+    });
+    if (hit?.kind === "ambiguous") {
+      expect(hit.candidates.map((c) => c.name)).toEqual(["PINMUX", "UART_ALT"]);
+    }
   });
 });

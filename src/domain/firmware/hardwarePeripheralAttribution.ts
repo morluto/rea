@@ -141,7 +141,7 @@ export const attributeHardwareAccess = (
   let controllerName: string | null = null;
   let cBasis: ControllerNameBasis = "observed_address";
 
-  if (customMatch !== null) {
+  if (customMatch !== null && customMatch.kind === "matched") {
     regionKind = "peripheral_mmio";
     const busSuffix =
       customMatch.peripheral.bus !== null
@@ -153,6 +153,14 @@ export const attributeHardwareAccess = (
     blockOffsetValue = addressValue - blockBaseValue;
     controllerName = customMatch.peripheral.name;
     cBasis = "explicit_profile";
+  } else if (customMatch !== null && customMatch.kind === "ambiguous") {
+    regionKind = "peripheral_mmio";
+    regionName = "Peripheral MMIO";
+    isMmio = true;
+    blockBaseValue = customMatch.baseAddressValue;
+    blockOffsetValue = addressValue - blockBaseValue;
+    controllerName = null;
+    cBasis = "observed_address";
   } else if (socPeripheral != null) {
     regionKind = "peripheral_mmio";
     regionName = `${socPeripheral.name} (${socPeripheral.bus})`;
@@ -181,7 +189,8 @@ export const attributeHardwareAccess = (
     archRegister === null && customMatch === null && platform != null
       ? lookupSocPeripheralRegister(addressValue, platform)
       : null;
-  const customRegister = customMatch?.register ?? null;
+  const customRegister =
+    customMatch?.kind === "matched" ? customMatch.register : null;
 
   const registerName =
     archRegister?.name ?? customRegister?.name ?? socRegister?.name ?? null;

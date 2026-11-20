@@ -1432,3 +1432,79 @@ describe("multi-board subjectSha256 gating and register aliases", () => {
     });
   });
 });
+
+describe("overlapping custom profile MMIO windows", () => {
+  it("preserves MMIO blocks while leaving controller name unresolved when custom windows tie", async () => {
+    const svdOverlap = `<?xml version="1.0" encoding="utf-8"?>
+      <device><name>BCM_OVERLAP</name><peripherals>
+        <peripheral>
+          <name>PINMUX</name>
+          <baseAddress>0xfe201000</baseAddress>
+          <addressBlock><offset>0x0</offset><size>0x200</size><usage>registers</usage></addressBlock>
+        </peripheral>
+        <peripheral>
+          <name>UART_ALT</name>
+          <baseAddress>0xfe201000</baseAddress>
+          <addressBlock><offset>0x0</offset><size>0x200</size><usage>registers</usage></addressBlock>
+        </peripheral>
+      </peripherals></device>`;
+
+    const execution: AnalysisExecution = {
+      result: {
+        procedure: ghidraFunctionIdentity(),
+        direction: "outgoing",
+        reference_kinds_available: true,
+        references: [
+          { ...ghidraReferenceEdge(), target_address: "0xfe201010" },
+        ],
+        unresolved_calls: [],
+      },
+      rawResult: null,
+      provider: { id: "ghidra", name: "Ghidra", version: "12.2" },
+      locations: [],
+      subject: {
+        sha256: "d".repeat(64),
+        path: "/tmp/bcm2711.bin",
+        format: "raw-binary",
+        architecture: "arm64",
+      },
+      limitations: [],
+    };
+
+    const res = await reconstructProcedureHardwareInteractions(
+      { execute: () => Promise.resolve(ok(execution)) },
+      {
+        procedure: "uart_mux_init",
+        architecture: "arm64",
+        svd_xml: svdOverlap,
+      },
+    );
+    if (!res.ok) throw res.error;
+
+    expect(res.value.mmioAccessCount).toBe(1);
+    expect(res.value.nonMmioAccessCount).toBe(0);
+    expect(res.value.attributions[0]).toMatchObject({
+      targetAddress: "0xfe201010",
+      regionKind: "peripheral_mmio",
+      isMmio: true,
+      controllerName: null,
+      controllerBasis: "observed_address",
+    });
+    expect(res.value.peripheralBlocks).toEqual([
+      expect.objectContaining({
+        blockBase: "0xfe201000",
+        regionKind: "peripheral_mmio",
+        socPeripheralName: null,
+        socPeripheralNameBasis: "observed_address",
+        uniqueAddresses: ["0xfe201010"],
+      }),
+    ]);
+    expect(
+      res.value.limitations.some((note) =>
+        note.includes(
+          "matches overlapping custom profile windows (PINMUX, UART_ALT)",
+        ),
+      ),
+    ).toBe(true);
+  });
+});
