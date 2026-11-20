@@ -1,11 +1,9 @@
 import { withCanonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
@@ -22,7 +20,13 @@ import {
   requireMcpOutput,
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { bindVerifierCommandInterruption } from "./lib/verifier-command-interruption.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
 import {
   withVerifierCleanup,
   closeVerifierResources,
@@ -56,6 +60,10 @@ const workspaceFixture = await VerifierFixture.open({
   prefix: "rea-raw-proof-",
 });
 const workspace = workspaceFixture.path;
+const retainWorkspace = (message, options) => {
+  workspaceFixture.retain(message);
+  return new Error(message, options);
+};
 let fixtureCleaned = true;
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
@@ -95,6 +103,12 @@ const env = {
           process.env.REA_GHIDRA_DISABLED_ANALYZERS,
       }),
 };
+// The public CLI launch uses this command owner. A timeout stops its process group.
+const commands = await createVerifierCommands();
+const commandInterruption = bindVerifierCommandInterruption(commands);
+const execOwned = commandInterruption.exec;
+const { untilInterrupted, throwIfInterrupted } = commandInterruption;
+const finishCommandInterruption = () => commandInterruption.finish();
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
@@ -129,16 +143,21 @@ workspaceFixture.releaseAfter(async () => {
     "Owned Java fixture cleanup remains pending",
   );
   verifierRun = await completeVerifierRun(run);
-  assert.equal(verifierRun.process_lineage.status, "verified");
-  assert.deepEqual(verifierRun.process_lineage.descendants, []);
+  assertVerifierCleanupComplete(verifierRun.process_lineage);
 });
+commandInterruption.retainWorkspaceIfInterrupted(workspaceFixture);
 await withVerifierFixture(workspaceFixture, async () => {
+  let primaryFailure;
   try {
-    await client.connect(transport);
-    connected = true;
-    const listedSearch = (await client.listTools()).tools.find(
-      (tool) => tool.name === "search_bytes",
+    await untilInterrupted(
+      client.connect(transport, { signal: commandInterruption.signal }),
     );
+    connected = true;
+    const listedSearch = (
+      await untilInterrupted(
+        client.listTools(undefined, { signal: commandInterruption.signal }),
+      )
+    ).tools.find((tool) => tool.name === "search_bytes");
     assert.ok(listedSearch);
     searchDefinition = withCanonicalOutputSchema(listedSearch);
     const profiles = [];
@@ -221,23 +240,33 @@ await withVerifierFixture(workspaceFixture, async () => {
       name: "retained_after_failed_open",
       comment: "Owned session annotation",
     });
-    const rejected = await client.callTool({
-      name: "open_binary",
-      arguments: {
+    throwIfInterrupted();
+    const rejected = await client.callTool(
+      {
+        name: "open_binary",
+        arguments: {
+          path,
+          format: "raw-binary",
+          architecture: "arm64",
+          entry_point: "0x8000001",
+        },
+      },
+      { signal: commandInterruption.signal },
+    );
+    const rejection = requireMcpToolError(rejected);
+    // admitRawBinary refuses an arm64 entry that is not a multiple of 4.
+    // The completion facts are the session that the failed open must leave in place.
+    assert.partialDeepStrictEqual(rejection, {
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
         path,
-        format: "raw-binary",
-        architecture: "arm64",
-        entry_point: "0x8000001",
+        reason: "raw-binary arm64 entry_point 0x8000001 must be 4-byte aligned",
+        constraint: "load_selection_rejected",
+        target_at_open_completion: { entry_point: "0x9000000" },
+        provider_id_at_open_completion: "ghidra",
       },
     });
-    assert.equal(rejected.isError, true);
-    assert.match(JSON.stringify(rejected.content), /must be 4-byte aligned/);
-    const rejection = JSON.parse(rejected.content[0].text).error;
-    assert.equal(
-      rejection.details.target_at_open_completion.entry_point,
-      "0x9000000",
-    );
-    assert.equal(rejection.details.provider_id_at_open_completion, "ghidra");
     const unchanged = await call("binary_session");
     assert.equal(unchanged.analysis_run.run_id, sessions[2]);
     assert.equal(unchanged.entry_point, "0x9000000");
@@ -256,7 +285,7 @@ await withVerifierFixture(workspaceFixture, async () => {
     );
     await call("close_binary");
 
-    const { stdout } = await promisify(execFile)(
+    const { stdout } = await execOwned(
       process.execPath,
       [
         entrypoint,
@@ -384,10 +413,17 @@ await withVerifierFixture(workspaceFixture, async () => {
       overlapping.normalized_result.matches.map((match) => match.address),
       ["0x1002", "0x1003"],
     );
-    const wrongCursor = await client.callTool({
-      name: "search_bytes",
-      arguments: { pattern: "c3", cursor: page.normalized_result.next_cursor },
-    });
+    throwIfInterrupted();
+    const wrongCursor = await client.callTool(
+      {
+        name: "search_bytes",
+        arguments: {
+          pattern: "c3",
+          cursor: page.normalized_result.next_cursor,
+        },
+      },
+      { signal: commandInterruption.signal },
+    );
     const cursorError = requireMcpToolError(wrongCursor);
     assert.partialDeepStrictEqual(cursorError, {
       code: "invalid_request",
@@ -625,12 +661,39 @@ await withVerifierFixture(workspaceFixture, async () => {
     };
   } catch (error) {
     if (stderr.trim()) process.stderr.write(stderr);
-    throw error;
+    primaryFailure = error;
   }
+  // Close the command owner before release observes the parent tree.
+  let cleanupFailure;
+  try {
+    await workspaceFixture.closeEarly([() => commands.close()]);
+  } catch (cause) {
+    cleanupFailure = cause;
+  }
+  if (cleanupFailure !== undefined || primaryFailure !== undefined)
+    throw retainWorkspace(
+      `Raw-binary verification failed; retained workspace: ${workspace}`,
+      {
+        cause:
+          cleanupFailure === undefined
+            ? primaryFailure
+            : primaryFailure === undefined
+              ? cleanupFailure
+              : new AggregateError(
+                  [primaryFailure, cleanupFailure],
+                  "Raw-binary verification and command cleanup both failed",
+                ),
+      },
+    );
+  const interrupted = commandInterruption.reason();
+  if (interrupted !== undefined)
+    throw retainWorkspace(
+      `Raw-binary verification interrupted; retained diagnostic workspace: ${workspace}`,
+      { cause: interrupted },
+    );
 });
-verifierRun = await completeVerifierRun(run);
-assert.equal(verifierRun.process_lineage.status, "verified");
-assert.deepEqual(verifierRun.process_lineage.descendants, []);
+const releaseInterrupted = finishCommandInterruption();
+if (releaseInterrupted !== undefined) throw releaseInterrupted;
 process.stdout.write(
   JSON.stringify({
     verifier_run: verifierRun,
@@ -645,10 +708,12 @@ async function call(
   targetSha256 = sha256,
   targetFormat = "raw-binary",
 ) {
+  throwIfInterrupted();
   const result = await client.callTool(
     { name, arguments: args },
     {
       timeout: 240000,
+      signal: commandInterruption.signal,
       ...(name === "search_bytes" ? { toolDefinition: searchDefinition } : {}),
     },
   );
@@ -713,6 +778,7 @@ async function verifyCrossBlockProject(target, targetSha256) {
     env,
     runId: run.run_id,
     expectedCommand: null,
+    signal: commandInterruption.signal,
   });
   fixtureCleaned = false;
   const supervisor = new ProviderProcessSupervisor({
@@ -721,9 +787,12 @@ async function verifyCrossBlockProject(target, targetSha256) {
     cleanup: () => cleanupOwnedProcessGroup(launch.ownership),
   });
   await withVerifierCleanup(async () => {
-    assert.ok(await supervisor.waitForExit(180000), "Fixture setup timed out");
     assert.ok(
-      await supervisor.waitForOutputClose(1000),
+      await untilInterrupted(supervisor.waitForExit(180000)),
+      "Fixture setup timed out",
+    );
+    assert.ok(
+      await untilInterrupted(supervisor.waitForOutputClose(1000)),
       "Fixture output did not close",
     );
     const snapshot = supervisor.snapshot();
@@ -755,16 +824,26 @@ async function verifyCrossBlockProject(target, targetSha256) {
     version: "1",
   });
   try {
-    await projectClient.connect(projectTransport);
-    const definition = (await projectClient.listTools()).tools.find(
-      (tool) => tool.name === "search_bytes",
+    await untilInterrupted(
+      projectClient.connect(projectTransport, {
+        signal: commandInterruption.signal,
+      }),
     );
+    const definition = (
+      await untilInterrupted(
+        projectClient.listTools(undefined, {
+          signal: commandInterruption.signal,
+        }),
+      )
+    ).tools.find((tool) => tool.name === "search_bytes");
     assert.ok(definition);
     const projectCall = async (name, args) => {
+      throwIfInterrupted();
       const reply = await projectClient.callTool(
         { name, arguments: args },
         {
           timeout: 240000,
+          signal: commandInterruption.signal,
           ...(name === "search_bytes" ? { toolDefinition: definition } : {}),
         },
       );
