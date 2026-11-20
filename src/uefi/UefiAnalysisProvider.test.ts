@@ -1935,6 +1935,41 @@ it.skipIf(!lzmaWorkerAvailable)(
   },
 );
 
+it("skips a large file in FFS2 while preserving the next file for inspection and extraction", async () => {
+  const large = buildFfsFile({
+    guid: GUID_DRIVER,
+    typeCode: 1,
+    payload: Buffer.alloc(0x100_0000 - 24),
+  });
+  const compact = buildFfsFile({
+    guid: GUID_RAW,
+    typeCode: 1,
+    payload: RAW_BODY,
+  });
+  const { buffer } = buildFv({ files: [large, compact] });
+  const root = await createTestTempDirectory("rea-uefi-ffs2-large-");
+  const path = join(root, "image.fd");
+  await writeFile(path, buffer);
+  const provider = new UefiAnalysisProvider();
+  try {
+    const inspected = expectOk(await provider.execute(inspectRequest(path)))
+      .value.result as UefiInspectResult;
+    expect(inspected.coverage).toBe("partial");
+    expect(inspected.firmware_volumes[0]?.ffs_files).toMatchObject([
+      { guid: GUID_RAW, offset: 72 + large.length },
+    ]);
+    const extracted = expectOk(
+      await provider.execute(extractRequest(path, join(root, "out"))),
+    ).value.result as UefiExtractResult;
+    expect(extracted.files).toMatchObject([{ sha256: sha256(RAW_BODY) }]);
+    expect(extracted.extraction_gaps).toMatchObject([
+      { kind: "unparsed-region", range: { offset: 72, length: large.length } },
+    ]);
+  } finally {
+    await provider.close();
+  }
+});
+
 it("preserves a later FFS file across interrupted headers and unpublished data", async () => {
   const incomplete = Buffer.alloc(32, 0xff);
   incomplete[19] = 1;

@@ -517,12 +517,7 @@ export const scanUefiImage = async (
       filesDiscovered < limits.maxFiles && reserve();
     while (cursor < fileArea.end) {
       checkpoint();
-      const read = readFfsHeader(
-        fileArea,
-        cursor,
-        header.erasePolarity,
-        reserveFile,
-      );
+      const read = readFfsHeader(fileArea, cursor, header, reserveFile);
       const at = absoluteOffset(fileArea, cursor);
       if (read.kind === "limited") {
         noteOmission(
