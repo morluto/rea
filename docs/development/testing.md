@@ -514,6 +514,49 @@ Do not report the warm result as a cold-suite improvement, and do not enable
 the cache in coverage or benchmark CI without first showing that its
 instrumentation remains equivalent.
 
+### Verifier scripts
+
+Compilers, linkers, `readelf`, and the REA CLI that a verifier starts go through
+`createVerifierCommands()` in `scripts/lib/verify-commands.mjs`. The helper loads
+`scripts/lib/verifier-command-owner.mts` and runs each command with
+`runOwnedCommand` (`src/process/OwnedCommand.ts`). POSIX commands spawn through
+`spawnOwnedProviderProcess` (`src/process/ProviderProcess.ts`); Windows commands
+use the owned job from `scripts/lib/windows-owned-command.mjs`. Pass the
+deadline to `exec` as `timeout` in milliseconds. An omitted timeout, or `0`,
+keeps only caller cancellation. When the deadline elapses, owned cleanup kills
+the process family: the POSIX process group and descendants that carry the
+command run token, or the Windows job. Cleanup that does not confirm stays
+on the verifier resource scope. `close()` aborts commands still running, and a
+failed close stays registered for retry.
+
+`createVerifierRun()` and `completeVerifierRun()` in
+`scripts/lib/verifier-run.mjs` bracket the run. Call
+`assertVerifierCleanupComplete` on the completed lineage. It accepts only status
+`verified` with an empty descendant list, confirming that no owned process
+survived. An `unavailable` lineage fails the assertion. Windows reports this
+observation unavailable because the verifier has no retained Job Object lease
+for it; provider jobs are verified by their native owners. A verified lineage
+has checked every live descendant's `REA_PROCESS_RUN_ID`. An empty descendant
+list means none were live during that observation. It does not prove that the
+verifier never launched children earlier in the run. A PID is not ownership
+proof.
+
+Close the command owner before that assertion. If shutdown fails, retain the
+diagnostic workspace. `scripts/verify-real-ghidra-ppc64.mjs` shares one command
+owner for the compiler, `readelf`, and the CLI, closes it through
+`workspaceFixture.closeEarly` before `completeVerifierRun`, and applies the same
+lineage condition. The script retains the workspace when close fails, the
+lineage is unverified, or the run fails, and releases the workspace only after
+those checks pass.
+
+Create the command owner before resolving or starting a tool, then start the
+tool with that owner's `exec`. `execFile`, `spawn`, `execFileSync`, and
+`promisify(execFile)` leave the process outside this owner. The example's
+pre-workspace toolchain probe is `requireLaneToolchain`, which runs each probe
+through `runOwnedCommand` so the tool starts under an owner. Scripts that still
+call `execFile` directly are known debt. Migrate them separately; a new or
+touched verifier uses these helpers.
+
 ## CodeQL production scope
 
 [The production configuration](https://github.com/morluto/rea/blob/main/.github/codeql/production.yml) excludes
@@ -625,6 +668,9 @@ Unblob extraction. Check the final readiness or capability output retains the
 producer's repair instructions, including which launch environment must change.
 When feasible, follow the advice and verify that the same operation now works.
 Report unexecuted recovery steps explicitly.
+
+Real-provider scripts that start compilers, linkers, readers, or the REA CLI
+follow [Verifier scripts](#verifier-scripts).
 
 ### Checking installers and publisher downloads
 
