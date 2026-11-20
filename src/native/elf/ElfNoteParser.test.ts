@@ -15,6 +15,7 @@ import {
   compressedElfNoteSectionFixture,
   coreAuxvNote,
   coreFileNote,
+  corePrpsinfoDescriptor,
   corePrpsinfoNote,
   coreSiginfoNote,
   elfNote,
@@ -1134,6 +1135,7 @@ it("decodes Linux core dump notes for 32-bit big-endian", () => {
 
   const bytes = elfNoteFixture({
     bits: 32,
+    machine: 40,
     little: false,
     type: 4,
     ownership: "program",
@@ -1167,6 +1169,86 @@ it("decodes Linux core dump notes for 32-bit big-endian", () => {
     { type: 6, type_name: "AT_PAGESZ", value: "0x1000" },
     { type: 11, type_name: "AT_UID", value: "0x1f4" },
   ]);
+});
+
+it.each([
+  { name: "i386", machine: 3, little: true },
+  { name: "s390 compat", machine: 22, little: false },
+  { name: "x86 x32 compat", machine: 62, little: true },
+])(
+  "decodes the 124-byte prpsinfo with 16-bit IDs for $name",
+  ({ machine, little }) => {
+    const report = parse(
+      elfNoteFixture({
+        bits: 32,
+        machine,
+        little,
+        type: 4,
+        ownership: "program",
+        notes: corePrpsinfoNote({
+          bits: 32,
+          little,
+          state: 1,
+          uid: 500,
+          gid: 600,
+          pid: 4242,
+          ppid: 1,
+          pgrp: 4242,
+          sid: 4242,
+          fname: "legacy-proc",
+          psargs: "./legacy-proc --serve",
+        }),
+      }),
+    );
+    expect(report.entries[0]?.core?.prpsinfo).toEqual({
+      state: 1,
+      pid: 4242,
+      ppid: 1,
+      pgrp: 4242,
+      sid: 4242,
+      uid: 500,
+      gid: 600,
+      filename: "legacy-proc",
+      psargs: "./legacy-proc --serve",
+    });
+  },
+);
+
+it.each([
+  { name: "an oversized legacy layout", machine: 3, idWidth: 4 as const },
+  {
+    name: "an unknown machine with 16-bit fields",
+    machine: 0xffff,
+    idWidth: 2 as const,
+  },
+  {
+    name: "an unknown machine with 32-bit fields",
+    machine: 0xffff,
+    idWidth: 4 as const,
+  },
+])("keeps raw prpsinfo evidence for $name", ({ machine, idWidth }) => {
+  const descriptor = corePrpsinfoDescriptor({ bits: 32, idWidth });
+  const report = parse(
+    elfNoteFixture({
+      bits: 32,
+      machine,
+      type: 4,
+      ownership: "program",
+      notes: elfNote("CORE", 3, descriptor),
+    }),
+  );
+  expect(report.coverage).toMatchObject({
+    status: "complete",
+    examined_entries: 1,
+  });
+  expect(report.entries[0]).toMatchObject({
+    type_name: "core_prpsinfo",
+    descriptor: {
+      bytes: descriptor.length,
+      sha256: createHash("sha256").update(descriptor).digest("hex"),
+    },
+    core: null,
+  });
 });
 
 it.each([
