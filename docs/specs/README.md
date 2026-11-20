@@ -24,6 +24,7 @@ for new work, roadmap granularity and producer-owned contracts.
 - [Documentation organization](documentation/organization/spec.md) ([plan](documentation/organization/plan.md), [tasks](documentation/organization/tasks.md), [verification](documentation/organization/verification.md))
 - [Android boot and vendor_boot images](firmware/android-boot-image/spec.md) ([plan](firmware/android-boot-image/plan.md), [tasks](firmware/android-boot-image/tasks.md))
 - [V8 cached-data compilation boundaries](javascript/v8-cached-data/spec.md) ([plan](javascript/v8-cached-data/plan.md), [tasks](javascript/v8-cached-data/tasks.md))
+- [Expo Router `require.context` route keys](javascript/expo-router-context-routes/spec.md) ([plan](javascript/expo-router-context-routes/plan.md), [tasks](javascript/expo-router-context-routes/tasks.md))
 - [Android `.note.android.ident` ELF note decoding](native/android-elf-ident-note/spec.md) ([plan](native/android-elf-ident-note/plan.md), [tasks](native/android-elf-ident-note/tasks.md))
 - [Native call source coordinates](native/call-source-locations/spec.md) ([plan](native/call-source-locations/plan.md), [tasks](native/call-source-locations/tasks.md), [verification](native/call-source-locations/verification.md))
 - [DWARF compile-unit inspection](native/dwarf-units/spec.md) ([plan](native/dwarf-units/plan.md), [tasks](native/dwarf-units/tasks.md))
