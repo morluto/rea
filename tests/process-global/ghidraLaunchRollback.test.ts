@@ -116,24 +116,48 @@ const fixture = async (
   return { launcher, session };
 };
 
-it
-  .skipIf(process.platform === "win32")
-  .each([undefined, new Error("rollback rejected")] as const)(
-  "retains the process owner after rollback rejects with %s",
-  async (rejection) => {
-    const { launcher, session } = await fixture(async () => {
-      throw rejection;
+it.skipIf(process.platform === "win32").each([
+  { completion: "undefined rejection", rejection: undefined, cancel: false },
+  {
+    completion: "error rejection",
+    rejection: new Error("rollback rejected"),
+    cancel: false,
+  },
+  {
+    completion: "synchronous throw during cancellation",
+    rejection: undefined,
+    cancel: true,
+  },
+])(
+  "retains the process and primary failure after $completion",
+  async ({ rejection, cancel }) => {
+    const controller = new AbortController();
+    const { launcher, session } = await fixture(() => {
+      if (cancel) {
+        controller.abort(null);
+        throw rejection;
+      }
+      return Promise.reject(rejection);
     });
     const result = await launcher.launch(session, {
       resourceScope: createTestArtifactResourceScope(),
+      signal: controller.signal,
     });
-    expect(result.ok).toBe(false);
     if (result.ok || !(result.error instanceof GhidraLaunchError))
       throw new Error("Expected launch failure");
-    expect(result.error.partialLaunch).toBeDefined();
-    expect(result.error).toMatchObject({
-      rollbackFailure: { kind: "rejected", cause: rejection },
+    expect(controller.signal.aborted).toBe(cancel);
+    expect(result.error.rollbackFailure).toEqual({
+      kind: "rejected",
+      cause: rejection,
     });
+    const aggregate = result.error.cause;
+    if (
+      !(aggregate instanceof AggregateError) ||
+      !(aggregate.cause instanceof GhidraLaunchError)
+    )
+      throw new Error("Expected launch and rollback failures");
+    expect(aggregate.errors).toEqual([aggregate.cause, rejection]);
+    expect(aggregate.cause.cause).toBe(fault.failure);
     expect(owners[0]?.process.exitCode).toBeNull();
     denyCleanup = false;
     expect(await result.error.partialLaunch?.cleanup?.()).toMatchObject({
@@ -172,11 +196,16 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
-it.skipIf(process.platform === "win32")(
-  "client adopts a rejected rollback owner and retries before removing its runtime",
-  async () => {
+it
+  .skipIf(process.platform === "win32")
+  .each(["rejection", "late cancellation"] as const)(
+  "client retains the failed runtime until retry after rollback %s",
+  async (scenario) => {
+    const controller = new AbortController();
     const { launcher } = await fixture(async () => {
-      throw undefined;
+      if (scenario === "rejection") throw undefined;
+      controller.abort(null);
+      return incomplete;
     });
     const target = await readFile(ghidraFixturePath);
     let runtimeRoot: string | undefined;
@@ -194,54 +223,33 @@ it.skipIf(process.platform === "win32")(
       startupTimeoutMs: 5000,
     });
     clients.push(client);
-    const result = await client.start();
-    expect(result).toMatchObject({
-      ok: false,
-      error: { kind: "start", cleanupFailure: { cleanupIncomplete: true } },
-    });
+    const result = await client.start(controller.signal);
     if (result.ok) throw new Error("Expected failed startup");
-    expect(owners[0]?.process.exitCode).toBeNull();
-    if (runtimeRoot === undefined)
-      throw new Error("Expected admitted runtime root");
+    expect(controller.signal.aborted).toBe(scenario === "late cancellation");
+    expect(result.error).toMatchObject({
+      kind: "start",
+      cleanupFailure: { cleanupIncomplete: true },
+    });
+    const failure = result.error.cause;
+    const aggregate =
+      failure instanceof GhidraLaunchError ? failure.cause : undefined;
+    if (
+      !(aggregate instanceof AggregateError) ||
+      !(aggregate.cause instanceof GhidraLaunchError)
+    )
+      throw new Error("Expected the original launch failure");
+    expect(aggregate.cause.cause).toBe(fault.failure);
+    const owned = owners[0]?.process;
+    if (owned === undefined || runtimeRoot === undefined)
+      throw new Error("Expected an admitted process and runtime root");
+    expect(owned.exitCode).toBeNull();
+    expect(owned.signalCode).toBeNull();
     await expect(access(runtimeRoot)).resolves.toBeUndefined();
     denyCleanup = false;
     expect(await client.close()).toMatchObject({ ok: true });
+    expect(owned.exitCode !== null || owned.signalCode !== null).toBe(true);
     expect(result.error.cleanupFailure?.cleanupIncomplete).toBe(false);
     await expect(access(runtimeRoot)).rejects.toMatchObject({ code: "ENOENT" });
-  },
-);
-
-it.skipIf(process.platform === "win32")(
-  "retains synchronous rollback rejection and the earlier failure during cancellation",
-  async () => {
-    const controller = new AbortController();
-    const { launcher, session } = await fixture(() => {
-      controller.abort(null);
-      throw undefined;
-    });
-    const result = await launcher.launch(session, {
-      resourceScope: createTestArtifactResourceScope(),
-      signal: controller.signal,
-    });
-    if (result.ok || !(result.error instanceof GhidraLaunchError))
-      throw new Error("Expected launch failure");
-    expect(result.error.rollbackFailure).toEqual({
-      kind: "rejected",
-      cause: undefined,
-    });
-    expect(result.error.cause).toBeInstanceOf(AggregateError);
-    if (!(result.error.cause instanceof AggregateError))
-      throw new Error("Expected composite failure");
-    const primary: unknown = result.error.cause.errors[0];
-    expect(primary).toBeInstanceOf(GhidraLaunchError);
-    if (!(primary instanceof GhidraLaunchError)) throw primary;
-    expect(primary.cause).toBe(fault.failure);
-    expect(result.error.cause.errors[1]).toBeUndefined();
-    expect(result.error.partialLaunch).toBeDefined();
-    denyCleanup = false;
-    expect(await result.error.partialLaunch?.cleanup?.()).toMatchObject({
-      cleaned: true,
-    });
   },
 );
 
@@ -347,38 +355,5 @@ it.skipIf(process.platform === "win32").each([null, "stop after spawn"])(
     expect(await result.error.partialLaunch?.cleanup?.()).toMatchObject({
       cleaned: true,
     });
-  },
-);
-
-it.skipIf(process.platform === "win32")(
-  "client preserves an earlier manifest failure when the final caller cancels during rollback",
-  async () => {
-    const controller = new AbortController();
-    const { launcher } = await fixture(async () => {
-      controller.abort(null);
-      return incomplete;
-    });
-    const target = await readFile(ghidraFixturePath);
-    const client = new GhidraClient({
-      launcher,
-      targetPath: ghidraFixturePath,
-      targetSha256: createHash("sha256").update(target).digest("hex"),
-      providerVersion: "test",
-      profileDigest: "b".repeat(64),
-      startupTimeoutMs: 5000,
-    });
-    clients.push(client);
-    const result = await client.start(controller.signal);
-    expect(result).toMatchObject({
-      ok: false,
-      error: { kind: "start", cleanupFailure: { cleanupIncomplete: true } },
-    });
-    if (result.ok) throw new Error("Expected original startup failure");
-    expect(JSON.stringify(result.error.diagnostics)).toContain(
-      fault.failure.message,
-    );
-    denyCleanup = false;
-    expect(await client.close()).toMatchObject({ ok: true });
-    expect(result.error.cleanupFailure?.cleanupIncomplete).toBe(false);
   },
 );
