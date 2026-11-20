@@ -6,6 +6,7 @@ import {
 import { isTypeOnlyExportDeclaration } from "./javascriptModuleDeclaration.js";
 import {
   javaScriptRuntimeContext,
+  javaScriptStrictnessAt,
   javaScriptThisOwner,
 } from "./javascriptSourceParser.js";
 import { semanticPropertyReadSources } from "./javascriptSemanticIterationSources.js";
@@ -48,6 +49,7 @@ interface StatementPosition {
 interface BindingReadPosition {
   readonly position: StatementPosition | null;
   readonly repeatingLoop: t.Loop | undefined;
+  readonly initializer?: t.VariableDeclarator;
 }
 
 interface ExpressionSiblings {
@@ -76,10 +78,7 @@ interface InitializerPositionCache {
   readonly read: WeakMap<t.Node, BindingReadPosition>;
   readonly enclosingFunction: WeakMap<t.Node, t.Function | null>;
   readonly functionPosition: WeakMap<t.Function, StatementPosition | null>;
-  readonly statementIndices: WeakMap<
-    readonly t.Statement[],
-    ReadonlyMap<t.Statement, number>
-  >;
+  readonly listIndices: WeakMap<readonly t.Node[], ReadonlyMap<t.Node, number>>;
   readonly moduleFunctionReads: WeakMap<
     readonly t.Statement[],
     {
@@ -117,13 +116,28 @@ const initializerPositionCache = (
     read: new WeakMap(),
     enclosingFunction: new WeakMap(),
     functionPosition: new WeakMap(),
-    statementIndices: new WeakMap(),
+    listIndices: new WeakMap(),
     moduleFunctionReads: new WeakMap(),
     evaluationChildren: new WeakMap(),
     expressionAncestry: undefined,
   };
   initializerPositionCaches.set(parents, created);
   return created;
+};
+
+const siblingIndex = (
+  node: t.Node,
+  siblings: readonly t.Node[],
+  parents: WeakMap<t.Node, t.Node>,
+): number => {
+  if (siblings.length <= 1) return siblings[0] === node ? 0 : -1;
+  const cache = initializerPositionCache(parents).listIndices;
+  let indices = cache.get(siblings);
+  if (indices === undefined) {
+    indices = new Map(siblings.map((entry, index) => [entry, index]));
+    cache.set(siblings, indices);
+  }
+  return indices.get(node) ?? -1;
 };
 
 const statementPosition = (
@@ -140,13 +154,7 @@ const statementPosition = (
       : statement;
   const parent = parents.get(enclosing);
   if (!t.isProgram(parent) && !t.isBlockStatement(parent)) return null;
-  const cache = initializerPositionCache(parents).statementIndices;
-  let positions = cache.get(parent.body);
-  if (positions === undefined) {
-    positions = new Map(parent.body.map((entry, index) => [entry, index]));
-    cache.set(parent.body, positions);
-  }
-  const index = positions.get(enclosing) ?? -1;
+  const index = siblingIndex(enclosing, parent.body, parents);
   return index < 0
     ? null
     : {
@@ -154,7 +162,7 @@ const statementPosition = (
         index,
         declaratorIndex:
           t.isVariableDeclaration(statement) && declarator !== undefined
-            ? statement.declarations.indexOf(declarator)
+            ? siblingIndex(declarator, statement.declarations, parents)
             : -1,
       };
 };
@@ -929,21 +937,56 @@ const bindingReadPosition = (
     if (node === undefined) continue;
     const parent = parents.get(node);
     let position: StatementPosition | null = null;
+    let initializer: t.VariableDeclarator | undefined;
     if (t.isVariableDeclarator(parent)) {
       const declaration = parents.get(parent);
       if (t.isVariableDeclaration(declaration))
         position = statementPosition(declaration, parents, parent);
+      if (node === parent.init) initializer = parent;
     } else if (
       t.isStatement(parent) &&
       !t.isLoop(parent) &&
       !t.isFunction(parent)
     )
       position = statementPosition(parent, parents);
-    if (position !== null && position !== result.position)
-      result = { ...result, position };
+    if (position !== null)
+      result = {
+        repeatingLoop: result.repeatingLoop,
+        position,
+        ...(initializer === undefined ? {} : { initializer }),
+      };
     cache.set(node, result);
   }
   return result;
+};
+
+/** Check whether declaration rules or known execution order can reject a write. */
+export const semanticBindingMayRejectAssignmentAt = (
+  binding: JavaScriptSemanticBindingState,
+  access: t.Node,
+  { parentsByNode }: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const { declarationKinds } = binding;
+  if (
+    binding.runtimeImport ||
+    declarationKinds.has("const") ||
+    declarationKinds.has("using") ||
+    declarationKinds.has("await using") ||
+    binding.selfNameAssignment === "always-throws" ||
+    (binding.selfNameAssignment === "throws-in-strict-mode" &&
+      javaScriptStrictnessAt(access, parentsByNode) !== "sloppy")
+  )
+    return true;
+  const declarator = binding.letDeclarator;
+  if (declarator == null || declarationKinds.size !== 1) return false;
+  const declaration = parentsByNode.get(declarator);
+  if (!t.isVariableDeclaration(declaration)) return false;
+  const { position, initializer } = bindingReadPosition(access, parentsByNode);
+  const end = statementPosition(declaration, parentsByNode, declarator);
+  if (position === null || end === null) return false;
+  // The RHS runs before any binding is initialized. Defaults inside the
+  // binding pattern itself can run after earlier targets are initialized.
+  return initializer === declarator || positionPrecedes(position, end);
 };
 
 /** Repeated member reads share unknown ordering, while retaining their source sites. */

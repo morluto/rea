@@ -155,6 +155,7 @@ interface BindPatternInput {
   readonly state: JavaScriptSemanticAnalysisState;
   readonly mutable: boolean;
   readonly declarationKind?: "var" | "let" | "const" | "using" | "await using";
+  readonly letDeclarator?: t.VariableDeclarator;
   readonly kind?: JavaScriptSemanticDefinition["kind"];
   readonly projection?: readonly (string | number | null)[];
   readonly referenceOnly?: boolean;
@@ -187,6 +188,7 @@ interface AddBindingInput {
   readonly kind: JavaScriptSemanticDefinition["kind"];
   readonly mutable: boolean;
   readonly declarationKind?: "var" | "let" | "const" | "using" | "await using";
+  readonly letDeclarator?: t.VariableDeclarator;
   readonly definitionNode: t.Node;
   readonly initializer: t.Node | null;
   readonly directOrigin?: JavaScriptModuleOrigin;
@@ -1768,6 +1770,9 @@ const bindInnerDeclaration = (
       ...(parent !== null && t.isVariableDeclaration(parent)
         ? { declarationKind: parent.kind }
         : {}),
+      ...(t.isVariableDeclaration(parent, { kind: "let" })
+        ? { letDeclarator: node }
+        : {}),
     });
   else if (t.isClass(node) && t.isIdentifier(node.id))
     addBinding({
@@ -2260,6 +2265,9 @@ const bindPattern = (input: BindPatternInput): void => {
       kind,
       mutable,
       ...(declarationKind === undefined ? {} : { declarationKind }),
+      ...(input.letDeclarator === undefined
+        ? {}
+        : { letDeclarator: input.letDeclarator }),
       definitionNode: pattern,
       initializer,
       projection,
@@ -2410,6 +2418,12 @@ const addBinding = (input: AddBindingInput): void => {
   binding.mutable ||= mutable;
   if (declarationKind !== undefined)
     binding.declarationKinds.add(declarationKind);
+  if (input.letDeclarator !== undefined)
+    binding.letDeclarator =
+      binding.letDeclarator === undefined ||
+      binding.letDeclarator === input.letDeclarator
+        ? input.letDeclarator
+        : null;
   binding.definitions.push({ kind, location: range(definitionNode) });
   if (initializer !== null)
     binding.initializers.push({
