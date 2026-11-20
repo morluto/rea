@@ -98,9 +98,17 @@ export const attestGhidraDosSnapshot = async (
   const prepared = prepareGhidraDosLoadImage(prefix, evidence);
   if (!prepared.ok) return prepared;
   const originalHash = createHash("sha256").update(prefix);
-  const modifiedHash = createHash("sha256")
-    .update(prepared.value.modified)
-    .update(prefix.subarray(prepared.value.header.imageBytes));
+  const image = prepared.value;
+  const expected =
+    image.kind === "exact"
+      ? {
+          kind: image.kind,
+          image,
+          hash: createHash("sha256")
+            .update(image.modified)
+            .update(prefix.subarray(image.header.imageBytes)),
+        }
+      : image;
   let read = prefix.length;
   if (read < fileBytes) {
     for await (const chunk of readArtifactFileChunks(handle, {
@@ -109,7 +117,7 @@ export const attestGhidraDosSnapshot = async (
       signal,
     })) {
       originalHash.update(chunk);
-      modifiedHash.update(chunk);
+      if (expected.kind === "exact") expected.hash.update(chunk);
       read += chunk.length;
     }
   }
@@ -118,8 +126,10 @@ export const attestGhidraDosSnapshot = async (
     {
       sha256: originalHash.digest("hex"),
       fileBytes,
-      modifiedSha256: modifiedHash.digest("hex"),
-      image: prepared.value,
+      image:
+        expected.kind === "exact"
+          ? { ...expected.image, modifiedSha256: expected.hash.digest("hex") }
+          : expected,
     },
     targetSha256,
     observations,

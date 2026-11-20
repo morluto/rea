@@ -344,7 +344,9 @@ it.each([
     { setting: "REA_IDA_MCP_CONFIG", constraint },
   ]);
   expect(parsed.error.message).toContain(constraint);
-  // The guidance names a migration target the provider guide documents.
+});
+
+it("points legacy protocol recovery to the documented migration", async () => {
   expect(LEGACY_PROTOCOL_REMOVED).toContain('"protocol": "native"');
   const guide = await fs.readFile("docs/providers/ida-provider.md", "utf8");
   expect(guide).toMatch(/^### Migrate a legacy attached registration$/mu);

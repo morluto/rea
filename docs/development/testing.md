@@ -44,9 +44,10 @@ that invoke PowerShell themselves remain subject to their own policy checks.
 | `npm run test:watch:all`          | Changed tests from every project; builds at startup, so rebuild after production edits before relying on compiled tests |
 | `npm run check:fast`              | Cached typecheck and lint, then the architecture guards and their counted baselines                                     |
 | `npm run check:changed`           | Cached typecheck/lint and branch-related source feedback                                                                |
-| `npm run check:pr`                | Opt-in complete local deterministic gate and generated-file checks                                                      |
+| `npm run check:pr`                | Opt-in deterministic test suite and generated-file checks                                                               |
 | `npm run docs:check`              | Generated-document validation and fresh onboarding example consistency checks                                           |
-| `npm run docs:build`              | Render VitePress documentation and apply its page-link checks; no live external-link or GitHub fragment verification    |
+| `npm run docs:build`              | Generate and build the VitePress site for local preview                                                                 |
+| `npm run verify:docs:routes`      | Build the VitePress site and verify rendered local routes, anchors, images, and physical edit targets                   |
 
 `typecheck` also checks the JavaScript verification scripts listed in
 `tsconfig.scripts.json` (`checkJs`, with the main compiler options). Those
@@ -70,11 +71,11 @@ semantics. Compare failures against the base revision, or run the suite on
 Linux or WSL, before attributing them to a change. See `CONTRIBUTING.md` →
 Windows source checkouts.
 
-The CI documentation lane runs both `docs:check` and `docs:build` when the
-existing change classifier selects documentation or its producing inputs.
-Generated facts and rendered page links have separate checks. VitePress does not
-establish that every external URL or GitHub-rendered localized heading exists;
-verify those destinations when editing them.
+The CI documentation lane runs `docs:check` and `verify:docs:routes` when the
+change classifier selects documentation or its producing inputs. Follow the
+[documentation authoring checks](documentation.md#generated-ownership-and-checks)
+and verify external URLs and GitHub-rendered headings separately when editing
+them.
 
 For example:
 
@@ -261,11 +262,10 @@ does not cap the complete process family's memory; measure the full invocation
 when enforcing a host budget.
 
 Routine iterations and rebases need focused regressions and relevant checks.
-Before handing off a PR, run `npm run check` and generated-document checks when
-applicable; CI owns the full suite and coverage. Use the full local gate for
-broad changes or diagnosing CI, rather than after every edit. Package/install
-changes additionally need package verification; provider changes need actual
-provider evidence.
+Follow the [contributor checks](https://github.com/morluto/rea/blob/main/CONTRIBUTING.md#development-feedback-and-pr-verification)
+before handing off a PR. Use `check:pr` for broad changes or CI diagnosis.
+Architecture guards run in `check`, `check:fast`, and `check:ci:deep`.
+The standalone test-discovery check runs in `check:ci:deep`.
 
 Vitest projects use up to two workers, bounded by host parallelism. GitHub
 Actions jobs own their runner and use up to four; see
@@ -514,6 +514,49 @@ Do not report the warm result as a cold-suite improvement, and do not enable
 the cache in coverage or benchmark CI without first showing that its
 instrumentation remains equivalent.
 
+### Verifier scripts
+
+Compilers, linkers, `readelf`, and the REA CLI that a verifier starts go through
+`createVerifierCommands()` in `scripts/lib/verify-commands.mjs`. The helper loads
+`scripts/lib/verifier-command-owner.mts` and runs each command with
+`runOwnedCommand` (`src/process/OwnedCommand.ts`). POSIX commands spawn through
+`spawnOwnedProviderProcess` (`src/process/ProviderProcess.ts`); Windows commands
+use the owned job from `scripts/lib/windows-owned-command.mjs`. Pass the
+deadline to `exec` as `timeout` in milliseconds. An omitted timeout, or `0`,
+keeps only caller cancellation. When the deadline elapses, owned cleanup kills
+the process family: the POSIX process group and descendants that carry the
+command run token, or the Windows job. Cleanup that does not confirm stays
+on the verifier resource scope. `close()` aborts commands still running, and a
+failed close stays registered for retry.
+
+`createVerifierRun()` and `completeVerifierRun()` in
+`scripts/lib/verifier-run.mjs` bracket the run. Call
+`assertVerifierCleanupComplete` on the completed lineage. It accepts only status
+`verified` with an empty descendant list, confirming that no owned process
+survived. An `unavailable` lineage fails the assertion. Windows reports this
+observation unavailable because the verifier has no retained Job Object lease
+for it; provider jobs are verified by their native owners. A verified lineage
+has checked every live descendant's `REA_PROCESS_RUN_ID`. An empty descendant
+list means none were live during that observation. It does not prove that the
+verifier never launched children earlier in the run. A PID is not ownership
+proof.
+
+Close the command owner before that assertion. If shutdown fails, retain the
+diagnostic workspace. `scripts/verify-real-ghidra-ppc64.mjs` shares one command
+owner for the compiler, `readelf`, and the CLI, closes it through
+`workspaceFixture.closeEarly` before `completeVerifierRun`, and applies the same
+lineage condition. The script retains the workspace when close fails, the
+lineage is unverified, or the run fails, and releases the workspace only after
+those checks pass.
+
+Create the command owner before resolving or starting a tool, then start the
+tool with that owner's `exec`. `execFile`, `spawn`, `execFileSync`, and
+`promisify(execFile)` leave the process outside this owner. The example's
+pre-workspace toolchain probe is `requireLaneToolchain`, which runs each probe
+through `runOwnedCommand` so the tool starts under an owner. Scripts that still
+call `execFile` directly are known debt. Migrate them separately; a new or
+touched verifier uses these helpers.
+
 ## CodeQL production scope
 
 [The production configuration](https://github.com/morluto/rea/blob/main/.github/codeql/production.yml) excludes
@@ -566,14 +609,14 @@ integration, then a producer golden; use the table to select quick feedback and
 claim-specific additional evidence. Provider-behavior claims require the
 matching real-provider lane.
 
-| Change or claim                           | Fast feedback                                                 | Claim-specific coverage                                     |
-| ----------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------- |
-| Source semantics                          | `npm run test:local -- PATH...`                               | Relevant boundary cases when the behavior crosses a port    |
-| CLI/MCP workflow                          | `npm run test:focused -- PATH...`                             | Actual public calls; an injected provider has limited scope |
-| Documentation or generated metadata       | `npm run docs:check`                                          | `npm run docs:build` for rendered pages and links           |
-| Engine adapter                            | Its real-provider lane below                                  | Host, version, target identity, and owned cleanup           |
-| Client configuration or schema conversion | [Native client lane](client-verification.md)                  | Distinguish loopback models from live services              |
-| Agent investigation quality               | [Agent evaluation](#agent-evaluation-and-conformance-records) | Review transcript and scenario-specific evidence            |
+| Change or claim                           | Fast feedback                                                 | Claim-specific coverage                                      |
+| ----------------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------ |
+| Source semantics                          | `npm run test:local -- PATH...`                               | Relevant boundary cases when the behavior crosses a port     |
+| CLI/MCP workflow                          | `npm run test:focused -- PATH...`                             | Actual public calls; an injected provider has limited scope  |
+| Documentation or generated metadata       | `npm run docs:check`                                          | `npm run verify:docs:routes` for rendered routes and anchors |
+| Engine adapter                            | Its real-provider lane below                                  | Host, version, target identity, and owned cleanup            |
+| Client configuration or schema conversion | [Native client lane](client-verification.md)                  | Distinguish loopback models from live services               |
+| Agent investigation quality               | [Agent evaluation](#agent-evaluation-and-conformance-records) | Review transcript and scenario-specific evidence             |
 
 ### Provider-backed workflow verification
 
@@ -625,6 +668,9 @@ Unblob extraction. Check the final readiness or capability output retains the
 producer's repair instructions, including which launch environment must change.
 When feasible, follow the advice and verify that the same operation now works.
 Report unexecuted recovery steps explicitly.
+
+Real-provider scripts that start compilers, linkers, readers, or the REA CLI
+follow [Verifier scripts](#verifier-scripts).
 
 ### Checking installers and publisher downloads
 
@@ -744,6 +790,16 @@ each consumer previously made its own decision. Allow differences in
 recovery or display when those belong to the consumer. For generated
 installers and verifiers, exercise the emitted artifact in its supported
 runtime so the test covers the code that actually receives the input.
+
+When detection and detailed inspection share a reader, compare a valid
+input, a recognizable malformed input, and a valid input whose examined
+prefix ends at the budget when those cases apply. Assert the recognized
+format, which fields are established, and the coverage and diagnostics in
+each consumer. If the source feeds both a digest and a converter, exercise a
+change to the original between the snapshot read and conversion. Assert that
+the digest and converted value describe the same bytes, or that the operation
+returns a typed failure. Check advertised effects and the lifecycle of any
+temporary copy.
 
 | Failure class                         | Regression that catches it                                                                                                                                                                                                                                                                                                                         |
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -913,9 +969,9 @@ cancels from inside final cleanup, and `controlledCleanup` gives children
 refused or confirmed outcomes with counted retries.
 `tests/support/providerLifecycleCoverage.ts` maps every registered provider id
 to its launch, handshake, operation, cancellation, cleanup and retry
-regressions, a not-applicable reason, or an explicit gap. Name the test file
-and literal title when a change adds or moves a provider lifecycle regression;
-the shrink-only gap list closes as stages gain coverage. Check server
+regressions or a reason a stage does not apply. Name the test file and the
+title at its registration site when a change adds or moves a lifecycle
+regression. The check rejects uncovered applicable stages. Check server
 settlement and retained resources even if the MCP SDK rejects the client promise
 before the handler finishes. A cancellation during active execution does not
 cover cancellation during final cleanup.
@@ -1202,15 +1258,14 @@ and job log also list up to 20 reported failed test files and the count of
 unhandled Vitest errors when reported. Partial reports are marked diagnostic
 only. Failed, cancelled, or missing selected shards still fail the required gate,
 and aggregate coverage thresholds remain enforced in full qualification.
-Only a successful complete merge on the default branch publishes shard history,
-and only from a push, schedule, or manual run. Fast runs publish
-`test-timings-fast`. Full runs publish `test-timings-full`. Pull requests do not
-publish it: the lookup reads one unpaginated artifact page, and pull-request
-artifacts would crowd out the default branch. The build job downloads the
-artifact that matches its tier, so fast shards use durations measured without
-coverage and full shards keep coverage-weighted durations. A tier with no
-qualifying artifact leaves history unset. The download is that small
-checkout-relative timing file, not the coverage/JUnit bundle. Timing weights come from Vitest module
+A complete shard merge on a default-branch push, schedule, or manual run can
+publish timing history. Fast runs publish `test-timings-fast` and full runs
+publish `test-timings-full`. The build job accepts only verified artifacts from
+successful default-branch CI runs that match its tier. It lists one page of
+matching artifacts and checks up to five producer runs individually. When
+eligible artifacts remain, it can check them against one page of successful CI
+runs. A tier with no qualifying artifact leaves history unset. The build
+downloads the small, checkout-relative timing file. Timing weights come from Vitest module
 diagnostics and include tests and hooks, worker preparation, environment,
 imports, and setup. Import timings already include transform waits, which are
 not added again. The weights describe file costs under the measured worker and
@@ -1397,8 +1452,10 @@ baselines (`scripts/verify/baselines/*.json`,
 `scripts/lib/module-layers.baseline.json`), `.git-blame-ignore-revs`, Python
 analysis-efficiency test scripts, and advertised-schema summaries select no
 portable Vitest tests unless named by path, because static, Python, and build
-jobs check them. Non-module CLI parity fixtures with a single known test suite
-are bound in `EXPLICIT_FIXTURE_OWNERS` and fail closed if their owner is missing.
+jobs check them. `EXPLICIT_TEST_OWNERS` binds inputs with a known test suite the
+selector cannot reach by imports or file names. These include non-module CLI
+parity fixtures and the managed pointer rows integration test. Selection falls
+back to the complete suite if a declared owner is missing.
 
 The PR falls back to the complete fast suite when it cannot decide:
 
@@ -1429,104 +1486,34 @@ The required checks still report on every PR and fail closed:
 
 ## Real-toolchain verification lanes
 
-See [Real-toolchain verification lanes](../testing-lanes.md#real-toolchain-verification-lanes).
+Use [Testing lanes and provider verification](../testing-lanes.md) to choose a
+command for the host, provider, and workflow you changed. Record which lane
+ran and which coverage was unavailable.
 
-## Android APK analysis
+<!-- Keep fragment links from earlier versions of this page working. -->
 
-See [Android APK analysis](../testing-lanes.md#android-apk-analysis).
-
-## Apktool resource decoding
-
-See [Apktool resource decoding](../testing-lanes.md#apktool-resource-decoding).
-
-## Flutter build identification
-
-See [Flutter build identification](../testing-lanes.md#flutter-build-identification).
-
-## ADB device acquisition
-
-See [ADB device acquisition](../testing-lanes.md#adb-device-acquisition).
-
-## Optional NativeAOT Ghidra analysis
-
-See [Optional NativeAOT Ghidra analysis](../testing-lanes.md#optional-nativeaot-ghidra-analysis).
-
-## IDA MCP adapter
-
-See [IDA MCP adapter](../testing-lanes.md#ida-mcp-adapter).
-
-## Kuna lane
-
-See [Kuna lane](../testing-lanes.md#kuna-lane).
-
-## DOS Ghidra analysis
-
-See [DOS Ghidra analysis](../testing-lanes.md#dos-ghidra-analysis).
-
-## Apple Interface Builder archives
-
-See [Apple Interface Builder archives](../testing-lanes.md#apple-interface-builder-archives).
-
-## Native platform baseline in CI
-
-See [Native platform baseline in CI](../testing-lanes.md#native-platform-baseline-in-ci).
-
-### Termux Android browser smoke test
-
-See [Termux Android browser smoke test](../testing-lanes.md#termux-android-browser-smoke-test).
-
-## Packet capture analysis
-
-See [Packet capture analysis](../testing-lanes.md#packet-capture-analysis).
-
-## Apple native metadata and UI
-
-See [Apple native metadata and UI](../testing-lanes.md#apple-native-metadata-and-ui).
-
-### Firmware adapters
-
-See [Firmware adapters](../testing-lanes.md#firmware-adapters).
-
-### JavaScript source recovery
-
-See [JavaScript source recovery](../testing-lanes.md#javascript-source-recovery).
-
-### Captured website source-map lane
-
-See [Captured website source-map lane](../testing-lanes.md#captured-website-source-map-lane).
-
-### JavaScript large-output lane
-
-See [JavaScript large-output lane](../testing-lanes.md#javascript-large-output-lane).
-
-### Website runtime attribution lane
-
-See [Website runtime attribution lane](../testing-lanes.md#website-runtime-attribution-lane).
-
-### Offline binary layout
-
-See [Offline binary layout](../testing-lanes.md#offline-binary-layout).
-
-### Offline EVM interface
-
-See [Offline EVM interface](../testing-lanes.md#offline-evm-interface).
-
-### Recorded crash evidence
-
-See [Recorded crash evidence](../testing-lanes.md#recorded-crash-evidence).
-
-### Exported environment bundles
-
-See [Exported environment bundles](../testing-lanes.md#exported-environment-bundles).
-
-## Agent evaluation and conformance records
-
-See [Agent evaluation and conformance records](../testing-lanes.md#agent-evaluation-and-conformance-records).
-
-## Frida instrumentation
-
-See [Frida instrumentation](../testing-lanes.md#frida-instrumentation).
-
-### Offline WASM artifacts
-
-See [Offline WASM artifacts](../testing-lanes.md#offline-wasm-artifacts).
+- <a id="android-apk-analysis"></a>[Android APK analysis](../testing-lanes.md#android-apk-analysis)
+- <a id="apktool-resource-decoding"></a>[Apktool resource decoding](../testing-lanes.md#apktool-resource-decoding)
+- <a id="flutter-build-identification"></a>[Flutter build identification](../testing-lanes.md#flutter-build-identification)
+- <a id="adb-device-acquisition"></a>[ADB device acquisition](../testing-lanes.md#adb-device-acquisition)
+- <a id="optional-nativeaot-ghidra-analysis"></a>[Optional NativeAOT Ghidra analysis](../testing-lanes.md#optional-nativeaot-ghidra-analysis)
+- <a id="ida-mcp-adapter"></a>[IDA MCP adapter](../testing-lanes.md#ida-mcp-adapter)
+- <a id="kuna-lane"></a>[Kuna lane](../testing-lanes.md#kuna-lane)
+- <a id="dos-ghidra-analysis"></a>[DOS Ghidra analysis](../testing-lanes.md#dos-ghidra-analysis)
+- <a id="apple-interface-builder-archives"></a>[Apple Interface Builder archives](../testing-lanes.md#apple-interface-builder-archives)
+- <a id="native-platform-baseline-in-ci"></a>[Native platform baseline in CI](../testing-lanes.md#native-platform-baseline-in-ci)
+- <a id="termux-android-browser-smoke-test"></a>[Termux Android browser smoke test](../testing-lanes.md#termux-android-browser-smoke-test)
+- <a id="packet-capture-analysis"></a>[Packet capture analysis](../testing-lanes.md#packet-capture-analysis)
+- <a id="apple-native-metadata-and-ui"></a>[Apple native metadata and UI](../testing-lanes.md#apple-native-metadata-and-ui)
+- <a id="firmware-adapters"></a>[Firmware adapters](../testing-lanes.md#firmware-adapters)
+- <a id="javascript-source-recovery"></a>[JavaScript source recovery](../testing-lanes.md#javascript-source-recovery)
+- <a id="captured-website-source-map-lane"></a>[Captured website source-map lane](../testing-lanes.md#captured-website-source-map-lane)
+- <a id="javascript-large-output-lane"></a>[JavaScript large-output lane](../testing-lanes.md#javascript-large-output-lane)
+- <a id="website-runtime-attribution-lane"></a>[Website runtime attribution lane](../testing-lanes.md#website-runtime-attribution-lane)
+- <a id="offline-binary-layout"></a>[Offline binary layout](../testing-lanes.md#offline-binary-layout)
+- <a id="offline-evm-interface"></a>[Offline EVM interface](../testing-lanes.md#offline-evm-interface)
+- <a id="recorded-crash-evidence"></a>[Recorded crash evidence](../testing-lanes.md#recorded-crash-evidence)
+- <a id="exported-environment-bundles"></a>[Exported environment bundles](../testing-lanes.md#exported-environment-bundles)
+- <a id="agent-evaluation-and-conformance-records"></a>[Agent evaluation and conformance records](../testing-lanes.md#agent-evaluation-and-conformance-records)
+- <a id="frida-instrumentation"></a>[Frida instrumentation](../testing-lanes.md#frida-instrumentation)
+- <a id="offline-wasm-artifacts"></a>[Offline WASM artifacts](../testing-lanes.md#offline-wasm-artifacts)

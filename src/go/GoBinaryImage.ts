@@ -13,7 +13,11 @@ import {
   isZeroFilledSpan,
   type BinaryContainer,
 } from "../domain/binaryContainer.js";
-import { readBinaryContainer } from "../domain/native/readBinaryContainer.js";
+import type { ZstandardFramePause } from "../domain/compression/zstandardExactFrame.js";
+import {
+  readBinaryContainer,
+  readBinaryContainerCooperative,
+} from "../domain/native/readBinaryContainer.js";
 import {
   goAnalysisBudgets,
   type GoAnalysisBudgets,
@@ -58,9 +62,31 @@ export interface ReadGoBinaryImageOptions {
 export const readGoBinaryImage = (
   bytes: Buffer,
   options?: ReadGoBinaryImageOptions,
+): GoBinaryImage =>
+  finishGoBinaryImage(
+    bytes,
+    options,
+    readBinaryContainer(bytes, "inspect_go_binary"),
+  );
+
+/** Same image as {@link readGoBinaryImage}. ELF section names yield through `pause`. */
+export const readGoBinaryImageCooperative = async (
+  bytes: Buffer,
+  options: ReadGoBinaryImageOptions | undefined,
+  pause: ZstandardFramePause,
+): Promise<GoBinaryImage> =>
+  finishGoBinaryImage(
+    bytes,
+    options,
+    await readBinaryContainerCooperative(bytes, "inspect_go_binary", pause),
+  );
+
+const finishGoBinaryImage = (
+  bytes: Buffer,
+  options: ReadGoBinaryImageOptions | undefined,
+  container: ReturnType<typeof readBinaryContainer>,
 ): GoBinaryImage => {
   const budgets = goAnalysisBudgets(options?.budgets);
-  const container = readBinaryContainer(bytes);
   const { format, architecture, bits, byte_order } = container;
   const stringLiterals =
     options?.includeStringLiterals === true
