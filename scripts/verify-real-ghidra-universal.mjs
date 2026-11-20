@@ -2,8 +2,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -19,6 +18,10 @@ import {
   requireMcpOperationResult,
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 // Public CLI/MCP file coordinates of a universal Mach-O name the container
 // that Evidence names, while Ghidra imports only the admitted slice.
@@ -37,7 +40,8 @@ const source = fileURLToPath(
 );
 const host = process.arch === "arm64" ? "arm64" : "x86_64";
 const hostCpu = host === "arm64" ? 0x0100000c : 0x01000007;
-const workspace = await mkdtemp(join(tmpdir(), "rea-universal-"));
+const fixture = await VerifierFixture.open({ prefix: "rea-universal-" });
+const workspace = fixture.path;
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const targetPath = join(workspace, "universal");
@@ -97,8 +101,8 @@ const assertContainerSubject = (evidence) => {
   assert.equal(evidence.subject.identity.format, "mach-o-universal");
   assert.equal(evidence.subject.identity.selection.offset, slice.offset);
 };
-let complete = false;
-try {
+fixture.releaseAfter(() => client.close());
+await withVerifierFixture(fixture, async () => {
   await mcp.connect(transport);
   await call("open_binary", { path: targetPath, provider_id: "ghidra" });
   const mapping = parseEvidence(
@@ -148,7 +152,6 @@ try {
   assert.equal(cli.normalized_result.file_offset, expected);
   assert.deepEqual(await readFile(targetPath), original);
   assert.deepEqual(await readdir(runtime), []);
-  complete = true;
   process.stdout.write(
     `${JSON.stringify({
       host_architecture: host,
@@ -161,11 +164,4 @@ try {
       cleanup: "complete",
     })}\n`,
   );
-} finally {
-  await client.close();
-  if (complete) await rm(workspace, { recursive: true, force: true });
-  else
-    process.stderr.write(
-      `Retained universal verifier workspace: ${workspace}\n`,
-    );
-}
+});
