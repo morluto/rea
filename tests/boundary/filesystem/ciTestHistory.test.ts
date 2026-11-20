@@ -416,6 +416,36 @@ it("recovers older timing history beyond the first successful run page", async (
 });
 
 it.each([
+  [1, 2],
+  [100, 4],
+])(
+  "stops at the page bound with %i unmatched runs per page",
+  async (pageSize, nextPage) => {
+    const failed = [107, 106, 105, 104, 103];
+    const { result, calls } = await invoke(
+      [...failed, 102].map((id) => artifact(id)),
+      Object.fromEntries(
+        failed.map((id) => [id, run(id, { conclusion: "failure" })]),
+      ),
+      {
+        tier: "full",
+        successfulRunPages: Array.from({ length: 4 }, (_, page) =>
+          Array.from({ length: pageSize }, (_, index) =>
+            run(1000 + page * 100 + index),
+          ),
+        ),
+      },
+    );
+    expect(JSON.parse(result.stdout)).toEqual({
+      run_id: "",
+      artifact_name: "",
+    });
+    expect(calls).toContain(`page=${nextPage - 1}`);
+    expect(calls).not.toContain(`page=${nextPage}`);
+  },
+);
+
+it.each([
   ["the commit SHAs differ", headSha, "b".repeat(40)],
   ["both commit SHAs are omitted", undefined, undefined],
   ["both commit SHAs are malformed", "invalid-sha", "invalid-sha"],
