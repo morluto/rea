@@ -30,7 +30,7 @@ import {
 } from "./FfsFile.js";
 import {
   AMD_ZLIB_HEADER_LENGTH,
-  peelAmiZlibPayload,
+  peelAmdZlibPayload,
   startsWithSectionFrame,
   walkSections,
   type UefiDecodeFormat,
@@ -982,7 +982,7 @@ export const scanUefiImage = async (
       );
     let carrier = payload;
     if (format === "zlib") {
-      const peeled = peelAmiZlibPayload(payload.bytes);
+      const peeled = peelAmdZlibPayload(payload.bytes);
       if (
         peeled === null ||
         peeled.declaredCompressedSize !== peeled.stream.length
