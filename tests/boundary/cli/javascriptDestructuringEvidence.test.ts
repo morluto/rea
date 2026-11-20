@@ -52,6 +52,28 @@ const firstDefaultSource = `
   missing[1][0] = "later";
 `;
 
+const immutableTargetSource = `
+  const fixed = 0;
+  let beforeImmutable, afterImmutable;
+  const values = ["before", 1, "unreached"];
+  [beforeImmutable, fixed, afterImmutable] = values;
+  values[0] = "later";
+`;
+
+const classNameTargetSource = `
+  class OuterFixed {}
+  let afterOuterClass;
+  const outer = [1, "reachable"];
+  [OuterFixed, afterOuterClass] = outer;
+  class Fixed {
+    static {
+      let beforeClassName, afterClassName;
+      const inner = ["before", 1, "unreached"];
+      [beforeClassName, Fixed, afterClassName] = inner;
+    }
+  }
+`;
+
 const expectedDependencies = [
   ["declared", ["a"]],
   ["a", ["a"]],
@@ -59,6 +81,11 @@ const expectedDependencies = [
   ["fallback", ["a", "0"]],
   ["scalar", ["b"]],
   ["ordinary", ["0"]],
+  ["beforeImmutable", ["0"]],
+  ["afterImmutable", ["2"], "candidate"],
+  ["beforeClassName", ["0"]],
+  ["afterClassName", ["2"], "candidate"],
+  ["afterOuterClass", ["1"]],
   ["arrayAssigned", ["0"]],
   ["elided", ["1"]],
   ["projected", ["items", "0"]],
@@ -87,6 +114,11 @@ const expectedDependencies = [
 const tracedBindings = [
   "declared",
   "ordinary",
+  "beforeImmutable",
+  "afterImmutable",
+  "beforeClassName",
+  "afterClassName",
+  "afterOuterClass",
   "arrayAssigned",
   "elided",
   "projected",
@@ -178,6 +210,8 @@ cliTest(
       ["array-prototype-alias.js", arrayPrototypeAliasSource],
       ["abrupt-object-pattern.js", abruptObjectPatternSource],
       ["first-default.js", firstDefaultSource],
+      ["immutable-target.js", immutableTargetSource],
+      ["class-name-target.js", classNameTargetSource],
     ] as const)
       await writeFile(join(root, path), source);
     const output = await cli.run({

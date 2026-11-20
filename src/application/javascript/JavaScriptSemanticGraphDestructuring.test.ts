@@ -1,5 +1,9 @@
 import { expect, it } from "vitest";
-import { analyzeJavaScriptSemantics } from "../../domain/javascript/javascriptSemanticAnalysis.js";
+import {
+  analyzeJavaScriptSemantics,
+  analyzeParsedJavaScriptSemantics,
+} from "../../domain/javascript/javascriptSemanticAnalysis.js";
+import { parseJavaScriptSource } from "../../domain/javascript/javascriptSourceParser.js";
 import { graphForJavaScript } from "../../../tests/fixtures/javascriptSemanticGraph.js";
 
 it.each([
@@ -2579,5 +2583,159 @@ it.each([
     ).toMatchObject(
       status === "literal" ? { status, value: "one" } : { status },
     );
+  },
+);
+
+it.each([
+  [
+    "immutable array assignment target",
+    'const fixed=0;let selected;const xs=[1,"one"];[fixed,selected]=xs;xs[1]="later";',
+    ["1"],
+    "candidate",
+  ],
+  [
+    "immutable target with a known merged source slot",
+    'const fixed=0;let selected;const xs=[1,"one"];[fixed,selected]=xs;',
+    ["1"],
+    "candidate",
+  ],
+  [
+    "immutable object assignment target",
+    'const fixed=0;let selected;const obj={fixed:1,mode:"one"};({fixed,mode:selected}=obj);obj.mode="later";',
+    ["mode"],
+    "candidate",
+  ],
+  [
+    "immutable target nested inside an array",
+    'const fixed=0;let selected;const xs=[{fixed:1,mode:"one"}];[{fixed,mode:selected}]=xs;xs[0].mode="later";',
+    ["0", "mode"],
+    "candidate",
+  ],
+  [
+    "runtime import assignment target",
+    'import {fixed} from "./hypothetical.js";let selected;const xs=[1,"one"];[fixed,selected]=xs;xs[1]="later";',
+    ["1"],
+    "candidate",
+  ],
+  [
+    "resource assignment target",
+    'using fixed={ [Symbol.dispose]() {} };let selected;const xs=[1,"one"];[fixed,selected]=xs;',
+    ["1"],
+    "candidate",
+  ],
+  [
+    "unknown property key with an immutable target",
+    'const fixed=0;let selected;const obj={fixed:1,mode:"one"};({[key]:fixed,mode:selected}=obj);',
+    ["mode"],
+    "candidate",
+  ],
+  [
+    "nested rest with an immutable target",
+    'const fixed=0;let selected;const xs=[[1],"one"];[[...fixed],selected]=xs;',
+    ["1"],
+    "candidate",
+  ],
+  [
+    "inner class declaration name",
+    'class Fixed { static { let selected; const xs=[1,"one"]; [Fixed,selected]=xs; } }',
+    ["1"],
+    "candidate",
+  ],
+  [
+    "named class expression's inner name",
+    'const Outer=class Fixed { method(){let selected; const xs=[1,"one"]; [Fixed,selected]=xs;} };',
+    ["1"],
+    "candidate",
+  ],
+  [
+    "mutable outer class declaration name",
+    'class Fixed {} let selected; const xs=[1,"one"];[Fixed,selected]=xs;',
+    ["1"],
+    "resolved",
+  ],
+  [
+    "mutable parameter shadowing a class name",
+    'class Fixed { method(Fixed){let selected; const xs=[1,"one"]; [Fixed,selected]=xs;} }',
+    ["1"],
+    "resolved",
+  ],
+  [
+    "strict write to a named function expression's self-binding",
+    'const run=function Fixed(){"use strict";let selected;const xs=[1,"one"];[Fixed,selected]=xs;};',
+    ["1"],
+    "candidate",
+    "app.cjs",
+  ],
+  [
+    "sloppy write to a named function expression's self-binding",
+    'const run=function Fixed(){let selected;const xs=[1,"one"];[Fixed,selected]=xs;};',
+    ["1"],
+    "resolved",
+    "app.cjs",
+  ],
+  [
+    "write to a named function expression's self-binding in unknown mode",
+    'const run=function Fixed(){let selected;const xs=[1,"one"];[Fixed,selected]=xs;};',
+    ["1"],
+    "candidate",
+  ],
+  [
+    "strict nested write to a sloppy named function expression's self-binding",
+    'const run=function Fixed(){function nested(){"use strict";let selected;const xs=[1,"one"];[Fixed,selected]=xs;} nested();};',
+    ["1"],
+    "candidate",
+    "app.cjs",
+  ],
+  [
+    "strict write to a mutable parameter shadowing a named function expression",
+    'const run=function Fixed(Fixed){"use strict";let selected;const xs=[1,"one"];[Fixed,selected]=xs;};',
+    ["1"],
+    "resolved",
+    "app.cjs",
+  ],
+  [
+    "read before an immutable target",
+    "let selected;const fixed=0;let later;const xs=[1,2,3];[selected,fixed,later]=xs;xs[0]=2;",
+    ["0"],
+    "resolved",
+  ],
+  [
+    "initialized mutable target",
+    'let fixed,selected;const xs=[1,"one"];[fixed,selected]=xs;xs[1]="later";',
+    ["1"],
+    "resolved",
+  ],
+  [
+    "immutable lexical declaration",
+    'const xs=[1,"one"];const [fixed,selected]=xs;xs[1]="later";',
+    ["1"],
+    "resolved",
+  ],
+] as const)(
+  "keeps destructuring evidence ordered for %s",
+  (_name, source, path, resolution, sourcePath?: string) => {
+    const file =
+      sourcePath === undefined
+        ? undefined
+        : parseJavaScriptSource(source, sourcePath);
+    expect(file).not.toBeNull();
+    const graph = graphForJavaScript(
+      source,
+      file == null ? undefined : analyzeParsedJavaScriptSemantics(file),
+    );
+    const selected = graph.nodes.find(
+      ({ kind, label }) => kind === "binding" && label === "selected",
+    );
+    expect(selected).toBeDefined();
+    const edge = graph.relations.find(
+      (relation) =>
+        relation.relation === "destructures" &&
+        relation.target_node_id === selected?.node_id,
+    );
+    expect(edge).toMatchObject({ resolution });
+    expect(
+      graph.nodes.find(({ node_id }) => node_id === edge?.source_node_id)
+        ?.properties.property_path,
+    ).toEqual(path);
   },
 );
