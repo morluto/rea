@@ -1173,6 +1173,7 @@
 * **parsers:** share strict UTF-8 byte validation ([#12281](https://github.com/morluto/rea/issues/12281)) ([5103019](https://github.com/morluto/rea/commit/510301969e729d2701b7e04d01e455ae7bdbc880))
 * **parsers:** state duplicate-member policies and bring parser-json-parse to 0 ([#11789](https://github.com/morluto/rea/issues/11789)) ([4a6bee6](https://github.com/morluto/rea/commit/4a6bee6cdb71f5cb230dd7757255d8402cb5aa57))
 * **pe:** move the PE resource parser into domain with domain parse failures ([#11550](https://github.com/morluto/rea/issues/11550)) ([807dd17](https://github.com/morluto/rea/commit/807dd1742f731ad4a0dba34176527eb248b848a2)), closes [#11527](https://github.com/morluto/rea/issues/11527)
+* **pe:** read CodeView directory declarations once ([#12632](https://github.com/morluto/rea/issues/12632)) ([04b4750](https://github.com/morluto/rea/commit/04b47507dc21e56b050d42d7e1ade8c9ad28b6e8))
 * **pe:** read COFF section records through BinaryReader ([#12520](https://github.com/morluto/rea/issues/12520)) ([66189e3](https://github.com/morluto/rea/commit/66189e3b454f9e1ba93c42df3925c55761d6c792))
 * **pe:** read icon group fields within their resource payload ([#12547](https://github.com/morluto/rea/issues/12547)) ([4e30dbe](https://github.com/morluto/rea/commit/4e30dbef142841ae7512449607ddcd7b7ea4624d))
 * **pe:** read optional header fields through BinaryReader ([#12351](https://github.com/morluto/rea/issues/12351)) ([5a27508](https://github.com/morluto/rea/commit/5a27508ae3da9cde74ab9d471908cc661a586fde))
