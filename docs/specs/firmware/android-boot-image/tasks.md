@@ -15,7 +15,7 @@ that covers the step.
       `src/artifacts/AndroidBootImageArtifactReader.test.ts`)
 - [x] Register metadata schemas and the reader on the uImage inventory,
       extraction, and target-resolution path. (Requirement 9;
-      `src/artifacts/artifactFormats.test.ts`,
+      `tests/acceptance/androidBootImageCli.test.ts`,
       `src/application/binary/TargetFormatVocabularies.test.ts`)
 - [x] Preserve untrusted-string and unknown-role limitations through CLI and
       MCP Evidence. (Requirements 5 and 9;

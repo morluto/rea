@@ -23,6 +23,7 @@ import {
   applicationGraphEvidenceSchema,
   isCompatibleApplicationGraphEvidenceLocation,
   isValidApplicationGraphEvidenceContext,
+  qualifyJavaScriptLoaderEvidence,
 } from "./javascriptApplicationEvidenceSchemas.js";
 import {
   JAVASCRIPT_SEMANTIC_RELATION_FAMILIES,
@@ -134,12 +135,23 @@ export class JavaScriptSemanticEvidenceContextRegistry {
   // distinct context once instead of on every fact.
   readonly #idsByCanonicalContext = new Map<string, string>();
   readonly #frozenEntries: FrozenInternedEvidenceEntry[] = [];
+  sourceLoaderCondition:
+    | {
+        readonly path: string;
+        readonly sha256: string;
+        readonly limitation: string;
+      }
+    | undefined;
 
   /** Fast-path interning when shared context objects match an already-validated frozen entry. */
   [tryInternValidatedInputSymbol](
     rawEvidence: unknown,
   ): JavaScriptSemanticEvidenceReference | undefined {
-    if (!hasExactEvidenceKeys(rawEvidence)) return undefined;
+    if (
+      this.sourceLoaderCondition !== undefined ||
+      !hasExactEvidenceKeys(rawEvidence)
+    )
+      return undefined;
     const match = this.#frozenEntries.find(
       (entry) =>
         entry.authority === rawEvidence.authority &&
@@ -180,7 +192,22 @@ export class JavaScriptSemanticEvidenceContextRegistry {
   ): JavaScriptSemanticEvidenceReference {
     const fast = this[tryInternValidatedInputSymbol](originalInput ?? evidence);
     if (fast !== undefined) return fast;
-    const normalized = normalizeEvidence(evidence);
+    const condition = this.sourceLoaderCondition;
+    const locationValue = evidence.location.available
+      ? evidence.location.value
+      : undefined;
+    const normalized = normalizeEvidence(
+      condition !== undefined &&
+        evidence.artifact.available &&
+        evidence.artifact.sha256 === condition.sha256 &&
+        (locationValue?.kind === "source-range"
+          ? locationValue.source
+          : locationValue?.kind === "artifact-path"
+            ? locationValue.path
+            : undefined) === condition.path
+        ? qualifyJavaScriptLoaderEvidence(evidence, condition.limitation)
+        : evidence,
+    );
     const { location, ...context } = normalized;
     const canonicalContext = canonicalJson(
       context,
@@ -202,7 +229,8 @@ export class JavaScriptSemanticEvidenceContextRegistry {
       this.#contexts.set(contextId, sealSemanticEvidenceContext(parsedContext));
       this.#idsByCanonicalContext.set(canonicalContext, contextId);
     }
-    const candidate = originalInput ?? evidence;
+    const candidate =
+      condition === undefined ? (originalInput ?? evidence) : normalized;
     if (
       this.#frozenEntries.length < 16 &&
       hasReusableFrozenContext(candidate) &&

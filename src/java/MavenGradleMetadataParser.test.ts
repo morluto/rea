@@ -114,6 +114,27 @@ const expectFailure = (
   }
 };
 
+it("classifies a Maven qualifier with parentheses as a literal version", () => {
+  const report = parse(`
+    <project><modelVersion>4.0.0</modelVersion>
+      <groupId>example</groupId><artifactId>consumer</artifactId><version>1</version>
+      <dependencies>
+        <dependency><groupId>example</groupId><artifactId>literal</artifactId><version>1.0-release(build)</version></dependency>
+        <dependency><groupId>example</groupId><artifactId>range</artifactId><version>(,2.0]</version></dependency>
+      </dependencies>
+    </project>
+  `);
+  expect(
+    report.dependencies.map(({ version, version_kind }) => [
+      version,
+      version_kind,
+    ]),
+  ).toEqual([
+    ["1.0-release(build)", "literal"],
+    ["(,2.0]", "range"],
+  ]);
+});
+
 it("reads Maven coordinates, parent, BOM import, exclusions, ranges and unresolved properties", () => {
   const report = parse(mavenPomFixture);
   expect(report.format).toBe("maven-pom");
@@ -415,6 +436,44 @@ it("removes credentials from POM property values", () => {
   expect(JSON.stringify(report)).not.toContain("password");
 });
 
+it("applies XML end-of-line handling to POM text", () => {
+  const report = parse(
+    "<project>\r\n  <modelVersion>4.0.0</modelVersion>\r\n  <artifactId>demo</artifactId>\r\n  <properties>\r\n    <banner>first\r\nsecond\rthird</banner>\r\n  </properties>\r\n</project>\r\n",
+  );
+  expect(report.properties).toEqual([
+    {
+      name: "banner",
+      value: "first\nsecond\nthird",
+      value_credentials_redacted: false,
+    },
+  ]);
+});
+
+it.each([
+  ["&#xA0;", "\u00a0"],
+  ["&#xFEFF;", "\ufeff"],
+  ["&#x20;", ""],
+])(
+  "preserves declared POM version characters at a %s boundary",
+  (reference, retained) => {
+    const report = parse(`<project>
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>example</groupId>
+    <artifactId>demo</artifactId>
+    <version>  ${reference}1.0${reference}  </version>
+    <dependencies>
+      <dependency>
+        <groupId>example</groupId>
+        <artifactId>library</artifactId>
+        <version>  ${reference}2.0${reference}  </version>
+      </dependency>
+    </dependencies>
+  </project>`);
+    expect(report.coordinates.version).toBe(`${retained}1.0${retained}`);
+    expect(report.dependencies[0]?.version).toBe(`${retained}2.0${retained}`);
+  },
+);
+
 it("lists properties in packaging, scope, type and classifier", () => {
   const report = parse(`<project>
   <groupId>com.example</groupId>
@@ -457,7 +516,24 @@ it("lists properties in packaging, scope, type and classifier", () => {
   ]);
 });
 
-it("classifies a Gradle exclusive-lower-bound request as a range", () => {
+it.each([
+  ["]1.0,2.0]", "range"],
+  ["[1.0,2.0[", "range"],
+  ["(,2.0]", "range"],
+  ["[1.0,)", "range"],
+  ["[1.0]", "range"],
+  ["[1.0\u00a0beta,2.0]", "range"],
+  ["[1.0\u2003beta]", "range"],
+  ["[1.0\tbeta,2.0]", "literal"],
+  ["[\t1.0,\r\n2.0 ]", "range"],
+  ["[\u00a01.0 ,2.0]", "range"],
+  ["[1.0 \u00a0,2.0]", "literal"],
+  ["1.+", "dynamic"],
+  ["latest.release", "dynamic"],
+  ["latest.release.candidate", "dynamic"],
+  ["sdk[preview]", "literal"],
+  ["[1.0,2.0", "literal"],
+])("reports Gradle selector %s as %s", (requires, versionKind) => {
   const report = parse(
     JSON.stringify({
       formatVersion: "1.1",
@@ -466,11 +542,7 @@ it("classifies a Gradle exclusive-lower-bound request as a range", () => {
         {
           name: "apiElements",
           dependencies: [
-            {
-              group: "com.example",
-              module: "lib",
-              version: { requires: "]1.0,2.0]" },
-            },
+            { group: "com.example", module: "lib", version: { requires } },
           ],
         },
       ],
@@ -478,35 +550,10 @@ it("classifies a Gradle exclusive-lower-bound request as a range", () => {
     "/artifacts/demo-1.0.0.module",
   );
   expect(report.dependencies[0]).toMatchObject({
-    version: "]1.0,2.0]",
-    version_kind: "range",
+    version: requires,
+    version_kind: versionKind,
   });
 });
-
-it.each(["1.+", "latest.release"])(
-  "classifies a Gradle dynamic selector %s as dynamic, not literal",
-  (requires) => {
-    const report = parse(
-      JSON.stringify({
-        formatVersion: "1.1",
-        component: { group: "com.example", module: "demo", version: "1.0.0" },
-        variants: [
-          {
-            name: "apiElements",
-            dependencies: [
-              { group: "com.example", module: "lib", version: { requires } },
-            ],
-          },
-        ],
-      }),
-      "/artifacts/demo-1.0.0.module",
-    );
-    expect(report.dependencies[0]).toMatchObject({
-      version: requires,
-      version_kind: "dynamic",
-    });
-  },
-);
 
 it("keeps an empty relativePath and a property-spelled optional distinct from omission", () => {
   const report = parse(`<project>
@@ -601,11 +648,11 @@ it("refuses a document type declaration", () => {
   );
 });
 
-it("refuses XML that is not a Maven project", () => {
-  expectFailure(
-    "<module><artifactId>demo</artifactId></module>",
-    "unsupported",
-  );
+it.each([
+  "<module><artifactId>demo</artifactId></module>",
+  '<project xmlns:ext="urn:example"><ext:artifactId>demo</ext:artifactId></project>',
+])("refuses XML that is not a Maven project: %s", (source) => {
+  expectFailure(source, "unsupported");
 });
 
 it("refuses a POM with two top-level dependencies blocks", () => {
@@ -801,8 +848,8 @@ it("reports the repeated variant-name refusal as a fixed report allowance", asyn
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "resource_constraint",
       retryable: false,
-      remediation: {
-        action: expect.stringContaining("fixed report allowance"),
+      details: {
+        refusal: { kind: "fixed_ceiling", allowance_kind: "report" },
       },
     });
   } finally {
@@ -1006,4 +1053,35 @@ it("refuses a POM past the XML node allowance before building its tree", () => {
       limit: { name: "xml_nodes", maximum: 1_048_576, required: 1_048_577 },
     },
   });
+});
+
+it.each([
+  ["gradle-module", gradleModuleFixture, "/artifacts/demo.module"],
+  ["maven-pom", mavenPomFixture, "/artifacts/pom.xml"],
+] as const)(
+  "reads %s with a UTF-8 signature and retains the input identity",
+  (format, source, path) => {
+    const signed = "\ufeff" + source;
+    const report = parse(signed, path);
+    const original = parse(source, path);
+    expect(report).toEqual({
+      ...original,
+      artifact: {
+        path,
+        bytes: Buffer.byteLength(signed),
+        sha256: createHash("sha256").update(signed, "utf8").digest("hex"),
+      },
+      coverage: {
+        ...original.coverage,
+        examined_bytes: Buffer.byteLength(signed),
+      },
+    });
+    expect(report.format).toBe(format);
+  },
+);
+
+it("still rejects duplicate fields after a Gradle UTF-8 signature", () => {
+  expect(() =>
+    parse('\ufeff{"formatVersion":"1.1","formatVersion":"1.1"}'),
+  ).toThrow(/declares a field more than once/u);
 });

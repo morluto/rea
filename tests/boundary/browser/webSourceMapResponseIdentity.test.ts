@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { expect, it, vi } from "vitest";
 
 import { fetchWebSourceMaps } from "../../../src/browser/WebSourceMapFetcher.js";
+import { fetchWebSourceMapsOk } from "../../fixtures/fetchWebSourceMapsOk.js";
 import { analyzeWebBundleInputSchema } from "../../../src/domain/webBundleAnalysis.js";
 
 const origin = "https://maps.example.test";
@@ -19,46 +20,120 @@ const input = analyzeWebBundleInputSchema.parse({
 const digest = (bytes: Uint8Array | string): string =>
   createHash("sha256").update(bytes).digest("hex");
 
-it.each([
-  { label: "an absent body", body: null },
-  {
-    label: "mapping indices",
-    body: JSON.stringify({
-      version: 3,
-      sources: ["a.js"],
-      names: [],
-      mappings: "ACAA",
-    }),
-  },
-])(
-  "retains completed body identity when $label is invalid",
-  async ({ body }) => {
-    const result = await fetchWebSourceMaps([request(1)], input, undefined, {
-      fetch: () => Promise.resolve(new Response(body, { status: 200 })),
+it("preserves redirected response identity across decoding failures and valid UTF-8", async () => {
+  const mapWithSourceBytes = (source: Uint8Array) =>
+    Buffer.concat([
+      Buffer.from('{"version":3,"names":[],"sources":["source'),
+      source,
+      Buffer.from('.ts"],"mappings":"AAAA"}'),
+    ]);
+  const invalid = [
+    { name: "absent", body: null },
+    {
+      name: "mapping-index",
+      body: JSON.stringify({
+        version: 3,
+        sources: ["a.js"],
+        names: [],
+        mappings: "ACAA",
+      }),
+    },
+    {
+      name: "invalid-json",
+      body: Buffer.from("not-json"),
+      diagnostic: "Source-map JSON is not a version 3 map",
+    },
+    {
+      name: "invalid-utf8",
+      body: mapWithSourceBytes(Uint8Array.of(0xff)),
+      diagnostic: "Source-map response is not valid UTF-8",
+    },
+  ] as const;
+  const valid = {
+    name: "replacement-character",
+    body: mapWithSourceBytes(Buffer.from("�")),
+  };
+  const unavailable = { name: "http-failure", body: "service unavailable" };
+  const fixtures = [...invalid, valid, unavailable].map((scenario, index) => ({
+    ...scenario,
+    ...request(index + 1),
+    effectiveUrl: `${origin}/maps/${scenario.name}.map?token=source-value#fragment`,
+  }));
+  const redirects = new Map(
+    fixtures.map((scenario) => [scenario.fetchUrl, scenario.effectiveUrl]),
+  );
+  const replies = new Map(
+    fixtures.map((scenario) => [scenario.effectiveUrl, scenario]),
+  );
+  const calls: string[] = [];
+  const result = await fetchWebSourceMapsOk(fixtures, input, undefined, {
+    fetch: async (url) => {
+      const received = String(url);
+      calls.push(received);
+      const location = redirects.get(received);
+      if (location !== undefined)
+        return new Response(null, { status: 302, headers: { location } });
+      const scenario = replies.get(received);
+      if (scenario === undefined)
+        throw new Error(`Unexpected request: ${received}`);
+      return new Response(scenario.body, {
+        status: scenario.name === unavailable.name ? 503 : 200,
+      });
+    },
+  });
+
+  expect(result).toMatchObject({
+    status: "partial",
+    requested: fixtures.length,
+    processed: fixtures.length,
+  });
+  expect(calls.sort()).toEqual(
+    fixtures
+      .flatMap(({ fetchUrl, effectiveUrl }) => [fetchUrl, effectiveUrl])
+      .sort(),
+  );
+  const byScript = new Map(result.items.map((item) => [item.script_key, item]));
+  for (const fixture of fixtures) {
+    const item = byScript.get(fixture.scriptKey);
+    if (item === undefined)
+      throw new Error(`Missing result for ${fixture.name}`);
+    expect(item, fixture.name).toMatchObject({
+      declared_url: fixture.declaredUrl,
+      effective_url: fixture.effectiveUrl,
     });
-    if (!result.ok) throw result.error;
-    expect(result.value).toMatchObject({
-      status: "unavailable",
-      requested: 1,
-      processed: 1,
-      items: [
-        {
-          status: "invalid",
-          artifact: null,
-          response_identity: {
-            sha256: digest(body ?? ""),
-            bytes: Buffer.byteLength(body ?? ""),
-            representation: "fetch-response-body-bytes",
-          },
-          original_sources: [],
-          original_module_edges: [],
-          mappings: [],
-          limitation: expect.stringContaining("Response text was not retained"),
+    if (fixture.name === valid.name) {
+      expect(item).toMatchObject({
+        status: "included",
+        artifact: { text: valid.body.toString("utf8") },
+      });
+    } else if (fixture.name === unavailable.name) {
+      expect(item).toMatchObject({
+        status: "fetch_failed",
+        artifact: null,
+        limitation: expect.stringContaining(
+          "Source-map server returned HTTP 503",
+        ),
+      });
+      expect(item).not.toHaveProperty("response_identity");
+    } else {
+      expect(item, fixture.name).toMatchObject({
+        status: "invalid",
+        artifact: null,
+        response_identity: {
+          sha256: digest(fixture.body ?? ""),
+          bytes: Buffer.byteLength(fixture.body ?? ""),
+          representation: "fetch-response-body-bytes",
         },
-      ],
-    });
-  },
-);
+        original_sources: [],
+        original_module_edges: [],
+        mappings: [],
+        limitation: expect.stringContaining("Response text was not retained"),
+      });
+      if ("diagnostic" in fixture)
+        expect(item.limitation, fixture.name).toContain(fixture.diagnostic);
+    }
+  }
+});
 
 it("retains completed body identity when the deadline lands as the response stream ends", async () => {
   const body = JSON.stringify({

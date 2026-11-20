@@ -65,6 +65,11 @@ const INTRINSICS: Readonly<Record<string, readonly string[]>> = {
   __hasOwnProp: ["Object", "prototype", "hasOwnProperty"],
 };
 
+type IntrinsicReadObserver = (
+  capture: t.Node,
+  path: readonly string[],
+) => boolean;
+
 interface IntrinsicDependency {
   readonly path: readonly string[];
   readonly capturedAt?: t.Node;
@@ -172,7 +177,9 @@ export const createSemanticModuleInterop = (
   // A nominal alias path is sufficient for conservative mutation lookup, but
   // helper proof also needs each read to follow initialization. An alias copy
   // retains the earlier function capture; a member read captures it anew.
-  const capturedIntrinsic = (node: t.Node): IntrinsicDependency | undefined => {
+  const capturedIntrinsic = (
+    node: t.Node,
+  ): Required<IntrinsicDependency> | undefined => {
     const path = intrinsicPath(node);
     if (path === undefined) return undefined;
     const visited = new Set<string>();
@@ -231,29 +238,32 @@ export const createSemanticModuleInterop = (
   const intrinsicReadChanged = (
     node: t.Node,
     path: readonly string[],
+    mayObserve?: IntrinsicReadObserver,
   ): boolean => {
     const capture = capturedIntrinsic(node)?.capturedAt ?? node;
     const scope = opaqueMutationPath(capture).join(".");
     const method = path.at(-1);
-    const invocationMethod =
-      method === "bind" || method === "call" || method === "apply";
-    return writes.some(
-      (write) =>
-        (write.scope === scope || write.scope === "intrinsic") &&
-        write.offset < (capture.start ?? -1) &&
-        (write.coverage.covers(path) ||
-          (invocationMethod &&
-            write.coverage.covers([
-              "intrinsic",
-              "Function",
-              "prototype",
-              method,
-            ]))),
+    const inherited =
+      (method === "bind" || method === "call" || method === "apply") &&
+      !(method === "apply" && path.length === 3 && path[1] === "Reflect")
+        ? ["intrinsic", "Function", "prototype", method]
+        : undefined;
+    return (
+      mayObserve?.(capture, path) === true ||
+      (inherited !== undefined && mayObserve?.(capture, inherited) === true) ||
+      writes.some(
+        (write) =>
+          (write.scope === scope || write.scope === "intrinsic") &&
+          write.offset < (capture.start ?? -1) &&
+          (write.coverage.covers(path) ||
+            (inherited !== undefined && write.coverage.covers(inherited))),
+      )
     );
   };
 
   const resolveBoundIntrinsic = (
     node: t.Node,
+    mayObserve?: IntrinsicReadObserver,
   ): JavaScriptIntrinsicInvocation | undefined => {
     const visited = new Set<string>();
     const argumentGroups: t.CallExpression["arguments"][] = [];
@@ -302,8 +312,9 @@ export const createSemanticModuleInterop = (
         const invocation = resolveJavaScriptIntrinsicInvocation(
           current,
           intrinsicPath,
-          boundIntrinsic,
-          intrinsicReadChanged,
+          (callee) => boundIntrinsic(callee, mayObserve),
+          (reference, selected) =>
+            intrinsicReadChanged(reference, selected, mayObserve),
           nativeArrayIteration,
         );
         if (
@@ -330,9 +341,20 @@ export const createSemanticModuleInterop = (
         current = bindTarget;
         continue;
       }
+      if (captured !== undefined && mayObserve !== undefined)
+        opaqueArguments ||= intrinsicReadChanged(
+          captured.capturedAt,
+          path,
+          mayObserve,
+        );
       const boundPath = [...path, "bind"];
       const functionBind = ["intrinsic", "Function", "prototype", "bind"];
       opaqueArguments ||= bindReads.some((capture) => {
+        if (
+          mayObserve?.(capture, boundPath) ||
+          mayObserve?.(capture, functionBind)
+        )
+          return true;
         const scope = opaqueMutationPath(capture).join(".");
         return writes.some(
           (write) =>
@@ -357,11 +379,12 @@ export const createSemanticModuleInterop = (
   const activeBoundValues = new WeakSet<t.Node>();
   const boundIntrinsic = (
     node: t.Node,
+    mayObserve?: IntrinsicReadObserver,
   ): JavaScriptIntrinsicInvocation | undefined => {
     if (activeBoundValues.has(node)) return undefined;
     activeBoundValues.add(node);
     try {
-      return resolveBoundIntrinsic(node);
+      return resolveBoundIntrinsic(node, mayObserve);
     } finally {
       activeBoundValues.delete(node);
     }
@@ -725,12 +748,18 @@ export const createSemanticModuleInterop = (
         | t.NewExpression
         | t.TaggedTemplateExpression,
       callablePath = intrinsicPath,
+      mayObserve?: IntrinsicReadObserver,
     ) =>
       resolveJavaScriptIntrinsicInvocation(
         node,
         callablePath,
-        boundIntrinsic,
-        intrinsicReadChanged,
+        mayObserve === undefined
+          ? boundIntrinsic
+          : (callee) => boundIntrinsic(callee, mayObserve),
+        mayObserve === undefined
+          ? intrinsicReadChanged
+          : (reference, path) =>
+              intrinsicReadChanged(reference, path, mayObserve),
         nativeArrayIteration,
       ),
     boundIntrinsic,

@@ -286,8 +286,7 @@ it("excludes declared binary lengths through CLI, MCP and retained capture pages
 });
 
 it("reads actual upstream HAR packages in an owned process and retains selected producer order", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-history-har-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const root = await createTestTempDirectory("rea-history-har-");
   const fixture = historicalHar();
   const first = fixture.log.entries[0];
   if (first === undefined) throw new Error("fixture missing");
@@ -314,8 +313,7 @@ it("reads actual upstream HAR packages in an owned process and retains selected 
 });
 
 it("keeps malformed JSON separate from absent external mitmproxy capability", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-history-errors-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const root = await createTestTempDirectory("rea-history-errors-");
   const path = join(root, "capture.har");
   await writeFile(path, "{malformed-private-json");
   const malformed = await cli(path, "har");
@@ -333,8 +331,7 @@ it("keeps malformed JSON separate from absent external mitmproxy capability", as
 });
 
 it("reports the actual HAR decoder nesting constraint as a typed selected-input issue", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-history-depth-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const root = await createTestTempDirectory("rea-history-depth-");
   let extension: unknown = "leaf";
   for (let depth = 0; depth < 66; depth++) extension = { child: extension };
   const path = join(root, "deep.har");

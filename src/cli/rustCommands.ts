@@ -33,7 +33,8 @@ export const registerRustCommands = (
       },
       fields: {
         path: {
-          description: "Local ELF, PE, thin Mach-O or universal Mach-O image",
+          description:
+            "Local ELF, PE, thin or universal Mach-O, or WebAssembly core-module image",
         },
         producer_limits: { description: PRODUCER_LIMITS_HELP },
         architecture: {

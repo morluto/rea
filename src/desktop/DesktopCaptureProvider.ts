@@ -1,4 +1,5 @@
 import type { DesktopCaptureProvider } from "../ports/DesktopApplicationSession.js";
+import type { DesktopTaskReaderRunner } from "../ports/DesktopTaskReader.js";
 import {
   runDesktopSession,
   runningApplicationWindows,
@@ -7,7 +8,11 @@ import { DesktopContentStore } from "./DesktopContentStore.js";
 import { walkHomeState } from "./HomeStateWalker.js";
 import { inspectLinuxApplication } from "./LinuxApplicationInventory.js";
 import { resolveProgram } from "./ProgramLookup.js";
+import { runReaderHere } from "./TaskReaderProcess.js";
 import { X11WindowObserver } from "./X11WindowObserver.js";
+
+/** Run one exported-task reader command using the desktop host runner. */
+export const runDesktopTaskReader: DesktopTaskReaderRunner = runReaderHere;
 
 /**
  * The desktop provider's implementation of the capture port: `xprop` window

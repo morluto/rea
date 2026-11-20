@@ -1,5 +1,9 @@
 import { HOST_PLATFORM, type HostPlatform } from "./platform/HostPlatform.js";
-import { systemDoctorHost, type DoctorHost } from "./application/Doctor.js";
+import {
+  systemDoctorHost,
+  type DoctorHost,
+  type RetainedProviderRequestBudgetResolver,
+} from "./application/Doctor.js";
 import type {
   DoctorCheck,
   DoctorProviderInspection,
@@ -359,27 +363,32 @@ export const createSystemDoctorHost = (
     platform,
     architecture: host.architecture,
     ...(signal === undefined ? {} : { signal }),
-    resolveProviderRequestBudget: async (
-      analysisProvider,
-      registrationEnvironment,
-      resourceScope,
-      inspectionSignal,
-    ) => {
-      if (analysisProvider !== "ida" && analysisProvider !== "auto")
-        return ok(undefined);
-      const path = registrationEnvironment.REA_IDA_MCP_CONFIG;
-      if (path === undefined) return ok(undefined);
-      const registration = await readRegistration(
-        path,
-        resourceScope,
-        inspectionSignal,
-      );
-      if (registration.ok) return ok(registration.value.timeoutMs);
-      // An invalid IDA registration cannot be selected automatically. Keep it
-      // out of recommendations for another available provider, but surface the
-      // parser-owned error when IDA itself was explicitly selected.
-      return analysisProvider === "ida" ? registration : ok(undefined);
-    },
+    resolveProviderRequestBudget: Object.assign(
+      async (
+        analysisProvider: Parameters<RetainedProviderRequestBudgetResolver>[0],
+        registrationEnvironment: Parameters<RetainedProviderRequestBudgetResolver>[1],
+        resourceScope: Parameters<RetainedProviderRequestBudgetResolver>[2],
+        inspectionSignal: Parameters<RetainedProviderRequestBudgetResolver>[3],
+      ) => {
+        if (analysisProvider !== "ida" && analysisProvider !== "auto")
+          return ok(undefined);
+        const path = registrationEnvironment.REA_IDA_MCP_CONFIG;
+        if (path === undefined) return ok(undefined);
+        const registration = await readRegistration(
+          path,
+          resourceScope,
+          inspectionSignal,
+        );
+        if (registration.ok) return ok(registration.value.timeoutMs);
+        // An invalid IDA registration cannot be selected automatically. Keep it
+        // out of recommendations for another available provider, but surface the
+        // parser-owned error when IDA itself was explicitly selected.
+        return analysisProvider === "ida" ? registration : ok(undefined);
+      },
+      // The only environment setting this resolver reads; an unresolved
+      // expression for it blocks budget derivation.
+      { budgetSettings: new Set(["REA_IDA_MCP_CONFIG"]) },
+    ),
     providerInspections: async (
       resourceScope: RetainedResourceScope,
       inspectionSignal: AbortSignal,

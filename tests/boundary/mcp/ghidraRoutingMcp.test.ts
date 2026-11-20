@@ -1,6 +1,7 @@
 import { batchDecompileResultSchema } from "../../../src/domain/native/batchDecompile.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { describe, expect, it } from "vitest";
+import { SUPPORTED_GHIDRA_VERSION } from "../../../src/ghidra/GhidraReleasePolicy.js";
 import { connectGhidraMcp, ghidraFixtureResult } from "./ghidraMcpHarness.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { ok } from "../../../src/domain/result.js";
@@ -52,7 +53,7 @@ describe("Ghidra MCP capability routing", () => {
       expect(sessionStatus.result).toMatchObject({
         open: true,
         analysis_provider_binding: {
-          provider: { id: "ghidra", version: "12.1.4" },
+          provider: { id: "ghidra", version: SUPPORTED_GHIDRA_VERSION },
         },
       });
       const availability = expandToolAvailability(

@@ -693,8 +693,35 @@ const requireJavaHomeExecutable = async (
   }
 };
 
+/** Smallest heap MiB or processor count. Zero is neither a heap size nor a count. */
+export const JADX_JVM_NUMERIC_MINIMUM = 1;
+
+/**
+ * Omitted `REA_JADX_HEAP_MIB` and `REA_JADX_ACTIVE_PROCESSOR_COUNT` pass no
+ * flag, so the JVM keeps its own default.
+ */
+export const JADX_JVM_DEFAULT = null;
+
+/** Heap MiB must be an exact safe integer. A larger flag cannot round-trip. */
+export const JADX_HEAP_MIB_MAXIMUM = Number.MAX_SAFE_INTEGER;
+
 /** `-XX:ActiveProcessorCount` is a Java `int`; this is a count, not a duration. */
-const JAVA_INT_MAX = 2_147_483_647;
+export const JADX_ACTIVE_PROCESSOR_COUNT_MAXIMUM = 2_147_483_647;
+
+const jadxJvmBounds = (
+  name: "REA_JADX_HEAP_MIB" | "REA_JADX_ACTIVE_PROCESSOR_COUNT",
+) =>
+  name === "REA_JADX_HEAP_MIB"
+    ? {
+        defaultValue: JADX_JVM_DEFAULT,
+        minimum: JADX_JVM_NUMERIC_MINIMUM,
+        maximum: JADX_HEAP_MIB_MAXIMUM,
+      }
+    : {
+        defaultValue: JADX_JVM_DEFAULT,
+        minimum: JADX_JVM_NUMERIC_MINIMUM,
+        maximum: JADX_ACTIVE_PROCESSOR_COUNT_MAXIMUM,
+      };
 
 const resolveJvmArguments = (
   environment: Readonly<Record<string, string | undefined>>,
@@ -704,26 +731,32 @@ const resolveJvmArguments = (
     ["REA_JADX_HEAP_MIB", "-Xmx", "m"],
     ["REA_JADX_ACTIVE_PROCESSOR_COUNT", "-XX:ActiveProcessorCount=", ""],
   ] as const) {
-    const value = environment[name];
-    if (value === undefined) continue;
-    if (!/^[1-9]\d*$/u.test(value) || !Number.isSafeInteger(Number(value)))
+    const bounds = jadxJvmBounds(name);
+    const selected =
+      environment[name] ??
+      (bounds.defaultValue === null ? undefined : String(bounds.defaultValue));
+    if (selected === undefined) continue;
+    const parsed =
+      /^[1-9]\d*$/u.test(selected) && Number.isSafeInteger(Number(selected))
+        ? Number(selected)
+        : undefined;
+    if (parsed === undefined || parsed < bounds.minimum)
       throw configurationFailure(
         "open_options_invalid",
-        `${name} must be a positive safe integer; received ${value}.`,
-        { setting: name, value },
+        `${name} must be a positive safe integer; received ${selected}.`,
+        { setting: name, value: selected },
         "jvm_options",
       );
-    if (
-      name === "REA_JADX_ACTIVE_PROCESSOR_COUNT" &&
-      Number(value) > JAVA_INT_MAX
-    )
+    if (parsed > bounds.maximum)
       throw configurationFailure(
         "open_options_invalid",
-        `${name} exceeds the JVM's signed 32-bit processor-count range.`,
-        { setting: name, value },
+        name === "REA_JADX_ACTIVE_PROCESSOR_COUNT"
+          ? `${name} exceeds the JVM's signed 32-bit processor-count range.`
+          : `${name} must be a positive safe integer; received ${selected}.`,
+        { setting: name, value: selected },
         "jvm_options",
       );
-    result.push(`${prefix}${value}${suffix}`);
+    result.push(`${prefix}${selected}${suffix}`);
   }
   return result;
 };

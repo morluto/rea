@@ -588,11 +588,12 @@ const installationCoordinates = async (
       : { source: "homebrew", command: homebrew };
   })();
   let javaCommand = selectedJava.command;
-  // Java is a prerequisite of a selected installation. Without one, or with a
-  // relative JAVA_HOME, configuration validation refuses Ghidra before Java can
+  // Java is a prerequisite of an existing installation. Missing application
+  // properties or a relative JAVA_HOME already refuse Ghidra before Java can
   // matter, so callers such as setup and doctor must not execute a host JVM.
   let javaProbe =
     installDir !== null &&
+    properties !== undefined &&
     (options.javaHome === undefined || path.isAbsolute(options.javaHome))
       ? await host.probeJava(
           javaCommand,

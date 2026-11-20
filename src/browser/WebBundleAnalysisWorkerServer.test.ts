@@ -2,11 +2,11 @@ import { analyzeCapturedWebScript } from "../domain/webBundleAnalyzer.js";
 import { createHash, randomUUID } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { expect, it, onTestFinished } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 import { createWebTextArtifact } from "../domain/webContentArtifact.js";
 import type { IncludedScript } from "../domain/webBundleAnalyzerState.js";
@@ -150,7 +150,7 @@ const closeServer = async (
 };
 
 it("transfers reached semantic budgets and does not retain them for the next job", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-web-worker-precision-"));
+  const root = await createTestTempDirectory("rea-web-worker-precision-");
   let worker: ChildProcessWithoutNullStreams | undefined;
   try {
     const server = await startServer(root);
@@ -198,16 +198,14 @@ it("transfers reached semantic budgets and does not retain them for the next job
     }
   } finally {
     if (worker !== undefined) await closeServer(worker);
-    await rm(root, { recursive: true, force: true });
   }
 });
 
 it("refuses with the allowance the parent sent and reports its limit", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-web-worker-work-"));
+  const root = await createTestTempDirectory("rea-web-worker-work-");
   let worker: ChildProcessWithoutNullStreams | undefined;
   onTestFinished(async () => {
     if (worker !== undefined) await closeServer(worker);
-    await rm(root, { recursive: true, force: true });
   });
   const server = await startServer(
     root,
@@ -236,11 +234,10 @@ it("refuses with the allowance the parent sent and reports its limit", async () 
 });
 
 const framingServer = async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-web-worker-framing-"));
+  const root = await createTestTempDirectory("rea-web-worker-framing-");
   let worker: ChildProcessWithoutNullStreams | undefined;
   onTestFinished(async () => {
     if (worker !== undefined) await closeServer(worker);
-    await rm(root, { recursive: true, force: true });
   });
   const server = await startServer(root);
   worker = server.process;
@@ -279,7 +276,7 @@ it("serves split and coalesced LF/CRLF requests as separate jobs", async () => {
 
 it.each([
   ["multibyte", Buffer.from("é🙂")],
-  ["replacement-decoded", Buffer.from([0xff])],
+  ["encoded replacement character", Buffer.from("�")],
 ] as const)(
   "accepts an exact-budget %s JSON request written in split UTF-8 and CRLF writes",
   async (_name, text) => {
@@ -302,14 +299,11 @@ it.each([
       text,
       Buffer.from(`",${request.slice(1)}`),
     ]);
-    const decodedBytes = Buffer.byteLength(json.toString("utf8"));
     const frame = Buffer.concat([
       json,
-      Buffer.alloc(WEB_BUNDLE_WORKER_LIMITS.protocolBytes - decodedBytes, 0x20),
+      Buffer.alloc(WEB_BUNDLE_WORKER_LIMITS.protocolBytes - json.length, 0x20),
     ]);
-    expect(Buffer.byteLength(frame.toString("utf8"))).toBe(
-      WEB_BUNDLE_WORKER_LIMITS.protocolBytes,
-    );
+    expect(frame.length).toBe(WEB_BUNDLE_WORKER_LIMITS.protocolBytes);
     await writeInput(server.process, frame.subarray(0, prefix.length + 1));
     await writeInput(
       server.process,
@@ -324,7 +318,16 @@ it.each([
   },
 );
 
-it("rejects an oversized unterminated frame at EOF without starting analysis", async () => {
+it.each([
+  [
+    "oversized EOF",
+    "RangeError: Web bundle worker request exceeds its byte budget",
+  ],
+  [
+    "malformed UTF-8",
+    "TypeError: Web bundle worker request is not valid UTF-8",
+  ],
+] as const)("rejects %s without starting analysis", async (kind, failure) => {
   const server = await framingServer();
   const input = sourceDescriptor(makeScript("fetch('/not-analyzed');"));
   const id = randomUUID();
@@ -336,22 +339,25 @@ it("rejects an oversized unterminated frame at EOF without starting analysis", a
     source: input.descriptor,
     result_budget_bytes: WEB_BUNDLE_WORKER_LIMITS.resultBytes,
   });
-  const frame = request.padEnd(WEB_BUNDLE_WORKER_LIMITS.protocolBytes + 1, " ");
+  const frame =
+    kind === "oversized EOF"
+      ? request.padEnd(WEB_BUNDLE_WORKER_LIMITS.protocolBytes + 1, " ")
+      : Buffer.concat([
+          Buffer.from('{"kind":"'),
+          Buffer.of(0xff),
+          Buffer.from(`",${request.slice(1)}\n`),
+        ]);
   const exited = once(server.process, "exit");
   server.process.stdin.end(frame);
-  await expect(server.next()).rejects.toThrow(
-    "RangeError: Web bundle worker request exceeds its byte budget",
-  );
+  await expect(server.next()).rejects.toThrow(failure);
   expect(await exited).toEqual([1, null]);
   await expect(
     readFile(join(server.root, `${id}.result`)),
-  ).rejects.toMatchObject({
-    code: "ENOENT",
-  });
+  ).rejects.toMatchObject({ code: "ENOENT" });
 });
 
 it("bounds and binds per-script worker jobs, then reuses one worker for the next script", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-web-worker-server-test-"));
+  const root = await createTestTempDirectory("rea-web-worker-server-test-");
   let worker: ChildProcessWithoutNullStreams | undefined;
   try {
     const server = await startServer(root);
@@ -491,6 +497,5 @@ it("bounds and binds per-script worker jobs, then reuses one worker for the next
     if (worker !== undefined) {
       await closeServer(worker);
     }
-    await rm(root, { recursive: true, force: true });
   }
 });

@@ -17,7 +17,11 @@ import { z } from "zod";
 import { parse as parseToml } from "smol-toml";
 
 import { manualRegistrationRemediation } from "../../../src/application/SupportedClients.js";
-import type { SetupResult } from "../../../src/application/SetupTypes.js";
+import type {
+  SetupClientState,
+  SetupResult,
+} from "../../../src/application/SetupTypes.js";
+import { supportedClientRegistrationProfile } from "../../fixtures/clientRegistrationProfile.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 
@@ -97,9 +101,10 @@ const clientStates = [
   {
     client: {
       name: "codex",
+      registrationProfile: supportedClientRegistrationProfile("codex"),
       format: "toml",
-      configPath: [".codex", "config.toml"],
-      marker: [".codex"],
+      configPath: join(".codex", "config.toml"),
+      markerPath: ".codex",
     },
     detected: true,
     configured: false,
@@ -108,15 +113,16 @@ const clientStates = [
   {
     client: {
       name: "opencode",
+      registrationProfile: supportedClientRegistrationProfile("opencode"),
       format: "opencode",
-      configPath: [".config", "opencode", "opencode.json"],
-      marker: [".config", "opencode"],
+      configPath: join(".config", "opencode", "opencode.json"),
+      markerPath: join(".config", "opencode"),
     },
     detected: false,
     configured: false,
     status: "missing",
   },
-] as const;
+] as const satisfies readonly SetupClientState[];
 
 const agentActions = actions.filter(({ kind }) => kind !== "install_hopper");
 
@@ -134,7 +140,9 @@ cliTest.for([
 
     await expect(access(config)).rejects.toMatchObject({ code: "ENOENT" });
     expect(result.exitCode).not.toBe(0);
-    expect(`${result.stdout}\n${result.stderr}`).toContain("--dry-run");
+    expect(result.json).toMatchObject({ code: "PARSE_ERROR" });
+    expect(result.stdout).toContain("--dry-run");
+    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(/^ +at /mu);
   },
 );
 
@@ -153,23 +161,6 @@ cliTest.for(["--dry-run=true", "--dry-run=false"] as const)(
       expect(result.json).toMatchObject({ status: "ready" });
       await expect(access(config)).resolves.toBeUndefined();
     }
-  },
-);
-
-cliTest(
-  "reports invalid dry-run through the public CLI without a stack trace",
-  async ({ cli }) => {
-    const home = await createTestTempDirectory(
-      "rea-cli-public-invalid-dry-run-",
-    );
-    const config = join(home, ".codex", "config.toml");
-    const result = await runSetup(cli, home, "--dry-run=abc");
-
-    expect(result.exitCode).not.toBe(0);
-    expect(result.json).toMatchObject({ code: "PARSE_ERROR" });
-    expect(result.stdout).toContain("--dry-run");
-    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(/^ +at /mu);
-    await expect(access(config)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );
 
@@ -661,13 +652,76 @@ describe("interactive setup journey", () => {
       ],
       false,
       agentActions,
-      ["codex"],
+      { initialClientIds: ["codex"] },
     );
     expect(result.decision.selectedActionIds).toEqual([
       "configure_client:codex",
       "install_skill",
     ]);
   });
+});
+
+describe("interactive setup client hints", () => {
+  const manual =
+    "Found migrated Claude Desktop storage. Register REA manually in the active file.";
+  const repairOverride =
+    "Invalid PI_CODING_AGENT_DIR: encoded slash. Repair the override before configuring Pi.";
+  const repairConfiguration =
+    "Existing configuration needs repair before setup";
+  it.for([
+    {
+      name: "claude_desktop",
+      format: "json",
+      status: "unknown",
+      configPathError: manual,
+      expected: manual,
+    },
+    {
+      name: "claude_desktop",
+      format: "json",
+      status: "invalid",
+      configPathError: manual,
+      expected: manual,
+    },
+    {
+      name: "pi",
+      format: "pi",
+      status: "unknown",
+      configPathError: repairOverride,
+      expected: repairOverride,
+    },
+    {
+      name: "codex",
+      format: "toml",
+      status: "invalid",
+      configPathError: undefined,
+      expected: repairConfiguration,
+    },
+  ] as const)(
+    "shows the recovery for $name when setup reports $status",
+    async ({ name, format, status, configPathError, expected }) => {
+      const state: SetupClientState = {
+        client: {
+          name,
+          registrationProfile: supportedClientRegistrationProfile(name),
+          format,
+          configPath: join(name, "config"),
+          ...(configPathError === undefined ? {} : { configPathError }),
+        },
+        detected: true,
+        configured: false,
+        status,
+      };
+      const result = await runJourney(
+        [step("Which agents should use REA?", "\r")],
+        false,
+        [actions[0]],
+        { states: [state, clientStates[1]] },
+      );
+      expect(result.output).toContain(expected);
+      expect(result.decision.selectedActionIds).toEqual([]);
+    },
+  );
 });
 
 describe("interactive setup completion", () => {
@@ -829,13 +883,19 @@ const runJourney = async (
   steps: readonly JourneyStep[],
   accessible = false,
   journeyActions: readonly object[] = agentActions,
-  initialClientIds: readonly string[] = [],
+  {
+    initialClientIds = [],
+    states = clientStates,
+  }: {
+    readonly initialClientIds?: readonly string[];
+    readonly states?: readonly SetupClientState[];
+  } = {},
 ): Promise<JourneyResult> => {
   const isolatedHome = await createTestTempDirectory("rea-cli-setup-test-");
   const script = [
     'import { confirmInteractiveSetup } from "./dist/cli/interactiveSetup.js";',
     `const actions = ${JSON.stringify(journeyActions)};`,
-    `const context = ${JSON.stringify({ stage: "select", clientStates, selectedClientIds: initialClientIds, clientSelectionAllowed: true })};`,
+    `const context = ${JSON.stringify({ stage: "select", clientStates: states, selectedClientIds: initialClientIds, clientSelectionAllowed: true })};`,
     `let decision = await confirmInteractiveSetup(actions, ${JSON.stringify(accessible)}, context);`,
     "if (!decision.cancelled && decision.selectedActionIds.length > 0) {",
     "  const selected = new Set(decision.selectedActionIds);",

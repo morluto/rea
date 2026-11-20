@@ -10,7 +10,7 @@ import {
   elfDebugLinkSchema,
   inspectElfDebugLinkInputSchema,
 } from "../../domain/native/elfDebugLink.js";
-import { gnuBuildIdNote } from "./ElfNotes.fixture.js";
+import { elfNote, gnuBuildIdNote } from "./ElfNotes.fixture.js";
 import { parseElfNotes } from "./ElfNoteParser.js";
 import { readElfImage } from "../../domain/native/elfImage.js";
 import {
@@ -263,6 +263,24 @@ it("fails the note entry budget instead of returning a partial build-id", () => 
   ).toThrow(ParseFailureError);
 });
 
+it("reads the build-id beside glibc's SystemTap probe notes by default", () => {
+  const probes = Array.from({ length: 79 }, () =>
+    elfNote("stapsdt", 3, Buffer.alloc(40)),
+  );
+  const report = parse(
+    elfDebugLinkFixture({
+      notes: Buffer.concat([
+        gnuBuildIdNote(FIXTURE_BUILD_ID_HEX, true),
+        ...probes,
+      ]),
+    }),
+  );
+  expect(report.build_id).toMatchObject({
+    status: "observed",
+    hex: FIXTURE_BUILD_ID_HEX,
+  });
+});
+
 it("preserves parent-directory segments and omits a slash name", () => {
   const preserved = parse(elfDebugLinkFixture(), {}, "/var/tmp/../lib/prog");
   expect(
@@ -358,7 +376,7 @@ const verify = (image: Buffer, candidate: Buffer, candidatePath: string) => {
 
 it("counts legacy .zdebug_info as present candidate debug info", () => {
   const candidate = elfDebugCandidateFixture({ zdebugInfo: true });
-  const sections = readElfImage(candidate).sections;
+  const sections = readElfImage(candidate, "elf-directory").sections;
   expect(
     sections.some(
       (section) => section.format === "elf" && section.name === ".zdebug_info",
@@ -379,7 +397,7 @@ it("counts legacy .zdebug_info as present candidate debug info", () => {
 /** Point one named section of a little-endian ELF64 candidate past its end. */
 const moveSectionPastEnd = (candidate: Buffer, name: string): Buffer => {
   const damaged = Buffer.from(candidate);
-  const declared = readElfImage(candidate).sections.find(
+  const declared = readElfImage(candidate, "elf-directory").sections.find(
     (section) => section.format === "elf" && section.name === name,
   );
   if (declared?.format !== "elf") throw new Error(`missing ${name}`);

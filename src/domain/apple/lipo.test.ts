@@ -132,6 +132,28 @@ it.each([
   },
 );
 
+it("keeps a thin unnamed architecture's signed numeric identity after the echoed filename", () => {
+  const path = "/fixture/\narchitecture forged";
+  const name = "(cputype (-1) cpusubtype (16777215))";
+  const parsed = parseLipoFixture(
+    `Non-fat file: ${path} is architecture: ${name}\n`,
+    path,
+  );
+  expect(parsed).toMatchObject({
+    format: "thin",
+    architectures: [
+      {
+        name,
+        cpu_type: null,
+        cpu_type_code: 0xffffffff,
+        cpu_subtype: null,
+        cpu_subtype_code: null,
+        cpu_subtype_base: 0xffffff,
+      },
+    ],
+  });
+});
+
 describe("lipo architecture facts", () => {
   it("preserves Apple's declared and hidden ARM64 architecture scopes", () => {
     const output = parseLipoFixture(`fat_magic 0xcafebabe
@@ -196,7 +218,7 @@ architecture arm64e
         cpu_type: "CPU_TYPE_ARM64",
         cpu_type_code: 0x0100000c,
         cpu_subtype: "CPU_SUBTYPE_ARM64E",
-        cpu_subtype_code: 0x80000002,
+        cpu_subtype_code: null,
         capabilities: "PTR_AUTH_VERSION USERSPACE 0",
         file_offset: 65536,
         size: 89088,
@@ -269,27 +291,29 @@ architecture arm64e
       },
     ]);
   });
-
-  it.each([
-    { capabilities: "PTR_AUTH_VERSION USERSPACE 1", code: 0x81000002 },
-    { capabilities: "", code: null },
-  ])(
-    "retains an arm64e base subtype with capabilities '$capabilities'",
-    ({ capabilities, code }) => {
-      expect(
-        parseLipoFixture(
-          `architecture arm64e.v1\n cputype CPU_TYPE_ARM64\n cpusubtype CPU_SUBTYPE_ARM64E\n capabilities ${capabilities}\n`,
-        ).architectures,
-      ).toMatchObject([
-        {
-          cpu_type_code: 0x0100000c,
-          cpu_subtype_code: code,
-          cpu_subtype_base: 2,
-        },
-      ]);
-    },
-  );
 });
+
+it.each([
+  { capabilities: "PTR_AUTH_VERSION USERSPACE 1", code: null },
+  { capabilities: "0x81", code: 0x81000002 },
+  { capabilities: "", code: null },
+])(
+  "retains an arm64e base subtype with capabilities '$capabilities'",
+  ({ capabilities, code }) => {
+    expect(
+      parseLipoFixture(
+        `architecture arm64e.v1\n cputype CPU_TYPE_ARM64\n cpusubtype CPU_SUBTYPE_ARM64E\n capabilities ${capabilities}\n`,
+      ).architectures,
+    ).toMatchObject([
+      {
+        cpu_type_code: 0x0100000c,
+        cpu_subtype_code: code,
+        cpu_subtype_base: 2,
+        capabilities: capabilities || null,
+      },
+    ]);
+  },
+);
 
 describe("lipo FAT operand framing", () => {
   it.each([
