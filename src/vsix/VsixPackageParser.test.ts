@@ -654,6 +654,27 @@ it("keeps a Zstandard decoder window refusal as a memory limit instead of a malf
   }
 });
 
+it("keeps activation events literal before classifying them as eager", async () => {
+  const bytes = await vsixPackageFixture({
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      engines: { vscode: "^1.74.0" },
+      activationEvents: ["* ", "onStartupFinished ", "*", "onStartupFinished"],
+    }),
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.activation_events).toEqual([
+    { event: "* ", eager: false },
+    { event: "onStartupFinished ", eager: false },
+    { event: "*", eager: true },
+    { event: "onStartupFinished", eager: true },
+  ]);
+});
+
 it("resolves dot segments in entry points under extension/", async () => {
   const bytes = await vsixPackageFixture({
     packageJson: JSON.stringify({

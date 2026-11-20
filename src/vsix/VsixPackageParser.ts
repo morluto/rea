@@ -257,6 +257,24 @@ const asStringArray = (value: unknown): string[] => {
   return ids;
 };
 
+/**
+ * Activation events are matched by VS Code as exact strings, so keep each
+ * declared value literal: no trimming and no comma splitting. Only empty
+ * strings and exact duplicates are dropped.
+ */
+const asLiteralStringArray = (value: unknown): string[] => {
+  const items = typeof value === "string" ? [value] : value;
+  if (!Array.isArray(items)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of items) {
+    if (typeof item !== "string" || item === "" || seen.has(item)) continue;
+    seen.add(item);
+    out.push(item);
+  }
+  return out;
+};
+
 const capabilityValue = (
   value: unknown,
 ): VsixPackage["capabilities"]["untrusted_workspaces"] => {
@@ -697,7 +715,7 @@ const parsePackageJsonDocument = (
     main: packageJsonEntryPath(record.main),
     mainDirectoryOnly: packageJsonEntryDirectoryOnly(record.main),
     browser: packageJsonEntryPath(record.browser),
-    activationEvents: asStringArray(record.activationEvents),
+    activationEvents: asLiteralStringArray(record.activationEvents),
     contributes: {
       keys,
       commands,
