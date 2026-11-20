@@ -47,6 +47,10 @@ Node.js, procps `ps`, the Docker CLI, a Docker daemon reachable without
 `sudo`, 20 GB free where Docker keeps images, agentenv-framework 0.9.1485,
 the runtime archive of this REA version, the build settings in the
 registration or the environment, and the skill. Each failure names its fix.
+Doctor reads the selected runtime archive without extracting it. The archive
+must supply one launcher at `scripts/rea.mjs` under a visible top folder.
+When doctor can identify the intended folder, it reports its declared package
+version even if the launcher is unusable.
 It also reports, without counting them against `healthy`, whether a model
 endpoint for solver runs is configured and which agentenv containers
 earlier builds left. Pass `--json` for the full report.
@@ -201,10 +205,13 @@ refused unless its SHA-256 is the one named, and unpacked by a root build
 step, `install-download.sh`, under `/opt/rea-apps/<desktop_entry>`; the
 export writes the same step. An AppImage is extracted with its own
 `--appimage-extract`, so no FUSE is needed, and the step installs the image's
-own `<desktop_entry>.desktop` under `/usr/local/share/applications` with
-each `Exec` program replaced by the image's `AppRun`, after any `env` prefix
-and its assignments, without `TryExec`, and its icon; an image without that entry fails the build, naming the entries it
-has. A tarball is read with Python's `tarfile`, since the computer has no
+own `<desktop_entry>.desktop` under `/usr/local/share/applications`. It replaces
+the effective `Exec` program in the main group and each desktop action with the
+image's `AppRun`, preserving any `env` prefix and its assignments. It removes
+main-group `TryExec` declarations and installs the main group's effective icon.
+Repeated declarations follow GLib's last-key rule. An image missing the
+requested desktop entry fails the build and lists the entries it has. A
+tarball is read with Python's `tarfile`, since the computer has no
 `xz` program, so gzip, bzip2 and xz archives work. Its `data` filter refuses
 links that point outside the folder, absolute ones included, and special
 files, so such an archive fails the build. Its `program` is a path
@@ -353,6 +360,10 @@ it, and tears down once that call has ended. Closing the
 MCP server closes every computer the same way, and a helper whose REA server
 exits sees its stdin close and tears down.
 
+Once the helper reports a computer, SIGTERM or SIGINT can request teardown
+while stdin remains open. It exits 0 when agentenv confirms nothing is left,
+or 1 when agentenv still reports resources.
+
 A timed-out or cancelled export command is stopped by that command's
 supervisor. It sends SIGINT, then SIGTERM, then SIGKILL, with two seconds
 between each, to processes that are still in the command's session. A child
@@ -368,6 +379,3 @@ the computer up so that reader can be retried.
 The control token that guards the computer's framework-only routes stays in
 REA: no result, error or log carries it. Code running in the computer as its
 user can still read it, which is acceptable for a local build.
-
-See the [specification](specs/desktop-app-environments/build-computer/spec.md)
-for scope and verification.

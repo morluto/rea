@@ -15,6 +15,7 @@ import { closeVerifierResources } from "../../scripts/lib/verifier-cleanup.mjs";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, expect, onTestFinished } from "vitest";
 import { createMcpSchemaValidation } from "./mcpSchemaValidation.js";
+import { createSharedMcpSession } from "../support/mcp/sharedMcpSession.js";
 
 /** Default to native tools while preserving explicit caller configuration. */
 export const localToolsMcpEnvironment = (
@@ -99,6 +100,24 @@ export async function connectLocalToolsMcp(
 }
 
 /**
+ * Lazy file-scoped production stdio MCP client. Connects on first use so
+ * skipped files pay zero startup cost, sharing `createSharedMcpSession`'s
+ * retryable cleanup queue and handshake-failure attribution.
+ */
+export const lazyLocalToolsMcp = (
+  environment: Readonly<Record<string, string>> = {},
+): (() => Promise<Awaited<ReturnType<typeof connectLocalToolsMcp>>>) => {
+  const { session, close } = createSharedMcpSession(
+    async (registerCleanup, isClosed) => {
+      if (isClosed()) throw new Error("Shared MCP session is closed");
+      return connectLocalToolsMcp(environment, registerCleanup);
+    },
+  );
+  afterAll(() => close());
+  return () => session.call();
+};
+
+/**
  * One production stdio MCP client for the calling test file. It connects
  * before the file's tests. Teardown removes each cleanup only after it
  * succeeds, so a failed cleanup stays owned.
@@ -124,6 +143,11 @@ export const fileLocalToolsMcp = (
       if (connected === undefined)
         throw new Error("The file's MCP client is not connected");
       return connected.client;
+    },
+    get call() {
+      if (connected === undefined)
+        throw new Error("The file's MCP client is not connected");
+      return connected.call;
     },
   };
 };

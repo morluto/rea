@@ -20,10 +20,9 @@ import {
 } from "./AgentEnvComputerHelper.js";
 import { AGENTENV_PROVIDER } from "./AgentEnvProviderIdentity.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { AGENTENV_BRIDGE_SOURCES } from "./AgentEnvBridgeSources.js";
 
-const HELPER = fileURLToPath(
-  new URL("../../bridge/agentenv/solve.py", import.meta.url),
-);
+const HELPER = fileURLToPath(AGENTENV_BRIDGE_SOURCES.solve);
 const REPORT_BYTES = 256 * 1024;
 const STDERR_BYTES = 16 * 1024;
 /** The longest one solve may take, its deploy and teardown included, before REA stops it. */
@@ -236,7 +235,10 @@ export const runSolveHelper = async (options: {
       report ??= line.ok
         ? parseReport(line.value)
         : {
-            error: "REA's solve helper's report is too long",
+            error:
+              line.error._tag === "ControlLineMalformedUtf8"
+                ? "REA's solve helper's report is not valid UTF-8"
+                : "REA's solve helper's report is too long",
             cleanup: { unknown: true, sandboxes: [] },
           };
   })().catch(() => undefined);

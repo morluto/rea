@@ -6,10 +6,7 @@ import {
   elfUnwindRangesSchema,
   inspectElfUnwindRangesInputSchema,
 } from "../../domain/native/elfUnwindRanges.js";
-import {
-  ElfUnwindSymbolTextFailure,
-  parseElfUnwindRanges,
-} from "./ElfUnwindTables.js";
+import { parseElfUnwindRanges } from "./ElfUnwindTables.js";
 import {
   UNWIND_FN_A,
   UNWIND_FN_A_SIZE,
@@ -508,24 +505,40 @@ it("returns only the CIEs a page's ranges name, however many the image has", () 
   expect(first.coverage.total_cies).toBe(502);
 });
 
-it("fails closed when the CIE or FDE budget is exhausted", () => {
-  const bytes = elfUnwindFixture();
-  const input = inspectElfUnwindRangesInputSchema.parse({
-    path: "/artifacts/unwind.elf",
-    max_ranges: 1,
-  });
-  expect(() =>
-    parseElfUnwindRanges(
-      bytes,
-      {
-        path: input.path,
-        sha256: "a".repeat(64),
-        bytes: bytes.length,
-      },
-      input,
-    ),
-  ).toThrow(ArtifactReaderFailure);
-});
+it.each([
+  { field: "CIE", maximum: 1, suffixNames: 0 },
+  { field: "FDE", maximum: 2, suffixNames: 1 },
+])(
+  "fails closed when the $field budget is exhausted",
+  ({ field, maximum, suffixNames }) => {
+    const bytes = elfUnwindFixture({ suffixNames });
+    const input = inspectElfUnwindRangesInputSchema.parse({
+      path: "/artifacts/unwind.elf",
+      max_ranges: maximum,
+    });
+    expect(() =>
+      parseElfUnwindRanges(
+        bytes,
+        {
+          path: input.path,
+          sha256: "a".repeat(64),
+          bytes: bytes.length,
+        },
+        input,
+      ),
+    ).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({
+          kind: "limit",
+          format: "elf-unwind-ranges",
+          field,
+          offset: expect.any(Number),
+          limit: { name: "max_ranges", maximum },
+        }),
+      }),
+    );
+  },
+);
 
 it("stops when the caller has already cancelled", () => {
   const bytes = elfUnwindFixture();
@@ -1190,7 +1203,12 @@ it("bounds the symbol-name text decoded for one page by its own allowance", () =
     symbol: { text: "s".repeat(65535) },
   });
   expect(() => parse(bytes, { limit: 300 })).toThrow(
-    ElfUnwindSymbolTextFailure,
+    expect.objectContaining({
+      failure: expect.objectContaining({
+        kind: "limit",
+        limit: { name: "symbol_name_text_bytes", maximum: 16 * 1024 * 1024 },
+      }),
+    }),
   );
 });
 

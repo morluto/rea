@@ -34,6 +34,7 @@ import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
 import type { HostIdentity } from "../../domain/desktop/hostIdentity.js";
 import { scrubDconf } from "../../domain/desktop/seedScrub.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import type { DesktopTaskReaderRunner } from "../../ports/DesktopTaskReader.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
@@ -239,7 +240,10 @@ const planExport = async (
     paths,
     seed: context.seed,
   });
-  const launch = planLaunch(capture, electron, seeds, files);
+  const launch = planLaunch(capture, electron, seeds, {
+    ...stateFiles,
+    restoredFiles: versions.seeds.keys(),
+  });
   const plan: DesktopAppExportPlan = {
     viewPolicy: request.viewPolicy,
     name: source,
@@ -343,9 +347,14 @@ const NO_SCRUB: SeedScrubReport = {
   unscrubbed: [],
 };
 
+/** State readers plus the host task reader needed by exportDesktopApplication. */
+export interface DesktopExportReaders extends DesktopStateReaders {
+  readonly taskReader: DesktopTaskReaderRunner;
+}
+
 const runExport = async (
   request: DesktopExportRequest,
-  readers: DesktopStateReaders,
+  readers: DesktopExportReaders,
   signal: AbortSignal | undefined,
 ) => {
   const { evidence, capture } = await readDesktopCapture(
@@ -384,6 +393,7 @@ const runExport = async (
     ends,
     identity,
     checkpoints,
+    taskReader: readers.taskReader,
     signal,
   });
   const admitted = await admitDesktopTasks(
@@ -567,7 +577,7 @@ const publishedExportFailure = (
 /** Export one capture folder as an agentenv computer app bundle, reported as Evidence. */
 export const exportDesktopApplication = async (
   request: DesktopExportRequest,
-  readers: DesktopStateReaders,
+  readers: DesktopExportReaders,
   signal?: AbortSignal,
 ): Promise<Evidence | AnalysisError> => {
   try {

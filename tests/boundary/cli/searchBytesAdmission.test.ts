@@ -51,7 +51,7 @@ it("forwards admitted original strings and caller-selected search/provider contr
   );
 });
 
-it("keeps an omitted mask omitted", async () => {
+it("keeps omitted mask and limit selections omitted", async () => {
   const { cli, run } = registry();
   await cli.serve(["search-bytes", "/selected", "AB", "--json"], {
     stdout: () => undefined,
@@ -60,7 +60,7 @@ it("keeps an omitted mask omitted", async () => {
   expect(run).toHaveBeenCalledExactlyOnceWith(
     "/selected",
     "search_bytes",
-    { pattern: "AB", limit: 100 },
+    { pattern: "AB" },
     expect.any(Object),
   );
 });

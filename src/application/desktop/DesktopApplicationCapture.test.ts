@@ -1,5 +1,7 @@
+import * as linuxSampling from "../../process/capture/LinuxProcessSampling.js";
 import {
   samplingInspectionFailures,
+  samplingObservation,
   settleSamplingReads,
   SamplingReadBatchFailure,
 } from "../../process/capture/ProcessSamplingObservation.js";
@@ -367,6 +369,59 @@ it.skipIf(process.platform !== "linux")(
     } finally {
       spy.mockRestore();
     }
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "keeps ownership of a worker after its clean-env launcher exits",
+  async () => {
+    const { root, environment } = await fixture();
+    const app = join(root, "bin/fakeapp");
+    const worker = join(root, "worker");
+    const pidFile = join(root, "worker-pid");
+    const completed = join(root, "worker-completed");
+    await executable(app, `#!/bin/sh\n"${worker}" &\nexit 0\n`);
+    await executable(
+      worker,
+      [
+        "#!/bin/sh",
+        `printf '%s\\n' "$$" > "${pidFile}"`,
+        "/bin/sleep 2",
+        '[ "${INHERITED-unset}" = unset ] && [ "$SELECTED" = yes ] || exit 91',
+        `touch "${completed}"`,
+      ].join("\n"),
+    );
+    const entry = join(root, "clean.desktop");
+    const argv = ["/usr/bin/env", "-i", "SELECTED=yes", app];
+    await writeFile(
+      entry,
+      `[Desktop Entry]\nType=Application\nName=FakeApp\nExec=${argv.join(" ")}\n`,
+    );
+
+    const evidence = await captureDesktopApplication(
+      {
+        ...request(join(root, "out")),
+        desktopEntry: entry,
+        executable: undefined,
+        maxDurationSeconds: 8,
+      },
+      host({ ...environment, INHERITED: "host" }),
+    );
+    if ("error" in evidence) throw new Error(JSON.stringify(evidence));
+    const capture = desktopApplicationCaptureSchema.parse(
+      evidence.normalized_result,
+    );
+    expect(capture.application.argv).toEqual(argv);
+    expect(capture.session).toMatchObject({
+      end_reason: "application_exited",
+      cleanup: { verified: true },
+    });
+    const workerPid = Number(await readFile(pidFile, "utf8"));
+    expect(workerPid).not.toBe(capture.session.launch_pid);
+    expect(capture.session.processes).toContainEqual(
+      expect.objectContaining({ pid: workerPid, started_by_capture: true }),
+    );
+    expect(fileExists(completed)).toBe(true);
   },
 );
 
@@ -1124,6 +1179,18 @@ const sessionInspectionFailure = async (
   });
 };
 
+// Supply the Linux identity sample even when the test host has no procfs.
+// The real run-token reader still transfers the descriptor failure.
+const fixtureProcessStat = samplingObservation({
+  pid: process.pid,
+  parent_pid: process.ppid,
+  process_group_id: process.pid,
+  session_id: process.pid,
+  command: "",
+  startTime: "1",
+  lifecycle: "non-zombie" as const,
+});
+
 it.for([
   { retrySucceeds: true, sessionOwns: false, neutralBatch: false },
   { retrySucceeds: false, sessionOwns: false, neutralBatch: false },
@@ -1162,6 +1229,9 @@ it.for([
       state: "listed",
       windows: [],
     });
+    vi.spyOn(linuxSampling, "readLinuxProcessStat").mockResolvedValue(
+      fixtureProcessStat,
+    );
     const environmentRead = vi
       .spyOn(systemProcessOwnershipHost, "environment")
       .mockRejectedValue(descriptor.failure);

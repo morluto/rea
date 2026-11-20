@@ -241,6 +241,12 @@ describe("CLI advertised input schemas", () => {
     });
     expect(
       parserSchema(cli, "inspect-keyed-archive", "args")?.parse({ path: "x" }),
+    ).toEqual({ path: "x" });
+    expect(
+      parserSchema(cli, "inspect-keyed-archive", "args")?.parse({
+        path: "x",
+        archive: ".",
+      }),
     ).toEqual({ path: "x", archive: "." });
 
     const help = await serve(cli, ["inspect-keyed-archive", "--help"]);
@@ -248,7 +254,7 @@ describe("CLI advertised input schemas", () => {
       "Usage: rea inspect-keyed-archive <path> [archive] [options]",
     );
     expect(help.stdout).toContain(
-      "archive  Relative archive path when the target is a bundle",
+      "archive  Relative archive path when the target is a bundle (default: .)",
     );
   });
 
@@ -303,13 +309,14 @@ describe("firmware CLI advertised input schema", () => {
     expect(options({ offset: maxOffset + 1 })).toBe(false);
     expect(options({ length: maxOffset + 1 })).toBe(false);
 
-    expect(
-      parserSchema(cli, "extract-firmware", "options")?.parse({}),
-    ).toMatchObject({
+    const parser = parserSchema(cli, "extract-firmware", "options");
+    expect(parser?.parse({})).toEqual({});
+    const selected = {
       maxDepth: 3,
       maxOutputBytes: 256 * 1024 * 1024,
       maxOutputFiles: 10_000,
-    });
+    };
+    expect(parser?.parse(selected)).toEqual(selected);
   });
 });
 
@@ -699,6 +706,32 @@ describe("ADB activity extra input schema", () => {
       expect(parser.safeParse(input).success).toBe(expected);
       expect(validate(input)).toBe(expected);
     }
+    for (const extra of [
+      "boolean:key:yes",
+      "string:bad key:value",
+      `string:${"k".repeat(257)}:value`,
+      "string:key:value\0",
+      "float:key:garbage",
+      "int:key:",
+    ]) {
+      expect(parser.safeParse({ extra: [extra] }).success, extra).toBe(false);
+      expect(validate({ extra: [extra] }), extra).toBe(false);
+    }
+    for (const extra of [
+      "int:key:2147483648",
+      "int:key:-2147483649",
+      "long:key:9223372036854775808",
+      "long:key:-9223372036854775809",
+    ])
+      expect(parser.safeParse({ extra: [extra] }).success, extra).toBe(false);
+    expect(validate({ extra: ["string:key:value:rest"] })).toBe(true);
+    expect(parser.safeParse({ extra: ["string:key:"] }).success).toBe(true);
+    expect(parser.safeParse({ extra: ["int:key:2147483647"] }).success).toBe(
+      true,
+    );
+    expect(
+      parser.safeParse({ extra: ["long:key:-9223372036854775808"] }).success,
+    ).toBe(true);
   });
 });
 
@@ -743,8 +776,8 @@ describe("reference-source outline-depth input schema", () => {
     const outlineDepth = advertised.options?.properties?.outlineDepth;
     expect(outlineDepth).toMatchObject({
       anyOf: [
-        { type: "integer", minimum: 0 },
-        { type: "string", pattern: "^[0-9]+$" },
+        { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+        { type: "string", pattern: expect.any(String) },
       ],
     });
 
@@ -794,8 +827,16 @@ describe("reference-source outline-depth input schema", () => {
       expect(validate(parsed.data)).toBe(true);
       expect(validate({ outlineDepth: token, detail: "summary" })).toBe(true);
     }
-    for (const token of ["0x2", "2e0", "-1"])
-      expect(validate({ outlineDepth: token, detail: "summary" })).toBe(false);
+    for (const token of [
+      "0x2",
+      "2e0",
+      "-1",
+      "9007199254740992",
+      "09007199254740992",
+    ])
+      expect(validate({ outlineDepth: token, detail: "summary" }), token).toBe(
+        false,
+      );
     expect(validate({ outlineDepth: -1 })).toBe(false);
     expect(validate({ outlineDepth: 9007199254740992 })).toBe(false);
     expect(validate({ outlineDepth: 2 })).toBe(false);

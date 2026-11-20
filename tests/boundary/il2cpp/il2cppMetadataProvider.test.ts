@@ -2,6 +2,7 @@ import { setImmediate } from "node:timers/promises";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { zstdCompressSync } from "node:zlib";
 import { afterEach, expect, it, vi } from "vitest";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import {
@@ -17,10 +18,12 @@ import { inspectIl2cppMetadataV108 } from "../../../src/il2cpp/Il2cppMetadataV10
 import { Il2cppGhidraSeedWriter } from "../../../src/il2cpp/Il2cppGhidraSeedWriter.js";
 import { Il2cppMetadataService } from "../../../src/application/il2cpp/Il2cppMetadataService.js";
 import { il2cppMetadataSchema } from "../../../src/domain/il2cpp/il2cppMetadata.js";
+import * as zstandard from "../../../src/domain/compression/zstandardExactFrame.js";
 import {
   createElfFixture,
   createIl2cppBinaryFixture,
   FIXTURE_GENERIC_INSTANCES,
+  FIXTURE_METHOD_ADDRESSES,
 } from "../../fixtures/il2cpp/binary.js";
 import {
   createIl2cppMetadataFixture,
@@ -149,23 +152,53 @@ it("accepts padding after the assumed v108 header", async () => {
   });
 });
 
-it("retains source evidence when a v108 section conflicts with the unverified layout", async () => {
-  const root = await createTestTempDirectory("rea-il2cpp-v108-invalid-");
-  const path = join(root, "global-metadata.dat");
-  const bytes = version108Header(Buffer.from("Name\0"));
-  bytes.writeInt32LE(bytes.length + 1, 12 + 2 * 12);
-  await writeFile(path, bytes);
-  const result = await inspectMetadata(path);
-  expect(result.ok).toBe(false);
-  if (result.ok) return;
-  expect(result.error).toBeInstanceOf(AnalysisUnsupportedTargetError);
-  expect(result.error.partialObservation).toMatchObject({
-    normalized_result: { artifact: { path, bytes: bytes.length } },
-  });
-  expect(JSON.stringify(result.error.partialObservation)).not.toContain(
-    "version_108_partial_inventory",
-  );
-});
+it.each([
+  [
+    "extends past the file",
+    (bytes: Buffer) => {
+      bytes.writeInt32LE(bytes.length + 1, 12 + 2 * 12);
+    },
+    /assumed section strings .* is invalid/,
+  ],
+  [
+    "starts inside the header",
+    (bytes: Buffer) => {
+      bytes.writeInt32LE(499, 8 + 2 * 12);
+    },
+    /assumed section strings .* is invalid/,
+  ],
+  [
+    "overlaps another section",
+    (bytes: Buffer) => {
+      bytes.writeInt32LE(501, 8 + 3 * 12);
+      bytes.writeInt32LE(1, 12 + 3 * 12);
+    },
+    /assumed sections strings and events overlap at 501/,
+  ],
+])(
+  "retains source evidence when a v108 section %s",
+  async (_name, mutate, reason) => {
+    const root = await createTestTempDirectory("rea-il2cpp-v108-invalid-");
+    const path = join(root, "global-metadata.dat");
+    const bytes = version108Header(Buffer.from("Name\0"));
+    mutate(bytes);
+    await expect(inspectIl2cppMetadataV108(bytes)).rejects.toMatchObject({
+      reason: "unsupported-version",
+      message: expect.stringMatching(reason),
+    });
+    await writeFile(path, bytes);
+    const result = await inspectMetadata(path);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBeInstanceOf(AnalysisUnsupportedTargetError);
+    expect(result.error.partialObservation).toMatchObject({
+      normalized_result: { artifact: { path, bytes: bytes.length } },
+    });
+    expect(JSON.stringify(result.error.partialObservation)).not.toContain(
+      "version_108_partial_inventory",
+    );
+  },
+);
 
 it("bounds v108 string samples and preserves undecodable bytes and leading BOMs", async () => {
   const repeated = await inspectIl2cppMetadataV108(
@@ -724,6 +757,137 @@ it("accepts cancellation between binary linking batches and keeps the metadata s
     await provider.close();
   }
 });
+
+/** Add a compressed ELF64 .shstrtab outside the fixture's PT_LOAD. */
+const withCompressedElfNames = (image: Buffer): Buffer => {
+  const names = Buffer.from("\0.shstrtab\0");
+  const compressionHeader = Buffer.alloc(24);
+  compressionHeader.writeUInt32LE(2, 0); // ELFCOMPRESS_ZSTD
+  compressionHeader.writeBigUInt64LE(BigInt(names.length), 8);
+  compressionHeader.writeBigUInt64LE(1n, 16);
+  const payload = Buffer.concat([compressionHeader, zstdCompressSync(names)]);
+  const padding = Buffer.alloc((8 - (image.length % 8)) % 8);
+  const tableOffset = image.length + padding.length;
+  const table = Buffer.alloc(128);
+  const namesHeader = table.subarray(64);
+  namesHeader.writeUInt32LE(1, 0); // ".shstrtab" offset in names
+  namesHeader.writeUInt32LE(3, 4); // SHT_STRTAB
+  namesHeader.writeBigUInt64LE(0x800n, 8); // SHF_COMPRESSED
+  namesHeader.writeBigUInt64LE(BigInt(tableOffset + table.length), 24);
+  namesHeader.writeBigUInt64LE(BigInt(payload.length), 32);
+  namesHeader.writeBigUInt64LE(1n, 48);
+  const bytes = Buffer.concat([image, padding, table, payload]);
+  bytes.writeBigUInt64LE(BigInt(tableOffset), 40);
+  bytes.writeUInt16LE(64, 58);
+  bytes.writeUInt16LE(2, 60);
+  bytes.writeUInt16LE(1, 62);
+  return bytes;
+};
+
+it("retains selected source evidence when cancelled decoding compressed ELF names", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-elf-names-cancel-");
+  const path = join(root, "global-metadata.dat");
+  const binary_path = join(root, "libil2cpp.so");
+  const metadata = createLinkedIl2cppMetadataFixture().bytes;
+  const binary = withCompressedElfNames(
+    createElfFixture(createIl2cppBinaryFixture()),
+  );
+  await Promise.all([
+    writeFile(path, metadata),
+    writeFile(binary_path, binary),
+  ]);
+
+  const controller = new AbortController();
+  const reason = new Error("cancel while decoding ELF names");
+  const decode = zstandard.decodeZstandardFramesCooperative;
+  const checkpoint = vi
+    .spyOn(zstandard, "decodeZstandardFramesCooperative")
+    .mockImplementation((bytes, options, pause) =>
+      decode(bytes, options, async () => {
+        controller.abort(reason);
+        await pause();
+      }),
+    );
+  const provider = new Il2cppMetadataProvider();
+  try {
+    const result = await provider.inspect(
+      { path, binary_path },
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected cancellation during ELF decoding");
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cause).toBe(reason);
+    expect(result.error.partialObservation).toMatchObject({
+      operation: "observe_il2cpp_metadata_source",
+      normalized_result: {
+        artifact: { path },
+        selected_binary: {
+          path: binary_path,
+          identity_status: "observed",
+          bytes: binary.length,
+          sha256: createHash("sha256").update(binary).digest("hex"),
+        },
+        inventory_status: "not-returned-as-complete",
+      },
+    });
+    checkpoint.mockRestore();
+    const retry = await provider.inspect({ path, binary_path });
+    if (!retry.ok) throw retry.error;
+    expect(retry.value.binary?.format).toBe("elf");
+    expect(retry.value.method_addresses[0]?.address).toBe(
+      `0x${FIXTURE_METHOD_ADDRESSES[0].toString(16)}`,
+    );
+  } finally {
+    await provider.close();
+  }
+});
+
+it.each([false, true])(
+  "refuses unsupported generic metadata before reading an invalid ELF directory (signal=%s)",
+  async (withSignal) => {
+    const root = await createTestTempDirectory("rea-il2cpp-generic-layout-");
+    const path = join(root, "global-metadata.dat");
+    const binary_path = join(root, "libil2cpp.so");
+    const metadata = createLinkedIl2cppMetadataFixture({ version: 39 }).bytes;
+    const binary = withCompressedElfNames(
+      createElfFixture(createIl2cppBinaryFixture()),
+    );
+    binary.writeBigUInt64LE(BigInt(binary.length + 8), 40);
+    await Promise.all([
+      writeFile(path, metadata),
+      writeFile(binary_path, binary),
+    ]);
+    const options = withSignal
+      ? { signal: new AbortController().signal }
+      : undefined;
+    const provider = new Il2cppMetadataProvider();
+    try {
+      const result = await provider.inspect(
+        { path, binary_path, generic_instances: true },
+        options,
+      );
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisUnsupportedTargetError",
+          reason: expect.stringContaining(
+            "generic method instances are not decoded for metadata version 39",
+          ),
+        },
+      });
+      const ordinary = await provider.inspect({ path, binary_path }, options);
+      expect(ordinary).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisInputError",
+          issues: [{ path: ["binary_path"], reason: "invalid_format" }],
+        },
+      });
+    } finally {
+      await provider.close();
+    }
+  },
+);
 
 it("refuses duplicate MethodDef tokens before publishing linked Evidence or Ghidra seeds", async () => {
   const root = await createTestTempDirectory(

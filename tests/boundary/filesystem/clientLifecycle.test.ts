@@ -19,10 +19,8 @@ import { parse as parseJsonc, type ParseError } from "jsonc-parser";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { ClientConfigurationPublication } from "../../../src/application/ClientConfigurationPublication.js";
 import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
-import {
-  supportedClientRegistrationProfile,
-  supportedClients,
-} from "../../../src/application/SupportedClients.js";
+import { supportedClients } from "../../../src/application/SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../../fixtures/clientRegistrationProfile.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 

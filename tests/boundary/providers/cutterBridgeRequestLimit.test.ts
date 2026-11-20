@@ -1,14 +1,16 @@
 import { bridgeMaxRequestBytesRecovery } from "../../../src/config/bridgeMaxRequestBytes.js";
 import { createServer } from "node:net";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, readFile, writeFile } from "node:fs/promises";
+
 import { join } from "node:path";
 
 import { expect, it, onTestFinished, vi } from "vitest";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { CutterBridgeClient } from "../../../src/cutter/CutterBridgeClient.js";
 import { runWithAnalysisOperationSnapshot } from "../../../src/domain/analysisOperationSnapshot.js";
 import { CutterBridgeService } from "../../../src/cutter/CutterBridgeService.js";
+import { cutterDiscoveryLimitations } from "../../../src/domain/cutterDiscovery.js";
 import { ConfigurationError } from "../../../src/domain/configurationErrors.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {
@@ -24,11 +26,8 @@ const SESSION = "00000000-0000-4000-8000-000000000001";
 const TOKEN = "bridge-token-0123456789abcdef";
 
 const privateDirectory = async (): Promise<string> => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-cutter-request-limit-"));
+  const directory = await createTestTempDirectory("rea-cutter-request-limit-");
   await chmod(directory, 0o700);
-  onTestFinished(async () => {
-    await rm(directory, { recursive: true, force: true });
-  });
   return directory;
 };
 
@@ -262,9 +261,16 @@ it("returns the matching session when the other ceiling descriptor is stale", as
   });
   await writeDescriptor(directory, other, await closedPort(), TOKEN);
   const client = clientFor(directory, "8192");
+  // The stale session's failed probe stays visible beside the found session.
+  const limitations = cutterDiscoveryLimitations("sessions_found", {
+    unreadable: 0,
+    unanswered: 1,
+  });
+  expect(limitations).not.toEqual([]);
   await expect(client.listSessions()).resolves.toMatchObject({
     discovery_status: "sessions_found",
     sessions: [{ session_id: SESSION }],
+    limitations,
   });
 });
 

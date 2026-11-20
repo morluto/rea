@@ -23,7 +23,7 @@ import {
 import { RegularFileChangedError } from "../filesystem/RegularFile.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { ProviderFailureDialect } from "../providers/classifyProviderFailure.js";
 import { errorMessage } from "../kernel/errorMessage.js";
@@ -130,14 +130,7 @@ export const ghidraFileDialect = (
       { cause: mapped },
     );
     bindArtifactFileCleanup(mapped, failure);
-    return analysisErrorWithCleanupFailure(
-      primary,
-      failure,
-      operation,
-    ).bindCleanupDependencies([
-      ...(primary.cleanupIncomplete ? [primary] : []),
-      failure,
-    ]);
+    return analysisErrorWithCleanupDependencies(primary, failure, operation);
   },
   unclassified: (cause, details) => {
     const { cause: primary } = artifactFilePrimaryFacts(cause);

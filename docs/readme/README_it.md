@@ -161,10 +161,13 @@ REA richiede Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) o 26+ (>=26.12.1), oltre
 | PE certificates              | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                            | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                                        |
 | PE imports                   | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                              | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                                  |
 | Windows shortcuts            | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts                            | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                                      |
+| Pacchetti NuGet              | Identità del pacchetto, gruppi di dipendenze, licenza, repository e contenuto ZIP                       | Ispezione statica integrata dei .nupkg; [Pacchetti NuGet](../guides/managed/nuget-nupkg.md)                                                                    |
 | Artefatto WASM               | Convalida, sezioni, forme WAT di import/export esatte e WAT decodificato                                | WABT 1.0.42 fornito dal chiamante; `inspect_wasm_artifact`                                                                                                     |
 | Bytecode EVM                 | Selettori di dispatch, offset dei byte, argomenti inferiti e mutabilità                                 | Carrier raw/hex locale su Linux x64; [guida EVM offline](../guides/evm/evm-bytecode.md)                                                                        |
 | Rust binaries                | Embedded cargo-auditable dependency list                                                                | [Rust binaries](../rust-binaries.md)                                                                                                                           |
 | ELF notes                    | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                         | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                                   |
+| DWARF compile units          | Compile-unit name, directory, producer, language, and dwo_name                                          | Built-in static ELF, Mach-O, and PE inspection; [DWARF compile units](../guides/native/dwarf-units.md)                                                         |
+| ELF dependencies             | DT_NEEDED, SONAME, RPATH/RUNPATH, GNU versions, and undefined imports                                   | Built-in static ELF inspection; [ELF dependencies](../elf-dependencies.md)                                                                                     |
 | Binary hardening             | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                                     | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                                  |
 | Linux kernel modules         | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                             | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                         |
 | Erlang BEAM                  | IFF chunks, atoms, exports, and tables                                                                  | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                              |
@@ -356,7 +359,6 @@ Inizia dalle [guide pratiche](https://rea.tools/it/guides/) del sito web. Per op
 - [CLI ed Evidence](../getting-started/cli.md): comandi, selezione provider, snapshot, import/export e stati di uscita.
 - [Contratti MCP](../reference/mcp-contracts.md) e [prompt agente](../getting-started/mcp-prompts.md): risultati degli strumenti, sessioni e indagini guidate.
 - [Catalogo strumenti](../reference/mcp-contracts.md#generated-catalog): inventario generato di strumenti, provider e comandi CLI.
-- [Roadmap](../development/roadmap.md): lavoro pianificato e tracker delle capacità.
 
 Segnala vulnerabilità tramite [SECURITY.md](../../SECURITY.md).
 
@@ -388,7 +390,7 @@ applicable licenses.
 
 Apprezzeremmo il tuo aiuto con REA! [Apri un issue](https://github.com/morluto/rea/issues) per segnalare un bug o suggerire una funzionalità, oppure [invia una pull request](https://github.com/morluto/rea/pulls) per migliorare il codice o la documentazione.
 
-Vedi [CONTRIBUTING.md](../../CONTRIBUTING.md) per la configurazione di sviluppo e i controlli, [testing](../development/testing.md) per le lane di verifica e la [mappa dell'architettura](../architecture/architecture.mermaid) per la struttura del progetto.
+Vedi [CONTRIBUTING.md](../../CONTRIBUTING.md) per la configurazione di sviluppo e i controlli, [testing](../development/testing.md) per le lane di verifica.
 
 ## License
 

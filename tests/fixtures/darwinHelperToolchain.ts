@@ -15,6 +15,7 @@ export const writeFakeXcrun = async (
   const sdk = join(directory, "sdk");
   const countPath = join(directory, "compile-count");
   const rootsPath = join(directory, "compile-roots");
+  const lookupsPath = join(directory, "stalled-lookups");
   await mkdir(join(directory, "toolchain"), { recursive: true });
   await mkdir(sdk, { recursive: true });
   await writeFile(swiftc, "compiler v1");
@@ -40,7 +41,10 @@ const compile = () => {
   fs.chmodSync(output, 0o755);
 };
 if (args[0] === "swiftc") compile();
-else if (${String(stalledLookups)}) setInterval(() => {}, 1000);
+else if (${String(stalledLookups)}) {
+  fs.appendFileSync(${JSON.stringify(lookupsPath)}, JSON.stringify(args) + "\\n");
+  setInterval(() => {}, 1000);
+}
 else if (args[0] === "--find") process.stdout.write(${JSON.stringify(swiftc)} + "\\n");
 else if (args[0] === "--show-sdk-path") process.stdout.write(${JSON.stringify(sdk)} + "\\n");
 else process.exit(64);
@@ -53,6 +57,10 @@ else process.exit(64);
     sdk,
     compilations: async () =>
       (await readFile(countPath, "utf8").catch(() => "")).length,
+    stalledLookups: async () =>
+      (await readFile(lookupsPath, "utf8").catch(() => ""))
+        .split("\n")
+        .filter((line) => line !== ""),
     roots: async () =>
       (await readFile(rootsPath, "utf8").catch(() => ""))
         .split("\n")

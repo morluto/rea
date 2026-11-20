@@ -47,14 +47,14 @@ typealias ProcessTableSysctlCall = (
   _ size: inout Int
 ) -> Int32
 
-private func readProcessSnapshot() -> ProcessSnapshot {
-  readProcessSnapshot { mib, output, size in
-    sysctl(&mib, u_int(mib.count), output, &size, nil, 0)
-  }
+private func systemProcessTableSysctl(
+  _ mib: inout [Int32], _ output: UnsafeMutableRawPointer?, _ size: inout Int
+) -> Int32 {
+  sysctl(&mib, u_int(mib.count), output, &size, nil, 0)
 }
 
 func readProcessSnapshot(
-  sysctlCall: ProcessTableSysctlCall
+  sysctlCall: ProcessTableSysctlCall = systemProcessTableSysctl
 ) -> ProcessSnapshot {
   for _ in 0..<3 {
     var mib = [CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0]
@@ -175,7 +175,7 @@ private func unavailableIdentity(pid: Int32, reason: String) -> ProcessIdentityO
   )
 }
 
-enum ProcargsMalformedStage: String, CaseIterable {
+enum ProcargsMalformedStage: String {
   case header
   case argumentCount = "argument_count"
   case executablePath = "executable_path"
@@ -306,15 +306,21 @@ private func readRunToken(pid: Int32, pointerSize: Int) -> RunTokenObservation {
   )
 }
 
-func readRunTokens(pids: [Int32]) -> [RunTokenObservation] {
-  let before = readProcessSnapshot()
+func readRunTokens(
+  pids: [Int32], sysctlCall: ProcessTableSysctlCall = systemProcessTableSysctl
+) -> [RunTokenObservation] {
+  let before = readProcessSnapshot(sysctlCall: sysctlCall)
+  // A later snapshot cannot establish the identity that opened the bracket.
+  if let failure = before.failure {
+    return pids.map { unavailable(pid: $0, reason: failure) }
+  }
   let observations = pids.map { pid -> RunTokenObservation in
     guard let metadata = before.metadata[pid] else {
-      return unavailable(pid: pid, reason: before.failure ?? "process_not_in_snapshot")
+      return unavailable(pid: pid, reason: "process_not_in_snapshot")
     }
     return readRunToken(pid: pid, pointerSize: metadata.pointerSize)
   }
-  let after = readProcessSnapshot()
+  let after = readProcessSnapshot(sysctlCall: sysctlCall)
   return zip(pids, observations).map { pid, observation in
     guard let initial = before.metadata[pid], let current = after.metadata[pid] else {
       return unavailable(pid: pid, reason: after.failure ?? "process_not_in_snapshot")

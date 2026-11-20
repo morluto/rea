@@ -25,7 +25,6 @@ import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
   createEvidence,
   evidenceEnvelopeForAdmission,
-  evidenceSubjectTarget,
   type Evidence,
   type EvidenceLocation,
 } from "../domain/evidence.js";
@@ -248,30 +247,35 @@ const workflowSubject = (target: BinaryTarget | undefined) =>
 export const createWorkflowEvidence = (
   input: WorkflowEvidenceInput,
 ): Evidence =>
-  createEvidence(workflowSubject(input.target), REA_WORKFLOW_PROVIDER, {
-    operation: input.operation,
-    parameters: input.parameters,
-    result: input.result,
-    ...(input.upstreamProfile === undefined
-      ? {}
-      : {
-          analysisProfile: workflowAnalysisProfile(
-            input.upstreamProfile,
-            input.operation,
-          ),
-        }),
-    confidence: "derived",
-    ...(input.upstreamEvidenceLinks === undefined
-      ? {}
-      : { evidenceLinks: input.upstreamEvidenceLinks }),
-    limitations: [
-      ...workflowLimitations(input.operation),
-      ...input.upstreamLimitations,
-    ],
-    ...(input.operation === "batch_decompile"
-      ? { locations: batchProcedureLocations(input.result) }
-      : {}),
-  });
+  createEvidence(
+    workflowSubject(input.target),
+    REA_WORKFLOW_PROVIDER,
+    {
+      operation: input.operation,
+      parameters: input.parameters,
+      result: input.result,
+      ...(input.upstreamProfile === undefined
+        ? {}
+        : {
+            analysisProfile: workflowAnalysisProfile(
+              input.upstreamProfile,
+              input.operation,
+            ),
+          }),
+      confidence: "derived",
+      ...(input.upstreamEvidenceLinks === undefined
+        ? {}
+        : { evidenceLinks: input.upstreamEvidenceLinks }),
+      limitations: [
+        ...workflowLimitations(input.operation),
+        ...input.upstreamLimitations,
+      ],
+      ...(input.operation === "batch_decompile"
+        ? { locations: batchProcedureLocations(input.result) }
+        : {}),
+    },
+    { callerTarget: input.target },
+  );
 
 const admitWorkflowRecovery = (
   observation: ComposedWorkflowObservation,
@@ -325,6 +329,7 @@ const admitWorkflowRecovery = (
       locations: [],
       evidenceLinks: [],
     },
+    evidenceInput.target,
   );
   const additional = estimateJsonStorage([
     observation.result,

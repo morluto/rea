@@ -68,6 +68,18 @@ const link = (bytes: Buffer, architecture?: Il2cppBinaryArchitecture) =>
     facts,
   );
 it.each([183, 62])(
+  "links IL2CPP registration and method pointers through APS2 on machine %d",
+  (machine) => {
+    const bytes = createElfFixture(createIl2cppBinaryFixture(), {
+      machine,
+      androidPacked: "aps2",
+    });
+    const original = Buffer.from(bytes);
+    expect(link(bytes).method_addresses).toEqual(expectedAddresses);
+    expect(bytes.equals(original)).toBe(true);
+  },
+);
+it.each([183, 62])(
   "links past unrelated ABS64 and GLOB_DAT records on ELF machine %d",
   (machine) => {
     const bytes = createElfFixture(createIl2cppBinaryFixture(), {
@@ -501,17 +513,23 @@ it("does not apply symbol relocations as RELATIVE ones", () => {
   ).toThrow(Il2cppBinaryFormatFailure);
 });
 
-it("reads a method pointer array in zero-fill as methods without bodies", () => {
-  // An iOS-only assembly in an Android build keeps its array in .bss.
-  const linked = link(
-    createElfFixture(createIl2cppBinaryFixture(), { zeroFilledTable: true }),
-  );
-  expect(linked.method_addresses).toEqual([
-    ...expectedAddresses.slice(0, 3),
-    expectedAddress("no-body"),
-    expectedAddress("no-body"),
-  ]);
-});
+it.each([undefined, "aps2"] as const)(
+  "reads a method pointer array in zero-fill as methods without bodies (packing: %s)",
+  (androidPacked) => {
+    // An iOS-only assembly in an Android build keeps its array in .bss.
+    const linked = link(
+      createElfFixture(createIl2cppBinaryFixture(), {
+        zeroFilledTable: true,
+        ...(androidPacked === undefined ? {} : { androidPacked }),
+      }),
+    );
+    expect(linked.method_addresses).toEqual([
+      ...expectedAddresses.slice(0, 3),
+      expectedAddress("no-body"),
+      expectedAddress("no-body"),
+    ]);
+  },
+);
 
 it("reads a PE pointer array across file bytes and the declared zero-fill tail", () => {
   const bytes = createSplitPointerPeFixture();
@@ -567,6 +585,34 @@ it.each([
     ).reason,
   ).toBe("code-registration-not-found");
 });
+
+it.each([
+  ["x86-64", 7],
+  ["arm64", 8],
+] as const)(
+  "keeps the entire %s registration reference inside the executable extent",
+  (arch, width) => {
+    const instruction = 0xc00;
+    const makeImage = (inside: number) => {
+      const bytes = createIl2cppBinaryFixture({
+        codeRegistration: false,
+        codeReference: arch === "x86-64",
+        adrpAdd: arch === "arm64" ? [[instruction, 0x500]] : [],
+        splitSegmentAt: instruction + inside,
+      });
+      if (arch === "x86-64") bytes.writeUInt32LE(0x01000007, 4);
+      bytes.writeUInt32LE(1, 32 + 72 + 60); // The second segment is read-only.
+      return bytes;
+    };
+    expect(link(makeImage(width)).code_gen_modules_array).toBe(
+      FIXTURE_BINARY_BASE + 0x500n,
+    );
+    expect(failure(makeImage(width - 1))).toMatchObject({
+      reason: "code-registration-not-found",
+      kind: "malformed",
+    });
+  },
+);
 
 it("finds an arm64 module array through the ADRP+ADD pair that loads it", () => {
   const linked = link(
@@ -1094,7 +1140,7 @@ it.each(["outside", "misaligned", "duplicate"] as const)(
       bytes.copy(bytes, 176, 120, 176);
       bytes.writeUInt16LE(3, 56);
     }
-    expect(() => readBinaryContainer(bytes)).not.toThrow();
+    expect(() => readBinaryContainer(bytes, "elf-directory")).not.toThrow();
     expect(() => link(bytes)).toThrow(
       shape === "duplicate"
         ? "multiple PT_DYNAMIC segments"
@@ -1105,8 +1151,8 @@ it.each(["outside", "misaligned", "duplicate"] as const)(
 
 it.each([
   [{ dynamic: false }, "unsupported-container"],
-  [{ machine: 243 }, "unsupported-container"],
-  [{ androidPacked: true }, "unsupported-pointer-encoding"],
+  [{ machine: 21 }, "unsupported-container"], // EM_PPC64 has no pointer profile.
+  [{ androidPacked: "aps1" }, "unsupported-pointer-encoding"],
 ] as const)(
   "refuses ELF relocations it cannot apply (%o)",
   (options, reason) => {

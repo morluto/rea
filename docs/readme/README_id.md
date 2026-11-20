@@ -164,10 +164,13 @@ Alat tambahan dan dukungan sistem host bergantung pada target yang dianalisis:
 | PE certificates            | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                          | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                                       |
 | PE imports                 | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                            | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                                 |
 | Windows shortcuts          | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts                          | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                                     |
+| Paket NuGet                | Identitas paket, grup dependensi, lisensi, repositori, dan isi ZIP                                    | Inspeksi statis .nupkg bawaan; [Paket NuGet](../guides/managed/nuget-nupkg.md)                                                                                |
 | Artefak WASM               | Validasi, bagian, bentuk WAT import/ekspor yang tepat, dan WAT yang didekode                          | WABT 1.0.42 yang disediakan pemanggil; `inspect_wasm_artifact`                                                                                                |
 | Bytecode EVM               | Selector dispatch, offset byte, argumen yang disimpulkan, dan sifat mutabilitas                       | Pembawa data raw/hex lokal di Linux x64; [panduan EVM offline](../guides/evm/evm-bytecode.md)                                                                 |
 | Rust binaries              | Embedded cargo-auditable dependency list                                                              | [Rust binaries](../rust-binaries.md)                                                                                                                          |
 | ELF notes                  | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                       | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                                  |
+| DWARF compile units        | Compile-unit name, directory, producer, language, and dwo_name                                        | Built-in static ELF, Mach-O, and PE inspection; [DWARF compile units](../guides/native/dwarf-units.md)                                                        |
+| ELF dependencies           | DT_NEEDED, SONAME, RPATH/RUNPATH, GNU versions, and undefined imports                                 | Built-in static ELF inspection; [ELF dependencies](../elf-dependencies.md)                                                                                    |
 | Binary hardening           | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                                   | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                                 |
 | Apple IPS crashes          | .ips metadata, threads, images, registers and crash classes                                           | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                                                 |
 | Linux kernel modules       | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                           | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                        |
@@ -377,7 +380,6 @@ Untuk mengetahui opsi, prasyarat, dan kontrak hasil secara tepat:
 - [CLI dan Bukti](../getting-started/cli.md): perintah, pemilihan penyedia, snapshot, impor/ekspor, dan status keluar.
 - [Kontrak MCP](../reference/mcp-contracts.md) dan [prompt agen](../getting-started/mcp-prompts.md): hasil alat, sesi, dan investigasi terpandu.
 - [Katalog alat](../reference/mcp-contracts.md#generated-catalog): inventaris alat, penyedia, dan perintah CLI yang dibuat secara otomatis.
-- [Peta jalan](../development/roadmap.md): pekerjaan yang direncanakan dan pelacak kemampuan.
 
 Laporkan kerentanan melalui [SECURITY.md](../../SECURITY.md).
 
@@ -409,7 +411,7 @@ applicable licenses.
 
 Kami sangat menghargai bantuan Anda untuk REA! [Buat issue](https://github.com/morluto/rea/issues) untuk melaporkan bug atau menyarankan fitur, atau [kirim pull request](https://github.com/morluto/rea/pulls) untuk meningkatkan kode atau dokumentasi.
 
-Lihat [CONTRIBUTING.md](../../CONTRIBUTING.md) untuk penyiapan pengembangan dan pemeriksaan, [pengujian](../development/testing.md) untuk tahapan verifikasi, serta [peta arsitektur](../architecture/architecture.mermaid) untuk struktur proyek.
+Lihat [CONTRIBUTING.md](../../CONTRIBUTING.md) untuk penyiapan pengembangan dan pemeriksaan, [pengujian](../development/testing.md) untuk tahapan verifikasi.
 
 ## Lisensi
 
