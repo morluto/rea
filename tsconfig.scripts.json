@@ -27,7 +27,6 @@
     "scripts/lib/wabt-verifier-timeouts.mjs",
     "scripts/prepare-reverse-tools-mutation.mjs",
     "scripts/record-catalog-digests.mjs",
-    "scripts/scan-todos.mjs",
     "scripts/verify-package-evidence.mjs",
     "scripts/verify/javascript/digests.mjs",
     "scripts/verify/javascript/output.mjs",
