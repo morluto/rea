@@ -212,7 +212,7 @@ export class UefiArtifactReader implements ArtifactReader {
     let local = header.firstFileLocal;
     while (local < region.end) {
       checkpoint();
-      const read = readFfsHeader(region, local, header.erasePolarity, reserve);
+      const read = readFfsHeader(region, local, header, reserve);
       if (read.kind === "limited") {
         omit(
           `${volumeName}/ffs-scan-limit-${hex(local)}`,

@@ -23,7 +23,7 @@ it.each(["unmapped", "zero-fill", "duplicate", "out-of-file"] as const)(
     expect(image.done).toBe(true);
     if (!image.done)
       throw new Error("container admission unexpectedly yielded");
-    expect(image.value.bytes).toBe(goNamed);
+    expect(image.value.stored.bytes).toBe(goNamed);
     expect(image.value.container).toMatchObject({
       format: "macho",
       macho_chained_fixups: false,

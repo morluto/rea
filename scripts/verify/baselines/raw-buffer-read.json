@@ -1,19 +1,14 @@
 {
   "src/domain/apple/appleMachoSelection.ts": 2,
   "src/domain/apple/machoLoadCommandReader.ts": 3,
-  "src/domain/binaryTarget.ts": 10,
   "src/domain/desktop/openPgpKeys.ts": 2,
   "src/domain/managed/managedMetadataInventoryRows.ts": 2,
   "src/domain/native/nativeAotPe.ts": 10,
-  "src/domain/pngVisualDiff.ts": 2,
   "src/ghidra/extensions/GhidraExtensions.ts": 1,
-  "src/il2cpp/Il2cppBinaryImage.ts": 2,
-  "src/il2cpp/Il2cppBinaryRegistration.ts": 8,
   "src/native/AppleDispatchMetadata.ts": 4,
   "src/native/AppleObjcDispatchFacets.ts": 1,
   "src/native/AppleSwiftDispatchFacets.ts": 1,
-  "src/native/elf/ElfNoteParser.ts": 19,
+  "src/native/elf/ElfNoteParser.ts": 13,
   "src/native/pe/PeCertificateAsn1.ts": 2,
-  "src/native/pwntools/RecordedCrashSourceBindings.ts": 6,
   "src/v8/V8CodeCacheParser.ts": 1
 }
