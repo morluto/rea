@@ -45,6 +45,8 @@ const environment = Object.fromEntries(
   Object.entries(process.env).filter(([, value]) => typeof value === "string"),
 );
 const root = await VerifierFixture.open({ prefix: "rea-solc-verifier-" });
+// The root is removed only after owned command cleanup confirms.
+root.releaseAfter(() => commands.close());
 const client = new Client({ name: "solc-artifact-verifier", version: "1" });
 const transport = new StdioClientTransport({
   command: process.execPath,
@@ -898,7 +900,6 @@ try {
   for (const close of [
     () => client.close(),
     () => transport.close(),
-    () => commands.close(),
     () => root.release(),
   ]) {
     try {
