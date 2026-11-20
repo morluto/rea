@@ -726,6 +726,37 @@ it("falls back to the directory index when its package.json main is missing", as
   });
 });
 
+it.each(["{not json", "[]", "null"])(
+  "reports a malformed directory package.json instead of using its index (%s)",
+  async (manifest) => {
+    const bytes = await vsixPackageFixture({
+      packageJson: JSON.stringify({
+        name: "hello",
+        publisher: "demo",
+        version: "1.2.3",
+        engines: { vscode: "^1.74.0" },
+        main: "./out",
+      }),
+      extraMembers: {
+        "extension/out/package.json": manifest,
+        "extension/out/index.js": "exports.activate = () => {};",
+      },
+    });
+    const report = vsixPackageSchema.parse(
+      await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+    );
+    expect(report.entry_points.main).toEqual({
+      path: "extension/out",
+      present: false,
+    });
+    expect(report.limitations).toContain(
+      VSIX_LIMITATIONS.malformedMainDirectoryPackageJson(
+        "extension/out/package.json",
+      ),
+    );
+  },
+);
+
 it("marks a missing main entry as absent without treating it as a format error", async () => {
   const bytes = await vsixPackageFixture({ includeMain: false });
   const report = vsixPackageSchema.parse(

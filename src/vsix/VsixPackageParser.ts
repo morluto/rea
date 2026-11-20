@@ -59,6 +59,8 @@ export const VSIX_LIMITATIONS = {
   noPackageJson: "No extension/package.json was selected.",
   malformedPackageJson:
     "The selected extension/package.json is not well-formed JSON.",
+  malformedMainDirectoryPackageJson: (path: string): string =>
+    `Member ${JSON.stringify(path)} is not a JSON object, so the directory main does not resolve; its index files were not used.`,
   emptyContributesKey:
     "extension/package.json contributes has an empty key; it is not listed in contributes.keys.",
   duplicatePath: (path: string): string =>
@@ -331,49 +333,65 @@ const resolveEntryPoint = (
 };
 
 /**
+ * What a directory's own package.json says about `main`. Node's loader
+ * rejects a manifest that is not a JSON object with
+ * ERR_INVALID_PACKAGE_CONFIG instead of falling back to `index.*`, so that
+ * outcome stays distinct from a manifest that names no usable `main`.
+ */
+type DirectoryManifestMain =
+  | { readonly kind: "main"; readonly path: string }
+  | { readonly kind: "none" }
+  | { readonly kind: "malformed" };
+
+/**
  * `main` of a directory's own package.json, joined onto that directory with
- * its `.` and `..` segments resolved, or null when it names nothing or climbs
- * out of the package.
+ * its `.` and `..` segments resolved; `none` when it names nothing or climbs
+ * out of the package, `malformed` when the manifest is not a JSON object.
  */
 const directoryManifestMain = (
   directory: string,
   text: string,
-): string | null => {
+): DirectoryManifestMain => {
   let record: unknown;
   try {
     record = JSON.parse(text);
   } catch {
-    return null;
+    return { kind: "malformed" };
   }
   if (record === null || typeof record !== "object" || Array.isArray(record))
-    return null;
+    return { kind: "malformed" };
   const main = (record as Record<string, unknown>).main;
-  if (typeof main !== "string" || main.trim() === "") return null;
+  if (typeof main !== "string" || main.trim() === "") return { kind: "none" };
   const segments: string[] = [];
   const joined = `${directory}/${vsixPackageLogicalPath(main.trim())}`;
   for (const segment of joined.split("/")) {
     if (segment === "" || segment === ".") continue;
     if (segment !== "..") segments.push(segment);
-    else if (segments.pop() === undefined) return null;
+    else if (segments.pop() === undefined) return { kind: "none" };
   }
-  return segments.length === 0 ? null : segments.join("/");
+  return segments.length === 0
+    ? { kind: "none" }
+    : { kind: "main", path: segments.join("/") };
 };
 
 /**
  * The member a `main` entry resolves to under Node's CommonJS lookup: the
  * file itself or with an added extension, then the directory's package.json
- * `main`, then the directory's `index.*`.
+ * `main`, then the directory's `index.*`. A malformed directory package.json
+ * stops the lookup, as it does in Node.
  */
 const resolveNodeEntryPoint = (
   declared: string,
   memberPaths: ReadonlyMap<string, string>,
-  directoryMain: string | null,
+  directoryMain: DirectoryManifestMain,
 ): { path: string; present: boolean } => {
   const asFile = resolveEntryPoint(declared, NODE_FILE_CANDIDATES, memberPaths);
   if (asFile.present) return asFile;
-  if (directoryMain !== null) {
+  if (directoryMain.kind === "malformed")
+    return { path: declared, present: false };
+  if (directoryMain.kind === "main") {
     const viaManifest = resolveEntryPoint(
-      directoryMain,
+      directoryMain.path,
       [...NODE_FILE_CANDIDATES, ...NODE_INDEX_CANDIDATES],
       memberPaths,
     );
@@ -992,7 +1010,7 @@ export const parseVsixPackage = async (
     );
     // A `main` naming a directory resolves through that directory's own
     // package.json before its index files, as Node's loader does.
-    let mainDirectoryMain: string | null = null;
+    let mainDirectoryMain: DirectoryManifestMain = { kind: "none" };
     const mainManifest =
       mainPath === null ? undefined : uniqueByPath(`${mainPath}/package.json`);
     if (
@@ -1032,8 +1050,16 @@ export const parseVsixPackage = async (
         } catch {
           text = undefined;
         }
-        if (text !== undefined)
-          mainDirectoryMain = directoryManifestMain(mainPath, text);
+        mainDirectoryMain =
+          text === undefined
+            ? { kind: "malformed" }
+            : directoryManifestMain(mainPath, text);
+        if (mainDirectoryMain.kind === "malformed")
+          limitations.push(
+            VSIX_LIMITATIONS.malformedMainDirectoryPackageJson(
+              mainManifest.path,
+            ),
+          );
       }
     }
     const extensionDependencies = {
