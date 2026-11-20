@@ -1,16 +1,5 @@
-import {
-  CCOB_MAGIC,
-  CLANG_BUNDLE_MAGIC,
-  findLegacyCcobRecoveryTotal,
-  readClangBundleDirectory,
-  readCcobHeader,
-} from "./ClangOffloadBundle.js";
-import { gpuObject, gpuLocation, type GpuPayloadTarget } from "./GpuObject.js";
-import { readCudaTarget } from "./CudaTarget.js";
-import { readCudaFatbinary } from "./CudaFatbinary.js";
-import { decodeGpuPayload, decodeGpuPayloadStream } from "./GpuPayloadCodec.js";
-import { createHash } from "node:crypto";
-import { scheduler } from "node:timers/promises";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import type { KnownCoverageStatus } from "../domain/coverage.js";
 import type {
   GpuCodeObjectsInput,
   GpuCodeObjects,
@@ -18,16 +7,43 @@ import type {
   GpuKernel,
 } from "../domain/gpu/gpuCodeObjects.js";
 import {
+  CCOB_MAGIC,
+  CLANG_BUNDLE_MAGIC,
+  findLegacyCcobRecoveryTotal,
+  readClangBundleDirectory,
+  readCcobHeader,
+} from "./ClangOffloadBundle.js";
+import {
+  gpuObject,
+  gpuLocation,
+  recordDeclaredGpuDecodedSize,
+  type GpuPayloadTarget,
+} from "./GpuObject.js";
+import { readCudaTarget } from "./CudaTarget.js";
+import { readCudaFatbinary } from "./CudaFatbinary.js";
+import { decodeGpuPayload, decodeGpuPayloadStream } from "./GpuPayloadCodec.js";
+import {
+  projectZstandardFrameAllowance,
+  ZstandardFrameAllowanceError,
+} from "../domain/compression/zstandardFrameAllowance.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { createHash } from "node:crypto";
+import { scheduler } from "node:timers/promises";
+import {
   BinaryFormatFailure,
+  BinaryReader,
   BinaryResourceFailure,
-  BinaryStringReadLimitFailure,
-} from "../native/metadata/BinaryContainer.js";
+  isBinaryStringReadLimit,
+} from "../domain/binaryContainer.js";
 import {
   readElfSectionDirectory,
   readPeSectionDirectory,
   type NativeSectionDirectory,
-} from "../native/metadata/NativeSectionDirectory.js";
-import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
+} from "../domain/native/nativeSectionDirectory.js";
+import {
+  assertArtifactReadActive,
+  yieldArtifactRead,
+} from "../resources/index.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
@@ -38,11 +54,11 @@ import {
   GpuReportCapacityFailure,
   gpuCount,
   nextGpuContainerOffset,
-  gpuSha256,
   readGpuNativeDirectory,
   rejectGpu,
   type GpuSource,
 } from "./GpuSource.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 import {
   readGpuElfKernels,
   readAmdElfMetadata,
@@ -64,7 +80,7 @@ export class GpuInventory {
     "Static declarations only; no GPU execution, SASS disassembly, host launch correlation or runtime compatibility was verified.",
     "Object IDs are positional identities scoped to artifact.sha256. Locations inside decoded objects name their containing object; they are not file offsets.",
   ];
-  discovery: "complete" | "partial" = "complete";
+  discovery: KnownCoverageStatus = "complete";
   examined_sections = 0;
   unknown_section_names = 0;
   #factBytes = 0;
@@ -114,18 +130,18 @@ export class GpuInventory {
     row.limitations.push(...messages);
   }
   /** Reserve input/output work atomically, before any payload allocation or read. */
-  #budgetWork(...sizes: number[]): void {
-    const total = sizes.reduce((sum, size) => sum + size, 0);
-    if (
-      sizes.some((size) => size > GPU_OBJECT_BYTES) ||
-      total > 512 * 1024 * 1024 - this.#workBytes
-    )
-      throw new BinaryResourceFailure(
-        "structure",
-        GPU_OBJECT_BYTES,
-        "GPU reads/decoding exceed 128 MiB per buffer or 512 MiB per inspection",
-      );
-    this.#workBytes += total;
+  #budgetWork(...sizes: (number | bigint)[]): void {
+    let workBytes = this.#workBytes;
+    for (const size of sizes) {
+      if (size > Math.min(GPU_OBJECT_BYTES, 512 * 1024 * 1024 - workBytes))
+        throw new BinaryResourceFailure(
+          "structure",
+          GPU_OBJECT_BYTES,
+          "GPU reads/decoding exceed 128 MiB per buffer or 512 MiB per inspection",
+        );
+      workBytes += Number(size);
+    }
+    this.#workBytes = workBytes;
   }
   #selected(row: GpuObject): boolean {
     return (
@@ -171,6 +187,7 @@ export class GpuInventory {
         elf
           ? readElfSectionDirectory(source.size)
           : readPeSectionDirectory(source.size),
+        () => yieldArtifactRead(this.signal),
       );
       if (elf && (directory.machine === 190 || directory.machine === 224)) {
         const row = gpuObject(source, {
@@ -194,10 +211,7 @@ export class GpuInventory {
             continue;
           }
           if (!isGpuSection(section.name)) continue;
-          if (
-            !section.file_backed ||
-            (directory.format === "elf" && (section.flags & 0x800n) !== 0n)
-          ) {
+          if (!section.file_backed || section.compressed) {
             this.discovery = "partial";
             const message = `GPU section ${section.index} has no supported uncompressed file range`;
             this.#retain(message);
@@ -290,24 +304,29 @@ export class GpuInventory {
   }
   #retainFailure(row: GpuObject, cause: unknown): void {
     if (cause instanceof GpuReportCapacityFailure) throw cause;
-    if (
-      !(cause instanceof BinaryFormatFailure) &&
-      !(cause instanceof BinaryResourceFailure)
-    )
-      throw cause;
-    row.inspection =
-      cause instanceof BinaryResourceFailure ||
-      cause instanceof BinaryStringReadLimitFailure
-        ? "capacity"
-        : cause.kind === "unsupported"
-          ? "unsupported"
-          : "malformed";
+    if (cause instanceof ZstandardFrameAllowanceError)
+      throw projectZstandardFrameAllowance("inspect_gpu_code_objects", cause);
+    if (cause instanceof AnalysisError) throw cause;
+    const capacity =
+      cause instanceof BinaryResourceFailure || isBinaryStringReadLimit(cause);
+    if (!capacity && !(cause instanceof BinaryFormatFailure)) throw cause;
+    row.inspection = capacity
+      ? "capacity"
+      : cause.kind === "unsupported"
+        ? "unsupported"
+        : "malformed";
     this.#objectLimitations(row, [cause.message]);
   }
   async #payload(
     source: GpuSource,
     row: GpuObject,
-    preparedAmd?: AmdElfMetadata,
+    {
+      amdMetadata,
+      declaredDecodedSize,
+    }: {
+      amdMetadata?: AmdElfMetadata;
+      declaredDecodedSize?: number | bigint;
+    } = {},
   ): Promise<void> {
     if (this.input.analysis !== "kernels") return;
     if (!this.#selected(row)) {
@@ -319,10 +338,11 @@ export class GpuInventory {
       return;
     }
     try {
+      const decodedSize = declaredDecodedSize ?? row.decoded_size;
       let coverage: "complete" | "partial" = "complete";
       if (
         row.kind === "ptx" &&
-        (row.decoded_size === null || row.decoded_size > GPU_REPORT_BYTES)
+        (decodedSize === null || decodedSize > GPU_REPORT_BYTES)
       )
         throw new BinaryResourceFailure(
           "structure",
@@ -334,11 +354,11 @@ export class GpuInventory {
         compression === "zstd" ||
         compression === "zlib" ||
         compression === "lz4";
-      if (compressed && row.decoded_size === null)
+      if (compressed && decodedSize === null)
         rejectGpu("Compressed GPU object has no decoded length");
       this.#budgetWork(
         row.location.size,
-        ...(compressed ? [row.decoded_size!] : []),
+        ...(compressed ? [decodedSize!] : []),
       );
       let bytes = await source.read(row.location.offset, row.location.size);
       if (compressed) {
@@ -346,11 +366,20 @@ export class GpuInventory {
           bytes = await decodeGpuPayload(
             bytes,
             compression,
-            row.decoded_size!,
+            Number(decodedSize),
             this.signal,
           );
         } catch (cause) {
-          if (cause instanceof BinaryResourceFailure) throw cause;
+          if (cause instanceof ZstandardFrameAllowanceError)
+            throw projectZstandardFrameAllowance(
+              "inspect_gpu_code_objects",
+              cause,
+            );
+          if (
+            cause instanceof BinaryResourceFailure ||
+            cause instanceof AnalysisError
+          )
+            throw cause;
           assertArtifactReadActive(this.signal);
           throw new BinaryFormatFailure(
             "malformed",
@@ -358,7 +387,7 @@ export class GpuInventory {
           );
         }
       }
-      this.#decoded(row, gpuSha256(bytes), bytes.length);
+      this.#decoded(row, sha256Hex(bytes), bytes.length);
       const decoded = new GpuBufferSource(bytes, row.id);
       if (row.kind === "ptx") {
         // NVIDIA appends NUL alignment padding to an uncompressed PTX entry.
@@ -368,10 +397,7 @@ export class GpuInventory {
         const content = bytes.subarray(0, length);
         let text: string;
         try {
-          text = new TextDecoder("utf-8", {
-            fatal: true,
-            ignoreBOM: true,
-          }).decode(content);
+          text = decodeStrictUtf8(content, "preserve");
         } catch {
           return rejectGpu("PTX is not valid UTF-8 text");
         }
@@ -389,7 +415,7 @@ export class GpuInventory {
         const artifact = {
           id: `${row.id}/ptx`,
           object_id: row.id,
-          sha256: gpuSha256(content),
+          sha256: sha256Hex(content),
           media_type: "text/x-ptx" as const,
           encoding: "utf-8" as const,
           byte_length: content.length,
@@ -407,7 +433,7 @@ export class GpuInventory {
       } else if (row.kind === "cubin" || row.kind === "amdgpu") {
         if (row.kind === "amdgpu" && isLlvmBitcode(bytes))
           throw new BinaryFormatFailure("unsupported", LLVM_BITCODE_LIMITATION);
-        coverage = await this.#elfFacts(decoded, row, row.kind, preparedAmd);
+        coverage = await this.#elfFacts(decoded, row, row.kind, amdMetadata);
       } else {
         row.inspection = "unsupported";
         this.#objectLimitations(row, [
@@ -510,6 +536,7 @@ export class GpuInventory {
         (await readGpuNativeDirectory(
           child,
           readElfSectionDirectory(child.size),
+          () => yieldArtifactRead(this.signal),
         ));
       const inspected = await readAmdElfMetadata(child, native);
       const prepared = inspected.ok ? inspected.value : inspected.error.partial;
@@ -530,7 +557,7 @@ export class GpuInventory {
       }
       const payloadSelected =
         this.input.analysis === "kernels" && this.#selected(row);
-      await this.#payload(source, row, prepared);
+      await this.#payload(source, row, { amdMetadata: prepared });
       if (!payloadSelected && prepared.limitations.length > 0)
         this.#objectLimitations(row, prepared.limitations);
     } catch (cause) {
@@ -553,6 +580,7 @@ export class GpuInventory {
         this.#retain(kernel);
         this.kernels.push(kernel);
       },
+      () => yieldArtifactRead(this.signal),
       preparedAmd,
       (target) => {
         conflict = this.#target(row, target);
@@ -562,9 +590,12 @@ export class GpuInventory {
     return conflict !== undefined ? "partial" : parsed.coverage;
   }
   async #cuda(source: GpuSource): Promise<void> {
-    for await (const row of readCudaFatbinary(source, this.signal)) {
+    for await (const { row, declaredDecodedSize } of readCudaFatbinary(
+      source,
+      this.signal,
+    )) {
       this.#add(row);
-      await this.#payload(source, row);
+      await this.#payload(source, row, { declaredDecodedSize });
     }
   }
   async #hip(source: GpuSource, depth: number): Promise<void> {
@@ -596,7 +627,7 @@ export class GpuInventory {
       if (!prefix.subarray(0, CCOB_MAGIC.length).equals(CCOB_MAGIC))
         rejectGpu("Unexpected bytes between Clang offload bundles");
       const header = readCcobHeader(prefix, source.size - base),
-        { width, decoded, hash, version, method } = header;
+        { width, decoded: declaredDecodedSize, hash, version, method } = header;
       let total = header.total;
       let extentKnown = version !== 1;
       const row = gpuObject(source, {
@@ -608,7 +639,7 @@ export class GpuInventory {
       row.compression =
         method === 0 ? "zlib" : method === 1 ? "zstd" : "unsupported";
       row.compression_id = `ccob:${version}:${method}`;
-      row.decoded_size = decoded;
+      recordDeclaredGpuDecodedSize(row, declaredDecodedSize);
       if (extentKnown) this.#add(row);
       if (row.compression === "unsupported") {
         row.inspection = "unsupported";
@@ -630,16 +661,17 @@ export class GpuInventory {
               start >= legacyWindow.offset &&
               start < legacyWindow.offset + legacyWindow.bytes.length;
             const readWindow = async (): Promise<Buffer> => {
-              this.#budgetWork(inputSize, decoded);
+              this.#budgetWork(inputSize, declaredDecodedSize);
               legacyWindow = undefined;
               const bytes = await source.read(start, inputSize);
               legacyWindow = { offset: start, bytes };
               return bytes;
             };
-            if (cached) this.#budgetWork(decoded);
+            if (cached) this.#budgetWork(declaredDecodedSize);
             let encoded: Buffer | undefined = cached
               ? legacyWindow!.bytes.subarray(start - legacyWindow!.offset)
               : await readWindow();
+            const decoded = Number(declaredDecodedSize);
             const available = encoded.length;
             const compression = row.compression;
             const completed = await decodeGpuPayloadStream(
@@ -676,19 +708,23 @@ export class GpuInventory {
                 "GPU decompressed length disagrees with its declaration",
               );
           } else {
-            this.#budgetWork(inputSize, decoded);
+            this.#budgetWork(inputSize, declaredDecodedSize);
             data = await decodeGpuPayload(
               await source.read(base + width, inputSize),
               row.compression,
-              decoded,
+              Number(declaredDecodedSize),
               this.signal,
             );
           }
           if (
-            createHash("md5").update(data).digest().readBigUInt64LE(0) !== hash
+            new BinaryReader(
+              createHash("md5").update(data).digest(),
+              true,
+              "ccob",
+            ).word(0, 64) !== hash
           )
             rejectGpu("CCOB truncated MD5 does not match decoded bytes");
-          this.#decoded(row, gpuSha256(data), data.length);
+          this.#decoded(row, sha256Hex(data), data.length);
           await this.inspect(new GpuBufferSource(data, row.id), depth + 1);
           row.inspection = "complete";
         } catch (cause) {
@@ -726,10 +762,11 @@ export class GpuInventory {
 const LLVM_BITCODE_LIMITATION =
   "LLVM bitcode kernel metadata is outside current coverage; bitcode validity and inner target were not inspected.";
 /** LLVM raw and wrapper signatures identify representation, not bitcode validity. */
-const isLlvmBitcode = (bytes: Buffer): boolean =>
-  bytes.length >= 4 &&
-  (bytes.readUInt32LE(0) === 0xdec04342 ||
-    bytes.readUInt32LE(0) === 0x0b17c0de);
+const isLlvmBitcode = (bytes: Buffer): boolean => {
+  if (bytes.length < 4) return false;
+  const magic = new BinaryReader(bytes, true, "llvm-bitcode").u32(0);
+  return magic === 0xdec04342 || magic === 0x0b17c0de;
+};
 const isGpuSection = (name: string): boolean =>
   [
     ".nv_fatbin",

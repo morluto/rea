@@ -50,6 +50,22 @@ const passing = (view: JsonValue, checks: readonly DesktopTaskCheckInput[]) =>
     new Map([[FILE, { format: "json" as const, view }]]),
   ).map(({ passed }) => passed);
 
+it("guards the count of a top-level JSON array when a member is edited", () => {
+  const before = [
+    { name: "one", done: false },
+    { name: "two", done: false },
+  ];
+  const after = [{ name: "one", done: true }, before[1]!];
+  const file = drafted(before, after);
+  expect(file.guards).toContainEqual({
+    kind: "member_count",
+    file: FILE,
+    pointer: "",
+    equals: 2,
+  });
+  expect(passing(after, file.guards).every(Boolean)).toBe(true);
+});
+
 describe("draftTaskFiles for a root JSON array of records", () => {
   it("counts additions to a root array and guards edits to its named members", () => {
     const before = [

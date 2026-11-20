@@ -1,3 +1,4 @@
+import { unescapeJsonPointerToken } from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
 import { collapseWhitespace, isTimestamp } from "./appTask.js";
 import {
@@ -6,6 +7,7 @@ import {
   selectorOf,
   type Condition,
 } from "./viewSelector.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /** The arrays a pointer stepped into, each as the pointer to it. */
 interface ArraySteps {
@@ -31,15 +33,6 @@ type Stepped =
   | { readonly kind: "unresolved"; readonly problem: string };
 
 const INDEX = /^(?:0|[1-9][0-9]*)$/u;
-
-/** A pointer segment for a key: `~` and `/` escaped as RFC 6901 writes them. */
-export const escapeToken = (token: string) =>
-  token.replaceAll("~", "~0").replaceAll("/", "~1");
-
-const isRecord = (
-  value: JsonValue | null | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const own = (record: Record<string, JsonValue>, key: string) =>
   Object.hasOwn(record, key) ? record[key] : undefined;
@@ -133,7 +126,12 @@ const holdsInside = (
 ) => {
   const steps = insideSteps(key) ?? [];
   if (format === "xml")
-    return isXmlElement(member) && elementHolds(member, steps, value);
+    return (
+      isXmlElement(member) &&
+      (steps.length === 1 && steps[0] === "text()"
+        ? collapseWhitespace(elementText(member)) === value
+        : elementHolds(member, steps, value))
+    );
   let found: JsonValue | undefined = member;
   for (const step of steps)
     found = isRecord(found) ? own(found, step) : undefined;
@@ -221,7 +219,7 @@ export const locatePointer = (
   const segments = pointer.slice(1).split("/");
   const steps = { searched: [] as string[], byPosition: [] as string[] };
   for (const [position, segment] of segments.entries()) {
-    const token = segment.replaceAll("~1", "/").replaceAll("~0", "~");
+    const token = unescapeJsonPointerToken(segment);
     if (Array.isArray(current)) {
       const array = segments
         .slice(0, position)

@@ -4,8 +4,8 @@
 
 Extend `goBinarySchema` in `src/domain/go/goBinary.ts` with optional
 `string_literals` (`evidence_kind: "inferred"`, `items`, `discovered_count`,
-`aggregate_bytes`, `max_items`, `truncated`), plus `include_string_literals` and
-`max_string_literals` on `src/contracts/go/goToolContracts.ts` and
+`aggregate_bytes`, `max_items`, `truncated`, optional `limits_reached`), plus
+`include_string_literals` and the Go-owned per-call budget controls on `src/contracts/go/goToolContracts.ts` and
 `src/cli/goCommands.ts`. Add the `string_literals` view projection to
 `src/domain/analysisView/goBinaryView.ts` so callers can page recovered literals
 from retained Evidence without repeating file parsing.
@@ -18,6 +18,9 @@ pointer alignment phase, merge overlaps, and sort by ascending file offset so
 `reference_count` counts each physical header once and `first_header_offset` is
 minimal. Deduplicate target slices in memory with bounded candidate and rejection
 caches before sorting deterministically by `(location.offset, location.bytes)`.
+Use exact offset/length keys, so configurable string lengths cannot collide in
+an arithmetic key encoding. Resolve budget defaults once in the image reader
+and pass that policy to string recovery.
 
 ## Incremental work and validation
 
@@ -37,4 +40,8 @@ caches before sorting deterministically by `(location.offset, location.bytes)`.
 
 Default `inspect_go_binary` calls omit `string_literals` and preserve historical
 Evidence compatibility. No external tool or target execution is introduced; only
-bounded offline byte slicing over the already read `64 MiB` image buffer runs.
+bounded offline byte slicing over the admitted stable image buffer runs. The
+input default remains `256 MiB`; callers can select byte and work budgets within
+the advertised runtime representability. Count normalized report bytes before
+allocating its JSON serialization. Every exhausted limit carries its own next
+request repair, independently of transport delivery.

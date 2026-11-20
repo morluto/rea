@@ -20,8 +20,10 @@ part (`org.xfce.mousepad` gives `mousepad`), or else the whole id without a
 trailing version (`glabels-3.0` gives `glabels`), with an `app-` prefix when
 that name would not be a portable bundle name (for example all digits). The
 output directory must be new or empty. `--task` adds a task an agent wrote for
-the capture, once REA has validated it against the capture; see
-[desktop application tasks](desktop-application-tasks.md). `--package-url`
+the capture, once REA has validated it against the capture; repeat it for
+several tasks, each checked at its own end checkpoint, which
+`--task-end NAME=CHECKPOINT` names; see
+[desktop application tasks](desktop-application-tasks.md#several-tasks). `--package-url`
 says where the computer downloads the package of an application installed from
 a `.deb` file; see [Applications from a .deb file](#applications-from-a-deb-file).
 `--download-install FILE` says which AppImage or tarball a build computer
@@ -55,7 +57,11 @@ bundle. A failed export, cancellation
 included, removes the bundle it had not yet published, so no partial copy of the
 user's data remains. If the bundle was published but its output handles could
 not be closed, the command reports a cleanup error that carries the export
-Evidence; the bundle itself is complete.
+Evidence; the bundle itself is complete. Cancellation during final output
+handle cleanup also preserves the complete bundle and returns its Evidence
+as a partial observation. If closing the handles fails too, the cleanup
+failure remains primary and cancellation is retained separately. The complete
+bundle remains usable.
 
 ## The bundle
 
@@ -70,7 +76,7 @@ Evidence; the bundle itself is complete.
 | `envs/<name>/install-download.sh` | With `--download-install`: the run script that unpacks the downloaded AppImage or tarball          |
 | `envs/<name>/applications/`       | With a tarball's `--download-install`: the desktop entry REA wrote for its program                 |
 | `tasks/smoke.json`                | A task that deploys the app                                                                        |
-| `tasks/<task>.json`               | With `--task`: the agent's task, its verifier in `artifacts/` and the eval in `evals/`             |
+| `tasks/<task>.json`               | With `--task`: each of the agent's tasks, its verifier in `artifacts/` and the eval in `evals/`    |
 | `README.md`                       | What was exported, from which capture, and what to keep in mind                                    |
 
 The class file is `<name>_app.py` with hyphens as underscores, for example
@@ -136,8 +142,8 @@ The class declares:
   architecture for a vendor package, since its repository may serve no other.
   A vendor package captured on any other architecture is refused. A package
   installed from its `.deb` file supports only that file's architecture.
-- A launch at boot with the captured command, ready when a window of the
-  captured class appears and one of them is listed in the taskbar and is not
+- A launch at boot with the captured command, ready when a window with the
+  recorded class component of X11 `WM_CLASS` is listed in the taskbar and is not
   typed as a splash: a splash screen or a dialog of the class skips the
   taskbar or says it is a splash, and an app whose splash shows first would
   otherwise count as ready before its own window opens. Arguments that are the captured home or under it, and
@@ -147,7 +153,13 @@ The class declares:
   captured working directory (`"$HOME"` when that was the home, as for a
   desktop entry without `Path`), which a relative argument or program path
   such as `./app` also needs, and still starts if that folder is missing. The
-  export refuses a capture that saw no application window.
+  export refuses a capture that saw no application window. When a launch path
+  traversed a parent directory through a symlink, export uses the recorded
+  physical state paths to place the seed and respell the launch together.
+  A file argument follows the file's seed location. A launch directory must
+  preserve the relative paths to its retained files. If those files cannot
+  share a replay location, capture again with an explicit home or XDG
+  directory without parent traversal.
 - The seed's document, opened at launch, so the app shows it rather than its
   start screen: when the seed holds exactly one file the state view gives the
   `document` role, and the desktop entry's `Exec` takes files (a `%f`, `%F`,
@@ -178,7 +190,9 @@ The class declares:
   unless that spelling is outside the captured home, as when the home itself is
   a symbolic link. When a selected link names an application state directory,
   the bundle seeds the application's state path and restores the selected
-  alias at boot. Selections nested under that alias are seeded under the same
+  alias at boot. Targets recorded as directories are created even when the seed
+  has no files there; file targets and targets of unknown kind are not turned
+  into directories. Selections nested under that alias are seeded under the same
   state path. An existing incompatible alias stops setup without replacing it. When two files map to one home path, the export uses the one present
   before the capture, else the first by path, and a limitation names the other.
 - Data hooks, because declaring any hook switches off agentenv's default data
@@ -332,6 +346,9 @@ A withheld file larger than 48 KiB is refused, since its base64 must fit one
 environment variable. `--withheld-copy <folder>` copies the withheld files,
 as captured, into a new or empty folder outside the bundle. The result lists
 them as `withheld_files`, each with its `setting`, `variable` and `handle`.
+REA resolves both destinations before writing either. A path that cannot be
+resolved, including a dangling link, is refused; the copy and bundle cannot
+contain one another, including through symbolic links.
 
 `--consent <file>` ships the person's consents, a `consent.json` that
 `record_build_consent` records, as the bundle's own `consent.json`.
@@ -551,7 +568,10 @@ as their entries, read with Python's `zipfile` from the file in place, with
 REA's entry, size, compression ratio and archive limits and its wording for an
 entry it does not read. The module reads the central directory itself, as REA
 does, and shows `zipfile` only the records it lists, reading each entry in
-bounded chunks no further than a byte past its declared size. A gzip file is
+bounded chunks no further than a byte past its declared size. The reader
+follows a Zip64 locator to the complete end-record span and skips its
+extension bytes before passing the bounded directory to `zipfile`.
+A gzip file is
 the view of the document inside it, with `"compression": "gzip"` beside its
 format, decompressed with Python's `zlib` within the same entry size and ratio
 limits, its members joined as REA joins them. A JSON file
@@ -560,7 +580,21 @@ or whose retained value nests more than 500 levels deep, gets an `error` instead
 REA. Duplicate keys keep their last value before the depth check. Text that is not one JSON
 document, such as JSON Lines, stays text. Format detection follows REA's
 rules. Files larger than 64 MiB get an `error` instead of a view
-and are not read. XML is read with Python's `expat` twice: with namespace
+and are not read. The selected `file_bytes` also applies to scrubbed seed task
+views before admission, independently of how much seed data the export can
+copy. SQLite table views have a shared `sqlite_view_bytes` allowance, default
+16 MiB of compact UTF-8 JSON per table, checked before retaining each row.
+An oversized table keeps its error while other tables remain readable. Raising
+this view allowance does not raise the independent 16 MiB native SQLite
+value/record limit or REA worker reply limit; worker facts include additional
+schema and typed-cell metadata and may be refused earlier. The TypeScript
+and exported Python readers count their respective native compact JSON encodings;
+float and exponent spelling can make their exact byte thresholds differ even
+when they report equal numeric facts. The Python byte counter quotes large
+strings in bounded chunks before retention.
+Exported SQLite readers require Python 3.11 or later for the native connection limits; the
+AgentEnv compatibility workflow uses Python 3.12.
+XML is read with Python's `expat` twice: with namespace
 processing, which refuses what REA's parser refuses, such as an undeclared
 prefix, then without it, so element and attribute names keep the prefixes the
 document spells and namespace declarations stay attributes, as in REA's view;
@@ -574,10 +608,11 @@ when a DOCTYPE names a DTD. Known differences remain:
 
 - dconf databases are reported as binary, since REA reads them with `dconf`;
   inside an archive, one is `dconf` with an error, as in REA.
-- Zip entry names: a name in an Info-ZIP Unicode Path extra field is used only
-  where Python's `zipfile` reads it (3.12 and later), and an entry whose local
-  header names it differently from the central directory is damaged rather
-  than read.
+- Zip entries whose local header names them differently from the central
+  directory are damaged rather than read. Entry names follow REA's Unicode
+  Path selection: the final extra field replaces earlier claims, a bad version
+  or CRC falls back to the stored name, and the UTF-8 flag takes precedence.
+  Invalid UTF-8 in the selected name makes the archive view unreadable.
 - SQLite databases are read in place, read-only, rather than from a staged copy;
   a write lock the running app holds is waited out for a quarter of a second
   and then gives the file an `error`, and so does a table or column name that
@@ -585,5 +620,4 @@ when a DOCTYPE names a DTD. Known differences remain:
 
 Unless it was [made for the task](#a-seed-made-for-the-task), the seed is the
 user's real data. Keep the bundle local and do not publish it.
-The class was checked against agentenv-framework 0.9.1464 with
-`python -m agentenv_protocol.computer._declare` and `agent-env run --dry-run`.
+The class targets agentenv-framework 0.9.1485.

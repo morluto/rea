@@ -1,25 +1,33 @@
-import { createHash } from "node:crypto";
-
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  assertArtifactReadActive,
+  yieldArtifactRead,
+} from "../../resources/index.js";
+import { allKeyed, firstKeyed, keyedBy } from "../../domain/keyedCollection.js";
 import { elfObjectTypeName } from "../../domain/native/elfNotes.js";
 import {
   KERNEL_MODULE_VERSION_ENTRY_BYTES,
-  MAX_KERNEL_MODULE_KEY_BYTES,
+  kernelModuleModinfoLimit,
   MAX_KERNEL_MODULE_RAW_BYTES,
   MAX_KERNEL_MODULE_SECTION_NAME_BYTES,
-  MAX_KERNEL_MODULE_VALUE_BYTES,
   MODULE_SIGNATURE_INFO_BYTES,
   MODULE_SIGNATURE_MAGIC,
   MODULE_SIGNATURE_PKCS7_ID_TYPE,
   type KernelModule,
   type InspectKernelModuleInput,
 } from "../../domain/native/kernelModule.js";
-import type {
-  ImageSection,
-  BinaryContainer,
-} from "../metadata/BinaryContainer.js";
-import { readElfImage } from "../metadata/ElfImage.js";
+import type { AnalysisParameterLimit } from "../../domain/analysisSettings.js";
+import {
+  BinaryReader,
+  type ImageSection,
+  type BinaryContainer,
+} from "../../domain/binaryContainer.js";
+import {
+  readElfImage,
+  readElfImageCooperative,
+} from "../../domain/native/elfImage.js";
 import { kernelCompressionCodecAt } from "./KernelCompressionCodec.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 type ElfSection = Extract<ImageSection, { format: "elf" }>;
 type Report = KernelModule;
@@ -27,9 +35,6 @@ type Limitations = string[];
 
 const MAGIC = Buffer.from(MODULE_SIGNATURE_MAGIC, "latin1");
 const MODULE_CODECS = ["gzip", "xz", "zstd"] as const;
-
-const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 const exceeds = (examined: number, maxEntries: number): void => {
   if (examined > maxEntries)
@@ -68,11 +73,6 @@ const inFile = (section: ElfSection, fileLength: number): boolean =>
 
 const rawHex = (bytes: Buffer): string | null =>
   bytes.length > MAX_KERNEL_MODULE_RAW_BYTES ? null : bytes.toString("hex");
-
-const compressionCodec = (bytes: Buffer): Report["compression"] => {
-  const codec = kernelCompressionCodecAt(bytes, 0, MODULE_CODECS);
-  return codec === null ? null : { codec, status: "unsupported" };
-};
 
 const baseLimitations = (): Limitations => [
   "This workflow does not execute the module, resolve imported symbols, or validate an appended signature.",
@@ -126,6 +126,17 @@ const unsupportedCompression = (
   ],
 });
 
+/** A recognized outer container never enters the ELF image parser. */
+const moduleCompressionReport = (
+  bytes: Buffer,
+  artifact: Report["artifact"],
+): Report | null => {
+  const codec = kernelCompressionCodecAt(bytes, 0, MODULE_CODECS);
+  return codec === null
+    ? null
+    : unsupportedCompression(artifact, { codec, status: "unsupported" });
+};
+
 const notApplicable = (
   artifact: Report["artifact"],
   facts: ReturnType<typeof headerFacts>,
@@ -154,17 +165,12 @@ interface SectionUse {
   readonly limitations: Limitations;
 }
 
-const sectionsNamed = (
-  sections: readonly ElfSection[],
-  name: string,
-): readonly ElfSection[] => sections.filter((section) => section.name === name);
-
 const parseModinfo = (
   bytes: Buffer,
   section: ElfSection | undefined,
   use: SectionUse,
   examined: { count: number },
-  maxEntries: number,
+  input: InspectKernelModuleInput,
 ): NonNullable<Report["modinfo"]> => {
   if (section === undefined)
     return {
@@ -191,11 +197,13 @@ const parseModinfo = (
     return {
       status: "unsupported",
       location,
-      sha256: sha256(stored),
+      sha256: sha256Hex(stored),
       entries: [],
       reason: "modinfo_section_compressed",
     };
   const entries: NonNullable<Report["modinfo"]>["entries"] = [];
+  let largestKeyBytes = 0;
+  let largestValueBytes = 0;
   let at = 0;
   while (at < stored.length) {
     if (stored[at] === 0) {
@@ -208,25 +216,27 @@ const parseModinfo = (
     const record = stored.subarray(at, stop);
     const raw = stored.subarray(at, terminated ? end + 1 : stored.length);
     examined.count += 1;
-    exceeds(examined.count, maxEntries);
+    exceeds(examined.count, input.max_entries);
     const separator = record.indexOf(0x3d);
     let key: string | null = null;
     let value: string | null = null;
+    const omittedFields: Array<"key" | "value"> = [];
     let reason: NonNullable<Report["modinfo"]>["entries"][number]["reason"] =
       terminated ? null : "unterminated_modinfo_entry";
     if (separator < 0) reason ??= "modinfo_missing_separator";
     else {
       const keyBytes = record.subarray(0, separator);
       const valueBytes = record.subarray(separator + 1);
+      largestKeyBytes = Math.max(largestKeyBytes, keyBytes.length);
+      largestValueBytes = Math.max(largestValueBytes, valueBytes.length);
       if (keyBytes.length === 0) reason ??= "modinfo_empty_key";
-      if (
-        keyBytes.length > MAX_KERNEL_MODULE_KEY_BYTES ||
-        valueBytes.length > MAX_KERNEL_MODULE_VALUE_BYTES
-      )
-        reason ??= "modinfo_field_exceeds_limit";
-      if (keyBytes.length > 0 && keyBytes.length <= MAX_KERNEL_MODULE_KEY_BYTES)
+      if (keyBytes.length > input.max_modinfo_key_bytes)
+        omittedFields.push("key");
+      if (valueBytes.length > input.max_modinfo_value_bytes)
+        omittedFields.push("value");
+      if (keyBytes.length > 0 && keyBytes.length <= input.max_modinfo_key_bytes)
         key = keyBytes.toString("latin1");
-      if (valueBytes.length <= MAX_KERNEL_MODULE_VALUE_BYTES)
+      if (valueBytes.length <= input.max_modinfo_value_bytes)
         value = valueBytes.toString("latin1");
     }
     entries.push({
@@ -237,20 +247,34 @@ const parseModinfo = (
       },
       key,
       value,
-      raw_sha256: sha256(raw),
+      raw_sha256: sha256Hex(raw),
       raw_hex: rawHex(raw),
       status: reason === null ? "observed" : "malformed",
       reason,
+      omitted_fields: omittedFields,
     });
     if (!terminated) break;
     at = end + 1;
   }
+  const omissionLimits: AnalysisParameterLimit[] = [];
+  for (const [field, selected, required] of [
+    ["key", input.max_modinfo_key_bytes, largestKeyBytes],
+    ["value", input.max_modinfo_value_bytes, largestValueBytes],
+  ] as const) {
+    if (required > selected) {
+      omissionLimits.push(kernelModuleModinfoLimit(field, selected));
+      use.limitations.push(
+        `.modinfo ${field} text exceeds max_modinfo_${field}_bytes=${String(selected)} bytes. Omitted fields keep their source range and digest; omission does not establish malformed syntax. Retry inspect_kernel_module with max_modinfo_${field}_bytes at least ${String(required)}; modinfo.omission_limits records the control. Applies on the next call without a REA restart; input, entry and raw-hex budgets do not change.`,
+      );
+    }
+  }
   return {
     status: "present",
     location,
-    sha256: sha256(stored),
+    sha256: sha256Hex(stored),
     entries,
     reason: null,
+    ...(omissionLimits.length === 0 ? {} : { omission_limits: omissionLimits }),
   };
 };
 
@@ -297,7 +321,7 @@ const parseVersions = (
       layout,
       entry_bytes: entryBytes,
       location,
-      sha256: sha256(stored),
+      sha256: sha256Hex(stored),
       entries: [],
       reason: "versions_section_compressed",
     };
@@ -307,24 +331,20 @@ const parseVersions = (
       layout,
       entry_bytes: entryBytes,
       location,
-      sha256: sha256(stored),
+      sha256: sha256Hex(stored),
       entries: [],
       reason: "versions_size_not_multiple",
     };
   const nameBytes = bits === 64 ? 56 : 60;
   const crcBytes = bits === 64 ? 8 : 4;
+  const reader = new BinaryReader(stored, little, "elf");
   const count = stored.length / entryBytes;
   exceeds(examined.count + count, maxEntries);
   const entries: NonNullable<Report["versions"]>["entries"] = [];
   for (let index = 0; index < count; index += 1) {
     const start = index * entryBytes;
     const record = stored.subarray(start, start + entryBytes);
-    const crc =
-      bits === 64
-        ? little
-          ? record.readBigUInt64LE(0)
-          : record.readBigUInt64BE(0)
-        : BigInt(little ? record.readUInt32LE(0) : record.readUInt32BE(0));
+    const crc = reader.word(start, bits);
     const nameField = record.subarray(crcBytes, crcBytes + nameBytes);
     const end = nameField.indexOf(0);
     entries.push({
@@ -342,7 +362,7 @@ const parseVersions = (
     layout,
     entry_bytes: entryBytes,
     location,
-    sha256: sha256(stored),
+    sha256: sha256Hex(stored),
     entries,
     reason: null,
   };
@@ -428,21 +448,23 @@ const parseSignature = (bytes: Buffer): Report["signature"] => {
       reason: "signature_trailer_truncated",
     };
   const infoOffset = magic.offset - MODULE_SIGNATURE_INFO_BYTES;
+  const footer = new BinaryReader(
+    bytes.subarray(infoOffset, magic.offset),
+    false,
+    "elf",
+  );
   const info = {
     location: { offset: infoOffset, bytes: MODULE_SIGNATURE_INFO_BYTES },
-    algo: bytes[infoOffset] ?? 0,
-    hash: bytes[infoOffset + 1] ?? 0,
-    id_type: bytes[infoOffset + 2] ?? 0,
-    signer_len: bytes[infoOffset + 3] ?? 0,
-    key_id_len: bytes[infoOffset + 4] ?? 0,
-    pad: [
-      bytes[infoOffset + 5] ?? 0,
-      bytes[infoOffset + 6] ?? 0,
-      bytes[infoOffset + 7] ?? 0,
-    ] as [number, number, number],
-    sig_len: bytes.readUInt32BE(infoOffset + 8),
+    algo: footer.u8(0),
+    hash: footer.u8(1),
+    id_type: footer.u8(2),
+    signer_len: footer.u8(3),
+    key_id_len: footer.u8(4),
+    pad: [footer.u8(5), footer.u8(6), footer.u8(7)] as [number, number, number],
+    sig_len: footer.u32(8),
   };
-  if (info.sig_len >= infoOffset)
+  const isPkcs7 = info.id_type === MODULE_SIGNATURE_PKCS7_ID_TYPE;
+  if (info.sig_len >= infoOffset || (isPkcs7 && info.sig_len === 0))
     return {
       status: "malformed",
       magic,
@@ -450,7 +472,7 @@ const parseSignature = (bytes: Buffer): Report["signature"] => {
       pkcs7: null,
       reason: "signature_length_inconsistent",
     };
-  if (info.id_type !== MODULE_SIGNATURE_PKCS7_ID_TYPE)
+  if (!isPkcs7)
     return {
       status: "unsupported",
       magic,
@@ -479,7 +501,7 @@ const parseSignature = (bytes: Buffer): Report["signature"] => {
     info,
     pkcs7: {
       location: { offset: infoOffset - info.sig_len, bytes: info.sig_len },
-      sha256: sha256(pkcs7),
+      sha256: sha256Hex(pkcs7),
     },
     reason: null,
   };
@@ -493,16 +515,13 @@ const signatureLimitation = (signature: Report["signature"]): string => {
   return "The appended signature trailer was not accepted as an unvalidated PKCS#7 range.";
 };
 
-/** Decode kernel-module metadata from one in-memory ET_REL image. */
-export const parseKernelModule = (
+/** Decode kernel-module metadata from an admitted in-memory ELF image. */
+const parseKernelModuleImage = (
   bytes: Buffer,
   artifact: Report["artifact"],
   input: InspectKernelModuleInput,
+  image: ReturnType<typeof readElfImage>,
 ): Report => {
-  const compression = compressionCodec(bytes);
-  if (compression !== null)
-    return unsupportedCompression(artifact, compression);
-  const image = readElfImage(bytes);
   const facts = headerFacts(image);
   if (facts.type !== 1) return notApplicable(artifact, facts);
   const sections = image.sections.filter(
@@ -517,22 +536,26 @@ export const parseKernelModule = (
   const use = { namesComplete, limitations };
   const examined = { count: 0 };
   let duplicateSections = false;
+  const byName = keyedBy(sections, ({ name }) => name);
   const firstNamedSection = (name: string): ElfSection | undefined => {
-    const found = sectionsNamed(sections, name);
-    if (found.length > 1) {
+    if (allKeyed(byName, name).length > 1) {
       duplicateSections = true;
       limitations.push(
         `Multiple ${name} sections are declared; the first is examined.`,
       );
     }
-    return found[0];
+    return firstKeyed(
+      byName,
+      name,
+      "Linux's module loader (find_sec) reads the first section with the name.",
+    );
   };
   const modinfo = parseModinfo(
     bytes,
     firstNamedSection(".modinfo"),
     use,
     examined,
-    input.max_entries,
+    input,
   );
   const versions = parseVersions(
     bytes,
@@ -611,6 +634,7 @@ export const parseKernelModule = (
     unbacked > 0 ||
     ksymtab.some((section) => section.reason !== null) ||
     sectionIncomplete(modinfo) ||
+    modinfo.entries.some((entry) => entry.omitted_fields.length > 0) ||
     sectionIncomplete(versions) ||
     modulePresence.status === "unsupported" ||
     (modulePresence.status === "present" && modulePresence.location === null) ||
@@ -644,4 +668,38 @@ export const parseKernelModule = (
     },
     limitations,
   };
+};
+
+export const parseKernelModule = (
+  bytes: Buffer,
+  artifact: Report["artifact"],
+  input: InspectKernelModuleInput,
+): Report =>
+  moduleCompressionReport(bytes, artifact) ??
+  parseKernelModuleImage(
+    bytes,
+    artifact,
+    input,
+    readElfImage(bytes, "inspect_kernel_module"),
+  );
+
+/** Same report as {@link parseKernelModule}. Section names yield for `signal`. */
+export const parseKernelModuleCooperative = async (
+  bytes: Buffer,
+  artifact: Report["artifact"],
+  input: InspectKernelModuleInput,
+  signal?: AbortSignal,
+): Promise<Report> => {
+  assertArtifactReadActive(signal);
+  return (
+    moduleCompressionReport(bytes, artifact) ??
+    parseKernelModuleImage(
+      bytes,
+      artifact,
+      input,
+      await readElfImageCooperative(bytes, "inspect_kernel_module", () =>
+        yieldArtifactRead(signal),
+      ),
+    )
+  );
 };

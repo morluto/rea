@@ -1,9 +1,16 @@
 import type { Element, Node } from "@xmldom/xmldom";
 
 import { isExactJsonNumber } from "../exactJsonNumber.js";
-import { MAX_JSON_DEPTH, type JsonValue } from "../jsonValue.js";
+import { jsonValueExceedsDepth, type JsonValue } from "../jsonValue.js";
+import {
+  DESKTOP_VIEW_DEFAULTS,
+  desktopViewByteDisplay,
+  type DesktopViewPolicy,
+} from "./desktopViewPolicy.js";
 import { err, ok, type Result } from "../result.js";
 import { safeParseJson } from "../safeJson.js";
+import { hasZipLocalHeader, hasZipSignature } from "../zipPackageFormat.js";
+import { ZIP_EOCD_BYTES } from "../zipEndOfCentralDirectory.js";
 import {
   declaredDocumentType,
   isWellFormedXml,
@@ -11,6 +18,13 @@ import {
   parseXmlDocument,
 } from "../xmlDocument.js";
 import { expatXmlName } from "./expatXmlNames.js";
+import {
+  desktopLineBreak,
+  isKeyfile,
+  keyfileLines,
+} from "./desktopTextSyntax.js";
+import { decodeStateUtf16 } from "./stateTextEncoding.js";
+import { decodeStrictUtf8 } from "../strictUtf8.js";
 
 /** Formats the state view reads into JSON. */
 export type DesktopStateFormat =
@@ -30,8 +44,6 @@ export const SQLITE_SIDECARS = [
   { suffix: "-journal", label: "rollback journal" },
 ] as const;
 const GVDB_HEADER = "GVariant";
-/** A zip archive's local file header, which FreeCAD, ODF, OOXML, EPUB and JAR files begin with. */
-const ZIP_HEADER = "PK\u0003\u0004";
 const XML_EXTENSIONS = /\.(?:xml|xbel|plist|svg|ui)$/iu;
 /** A DOCTYPE that only names its DTD reads as XML; one with an internal subset, which can declare entities, does not. */
 export const XML_POLICY = {
@@ -39,63 +51,15 @@ export const XML_POLICY = {
   lineEndings: "normalize",
   nameSupported: expatXmlName,
 } as const;
-const MAX_TEXT_LINES = 5000;
-const MAX_XML_NODES = 5000;
-const MAX_XML_DEPTH = 64;
-/** Half of Evidence's nesting limit, leaving room for the result around a view. */
-const MAX_JSON_VIEW_DEPTH = MAX_JSON_DEPTH / 2;
-const MIB = 1024 * 1024;
-/** Largest JSON or key file read into a view, whose whole value enters Evidence. */
-const MAX_PARSED_VIEW_BYTES = 4 * MIB;
 
-type KeyfileLine =
-  | { readonly kind: "skip" }
-  | { readonly kind: "group"; readonly name: string }
-  | { readonly kind: "entry"; readonly key: string; readonly value: string }
-  | { readonly kind: "other" };
-
-/** One key file line: blank or comment, `[group]`, `key=value`, or anything else. */
-const keyfileLine = (raw: string): KeyfileLine => {
-  const line = raw.trim();
-  if (line.length === 0 || line.startsWith("#") || line.startsWith(";"))
-    return { kind: "skip" };
-  const name = /^\[(?<name>[^\]]+)\]$/u.exec(line)?.groups?.name;
-  if (name !== undefined) return { kind: "group", name };
-  const equals = raw.indexOf("=");
-  if (equals < 0) return { kind: "other" };
-  const key = raw.slice(0, equals).trim();
-  return key.length === 0
-    ? { kind: "other" }
-    : {
-        kind: "entry",
-        key,
-        // Only ASCII space and tab immediately after '=' are padding.
-        value: raw.slice(equals + 1).replace(/^[ \t]+/u, ""),
-      };
-};
-
-/**
- * A key file has at least one group and nothing a key file view would drop.
- * Lines are read one at a time, stopping at the first that is neither.
- */
-const isKeyfile = (text: string): boolean => {
-  let group = false;
-  for (let start = 0; start <= text.length;) {
-    const end = text.indexOf("\n", start);
-    const kind = keyfileLine(text.slice(start, end < 0 ? undefined : end)).kind;
-    if (kind === "other") return false;
-    if (kind === "group") group = true;
-    if (end < 0) break;
-    start = end + 1;
-  }
-  return group;
-};
-
-/** Decode bytes as UTF-8 text, or undefined for binary content. */
+/** Decode UTF-8 and BOM-marked UTF-16, or return undefined for binary content. */
 export const decodeStateText = (bytes: Uint8Array): string | undefined => {
+  const utf16 = decodeStateUtf16(bytes);
+  if (utf16 !== undefined)
+    return utf16.text.includes("\0") ? undefined : utf16.text;
   if (bytes.subarray(0, 8192).includes(0)) return undefined;
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return decodeStrictUtf8(bytes, "strip-signature");
   } catch {
     return undefined;
   }
@@ -199,7 +163,7 @@ const jsonScalar = (scan: JsonScan, string: boolean): boolean => {
  * a time without building the value: it holds a byte per open container, so
  * text too large to parse into a view is still told apart from other text.
  */
-export const isJsonText = (text: string): boolean => {
+const isJsonText = (text: string): boolean => {
   const scan: JsonScan = {
     expect: "value",
     empty: false,
@@ -337,18 +301,23 @@ export const textSyntaxFormat = (
 export const detectStateFormat = (
   path: string,
   bytes: Uint8Array,
+  policy: DesktopViewPolicy = DESKTOP_VIEW_DEFAULTS,
 ): DesktopStateFormat => {
   const header = new TextDecoder("latin1").decode(bytes.subarray(0, 16));
   if (header === SQLITE_HEADER) return "sqlite";
   if (header.startsWith(GVDB_HEADER)) return "dconf";
-  if (header.startsWith(ZIP_HEADER)) return "zip";
+  if (
+    hasZipLocalHeader(bytes) ||
+    (bytes.length >= ZIP_EOCD_BYTES && hasZipSignature(bytes))
+  )
+    return "zip";
   const text = decodeStateText(bytes);
   if (text === undefined) return "binary";
   const trimmed = text.trimStart();
   if (
     namedJson(path, trimmed) &&
     // JSON too large for a view is told apart without building its value.
-    (bytes.length > MAX_PARSED_VIEW_BYTES
+    (bytes.length > policy.parsed_bytes
       ? isJsonText(text)
       : safeParseJson(text).ok)
   )
@@ -360,58 +329,41 @@ export const detectStateFormat = (
 };
 
 /** An object's own values one at a time, without copying them into an array. */
-function* ownValues(record: Record<string, JsonValue>): Generator<JsonValue> {
-  for (const key in record)
-    if (Object.hasOwn(record, key)) yield record[key] ?? null;
-}
-
-/**
- * Whether a parsed JSON value nests deeper than a limit, checked without
- * recursion: a value's depth is the number of levels open above it, each
- * walked by one iterator, so no container's members are copied or queued.
- */
-export const deeperThan = (root: JsonValue, limit: number): boolean => {
-  const levels: Iterator<JsonValue>[] = [[root].values()];
-  for (let level = levels.at(-1); level !== undefined; level = levels.at(-1)) {
-    const next = level.next();
-    if (next.done === true) levels.pop();
-    else if (levels.length - 1 > limit) return true;
-    else if (Array.isArray(next.value)) levels.push(next.value.values());
-    else if (typeof next.value === "object" && next.value !== null)
-      levels.push(ownValues(next.value));
-  }
-  return false;
-};
-
 /** A JSON file's value, refused when a number would be rounded or it nests too deeply. */
-export const jsonView = (text: string): Result<JsonValue, string> => {
+const jsonView = (
+  text: string,
+  policy: DesktopViewPolicy,
+): Result<JsonValue, string> => {
   let rounded = false;
   const parsed = safeParseJson(text, (_key, value, context) => {
     if (typeof value === "number" && !isExactJsonNumber(value, context?.source))
       rounded = true;
     return value;
   });
-  if (!parsed.ok) return err(parsed.error);
+  if (!parsed.ok) return parsed;
   if (rounded)
     return err(
       "a number in it cannot be read exactly, such as an integer above 2^53",
     );
   const value = parsed.value as JsonValue;
-  return deeperThan(value, MAX_JSON_VIEW_DEPTH)
+  return jsonValueExceedsDepth(value, policy.json_depth)
     ? err(
-        `nested deeper than the ${String(MAX_JSON_VIEW_DEPTH)} levels a JSON view keeps`,
+        `nested deeper than the ${String(policy.json_depth)} levels a JSON view keeps`,
       )
     : ok(value);
 };
 
 /** A text file as lines, bounded. */
-export const textView = (text: string): JsonValue => {
-  const lines = text.split(/\r?\n/u);
+export const textView = (
+  text: string,
+  policy: DesktopViewPolicy = DESKTOP_VIEW_DEFAULTS,
+): JsonValue => {
+  const lines = text.split(desktopLineBreak);
   if (lines.at(-1) === "") lines.pop();
   return {
-    lines: lines.slice(0, MAX_TEXT_LINES),
+    lines: lines.slice(0, policy.text_lines),
     line_count: lines.length,
-    truncated: lines.length > MAX_TEXT_LINES,
+    truncated: lines.length > policy.text_lines,
   };
 };
 
@@ -428,8 +380,7 @@ export const keyfileView = (
 ): Record<string, Record<string, string>> => {
   const groups = plainRecord<Record<string, string>>();
   let group = "";
-  for (const raw of text.split(/\r?\n/u)) {
-    const line = keyfileLine(raw);
+  for (const line of keyfileLines(text)) {
     if (line.kind === "group") {
       group = line.name;
       groups[group] ??= plainRecord();
@@ -480,8 +431,9 @@ const xmlNode = (
   depth: number,
   budget: XmlBudget,
   scope: XmlScope,
+  policy: DesktopViewPolicy,
 ): JsonValue | undefined => {
-  if (budget.remaining <= 0 || depth > MAX_XML_DEPTH) {
+  if (budget.remaining <= 0 || depth > policy.xml_depth) {
     budget.truncated = true;
     return undefined;
   }
@@ -511,7 +463,7 @@ const xmlNode = (
     child !== null;
     child = child.nextSibling
   ) {
-    const value = xmlNode(child, depth + 1, budget, inner);
+    const value = xmlNode(child, depth + 1, budget, inner, policy);
     if (value !== undefined) children.push(value);
   }
   return { name: element.tagName, attributes, children };
@@ -522,15 +474,24 @@ const xmlNode = (
  * is recorded as `doctype`, its DTD never read; one with an internal subset is
  * refused, as is a reference to any entity but XML's five.
  */
-export const xmlView = (text: string): JsonValue | undefined => {
+export const xmlView = (
+  text: string,
+  policy: DesktopViewPolicy = DESKTOP_VIEW_DEFAULTS,
+): JsonValue | undefined => {
   const parsed = parseXmlDocument(text, XML_POLICY);
   const root = parsed.ok ? parsed.value.documentElement : null;
   if (!parsed.ok || root === null) return undefined;
-  const budget: XmlBudget = { remaining: MAX_XML_NODES, truncated: false };
-  const tree = xmlNode(root, 0, budget, {
-    preserve: false,
-    elementContent: false,
-  });
+  const budget: XmlBudget = { remaining: policy.xml_nodes, truncated: false };
+  const tree = xmlNode(
+    root,
+    0,
+    budget,
+    {
+      preserve: false,
+      elementContent: false,
+    },
+    policy,
+  );
   if (tree === undefined) return undefined;
   const doctype = declaredDocumentType(parsed.value);
   return {
@@ -551,7 +512,7 @@ export const xmlView = (text: string): JsonValue | undefined => {
 /** Formats read from a file's bytes alone, without a tool or worker. */
 export type TextualStateFormat = "text" | "json" | "keyfile" | "xml";
 
-/** Whether a format is one of the text formats, read as UTF-8. */
+/** Whether a format is one of the text formats. */
 export const isTextualFormat = (
   format: string | null,
 ): format is TextualStateFormat =>
@@ -564,24 +525,25 @@ export const isTextualFormat = (
 export const textualView = (
   format: TextualStateFormat,
   bytes: Uint8Array,
+  policy: DesktopViewPolicy = DESKTOP_VIEW_DEFAULTS,
 ): Result<JsonValue, string> => {
   if (
     (format === "json" || format === "keyfile") &&
-    bytes.length > MAX_PARSED_VIEW_BYTES
+    bytes.length > policy.parsed_bytes
   )
     return err(
-      `larger than the ${String(MAX_PARSED_VIEW_BYTES / MIB)} MiB limit for JSON and key file views`,
+      `larger than the ${desktopViewByteDisplay(policy.parsed_bytes)} limit for JSON and key file views`,
     );
   const text = decodeStateText(bytes) ?? "";
   switch (format) {
     case "text":
-      return ok(textView(text));
+      return ok(textView(text, policy));
     case "json":
-      return jsonView(text);
+      return jsonView(text, policy);
     case "keyfile":
       return ok({ groups: keyfileView(text) });
     case "xml": {
-      const tree = xmlView(text);
+      const tree = xmlView(text, policy);
       return tree === undefined
         ? err("not well-formed XML, or its DOCTYPE has an internal subset")
         : ok(tree);

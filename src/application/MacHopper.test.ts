@@ -1,8 +1,19 @@
 import { createHash } from "node:crypto";
+import {
+  mkdir,
+  realpath,
+  symlink,
+  truncate,
+  writeFile,
+} from "node:fs/promises";
+import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { err, ok } from "../domain/result.js";
+import { resolveAppleBundleExecutable } from "./AppBundleExecutable.js";
 import {
   HOPPER_METADATA_TIMEOUT_MS,
   type HopperDownload,
@@ -10,10 +21,100 @@ import {
 } from "./HopperDownload.js";
 import {
   installMacHopper,
+  systemMacHopperInstallHost,
   type MacHopperBundleVerification,
   type MacHopperBundleInstallResult,
   type MacHopperInstallHost,
 } from "./MacHopper.js";
+
+it("bounds the system host's Hopper minimum-version plist read", async () => {
+  const root = await createTestTempDirectory("rea-hopper-plist-input-");
+  const app = join(root, "Hopper.app");
+  const plist = join(app, "Contents", "Info.plist");
+  await mkdir(join(app, "Contents"), { recursive: true });
+  await writeFile(
+    plist,
+    "<plist><dict><key>LSMinimumSystemVersion</key><string>13.0</string></dict></plist>",
+  );
+  const host = systemMacHopperInstallHost(root, {}, async () => "15.0");
+
+  await expect(host.minimumSystemVersion(app)).resolves.toBe("13.0");
+  await truncate(plist, 64 * 1024 * 1024 + 1);
+  await expect(host.minimumSystemVersion(app)).rejects.toMatchObject({
+    name: "ParseFailureError",
+    kind: "limit",
+    failure: {
+      limit: { maximum: 64 * 1024 * 1024, required: 64 * 1024 * 1024 + 1 },
+    },
+    message: expect.stringContaining("67108864-byte input allowance"),
+  });
+});
+
+it.skipIf(process.platform === "win32")(
+  "keeps symlinked Info.plist selection in bundle resolution and the Hopper version check",
+  async () => {
+    const root = await createTestTempDirectory("rea-symlinked-info-plist-");
+    const app = join(root, "Hopper.app");
+    const contents = join(app, "Contents");
+    const plist = join(contents, "Info.plist");
+    const selected = join(root, "Selected.plist");
+    const executable = join(contents, "MacOS", "Hopper");
+    await mkdir(join(contents, "MacOS"), { recursive: true });
+    await writeFile(executable, "inert fixture");
+    await writeFile(
+      selected,
+      "<plist><dict><key>CFBundleExecutable</key><string>Hopper</string><key>LSMinimumSystemVersion</key><string>13.0</string></dict></plist>",
+    );
+    await symlink(selected, plist);
+    const host = systemMacHopperInstallHost(root, {}, async () => "15.0");
+    try {
+      await expect(resolveAppleBundleExecutable(app)).resolves.toEqual({
+        ok: true,
+        value: { executable: await realpath(executable), infoPlist: plist },
+      });
+      await expect(host.minimumSystemVersion(app)).resolves.toBe("13.0");
+    } finally {
+      await host.close();
+    }
+  },
+);
+
+it("retains the system host's minimum-version plist descriptor until close can retry it", async () => {
+  const root = await createTestTempDirectory("rea-hopper-plist-cleanup-");
+  const app = join(root, "Hopper.app");
+  const plist = join(app, "Contents", "Info.plist");
+  await mkdir(join(app, "Contents"), { recursive: true });
+  await writeFile(
+    plist,
+    "<plist><dict><key>LSMinimumSystemVersion</key><string>13.0</string></dict></plist>",
+  );
+  const host = systemMacHopperInstallHost(root, {}, async () => "15.0");
+  const closeHandle = OwnedFileHandle.prototype.close;
+  const attempts: OwnedFileHandle[] = [];
+  let denied = true;
+  const close = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockImplementation(async function (this: OwnedFileHandle) {
+      attempts.push(this);
+      if (denied) throw new Error("controlled Info.plist close denial");
+      await closeHandle.call(this);
+    });
+  try {
+    await expect(host.minimumSystemVersion(app)).rejects.toBeDefined();
+    await expect(host.close?.()).resolves.toMatchObject({ resources: [plist] });
+    expect(attempts).toHaveLength(2);
+    expect(attempts[0]).toBe(attempts[1]);
+    denied = false;
+    await expect(host.close?.()).resolves.toBeUndefined();
+    expect(attempts[0]!.handle.fd).toBe(-1);
+    await expect(host.minimumSystemVersion(app)).resolves.toBe("13.0");
+  } finally {
+    denied = false;
+    await host.close?.();
+    await Promise.all(attempts.map((owner) => closeHandle.call(owner)));
+    close.mockRestore();
+  }
+});
 
 class FakeMacHopperHost implements MacHopperInstallHost {
   readonly archive = new TextEncoder().encode("hopper-dmg");
@@ -589,3 +690,81 @@ it("stops before mounting when setup is cancelled as the package downloads", asy
   expect(host.mounts).toBe(0);
   expect(host.installs).toBe(0);
 });
+
+it("retains the completed installation but skips opening when cancelled during its copy", async () => {
+  const host = new FakeMacHopperHost();
+  const controller = new AbortController();
+  const install = host.installBundle;
+  host.installBundle = async (...args) => {
+    const result = await install(...args);
+    controller.abort(new Error("stop setup"));
+    return result;
+  };
+
+  await expect(
+    installMacHopper({ signal: controller.signal }, host),
+  ).resolves.toMatchObject({
+    status: "installed",
+    launcherPath:
+      "/home/user/Applications/Hopper Disassembler.app/Contents/MacOS/hopper",
+    openFailure: "Setup was cancelled before Hopper was opened",
+  });
+  expect(host.installs).toBe(1);
+  expect(host.opens).toBe(0);
+  expect(host.unmounts).toBe(1);
+  expect(host.cleanups).toBe(1);
+});
+
+it.each(["physical", "abort-name", "caller", "node-wrapper"] as const)(
+  "attributes a rejected package write and retains cleanup (%s)",
+  async (kind) => {
+    const host = new FakeMacHopperHost();
+    const controller = new AbortController();
+    const reason = { caller: "stop during package write" };
+    const physical = Object.assign(new Error("package write denied"), {
+      name: kind === "abort-name" ? "AbortError" : "Error",
+    });
+    const wrapped = Object.assign(
+      new Error("operation aborted", { cause: reason }),
+      {
+        name: "AbortError",
+        code: "ABORT_ERR",
+      },
+    );
+    host.writePackage = async () => {
+      controller.abort(reason);
+      throw kind === "caller"
+        ? reason
+        : kind === "node-wrapper"
+          ? wrapped
+          : physical;
+    };
+    let retained: (() => Promise<void>) | undefined;
+    let release = false;
+    host.cleanup = async () => {
+      if (!release) throw new Error("temporary root busy");
+    };
+    const result = await installMacHopper(
+      { signal: controller.signal },
+      {
+        ...host,
+        retainCleanup: (cleanup, resources) => {
+          expect(resources).toEqual(["/tmp/rea-hopper-test"]);
+          retained = cleanup;
+        },
+      },
+    );
+    expect(result).toMatchObject({
+      status: "failed",
+      reason:
+        kind === "caller" || kind === "node-wrapper" ? "cancelled" : "mount",
+      cleanupFailure: expect.stringContaining("temporary root busy"),
+    });
+    if (kind === "physical" || kind === "abort-name")
+      expect(result).toMatchObject({ diagnostic: physical.message });
+    expect(host.installs).toBe(0);
+    expect(retained).toBeTypeOf("function");
+    release = true;
+    await retained?.();
+  },
+);

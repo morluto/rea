@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 
-import type { HopperLauncherOutcome } from "../domain/hopperErrors.js";
+import type { HopperLauncherOutcome } from "./HopperErrors.js";
 import {
   hopperLauncherReportedApplicationNotFound,
   nativeHopperLaunchWasDenied,

@@ -9,6 +9,13 @@ export interface ReferenceSourceGitDirectory {
   readonly commonDirectory: string;
 }
 
+/** A cancellation observed by the Git directory locator itself. */
+export class ReferenceSourceGitDirectoryCancelled extends Error {
+  constructor(readonly reason: unknown) {
+    super("Git directory lookup cancelled", { cause: reason });
+  }
+}
+
 /** Locate the nearest repository without running Git or following config includes. */
 export const locateReferenceSourceGitDirectory = async (
   root: string,
@@ -17,7 +24,8 @@ export const locateReferenceSourceGitDirectory = async (
 ): Promise<ReferenceSourceGitDirectory | undefined> => {
   let repository = root;
   for (;;) {
-    signal?.throwIfAborted();
+    if (signal?.aborted === true)
+      throw new ReferenceSourceGitDirectoryCancelled(signal.reason);
     const dotgit = join(repository, ".git");
     let metadata;
     try {

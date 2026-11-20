@@ -118,3 +118,67 @@ it("retains constructor loader requests without inventing host authority", async
     ),
   ).toBe(false);
 });
+
+it("indexes returned loader reads before publishing dependency edges", async () => {
+  const root = await createTestTempDirectory("rea-returned-loader-reads-");
+  const sources = {
+    "unchanged.cjs": 'const box={load:require};(()=>box.load)()("./dep.cjs");',
+    "child-only.cjs":
+      'const box={load:require};box.load.extra=1;(()=>box.load)()("./dep.cjs");',
+    "captured-before.cjs":
+      'const box={load:require};const load=box.load;box.load=()=>{};(()=>load)()("./dep.cjs");',
+    "nested-unchanged.cjs":
+      'const box={api:{load:require}};(()=>box.api.load)()("./dep.cjs");',
+    "overwritten.cjs":
+      'const box={load:require};box.load=()=>{};(()=>box.load)()("./dep.cjs");',
+    "conditional.cjs":
+      'const box={load:require};box.load=()=>{};(()=>(true?box.load:box.load))()("./dep.cjs");',
+    "sequence.cjs":
+      'const box={load:require};box.load=()=>{};(()=>(0,box.load))()("./dep.cjs");',
+    "deleted.cjs":
+      'const box={load:require};delete box.load;(()=>box.load)()("./dep.cjs");',
+    "nested-replaced.cjs":
+      'const box={api:{load:require}};box.api.load=()=>{};(()=>box.api.load)()("./dep.cjs");',
+    "own-write.cjs":
+      'const box={load:require};(()=>(box.load=()=>{},box.load))()("./dep.cjs");',
+    "local.cjs": 'const box={load:()=>{}};(()=>box.load)()("./dep.cjs");',
+    "direct-overwritten.cjs":
+      'const box={load:require};box.load=()=>{};box.load("./dep.cjs");',
+    "dep.cjs": "module.exports={};",
+  };
+  await Promise.all(
+    Object.entries(sources).map(([name, source]) =>
+      writeFile(join(root, name), source),
+    ),
+  );
+  const result = await importReferenceSource({
+    root,
+    caller: "returned-loader-reads",
+    policy: { secretPatterns: [] },
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.parse_failures).toEqual([]);
+  expect(result.value.relationships).toEqual([
+    ...["captured-before.cjs", "child-only.cjs"].map((from_path) => ({
+      from_path,
+      to: "dep.cjs",
+      kind: "requires",
+      resolution: "internal",
+      parse_state: "parsed",
+    })),
+    {
+      from_path: "direct-overwritten.cjs",
+      to: "./dep.cjs",
+      kind: "requires",
+      resolution: "unknown",
+      parse_state: "partial",
+    },
+    ...["nested-unchanged.cjs", "unchanged.cjs"].map((from_path) => ({
+      from_path,
+      to: "dep.cjs",
+      kind: "requires",
+      resolution: "internal",
+      parse_state: "parsed",
+    })),
+  ]);
+});

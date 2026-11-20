@@ -16,12 +16,15 @@ import {
   resolveSemanticBindingState,
   semanticResolutionBlocked,
   type JavaScriptSemanticAnalysisState,
-  type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
-import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
-import { semanticOpaqueNameMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
+import {
+  isIntrinsicGlobalReference,
+  isUnmodifiedGlobalReference,
+} from "./javascriptSemanticGlobalReference.js";
+import { opaqueCodeMayChangeGlobalRead } from "./javascriptSemanticEffectLog.js";
+import { createGlobalReferenceReader } from "./javascriptSemanticAmbientWrites.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
   builtinDataEffectIdentity,
@@ -110,6 +113,10 @@ interface TimerCollectionInput {
   readonly ownerCallableId: string | null;
   readonly state: JavaScriptSemanticAnalysisState;
   readonly output: TimerCandidate[];
+  readonly delayConstructors: ReadonlyMap<
+    string,
+    ReturnType<typeof createGlobalReferenceReader>
+  >;
   readonly ancestors: readonly t.Node[];
 }
 
@@ -121,6 +128,10 @@ export const collectJavaScriptSemanticAsyncEffects = (
 ): AsyncEffectAnalysis => {
   const events: JavaScriptSemanticEventOperation[] = [];
   const timers: TimerCandidate[] = [];
+  const delayConstructors = new Map([
+    ["Symbol", createGlobalReferenceReader(state, ["Symbol"])],
+    ["BigInt", createGlobalReferenceReader(state, ["BigInt"])],
+  ]);
   const callableIds = new Set(callables.map(({ callableId }) => callableId));
   const callableStack = createSemanticCallableIdStack(callableIds);
   const ancestors: t.Node[] = [];
@@ -135,6 +146,7 @@ export const collectJavaScriptSemanticAsyncEffects = (
           ownerCallableId,
           state,
           output: timers,
+          delayConstructors,
           ancestors,
         });
       }
@@ -160,7 +172,10 @@ export const collectJavaScriptSemanticAsyncEffects = (
  *
  * A class expression passes Node's own `typeof` check, so it is kept.
  */
-const rejectsEventListener = (listener: t.Node): boolean => {
+export const rejectsSemanticEventListener = (
+  listener: t.Node | undefined,
+): boolean => {
+  if (listener === undefined) return true;
   if (t.isSpreadElement(listener)) return false;
   const value = unwrapJavaScriptExpression(listener).node;
   if (t.isFunctionExpression(value) || t.isArrowFunctionExpression(value))
@@ -204,9 +219,9 @@ const collectEvent = (
   // provably the listener: `e.on(...["x", fn], 1)` registers `fn` and ignores the
   // trailing `1`.
   if (
+    EVENT_LISTENER_METHODS.includes(method) &&
     !t.isSpreadElement(eventArgument) &&
-    listenerArgument !== undefined &&
-    rejectsEventListener(listenerArgument)
+    rejectsSemanticEventListener(listenerArgument)
   )
     return;
   const emitter = emitterIdentity(member.object, state);
@@ -363,8 +378,7 @@ const schedulesWithNonFunctionCallback = (
   if (
     t.isIdentifier(value) &&
     ["undefined", "NaN", "Infinity"].includes(value.name) &&
-    isUnmodifiedGlobalReference(value, state, value.name) &&
-    !semanticOpaqueNameMayHaveChanged(value, state)
+    isIntrinsicGlobalReference(value, state, value.name)
   )
     return true;
   // A class passes Node's own typeof check; invoking it is a separate failure,
@@ -372,6 +386,37 @@ const schedulesWithNonFunctionCallback = (
   // `void`, `!`, `~`, `typeof` and `delete`) yields a primitive, never a
   // function.
   return t.isUnaryExpression(value);
+};
+
+// Node converts timeout and interval delays to numbers before creating a handle.
+// BigInt and Symbol values throw there. A spread can shift the delay slot, and
+// shadowed or replaced constructors cannot establish the argument's type.
+const schedulesWithInvalidDelay = (
+  node: t.CallExpression | t.OptionalCallExpression,
+  state: JavaScriptSemanticAnalysisState,
+  delayConstructors: TimerCollectionInput["delayConstructors"],
+): boolean => {
+  if (
+    node.arguments.slice(0, 2).some((argument) => t.isSpreadElement(argument))
+  )
+    return false;
+  const argument = node.arguments[1];
+  if (argument === undefined) return false;
+  const value = unwrapJavaScriptExpression(argument).node;
+  if (t.isBigIntLiteral(value)) return true;
+  if (
+    t.isUnaryExpression(value) &&
+    ["+", "-", "~"].includes(value.operator) &&
+    t.isBigIntLiteral(unwrapJavaScriptExpression(value.argument).node)
+  )
+    return true;
+  return (
+    t.isCallExpression(value) &&
+    t.isIdentifier(value.callee) &&
+    delayConstructors.get(value.callee.name)?.(value.callee).status ===
+      "unmodified" &&
+    !opaqueCodeMayChangeGlobalRead(value.callee, state, value.callee.name)
+  );
 };
 
 const collectTimer = (input: TimerCollectionInput): void => {
@@ -382,7 +427,9 @@ const collectTimer = (input: TimerCollectionInput): void => {
   if (
     TIMER_SCHEDULE_METHODS.some((candidate) => candidate === method) &&
     nodeBuiltinTimerMethod(node.callee, state) !== null &&
-    schedulesWithNonFunctionCallback(node, input.state)
+    (schedulesWithNonFunctionCallback(node, state) ||
+      ((method === "setTimeout" || method === "setInterval") &&
+        schedulesWithInvalidDelay(node, state, input.delayConstructors)))
   )
     return;
   const kind = TIMER_SCHEDULE_METHODS.some((candidate) => candidate === method)

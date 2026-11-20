@@ -36,6 +36,8 @@ it.skipIf(process.platform === "win32")(
         working_directory: root,
         environment: { PATH: bin },
       }),
+      process.env,
+      process.platform,
     );
     expect(resolved.executable).toBe(selected);
   },
@@ -55,6 +57,8 @@ it.skipIf(process.platform === "win32")(
           working_directory: root,
           environment: { PATH: "" },
         }),
+        process.env,
+        process.platform,
       );
       expect(resolved.executable).toBe(alias);
     } finally {
@@ -71,30 +75,19 @@ it("resolves a Windows executable through the canonical PATH spelling", async ()
     await mkdir(selected);
     await mkdir(ambient);
     await writeFile(join(selected, "tool.exe"), "");
-    await chmod(join(selected, "tool.exe"), 0o644);
+    await chmod(join(selected, "tool.exe"), 0o755);
     const scenario = processScenarioSchema.parse({
       executable: "tool.exe",
       working_directory: root,
       environment: { Path: selected },
     });
     const candidate = join(selected, "tool.exe");
-    try {
-      const resolved = await resolveProcessScenarioRuntimePaths(
-        scenario,
-        { PATH: ambient },
-        "win32",
-      );
-      expect(resolved.executable).toBe(candidate);
-    } catch (cause: unknown) {
-      const message =
-        cause instanceof AnalysisInputError
-          ? (cause.issues[0]?.message ?? cause.message)
-          : cause instanceof Error
-            ? cause.message
-            : String(cause);
-      expect(message).toContain(candidate);
-      expect(message).not.toContain(ambient);
-    }
+    const resolved = await resolveProcessScenarioRuntimePaths(
+      scenario,
+      { PATH: ambient },
+      "win32",
+    );
+    expect(resolved.executable).toBe(candidate);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -244,6 +237,8 @@ const runtimePathOutcome = async (scenario: unknown): Promise<unknown> => {
   try {
     return await resolveProcessScenarioRuntimePaths(
       processScenarioSchema.parse(scenario),
+      process.env,
+      process.platform,
     );
   } catch (cause: unknown) {
     return cause;
@@ -309,6 +304,8 @@ it.skipIf(SKIP_PERMISSIONS)(
           working_directory: root,
           environment: { PATH: [denied, bin].join(delimiter) },
         }),
+        process.env,
+        process.platform,
       );
       expect(resolved.executable).toBe(tool);
       const failure = await runtimePathOutcome({
@@ -341,6 +338,8 @@ const runtimePathFailure = async (
   try {
     await resolveProcessScenarioRuntimePaths(
       processScenarioSchema.parse(scenario),
+      process.env,
+      process.platform,
     );
   } catch (cause: unknown) {
     failure = cause;
@@ -379,6 +378,8 @@ it.skipIf(process.platform === "win32").each(["absolute", "relative", "PATH"])(
         working_directory: root,
         environment: { PATH: "alias/.." },
       }),
+      process.env,
+      process.platform,
     );
     expect(await realpath(executable)).toBe(join(intended, "probe"));
     expect(execFileSync(executable, { encoding: "utf8", timeout: 2000 })).toBe(
@@ -399,7 +400,11 @@ it.skipIf(process.platform === "win32")(
       executable: "sh",
       working_directory: root,
     });
-    const unset = await resolveProcessScenarioRuntimePaths(scenario, {});
+    const unset = await resolveProcessScenarioRuntimePaths(
+      scenario,
+      {},
+      process.platform,
+    );
     expect(unset.executable).not.toBe(localShell);
     expect(
       execFileSync(unset.executable, ["-c", "printf system-shell"], {
@@ -412,18 +417,24 @@ it.skipIf(process.platform === "win32")(
       const selected = await resolveProcessScenarioRuntimePaths(
         { ...scenario, environment },
         { PATH: "/usr/bin:/bin" },
+        process.platform,
       );
       expect(selected.executable).toBe(localShell);
     }
-    const inheritedEmpty = await resolveProcessScenarioRuntimePaths(scenario, {
-      PATH: "",
-    });
+    const inheritedEmpty = await resolveProcessScenarioRuntimePaths(
+      scenario,
+      {
+        PATH: "",
+      },
+      process.platform,
+    );
     expect(inheritedEmpty.executable).toBe(localShell);
     await rm(localShell);
     await expect(
       resolveProcessScenarioRuntimePaths(
         { ...scenario, environment: { PATH: "" } },
         {},
+        process.platform,
       ),
     ).rejects.toBeInstanceOf(AnalysisInputError);
   },

@@ -151,6 +151,7 @@ const parseDocument = (
   const nextDeclared =
     snapshot.kind === "package-json" &&
     ["dependencies", "devDependencies", "peerDependencies"].some((key) => {
+      if (!Object.hasOwn(record, key)) return false;
       const dependencies: unknown = record[key];
       if (
         typeof dependencies !== "object" ||

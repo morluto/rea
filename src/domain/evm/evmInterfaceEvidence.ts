@@ -26,6 +26,9 @@ export const evmInterfaceEvidence = (
     parameters: {
       path: input.path,
       encoding: input.encoding,
+      ...(input.producer_limits === undefined
+        ? {}
+        : { producer_limits: input.producer_limits }),
       ...(input.timeout_ms === undefined
         ? {}
         : { timeout_ms: input.timeout_ms }),

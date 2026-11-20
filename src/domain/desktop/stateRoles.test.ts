@@ -5,7 +5,6 @@ import {
   isApplicationDconfGroup,
   namedInTitles,
   roleFacts,
-  sqliteSidecarRoots,
   stateReasons,
   stateRole,
   type DesktopRoleFacts,
@@ -241,10 +240,15 @@ describe("sqliteSidecarRoots", () => {
     const database = "/home/ada/Documents/books.db";
     const wal = `${database}-wal`;
     const journal = `${database}-journal`;
-    expect(sqliteSidecarRoots([database, wal, journal])).toEqual(
-      new Set([wal, journal]),
-    );
-    expect(sqliteSidecarRoots([wal])).toEqual(new Set());
+    const sidecars = (roots: string[]) =>
+      roleFacts({
+        host: { home: "/home/ada" },
+        application: { state_directories: [] },
+        state: { content_roots: roots, selected_paths: [] },
+        session: { windows: [], opened_files: [] },
+      } as unknown as DesktopApplicationCapture).sqliteSidecars;
+    expect(sidecars([database, wal, journal])).toEqual(new Set([wal, journal]));
+    expect(sidecars([wal])).toEqual(new Set());
   });
 
   it("keeps a separately selected journal-named document alongside automatic sidecars", () => {

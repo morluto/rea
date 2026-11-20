@@ -1,6 +1,5 @@
 import { constants } from "node:buffer";
 import type { Writable } from "node:stream";
-import type { Filter } from "incur";
 import { estimateTokenCount } from "tokenx";
 
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
@@ -21,6 +20,8 @@ import {
   writeOutputText,
 } from "./jsonOutput.js";
 import { retainCliPublicationOnError } from "./cliEvidencePublication.js";
+import type { CliResultControls } from "./cliResultControls.js";
+import type { OutputFilterPath } from "./outputFilter.js";
 
 interface CliJsonLinesInput {
   readonly source: unknown;
@@ -28,10 +29,12 @@ interface CliJsonLinesInput {
   readonly operationFailure: unknown;
   readonly command: string;
   readonly duration: string;
+  /** Flags of the per-call controls the result records, by contract field. */
+  readonly cliControls?: CliResultControls;
   readonly fullOutput: boolean;
   readonly tokenCount: boolean;
   readonly filterOutput: string | undefined;
-  readonly filterPaths: ReturnType<typeof Filter.parse> | undefined;
+  readonly filterPaths: readonly OutputFilterPath[] | undefined;
 }
 
 /** Render one already classified result, sharing a plan for output and counting. */
@@ -41,7 +44,13 @@ export const writeCliJsonLines = async (
 ): Promise<AnalysisErrorProjection | undefined> => {
   const { source, selected, operationFailure } = options;
   let error: AnalysisErrorProjection | undefined;
-  const meta = { command: options.command, duration: options.duration };
+  const meta = {
+    command: options.command,
+    duration: options.duration,
+    ...(options.cliControls === undefined
+      ? {}
+      : { cli_controls: { ...options.cliControls } }),
+  };
   const envelope = (data: unknown) =>
     options.fullOutput ? { ok: true, data, meta } : data;
   let failureRecord =

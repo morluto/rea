@@ -18,8 +18,14 @@ import {
   AnalysisInputError,
 } from "../../domain/analysisErrorCore.js";
 import { isLockFile } from "../../domain/desktop/appExportUnowned.js";
-import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
+import {
+  type ArtifactResourceScope,
+  bindArtifactFileCleanup,
+} from "../../resources/index.js";
+import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const START = "start_build_computer";
 const MAX_KEY_BYTES = 1024 * 1024;
@@ -76,6 +82,7 @@ const readAptKey = async (path: string): Promise<Buffer> => {
 const writeBuildBundle = async (
   request: BuildRequest,
   payload: ReaPayload,
+  resources: ArtifactResourceScope,
 ): Promise<{
   readonly workspace: PrivateRuntimeRoot;
   readonly bundle: string;
@@ -103,7 +110,23 @@ const writeBuildBundle = async (
     }
     return { workspace, bundle, name };
   } catch (cause: unknown) {
-    await workspace.close();
+    const released = await resources.release({
+      kind: "private-runtime-root",
+      resource: workspace.path,
+      root: workspace,
+    });
+    if (released.kind === "failed") {
+      const cleanup = resources.cleanupFailure({ kind: "failed", cause }, [
+        released,
+      ]);
+      const error = new ProviderAdapterError(AGENTENV_PROVIDER, START, {
+        cause,
+        userMessage: errorMessage(cause),
+        cleanup: cleanup.cleanup,
+      });
+      bindArtifactFileCleanup(cleanup, error);
+      throw error;
+    }
     throw cause;
   }
 };
@@ -115,7 +138,8 @@ const writeBuildBundle = async (
 export const writeRequestBundle = async (
   request: BuildRequest,
   environment: Readonly<NodeJS.ProcessEnv>,
-) => writeBuildBundle(request, await reaPayload(environment));
+  resources: ArtifactResourceScope,
+) => writeBuildBundle(request, await reaPayload(environment), resources);
 
 /**
  * The lock files in a bundle folder's seeds, as `envs/<name>/seed/<home
@@ -125,16 +149,33 @@ export const writeRequestBundle = async (
  */
 export const seededLockFiles = async (
   bundle: string,
-): Promise<readonly string[]> => {
+): Promise<{
+  readonly locks: readonly string[];
+  readonly unreadable: readonly {
+    readonly path: string;
+    readonly reason: string;
+  }[];
+}> => {
   const environments = join(bundle, "envs");
-  const names = await readdir(environments).catch(() => []);
+  const unreadable: { path: string; reason: string }[] = [];
+  const unavailable = (path: string, cause: unknown) => {
+    if (!(cause instanceof Error && "code" in cause && cause.code === "ENOENT"))
+      unreadable.push({
+        path,
+        reason: errorMessage(cause),
+      });
+    return [];
+  };
+  const names = await readdir(environments).catch((cause: unknown) =>
+    unavailable(environments, cause),
+  );
   const locks: string[] = [];
   for (const name of names) {
     const seed = join(environments, name, "seed");
     const entries = await readdir(seed, {
       recursive: true,
       withFileTypes: true,
-    }).catch(() => []);
+    }).catch((cause: unknown) => unavailable(seed, cause));
     const homes = new Set(
       entries
         .filter((entry) => entry.isFile())
@@ -147,5 +188,5 @@ export const seededLockFiles = async (
     for (const home of homes)
       if (isLockFile(home, [], homes)) locks.push(`envs/${name}/seed/${home}`);
   }
-  return locks.sort();
+  return { locks: locks.sort(), unreadable };
 };

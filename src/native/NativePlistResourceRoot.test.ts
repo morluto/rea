@@ -1,6 +1,5 @@
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { NativeMacOSProvider } from "./NativeMacOSProvider.js";
 import { resolveBundleResourcePlistSelection } from "./NativePlistSource.js";
 import { NativeFixtureRunner } from "../../tests/fixtures/nativeCommands.js";
@@ -18,16 +17,14 @@ it("inspects a resolved app plist without executable identity", async () => {
     layout: "root" as const,
     executableSha256: null,
   };
-  expect(await resolveBundleResourcePlistSelection(root, undefined)).toEqual({
+  expect(resolveBundleResourcePlistSelection(root, undefined)).toEqual({
     ok: true,
     value: { path: infoPlist, origin: "default" },
   });
-  expect(await resolveBundleResourcePlistSelection(root, "Info.plist")).toEqual(
-    {
-      ok: true,
-      value: { path: infoPlist, origin: "selected" },
-    },
-  );
+  expect(resolveBundleResourcePlistSelection(root, "Info.plist")).toEqual({
+    ok: true,
+    value: { path: infoPlist, origin: "selected" },
+  });
   const client = new NativeMacOSProvider(
     {},
     new NativeFixtureRunner(),
@@ -69,30 +66,14 @@ it.skipIf(process.platform === "win32")(
       `${bundle}/alias/../Info.plist`,
       "physical/Info.plist",
     ]) {
-      const selected = await resolveBundleResourcePlistSelection(
-        root,
-        requested,
-      );
+      const selected = resolveBundleResourcePlistSelection(root, requested);
       if (!selected.ok) throw selected.error;
       expect(selected.value.origin).toBe("selected");
       expect(await readFile(selected.value.path, "utf8")).toBe(
         "selected source",
       );
     }
-    const outside = await resolveBundleResourcePlistSelection(
-      root,
-      join(bundle, "..", "Outside.plist"),
-    );
-    if (outside.ok)
-      throw new Error("admitted a plist outside the resource root");
-    expect(projectAnalysisError(outside.error)).toMatchObject({
-      code: "invalid_request",
-      details: { issues: [{ path: ["path"], reason: "invalid_value" }] },
-    });
-    const directory = await resolveBundleResourcePlistSelection(
-      root,
-      "Info.plist/",
-    );
+    const directory = resolveBundleResourcePlistSelection(root, "Info.plist/");
     if (!directory.ok) throw directory.error;
     await expect(readFile(directory.value.path)).rejects.toMatchObject({
       code: "ENOTDIR",

@@ -1,17 +1,21 @@
 import {
   mkdir,
+  lstat as fsLstat,
   open as fsOpen,
   opendir as fsOpendir,
   writeFile,
   type FileHandle,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import type { Dirent } from "node:fs";
 
 import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
 
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { importReferenceSource } from "../../../src/application/ReferenceSourceImport.js";
+import { referenceSourceImportAnalysisError } from "../../../src/application/ReferenceSourceImportTypes.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { readReferenceSource } from "../../../src/reference/ReferenceSourceReader.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { err, ok } from "../../../src/domain/result.js";
@@ -21,11 +25,13 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   return {
     ...actual,
     open: vi.fn(actual.open),
+    lstat: vi.fn(actual.lstat),
     opendir: vi.fn(actual.opendir),
   };
 });
 
 const openMock = vi.mocked(fsOpen);
+const lstatMock = vi.mocked(fsLstat);
 const opendirMock = vi.mocked(fsOpendir);
 let actual: typeof import("node:fs/promises");
 
@@ -40,13 +46,76 @@ beforeEach(async () => {
       "node:fs/promises",
     );
   openMock.mockImplementation((...args) => actual.open(...args));
+  lstatMock.mockImplementation((...args) => actual.lstat(...args));
   opendirMock.mockImplementation((...args) => actual.opendir(...args));
 });
 
 afterEach(() => {
   openMock.mockReset();
+  lstatMock.mockReset();
   opendirMock.mockReset();
 });
+
+it.each([
+  "root-admission",
+  "directory-validation",
+  "entry-metadata",
+  "file-finalization",
+] as const)(
+  "retains physical metadata failure during cancellation at %s",
+  async (phase) => {
+    const root = await createTestTempDirectory("rea-reference-metadata-abort-");
+    const file = join(root, "source.ts");
+    if (phase === "entry-metadata" || phase === "file-finalization")
+      await writeFile(file, "observed");
+    const resources = new ArtifactResourceScope();
+    onTestFinished(() => resources.close());
+    const controller = new AbortController();
+    const physical = Object.assign(new Error("authored metadata EIO"), {
+      code: "EIO",
+    });
+    let armed = phase === "root-admission";
+    if (phase === "file-finalization")
+      openMock.mockImplementation(async (...args) => {
+        const handle = await actual.open(...args);
+        const read = handle.read.bind(handle);
+        vi.spyOn(handle, "read").mockImplementation(async (...readArgs) => {
+          const result = await read(...readArgs);
+          if (result.bytesRead === 0) armed = true;
+          return result;
+        });
+        return handle;
+      });
+    lstatMock.mockImplementation(async (...args) => {
+      if (!armed || (phase === "entry-metadata" && String(args[0]) !== file))
+        return actual.lstat(...args);
+      controller.abort("during failed metadata lookup");
+      throw physical;
+    });
+    const result = await readReferenceSource(root, resources, {
+      signal: controller.signal,
+      beforeDirectory: async () => {
+        if (phase !== "file-finalization") armed = true;
+        return ok(undefined);
+      },
+    });
+    if (result.ok) throw new Error("Metadata failure was ignored");
+    if (phase === "root-admission") {
+      expect(result.error).toMatchObject({ code: "io", cause: physical });
+    } else if (phase === "directory-validation") {
+      expect(result.error.code).toBe("cancelled");
+      expect(result.error.partial?.rootFailure).toMatchObject({
+        code: "io",
+        message: expect.stringContaining("EIO"),
+      });
+    } else {
+      expect(result.error.code).toBe("cancelled");
+      expect(result.error.partial?.entries).toContainEqual(
+        expect.objectContaining({ path: "source.ts", code: "io" }),
+      );
+    }
+  },
+);
 
 it.each([
   ["refusal", false],
@@ -129,64 +198,75 @@ it.each([
   },
 );
 
-it("preserves admission EIO and retains an invalidated failed-close owner", async () => {
-  const root = await createTestTempDirectory("rea-reference-admission-owner-");
-  const file = join(root, "source.ts");
-  await writeFile(file, "export const answer = 42;\n");
-  const resources = new ArtifactResourceScope();
-  onTestFinished(() => resources.close().catch(() => undefined));
-  const statFailure = Object.assign(new Error("injected admission EIO"), {
-    code: "EIO",
-  });
-  const closeFailure = new Error("native close rejected after invalidation");
-  let closeCalls = 0;
-
-  openMock.mockImplementation(async (...args) => {
-    const handle = await actual.open(...args);
-    vi.spyOn(handle, "stat").mockRejectedValueOnce(statFailure);
-    const close = handle.close.bind(handle);
-    vi.spyOn(handle, "close").mockImplementation(async () => {
-      closeCalls += 1;
-      await close();
-      throw closeFailure;
+it.each([false, true])(
+  "preserves admission EIO and retains its failed-close owner (cancelled=%s)",
+  async (cancelled) => {
+    const root = await createTestTempDirectory(
+      "rea-reference-admission-owner-",
+    );
+    const file = join(root, "source.ts");
+    await writeFile(file, "export const answer = 42;\n");
+    const resources = new ArtifactResourceScope();
+    onTestFinished(() => resources.close().catch(() => undefined));
+    const statFailure = Object.assign(new Error("injected admission EIO"), {
+      code: "EIO",
     });
-    return handle;
-  });
+    const closeFailure = new Error("native close rejected after invalidation");
+    const controller = new AbortController();
+    let closeCalls = 0;
 
-  const result = await readReferenceSource(root, resources);
-  expect(result).toMatchObject({
-    ok: false,
-    error: {
-      tag: "reference-source-reader",
-      code: "io",
-      message: expect.stringContaining("EIO"),
+    openMock.mockImplementation(async (...args) => {
+      const handle = await actual.open(...args);
+      vi.spyOn(handle, "stat").mockImplementationOnce(async () => {
+        if (cancelled) controller.abort("during failed admission");
+        throw statFailure;
+      });
+      const close = handle.close.bind(handle);
+      vi.spyOn(handle, "close").mockImplementation(async () => {
+        closeCalls += 1;
+        await close();
+        throw closeFailure;
+      });
+      return handle;
+    });
+
+    const result = await readReferenceSource(root, resources, {
+      signal: controller.signal,
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        tag: "reference-source-reader",
+        code: "io",
+        message: expect.stringContaining("EIO"),
+        cleanup: {
+          resources: [file],
+          reason: expect.stringContaining(closeFailure.message),
+        },
+        partial: {
+          entries: [
+            {
+              status: "failed",
+              kind: "file",
+              path: "source.ts",
+              code: "io",
+              message: expect.stringContaining("EIO"),
+            },
+          ],
+        },
+      },
+    });
+    expect(closeCalls).toBe(1);
+
+    await expect(resources.close()).rejects.toMatchObject({
       cleanup: {
         resources: [file],
         reason: expect.stringContaining(closeFailure.message),
       },
-      partial: {
-        entries: [
-          {
-            status: "failed",
-            kind: "file",
-            path: "source.ts",
-            code: "io",
-            message: expect.stringContaining("EIO"),
-          },
-        ],
-      },
-    },
-  });
-  expect(closeCalls).toBe(1);
-
-  await expect(resources.close()).rejects.toMatchObject({
-    cleanup: {
-      resources: [file],
-      reason: expect.stringContaining(closeFailure.message),
-    },
-  });
-  expect(closeCalls).toBe(1);
-});
+    });
+    expect(closeCalls).toBe(1);
+  },
+);
 
 const assertSourceCleanupRetry = async (enclosingGit: boolean) => {
   const workspace = await createTestTempDirectory("rea-reference-file-owner-");
@@ -285,77 +365,129 @@ it.each([false, true])(
   assertSourceCleanupRetry,
 );
 
-it("preserves a directory read failure when closing that directory also fails", async () => {
-  const root = await createTestTempDirectory(
-    "rea-reference-directory-read-owner-",
-  );
-  const file = join(root, "source.ts");
-  const bytes = "observed before directory EIO\n";
-  await writeFile(file, bytes);
-  const resources = new ArtifactResourceScope();
-  onTestFinished(() => resources.close().catch(() => undefined));
-  const readFailure = Object.assign(new Error("injected directory EIO"), {
-    code: "EIO",
-  });
-  const closeFailure = new Error("directory close rejected after invalidation");
-  let readCalls = 0;
-  let closeCalls = 0;
-
-  opendirMock.mockImplementation(async (...args) => {
-    const directory = await actual.opendir(...args);
-    const operations: DirectoryOperations = directory;
-    const read = operations.read.bind(directory);
-    vi.spyOn(operations, "read").mockImplementation(async () => {
-      if (readCalls++ > 0) throw readFailure;
-      return read();
+it.each([
+  [false, false, "reader"],
+  [false, true, "reader"],
+  [true, false, "reader"],
+  [true, true, "reader"],
+  [true, false, "import"],
+  [true, true, "import"],
+] as const)(
+  "preserves directory EIO through close (late cancellation=%s, close fails=%s, surface=%s)",
+  async (lateCancellation, closeFails, surface) => {
+    const root = await createTestTempDirectory(
+      "rea-reference-directory-read-owner-",
+    );
+    const file = join(root, "source.ts");
+    const bytes = "observed before directory EIO\n";
+    await writeFile(file, bytes);
+    const resources = new ArtifactResourceScope();
+    onTestFinished(() => resources.close().catch(() => undefined));
+    const readFailure = Object.assign(new Error("injected directory EIO"), {
+      code: "EIO",
     });
-    const close = operations.close.bind(directory);
-    vi.spyOn(operations, "close").mockImplementation(async () => {
-      closeCalls += 1;
-      await close();
-      throw closeFailure;
-    });
-    return directory;
-  });
+    const closeFailure = new Error(
+      "directory close rejected after invalidation",
+    );
+    const controller = new AbortController();
+    const reason = { selected: "after directory read failed" };
+    let readCalls = 0;
+    let closeCalls = 0;
 
-  const result = await readReferenceSource(root, resources);
-  if (result.ok) throw new Error("Directory and cleanup failures were ignored");
-  expect(result).toMatchObject({
-    ok: false,
-    error: {
+    opendirMock.mockImplementation(async (...args) => {
+      const directory = await actual.opendir(...args);
+      const operations: DirectoryOperations = directory;
+      const read = operations.read.bind(directory);
+      vi.spyOn(operations, "read").mockImplementation(async () => {
+        if (readCalls++ > 0) throw readFailure;
+        return read();
+      });
+      const close = operations.close.bind(directory);
+      vi.spyOn(operations, "close").mockImplementation(async () => {
+        closeCalls += 1;
+        if (lateCancellation) controller.abort(reason);
+        await close();
+        if (closeFails) throw closeFailure;
+      });
+      return directory;
+    });
+
+    const result =
+      surface === "reader"
+        ? await readReferenceSource(root, resources, {
+            signal: controller.signal,
+          })
+        : await importReferenceSource(
+            {
+              root,
+              caller: "reference-cancellation-test",
+              policy: { secretPatterns: [] },
+              signal: controller.signal,
+            },
+            resources,
+          );
+    if (result.ok)
+      throw new Error("Directory and cleanup failures were ignored");
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: "io",
+        message: expect.stringContaining(readFailure.message),
+        ...(closeFails
+          ? {
+              cleanup: {
+                resources: [root],
+                reason: expect.stringContaining(closeFailure.message),
+              },
+            }
+          : {}),
+        partial: {
+          bytesRead: Buffer.byteLength(bytes),
+        },
+      },
+    });
+    if (lateCancellation)
+      expect(result.error.secondaryCancellation?.cause).toBe(reason);
+    expect(result.error.cause).toBe(readFailure);
+    if (
+      surface === "import" &&
+      result.error.tag === "reference-source-import"
+    ) {
+      const projected = projectAnalysisError(
+        referenceSourceImportAnalysisError(result.error),
+      );
+      expect(projected.details?.secondary_failures).toEqual([
+        expect.objectContaining({ category: "cancelled" }),
+      ]);
+    }
+    expect(result.error.partial?.entries).toContainEqual(
+      expect.objectContaining({
+        status: "read",
+        kind: "file",
+        path: "source.ts",
+        bytes: Buffer.from(bytes),
+      }),
+    );
+    expect(result.error.partial?.rootFailure).toEqual({
       code: "io",
       message: expect.stringContaining(readFailure.message),
-      cleanup: {
-        resources: [root],
-        reason: expect.stringContaining(closeFailure.message),
-      },
-      partial: {
-        bytesRead: Buffer.byteLength(bytes),
-      },
-    },
-  });
-  expect(result.error.partial?.entries).toContainEqual(
-    expect.objectContaining({
-      status: "read",
-      kind: "file",
-      path: "source.ts",
-      bytes: Buffer.from(bytes),
-    }),
-  );
-  expect(result.error.partial?.rootFailure).toEqual({
-    code: "io",
-    message: expect.stringContaining(readFailure.message),
-  });
-  expect(closeCalls).toBe(1);
+    });
+    expect(closeCalls).toBe(1);
 
-  await expect(resources.close()).rejects.toMatchObject({
-    cleanup: {
-      resources: [root],
-      reason: expect.stringContaining(closeFailure.message),
-    },
-  });
-  expect(closeCalls).toBe(1);
-});
+    if (closeFails)
+      await expect(resources.close()).rejects.toMatchObject({
+        cleanup: {
+          resources: [root],
+          reason: expect.stringContaining(closeFailure.message),
+        },
+      });
+    else {
+      expect(result.error.cleanup).toBeUndefined();
+      await resources.close();
+    }
+    expect(closeCalls).toBe(1);
+  },
+);
 
 it("keeps cancelled traversal typed when native directory close rejects after invalidation", async () => {
   const root = await createTestTempDirectory("rea-reference-directory-owner-");
@@ -460,4 +592,140 @@ it("preserves null cancellation and retained directory cleanup across retry", as
   expect(resources.hasPending).toBe(true);
   expect(resources.cleanupResources).toEqual([root]);
   expect(closeCalls).toBe(1);
+});
+
+// Directory admissions run ahead of their turn (#11365). Each later lookup
+// below finishes sooner than the one before it, so completion order reverses
+// start order; policy must still run, and refuse first, in traversal order.
+it("runs directory policy in traversal order when prefetched admissions finish out of order", async () => {
+  const root = await createTestTempDirectory("rea-reference-ordered-");
+  for (const name of ["a", "b", "c", "d", "e", "f"])
+    await mkdir(join(root, name));
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+  let started = 0;
+  lstatMock.mockImplementation(async (...args) => {
+    if (dirname(String(args[0])) === root) {
+      started += 1;
+      await delay(Math.max(0, 80 - started * 10));
+    }
+    return actual.lstat(...args);
+  });
+  const listed: string[] = [];
+  const policy: string[] = [];
+  const result = await readReferenceSource(root, resources, {
+    shouldExclude: (path, kind) => {
+      if (kind === "directory") listed.push(path);
+      return false;
+    },
+    beforeDirectory: async (path) => {
+      policy.push(path);
+      return path === "."
+        ? ok(undefined)
+        : err({
+            tag: "reference-source-reader",
+            code: "io",
+            message: `refused ${path}`,
+          });
+    },
+  });
+  expect(listed).toHaveLength(6);
+  expect(policy).toEqual([".", listed[0]]);
+  expect(result).toMatchObject({
+    ok: false,
+    error: { code: "io", message: `refused ${listed[0]}` },
+  });
+});
+
+it("settles every lookup started ahead of its turn before a cancelled read returns", async () => {
+  const root = await createTestTempDirectory("rea-reference-settled-");
+  for (const name of ["a", "b", "c", "d", "e", "f"]) {
+    await mkdir(join(root, name));
+    await writeFile(join(root, name, "source.ts"), "observed");
+  }
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+  // Each later lookup takes longer, so lookups started ahead of the cancelled
+  // directory are still running when it stops.
+  let started = 0;
+  let inFlight = 0;
+  lstatMock.mockImplementation(async (...args) => {
+    started += 1;
+    inFlight += 1;
+    try {
+      await delay(started * 3);
+      return await actual.lstat(...args);
+    } finally {
+      inFlight -= 1;
+    }
+  });
+  const controller = new AbortController();
+  const result = await readReferenceSource(root, resources, {
+    signal: controller.signal,
+    beforeDirectory: async (path) => {
+      if (path !== ".") controller.abort("stop at the first child");
+      return ok(undefined);
+    },
+  });
+  expect(inFlight).toBe(0);
+  expect(result).toMatchObject({ ok: false, error: { code: "cancelled" } });
+});
+
+// Children pushed during descent bury older siblings whose admissions are
+// still running; the number running at once stays bounded at every depth.
+it("bounds running directory admissions while slow siblings are buried by deeper levels", async () => {
+  const root = await createTestTempDirectory("rea-reference-bounded-");
+  const levels = 6;
+  let parent = root;
+  for (let level = 0; level < levels; level += 1) {
+    for (const sibling of [1, 2, 3])
+      await mkdir(join(parent, `s${String(level)}-${String(sibling)}`));
+    parent = join(parent, `d${String(level)}`);
+    await mkdir(parent);
+  }
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+  // List names in byte order, so each level descends ("d") before its
+  // siblings ("s") are popped.
+  opendirMock.mockImplementation(async (...args) => {
+    const directory = await actual.opendir(...args);
+    const children: Dirent[] = [];
+    for await (const child of directory) children.push(child);
+    children.sort((left, right) =>
+      Buffer.compare(
+        Buffer.from(left.name as unknown as Uint8Array),
+        Buffer.from(right.name as unknown as Uint8Array),
+      ),
+    );
+    const operations: DirectoryOperations = directory;
+    vi.spyOn(operations, "read").mockImplementation(async () =>
+      Promise.resolve(children.shift() ?? null),
+    );
+    vi.spyOn(operations, "close").mockImplementation(async () => undefined);
+    return directory;
+  });
+  // A directory's second lookup is its opening admission (the first is its
+  // parent's metadata lookup); hold the siblings' admissions open.
+  const lookups = new Map<string, number>();
+  let running = 0;
+  let peak = 0;
+  lstatMock.mockImplementation(async (...args) => {
+    const path = String(args[0]);
+    const count = (lookups.get(path) ?? 0) + 1;
+    lookups.set(path, count);
+    if (count !== 2 || !/\/s\d+-\d+$/u.test(path)) return actual.lstat(...args);
+    running += 1;
+    peak = Math.max(peak, running);
+    try {
+      await delay(100);
+      return await actual.lstat(...args);
+    } finally {
+      running -= 1;
+    }
+  });
+  const result = await readReferenceSource(root, resources);
+  if (!result.ok) throw result.error;
+  expect(result.value.entries).toHaveLength(levels * 4);
+  // Four started ahead plus the popped directory's own admission.
+  expect(peak).toBeLessThanOrEqual(5);
 });

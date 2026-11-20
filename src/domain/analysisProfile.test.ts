@@ -28,7 +28,7 @@ describe("analysis profile commitments", () => {
     ).toBe(3);
   });
 
-  it("commits parameter objects larger than the former byte ceiling", () => {
+  it("commits parameter objects above 64 KiB", () => {
     const parameters = Object.fromEntries(
       Array.from({ length: 5 }, (_, index) => [
         `parameter-${String(index)}`,

@@ -1,10 +1,8 @@
 import * as t from "@babel/types";
 import { expect, it } from "vitest";
 
-import {
-  analyzeParsedJavaScriptSemantics,
-  indexJavaScriptBindingsSteps,
-} from "./javascriptSemanticAnalysis.js";
+import { analyzeParsedJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
+import { indexJavaScriptBindingsSteps } from "../../../tests/fixtures/javascriptSemanticIndex.js";
 import { createSemanticExpressionShapeResolver } from "./javascriptSemanticExpressionShapes.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import {

@@ -1,17 +1,98 @@
 import * as t from "@babel/types";
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
-import {
-  indexJavaScriptBindingsSteps,
-  indexJavaScriptBindingsWithReceiversSteps,
-} from "./javascriptSemanticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
+import { indexJavaScriptBindingsWithReceiversSteps } from "./javascriptSemanticAnalysis.js";
+import { indexJavaScriptBindingsSteps } from "../../../tests/fixtures/javascriptSemanticIndex.js";
 import {
   completeSemanticSteps,
   traverseJavaScriptAst,
 } from "./javascriptSemanticTraversal.js";
-import { createGlobalReferenceReader } from "./javascriptSemanticAmbientWrites.js";
+import {
+  createGlobalPathReader,
+  createGlobalReferenceReader,
+} from "./javascriptSemanticAmbientWrites.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
+import { ambientPathMayObserveAt } from "./javascriptSemanticEffectLog.js";
+
+it.each([
+  ["writes", "protos[0].return = () => ({});", true],
+  ["escapes", "configure(protos[0]);", true],
+  ["unrelated writes", "protos[0].unrelated = true;", false],
+] as const)(
+  "indexes %s to spread-stored Iterator.prototype before member analysis",
+  (_name, effect, observed) => {
+    const parsed = parseJavaScriptSource(`
+    const protos = [...[Iterator.prototype]];
+    const box = [0, { mode: 'before' }];
+    const [before] = box;
+    ${effect}
+    const [after] = box;
+  `);
+    if (parsed === null) throw new Error("Expected a parsed iterator fixture");
+    const index = completeSemanticSteps(
+      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+    );
+    completeSemanticSteps(index.indexAmbientWritesSteps());
+    const observations: boolean[] = [];
+    traverseJavaScriptAst(parsed.program, {
+      enter(node) {
+        if (t.isArrayPattern(node))
+          observations.push(
+            ambientPathMayObserveAt(
+              index.bindings,
+              node,
+              ["global", "Iterator", "prototype", "return"],
+              "contents",
+            ),
+          );
+      },
+    });
+    expect(observations).toEqual([false, observed]);
+  },
+);
+
+it.each([
+  [
+    "await value; Object.prototype.then=null; await value;",
+    ["unmodified", "null"],
+  ],
+  [
+    "Object.prototype.then=function(resolve){resolve()}; await value;",
+    ["function"],
+  ],
+  ["if(flag) Object.prototype.then=null; await value;", ["unknown"]],
+  ["mutate(Object.prototype); await value;", ["unknown"]],
+  ["await value; mutate(Object.prototype);", ["unmodified"]],
+  ["Array.prototype.then=null; await value;", ["unmodified"]],
+] as const)(
+  "reads intrinsic property facts at implicit await sites: %s",
+  (source, expected) => {
+    const parsed = parseJavaScriptSource(source, "app.mjs");
+    if (parsed === null) throw new Error("Expected implicit read fixture");
+    const state = completeSemanticSteps(
+      indexJavaScriptBindingsSteps(parsed.program),
+    );
+    const read = createGlobalPathReader(state, ["Object", "prototype", "then"]);
+    const statuses: string[] = [];
+    traverseJavaScriptAst(parsed.program, {
+      enter(node) {
+        if (!t.isAwaitExpression(node)) return;
+        const fact = read(node);
+        statuses.push(
+          fact.status === "replacement"
+            ? t.isNullLiteral(fact.value)
+              ? "null"
+              : t.isFunction(fact.value)
+                ? "function"
+                : "other"
+            : fact.status,
+        );
+      },
+    });
+    expect(statuses).toEqual(expected);
+  },
+);
 
 it("keeps wrapper module aliases distinct from global-object module properties", () => {
   const parsed = parseJavaScriptSource(
@@ -245,6 +326,50 @@ it("indexes unknown-key stores of fresh objects in linear stored-value work", ()
   expect(work(64)).toBeLessThan(3 * work(32));
 });
 
+it("escapes a looping alias cycle in linear initializer work", () => {
+  // Every copy in the loop reads a binding whose initializers are the other
+  // binding's reads. Count reads of the copied values' own syntax only.
+  const work = (count: number): number => {
+    const copies = Array.from({ length: count }, (_, i) =>
+      i % 2 === 0 ? "a=b;" : "b=a;",
+    ).join("");
+    const parsed = parseJavaScriptSource(
+      `function run(){var a={},b=globalThis;while(flag){${copies}}consume(a);}`,
+    );
+    if (parsed === null) throw new Error("Expected alias-cycle fixture");
+    const index = completeSemanticSteps(
+      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+    );
+    let counting = false;
+    let reads = 0;
+    traverseJavaScriptAst(parsed.program, {
+      enter(node) {
+        if (!t.isAssignmentExpression(node)) return;
+        const value = node.right;
+        const type = value.type;
+        Object.defineProperty(value, "type", {
+          enumerable: true,
+          configurable: true,
+          get: () => {
+            if (counting) reads += 1;
+            return type;
+          },
+        });
+      },
+    });
+    counting = true;
+    completeSemanticSteps(index.indexAmbientWritesSteps());
+    counting = false;
+    expect(index.bindings.ambientEscapeEffects.map(({ path }) => path)).toEqual(
+      [["global", null]],
+    );
+    return reads;
+  };
+  // The escape query takes each copied value once. Requeueing every
+  // initializer at each read of the other binding grows quadratically.
+  expect(work(64)).toBeLessThan(3 * work(32));
+});
+
 it.each([
   [
     "before and after a direct replacement",
@@ -307,6 +432,11 @@ it.each([
     ["replacement"],
   ],
   [
+    "an escaped global owner",
+    "mutate(Object);inspect(Object.defineProperty);",
+    ["unknown"],
+  ],
+  [
     "a namespaced global",
     "inspect(globalThis.Object.defineProperty);globalThis.Object.defineProperty=()=>{};inspect(globalThis.Object.defineProperty);",
     ["unmodified", "replacement"],
@@ -336,4 +466,161 @@ it.each([
     });
     expect(statuses).toEqual(expected);
   },
+);
+
+// An argument of a directly invoked source function expression reaches only
+// that function's parameter, whose effects are indexed like any other source
+// effect. Only arguments the body may reach another way escape.
+function expectAmbientEffectPaths({
+  source,
+  writes,
+  escapes,
+}: {
+  readonly source: string;
+  readonly writes: readonly (readonly unknown[])[];
+  readonly escapes: readonly (readonly unknown[])[];
+}): void {
+  const parsed = parseJavaScriptSource(source, "app.js");
+  if (parsed === null) throw new Error("Expected ambient effect fixture");
+  const index = completeSemanticSteps(
+    indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+  );
+  completeSemanticSteps(index.indexMemberMutationFactsSteps());
+  const paths = (effects: readonly { readonly path: unknown }[]) => [
+    ...new Set(effects.map(({ path }) => JSON.stringify(path))),
+  ];
+  expect({
+    writes: paths(index.bindings.ambientWriteEffects),
+    escapes: paths(index.bindings.ambientEscapeEffects),
+  }).toEqual({
+    writes: writes.map((path) => JSON.stringify(path)),
+    escapes: escapes.map((path) => JSON.stringify(path)),
+  });
+}
+
+it.each([
+  {
+    source:
+      "const proto=Object.getPrototypeOf([]);proto[Symbol.iterator]=function*(){};",
+    writes: [["global", "Array", "prototype", null]],
+    escapes: [],
+  },
+  {
+    source:
+      "change();function change(){const proto=Reflect.getPrototypeOf([]);proto[Symbol.iterator]=function*(){};}",
+    writes: [["global", "Array", "prototype", null]],
+    escapes: [],
+  },
+  {
+    source:
+      "const Object={getPrototypeOf:()=>({})};const proto=Object.getPrototypeOf([]);proto[Symbol.iterator]=function*(){};",
+    writes: [],
+    escapes: [],
+  },
+])(
+  "keeps native array prototype identity through $source",
+  expectAmbientEffectPaths,
+);
+
+it.each([
+  { source: "(function(g){})(this);", writes: [], escapes: [] },
+  { source: "(function(){})(this);", writes: [], escapes: [] },
+  {
+    source: "(function(g){g.x=1})(this);",
+    writes: [["global", "x"]],
+    escapes: [],
+  },
+  {
+    source: "(function(g){var h=g;h.y=2})(this);",
+    writes: [["global", "y"]],
+    escapes: [],
+  },
+  {
+    source: "(function(g){later(function(){g.w=1})})(this);",
+    writes: [["global", "w"]],
+    escapes: [],
+  },
+  {
+    source: "(function(g){return g})(this).z=1;",
+    writes: [["global", "z"]],
+    escapes: [],
+  },
+  {
+    source: "(function(g,y){y(1)})(this,function(g){});",
+    writes: [],
+    escapes: [],
+  },
+  {
+    source: "(function(g){patch(g)})(this);",
+    writes: [],
+    escapes: [["global", null]],
+  },
+  {
+    source: "(function(g){arguments[0].x=1})(this);",
+    writes: [],
+    escapes: [["global", null]],
+  },
+  {
+    source: "(function(g){})(...[this]);",
+    writes: [],
+    escapes: [["global", null]],
+  },
+  {
+    source: "(function({x}){})(this);",
+    writes: [],
+    escapes: [["global", null]],
+  },
+  {
+    source: "(function(g=d){})(this);",
+    writes: [],
+    escapes: [["global", null]],
+  },
+  {
+    source: "(function(...r){})(this);",
+    writes: [],
+    escapes: [["global", null]],
+  },
+  { source: "unknown(this);", writes: [], escapes: [["global", null]] },
+  {
+    source: "(function(g){g.x=1})(globalThis);",
+    writes: [["global", "x"]],
+    escapes: [],
+  },
+  {
+    source: "(function(m){m.exports=1})(module);",
+    writes: [["commonjs-module", "exports"]],
+    escapes: [],
+  },
+  {
+    source: "(function(g){patch(g)})(window);",
+    writes: [],
+    escapes: [["global", null]],
+  },
+  {
+    source: "(function(g){throw g})(this);",
+    writes: [],
+    escapes: [["global", null]],
+  },
+])(
+  "tracks arguments of directly invoked functions through parameters: $source",
+  expectAmbientEffectPaths,
+);
+
+// A value thrown uncaught at the top level reaches the host's
+// uncaught-exception handlers, which may change it.
+it.each([
+  ...[
+    "throw this;",
+    "{ throw this; }",
+    "try { throw this; } finally {}",
+    "try {} catch { throw this; }",
+  ].map((source) => ({
+    source,
+    writes: [],
+    escapes: [["global", null]],
+  })),
+  { source: "try { throw this; } catch {}", writes: [], escapes: [] },
+])(
+  "escapes values thrown uncaught at the top level: $source",
+  expectAmbientEffectPaths,
 );

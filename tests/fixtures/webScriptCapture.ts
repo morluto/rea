@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { createHash } from "node:crypto";
 
 import { sanitizeBrowserUrl } from "../../src/domain/browserObservation.js";
@@ -129,7 +130,7 @@ export const scriptScenarioFixture = (
 /** Complete Evidence envelope for authentication and file-boundary tests. */
 export const scriptCaptureEvidenceFixture = () =>
   createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "source-fixture", name: "Source fixture", version: "1" },
     {
       operation: "capture_browser_scenario",

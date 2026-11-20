@@ -1,3 +1,5 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -25,12 +27,11 @@ const validateAdvertised = (
   response: CallToolResult,
 ) => {
   const tool = tools.find((candidate) => candidate.name === name);
-  if (tool?.outputSchema === undefined)
-    throw new Error(`missing ${name} output schema`);
+  if (tool === undefined) throw new Error(`missing ${name} output schema`);
   const validate = new Ajv2020({
     strict: false,
     validateFormats: false,
-  }).compile(z.record(z.string(), z.unknown()).parse(tool.outputSchema));
+  }).compile(canonicalOutputSchema(tool.name));
   expect(
     validate(response.structuredContent),
     JSON.stringify(validate.errors),
@@ -112,16 +113,21 @@ it("saves a GameCube DOL snapshot and replays it after reopening", async () => {
   const snapshot = await readAnalysisSnapshot(snapshotPath);
   if (!snapshot.ok) throw snapshot.error;
   expect(snapshot.value.target).toMatchObject({
-    format: "gamecube-dol",
     kind: "executable",
-    architecture: "powerpc",
-    entry_point: "0x80003100",
+    identity: {
+      kind: "file",
+      sha256: createHash("sha256").update(buildGamecubeDol()).digest("hex"),
+      format: "gamecube-dol",
+      architecture: "powerpc",
+      selection: { kind: "entry-point", entry_point: "0x80003100" },
+    },
   });
   expect(snapshot.value.entries).toHaveLength(1);
   expect(snapshot.value.evidence_bundle.artifacts).toEqual([
     expect.objectContaining({
       format: "gamecube-dol",
       architecture: "powerpc",
+      digest: { sha256: snapshot.value.target.identity.sha256 },
     }),
   ]);
 
@@ -130,6 +136,18 @@ it("saves a GameCube DOL snapshot and replays it after reopening", async () => {
     arguments: { path, format: "gamecube-dol", snapshot_path: snapshotPath },
   });
   expect(reopened.isError, JSON.stringify(reopened)).not.toBe(true);
+  expect(
+    validateAdvertised(
+      (await client.listTools()).tools,
+      "open_binary",
+      reopened,
+    ),
+  ).toMatchObject({
+    format: "gamecube-dol",
+    kind: "executable",
+    architecture: "powerpc",
+    entry_point: "0x80003100",
+  });
   const replayed = parseEvidence(
     (await client.callTool(query)).structuredContent,
   );

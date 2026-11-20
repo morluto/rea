@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -26,7 +27,7 @@ afterEach(async () => {
   );
 });
 
-it("routes a CLI app resource path through the resource session and preserves null target identity", async () => {
+it("routes a CLI app resource path through the resource session and keeps the target identity unknown", async () => {
   const bundlePath = await mkdtemp(join(tmpdir(), "rea-cli-resource-root-"));
   temporaryDirectories.push(bundlePath);
   await mkdir(join(bundlePath, "Resources"));
@@ -63,7 +64,11 @@ it("routes a CLI app resource path through the resource session and preserves nu
   ).then(projectCliAnalysisResult);
   expect(result).toMatchObject({
     operation: "inspect_keyed_archive",
-    subject: null,
+    subject: {
+      identity: unknownTarget("not-observed"),
+      name: null,
+      local_path: null,
+    },
     normalized_result: {
       target_sha256: null,
       resource_root: { canonical_path: bundlePath, executable_sha256: null },

@@ -1,9 +1,9 @@
 import {
   ArtifactResourceScope,
   type ArtifactResourceOwner,
-} from "../../src/artifacts/ArtifactResourceScope.js";
+} from "../../src/resources/ArtifactResourceScope.js";
 import { onTestFinished } from "vitest";
-import { ArtifactReaderFailure } from "../../src/artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../src/resources/ArtifactReader.js";
 import { classifyAndHashRootForInventory } from "../../src/artifacts/inventory/classify.js";
 import {
   inventoryArtifact as inventoryArtifactOwned,

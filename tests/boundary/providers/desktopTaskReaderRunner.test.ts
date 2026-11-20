@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 
@@ -12,8 +12,10 @@ import {
   readerCommand,
   PYTHON_READER_CLEANUP,
 } from "../../../src/domain/desktop/appTaskReaders.js";
+import { parseExactJson } from "../../../src/domain/exactJsonNumber.js";
 import { runReaderHere } from "../../../src/desktop/TaskReaderProcess.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { processHasStopped } from "../../support/process/observePosixProcess.js";
 
 const execute = promisify(execFile);
 const NOTE = "Documents/today.txt";
@@ -69,6 +71,25 @@ const reporting = (app: string, fields: Partial<DesktopTaskReader> = {}) =>
     output: "json",
     ...fields,
   }) as DesktopTaskReader;
+
+it("checks numeric exactness after a reader's duplicate JSON keys settle", async () => {
+  const { home } = await computer();
+  const output = String.raw`{"version":9007199254740993,"version":1,"status":{"n":-0.0},"status":"ready","nested":{"a":1e-400,"\u0061":3}}`;
+  const expected = parseExactJson(output);
+  expect(expected).toEqual({ version: 1, status: "ready", nested: { a: 3 } });
+  const stdout = await run(home, {
+    id: "records",
+    file: NOTE,
+    argv: [
+      "python3",
+      "-c",
+      `print(${JSON.stringify(`REA ${output}`)})`,
+      "{file}",
+    ],
+    output: "json",
+  });
+  expect(readerAnswerView(stdout)).toEqual({ format: "json", view: expected });
+});
 
 it("runs the reader on a private copy of the file in a fresh home, without the display, the session bus or the control token", async () => {
   const { home, app } = await computer();
@@ -209,6 +230,66 @@ it("answers absent for a file the home does not hold, without running the reader
   await expect(access(join(home, "ran"))).rejects.toThrow();
 });
 
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "keeps an inaccessible source unknown instead of answering absent",
+  async () => {
+    const { home, app } = await computer();
+    const documents = join(home, "Documents");
+    await chmod(documents, 0);
+    try {
+      const view = readerAnswerView(await run(home, reporting(app)));
+      expect(view).toMatchObject({ format: null, view: null });
+      expect(view?.error).toContain("cannot inspect");
+    } finally {
+      await chmod(documents, 0o700);
+    }
+  },
+);
+
+it.each(["json", "lines"] as const)(
+  "refuses malformed UTF-8 in marked %s output while preserving literal replacement characters",
+  async (output) => {
+    const { home } = await computer();
+    const reader = (bytes: string): DesktopTaskReader => ({
+      id: "encoding",
+      file: NOTE,
+      argv: [
+        "python3",
+        "-I",
+        "-c",
+        `import sys; sys.stdout.buffer.write(${bytes})`,
+        "{file}",
+      ],
+      output,
+    });
+    const malformed = readerAnswerView(
+      await run(home, reader(String.raw`b'REA {"value":"\xff"}\n'`)),
+    );
+    expect(malformed).toMatchObject({ format: null, view: null });
+    expect(malformed?.error).toContain("UTF-8");
+    const valid = readerAnswerView(
+      await run(
+        home,
+        reader(
+          String.raw`b'\xff ignored banner\nREA {"value":"\xef\xbf\xbd"}\r\n'`,
+        ),
+      ),
+    );
+    expect(valid).toMatchObject(
+      output === "json"
+        ? { format: "json", view: { value: "\ufffd" } }
+        : {
+            format: "text",
+            view: {
+              lines: ['{"value":"\ufffd"}'],
+              line_count: 1,
+              truncated: false,
+            },
+          },
+    );
+  },
+);
+
 it.each([
   [
     "exits non-zero",
@@ -231,6 +312,16 @@ it.each([
   [
     "prints a number JSON cannot hold exactly",
     ["sh", "-c", "echo 'REA {\"id\": 9007199254740993}'; : {file}"],
+    "json",
+    ["cannot be read exactly"],
+  ],
+  [
+    "retains an inexact number beside an overwritten one",
+    [
+      "sh",
+      "-c",
+      `echo 'REA {"id":9007199254740993,"id":1,"kept":[9007199254740993]}'; : {file}`,
+    ],
     "json",
     ["cannot be read exactly"],
   ],
@@ -361,7 +452,7 @@ it("stops the reader, the processes it started and its folder when the export is
   const reader = await pid();
   controller.abort(new Error("cancelled"));
   await expect(read).rejects.toThrow();
-  expect(() => process.kill(reader, 0)).toThrow();
+  expect(await processHasStopped(reader)).toBe(true);
   const folder = (await readFile(join(out, "cwd"), "utf8")).trim();
   await expect(access(folder)).rejects.toThrow();
 });

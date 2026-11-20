@@ -1,3 +1,4 @@
+import { ProcessCaptureError } from "./ProcessCaptureError.js";
 import { fstatSync } from "node:fs";
 import {
   mkdtemp,
@@ -141,9 +142,17 @@ it("rejects cancellation for an empty file before returning its digest", async (
     const controller = new AbortController();
     controller.abort();
 
-    await expect(
-      hashFile(path, expected, 1_000, controller.signal),
-    ).rejects.toMatchObject({ name: "AbortError" });
+    const failure: unknown = await hashFile(
+      path,
+      expected,
+      1_000,
+      controller.signal,
+    ).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(ProcessCaptureError);
+    if (!(failure instanceof ProcessCaptureError))
+      throw new Error("Expected cancellation from the capture checkpoint");
+    expect(failure.reason).toBe("cancelled");
+    expect(failure.cause).toBe(controller.signal.reason);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

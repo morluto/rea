@@ -6,16 +6,11 @@ import { err, ok } from "../domain/result.js";
 import * as pythonRuntime from "./LinuxHopperPython.js";
 import {
   linuxHopperInstallDisclosure,
-  linuxPackageManagerCommands,
   systemLinuxHopperInstallHost,
 } from "./LinuxHopper.js";
 
 /** Package transactions that install Hopper before any runtime library repair. */
-const debCommands = linuxPackageManagerCommands(
-  "deb",
-  "/tmp/verified-hopper.deb",
-  false,
-).length;
+const debCommands = 2;
 
 const missingPython = {
   interpreter: "/usr/bin/python3",
@@ -41,6 +36,34 @@ const commandSuccess = {
 };
 
 describe("Linux Hopper package runtime", () => {
+  it("preserves package path boundaries in the reported failed command", async () => {
+    const directory = await createTestTempDirectory("rea-hopper-command-");
+    const host = systemLinuxHopperInstallHost(
+      { XDG_CACHE_HOME: directory },
+      async () => undefined,
+    );
+    const archive = "/tmp/rea test/hopper's package.rpm";
+    const command = vi
+      .spyOn(boundedCommands, "execFileBoundedOutput")
+      .mockResolvedValue({
+        exitCode: 1,
+        stdout: "",
+        stderr: "fixture failure",
+        outputTruncated: false,
+      });
+    try {
+      const result = await host.installPackage("rpm", archive);
+      expect(command.mock.calls[0]?.[1]).toContain(archive);
+      expect(result).toMatchObject({
+        status: "failed",
+        failure: { command: expect.stringContaining(`"${archive}"`) },
+      });
+    } finally {
+      command.mockRestore();
+      await host.close?.();
+    }
+  });
+
   it.each([
     {
       name: "installs and verifies the matching future Python library",

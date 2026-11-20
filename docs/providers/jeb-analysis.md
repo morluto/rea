@@ -35,8 +35,10 @@ Catalog discovery and each `tools/call` share `REA_JEB_MCP_TIMEOUT_MS`. Set it
 in REA's launch environment to an integer from 1 to 2147483647 milliseconds,
 for example `REA_JEB_MCP_TIMEOUT_MS=300000` for a five-minute budget. Omitted
 means the pinned MCP client SDK default of 60000 ms (`@modelcontextprotocol/client`
-2.3.1). Restart REA and reconnect to apply a change. Raising the setting raises
-both phases. It does not make one end-to-end deadline across a whole CLI or MCP
+2.3.1). Change the budget for subsequent operations with
+`update_analysis_settings` using `jeb.mcp_timeout_ms`. To change the launch
+value, update REA's environment and restart. Raising the setting raises both
+phases. It does not make one end-to-end deadline across a whole CLI or MCP
 operation: discovery and each `tools/call` each get that budget. A request that
 reaches its budget returns a typed timeout naming the phase and the effective
 milliseconds, while caller cancellation remains a cancellation. Allow execution,
@@ -63,7 +65,7 @@ All four preserve target-file bytes. `open_jeb_project` selects or creates an en
 - The engine caps `list_units` pages at 100; a full page is reported as `coverage: "partial"` because more units may exist. An empty remainder is `complete` only when fewer units than requested were returned.
 - When `decompile_jeb_item` omits `unit_path`, the engine implicitly selects the project's first code unit; REA reports `unit_path: null` and a limitation instead of guessing the effective unit.
 - `item_address` is a JEB code-item reference, such as a value returned by the engine's `list_code_items`. Preserve that representation and select its code unit explicitly. For the audited CE SQLite unit, the exported method reference was `sqlite3_libversion_number`; using its raw ELF symbol address did not produce a successful decompilation. File offsets, ELF virtual addresses and engine item references have different semantics. REA currently exposes unit listing, while code-item discovery remains an upstream JEB operation.
-- Valid engine refusals (`success: false` envelopes) return `execution_failure` with the engine's message when available. Diagnostics preserve the original envelope, including any recovery advice, and the inputs of a refused primary request. If client metadata fails after a primary reply, that reply and the caller's inputs remain in partial Evidence. REA does not infer an unsupported target from a refusal, invoke a recovery tool, or retry the request.
+- Valid engine refusals (`success: false` envelopes) return `execution_failure` with the engine's message when available. Diagnostics preserve the original envelope, including any recovery advice, and the inputs of a refused primary request. If client metadata fails after a primary reply, that reply and the caller's inputs remain in partial Evidence. REA does not infer an unsupported target from a refusal, invoke a recovery tool, or retry the request. A refusal whose message carries the JVM's own `java.lang.OutOfMemoryError` report is a resource constraint instead (`capacity` for native-thread exhaustion), with recovery naming the JEB client's Java heap; the envelope stays in diagnostics.
 - Successfully parsed client information is reused within the current MCP session, including when the engine omits its version. Explicit client inspection and availability probes refresh it; reconnecting invalidates the cached information.
 - An unreachable endpoint is a provider-availability failure with recovery guidance; REA does not spawn the engine or automatically replay failed operations.
 - After a transport or RPC failure (including a request or catalog timeout), the next explicit call attempts a new MCP connection after cleanup succeeds. Engine version and GUI mode are refreshed for that connection. Caller cancellation and decoded engine refusal envelopes preserve the existing connection.

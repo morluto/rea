@@ -34,7 +34,7 @@ it.each([
     });
     expect(() => decodeHarCapture(text, [])).toThrow(
       expect.objectContaining({
-        reason: "format",
+        failure: expect.objectContaining({ kind: "malformed" }),
         pointer: `/log/entries/0/timings${field}`,
       }),
     );
@@ -67,7 +67,7 @@ it.each([
     ),
   ).toThrow(
     expect.objectContaining({
-      reason: "format",
+      failure: expect.objectContaining({ kind: "malformed" }),
       pointer: "/log/entries/0/cache",
     }),
   );
@@ -85,7 +85,7 @@ it.each([-1, -0.5])("rejects negative HAR elapsed time: %s", (time) => {
     ),
   ).toThrow(
     expect.objectContaining({
-      reason: "format",
+      failure: expect.objectContaining({ kind: "malformed" }),
       pointer: "/log/entries/0/time",
     }),
   );
@@ -111,7 +111,7 @@ it.each(["onContentLoad", "onLoad"])(
         ),
       ).toThrow(
         expect.objectContaining({
-          reason: "format",
+          failure: expect.objectContaining({ kind: "malformed" }),
           pointer: `/log/pages/0/pageTimings/${field}`,
         }),
       );
@@ -767,16 +767,20 @@ it("preserves observed SaveHar null post-data without broadening arbitrary HAR p
   ).toThrow("HAR schema validation failed");
 });
 
-it.each(["[2001:db8::1]", "[::1]", "[::ffff:192.0.2.1]"])(
-  "retains Playwright 1.58.2 bracketed IPv6 spelling in reported Evidence: %s",
-  (address) => {
+it.each([
+  { version: "1.58.2", address: "[2001:db8::1]" },
+  { version: "1.64.1", address: "[::1]" },
+  { version: "1.58.2", address: "[::ffff:192.0.2.1]" },
+])(
+  "retains Playwright $version bracketed IPv6 spelling in reported Evidence: $address",
+  ({ version, address }) => {
     const fixture = historicalHar();
     const first = fixture.log.entries[0];
     if (first === undefined) throw new Error("fixture missing");
     const input = {
       log: {
         ...fixture.log,
-        creator: { name: "Playwright", version: "1.58.2" },
+        creator: { name: "Playwright", version },
         entries: [
           {
             ...first,
@@ -795,7 +799,7 @@ it.each(["[2001:db8::1]", "[::1]", "[::ffff:192.0.2.1]"])(
       },
     });
     const limitation = decoded.records[0]?.limitations.find((line) =>
-      line.includes("Playwright 1.58.2"),
+      line.includes(`Playwright ${version}`),
     );
     expect(limitation).toMatch(/bracketed IPv6.*serverIPAddress/iu);
     expect(limitation).toMatch(/original spellings.*retained/iu);
@@ -963,7 +967,12 @@ it.each([
     const enclosing = depth - 3;
     const text = `{"log":{"version":"1.2","creator":{"name":"fixture","version":"1"},"entries":[],"_extension":${"[".repeat(enclosing)}${innermost}${"]".repeat(enclosing)}}}`;
     if (accepted) expect(decodeHarCapture(text, []).total_records).toBe(0);
-    else expect(() => decodeHarCapture(text, [])).toThrow("nesting budget");
+    else
+      expect(() => decodeHarCapture(text, [])).toThrow(
+        expect.objectContaining({
+          limit: { name: "nesting-depth", maximum: 64 },
+        }),
+      );
   },
 );
 
@@ -975,7 +984,9 @@ it("rejects excessive extension nesting instead of returning a partial capture",
       JSON.stringify({ ...historicalHar(), _extension: extension }),
       [],
     ),
-  ).toThrow("nesting budget");
+  ).toThrow(
+    expect.objectContaining({ limit: { name: "nesting-depth", maximum: 64 } }),
+  );
 });
 
 it.each([

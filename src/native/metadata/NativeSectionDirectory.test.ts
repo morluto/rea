@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import { pe } from "../../domain/binaryTarget.fixture.js";
 import { elfHardeningFixture } from "../hardening/BinaryHardening.fixture.js";
 import { elfUnwindSectionlessFixture } from "../elf/ElfUnwindTables.fixture.js";
+import { compressedElfNoteSectionFixture } from "../elf/ElfNotes.fixture.js";
 import {
   ELF_PT_GNU_EH_FRAME,
   ELF_PT_GNU_RELRO,
@@ -9,7 +10,7 @@ import {
   ELF_PT_INTERP,
   readElfDirectoryFromBuffer,
   readPeSectionDirectory,
-} from "./NativeSectionDirectory.js";
+} from "../../domain/native/nativeSectionDirectory.js";
 
 const readDirectory = (bytes: Buffer) => {
   const reader = readPeSectionDirectory(bytes.length);
@@ -33,8 +34,13 @@ it("classifies a confirmed overlapping PE directory as an unsupported layout", (
 it.each([0x014c, 0x8664])(
   "reads a nonoverlapping PE directory for machine %s",
   (machine) => {
-    expect(readDirectory(pe(machine))).toMatchObject({
+    const bytes = pe(machine);
+    const coff = bytes.readUInt32LE(0x3c) + 4;
+    bytes.writeUInt32LE(0xfedcba98, coff + 8);
+    bytes.writeUInt32LE(0x76543210, coff + 12);
+    expect(readDirectory(bytes)).toMatchObject({
       format: "pe",
+      pe_symbol_table: { offset: 0xfedcba98, count: 0x76543210 },
       machine,
       bits: machine === 0x014c ? 32 : 64,
       sections: [],
@@ -53,6 +59,7 @@ it("does not classify an unconfirmed pointer overlapping DOS data as a PE layout
 it("admits PT_INTERP, PT_GNU_STACK and PT_GNU_RELRO program headers", () => {
   const directory = readElfDirectoryFromBuffer(
     elfHardeningFixture({ interp: true, gnuRelro: true }),
+    "elf-directory",
   );
   expect(directory.elf_type).toBe(3);
   expect(directory.programs.map((program) => program.type)).toEqual(
@@ -68,7 +75,7 @@ it("admits PT_INTERP, PT_GNU_STACK and PT_GNU_RELRO program headers", () => {
 
 it("retains PT_GNU_EH_FRAME with its file and address span", () => {
   const bytes = elfUnwindSectionlessFixture();
-  const directory = readElfDirectoryFromBuffer(bytes);
+  const directory = readElfDirectoryFromBuffer(bytes, "elf-directory");
   expect(directory.programs.map((program) => program.type)).toEqual([
     1,
     ELF_PT_GNU_EH_FRAME,
@@ -94,3 +101,40 @@ it("retains a confirmed overlapping PE when the COFF record extends past EOF", (
     }),
   );
 });
+
+it.each([
+  [32, true],
+  [32, false],
+  [64, true],
+  [64, false],
+] as const)(
+  "retains ELF%i little=%s compression independently of stored section coverage",
+  (bits, little) => {
+    const bytes = compressedElfNoteSectionFixture(bits, little);
+    const initial = readElfDirectoryFromBuffer(bytes, "elf-directory")
+      .sections[1]!;
+    expect(initial).toMatchObject({ compressed: true, file_backed: true });
+    expect(
+      readElfDirectoryFromBuffer(bytes, "elf-directory").sections[2],
+    ).toMatchObject({
+      compressed: false,
+      file_backed: true,
+    });
+    // Compression metadata describes the encoding even if its stored range
+    // subsequently proves incomplete. It must not be inferred from readability.
+    const sizeAt = initial.header_offset + (bits === 64 ? 32 : 20);
+    if (bits === 64) {
+      if (little) bytes.writeBigUInt64LE(BigInt(bytes.length), sizeAt);
+      else bytes.writeBigUInt64BE(BigInt(bytes.length), sizeAt);
+    } else if (little) bytes.writeUInt32LE(bytes.length, sizeAt);
+    else bytes.writeUInt32BE(bytes.length, sizeAt);
+    expect(
+      readElfDirectoryFromBuffer(bytes, "elf-directory").sections[1],
+    ).toMatchObject({
+      compressed: true,
+      file_backed: false,
+      offset: initial.offset,
+      size: BigInt(bytes.length),
+    });
+  },
+);

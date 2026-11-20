@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import {
+  analyzeJavaScriptStaticSource,
+  analyzeParsedJavaScriptStaticSource,
+} from "../../../tests/fixtures/javascriptStaticAnalysis.js";
+import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 
 describe("Vite preload dependency recovery", () => {
   it("decodes helper table values and preserves sparse and dynamic slots", () => {
@@ -142,4 +146,110 @@ describe("Vite preload dependency recovery", () => {
       "vite-output:assets/lazy.js",
     ]);
   });
+});
+
+it.each([
+  {
+    name: "canonical declaration",
+    prefix: "",
+    suffix: "__vite__mapDeps([0]);",
+    specifiers: ["./canonical.js"],
+  },
+  {
+    name: "captured outer binding",
+    prefix: "",
+    suffix: "function load(){return __vite__mapDeps([0]);}load();",
+    specifiers: ["./canonical.js"],
+  },
+  {
+    name: "shadowed parameter",
+    prefix: "",
+    suffix:
+      "function load(__vite__mapDeps){return __vite__mapDeps([0]);}load(()=>[]);",
+    specifiers: [],
+  },
+  {
+    name: "out-of-scope declaration",
+    prefix: "function setup(){",
+    suffix: "}__vite__mapDeps([0]);",
+    specifiers: [],
+  },
+  {
+    name: "unrelated shadowed cache mutation",
+    prefix: "",
+    suffix:
+      "function change(__vite__mapDeps){__vite__mapDeps.f=['./other.js'];}__vite__mapDeps([0]);",
+    specifiers: ["./canonical.js"],
+  },
+  {
+    name: "uncertain with receiver",
+    prefix: "",
+    suffix: "with(unknown){__vite__mapDeps([0]);}",
+    specifiers: [null],
+  },
+  {
+    name: "uncertain with mutation",
+    prefix: "",
+    suffix:
+      "with(unknown){__vite__mapDeps.f=['./other.js'];}__vite__mapDeps([0]);",
+    specifiers: [null],
+  },
+])(
+  "uses the canonical helper's lexical identity for $name",
+  ({ prefix, suffix, specifiers }) => {
+    const source = `${prefix}
+    const __vite__mapDeps = (indexes, map = __vite__mapDeps, dependencies =
+      (map.f || (map.f = ["./canonical.js"]))) => indexes.map((index) => dependencies[index]);
+    ${suffix}
+  `;
+    const parsed = parseJavaScriptSource(source, "preload.cjs");
+    expect(parsed).not.toBeNull();
+    if (parsed === null) throw new Error("preload fixture did not parse");
+    const analysis = analyzeParsedJavaScriptStaticSource(source, parsed);
+    expect(analysis.parse_error_count).toBe(0);
+    expect(
+      analysis.references
+        .filter(({ kind }) => kind === "dynamic-import")
+        .map(({ specifier }) => specifier),
+    ).toEqual(specifiers);
+  },
+);
+
+it("keeps a preload call that precedes a later helper reassignment", () => {
+  const specifiers = (source: string) =>
+    analyzeJavaScriptStaticSource(source)
+      .references.filter(({ kind }) => kind === "dynamic-import")
+      .map(({ specifier }) => specifier);
+  const helper = `let __vite__mapDeps = (indexes, map = __vite__mapDeps, dependencies =
+      (map.f || (map.f = ["./canonical.js"]))) => indexes.map((index) => dependencies[index]);`;
+  expect(
+    specifiers(`${helper} __vite__mapDeps([0]); __vite__mapDeps = () => [];`),
+  ).toEqual(["./canonical.js"]);
+  expect(
+    specifiers(`${helper} __vite__mapDeps = () => []; __vite__mapDeps([0]);`),
+  ).toEqual([]);
+  expect(
+    specifiers(
+      `${helper} __vite__mapDeps.f = ["./changed.js"]; __vite__mapDeps([0]); __vite__mapDeps = other;`,
+    ),
+  ).toEqual([null]);
+  expect(
+    specifiers(
+      `${helper} __vite__mapDeps([0]); __vite__mapDeps = other; __vite__mapDeps.f = ["./changed.js"];`,
+    ),
+  ).toEqual(["./canonical.js"]);
+});
+
+it("retains the identity of a function-declared preload helper", () => {
+  const analysis = analyzeJavaScriptStaticSource(`
+    function __vite__mapDeps(indexes, map = __vite__mapDeps, dependencies =
+      (map.f || (map.f = ["./canonical.js"]))) { return indexes.map((index) => dependencies[index]); }
+    __vite__mapDeps([0]);
+  `);
+  expect(analysis.parse_error_count).toBe(0);
+  expect(
+    analysis.references
+      .filter(({ kind }) => kind === "dynamic-import")
+      .map(({ specifier }) => specifier),
+  ).toEqual(["./canonical.js"]);
 });

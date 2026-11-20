@@ -1,9 +1,8 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 import { bindExecutionTarget } from "../../../../src/application/binary/BinarySessionExecution.js";
-import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { inspectPlistSchema } from "../../../../src/domain/native/nativeInspection.js";
 import { ok } from "../../../../src/domain/result.js";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
@@ -16,7 +15,7 @@ import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js
 const plist = (marker: string): string =>
   `<plist><dict><key>CFBundleExecutable</key><string>Probe</string><key>Marker</key><string>${marker}</string></dict></plist>`;
 
-it("records each plist byte digest under the open executable and refuses a file outside the bundle", async () => {
+it("records each plist byte digest under the open executable including an explicitly selected file outside the bundle", async () => {
   const root = await createTestTempDirectory("rea-plist-bundle-evidence-");
   const app = join(root, "Probe.app");
   const contents = join(app, "Contents");
@@ -41,15 +40,7 @@ it("records each plist byte digest under the open executable and refuses a file 
     ...(await nativeMachoTargetForFile(executable, app)),
     bundleInfoPlist: info,
   };
-  const calls: string[] = [];
   const runner = new NativeFixtureRunner();
-  const original = runner.run.bind(runner);
-  runner.run = async (tool, args, options) => {
-    calls.push(args.at(-1) ?? tool);
-    if (args.some((argument) => argument.includes("Outside.plist")))
-      throw new Error(`read ${tool} for a plist outside the bundle`);
-    return original(tool, args, options);
-  };
   const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
     target,
   );
@@ -77,7 +68,6 @@ it("records each plist byte digest under the open executable and refuses a file 
     path: executable,
   });
 
-  calls.length = 0;
   const helper = await client.execute("inspect_plist", { path: nested });
   if (!helper.ok) throw helper.error;
   const helperDigest = createHash("sha256")
@@ -95,14 +85,17 @@ it("records each plist byte digest under the open executable and refuses a file 
   if (!helperBound.ok) throw helperBound.error;
   expect(helperBound.value.subject?.sha256).toBe(target.sha256);
 
-  calls.length = 0;
-  const refused = await client.execute("inspect_plist", { path: outside });
-  if (refused.ok) throw new Error("inspected a plist outside the bundle");
-  expect(projectAnalysisError(refused.error)).toMatchObject({
-    code: "invalid_request",
-    details: { issues: [{ path: ["path"], reason: "invalid_value" }] },
-  });
-  expect(calls).toEqual([]);
+  for (const path of [outside, "../Outside.plist"]) {
+    const selected = await client.execute("inspect_plist", { path });
+    if (!selected.ok) throw selected.error;
+    expect(inspectPlistSchema.parse(selected.value.result)).toMatchObject({
+      source_path: path === outside ? outside : `${app}/../Outside.plist`,
+      source_sha256: createHash("sha256")
+        .update(plist("outside"))
+        .digest("hex"),
+      value: { Marker: "outside" },
+    });
+  }
 
   expect(
     inspectPlistSchema.parse({
@@ -121,3 +114,72 @@ it("records each plist byte digest under the open executable and refuses a file 
     }).source_sha256,
   ).toBeUndefined();
 });
+
+it.each([
+  ["xml", plist("first"), "XML 1.0 document text", ["file", "plutil"]],
+  ["openstep", "{ Marker = first; }", "ASCII text", ["file", "plutil"]],
+] as const)(
+  "binds %s observation and digest to the original stable bytes after the source changes",
+  async (format, source, description, commands) => {
+    const root = await createTestTempDirectory("rea-plist-evidence-stable-");
+    const path = join(root, "selected.plist");
+    await writeFile(path, source);
+    const observed: string[] = [];
+    let operand: string | undefined;
+    const replay = new NativeFixtureRunner({ file: description });
+    const provider = new NativeMacOSProvider(
+      {},
+      {
+        async run(tool, arguments_) {
+          const selected = arguments_.at(-1);
+          if (selected === undefined)
+            throw new Error("Expected a plist operand");
+          observed.push(tool);
+          const capture = await replay.run(tool, arguments_);
+          if (tool === "file") {
+            operand = selected;
+            await writeFile(
+              path,
+              format === "xml" ? plist("second") : "{ Marker = second; }",
+            );
+            return capture;
+          }
+          expect(selected).toBe(operand);
+          const conversionInput = await readFile(selected, "utf8");
+          if (arguments_[0] === "-lint") {
+            expect(conversionInput).toBe(source);
+            return capture;
+          }
+          const stdout = JSON.stringify({
+            Marker: conversionInput.includes("first") ? "first" : "second",
+          });
+          if (!capture.ok) return capture;
+          return ok({
+            ...capture.value,
+            stdout,
+            stdoutBytes: Buffer.byteLength(stdout),
+          });
+        },
+      },
+      "darwin",
+    );
+    const target = await nativeMachoTargetForFile(path);
+    const client = provider.createClient(target);
+    onTestFinished(async () => {
+      const closed = await client.close();
+      if (!closed.ok) throw closed.error;
+    });
+    const result = await client.execute("inspect_plist", { path });
+    if (!result.ok) throw result.error;
+    expect(observed).toEqual(commands);
+    expect(await readFile(path, "utf8")).toContain("second");
+    expect(inspectPlistSchema.parse(result.value.result)).toMatchObject({
+      source_path: path,
+      source_sha256: createHash("sha256").update(source).digest("hex"),
+      value: { Marker: "first" },
+    });
+    expect(operand).toBeDefined();
+    expect(operand).not.toBe(path);
+    await expect(access(operand!)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);

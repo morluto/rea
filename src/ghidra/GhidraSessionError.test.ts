@@ -8,6 +8,7 @@ import {
 } from "./GhidraSessionError.js";
 import { GhidraLaunchError } from "./GhidraLauncher.js";
 import { createGhidraDiagnostics } from "./GhidraDiagnostics.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 it.each(["decompile_failed", "future_remote_failure"])(
   "retains complete session diagnostics for non-input remote code %s",
@@ -40,6 +41,36 @@ it.each(["decompile_failed", "future_remote_failure"])(
     expect(failure.diagnostics).not.toHaveProperty("diagnostic_scope");
   },
 );
+
+it("scopes a byte-search cursor mismatch to the request", () => {
+  const factory = bindGhidraSessionFailure((scope) =>
+    createGhidraDiagnostics({
+      scope,
+      targetPath: "/selected/target",
+      targetSha256: "a".repeat(64),
+      transport: "unix-socket",
+      providerVersion: "12.1.4",
+      profileDigest: "b".repeat(64),
+      runtimeRoot: "/owned/runtime",
+      snapshot: {
+        stdout: { text: "engine diagnostic", bytes: 17, observedBytes: 17 },
+        stderr: { text: "", bytes: 0, observedBytes: 0 },
+        exitCode: null,
+        signal: null,
+      },
+      previous: {},
+    }),
+  );
+  const failure = factory("remote", "cursor mismatch", undefined, {
+    remoteCode: "byte_search_cursor_mismatch",
+  });
+  expect(failure.diagnostics).toMatchObject({
+    diagnostic_scope: "request",
+    remote_code: "byte_search_cursor_mismatch",
+  });
+  expect(failure.diagnostics).not.toHaveProperty("stdout");
+  expect(failure.diagnostics).not.toHaveProperty("stderr");
+});
 
 it("reports truncated cyclic causes in serializable diagnostics", () => {
   const cause = new Error("cyclic launcher failure");
@@ -202,7 +233,7 @@ it.each([null, undefined, new Error("original cause")])(
       },
     });
     expect(refreshed.cleanupFailure).toBe(cleanup);
-    cleanup.resolveCleanup();
+    releaseOwnedCleanup(cleanup);
     expect(refreshed.cleanupFailure?.cleanupIncomplete).toBe(false);
     expect(
       Object.hasOwn(
@@ -230,7 +261,7 @@ it("preserves the compiler root cleanup dependency through launch and session pr
     launch,
   );
   expect(session.cleanupFailure).toBe(cleanup);
-  cleanup.resolveCleanup();
+  releaseOwnedCleanup(cleanup);
   expect(session.cleanupFailure?.cleanupIncomplete).toBe(false);
 });
 

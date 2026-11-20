@@ -115,13 +115,10 @@ const verify = (
   } else if (scenario === "opaque-xml") {
     expect(fields.text).toBe("<integer>9007199254740993</integer>");
     expect(fields.real).toBe(9007199254740996);
-    expect(fields.first).toBeDefined();
-    const exact =
-      typeof fields.first === "object" &&
-      fields.first !== null &&
-      JSON.stringify(fields.first) ===
-        JSON.stringify({ $plist_type: "integer", decimal: "9007199254740993" });
-    expect(exact || precisionNote).toBe(true);
+    expect(fields.first).toEqual({
+      $plist_type: "integer",
+      decimal: "9007199254740993",
+    });
     // If a literal count is reported, opaque content must not inflate it.
     const countNote = result.limitations.find((note) =>
       /integer literal\(s\)/u.test(note),

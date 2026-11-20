@@ -15,7 +15,8 @@ const scenario = browserScenarioSchema.parse({
 });
 const secrets = resolveScenarioSecrets(scenario, {});
 
-it("returns a complete requested text artifact beyond the former inline ceiling", async () => {
+// Text artifacts have no inline size ceiling; the content is returned whole.
+it("returns a large requested text artifact complete", async () => {
   const page = {
     url: () => "https://app.example.test/",
     content: () => Promise.resolve("x".repeat(16 * 1_024 * 1_024 + 1)),

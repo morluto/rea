@@ -112,7 +112,14 @@ it.each(["hash", "snapshot"] as const)(
       const read = failure as ProcessCaptureReadFailure;
       expect(read.cause).toBe(reason);
       expect(read.userCategory).toBe("cancelled");
-      expect(read.outcome).toMatchObject({ kind: "failed", cause: reason });
+      expect(read.outcome).toMatchObject({
+        kind: "failed",
+        cause: {
+          _tag: "ProcessCaptureError",
+          reason: "cancelled",
+          cause: reason,
+        },
+      });
       expect(read.cleanupLeases).toEqual([]);
       expect(read.cleanupIncomplete).toBe(false);
     } else {
