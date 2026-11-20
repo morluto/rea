@@ -47,7 +47,7 @@ it("classifies a guided LZMA section through its definition GUID", () => {
   expect(draft?.payload).toEqual({ start: 24, end: 24 + compressed.length });
 });
 
-it("classifies the AMI-zlib guided section and peels its AMD header", () => {
+it("classifies the AMD-zlib guided section and peels its AMD header", () => {
   const stream = Buffer.from([0x78, 0xda, 0x01, 0x02, 0x03]);
   const amdHeader = Buffer.alloc(AMD_ZLIB_HEADER_LENGTH, 0);
   amdHeader.writeUInt32LE(stream.length, 0x14);
@@ -60,7 +60,7 @@ it("classifies the AMI-zlib guided section and peels its AMD header", () => {
   expect(walked.sections).toHaveLength(1);
   const draft = walked.sections[0];
   expect(draft?.compression).toMatchObject({
-    kind: "ami-zlib",
+    kind: "amd-zlib",
     guid: "ce3233f5-2cd6-4d87-9152-4a238bb6d1c4",
     dataOffset: 24,
     attributes: 0,

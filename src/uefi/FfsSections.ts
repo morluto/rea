@@ -51,7 +51,7 @@ export interface SectionDraft {
         readonly kind:
           | "lzma-custom"
           | "lzmaf86"
-          | "ami-zlib"
+          | "amd-zlib"
           | "tiano"
           | "unknown-compression"
           | "efi-standard"
@@ -125,7 +125,7 @@ function guidedSectionContent(
 
   if (kind === "lzma-custom") return { kind: "decode", format: "lzma" };
   if (kind === "lzmaf86") return { kind: "decode", format: "lzmaf86" };
-  if (kind === "ami-zlib") return { kind: "decode", format: "zlib" };
+  if (kind === "amd-zlib") return { kind: "decode", format: "zlib" };
 
   if (
     (attributes & GUIDED_PROCESSING_REQUIRED) === 0 &&
@@ -304,7 +304,7 @@ export function walkSections(
  */
 export const AMD_ZLIB_HEADER_LENGTH = 0x100;
 
-/** Peel the 0x100-byte AMD header off one ami-zlib payload, or null when short. */
+/** Peel the 0x100-byte AMD header off one amd-zlib payload, or null when short. */
 export function peelAmiZlibPayload(
   payload: Buffer,
 ): { stream: Buffer; declaredCompressedSize: number } | null {
