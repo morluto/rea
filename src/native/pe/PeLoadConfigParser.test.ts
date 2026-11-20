@@ -7,6 +7,7 @@ import {
 } from "../../domain/native/peLoadConfig.js";
 import { parsePeLoadConfig } from "./PeLoadConfigParser.js";
 import {
+  PE_LOAD_CONFIG_FIXTURE,
   peLoadConfigImage,
   peManySectionsImage,
   type PeLoadConfigFixtureOptions,
@@ -208,6 +209,20 @@ it("retains a callback in virtual-only section storage with unknown file offset"
   ).toMatchObject({ rva: 0x2200, file_offset: null, section: ".text" });
 });
 
+it("requires the full physical section extent even when its virtual bytes fit", async () => {
+  const bytes = peLoadConfigImage({ textVirtualSize: 0x20 }).subarray(
+    0,
+    0x1620,
+  );
+  await expect(
+    parsePeLoadConfig(
+      bytes,
+      { path: "/sample.exe", sha256: "a".repeat(64), bytes: bytes.length },
+      inspectPeLoadConfigInputSchema.parse({ path: "/sample.exe" }),
+    ),
+  ).rejects.toMatchObject({ failure: { kind: "truncated" } });
+});
+
 it("resolves callback sections without rescanning the largest section table", async () => {
   const bytes = peManySectionsImage(65535, 4096);
   // Building the section index reads each entry about twice (131071 here); a
@@ -397,5 +412,26 @@ it.each([32, 64] as const)(
         dynamic_value_reloc_table_section: section,
       });
     }
+  },
+);
+
+it.each([32, 64] as const)(
+  "reads DWORDs after the four PE%d TLS pointers",
+  async (bits) => {
+    const bytes = peLoadConfigImage({ bits });
+    const layout = PE_LOAD_CONFIG_FIXTURE;
+    const offset =
+      layout.dataFile + layout.tlsRva - layout.dataRva + 4 * (bits / 8);
+    bytes.writeUInt32LE(0xfedcba98, offset);
+    bytes.writeUInt32LE(0x80100000, offset + 4);
+    const report = await parsePeLoadConfig(
+      bytes,
+      { path: "/sample.exe", sha256: "a".repeat(64), bytes: bytes.length },
+      inspectPeLoadConfigInputSchema.parse({ path: "/sample.exe" }),
+    );
+    expect(report.tls).toMatchObject({
+      size_of_zero_fill: 0xfedcba98,
+      characteristics: 0x80100000,
+    });
   },
 );

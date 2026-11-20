@@ -329,42 +329,53 @@ it("reports cancellation and keeps indexed paths for an unsupported remote listi
   });
 });
 
-it("keeps a resolved remote module beside one with a missing specifier", async () => {
-  const url = "https://example.com/mod.ts";
-  const snapshot = await inventoryOf(
-    "partial-remote",
-    denoElf(
-      buildDenoSection({
-        metadata: { ...defaultDenoMetadata(), entrypoint_key: url },
-        specifiers: [{ text: url, id: 1 }],
-        remoteModules: [
-          { specifierId: 1, data: "known" },
-          { specifierId: 2, data: "missing" },
-        ],
-      }),
-    ),
-  );
-  expect(
-    snapshot.occurrences.find((row) => row.logical_path === "."),
-  ).toMatchObject({
-    format_metadata: { remote_module_listing: "unsupported" },
-  });
-  expect(
-    snapshot.occurrences.find(
-      (row) => row.logical_path === "deno-remote/example.com/mod.ts",
-    ),
-  ).toMatchObject({
-    format_metadata: { source_path: url, entry_point: true },
-  });
-  expect(
-    snapshot.occurrences.find((row) => row.logical_path === "deno-remote/1"),
-  ).toMatchObject({
-    format_metadata: { source_path: null, entry_point: false },
-    limitations: expect.arrayContaining([
-      expect.stringContaining("not available as a logical path"),
-    ]),
-  });
-});
+it.each(["missing", "invalid UTF-8"] as const)(
+  "keeps a resolved remote module beside a %s specifier",
+  async (specifier) => {
+    const url = "https://example.com/mod.ts";
+    const snapshot = await inventoryOf(
+      "partial-remote",
+      denoElf(
+        buildDenoSection({
+          metadata: { ...defaultDenoMetadata(), entrypoint_key: url },
+          specifiers: [
+            { text: url, id: 1 },
+            ...(specifier === "invalid UTF-8"
+              ? [{ bytes: Buffer.from([0xff]), id: 2 }]
+              : []),
+          ],
+          remoteModules: [
+            { specifierId: 1, data: "known" },
+            { specifierId: 2, data: "missing" },
+          ],
+        }),
+      ),
+    );
+    expect(
+      snapshot.occurrences.find((row) => row.logical_path === "."),
+    ).toMatchObject({
+      format_metadata: {
+        specifier_listing: specifier === "missing" ? "listed" : "unsupported",
+        remote_module_listing: "unsupported",
+      },
+    });
+    expect(
+      snapshot.occurrences.find(
+        (row) => row.logical_path === "deno-remote/example.com/mod.ts",
+      ),
+    ).toMatchObject({
+      format_metadata: { index: 0, source_path: url, entry_point: true },
+    });
+    expect(
+      snapshot.occurrences.find((row) => row.logical_path === "deno-remote/1"),
+    ).toMatchObject({
+      format_metadata: { index: 1, source_path: null, entry_point: false },
+      limitations: expect.arrayContaining([
+        expect.stringContaining("not available as a logical path"),
+      ]),
+    });
+  },
+);
 
 it.each([
   ["a port", "http://localhost:8000/mod.ts", "localhost%3A8000/mod.ts"],

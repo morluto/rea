@@ -1,3 +1,4 @@
+import { BinaryReader } from "./binaryContainer.js";
 import { err, ok, type Result } from "./result.js";
 
 export const ELF_RELR_DYNAMIC_TAGS = {
@@ -81,23 +82,21 @@ export function readElfRelocationEntry(
       kind: "malformed",
       message: "ELF relocation entry is truncated",
     });
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const offset =
-    bits === 64
-      ? view.getBigUint64(0, littleEndian)
-      : BigInt(view.getUint32(0, littleEndian));
-  const info =
-    bits === 64
-      ? view.getBigUint64(wordBytes, littleEndian)
-      : BigInt(view.getUint32(wordBytes, littleEndian));
+  const reader = new BinaryReader(
+    Buffer.isBuffer(bytes)
+      ? bytes
+      : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    littleEndian,
+    "elf",
+  );
+  const offset = reader.word(0, bits);
+  const info = reader.word(wordBytes, bits);
   const entry = {
     offset,
     ...decodeElfRelocationInfo(info, bits),
   };
   if (encoding === "rel") return ok(entry);
   const addend =
-    bits === 64
-      ? view.getBigInt64(wordBytes * 2, littleEndian)
-      : BigInt(view.getInt32(wordBytes * 2, littleEndian));
+    bits === 64 ? reader.i64(wordBytes * 2) : BigInt(reader.i32(wordBytes * 2));
   return ok({ ...entry, addend });
 }

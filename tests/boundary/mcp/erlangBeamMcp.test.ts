@@ -16,6 +16,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
+  erlangBeamChunksFixture,
   erlangBeamDeclaredRowsFixture,
   erlangBeamRowsFixture,
   erlangBeamFixture,
@@ -131,6 +132,51 @@ mcpTest(
           remediation: { action: expect.stringContaining(remediation) },
           details: { reported_limits: budget },
         });
+      }
+    } finally {
+      await session.close();
+    }
+  },
+);
+
+mcpTest(
+  "checks admitted atom lengths before reporting capacity",
+  async ({ mcp }) => {
+    const { client, session } = await connect(mcp);
+    const root = await createTestTempDirectory("rea-beam-atom-framing-");
+    try {
+      for (const [chunk, count, validLength, invalidLength] of [
+        ["Atom", [0, 0, 0, 2], 1, 2],
+        ["AtU8", [0, 0, 0, 2], 1, 2],
+        ["AtU8", [0xff, 0xff, 0xff, 0xfe], 0x10, 0x20],
+      ] as const) {
+        for (const [length, finalByte, malformedPrefix] of [
+          [validLength, 0, false],
+          [validLength, validLength, false], // The truncated second name is outside the scan.
+          [invalidLength, 0x62, true],
+        ] as const) {
+          const path = join(root, "atoms.beam");
+          const payload = Buffer.from([...count, length, 0x61, finalByte]);
+          await writeFile(path, erlangBeamChunksFixture([[chunk, payload]]));
+          const response = await client.callTool({
+            name: "inspect_erlang_beam",
+            arguments: { path, max_atoms: 1 },
+          });
+          expect(response.isError).toBe(true);
+          expect(parseMcpToolError(response).error).toMatchObject(
+            malformedPrefix
+              ? {
+                  code: "invalid_request",
+                  details: {
+                    issues: [{ path: ["path"], reason: "invalid_format" }],
+                  },
+                }
+              : {
+                  code: "resource_constraint",
+                  details: { reported_limits: { max_atoms: 1 } },
+                },
+          );
+        }
       }
     } finally {
       await session.close();

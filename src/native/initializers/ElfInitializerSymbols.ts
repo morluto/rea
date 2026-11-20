@@ -1,3 +1,5 @@
+import { BinaryReader } from "../../domain/binaryContainer.js";
+import { readInitializerWord } from "./initializerWord.js";
 import { setImmediate as immediate } from "node:timers/promises";
 import { assertArtifactReadActive } from "../../resources/index.js";
 import { readElfRelocationEntry } from "../../domain/elfRelocation.js";
@@ -82,25 +84,6 @@ interface ImageFacts {
 }
 
 const wordOf = (bits: 32 | 64): number => bits / 8;
-
-/** In-place word used as a REL addend. Null when the slot is not file-backed. */
-export const readPointerWord = (
-  bytes: Buffer,
-  offset: number | null,
-  bits: 32 | 64,
-  little: boolean,
-): bigint | null => {
-  const width = wordOf(bits);
-  if (offset === null || offset < 0 || offset > bytes.length - width)
-    return null;
-  if (bits === 64)
-    return little
-      ? bytes.readBigUInt64LE(offset)
-      : bytes.readBigUInt64BE(offset);
-  return BigInt(
-    little ? bytes.readUInt32LE(offset) : bytes.readUInt32BE(offset),
-  );
-};
 
 /**
  * Name at `offset`. Offset 0 is the empty name. A missing string table or an
@@ -570,6 +553,7 @@ export const sectionRelocations = async (
     return target?.type === 0 ? undefined : target;
   };
   const word = wordOf(input.bits);
+  const reader = new BinaryReader(input.bytes, input.little, "elf");
   let complete = true;
   const skip = (section: NativeSection): void => {
     if (
@@ -720,12 +704,7 @@ export const sectionRelocations = async (
         ) {
           const inplace =
             encoding === "rel"
-              ? readPointerWord(
-                  input.bytes,
-                  writtenFileOffset,
-                  input.bits,
-                  input.little,
-                )
+              ? readInitializerWord(reader, writtenFileOffset, input.bits)
               : null;
           found.set(
             key,

@@ -18,6 +18,7 @@ import {
 import {
   admitElfLoadSegment,
   elfLoadSpans,
+  elfProgramHeaderWidth,
   readElfProgramHeader,
   type ElfProgramHeader,
 } from "../elfProgramHeader.js";
@@ -116,7 +117,7 @@ const programHeaders = async (
   });
   if (!declaration.ok) return err(declaration.error.message);
   const { offset, width: entrySize, count } = declaration.value.programs;
-  if (entrySize < (bits === 64 ? 56 : 32) || count === 0xffff)
+  if (entrySize < elfProgramHeaderWidth(bits) || count === 0xffff)
     return err("unsupported ELF program header table");
   const table = await readBoundedExtent(
     read,
@@ -223,6 +224,8 @@ const dynamicTags = (
         ? walked.error.error
         : `Duplicate dynamic tag 0x${walked.error.tag.toString(16)}`,
     );
+  if (walked.value.trailingBytes !== 0)
+    return err("ELF PT_DYNAMIC size is not a whole number of entries");
   return walked.value.terminatorOffset === null
     ? err("ELF dynamic table has no DT_NULL terminator")
     : ok(found);

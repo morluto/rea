@@ -13,6 +13,7 @@ const script = fileURLToPath(
 const repository = "example/rea";
 const repositoryId = 1;
 const now = Date.now();
+const headSha = "a".repeat(40);
 
 function artifact(id: number, overrides: Record<string, unknown> = {}) {
   return {
@@ -25,6 +26,7 @@ function artifact(id: number, overrides: Record<string, unknown> = {}) {
       repository_id: repositoryId,
       head_repository_id: repositoryId,
       head_branch: "main",
+      head_sha: headSha,
     },
     ...overrides,
   };
@@ -40,6 +42,7 @@ function run(id: number, overrides: Record<string, unknown> = {}) {
     created_at: new Date(now - 120_000).toISOString(),
     head_branch: "main",
     head_repository: { full_name: repository },
+    head_sha: headSha,
     ...overrides,
   };
 }
@@ -410,4 +413,37 @@ it("recovers older timing history beyond the first successful run page", async (
   });
   expect(calls).toContain("page=2");
   expect(calls).not.toContain("page=3");
+});
+
+it.each([
+  ["the commit SHAs differ", headSha, "b".repeat(40)],
+  ["both commit SHAs are omitted", undefined, undefined],
+  ["both commit SHAs are malformed", "invalid-sha", "invalid-sha"],
+])("skips newer timing history when %s", async (_, artifactSha, runSha) => {
+  const unverifiedArtifact = artifact(51, {
+    created_at: new Date(now - 30_000).toISOString(),
+    workflow_run: { ...artifact(51).workflow_run, head_sha: artifactSha },
+  });
+  const unverifiedRun = run(51, { head_sha: runSha });
+  const [fallback, empty] = await Promise.all([
+    invoke(
+      [unverifiedArtifact, artifact(50)],
+      { 51: unverifiedRun, 50: run(50) },
+      {
+        tier: "full",
+      },
+    ),
+    invoke([unverifiedArtifact], { 51: unverifiedRun }, { tier: "full" }),
+  ]);
+
+  expect(JSON.parse(fallback.result.stdout)).toEqual({
+    run_id: "50",
+    artifact_name: "test-timings-full",
+  });
+  expect(fallback.output).toBe("run-id=50\nartifact-name=test-timings-full\n");
+  expect(JSON.parse(empty.result.stdout)).toEqual({
+    run_id: "",
+    artifact_name: "",
+  });
+  expect(empty.output).toBe("run-id=\nartifact-name=\n");
 });

@@ -1340,6 +1340,34 @@ it("makes unsupported modern filter constructs partial while retaining their sou
   expect(result.limitations.join(" ")).toContain("unsupported constructs");
 });
 
+it("reports unnamed intent-filter members while retaining named siblings", () => {
+  const xml = [
+    '<manifest xmlns:a="http://schemas.android.com/apk/res/android" xmlns:other="urn:other" package="com.example"><application>',
+    '<activity a:name=".Main"><intent-filter><action other:name="DECOY"/><category/><action a:name="VIEW"/><category a:name="DEFAULT"/></intent-filter>',
+    '<intent-filter><action a:name="EDIT"/></intent-filter></activity>',
+    "</application></manifest>",
+  ].join("\n");
+  const result = parseAndroidManifestComponents(xml, "complete", "30");
+  expect(result.status).toBe("partial");
+  expect(result.items).toMatchObject([
+    {
+      exported_default: true,
+      declaration_coverage: "partial",
+      actions: ["VIEW", "EDIT"],
+      categories: ["DEFAULT"],
+      intent_filters: [
+        { actions: ["VIEW"], categories: ["DEFAULT"], coverage: "partial" },
+        { actions: ["EDIT"], categories: [], coverage: "complete" },
+      ],
+    },
+  ]);
+  expect(result.limitations).toContainEqual(
+    expect.stringContaining(
+      "2 intent-filter action or category declaration(s) without android:name",
+    ),
+  );
+});
+
 it.each([
   ["a:sspPrefix", "partial"],
   ["foreign:sspPrefix", "complete"],

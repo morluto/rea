@@ -6,6 +6,8 @@ import {
 } from "../../tests/fixtures/managedStringsAmbiguity.js";
 import { validateManagedTokenScope } from "../domain/managed/managedInspectionEvidence.js";
 import { compareManagedMembers } from "../domain/managed/managedMemberComparison.js";
+import { readManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
+import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
 import { inspectManagedArtifactBytes } from "./ManagedArtifactInspector.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
 import { inspectManagedNativeBoundariesBytes } from "./ManagedNativeBoundaryInspector.js";
@@ -157,6 +159,69 @@ it("keeps an independent MVID beside an invalid ENC index", () => {
     }),
   );
 });
+
+it.each([1, 2])(
+  "retains the MVID beside an invalid name only when the Module row is unique (rows: %i)",
+  (moduleRowCount) => {
+    const bytes = buildManagedPeFixture({ moduleRowCount });
+    const pe = readManagedPeLayout(bytes);
+    if (pe.cli === null) throw new Error("Fixture omitted CLI metadata");
+    const { size, rva } = pe.cli.metadata;
+    const root = pe.rvaToOffset(rva, size, "fixture metadata");
+    const module = readManagedMetadataLayout(bytes, root, size).table(0);
+    if (module === undefined) throw new Error("Fixture omitted its Module row");
+    const nameIndex = 0xffff;
+    bytes.writeUInt16LE(nameIndex, module.offset + 2);
+
+    const target = managedPeFixtureTarget(bytes);
+    const artifact = inspectManagedArtifactBytes(bytes, target);
+    const members = inspectManagedMembersBytes(bytes, target);
+    const mvid =
+      moduleRowCount === 1 ? "00112233-4455-6677-8899-aabbccddeeff" : null;
+    for (const report of [artifact, members]) {
+      expect(report.module).toBeNull();
+      expect(report.metadata.status).toBe("partial");
+      expect(report.coverage.issues).toContainEqual(
+        expect.objectContaining({
+          code: "invalid-heap-index",
+          scope: "metadata.#Strings",
+        }),
+      );
+      if (mvid === null) {
+        expect(report.metadata).not.toHaveProperty("unresolved_module_name");
+      } else {
+        expect(report.metadata.unresolved_module_name).toEqual({
+          name: null,
+          name_index: nameIndex,
+          generation: 0,
+          mvid,
+          enc_id: null,
+          enc_base_id: null,
+          token: "0x00000001",
+          row_offset: module.offset,
+        });
+      }
+    }
+    expect(members.identity_scope.requires_mvid).toBe(mvid);
+    expect(
+      validateManagedTokenScope(members, "managed inspection", "fixture").ok,
+    ).toBe(true);
+    const namedBytes = buildManagedPeFixture();
+    const named = inspectManagedMembersBytes(
+      namedBytes,
+      managedPeFixtureTarget(namedBytes),
+    );
+    const comparison = compareManagedMembers(
+      { evidenceId: "ev_" + "a".repeat(64), result: named },
+      { evidenceId: "ev_" + "b".repeat(64), result: members },
+    );
+    expect(comparison.right).toMatchObject({
+      mvid,
+      module_name: null,
+      metadata_status: "partial",
+    });
+  },
+);
 
 it("treats a duplicate #Strings extent outside the root as malformed", () => {
   const { bytes, metadataEnd } = managedStringsAmbiguity("outside-root");

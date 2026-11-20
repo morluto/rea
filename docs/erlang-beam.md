@@ -137,6 +137,9 @@ Malformed `FOR1`/`BEAM` headers, truncated
 chunks, and `AtU8` names that are not valid UTF-8 fail without partial success.
 The reader checks each encountered chunk's payload and alignment padding against
 the declared form before applying the chunk count limit.
+An atom count above `max_atoms` still checks the length fields of at most
+`max_atoms` entries. A length that leaves too few bytes for the remaining
+entries is a format failure.
 
 This workflow does not execute bytecode, inflate `LitT` literals, or decode
 `Attr`/`CInf` external-term payloads. Complete coverage describes this static

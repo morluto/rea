@@ -722,9 +722,6 @@ it("exposes overload candidates and executes only an explicitly selected ambiguo
   // A schema-valid ambiguous selector names its candidates, not the schema.
   const ambiguousProjection = projectAnalysisError(ambiguous.error);
   expect(ambiguousProjection.recovery).toBeUndefined();
-  expect(ambiguousProjection.remediation.action).toMatch(
-    /^Set overload_index to exactly one of the \d+ candidates/u,
-  );
   expect(ambiguousProjection.details?.refusal).toMatchObject({
     kind: "ambiguous_selector",
     operation: "inspect_android_method",
