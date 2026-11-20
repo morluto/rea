@@ -757,6 +757,106 @@ it.each(["{not json", "[]", "null"])(
   },
 );
 
+it("treats a trailing-slash main as directory-only and skips a sibling file", async () => {
+  const bytes = await vsixPackageFixture({
+    includeMain: false,
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      engines: { vscode: "^1.74.0" },
+      main: "./out/",
+    }),
+    extraMembers: {
+      "extension/out.js": "exports.activate = () => {};",
+    },
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.entry_points.main).toEqual({
+    path: "extension/out",
+    present: false,
+  });
+});
+
+it("resolves a trailing-slash main to the directory index over a sibling file", async () => {
+  const bytes = await vsixPackageFixture({
+    includeMain: false,
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      engines: { vscode: "^1.74.0" },
+      main: "./out/",
+    }),
+    extraMembers: {
+      "extension/out.js": "exports.activate = () => {};",
+      "extension/out/index.js": "exports.activate = () => {};",
+    },
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.entry_points.main).toEqual({
+    path: "extension/out/index.js",
+    present: true,
+  });
+});
+
+it("resolves a trailing-slash main through the directory package.json", async () => {
+  const bytes = await vsixPackageFixture({
+    includeMain: false,
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      engines: { vscode: "^1.74.0" },
+      main: "./out/",
+    }),
+    extraMembers: {
+      "extension/out.js": "exports.activate = () => {};",
+      "extension/out/package.json": JSON.stringify({ main: "./start.js" }),
+      "extension/out/start.js": "exports.activate = () => {};",
+      "extension/out/index.js": "exports.activate = () => {};",
+    },
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.entry_points.main).toEqual({
+    path: "extension/out/start.js",
+    present: true,
+  });
+});
+
+it.each(["./out/.", "./out/sub/.."])(
+  "keeps directory-only intent for main %s",
+  async (main) => {
+    const bytes = await vsixPackageFixture({
+      includeMain: false,
+      packageJson: JSON.stringify({
+        name: "hello",
+        publisher: "demo",
+        version: "1.2.3",
+        engines: { vscode: "^1.74.0" },
+        main,
+      }),
+      extraMembers: {
+        "extension/out.js": "exports.activate = () => {};",
+        "extension/out/index.js": "exports.activate = () => {};",
+      },
+    });
+    const report = vsixPackageSchema.parse(
+      await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+    );
+    expect(report.entry_points.main).toEqual({
+      path: "extension/out/index.js",
+      present: true,
+    });
+  },
+);
+
 it("matches entry points by exact member case, reporting a case-only match", async () => {
   const bytes = await vsixPackageFixture({
     packageJson: JSON.stringify({

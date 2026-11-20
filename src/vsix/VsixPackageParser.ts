@@ -309,6 +309,24 @@ const packageJsonEntryPath = (value: unknown): string | null => {
 };
 
 /**
+ * True when a package.json entry point can only name a directory: a trailing
+ * separator, `.`, `..`, or a final `.` or `..` segment. Node's loader skips
+ * the file lookup for such a specifier, so normalizing it to a bare path must
+ * not let a sibling file such as `out.js` match `./out/`.
+ */
+const packageJsonEntryDirectoryOnly = (value: unknown): boolean => {
+  if (typeof value !== "string") return false;
+  const raw = value.trim().replaceAll("\\", "/");
+  return (
+    raw.endsWith("/") ||
+    raw === "." ||
+    raw === ".." ||
+    raw.endsWith("/.") ||
+    raw.endsWith("/..")
+  );
+};
+
+/**
  * Suffixes tried after the declared path, in order. VS Code loads `main`
  * through Node's CommonJS file and directory lookup, and the web extension
  * host adds `.js` to a `browser` entry that lacks it.
@@ -394,18 +412,26 @@ const directoryManifestMain = (
 };
 
 /**
- * The member a `main` entry resolves to under Node's CommonJS lookup: the
- * file itself or with an added extension, then the directory's package.json
- * `main`, then the directory's `index.*`. A malformed directory package.json
- * stops the lookup, as it does in Node.
+ * The member a `main` entry resolves to under Node's CommonJS lookup: unless
+ * the specifier is directory-only, the file itself or with an added
+ * extension; then the directory's package.json `main`, then the directory's
+ * `index.*`. A malformed directory package.json stops the lookup, as it does
+ * in Node.
  */
 const resolveNodeEntryPoint = (
   declared: string,
   memberPaths: ReadonlySet<string>,
   directoryMain: DirectoryManifestMain,
+  directoryOnly: boolean,
 ): { path: string; present: boolean } => {
-  const asFile = resolveEntryPoint(declared, NODE_FILE_CANDIDATES, memberPaths);
-  if (asFile.present) return asFile;
+  if (!directoryOnly) {
+    const asFile = resolveEntryPoint(
+      declared,
+      NODE_FILE_CANDIDATES,
+      memberPaths,
+    );
+    if (asFile.present) return asFile;
+  }
   if (directoryMain.kind === "malformed")
     return { path: declared, present: false };
   if (directoryMain.kind === "main") {
@@ -549,6 +575,7 @@ interface ParsedPackageJson {
   readonly identity: VsixPackage["package_identity"];
   readonly engine: string | null;
   readonly main: string | null;
+  readonly mainDirectoryOnly: boolean;
   readonly browser: string | null;
   readonly activationEvents: string[];
   readonly contributes: VsixPackage["contributes"];
@@ -567,6 +594,7 @@ const parsePackageJsonDocument = (
     identity: null,
     engine: null,
     main: null,
+    mainDirectoryOnly: false,
     browser: null,
     activationEvents: [],
     contributes: {
@@ -646,6 +674,7 @@ const parsePackageJsonDocument = (
     },
     engine,
     main: packageJsonEntryPath(record.main),
+    mainDirectoryOnly: packageJsonEntryDirectoryOnly(record.main),
     browser: packageJsonEntryPath(record.browser),
     activationEvents: asStringArray(record.activationEvents),
     contributes: {
@@ -1023,6 +1052,7 @@ export const parseVsixPackage = async (
     const vsixEngine = vsixParsed?.engine ?? null;
     const packageEngine = packageParsed?.engine ?? null;
     const mainPath = packageParsed?.main ?? null;
+    const mainDirectoryOnly = packageParsed?.mainDirectoryOnly ?? false;
     const browserPath = packageParsed?.browser ?? null;
     const memberPaths = new Set(files.map((file) => file.path));
     // A `main` naming a directory resolves through that directory's own
@@ -1039,7 +1069,8 @@ export const parseVsixPackage = async (
       !mainManifest.traverses &&
       !mainManifest.encrypted &&
       mainPath !== null &&
-      !resolveEntryPoint(mainPath, NODE_FILE_CANDIDATES, memberPaths).present
+      (mainDirectoryOnly ||
+        !resolveEntryPoint(mainPath, NODE_FILE_CANDIDATES, memberPaths).present)
     ) {
       let decoded: Uint8Array | undefined;
       try {
@@ -1051,11 +1082,13 @@ export const parseVsixPackage = async (
           "max_manifest_bytes",
         );
       } catch (cause: unknown) {
-        if (!(
-          cause instanceof ParseFailureError &&
-          cause.failure.kind === "limit" &&
-          cause.failure.limit?.name === "max_manifest_bytes"
-        ))
+        if (
+          !(
+            cause instanceof ParseFailureError &&
+            cause.failure.kind === "limit" &&
+            cause.failure.limit?.name === "max_manifest_bytes"
+          )
+        )
           throw cause;
         limitations.push(
           `Member ${JSON.stringify(mainManifest.path)} exceeds the ${String(input.max_manifest_bytes)}-byte manifest budget and was not read to resolve main.`,
@@ -1102,7 +1135,12 @@ export const parseVsixPackage = async (
     const mainEntry =
       mainPath === null
         ? null
-        : resolveNodeEntryPoint(mainPath, memberPaths, mainDirectoryMain);
+        : resolveNodeEntryPoint(
+            mainPath,
+            memberPaths,
+            mainDirectoryMain,
+            mainDirectoryOnly,
+          );
     const browserEntry =
       browserPath === null
         ? null
@@ -1111,7 +1149,12 @@ export const parseVsixPackage = async (
       files.map((file) => [file.path.toLowerCase(), file.path]),
     );
     for (const [entry, suffixes] of [
-      [mainEntry, [...NODE_FILE_CANDIDATES, ...NODE_INDEX_CANDIDATES]],
+      [
+        mainEntry,
+        mainDirectoryOnly
+          ? NODE_INDEX_CANDIDATES
+          : [...NODE_FILE_CANDIDATES, ...NODE_INDEX_CANDIDATES],
+      ],
       [browserEntry, BROWSER_ENTRY_CANDIDATES],
     ] as const) {
       if (entry === null || entry.present) continue;
