@@ -1913,6 +1913,33 @@ it("reports an object-file import name over the name budget as partial coverage"
   );
 });
 
+it("resolves the same high nlist value by address and by relocation index", async () => {
+  const image = machoX8664ObjectInitializers();
+  const base = 0x8000_0001_0000_0000n;
+  image.writeBigUInt64LE(base, 32 + 24); // segment vmaddr
+  image.writeBigUInt64LE(base, 104 + 32); // __text
+  image.writeBigUInt64LE(base + 0x20n, 184 + 32); // __mod_init_func
+  image.writeBigUInt64LE(base, 0x258); // _before
+  image.writeBigUInt64LE(base + 0x10n, 0x268); // _startup
+  image.writeBigUInt64LE(base + 0x10n, 0x228); // local section relocation
+  const resolved = await read(image);
+  expect(row(resolved)).toMatchObject([
+    {
+      value: "0x8000000100000010",
+      symbol: "_startup",
+      resolution: "symbol_addend",
+    },
+    { value: "0x8000000100000010", symbol: "_startup", resolution: "raw" },
+  ]);
+
+  image[0x264] = 0xe0; // A debugger record at the same address.
+  const debug = await read(image);
+  expect(row(debug)).toMatchObject([
+    { value: null, symbol: null, resolution: "unresolved" },
+    { value: "0x8000000100000010", symbol: null, resolution: "raw" },
+  ]);
+});
+
 describe("Initializer target semantics", () => {
   it.each([32, 64] as const)(
     "does not interpret a defined RV%s TLS offset as an initializer address or name",

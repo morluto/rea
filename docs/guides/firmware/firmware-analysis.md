@@ -35,7 +35,8 @@ Unblob. FFS file and section discovery applies to FFS2 and FFS3 volumes.
 Volumes with other file-system GUIDs retain their header and extent, with the
 body reported as unparsed. REA checks the volume header and block map against
 the declared volume extent. FFS traversal accounts for volume extensions and
-retains valid files after an unusable file header. Malformed FV extension
+retains later files when the observed header or state establishes the next
+file boundary. Otherwise the remaining bytes stay unparsed. Malformed FV extension
 entries and conflicts between `UsedSize` and the claimed erased tail appear as
 volume-scoped gaps. Readable FFS files remain selectable. A truncated file body
 does not receive a verified checksum verdict. For a file without a body

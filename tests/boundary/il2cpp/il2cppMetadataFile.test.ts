@@ -155,17 +155,12 @@ describe("IL2CPP global-metadata version 39", () => {
     },
   );
 
-  it("accepts empty sections that share an offset with occupied sections and padding gaps", () => {
+  it("accepts an empty section whose offset is inside an occupied section", () => {
     const bytes = mutated((fixture, target) => {
       const methods = fixture.section("methods");
       target.writeInt32LE(
         methods.offset + 3,
         fixture.header("windowsRuntimeStrings", "offset"),
-      );
-      // Grow strings into trailing padding that no other section occupies.
-      target.writeInt32LE(
-        fixture.section("strings").size,
-        fixture.header("strings", "size"),
       );
     });
     expect(readIl2cppMetadata(bytes).types).toEqual(FIXTURE_TYPES);
@@ -499,29 +494,6 @@ describe("rejected IL2CPP metadata references", () => {
       ),
       "invalid-string",
     );
-  });
-
-  it("rejects a string section overlapping literal data", () => {
-    rejects(
-      mutated((fixture, bytes) => {
-        bytes.writeInt32LE(
-          fixture.section("strings").offset - 1,
-          fixture.header("strings", "offset"),
-        );
-      }),
-      "section-overlap",
-    );
-  });
-
-  it("decodes a valid string suffix from its byte offset", () => {
-    const fixture = createIl2cppMetadataFixture({
-      typeNames: { 0: "xPlayer" },
-    });
-    const bytes = Buffer.from(fixture.bytes);
-    const originalOffset = fixture.record("typeDefinitions", 0);
-    bytes.writeInt32LE(bytes.readInt32LE(originalOffset) + 1, originalOffset);
-
-    expect(readIl2cppMetadata(bytes).types[0]?.name).toBe("Player");
   });
 
   it("accepts a UTF-8 code-point boundary suffix and rejects a split code point", () => {

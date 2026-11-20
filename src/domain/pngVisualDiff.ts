@@ -117,10 +117,8 @@ export const isOneColourPng = (dataBase64: string): boolean | undefined => {
   } catch {
     return undefined;
   }
-  const first = rgba.readUInt32BE(0);
-  for (let offset = 4; offset < rgba.length; offset += 4)
-    if (rgba.readUInt32BE(offset) !== first) return false;
-  return true;
+  // A uniform frame matches itself shifted by one RGBA pixel.
+  return rgba.subarray(4).equals(rgba.subarray(0, -4));
 };
 
 const parsePng = (

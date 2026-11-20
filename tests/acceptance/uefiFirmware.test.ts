@@ -340,7 +340,7 @@ it("retains an opaque volume and reports only the unparsed ranges in the selecte
   const path = join(root, "mixed.fd");
   const nvDataGuid = "fff12b8d-7696-4c8b-a985-2747075b4f50";
   const valid = buildFv({
-    fileSystemGuid: "54731207-5c41-4cbd-b5e5-cd26d80770b1",
+    fileSystemGuid: "5473c07a-3dcb-4dca-bd6f-1e9689e7349a",
     files: [
       buildFfsFile({ guid: DRIVER_GUID, typeCode: 0x07, payload: PE_SECTION }),
     ],

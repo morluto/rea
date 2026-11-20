@@ -974,6 +974,44 @@ it("uses a tag-only manifest release and excludes older version overrides", asyn
   ).toBe(true);
 });
 
+it("recuts the abandoned patch from the last published manifest version", async () => {
+  const fixture = await releaseFixture({
+    releasedVersions: { ".": "6.10.0" },
+    releases: [releaseRecord("6.10.0")],
+    commits: [
+      {
+        sha: latest,
+        message:
+          "fix(release): restore the previous manifest\n\nRelease-As: 6.10.1",
+        files: [".release-please-manifest.json"],
+      },
+      {
+        sha: "b".repeat(40),
+        message: "fix: correct candidate regression",
+        files: ["src/change.ts"],
+      },
+      {
+        sha: "c".repeat(40),
+        message: "chore(main): release rea-agents 6.10.1",
+        files: [".release-please-manifest.json"],
+      },
+      {
+        sha: baseline,
+        message: "chore(main): release rea-agents 6.10.0",
+        files: [".release-please-manifest.json"],
+      },
+    ],
+  });
+  const [candidate] = await fixture.manifest.buildPullRequests();
+  expect(candidate?.body.toString()).toContain("correct candidate regression");
+  const version = candidate?.updates.find(
+    (update) => update.path === "version.txt",
+  );
+  expect(
+    version?.updater.updateContent("6.10.0 // x-release-please-version"),
+  ).toContain("6.10.1");
+});
+
 it.each(["omitted", "0.0.0"])(
   "preserves initial bootstrap with an %s manifest version",
   async (version) => {

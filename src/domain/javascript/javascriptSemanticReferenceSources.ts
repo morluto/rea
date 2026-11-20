@@ -82,6 +82,36 @@ const arrayIteratorReturnPaths = [
   ]),
 ] as const;
 
+/** Whether a native array iterator can observe a possible close hook here. */
+const semanticArrayIteratorMayHaveReturnAt = (
+  pattern: t.ArrayPattern,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  arrayIteratorReturnPaths.some((path) =>
+    ambientPathMayObserveAt(state, pattern, path, "contents"),
+  );
+
+export const isLexicalPatternDeclaration = (
+  owner: t.Node | undefined,
+  state: JavaScriptSemanticAnalysisState,
+): owner is t.VariableDeclarator => {
+  if (!t.isVariableDeclarator(owner)) return false;
+  const declaration = state.parentsByNode.get(owner);
+  return (
+    t.isVariableDeclaration(declaration) &&
+    (declaration.kind === "const" || declaration.kind === "let")
+  );
+};
+
+/** A proved lexical inner read can resume its outer iterator after a hook-free close. */
+export const semanticArrayPatternCanResumeAfterClose = (
+  pattern: t.ArrayPattern,
+  owner: t.Node | undefined,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  isLexicalPatternDeclaration(owner, state) &&
+  !semanticArrayIteratorMayHaveReturnAt(pattern, state);
+
 /** References a possible native close hook can still obtain by advancing its iterator. */
 export const semanticArrayPatternCloseSelection = (
   pattern: t.ArrayPattern,
@@ -89,22 +119,11 @@ export const semanticArrayPatternCloseSelection = (
   array: Extract<JavaScriptSemanticValue, { status: "array" }>,
   state: JavaScriptSemanticAnalysisState,
 ): JavaScriptSemanticPropertySelection | undefined => {
-  if (
-    !arrayIteratorReturnPaths.some((path) =>
-      ambientPathMayObserveAt(state, pattern, path, "contents"),
-    )
-  )
-    return undefined;
-  const declaration =
-    owner === undefined ? undefined : state.parentsByNode.get(owner);
+  if (!semanticArrayIteratorMayHaveReturnAt(pattern, state)) return undefined;
   const last = pattern.elements.at(-1);
   const hasRest = t.isRestElement(last);
   let consumed = 0;
-  if (
-    t.isVariableDeclarator(owner) &&
-    t.isVariableDeclaration(declaration) &&
-    (declaration.kind === "const" || declaration.kind === "let")
-  ) {
+  if (isLexicalPatternDeclaration(owner, state)) {
     for (const [index, element] of pattern.elements.entries()) {
       // A lexical rest drains the iterator only after earlier pattern work
       // reaches it. A preceding default or nested binding can throw first.

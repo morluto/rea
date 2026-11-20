@@ -116,7 +116,7 @@ import {
   parseMzExecutableMetadata,
   parsePeRecordFacts,
   peDebugDirectoryEntry,
-  peCodeViewDataRanges,
+  peCodeViewDirectoryEntries,
   peRvaToFileOffset,
   type ExecutableMetadata,
 } from "../domain/binaryTarget.js";
@@ -1459,12 +1459,13 @@ const readPeCodeView = async (
   for (const {
     fileOffset: pointerToRawData,
     declaredSize: sizeOfData,
-  } of peCodeViewDataRanges(
+  } of peCodeViewDirectoryEntries(
     debugDirectoryBuffer,
     sectionTable,
     numberOfSections,
     debugDir.sizeOfHeaders,
   )) {
+    if (pointerToRawData === undefined) continue;
     const maxCodeViewRead = Math.min(sizeOfData, PE_CODEVIEW_PREFIX_BYTES);
     const codeViewBuffer = await readHandleRange(
       handle,

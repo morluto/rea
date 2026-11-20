@@ -2,11 +2,11 @@ import { analyzeCapturedWebScript } from "../domain/webBundleAnalyzer.js";
 import { createHash, randomUUID } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { expect, it, onTestFinished } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 import { createWebTextArtifact } from "../domain/webContentArtifact.js";
 import type { IncludedScript } from "../domain/webBundleAnalyzerState.js";
@@ -150,7 +150,7 @@ const closeServer = async (
 };
 
 it("transfers reached semantic budgets and does not retain them for the next job", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-web-worker-precision-"));
+  const root = await createTestTempDirectory("rea-web-worker-precision-");
   let worker: ChildProcessWithoutNullStreams | undefined;
   try {
     const server = await startServer(root);
@@ -198,16 +198,14 @@ it("transfers reached semantic budgets and does not retain them for the next job
     }
   } finally {
     if (worker !== undefined) await closeServer(worker);
-    await rm(root, { recursive: true, force: true });
   }
 });
 
 it("refuses with the allowance the parent sent and reports its limit", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-web-worker-work-"));
+  const root = await createTestTempDirectory("rea-web-worker-work-");
   let worker: ChildProcessWithoutNullStreams | undefined;
   onTestFinished(async () => {
     if (worker !== undefined) await closeServer(worker);
-    await rm(root, { recursive: true, force: true });
   });
   const server = await startServer(
     root,
@@ -236,11 +234,10 @@ it("refuses with the allowance the parent sent and reports its limit", async () 
 });
 
 const framingServer = async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-web-worker-framing-"));
+  const root = await createTestTempDirectory("rea-web-worker-framing-");
   let worker: ChildProcessWithoutNullStreams | undefined;
   onTestFinished(async () => {
     if (worker !== undefined) await closeServer(worker);
-    await rm(root, { recursive: true, force: true });
   });
   const server = await startServer(root);
   worker = server.process;
@@ -360,7 +357,7 @@ it.each([
 });
 
 it("bounds and binds per-script worker jobs, then reuses one worker for the next script", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-web-worker-server-test-"));
+  const root = await createTestTempDirectory("rea-web-worker-server-test-");
   let worker: ChildProcessWithoutNullStreams | undefined;
   try {
     const server = await startServer(root);
@@ -500,6 +497,5 @@ it("bounds and binds per-script worker jobs, then reuses one worker for the next
     if (worker !== undefined) {
       await closeServer(worker);
     }
-    await rm(root, { recursive: true, force: true });
   }
 });

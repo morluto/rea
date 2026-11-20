@@ -1,11 +1,13 @@
 import { assertProcessOwnershipInspectionActive } from "../../process/ProcessInspectionCancellation.js";
 import { ProcessAdmissionError } from "../../process/ProcessAdmissionError.js";
-import { access } from "node:fs/promises";
+import { access, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import * as processOutput from "../../process/ExecFileOutput.js";
 import {
   AnalysisCancelledError,
   AnalysisResourceConstraintError,
+  AnalysisTimeoutError,
 } from "../../domain/analysisErrorCore.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import {
@@ -13,10 +15,11 @@ import {
   LinuxOwnedProcessPrerequisiteError,
 } from "../../process/ProcessOwnershipObservation.js";
 import {
-  ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
+  type ProviderProcessExitObservation,
 } from "../../process/ProviderProcess.js";
-import { WEB_SOURCE_MAP_LIMITS } from "../../domain/sourceMapLimits.js";
+import { phaseArrival } from "../../../tests/support/lifecycleHarness.js";
+import { WindowsNativeControlUnavailableError } from "../../windows/WindowsOwnedProcess.js";
 import type { WebSourceMapReport } from "../../domain/webSourceLocation.js";
 import { traceSourceMap } from "./TraceSourceMap.js";
 import {
@@ -55,45 +58,93 @@ afterEach(async () => {
   expect(owner).toBeUndefined();
 });
 
-const runChild = (
-  signal: AbortSignal | undefined,
-  script: string,
-  onRuntime?: (path: string) => void,
-) =>
-  runSourceMapCommand(
+const runCodecWithHeldStderr = async (
+  mode: "diagnostic" | "overflow" | "memory",
+  cancelReason?: { caller: string },
+) => {
+  const controller = new AbortController();
+  const observedExit = phaseArrival<{
+    exit: ProviderProcessExitObservation;
+    runtime: string;
+    deadline: AbortSignal | undefined;
+  }>();
+  const exitCode = mode === "memory" ? 3 : 7;
+  const primary =
+    mode === "memory" ? "memory limit reached" : "physical exit 7";
+  const descendant = `
+    const { existsSync } = require("node:fs");
+    const gate = setInterval(() => {
+      if (!existsSync("release-stderr")) return;
+      clearInterval(gate);
+      ${
+        mode === "overflow"
+          ? 'process.stderr.write("x".repeat(1024 * 1024 + 64)); setInterval(() => {}, 1000);'
+          : 'process.stderr.write("late descendant diagnostic");'
+      }
+    }, 10);
+  `;
+  const codec = `
+    require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}], {
+      stdio: ["ignore", "inherit", "inherit"],
+    });
+    process.stderr.write(${JSON.stringify(primary)}, () => process.exit(${String(exitCode)}));
+  `;
+  const operation = runSourceMapCommand(
     "{}",
     "/probe/source.map",
-    signal === undefined ? undefined : { signal },
+    { signal: controller.signal },
     {
       prepareOwnership: async () => {},
-      createRuntime: async () => {
-        const runtime = await PrivateRuntimeRoot.create({
-          prefix: "rea-source-map-command-test-",
-        });
-        onRuntime?.(runtime.path);
-        return runtime;
-      },
       launcher: async (options) => {
-        const child = await spawnOwnedProviderProcess({
+        const runtime = options.cwd;
+        if (runtime === undefined) throw new Error("Expected codec workspace");
+        const spawned = await spawnOwnedProviderProcess({
           ...options,
-          arguments: ["-e", script],
+          arguments: ["-e", codec],
         });
-        return child;
+        if (mode === "memory")
+          Object.defineProperty(spawned.process, "memoryLimitReached", {
+            get: () => spawned.process.exitCode !== null,
+          });
+        spawned.process.once(
+          "exit",
+          (code: number | null, signal: NodeJS.Signals | null) => {
+            observedExit.arrive({
+              exit: { code, signal },
+              runtime,
+              deadline: options.signal,
+            });
+          },
+        );
+        return spawned;
       },
     },
     unexpectedCleanup,
   );
 
-const lateDiagnostic =
-  'setTimeout(() => process.stderr.write("late descendant diagnostic"), 400)';
-const exitsAfterHoldingOutput = `
-  const { spawn } = require("node:child_process");
-  spawn(process.execPath, ["-e", ${JSON.stringify(lateDiagnostic)}], {
-    stdio: ["ignore", "inherit", "inherit"],
+  let observed;
+  try {
+    observed = await observedExit.reached(
+      operation,
+      "codec exited with stderr held open",
+    );
+    expect(observed.exit).toEqual({ code: exitCode, signal: null });
+    if (cancelReason !== undefined) controller.abort(cancelReason);
+    else await writeFile(join(observed.runtime, "release-stderr"), "");
+  } catch (cause) {
+    controller.abort(cause);
+    throw cause;
+  } finally {
+    // Join even when an assertion or the test-owned pipe release fails.
+    await operation;
+  }
+  const result = await operation;
+  if (result.ok) throw new Error("Expected physical failure");
+  await expect(access(observed.runtime)).rejects.toMatchObject({
+    code: "ENOENT",
   });
-  process.stderr.write("physical exit 7");
-  process.exit(7);
-`;
+  return { error: result.error, deadline: observed.deadline };
+};
 
 it("retains a physical process inspection failure when the caller cancels concurrently", async () => {
   const controller = new AbortController();
@@ -133,9 +184,6 @@ it("retains a physical process inspection failure when the caller cancels concur
     cause: reason,
   });
 });
-
-const exitsThenDescendantExceedsStderrBudget =
-  'const {spawn}=require("node:child_process"); spawn(process.execPath,["-e",`setTimeout(()=>{process.stderr.write("x".repeat(1024*1024+64)); setInterval(()=>{},1000)},25)`],{stdio:["ignore","inherit","inherit"]}); process.stderr.write("physical exit 7"); process.exit(7)';
 
 it.each([null, { caller: "late source-map cancellation" }])(
   "retains a late caller reason %j when runtime cleanup first fails",
@@ -195,60 +243,23 @@ it.each([null, { caller: "late source-map cancellation" }])(
 
 it("preserves an observed nonzero exit before caller cancellation during output drain", async () => {
   const reason = { caller: "later than owned exit" };
-  const controller = new AbortController();
-  let runtimePath: string | undefined;
-  let observedBeforeAbort:
-    | { readonly code: number | null; readonly signal: NodeJS.Signals | null }
-    | undefined;
-  const originalWait = ProviderProcessSupervisor.prototype.waitForOutputClose;
-  const waitSpy = vi
-    .spyOn(ProviderProcessSupervisor.prototype, "waitForOutputClose")
-    .mockImplementation(async function (
-      this: ProviderProcessSupervisor,
-      timeoutMs,
-      signal,
-    ) {
-      const exit = this.observedExit();
-      if (exit?.code === 7 && !controller.signal.aborted) {
-        observedBeforeAbort = exit;
-        controller.abort(reason);
-        return false;
-      }
-      return originalWait.call(this, timeoutMs, signal);
-    });
-  let result;
-  try {
-    result = await runChild(
-      controller.signal,
-      exitsAfterHoldingOutput,
-      (path) => {
-        runtimePath = path;
-      },
-    );
-  } finally {
-    waitSpy.mockRestore();
-  }
-  expect(observedBeforeAbort).toEqual({ code: 7, signal: null });
-  if (result.ok) throw new Error("expected physical failure");
-  expect(result.error._tag).toBe("ProviderAdapterError");
-  expect(result.error.diagnostics).toMatchObject({
+  const { error } = await runCodecWithHeldStderr("diagnostic", reason);
+  expect(error._tag).toBe("ProviderAdapterError");
+  expect(error.diagnostics).toMatchObject({
     exit_code: 7,
     output_complete: false,
   });
-  expect(result.error.capturedOutput?.truncated).toBe(true);
+  expect(error.capturedOutput?.truncated).toBe(true);
   expect(
-    result.error.secondaryFailures.find(
+    error.secondaryFailures.find(
       (failure) => failure instanceof AnalysisCancelledError,
     )?.cause,
   ).toBe(reason);
-  if (runtimePath === undefined) throw new Error("runtime was not acquired");
-  await expect(access(runtimePath)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
-it("classifies the same nonzero exit without cancellation", async () => {
-  const result = await runChild(undefined, exitsAfterHoldingOutput);
-  if (result.ok) throw new Error("expected physical failure");
-  expect(result.error).toMatchObject({
+it("drains inherited stderr after a nonzero codec exit", async () => {
+  const { error } = await runCodecWithHeldStderr("diagnostic");
+  expect(error).toMatchObject({
     _tag: "ProviderAdapterError",
     diagnostics: {
       exit_code: 7,
@@ -259,90 +270,32 @@ it("classifies the same nonzero exit without cancellation", async () => {
 });
 
 it("stops a held drain after late output exceeds budget but keeps the exit primary", async () => {
-  const startedAt = performance.now();
-  const result = await runChild(
-    undefined,
-    exitsThenDescendantExceedsStderrBudget,
-  );
-  const elapsedMs = performance.now() - startedAt;
-  if (result.ok) throw new Error("expected physical failure");
-  expect(result.error._tag).toBe("ProviderAdapterError");
-  expect(result.error.diagnostics).toMatchObject({
+  const { error, deadline } = await runCodecWithHeldStderr("overflow");
+  expect(error._tag).toBe("ProviderAdapterError");
+  expect(error.diagnostics).toMatchObject({
     exit_code: 7,
     output_limit_reached: true,
     output_complete: false,
   });
-  expect(result.error.diagnostics?.stderr).toContain("physical exit 7");
-  expect(result.error.capturedOutput?.truncated).toBe(true);
-  // The descendant holds stderr open forever, and a drain the codec deadline
-  // ends reports the same exit. Only the output-limit stop beats that deadline.
-  expect(elapsedMs).toBeLessThan(WEB_SOURCE_MAP_LIMITS.decodeTimeoutMs);
+  expect(error.diagnostics?.stderr).toContain("physical exit 7");
+  expect(error.capturedOutput?.truncated).toBe(true);
+  // The descendant still holds stderr. Letting the deadline stop the drain
+  // would retain the same primary exit, so check that deadline never fired.
+  expect(deadline?.aborted).toBe(false);
 });
 
 it("preserves an observed process-memory limit over the codec exit status", async () => {
-  const controller = new AbortController();
-  const reason = { caller: "after memory-limit exit" };
-  let observedBeforeAbort:
-    | { readonly code: number | null; readonly signal: NodeJS.Signals | null }
-    | undefined;
-  const originalWait = ProviderProcessSupervisor.prototype.waitForOutputClose;
-  const waitSpy = vi
-    .spyOn(ProviderProcessSupervisor.prototype, "waitForOutputClose")
-    .mockImplementation(async function (
-      this: ProviderProcessSupervisor,
-      timeoutMs,
-      signal,
-    ) {
-      const exit = this.observedExit();
-      if (exit?.code === 3 && !controller.signal.aborted) {
-        observedBeforeAbort = exit;
-        controller.abort(reason);
-        return false;
-      }
-      return originalWait.call(this, timeoutMs, signal);
-    });
-  let result;
-  try {
-    result = await runSourceMapCommand(
-      "{}",
-      "/probe/source.map",
-      { signal: controller.signal },
-      {
-        prepareOwnership: async () => {},
-        launcher: async (options) => {
-          const spawned = await spawnOwnedProviderProcess({
-            ...options,
-            arguments: [
-              "-e",
-              'const {spawn}=require("node:child_process"); spawn(process.execPath,["-e","setTimeout(()=>{},400)"],{stdio:["ignore","inherit","inherit"]}); process.stderr.write("memory limit reached"); process.exit(3)',
-            ],
-          });
-          let exited = false;
-          spawned.process.once("exit", () => {
-            exited = true;
-          });
-          Object.defineProperty(spawned.process, "memoryLimitReached", {
-            get: () => exited,
-          });
-          return spawned;
-        },
-      },
-      unexpectedCleanup,
-    );
-  } finally {
-    waitSpy.mockRestore();
-  }
-  expect(observedBeforeAbort).toEqual({ code: 3, signal: null });
-  if (result.ok) throw new Error("expected memory-limit failure");
-  expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
-  expect(result.error).toMatchObject({
+  const { error } = await runCodecWithHeldStderr("memory", {
+    caller: "after memory-limit exit",
+  });
+  expect(error).toBeInstanceOf(AnalysisResourceConstraintError);
+  expect(error).toMatchObject({
     resource: "memory",
     reportedLimits: {
       codec_process_memory_limit_bytes: expectedProcessMemoryLimitBytes,
     },
-    capturedOutput: { stderr: "memory limit reached" },
+    capturedOutput: { stderr: "memory limit reached", truncated: true },
   });
-  expect(result.error.capturedOutput?.truncated).toBe(true);
 });
 
 it("retains a physical process admission error alongside cancellation", async () => {
@@ -413,3 +366,71 @@ it.each([
     }
   },
 );
+
+it.each([
+  [
+    "physical OS spawn error",
+    Object.assign(new Error("spawn resource unavailable"), { code: "EAGAIN" }),
+    "ProviderAdapterError",
+  ],
+  [
+    "Windows memory capability refusal",
+    new WindowsNativeControlUnavailableError("job-memory-limit"),
+    "AnalysisCapabilityUnavailableError",
+  ],
+] as const)(
+  "keeps a %s alongside caller cancellation",
+  async (_name, physical, errorTag) => {
+    const controller = new AbortController();
+    const reason = { caller: "during process spawn" };
+    const result = await runSourceMapCommand(
+      "{}",
+      "/probe/source.map",
+      { signal: controller.signal },
+      {
+        prepareOwnership: async () => {},
+        launcher: async () => {
+          controller.abort(reason);
+          throw physical;
+        },
+      },
+      unexpectedCleanup,
+    );
+    if (result.ok) throw new Error("expected launch rejection");
+    expect(result.error._tag).toBe(errorTag);
+    expect(result.error.cause).toBe(physical);
+    expect(result.error.secondaryFailures).toHaveLength(1);
+    expect(result.error.secondaryFailures[0]).toBeInstanceOf(
+      AnalysisCancelledError,
+    );
+    expect(result.error.secondaryFailures[0]?.cause).toBe(reason);
+  },
+);
+
+it("keeps an observed launcher interruption at the codec deadline a timeout", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+  try {
+    const result = await runSourceMapCommand(
+      "{}",
+      "/probe/source.map",
+      undefined,
+      {
+        prepareOwnership: async () => {},
+        launcher: async ({ signal }) => {
+          await vi.advanceTimersByTimeAsync(1000);
+          assertProcessOwnershipInspectionActive(signal);
+          throw new Error(
+            "expected the codec deadline to interrupt the launcher",
+          );
+        },
+      },
+      unexpectedCleanup,
+      1000,
+    );
+    if (result.ok) throw new Error("expected launch timeout");
+    expect(result.error).toBeInstanceOf(AnalysisTimeoutError);
+    expect(result.error.secondaryFailures).toHaveLength(0);
+  } finally {
+    vi.useRealTimers();
+  }
+});
