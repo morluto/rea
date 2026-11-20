@@ -1,14 +1,48 @@
 import { readFile, realpath } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   bindConformanceFixtureArtifact,
   resolveConformanceFixturePath,
   parseConformanceFixtureManifest,
 } from "./conformance-fixtures.mjs";
 
-/** Bind the real-Hopper semantic verifier to source-owned manifest artifacts. */
-export async function loadRealHopperFixtureTargets(manifestPath) {
-  const canonicalManifest = await realpath(manifestPath);
+const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
+
+/**
+ * Bind the real-Hopper semantic verifier to source-owned manifest artifacts.
+ *
+ * `manifestPath` is resolved against `fixtureRoot` and must stay inside it
+ * after symlink canonicalization. The default root is the repository, so an
+ * operator-selected manifest cannot read an arbitrary filesystem path. Tests
+ * pass the directory they created.
+ */
+export async function loadRealHopperFixtureTargets(
+  manifestPath,
+  { fixtureRoot = repositoryRoot } = {},
+) {
+  const root = resolve(fixtureRoot);
+  const resolved = resolve(root, manifestPath);
+  const lexical = relative(root, resolved);
+  if (
+    lexical === ".." ||
+    lexical.startsWith(".." + sep) ||
+    isAbsolute(lexical)
+  )
+    throw new Error(
+      `Hopper conformance manifest escapes the fixture root: ${manifestPath}`,
+    );
+  const canonicalRoot = await realpath(root);
+  const canonicalManifest = await realpath(resolved);
+  const canonical = relative(canonicalRoot, canonicalManifest);
+  if (
+    canonical === ".." ||
+    canonical.startsWith(".." + sep) ||
+    isAbsolute(canonical)
+  )
+    throw new Error(
+      `Hopper conformance manifest escapes the fixture root: ${manifestPath}`,
+    );
   const manifest = parseConformanceFixtureManifest(
     JSON.parse(await readFile(canonicalManifest, "utf8")),
   );
@@ -17,11 +51,11 @@ export async function loadRealHopperFixtureTargets(manifestPath) {
   const large = fixtureEntry(manifest.fixtures, "large");
   const oracle = requireCOracle(primary.expectations?.hopperOracle);
   const largeOracle = requireLargeOracle(large.expectations);
-  const root = dirname(canonicalManifest);
+  const manifestDirectory = dirname(canonicalManifest);
   const [primaryArtifact, secondaryArtifact, largeArtifact] = await Promise.all(
     [primary, secondary, large].map(async (fixture) =>
       bindConformanceFixtureArtifact(
-        await resolveConformanceFixturePath(root, fixture.artifact),
+        await resolveConformanceFixturePath(manifestDirectory, fixture.artifact),
         fixture,
       ),
     ),
@@ -33,7 +67,7 @@ export async function loadRealHopperFixtureTargets(manifestPath) {
     unicode === undefined
       ? undefined
       : await bindConformanceFixtureArtifact(
-          await resolveConformanceFixturePath(root, unicode.artifact),
+          await resolveConformanceFixturePath(manifestDirectory, unicode.artifact),
           unicode,
         );
   requireDistinctArtifacts([
