@@ -59,6 +59,8 @@ export const VSIX_LIMITATIONS = {
   noPackageJson: "No extension/package.json was selected.",
   malformedPackageJson:
     "The selected extension/package.json is not well-formed JSON.",
+  oversizedMainDirectoryPackageJson: (path: string, limit: number): string =>
+    `Member ${JSON.stringify(path)} exceeds the ${String(limit)}-byte manifest budget and was not read, so the directory main is unresolved; its index files were not used.`,
   malformedMainDirectoryPackageJson: (path: string): string =>
     `Member ${JSON.stringify(path)} is not a JSON object, so the directory main does not resolve; its index files were not used.`,
   entryPointCaseOnlyMatch: (path: string, member: string): string =>
@@ -379,11 +381,18 @@ const caseOnlyEntryPointMatch = (
  * rejects a manifest that is not a JSON object with
  * ERR_INVALID_PACKAGE_CONFIG instead of falling back to `index.*`, so that
  * outcome stays distinct from a manifest that names no usable `main`.
+ * `unread` marks a manifest skipped by the byte budget: its `main` is
+ * unknown, so the index files cannot stand in for it either.
  */
 type DirectoryManifestMain =
   | { readonly kind: "main"; readonly path: string }
   | { readonly kind: "none" }
-  | { readonly kind: "malformed" };
+  | { readonly kind: "malformed" }
+  | { readonly kind: "unread" };
+
+/** Whether the directory manifest stops the lookup before `index.*`. */
+const directoryMainStopsLookup = (main: DirectoryManifestMain): boolean =>
+  main.kind === "malformed" || main.kind === "unread";
 
 /**
  * `main` of a directory's own package.json, joined onto that directory with
@@ -421,7 +430,7 @@ const directoryManifestMain = (
  * the specifier is directory-only, the file itself or with an added
  * extension; then the directory's package.json `main`, then the directory's
  * `index.*`. A malformed directory package.json stops the lookup, as it does
- * in Node.
+ * in Node; an unread one stops it too, since its `main` is unknown.
  */
 const resolveNodeEntryPoint = (
   declared: string,
@@ -437,7 +446,7 @@ const resolveNodeEntryPoint = (
     );
     if (asFile.present) return asFile;
   }
-  if (directoryMain.kind === "malformed")
+  if (directoryMainStopsLookup(directoryMain))
     return { path: declared, present: false };
   if (directoryMain.kind === "main") {
     const viaManifest = resolveEntryPoint(
@@ -1095,8 +1104,12 @@ export const parseVsixPackage = async (
           )
         )
           throw cause;
+        mainDirectoryMain = { kind: "unread" };
         limitations.push(
-          `Member ${JSON.stringify(mainManifest.path)} exceeds the ${String(input.max_manifest_bytes)}-byte manifest budget and was not read to resolve main.`,
+          VSIX_LIMITATIONS.oversizedMainDirectoryPackageJson(
+            mainManifest.path,
+            input.max_manifest_bytes,
+          ),
         );
       }
       if (decoded !== undefined) {
@@ -1156,11 +1169,11 @@ export const parseVsixPackage = async (
     for (const [entry, suffixes] of [
       [
         mainEntry,
-        // A malformed directory package.json stops the lookup before the
-        // index files, so their case cannot be the reason main is absent.
+        // A malformed or unread directory package.json stops the lookup
+        // before the index files, so their case cannot be why main is absent.
         [
           ...(mainDirectoryOnly ? [] : NODE_FILE_CANDIDATES),
-          ...(mainDirectoryMain.kind === "malformed"
+          ...(directoryMainStopsLookup(mainDirectoryMain)
             ? []
             : NODE_INDEX_CANDIDATES),
         ],
