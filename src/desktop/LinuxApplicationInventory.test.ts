@@ -253,18 +253,8 @@ describe.skipIf(process.platform === "win32")(
     it.each([
       { before: "", extra: "this is not a key\n", invalidLine: 3 },
       { before: "[Other]\nName=Other\n", extra: "", invalidLine: 1 },
-      {
-        before: "",
-        extra: "",
-        header: "\u00a0[Desktop Entry]",
-        invalidLine: 1,
-      },
-      {
-        before: "",
-        extra: "",
-        header: "[Desktop Entry]\u00a0",
-        invalidLine: 1,
-      },
+      { header: "\u00a0[Desktop Entry]", invalidLine: 1 },
+      { header: "[Desktop Entry]\u00a0", invalidLine: 1 },
       {
         before: "",
         extra: "",
@@ -280,7 +270,7 @@ describe.skipIf(process.platform === "win32")(
     ])(
       "refuses a hidden override with malformed structure at line $invalidLine",
       async ({ before, extra, header, trailing = "", invalidLine }) => {
-        const entry = `${before}${header ?? "[Desktop Entry]"}\nType=Application\n${extra}Name=User notes\nExec=notes-app\n`;
+        const entry = `${before ?? ""}${header ?? "[Desktop Entry]"}\nType=Application\n${extra ?? ""}Name=User notes\nExec=notes-app\n`;
         const { inspect, file } = await userOverride(
           `${entry}Hidden=true\n${trailing}`,
         );
