@@ -4,6 +4,8 @@ import java.io.ByteArrayInputStream;
 import java.io.PrintWriter;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Locale;
 
 import com.google.gson.JsonNull;
@@ -83,7 +85,25 @@ public final class ReaFileOffsetSourceProbe extends HeadlessScript {
         require(mapped.get("file_offset").getAsLong() == 0x4210, "slice base added to the file offset");
         rejectedCode(resolve, bridge, "file_offset_unmapped", "no loaded source mapping",
             "file-offset:0x210", new JsonObject());
+        base.set(bridge, 9007199254740991L - 0x20fL);
+        rejectedCode(reverse, bridge, "file_offset_unrepresentable", "beyond the exact JSON integer range",
+            reverseInput("0x140001010"));
         base.set(bridge, 0L);
+
+        // The session descriptor admits only an exact non-negative JSON integer base.
+        var readDescriptor = bridge.getClass().getDeclaredMethod("readDescriptor", Path.class);
+        readDescriptor.setAccessible(true);
+        Path descriptorFile = Files.createTempFile("rea-descriptor", ".json");
+        descriptorFile.toFile().deleteOnExit();
+        for (String invalid : new String[] { "-1", "1.5", "9007199254740992", "true" }) {
+            Files.writeString(descriptorFile, descriptorWithBase(invalid));
+            rejected(readDescriptor, null, "REA session descriptor is invalid", descriptorFile);
+        }
+        Files.writeString(descriptorFile, descriptorWithBase("16384"));
+        Object descriptor = readDescriptor.invoke(null, descriptorFile);
+        var descriptorBase = descriptor.getClass().getDeclaredMethod("targetFileOffsetBase");
+        descriptorBase.setAccessible(true);
+        require((long)descriptorBase.invoke(descriptor) == 16384L, "descriptor slice base admitted");
 
         // Inject backend failures after real source/function resolution. This
         // verifies context propagation, not a naturally failing decompiler.
@@ -116,6 +136,12 @@ public final class ReaFileOffsetSourceProbe extends HeadlessScript {
         rejectedCode(resolve, bridge, "file_offset_ambiguous", "multiple loaded mappings",
             "file-offset:0x210", new JsonObject());
         println("REA_FILE_OFFSET_SOURCE_OK foreign/partial/uninitialized/unmapped rejected; original round trip; duplicate ambiguity; injected backend failure context retained");
+    }
+
+    private String descriptorWithBase(String base) {
+        return "{\"transport\":\"unix-socket\",\"endpoint_path\":\"/tmp/rea.sock\",\"token\":\"t\","
+            + "\"run_id\":\"r\",\"target_sha256\":\"" + "a".repeat(64) + "\",\"provider_version\":\"12.2\","
+            + "\"profile_digest\":\"p\",\"target_file_offset_base\":" + base + "}";
     }
 
     private JsonObject reverseInput(String address) {

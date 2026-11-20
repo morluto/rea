@@ -1368,3 +1368,61 @@ describe("Ghidra GameCube DOL section file", () => {
     },
   );
 });
+
+describe("Ghidra universal Mach-O slice descriptor", () => {
+  it.skipIf(process.platform === "win32").each([
+    { targetFileOffsetBase: 16384, expected: 16384 },
+    { targetFileOffsetBase: undefined, expected: undefined },
+  ])(
+    "writes slice base $expected to session.json before spawn",
+    async ({ targetFileOffsetBase, expected }) => {
+      const parent = await createTestTempDirectory("rea-slice-descriptor-");
+      const runtime = await createGhidraTestRuntime(parent);
+      runtimes.push(runtime);
+      const spawnProcess = vi.fn(async () => {
+        throw new Error("fixture stops before process creation");
+      });
+      const javaHome = "/opt/fixture-jdk";
+      const launcher = new GhidraHeadlessLauncher({
+        environment: process.env,
+        platform: "darwin",
+        configurationDirectoryName: "ghidra_12.2_PUBLIC",
+        analyzeHeadlessPath: fixturePath,
+        javaHome,
+        bridgeScriptPath: join(parent, "ReaGhidraBridge.java"),
+        javaLaunch: async () => ({
+          command: join(javaHome, "bin", "java"),
+          arguments: [],
+          environment: {},
+        }),
+        spawnProcess,
+      });
+      await launcher.launch(
+        {
+          runtimeRoot: runtime.path,
+          transport: "unix-socket",
+          endpointPath: join(runtime.path, "bridge.sock"),
+          token: "token-for-slice-test",
+          runId: "d6fcbb66-e829-4ff6-a535-0035aec63139",
+          targetPath: "/tmp/fixture-slice",
+          targetSha256: "c".repeat(64),
+          ...(targetFileOffsetBase === undefined
+            ? {}
+            : { targetFileOffsetBase }),
+          providerVersion: "12.2",
+          profileDigest: "a".repeat(64),
+        },
+        { resourceScope: createTestArtifactResourceScope() },
+      );
+      expect(spawnProcess).toHaveBeenCalledOnce();
+      const descriptor: unknown = JSON.parse(
+        await readFile(join(runtime.path, "session.json"), "utf8"),
+      );
+      expect(descriptor).toMatchObject({ target_sha256: "c".repeat(64) });
+      expect(
+        (descriptor as { target_file_offset_base?: unknown })
+          .target_file_offset_base,
+      ).toBe(expected);
+    },
+  );
+});

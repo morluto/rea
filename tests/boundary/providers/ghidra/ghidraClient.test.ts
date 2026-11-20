@@ -44,7 +44,12 @@ import {
   GhidraLaunchError,
 } from "../../../../src/ghidra/GhidraLauncher.js";
 import type { GhidraDiagnostic } from "../../../../src/ghidra/GhidraClientTypes.js";
-import type { GhidraLauncher } from "../../../../src/ghidra/GhidraLauncher.js";
+import type {
+  GhidraLauncher,
+  GhidraLaunchSession,
+} from "../../../../src/ghidra/GhidraLauncher.js";
+import type { UniversalMachOSlice } from "../../../../src/domain/binaryTargetTypes.js";
+import { fat } from "../../../../src/domain/binaryTarget.fixture.js";
 import type { ProviderProcessHandle } from "../../../../src/process/ProviderProcess.js";
 import type { GhidraTransportKind } from "../../../../src/ghidra/GhidraTransport.js";
 import {
@@ -130,6 +135,7 @@ const clientFor = (
     readonly logger?: Logger;
     readonly targetPath?: string;
     readonly targetSha256?: string;
+    readonly universalSlice?: UniversalMachOSlice;
     readonly bridgeMaxReplyBytes?: BridgeMaxReplyBytes;
   } = {},
 ): GhidraClient => {
@@ -143,6 +149,9 @@ const clientFor = (
     startupTimeoutMs: options.startupTimeoutMs ?? 1_000,
     ...(options.runId === undefined ? {} : { runId: options.runId }),
     ...(options.logger === undefined ? {} : { logger: options.logger }),
+    ...(options.universalSlice === undefined
+      ? {}
+      : { universalSlice: options.universalSlice }),
     ...(options.bridgeMaxReplyBytes === undefined
       ? {}
       : { bridgeMaxReplyBytes: options.bridgeMaxReplyBytes }),
@@ -1043,6 +1052,43 @@ it("does not classify a later remote error as an identity admission failure", as
   expect(result.error.remoteCode).toBe("import_identity_mismatch");
   expect(result.error.cause).not.toBeInstanceOf(GhidraAdmissionError);
   expect(client.isReady()).toBe(true);
+});
+
+describe("GhidraClient universal Mach-O slice", () => {
+  it.skipIf(process.platform === "win32")(
+    "completes the handshake under the digest of the imported universal slice",
+    async () => {
+      const bytes = fat([0x01000007, 0x0100000c]);
+      const universalSlice = { offset: 80, size: 32 };
+      const directory = await createTestTempDirectory("rea-ghidra-slice-");
+      const targetPath = join(directory, "universal");
+      await writeFile(targetPath, bytes);
+      const sessions: GhidraLaunchSession[] = [];
+      const fixture = new FixtureLauncher();
+      const client = clientFor(
+        {
+          launch: (session) => {
+            sessions.push(session);
+            return fixture.launch(session);
+          },
+        },
+        {
+          targetPath,
+          targetSha256: createHash("sha256").update(bytes).digest("hex"),
+          universalSlice,
+        },
+      );
+      expect(await client.start()).toMatchObject({ ok: true });
+      expect(sessions).toMatchObject([
+        {
+          targetSha256: createHash("sha256")
+            .update(bytes.subarray(80, 112))
+            .digest("hex"),
+          targetFileOffsetBase: 80,
+        },
+      ]);
+    },
+  );
 });
 
 describe("GhidraClient", () => {
