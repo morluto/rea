@@ -5,6 +5,7 @@ The containing mitmdump process and its configuration directory are REA-owned.
 """
 
 import base64
+import errno
 import hashlib
 import ipaddress
 import json
@@ -360,7 +361,32 @@ def _clamp_resource_limit(kind, requested):
     """Lower one soft limit. Keep the inherited hard limit, including infinity."""
     soft, hard = resource.getrlimit(kind)
     finite = [requested] + [value for value in (soft, hard) if value != resource.RLIM_INFINITY]
-    resource.setrlimit(kind, (min(finite), hard))
+    effective = min(finite)
+    resource.setrlimit(kind, (effective, hard))
+    return effective
+
+
+def _file_limit_reply(effective):
+    """A reply that fits a tighter inherited file-size limit and names that limit."""
+    return json.dumps(
+        {
+            "ok": False,
+            "reason": "fixed-limit",
+            "message": "The effective RLIMIT_FSIZE of " + str(effective) + " bytes cannot hold the serialized reply. The requested output budget does not raise an inherited limit.",
+            "pointer": "",
+            "boundary": "file-size",
+            "ceiling": {
+                "name": "The inherited file-size limit of " + str(effective) + " bytes",
+                "kind": "bytes",
+                "limit": effective,
+                "unit": "bytes",
+                "narrowing": "Raise the process RLIMIT_FSIZE above the complete reply, or select a capture whose reply fits in the inherited limit.",
+            },
+        },
+        ensure_ascii=True,
+        allow_nan=False,
+        separators=(",", ":"),
+    ).encode("ascii")
 
 
 class OfflineCapture:
@@ -378,7 +404,7 @@ class OfflineCapture:
             if any(type(budgets[key]) is not int or budgets[key] < 1 for key in ("inputBytes", "outputBytes", "depth")):
                 raise ValueError("Invalid admitted capture budgets")
             output_bytes = budgets["outputBytes"]
-            _clamp_resource_limit(resource.RLIMIT_FSIZE, output_bytes)
+            file_limit = _clamp_resource_limit(resource.RLIMIT_FSIZE, output_bytes)
             try:
                 response = {"ok": True, "value": decode(request)}
             except Exception as error:
@@ -387,8 +413,15 @@ class OfflineCapture:
                 output = json.dumps(response, ensure_ascii=True, allow_nan=False, separators=(",", ":")).encode("ascii")
             except Exception as error:
                 output = json.dumps(failure_reply(error), separators=(",", ":")).encode("ascii")
-            if len(output) > output_bytes:
-                output = b'{"ok":false,"reason":"limit","message":"Native reply exceeds the complete-evidence output budget.","pointer":""}'
+            if len(output) > file_limit:
+                # file_limit is never above the requested budget. A lower value is the inherited cap.
+                output = (
+                    _file_limit_reply(file_limit)
+                    if file_limit < output_bytes
+                    else b'{"ok":false,"reason":"limit","message":"Native reply exceeds the complete-evidence output budget.","pointer":""}'
+                )
+            if len(output) > file_limit:
+                raise OSError(errno.EFBIG, "file-size limit cannot hold a limit refusal")
             Path(request["reply_path"]).write_bytes(output)
         finally:
             ctx.master.shutdown()
