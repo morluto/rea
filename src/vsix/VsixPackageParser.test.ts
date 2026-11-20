@@ -233,6 +233,27 @@ it("caps contributed commands and keeps the omitted count", async () => {
   expect(report.contributes.commands_omitted).toBe(3);
 });
 
+it("counts a single contributed command object as one command", async () => {
+  const bytes = await vsixPackageFixture({
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      engines: { vscode: "^1.74.0" },
+      contributes: { commands: { command: "demo.run", title: "Run" } },
+    }),
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.contributes.commands).toEqual([
+    { command: "demo.run", title: "Run" },
+  ]);
+  expect(report.contributes.commands_total).toBe(1);
+  expect(report.contributes.commands_omitted).toBe(0);
+  expect(report.contributes.keys).toEqual([{ name: "commands", count: 1 }]);
+});
+
 it("reports an empty contributes key as a limitation and keeps the report", async () => {
   const bytes = await vsixPackageFixture({
     packageJson: JSON.stringify({

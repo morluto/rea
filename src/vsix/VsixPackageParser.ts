@@ -684,12 +684,19 @@ const parsePackageJsonDocument = (
   // A contribution point is named by its key; an empty key names none.
   if (entries.some(([name]) => name.length === 0))
     limitations.push(VSIX_LIMITATIONS.emptyContributesKey);
+  // VS Code accepts `contributes.commands` as one command object or an array.
+  const commandsRaw = contributesRaw?.commands;
+  const commandRows: readonly unknown[] = Array.isArray(commandsRaw)
+    ? commandsRaw
+    : commandsRaw !== null && typeof commandsRaw === "object"
+      ? [commandsRaw]
+      : [];
   const keys = entries
     .filter(([name]) => name.length > 0)
-    .map(([name, item]) => ({ name, count: contributeCount(item) }));
-  const commandRows = Array.isArray(contributesRaw?.commands)
-    ? contributesRaw.commands
-    : [];
+    .map(([name, item]) => ({
+      name,
+      count: name === "commands" ? commandRows.length : contributeCount(item),
+    }));
   const listedCommands = boundedList(commandRows, VSIX_COMMANDS_CAP);
   const commands = listedCommands.items.map((item) => {
     if (item === null || typeof item !== "object" || Array.isArray(item))
