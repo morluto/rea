@@ -59,7 +59,7 @@ export const DEFAULT_EVM_TIMEOUT_MS = 30_000;
 /** Keep each selected compiler encoding self-contained in advertised JSON Schemas. */
 export const evmEncodingSchema = z.union([
   z.enum(["raw", "hex"]),
-  compilerSelectionSchema.extend({ kind: z.literal("solc-json") }),
+  compilerSelectionSchema.safeExtend({ kind: z.literal("solc-json") }),
 ]);
 export type EvmEncoding = z.infer<typeof evmEncodingSchema>;
 export const evmEncodingKind = (

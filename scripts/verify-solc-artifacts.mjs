@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 import { artifactMcpCall } from "./lib/artifact-e2e.mjs";
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Ajv2020 } from "ajv/dist/2020.js";
+import { canonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { mcpTextValue } from "./lib/mcp-verifier-results.mjs";
@@ -39,7 +39,7 @@ const { linked, unlinked, failedCompile } =
   await createSolcFixtureOutputs(modulePath);
 const entrypoint =
   process.argv[2] ?? fileURLToPath(new URL("./rea.mjs", import.meta.url));
-const execute = promisify(execFile);
+const commands = await createVerifierCommands();
 const run = createVerifierRun();
 const environment = Object.fromEntries(
   Object.entries(process.env).filter(([, value]) => typeof value === "string"),
@@ -65,9 +65,10 @@ try {
   const definition = (await client.listTools()).tools.find(
     ({ name }) => name === "inspect_evm_interface",
   );
-  assert.ok(definition?.outputSchema, "Missing named EVM output schema");
+  assert.ok(definition, "Missing EVM interface tool");
   inputSchema = definition.inputSchema;
-  outputSchema = definition.outputSchema;
+  // tools/list omits output schemas by default; validate against the contract.
+  outputSchema = canonicalOutputSchema("inspect_evm_interface");
   validate = new Ajv2020({ strict: false, validateFormats: false });
   for (const schema of [inputSchema, outputSchema])
     assert.ok(validate.validateSchema(schema), JSON.stringify(validate.errors));
@@ -142,7 +143,7 @@ try {
       let failed = false,
         stdout;
       try {
-        ({ stdout } = await execute(
+        ({ stdout } = await commands.exec(
           fileSizeLimit === undefined ? process.execPath : "/usr/bin/prlimit",
           fileSizeLimit === undefined
             ? args
@@ -159,10 +160,13 @@ try {
           },
         ));
       } catch (cause) {
-        if (typeof cause.code !== "number" || typeof cause.stdout !== "string")
+        if (
+          typeof cause.code !== "number" ||
+          typeof cause.snapshot?.stdout?.text !== "string"
+        )
           throw cause;
         failed = true;
-        stdout = cause.stdout;
+        stdout = cause.snapshot.stdout.text;
       }
       value = JSON.parse(stdout);
       if (expectedError) {
@@ -894,6 +898,7 @@ try {
   for (const close of [
     () => client.close(),
     () => transport.close(),
+    () => commands.close(),
     () => root.release(),
   ]) {
     try {

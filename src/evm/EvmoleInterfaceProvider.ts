@@ -92,7 +92,10 @@ import {
   EVM_WORKER_HEAP_MIB,
   EVM_FILE_SIZE_FAILURE_EXIT,
 } from "./EvmoleRelease.js";
-import { evmWorkerReplySchema } from "./EvmInterfaceWorkerContract.js";
+import {
+  MAX_EVM_WORKER_REQUEST_BYTES,
+  evmWorkerReplySchema,
+} from "./EvmInterfaceWorkerContract.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { decodeLimit } from "../domain/parseFailure.js";
 import { parseLimitConstraint } from "../domain/parseFailureAnalysisError.js";
@@ -657,18 +660,20 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
         mode: 0o600,
         ...(options?.signal === undefined ? {} : { signal: options.signal }),
       });
-      await writeFile(
-        requestPath,
-        JSON.stringify({
-          snapshot_path: snapshotPath,
-          reply_path: replyPath,
-          failure_marker_path: join(root.path, "resource.failure"),
-          file_size_bytes: workerLimits.file_bytes,
-          encoding: input.encoding,
-          producer_limits: producerLimits,
-        }),
-        { flag: "wx", mode: 0o600 },
-      );
+      const requestJson = JSON.stringify({
+        snapshot_path: snapshotPath,
+        reply_path: replyPath,
+        failure_marker_path: join(root.path, "resource.failure"),
+        file_size_bytes: workerLimits.file_bytes,
+        encoding: input.encoding,
+        producer_limits: producerLimits,
+      });
+      // The worker reads this file under the same ceiling; refuse before it starts.
+      if (Buffer.byteLength(requestJson) > MAX_EVM_WORKER_REQUEST_BYTES)
+        throw invariantViolation(
+          "Encoded worker request exceeds the shared request ceiling.",
+        );
+      await writeFile(requestPath, requestJson, { flag: "wx", mode: 0o600 });
       const { NODE_OPTIONS: _ambientNodeOptions, ...workerEnvironment } =
         environment;
       const execution = await runOwnedCommand(

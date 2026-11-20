@@ -107,7 +107,7 @@ mcpTest(
       { kind: "session", session },
       {
         evmInterface: service,
-        environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
+        environment: process.env,
       },
     );
     ownArtifactSession(session, onTestFinished);
@@ -119,7 +119,7 @@ mcpTest(
       client,
       "inspect_evm_interface",
     );
-    const { ajv, inputSchema } = schemas;
+    const { ajv, canonicalInputSchema: inputSchema } = schemas;
     expect(
       ajv.validate(inputSchema, { path: value.artifact.path, encoding: "hex" }),
     ).toBe(true);
@@ -226,7 +226,7 @@ mcpTest(
       {},
       undefined,
       createToolResultDelivery(undefined),
-      { budgetBytes: 13 * 1024 },
+      { budgetBytes: 1024 },
     );
     registerServiceTools(
       server,
@@ -241,7 +241,7 @@ mcpTest(
       client,
       "inspect_evm_interface",
     );
-    expect(inputSchema.description).toContain("Advertised in reduced form");
+    expect(inputSchema.properties).toEqual({});
     const arguments_ = {
       path: "/selected.json",
       encoding: {

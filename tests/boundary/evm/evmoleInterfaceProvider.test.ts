@@ -7,7 +7,10 @@ import { z } from "zod";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { evmInterfaceSchema } from "../../../src/domain/evm/evmInterface.js";
 import { EvmoleInterfaceProvider } from "../../../src/evm/EvmoleInterfaceProvider.js";
-import { evmWorkerRequestSchema } from "../../../src/evm/EvmInterfaceWorkerContract.js";
+import {
+  MAX_EVM_WORKER_REQUEST_BYTES,
+  evmWorkerRequestSchema,
+} from "../../../src/evm/EvmInterfaceWorkerContract.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { waitForProviderProcessReady } from "../../fixtures/providerProcess.js";
@@ -1120,5 +1123,34 @@ it.runIf(!unsupportedHost)(
       "producer_limits.input_bytes",
     );
     expect(spawned).toBe(false);
+  },
+);
+
+it.runIf(!unsupportedHost)(
+  "writes an admitted large compiler selection within the worker request ceiling",
+  async () => {
+    const { path } = await fixture();
+    const sourceUnit = "\u0001".repeat(70 * 1024);
+    let requestBytes = 0;
+    const provider = new EvmoleInterfaceProvider({}, async (spawn) => {
+      const requestPath = spawn.arguments.at(-1) ?? "";
+      requestBytes = (await readFile(requestPath)).byteLength;
+      return spawnOwnedProviderProcess({
+        ...spawn,
+        command: process.execPath,
+        arguments: ["-e", ""],
+      });
+    });
+    await provider.inspect({
+      path,
+      encoding: {
+        kind: "solc-json",
+        source_unit: sourceUnit,
+        contract_name: "C",
+        bytecode_kind: "creation",
+      },
+    });
+    expect(requestBytes).toBeGreaterThan(64 * 1024);
+    expect(requestBytes).toBeLessThanOrEqual(MAX_EVM_WORKER_REQUEST_BYTES);
   },
 );

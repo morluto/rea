@@ -6,6 +6,12 @@ import {
   solcCompilerDiagnosticsSchema,
 } from "../domain/evm/solcArtifact.js";
 import { evmoleInterfaceReplySchema } from "./EvmoleInterfaceAdapter.js";
+import { SOLC_JSON_LIMITS } from "../domain/evm/solcCompilerJson.js";
+
+/** Worker request ceiling: fixed fields, plus admitted selection bytes at the
+ * worst JSON escaping (a control byte becomes six). Provider and worker share it. */
+export const MAX_EVM_WORKER_REQUEST_BYTES =
+  64 * 1024 + 6 * SOLC_JSON_LIMITS.inputBytes;
 
 const workerRequestFields = {
   snapshot_path: z.string(),

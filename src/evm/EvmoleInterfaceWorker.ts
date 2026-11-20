@@ -14,7 +14,10 @@ import {
   EvmCarrierFailure,
 } from "./EvmBytecodeCarrier.js";
 import { selectSolcArtifact } from "../domain/evm/solcArtifactSelection.js";
-import { evmWorkerRequestSchema } from "./EvmInterfaceWorkerContract.js";
+import {
+  MAX_EVM_WORKER_REQUEST_BYTES,
+  evmWorkerRequestSchema,
+} from "./EvmInterfaceWorkerContract.js";
 import { evmoleInterfaceReplySchema } from "./EvmoleInterfaceAdapter.js";
 import { inspectSolidityMetadata } from "./SolidityMetadata.js";
 import { EVM_FILE_SIZE_FAILURE_EXIT } from "./EvmoleRelease.js";
@@ -23,8 +26,6 @@ import { readStableArtifact } from "../resources/index.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 
-/** Maximum UTF-8 byte size of the REA-authored worker request JSON file. */
-const MAX_EVM_WORKER_REQUEST_BYTES = 64 * 1024;
 class UnsupportedContainer extends Error {}
 
 /** Admit bounded encoded parts before allocating a complete worker reply. */
