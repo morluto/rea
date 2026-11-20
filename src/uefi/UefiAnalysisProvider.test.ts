@@ -28,6 +28,7 @@ import {
 import { UefiAnalysisProvider } from "./UefiAnalysisProvider.js";
 import {
   uefiRequestSchema,
+  type UefiDecompileResult,
   type UefiExtractResult,
   type UefiRequest,
   type UefiInspectResult,
@@ -120,6 +121,20 @@ const extractRequest = (
 ) =>
   uefiRequestSchema.parse({
     operation: "extract_uefi_firmware",
+    input: { path, output_directory: outputDirectory, ...overrides },
+  });
+
+const decompileRequest = (
+  path: string,
+  outputDirectory: string,
+  overrides?: {
+    readonly max_modules?: number;
+    readonly include_disassembly?: boolean;
+    readonly filter_phase?: "all" | "pei" | "dxe" | "smm" | "sec" | "app";
+  },
+) =>
+  uefiRequestSchema.parse({
+    operation: "decompile_uefi_firmware",
     input: { path, output_directory: outputDirectory, ...overrides },
   });
 
@@ -1604,6 +1619,144 @@ it("retains a signed guided section as opaque when its processing flag is clear"
         range: { offset: 120, length: child.length },
       },
     ]);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("decompiles UEFI image modules into structured C scaffolding, headers and relative README links via SafeOutputTree", async () => {
+  const { imagePath, directory } = await writeTestImage();
+  const outDir = join(directory, "decompiled");
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(decompileRequest(imagePath, outDir)),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_found).toBe(1);
+    expect(result.total_modules_decompiled).toBe(1);
+    expect(result.phases.dxe).toBe(1);
+
+    const mod = result.modules[0];
+    expect(mod).toBeDefined();
+    expect(mod?.guid).toBe(GUID_DRIVER);
+    expect(mod?.phase).toBe("DXE");
+    expect(mod?.occurrence).toBe(0);
+    expect(mod?.relative_c_file).toContain("DXE/");
+    expect(mod?.c_file).toBe(join(outDir, mod!.relative_c_file!));
+
+    expect(existsSync(mod!.c_file!)).toBe(true);
+    expect(existsSync(mod!.header_file!)).toBe(true);
+    expect(existsSync(join(outDir, "firmware_manifest.json"))).toBe(true);
+    expect(existsSync(join(outDir, "README.md"))).toBe(true);
+
+    const cContent = await readFile(mod!.c_file!, "utf8");
+    expect(cContent).toContain("Reconstructed Entry Scaffolding");
+    expect(cContent).toContain("EFI_STATUS EFIAPI");
+
+    const headerContent = await readFile(mod!.header_file!, "utf8");
+    expect(headerContent).toContain("#ifndef EFIAPI");
+    expect(headerContent).toContain("#include <stdint.h>");
+
+    const readmeContent = await readFile(join(outDir, "README.md"), "utf8");
+    expect(readmeContent).toContain(
+      `[${mod!.name}.c](${mod!.relative_c_file})`,
+    );
+    expect(readmeContent).not.toContain(outDir);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("filters UEFI decompilation by initialization phase", async () => {
+  const { imagePath, directory } = await writeTestImage();
+  const outDir = join(directory, "decompiled_filtered");
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(imagePath, outDir, { filter_phase: "pei" }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_found).toBe(0);
+    expect(result.total_modules_decompiled).toBe(0);
+    expect(result.modules).toEqual([]);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("decompiles directory of pre-extracted binaries with bounded sniffing, duplicate disambiguation, and relative links", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-dir-decompile-");
+  const inDir = join(directory, "input");
+  const outDir = join(directory, "output");
+
+  const mzHeader = Buffer.alloc(128, 0);
+  mzHeader[0] = 0x4d; // M
+  mzHeader[1] = 0x5a; // Z
+  mzHeader.write("TEST_PAYLOAD", 64, "utf8");
+
+  const secDir = join(inDir, "sec");
+  const dxeDir = join(inDir, "dxe");
+  const dxeSubDir = join(inDir, "dxe", "recovery");
+  const rootDir = inDir;
+
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(secDir, { recursive: true });
+  await mkdirFs(dxeSubDir, { recursive: true });
+
+  const guid = "11112222-3333-4444-5555-666677778888";
+  await writeFile(join(secDir, "sec_core.efi"), mzHeader);
+  await writeFile(join(dxeDir, `${guid}_mod.efi`), mzHeader);
+  await writeFile(join(dxeSubDir, `${guid}_mod.efi`), mzHeader); // duplicate!
+  await writeFile(join(rootDir, "section-0.bin"), mzHeader); // should NOT match SEC
+  await writeFile(join(rootDir, "ignored.txt"), Buffer.from("just plain text"));
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_found).toBe(4);
+    expect(result.phases.sec).toBe(1);
+    expect(result.phases.dxe).toBe(3); // sec_core=SEC, 2 duplicates in dxe=DXE, section-0 in root=DXE (not SEC!)
+
+    const duplicates = result.modules.filter((m) => m.guid === guid);
+    expect(duplicates).toHaveLength(2);
+    expect(duplicates[0]?.occurrence).toBe(0);
+    expect(duplicates[1]?.occurrence).toBe(1);
+    expect(duplicates[0]?.relative_c_file).not.toBe(
+      duplicates[1]?.relative_c_file,
+    );
+
+    expect(existsSync(duplicates[0]!.c_file!)).toBe(true);
+    expect(existsSync(duplicates[1]!.c_file!)).toBe(true);
+
+    const readmeContent = await readFile(join(outDir, "README.md"), "utf8");
+    expect(readmeContent).not.toContain(outDir);
+    expect(readmeContent).toContain(duplicates[0]!.relative_c_file!);
+    expect(readmeContent).toContain(duplicates[1]!.relative_c_file!);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("rejects an already existing output directory under SafeOutputTree", async () => {
+  const { imagePath, directory } = await writeTestImage();
+  const outDir = join(directory, "existing_output");
+  const { mkdir: mkdirFs } = await import("node:fs/promises");
+  await mkdirFs(outDir, { recursive: true });
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = await provider.execute(
+      decompileRequest(imagePath, outDir),
+    );
+    expect(executed.ok).toBe(false);
   } finally {
     await provider.close();
   }

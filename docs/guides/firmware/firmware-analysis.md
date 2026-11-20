@@ -43,6 +43,7 @@ rea inspect-uefi-firmware /path/to/flash.bin --json
 rea inspect-uefi-nvram /path/to/flash.bin --json
 rea extract-uefi-firmware /path/to/flash.bin /path/to/new-output \
   --volume-offset 4096 --source-stream flash --json
+rea decompile-uefi-firmware /path/to/flash.bin /path/to/new-decompiled-tree --json
 ```
 
 Use `inspect_uefi_firmware` and `inspect_uefi_nvram` from MCP with
@@ -95,6 +96,39 @@ GUID. Data-only records have neither. Links remain observations and variable
 contents are retained as byte ranges. A nested NVAR chain can begin with a
 framed inactive record. The scan continues past framed inactive entries and
 reports partial coverage for incomplete successors.
+
+### Decompile UEFI firmware modules into source tree
+
+To reconstruct a navigable source code tree from executable PE32 and TE modules
+across all initialization phases (SEC, PEI, DXE, SMM, APP):
+
+```sh
+rea decompile-uefi-firmware /path/to/flash.bin /path/to/new-decompiled-tree --json
+```
+
+Or from MCP:
+
+```json
+{
+  "name": "decompile_uefi_firmware",
+  "arguments": {
+    "path": "/path/to/flash.bin",
+    "output_directory": "/path/to/new-decompiled-tree",
+    "max_modules": 500,
+    "include_disassembly": true,
+    "filter_phase": "all"
+  }
+}
+```
+
+The operation maps executable modules, writes their raw payloads, generates C
+entry point scaffolding with sanitized identifiers and EDK2-compatible headers,
+and disassembles instructions using system `llvm-objdump` or `objdump` when
+available. All files are staged and published through REA's `SafeOutputTree` into
+an absent output directory. Modules are organized by execution phase, indexed in
+`firmware_manifest.json`, and summarized with relative links in `README.md`.
+Directory mode is also supported: pass an existing directory path of pre-extracted
+PE/TE binaries to index and organize them into phases.
 
 UEFI operations accept up to 128 MiB per image, with a shared limit of 100,000
 structural records. Artifact inventory applies the same ceiling to volume

@@ -166,7 +166,7 @@ export const registerUefiCommands = (
       fields: {
         path: FLASH_PATH,
         output_directory: {
-          description: "Target directory for decompiled C source tree",
+          description: "Absent output directory; parent must exist",
         },
       },
     },

@@ -280,9 +280,7 @@ export const uefiInputSchemas = {
       .refine(isAbsolute, {
         message: "output_directory must be an absolute local filesystem path",
       })
-      .describe(
-        "Absolute output directory for decompiled firmware source tree",
-      ),
+      .describe("Absolute, absent output directory; parent must exist"),
     max_modules: z
       .number()
       .int()
@@ -564,12 +562,17 @@ export const uefiResultSchemas = {
     }),
     modules: z.array(
       z.strictObject({
-        guid: guidSchema,
+        occurrence: bytes,
+        guid: guidSchema.nullable(),
         name: z.string(),
         phase: z.string(),
+        disassembly_status: z.enum(["ok", "failed", "omitted"]),
         c_file: z.string().nullable(),
         asm_file: z.string().nullable(),
         header_file: z.string().nullable(),
+        relative_c_file: z.string().nullable(),
+        relative_asm_file: z.string().nullable(),
+        relative_header_file: z.string().nullable(),
         code_bytes: bytes,
       }),
     ),
