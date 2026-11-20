@@ -45,6 +45,8 @@ processTest.skipIf(hostLabel === undefined).for([
   },
 ])(
   "checks the Cutter verifier when the label is $mode",
+  // A cold macOS discovery can compile the native process identity helper.
+  { tags: process.platform === "darwin" ? ["long-running"] : [] },
   async ({ selected, diagnostic }, { processes }) => {
     const root = await createTestTempDirectory("rea-cutter-platform-");
     const env: NodeJS.ProcessEnv = {
