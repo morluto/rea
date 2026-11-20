@@ -96,9 +96,11 @@ Coordinate expensive checks across agents. If a test unexpectedly consumes heavy
 
 For tool design, follow [docs/development/tool-design.md](docs/development/tool-design.md): start from the analyst question, reuse existing contracts, preserve caller choices, and return useful evidence inline. Limits must follow real format, protocol, authority, or resource constraints. Account for representation expansion before allocation; derive completeness from examined coverage.
 
-A new ceiling is an `REA_` runtime setting with a default, floor, and maximum, and its error names the setting, effective value, source, and range. A fixed ceiling needs a stated format, protocol, or representation reason ([analysis settings, limits, and recovery](docs/design/limits-and-recovery.md)).
-
-Docs for a runtime setting name `update_analysis_settings` and the setting ID, and never say "restart".
+Choose the scope of a new limit from [analysis settings, limits, and recovery](docs/design/limits-and-recovery.md).
+A registered runtime setting may have an optional launch seed. Per-call and
+launch-only controls have their own contracts. Report the effective limit and
+recovery for the control that stopped the work, and document the setting ID
+and `update_analysis_settings` for changes that apply at runtime.
 
 For user- or agent-facing tool problems, prioritize fixing the owning behavior,
 contract, and actionable result or recovery at the point of use. Document the
@@ -108,11 +110,13 @@ a skill as the primary repair for a discoverability or contract defect.
 
 For test changes or provider claims, use [docs/development/testing.md](docs/development/testing.md). Select applicable [boundary regressions](docs/development/testing.md#boundary-regressions) for parser, inventory, snapshot, and projection fixes. Prefer real public CLI/MCP workflows, then production-boundary integration, then producer goldens. Keep module tests for distinct semantics stronger workflows cannot reliably reproduce. Preserve malformed-input, cancellation, cleanup, permission, capacity, and target-identity coverage when pruning. Report unverified coverage explicitly; simulated providers do not establish real-provider behavior.
 
-Tests assert error codes and structured facts, not prose. See [test design and pruning](docs/development/testing.md#test-design-and-pruning).
+Use structured facts to test behavior and assert wording when wording is part
+of the contract. Follow [test design and pruning](docs/development/testing.md#test-design-and-pruning)
+and use the [supervised command owner](docs/development/testing.md#verifier-scripts)
+for commands launched by a verifier.
 
-Verifier scripts launch commands only through [`createVerifierCommands`](scripts/lib/verify-commands.mjs) and [`createVerifierRun`](scripts/lib/verifier-run.mjs), never bare `execFile` or `spawn`.
-
-A new tool, lane, or format needs `docs/specs/<domain>/<slug>/` with `spec.md`, `plan.md`, and `tasks.md` before implementation. Follow the [feature lifecycle](docs/development/documentation.md#feature-lifecycle).
+Follow the [feature lifecycle](docs/development/documentation.md#feature-lifecycle)
+to decide when a new capability needs a feature record.
 
 Use Conventional Commit subjects and PR titles as specified under [pull request ownership and readiness](CONTRIBUTING.md#pull-request-ownership-and-readiness). Mark breaking changes with `!` or a `BREAKING CHANGE:` footer. Describe behavior changes, relevant validation, and real-provider verification scope.
 
@@ -130,8 +134,7 @@ required to open an issue.
 ## Pull Request Readiness
 
 Follow [human ownership and readiness](CONTRIBUTING.md#pull-request-ownership-and-readiness)
-when preparing a PR. An agent never attests to human review unless the human
-owner dictates it.
+when preparing a PR. Leave human readiness declarations to the human owner.
 
 <!-- BEGIN:turborepo-agent-rules -->
 

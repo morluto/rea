@@ -135,8 +135,7 @@ Leave the readiness declaration unchecked until the human owner has completed
 it. The declaration records initial readiness; later pushes do not invalidate
 it or require another human sign-off. Keep the PR description and affected
 validation current as work changes. AI agents must leave human declarations to
-the human owner. An agent never attests to human review unless the human owner
-dictates it.
+the human owner and must not attest to a human review on their behalf.
 
 Maintainers review the **Author readiness** declaration in the PR body. PRs
 authored by @morluto, @kaoru0822-kitauji, @N0zoM1z0, @gensokyo-dev, or
