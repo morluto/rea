@@ -70,7 +70,7 @@ the effective limit and exact repair; accepted overrides are reported separately
 from caller selections. Changes apply on the next call without restarting REA.
 Summary and selected extraction do not change the producer's admission.
 
-Module-graph admission ceilings are in [Bun standalone module graphs](#bun-standalone-module-graphs). Shared artifact-reader admission stays in [limits and recovery](design/limits-and-recovery.md#artifact-reader-admission).
+Module-graph admission ceilings are in [Bun standalone module graphs](#bun-standalone-module-graphs). Shared artifact-reader admission stays in [limits and recovery](reference/limits-and-recovery.md#artifact-reader-admission).
 Synthetic tests cover the carriers and malformed declarations. Run
 `node scripts/verify-bun-standalone.mjs` after `npm run build:cached` for local Bun
 verification, and add `--docker` to compile a Linux fixture with `oven/bun:1.4.0`.

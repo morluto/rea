@@ -112,31 +112,19 @@ it("preserves historical cargo-auditable feature lists and rejects bad values", 
   ).toThrow(ParseFailureError);
 });
 
-it("reports dependency cycles and keeps an omitted format version unknown", () => {
+it("reports only cyclic packages and preserves omitted root and version", () => {
+  // A multi-package component, a self-cycle, and a leaf reachable from a cycle.
   const parsed = section({
-    packages: [
-      { name: "a", version: "1", source: "local", dependencies: [1] },
-      { name: "b", version: "1", source: "local", dependencies: [0] },
-    ],
+    packages: [[1, 2, 4], [0], [1], [3], []].map((dependencies, index) => ({
+      name: `package-${String(index)}`,
+      version: "1",
+      source: "local",
+      dependencies,
+    })),
   });
-  expect(parsed.cyclic_dependency_indices).toEqual([0, 1]);
+  expect(parsed.cyclic_dependency_indices).toEqual([0, 1, 2, 3]);
   expect(parsed.format_version).toBeNull();
   expect(parsed.root_package_index).toBeNull();
-});
-
-it("includes every package that participates in a dependency cycle", () => {
-  const parsed = section({
-    packages: [
-      { name: "a", version: "1", source: "local", dependencies: [1, 2] },
-      { name: "b", version: "1", source: "local", dependencies: [0] },
-      { name: "c", version: "1", source: "local", dependencies: [1] },
-    ],
-  });
-  expect(parsed.cyclic_dependency_indices).toEqual([0, 1, 2]);
-  const self = section({
-    packages: [{ name: "a", version: "1", source: "local", dependencies: [0] }],
-  });
-  expect(self.cyclic_dependency_indices).toEqual([0]);
 });
 
 it("finishes a long acyclic dependency chain", () => {
@@ -322,31 +310,18 @@ it("names the fixed cap when it bounds a large padded section's inflate allocati
   expect((failure as Error).message).not.toContain("storage size");
 });
 
-it.each([0, 8])("reads documented cargo-auditable revision %i", (format) => {
-  const parsed = section({
-    format,
-    packages: [
-      { name: "sample", version: "0.1.0", source: "local", root: true },
-    ],
-  });
-  expect(parsed).toMatchObject({
-    format_version: format,
-    root_package_index: 0,
-  });
-  expect(rustAuditableMetadataSchema.parse(parsed)).toEqual(parsed);
-});
-
-it.each([{ source: 4 }, { source: 9 }, { source: 99 }])(
-  "preserves unknown revision $source for the documented preceding-revision interpretation",
-  ({ source }) => {
+it.each([0, 4, 8, 0xffff_ffff])(
+  "preserves cargo-auditable revision %i through metadata validation",
+  (format) => {
     const parsed = section({
-      format: source,
+      format,
       packages: [
         { name: "sample", version: "0.1.0", source: "local", root: true },
       ],
     });
     expect(parsed).toMatchObject({
-      format_version: source,
+      format_version: format,
+      root_package_index: 0,
     });
     expect(rustAuditableMetadataSchema.parse(parsed)).toEqual(parsed);
   },

@@ -8,7 +8,7 @@ import ts from "typescript6";
 // reported separately and are not verified by this Node-only scan.
 // Per-call limits belong to ANALYSIS_SETTINGS.
 // A name in REQUIRED_RUNTIME_LIMITS that is absent from source fails closed.
-// Each default, floor, and maximum in docs/design/rea-limit-inventory.md must
+// Each default, floor, and maximum in docs/reference/rea-limit-inventory.md must
 // equal ANALYSIS_SETTINGS or the owner export the parser enforces.
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -949,7 +949,7 @@ export const parseDocumentedNumericLimits = (markdown) => {
     const heading = lines.findIndex((line) => line.trim() === `## ${title}`);
     if (heading < 0)
       throw new Error(
-        `docs/design/rea-limit-inventory.md is missing "## ${title}"`,
+        `docs/reference/rea-limit-inventory.md is missing "## ${title}"`,
       );
     let index = heading + 1;
     while (index < lines.length && !lines[index].startsWith("|")) {
@@ -1092,7 +1092,7 @@ export const compareDocumentedNumericLimits = (rows, bounds, names) => {
         ? `${bound.name} (${bound.aliases.join(", ")})`
         : bound.name;
     failures.push(
-      `${label}: code exports default ${showLimitValue(bound.defaultValue)}, floor ${showLimitValue(bound.minimum)}, maximum ${showLimitValue(bound.maximum)}, but docs/design/rea-limit-inventory.md has no row`,
+      `${label}: code exports default ${showLimitValue(bound.defaultValue)}, floor ${showLimitValue(bound.minimum)}, maximum ${showLimitValue(bound.maximum)}, but docs/reference/rea-limit-inventory.md has no row`,
     );
   }
   return failures;
@@ -1210,8 +1210,8 @@ const restartOnlyBounds = (owners) => {
     ),
     bound(
       "REA_KUNA_JOBS",
-      exportedNumber(owners.kuna, "DEFAULT_KUNA_JOBS"),
-      exportedNumber(owners.kuna, "MINIMUM_KUNA_JOBS"),
+      exportedNumber(owners.kuna, "SERIAL_KUNA_JOBS"),
+      exportedNumber(owners.kuna, "SERIAL_KUNA_JOBS"),
       exportedNumber(owners.kuna, "MAXIMUM_KUNA_JOBS"),
     ),
     phaseBound(phases.doctor),
@@ -1373,7 +1373,7 @@ if (direct) {
   )) {
     if (!runtime.has(name) && !listed.has(name))
       failures.push(
-        `${name} in ${file.path} is neither an analysis setting nor docs/design/rea-limit-inventory.md via src/domain/numericLimitRegistry.ts`,
+        `${name} in ${file.path} is neither an analysis setting nor docs/reference/rea-limit-inventory.md via src/domain/numericLimitRegistry.ts`,
       );
   }
   for (const name of listed.keys()) {
@@ -1453,7 +1453,7 @@ if (direct) {
   if (checkout) {
     try {
       const inventory = await readFile(
-        join(root, "docs/design/rea-limit-inventory.md"),
+        join(root, "docs/reference/rea-limit-inventory.md"),
         "utf8",
       );
       const exported = await loadExportedNumericLimitBounds();

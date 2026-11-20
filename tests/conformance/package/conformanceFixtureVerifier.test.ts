@@ -19,6 +19,7 @@ import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js
 import { runningTestDeadline } from "../../support/runningTestDeadline.js";
 import { waitFor } from "../../support/testWait.js";
 import { removeTestWorkspace } from "../../support/workspace/workspaceFixture.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const digest = (bytes: string | Buffer) =>
   createHash("sha256").update(bytes).digest("hex");
@@ -27,13 +28,10 @@ const verifier = fileURLToPath(
 );
 
 const ownedFixture = async (prefix: string) => {
+  const root = await createTestTempDirectory(prefix);
   const commands = await createVerifierCommands();
-  let root: string | undefined;
-  onTestFinished(async () => {
-    await commands.close();
-    if (root !== undefined) await removeTestWorkspace(root);
-  });
-  root = await realpath(await mkdtemp(join(await realpath(tmpdir()), prefix)));
+  // Registered after the directory helper so stack order closes commands first.
+  onTestFinished(() => commands.close());
   return { commands, root };
 };
 

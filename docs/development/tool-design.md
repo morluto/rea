@@ -207,7 +207,7 @@ does not establish another instance.
   constraints. Report pagination, truncation, cancellation, and partial failure.
   An assumed agent budget is insufficient justification for a limit. Name the
   ceiling and its recovery as described in
-  [admission limits and recovery](../design/limits-and-recovery.md).
+  [admission limits and recovery](../reference/limits-and-recovery.md).
 
 ### Compose declared Evidence inputs
 

@@ -9,30 +9,35 @@ for (const transport of ["tcp", "unix"] as const)
   it.skipIf(transport === "unix" && process.platform === "win32")(
     `connects a real local ${transport} socket and transfers ownership`,
     async () => {
-      const directory = await createTestTempDirectory("rea-local-socket-");
+      const path =
+        transport === "unix"
+          ? join(await createTestTempDirectory("rea-local-socket-"), "socket")
+          : undefined;
       const server = createServer();
-      const path = join(directory, "socket");
       try {
-        if (transport === "unix") server.listen(path);
+        if (path !== undefined) server.listen(path);
         else server.listen(0, "127.0.0.1");
         await once(server, "listening");
         const incoming = once(server, "connection");
         const target =
-          transport === "unix"
+          path !== undefined
             ? { path }
             : {
                 host: "127.0.0.1",
                 port: (server.address() as AddressInfo).port,
               };
-        const result = await connectLocalSocketOnce(
-          target,
-          new AbortController().signal,
-        );
+        const controller = new AbortController();
+        const result = await connectLocalSocketOnce(target, controller.signal);
         if (!result.ok)
           throw new Error(`Connection failed: ${result.error.kind}`);
         const [peer] = await incoming;
-        result.value.destroy();
-        peer.destroy();
+        try {
+          controller.abort();
+          expect(result.value.destroyed).toBe(false);
+        } finally {
+          result.value.destroy();
+          peer.destroy();
+        }
       } finally {
         await new Promise<void>((resolve, reject) =>
           server.close((error) => (error ? reject(error) : resolve())),

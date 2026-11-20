@@ -247,7 +247,7 @@ const framingServer = async () => {
 
 // Pipe writes do not fix read boundaries: BoundedControlLines.test.ts owns every
 // split-chunk case deterministically. These worker tests prove the server wiring.
-it("serves split and coalesced LF/CRLF requests as separate jobs", async () => {
+it("serves a split LF request followed by an exact-limit CRLF request", async () => {
   const server = await framingServer();
   const input = sourceDescriptor(makeScript("fetch('/framed');"));
   const ids = [randomUUID(), randomUUID()];
@@ -260,11 +260,16 @@ it("serves split and coalesced LF/CRLF requests as separate jobs", async () => {
   }));
   for (const id of ids) await writeSource(server.root, id, input.bytes);
   const first = JSON.stringify(requests[0]);
-  await writeInput(server.process, first.slice(0, 17));
-  await writeInput(
-    server.process,
-    `${first.slice(17)}\n${JSON.stringify(requests[1])}\r\n`,
+  const second = JSON.stringify(requests[1]).padEnd(
+    WEB_BUNDLE_WORKER_LIMITS.protocolBytes,
+    " ",
   );
+  expect(Buffer.byteLength(second)).toBe(
+    WEB_BUNDLE_WORKER_LIMITS.protocolBytes,
+  );
+  await writeInput(server.process, first.slice(0, 17));
+  await writeInput(server.process, `${first.slice(17)}\n${second}\r`);
+  await writeInput(server.process, "\n");
   for (const id of ids) {
     expect(await server.next()).toMatchObject({ kind: "phase", id });
     expect(await server.next()).toMatchObject({ kind: "complete", id });
@@ -273,50 +278,6 @@ it("serves split and coalesced LF/CRLF requests as separate jobs", async () => {
     ).toMatchObject({ status: "analyzed" });
   }
 });
-
-it.each([
-  ["multibyte", Buffer.from("é🙂")],
-  ["encoded replacement character", Buffer.from("�")],
-] as const)(
-  "accepts an exact-budget %s JSON request written in split UTF-8 and CRLF writes",
-  async (_name, text) => {
-    const server = await framingServer();
-    const input = sourceDescriptor(makeScript("fetch('/exact-budget');"));
-    const id = randomUUID();
-    await writeSource(server.root, id, input.bytes);
-    const request = JSON.stringify({
-      kind: "analyze",
-      member_mutation_allowance: DEFAULT_ALLOWANCE,
-      id,
-      source: input.descriptor,
-      result_budget_bytes: WEB_BUNDLE_WORKER_LIMITS.resultBytes,
-    });
-    // JSON.parse retains the final known key, so non-ASCII input exercises the
-    // decoder while the request admitted by the named schema stays unchanged.
-    const prefix = Buffer.from('{"kind":"');
-    const json = Buffer.concat([
-      prefix,
-      text,
-      Buffer.from(`",${request.slice(1)}`),
-    ]);
-    const frame = Buffer.concat([
-      json,
-      Buffer.alloc(WEB_BUNDLE_WORKER_LIMITS.protocolBytes - json.length, 0x20),
-    ]);
-    expect(frame.length).toBe(WEB_BUNDLE_WORKER_LIMITS.protocolBytes);
-    await writeInput(server.process, frame.subarray(0, prefix.length + 1));
-    await writeInput(
-      server.process,
-      Buffer.concat([frame.subarray(prefix.length + 1), Buffer.from("\r")]),
-    );
-    await writeInput(server.process, "\n");
-    expect(await server.next()).toMatchObject({ kind: "phase", id });
-    expect(await server.next()).toMatchObject({ kind: "complete", id });
-    expect(
-      JSON.parse(await readFile(join(server.root, `${id}.result`), "utf8")),
-    ).toMatchObject({ status: "analyzed" });
-  },
-);
 
 it.each([
   [

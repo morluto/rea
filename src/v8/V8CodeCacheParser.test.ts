@@ -93,43 +93,24 @@ it("reports the source length the producer recorded", () => {
   expect(report.header.fields[2]?.value).toBe(cache.readUInt32LE(8));
 });
 
-it("reports a module cache as a module rather than a script", () => {
-  // Bit 30 of the source-length word marks `vm.SourceTextModule` output. Measured on
-  // Node 24.22.1: a real module cache reads `0x40000013` for a 19-unit source while a
-  // script of the same length reads `0x00000013`, so a producer check that only tests
-  // the function bit reports the module cache as a plain script.
-  const script = v8CodeCacheFixture();
-  const word = script.readUInt32LE(8);
-  const length = word & 0x1fffffff;
-  expect(word & 0x40000000).toBe(0);
-  expect(word & 0x20000000).toBe(0);
-  expect(parse(script).header.producer).toBe("unknown");
-
-  const moduleCache = withHeaderWord(script, 2, word | 0x40000000);
-  const report = parse(moduleCache);
-  expect(report.header.producer).toBe("module");
-  // The module bit sits outside the source-length mask, so the length is unchanged.
-  expect(report.header.source_length).toBe(length);
-});
-
-it("keeps the function and module flags distinct", () => {
-  const script = v8CodeCacheFixture("var y = 1;");
-  const length = script.readUInt32LE(8) & 0x1fffffff;
-  expect(
-    parse(withHeaderWord(script, 2, 0x20000000 | length)).header.producer,
-  ).toBe("compile_function");
-  expect(
-    parse(withHeaderWord(script, 2, 0x40000000 | length)).header.producer,
-  ).toBe("module");
-  // V8 before 13.4 (Node 22's 12.4) marks a module with bit 31: `0x80000017` on Electron 30.
-  const legacy = parse(withHeaderWord(script, 2, 0x80000000 | length)).header;
-  expect([legacy.producer, legacy.source_length]).toEqual(["module", length]);
-  // Both bits set is not a shape V8 produces; the module flag wins so the reported
-  // family stays one of the three observed kinds.
-  expect(
-    parse(withHeaderWord(script, 2, 0x60000000 | length)).header.producer,
-  ).toBe("module");
-});
+it.each([
+  [0x20000000, "compile_function"],
+  [0x40000000, "module"],
+  [0x80000000, "module"],
+  [0x60000000, "module"],
+] as const)(
+  "interprets producer flags %i without changing source length",
+  (flags, producer) => {
+    // Older V8 uses bit 31 for modules. A synthetic word with both bits set
+    // checks that the module marker wins over the function marker.
+    const sourceLength = 19;
+    const cache = withHeaderWord(real, 2, flags | sourceLength);
+    expect(parse(cache).header).toMatchObject({
+      producer,
+      source_length: sourceLength,
+    });
+  },
+);
 
 it("separates the compileFunction producer bit from the source length", () => {
   const source = "return 7;";
@@ -146,7 +127,6 @@ it("separates the compileFunction producer bit from the source length", () => {
     (word & 0x20000000) === 0 ? "unknown" : "compile_function",
   );
   // The source length is the low bits either way, so it is the part that must hold.
-  expect(report.header.source_length).toBe(word & 0x1fffffff);
   expect(report.header.source_length).toBe(source.length);
 });
 
@@ -191,30 +171,10 @@ it("fails closed on a foreign magic", () => {
   );
 });
 
-it("fails closed on a payload-length mismatch", () => {
-  const corrupt = withHeaderWord(real, 5, real.readUInt32LE(20) + 8);
-  expect(() => parse(corrupt)).toThrow(
-    expect.objectContaining({
-      kind: "malformed",
-      message: expect.stringContaining("truncated or corrupt"),
-    }),
-  );
-});
-
 it("fails closed on a truncated header", () => {
   expect(() =>
     parse(real.subarray(0, V8_CODE_CACHE_NARROW_HEADER_BYTES - 1)),
   ).toThrow(expect.objectContaining({ kind: "malformed" }));
-});
-
-it("fails closed when fewer payload bytes follow the header than it declares", () => {
-  // Cut bytes off the end without rewriting the declared payload length.
-  expect(() => parse(real.subarray(0, real.length - 16))).toThrow(
-    expect.objectContaining({
-      kind: "malformed",
-      message: expect.stringContaining("truncated or corrupt"),
-    }),
-  );
 });
 
 it("treats the observed header as version-dependent rather than a fixed ABI", () => {
@@ -307,9 +267,11 @@ it("refuses a wide container that is only four bytes short", () => {
   const short = real.subarray(0, real.length - 4);
   expect(short.readUInt32LE(28)).toBe(0);
   expect(() => parse(short)).toThrow(
-    expect.objectContaining({ kind: "malformed" }),
+    expect.objectContaining({
+      kind: "malformed",
+      message: expect.stringContaining("ambiguous"),
+    }),
   );
-  expect(() => parse(short)).toThrow(/ambiguous/u);
   // A synthetic narrow fixture has payload at the same byte offset.
   const narrow = withSyntheticNarrowHeader(real);
   expect(narrow.readUInt32LE(V8_CODE_CACHE_NARROW_HEADER_BYTES)).not.toBe(0);

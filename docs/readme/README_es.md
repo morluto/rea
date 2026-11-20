@@ -363,7 +363,6 @@ Empieza con las [guías prácticas](https://rea.tools/es/guides/) del sitio web.
 - [CLI y Evidence](../getting-started/cli.md): comandos, selección de proveedores, instantáneas, importación/exportación y estados de salida.
 - [Contratos de MCP](../reference/mcp-contracts.md) y [prompts para agentes](../getting-started/mcp-prompts.md): resultados de herramientas, sesiones e investigaciones guiadas.
 - [Catálogo de herramientas](../reference/mcp-contracts.md#generated-catalog): inventario de herramientas, proveedores y comandos de CLI generado durante la compilación.
-- [Hoja de ruta](../development/roadmap.md): trabajo previsto y seguimiento de capacidades.
 
 Informa de vulnerabilidades siguiendo [SECURITY.md](../../SECURITY.md).
 
@@ -395,7 +394,7 @@ applicable licenses.
 
 ¡Nos encantaría que ayudaras con REA! [Abre una issue](https://github.com/morluto/rea/issues) para comunicar un error o proponer una función, o [envía una pull request](https://github.com/morluto/rea/pulls) para mejorar el código o la documentación.
 
-Consulta [CONTRIBUTING.md](../../CONTRIBUTING.md) para preparar el entorno de desarrollo y las comprobaciones, la [guía de pruebas](../development/testing.md) para los procesos de verificación y el [mapa de arquitectura](../architecture/architecture.mermaid) para la estructura del proyecto.
+Consulta [CONTRIBUTING.md](../../CONTRIBUTING.md) para preparar el entorno de desarrollo y las comprobaciones, la [guía de pruebas](../development/testing.md) para los procesos de verificación.
 
 ## Licencia
 

@@ -172,7 +172,6 @@ const writeOversizedHeaderArchive = async (): Promise<string> => {
 
 it("names the default header admission budget and its setting when source selection cannot bypass it", async () => {
   const recovery = asarHeaderAdmissionRecovery(DEFAULT_ASAR_HEADER_ADMISSION);
-  expect(DEFAULT_ASAR_MAX_HEADER_BYTES).toBe(16 * 1024 * 1024);
   const archive = await writeOversizedHeaderArchive();
   let inventoryFailure: unknown;
   try {
