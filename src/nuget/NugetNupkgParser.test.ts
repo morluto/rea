@@ -320,8 +320,16 @@ it("reports cancellation during a member read with the caller's reason", async (
   const enumeration = vi
     .spyOn(ZipReader.prototype, "getEntriesGenerator")
     .mockImplementation(async function* (this: ZipReader<unknown>, options) {
-      yield* original.call(this, options);
-      controller.abort(reason);
+      for await (const entry of original.call(this, options)) {
+        if (!entry.directory && entry.filename === "_rels/.rels") {
+          const getData = entry.getData.bind(entry);
+          entry.getData = (writer, options) => {
+            controller.abort(reason);
+            return getData(writer, options);
+          };
+        }
+        yield entry;
+      }
       return true;
     });
   try {
@@ -335,6 +343,74 @@ it("reports cancellation during a member read with the caller's reason", async (
     expect(failure).toMatchObject({ reason: "cancelled" });
     expect((failure as ArtifactReaderFailure).cancellation?.reason).toBe(
       reason,
+    );
+  } finally {
+    enumeration.mockRestore();
+  }
+});
+
+it.each(["before a visible row", "at enumeration completion"] as const)(
+  "reports cancellation %s without a metadata member read",
+  async (phase) => {
+    const bytes = await nugetNupkgMissingNuspecFixture();
+    const controller = new AbortController();
+    const reason = { caller: "stop ZIP inventory" };
+    const original = ZipReader.prototype.getEntriesGenerator;
+    const enumeration = vi
+      .spyOn(ZipReader.prototype, "getEntriesGenerator")
+      .mockImplementation(async function* (this: ZipReader<unknown>, options) {
+        for await (const entry of original.call(this, options)) {
+          if (phase === "before a visible row") controller.abort(reason);
+          yield entry;
+        }
+        if (phase === "at enumeration completion") controller.abort(reason);
+        return true;
+      });
+    try {
+      const failure: unknown = await parseNugetNupkg(
+        bytes,
+        artifactOf(bytes),
+        defaults,
+        controller.signal,
+      ).catch((cause: unknown) => cause);
+      if (!(failure instanceof ArtifactReaderFailure))
+        throw new Error("expected inventory cancellation");
+      expect(failure.reason).toBe("cancelled");
+      expect(failure.cancellation?.reason).toBe(reason);
+    } finally {
+      enumeration.mockRestore();
+    }
+  },
+);
+
+it("keeps the ZIP directory failure when cancellation reuses that error", async () => {
+  // A local header signature without a central directory is not a valid ZIP.
+  const bytes = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+  const controller = new AbortController();
+  const original = ZipReader.prototype.getEntriesGenerator;
+  const enumeration = vi
+    .spyOn(ZipReader.prototype, "getEntriesGenerator")
+    .mockImplementation(async function* (this: ZipReader<unknown>, options) {
+      try {
+        return yield* original.call(this, options);
+      } catch (cause: unknown) {
+        controller.abort(cause);
+        throw cause;
+      }
+    });
+  try {
+    const failure: unknown = await parseNugetNupkg(
+      bytes,
+      artifactOf(bytes),
+      defaults,
+      controller.signal,
+    ).catch((cause: unknown) => cause);
+    if (!(failure instanceof ParseFailureError))
+      throw new Error("expected malformed ZIP failure", { cause: failure });
+    expect(failure.failure.kind).toBe("malformed");
+    expect(failure.cause).toBeInstanceOf(ArtifactReaderFailure);
+    expect((failure.cause as ArtifactReaderFailure).cause).toBe(
+      controller.signal.reason,
     );
   } finally {
     enumeration.mockRestore();
