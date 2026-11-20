@@ -173,6 +173,24 @@ describe.skipIf(process.platform === "win32")(
 describe.skipIf(process.platform === "win32")(
   "desktop entry ID masking",
   () => {
+    const userOverride = async (contents: string | Buffer) => {
+      const { home, environment } = await fixture();
+      const applications = join(environment.XDG_DATA_HOME, "applications");
+      await mkdir(applications, { recursive: true });
+      const file = join(applications, "org.example.notes.desktop");
+      await writeFile(file, contents);
+      const inspect = (desktopEntry = "org.example.notes") =>
+        inspectLinuxApplication({
+          desktopEntry,
+          executable: undefined,
+          arguments: [],
+          environment,
+          home,
+          callerDirectory: home,
+        });
+      return { inspect, file };
+    };
+
     it.each([
       { setting: "Hidden=true", exec: true, found: false },
       { setting: "Hidden=true", exec: false, found: false },
@@ -181,12 +199,7 @@ describe.skipIf(process.platform === "win32")(
     ])(
       "resolves the user override $setting (Exec present: $exec)",
       async ({ setting, exec, found }) => {
-        const { home, environment } = await fixture();
-        const applications = join(environment.XDG_DATA_HOME, "applications");
-        await mkdir(applications, { recursive: true });
-        const file = join(applications, "org.example.notes.desktop");
-        await writeFile(
-          file,
+        const { inspect, file } = await userOverride(
           [
             "[Desktop Entry]",
             "Type=Application",
@@ -195,16 +208,7 @@ describe.skipIf(process.platform === "win32")(
             setting,
           ].join("\n"),
         );
-        const inspect = (desktopEntry: string) =>
-          inspectLinuxApplication({
-            desktopEntry,
-            executable: undefined,
-            arguments: [],
-            environment,
-            home,
-            callerDirectory: home,
-          });
-        const result = await inspect("org.example.notes");
+        const result = await inspect();
         if (found) {
           expect(result).toMatchObject({
             ok: true,
@@ -238,22 +242,17 @@ describe.skipIf(process.platform === "win32")(
       },
     );
 
-    it("does not let a Hidden key without an Application type mask the system entry", async () => {
-      const { home, environment } = await fixture();
-      const applications = join(environment.XDG_DATA_HOME, "applications");
-      await mkdir(applications, { recursive: true });
-      await writeFile(
-        join(applications, "org.example.notes.desktop"),
-        "[Desktop Entry]\nHidden=true\n",
-      );
-      const result = await inspectLinuxApplication({
-        desktopEntry: "org.example.notes",
-        executable: undefined,
-        arguments: [],
-        environment,
-        home,
-        callerDirectory: home,
+    it("preserves a read refusal for an invalid user entry above a system copy", async () => {
+      const { inspect } = await userOverride(Buffer.from([0xff]));
+      expect(await inspect()).toMatchObject({
+        ok: false,
+        error: { reason: "desktop_entry_invalid", detail: "not valid UTF-8" },
       });
+    });
+
+    it("does not let a Hidden key without an Application type mask the system entry", async () => {
+      const { inspect } = await userOverride("[Desktop Entry]\nHidden=true\n");
+      const result = await inspect();
       expect(result).toMatchObject({
         ok: true,
         value: { inventory: { desktop_entry: { name: "Notes" } } },
