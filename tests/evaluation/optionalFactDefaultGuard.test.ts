@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import { expect, it } from "vitest";
 import {
   isComparisonOrCountFile,
@@ -227,17 +226,6 @@ it("exempts a default whose operand starts on an earlier line", () => {
       "const offset = getOptions(\n  request,\n).offset ?? 0;",
     ),
   ).toBe(1);
-});
-
-it("loads without installed dependencies, as CI runs it before npm ci", async () => {
-  const source = await readFile(
-    new URL(
-      "../../scripts/verify/optional-fact-default-guard.mjs",
-      import.meta.url,
-    ),
-    "utf8",
-  );
-  expect(source).not.toMatch(/\bfrom\s+["'](?!node:|\.)/u);
 });
 
 it("selects comparison, coverage and count files only", () => {

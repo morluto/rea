@@ -3,7 +3,7 @@
   "repository": "morluto/rea",
   "version": "6.10.0",
   "base": "d74549e495c58eb4a560279fd9f05508401ea0a0",
-  "target": "34f3682afd2458b4394375512c73fa19feb4d37c",
+  "target": "9d3bf82c6ab37f4faaa8353950b2797c747cb4ef",
   "commits": [
     {
       "sha": "5eef239dfd774331d622aaa4762f42fa632121ab",
@@ -31051,6 +31051,124 @@
         }
       ],
       "pullRequests": []
+    },
+    {
+      "sha": "d9df0f9ca2d5212cec5a11f5eed45c798634a237",
+      "subject": "perf(javascript): allocate nested evaluation contexts with fixed shapes (#9007)",
+      "body": "perf(javascript): allocate nested evaluation contexts with fixed shapes (#9007)\n\nnestedContext builds one EvaluationContext per recursive expression step. A conditional object spread forces V8 through the generic property-copy path even when the spread adds no fields, and prevents a stable shape. It was the top self-time frame (25.4%) in a profile of semantic indexing.\n\nUse two explicit object literals selected by capturePoint, keeping the same field set, order, values and optionality. Completed analyses are byte-identical across 12 representative sources (36 IR/facts/coverage digests), and member-mutation indexing is 1.47-1.65x faster on the profiled alias-chain workload.\n\nCo-authored-by: Zhenyang Han <mshzy@users.noreply.github.com>\nCo-authored-by: morluto <76467478+morluto@users.noreply.github.com>",
+      "parents": ["34f3682afd2458b4394375512c73fa19feb4d37c"],
+      "authors": [
+        {
+          "name": "Zhenyang Han",
+          "email": "156560471+mshzy@users.noreply.github.com",
+          "user": {
+            "login": "mshzy",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "Zhenyang Han",
+          "email": "mshzy@users.noreply.github.com",
+          "user": {
+            "login": "mshzy",
+            "__typename": "User"
+          }
+        },
+        {
+          "name": "morluto",
+          "email": "76467478+morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [9007]
+    },
+    {
+      "sha": "af0d9ed45af6c41185a94a4a98beff02d79ba7cd",
+      "subject": "test(uninstall): cover Windows purge without POSIX cache assumptions (#12696)",
+      "body": "test(uninstall): cover Windows purge without POSIX cache assumptions (#12696)",
+      "parents": ["d9df0f9ca2d5212cec5a11f5eed45c798634a237"],
+      "authors": [
+        {
+          "name": "RRFZ",
+          "email": "247457381+Plastic-time@users.noreply.github.com",
+          "user": {
+            "login": "Plastic-time",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": [12696]
+    },
+    {
+      "sha": "f3734d90e778964d43ccf27fa4d2541362f6fb2e",
+      "subject": "test(ci): repair stale coverage expectations on main",
+      "body": "test(ci): repair stale coverage expectations on main\n",
+      "parents": ["af0d9ed45af6c41185a94a4a98beff02d79ba7cd"],
+      "authors": [
+        {
+          "name": "morluto",
+          "email": "76467478+morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": []
+    },
+    {
+      "sha": "6bb2ad90ac85cae3571ed715c1c9fdaa5f58a3fe",
+      "subject": "test: harden verifier assertions and prune duplicate checks",
+      "body": "test: harden verifier assertions and prune duplicate checks\n",
+      "parents": ["f3734d90e778964d43ccf27fa4d2541362f6fb2e"],
+      "authors": [
+        {
+          "name": "morluto",
+          "email": "76467478+morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": []
+    },
+    {
+      "sha": "e1e24543e4a9f21cbb3c2abe85f71cca71ea1bb1",
+      "subject": "test: prove retained facts and remove preinstall source greps",
+      "body": "test: prove retained facts and remove preinstall source greps\n",
+      "parents": ["6bb2ad90ac85cae3571ed715c1c9fdaa5f58a3fe"],
+      "authors": [
+        {
+          "name": "morluto",
+          "email": "76467478+morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": []
+    },
+    {
+      "sha": "9d3bf82c6ab37f4faaa8353950b2797c747cb4ef",
+      "subject": "test(desktop): require a verdict for every regenerated check",
+      "body": "test(desktop): require a verdict for every regenerated check\n",
+      "parents": ["e1e24543e4a9f21cbb3c2abe85f71cca71ea1bb1"],
+      "authors": [
+        {
+          "name": "morluto",
+          "email": "76467478+morluto@users.noreply.github.com",
+          "user": {
+            "login": "morluto",
+            "__typename": "User"
+          }
+        }
+      ],
+      "pullRequests": []
     }
   ],
   "pullRequests": [
@@ -31370,6 +31488,19 @@
       },
       "mergeCommit": {
         "oid": "a42f96d0bd50b42812776a54d1c02062c4f733d9"
+      },
+      "issues": []
+    },
+    {
+      "number": 9007,
+      "title": "perf(javascript): allocate nested evaluation contexts with fixed shapes",
+      "url": "https://github.com/morluto/rea/pull/9007",
+      "author": {
+        "login": "mshzy",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "d9df0f9ca2d5212cec5a11f5eed45c798634a237"
       },
       "issues": []
     },
@@ -52031,6 +52162,31 @@
         "oid": "68604b7e9542db25c4101c7c51a5b99809eca183"
       },
       "issues": []
+    },
+    {
+      "number": 12696,
+      "title": "test(uninstall): cover Windows purge without POSIX cache assumptions",
+      "url": "https://github.com/morluto/rea/pull/12696",
+      "author": {
+        "login": "Plastic-time",
+        "__typename": "User"
+      },
+      "mergeCommit": {
+        "oid": "af0d9ed45af6c41185a94a4a98beff02d79ba7cd"
+      },
+      "issues": [
+        {
+          "number": 12695,
+          "url": "https://github.com/morluto/rea/issues/12695",
+          "author": {
+            "login": "Plastic-time",
+            "__typename": "User"
+          },
+          "repository": {
+            "nameWithOwner": "morluto/rea"
+          }
+        }
+      ]
     },
     {
       "number": 12700,

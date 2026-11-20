@@ -967,17 +967,22 @@ it("keeps distinct JSON kind/name tuples addressable after regenerated ids and r
   const original = await runVerifier(checks, [[0, views(after)]], [], {
     exec: false,
   });
-  expect(original.results.length).toBeGreaterThan(0);
-  expect(original.results.every(({ result }) => result)).toBe(true);
+  expect(checks.length).toBeGreaterThan(0);
+  const passing = checks.map(({ id }) => [id, true]);
+  expect(original.results.map(({ id, result }) => [id, result])).toEqual(
+    passing,
+  );
   const repeated = await runVerifier(checks, [[0, views(saved)]], [], {
     exec: false,
   });
-  expect(repeated.results.every(({ result }) => result)).toBe(true);
+  expect(repeated.results.map(({ id, result }) => [id, result])).toEqual(
+    passing,
+  );
   expect(
-    evaluateTaskChecks(checks, new Map([[file, views(saved)[file]]])).every(
-      ({ passed }) => passed,
+    evaluateTaskChecks(checks, new Map([[file, views(saved)[file]]])).map(
+      ({ id, passed }) => [id, passed],
     ),
-  ).toBe(true);
+  ).toEqual(passing);
   const wrong = saved.map((record) => ({
     ...record,
     done: record.format === "A",

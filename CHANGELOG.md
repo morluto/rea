@@ -11,6 +11,7 @@
 
 ### Changes
 
+- JavaScript semantic indexing uses fixed object shapes for nested evaluation contexts to reduce allocation overhead. [#9007](https://github.com/morluto/rea/pull/9007). Thanks @mshzy.
 - Inspect ELF dynamic dependencies and required symbol versions, resolve separate debug-file linkage, inspect DWARF compilation units offline, and decode FDO packaging and dlopen notes. [e9c72db](https://github.com/morluto/rea/commit/e9c72dbd1fa6b318cb3e455c92df064eed62333a) [#7868](https://github.com/morluto/rea/pull/7868) [54e3918](https://github.com/morluto/rea/commit/54e3918d1c09991970aadf8f0eb1ab6bcf6f83fb) [#9560](https://github.com/morluto/rea/pull/9560) [637e4cb](https://github.com/morluto/rea/commit/637e4cb60c99b1b17026855297cb03e299c3ba89) [#8523](https://github.com/morluto/rea/pull/8523) [#7237](https://github.com/morluto/rea/pull/7237) [#7235](https://github.com/morluto/rea/issues/7235). Thanks @AniketR10, @gensokyo-dev, @mvanhorn.
 - Read cargo-auditable dependencies from WebAssembly and export Go and Rust dependency Evidence as CycloneDX. [#5069](https://github.com/morluto/rea/pull/5069) [237b1ea](https://github.com/morluto/rea/commit/237b1ea5b39ea9fc5373aa08a9f54d25715c4873) [#8445](https://github.com/morluto/rea/pull/8445). Thanks @gensokyo-dev, @kaoru0822-kitauji, @mvanhorn, @yu0809.
 - Decode CPython 3.14 and 3.15 bytecode and use Kuna 1.1000. [1d08253](https://github.com/morluto/rea/commit/1d08253ff2cb68838b93cf9275000c39bf1f507a) [#10518](https://github.com/morluto/rea/pull/10518) [#12107](https://github.com/morluto/rea/pull/12107). Thanks @abhisheksharma001, @gensokyo-dev, @N0zoM1z0.
@@ -63,7 +64,7 @@
 - Recreate native Evidence for Mach-O encryption, malformed slice causes, import facts and symbol `runtime_name`; ELF import/export encoding and export visibility; value-flow `limits`; load-image permissions and relocation symbols; Swift `type_reference_kind`; and GPU `amd_target_metadata`. Update strict readers for removed legacy values such as unknown ELF export visibility and `modinfo_field_exceeds_limit`. [PR 10946](https://github.com/morluto/rea/pull/10946/files).
 - Recreate inventory Evidence missing ESP `format_metadata.flash_dump`, PE signer observations missing `unsigned_attribute_oids`, and firmware inspection or extraction results missing `analysis_timeout_ms`. [#11595](https://github.com/morluto/rea/pull/11595).
 
-Full contribution record: [1569 commits and 1368 merged PRs](https://github.com/morluto/rea/blob/rea-agents-6.10.0/docs/releases/6.10.0.contributions.json).
+Full contribution record: [1575 commits and 1370 merged PRs](https://github.com/morluto/rea/blob/rea-agents-6.10.0/docs/releases/6.10.0.contributions.json).
 
 ## [6.9.0](https://github.com/morluto/rea/compare/rea-agents-6.8.0...rea-agents-6.9.0) (2026-11-11)
 

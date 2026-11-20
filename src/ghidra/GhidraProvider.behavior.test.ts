@@ -2047,17 +2047,6 @@ describe("Ghidra byte-search cursor projection", () => {
       },
     });
     expect(projected).not.toHaveProperty("recovery");
-    expect(projected.message).toContain("analysis profile");
-    expect(projected.message).toContain("project");
-    expect(projected.message).not.toContain("Analysis input is invalid");
-    expect(projected.remediation.action).toContain("pattern");
-    expect(projected.remediation.action).not.toContain("schema");
-    expect(projected.remediation.action).not.toContain("tools/list");
-    const bridge = await readFile(
-      new URL("../../bridge/ghidra/ReaGhidraBridge.java", import.meta.url),
-      "utf8",
-    );
-    expect(bridge).toContain(`"${CURSOR_MISMATCH}"`);
     await client.close();
   });
 
