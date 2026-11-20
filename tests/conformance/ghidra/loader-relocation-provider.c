@@ -10,3 +10,6 @@ rea_loader_word rea_external_value = 0x22222222u;
 
 __attribute__((visibility("default")))
 const rea_loader_word rea_external_const = 0x11111111u;
+
+__attribute__((visibility("default")))
+__thread rea_loader_word rea_external_tls = 0x33333333u;

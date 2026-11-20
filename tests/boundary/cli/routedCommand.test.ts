@@ -131,11 +131,11 @@ it("advertises each option's default without supplying it to routing", async () 
   expect(schema.properties).toMatchObject({
     mode: {
       default: "fast",
-      description: "Default: fast",
     },
     policy: { default: JSON.stringify({ rules: [] }) },
     report: { default: "text" },
   });
+  expect(schema.properties.mode).not.toHaveProperty("description");
   // A given option routes the input even when it spells the default.
   const refused = await invoke("/x/program", { report: "text" });
   expect(calls).toEqual([]);

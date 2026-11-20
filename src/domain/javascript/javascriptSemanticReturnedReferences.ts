@@ -540,9 +540,11 @@ export const createSemanticReturnedReferences = (
         const [key, ...path] = current.path ?? [];
         if (current.path !== undefined && key !== undefined) {
           for (const choice of semanticAliasSelectionChoices(key))
-            for (const source of semanticArrayPropertyReferences(node, [
-              choice,
-            ])) {
+            for (const source of semanticArrayPropertyReferences(
+              node,
+              [choice],
+              state,
+            )) {
               let projection = source.path;
               if (
                 source.capturedSelectionAt !== undefined &&
@@ -553,6 +555,7 @@ export const createSemanticReturnedReferences = (
                     source.capturedSelectionAt,
                   )?.value,
                   state,
+                  source.capturedSelectionAt,
                 )
               )
                 projection = [null, ...source.path.slice(1)];

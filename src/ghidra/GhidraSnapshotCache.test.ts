@@ -28,7 +28,7 @@ const TARGET: BinaryTarget = {
 
 // Exercise the real provider descriptors, profile, input/output projection and
 // session cache; only the installed Ghidra process is replaced at its seam.
-const fixture = (version = "12.1.4", coverage?: RelationshipCoverage) => {
+const fixture = (version = "12.2", coverage?: RelationshipCoverage) => {
   const config = parseConfig({ GHIDRA_INSTALL_DIR: "/opt/ghidra" });
   if (!config.ok) throw config.error;
   const calls: string[] = [];
@@ -46,15 +46,15 @@ const fixture = (version = "12.1.4", coverage?: RelationshipCoverage) => {
       platform: "linux",
       architecture: "x64",
       readText: () =>
-        `application.version=${version}\napplication.java.min=21\n`,
+        `application.version=${version}\napplication.java.min=25\n`,
       executable: () => true,
       probeJava: () =>
         javaProbeOk<GhidraJavaObservation>({
           osArch: "amd64",
           osName: "Linux",
-          version: "21.0.11",
-          major: 21,
-          home: "/usr/lib/jvm/jdk-21",
+          version: "25.0.1",
+          major: 25,
+          home: "/usr/lib/jvm/jdk-25",
           bits: 64,
           runtime: "jdk",
         }),
@@ -262,7 +262,7 @@ describe("Ghidra relationship coverage replay", () => {
   ] satisfies (RelationshipCoverage | undefined)[])(
     "preserves relationship coverage %j as historical Evidence while reobserving new calls",
     async (coverage) => {
-      const initial = fixture("12.1.4", coverage);
+      const initial = fixture("12.2", coverage);
       await open(initial.session);
       const parameters = { procedure: "0x1000" };
       for (let i = 0; i < 2; i++) {
@@ -285,7 +285,7 @@ describe("Ghidra relationship coverage replay", () => {
         status: "unknown",
         reason: "Current observation after import",
       };
-      const replay = fixture("12.1.4", liveCoverage);
+      const replay = fixture("12.2", liveCoverage);
       expect(replay.session.importAnalysisSnapshot(snapshot.value).ok).toBe(
         true,
       );
@@ -400,7 +400,7 @@ describe("Ghidra snapshot cache", () => {
       if (!snapshot.ok) throw snapshot.error;
       expect(snapshot.value.entries).toHaveLength(1);
       expect(snapshot.value.binding.analysis_profile.provider.version).toBe(
-        "12.1.4",
+        "12.2",
       );
       await initial.session.close();
 
@@ -430,7 +430,7 @@ describe("Ghidra snapshot cache", () => {
       );
       await replay.session.close();
 
-      const changed = fixture("12.1.5");
+      const changed = fixture("12.3");
       expect(changed.session.importAnalysisSnapshot(snapshot.value).ok).toBe(
         true,
       );

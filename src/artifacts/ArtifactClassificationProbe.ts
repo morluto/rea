@@ -13,8 +13,13 @@ import {
 } from "../domain/apple/machoContainer.js";
 import {
   observeMzWindowsHeader,
+  type MzWindowsHeaderRecordEvidence,
   type MzWindowsHeaderSignatureEvidence,
 } from "../domain/dosMz.js";
+import {
+  MAX_PE_OPTIONAL_HEADER_BYTES,
+  PE_RECORD_HEADER_BYTES,
+} from "../domain/binaryTarget.js";
 import { DFUSE_SUFFIX_BYTES } from "../domain/firmware/dfuse.js";
 import {
   createAsarHeaderSignatureProbe,
@@ -34,6 +39,7 @@ export interface ArtifactClassificationEvidence {
   readonly asarHeader: FinalAsarHeaderProbeObservation;
   readonly fatSliceHeaders?: FatSliceHeaderEvidence;
   readonly mzWindowsHeaderSignature?: MzWindowsHeaderSignatureEvidence;
+  readonly mzWindowsHeaderRecord?: MzWindowsHeaderRecordEvidence;
 }
 
 const observeFatSliceHeaders = (input: {
@@ -86,6 +92,7 @@ const finishClassificationEvidence = (
   finishAsar: (archiveBytes: number) => FinalAsarHeaderProbeObservation,
   sliceHeadersByOffset: Map<number, MachoHeaderPrefixFacts>,
   mzWindowsHeaderSignature: MzWindowsHeaderSignatureEvidence | undefined,
+  mzWindowsHeaderRecord: MzWindowsHeaderRecordEvidence | undefined,
 ): ArtifactClassificationEvidence => {
   const finalHeader = readFatContainerHeader(prefix, archiveBytes);
   if (finalHeader.state === "parsed") {
@@ -118,6 +125,7 @@ const finishClassificationEvidence = (
     ...(mzWindowsHeaderSignature === undefined
       ? {}
       : { mzWindowsHeaderSignature }),
+    ...(mzWindowsHeaderRecord === undefined ? {} : { mzWindowsHeaderRecord }),
   };
 };
 
@@ -137,6 +145,7 @@ export const createArtifactClassificationProbe = (
     { readonly bytes: Buffer; count: number }
   >();
   let mzWindowsHeaderSignature: MzWindowsHeaderSignatureEvidence | undefined;
+  let mzWindowsHeaderRecord: MzWindowsHeaderRecordEvidence | undefined;
   let mzWindowsHeaderOffset: number | undefined;
   let mzHeaderChecked = false;
   let suffix = Buffer.alloc(0);
@@ -175,6 +184,35 @@ export const createArtifactClassificationProbe = (
     }
     if (observedLength === 0) return;
     mzWindowsHeaderSignature = {
+      offset,
+      bytes: window.subarray(0, observedLength),
+    };
+  };
+  const observeRecordWindow = (
+    offset: number,
+    sourceOffset: number,
+    sourceBytes: Uint8Array,
+  ): void => {
+    if (!Number.isSafeInteger(offset) || offset < 0) return;
+    const maximum = PE_RECORD_HEADER_BYTES + MAX_PE_OPTIONAL_HEADER_BYTES;
+    const start = Math.max(offset, sourceOffset);
+    const end = Math.min(offset + maximum, sourceOffset + sourceBytes.length);
+    if (start >= end) return;
+    const window = Buffer.alloc(maximum);
+    const previous =
+      mzWindowsHeaderRecord?.offset === offset
+        ? mzWindowsHeaderRecord.bytes
+        : undefined;
+    previous?.copy(window);
+    let observedLength = previous?.length ?? 0;
+    if (start <= offset + observedLength) {
+      Buffer.from(
+        sourceBytes.subarray(start - sourceOffset, end - sourceOffset),
+      ).copy(window, start - offset);
+      observedLength = Math.max(observedLength, end - offset);
+    }
+    if (observedLength === 0) return;
+    mzWindowsHeaderRecord = {
       offset,
       bytes: window.subarray(0, observedLength),
     };
@@ -260,7 +298,11 @@ export const createArtifactClassificationProbe = (
             prefix,
             Number.MAX_SAFE_INTEGER,
           );
-          if (windowsHeader.state === "signature-needed") {
+          if (
+            windowsHeader.state === "signature-needed" ||
+            (windowsHeader.state === "declared" &&
+              windowsHeader.signature === "PE")
+          ) {
             mzWindowsHeaderOffset = windowsHeader.offset;
             if (windowsHeader.offset < prefix.length) {
               const inline = prefix.subarray(
@@ -275,8 +317,10 @@ export const createArtifactClassificationProbe = (
           }
         }
       }
-      if (mzWindowsHeaderOffset !== undefined)
+      if (mzWindowsHeaderOffset !== undefined) {
         observeSignatureWindow(mzWindowsHeaderOffset, streamOffset, bytes);
+        observeRecordWindow(mzWindowsHeaderOffset, streamOffset, bytes);
+      }
       observeSuffix(bytes);
       observedBytes += bytes.length;
     },
@@ -289,6 +333,7 @@ export const createArtifactClassificationProbe = (
         (bytes) => asar.finish(bytes),
         fatSliceHeadersByOffset,
         mzWindowsHeaderSignature,
+        mzWindowsHeaderRecord,
       );
     },
   };

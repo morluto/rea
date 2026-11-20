@@ -40,7 +40,7 @@ generation reads the kinds of change.
   only when it has no internal subset and its DTD never read
   ([XML text checks](../xml-text-checks/spec.md)); key files up to 4 MiB
   whose every line parses; zip archives by
-  their local file header, as their entries with each entry's own format and
+  their local file header or empty archive signature, as their entries with each entry's own format and
   view ([document views](../document-views/spec.md)); text; binary. A gzip
   file, told by its magic bytes, is read as the document inside, its members
   joined, within a zip entry's 16 MiB and 100-times limits, and its version

@@ -484,6 +484,54 @@ it("reports REA's Kilo entry that only KILO_CONFIG_CONTENT sets instead of calli
   expect(await readFile(join(root, "kilo.json"), "utf8")).toBe(other);
 });
 
+it.each(["lower", "upper"])(
+  "keeps an inline Kilo registration disabled by its %s file during uninstall",
+  async (layer) => {
+    const home = await createTestTempDirectory("rea-kilo-uninstall-disabled-");
+    const lowerRoot = join(home, ".config", "kilo");
+    const upperRoot = join(home, ".kilo");
+    await mkdir(lowerRoot, { recursive: true });
+    await mkdir(upperRoot);
+    const lower = join(lowerRoot, "kilo.json");
+    const upper = join(upperRoot, "kilo.json");
+    const disabled = JSON.stringify({ mcp: { rea: { enabled: false } } });
+    const other = JSON.stringify({ mcp: { other: { command: ["x"] } } });
+    await writeFile(lower, layer === "lower" ? disabled : other);
+    await writeFile(upper, layer === "upper" ? disabled : other);
+    const environment = {
+      KILO_CONFIG_CONTENT: JSON.stringify({
+        mcp: { rea: { type: "local", command } },
+      }),
+    };
+    const row = await kiloRow(home, environment);
+    if (row === undefined) throw new Error("Kilo row is missing");
+    const before = await readEffectiveClientRegistrationConfiguration(
+      row,
+      undefined,
+      platform,
+    );
+    expect(before).toMatchObject({
+      ok: true,
+      value: { document: { servers: { rea: { enabled: false } } } },
+    });
+    const { kilo } = await uninstallKilo(home, environment);
+    expect(kilo).toBeDefined();
+    expect(kilo?.status).not.toBe("failed");
+    const enabled = await uninstallKilo(home, {
+      KILO_CONFIG_CONTENT: JSON.stringify({
+        mcp: { rea: { type: "local", command, enabled: true } },
+      }),
+    });
+    expect(enabled.kilo?.status).toBe("failed");
+    expect(await readFile(lower, "utf8")).toBe(
+      layer === "lower" ? disabled : other,
+    );
+    expect(await readFile(upper, "utf8")).toBe(
+      layer === "upper" ? disabled : other,
+    );
+  },
+);
+
 it("leaves a stale Kilo registration KILO_CONFIG_CONTENT pins out of update maintenance", async () => {
   const home = await createTestTempDirectory("rea-kilo-update-inline-");
   await mkdir(join(home, ".config", "kilo"), { recursive: true });

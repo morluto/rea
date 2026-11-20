@@ -18,6 +18,10 @@ import { WindowsShortcutService } from "../application/binaryDiagnostics/Windows
 import { WindowsShortcutProvider } from "../native/windows/WindowsShortcutProvider.js";
 import { ElfNotesService } from "../application/binaryDiagnostics/ElfNotesService.js";
 import { ElfNotesProvider } from "../native/elf/ElfNotesProvider.js";
+import { DwarfUnitsService } from "../application/binaryDiagnostics/DwarfUnitsService.js";
+import { DwarfUnitsProvider } from "../native/dwarf/DwarfUnitsProvider.js";
+import { ElfDebugLinkService } from "../application/binaryDiagnostics/ElfDebugLinkService.js";
+import { ElfDebugLinkProvider } from "../native/elf/ElfDebugLinkProvider.js";
 import { NativeInitializersService } from "../application/binaryDiagnostics/NativeInitializersService.js";
 import { NativeInitializersProvider } from "../native/initializers/NativeInitializersProvider.js";
 import { ElfUnwindRangesService } from "../application/binaryDiagnostics/ElfUnwindRangesService.js";
@@ -26,6 +30,8 @@ import { AppleIpsService } from "../application/binaryDiagnostics/AppleIpsServic
 import { AppleIpsProvider } from "../native/apple/AppleIpsProvider.js";
 import { KernelModuleService } from "../application/binaryDiagnostics/KernelModuleService.js";
 import { KernelModuleProvider } from "../native/elf/KernelModuleProvider.js";
+import { ElfDependenciesService } from "../application/binaryDiagnostics/ElfDependenciesService.js";
+import { ElfDependenciesProvider } from "../native/elf/ElfDependenciesProvider.js";
 import { KernelBuildConfigService } from "../application/binaryDiagnostics/KernelBuildConfigService.js";
 import { KernelBuildConfigProvider } from "../native/elf/KernelBuildConfigProvider.js";
 import type { ArtifactResourceScope } from "../resources/index.js";
@@ -60,6 +66,12 @@ export const createNativeExportsService = (): NativeExportsService =>
 export const createElfNotesService = (): ElfNotesService =>
   new ElfNotesService(new ElfNotesProvider());
 
+/** Portable DWARF compile-unit inspection with no engine or debug package. */
+export const createDwarfUnitsService = (): DwarfUnitsService =>
+  new DwarfUnitsService(new DwarfUnitsProvider());
+/** Portable ELF separate-debug linkage inspection with no engine or network lookup. */
+export const createElfDebugLinkService = (): ElfDebugLinkService =>
+  new ElfDebugLinkService(new ElfDebugLinkProvider());
 /** Portable ELF and Mach-O initializer and finalizer listing with no engine. */
 export const createNativeInitializersService = (): NativeInitializersService =>
   new NativeInitializersService(new NativeInitializersProvider());
@@ -76,6 +88,10 @@ export const createKernelModuleService = (): KernelModuleService =>
 /** Portable Linux kernel banner and embedded build-config inspection with no engine or host tools. */
 export const createKernelBuildConfigService = (): KernelBuildConfigService =>
   new KernelBuildConfigService(new KernelBuildConfigProvider());
+
+/** Portable ELF dynamic-dependency inspection with no loader or host `ldd`. */
+export const createElfDependenciesService = (): ElfDependenciesService =>
+  new ElfDependenciesService(new ElfDependenciesProvider());
 
 /** Compose the offline adapter without import-time I/O or dependency acquisition. */
 export const createBinaryLayoutService = (

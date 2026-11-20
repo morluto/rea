@@ -167,30 +167,30 @@ cliTest.skipIf(process.platform === "win32").for([
         },
       });
 
-    const setup = await run(registered, [
-      "setup",
-      "--client",
-      "cursor",
-      "--skill=false",
-      "--yes",
-      "--json",
-    ]);
+    const scope = ["--client", "cursor", "--skill=false", "--json"];
+    const setup = await run(registered, ["setup", "--yes", ...scope]);
     expect(setup.exitCode, setup.stderr).toBe(0);
-    for (const alias of [registered, alternate]) {
-      const doctor = await run(alias, [
-        "doctor",
-        "--client",
-        "cursor",
-        "--skill=false",
-        "--json",
-      ]);
-      expect(doctor.exitCode, doctor.stdout).toBe(0);
-      expect(JSON.parse(doctor.stdout)).toMatchObject({
-        scope_checks: expect.arrayContaining([
-          expect.objectContaining({ name: "registration:cursor", ok: true }),
-        ]),
-      });
-    }
+    expect(JSON.parse(setup.stdout)).toMatchObject({
+      doctor: {
+        healthy: true,
+        identity: {
+          registrations: [
+            {
+              client: "cursor",
+              state: "aligned",
+              command: [expect.any(String), join(root, registered), "mcp"],
+            },
+          ],
+        },
+      },
+    });
+    const doctor = await run(alternate, ["doctor", ...scope]);
+    expect(doctor.exitCode, doctor.stdout).toBe(0);
+    expect(JSON.parse(doctor.stdout)).toMatchObject({
+      scope_checks: expect.arrayContaining([
+        expect.objectContaining({ name: "registration:cursor", ok: true }),
+      ]),
+    });
     const uninstall = await run(alternate, ["uninstall", "--json"]);
     expect(uninstall.exitCode, uninstall.stderr).toBe(0);
     expect(JSON.parse(await readFile(config, "utf8"))).toEqual({

@@ -276,6 +276,25 @@ describe("WxapkgArtifactReader data region", () => {
     );
   });
 
+  it("rejects member extents that require different index-length conventions", async () => {
+    // The rows end at 44. Counting the member count in the index length places
+    // data at [44, 48). Counting only rows places it at [48, 52).
+    const bytes = buildWxapkg(
+      [
+        { path: "a", data: "AAAA", offset: 44 },
+        { path: "b", data: "BBBB", offset: 48 },
+      ],
+      { indexLengthIncludesFileCount: true, declaredDataLength: 4 },
+    );
+    await withReader(bytes, async (reader) => {
+      await expect(list(reader)).rejects.toMatchObject({
+        reason: "format",
+        message:
+          "wxapkg is malformed: no single declared data region contains all member extents",
+      });
+    });
+  });
+
   it("rejects a data region declared past the file", async () => {
     await withReader(
       buildWxapkg([{ path: "x", data: "ok" }], {

@@ -2,11 +2,9 @@
  * Lifecycle regression coverage for every provider id in
  * `CAPABILITY_DECLARATIONS`.
  *
- * Each stage either names real regression tests (file and literal test title),
- * is not applicable for a stated reason, or is an explicit gap. Gaps are also
- * listed in `PROVIDER_LIFECYCLE_GAPS`; that list may only shrink, so closing a
- * gap means naming its tests here and removing the gap entry. A newly
- * registered provider must add its own entry.
+ * Each stage names a regression by file and title at its registration site,
+ * or states why the stage does not apply. The coverage check reports any
+ * applicable stage still marked as a gap.
  *
  * Stages: `launch` starts the owned process (including launch failure and
  * refusal at the launch boundary); `handshake` is the first readiness or
@@ -34,7 +32,7 @@ export type LifecycleStage = (typeof LIFECYCLE_STAGES)[number];
 export interface LifecycleRegression {
   /** Repository-relative test file. */
   readonly path: string;
-  /** Literal title of a test in that file. */
+  /** Title at the test registration site, before any parameter expansion. */
   readonly title: string;
 }
 
@@ -65,7 +63,6 @@ const notApplicable = (reason: string): StageCoverage => ({
   kind: "not_applicable",
   reason,
 });
-const gap = (reason: string): StageCoverage => ({ kind: "gap", reason });
 
 const ONE_SHOT = notApplicable(
   "One-shot command per request: there is no handshake after launch.",
@@ -134,6 +131,7 @@ const historicalCapture = (
   },
 });
 
+const UEFI_PROVIDER = "src/uefi/UefiAnalysisProvider.test.ts";
 const FIRMWARE_INTEGRATION =
   "tests/boundary/firmware/firmwareIntegration.test.ts";
 const REVERSE_LAUNCH_ERRORS =
@@ -1283,6 +1281,46 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     ),
   ),
+  "rea-dwarf-units": inProcess(
+    covered(
+      test(
+        "tests/acceptance/dwarfUnitsCli.test.ts",
+        "reports a compile unit through the public CLI",
+      ),
+      test(
+        "tests/boundary/mcp/dwarfUnitsMcp.test.ts",
+        "advertises inspect_dwarf_units and reads a compile unit",
+      ),
+    ),
+    typedFailures("tests/boundary/filesystem/dwarfUnits.test.ts"),
+  ),
+  "rea-elf-debug-link": inProcess(
+    covered(
+      test(
+        "tests/acceptance/elfDebugLinkCli.test.ts",
+        "verifies a matching debug file from absolute and relative paths",
+      ),
+    ),
+    covered(
+      test(
+        "tests/boundary/filesystem/elfDebugLink.test.ts",
+        "returns typed resource and cancellation failures",
+      ),
+      test(
+        "src/native/elf/ElfDebugLinkProvider.test.ts",
+        "keeps a completed candidate stream's identity when cancellation arrives during close",
+      ),
+    ),
+  ),
+  "rea-elf-dependencies": inProcess(
+    covered(
+      test(
+        "tests/acceptance/elfDependenciesCli.test.ts",
+        "reports needed libraries, RUNPATH tokens, and versioned imports through the public CLI",
+      ),
+    ),
+    typedFailures("tests/boundary/filesystem/elfDependencies.test.ts"),
+  ),
   "rea-elf-notes": inProcess(
     covered(
       test(
@@ -1420,6 +1458,20 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     ),
     typedFailures("tests/boundary/filesystem/kernelModule.test.ts"),
   ),
+  "rea-maven-gradle-metadata": inProcess(
+    covered(
+      test(
+        "tests/boundary/mcp/mavenGradleMetadataMcp.test.ts",
+        "advertises inspect_maven_gradle_metadata and reports a real POM",
+      ),
+    ),
+    covered(
+      test(
+        "src/application/java/MavenGradleMetadataService.test.ts",
+        "retains completed Evidence and selected parameters on late cancellation",
+      ),
+    ),
+  ),
   "rea-native-exports": inProcess(
     covered(
       test(
@@ -1494,7 +1546,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
         ),
         test(
           "src/browser/PlaywrightScenarioBrowser.test.ts",
-          "passes the selected environment to the actual browser launch boundary",
+          "passes the selected environment to the $platform browser launch boundary",
         ),
       ),
       handshake: covered(
@@ -1574,6 +1626,20 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     },
   },
+  "rea-nuget-nupkg": inProcess(
+    covered(
+      test(
+        "tests/boundary/mcp/nugetNupkgMcp.test.ts",
+        "advertises inspect_nuget_nupkg and reads package identity",
+      ),
+    ),
+    covered(
+      test(
+        "src/application/nuget/NugetNupkgService.test.ts",
+        "retains completed Evidence and caller selections on late cancellation",
+      ),
+    ),
+  ),
   "rea-python-pyc": inProcess(
     covered(
       test(
@@ -1596,7 +1662,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "tests/acceptance/v8CodeCacheCli.test.ts",
-        "reports the observed header and payload through the public CLI",
+        "reports wide and synthetic narrow header extents through the public CLI",
       ),
     ),
     covered(
@@ -1961,6 +2027,42 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     },
   },
+  "rea-uefi": {
+    ownership: "process",
+    stages: {
+      launch: covered(
+        test(
+          UEFI_PROVIDER,
+          "decodes an LZMA-custom section through the owned worker and derives it",
+        ),
+      ),
+      handshake: ONE_SHOT,
+      operation: covered(
+        test(
+          "tests/acceptance/uefiFirmware.test.ts",
+          "maps a flash image end to end through CLI inspection and MCP session inventory",
+        ),
+      ),
+      cancel: covered(
+        test(
+          UEFI_PROVIDER,
+          "waits for committed output finalization during late cancellation and retries retained cleanup",
+        ),
+      ),
+      cleanup: covered(
+        test(
+          UEFI_PROVIDER,
+          "retains the worker root across a failed descriptor retry and releases its child before root removal",
+        ),
+      ),
+      retry: covered(
+        test(
+          UEFI_PROVIDER,
+          "retains the worker root across a failed descriptor retry and releases its child before root removal",
+        ),
+      ),
+    },
+  },
   unblob: {
     ownership: "process",
     stages: {
@@ -2070,9 +2172,3 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     },
   },
 };
-
-/**
- * Every stage marked as a gap above, as `providerId:stage`. This list may only
- * shrink: close a gap by naming its regression tests and removing the entry.
- */
-export const PROVIDER_LIFECYCLE_GAPS: readonly string[] = [];

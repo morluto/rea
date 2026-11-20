@@ -305,3 +305,70 @@ it(
     }
   },
 );
+
+it("preserves the exit result when a child closes stdin before consuming its input", async () => {
+  const processes = createTestProcessRegistry();
+  try {
+    await expect(
+      processes.run(
+        process.execPath,
+        [
+          "-e",
+          'process.stderr.write("input refused\\n", () => process.exit(7));',
+        ],
+        { input: Buffer.alloc(4 * 1024 * 1024) },
+      ),
+    ).resolves.toMatchObject({
+      exitCode: 7,
+      stderr: "input refused\n",
+    });
+  } finally {
+    await processes.shutdown();
+  }
+});
+
+it.each(["input", "spawn", "deadline"] as const)(
+  "preserves the %s failure when stdin emits a non-EPIPE error",
+  async (failure) => {
+    vi.useFakeTimers();
+    const child = Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      pid: 901,
+      exitCode: null as number | null,
+      signalCode: null as NodeJS.Signals | null,
+      kill: vi.fn(() => true),
+    });
+    const processes = createTestProcessRegistry(
+      () => child as unknown as ChildProcessWithoutNullStreams,
+    );
+    const outcome = processes
+      .run("fixture", [], { timeoutMs: 100 })
+      .catch((error: unknown) => error);
+    const inputError = Object.assign(new Error("stdin write failed"), {
+      code: "EIO",
+    });
+    const spawnError = new Error("spawn failed");
+    try {
+      child.stdin.emit("error", inputError);
+      if (failure === "spawn") child.emit("error", spawnError);
+      if (failure === "deadline") await vi.advanceTimersByTimeAsync(100);
+      child.emit("close", 0, null);
+      if (failure === "deadline") {
+        expect(await outcome).toMatchObject({
+          message: "Test process exceeded its 100ms deadline",
+        });
+      } else {
+        expect(await outcome).toBe(
+          failure === "spawn" ? spawnError : inputError,
+        );
+      }
+    } finally {
+      child.emit("close", 0, null);
+      await outcome;
+      await processes.shutdown();
+      vi.useRealTimers();
+    }
+  },
+);

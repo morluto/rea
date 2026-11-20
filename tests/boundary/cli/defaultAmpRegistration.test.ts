@@ -1,25 +1,61 @@
-import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it } from "vitest";
 import { decode } from "@toon-format/toon";
 
 import { mcpRegistrationReportSchema } from "../../../src/contracts/mcpRegistration.js";
 import { parseCliGlobalArguments } from "../../../src/cliBuiltinArguments.js";
-import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { registrationEnvironment } from "../../support/cli/registrationEnvironment.js";
+import {
+  createTestWorkspace,
+  removeTestWorkspace,
+} from "../../support/workspace/workspaceFixture.js";
+
+const PRESERVED_HOME_ENTRIES = new Set([
+  "registration-environment.mjs",
+  "registration-bin",
+  "unexpected-acquisition.log",
+]);
+
+let sharedRoot = "";
+let sharedHome = "";
+let sharedEnvironment: NodeJS.ProcessEnv = {};
+
+beforeAll(async () => {
+  sharedRoot = (await createTestWorkspace("rea-default-amp-")).root;
+  sharedHome = join(sharedRoot, "home");
+  sharedEnvironment = await registrationEnvironment(sharedHome);
+});
+
+afterAll(async () => {
+  if (sharedRoot !== "") {
+    await removeTestWorkspace(sharedRoot);
+  }
+});
 
 const fixture = async (initial: string) => {
-  const home = await createTestTempDirectory("rea-default-amp-");
-  const directory = join(home, ".config", "amp");
+  for (const entry of await readdir(sharedHome)) {
+    if (!PRESERVED_HOME_ENTRIES.has(entry)) {
+      await rm(join(sharedHome, entry), { recursive: true, force: true });
+    }
+  }
+  const directory = join(sharedHome, ".config", "amp");
   const settings = join(directory, "settings.json");
   await mkdir(directory, { recursive: true });
   await writeFile(settings, initial);
   return {
-    home,
+    home: sharedHome,
     directory,
     settings,
-    environment: await registrationEnvironment(home),
+    environment: sharedEnvironment,
   };
 };
 const original = `${JSON.stringify({

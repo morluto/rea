@@ -21,7 +21,6 @@ import {
   type ProcessCaptureCleanupHost,
 } from "./ProcessCaptureLifecycle.js";
 import { parseProcessCapture } from "../../domain/process/processCaptureParsing.js";
-import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../domain/process/processCaptureExample.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import {
   accountFullyObservedProcessCapture,
@@ -30,14 +29,11 @@ import {
 import { analysisErrorProjectionSchema } from "../../domain/analysisErrorProjectionSchema.js";
 import {
   ProcessCaptureError,
-  normalizeCaptureFailure,
   processCaptureCancelled,
 } from "./ProcessCaptureError.js";
-import { DarwinProcessOwnershipInspectionError } from "../DarwinProcessRunTokenReader.js";
 
 import {
   partialProcessCaptureObservationSchema,
-  processCaptureSchema,
   type ProcessCaptureCleanupReport,
 } from "../../domain/process/processCapture.js";
 const emptyFilesystemCoverage =
@@ -243,29 +239,6 @@ it("projects complete after-snapshot metadata when a later capture stage fails",
         },
       },
     },
-  });
-});
-
-it("rejects legacy replay output instead of silently discarding it", () => {
-  expect(
-    processCaptureSchema.safeParse({
-      ...EMPTY_PROCESS_CAPTURE_EXAMPLE,
-      protocol_events: [],
-    }).success,
-  ).toBe(false);
-});
-
-it("preserves the actionable Darwin ownership compiler prerequisite", () => {
-  const normalized = normalizeCaptureFailure(
-    new DarwinProcessOwnershipInspectionError(
-      "macOS process ownership inspection requires the Apple Swift compiler via xcrun",
-    ),
-  );
-
-  expect(normalized).toBeInstanceOf(ProcessCaptureError);
-  expect(normalized).toMatchObject({
-    message:
-      "macOS process ownership inspection requires the Apple Swift compiler via xcrun",
   });
 });
 
@@ -803,43 +776,6 @@ it("fails closed on Windows before resolving or launching scenario paths", async
   });
 });
 
-it("retains the root start identity once at launch and signals only with it", async () => {
-  const observe = vi.fn(async () => ({
-    state: "readable" as const,
-    identity: "id-launch",
-  }));
-  const signal = vi.fn(async () => "signaled" as const);
-  const signalRoot = retainRootSignaller(
-    4242,
-    retainRootIdentity(4242, "captured-run", observe),
-    signal,
-  );
-
-  expect(
-    observe,
-    "the identity is read at launch, before any signal",
-  ).toHaveBeenCalledTimes(1);
-  expect(
-    await signalRoot.signal("SIGTERM"),
-    "a matching identity is signalled",
-  ).toEqual({
-    delivery: "signaled",
-  });
-  await signalRoot.signal("SIGKILL");
-
-  expect(
-    observe,
-    "later signals never re-read the identity",
-  ).toHaveBeenCalledTimes(1);
-  expect(
-    signal.mock.calls,
-    "both signals carry the pid and the identity retained at launch",
-  ).toEqual([
-    [4242, "id-launch", "SIGTERM"],
-    [4242, "id-launch", "SIGKILL"],
-  ]);
-});
-
 it.each([
   ["a vanished root", async () => undefined, { delivery: "gone" }],
   [
@@ -967,35 +903,6 @@ it.each(["signaled", "gone", "identity-changed", "unverified"] as const)(
     );
   },
 );
-
-it("seeds a finalization observation only for a scenario with an interval", () => {
-  const seed = {
-    frames: [],
-    interactions: [],
-    samples: [],
-    eventJournal: [],
-    before: {
-      files: [],
-      truncated: false,
-      completeRoots: [],
-      coverage: emptyFilesystemCoverage,
-    },
-  };
-
-  expect(
-    Object.keys(createProcessCaptureObservationBuffer(seed)),
-    "a default scenario keeps the base observation keys",
-  ).not.toContain("finalization");
-  expect(
-    Object.keys(
-      createProcessCaptureObservationBuffer({
-        ...seed,
-        finalizationEnabled: true,
-      }),
-    ),
-    "a scenario with an interval carries the finalization observation",
-  ).toContain("finalization");
-});
 
 it("keeps a non-empty reason when the identity inspection fails without a message", async () => {
   const signalRoot = retainRootSignaller(

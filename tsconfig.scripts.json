@@ -29,7 +29,6 @@
     "scripts/record-catalog-digests.mjs",
     "scripts/scan-todos.mjs",
     "scripts/verify-package-evidence.mjs",
-    "scripts/verify/cli-text-guard.mjs",
     "scripts/verify/javascript/digests.mjs",
     "scripts/verify/javascript/output.mjs",
     "scripts/verify/limit-class-guard.mjs",
