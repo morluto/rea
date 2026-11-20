@@ -507,7 +507,18 @@ it.each(["descriptor-first", "workspace-first"])(
         cause: expect.any(AggregateError),
         diagnostics: {
           failures: expect.arrayContaining([
-            expect.objectContaining({ resources: [workspacePath] }),
+            {
+              engine: "firmware",
+              operation: "close_firmware",
+              resources: [path],
+              reason: "controlled firmware descriptor close failure",
+            },
+            {
+              engine: "binwalk",
+              operation: "inspect_firmware_regions",
+              resources: [workspacePath],
+              reason: "controlled workspace cleanup failure",
+            },
           ]),
         },
       },
@@ -518,6 +529,10 @@ it.each(["descriptor-first", "workspace-first"])(
     const retry = await provider.close().catch((cause: unknown) => cause);
     expect(retry).toBeInstanceOf(AnalysisError);
     expect(result.error.cleanupIncomplete).toBe(true);
+    if (!blocked.ok)
+      expect(blocked.error.cleanupResources).toEqual([
+        order === "descriptor-first" ? workspacePath : path,
+      ]);
     if (order === "workspace-first")
       await expect(access(workspacePath)).rejects.toMatchObject({
         code: "ENOENT",
