@@ -2108,6 +2108,48 @@ it.each([
     "resolved",
   ],
   [
+    "a numeric own slot on a projected array RHS",
+    'const box={pairs:[["one"]]};const {0:[selected]}=box.pairs;box.pairs[0][0]="later";',
+    ["pairs", "0", "0"],
+    "resolved",
+  ],
+  [
+    "a quoted own slot on a projected const alias",
+    'const box={pairs:[["one"]]};const alias=box;let selected;({"0":[selected]}=alias.pairs);box.pairs[0][0]="later";',
+    ["pairs", "0", "0"],
+    "resolved",
+  ],
+  [
+    "a numeric own slot under an own object path",
+    'const box={nested:{pairs:[["one"]]}};const {0:[selected]}=box.nested.pairs;box.nested.pairs[0][0]="later";',
+    ["nested", "pairs", "0", "0"],
+    "resolved",
+  ],
+  [
+    "a numeric slot selected through an accessor",
+    'const box={get pairs(){return [["one"]];}};const {0:[selected]}=box.pairs;box.pairs[0][0]="later";',
+    ["pairs", "0", "0"],
+    "candidate",
+  ],
+  [
+    "an earlier replacement of the projected array receiver",
+    'const box={pairs:[["one"]]};box.pairs=[["earlier"]];const {0:[selected]}=box.pairs;box.pairs[0][0]="later";',
+    ["pairs", "0", "0"],
+    "candidate",
+  ],
+  [
+    "a hole in a projected array",
+    'const box={pairs:[,["one"]]};const {0:[selected]}=box.pairs;box.pairs[0]=["later"];',
+    ["pairs", "0", "0"],
+    "candidate",
+  ],
+  [
+    "an early inner iterator overwrite at a projected array slot",
+    'const box={pairs:[["one"]]};Object.getPrototypeOf([].values()).next=()=>({done:true});const {0:[selected]}=box.pairs;box.pairs[0][0]="later";',
+    ["pairs", "0", "0"],
+    "candidate",
+  ],
+  [
     "a quoted own array slot captured through a const alias",
     'const pairs=[["one"]];const alias=pairs;let selected;({"0":[selected]}=alias);pairs[0][0]="later";',
     ["0", "0"],

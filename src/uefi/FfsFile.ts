@@ -8,6 +8,7 @@ import {
   type ScanRegion,
 } from "./UefiBytes.js";
 import { formatGuidLittleEndian } from "./UefiGuid.js";
+import type { FirmwareVolumeHeader } from "./FirmwareVolume.js";
 import { FFS_ATTRIBUTE_MASKS, FFS_HEADER_LAYOUT } from "./UefiCodeTables.js";
 
 const FFS_DATA_ALIGNMENT_EXPONENTS = [0, 4, 7, 9, 10, 12, 15, 16] as const;
@@ -300,7 +301,10 @@ type FfsHeaderRead =
 export function readFfsHeader(
   region: ScanRegion,
   local: number,
-  erasePolarity: boolean,
+  {
+    erasePolarity,
+    fileSystem,
+  }: Pick<FirmwareVolumeHeader, "erasePolarity" | "fileSystem">,
   reserve: () => boolean = () => true,
 ): FfsHeaderRead {
   if (local >= region.end) return { kind: "end" };
@@ -342,6 +346,38 @@ export function readFfsHeader(
         region.end,
         region.start + alignUp(end - region.start, 8),
       );
+      if (
+        fileSystem === "ffs2" &&
+        header.headerLength === FFS_HEADER_LAYOUT.extendedLength
+      ) {
+        const detail = `FFS2 volume contains an FFS3 file header at 0x${header.absoluteBase.toString(16)}.`;
+        const fixedHeaderOnly = header.extentIssue === "unusable-header-state";
+        if (
+          !fixedHeaderOnly &&
+          (header.extentIssue !== null ||
+            !header.headerChecksumValid ||
+            header.declaredLength <= 0xff_ffff ||
+            header.implausibilities.includes(
+              "large-file-compact-size-is-nonzero",
+            ))
+        )
+          return {
+            kind: "unparsed",
+            offset: header.absoluteBase,
+            length: region.end - local,
+            detail: `${detail} Its occupied extent could not be confirmed.`,
+          };
+        const skipEnd = fixedHeaderOnly ? end : nextLocal;
+        return {
+          kind: "unusable-header",
+          offset: header.absoluteBase,
+          length: skipEnd - local,
+          nextLocal: skipEnd,
+          detail: fixedHeaderOnly
+            ? `${detail} Its state permits advancing by the fixed header extent.`
+            : detail,
+        };
+      }
       return {
         kind: "file",
         header,

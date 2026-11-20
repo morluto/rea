@@ -1,4 +1,5 @@
 import { BinaryReader } from "../domain/binaryContainer.js";
+import type { UefiSectionRecord } from "../domain/uefi/uefiFirmwareAnalysis.js";
 import { Buffer } from "node:buffer";
 import {
   absoluteOffset,
@@ -48,15 +49,10 @@ export interface SectionDraft {
   readonly compression:
     | { readonly kind: "none" }
     | {
-        readonly kind:
-          | "lzma-custom"
-          | "lzmaf86"
-          | "ami-zlib"
-          | "tiano"
-          | "unknown-compression"
-          | "efi-standard"
-          | "crc32-guided"
-          | "unknown-guid";
+        readonly kind: Exclude<
+          UefiSectionRecord["compression"]["kind"],
+          "none"
+        >;
         readonly guid: string | null;
         readonly dataOffset: number;
         readonly attributes: number | null;
@@ -125,7 +121,7 @@ function guidedSectionContent(
 
   if (kind === "lzma-custom") return { kind: "decode", format: "lzma" };
   if (kind === "lzmaf86") return { kind: "decode", format: "lzmaf86" };
-  if (kind === "ami-zlib") return { kind: "decode", format: "zlib" };
+  if (kind === "amd-zlib") return { kind: "decode", format: "zlib" };
 
   if (
     (attributes & GUIDED_PROCESSING_REQUIRED) === 0 &&
@@ -304,8 +300,8 @@ export function walkSections(
  */
 export const AMD_ZLIB_HEADER_LENGTH = 0x100;
 
-/** Peel the 0x100-byte AMD header off one ami-zlib payload, or null when short. */
-export function peelAmiZlibPayload(
+/** Peel the 0x100-byte AMD header off one amd-zlib payload, or null when short. */
+export function peelAmdZlibPayload(
   payload: Buffer,
 ): { stream: Buffer; declaredCompressedSize: number } | null {
   if (payload.length < AMD_ZLIB_HEADER_LENGTH) {
