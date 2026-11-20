@@ -48,14 +48,6 @@ const environmentName = z
         ? `${reservedRunIdEnvironmentName} is reserved by the process adapter`
         : "Environment names cannot contain '=' or NUL",
   });
-const unsupportedPtyEnvironmentName = "__proto__";
-const ptyEnvironmentName = environmentName.regex(
-  environmentNamePattern(unsupportedPtyEnvironmentName),
-  {
-    error:
-      "The installed PTY backend cannot preserve the __proto__ environment name; pass it through /usr/bin/env instead.",
-  },
-);
 const childProcessString = z
   .string()
   .regex(
@@ -64,7 +56,7 @@ const childProcessString = z
   );
 const processEnvironmentSchema = jsonRecordSchema(
   childProcessString,
-  ptyEnvironmentName,
+  environmentName,
 );
 
 const fitsProcessTerminalCellBudget = (

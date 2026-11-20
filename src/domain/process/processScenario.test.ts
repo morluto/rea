@@ -15,13 +15,13 @@ import {
 
 const baseScenario = { executable: "/usr/bin/true" };
 
-it("advertises the same unsupported PTY environment name as runtime admission", () => {
+it("advertises the same process environment names as runtime admission", () => {
   const schema = z.toJSONSchema(processScenarioSchema.shape.environment, {
     io: "input",
   });
   const ajv = new Ajv2020({ strict: false });
   const validate = ajv.compile(schema);
-  expect(validate(Object.fromEntries([["__proto__", "selected"]]))).toBe(false);
+  expect(validate(Object.fromEntries([["__proto__", "selected"]]))).toBe(true);
   expect(
     validate({
       constructor: "ordinary",
@@ -329,8 +329,8 @@ it("identifies each event scheduled after the scenario timeout", () => {
   ]);
 });
 
-it.each(["selected-value", 7])(
-  "rejects a selected __proto__ PTY environment value instead of omitting %j",
+it.each(["selected-value", "7"])(
+  "accepts a selected __proto__ process environment value %j",
   (value) => {
     const environment = Object.fromEntries([
       ["__proto__", value],
@@ -340,21 +340,25 @@ it.each(["selected-value", 7])(
       ...baseScenario,
       environment,
     });
-    expect(parsed.success).toBe(false);
-    if (parsed.success)
-      throw new Error("Expected the unsupported PTY name to be rejected");
+    expect(parsed.success, JSON.stringify(parsed)).toBe(true);
+    if (!parsed.success) return;
+    expect(Object.hasOwn(parsed.data.environment, "__proto__")).toBe(true);
+    expect(parsed.data.environment["__proto__"]).toBe(value);
     expect(
-      projectInputIssues(parsed.error.issues, { ...baseScenario, environment }),
-    ).toContainEqual(
-      expect.objectContaining({
-        path: ["environment", "__proto__"],
-        message: expect.stringContaining("PTY backend cannot preserve"),
-      }),
-    );
+      Object.hasOwn(processScenarioCommitment(parsed.data), "environment"),
+    ).toBe(true);
+    expect(
+      (
+        processScenarioCommitment(parsed.data).environment as Record<
+          string,
+          string
+        >
+      )["__proto__"],
+    ).toBe(value);
   },
 );
 
-it("keeps native and PTY environment admission distinct through Standard Schema export", () => {
+it("keeps native and process scenario environment admission aligned through Standard Schema export", () => {
   const environment = Object.fromEntries([
     ["__proto__", "selected"],
     ["constructor", "ordinary"],
@@ -366,12 +370,12 @@ it("keeps native and PTY environment admission distinct through Standard Schema 
   const ajv = new Ajv2020({ strict: false });
   const options = { target: "draft-2020-12" as const };
   const nativePublished = native["~standard"].jsonSchema.input(options);
-  const ptyPublished =
+  const processPublished =
     processScenarioSchema.shape.environment["~standard"].jsonSchema.input(
       options,
     );
   expect(ajv.compile(nativePublished)(environment)).toBe(true);
-  expect(ajv.compile(ptyPublished)(environment)).toBe(false);
+  expect(ajv.compile(processPublished)(environment)).toBe(true);
 });
 
 const planWith = (events: unknown[]) => {

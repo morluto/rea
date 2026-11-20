@@ -31,6 +31,29 @@ it("uses Windows environment identity for caller overrides and capture-owned val
   });
 });
 
+it("preserves object-like environment names for the child", () => {
+  const scenario = processScenarioSchema.parse({
+    executable: "node",
+    environment: {
+      ["__proto__"]: "selected-value",
+      NORMAL_CAPTURE_KEY: "control-value",
+    },
+  });
+  expect(
+    makeProcessCaptureEnvironment({
+      scenario,
+      hostEnvironment: { NORMAL_CAPTURE_KEY: "host-value" },
+      runId: "capture-token",
+      platform: "linux",
+    }),
+  ).toEqual({
+    NORMAL_CAPTURE_KEY: "control-value",
+    ["__proto__"]: "selected-value",
+    TERM: "xterm-256color",
+    REA_PROCESS_RUN_ID: "capture-token",
+  });
+});
+
 it("preserves distinct POSIX names and supplies the terminal default", () => {
   const scenario = processScenarioSchema.parse({
     executable: "node",
