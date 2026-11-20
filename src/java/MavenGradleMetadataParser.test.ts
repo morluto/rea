@@ -449,6 +449,31 @@ it("applies XML end-of-line handling to POM text", () => {
   ]);
 });
 
+it.each([
+  ["&#xA0;", "\u00a0"],
+  ["&#xFEFF;", "\ufeff"],
+  ["&#x20;", ""],
+])(
+  "preserves declared POM version characters at a %s boundary",
+  (reference, retained) => {
+    const report = parse(`<project>
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>example</groupId>
+    <artifactId>demo</artifactId>
+    <version>  ${reference}1.0${reference}  </version>
+    <dependencies>
+      <dependency>
+        <groupId>example</groupId>
+        <artifactId>library</artifactId>
+        <version>  ${reference}2.0${reference}  </version>
+      </dependency>
+    </dependencies>
+  </project>`);
+    expect(report.coordinates.version).toBe(`${retained}1.0${retained}`);
+    expect(report.dependencies[0]?.version).toBe(`${retained}2.0${retained}`);
+  },
+);
+
 it("lists properties in packaging, scope, type and classifier", () => {
   const report = parse(`<project>
   <groupId>com.example</groupId>
