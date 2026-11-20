@@ -64,6 +64,76 @@ cliTest(
 );
 
 cliTest(
+  "distinguishes the ELF string scan cap from an observed unterminated table end",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-elf-dependencies-string-end-",
+    );
+    for (const { kind, length, truncate, message } of [
+      {
+        kind: "unterminated-at-cap",
+        length: 65536,
+        truncate: true,
+        message: "DT_SONAME string is unterminated in the dynamic string table",
+      },
+      {
+        kind: "terminator-beyond-cap",
+        length: 65536,
+        truncate: false,
+        message:
+          "DT_SONAME string has no terminator within the 65536-byte string scan limit in the dynamic string table",
+      },
+      {
+        kind: "terminator-at-cap",
+        length: 65535,
+        truncate: false,
+        message: null,
+      },
+    ]) {
+      const path = join(root, kind);
+      // Place SONAME last, with a nonzero string-table index and no neighboring
+      // string that could supply a terminator after the selected bytes.
+      await writeFile(
+        path,
+        elfDependencyFixture({
+          soname: "s".repeat(length),
+          runpath: null,
+          imports: [],
+          verneed: [],
+          verdef: [],
+          truncateDynstr: truncate,
+        }),
+      );
+      const result = await cli.run({
+        arguments: ["inspect-elf-dependencies", path, "--json"],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      const report = dependenciesContract.outputSchema.parse(
+        result.json,
+      ).normalized_result;
+      if (!("dynamic" in report))
+        throw new Error("Expected an inline ELF dependency inventory");
+      expect(
+        report.needed.map(({ name }) => name),
+        kind,
+      ).toEqual(["libstdc++.so.6", "libm.so.6", "libc.so.6"]);
+      const issue = report.issues.find(
+        ({ location }) => location === "DT_SONAME",
+      );
+      if (message === null) {
+        expect(issue, kind).toBeUndefined();
+        expect(report.dynamic.soname?.name?.length, kind).toBe(length);
+        expect(report.coverage.status, kind).toBe("complete");
+      } else {
+        expect(issue, kind).toMatchObject({ code: "name_unreadable", message });
+        expect(report.dynamic.soname?.name, kind).toBeNull();
+        expect(report.coverage.status, kind).toBe("partial");
+      }
+    }
+  },
+);
+
+cliTest(
   "resolves a relative ELF path against the working directory",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-elf-dependencies-cli-rel-");
