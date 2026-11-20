@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { lstat, mkdir, symlink, unlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -280,16 +279,20 @@ describe("readReferenceSource failures and exclusions", () => {
     });
   });
 
-  it("keeps selected-root paths in actionable filesystem errors", async () => {
-    const missing = join(tmpdir(), "rea-secret-root-that-does-not-exist");
-    const result = await readReferenceSource(missing);
-
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error.message).toContain(missing);
+  it("returns the selected path in a typed missing-root error", async () => {
+    const root = await createTestTempDirectory("rea-reference-");
+    const missing = join(root, "missing");
+    expect(await readReferenceSource(missing)).toMatchObject({
+      ok: false,
+      error: {
+        tag: "reference-source-reader",
+        code: "invalid-root",
+        message: expect.stringContaining(missing),
+      },
+    });
   });
 
-  it("returns typed failures for cancellation and invalid roots", async () => {
+  it("returns the exact reason when cancelled before traversal", async () => {
     const controller = new AbortController();
     controller.abort();
     const cancelled = await readReferenceSource("/unused", {
@@ -304,10 +307,5 @@ describe("readReferenceSource failures and exclusions", () => {
         cause: controller.signal.reason,
       },
     });
-
-    const invalid = await readReferenceSource("/path/that/does/not/exist");
-    expect(invalid.ok).toBe(false);
-    if (invalid.ok) return;
-    expect(invalid.error.code).toBe("invalid-root");
   });
 });
