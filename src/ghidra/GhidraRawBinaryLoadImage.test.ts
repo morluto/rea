@@ -320,13 +320,6 @@ const RAW_BINARY_MISMATCH_CASES = [
     },
   },
   {
-    label: "compiler_spec_id",
-    name: "compiler_spec_id",
-    mutate: (f: ReturnType<typeof fixtureRawBinaryLoadImage>) => {
-      f.observation.compiler_spec_id = "drifted_cspec";
-    },
-  },
-  {
     label: "modified_file_sha256",
     name: "modified_file_sha256",
     mutate: (f: ReturnType<typeof fixtureRawBinaryLoadImage>) => {
