@@ -32,57 +32,48 @@ The other values reported here are in force, so `pending_restart` is false. Pros
 restart REA is marked `prose`. `mcp_server_restart_required` is a
 server-identity alignment state in `src/process/ServerIdentity.ts`, not a setting field.
 
-Three numeric limits are absent from this tree and are being moved into the
-runtime system on their own PRs. This audit does not change them:
-
-| Name                                         | Tracking |
-| -------------------------------------------- | -------- |
-| `REA_NTFS_MFT_MAX_FILE_BYTES`                | #9868    |
-| `REA_REGF_HIVE_MAX_FILE_BYTES`               | #9865    |
-| `REA_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES` | #9836    |
-
-When those names land in `src`, the static check requires them to be analysis
-settings. They are not on the restart-only list.
+None pending. No numeric `REA_` limit is absent from this tree.
 
 ## Counts
 
 | Category                                                              |                                                                        Count |
 | --------------------------------------------------------------------- | ---------------------------------------------------------------------------: |
-| Runtime analysis settings                                             |                  29 (26 have an `REA_` seed; 3 are per-call parameters only) |
+| Runtime analysis settings                                             |                  32 (29 have an `REA_` seed; 3 are per-call parameters only) |
 | Per-call numeric `REA_` limits still read from the launch environment |                                                                            0 |
 | Restart-only numeric `REA_` limits                                    |                                                                           15 |
-| Numeric `REA_` candidates recognized in TypeScript source             |                                                                           39 |
+| Numeric `REA_` candidates recognized in TypeScript source             |                                                                           41 |
 | Numeric `REA_` controls with external or generated-reader provenance  |                                                                            2 |
 | Non-numeric `REA_` settings kept restart-only                         | 52 caller settings, plus process-protocol names that are not caller settings |
 | Hardcoded ceilings left for follow-up                                 |                        grouped below; none converted in the inventory change |
 
 ## Runtime analysis settings
 
-Already adjustable with `update_analysis_settings`. Each call reads the snapshot
+Already adjustable with `update_analysis_settings`. This table and the per-call
+table below are the 32 `ANALYSIS_SETTINGS` entries. Each call reads the snapshot
 accepted for that operation. Launch source is `default` or `setting`; a runtime
 override is `source: "runtime"`. The structured field is `update_mode: "runtime"` and `pending_restart: false`.
 `applies_at` is the finer point
 (`next_operation`, `next_worker`, or `next_startup`).
 
-| Setting                                      | Environment seed                                 | Owner                                                         | Default                                   |            Floor |                                Maximum | Read                  |
-| -------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------- | ----------------------------------------- | ---------------: | -------------------------------------: | --------------------- |
-| `asar.max_header_bytes`                      | `REA_ASAR_MAX_HEADER_BYTES`                      | `src/domain/analysisResourceLimits.ts`                        | 16777216                                  |                1 |                              268435456 | per operation         |
-| `asar.max_listing_bytes`                     | `REA_ASAR_MAX_LISTING_BYTES`                     | `src/domain/analysisResourceLimits.ts`                        | 67108864                                  |                1 |              `Number.MAX_SAFE_INTEGER` | per operation         |
-| `ghidra.value_flow_max_operations`           | `REA_GHIDRA_VALUE_FLOW_MAX_OPERATIONS`           | `src/domain/analysisResourceLimits.ts`                        | 3000                                      |                1 |                             2147483647 | per operation         |
-| `ghidra.value_flow_max_inputs_per_operation` | `REA_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION` | `src/domain/analysisResourceLimits.ts`                        | 64                                        |                1 |                             2147483647 | per operation         |
-| `ghidra.value_flow_max_edges`                | `REA_GHIDRA_VALUE_FLOW_MAX_EDGES`                | `src/domain/analysisResourceLimits.ts`                        | 12000                                     |                1 |                             2147483647 | per operation         |
-| `ghidra.decompile_max_payload_mib`           | `REA_GHIDRA_DECOMPILE_MAX_PAYLOAD_MIB`           | `src/domain/analysisResourceLimits.ts`                        | unset (`null`, unbounded payload policy)  |                1 |                                   2047 | per operation         |
-| `ghidra.startup_timeout_ms`                  | `REA_GHIDRA_STARTUP_TIMEOUT_MS`                  | `src/domain/analysisResourceLimits.ts`                        | 330000                                    |                1 |                             2147483647 | next provider startup |
-| `hopper.startup_timeout_ms`                  | `REA_HOPPER_STARTUP_TIMEOUT_MS`                  | `src/domain/analysisResourceLimits.ts`                        | 120000                                    |                1 |                             2147483647 | next provider startup |
-| `ghidra.decompile_timeout_seconds`           | `REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS`           | `src/domain/analysisResourceLimits.ts`                        | unset (`null`, decompile stays unbounded) |                1 | `MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS` | per operation         |
-| `jadx.operation_timeout_ms`                  | `REA_JADX_OPERATION_TIMEOUT_MS`                  | `src/domain/analysisResourceLimits.ts`                        | 120000                                    |                1 |                             2147483647 | per operation         |
-| `regex.matching_deadline_ms`                 | `REA_REGEX_MATCHING_DEADLINE_MS`                 | `src/domain/analysisResourceLimits.ts`                        | 5000                                      |                1 |                             2147483647 | per operation         |
-| `regex.worker_heap_request_mib`              | `REA_REGEX_WORKER_HEAP_REQUEST_MIB`              | `src/domain/analysisResourceLimits.ts`                        | 128                                       |                7 |                                  16384 | next worker           |
-| `capture.decoder_old_generation_mib`         | `REA_CAPTURE_DECODER_OLD_GENERATION_MIB`         | `src/domain/analysisResourceLimits.ts`                        | 192                                       | semi-space floor |                                  16384 | next worker           |
-| `javascript.analysis_timeout_ms`             | none (`analysis_timeout_ms`)                     | `src/domain/javascript/javascriptAnalysisResourceControls.ts` | owner default                             |                1 |                             2147483647 | per operation         |
-| `javascript.max_heap_mb`                     | none (`max_heap_mb`)                             | `src/domain/javascript/javascriptAnalysisResourceControls.ts` | owner default                             |      owner floor |                          owner maximum | next worker           |
-| `wasm.command_timeout_ms`                    | none (`command_timeout_ms`)                      | `src/domain/wasm/wasmArtifact.ts`                             | owner default                             |                1 |                          owner maximum | per operation         |
-| `native.matching_representation_bytes`       | `REA_NATIVE_MATCHING_REPRESENTATION_BYTES`       | `src/domain/analysisResourceLimits.ts`                        | 100663296                                 |                1 |                             1073741824 | per operation         |
+| Setting                                      | Environment seed                                 | Owner                                                         | Default                                   | Floor |                                Maximum | Read                  |
+| -------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------- | ----------------------------------------- | ----: | -------------------------------------: | --------------------- |
+| `asar.max_header_bytes`                      | `REA_ASAR_MAX_HEADER_BYTES`                      | `src/domain/analysisResourceLimits.ts`                        | 16777216                                  |     1 |                              268435456 | per operation         |
+| `asar.max_listing_bytes`                     | `REA_ASAR_MAX_LISTING_BYTES`                     | `src/domain/analysisResourceLimits.ts`                        | 67108864                                  |     1 |              `Number.MAX_SAFE_INTEGER` | per operation         |
+| `ghidra.value_flow_max_operations`           | `REA_GHIDRA_VALUE_FLOW_MAX_OPERATIONS`           | `src/domain/analysisResourceLimits.ts`                        | 3000                                      |     1 |                             2147483647 | per operation         |
+| `ghidra.value_flow_max_inputs_per_operation` | `REA_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION` | `src/domain/analysisResourceLimits.ts`                        | 64                                        |     1 |                             2147483647 | per operation         |
+| `ghidra.value_flow_max_edges`                | `REA_GHIDRA_VALUE_FLOW_MAX_EDGES`                | `src/domain/analysisResourceLimits.ts`                        | 12000                                     |     1 |                             2147483647 | per operation         |
+| `ghidra.decompile_max_payload_mib`           | `REA_GHIDRA_DECOMPILE_MAX_PAYLOAD_MIB`           | `src/domain/analysisResourceLimits.ts`                        | unset (`null`, unbounded payload policy)  |     1 |                                   2047 | per operation         |
+| `ghidra.startup_timeout_ms`                  | `REA_GHIDRA_STARTUP_TIMEOUT_MS`                  | `src/domain/analysisResourceLimits.ts`                        | 330000                                    |     1 |                             2147483647 | next provider startup |
+| `hopper.startup_timeout_ms`                  | `REA_HOPPER_STARTUP_TIMEOUT_MS`                  | `src/domain/analysisResourceLimits.ts`                        | 120000                                    |     1 |                             2147483647 | next provider startup |
+| `ghidra.decompile_timeout_seconds`           | `REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS`           | `src/domain/analysisResourceLimits.ts`                        | unset (`null`, decompile stays unbounded) |     1 | `MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS` | per operation         |
+| `jadx.operation_timeout_ms`                  | `REA_JADX_OPERATION_TIMEOUT_MS`                  | `src/domain/analysisResourceLimits.ts`                        | 120000                                    |     1 |                             2147483647 | per operation         |
+| `regex.matching_deadline_ms`                 | `REA_REGEX_MATCHING_DEADLINE_MS`                 | `src/domain/analysisResourceLimits.ts`                        | 5000                                      |     1 |                             2147483647 | per operation         |
+| `regex.worker_heap_request_mib`              | `REA_REGEX_WORKER_HEAP_REQUEST_MIB`              | `src/domain/analysisResourceLimits.ts`                        | 128                                       |     7 |                                  16384 | next worker           |
+| `capture.decoder_old_generation_mib`         | `REA_CAPTURE_DECODER_OLD_GENERATION_MIB`         | `src/domain/analysisResourceLimits.ts`                        | 192                                       |     8 |                                  16384 | next worker           |
+| `javascript.analysis_timeout_ms`             | none (`analysis_timeout_ms`)                     | `src/domain/javascript/javascriptAnalysisResourceControls.ts` | 300000                                    |     1 |                             2147483647 | per operation         |
+| `javascript.max_heap_mb`                     | none (`max_heap_mb`)                             | `src/domain/javascript/javascriptAnalysisResourceControls.ts` | 1024                                      |   128 |                                  16384 | next worker           |
+| `wasm.command_timeout_ms`                    | none (`command_timeout_ms`)                      | `src/domain/wasm/wasmArtifact.ts`                             | 30000                                     |     1 |                             2147483647 | per operation         |
+| `native.matching_representation_bytes`       | `REA_NATIVE_MATCHING_REPRESENTATION_BYTES`       | `src/domain/analysisResourceLimits.ts`                        | 100663296                                 |     1 |                             1073741824 | per operation         |
 
 An out-of-range `update_analysis_settings` value is rejected by the setting's
 schema. Invalid launch seeds that the global environment parser accepts as

@@ -96,13 +96,15 @@ provider constructor would freeze it at launch. For entrypoints outside the
 MCP wrapper, an embedder needing the same snapshot guarantee must establish
 the operation scope with `AnalysisSettings.run()`.
 
-## Name a default, then a setting when operators need headroom
+## Turn a hardcoded limit into a runtime setting
+
+A hardcoded limit becomes an `REA_` runtime setting. Give it a default, a
+floor, and a maximum. An error names the setting, the effective value, the
+source, and the range.
 
 Put the number in a named constant with a unit. Do not leave it as a magic
-number at the call site.
-
-When a workload may need more room, add a setting whose unset value is that
-constant. Pure numeric contracts live in `src/domain/analysisResourceLimits.ts`
+number at the call site. The setting's unset value is that constant. Pure
+numeric contracts live in `src/domain/analysisResourceLimits.ts`
 or their existing domain owner. `analysisSettingDefinitions.ts` binds the
 curated runtime IDs to those same bounds, defaults and application points.
 Environment parsers and recovery text stay under `src/config/`; register launch
@@ -377,6 +379,9 @@ same effective setting so readiness changes along with repair and reset.
 
 ## Keep a fixed ceiling honest
 
+A fixed ceiling is the exception. Keep one only for a stated format, protocol,
+or representation reason.
+
 Inspection's separate
 [constraints](https://github.com/morluto/rea/blob/main/src/server/analysisSettingsConstraints.ts)
 describe operator-owned, external, and fixed controls. REA can report its
@@ -385,9 +390,8 @@ buffers remain explicitly unknown. These are not entries accepted by the
 runtime setter. Raising a worker heap request cannot raise the parent heap,
 and raising a provider deadline cannot make the client wait longer.
 
-If the ceiling must stay fixed, say so in the failure. Name the limit and the
-effective value, say this release has no runtime override, and name what does
-not raise it. Do not invent a setting.
+The failure names the limit and the effective value. Say this release has no
+runtime override, and name what does not raise it. Do not invent a setting.
 
 JSON values stop at `MAX_JSON_DEPTH` (1000) in
 [`jsonValue.ts`](https://github.com/morluto/rea/blob/main/src/domain/jsonValue.ts):
@@ -490,9 +494,12 @@ MCP drop, a capacity wait, or retained cleanup.
 
 ## Adding a runtime setting
 
-1. Identify the enforcing owner and the real resource constraint. Decide whether
-   callers need a per-call argument, a runtime default, a launch-only control,
-   or a fixed limit. A registry entry must not advertise authority REA lacks.
+1. Identify the enforcing owner and the real resource constraint. A hardcoded
+   limit becomes an `REA_` runtime setting with a default, a floor, and a
+   maximum. Its errors name the setting, the effective value, the source, and
+   the range. A fixed ceiling is the exception and needs a stated format,
+   protocol, or representation reason; that error names the limit and the
+   effective value. A registry entry must not advertise authority REA lacks.
 2. Define the value type and named numeric bounds with the domain owner. Add the
    ID and metadata to `analysisSettings.ts` and `analysisSettingDefinitions.ts`.
    Reuse those bounds in runtime validation, launch parsing, and error metadata.
@@ -544,27 +551,6 @@ public MCP checks, simulated provider coverage, real Ghidra execution, and
 measured task costs. It does not establish real-provider behavior for every
 editable setting or active worker telemetry.
 
-## Bun standalone module graphs
-
-`inspect_artifact` and `extract_artifact` accept per-call `artifact_limits`.
-The `bun` group defaults to 100,000 modules, independent 256 MiB payload,
-retained-representation and physical metadata-read allowances, 256 path parts
-and 250,000 logical path nodes. Recognition separately admits a 1 MiB ELF
-section table and 16 MiB Mach-O load commands. Exhausted recognition remains
-unknown rather than proving the carrier has no Bun graph. Inventory preserves
-native-root facts or another confirmed pack and reports the exact unexamined
-alternative inline; it does not assert Bun presence. ELF section names
-are examined with exact bounded reads, including names beyond the former
-prefix window.
-
-For example, keep the same complete carrier and retry a reported recognition
-limitation with `{"artifact_limits":{"bun":{"recognition_table_bytes":2097152}}}`.
-The CLI spelling is `--artifact-limits '{"bun":{"recognition_table_bytes":2097152}}'`.
-No REA restart is needed. A smaller later selection is re-admitted; previously
-parsed facts cannot bypass it. The 256 KiB / 1,024-entry exact-range cache
-avoids full-page amplification and remains an internal optimization, not an agent
-resource setting. Shared logical path prefixes count once before nodes are added.
-
 ## Artifact reader admission
 
 The same request provides `dotnet_bundle`, `node_sea` and `godot` groups. Their
@@ -598,58 +584,3 @@ Evidence parameters retain the exact selected object, including omission or
 not process-memory telemetry or a claim that every format reader ran. Complete
 source identities and graph manifests remain content-addressed independently
 of delivery selection. No partial extraction is claimed on admission failure.
-
-## Deno compile sections
-
-`MAX_DENO_METADATA_JSON_BYTES` admits at most 8 MiB of metadata JSON.
-`MAX_DENO_VFS_HEADER_JSON_BYTES` admits at most 32 MiB of virtual-filesystem
-header JSON. Specifier, redirect, and remote tables each admit at most 100,000
-records. Specifier text admits at most 8 MiB, and remote module bodies admit at
-most 256 MiB. The virtual filesystem admits at most 100,000 directory, file,
-and symlink records and at most 512 nested levels (`MAX_DENO_VFS_DEPTH`). A
-name longer than 4,096 UTF-16 code units is indexed and is not retained.
-`MAX_DENO_VFS_RETAINED_UNITS` admits at most 32 million UTF-16 code units across
-the source path built for every entry, directories included, and retained
-symlink parts. A logical path deeper than 256 parts, a name that is not a safe
-relative path, a path component longer than 255 UTF-8 bytes
-(`MAX_DENO_PATH_COMPONENT_BYTES`, POSIX `NAME_MAX`), or a logical path longer
-than 512 UTF-8 bytes (`MAX_DENO_LOGICAL_PATH_BYTES`, half of the Darwin
-`PATH_MAX`) uses an indexed path and keeps the original spelling when that
-spelling is within the name allowance. Component and path lengths include the
-`.deno-*` suffix of the stored regions a member has. A descendant has no source
-path when an ancestor spelling was not retained. Cancellation is checked before
-the virtual-filesystem walk. The walk does not yield, so it does not observe a
-cancellation that arrives while it is running; the retained allowance bounds its
-work. The combined logical path tree admits at most 250,000 distinct prefixes.
-`MAX_DENO_RETAINED_BYTES` admits at most 256 MiB of retained header and entry
-metadata. The shared artifact expansion budget also bounds the sum of referenced
-member lengths, with a 256 MiB floor.
-
-Carrier location claims a file only after it confirms the carrier name: a
-Mach-O `__SUI` segment, a `SUI` ELF note descriptor named `d3n0l4nd`, a PE
-`D3N0L4ND` resource, or an Intel trailer opening with `d3n0l4nd`. Before that,
-malformed tables and exhausted search budgets leave the file with native
-inventory, and that inventory makes no claim that the file holds no Deno
-section. ELF location reads ELF and note headers, not the whole image, and does
-not hash note descriptors. An ELF larger than 512 MiB is still located when
-those headers fit. Program and section tables are read at their canonical record
-size, so the 16-bit header count bounds each read at 65,535 records. A table
-that cannot be read, or that uses extended program numbering, is skipped and
-another table can still hold the note. At most 256 notes are examined
-(`MAX_INSPECT_ELF_NOTE_ENTRIES`). A damaged table or the note ceiling is a
-refusal only when a `SUI` note was also confirmed. Intel Mach-O trailer search
-reads each scanned byte at most once and examines at most 64 `<~sui-data~>`
-sentinels (`MAX_DENO_INTEL_TRAILER_SENTINELS`). The search continues past a
-confirmed trailer, because an enclosing trailer can hold it as a stored file, so
-reaching that allowance after a confirmation is a refusal. PE location walks the resource directories to the named payload and
-does not read the image whole, so a PE of any size is located when the
-`D3N0L4ND` payload is within the 512 MiB resource reader ceiling. A larger
-payload, or a confirmed resource that cannot be resolved, is a named refusal.
-Refusals name the boundary. There is no runtime override; additional host memory
-or `NODE_OPTIONS` does not raise these ceilings. Duplicate-section verification
-rejects unequal lengths before hashing, stops at the first digest mismatch,
-and reads at most the carrier file size in aggregate
-payload bytes. Overlapping copies that exceed that allowance are refused.
-Environment-file values and CA certificate bytes are retained in local Evidence
-with their counts and byte lengths. The npm snapshot length is retained and its
-bytes are not decoded.
