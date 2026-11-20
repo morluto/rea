@@ -1,20 +1,25 @@
 import { canonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { execFile } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { constants } from "node:fs";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import Ajv from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
+import { runOwnedCommand } from "../dist/process/OwnedCommand.js";
 import {
-  mcpTextValue,
   requireMcpOperationResult,
+  requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import {
+  assertVerifierCleanupComplete,
+  completeVerifierRun,
+  createVerifierRun,
+} from "./lib/verifier-run.mjs";
 import { snapshotHopperRuntime } from "./lib/real-hopper-cleanup.mjs";
 import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
 import { HOPPER_TARGET_LEASE_DIRECTORY } from "../dist/process/HopperLease.js";
@@ -24,12 +29,26 @@ import {
   verifyHopperSourceBinding,
   relocateSingleFatSlice,
 } from "./lib/real-hopper-source-binding.mjs";
-import {
-  VerifierFixture,
-  withVerifierFixture,
-} from "./lib/verifier-fixture.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
-const run = promisify(execFile);
+const verifierRun = createVerifierRun();
+// xcrun resolves clang and lipo before a workspace exists. A failed probe must
+// not allocate a root, so it uses the same short-lived owner as requireLaneToolchain.
+const probeOwnedCommand = async (command, arguments_) => {
+  const snapshot = await runOwnedCommand(
+    {
+      command,
+      arguments: arguments_,
+      cwd: process.cwd(),
+      env: process.env,
+      runId: `rea-hopper-fat-probe-${randomUUID()}`,
+      expectedCommand: null,
+      sweepTokenOwnedProcesses: true,
+    },
+    { timeoutMs: null, diagnosticBytes: 1024 * 1024 },
+  );
+  return snapshot.stdout.text;
+};
 const verifyFat64 = process.argv[2] === "--fat64";
 assert.deepEqual(process.argv.slice(2), verifyFat64 ? ["--fat64"] : []);
 if (process.platform !== "darwin" || !["arm64", "x64"].includes(process.arch))
@@ -52,24 +71,34 @@ await access(hopperLauncherPath, constants.X_OK).catch((cause) => {
 const toolPaths = {};
 for (const command of ["clang", "lipo"])
   toolPaths[command] = (
-    await run("xcrun", ["--find", command]).catch((cause) => {
+    await probeOwnedCommand("xcrun", ["--find", command]).catch((cause) => {
       throw new Error(`Hopper FAT verification requires ${command}`, { cause });
     })
-  ).stdout.trim();
+  ).trim();
 const sdk = (
-  await run("xcrun", ["--sdk", "macosx", "--show-sdk-path"]).catch((cause) => {
+  await probeOwnedCommand("xcrun", [
+    "--sdk",
+    "macosx",
+    "--show-sdk-path",
+  ]).catch((cause) => {
     throw new Error(
       "Hopper FAT verification requires the installed macOS SDK",
       { cause },
     );
   })
-).stdout.trim();
+).trim();
 
 const workspace = await VerifierFixture.open({
   prefix: "hopper-fat-",
   private: false,
 });
 const directory = workspace.path;
+const commands = await createVerifierCommands();
+const retainWorkspace = (message, options) => {
+  workspace.retain(message);
+  return new Error(message, options);
+};
+const hostFatArchitecture = process.arch === "arm64" ? "arm64" : "x86_64";
 const source = fileURLToPath(
   new URL("../tests/conformance/c/fixture.c", import.meta.url),
 );
@@ -100,33 +129,9 @@ const ajv = new Ajv({ strict: false });
 addFormats(ajv);
 const observations = [];
 const sourceBinding = [];
-// The root is removed only after these cleanups confirm.
-workspace.releaseAfter(async () => {
-  try {
-    await closeVerifierResources([
-      () => client.close(),
-      () => transport.close(),
-    ]);
-  } catch (cause) {
-    throw new Error(`Hopper cleanup failed; fixture retained at ${directory}`, {
-      cause,
-    });
-  }
-  try {
-    const retained = [
-      ...(await snapshotHopperRuntime("/tmp", HOPPER_TARGET_LEASE_DIRECTORY))
-        .paths,
-    ].filter((path) => !before.has(path));
-    assert.deepEqual(retained, [], "Hopper resources remain or are unresolved");
-  } catch (cause) {
-    throw new Error(
-      `Hopper resource verification failed; fixture retained at ${directory}`,
-      { cause },
-    );
-  }
-});
-await withVerifierFixture(workspace, async () => {
-  await run(toolPaths.clang, [
+let primaryFailure;
+try {
+  await commands.exec(toolPaths.clang, [
     "-isysroot",
     sdk,
     "-arch",
@@ -137,7 +142,7 @@ await withVerifierFixture(workspace, async () => {
     "-o",
     arm,
   ]);
-  await run(toolPaths.clang, [
+  await commands.exec(toolPaths.clang, [
     "-isysroot",
     sdk,
     "-arch",
@@ -148,9 +153,9 @@ await withVerifierFixture(workspace, async () => {
     "-o",
     intel,
   ]);
-  await run(toolPaths.lipo, ["-create", arm, intel, "-output", fat]);
+  await commands.exec(toolPaths.lipo, ["-create", arm, intel, "-output", fat]);
   if (verifyFat64)
-    await run(toolPaths.lipo, [
+    await commands.exec(toolPaths.lipo, [
       "-create",
       arm,
       intel,
@@ -158,7 +163,7 @@ await withVerifierFixture(workspace, async () => {
       "-output",
       fat64,
     ]);
-  await run(toolPaths.lipo, [
+  await commands.exec(toolPaths.lipo, [
     "-create",
     process.arch === "arm64" ? arm : intel,
     "-output",
@@ -186,7 +191,7 @@ await withVerifierFixture(workspace, async () => {
     await writeFile(little, swapped);
     extraFat64.push(little);
     const single = join(directory, "c-single-fat64");
-    await run(toolPaths.lipo, [
+    await commands.exec(toolPaths.lipo, [
       "-create",
       process.arch === "arm64" ? arm : intel,
       "-fat64",
@@ -194,25 +199,34 @@ await withVerifierFixture(workspace, async () => {
       single,
     ]);
     extraFat64.push(single);
-    for (const [name, reason, mutate] of [
+    for (const [name, refusal, mutate] of [
       [
         "reserved",
-        /nonzero reserved field/u,
+        {
+          reason: "FAT64 architecture 0 has a nonzero reserved field",
+        },
         (bytes) => bytes.writeUInt32BE(1, 36),
       ],
       [
         "range",
-        /extends beyond the file/u,
+        {
+          reason: "FAT architecture 0 slice range extends beyond the file",
+          constraint: "file_format_rejected",
+        },
         (bytes) => bytes.writeBigUInt64BE(BigInt(bytes.length), 24),
       ],
       [
         "identity",
-        /disagrees with its Mach-O header/u,
+        {
+          reason:
+            "FAT architecture 0 CPU type/subtype disagrees with its Mach-O header",
+          constraint: "file_format_rejected",
+        },
         (bytes) => bytes.writeUInt32BE(bytes.readUInt32BE(12) + 1, 12),
       ],
       [
         "overlap",
-        /slices overlap/u,
+        { reason: "FAT slices overlap" },
         (bytes) => {
           const firstOffset = bytes.readBigUInt64BE(16);
           const secondOffset = bytes.readBigUInt64BE(48);
@@ -232,7 +246,7 @@ await withVerifierFixture(workspace, async () => {
       mutate(bytes);
       const path = join(directory, `c-fat64-invalid-${name}`);
       await writeFile(path, bytes);
-      invalidFat64.push({ path, reason });
+      invalidFat64.push({ path, refusal });
     }
     const hostBytes = await readFile(process.arch === "arm64" ? arm : intel);
     const secondOffset = Math.ceil((16384 + hostBytes.length) / 16384) * 16384;
@@ -252,8 +266,10 @@ await withVerifierFixture(workspace, async () => {
     await writeFile(path, ambiguous);
     invalidFat64.push({
       path,
-      reason:
-        /FAT binary declares several (?:arm64|x86_64) slices; no slice was selected/u,
+      refusal: {
+        reason: `FAT binary declares several ${hostFatArchitecture} slices; no slice was selected`,
+        constraint: "file_format_rejected",
+      },
     });
   }
   await client.connect(transport);
@@ -391,13 +407,28 @@ await withVerifierFixture(workspace, async () => {
     });
     await call("close_binary");
   }
-  for (const { path, reason } of invalidFat64) {
+  for (const { path, refusal } of invalidFat64) {
     const reply = await client.callTool({
       name: "open_binary",
       arguments: { path },
     });
-    assert.equal(reply.isError, true, "malformed FAT64 unexpectedly launched");
-    assert.match(mcpTextValue(reply), reason);
+    // Admission failures are BinaryTargetError file_format_rejected.
+    // Reserved and overlap survive admission and fail in resolveHopperMachOImage,
+    // which returns BinaryTargetError with no constraint. Both classify as
+    // target_unavailable and keep the producer reason on details.reason.
+    const refused = requireMcpToolError(reply);
+    assert.partialDeepStrictEqual(refused, {
+      code: "target_unavailable",
+      details: {
+        path,
+        reason: refusal.reason,
+        ...(refusal.constraint === undefined
+          ? {}
+          : { constraint: refusal.constraint }),
+      },
+    });
+    if (refusal.constraint === undefined)
+      assert.equal(refused.details?.constraint, undefined);
   }
   if (verifyFat64) {
     await call("open_binary", { path: fat64 });
@@ -441,7 +472,7 @@ await withVerifierFixture(workspace, async () => {
     await assert.rejects(access(preparedImagePath), { code: "ENOENT" });
   }
   for (const [path, expected] of cliMappings) {
-    const pending = run(
+    const cliResult = await commands.exec(
       process.execPath,
       [
         "scripts/rea.mjs",
@@ -458,11 +489,91 @@ await withVerifierFixture(workspace, async () => {
         env: { ...process.env, HOPPER_LOADER_ARGS_JSON: "[]" },
       },
     );
-    assert.ok(pending.child.pid !== undefined);
-    const cli = JSON.parse((await pending).stdout);
+    const cli = JSON.parse(cliResult.stdout);
     assert.deepEqual(cli.normalized_result, expected.mapping);
   }
-});
+} catch (cause) {
+  primaryFailure = cause;
+}
+let hopperCleanupFailure;
+try {
+  await workspace.closeEarly([
+    async () => {
+      try {
+        await closeVerifierResources([
+          () => client.close(),
+          () => transport.close(),
+        ]);
+      } catch (cause) {
+        throw new Error(
+          `Hopper cleanup failed; fixture retained at ${directory}`,
+          { cause },
+        );
+      }
+      try {
+        const retained = [
+          ...(
+            await snapshotHopperRuntime("/tmp", HOPPER_TARGET_LEASE_DIRECTORY)
+          ).paths,
+        ].filter((path) => !before.has(path));
+        assert.deepEqual(
+          retained,
+          [],
+          "Hopper resources remain or are unresolved",
+        );
+      } catch (cause) {
+        throw new Error(
+          `Hopper resource verification failed; fixture retained at ${directory}`,
+          { cause },
+        );
+      }
+    },
+  ]);
+} catch (cause) {
+  hopperCleanupFailure = cause;
+}
+if (hopperCleanupFailure !== undefined)
+  primaryFailure =
+    primaryFailure === undefined
+      ? hopperCleanupFailure
+      : new AggregateError(
+          [primaryFailure, hopperCleanupFailure],
+          "Hopper FAT verification and Hopper cleanup both failed",
+        );
+let commandCleanupFailure;
+try {
+  await workspace.closeEarly([() => commands.close()]);
+} catch (cause) {
+  commandCleanupFailure = cause;
+}
+if (commandCleanupFailure !== undefined)
+  throw retainWorkspace(
+    `Hopper FAT command cleanup failed; retained diagnostic workspace: ${directory}`,
+    {
+      cause:
+        primaryFailure === undefined
+          ? commandCleanupFailure
+          : new AggregateError(
+              [primaryFailure, commandCleanupFailure],
+              "Hopper FAT verification and command cleanup both failed",
+            ),
+    },
+  );
+const completedVerifierRun = await completeVerifierRun(verifierRun);
+try {
+  assertVerifierCleanupComplete(completedVerifierRun.process_lineage);
+} catch (cause) {
+  throw retainWorkspace(
+    `Cleanup unverified; retained diagnostic workspace: ${directory}`,
+    { cause: primaryFailure ?? cause },
+  );
+}
+if (primaryFailure !== undefined)
+  throw retainWorkspace(
+    `Hopper FAT verification failed; retained workspace: ${directory}`,
+    { cause: primaryFailure },
+  );
+await workspace.release();
 console.log(
   JSON.stringify(
     {

@@ -8,12 +8,11 @@
 // `--compare-ghidra` runs the same functions through a bring-your-own Ghidra
 // and reports latency, CPU, memory, output size and simple quality signals.
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseArgs, promisify } from "node:util";
+import { parseArgs } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { inspectKunaInstallation } from "../dist/kuna/KunaInstallation.js";
@@ -44,9 +43,8 @@ import {
   completeVerifierRun,
   createVerifierRun,
 } from "./lib/verifier-run.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
-
-const exec = promisify(execFile);
 const { values } = parseArgs({
   options: {
     targets: { type: "string" },
@@ -94,6 +92,8 @@ const workspaceFixture = await VerifierFixture.open({
 });
 const workspace = workspaceFixture.path;
 const cacheRoot = join(workspace, "cache");
+// nm, ps, cc and strip share one owner, created before any of them starts.
+const commands = await createVerifierCommands();
 // A server retains its workspace until both provider and transport cleanup
 // have positively completed, even if later lineage observation is empty.
 const pendingServers = new Set();
@@ -135,7 +135,7 @@ int main(int argc, char **argv) {
 
 /** Resolve function entry addresses from a symbol-bearing build. */
 const symbolAddresses = async (binary, names) => {
-  const { stdout } = await exec(process.env.REA_NM ?? "nm", [binary]);
+  const { stdout } = await commands.exec(process.env.REA_NM ?? "nm", [binary]);
   const found = new Map();
   for (const line of stdout.split("\n")) {
     const [address, type, symbol] = line.trim().split(/\s+/u);
@@ -150,7 +150,11 @@ const symbolAddresses = async (binary, names) => {
 
 /** Sum the resident memory and CPU time of a process and its descendants. */
 const sampleTree = async (root) => {
-  const { stdout } = await exec("ps", ["-A", "-o", "pid=,ppid=,rss=,time="]);
+  const { stdout } = await commands.exec("ps", [
+    "-A",
+    "-o",
+    "pid=,ppid=,rss=,time=",
+  ]);
   const rows = stdout
     .trim()
     .split("\n")
@@ -778,10 +782,10 @@ try {
   const source = join(fixtureDir, "fixture.c");
   await writeFile(source, FIXTURE_SOURCE);
   const built = join(fixtureDir, "rea-kuna-fixture");
-  await exec(process.env.REA_CC ?? "cc", ["-O2", "-o", built, source]);
+  await commands.exec(process.env.REA_CC ?? "cc", ["-O2", "-o", built, source]);
   const stripped = `${built}.stripped`;
   await writeFile(stripped, await readFile(built));
-  await exec(process.env.REA_STRIP ?? "strip", [stripped]);
+  await commands.exec(process.env.REA_STRIP ?? "strip", [stripped]);
   const fixtureFunctions = await symbolAddresses(built, [
     "rea_checksum",
     "rea_classify",
@@ -829,24 +833,40 @@ try {
   inspectionResourcesClean = false;
   failures.push(cause);
 }
+let commandCleanupFailure;
+try {
+  await workspaceFixture.closeEarly([() => commands.close()]);
+} catch (cause) {
+  commandCleanupFailure = cause;
+  failures.push(cause);
+}
 const lifecycle = await completeVerifierRun(run);
 let cleanupComplete =
   pendingServers.size === 0 &&
   retainedNative.size === 0 &&
-  inspectionResourcesClean;
+  inspectionResourcesClean &&
+  commandCleanupFailure === undefined;
 try {
   assertVerifierCleanupComplete(lifecycle.process_lineage);
 } catch (cause) {
   cleanupComplete = false;
   failures.push(cause);
 }
-if (cleanupComplete)
+let workspaceReleased = false;
+if (cleanupComplete && failures.length === 0)
   try {
     await workspaceFixture.release();
+    workspaceReleased = true;
   } catch (cause) {
     cleanupComplete = false;
     failures.push(cause);
   }
+if (!workspaceReleased)
+  workspaceFixture.retain(
+    cleanupComplete
+      ? `Kuna verification failed; retained workspace: ${workspace}`
+      : `Kuna cleanup was not confirmed; retained diagnostic workspace: ${workspace}`,
+  );
 const report = {
   lane: "kuna",
   status: failures.length === 0 ? "passed" : "failed",
@@ -867,7 +887,7 @@ const report = {
     "Response bytes are UTF-8 serialization sizes. Model token usage, tool schema costs and agent task completion were not measured.",
   ],
   cleanup: cleanupComplete ? "complete" : "incomplete",
-  ...(cleanupComplete ? {} : { retained_workspace: workspace }),
+  ...(workspaceReleased ? {} : { retained_workspace: workspace }),
   ...(failures.length === 0 ? {} : { failures: failures.map(describeFailure) }),
 };
 if (values.report !== undefined)
