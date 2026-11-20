@@ -154,6 +154,7 @@ const databaseTarget = (): BinaryTarget => ({
   sha256: "a".repeat(64),
   kind: "database",
   format: "analysis-database",
+  databaseEngine: "hopper",
 });
 
 const executableTarget: BinaryTarget = {

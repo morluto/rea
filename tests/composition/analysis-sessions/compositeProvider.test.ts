@@ -22,6 +22,7 @@ const target: BinaryTarget = {
   path: "/fixture",
   kind: "database",
   format: "analysis-database",
+  databaseEngine: null,
   sha256: "0".repeat(64),
 };
 
