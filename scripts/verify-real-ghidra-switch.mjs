@@ -58,6 +58,25 @@ assert.ok(
 // Compiler, reader and CLI launches share one command owner, including the
 // pre-workspace version probes. A timeout stops that process group.
 const commands = await createVerifierCommands();
+// Ctrl-C must abort the detached command and wait for its cleanup. Node's
+// default SIGINT would exit first and leave that process group running.
+const commandInterruption = new AbortController();
+const interruptOwnedCommand = (signal) =>
+  commandInterruption.abort(new Error(`Verifier interrupted by ${signal}`));
+process.on("SIGINT", interruptOwnedCommand);
+process.on("SIGTERM", interruptOwnedCommand);
+const execOwned = (command, args, options = {}) =>
+  commands.exec(command, args, {
+    ...options,
+    signal: commandInterruption.signal,
+  });
+const finishCommandInterruption = () => {
+  process.off("SIGINT", interruptOwnedCommand);
+  process.off("SIGTERM", interruptOwnedCommand);
+  return commandInterruption.signal.aborted
+    ? commandInterruption.signal.reason
+    : undefined;
+};
 const toolchain = {
   gcc: process.env.REA_GCC ?? "gcc",
   clang: process.env.REA_CLANG ?? "clang",
@@ -69,9 +88,10 @@ const versions = {};
 try {
   for (const [role, command] of Object.entries(toolchain)) {
     try {
-      const { stdout } = await commands.exec(command, ["--version"]);
+      const { stdout } = await execOwned(command, ["--version"]);
       versions[role] = stdout.split("\n")[0];
     } catch (cause) {
+      if (commandInterruption.signal.aborted) throw cause;
       throw new Error(
         `Ghidra switch compiler lane prerequisite missing: ${role} '${command}'`,
         { cause },
@@ -156,18 +176,18 @@ await withVerifierFixture(workspaceFixture, async () => {
   try {
     for (const compiler of ["gcc", "clang"]) {
       const original = join(workspace, `${compiler}-optimized`);
-      await commands.exec(toolchain[compiler], [
+      await execOwned(toolchain[compiler], [
         ...flags,
         source,
         "-o",
         original,
       ]);
       const bytes = await readFile(original);
-      const { stdout: symbols } = await commands.exec(toolchain.nm, [
+      const { stdout: symbols } = await execOwned(toolchain.nm, [
         "-n",
         original,
       ]);
-      const { stdout: disassembly } = await commands.exec(toolchain.objdump, [
+      const { stdout: disassembly } = await execOwned(toolchain.objdump, [
         "-d",
         original,
       ]);
@@ -193,7 +213,7 @@ await withVerifierFixture(workspaceFixture, async () => {
       }
       const stripped = join(workspace, `${compiler}-stripped`);
       await copyFile(original, stripped);
-      await commands.exec(toolchain.strip, ["--strip-all", stripped]);
+      await execOwned(toolchain.strip, ["--strip-all", stripped]);
       // Byte/physical target oracle survives removal of the names that REA could use.
       assertCompiledSwitchOracle(
         await readFile(stripped),
@@ -263,6 +283,12 @@ await withVerifierFixture(workspaceFixture, async () => {
                   "Switch verification and command cleanup both failed",
                 ),
       },
+    );
+  const interrupted = finishCommandInterruption();
+  if (interrupted !== undefined)
+    throw retainWorkspace(
+      `Switch verification interrupted; retained diagnostic workspace: ${workspace}`,
+      { cause: interrupted },
     );
 });
 process.stdout.write(
@@ -419,7 +445,7 @@ async function call(client, name, arguments_ = {}) {
 }
 
 async function cliSwitchEvidence(entrypoint, path, procedure, env) {
-  const { stdout } = await commands.exec(
+  const { stdout } = await execOwned(
     process.execPath,
     [
       entrypoint,

@@ -104,6 +104,25 @@ const env = {
 };
 // The public CLI launch uses this command owner. A timeout stops its process group.
 const commands = await createVerifierCommands();
+// Ctrl-C must abort the detached command and wait for its cleanup. Node's
+// default SIGINT would exit first and leave that process group running.
+const commandInterruption = new AbortController();
+const interruptOwnedCommand = (signal) =>
+  commandInterruption.abort(new Error(`Verifier interrupted by ${signal}`));
+process.on("SIGINT", interruptOwnedCommand);
+process.on("SIGTERM", interruptOwnedCommand);
+const execOwned = (command, args, options = {}) =>
+  commands.exec(command, args, {
+    ...options,
+    signal: commandInterruption.signal,
+  });
+const finishCommandInterruption = () => {
+  process.off("SIGINT", interruptOwnedCommand);
+  process.off("SIGTERM", interruptOwnedCommand);
+  return commandInterruption.signal.aborted
+    ? commandInterruption.signal.reason
+    : undefined;
+};
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
@@ -271,7 +290,7 @@ await withVerifierFixture(workspaceFixture, async () => {
     );
     await call("close_binary");
 
-    const { stdout } = await commands.exec(
+    const { stdout } = await execOwned(
       process.execPath,
       [
         entrypoint,
@@ -663,6 +682,12 @@ await withVerifierFixture(workspaceFixture, async () => {
                   "Raw-binary verification and command cleanup both failed",
                 ),
       },
+    );
+  const interrupted = finishCommandInterruption();
+  if (interrupted !== undefined)
+    throw retainWorkspace(
+      `Raw-binary verification interrupted; retained diagnostic workspace: ${workspace}`,
+      { cause: interrupted },
     );
 });
 process.stdout.write(

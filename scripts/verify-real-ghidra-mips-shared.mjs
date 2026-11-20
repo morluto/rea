@@ -60,6 +60,25 @@ const env = {
 };
 // The public CLI launch uses this command owner. A timeout stops its process group.
 const commands = await createVerifierCommands();
+// Ctrl-C must abort the detached command and wait for its cleanup. Node's
+// default SIGINT would exit first and leave that process group running.
+const commandInterruption = new AbortController();
+const interruptOwnedCommand = (signal) =>
+  commandInterruption.abort(new Error(`Verifier interrupted by ${signal}`));
+process.on("SIGINT", interruptOwnedCommand);
+process.on("SIGTERM", interruptOwnedCommand);
+const execOwned = (command, args, options = {}) =>
+  commands.exec(command, args, {
+    ...options,
+    signal: commandInterruption.signal,
+  });
+const finishCommandInterruption = () => {
+  process.off("SIGINT", interruptOwnedCommand);
+  process.off("SIGTERM", interruptOwnedCommand);
+  return commandInterruption.signal.aborted
+    ? commandInterruption.signal.reason
+    : undefined;
+};
 const reports = [];
 let failure;
 try {
@@ -296,7 +315,7 @@ try {
         );
         await call("close_binary");
         await client.ping();
-        const cli = await commands.exec(
+        const cli = await execOwned(
           process.execPath,
           [
             "scripts/rea.mjs",
@@ -385,6 +404,12 @@ if (failure !== undefined)
   throw retainWorkspace(
     `MIPS16 shared verification failed; retained workspace: ${workspace}`,
     { cause: failure },
+  );
+const interrupted = finishCommandInterruption();
+if (interrupted !== undefined)
+  throw retainWorkspace(
+    `MIPS16 shared verification interrupted; retained diagnostic workspace: ${workspace}`,
+    { cause: interrupted },
   );
 await workspaceFixture.release();
 console.log(JSON.stringify({ ...completed, fixtures: reports }, null, 2));

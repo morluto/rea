@@ -92,6 +92,25 @@ for (const key of ["GHIDRA_HEADLESS_MAXMEM", "GHIDRA_MAXMEM"])
   if (process.env[key] !== undefined) env[key] = process.env[key];
 // Public CLI launches share one command owner. A timeout stops that process group.
 const commands = await createVerifierCommands();
+// Ctrl-C must abort the detached command and wait for its cleanup. Node's
+// default SIGINT would exit first and leave that process group running.
+const commandInterruption = new AbortController();
+const interruptOwnedCommand = (signal) =>
+  commandInterruption.abort(new Error(`Verifier interrupted by ${signal}`));
+process.on("SIGINT", interruptOwnedCommand);
+process.on("SIGTERM", interruptOwnedCommand);
+const execOwned = (command, args, options = {}) =>
+  commands.exec(command, args, {
+    ...options,
+    signal: commandInterruption.signal,
+  });
+const finishCommandInterruption = () => {
+  process.off("SIGINT", interruptOwnedCommand);
+  process.off("SIGTERM", interruptOwnedCommand);
+  return commandInterruption.signal.aborted
+    ? commandInterruption.signal.reason
+    : undefined;
+};
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
@@ -426,7 +445,7 @@ try {
         [stripped ? addressFor("rea_riscv_entry") : "rea_riscv_entry"],
       ],
     ]) {
-      const cli = await commands.exec(
+      const cli = await execOwned(
         process.execPath,
         [
           entrypoint,
@@ -565,7 +584,7 @@ try {
               arch: fixture.riscv.isa.arch,
             },
           };
-          const cli = await commands.exec(
+          const cli = await execOwned(
             process.execPath,
             cliArguments,
             cliOptions,
@@ -583,7 +602,7 @@ try {
           JSON.stringify(error),
         );
         await assert.rejects(
-          commands.exec(process.execPath, cliArguments, cliOptions),
+          execOwned(process.execPath, cliArguments, cliOptions),
           (cause) => {
             const output = `${cause?.snapshot?.stdout?.text ?? ""}\n${cause?.snapshot?.stderr?.text ?? ""}`;
             return (
@@ -698,6 +717,12 @@ const survivors = await readdir(runtime);
 if (survivors.length > 0)
   throw retainWorkspace(
     `Runtime resources survived server shutdown (${survivors.join(", ")}); retained workspace: ${workspace}`,
+  );
+const interrupted = finishCommandInterruption();
+if (interrupted !== undefined)
+  throw retainWorkspace(
+    `RISC-V verification interrupted; retained diagnostic workspace: ${workspace}`,
+    { cause: interrupted },
   );
 await workspaceFixture.release();
 console.log(

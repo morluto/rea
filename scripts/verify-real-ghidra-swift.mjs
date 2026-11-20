@@ -36,8 +36,27 @@ if (process.platform !== "darwin" || installation.status !== "available")
   );
 // swiftc and clang share one command owner, including the pre-workspace probe.
 const commands = await createVerifierCommands();
+// Ctrl-C must abort the detached command and wait for its cleanup. Node's
+// default SIGINT would exit first and leave that process group running.
+const commandInterruption = new AbortController();
+const interruptOwnedCommand = (signal) =>
+  commandInterruption.abort(new Error(`Verifier interrupted by ${signal}`));
+process.on("SIGINT", interruptOwnedCommand);
+process.on("SIGTERM", interruptOwnedCommand);
+const execOwned = (command, args, options = {}) =>
+  commands.exec(command, args, {
+    ...options,
+    signal: commandInterruption.signal,
+  });
+const finishCommandInterruption = () => {
+  process.off("SIGINT", interruptOwnedCommand);
+  process.off("SIGTERM", interruptOwnedCommand);
+  return commandInterruption.signal.aborted
+    ? commandInterruption.signal.reason
+    : undefined;
+};
 try {
-  await commands.exec("swiftc", ["--version"], { timeout: 10_000 });
+  await execOwned("swiftc", ["--version"], { timeout: 10_000 });
 } catch (cause) {
   try {
     await commands.close();
@@ -47,6 +66,7 @@ try {
       "verify:ghidra:swift requires the host Swift compiler (swiftc), and closing its command owner failed.",
     );
   }
+  if (commandInterruption.signal.aborted) throw cause;
   throw new Error(
     "verify:ghidra:swift requires the host Swift compiler (swiftc).",
     { cause },
@@ -107,7 +127,7 @@ rootFixture.releaseAfter(async () => {
 await withVerifierFixture(rootFixture, async () => {
   let primaryFailure;
   try {
-    await commands.exec("swiftc", ["-O", "-g", source, "-o", binary], {
+    await execOwned("swiftc", ["-O", "-g", source, "-o", binary], {
       timeout: 60_000,
     });
     await mkdir(join(root, "copied"));
@@ -115,7 +135,7 @@ await withVerifierFixture(rootFixture, async () => {
     await copyFile(binary, copied);
     // Decoding covers AArch64 register pairs, so build that slice on any Mac host.
     for (const { source: assembly, object } of literalObjects)
-      await commands.exec(
+      await execOwned(
         "xcrun",
         [
           "clang",
@@ -128,7 +148,7 @@ await withVerifierFixture(rootFixture, async () => {
         ],
         { timeout: 60_000 },
       );
-    await commands.exec(
+    await execOwned(
       "swiftc",
       [
         "-O",
@@ -244,6 +264,12 @@ await withVerifierFixture(rootFixture, async () => {
                   "Swift verification and command cleanup both failed",
                 ),
       },
+    );
+  const interrupted = finishCommandInterruption();
+  if (interrupted !== undefined)
+    throw retainWorkspace(
+      `Swift verification interrupted; retained diagnostic workspace: ${root}`,
+      { cause: interrupted },
     );
 });
 console.log(

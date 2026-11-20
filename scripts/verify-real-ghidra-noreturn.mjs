@@ -64,6 +64,25 @@ let report;
 let verifierRun;
 // cc uses this command owner. A timeout stops its process group.
 const commands = await createVerifierCommands();
+// Ctrl-C must abort the detached command and wait for its cleanup. Node's
+// default SIGINT would exit first and leave that process group running.
+const commandInterruption = new AbortController();
+const interruptOwnedCommand = (signal) =>
+  commandInterruption.abort(new Error(`Verifier interrupted by ${signal}`));
+process.on("SIGINT", interruptOwnedCommand);
+process.on("SIGTERM", interruptOwnedCommand);
+const execOwned = (command, args, options = {}) =>
+  commands.exec(command, args, {
+    ...options,
+    signal: commandInterruption.signal,
+  });
+const finishCommandInterruption = () => {
+  process.off("SIGINT", interruptOwnedCommand);
+  process.off("SIGTERM", interruptOwnedCommand);
+  return commandInterruption.signal.aborted
+    ? commandInterruption.signal.reason
+    : undefined;
+};
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 // The workspace stays while an owned Ghidra process or server may still use
 // it: this cleanup confirms only once their cleanup was verified.
@@ -92,7 +111,7 @@ await withVerifierFixture(workspaceFixture, async () => {
             "-D_FORTIFY_SOURCE=0",
           ]
         : ["-shared"];
-    await commands.exec(process.env.REA_CC ?? "cc", [
+    await execOwned(process.env.REA_CC ?? "cc", [
       ...targetOptions,
       "-fPIC",
       "-O0",
@@ -273,6 +292,12 @@ await withVerifierFixture(workspaceFixture, async () => {
                   "No-return verification and command cleanup both failed",
                 ),
       },
+    );
+  const interrupted = finishCommandInterruption();
+  if (interrupted !== undefined)
+    throw retainWorkspace(
+      `No-return verification interrupted; retained diagnostic workspace: ${workspace}`,
+      { cause: interrupted },
     );
 });
 console.log(

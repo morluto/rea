@@ -122,6 +122,25 @@ if (mode === "loader-failure")
   env.REA_GHIDRA_NATIVEAOT_JAR = join(workspace, "bad-extension.jar");
 // javac, jar, and the optional CLI share one command owner. A timeout stops that process group.
 const commands = await createVerifierCommands();
+// Ctrl-C must abort the detached command and wait for its cleanup. Node's
+// default SIGINT would exit first and leave that process group running.
+const commandInterruption = new AbortController();
+const interruptOwnedCommand = (signal) =>
+  commandInterruption.abort(new Error(`Verifier interrupted by ${signal}`));
+process.on("SIGINT", interruptOwnedCommand);
+process.on("SIGTERM", interruptOwnedCommand);
+const execOwned = (command, args, options = {}) =>
+  commands.exec(command, args, {
+    ...options,
+    signal: commandInterruption.signal,
+  });
+const finishCommandInterruption = () => {
+  process.off("SIGINT", interruptOwnedCommand);
+  process.off("SIGTERM", interruptOwnedCommand);
+  return commandInterruption.signal.aborted
+    ? commandInterruption.signal.reason
+    : undefined;
+};
 async function prepareLoaderFailure() {
   const source = join(workspace, "NativeAotExtension.java");
   const classes = join(workspace, "classes");
@@ -140,12 +159,12 @@ public final class NativeAotExtension {
     process.env.JAVA_HOME === undefined
       ? name
       : join(process.env.JAVA_HOME, "bin", name);
-  await commands.exec(
+  await execOwned(
     command("javac"),
     ["-J-Xmx512m", "-J-XX:ActiveProcessorCount=1", "-d", classes, source],
     { timeout: 60000 },
   );
-  await commands.exec(
+  await execOwned(
     command("jar"),
     ["--create", "--file", env.REA_GHIDRA_NATIVEAOT_JAR, "-C", classes, "."],
     { timeout: 60000 },
@@ -367,7 +386,7 @@ await withVerifierFixture(workspaceFixture, async () => {
         // One representative CLI boundary, selected explicitly to avoid repeated
         // full NativeAOT auto-analysis during each focused iteration.
         if (process.env.REA_NATIVEAOT_PROOF_CLI === "1") {
-          const { stdout } = await commands.exec(
+          const { stdout } = await execOwned(
             process.execPath,
             [
               entrypoint,
@@ -425,6 +444,12 @@ await withVerifierFixture(workspaceFixture, async () => {
                   "NativeAOT verification and command cleanup both failed",
                 ),
       },
+    );
+  const interrupted = finishCommandInterruption();
+  if (interrupted !== undefined)
+    throw retainWorkspace(
+      `NativeAOT verification interrupted; retained diagnostic workspace: ${workspace}`,
+      { cause: interrupted },
     );
 });
 const capture = process.env.REA_NATIVEAOT_PROOF_CAPTURE_DIR;

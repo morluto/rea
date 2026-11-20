@@ -81,6 +81,25 @@ for (const setting of ["GHIDRA_HEADLESS_MAXMEM", "GHIDRA_MAXMEM"]) {
 }
 // The public CLI launch uses this command owner. A timeout stops its process group.
 const commands = await createVerifierCommands();
+// Ctrl-C must abort the detached command and wait for its cleanup. Node's
+// default SIGINT would exit first and leave that process group running.
+const commandInterruption = new AbortController();
+const interruptOwnedCommand = (signal) =>
+  commandInterruption.abort(new Error(`Verifier interrupted by ${signal}`));
+process.on("SIGINT", interruptOwnedCommand);
+process.on("SIGTERM", interruptOwnedCommand);
+const execOwned = (command, args, options = {}) =>
+  commands.exec(command, args, {
+    ...options,
+    signal: commandInterruption.signal,
+  });
+const finishCommandInterruption = () => {
+  process.off("SIGINT", interruptOwnedCommand);
+  process.off("SIGTERM", interruptOwnedCommand);
+  return commandInterruption.signal.aborted
+    ? commandInterruption.signal.reason
+    : undefined;
+};
 
 /** Read every word the oracle checks through the public read_bytes operation. */
 async function loadedWords(call, independent, delta, byteOrder) {
@@ -274,7 +293,7 @@ async function verifyFixture(byteOrder, softFloat) {
     assert.deepEqual(await call("list_procedures"), procedures);
     await call("close_binary");
     // Same public operation through CLI, not a private injected provider.
-    const cli = await commands.exec(
+    const cli = await execOwned(
       process.execPath,
       [
         entrypoint,
@@ -383,6 +402,12 @@ if (primaryFailure !== undefined)
   throw retainWorkspace(
     `MIPS32 shared-library verification failed; retained workspace: ${workspace}`,
     { cause: primaryFailure },
+  );
+const interrupted = finishCommandInterruption();
+if (interrupted !== undefined)
+  throw retainWorkspace(
+    `MIPS32 shared-library verification interrupted; retained diagnostic workspace: ${workspace}`,
+    { cause: interrupted },
   );
 await workspaceFixture.release();
 console.log(JSON.stringify({ ...completed, fixtures: reports }, null, 2));
