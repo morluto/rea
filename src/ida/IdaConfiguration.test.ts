@@ -1,8 +1,8 @@
 import * as fs from "node:fs/promises";
 import { appendFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { createIdaTarget } from "../../tests/fixtures/idaMcp.js";
+import { describe, expect, it, vi } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import {
   LEGACY_PROTOCOL_REMOVED,
   readIdaConfiguration,
@@ -24,16 +24,9 @@ const ATTACHED_REGISTRATION = JSON.stringify({
 });
 const read = (path: string) => readIdaConfiguration(path, { resourceScope });
 
-const roots: string[] = [];
-afterEach(async () => {
-  for (const root of roots.splice(0))
-    await rm(root, { recursive: true, force: true });
-});
-
 describe("IDA registration and MCP result boundaries", () => {
   it("reuses a direct or upstream mcpServers registration with no installation", async () => {
-    const { root } = await createIdaTarget();
-    roots.push(root);
+    const root = await createTestTempDirectory("rea-ida-config-");
     const path = join(root, "mcp.json");
     for (const input of [
       { command: "python", args: ["server.py"], protocol: "native" },
@@ -61,9 +54,8 @@ describe("IDA registration and MCP result boundaries", () => {
     }
   });
 
-  it("validates local transport and lifecycle inputs without leaking auth into a profile", async () => {
-    const { root } = await createIdaTarget();
-    roots.push(root);
+  it("validates local transport and lifecycle inputs and retains selected HTTP credentials", async () => {
+    const root = await createTestTempDirectory("rea-ida-config-");
     const path = join(root, "mcp.json");
     for (const input of [
       { url: "https://example.com/mcp" },
@@ -86,7 +78,10 @@ describe("IDA registration and MCP result boundaries", () => {
         headers: { Authorization: "Bearer fixture-secret" },
       }),
     );
-    expect((await read(path)).ok).toBe(true);
+    expect(await read(path)).toMatchObject({
+      ok: true,
+      value: { headers: { Authorization: "Bearer fixture-secret" } },
+    });
     for (const url of [
       "http://host.docker.internal:13337/mcp",
       "http://HOST.CONTAINERS.INTERNAL:13337/mcp",
@@ -109,8 +104,7 @@ describe("IDA registration and MCP result boundaries", () => {
 });
 
 it("rejects registration growth beyond the byte limit after descriptor admission", async () => {
-  const { root } = await createIdaTarget();
-  roots.push(root);
+  const root = await createTestTempDirectory("rea-ida-config-");
   const path = join(root, "mcp.json");
   await writeFile(path, ATTACHED_REGISTRATION);
   const openRegularFile = regularFile.openRegularFile;
@@ -133,8 +127,7 @@ it("rejects registration growth beyond the byte limit after descriptor admission
 
 describe("IDA registration descriptor ownership", () => {
   it("retains the exact descriptor after close denial and resolves its error only after retry", async () => {
-    const { root } = await createIdaTarget();
-    roots.push(root);
+    const root = await createTestTempDirectory("rea-ida-config-");
     const path = join(root, "mcp.json");
     await writeFile(path, ATTACHED_REGISTRATION);
     const retained: { close(): Promise<void> }[] = [];
@@ -165,8 +158,7 @@ describe("IDA registration descriptor ownership", () => {
     expect(result.error.cleanupIncomplete).toBe(false);
   });
   it("preserves the caller's exact cancellation reason", async () => {
-    const { root } = await createIdaTarget();
-    roots.push(root);
+    const root = await createTestTempDirectory("rea-ida-config-");
     const path = join(root, "mcp.json");
     await writeFile(path, ATTACHED_REGISTRATION);
     const reason = new Error("stop registration inspection");
@@ -180,8 +172,7 @@ describe("IDA registration descriptor ownership", () => {
     ).rejects.toMatchObject({ _tag: "AnalysisCancelledError", cause: reason });
   });
   it("preserves post-open cancellation when the descriptor's final close is denied", async () => {
-    const { root } = await createIdaTarget();
-    roots.push(root);
+    const root = await createTestTempDirectory("rea-ida-config-");
     const path = join(root, "mcp.json");
     await writeFile(path, ATTACHED_REGISTRATION);
     const retained: { close(): Promise<void> }[] = [];
@@ -221,8 +212,7 @@ describe("IDA registration descriptor ownership", () => {
     expect(cancellation).toMatchObject({ cleanupIncomplete: false });
   });
   it("retains completed-read facts and cancellation through a denied final close", async () => {
-    const { root } = await createIdaTarget();
-    roots.push(root);
+    const root = await createTestTempDirectory("rea-ida-config-");
     const path = join(root, "mcp.json");
     await writeFile(path, ATTACHED_REGISTRATION);
     const retained: { close(): Promise<void> }[] = [];
@@ -274,8 +264,7 @@ describe("IDA registration descriptor ownership", () => {
 it.each(["env", "headers"] as const)(
   "preserves all explicit IDA %s keys",
   async (field) => {
-    const { root } = await createIdaTarget();
-    roots.push(root);
+    const root = await createTestTempDirectory("rea-ida-config-");
     const path = join(root, "mcp.json");
     const mapping = JSON.parse(
       '{"__proto__":"operator","constructor":"selected","normal":"value"}',
@@ -301,8 +290,7 @@ it.each(["env", "headers"] as const)(
 it.each(["env", "headers"] as const)(
   "rejects malformed explicit IDA %s values at __proto__",
   async (field) => {
-    const { root } = await createIdaTarget();
-    roots.push(root);
+    const root = await createTestTempDirectory("rea-ida-config-");
     const path = join(root, "mcp.json");
     const transport =
       field === "env"
@@ -332,8 +320,7 @@ it.each([
     },
   },
 ])("refuses the removed legacy protocol in %j", async (input) => {
-  const { root } = await createIdaTarget();
-  roots.push(root);
+  const root = await createTestTempDirectory("rea-ida-config-");
   const path = join(root, "mcp.json");
   await writeFile(path, JSON.stringify(input));
   const parsed = await read(path);
@@ -364,8 +351,7 @@ it.each([
 ])(
   "requires an explicit protocol for attached registration %j",
   async (input) => {
-    const { root } = await createIdaTarget();
-    roots.push(root);
+    const root = await createTestTempDirectory("rea-ida-config-");
     const path = join(root, "mcp.json");
     await writeFile(path, JSON.stringify(input));
     const parsed = await read(path);
@@ -380,8 +366,7 @@ it.each([
 );
 
 it("resolves the single headless protocol without a protocol field", async () => {
-  const { root } = await createIdaTarget();
-  roots.push(root);
+  const root = await createTestTempDirectory("rea-ida-config-");
   const path = join(root, "mcp.json");
   await writeFile(
     path,

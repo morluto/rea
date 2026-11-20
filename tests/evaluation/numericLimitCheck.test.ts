@@ -642,7 +642,7 @@ it("names a documented limit the code does not export", () => {
 
 it("matches the inventory to the exported analysis settings and owner bounds", async () => {
   const inventory = await readFile(
-    new URL("../../docs/design/rea-limit-inventory.md", import.meta.url),
+    new URL("../../docs/reference/rea-limit-inventory.md", import.meta.url),
     "utf8",
   );
   const exported = await loadExportedNumericLimitBounds();

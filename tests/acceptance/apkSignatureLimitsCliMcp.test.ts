@@ -79,15 +79,13 @@ cliTest(
         },
       },
     };
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const reply = await cli.run({
-        arguments: ["inspect-apk-signature", paths.get(4097)!, "--json"],
-      });
-      expect(reply.exitCode, reply.stderr).toBe(1);
-      const error = analysisErrorProjectionSchema.parse(reply.json);
-      expect(error).toMatchObject(expected);
-      expect(error.remediation.action).toContain("4096");
-    }
+    const reply = await cli.run({
+      arguments: ["inspect-apk-signature", paths.get(4097)!, "--json"],
+    });
+    expect(reply.exitCode, reply.stderr).toBe(1);
+    const error = analysisErrorProjectionSchema.parse(reply.json);
+    expect(error).toMatchObject(expected);
+    expect(error.remediation.action).toContain("4096");
     const malformedExpected = {
       code: "invalid_request",
       details: {

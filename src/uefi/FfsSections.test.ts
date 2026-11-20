@@ -13,21 +13,35 @@ import {
   walkSections,
 } from "./FfsSections.js";
 
-it("walks a two-section chain with clean payload windows", () => {
+it("retains aligned payload windows when the final section is truncated", () => {
   const ui = buildSection(0x15, Buffer.from("Module"));
   const pe = buildSection(0x10, Buffer.from([0x4d, 0x5a, 0x90]));
   const chain = Buffer.concat([ui, pe]);
-  const region = imageRegion(chain, 0, chain.length);
-  const walked = walkSections(region);
-  expect(walked.remainder).toBeNull();
-  expect(walked.sections).toHaveLength(2);
-  const [uiDraft, peDraft] = walked.sections;
-  expect(uiDraft?.typeCode).toBe(0x15);
-  expect(uiDraft?.headerLength).toBe(4);
-  expect(uiDraft?.payload).toEqual({ start: 4, end: 4 + 6 });
-  // The PE section starts after the first section's 4-byte chain alignment.
-  expect(peDraft?.payload).toEqual({ start: 16, end: 19 });
-  expect(peDraft?.typeCode).toBe(0x10);
+  const uiDraft = {
+    typeCode: 0x15,
+    headerLength: 4,
+    payload: { start: 4, end: 10 },
+  };
+  const peDraft = { typeCode: 0x10, declaredLength: 7 };
+  expect(walkSections(imageRegion(chain, 0, chain.length))).toMatchObject({
+    remainder: null,
+    sections: [
+      uiDraft,
+      { ...peDraft, truncated: false, payload: { start: 16, end: 19 } },
+    ],
+  });
+  expect(walkSections(imageRegion(chain, 0, 18))).toMatchObject({
+    remainder: null,
+    sections: [
+      uiDraft,
+      {
+        ...peDraft,
+        truncated: true,
+        observedLength: 6,
+        payload: { start: 16, end: 18 },
+      },
+    ],
+  });
 });
 
 it("classifies a guided LZMA section through its definition GUID", () => {
@@ -89,23 +103,6 @@ it("marks unknown definition GUIDs instead of guessing", () => {
   }
   expect(draft.compression.attributes).toBe(0);
   expect(draft?.payload).toEqual({ start: 24, end: 24 + 12 });
-});
-
-it("records a truncated final section instead of inventing one", () => {
-  const ui = buildSection(0x15, Buffer.from("Module"));
-  const truncatedBody = Buffer.alloc(10, 0x77);
-  truncatedBody.writeUInt32LE(0xfff, 0); // declared far beyond the region
-  const truncated = Buffer.concat([
-    Buffer.from([0xff, 0x0f, 0x00, 0x10]), // declared length 0xfff at size field
-    truncatedBody,
-  ]);
-  const chain = Buffer.concat([ui, truncated]);
-  const region = imageRegion(chain, 0, chain.length);
-  const walked = walkSections(region);
-  expect(walked.sections).toHaveLength(2);
-  const last = walked.sections[1];
-  expect(last?.typeCode).toBe(0x10);
-  expect(last?.truncated).toBe(true);
 });
 
 it("returns no sections when the area is shorter than one header", () => {

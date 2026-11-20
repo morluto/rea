@@ -439,7 +439,6 @@ For exact options, prerequisites and result contracts:
 - [CLI and Evidence](docs/getting-started/cli.md): commands, provider selection, snapshots, import/export and exit statuses.
 - [MCP contracts](docs/reference/mcp-contracts.md) and [agent prompts](docs/getting-started/mcp-prompts.md): tool results, sessions and guided investigations.
 - [Tool catalog](docs/reference/mcp-contracts.md#generated-catalog): generated inventory of tools, providers and CLI commands.
-- [Roadmap](docs/development/roadmap.md): planned work and capability trackers.
 
 Report vulnerabilities through [SECURITY.md](SECURITY.md).
 
@@ -473,9 +472,8 @@ We'd love your help with REA! [Open an issue](https://github.com/morluto/rea/iss
 report a bug or suggest a feature, or [send a pull request](https://github.com/morluto/rea/pulls)
 to improve the code or docs.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and checks,
-[testing](docs/development/testing.md) for verification lanes, and the
-[architecture map](docs/architecture/architecture.mermaid) for selected layers and dependency paths.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and checks. See the
+[testing guide](docs/development/testing.md) for verification lanes.
 
 ## License
 

@@ -1479,6 +1479,10 @@ it.each([
     { code: true, package: true, runtime: true, apple: false },
   ],
   [
+    "src/desktop/AgentEnvBridgeSources.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
     "scripts/verify-packed-bridge.mjs",
     {
       code: true,

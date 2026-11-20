@@ -363,7 +363,6 @@ npx rea-agents@latest setup
 - [CLI และ Evidence](../getting-started/cli.md): คำสั่ง การเลือกผู้ให้บริการ สแนปช็อต การนำเข้า/ส่งออก และรหัสการสิ้นสุด
 - [สัญญา MCP](../reference/mcp-contracts.md) และ[พรอมป์ต์สำหรับเอเจนต์](../getting-started/mcp-prompts.md): ผลลัพธ์เครื่องมือ เซสชัน และการตรวจสอบตามคำแนะนำ
 - [แค็ตตาล็อกเครื่องมือ](../reference/mcp-contracts.md#generated-catalog): รายการเครื่องมือ ผู้ให้บริการ และคำสั่ง CLI ที่สร้างระหว่างการบิลด์
-- [แผนพัฒนา](../development/roadmap.md): งานที่วางแผนไว้และรายการติดตามความสามารถ
 
 รายงานช่องโหว่ผ่าน [SECURITY.md](../../SECURITY.md)
 
@@ -395,7 +394,7 @@ applicable licenses.
 
 เรายินดีรับความช่วยเหลือในการพัฒนา REA! [เปิด issue](https://github.com/morluto/rea/issues) เพื่อรายงานบั๊กหรือเสนอฟีเจอร์ หรือ[ส่ง pull request](https://github.com/morluto/rea/pulls) เพื่อปรับปรุงโค้ดหรือเอกสาร
 
-ดู [CONTRIBUTING.md](../../CONTRIBUTING.md) สำหรับการตั้งค่าสภาพแวดล้อมพัฒนาและการตรวจสอบ ดู[การทดสอบ](../development/testing.md) สำหรับแนวทางการตรวจยืนยัน และ[แผนผังสถาปัตยกรรม](../architecture/architecture.mermaid) สำหรับโครงสร้างโปรเจกต์
+ดู [CONTRIBUTING.md](../../CONTRIBUTING.md) สำหรับการตั้งค่าสภาพแวดล้อมพัฒนาและการตรวจสอบ ดู[การทดสอบ](../development/testing.md) สำหรับแนวทางการตรวจยืนยัน
 
 ## สัญญาอนุญาต
 
