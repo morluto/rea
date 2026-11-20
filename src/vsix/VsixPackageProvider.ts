@@ -81,6 +81,15 @@ const vsixParseLimit = (
         { limit: cause.failure.limit.maximum, unit: "nodes" },
       ),
     });
+  if (cause.failure.limit.name === "json_values")
+    return parseLimitConstraint(OPERATION, "memory", cause, {
+      path: input.path,
+      ...fixedAllowanceOptions(
+        `The ${String(cause.failure.limit.maximum)}-value allowance for a parsed extension/package.json`,
+        "parser",
+        { limit: cause.failure.limit.maximum, unit: "values" },
+      ),
+    });
   const parameter = (
     Object.keys(
       VSIX_PACKAGE_LIMIT_MAXIMA,

@@ -11,6 +11,7 @@ import { ZipReader } from "@zip.js/zip.js";
 import {
   inspectVsixPackageInputSchema,
   MAX_INSPECT_VSIX_PACKAGE_MANIFEST_BYTES,
+  MAX_INSPECT_VSIX_PACKAGE_MANIFEST_JSON_VALUES,
   MAX_INSPECT_VSIX_PACKAGE_MANIFEST_XML_NODES,
   MAX_INSPECT_VSIX_PACKAGE_MEMBER_BYTES,
   VSIX_COMMANDS_CAP,
@@ -593,6 +594,100 @@ it("refuses a vsixmanifest with more XML nodes than its tree allowance", async (
       },
     },
   });
+});
+
+/** A package.json whose unused `padding` array alone fills the value allowance. */
+const manyValuesPackageJson = (main: string): string =>
+  `{"name":"hello","publisher":"demo","version":"1.2.3","engines":{"vscode":"^1.74.0"},"main":${JSON.stringify(main)},"padding":[${"0,".repeat(MAX_INSPECT_VSIX_PACKAGE_MANIFEST_JSON_VALUES)}0]}`;
+
+it("refuses a package.json with more JSON values than its parse allowance", async () => {
+  const bytes = await vsixPackageFixture({
+    packageJson: manyValuesPackageJson("./out/extension.js"),
+  });
+  await expect(
+    parseVsixPackage(bytes, artifactOf(bytes), {
+      ...defaults,
+      max_manifest_bytes: MAX_INSPECT_VSIX_PACKAGE_MANIFEST_BYTES,
+    }),
+  ).rejects.toMatchObject({
+    constructor: ParseFailureError,
+    failure: {
+      kind: "limit",
+      limit: {
+        name: "json_values",
+        maximum: MAX_INSPECT_VSIX_PACKAGE_MANIFEST_JSON_VALUES,
+        required: MAX_INSPECT_VSIX_PACKAGE_MANIFEST_JSON_VALUES + 1,
+      },
+    },
+  });
+});
+
+it("reports the package.json value refusal as a fixed parser allowance", async () => {
+  const root = await createTestTempDirectory("rea-vsix-json-values-");
+  const path = join(root, "demo.hello-1.2.3.vsix");
+  await writeFile(
+    path,
+    await vsixPackageFixture({
+      packageJson: manyValuesPackageJson("./out/extension.js"),
+    }),
+  );
+  const provider = new VsixPackageProvider();
+  try {
+    const result = await provider.inspect(
+      inspectVsixPackageInputSchema.parse({
+        path,
+        max_manifest_bytes: MAX_INSPECT_VSIX_PACKAGE_MANIFEST_BYTES,
+      }),
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({
+      retryable: false,
+      fixedAllowance: {
+        kind: "parser",
+        limit: MAX_INSPECT_VSIX_PACKAGE_MANIFEST_JSON_VALUES,
+        unit: "values",
+      },
+    });
+    expect(JSON.stringify(projectAnalysisError(result.error))).not.toMatch(
+      /more memory|Raise /,
+    );
+  } finally {
+    await provider.close();
+  }
+});
+
+it("does not parse or use index files when the directory package.json exceeds the value allowance", async () => {
+  const bytes = await vsixPackageFixture({
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      engines: { vscode: "^1.74.0" },
+      main: "./out",
+    }),
+    extraMembers: {
+      "extension/out/package.json": manyValuesPackageJson("./start.js"),
+      "extension/out/start.js": "exports.activate = () => {};",
+      "extension/out/index.js": "exports.activate = () => {};",
+    },
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), {
+      ...defaults,
+      max_manifest_bytes: MAX_INSPECT_VSIX_PACKAGE_MANIFEST_BYTES,
+    }),
+  );
+  expect(report.entry_points.main).toEqual({
+    path: "extension/out",
+    present: false,
+  });
+  expect(report.limitations).toContain(
+    VSIX_LIMITATIONS.overgrownMainDirectoryPackageJson(
+      "extension/out/package.json",
+      MAX_INSPECT_VSIX_PACKAGE_MANIFEST_JSON_VALUES,
+    ),
+  );
 });
 
 it("reports the vsixmanifest node refusal as a fixed parser allowance", async () => {

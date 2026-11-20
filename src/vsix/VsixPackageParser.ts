@@ -24,6 +24,7 @@ import {
   zipListingCoverage,
 } from "../resources/index.js";
 import { countXmlNodes, parseXmlDocument } from "../domain/xmlDocument.js";
+import { countJsonValues } from "../domain/jsonValue.js";
 import { decodeXmlPlistText } from "../domain/propertyListXmlText.js";
 import { hasZipSignature } from "../domain/zipPackageFormat.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
@@ -31,6 +32,7 @@ import { Budget } from "../domain/budget.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 import { boundedList } from "../domain/boundedList.js";
 import {
+  MAX_INSPECT_VSIX_PACKAGE_MANIFEST_JSON_VALUES,
   MAX_INSPECT_VSIX_PACKAGE_MANIFEST_XML_NODES,
   VSIX_COMMANDS_CAP,
   VSIX_PACKAGE_FORMAT,
@@ -63,6 +65,8 @@ export const VSIX_LIMITATIONS = {
     `Member ${JSON.stringify(path)} exceeds the ${String(limit)}-byte manifest budget and was not read, so the directory main is unresolved; its index files were not used.`,
   unreadMainDirectoryPackageJson: (path: string): string =>
     `Member ${JSON.stringify(path)} is encrypted or duplicated and was not read, so the directory main is unresolved; its index files were not used.`,
+  overgrownMainDirectoryPackageJson: (path: string, limit: number): string =>
+    `Member ${JSON.stringify(path)} holds more than ${String(limit)} JSON values and was not parsed, so the directory main is unresolved; its index files were not used.`,
   malformedMainDirectoryPackageJson: (path: string): string =>
     `Member ${JSON.stringify(path)} is not a JSON object, so the directory main does not resolve; its index files were not used.`,
   entryPointCaseOnlyMatch: (path: string, member: string): string =>
@@ -420,12 +424,18 @@ const directoryMainStopsLookup = (main: DirectoryManifestMain): boolean =>
 /**
  * `main` of a directory's own package.json, joined onto that directory with
  * its `.` and `..` segments resolved; `none` when it names nothing or climbs
- * out of the package, `malformed` when the manifest is not a JSON object.
+ * out of the package, `malformed` when the manifest is not a JSON object,
+ * `unread` when it holds more values than the parse allowance.
  */
 const directoryManifestMain = (
   directory: string,
   text: string,
 ): DirectoryManifestMain => {
+  if (
+    countJsonValues(text, MAX_INSPECT_VSIX_PACKAGE_MANIFEST_JSON_VALUES) >
+    MAX_INSPECT_VSIX_PACKAGE_MANIFEST_JSON_VALUES
+  )
+    return { kind: "unread" };
   let record: unknown;
   try {
     record = JSON.parse(text);
@@ -1007,15 +1017,32 @@ export const parseVsixPackage = async (
       );
       packageBytes = decoded.length;
       examined += decoded.length;
+      let packageText: string | undefined;
       try {
-        packageParsed = parsePackageJsonDocument(
-          decodeXmlPlistText(decoded),
-          limitations,
-        );
+        packageText = decodeXmlPlistText(decoded);
       } catch {
         limitations.push(
           "The selected extension/package.json is not valid UTF-8 or BOM-marked UTF-16 JSON text.",
         );
+      }
+      if (packageText !== undefined) {
+        // Count values in one scan first, so a compressed manifest of many tiny
+        // values is refused before JSON.parse allocates them.
+        const values = countJsonValues(
+          packageText,
+          MAX_INSPECT_VSIX_PACKAGE_MANIFEST_JSON_VALUES,
+        );
+        if (values > MAX_INSPECT_VSIX_PACKAGE_MANIFEST_JSON_VALUES)
+          throw decodeLimit(
+            VSIX_PACKAGE_FORMAT,
+            `Selected extension/package.json holds more than ${String(MAX_INSPECT_VSIX_PACKAGE_MANIFEST_JSON_VALUES)} JSON values, above the value allowance for its parsed document.`,
+            {
+              name: "json_values",
+              maximum: MAX_INSPECT_VSIX_PACKAGE_MANIFEST_JSON_VALUES,
+              required: values,
+            },
+          );
+        packageParsed = parsePackageJsonDocument(packageText, limitations);
       }
     }
     const interestingMembers: VsixPackage["interesting_members"] = [];
@@ -1197,6 +1224,13 @@ export const parseVsixPackage = async (
           text === undefined
             ? { kind: "malformed" }
             : directoryManifestMain(mainPath, text);
+        if (mainDirectoryMain.kind === "unread")
+          limitations.push(
+            VSIX_LIMITATIONS.overgrownMainDirectoryPackageJson(
+              mainManifest.path,
+              MAX_INSPECT_VSIX_PACKAGE_MANIFEST_JSON_VALUES,
+            ),
+          );
         if (mainDirectoryMain.kind === "malformed")
           limitations.push(
             VSIX_LIMITATIONS.malformedMainDirectoryPackageJson(
