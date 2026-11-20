@@ -1585,28 +1585,6 @@ describe("Ghidra result projection", () => {
     });
   });
 
-  it("projects terminal-call facts from the function bridge into execution limitations", async () => {
-    const limitation =
-      "Ghidra Listing reports a terminal call at 0x401020 to 0x7f001000 __tls_get_addr (external=true, thunk=false, hasNoReturn=true); fallthrough is excluded by Ghidra's flow model. This records Ghidra's FunctionManager flag, not an independent verification that the callee cannot return.";
-    const ghidra = provider(installationHost(), () => ({
-      start: () => Promise.resolve(ok(sessionInfo())),
-      callTool: () =>
-        Promise.resolve(
-          ok({ value: "void main() {}", limitations: [limitation] }),
-        ),
-      close: () => Promise.resolve(ok(null)),
-    }));
-    const client = await createElfClient(ghidra);
-    const execution = await client.execute("procedure_pseudo_code", {
-      procedure: "main",
-    });
-    if (!execution.ok) throw execution.error;
-    expect(execution.value.result).toBe("void main() {}");
-    expect(execution.value.limitations).toContain(limitation);
-    expect(execution.value.rawResult).toBeNull();
-    await client.close();
-  });
-
   it.each([
     ["invalid_request", "AnalysisInputError"],
     ["not_found", "AnalysisInputError"],

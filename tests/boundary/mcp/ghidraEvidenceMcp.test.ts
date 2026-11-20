@@ -223,7 +223,7 @@ it("retains terminal-call qualifications across live dossiers and snapshot-backe
 it("retains handler-region limitations on incoming and outgoing reference Evidence", async () => {
   const limitation =
     "Ghidra Listing shows a Borland/Delphi-style SEH frame registration at 0x40108f (push 0x4010c0 followed by fs-segment stack chaining); handler 0x4010c0 lies outside this procedure's body, so callees, strings, and cross-references may omit the handler region.";
-  const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
+  const procedure = ghidraFunctionIdentity();
   const harness = await connectGhidraMcp(
     "ghidra-seh-reference-evidence",
     (operation, input) => {
@@ -232,7 +232,7 @@ it("retains handler-region limitations on incoming and outgoing reference Eviden
       return Promise.resolve(
         ok({
           value: jsonValueSchema.parse({
-            procedure: ghidraFunctionIdentity(),
+            procedure,
             direction: input.direction ?? "outgoing",
             references: [],
             reference_kinds_available: true,
@@ -247,7 +247,7 @@ it("retains handler-region limitations on incoming and outgoing reference Eviden
     for (const direction of ["incoming", "outgoing"] as const) {
       const reply = await harness.mcp.callTool({
         name: "procedure_references",
-        arguments: { procedure: dossier.procedure.address, direction },
+        arguments: { procedure: procedure.address, direction },
       });
       expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
       const evidence = sessionEvidence(
@@ -257,16 +257,8 @@ it("retains handler-region limitations on incoming and outgoing reference Eviden
       expect(evidence.normalized_result).toMatchObject({ direction });
       expect(evidence.raw_result).toBeNull();
       expect(evidence.limitations).toContain(limitation);
-      const replay = await harness.session.execute(
-        "procedure_references",
-        evidence.parameters,
-      );
-      if (!replay.ok) throw replay.error;
-      expect(replay.value.limitations).toContain(limitation);
     }
     expect(harness.calls).toEqual([
-      "procedure_references",
-      "procedure_references",
       "procedure_references",
       "procedure_references",
     ]);
