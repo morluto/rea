@@ -54,11 +54,7 @@ const matchingDescriptorCount = async (identity: Stats): Promise<number> => {
 };
 
 const waitForNoMatchingDescriptor = async (identity: Stats): Promise<void> => {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if ((await matchingDescriptorCount(identity)) === 0) return;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  expect(await matchingDescriptorCount(identity)).toBe(0);
+  await expect.poll(() => matchingDescriptorCount(identity)).toBe(0);
 };
 
 const createUnpackedFixture = async () => {
@@ -659,20 +655,11 @@ it.skipIf(process.platform === "win32")(
 it.skipIf(process.platform === "win32")(
   "releases unpacked handles after stream completion and cancellation",
   async () => {
-    const root = await createTestTempDirectory("rea-asar-unpacked-stream-");
-    const source = join(root, "source");
-    const archive = join(root, "fixture.asar");
-    await mkdir(source);
-    await writeFile(join(source, "small.js"), "module.exports = 1;\n");
-    await createPackageWithOptions(source, archive, { unpack: "small.js" });
-    const identity = await lstat(join(`${archive}.unpacked`, "small.js"));
+    const { archive, identity } = await createUnpackedFixture();
     const reader = new AsarArtifactReader(archive);
 
     try {
-      const entries = [];
-      for await (const entry of reader.entries()) entries.push(entry);
-      const entry = entries.find(({ path }) => path === "small.js");
-      if (entry === undefined) throw new Error("Expected unpacked ASAR member");
+      const entry = await unpackedMember(reader);
       expect((await buffer(await reader.open(entry))).toString()).toBe(
         "module.exports = 1;\n",
       );
@@ -751,17 +738,9 @@ describe("ASAR entry streaming", () => {
   });
 
   it("reports the observed digest when an unpacked member changes size", async () => {
-    const root = await createTestTempDirectory(
-      "rea-asar-unpacked-size-change-",
-    );
-    const source = join(root, "source");
-    const archive = join(root, "fixture.asar");
-    const original = join(source, "small.js");
+    const { archive, unpackedPath } = await createUnpackedFixture();
     const changed = "changed();\n";
-    await mkdir(source);
-    await writeFile(original, "module.exports = 1;\n");
-    await createPackageWithOptions(source, archive, { unpack: "small.js" });
-    await writeFile(join(`${archive}.unpacked`, "small.js"), changed);
+    await writeFile(unpackedPath, changed);
 
     await expect(scanArtifactInventory(archive)).rejects.toMatchObject({
       reason: "integrity",
@@ -773,20 +752,27 @@ describe("ASAR entry streaming", () => {
     });
   });
 
-  it.each([
-    ["packed", {}],
-    ["unpacked", { unpack: "large.bin" }],
-  ] as const)(
+  it.each(["packed", "unpacked"] as const)(
     "streams a %s member in bounded chunks with its complete digest",
-    async (_kind, options) => {
+    async (kind) => {
       const root = await createTestTempDirectory("rea-asar-streaming-");
-      const source = join(root, "source");
       const archive = join(root, "fixture.asar");
-      const member = join(source, "large.bin");
-      await mkdir(source);
-      await writeFile(member, Buffer.alloc(0));
-      await truncate(member, memberBytes);
-      await createPackageWithOptions(source, archive, options);
+      const unpacked = kind === "unpacked";
+      const header = asarHeaderBytes(
+        JSON.stringify({
+          files: { "large.bin": { size: memberBytes, offset: "0", unpacked } },
+        }),
+      );
+      await writeFile(archive, header);
+      if (unpacked) {
+        const companion = `${archive}.unpacked`;
+        await mkdir(companion);
+        const member = join(companion, "large.bin");
+        await writeFile(member, "");
+        await truncate(member, memberBytes);
+      } else {
+        await truncate(archive, header.length + memberBytes);
+      }
 
       const reader = new AsarArtifactReader(archive);
       try {
@@ -794,6 +780,7 @@ describe("ASAR entry streaming", () => {
         for await (const entry of reader.entries()) entries.push(entry);
         const entry = entries.find(({ path }) => path === "large.bin");
         if (entry === undefined) throw new Error("Expected large ASAR member");
+        expect(entry.unpacked).toBe(unpacked);
 
         const stream = await reader.open(entry);
         let largestChunkBytes = 0;
