@@ -5,7 +5,7 @@
   "src/domain/desktop/openPgpKeys.ts": 2,
   "src/domain/managed/managedMetadataInventoryRows.ts": 2,
   "src/domain/native/elfPointerRelocations.ts": 6,
-  "src/domain/native/nativeAotPe.ts": 16,
+  "src/domain/native/nativeAotPe.ts": 10,
   "src/domain/native/readBinaryContainer.ts": 1,
   "src/domain/pngVisualDiff.ts": 2,
   "src/ghidra/extensions/GhidraExtensions.ts": 1,
