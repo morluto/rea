@@ -78,7 +78,8 @@ it.each([
   const failed = fixture.log.entries[1]!;
   if (variant === "other-producer") fixture.log.creator.name = "unknown";
   if (variant === "other-version") fixture.log.creator.version = "unknown";
-  if (variant === "empty-failure") failed.response._failureText = "";
+  if (variant === "empty-failure")
+    Object.assign(failed.response, { _failureText: "" });
   if (variant === "missing-failure")
     Reflect.deleteProperty(failed.response, "_failureText");
   if (variant === "invalid-duration") failed.timings.send = -2;
