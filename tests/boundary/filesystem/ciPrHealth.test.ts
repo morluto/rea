@@ -545,6 +545,45 @@ it.each([
   },
 );
 
+it.each([
+  ["2026-10-13T01:00:00Z", "completed_failure"],
+  ["2026-10-12T23:30:00Z", "completed_success"],
+  ["2026-10-13T00:00:00Z", "unknown"],
+  ["2026-10-12T23:00:00Z", "unknown"],
+  ["invalid", "unknown"],
+])(
+  "uses the attempt start %s to order a retry and a separate run",
+  (startedAt, category) => {
+    const retried = run({
+      id: 78,
+      run_attempt: 2,
+      created_at: "2026-10-12T23:00:00Z",
+      run_started_at: startedAt,
+      conclusion: "failure",
+    });
+    const fresh = run({ run_attempt: 1 });
+    for (const candidates of [
+      [fresh, retried],
+      [retried, fresh],
+    ]) {
+      const report = classifyPrCi({
+        pull: validPull(),
+        runs: candidates.map((run) => ({
+          run,
+          basis: "event_pr_number_and_head_sha",
+        })),
+        ambiguousRuns: [],
+        runsComplete: true,
+        pullRequestInventoryComplete: true,
+      });
+      expect(report.category).toBe(category);
+      expect(report.runs.find(({ id }) => id === 78)?.startedAt).toBe(
+        startedAt,
+      );
+    }
+  },
+);
+
 it("does not let an older proven run hide a newer run with an unverified repository ID", async () => {
   const pull = rawPull(42);
   const older = run({
