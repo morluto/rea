@@ -1,10 +1,11 @@
 import { bridgeMaxRequestBytesRecovery } from "../../../src/config/bridgeMaxRequestBytes.js";
 import { createServer } from "node:net";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, readFile, writeFile } from "node:fs/promises";
+
 import { join } from "node:path";
 
 import { expect, it, onTestFinished, vi } from "vitest";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { CutterBridgeClient } from "../../../src/cutter/CutterBridgeClient.js";
 import { runWithAnalysisOperationSnapshot } from "../../../src/domain/analysisOperationSnapshot.js";
@@ -25,11 +26,8 @@ const SESSION = "00000000-0000-4000-8000-000000000001";
 const TOKEN = "bridge-token-0123456789abcdef";
 
 const privateDirectory = async (): Promise<string> => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-cutter-request-limit-"));
+  const directory = await createTestTempDirectory("rea-cutter-request-limit-");
   await chmod(directory, 0o700);
-  onTestFinished(async () => {
-    await rm(directory, { recursive: true, force: true });
-  });
   return directory;
 };
 

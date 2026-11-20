@@ -226,8 +226,9 @@ conflicting values remain unknown. Parameter sections are parsed once per ELF.
 Missing CUBIN symbol tables or unresolved section names produce `partial`
 object, report and target coverage even when some kernel facts survive. AMD note
 failures preserve earlier successfully parsed declarations and the original
-failure reason. Standalone PTX recognition tries a small header first, then
-continues within the existing 16 MiB text budget when leading comments or
-whitespace obscure its directives; admitted full-file probe bytes are reused.
-After those comments and whitespace, `.version` must be the first PTX module
-token; later PTX-looking text does not identify an arbitrary binary as PTX.
+failure reason. Standalone PTX recognition scans up to 16 MiB, allowing for
+leading comments and whitespace. After that leading text, `.version` must be
+the first module token. Inventory and kernel inspection use strict UTF-8 and
+reuse a complete, valid scan. Invalid encoding can leave a recognizable PTX
+object whose effective target is unknown. If a file extends beyond the byte
+budget, discovery is partial, including when the scan ends mid-character.

@@ -18,6 +18,7 @@ import { ok as resultOk, err } from "../../../src/domain/result.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import { nativeDispatchMetadataResultSchema } from "../../../src/domain/native/objcSwiftMetadata.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const targetObservation = (value: unknown) =>
   resultOk(
@@ -218,16 +219,10 @@ const fixturePort = (): AnalysisOperationPort => ({
 });
 
 const resources: Array<{ close(): Promise<void> }> = [];
-let decompileOutput: string | undefined;
-
 afterEach(async () => {
   await Promise.all(
     resources.splice(0).map(async (resource) => resource.close()),
   );
-  if (decompileOutput !== undefined) {
-    await rm(decompileOutput, { recursive: true, force: true });
-    decompileOutput = undefined;
-  }
 });
 
 const connect = async (analysis: AnalysisOperationPort = fixturePort()) => {
@@ -268,8 +263,7 @@ describe("enhanced MCP tools", () => {
   // oxlint-disable-next-line max-lines-per-function -- one exhaustive registration test guards the public tool catalog.
   it("executes all enhanced tools through production registration", async () => {
     const client = await connect();
-    const outputParent = await mkdtemp(join(tmpdir(), "rea-decompile-all-"));
-    decompileOutput = outputParent;
+    const outputParent = await createTestTempDirectory("rea-decompile-all-");
     const calls = [
       ["get_objc_classes", { pattern: "Fixture" }],
       ["get_objc_protocols", {}],

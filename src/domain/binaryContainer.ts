@@ -635,11 +635,11 @@ interface MappedStringAccess {
 /** Read a bounded NUL-terminated string while retaining mapping/alias semantics. */
 export const readMappedCString = (
   bytes: Buffer,
-  image: BinaryContainer,
+  mappings: readonly FileMapping[],
   address: bigint,
   maximumBytes: number,
+  zeroFills: readonly ZeroFillMapping[],
 ): Buffer => {
-  const mappings = imageFileMappings(image);
   return readMappedString(
     bytes,
     {
@@ -650,7 +650,7 @@ export const readMappedCString = (
             cursor < range.address + BigInt(range.size),
         ),
       offset: (cursor, size) =>
-        mappedFileOffset(mappings, cursor, size, image.zero_fills),
+        mappedFileOffset(mappings, cursor, size, zeroFills),
     },
     address,
     maximumBytes,

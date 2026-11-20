@@ -175,15 +175,21 @@ it.for<TextSourceCase>([
   const tools: string[] = [];
   let conversionIndex = 0;
   let validations = 0;
+  let operand: string | undefined;
   const client = new NativeMacOSProvider(
     {},
     {
       async run(tool, args) {
         tools.push(tool);
+        if (tool === "file") {
+          operand = args[1];
+          expect(operand).toBeDefined();
+          expect(operand).not.toBe(path);
+        }
         const result = await replay.run(tool, args);
         if (tool !== "plutil" || !result.ok) return result;
         if (args[0] === "-lint") {
-          expect(args).toEqual(["-lint", "--", path]);
+          expect(args).toEqual(["-lint", "--", operand]);
           validations += 1;
           return result;
         }
@@ -196,7 +202,7 @@ it.for<TextSourceCase>([
           "-o",
           "-",
           "--",
-          path,
+          operand,
         ]);
         return ok({
           ...result.value,

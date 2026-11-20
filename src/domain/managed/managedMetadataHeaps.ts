@@ -193,6 +193,28 @@ export const readMetadataString = (
   }
 };
 
+/** Read a required row name; nil and a nonzero index of an empty string are invalid. */
+export const readRequiredMetadataName = (
+  bytes: Buffer,
+  layout: ManagedMetadataLayout,
+  table: "TypeDef" | "Field" | "MethodDef",
+  token: string,
+  {
+    nameIndex,
+    nameOffset,
+  }: { readonly nameIndex: number; readonly nameOffset: number },
+): string => {
+  const name = readMetadataString(bytes, layout, nameIndex);
+  if (name.length === 0)
+    throw managedFailure(
+      "invalid-row",
+      `metadata.${table}:${token}`,
+      `${table} Name index ${String(nameIndex)} must reference a nonempty string`,
+      nameOffset,
+    );
+  return name;
+};
+
 /** File coordinate used when reporting a budget for decoded blob facts. */
 export const metadataBlobOffset = (layout: ManagedMetadataLayout): number =>
   layout.blob?.kind === "available"
@@ -337,9 +359,10 @@ export const readMetadataUserString = (
   budget.reserveString(units, start);
   // Check the serialized flag independently of literal decoding. A difference
   // from ECMA-335 is observable metadata, not proof of runtime rejection.
+  const reader = new BinaryReader(bytes, true, "managed");
   let expectedFlag = 0;
   for (let unitIndex = 0; unitIndex < units; unitIndex++) {
-    const unit = bytes.readUInt16LE(content + unitIndex * 2);
+    const unit = reader.u16(content + unitIndex * 2);
     if (
       unit > 0xff ||
       (unit >= 0x01 && unit <= 0x08) ||
@@ -389,13 +412,14 @@ export const readMetadataGuid = (
       heapOffset + Math.max(relative, 0),
     );
   const offset = heapOffset + relative;
-  const part1 = bytes.readUInt32LE(offset).toString(16).padStart(8, "0");
-  const part2 = bytes
-    .readUInt16LE(offset + 4)
+  const reader = new BinaryReader(bytes, true, "managed");
+  const part1 = reader.u32(offset).toString(16).padStart(8, "0");
+  const part2 = reader
+    .u16(offset + 4)
     .toString(16)
     .padStart(4, "0");
-  const part3 = bytes
-    .readUInt16LE(offset + 6)
+  const part3 = reader
+    .u16(offset + 6)
     .toString(16)
     .padStart(4, "0");
   const part4 = bytes.subarray(offset + 8, offset + 10).toString("hex");

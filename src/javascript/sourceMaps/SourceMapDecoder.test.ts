@@ -10,6 +10,7 @@ import {
   type SourceMapDecoderDependencies,
 } from "./SourceMapCommand.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
+import { assertProcessOwnershipInspectionActive } from "../../process/ProcessInspectionCancellation.js";
 import { spawnOwnedProviderProcess } from "../../process/ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "../../process/ProcessOwnership.js";
 import {
@@ -315,61 +316,67 @@ it("retains cancellation while retrying an earlier failed cleanup", async () => 
   }
 });
 
-it("retains Darwin preparation cleanup ownership and cancellation through retry", async () => {
-  const root = await PrivateRuntimeRoot.create({
-    prefix: "rea-source-map-prep-owner-",
-  });
-  const controller = new AbortController();
-  const reason = { caller: "after preparation failure" };
-  const cleanup = new ProviderCleanupError("darwin-helper", [root.path], {
-    reason: "held",
-  });
-  let release = false;
-  const physical = new DarwinProcessOwnershipInspectionError(
-    "compiler failure",
-    {
-      cleanupFailure: cleanup,
-      cleanupOwner: {
-        close: async () => {
-          if (!release) throw new Error("still held");
-          await root.close();
-          releaseOwnedCleanup(cleanup);
+it.each(["distinct", "shared"] as const)(
+  "retains physical Darwin preparation and cleanup for a %s caller reason",
+  async (reasonKind) => {
+    const root = await PrivateRuntimeRoot.create({
+      prefix: "rea-source-map-prep-owner-",
+    });
+    const controller = new AbortController();
+    const cleanup = new ProviderCleanupError("darwin-helper", [root.path], {
+      reason: "held",
+    });
+    let release = false;
+    const physical = new DarwinProcessOwnershipInspectionError(
+      "compiler failure",
+      {
+        cleanupFailure: cleanup,
+        cleanupOwner: {
+          close: async () => {
+            if (!release) throw new Error("still held");
+            await root.close();
+            releaseOwnedCleanup(cleanup);
+          },
         },
       },
-    },
-  );
-  const decoder = new SourceMapDecoder({
-    prepareOwnership: async () => {
-      controller.abort(reason);
-      throw physical;
-    },
-  });
-  try {
-    const failed = await decoder.trace(input, { signal: controller.signal });
-    if (failed.ok) throw new Error("expected failed preparation");
-    expect(failed.error.cleanupIncomplete).toBe(true);
-    expect(failed.error.cleanupResources).toContain(root.path);
-    expect(failed.error.cleanupPrimary?.cause).toBe(physical);
-    expect(
-      failed.error.cleanupPrimary?.secondaryFailures.find(
-        (entry) => entry instanceof AnalysisCancelledError,
-      )?.cause,
-    ).toBe(reason);
-    await expect(decoder.close()).rejects.toMatchObject({
-      cleanupIncomplete: true,
+    );
+    const reason =
+      reasonKind === "shared"
+        ? physical
+        : { caller: "after preparation failure" };
+    const decoder = new SourceMapDecoder({
+      prepareOwnership: async () => {
+        controller.abort(reason);
+        throw physical;
+      },
     });
-    expect(failed.error.cleanupResources).toContain(root.path);
-    await expect(access(root.path)).resolves.toBeUndefined();
-    release = true;
-    await decoder.close();
-    await expect(access(root.path)).rejects.toMatchObject({ code: "ENOENT" });
-    expect(failed.error.cleanupIncomplete).toBe(false);
-  } finally {
-    release = true;
-    await decoder.close();
-    await root.close();
-  }
-});
+    try {
+      const failed = await decoder.trace(input, { signal: controller.signal });
+      if (failed.ok) throw new Error("expected failed preparation");
+      expect(failed.error.cleanupIncomplete).toBe(true);
+      expect(failed.error.cleanupResources).toContain(root.path);
+      expect(failed.error.cleanupPrimary?.cause).toBe(physical);
+      expect(
+        failed.error.cleanupPrimary?.secondaryFailures.find(
+          (entry) => entry instanceof AnalysisCancelledError,
+        )?.cause,
+      ).toBe(reason);
+      await expect(decoder.close()).rejects.toMatchObject({
+        cleanupIncomplete: true,
+      });
+      expect(failed.error.cleanupResources).toContain(root.path);
+      await expect(access(root.path)).resolves.toBeUndefined();
+      release = true;
+      await decoder.close();
+      await expect(access(root.path)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(failed.error.cleanupIncomplete).toBe(false);
+    } finally {
+      release = true;
+      await decoder.close();
+      await root.close();
+    }
+  },
+);
 
 it("does not claim an opaque caller reason's Darwin cleanup owner", async () => {
   const controller = new AbortController();
@@ -389,9 +396,9 @@ it("does not claim an opaque caller reason's Darwin cleanup owner", async () => 
     },
   );
   const decoder = new SourceMapDecoder({
-    prepareOwnership: async () => {
+    prepareOwnership: async (signal) => {
       controller.abort(reason);
-      throw reason;
+      assertProcessOwnershipInspectionActive(signal);
     },
   });
   const result = await decoder.trace(input, { signal: controller.signal });

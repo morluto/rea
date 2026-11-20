@@ -28,6 +28,7 @@ import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarnes
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const reference = (source: Evidence) => ({
   kind: "retained-evidence" as const,
@@ -256,8 +257,7 @@ it("reports missing sources for a retained dossier with a large link set", async
       evidenceLinks: links,
     },
   );
-  const directory = await mkdtemp(join(tmpdir(), "rea-large-links-"));
-  onTestFinished(() => rm(directory, { recursive: true, force: true }));
+  const directory = await createTestTempDirectory("rea-large-links-");
   const path = join(directory, "bundle.json");
   await writeFile(path, JSON.stringify(createEvidenceBundle([source])));
   const imported = await client.callTool({

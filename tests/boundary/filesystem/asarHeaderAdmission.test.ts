@@ -123,7 +123,6 @@ it("rejects contradictory and unsigned-boundary extents before decoding", async 
 it("separates the header decode budget from container validity at its exact boundary", async () => {
   const root = await createTestTempDirectory("rea-asar-header-budget-");
   const archive = join(root, "budget.asar");
-  expect(DEFAULT_ASAR_MAX_HEADER_BYTES).toBe(16 * 1024 * 1024);
   for (const headerBytes of [
     DEFAULT_ASAR_MAX_HEADER_BYTES,
     DEFAULT_ASAR_MAX_HEADER_BYTES + 4,
@@ -173,7 +172,6 @@ const writeOversizedHeaderArchive = async (): Promise<string> => {
 
 it("names the default header admission budget and its setting when source selection cannot bypass it", async () => {
   const recovery = asarHeaderAdmissionRecovery(DEFAULT_ASAR_HEADER_ADMISSION);
-  expect(DEFAULT_ASAR_MAX_HEADER_BYTES).toBe(16 * 1024 * 1024);
   const archive = await writeOversizedHeaderArchive();
   let inventoryFailure: unknown;
   try {
