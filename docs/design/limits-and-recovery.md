@@ -35,15 +35,15 @@ errors is [#5910](https://github.com/morluto/rea/issues/5910).
 
 ## Ownership and data flow
 
-| Owner                                                                                                                                                                                                                   | Responsibility                                                                                                                                                                                     |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Domain definitions](https://github.com/morluto/rea/blob/main/src/domain/analysisSettingDefinitions.ts) and [types](https://github.com/morluto/rea/blob/main/src/domain/analysisSettings.ts)                            | Exact setting IDs, value types, shared bounds/defaults, units, provider/operation associations, application points, and structured limit metadata. Numeric constants stay with their domain owner. |
-| [Launch parser](https://github.com/morluto/rea/blob/main/src/config/analysisSettings.ts)                                                                                                                                | Parse selected launch values once, preserving an invalid value as a typed configuration failure rather than substituting a default.                                                                |
-| [AnalysisSettings](https://github.com/morluto/rea/blob/main/src/application/AnalysisSettings.ts)                                                                                                                        | Own one runtime's launch baseline, immutable override revisions, atomic updates, inspection, and accepted-operation snapshots. It does not own provider lifecycle or cleanup.                      |
-| [Composition](https://github.com/morluto/rea/blob/main/src/main/eagerRuntime.ts) and [typed configuration views](https://github.com/morluto/rea/blob/main/src/config/runtimeAnalysisSettings.ts)                        | Inject the same settings reader into providers and workflows; translate overrides into the configuration each consumer understands.                                                                |
-| Provider or resource owner                                                                                                                                                                                              | Resolve the effective budget, enforce it at the applicable boundary, and attach the actual value and known source to failures.                                                                     |
-| [MCP registration boundary](https://github.com/morluto/rea/blob/main/src/server/EvidenceMcpServerCore.ts)                                                                                                               | Enter the operation's settings scope before invoking its handler.                                                                                                                                  |
-| [Settings contracts](https://github.com/morluto/rea/blob/main/src/contracts/analysisSettingsContracts.ts) and [tool registration](https://github.com/morluto/rea/blob/main/src/server/registerAnalysisSettingsTools.ts) | Validate named requests and deliver inspection/update results without requiring an open target or healthy analysis provider.                                                                       |
+| Owner                                                                                                                                                                                                              | Responsibility                                                                                                                                                                                     |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Domain definitions](https://github.com/morluto/rea/blob/main/src/domain/analysisSettingDefinitions.ts) and [types](https://github.com/morluto/rea/blob/main/src/domain/analysisSettings.ts)                       | Exact setting IDs, value types, shared bounds/defaults, units, provider/operation associations, application points, and structured limit metadata. Numeric constants stay with their domain owner. |
+| [Launch parser](https://github.com/morluto/rea/blob/main/src/config/analysisSettings.ts)                                                                                                                           | Parse selected launch values once, preserving an invalid value as a typed configuration failure rather than substituting a default.                                                                |
+| [AnalysisSettings](https://github.com/morluto/rea/blob/main/src/application/AnalysisSettings.ts)                                                                                                                   | Own one runtime's launch baseline, immutable override revisions, atomic updates, inspection, and accepted-operation snapshots. It does not own provider lifecycle or cleanup.                      |
+| [Composition](https://github.com/morluto/rea/blob/main/src/main/eagerRuntime.ts) and [typed configuration views](https://github.com/morluto/rea/blob/main/src/config/runtimeAnalysisSettings.ts)                   | Inject the same settings reader into providers and workflows; translate overrides into the configuration each consumer understands.                                                                |
+| Provider or resource owner                                                                                                                                                                                         | Resolve the effective budget, enforce it at the applicable boundary, and attach the actual value and known source to failures.                                                                     |
+| [MCP registration boundary](https://github.com/morluto/rea/blob/main/src/server/EvidenceMcpServerCore.ts)                                                                                                          | Enter the operation's settings scope before invoking its handler.                                                                                                                                  |
+| [Settings contracts](https://github.com/morluto/rea/blob/main/src/contracts/analysisSettingsContracts.ts) and [settings tool bindings](https://github.com/morluto/rea/blob/main/src/server/serviceToolBindings.ts) | Validate named requests and deliver inspection/update results without requiring an open target or healthy analysis provider.                                                                       |
 
 The normal path is: composition creates the store, an MCP handler captures its
 current revision, and providers read that snapshot when resolving budgets.
@@ -176,20 +176,22 @@ checks all happen before publishing the replacement snapshot; a rejected batch
 cannot partially apply. Clients coordinating writes can supply
 `expected_revision`; without it, valid updates apply to the current state.
 
-| Runtime setting                                                                                                 | Application point                                                               |
-| --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| `asar.max_header_bytes`                                                                                         | Next archive operation, including full JavaScript application analysis          |
-| `asar.max_listing_bytes`                                                                                        | Next expanded ASAR listing, independently of packed header bytes                |
-| `ghidra.startup_timeout_ms`, `hopper.startup_timeout_ms`                                                        | Next provider startup attempt                                                   |
-| `ghidra.decompile_timeout_seconds`                                                                              | Next operation on the existing Ghidra Program; `null` means unbounded           |
-| `ghidra.decompile_max_payload_mib`                                                                              | Next native decompile; `null` preserves the selected provider's payload default |
-| `ghidra.value_flow_max_operations`, `ghidra.value_flow_max_inputs_per_operation`, `ghidra.value_flow_max_edges` | Next function value-flow projection on the existing Program                     |
-| `jadx.operation_timeout_ms`                                                                                     | Next JADX operation                                                             |
-| `regex.matching_deadline_ms`, `regex.worker_heap_request_mib`                                                   | Next search / new regex worker                                                  |
-| `capture.decoder_old_generation_mib`                                                                            | Next owned capture decoder                                                      |
-| `javascript.analysis_timeout_ms`, `javascript.max_heap_mb`                                                      | Next source analysis / new JavaScript worker                                    |
-| `wasm.command_timeout_ms`                                                                                       | Next WABT operation                                                             |
-| `native.matching_representation_bytes`                                                                          | Next `match_native_functions` request                                           |
+| Runtime setting                                                                                                 | Application point                                                                            |
+| --------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `asar.max_header_bytes`                                                                                         | Next archive operation, including full JavaScript application analysis                       |
+| `asar.max_listing_bytes`                                                                                        | Next expanded ASAR listing, independently of packed header bytes                             |
+| `ghidra.startup_timeout_ms`, `hopper.startup_timeout_ms`                                                        | Next provider startup attempt                                                                |
+| `ghidra.decompile_timeout_seconds`                                                                              | Next operation on the existing Ghidra Program; `null` means unbounded                        |
+| `ghidra.decompile_max_payload_mib`                                                                              | Next native decompile; `null` preserves the selected provider's payload default              |
+| `ghidra.value_flow_max_operations`, `ghidra.value_flow_max_inputs_per_operation`, `ghidra.value_flow_max_edges` | Next function value-flow projection on the existing Program                                  |
+| `jadx.operation_timeout_ms`                                                                                     | Next JADX operation                                                                          |
+| `regex.matching_deadline_ms`, `regex.worker_heap_request_mib`                                                   | Next search / new regex worker                                                               |
+| `capture.decoder_old_generation_mib`                                                                            | Next owned capture decoder                                                                   |
+| `javascript.analysis_timeout_ms`, `javascript.max_heap_mb`                                                      | Next source analysis / new JavaScript worker                                                 |
+| `javascript.member_mutation_alias_states`                                                                       | Next JavaScript application, web bundle or reference-source analysis                         |
+| `wasm.command_timeout_ms`                                                                                       | Next WABT operation                                                                          |
+| `native.matching_representation_bytes`                                                                          | Next `match_native_functions` request                                                        |
+| `zstd.max_frames`                                                                                               | Next exact Zstandard decode for an ELF section, OTA `REPLACE_ZSTD` operation, or GPU payload |
 
 ### Precedence and lifetime
 
@@ -291,6 +293,27 @@ Error copying, attribution, redaction, and delivery must preserve these facts.
 Human-readable remediation explains the same failure; clients should not need
 to parse that sentence to identify an editable setting.
 
+A deadline controlled by something other than a registered setting reports
+`details.limit` with `control_kind` instead of `setting`.
+`control_kind: "parameter"` names the per-call contract field in `parameter`
+(`native_command_timeout_ms`, `native_ui_deadline_ms`,
+`pwntools_timeout_ms`) and applies on the next call. Services and their
+remediation text name only that field. A CLI command adds `cli_flag`, the
+option that sets the field on that command, from its own field-to-flag
+binding; MCP results do not carry it.
+A completed or partial result can record the same reference, for example a
+`limit` in a web bundle `unknowns` entry for a script that reached its
+`analysis_timeout_ms` deadline. That reference is part of the result and its
+Evidence identity, so the CLI never adds to it. Instead, the CLI renders the
+flags in its own `--full-output` envelope as `meta.cli_controls`, a map from
+each recorded contract field to the option that sets it on that command. The
+bare result is the record itself and gains no CLI field.
+`control_kind: "environment"` names the `environment` variable REA reads when
+it starts (`REA_SWIFTC_COMPILE_TIMEOUT_MS`): `applies_at` is `next_startup`,
+or `next_invocation` for a one-shot invocation. Both carry `effective_value`,
+`unit`, `minimum`, `maximum` and `default_value`. `update_analysis_settings`
+changes neither. A limit without `control_kind` is a registered setting.
+
 This output is breaking. Results and errors no longer carry the previous
 restart boolean or a single effect field, and there is no compatibility alias.
 Read `update_mode` to see whether the setter can change the active value, and
@@ -371,6 +394,35 @@ JSON values stop at `MAX_JSON_DEPTH` (1000) in
 "JSON value exceeds maximum nesting depth of 1000. This release has no runtime
 override."
 
+## Typed refusals
+
+A producer that refuses a request types the refusal instead of leaving
+recovery to the resource kind. The domain owner is
+[`analysisRefusal.ts`](https://github.com/morluto/rea/blob/main/src/domain/analysisRefusal.ts).
+It has three variants. Each one projects under `details.refusal` with the
+`operation` the error is attributed to:
+
+| Variant              | Producer fact                                                                                                                            | Projected fields                                                                    |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `fixed_ceiling`      | `fixedAllowanceOptions(name, kind, { limit, unit, narrowing })`, or an artifact reader's `artifactFixedLimitFailure(allowance, outcome)` | `allowance`, `allowance_kind`, `limit`, `unit`, `narrowing`                         |
+| `adjustable_budget`  | an `AnalysisSettingLimit` bound as `limit`                                                                                               | `control`, `setting`, `effective_value`, `unit`, `range`, optional `required_value` |
+| `ambiguous_selector` | `AnalysisInputError` option `ambiguousSelector: { field, candidates }`                                                                   | `field`, `candidates`                                                               |
+
+Presentation is total over these variants. Authored remediation still wins.
+Without it, the variant names the recovery: fixed ceilings and their narrowing
+step, the budget's control and range for the caller's lifetime, or the selector
+field and its candidates. A resource refusal never falls back to text about
+worker limits, the MCP transport, or doctor. An ambiguous selector conforms to
+the input contract, so it does not ask the caller to inspect the schema.
+
+A measured exhaustion or occupied admission is not a refusal. It declares
+`measuredExhaustion: true` and keeps the resource kind's recovery. The
+`rea/typed-resource-refusal` lint rule rejects a new
+`AnalysisResourceConstraintError` that names none of these. Older untyped
+constructions are counted in
+`scripts/lint/rules/typed-resource-refusal-baseline.json`, and those counts may
+only shrink.
+
 ## Recovery text
 
 The string the caller sees includes:
@@ -408,7 +460,9 @@ request to change it.
   retry a startup that returns the same unchanged result: tell the user REA
   could not start, ask them to restart the MCP client, then run `rea doctor`.
 - Unexpected process-command failure: do not repeat the command. Tell the user
-  to check the input files, then run `rea doctor`.
+  the reported reason and ask them to check the scenario or capture files it
+  read; if they are valid, report the failure with its diagnostics. Doctor does
+  not check process commands.
 - `cleanup_incomplete`: the operation is not retryable. Retry that exact
   cleanup owner, named in `details.resources`, and wait until it confirms
   release before admitting new work on those resources

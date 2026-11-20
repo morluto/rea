@@ -3,14 +3,13 @@ import { afterEach, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 
-const originalPlatform = vi.hoisted(() => {
-  const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
-  Object.defineProperty(process, "platform", {
-    value: "linux",
-    configurable: true,
-  });
-  return descriptor;
-});
+// The system ownership host is composed from HOST_PLATFORM; select Linux there.
+vi.mock("../platform/HostPlatform.js", () => ({
+  HOST_PLATFORM: Object.freeze({
+    platform: "linux",
+    architecture: process.arch,
+  }),
+}));
 const state = vi.hoisted(() => ({
   readFile: vi.fn(),
   spawn: vi.fn(),
@@ -54,7 +53,6 @@ import { systemProcessOwnershipHost } from "./ProcessOwnershipObservation.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
-  Object.defineProperty(process, "platform", originalPlatform);
 });
 
 it("runs the production private-display timeout cleanup through the Linux host", async () => {
@@ -88,7 +86,7 @@ it("runs the production private-display timeout cleanup through the Linux host",
       : []),
   ];
   state.ps.mockImplementation(async (command) => {
-    expect(command).toBe("ps");
+    expect(command).toMatch(/(?:^|\/)ps$/u);
     return { stdout: rows().join("\n"), stderr: "" };
   });
   state.readFile.mockImplementation(async (path) => {

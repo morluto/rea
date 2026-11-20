@@ -1,6 +1,6 @@
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import { runtimeAsarHeaderAdmission } from "../config/runtimeAnalysisSettings.js";
-import type { JavaScriptRuntimeObservationPort } from "../application/javascript/JavaScriptRuntimeObservationPort.js";
+import type { JavaScriptRuntimeObservationPort } from "../ports/javascript/JavaScriptRuntimeObservationPort.js";
 import {
   V8InspectorAdmission,
   V8InspectorProvider,

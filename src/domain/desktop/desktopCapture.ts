@@ -1,3 +1,4 @@
+import { boundedList } from "../boundedList.js";
 import { z } from "zod";
 
 import { runtimeFile } from "./runtimeFiles.js";
@@ -145,6 +146,7 @@ export const checkpointTaken = (
         (left.path < right.path ? -1 : left.path > right.path ? 1 : 0),
     )
     .map(({ path }) => relative(path));
+  const changedFiles = boundedList(files, MAX_ACKNOWLEDGED_FILES);
   return {
     kind: "checkpoint",
     name: checkpoint.name,
@@ -157,8 +159,8 @@ export const checkpointTaken = (
       (sum, file) => sum + file.size,
       0,
     ),
-    changed_files: files.slice(0, MAX_ACKNOWLEDGED_FILES),
-    more_changed_files: Math.max(0, files.length - MAX_ACKNOWLEDGED_FILES),
+    changed_files: [...changedFiles.items],
+    more_changed_files: changedFiles.omitted,
   };
 };
 
@@ -191,12 +193,14 @@ const aptRepositorySchema = z.strictObject({
   sources_file: z.string().nullable(),
   /** Without the user name and password the entry may hold. */
   uri: z.string().nullable(),
-  /** Whether the entry's URI held a user name or password, which REA does not record; absent from captures written before it was recorded. */
+  /** The index Repo-URI observed by apt, without credentials. Older captures omit it. */
+  repo_uri: z.string().min(1).optional(),
+  /** Whether the entry or index URI held credentials, which REA does not record. */
   uri_credentials_removed: z.boolean().optional(),
   suite: z.string().nullable(),
   /** Empty for a flat repository. */
   components: z.array(z.string()),
-  /** The entry's architecture restriction; empty when it names none, absent from captures written before it was recorded. */
+  /** The entry's architecture restriction. `all` allows architecture-independent packages. An empty list depends on the host's APT defaults. Older captures omit this field. */
   architectures: z.array(z.string()).optional(),
   /** The release's Suite (apt's `a=`), or else its Codename, which `<package>/<release>` selects; null when unknown, absent from captures written before it was recorded. */
   release: z.string().nullable().optional(),
@@ -261,7 +265,10 @@ const packageSchema = z.strictObject({
 export const desktopApplicationInventorySchema = z.strictObject({
   desktop_entry: desktopEntrySchema.nullable(),
   argv: z.array(z.string()).min(1),
+  /** Directory in which the recorded argv is invoked. */
   working_directory: z.string().min(1),
+  /** Physical directory selected by an env chdir option, when present. */
+  application_working_directory: z.string().min(1).optional(),
   executable: z.strictObject({
     path: z.string().min(1),
     resolved_path: z.string().nullable(),

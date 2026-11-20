@@ -2,7 +2,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
-import * as machoReader from "../../artifacts/apple/MachoLoadCommandReader.js";
+import * as machoReader from "../../domain/apple/machoLoadCommandReader.js";
 import { inspectAppleIpsInputSchema } from "../../domain/native/appleIps.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { appleIpsBytes } from "../../../tests/fixtures/binaryDiagnostics/appleIps.js";

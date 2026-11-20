@@ -3,14 +3,13 @@ import { access, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { rizinTestInferiorTty } from "./RizinTestInferiorTty.js";
 import {
   createRizinCoverageHarness,
   createInjectedProcess,
   incompleteStop,
 } from "./RizinDebugSessionCoverage.fixtures.js";
 
-const { cleanup, makeProvider, start, startInjected, createManager } =
+const { cleanup, makeProvider, start, startInjected } =
   createRizinCoverageHarness();
 afterEach(cleanup);
 
@@ -273,6 +272,10 @@ it.skipIf(process.platform === "win32")(
     if (!result.ok) {
       expect(result.error.cleanupIncomplete).toBe(true);
       expect(result.error.cleanupResources).toEqual([sessionId]);
+      // The retained failure names why the session stopped.
+      expect(result.error.diagnostics).toMatchObject({
+        session_stop: "command-deadline",
+      });
       const evidence = evidenceSchema.parse(result.error.partialObservation);
       expect(evidence.normalized_result).toMatchObject({
         completion_status: "unknown",

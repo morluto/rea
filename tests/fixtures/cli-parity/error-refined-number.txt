@@ -1,0 +1,11 @@
+$ rea inspect-byte-entropy <workspace>/sample.bin --block-size 100
+exit: 1
+--- stdout
+code: VALIDATION_ERROR
+message: "REA could not read the command arguments. Check the named argument and its expected type, then try again."
+fieldErrors[2]{code,missing,path,expected,received,message}:
+  too_small,false,blockSize,"","","Too small: expected number to be >=256"
+  custom,false,blockSize,"","",Block size must be a power of two.
+<end>
+--- stderr
+<end>

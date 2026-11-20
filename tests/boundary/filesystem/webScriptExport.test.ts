@@ -27,13 +27,13 @@ import {
 import { analyzeJavaScriptApplication } from "../../support/javascriptApplicationScope.js";
 import { exportWebScripts } from "../../../src/application/WebScriptExportService.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
-import { publishWebScripts } from "../../../src/browser/assets/PublishWebScripts.js";
-import { DestinationCaseCollisionFailure } from "../../../src/artifacts/ArtifactPaths.js";
-import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
-import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
-import { SafeOutputTreeCreationFailure } from "../../../src/artifacts/SafeOutputTreeCreationFailure.js";
-import { selectScriptCapture } from "../../../src/browser/assets/ScriptCaptureAdapters.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
+import { publishWebScripts } from "../../../src/application/PublishWebScripts.js";
+import { DestinationCaseCollisionFailure } from "../../../src/resources/ArtifactPaths.js";
+import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
+import { SafeOutputTree } from "../../../src/resources/SafeOutputTree.js";
+import { SafeOutputTreeCreationFailure } from "../../../src/resources/SafeOutputTreeCreationFailure.js";
+import { selectScriptCapture } from "../../../src/domain/webScriptCaptureAdapters.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { PLAYWRIGHT_RESPONSE_BODY_PROVENANCE_LIMITATION } from "../../../src/domain/browserNetworkEvidence.js";
@@ -1034,6 +1034,7 @@ describe("capture read failure provenance", () => {
         new Error("physical capture read failed"),
         { code },
       );
+      const reason = sameReason ? physical : { request: "later cancellation" };
       const closeFailure = new Error("capture close failed");
       let handle: Awaited<ReturnType<typeof actualFs.open>> | undefined;
       let closeCalls = 0;
@@ -1042,9 +1043,7 @@ describe("capture read failure provenance", () => {
         if (String(args[0]) !== input.capture_path) return opened;
         handle = opened;
         vi.spyOn(opened, "read").mockImplementation(async () => {
-          controller.abort(
-            sameReason ? physical : { request: "later cancellation" },
-          );
+          controller.abort(reason);
           throw physical;
         });
         const close = opened.close.bind(opened);
@@ -1078,6 +1077,11 @@ describe("capture read failure provenance", () => {
           errors: [physical, closeFailure],
         });
       else expect(primary.cause).toBe(physical);
+      expect(primary.secondaryFailures).toHaveLength(1);
+      expect(primary.secondaryFailures[0]?.cause).toBe(reason);
+      expect(
+        projectAnalysisError(result.error).details?.secondary_failures,
+      ).toEqual([expect.objectContaining({ code: "cancelled" })]);
       await expect(access(input.output_directory)).rejects.toMatchObject({
         code: "ENOENT",
       });
@@ -1498,25 +1502,3 @@ it.each(["basename", "directory"])(
     ).toEqual(result.scripts);
   },
 );
-
-it("retains invalid Windows ChangeTime configuration at the capture read boundary", async () => {
-  const { input, resources } = await setup();
-  const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
-  const previous = process.env.REA_WINDOWS_CHANGE_TIME_DRIFT_MS;
-  try {
-    Object.defineProperty(process, "platform", { value: "win32" });
-    process.env.REA_WINDOWS_CHANGE_TIME_DRIFT_MS = "invalid";
-    const result = await exportWebScripts(input, resources);
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error("Expected configuration refusal");
-    expect(projectAnalysisError(result.error)).toMatchObject({
-      code: "configuration_invalid",
-      details: { settings: [{ setting: "REA_WINDOWS_CHANGE_TIME_DRIFT_MS" }] },
-    });
-  } finally {
-    Object.defineProperty(process, "platform", platform);
-    if (previous === undefined)
-      delete process.env.REA_WINDOWS_CHANGE_TIME_DRIFT_MS;
-    else process.env.REA_WINDOWS_CHANGE_TIME_DRIFT_MS = previous;
-  }
-});

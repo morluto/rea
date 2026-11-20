@@ -1,0 +1,20 @@
+$ rea completions --help
+exit: 0
+--- stdout
+rea completions — Generate shell completion script
+
+Usage: rea completions <bash|fish|nushell|zsh>
+
+Arguments:
+  shell  Shell to generate completions for
+
+Setup:
+  bash     eval "$(rea completions bash)"  # add to ~/.bashrc
+  fish     rea completions fish | source   # add to ~/.config/fish/config.fish
+  nushell  see `rea completions nushell`   # add to config.nu
+  zsh      eval "$(rea completions zsh)"   # add to ~/.zshrc
+
+Zsh: initialize completion with `autoload -Uz compinit; compinit` before evaluating the zsh hook. If your shell already runs compinit, place the hook after it.
+<end>
+--- stderr
+<end>

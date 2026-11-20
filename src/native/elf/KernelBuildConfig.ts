@@ -2,8 +2,10 @@ import { createHash } from "node:crypto";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { crc32, inflateRaw } from "node:zlib";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import {
+  ArtifactReaderFailure,
+  assertArtifactReadActive,
+} from "../../resources/index.js";
 import {
   KERNEL_BUILD_CONFIG_CODECS,
   KERNEL_BUILD_CONFIG_NUMBER,
@@ -12,6 +14,8 @@ import {
   type KernelBuildConfigEntry,
 } from "../../domain/native/kernelBuildConfig.js";
 import { kernelCompressionCodecAt } from "./KernelCompressionCodec.js";
+import { BinaryReader } from "../../domain/binaryContainer.js";
+import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
 type Report = KernelBuildConfig;
 type Entry = KernelBuildConfigEntry;
@@ -147,9 +151,10 @@ const FCOMMENT = 0x10;
  * `invalid` when it is not deflate, sets reserved flags, or fails its FHCRC.
  */
 const gzipHeaderEnd = (
-  bytes: Buffer,
+  reader: BinaryReader,
   start: number,
 ): number | "invalid" | null => {
+  const { bytes } = reader;
   if (start + 10 > bytes.length) return null;
   if (bytes[start + 2] !== CM_DEFLATE) return "invalid";
   const flags = bytes[start + 3] ?? 0;
@@ -157,7 +162,7 @@ const gzipHeaderEnd = (
   let cursor = start + 10;
   if ((flags & FEXTRA) !== 0) {
     if (cursor + 2 > bytes.length) return null;
-    cursor += 2 + bytes.readUInt16LE(cursor);
+    cursor += 2 + reader.u16(cursor);
   }
   for (const flag of [FNAME, FCOMMENT]) {
     if ((flags & flag) === 0) continue;
@@ -168,10 +173,7 @@ const gzipHeaderEnd = (
   if ((flags & FHCRC) === 0) return cursor > bytes.length ? null : cursor;
   if (cursor + 2 > bytes.length) return null;
   // FHCRC is the low 16 bits of the CRC-32 of every header byte before it.
-  if (
-    bytes.readUInt16LE(cursor) !==
-    (crc32(bytes.subarray(start, cursor)) & 0xffff)
-  )
+  if (reader.u16(cursor) !== (crc32(bytes.subarray(start, cursor)) & 0xffff))
     return "invalid";
   return cursor + 2;
 };
@@ -204,7 +206,8 @@ const inflateGzipMember = async (
   maxOutput: number,
   signal: AbortSignal | undefined,
 ): Promise<GzipMember> => {
-  const body = gzipHeaderEnd(bytes, start);
+  const reader = new BinaryReader(bytes, true, "gzip");
+  const body = gzipHeaderEnd(reader, start);
   if (body === null) return { kind: "truncated", spent: 0 };
   if (body === "invalid") return { kind: "invalid", spent: 0 };
   let output: Buffer;
@@ -227,14 +230,14 @@ const inflateGzipMember = async (
   if (trailer + 8 > bytes.length)
     return { kind: "truncated", spent: output.length };
   if (
-    bytes.readUInt32LE(trailer) !== crc32(output) ||
-    bytes.readUInt32LE(trailer + 4) !== output.length >>> 0
+    reader.u32(trailer) !== crc32(output) ||
+    reader.u32(trailer + 4) !== output.length >>> 0
   )
     return { kind: "corrupt", end: trailer + 8, inflated: output.length };
   return { kind: "member", output, end: trailer + 8 };
 };
 
-const decoder = new TextDecoder("utf-8", { fatal: true });
+const decoder = strictUtf8Decoder("strip-signature");
 /** C0 controls other than tab, LF and CR, plus DEL. */
 const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u;
 
@@ -263,10 +266,6 @@ const decodeText = async (
 const QUOTE = 0x22;
 const BACKSLASH = 0x5c;
 
-/** Line terminators other than LF that a `.config` value may not contain. */
-const isLineBreak = (char: number): boolean =>
-  char === 0x0d || char === 0x2028 || char === 0x2029;
-
 /**
  * Decoded `"..."` value whose only escapes are `\"` and `\\`. The line is
  * validated in place first, yielding once per TURN_STRIDE characters, so the
@@ -287,7 +286,9 @@ const unquote = async (
       await yieldTurn(signal);
     }
     const char = raw.charCodeAt(index);
-    if (char === QUOTE || isLineBreak(char)) return null;
+    // Kconfig writes Unicode separators literally inside quoted strings.
+    // LF already frames records; CR remains disallowed in a value.
+    if (char === QUOTE || char === 0x0d) return null;
     if (char !== BACKSLASH) continue;
     const next = raw.charCodeAt(index + 1);
     if (index + 1 >= end || (next !== QUOTE && next !== BACKSLASH)) return null;
@@ -530,8 +531,8 @@ const parseBannerText = (
   let compiler: string | null = null;
   if (rest.startsWith(" (")) {
     const close = rest.indexOf(")");
-    if (close > 2) {
-      builder = rest.slice(2, close);
+    if (close >= 2) {
+      builder = rest.slice(2, close) || null;
       rest = rest.slice(close + 1);
     }
   }
@@ -766,7 +767,6 @@ const reportFromSearch = async (
                 ...blobRanges(found, search.space),
               }
             : acceptedConfig(found, input, search.space);
-  const complete = found === "absent" || config.status === "present";
   const banner = await findBanner(search.bytes, search.space, signal);
   return {
     artifact,
@@ -776,7 +776,14 @@ const reportFromSearch = async (
     banner,
     config,
     coverage: {
-      status: complete ? "complete" : "incomplete",
+      status:
+        found === "absent" || config.status === "present"
+          ? "complete"
+          : // A member cut by the searched bytes, or candidates the budget
+            // left uninflated, is a known gap; a malformed config is unreadable.
+            found === "truncated" || found === "exhausted"
+            ? "partial"
+            : "unknown",
       examined_bytes: search.bytes.length,
       examined_entries: config.option_count,
     },
@@ -819,12 +826,13 @@ const readBzImage = (
   | { kind: "payload"; payload: BzImagePayload } => {
   if (bytes.length < 0x206 || bytes.toString("latin1", 0x202, 0x206) !== "HdrS")
     return { kind: "none" };
-  if (bytes.length < 0x250 || bytes.readUInt16LE(0x206) < 0x0208)
+  const reader = new BinaryReader(bytes, true, "bzImage");
+  if (bytes.length < 0x250 || reader.u16(0x206) < 0x0208)
     return { kind: "unavailable" };
   const setupSects = bytes[0x1f1] === 0 ? 4 : (bytes[0x1f1] ?? 4);
   const payload = {
-    offset: (setupSects + 1) * 512 + bytes.readUInt32LE(0x248),
-    bytes: bytes.readUInt32LE(0x24c),
+    offset: (setupSects + 1) * 512 + reader.u32(0x248),
+    bytes: reader.u32(0x24c),
   };
   if (payload.bytes === 0) return { kind: "unavailable" };
   return payload.offset > bytes.length ||
@@ -854,7 +862,12 @@ const closedReport = (
       : null,
   banner: absentBanner("unknown"),
   config: emptyConfig(input, status, reason),
-  coverage: { status, examined_bytes: 0, examined_entries: 0 },
+  // Nothing was searched, so whether a config exists cannot be determined.
+  coverage: {
+    status: status === "incomplete" ? "unknown" : status,
+    examined_bytes: 0,
+    examined_entries: 0,
+  },
   limitations: [...baseLimitations(), limitation],
 });
 

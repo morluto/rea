@@ -90,7 +90,7 @@ When changing installers or setup recovery, follow
 
 Coordinate expensive checks across agents. If a test unexpectedly consumes heavy CPU, stop its owned process family and profile a bounded representative case before retrying. Inspect production work, fixture generation, subprocesses, and repeated setup; preserve regression coverage when optimizing. Follow the [test resource guidance](docs/development/testing.md#developer-commands).
 
-`docs/public/product-catalog.json`, `docs/verification/managed-conformance-*.json`, and `skills/` are ignored outputs. Edit source contracts and `.agents/skills/reverse-engineer-anything/`, then regenerate as needed. `.cache/mcp-tool-catalog.json` is test metadata; runtime builds and source checking do not consume it. Never commit binaries, provider project documents, credentials, `dist/`, `node_modules/`, or local planning artifacts.
+`docs/public/product-catalog.json`, `docs/verification/managed-conformance-*.json`, and `skills/` are ignored outputs. Edit source contracts and `.agents/skills/reverse-engineer-anything/`, then regenerate as needed. Never commit binaries, provider project documents, credentials, `dist/`, `node_modules/`, or local planning artifacts.
 
 ## Tool and Test Changes
 
@@ -134,9 +134,9 @@ owner to complete. Never attest to human review on their behalf. Draft status
 is optional; preserve the PR's current draft status unless the user asks to change
 it. Later pushes do not invalidate the readiness declaration or require another
 human sign-off. Keep the PR body and affected validation current as work changes.
-The readiness check validates the filled declaration or the author exemption
-listed in CONTRIBUTING.md; CI and automated review results do not establish that
-human review occurred, maintainer scope approval, or merge permission.
+Maintainers review the declaration and honor the author exemptions in
+CONTRIBUTING.md. CI and automated review results do not establish that human
+review occurred, maintainer scope approval, or merge permission.
 
 <!-- BEGIN:turborepo-agent-rules -->
 

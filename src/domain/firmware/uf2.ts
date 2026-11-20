@@ -1,8 +1,10 @@
+import { boundedList, describeBoundedList } from "../boundedList.js";
 import type { Uf2Metadata } from "../artifactFormatMetadata.js";
 import { err, ok, type Result } from "../result.js";
 import { mergeArenaRuns, type RunConflict } from "./addressRuns.js";
 import type { RegionDecodeFailure, RegionDecoder } from "./regionDecoder.js";
 import { UF2_FAMILY_REGISTRY, uf2FamilyName } from "./uf2Families.js";
+import { byteToHex } from "../../kernel/byteToHex.js";
 
 /** Every UF2 block is 512 bytes: a 32-byte header, 476 data bytes, an end magic. */
 export const UF2_BLOCK_BYTES = 512;
@@ -105,7 +107,7 @@ const familyText = (familyId: number | null): string => {
 
 /** At most NAMED_GROUPS descriptions, then a count of the rest. */
 const named = (items: readonly string[]): string =>
-  `${items.slice(0, NAMED_GROUPS).join("; ")}${items.length > NAMED_GROUPS ? `; and ${String(items.length - NAMED_GROUPS)} more` : ""}`;
+  describeBoundedList(boundedList(items, NAMED_GROUPS), "; ");
 
 /** Recognize a file only by a complete first block with all three magic numbers. */
 export const hasUf2Block = (prefix: Uint8Array): boolean =>
@@ -161,7 +163,7 @@ class StreamingUf2Decoder implements RegionDecoder<Uf2Image> {
   readonly #groups = new Map<string, NumberingGroup>();
   readonly #families = new Set<number>();
   #arena: Uint8Array;
-  #arenaUsed = 0;
+  #arenaWriteOffset = 0;
   #blockLength = 0;
   #blockCount = 0;
   #invalid = 0;
@@ -227,6 +229,10 @@ class StreamingUf2Decoder implements RegionDecoder<Uf2Image> {
     const index = this.#blockCount;
     this.#blockCount += 1;
     const flags = readUint32(block, 8);
+    const fileContainer = (flags & UF2_FLAG_FILE_CONTAINER) !== 0;
+    // File-container blocks use the address field as a file offset. Pure
+    // nonflash blocks do not establish an address range.
+    const nonflash = !fileContainer && (flags & UF2_FLAG_NOT_MAIN_FLASH) !== 0;
     const address = readUint32(block, 12);
     const size = readUint32(block, 16);
     const fault =
@@ -240,7 +246,7 @@ class StreamingUf2Decoder implements RegionDecoder<Uf2Image> {
             : (flags & UF2_FLAG_MD5) !== 0 &&
                 size > UF2_DATA_BYTES - UF2_MD5_BYTES
               ? "payload overlaps the reserved MD5 checksum metadata"
-              : address + size > ADDRESS_SPACE
+              : !nonflash && address + size > ADDRESS_SPACE
                 ? `payload at ${hex32(address)} with ${String(size)} bytes wraps past 0xffffffff`
                 : undefined;
     if (fault !== undefined) {
@@ -259,11 +265,11 @@ class StreamingUf2Decoder implements RegionDecoder<Uf2Image> {
       address,
     );
     // The file-container flag overrides not-main-flash: such blocks hold files.
-    if ((flags & UF2_FLAG_FILE_CONTAINER) !== 0) {
+    if (fileContainer) {
       this.#fileContainer += 1;
       return ok(undefined);
     }
-    if ((flags & UF2_FLAG_NOT_MAIN_FLASH) !== 0) {
+    if (nonflash) {
       this.#notMainFlash += 1;
       this.#notMainFlashBytes += size;
       return ok(undefined);
@@ -325,7 +331,7 @@ class StreamingUf2Decoder implements RegionDecoder<Uf2Image> {
     data: Uint8Array,
   ): Result<void, RegionDecodeFailure> {
     if (data.length === 0) return ok(undefined);
-    if (this.#arenaUsed + data.length > this.#arena.length)
+    if (this.#arenaWriteOffset + data.length > this.#arena.length)
       return err({
         kind: "limit",
         boundary: "file-size",
@@ -344,14 +350,14 @@ class StreamingUf2Decoder implements RegionDecoder<Uf2Image> {
       this.#runs.push({
         familyId,
         address,
-        offset: this.#arenaUsed,
+        offset: this.#arenaWriteOffset,
         length: data.length,
         blockCount: 1,
         firstFileBlock: block,
         lastFileBlock: block,
       });
-    this.#arena.set(data, this.#arenaUsed);
-    this.#arenaUsed += data.length;
+    this.#arena.set(data, this.#arenaWriteOffset);
+    this.#arenaWriteOffset += data.length;
     return ok(undefined);
   }
 
@@ -475,5 +481,5 @@ const conflict = ({
   incoming,
 }: RunConflict<BlockRun>): RegionDecodeFailure => ({
   kind: "format",
-  message: `${familyText(run.familyId)} address ${hex32(address)} is written with different values by ${blockSpan(writer)} (0x${existing.toString(16).padStart(2, "0")}) and ${blockSpan(run)} (0x${incoming.toString(16).padStart(2, "0")})`,
+  message: `${familyText(run.familyId)} address ${hex32(address)} is written with different values by ${blockSpan(writer)} (0x${byteToHex(existing)}) and ${blockSpan(run)} (0x${byteToHex(incoming)})`,
 });

@@ -11,7 +11,7 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../../src/resources/ArtifactResourceScope.js";
 import {
   copyExistingGhidraProject,
   fingerprintGhidraProject,

@@ -33,8 +33,11 @@ Bun 1.3.9 layout. These labels identify structural layouts, not a detected compi
 version. Bun does not store an explicit revision identifier: unknown table sizes
 and ambiguous known layouts are unsupported. A future layout that is byte-for-byte
 compatible cannot be distinguished. Invalid pointers and truncated claimed sections
-are malformed. An absent trailer without a named section does not establish a Bun
-graph. Unknown enum values remain raw, with a null name.
+are malformed. A named Mach-O section is also malformed when it declares zero-fill
+or falls outside its containing segment's file or virtual address range. A confirmed
+section graph requires a complete Mach-O load command table. An absent
+trailer without a named section does not establish a Bun graph. Unknown enum values
+remain raw, with a null name.
 
 Sourcemaps are stored Bun regions, not necessarily standalone JSON source maps.
 Extracted contents retain their original encoding. Use JavaScript analysis only on
@@ -56,6 +59,9 @@ are `payload_bytes`, `module_count`, `representation_bytes`, `metadata_read_byte
 absence. ELF section names are examined at their actual offsets, including names
 beyond a large section-name prefix. Select `artifact_limits.expanded_bytes` to
 change the aggregate referenced-plaintext work allowance.
+The reader validates the graph extent and suffix before applying `payload_bytes`.
+A declared extent outside its carrier or a suffix count that disagrees with the
+located payload is a format error.
 
 For a reported metadata-read refusal, keep the same carrier and retry with
 `--artifact-limits '{"bun":{"metadata_read_bytes":536870912}}'` or the equivalent

@@ -1,5 +1,4 @@
 import { artifactPreparationRecoveryCases } from "../../tests/fixtures/artifactReaderLifecycle.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { once } from "node:events";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -13,6 +12,7 @@ import { buildWxapkg } from "../../tests/fixtures/wxapkg.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { WxapkgArtifactReader } from "./WxapkgArtifactReader.js";
+import { ArtifactFileSource } from "../resources/index.js";
 
 const fixture = async (bytes: Buffer): Promise<string> => {
   const path = join(
@@ -104,6 +104,12 @@ describe("wxapkg allocation and malformed-input boundaries", () => {
       await expect(entries(reader)).rejects.toMatchObject({
         reason: "limit",
         boundary: "capacity",
+        fixedAllowance: {
+          name: "The wxapkg member table allowance",
+          kind: "parser",
+          limit: 16 * 1024 * 1024,
+          unit: "bytes",
+        },
       });
       expect(reads).toHaveBeenCalledTimes(1); // bounded header only
     } finally {
@@ -139,6 +145,10 @@ describe("wxapkg allocation and malformed-input boundaries", () => {
       await expect(entries(reader)).rejects.toMatchObject({
         reason: "limit",
         boundary: "capacity",
+        fixedAllowance: {
+          name: "The wxapkg directory representation allowance",
+          unit: "bytes",
+        },
       });
     } finally {
       await reader.close();
@@ -156,7 +166,10 @@ describe("wxapkg allocation and malformed-input boundaries", () => {
       await fixture(buildWxapkg(members, { aliasOffsets: true })),
     );
     try {
-      await expect(entries(reader)).rejects.toMatchObject({ reason: "limit" });
+      await expect(entries(reader)).rejects.toMatchObject({
+        reason: "limit",
+        message: expect.stringContaining("wxapkg members declare"),
+      });
     } finally {
       await reader.close();
     }
@@ -418,29 +431,30 @@ describe("wxapkg stream capacity and freshness", () => {
     }
   });
 
-  it("bounds repeated member I/O operations, including empty members", async () => {
+  it.each([
+    { path: "x", data: "b" },
+    { path: "empty.wxss", data: "" },
+  ])("bounds repeated I/O operations for $path", async (member) => {
     const reader = new WxapkgArtifactReader(
-      await fixture(
-        buildWxapkg([
-          { path: "x", data: "b" },
-          { path: "empty.wxss", data: "" },
-        ]),
-      ),
+      await fixture(buildWxapkg([member])),
     );
     try {
-      const [entry, emptyEntry] = await entries(reader);
+      const [entry] = await entries(reader);
       await expect(
         (async () => {
           for (let index = 0; index < 5000; index++)
             await buffer(await reader.open(entry!));
         })(),
-      ).rejects.toMatchObject({ reason: "limit", boundary: "capacity" });
-      await expect(
-        (async () => {
-          for (let index = 0; index < 5000; index++)
-            await buffer(await reader.open(emptyEntry!));
-        })(),
-      ).rejects.toMatchObject({ reason: "limit", boundary: "capacity" });
+      ).rejects.toMatchObject({
+        reason: "limit",
+        boundary: "capacity",
+        fixedAllowance: {
+          name: "The wxapkg directory-and-chunk I/O work allowance",
+          kind: "parser",
+          limit: expect.any(Number),
+          unit: "operations",
+        },
+      });
     } finally {
       await reader.close();
     }

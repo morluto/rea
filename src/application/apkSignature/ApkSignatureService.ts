@@ -5,8 +5,8 @@ import {
   type AnalysisViewRetention,
 } from "../analysisView/AnalysisViewService.js";
 
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { ApkSignaturePort } from "./ApkSignaturePort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { ApkSignaturePort } from "../../ports/apkSignature/ApkSignaturePort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import {

@@ -1,3 +1,7 @@
+import {
+  fileIdentity,
+  fileSubjectDisplay,
+} from "../../fixtures/evidenceSubject.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -22,7 +26,7 @@ const EXPORTS = 130_000;
 /** Recreate the example's Mach-O Evidence with `count` exports, keeping its matching first row. */
 const machoExports = (count: number): Evidence => {
   const [source] = MANAGED_NATIVE_VERIFICATION_EXAMPLE.native_observations;
-  if (source?.subject == null) throw new Error("Missing native example");
+  if (source === undefined) throw new Error("Missing native example");
   const result = inspectMachoSchema.parse(source.normalized_result);
   const [match] = result.exports.items;
   if (match === undefined) throw new Error("Missing matching export");
@@ -38,9 +42,9 @@ const machoExports = (count: number): Evidence => {
     });
   return createEvidence(
     {
-      path: source.subject.local_path,
-      sha256: source.subject.digest.sha256,
-      format: source.subject.format,
+      path: fileSubjectDisplay(source.subject).local_path,
+      sha256: fileIdentity(source.subject).sha256,
+      format: fileIdentity(source.subject).format,
     },
     source.provider,
     {
@@ -107,5 +111,4 @@ cliTest(
       },
     });
   },
-  120_000,
 );

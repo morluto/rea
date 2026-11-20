@@ -1,6 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -16,14 +15,19 @@ import {
   assertKeyedArchiveIntegerResult,
   verifyKeyedArchiveIntegerArchives,
 } from "./keyed-archive-integers.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "../../lib/verifier-fixture.mjs";
 
 if (process.platform !== "darwin")
   throw new Error(
     "Real Foundation keyed archive verification requires macOS and Xcode Swift tools",
   );
-const root = await mkdtemp(join(tmpdir(), "rea-keyed-fixture-"));
+const fixture = await VerifierFixture.open({ prefix: "rea-keyed-fixture-" });
+const root = fixture.path;
 let report;
-try {
+await withVerifierFixture(fixture, async () => {
   const archive = join(root, "model.plist");
   await promisify(execFile)("/usr/bin/xcrun", [
     "swift",
@@ -223,7 +227,5 @@ try {
     cyclic_identity: true,
     target_classes_instantiated_by_reader: false,
   };
-} finally {
-  await rm(root, { recursive: true, force: true });
-}
+});
 process.stdout.write(`${JSON.stringify(report)}\n`);

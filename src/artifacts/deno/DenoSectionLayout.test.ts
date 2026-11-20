@@ -1,8 +1,8 @@
 import { expect, it } from "vitest";
 
 import {
-  MAX_DENO_METADATA_JSON_BYTES,
-  MAX_DENO_TABLE_COUNT,
+  MAX_DENO_REMOTE_BODY_BYTES,
+  MAX_DENO_SPECIFIER_TEXT_BYTES,
   parseDenoSection,
 } from "./DenoSectionLayout.js";
 import {
@@ -130,7 +130,7 @@ it("treats a missing opening marker as an unsupported layout", async () => {
 });
 
 it("refuses metadata JSON above the named allowance before reading it as JSON", async () => {
-  const claimed = MAX_DENO_METADATA_JSON_BYTES + 1;
+  const claimed = 8 * 1024 * 1024 + 1;
   const bytes = Buffer.alloc(DENO_FIXTURE_SECTION_MAGIC.length + 8 + claimed);
   DENO_FIXTURE_SECTION_MAGIC.copy(bytes, 0);
   bytes.writeBigUInt64LE(BigInt(claimed), DENO_FIXTURE_SECTION_MAGIC.length);
@@ -145,7 +145,7 @@ it("refuses a specifier table above the named record allowance", async () => {
     parseDenoSectionBytes(
       buildDenoSection({
         specifiers: [],
-        specifierCount: MAX_DENO_TABLE_COUNT + 1,
+        specifierCount: 100_001,
       }),
     ),
   ).rejects.toMatchObject({
@@ -153,6 +153,51 @@ it("refuses a specifier table above the named record allowance", async () => {
     message: expect.stringContaining("specifier"),
   });
 });
+
+it.each([
+  {
+    text: "file:///wire-specifier.ts",
+    limit: MAX_DENO_SPECIFIER_TEXT_BYTES,
+    field: "specifier text",
+  },
+  {
+    text: "wire-module",
+    limit: MAX_DENO_REMOTE_BODY_BYTES,
+    field: "remote module",
+  },
+  {
+    text: "wire-transpiled",
+    limit: MAX_DENO_REMOTE_BODY_BYTES,
+    field: "remote transpiled",
+  },
+])(
+  "validates the $field extent before charging its byte allowance",
+  async ({ text, limit, field }) => {
+    const bytes = buildDenoSection({
+      specifiers: [{ text: "file:///wire-specifier.ts", id: 0 }],
+      remoteModules: [
+        { specifierId: 0, data: "wire-module", transpiled: "wire-transpiled" },
+      ],
+    });
+    const body = bytes.indexOf(Buffer.from(text));
+    expect(body).toBeGreaterThan(4);
+    const claimed = limit + 1;
+    bytes.writeUInt32LE(claimed, body - 4);
+    const read = async (offset: number, length: number) =>
+      bytes.subarray(offset, offset + length);
+    await expect(parseDenoSection(bytes.length, read)).rejects.toMatchObject({
+      reason: "format",
+      message: expect.stringContaining(`${field} length overruns`),
+    });
+    // The same body could fit at this logical section size. The selected
+    // allowance must stop the parser before it tries to read the body.
+    await expect(
+      parseDenoSection(body + claimed + 64, read),
+    ).rejects.toMatchObject({
+      reason: "limit",
+    });
+  },
+);
 
 it("stops on unrecognized remote flags and duplicate specifier ids", async () => {
   await expect(

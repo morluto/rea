@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { changedEvidenceSubject } from "../../../tests/fixtures/evidenceSubject.js";
 import { createEvidence } from "../evidence.js";
 import { projectAnalysisView } from "./analysisView.js";
 import { webNetworkCaptureSchema } from "../webNetworkCapture.js";
@@ -210,7 +211,9 @@ it("omits large values by default, returns requested text inline and preserves p
   const changedSubject = projectAnalysisView(
     {
       ...parent,
-      subject: { ...parent.subject!, digest: { sha256: "e".repeat(64) } },
+      subject: changedEvidenceSubject(parent.subject, {
+        sha256: "e".repeat(64),
+      }),
     },
     { kind: "protobuf", collection: "bodies", offset: 0, limit: 1 },
   );

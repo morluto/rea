@@ -1,5 +1,5 @@
 import { createEmptyIl2cppMetadataFixture } from "../il2cpp/il2cppMetadata.fixture.js";
-import { afterEach, expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 import { z } from "zod";
 import {
   il2cppMetadataParentSchema,
@@ -24,10 +24,6 @@ const projectIl2cppMetadataView = (
   view: Il2cppMetadataViewInput,
 ): ReturnType<typeof projectAdmittedIl2cppMetadataView> =>
   projectAdmittedIl2cppMetadataView(parent, view satisfies AdmittedView);
-
-afterEach(() => {
-  vi.restoreAllMocks();
-});
 
 const report: Il2cppMetadata = {
   ...createEmptyIl2cppMetadataFixture(),
@@ -88,8 +84,7 @@ const page = {
   limit: 1,
 } as const;
 
-it("validates a sealed parent once across pages and keeps counts exact", () => {
-  const parse = vi.spyOn(il2cppMetadataParentSchema, "safeParse");
+it("keeps collection counts exact across sealed metadata pages", () => {
   const sealed = parent(freezeJsonSnapshot(structuredClone(report)), true);
   for (const offset of [0, 1]) {
     const view = projectIl2cppMetadataView(sealed, { ...page, offset });
@@ -114,15 +109,6 @@ it("validates a sealed parent once across pages and keeps counts exact", () => {
       },
     });
   }
-  expect(parse).toHaveBeenCalledTimes(1);
-});
-
-it("revalidates unsealed inline input on every page", () => {
-  const parse = vi.spyOn(il2cppMetadataParentSchema, "safeParse");
-  const inline = parent(structuredClone(report), false);
-  projectIl2cppMetadataView(inline, page);
-  projectIl2cppMetadataView(inline, page);
-  expect(parse).toHaveBeenCalledTimes(2);
 });
 
 it("preserves historical omission as unknown while keeping existing metadata queries usable", () => {

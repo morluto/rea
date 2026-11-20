@@ -13,7 +13,10 @@ import { interfaceBuilderAnalysisSchema } from "../../../../src/domain/apple/int
 import { artifactInspectionResultSchema } from "../../../../src/domain/artifactInspection.js";
 import { createAnalysisExecutionEvidence } from "../../../../src/domain/analysisObservation.js";
 import { immutableJsonSnapshotMember } from "../../../../src/domain/immutableJson.js";
-import { parseEvidence } from "../../../../src/domain/evidence.js";
+import {
+  parseEvidence,
+  evidenceFileTarget,
+} from "../../../../src/domain/evidence.js";
 
 const { runProviderAnalysis } = createDirectAnalysis({});
 
@@ -54,7 +57,7 @@ it("runs static .app decoding without registering native analysis engines", asyn
   );
   expect(result.documents).toEqual([]);
   expect(result.graph.target_sha256).toBe(
-    evidence.subject?.digest.sha256 ?? null,
+    evidenceFileTarget(evidence)?.sha256 ?? null,
   );
 });
 

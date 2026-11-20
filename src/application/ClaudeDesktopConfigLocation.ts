@@ -6,6 +6,7 @@ import {
   windowsAppDataRoots,
   type MsixPackageView,
 } from "./MsixPackageStorage.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const CONFIG_FILE = "claude_desktop_config.json";
 
@@ -377,6 +378,3 @@ const isMissing = (cause: unknown): boolean =>
   cause instanceof Error &&
   "code" in cause &&
   (cause.code === "ENOENT" || cause.code === "ENOTDIR");
-
-const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);

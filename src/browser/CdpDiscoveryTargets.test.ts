@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 
 import { expect, it } from "vitest";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
+import { fakeCdpSend } from "../../tests/fixtures/fakeCdpSend.js";
 
 import { inspectWebPageInputSchema } from "../domain/browserObservation.js";
 import { inspectElectronPageInputSchema } from "../domain/javascript/electronObservation.js";
@@ -49,7 +50,7 @@ it.each([0, 1, 2])(
   async (malformedRows) => {
     const discovery = await discoverCdpBrowserSocket(
       {
-        send: async (method) =>
+        send: fakeCdpSend((method) =>
           method === "Browser.getVersion"
             ? {
                 protocolVersion: "1.3",
@@ -81,6 +82,7 @@ it.each([0, 1, 2])(
                   },
                 ],
               },
+        ),
       },
       "ws://127.0.0.1:9222/devtools/browser/fixture",
       "inspect_web_page",

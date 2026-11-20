@@ -56,15 +56,15 @@ const isCommandHandler = (node, command) => {
   )
     return false;
   const call = property.parent.parent;
+  // Commands register through src/cli/commandRegistry.ts:
+  // registerCliCommand(cli, CLI_COMMANDS.<command>, { run: ... }).
   if (
     !ts.isCallExpression(call) ||
-    !ts.isPropertyAccessExpression(call.expression) ||
-    !ts.isIdentifier(call.expression.expression) ||
-    call.expression.expression.text !== "cli" ||
-    call.expression.name.text !== "command"
+    !ts.isIdentifier(call.expression) ||
+    call.expression.text !== "registerCliCommand"
   )
     return false;
-  const selected = call.arguments[0];
+  const selected = call.arguments[1];
   return (
     selected !== undefined &&
     ts.isPropertyAccessExpression(selected) &&

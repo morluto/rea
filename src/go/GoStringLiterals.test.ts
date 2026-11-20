@@ -5,7 +5,7 @@ import type {
   BinaryContainer,
   ImageSection,
   LoadRegion,
-} from "../native/metadata/BinaryContainer.js";
+} from "../domain/binaryContainer.js";
 import { createGoRodataStringFixture } from "../../tests/fixtures/go/rodataStringImage.js";
 import { readGoBinaryImage } from "./GoBinaryImage.js";
 import { recoverGoStringLiterals } from "./GoStringLiterals.js";
@@ -516,6 +516,7 @@ it("indexes 25,000 Mach-O load regions and sections without quadratic stalls and
       declared_range: { offset: BigInt(offset), size: BigInt(slotBytes) },
       segment_mapping: mapping,
       segment_unmapped: false,
+      on_disk: true,
       relocations: { offset: 0, count: 0 },
       offset,
       size: slotBytes,
@@ -539,6 +540,7 @@ it("indexes 25,000 Mach-O load regions and sections without quadratic stalls and
 
   const container: BinaryContainer = {
     format: "macho",
+    macho_cpu_type: 0x0100000c,
     architecture: "arm64",
     bits: 64,
     byte_order: "little",
@@ -548,11 +550,29 @@ it("indexes 25,000 Mach-O load regions and sections without quadratic stalls and
     sections,
   };
 
-  const started = performance.now();
-  const recovered = recoverGoStringLiterals(bytes, container);
-  const elapsedMs = performance.now() - started;
-
-  expect(elapsedMs).toBeLessThan(500);
+  // Indexing reads each mapping, load region and section once or twice
+  // (100,000 reads here); a per-lookup scan reads 25,000 regions per lookup.
+  let tableReads = 0;
+  const budget = 8 * count;
+  const counted = <T extends object>(table: readonly T[]): readonly T[] =>
+    new Proxy(table, {
+      get(target, property, receiver) {
+        if (
+          typeof property === "string" &&
+          /^\d+$/u.test(property) &&
+          ++tableReads > budget
+        )
+          throw new Error("Container table read budget exceeded");
+        return Reflect.get(target, property, receiver) as unknown;
+      },
+    });
+  const recovered = recoverGoStringLiterals(bytes, {
+    ...container,
+    mappings: counted(mappings),
+    load_regions: counted(loadRegions),
+    sections: counted(sections),
+  } as BinaryContainer);
+  expect(tableReads).toBeLessThanOrEqual(budget);
   expect(recovered.items).toEqual([
     {
       value: literal,
@@ -682,6 +702,7 @@ it.each([
     };
     const container: BinaryContainer = {
       format: "macho",
+      macho_cpu_type: 0x0100000c,
       architecture: "arm64",
       bits: 64,
       byte_order: "little",
@@ -712,6 +733,7 @@ it.each([
           declared_range: { offset: 0n, size: 16n },
           segment_mapping: roMapping,
           segment_unmapped: false,
+          on_disk: true,
           relocations: { offset: 0, count: 0 },
           offset: 0,
           size: 16,
@@ -729,6 +751,7 @@ it.each([
           declared_range: { offset: 16n, size: 16n },
           segment_mapping: dataMapping,
           segment_unmapped: false,
+          on_disk: true,
           relocations: { offset: 0, count: 0 },
           offset: 16,
           size: 16,

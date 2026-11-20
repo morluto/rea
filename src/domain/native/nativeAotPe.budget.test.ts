@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { NativeAotParserLimits } from "./nativeAotPe.js";
 import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 import {
+  DEFAULT_NATIVE_AOT_PARSER_LIMITS,
+  NATIVE_AOT_BASE_WORK_UNITS,
   NATIVE_AOT_MAX_REPORT_BYTES,
+  NATIVE_AOT_MAX_SOURCE_BYTES,
+  nativeAotParserLimitsFor,
   parseNativeAotPe,
 } from "./nativeAotPe.js";
 import {
@@ -11,6 +15,34 @@ import {
 } from "../../../tests/fixtures/nativeaotPe.js";
 
 const REPORT_BUDGET = NATIVE_AOT_MAX_REPORT_BYTES;
+
+describe("NativeAOT work budget scaling", () => {
+  it("grows with the admitted image and stops at the source-byte ceiling", () => {
+    const small = nativeAotParserLimitsFor(1024);
+    const large = nativeAotParserLimitsFor(26_180_096);
+    expect(small.workUnits).toBeGreaterThan(NATIVE_AOT_BASE_WORK_UNITS);
+    // bflat 8.0.2's 26,180,096-byte image needs 71,645,819 units to complete.
+    expect(large.workUnits).toBeGreaterThan(71_645_819);
+    expect(nativeAotParserLimitsFor(Number.MAX_SAFE_INTEGER)).toEqual(
+      DEFAULT_NATIVE_AOT_PARSER_LIMITS,
+    );
+    expect(DEFAULT_NATIVE_AOT_PARSER_LIMITS.sourceBytes).toBe(
+      NATIVE_AOT_MAX_SOURCE_BYTES,
+    );
+  });
+
+  it("charges an image against the budget for its own size by default", () => {
+    const bytes = nativeAotPeFixture();
+    const report = parseNativeAotPe(
+      bytes,
+      nativeAotPeDigest(bytes),
+      REPORT_BUDGET,
+    ).summary;
+    expect(report.coverage.work_budget_units).toBe(
+      nativeAotParserLimitsFor(bytes.length).workUnits,
+    );
+  });
+});
 
 describe("NativeAOT parser resource budgets", () => {
   it("reports source-cap rejection without hashing or inventing omitted-byte coverage", () => {

@@ -112,7 +112,9 @@ retryable capacity error. Retained queries do not require another import.
 Resource policies admit a 256-MiB archive, 32 MiB of decoded streams, a
 conservative 32-MiB retained-facts representation, 4-MiB metadata reads and
 4-MiB physical lines. JSON parsing additionally checks heap headroom, a
-131,072-node record allowance and the shared 64-level capture nesting budget.
+131,072-node record allowance and a fixed 64-level trace nesting allowance.
+JSON parser refusals report the exhausted limit name and maximum in
+`details.reported_limits`.
 These are resource policies, not Playwright format limits. Paging or field
 selection does not increase parsing allowances; choose a smaller complete
 recorder chunk when admission fails.

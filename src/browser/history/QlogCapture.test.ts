@@ -443,7 +443,9 @@ it.each([
     if (accepted) expect(facts(text).decoded.total_records).toBe(0);
     else
       expect(() => facts(text)).toThrow(
-        expect.objectContaining({ reason: "input-limit" }),
+        expect.objectContaining({
+          limit: { name: "nesting-depth", maximum: 64 },
+        }),
       );
   },
 );
@@ -457,7 +459,9 @@ it("rejects other qlog containers/versions and excessive nesting, accepts empty 
         extension: JSON.parse("[".repeat(65) + "0" + "]".repeat(65)),
       }),
     ),
-  ).toThrow(expect.objectContaining({ reason: "input-limit" }));
+  ).toThrow(
+    expect.objectContaining({ limit: { name: "nesting-depth", maximum: 64 } }),
+  );
   expect(
     facts('{"qlog_format":"JSON","qlog_version":"0.3","traces":[]}').traces,
   ).toEqual([]);

@@ -19,8 +19,7 @@ import {
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
 import { findDotnetBundleHeader } from "./dotnet/DotnetBundle.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
-import { abortIfNeeded } from "./ArtifactHash.js";
+import { ArtifactReaderFailure, abortIfNeeded } from "../resources/index.js";
 import { locateGodotPck, type GodotPckLocation } from "./GodotPckLocation.js";
 import {
   locateNodeSea,
@@ -31,6 +30,7 @@ import {
   type PyInstallerCookie,
   type PyInstallerCookieObservation,
 } from "./pyinstaller/CArchiveLayout.js";
+import { pyInstallerReaderFailure } from "./pyinstaller/PyInstallerFailure.js";
 
 /** Completed observations and explicit recognition limits; null alone is examined absence. */
 export interface ArtifactEmbeddedFormatProbeFacts {
@@ -64,6 +64,7 @@ export class ArtifactEmbeddedFormatProbes {
       throw new ArtifactReaderFailure(
         "integrity",
         `Root artifact changed before inventory: ${path}`,
+        { integrityCheck: "container-identity" },
       );
     const reusable =
       previous !== undefined &&
@@ -138,8 +139,7 @@ export class ArtifactEmbeddedFormatProbes {
       this.signal,
     );
     abortIfNeeded(this.signal);
-    if (!found.ok)
-      throw new ArtifactReaderFailure(found.error.reason, found.error.message);
+    if (!found.ok) throw pyInstallerReaderFailure(found.error);
     this.#facts = { ...this.#facts, pyInstaller: found.value };
     return found.value.state === "located" ? found.value.cookie : undefined;
   }

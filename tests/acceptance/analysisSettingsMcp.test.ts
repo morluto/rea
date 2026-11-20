@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../fixtures/canonicalOutputSchema.js";
 import { analysisSettingsResultSchema } from "../../src/contracts/analysisSettingsContracts.js";
 import { expect, it } from "vitest";
 import type { AnySchema } from "ajv";
@@ -80,7 +81,7 @@ it("recovers expanded ASAR listing admission on the same MCP connection independ
   } finally {
     await client.close();
   }
-}, 30000);
+});
 
 it("advertises exact contracts and recovers a full large-index archive over one MCP connection", async () => {
   const root = await createTestTempDirectory("rea-runtime-settings-");
@@ -111,7 +112,9 @@ it("advertises exact contracts and recovers a full large-index archive over one 
       const tool = catalog.tools.find((tool) => tool.name === name)!;
       expect(tool).toBeDefined();
       expect(ajv.validateSchema(tool.inputSchema as AnySchema)).toBe(true);
-      expect(ajv.validateSchema(tool.outputSchema as AnySchema)).toBe(true);
+      expect(
+        ajv.validateSchema(canonicalOutputSchema(tool.name) as AnySchema),
+      ).toBe(true);
     }
     const initial = await invoke("inspect_analysis_settings", {
       settings: ["asar.max_header_bytes"],
@@ -214,7 +217,7 @@ it("advertises exact contracts and recovers a full large-index archive over one 
   } finally {
     await client.close();
   }
-}, 30000);
+});
 
 it.each(["0", "2147483648"])(
   "keeps invalid JADX launch timeout %s local and repairable through MCP",
@@ -232,9 +235,11 @@ it.each(["0", "2147483648"])(
       const tool = (await client.listTools()).tools.find(
         (entry) => entry.name === "inspect_analysis_settings",
       );
-      expect(tool?.outputSchema).toBeDefined();
+      expect(tool).toBeDefined();
       const ajv = new Ajv2020({ strict: false });
-      const validate = ajv.compile(tool!.outputSchema as AnySchema);
+      const validate = ajv.compile(
+        canonicalOutputSchema(tool!.name) as AnySchema,
+      );
       expect(
         validate(response.structuredContent),
         JSON.stringify(validate.errors),
@@ -279,7 +284,6 @@ it.each(["0", "2147483648"])(
       await client.close();
     }
   },
-  30000,
 );
 
 it("lowers, restores and seeds the native matching allowance over MCP", async () => {
@@ -427,7 +431,7 @@ it("lowers, restores and seeds the native matching allowance over MCP", async ()
   } finally {
     await invalid.client.close();
   }
-}, 30000);
+});
 
 it("starts with invalid runtime seeds and recovers ASAR and capture work on the same connection", async () => {
   const root = await createTestTempDirectory("rea-invalid-runtime-seeds-");
@@ -517,7 +521,7 @@ it("starts with invalid runtime seeds and recovers ASAR and capture work on the 
   } finally {
     await client.close();
   }
-}, 30000);
+});
 
 it.skipIf(process.platform === "win32")(
   "ignores Windows ChangeTime launch settings on other hosts",
@@ -539,5 +543,4 @@ it.skipIf(process.platform === "win32")(
       await client.close();
     }
   },
-  30000,
 );

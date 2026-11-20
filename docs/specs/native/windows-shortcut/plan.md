@@ -8,7 +8,7 @@ coverage; `src/domain/native/windowsShortcut.ts` owns the result schema.
 `WindowsShortcutProvider` (`rea-windows-shortcut`, built in) owns path
 validation and the stable regular-file read through `readStableArtifact` and
 `ArtifactResourceScope`. `WindowsShortcutService` owns Evidence provenance with
-`subject.format: "file"`. The CLI command and MCP tool consume that Evidence
+`subject.identity.format: "file"`. The CLI command and MCP tool consume that Evidence
 and add no interpretation.
 
 ANSI strings use a byte-preserving Latin1 projection because the original

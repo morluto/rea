@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -54,6 +55,8 @@ it.each(["native", "legacy"])(
             sourcePath,
           })),
         ),
+        undefined,
+        HOST_PLATFORM.platform,
       )?.servers.rea;
     const before = await effective();
     expect(before).toMatchObject({

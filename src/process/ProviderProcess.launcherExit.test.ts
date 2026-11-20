@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { afterEach, expect, it, vi } from "vitest";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import {
   cleanupOwnedProcessGroup,
   type OwnedProcessGroup,
@@ -165,11 +166,31 @@ it.each([
     const launcher = launcherChild();
     const host = hostFor(launcher, launcherRow("/usr/bin/other"), lifecycle);
     const { supervisor, results } = supervise(launcher, host);
-    const started = performance.now();
+    // A mismatch is not exit proof: the stop stays pending through the
+    // launcher's grace and reports incomplete only once it ends without exit.
+    const grace = phaseGate<void, boolean>();
+    const waited = vi
+      .spyOn(supervisor, "waitForExit")
+      .mockImplementation(() => grace.hold());
+    let settled = false;
+    const stopping = supervisor.stop({ killGraceMs: 50 }).finally(() => {
+      settled = true;
+    });
+    let settledDuringGrace = true;
+    let stopped: Awaited<typeof stopping> | undefined;
+    try {
+      await grace.reached(stopping, "launcher grace");
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      settledDuringGrace = settled;
+    } finally {
+      // Release and join the stop before any assertion or mock restore.
+      grace.release(false);
+      stopped = await stopping;
+      supervisor.dispose();
+    }
 
-    const stopped = await supervisor.stop({ killGraceMs: 50 });
-
-    expect(performance.now() - started).toBeGreaterThanOrEqual(45);
+    expect(waited.mock.calls).toEqual([[50]]);
+    expect(settledDuringGrace).toBe(false);
     expect(stopped).toEqual({
       status: "incomplete",
       reason: `owned launcher command identity did not match (observed=/usr/bin/other; expected=${JAVA})`,
@@ -178,7 +199,6 @@ it.each([
     expect(results).toHaveLength(1);
     expect(host.signalGroup).not.toHaveBeenCalled();
     expect(launcher.child.kill).not.toHaveBeenCalled();
-    supervisor.dispose();
   },
 );
 
@@ -195,14 +215,12 @@ it("does not repeat verification without new launcher exit evidence", async () =
     cleanup,
   });
   launcher.exit();
-  const started = performance.now();
 
   await expect(supervisor.stop()).resolves.toMatchObject({
     status: "incomplete",
     reason: "process table could not be inspected: spawn EPERM",
   });
   expect(cleanup).toHaveBeenCalledOnce();
-  expect(performance.now() - started).toBeLessThan(500);
 });
 
 it("retains the post-exit verification failure for a later owned retry", async () => {

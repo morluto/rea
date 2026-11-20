@@ -1,15 +1,15 @@
-import { mkdirSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
-import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
+import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
 import { readReferenceSource } from "../../support/referenceSourceResourceScope.js";
 import {
   createTestWorkspace,
   removeTestWorkspace,
   type TestWorkspace,
 } from "../../support/workspace/workspaceFixture.js";
+import { DirectoryArtifactReader } from "../../../src/resources/index.js";
 
 /** More children than one call can receive as arguments on V8's default stack. */
 const CHILD_DIRECTORIES = 130_000;
@@ -53,11 +53,19 @@ describe("directory traversal of a parent wider than call arguments allow", () =
   beforeAll(async () => {
     workspace = await createTestWorkspace("rea-wide-directory-");
     root = await workspace.mkdir("tree");
-    for (const name of childNames()) mkdirSync(join(root, name));
-  }, 60_000);
+    const names = childNames();
+    const batchSize = 64;
+    for (let offset = 0; offset < names.length; offset += batchSize) {
+      await Promise.all(
+        names
+          .slice(offset, offset + batchSize)
+          .map((name) => mkdir(join(root, name))),
+      );
+    }
+  });
   afterAll(async () => {
     if (workspace !== undefined) await removeTestWorkspace(workspace.root);
-  }, 60_000);
+  });
 
   it("schedules the artifact reader's children within the selected entry budget", async () => {
     // Cancel once the parent listing is complete. The next cancellation
@@ -84,7 +92,7 @@ describe("directory traversal of a parent wider than call arguments allow", () =
       examinedEntries: 2_000,
       maximumEntries: 2_000,
     });
-  }, 60_000);
+  });
 
   it.skipIf(process.platform === "win32")(
     "reads every child directory into the reference-source inventory",
@@ -100,6 +108,5 @@ describe("directory traversal of a parent wider than call arguments allow", () =
       ).toEqual([]);
       expect(missingChildren(entries.map(({ path }) => path))).toEqual([]);
     },
-    120_000,
   );
 });

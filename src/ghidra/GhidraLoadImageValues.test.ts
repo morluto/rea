@@ -113,13 +113,13 @@ const damage: ReadonlyArray<
   [
     "modified source",
     (x) => {
-      x.source_files[0] && (x.source_files[0].modified_sha256 = "f".repeat(64));
+      x.source_files[0]!.modified_sha256 = "f".repeat(64);
     },
   ],
   [
     "original source",
     (x) => {
-      x.source_files[0] && (x.source_files[0].original_sha256 = "f".repeat(64));
+      x.source_files[0]!.original_sha256 = "f".repeat(64);
     },
   ],
   [

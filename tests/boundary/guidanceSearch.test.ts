@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import {
   readGuidanceSection,
   searchGuidance,

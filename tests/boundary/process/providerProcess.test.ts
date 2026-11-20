@@ -235,7 +235,9 @@ describe("provider process output and cleanup primitives", () => {
     });
   });
 
-  it("retains complete stdout and stderr beyond the former fixed ceiling", async () => {
+  // Without a selected diagnostic budget every byte is retained; a selected
+  // budget drains and reports overflow (providerProcessOutput.test.ts).
+  it("retains complete stdout and stderr when no diagnostic budget is selected", async () => {
     const outputBytes = 70_000;
     const child = spawnProviderProcessFixture("burst", outputBytes);
     const diagnostics: ProviderProcessDiagnostic[] = [];

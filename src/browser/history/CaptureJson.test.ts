@@ -1,12 +1,29 @@
 import { expect, it, onTestFinished } from "vitest";
 
 import { createTestProcessRegistry } from "../../../tests/support/process/processFixture.js";
+import { selectedWebNetworkCaptureBudgets } from "../../domain/webNetworkCapture.js";
+import { withCaptureBudgets } from "./CaptureBudgets.js";
 import { parseCaptureJson } from "./CaptureJson.js";
 
 it("decodes every JSON string escape as JSON.parse does", () => {
   const text = String.raw`["\"\\\/\b\f\n\r\t","Aé 😀","\ud800","雪 plain"]`;
 
   expect(parseCaptureJson(text, "HAR")).toEqual(JSON.parse(text));
+});
+
+it("keeps trace nesting independent of the selected network capture depth", () => {
+  const text = "[[true]]";
+  const budgets = selectedWebNetworkCaptureBudgets({ max_nesting_depth: 1 });
+  withCaptureBudgets(budgets, () => {
+    expect(() => parseCaptureJson(text, "HAR")).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({
+          limit: { name: "nesting-depth", maximum: 1 },
+        }),
+      }),
+    );
+    expect(parseCaptureJson(text, "Playwright trace")).toEqual([[true]]);
+  });
 });
 
 it("retains escape-heavy strings within a heap near their decoded size", async () => {
@@ -21,19 +38,15 @@ it("retains escape-heavy strings within a heap near their decoded size", async (
     if (!Array.isArray(parsed) || parsed.length !== 463 || parsed.some((value) => value !== body)) process.exit(3);
   `;
 
-  const child = await processes.run(
-    process.execPath,
-    [
-      "--max-old-space-size=48",
-      "--max-semi-space-size=8",
-      "--import",
-      "tsx",
-      "--input-type=module",
-      "--eval",
-      program,
-    ],
-    { timeoutMs: 30_000 },
-  );
+  const child = await processes.run(process.execPath, [
+    "--max-old-space-size=48",
+    "--max-semi-space-size=8",
+    "--import",
+    "tsx",
+    "--input-type=module",
+    "--eval",
+    program,
+  ]);
 
   expect(child.exitCode, child.stderr).toBe(0);
 });

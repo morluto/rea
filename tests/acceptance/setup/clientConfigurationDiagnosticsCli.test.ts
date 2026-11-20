@@ -3,14 +3,42 @@ import {
   mkdir,
   readFile,
   readdir,
+  rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { expect } from "vitest";
+import { afterAll, beforeAll, beforeEach, expect } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import {
+  createTestWorkspace,
+  removeTestWorkspace,
+} from "../../support/workspace/workspaceFixture.js";
+
+let sharedDiagnosticHome = "";
+
+beforeAll(async () => {
+  sharedDiagnosticHome = (
+    await createTestWorkspace("rea-client-config-diagnostic-")
+  ).root;
+});
+
+beforeEach(async () => {
+  for (const entry of await readdir(sharedDiagnosticHome)) {
+    await rm(join(sharedDiagnosticHome, entry), {
+      recursive: true,
+      force: true,
+    });
+  }
+});
+
+afterAll(async () => {
+  if (sharedDiagnosticHome !== "") {
+    await removeTestWorkspace(sharedDiagnosticHome);
+  }
+});
 
 const cases = [
   {
@@ -82,8 +110,23 @@ const cases = [
     client: "cursor",
     path: ".cursor/mcp.json",
     text: "not-json",
-    diagnostic: "Configuration is not valid JSON",
+    diagnostic: "Configuration is not valid JSONC and was not changed",
+    syntax: "JSONC",
+  },
+  {
+    // Pi loads mcp.json with strict JSON.parse, so REA's reader admits JSON only.
+    client: "pi",
+    path: ".pi/agent/mcp.json",
+    text: '{"mcpServers":{},}',
+    diagnostic: "Configuration is not valid JSON and was not changed",
     syntax: "JSON",
+  },
+  {
+    client: "codex",
+    path: ".codex/config.toml",
+    text: "[mcp_servers\n",
+    diagnostic: "Configuration is not valid TOML and was not changed",
+    syntax: "TOML",
   },
   {
     client: "hermes",
@@ -105,9 +148,7 @@ for (const scenario of cases)
   cliTest(
     `setup and uninstall explain ${scenario.client} configuration ${scenario.text}`,
     async ({ cli }) => {
-      const home = await createTestTempDirectory(
-        "rea-client-config-diagnostic-",
-      );
+      const home = sharedDiagnosticHome;
       const config = join(home, scenario.path);
       await mkdir(dirname(config), { recursive: true });
       const original =
@@ -142,7 +183,7 @@ for (const scenario of cases)
         expect(setup.json).toMatchObject({
           remediation: expect.stringMatching(/\S/u),
         });
-        if (scenario.syntax === "JSON")
+        if (scenario.syntax === "JSONC")
           expect(setup.stdout).toContain("Invalid JSON/JSONC");
       } else {
         expect(setup.json).toMatchObject({

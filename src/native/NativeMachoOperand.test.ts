@@ -8,7 +8,7 @@ import {
 } from "../../tests/fixtures/nativeCommands.js";
 import { NativeMacOSProvider } from "./NativeMacOSProvider.js";
 import type { NativeCallTracer } from "./LldbCallTracer.js";
-import { NativeCommandFailure } from "./CommandRunner.js";
+import { NativeCommandFailure } from "../providers/NativeCommandRunner.js";
 import { inspectMachoSchema } from "../domain/native/nativeInspection.js";
 import { err, ok } from "../domain/result.js";
 

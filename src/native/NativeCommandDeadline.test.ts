@@ -17,8 +17,8 @@ import {
 import type {
   NativeCommandOptions,
   NativeCommandRunner,
-} from "./CommandRunner.js";
-import { XcrunCommandRunner } from "./CommandRunner.js";
+} from "../providers/NativeCommandRunner.js";
+import { XcrunCommandRunner } from "../providers/NativeCommandRunner.js";
 import { NativeMacOSProvider } from "./NativeMacOSProvider.js";
 
 vi.mock("../process/OwnedCommand.js", async (original) => ({

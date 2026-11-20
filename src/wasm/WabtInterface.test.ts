@@ -2,16 +2,20 @@ import { expect, it } from "vitest";
 import { parseWabtWat } from "./WabtWat.js";
 
 it("resolves imported index spaces and decoded escaped names without depending on body/type numbering", () => {
+  const imported = String.raw`(import "a\22b" "\ef\bb\bf\00\0a" (func (;0;) (type 0)))`;
+  const exported = '(export "" (func 1))';
   const report = parseWabtWat(`(module
     (type (;0;) (func (param i32) (result i64)))
-    (import "a\\22b" "\\ef\\bb\\bf\\00" (func (;0;) (type 0)))
+    ${imported}
     (func (;1;) (type 0) (param i32) (result i64) local.get 0 i64.extend_i32_s)
-    (export "" (func 1)))`).interface;
-  expect(report.entries).toMatchObject([
+    ${exported})`);
+  expect(report.imports).toEqual([imported]);
+  expect(report.exports).toEqual([exported]);
+  expect(report.interface.entries).toMatchObject([
     {
       direction: "import",
       module: 'a"b',
-      name: "\ufeff\0",
+      name: "\ufeff\0\n",
       index: 0,
       signature: { kind: "func", params: ["i32"], results: ["i64"] },
     },
@@ -116,9 +120,11 @@ it("preserves custom memory page sizes and treats unadmitted nested declarations
     page_size: "1",
   });
   const unknown = parseWabtWat(
-    '(module (memory 1 (future-proposal 0)) (export "m" (memory 0)))',
+    String.raw`(module (memory 1 (future-proposal "ignored\ff")) (export "m" (memory 0)))`,
   ).interface;
-  expect(unknown.entries[0]?.signature).toBeNull();
+  expect(unknown.entries).toMatchObject([
+    { name: "m", signature: null, issue: expect.stringMatching(/\S/u) },
+  ]);
 });
 
 it("recovers typed name expansion with a larger selected interface allowance", () => {
