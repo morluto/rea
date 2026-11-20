@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { gzipSync } from "node:zlib";
 
 import { inspectDebPackageInputSchema } from "../domain/deb/debPackage.js";
@@ -46,6 +46,25 @@ const parse = (bytes: Uint8Array, overrides: Record<string, number> = {}) =>
 
 afterEach(() => {
   replaceXzBindingForTests(undefined);
+});
+
+const paragraphReads = vi.hoisted(() => ({ largest: 0 }));
+
+vi.mock("../domain/desktop/aptRepositories.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("../domain/desktop/aptRepositories.js")
+    >();
+  return {
+    ...actual,
+    deb822Paragraphs: (
+      ...args: Parameters<typeof actual.deb822Paragraphs>
+    ): ReturnType<typeof actual.deb822Paragraphs> => {
+      const found = actual.deb822Paragraphs(...args);
+      paragraphReads.largest = Math.max(paragraphReads.largest, found.length);
+      return found;
+    },
+  };
 });
 
 const expectFailure = <Failure>(
@@ -277,6 +296,20 @@ it("reports a Zstandard frame above the decoder window as an allowance, not dama
   expect(error.partial?.ar.members.map((member) => member.name)).toContain(
     "control.tar.zst",
   );
+});
+
+it("reads only the first control paragraph however many follow", () => {
+  paragraphReads.largest = 0;
+  const report = parse(
+    debPackageFixture({
+      controlText: `Package: hello\nVersion: 1.0\nArchitecture: all\n\n${"a:b\n\n".repeat(100_000)}`,
+    }),
+  );
+  expect(report.control).toMatchObject({
+    package: "hello",
+    version: { raw: "1.0" },
+  });
+  expect(paragraphReads.largest).toBe(1);
 });
 
 it("keeps missing optional control fields null rather than empty", () => {

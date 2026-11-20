@@ -884,9 +884,11 @@ const interpreterLine = (bytes: Uint8Array): string | null => {
 };
 
 const parseControl = (tar: TarParse, issues: DebPackageIssue[]): DebControl => {
-  const listed = listedFile(tar.files, "control");
-  const fields =
-    listed.text === null ? undefined : deb822Paragraphs(listed.text)[0];
+  // Only the first paragraph describes the package; stop there so a control
+  // file of many small paragraphs never builds one map for each of them.
+  const bytes = tar.files.get("control");
+  const text = bytes === undefined ? null : decodeUtf8(bytes);
+  const fields = text === null ? undefined : deb822Paragraphs(text, 1)[0];
   const textField = (name: string): string | null =>
     nonempty(fields?.get(name));
   const versionText = textField("version");
@@ -988,7 +990,7 @@ const parseControl = (tar: TarParse, issues: DebPackageIssue[]): DebControl => {
       ? []
       : [{ name, interpreter: interpreterLine(bytes), bytes: bytes.length }];
   });
-  if (listed.present && listed.text === null)
+  if (bytes !== undefined && text === null)
     issues.push({
       kind: "malformed",
       member: "control.tar",
