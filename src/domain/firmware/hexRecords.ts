@@ -121,7 +121,7 @@ class StreamingHexRecordDecoder implements RegionDecoder<HexRecordImage> {
   #start: (DeclaredValue<number> & { readonly record: string }) | undefined;
   #startSegment: DeclaredValue<readonly [number, number]> | undefined;
   #header: DeclaredValue<Uint8Array> | undefined;
-  #declaredCount: number | null = null;
+  #declaredCount: DeclaredValue<number> | undefined;
   readonly #dataTypes = new Set<string>();
 
   constructor(encoding: HexRecordEncoding, fileBytes: number) {
@@ -153,6 +153,14 @@ class StreamingHexRecordDecoder implements RegionDecoder<HexRecordImage> {
       const ended = this.#endLine(false);
       if (!ended.ok) return ended;
     }
+    const count = this.#declaredCount;
+    if (count !== undefined && count.value !== this.#dataRecordCount)
+      return err(
+        formatFailure(
+          count.line,
+          `S-record count declares ${String(count.value)} data records, but the file contains ${String(this.#dataRecordCount)}`,
+        ),
+      );
     const merged = mergeRuns(this.#runs, this.#arena);
     this.#arena = new Uint8Array(0);
     if (!merged.ok) return merged;
@@ -267,7 +275,7 @@ class StreamingHexRecordDecoder implements RegionDecoder<HexRecordImage> {
               `record type ${record.type} declares ${String(record.address)} data records, but ${String(this.#dataRecordCount)} precede it`,
             ),
           );
-        this.#declaredCount = record.address;
+        this.#declaredCount = { value: record.address, line: this.#lineNumber };
         return ok(undefined);
       default:
         this.#termination = { value: record.type, line: this.#lineNumber };
@@ -426,7 +434,7 @@ class StreamingHexRecordDecoder implements RegionDecoder<HexRecordImage> {
         header?.every((byte) => byte >= 0x20 && byte <= 0x7e) === true
           ? String.fromCharCode(...header)
           : null,
-      declared_data_record_count: this.#declaredCount,
+      declared_data_record_count: this.#declaredCount?.value ?? null,
     };
   }
 }

@@ -15,6 +15,7 @@ import {
   INTEL_HEX_I32_GAP,
   SREC_S19,
   intelHexRecord,
+  srecRecord,
 } from "../domain/firmware/hexRecords.fixture.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
@@ -76,6 +77,24 @@ it("reports unknown coverage and termination facts as limitations", async () => 
     ),
   );
 });
+
+it.each([5, 6] as const)(
+  "rejects a stale S%i count when additional data follows",
+  async (type) => {
+    const text = SREC_S19.replace(
+      "S5030002FA",
+      `${srecRecord(type, 2, [])}\n${srecRecord(1, 0x20, [0x2a])}`,
+    );
+    await expect(
+      scanCanonicalArtifactInventory(await writeImage("count.s19", text)),
+    ).rejects.toMatchObject({
+      reason: "format",
+      message: expect.stringMatching(
+        /line 4.*count declares 2 data records.*contains 3/iu,
+      ),
+    });
+  },
+);
 
 it("fails closed on over-limit records", async () => {
   const runs = [intelHexRecord(0, 0, [1])];
