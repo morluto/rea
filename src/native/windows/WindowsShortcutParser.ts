@@ -344,10 +344,11 @@ type RecordedPath = {
   readonly extension: string | null;
 };
 
-type LinkInfoPathUncertainty = {
+type TargetPathUncertainty = {
   local: boolean;
   network: boolean;
   suffix: boolean;
+  environment: boolean;
 };
 
 const isAscii = (text: string): boolean =>
@@ -418,7 +419,7 @@ const iconDiffersFromTarget = (
 /** LinkInfo local and network base paths, each joined with CommonPathSuffix. */
 const linkInfoTargets = (
   info: NonNullable<WindowsShortcut["link_info"]>,
-  uncertainty: LinkInfoPathUncertainty,
+  uncertainty: TargetPathUncertainty,
 ): RecordedPath[] => {
   // Neither joined LinkInfo path can be proven complete without its suffix.
   if (uncertainty.suffix) return [];
@@ -471,7 +472,7 @@ const targetPaths = (
     readonly id_list: WindowsShortcut["id_list"];
     readonly extra_data: WindowsShortcut["extra_data"];
   },
-  uncertainty: LinkInfoPathUncertainty,
+  uncertainty: TargetPathUncertainty,
 ): RecordedPath[] => {
   const values: RecordedPath[] =
     report.link_info === null
@@ -507,7 +508,7 @@ const observationsOf = (
     WindowsShortcut,
     "header" | "link_info" | "string_data" | "id_list" | "extra_data"
   >,
-  uncertainty: LinkInfoPathUncertainty,
+  uncertainty: TargetPathUncertainty,
 ): WindowsShortcut["observations"] => {
   const argumentsDeclared = (report.header.link_flags.raw & 0x00000020) !== 0;
   const argumentsField = report.string_data.arguments;
@@ -520,7 +521,10 @@ const observationsOf = (
         : "";
   const targets = targetPaths(report, uncertainty);
   const targetPathUnknown =
-    uncertainty.local || uncertainty.network || uncertainty.suffix;
+    uncertainty.local ||
+    uncertainty.network ||
+    uncertainty.suffix ||
+    uncertainty.environment;
   const iconDifference = iconDiffersFromTarget(
     report.string_data.icon_location,
     targets,
@@ -615,7 +619,7 @@ type Walk = {
   stopped: boolean;
   stringBytes: number;
   maxStringBytes: number;
-  pathUncertainty: LinkInfoPathUncertainty;
+  pathUncertainty: TargetPathUncertainty;
 };
 
 /** A declared preferred path that could not be decoded cannot be treated as absent. */
@@ -1041,10 +1045,19 @@ const parseStringField = (
   }
 };
 
+// MS-SHLLINK 2.5 defines exact sizes for these decoded blocks.
+const FIXED_EXTRA_PAYLOAD_BYTES: Readonly<Partial<Record<number, number>>> = {
+  0xa0000001: 780,
+  0xa0000003: 88,
+  0xa0000004: 4,
+  0xa0000005: 8,
+  0xa0000007: 780,
+  0xa000000b: 20,
+};
+
 const environmentTargets = (
   payload: Buffer,
-): { target_ansi: string; target_unicode: string } | null => {
-  if (payload.length < 780) return null;
+): { target_ansi: string; target_unicode: string } => {
   return {
     target_ansi: latin1Z(payload.subarray(0, 260)),
     target_unicode: utf16Z(payload.subarray(260, 780)),
@@ -1057,37 +1070,30 @@ const decodeExtra = (
   walk: Walk,
   offset: number,
 ): WindowsShortcutExtraDataBlock["decoded"] => {
-  if (signature === 0xa0000001 || signature === 0xa0000007) {
+  const isEnvironmentTarget = signature === 0xa0000001;
+  const expectedBytes = FIXED_EXTRA_PAYLOAD_BYTES[signature];
+  if (expectedBytes !== undefined && payload.length !== expectedBytes) {
+    walk.pathUncertainty.environment ||= isEnvironmentTarget;
+    note(
+      walk,
+      payload.length < expectedBytes ? "truncated" : "malformed_structure",
+      offset,
+      `${extraSignatureName(signature)} requires a ${expectedBytes + 8}-byte block, got ${payload.length + 8} bytes`,
+    );
+    return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
+  }
+  if (isEnvironmentTarget || signature === 0xa0000007) {
     const targets = environmentTargets(payload);
-    if (targets === null) {
-      note(
-        walk,
-        "truncated",
-        offset,
-        "Environment ExtraData payload is shorter than 780 bytes",
-      );
-      return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
-    }
     charge(
       walk,
       targets.target_ansi.length + targets.target_unicode.length * 2,
     );
     return {
-      kind:
-        signature === 0xa0000001 ? "environment_variable" : "icon_environment",
+      kind: isEnvironmentTarget ? "environment_variable" : "icon_environment",
       ...targets,
     };
   }
   if (signature === 0xa0000003) {
-    if (payload.length < 88) {
-      note(
-        walk,
-        "truncated",
-        offset,
-        "TrackerDataBlock payload is shorter than 0x58 bytes",
-      );
-      return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
-    }
     const length = payload.readUInt32LE(0);
     const version = payload.readUInt32LE(4);
     if (length !== 0x58 || version !== 0) {
@@ -1115,17 +1121,9 @@ const decodeExtra = (
     };
   }
   if (signature === 0xa0000004) {
-    if (payload.length < 4) {
-      note(walk, "truncated", offset, "ConsoleFEDataBlock is truncated");
-      return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
-    }
     return { kind: "console_fe", code_page: payload.readUInt32LE(0) };
   }
   if (signature === 0xa0000005) {
-    if (payload.length < 8) {
-      note(walk, "truncated", offset, "SpecialFolderDataBlock is truncated");
-      return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
-    }
     return {
       kind: "special_folder",
       folder_id: payload.readUInt32LE(0),
@@ -1133,10 +1131,6 @@ const decodeExtra = (
     };
   }
   if (signature === 0xa000000b) {
-    if (payload.length < 20) {
-      note(walk, "truncated", offset, "KnownFolderDataBlock is truncated");
-      return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
-    }
     return {
       kind: "known_folder",
       folder_id: formatGuid(payload, 0),
@@ -1383,7 +1377,12 @@ export const parseWindowsShortcut = async (
     stopped: false,
     stringBytes: 0,
     maxStringBytes: input.max_string_bytes,
-    pathUncertainty: { local: false, network: false, suffix: false },
+    pathUncertainty: {
+      local: false,
+      network: false,
+      suffix: false,
+      environment: false,
+    },
   };
   const idList =
     (flags & 0x00000001) !== 0
