@@ -44,8 +44,9 @@ const ENTRY = new RegExp(
   "su",
 );
 const valueEscape = new RegExp(DESKTOP_VALUE_ESCAPE, "gu");
-// GLib strips its ASCII whitespace from the raw boolean. LF ends the record.
-const BOOLEAN_TRUE = /^[ \t\f\r]*(?:true|1)[ \t\f\r]*$/u;
+// Freedesktop Desktop Entry Specification: boolean values may be true/false or 1/0
+// (case-insensitive). GLib strips its ASCII whitespace from the raw boolean.
+const BOOLEAN_TRUE = /^[ \t\f\r]*(?:true|1)[ \t\f\r]*$/iu;
 
 /** Undo the escapes the desktop entry format allows in string values. */
 const unescapeValue = (value: string): string =>

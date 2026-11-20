@@ -330,3 +330,51 @@ it.each([
     ),
   ).toMatchObject({ ok: true, value: { terminal } });
 });
+
+it.each([
+  ["1", true],
+  ["true", true],
+  ["True", true],
+  ["TRUE", true],
+  ["0", false],
+  ["false", false],
+  ["False", false],
+  ["FALSE", false],
+])("parses Terminal=%s as %s", (flag, expected) => {
+  const result = parseDesktopEntry(
+    `[Desktop Entry]\nType=Application\nName=App\nExec=app\nTerminal=${flag}\n`,
+  );
+  expect(result).toMatchObject({
+    ok: true,
+    value: { terminal: expected },
+  });
+});
+
+it("defaults terminal to false when the Terminal key is omitted", () => {
+  const result = parseDesktopEntry(
+    "[Desktop Entry]\nType=Application\nName=App\nExec=app\n",
+  );
+  expect(result).toMatchObject({
+    ok: true,
+    value: { terminal: false },
+  });
+});
+
+it.each([
+  ["1", true],
+  ["true", true],
+  ["True", true],
+  ["TRUE", true],
+  ["0", false],
+  ["false", false],
+  ["False", false],
+  ["FALSE", false],
+])("parses Hidden=%s as %s", (flag, expected) => {
+  const result = parseDesktopEntry(
+    `[Desktop Entry]\nType=Application\nName=App\nExec=app\nHidden=${flag}\n`,
+  );
+  expect(result).toMatchObject({
+    ok: true,
+    value: { hidden: expected },
+  });
+});
