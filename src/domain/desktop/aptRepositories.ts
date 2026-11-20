@@ -236,11 +236,13 @@ export const deb822Paragraphs = (
       readable = false;
       continue;
     }
-    const content = trimDeb822Line(line);
-    if (/^\r*$/u.test(line)) {
+    // APT skips CRs after a line feed before classifying the next record.
+    const afterLeadingCr = line.replace(/^\r+/u, "");
+    if (afterLeadingCr.length === 0) {
       finish();
     } else if (line.startsWith("#")) continue;
-    else if (/^[ \t\v\f\r]/u.test(line) && last !== undefined) {
+    else if (/^[ \t\v\f]/u.test(afterLeadingCr) && last !== undefined) {
+      const content = trimDeb822Line(line);
       const previous = current.get(last) ?? "";
       // APT skips an initial newline only before a space-led continuation.
       current.set(

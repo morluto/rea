@@ -835,6 +835,24 @@ it.each([
   },
 );
 
+it("reads a CR-led field and preserves a CR-only paragraph separator", () => {
+  const source = [
+    "Types: deb",
+    "URIs: https://disabled.invalid/deb",
+    "Suites: stable",
+    "Components: main",
+    "\rEnabled: no",
+    "\r",
+    "Types: deb",
+    "URIs: https://active.invalid/deb",
+    "Suites: stable",
+    "Components: main",
+    "",
+  ].join("\n");
+  const stanzas = parseDeb822Sources(Buffer.from(source), "local.sources");
+  expect(stanzas.map(({ position }) => position)).toEqual([2]);
+});
+
 it.each([1, 65_536])(
   "preserves %i interior blank continuations but trims trailing ones",
   (interiorBlanks) => {
