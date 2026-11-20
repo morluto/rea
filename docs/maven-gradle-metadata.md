@@ -66,7 +66,9 @@ Gradle's `+` prefix (`1.+`) or a `latest.<status>` selector
 For Gradle module metadata, `gradle` records `format_version`,
 `created_by_gradle`, and each variant's name, `org.gradle.category`,
 `org.gradle.usage`, `available-at` coordinates as spelled, and declared
-dependency and constraint counts. Variant dependencies are `origin`
+dependency and constraint counts. Nonempty variant names retain their exact
+spelling and identify their dependency and constraint rows. Duplicate names
+fail with `invalid_format`. Variant dependencies are `origin`
 `variant-dependencies`; `dependencyConstraints` are `origin`
 `variant-constraints`. Rich versions keep `requires`, `prefers`, `strictly`,
 and `rejects`. A variant whose category is `platform` or `enforced-platform`
