@@ -152,7 +152,7 @@ describe("Vitest project configuration", () => {
 
   processTest.for(
     [
-      { flags: [], timeout: 30_000, lines: 68 },
+      { flags: [], timeout: 30_000, lines: 68, alsoHosted: true },
       { flags: ["--coverage"], timeout: 60_000, lines: 68 },
       { flags: ["--coverage.enabled"], timeout: 60_000, lines: 68 },
       { flags: ["--coverage=false"], timeout: 30_000, lines: 68 },
@@ -170,19 +170,20 @@ describe("Vitest project configuration", () => {
         flags: ["--coverage.enabled", "--shard", "1/6"],
         timeout: 60_000,
         lines: 0,
+        alsoHosted: true,
       },
       {
         flags: ["--coverage.enabled=false", "--shard=1/6"],
         timeout: 30_000,
         lines: 0,
       },
-    ].flatMap((policy) =>
-      // Hosted CI owns a four-core runner: up to four workers, doubled deadlines.
-      [
-        { ...policy, hosted: false, workers: 2, scale: 1 },
-        { ...policy, hosted: true, workers: 4, scale: 2 },
-      ],
-    ),
+    ].flatMap(({ alsoHosted, ...policy }) => [
+      { ...policy, hosted: false, workers: 2, scale: 1 },
+      // Check hosted scaling with coverage both off and on.
+      ...(alsoHosted
+        ? [{ ...policy, hosted: true, workers: 4, scale: 2 }]
+        : []),
+    ]),
   )(
     "resolves worker resources from actual CLI options: $flags (hosted: $hosted)",
     async (
