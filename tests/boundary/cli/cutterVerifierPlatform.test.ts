@@ -2,7 +2,6 @@ import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { parse } from "yaml";
-import { resolveSwiftcCompileTimeoutMs } from "../../../src/process/DarwinProcessRunTokenReader.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { processTest } from "../../support/process/processFixture.js";
 
@@ -12,8 +11,6 @@ const hostLabels: Partial<Record<NodeJS.Platform, string>> = {
   win32: "Windows",
 };
 const hostLabel = hostLabels[process.platform];
-const preparationBudget =
-  process.platform === "darwin" ? resolveSwiftcCompileTimeoutMs() : 0;
 
 it("declares the three supported platform labels in the Cutter workflow", async () => {
   const workflow = parse(
@@ -48,7 +45,8 @@ processTest.skipIf(hostLabel === undefined).for([
   },
 ])(
   "checks the Cutter verifier when the label is $mode",
-  { timeout: Math.min(2_147_483_647, preparationBudget + 30_000) },
+  // A cold macOS discovery can compile the native process identity helper.
+  { tags: process.platform === "darwin" ? ["long-running"] : [] },
   async ({ selected, diagnostic }, { processes }) => {
     const root = await createTestTempDirectory("rea-cutter-platform-");
     const env: NodeJS.ProcessEnv = {
@@ -63,7 +61,7 @@ processTest.skipIf(hostLabel === undefined).for([
     const result = await processes.run(
       process.execPath,
       ["scripts/verify-real-cutter.mjs"],
-      { env, timeoutMs: Math.min(2_147_483_647, preparationBudget + 15_000) },
+      { env },
     );
     expect(result.exitCode, result.stderr).toBe(1);
     expect(result.stderr).toContain(diagnostic);
