@@ -437,6 +437,7 @@ export class HistoricalCaptureDecoder {
       const effectiveCpuSeconds = await recordedDecoderCpuSeconds(
         runtime?.path,
         cause,
+        runtimeResources,
       );
       const error = retainProcessInspectionCleanup(
         processInspectionFailure(cause),
