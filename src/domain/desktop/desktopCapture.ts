@@ -198,6 +198,8 @@ const aptRepositorySchema = z.strictObject({
   /** Whether the entry or index URI held credentials, which REA does not record. */
   uri_credentials_removed: z.boolean().optional(),
   suite: z.string().nullable(),
+  /** The index's selected source suite, recorded when it differs from the authored suite. */
+  repo_suite: z.string().min(1).optional(),
   /** Empty for a flat repository. */
   components: z.array(z.string()),
   /** The entry's architecture restriction. `all` allows architecture-independent packages. An empty list depends on the host's APT defaults. Older captures omit this field. */

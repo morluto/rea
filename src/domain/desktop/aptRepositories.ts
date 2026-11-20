@@ -12,6 +12,7 @@ export interface AptSourceStanza {
   readonly file: string;
   /** apt's number for the entry: a one-line entry's line, a deb822 entry's stanza, counted from 1. */
   readonly position: number;
+  readonly format: "one-line" | "deb822";
   readonly uris: readonly AptSourceUri[];
   readonly suites: readonly string[];
   readonly components: readonly string[];
@@ -31,7 +32,7 @@ interface AptSourceUri {
 /** One `deb` entry of an apt sources file for one URI and suite. */
 export interface AptSourceEntry extends Omit<
   AptSourceStanza,
-  "uris" | "suites"
+  "uris" | "suites" | "format"
 > {
   readonly uri: string | null;
   /** Whether the entry's URI held a user name or password, which `uri` leaves out. */
@@ -88,20 +89,168 @@ export const withoutCredentialsIn = (text: string): string =>
 const withTrailingSlash = (uri: string): string =>
   uri.endsWith("/") ? uri : `${uri}/`;
 
-const EMPTY_AUTHORITY = /^([a-z][a-z0-9+.-]*:)\/\/(?=\/)/iu;
-const NUMERIC_PORT =
-  /^([a-z][a-z0-9+.-]*:\/\/(?:\[[^\]]+\]|[^/:]+)):([0-9]+)(?=\/|$)/iu;
+const SCHEME_PREFIX = /^([a-z][a-z0-9+.-]*):/iu;
+const LONG_MAX = (1n << 63n) - 1n;
+const LONG_MIN = -(1n << 63n);
+/** Largest magnitude strtol can return: LONG_MAX, or LONG_MIN's absolute value. */
+const PORT_MAGNITUDE_LIMIT = LONG_MAX + 1n;
+
+const isAsciiSpace = (character: string): boolean =>
+  character === " " ||
+  character === "\t" ||
+  character === "\n" ||
+  character === "\v" ||
+  character === "\f" ||
+  character === "\r";
+
+/**
+ * APT assigns `atoi(suffix)` to an unsigned 32-bit port. The magnitude stops
+ * growing once it passes the signed 64-bit limit; further digits are skipped.
+ * Trailing junk ends the conversion, and a zero result is omitted.
+ */
+const aptPort = (suffix: string): number => {
+  let index = 0;
+  while (index < suffix.length && isAsciiSpace(suffix[index] ?? "")) index += 1;
+  const sign = suffix[index];
+  const negative = sign === "-";
+  if (sign === "+" || sign === "-") index += 1;
+  let magnitude = 0n;
+  let overflow = false;
+  while (index < suffix.length) {
+    const code = suffix.charCodeAt(index);
+    if (code < 48 || code > 57) break;
+    index += 1;
+    if (overflow) continue;
+    const digit = BigInt(code - 48);
+    if (magnitude > (PORT_MAGNITUDE_LIMIT - digit) / 10n) {
+      overflow = true;
+      continue;
+    }
+    magnitude = magnitude * 10n + digit;
+  }
+  const value = overflow
+    ? negative
+      ? LONG_MIN
+      : LONG_MAX
+    : negative
+      ? -magnitude
+      : magnitude > LONG_MAX
+        ? LONG_MAX
+        : magnitude;
+  return Number(BigInt.asUintN(32, BigInt.asIntN(32, value)));
+};
+
+/** The first path slash, ignoring a slash inside an IPv6 bracket. */
+const authorityEnd = (value: string): number => {
+  let inBracket = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (character === "[") inBracket = true;
+    else if (character === "]" && inBracket) inBracket = false;
+    else if (character === "/" && !inBracket) return index;
+  }
+  return value.length;
+};
+
+/**
+ * One pass over a host: copy every non-bracket character once, and remember
+ * the debracketed offset where a port suffix may begin.
+ */
+const debracketHost = (
+  host: string,
+): {
+  readonly text: string;
+  readonly portEnd: number;
+  readonly open: boolean;
+} => {
+  const pieces: string[] = [];
+  let start = 0;
+  let length = 0;
+  let portEnd = 0;
+  let inBracket = false;
+  for (let index = 0; index < host.length; index += 1) {
+    const character = host[index];
+    const opening = character === "[";
+    const closing = inBracket && character === "]";
+    if (!opening && !closing) continue;
+    if (index > start) {
+      pieces.push(host.slice(start, index));
+      length += index - start;
+    }
+    start = index + 1;
+    if (opening) inBracket = true;
+    else {
+      inBracket = false;
+      portEnd = length;
+    }
+  }
+  if (start < host.length) pieces.push(host.slice(start));
+  return { text: pieces.join(""), portEnd, open: inBracket };
+};
+
+/**
+ * APT's deb822 Repo-URI host and port. Path octets stay as authored. An
+ * unclosed IPv6 bracket or a port that consumes the host drops the authority.
+ * `scheme:host/path` gains the slashes APT inserts; `scheme:/path` does not.
+ */
+const renderHostUri = (
+  schemeText: string,
+  authority: string,
+  path: string,
+  sawSlashes: boolean,
+): string => {
+  // `file://` has no path, and APT keeps both slashes. A path after the
+  // empty host, as in `file:///srv`, drops that host.
+  if (authority.length === 0)
+    return sawSlashes && path.length === 0
+      ? `${schemeText}://`
+      : `${schemeText}:${path}`;
+
+  const at = authority.lastIndexOf("@");
+  const userinfo = at === -1 ? "" : authority.slice(0, at + 1);
+  const separated = debracketHost(
+    at === -1 ? authority : authority.slice(at + 1),
+  );
+  if (separated.open) return `${schemeText}:${path}`;
+  let host = separated.text;
+  const colon = host.lastIndexOf(":");
+  let port = 0;
+  if (colon !== -1 && colon >= separated.portEnd) {
+    port = aptPort(host.slice(colon + 1));
+    host = host.slice(0, colon);
+  }
+  if (host.length === 0) return `${schemeText}:${path}`;
+  const rendered =
+    host.includes(":") || host.includes("/") ? `[${host}]` : host;
+  const renderedPort = port === 0 ? "" : `:${String(port)}`;
+  return `${schemeText}://${userinfo}${rendered}${renderedPort}${path}`;
+};
+
+const aptAuthorityUri = (uri: string): string => {
+  const scheme = SCHEME_PREFIX.exec(uri);
+  if (scheme === null) return uri;
+  const schemeText = scheme[1] ?? "";
+  const after = uri.slice(scheme[0].length);
+  if (after.startsWith("//")) {
+    const rest = after.slice(2);
+    const end = authorityEnd(rest);
+    return renderHostUri(schemeText, rest.slice(0, end), rest.slice(end), true);
+  }
+  // `copy:/srv` is a path. `http:127.0.0.1:18743/archive` is a host APT
+  // rewrites with `//`.
+  if (after.startsWith("/")) return `${schemeText}:${after}`;
+  const end = authorityEnd(after);
+  return renderHostUri(
+    schemeText,
+    after.slice(0, end),
+    after.slice(end),
+    false,
+  );
+};
 
 /** APT fixes up deb822 URIs before emitting Repo-URI, leaving path octets intact. */
 const deb822RepoUri = (uri: string): string =>
-  withTrailingSlash(
-    uri
-      .replace(EMPTY_AUTHORITY, "$1")
-      .replace(NUMERIC_PORT, (_match, authority: string, port: string) => {
-        const digits = port.replace(/^0+/u, "");
-        return digits === "" ? authority : `${authority}:${digits}`;
-      }),
-  );
+  withTrailingSlash(aptAuthorityUri(uri));
 
 /**
  * The key block a deb822 Signed-By field holds, as apt writes it to a key
@@ -119,9 +268,26 @@ const inlineKeyBlock = (value: string): string | null => {
   return `${lines.slice(begin, end < begin ? lines.length : end + 1).join("\n")}\n`;
 };
 
-/** Whether a suite as an entry writes it is a target's release, which apt leaves empty for the flat suite `/`. */
-const isRelease = (suite: string, release: string): boolean =>
-  suite === release || (suite === "/" && release === "");
+/** APT expands this variable in repository URIs and suites using APT::Architecture. */
+const expandAptArchitecture = (
+  value: string,
+  architecture: string | undefined,
+): string | undefined => {
+  const variable = "$(ARCH)";
+  if (!value.includes(variable)) return value;
+  return architecture === undefined
+    ? undefined
+    : value.replaceAll(variable, architecture);
+};
+
+/** The source suite as selected by APT, including the flat suite `/`. */
+export const aptIndexSourceSuite = (target: AptIndexTarget): string =>
+  target.release || "/";
+
+/** Match the selected release without changing an authored suite. */
+const isRelease = (suite: string, target: AptIndexTarget): boolean =>
+  expandAptArchitecture(suite, target.configuredArchitecture) ===
+  aptIndexSourceSuite(target);
 
 const stanza = (
   at: { readonly file: string; readonly position: number },
@@ -137,6 +303,7 @@ const stanza = (
   const inlineKey = inlineKeyBlock(signedBy);
   return {
     ...at,
+    format: fields.oneLine === true ? "one-line" : "deb822",
     uris: fields.uris.map((source) => {
       const uri = withoutCredentials(source);
       return fields.oneLine === true && ONE_LINE_ESCAPED_USER_INFO.test(uri)
@@ -321,8 +488,10 @@ export interface AptIndexTarget {
   /** Without a user name or password, as `baseUri`, whether or not apt printed them. */
   readonly repoUri: string;
   readonly repoUriCredentialsRemoved?: true;
-  /** The suite as the entry writes it; empty for the flat suite `/`. */
+  /** APT's selected suite after variable expansion; empty for the flat suite `/`. */
   readonly release: string;
+  /** Effective APT::Architecture from apt-config, distinct from an index's architecture. */
+  readonly configuredArchitecture?: string;
   /** The entry's component the index belongs to; null for a flat repository. */
   readonly component: string | null;
   /** The URI of the folder holding the release's InRelease, Release and Release.gpg. */
@@ -340,6 +509,7 @@ const SOURCES_ENTRY = /^(?<file>\/.*):(?<position>[1-9]\d*)$/u;
 /** The index targets of `apt-get indextargets` output; a paragraph missing a field REA needs is skipped. */
 export const parseAptIndexTargets = (
   output: string | Buffer,
+  configuredArchitecture?: string,
 ): readonly AptIndexTarget[] =>
   deb822Paragraphs(output).flatMap((fields) => {
     const at = SOURCES_ENTRY.exec(fields.get("sourcesentry") ?? "")?.groups;
@@ -368,6 +538,9 @@ export const parseAptIndexTargets = (
           ? {}
           : { repoUriCredentialsRemoved: true as const }),
         release: fields.get("release") ?? "",
+        ...(configuredArchitecture === undefined
+          ? {}
+          : { configuredArchitecture }),
         component: optional("component"),
         baseUri: withoutCredentials(baseUri),
         filename,
@@ -392,21 +565,28 @@ export const entryForTarget = (
       candidate.position === target.position,
   );
   if (at === undefined) return undefined;
-  const { uris, suites, ...entry } = at;
-  const single = uris.length === 1 && suites.length === 1;
+  const { uris, suites, format, ...entry } = at;
+  const single = format === "one-line";
   // A one-line entry has one URI and one suite. Only deb822 needs a URI lookup.
   const matches = single
     ? uris
-    : uris.filter(
-        ({ uri }) => uri !== null && deb822RepoUri(uri) === target.repoUri,
-      );
+    : uris.filter(({ uri }) => {
+        if (uri === null) return false;
+        const selected = expandAptArchitecture(
+          uri,
+          target.configuredArchitecture,
+        );
+        return (
+          selected !== undefined && deb822RepoUri(selected) === target.repoUri
+        );
+      });
   const first = matches[0];
   if (first === undefined) return undefined;
   const uri =
     first.uri === null ? null : withoutOptionalTrailingSlash(first.uri);
   const suite = single
     ? suites[0]
-    : suites.find((listed) => isRelease(listed, target.release));
+    : suites.find((listed) => isRelease(listed, target));
   if (
     suite === undefined ||
     matches.some(({ uri: listed }) =>
@@ -425,21 +605,24 @@ export const entryForTarget = (
   };
 };
 
-type ReplayRepository = Pick<
+type ReplayUriRepository = Pick<
   AptRepository,
   "uri" | "repo_uri" | "uri_credentials_removed"
 > &
   Partial<Pick<AptRepository, "sources_file">>;
 
-type RepositoryDeclaration = ReplayRepository &
-  Pick<AptRepository, "source" | "suite" | "components">;
+type ReplayRepository = ReplayUriRepository &
+  Pick<AptRepository, "suite" | "repo_suite">;
 
-const oneLineSource = (repository: ReplayRepository): boolean =>
+type RepositoryDeclaration = ReplayRepository &
+  Pick<AptRepository, "source" | "components">;
+
+const oneLineSource = (repository: ReplayUriRepository): boolean =>
   repository.sources_file?.endsWith(".sources") !== true;
 
 /** Detect credentials left in a legacy or externally supplied capture. */
 export const aptRepositoryHoldsCredentials = (
-  repository: ReplayRepository,
+  repository: ReplayUriRepository,
 ): boolean => {
   const { uri, repo_uri } = repository;
   return (
@@ -451,17 +634,19 @@ export const aptRepositoryHoldsCredentials = (
 };
 
 type AptReplayRefusal = {
-  readonly kind: "credentials" | "uri";
+  readonly kind: "credentials" | "uri" | "suite";
   readonly reason: string;
 };
 
 const httpSourceUri = (uri: string): boolean => /^https?:\/\/[^/]+/u.test(uri);
-const isDeb822UriToken = (uri: string): boolean =>
-  !/[\s\p{Cc}]/u.test(uri) && !uri.includes("$(ARCH)");
+const isDeb822ReplayToken = (value: string): boolean =>
+  value.length !== 0 &&
+  !/[\s\p{Cc}]/u.test(value) &&
+  !value.includes("$(ARCH)");
 
 /** Admit one AgentEnv deb822 URI and the APT Repo-URI it reproduces. */
-export const aptRepositoryReplayUri = (
-  repository: ReplayRepository,
+const replayUri = (
+  repository: ReplayUriRepository,
 ): Result<
   { readonly uri: string; readonly repoUri: string },
   AptReplayRefusal
@@ -504,16 +689,47 @@ export const aptRepositoryReplayUri = (
 
   const repoUri = observed ?? deb822RepoUri(uri);
   const declaration =
-    deb822RepoUri(uri) === repoUri && isDeb822UriToken(uri)
+    deb822RepoUri(uri) === repoUri && isDeb822ReplayToken(uri)
       ? uri
       : withoutOptionalTrailingSlash(repoUri);
-  if (!isDeb822UriToken(declaration) || deb822RepoUri(declaration) !== repoUri)
+  if (
+    !isDeb822ReplayToken(declaration) ||
+    deb822RepoUri(declaration) !== repoUri
+  )
     return err({
       kind: "uri",
       reason:
         "apt's repository URI cannot be represented as one AgentEnv deb822 URI token",
     });
   return ok({ uri: declaration, repoUri });
+};
+
+/** The concrete deb822 URI and suite that reproduce the captured source index. */
+export const aptRepositoryReplay = (
+  repository: ReplayRepository,
+): Result<
+  { readonly uri: string; readonly repoUri: string; readonly suite: string },
+  AptReplayRefusal
+> => {
+  const uri = replayUri(repository);
+  if (!uri.ok) return uri;
+  const authored = repository.suite;
+  if (authored === null)
+    return err({ kind: "suite", reason: "no apt sources entry configures it" });
+  if (repository.repo_suite === undefined && authored.includes("$(ARCH)"))
+    return err({
+      kind: "suite",
+      reason:
+        "its sources entry templates the suite and the capture does not record apt's selected suite. Capture the application again",
+    });
+  const suite = repository.repo_suite ?? authored;
+  if (!isDeb822ReplayToken(suite))
+    return err({
+      kind: "suite",
+      reason:
+        "apt's selected suite cannot be represented as one AgentEnv deb822 suite token",
+    });
+  return ok({ ...uri.value, suite });
 };
 
 /**
@@ -528,16 +744,17 @@ export const declaredPackageFiles = (
 ): ReadonlySet<string> => {
   const declarations = repositories.flatMap((repository) => {
     const observed = targets.get(repository.source);
-    const replay = aptRepositoryReplayUri(repository);
+    const replay = aptRepositoryReplay(repository);
     return !replay.ok ||
-      observed?.repoUri !== replay.value.repoUri ||
-      repository.suite === null
+      observed === undefined ||
+      observed.repoUri !== replay.value.repoUri ||
+      aptIndexSourceSuite(observed) !== replay.value.suite
       ? []
       : [
           {
             ...repository,
             repoUri: replay.value.repoUri,
-            suite: repository.suite,
+            suite: replay.value.suite,
           },
         ];
   });
@@ -547,7 +764,7 @@ export const declaredPackageFiles = (
       declarations.some(
         ({ repoUri, suite, components }) =>
           repoUri === target.repoUri &&
-          isRelease(suite, target.release) &&
+          suite === aptIndexSourceSuite(target) &&
           (target.component === null
             ? components.length === 0
             : components.includes(target.component)),

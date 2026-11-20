@@ -2,7 +2,7 @@ import { err, ok, type Result } from "../result.js";
 import type { DownloadInstall } from "./appDownloadInstall.js";
 import {
   aptRepositoryHoldsCredentials,
-  aptRepositoryReplayUri,
+  aptRepositoryReplay,
   withoutCredentials,
   withoutCredentialsIn,
 } from "./aptRepositories.js";
@@ -129,15 +129,13 @@ const describe = (repository: AptRepository): string =>
 
 /** Check the source, key, and replay spelling at the export boundary. */
 const repositoryReplay = (repository: AptRepository) => {
-  const replay = aptRepositoryReplayUri(repository);
+  const replay = aptRepositoryReplay(repository);
   if (!replay.ok && replay.error.kind === "credentials")
     return err(replay.error.reason);
   if (repository.signing_key === null)
     return err(
       repository.signing_key_reason ?? "its signing key was not verified",
     );
-  if (repository.suite === null)
-    return err("no apt sources entry configures it");
   return replay.ok ? replay : err(replay.error.reason);
 };
 
@@ -183,16 +181,16 @@ const declaredSources = (
   const refused: string[] = [];
   const kept: AptRepository[] = [];
   for (const repository of repositories) {
-    const { suite, components, signing_key: key } = repository;
+    const { components, signing_key: key } = repository;
     const replay = repositoryReplay(repository);
     const reason = replay.ok
       ? architectureRefusal(repository, architecture, packageArchitecture)
       : replay.error;
-    if (!replay.ok || reason !== undefined || key === null || suite === null) {
+    if (!replay.ok || reason !== undefined || key === null) {
       refused.push(`${describe(repository)}: ${reason ?? "it is unusable"}`);
       continue;
     }
-    const { uri, repoUri } = replay.value;
+    const { uri, repoUri, suite } = replay.value;
     const id = `${repoUri}\n${suite}`;
     const existing = declared.get(id);
     if (existing !== undefined && existing.keySha256 !== key.sha256) {
