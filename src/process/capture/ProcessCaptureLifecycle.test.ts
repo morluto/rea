@@ -319,19 +319,20 @@ it("waits for a pending delivery before reporting an observed exit", async () =>
   });
   const fake = fakeTerminal({ SIGTERM: "signaled" }, hold);
   const pending = start(fake, { timeout_ms: 100, finalization_ms: 5_000 });
-  await expect.poll(() => fake.signals).toContain("SIGTERM");
-  fake.deliverExit({ exitCode: 0, signal: 0 });
-  let settled = false;
-  void pending.then(() => {
-    settled = true;
-  });
   try {
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(settled, "the result waits for the outstanding delivery").toBe(
-      false,
-    );
+    await expect.poll(() => fake.signals).toContain("SIGTERM");
+    fake.deliverExit({ exitCode: 0, signal: 0 });
+    const result = await Promise.race([
+      pending,
+      new Promise<void>((resolve) => setImmediate(resolve)),
+    ]);
+    expect(
+      result,
+      "the result waits for the outstanding delivery",
+    ).toBeUndefined();
   } finally {
     release();
+    await Promise.allSettled([pending]);
   }
   const exit = observed(await pending);
 
