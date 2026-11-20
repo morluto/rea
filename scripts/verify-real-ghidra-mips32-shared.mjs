@@ -108,23 +108,25 @@ const throwIfInterrupted = () => {
 // on interrupt, then let the existing cleanup run.
 const untilInterrupted = (promise) =>
   new Promise((resolve, reject) => {
-    if (commandInterruption.signal.aborted) {
-      reject(commandInterruption.signal.reason);
-      return;
-    }
-    const onAbort = () => reject(commandInterruption.signal.reason);
-    commandInterruption.signal.addEventListener("abort", onAbort, {
-      once: true,
-    });
+    let settled = false;
+    const finish = (settle, value) => {
+      if (settled) return;
+      settled = true;
+      commandInterruption.signal.removeEventListener("abort", onAbort);
+      settle(value);
+    };
+    const onAbort = () => finish(reject, commandInterruption.signal.reason);
+    // The caller starts `promise` before this check. Observe it even when the
+    // signal is already aborted so its later rejection cannot end the process.
+    if (commandInterruption.signal.aborted)
+      finish(reject, commandInterruption.signal.reason);
+    else
+      commandInterruption.signal.addEventListener("abort", onAbort, {
+        once: true,
+      });
     Promise.resolve(promise).then(
-      (value) => {
-        commandInterruption.signal.removeEventListener("abort", onAbort);
-        resolve(value);
-      },
-      (cause) => {
-        commandInterruption.signal.removeEventListener("abort", onAbort);
-        reject(cause);
-      },
+      (value) => finish(resolve, value),
+      (cause) => finish(reject, cause),
     );
   });
 
