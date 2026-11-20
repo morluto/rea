@@ -215,3 +215,62 @@ it.each([
     expect(f.changed).not.toHaveBeenCalled();
   },
 );
+
+it("ranks multi-word queries by relevance with keyword scoring and tie-breaking", async () => {
+  const f = await connect();
+
+  // 1. Single-word query
+  const single = await f.discover({ query: "alpha", limit: 5 });
+  expect(single.structuredContent).toMatchObject({
+    total_matches: 1,
+    tools: [{ name: "alpha_sqlite" }],
+  });
+
+  // 2. Multi-word task query where only a subset of words match (OR logic)
+  const subset = await f.discover({
+    query: "alpha nonexistent_token",
+    limit: 5,
+  });
+  expect(subset.structuredContent).toMatchObject({
+    total_matches: 1,
+    tools: [{ name: "alpha_sqlite" }],
+  });
+
+  // 3. Ranking order: more matching words rank higher
+  // Query: "alpha database" -> alpha_sqlite matches 2 tokens ("alpha" in name, "database" in desc)
+  // beta_sqlite and binary_session only match 1 token ("database" in desc)
+  const ranked = await f.discover({
+    query: "alpha database",
+    limit: 5,
+  });
+  expect(ranked.structuredContent).toMatchObject({
+    total_matches: 3,
+  });
+  const rankedTools = (
+    ranked.structuredContent as { tools: Array<{ name: string }> }
+  ).tools;
+  expect(rankedTools[0]?.name).toBe("alpha_sqlite");
+  expect(rankedTools.map((t) => t.name)).toEqual([
+    "alpha_sqlite",
+    "beta_sqlite",
+    "binary_session",
+  ]);
+
+  // 4. No-match queries
+  const noMatch = await f.discover({ query: "completely_unmatched_token" });
+  expect(noMatch.structuredContent).toMatchObject({
+    total_matches: 0,
+    tools: [],
+  });
+
+  // 5. Empty / whitespace queries return all discoverable tools sorted alphabetically
+  const empty = await f.discover({ query: "   ", limit: 10 });
+  expect(empty.structuredContent).toMatchObject({
+    total_matches: 3,
+    tools: [
+      { name: "alpha_sqlite" },
+      { name: "beta_sqlite" },
+      { name: "binary_session" },
+    ],
+  });
+});

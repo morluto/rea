@@ -27,7 +27,7 @@ const inputSchema = z
       .trim()
       .optional()
       .describe(
-        "Case-insensitive words matched against tool names and descriptions; all words must match. Omit to browse.",
+        "Case-insensitive words matched against tool names and descriptions. Omit to browse.",
       ),
     names: z
       .array(z.string().min(1))
