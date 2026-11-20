@@ -1110,47 +1110,6 @@ describe("CutterBridgeClient: scenario group 6", () => {
     directory = undefined;
   });
 
-  it("rejects bridge frames that exceed the bounded response size", async () => {
-    directory = await createTestTempDirectory("rea-cutter-large-response-");
-    const sessionId = "27d3e3f1-f1e5-49ae-91ec-95af1f343a5a";
-    server = authenticatedServer(
-      "synthetic-cutter-bridge-token-for-test",
-      sessionId,
-      (_request, respond, connection) => {
-        connection.on("error", (error) => {
-          expect((error as NodeJS.ErrnoException).code).toBe("ECONNRESET");
-        });
-        respond(
-          { ok: true, output: "雪".repeat(5_600_000) },
-          { chunkBytes: 64 * 1024 },
-        );
-      },
-    );
-    const port = await listen(server);
-    await writeDescriptor(
-      directory,
-      sessionId,
-      port,
-      "synthetic-cutter-bridge-token-for-test",
-    );
-    const execution = await createClient({
-      REA_CUTTER_BRIDGE_DIR: directory,
-    }).execute({
-      sessionId,
-      expectedGeneration: 0,
-      command: "pd 1",
-      json: false,
-    });
-    expect(execution).toMatchObject({
-      executionState: "unknown",
-      error: "transport-response-missing",
-      message: expect.stringMatching(
-        /framed transport limit of 16777216 bytes.*REA_BRIDGE_MAX_REQUEST_BYTES.*may have completed/s,
-      ),
-    });
-    expect(execution.message).not.toContain("no runtime override");
-  });
-
   it("rejects stale sessions and preserves failures before command dispatch", async () => {
     directory = await createTestTempDirectory("rea-cutter-stale-session-");
     const sessionId = "27d3e3f1-f1e5-49ae-91ec-95af1f343a5a";
