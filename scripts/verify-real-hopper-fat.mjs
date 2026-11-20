@@ -88,12 +88,12 @@ const sdk = (
   })
 ).trim();
 
+const commands = await createVerifierCommands();
 const workspace = await VerifierFixture.open({
   prefix: "hopper-fat-",
   private: false,
 });
 const directory = workspace.path;
-const commands = await createVerifierCommands();
 const retainWorkspace = (message, options) => {
   workspace.retain(message);
   return new Error(message, options);

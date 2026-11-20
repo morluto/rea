@@ -73,6 +73,7 @@ const clang = (await probeOwnedCommand("xcrun", ["--find", "clang"])).trim();
 const sdk = (
   await probeOwnedCommand("xcrun", ["--sdk", "macosx", "--show-sdk-path"])
 ).trim();
+const commands = await createVerifierCommands();
 // A plain root under /tmp, where this verifier has always built its fixtures.
 const workspace = await VerifierFixture.open({
   prefix: "rea-hopper-callers-verifier-",
@@ -80,7 +81,6 @@ const workspace = await VerifierFixture.open({
   private: false,
 });
 const directory = workspace.path;
-const commands = await createVerifierCommands();
 const retainWorkspace = (message, options) => {
   workspace.retain(message);
   return new Error(message, options);

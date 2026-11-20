@@ -85,6 +85,8 @@ const resourceScope = {
     }),
   run: (operation) => inspectionResources.run(operation),
 };
+// nm, ps, cc and strip share one owner, created before any of them starts.
+const commands = await createVerifierCommands();
 // Kuna children cache under the root; a plain root admits them on every host.
 const workspaceFixture = await VerifierFixture.open({
   prefix: "rea-kuna-lane-",
@@ -92,8 +94,6 @@ const workspaceFixture = await VerifierFixture.open({
 });
 const workspace = workspaceFixture.path;
 const cacheRoot = join(workspace, "cache");
-// nm, ps, cc and strip share one owner, created before any of them starts.
-const commands = await createVerifierCommands();
 // A server retains its workspace until both provider and transport cleanup
 // have positively completed, even if later lineage observation is empty.
 const pendingServers = new Set();
