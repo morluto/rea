@@ -1,7 +1,7 @@
 import { isAborted } from "../domain/analysisErrorCore.js";
 import { lstat, realpath, stat } from "node:fs/promises";
 import fs from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import {
   locateReferenceSourceGitDirectory,
   ReferenceSourceGitDirectoryCancelled,
@@ -222,13 +222,15 @@ const readIgnoreCase = async (
     // isomorphic-git probes readFile() without a path to detect promise APIs.
     if (path === undefined)
       throw new TypeError("Git metadata path is required");
-    const read = await readPolicyFile(path, resources, signal);
+    // isomorphic-git joins its metadata paths with forward slashes.
+    const hostPath = path.replaceAll("/", sep);
+    const read = await readPolicyFile(hostPath, resources, signal);
     if (!read.ok) {
       readFailure = read.error;
       throw read.error;
     }
     if (read.value === undefined) {
-      const absent = new Error(`Git metadata file is absent: ${path}`);
+      const absent = new Error(`Git metadata file is absent: ${hostPath}`);
       Object.assign(absent, { code: "ENOENT" });
       throw absent;
     }
