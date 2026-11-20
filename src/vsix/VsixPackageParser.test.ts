@@ -1454,3 +1454,139 @@ it("marks a missing main entry as absent without treating it as a format error",
   });
   expect(report.entry_points.browser?.present).toBe(true);
 });
+
+it("keeps backslashes literal in package.json entry points instead of matching slash-separated members", async () => {
+  const bytes = await vsixPackageFixture({
+    includeMain: false,
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      engines: { vscode: "^1.74.0" },
+      main: "./out\\start.js",
+      browser: "./out\\web\\extension.js",
+    }),
+    extraMembers: {
+      "extension/out/start.js": "exports.activate = () => {};",
+    },
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.entry_points).toEqual({
+    main: { path: "extension/out\\start.js", present: false },
+    browser: { path: "extension/out\\web\\extension.js", present: false },
+  });
+  expect(report.limitations).toContain(
+    VSIX_LIMITATIONS.entryPointBackslash("extension/out\\start.js"),
+  );
+  expect(report.limitations).toContain(
+    VSIX_LIMITATIONS.entryPointBackslash("extension/out\\web\\extension.js"),
+  );
+});
+
+it("does not treat a trailing backslash in main as a POSIX directory marker", async () => {
+  const bytes = await vsixPackageFixture({
+    includeMain: false,
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      engines: { vscode: "^1.74.0" },
+      main: "./out\\",
+    }),
+    extraMembers: {
+      "extension/out.js": "exports.activate = () => {};",
+      "extension/out/index.js": "exports.activate = () => {};",
+    },
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.entry_points.main).toEqual({
+    path: "extension/out\\",
+    present: false,
+  });
+  expect(report.limitations).toContain(
+    VSIX_LIMITATIONS.entryPointBackslash("extension/out\\"),
+  );
+});
+
+it("keeps backslashes literal in a directory main's nested package.json", async () => {
+  const bytes = await vsixPackageFixture({
+    includeMain: false,
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      engines: { vscode: "^1.74.0" },
+      main: "./out",
+    }),
+    extraMembers: {
+      "extension/out/package.json": JSON.stringify({
+        main: "./sub\\start.js",
+      }),
+      "extension/out/sub/start.js": "exports.activate = () => {};",
+    },
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.entry_points.main).toEqual({
+    path: "extension/out",
+    present: false,
+  });
+  expect(report.limitations).toContain(
+    VSIX_LIMITATIONS.entryPointBackslash("extension/out/sub\\start.js"),
+  );
+});
+
+it("still resolves slash-separated and extensionless entry points, including backslash-named ZIP members", async () => {
+  const slashAndExtensionless = await vsixPackageFixture({
+    includeMain: false,
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      engines: { vscode: "^1.74.0" },
+      main: "./out/start",
+      browser: "./out/web/extension.js",
+    }),
+    extraMembers: {
+      "extension\\out\\start.js": "exports.activate = () => {};",
+    },
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(
+      slashAndExtensionless,
+      artifactOf(slashAndExtensionless),
+      defaults,
+    ),
+  );
+  expect(report.entry_points).toEqual({
+    main: { path: "extension/out/start.js", present: true },
+    browser: { path: "extension/out/web/extension.js", present: true },
+  });
+
+  const nestedSlash = await vsixPackageFixture({
+    includeMain: false,
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      engines: { vscode: "^1.74.0" },
+      main: "./out",
+    }),
+    extraMembers: {
+      "extension/out/package.json": JSON.stringify({ main: "./sub/start" }),
+      "extension/out/sub/start.js": "exports.activate = () => {};",
+    },
+  });
+  const nestedReport = vsixPackageSchema.parse(
+    await parseVsixPackage(nestedSlash, artifactOf(nestedSlash), defaults),
+  );
+  expect(nestedReport.entry_points.main).toEqual({
+    path: "extension/out/sub/start.js",
+    present: true,
+  });
+});

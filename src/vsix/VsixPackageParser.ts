@@ -71,6 +71,8 @@ export const VSIX_LIMITATIONS = {
     `Member ${JSON.stringify(path)} is not a JSON object, so the directory main does not resolve; its index files were not used.`,
   entryPointCaseOnlyMatch: (path: string, member: string): string =>
     `Entry point ${JSON.stringify(path)} matches member ${JSON.stringify(member)} only when case is ignored; it is reported absent, as a case-sensitive file system would not load it.`,
+  entryPointBackslash: (path: string): string =>
+    `Entry point ${JSON.stringify(path)} contains a backslash and is reported absent, as Node on POSIX treats "\\" as a literal filename character.`,
   emptyContributesKey:
     "extension/package.json contributes has an empty key; it is not listed in contributes.keys.",
   duplicatePath: (path: string): string =>
@@ -320,12 +322,12 @@ const contributeCount = (value: unknown): number => {
  * path that climbs out of `extension/` keeps its unresolved form, which no
  * member matches. A path that resolves to the package root is `extension`,
  * so the directory lookups that append `/package.json` or `/index.js` name
- * real members. The declared text is used as written: a member name may
- * begin or end with whitespace, and Node does not trim the specifier.
+ * real members. The declared text is split only on `/`: Node on POSIX treats
+ * `\` as a literal filename character and does not trim whitespace.
  */
 const packageJsonEntryPath = (value: unknown): string | null => {
   if (typeof value !== "string" || value === "") return null;
-  const relative = vsixPackageLogicalPath(value).replace(/^\/+/u, "");
+  const relative = value.replace(/^\/+/u, "");
   const segments: string[] = [];
   for (const segment of relative.split("/")) {
     if (segment === "" || segment === ".") continue;
@@ -339,19 +341,19 @@ const packageJsonEntryPath = (value: unknown): string | null => {
 
 /**
  * True when a package.json entry point can only name a directory: a trailing
- * separator, `.`, `..`, or a final `.` or `..` segment. Node's loader skips
- * the file lookup for such a specifier, so normalizing it to a bare path must
- * not let a sibling file such as `out.js` match `./out/`.
+ * `/`, `.`, `..`, or a final `/.` or `/..` segment. Node's loader skips the
+ * file lookup for such a specifier (a trailing `\` is a literal filename
+ * character on POSIX, not a directory marker), so normalizing it to a bare
+ * path must not let a sibling file such as `out.js` match `./out/`.
  */
 const packageJsonEntryDirectoryOnly = (value: unknown): boolean => {
   if (typeof value !== "string") return false;
-  const raw = value.replaceAll("\\", "/");
   return (
-    raw.endsWith("/") ||
-    raw === "." ||
-    raw === ".." ||
-    raw.endsWith("/.") ||
-    raw.endsWith("/..")
+    value.endsWith("/") ||
+    value === "." ||
+    value === ".." ||
+    value.endsWith("/.") ||
+    value.endsWith("/..")
   );
 };
 
@@ -423,9 +425,10 @@ const directoryMainStopsLookup = (main: DirectoryManifestMain): boolean =>
 
 /**
  * `main` of a directory's own package.json, joined onto that directory with
- * its `.` and `..` segments resolved; `none` when it names nothing or climbs
- * out of the package, `malformed` when the manifest is not a JSON object,
- * `unread` when it holds more values than the parse allowance.
+ * its `/`-separated `.` and `..` segments resolved (`\` stays literal);
+ * `none` when it names nothing or climbs out of the package, `malformed` when
+ * the manifest is not a JSON object, `unread` when it holds more values than
+ * the parse allowance.
  */
 const directoryManifestMain = (
   directory: string,
@@ -447,7 +450,7 @@ const directoryManifestMain = (
   const main = (record as Record<string, unknown>).main;
   if (typeof main !== "string" || main === "") return { kind: "none" };
   const segments: string[] = [];
-  const joined = `${directory}/${vsixPackageLogicalPath(main)}`;
+  const joined = `${directory}/${main}`;
   for (const segment of joined.split("/")) {
     if (segment === "" || segment === ".") continue;
     if (segment !== "..") segments.push(segment);
@@ -1276,9 +1279,10 @@ export const parseVsixPackage = async (
     const foldedMemberPaths = new Map(
       files.map((file) => [file.path.toLowerCase(), file.path]),
     );
-    for (const [entry, suffixes] of [
+    for (const [entry, nestedPath, suffixes] of [
       [
         mainEntry,
+        mainDirectoryMain.kind === "main" ? mainDirectoryMain.path : undefined,
         // A malformed or unread directory package.json stops the lookup
         // before the index files, so their case cannot be why main is absent.
         [
@@ -1288,9 +1292,16 @@ export const parseVsixPackage = async (
             : NODE_INDEX_CANDIDATES),
         ],
       ],
-      [browserEntry, BROWSER_ENTRY_CANDIDATES],
+      [browserEntry, undefined, BROWSER_ENTRY_CANDIDATES],
     ] as const) {
       if (entry === null || entry.present) continue;
+      const backslashPath = entry.path.includes("\\")
+        ? entry.path
+        : nestedPath?.includes("\\") === true
+          ? nestedPath
+          : undefined;
+      if (backslashPath !== undefined)
+        limitations.push(VSIX_LIMITATIONS.entryPointBackslash(backslashPath));
       const member = caseOnlyEntryPointMatch(
         entry.path,
         suffixes,
