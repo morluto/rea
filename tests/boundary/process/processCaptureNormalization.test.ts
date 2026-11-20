@@ -13,7 +13,10 @@ import {
 import { parseProcessCapture } from "../../../src/domain/process/processCaptureParsing.js";
 import { compareProcessCaptures } from "../../../src/domain/process/processComparison.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { itWithCaptureCapability } from "./processCaptureCapability.js";
+import {
+  CAPTURE_SKIP_REASON,
+  itWithCaptureCapability,
+} from "./processCaptureCapability.js";
 
 const processFixture = fileURLToPath(
   new URL("../../fixtures/processIdentity.mjs", import.meta.url),
@@ -25,8 +28,9 @@ const identitySchema = z.object({
   session_id: z.number().int().positive(),
 });
 
-const itWithLinuxCaptureCapability =
-  process.platform === "linux" ? itWithCaptureCapability : it.skip;
+const itWithLinuxCaptureCapability = it.skipIf(
+  process.platform !== "linux" || CAPTURE_SKIP_REASON !== false,
+);
 
 itWithCaptureCapability(
   "captures a POSIX PATH executable with a literal backslash in its basename",
