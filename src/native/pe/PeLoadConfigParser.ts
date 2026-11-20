@@ -6,6 +6,7 @@ import { setImmediate } from "node:timers/promises";
 import { assertArtifactReadActive } from "../../resources/index.js";
 import {
   BinaryFormatFailure,
+  BinaryReader,
   BinaryMappingFailure,
   BinaryResourceFailure,
   createFileMappingIndex,
@@ -145,10 +146,7 @@ export const parsePeLoadConfig = async (
     image.zero_fills,
   );
   const pointerWidth = bits === 64 ? 8 : 4;
-  const readPointer = (offset: number): bigint =>
-    bits === 64
-      ? bytes.readBigUInt64LE(offset)
-      : BigInt(bytes.readUInt32LE(offset));
+  const reader = new BinaryReader(bytes, true, "pe");
 
   const dataDirectory = (index: number): DirectorySpan | null => {
     const entry = image.pe_data_directories[index];
@@ -197,11 +195,10 @@ export const parsePeLoadConfig = async (
   };
 
   const tls = await readTls({
-    bytes,
+    reader,
     bits,
     directory: dataDirectory(PE_TLS_DIRECTORY),
     pointerWidth,
-    readPointer,
     locate,
     rvaOf,
     sectionName,
@@ -219,10 +216,9 @@ export const parsePeLoadConfig = async (
     signal,
   });
   const loadConfig = readLoadConfig({
-    bytes,
+    reader,
     bits,
     directory: dataDirectory(PE_LOAD_CONFIG_DIRECTORY),
-    readPointer,
     locate,
     structOffset: (rva, size) => {
       if (!fitsRva(rva, size))
@@ -256,11 +252,10 @@ export const parsePeLoadConfig = async (
 };
 
 const readTls = async ({
-  bytes,
+  reader,
   bits,
   directory,
   pointerWidth,
-  readPointer,
   locate,
   rvaOf,
   sectionName,
@@ -269,11 +264,10 @@ const readTls = async ({
   maxCallbacks,
   signal,
 }: {
-  readonly bytes: Buffer;
+  readonly reader: BinaryReader;
   readonly bits: 32 | 64;
   readonly directory: DirectorySpan | null;
   readonly pointerWidth: number;
-  readonly readPointer: (offset: number) => bigint;
   readonly locate: (va: bigint) => PeLoadConfigLocated;
   readonly rvaOf: (va: bigint) => number | null;
   readonly sectionName: (rva: number) => string | null;
@@ -289,14 +283,13 @@ const readTls = async ({
       "malformed",
       `TLS directory is ${String(directory.size)} bytes; PE${String(bits)} requires ${String(structBytes)}`,
     );
+  const readPointer = (offset: number) => reader.word(offset, bits);
   const start = readPointer(directory.file_offset);
   const end = readPointer(directory.file_offset + pointerWidth);
   const index = readPointer(directory.file_offset + pointerWidth * 2);
   const callbacksVa = readPointer(directory.file_offset + pointerWidth * 3);
-  const sizeOfZeroFill = bytes.readUInt32LE(
-    directory.file_offset + pointerWidth * 4,
-  );
-  const characteristics = bytes.readUInt32LE(
+  const sizeOfZeroFill = reader.u32(directory.file_offset + pointerWidth * 4);
+  const characteristics = reader.u32(
     directory.file_offset + pointerWidth * 4 + 4,
   );
   if (end < start)
@@ -373,17 +366,15 @@ const readTls = async ({
 };
 
 const readLoadConfig = ({
-  bytes,
+  reader,
   bits,
   directory,
-  readPointer,
   locate,
   structOffset,
 }: {
-  readonly bytes: Buffer;
+  readonly reader: BinaryReader;
   readonly bits: 32 | 64;
   readonly directory: DirectorySpan | null;
-  readonly readPointer: (offset: number) => bigint;
   readonly locate: (va: bigint) => PeLoadConfigLocated;
   readonly structOffset: (rva: number, size: number) => number;
 }): PeLoadConfigDirectory | null => {
@@ -393,7 +384,7 @@ const readLoadConfig = ({
       "malformed",
       "Load configuration directory is shorter than its Size field",
     );
-  const size = bytes.readUInt32LE(directory.file_offset);
+  const size = reader.u32(directory.file_offset);
   if (size < 4)
     throw new BinaryFormatFailure(
       "malformed",
@@ -413,12 +404,10 @@ const readLoadConfig = ({
   const readField = (name: PeLoadConfigField): bigint | null => {
     if (!loadConfigFieldCovered(bits, size, name)) return null;
     const field = loadConfigFieldLayout(bits, name);
-    return readUnsignedField(
-      bytes,
-      directory.file_offset + field.offset,
-      field.width,
-      readPointer,
-    );
+    const offset = directory.file_offset + field.offset;
+    return field.width === 2
+      ? BigInt(reader.u16(offset))
+      : reader.word(offset, field.width === 4 ? 32 : 64);
   };
   const located = (
     name: PeLoadConfigLocatedField,
@@ -490,15 +479,3 @@ const readLoadConfig = ({
     inferences: decoded?.inferences ?? [],
   };
 };
-
-const readUnsignedField = (
-  bytes: Buffer,
-  offset: number,
-  width: 2 | 4 | 8,
-  readPointer: (offset: number) => bigint,
-): bigint =>
-  width === 8
-    ? readPointer(offset)
-    : BigInt(
-        width === 4 ? bytes.readUInt32LE(offset) : bytes.readUInt16LE(offset),
-      );

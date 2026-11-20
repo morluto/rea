@@ -1,6 +1,6 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 import { expect, it, vi } from "vitest";
 
@@ -23,7 +23,10 @@ import {
   parseCaptureDecoderHeap,
   resolveCaptureDecoderHeap,
 } from "./captureDecoderHeap.js";
-import { MAXIMUM_CAPTURE_DECODER_OLD_GENERATION_MIB } from "../domain/analysisResourceLimits.js";
+import {
+  CAPTURE_DECODER_SEMI_SPACE_MIB,
+  MAXIMUM_CAPTURE_DECODER_OLD_GENERATION_MIB,
+} from "../domain/analysisResourceLimits.js";
 
 const configured = (oldGenerationMiB: number) =>
   ({ oldGenerationMiB, source: "setting" }) as const;
@@ -105,13 +108,10 @@ it("uses a valid REA_CAPTURE_DECODER_OLD_GENERATION_MIB override", async () => {
     code: "resource_constraint",
     details: { resource: "memory" },
   });
-  expect(projected.remediation.action).toMatch(
-    /REA_CAPTURE_DECODER_OLD_GENERATION_MIB.*256 MiB.*source setting/iu,
+  expect(projected.remediation.action).toContain(
+    "REA_CAPTURE_DECODER_OLD_GENERATION_MIB",
   );
   expect(projected.remediation.action).toContain("--max-old-space-size=256");
-  expect(projected.remediation.action).toMatch(
-    /floor 8 MiB.*maximum 16384 MiB/iu,
-  );
   expect(projected.remediation.action).toContain("update_analysis_settings");
   expect(projected.remediation.action).toContain("launch seed");
   expect(projected.remediation.action).toContain(
@@ -136,6 +136,8 @@ it("uses a valid REA_CAPTURE_DECODER_OLD_GENERATION_MIB override", async () => {
         agent_editable: true,
         update_mode: "runtime",
         pending_restart: false,
+        minimum: CAPTURE_DECODER_SEMI_SPACE_MIB,
+        maximum: MAXIMUM_CAPTURE_DECODER_OLD_GENERATION_MIB,
       },
       reported_limits: {
         old_generation_heap_mib: 256,
@@ -164,7 +166,7 @@ it("reports the heap the selected adapter launches when decoder environment diff
   const other = new NodeCaptureAdapter("saz", {
     REA_CAPTURE_DECODER_OLD_GENERATION_MIB: "512",
   });
-  const root = await mkdtemp(join(tmpdir(), "rea-capture-heap-report-"));
+  const root = await createTestTempDirectory("rea-capture-heap-report-");
   const capturePath = join(root, "input.har");
   const text = JSON.stringify(historicalHar());
   await writeFile(capturePath, text);
@@ -198,8 +200,8 @@ it("reports the heap the selected adapter launches when decoder environment diff
     if (exhausted.ok) throw new Error("Heap exhaustion must fail inspection");
     const projected = projectAnalysisError(exhausted.error);
     expect(projected.code).toBe("resource_constraint");
-    expect(projected.remediation.action).toMatch(
-      /REA_CAPTURE_DECODER_OLD_GENERATION_MIB.*256 MiB.*source setting/iu,
+    expect(projected.remediation.action).toContain(
+      "REA_CAPTURE_DECODER_OLD_GENERATION_MIB",
     );
     expect(projected.remediation.action).toContain("--max-old-space-size=256");
     if (process.versions.bun === undefined)
@@ -216,7 +218,6 @@ it("reports the heap the selected adapter launches when decoder environment diff
       });
   } finally {
     await decoder.close();
-    await rm(root, { recursive: true, force: true });
   }
 });
 

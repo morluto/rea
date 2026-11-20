@@ -25,11 +25,18 @@ const bundleOutputSchema = contractNamed(
 ).outputSchema;
 
 cliTest(
-  "preserves qualified POM property keys beside their references through CLI, MCP and retained Evidence",
+  "distinguishes POM declaration namespaces and preserves qualified property keys through CLI and MCP",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-maven-property-keys-");
     const path = join(root, "pom.xml");
-    const bytes = Buffer.from(qualifiedMavenPropertiesFixture);
+    const bytes = Buffer.from(
+      qualifiedMavenPropertiesFixture
+        .replace("<groupId>", "<a:groupId>foreign</a:groupId><groupId>")
+        .replace(
+          "<dependencies>",
+          "<dependencies><a:dependency><artifactId>foreign</artifactId></a:dependency>",
+        ),
+    );
     await writeFile(path, bytes);
     const result = await cli.run({
       arguments: ["inspect-maven-gradle-metadata", path, "--json"],
@@ -37,6 +44,8 @@ cliTest(
     expect(result.exitCode, result.stdout + result.stderr).toBe(0);
     const cliEvidence = outputSchema.parse(result.json);
     const report = cliEvidence.normalized_result;
+    expect(report.coordinates.group_id).toBe("example");
+    expect(report.dependencies).toHaveLength(1);
     expect(report.properties).toEqual([
       { name: "revision", value: "0", value_credentials_redacted: false },
       { name: "a:revision", value: "11", value_credentials_redacted: false },

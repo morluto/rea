@@ -129,11 +129,30 @@ cliTest(
 );
 
 cliTest(
-  "matches CLI and MCP observations for the same .nupkg",
+  "matches NuGet's field namespaces and license type through CLI and MCP",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-nupkg-cli-mcp-");
     const path = join(root, "Demo.Package.nupkg");
-    await writeFile(path, await nugetNupkgFixture());
+    await writeFile(
+      path,
+      await nugetNupkgFixture({
+        nuspec: `<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd" xmlns:ext="urn:example">
+          <ext:metadata>
+            <ext:id>Extension</ext:id><id>Demo.Package</id>
+            <ext:version>9.0.0</ext:version><version>1.2.3</version>
+            <ext:license type="expression">ISC</ext:license><license type="EXPRESSION">MIT</license>
+            <ext:repository type="git" url="https://example.invalid/extension" />
+            <repository type="git" url="https://example.invalid/declared" />
+            <ext:authors>Alice</ext:authors><authors>Second author</authors>
+            <ext:description>First description.</ext:description><description>Second description.</description>
+            <dependencies>
+              <ext:group targetFramework="net8.0"><ext:dependency id="Extension" /></ext:group>
+              <dependency id="Declared" version="1.0" />
+            </dependencies>
+          </ext:metadata>
+        </package>`,
+      }),
+    );
     const output = await cli.run({
       arguments: ["inspect-nuget-nupkg", path, "--json"],
     });
@@ -148,6 +167,19 @@ cliTest(
       completeNupkgEvidenceSchema.parse(reply.structuredContent)
         .normalized_result,
     ).toEqual(report);
+    expect(report).toMatchObject({
+      identity: {
+        id: "Demo.Package",
+        version: "1.2.3",
+        authors: "Alice",
+        description: "First description.",
+      },
+      license: { type: "expression", value: "MIT" },
+      repository: { url: "https://example.invalid/declared" },
+      dependency_groups: [
+        { target_framework: null, dependencies: [{ id: "Declared" }] },
+      ],
+    });
   },
 );
 

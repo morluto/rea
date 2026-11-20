@@ -1,3 +1,4 @@
+import { readInitializerWord } from "./initializerWord.js";
 import { setImmediate as immediate } from "node:timers/promises";
 import {
   assertArtifactReadActive,
@@ -31,6 +32,7 @@ import {
 import {
   BinaryFormatFailure,
   BinaryMappingFailure,
+  BinaryReader,
   BinaryResourceFailure,
   createFileMappingIndex,
   mappedFileOffset,
@@ -44,7 +46,6 @@ import type { NativeSection } from "../../domain/native/nativeSectionDirectory.j
 import {
   loadElfSymbolIndex,
   elfInitializerSlotKey,
-  readPointerWord,
   relocationFromEntry,
   sectionRelocations,
   sectionSymbolKey,
@@ -126,6 +127,7 @@ interface Source {
 }
 
 interface ElfScan {
+  readonly reader: BinaryReader;
   readonly bytes: Buffer;
   readonly bits: 32 | 64;
   readonly little: boolean;
@@ -766,7 +768,7 @@ const fromDynamicWrite = (
     },
     symbols,
     encoding === "rel"
-      ? readPointerWord(scan.bytes, write.file_offset, scan.bits, scan.little)
+      ? readInitializerWord(scan.reader, write.file_offset, scan.bits)
       : null,
   );
 };
@@ -775,7 +777,7 @@ const rawRelocation = (
   scan: ElfScan,
   fileOffset: number | null,
 ): SlotRelocation => {
-  const value = readPointerWord(scan.bytes, fileOffset, scan.bits, scan.little);
+  const value = readInitializerWord(scan.reader, fileOffset, scan.bits);
   return value === null
     ? { method: "unresolved", value: null, importName: null, definedName: null }
     : { method: "raw", value, importName: null, definedName: null };
@@ -994,6 +996,7 @@ export const readElfInitializers = async (
   const image = readElfImageFromDirectory(bytes, directory);
   const scan: ElfScan = {
     bytes,
+    reader: new BinaryReader(bytes, image.byte_order === "little", "elf"),
     bits: image.bits,
     little: image.byte_order === "little",
     machine: image.elf.machine,

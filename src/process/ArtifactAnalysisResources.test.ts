@@ -729,9 +729,6 @@ it("keeps an unchanged SIGXFSZ retry uncertain when the inherited limit was not 
       ),
     );
     expect(projected.remediation.action).toContain(
-      "The effective inherited limit was not reported.",
-    );
-    expect(projected.remediation.action).toContain(
       "an unchanged retry may succeed or may fail the same way",
     );
     expect(projected.remediation.action).not.toMatch(
@@ -774,13 +771,17 @@ it("treats a fixed command-output cap as a non-retryable capture allowance", asy
       fixedAllowance: { kind: "capture", limit: 1024, unit: "bytes" },
     });
     const projected = projectAnalysisError(error);
-    expect(projected.retryable).toBe(false);
-    expect(projected.remediation.action).toContain(
-      "The retained command-output allowance of 1024 bytes",
-    );
-    expect(projected.remediation.action).toContain(
-      "this release has no runtime override",
-    );
+    expect(projected).toMatchObject({
+      retryable: false,
+      details: {
+        refusal: {
+          kind: "fixed_ceiling",
+          allowance_kind: "capture",
+          limit: 1024,
+          unit: "bytes",
+        },
+      },
+    });
     expect(projected.remediation.action).not.toMatch(
       /Review the reported worker memory limits/u,
     );

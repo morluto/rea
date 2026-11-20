@@ -714,17 +714,22 @@ for (const name of ["missing", "deleted", "ghost", "../escape", "root"]) {
 cliTest.skipIf(process.platform === "win32")(
   "Hermes named-user home aligns setup, doctor, skill and uninstall despite an isolated HOME",
   async ({ cli }) => {
-    const home = sharedHome;
     const account = userInfo();
+    const accountHome = await realpath(account.homedir);
+    // Keep the unexpanded tilde path inside the fixture even after its ".." segments.
+    const home = join(sharedHome, relative("/", accountHome));
+    await mkdir(home, { recursive: true });
     const temporary = await createTestTempDirectory(
       "rea-hermes-named-profile-",
     );
-    const suffix = relative(await realpath(account.homedir), temporary);
+    const suffix = relative(accountHome, temporary);
     // Exercise the real named-account lookup without requiring a writable
     // account home. Resolve parent traversal from its physical directory while
     // keeping the named home's expanded spelling, including parent segments.
     const profile = `${account.homedir.replace(/\/+$/u, "")}/${suffix}`;
     const override = `~${account.username}//${suffix}`;
+    const literalProfile = join(home, override);
+    expect(literalProfile).not.toBe(temporary);
     const config = `${profile}/config.yaml`;
     const skill = `${profile}/skills/reverse-engineer-anything/SKILL.md`;
     const original =
@@ -785,7 +790,7 @@ cliTest.skipIf(process.platform === "win32")(
     expect((await run(["uninstall", "--json"])).exitCode).toBe(0);
     expect(parse(await readFile(config, "utf8"))).toEqual(parse(original));
     await expect(access(skill)).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(access(join(home, override))).rejects.toMatchObject({
+    await expect(access(literalProfile)).rejects.toMatchObject({
       code: "ENOENT",
     });
   },

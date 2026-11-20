@@ -422,6 +422,27 @@ it("keeps unknown CI scripts on the fast Linux baseline", async () => {
   for (const flag of CI_FLAGS) expect(full[flag]).toBe(true);
 });
 
+it("does not credit a fixture test as coverage for an unrelated shared script", async () => {
+  const { directory } = await fixture();
+  const module = "scripts/lib/uncovered.mjs";
+  const data = "tests/fixtures/independent.txt";
+  const test = "tests/boundary/filesystem/independent.test.ts";
+  await mkdir(dirname(join(directory, test)), { recursive: true });
+  await writeFile(join(directory, test), `readFileSync("${data}");\n`);
+  const base = await change(directory, [module, data]);
+  const head = await change(
+    directory,
+    [module, data],
+    "Updated fixture content\n",
+  );
+  expect(await runPlanScript(directory, base, head)).toMatchObject({
+    testSelection: {
+      mode: "full",
+      reason: `No test reaches shared script module: ${module}`,
+    },
+  });
+});
+
 it("selects the tests a pull request affects and runs everything when it cannot decide", async () => {
   const { directory } = await fixture();
   // The entrypoint's output file is not part of the change.
@@ -794,7 +815,7 @@ it.each(["", "not-a-commit"])(
   },
 );
 
-it("selects only a trusted successful ancestor from recent CI push runs", async ({
+it("selects a completed CI ancestor rather than a foreign or non-terminal run", async ({
   skip,
 }) => {
   skip(process.platform === "win32", "the fake gh is a POSIX shell script");
@@ -812,6 +833,8 @@ it("selects only a trusted successful ancestor from recent CI push runs", async 
     JSON.stringify({
       workflow_runs: [
         {
+          status: "completed",
+          path: ".github/workflows/ci.yml@refs/heads/main",
           event: "push",
           conclusion: "success",
           head_branch: "main",
@@ -819,6 +842,26 @@ it("selects only a trusted successful ancestor from recent CI push runs", async 
           head_sha: foreignBase,
         },
         {
+          status: "in_progress",
+          path: ".github/workflows/ci.yml@refs/heads/main",
+          event: "push",
+          conclusion: "success",
+          head_branch: "main",
+          head_repository: { full_name: "owner/repo" },
+          head_sha: foreignBase,
+        },
+        {
+          status: "completed",
+          path: ".github/workflows/release.yml@refs/heads/main",
+          event: "push",
+          conclusion: "success",
+          head_branch: "main",
+          head_repository: { full_name: "owner/repo" },
+          head_sha: foreignBase,
+        },
+        {
+          status: "completed",
+          path: ".github/workflows/ci.yml@refs/heads/main",
           event: "push",
           conclusion: "success",
           head_branch: "main",
@@ -957,13 +1000,13 @@ it("retains native Inspector verification on every documented package host", asy
   );
   expect(windowsBuild).toBeGreaterThanOrEqual(0);
   expect(windowsSteps[windowsBuild]?.if).toBeUndefined();
-  for (const verifier of [
-    "node scripts/verify/inspector/runtime-observation.mjs",
-    "node scripts/verify-windows-package.mjs",
-  ]) {
+  for (const [verifier, condition] of [
+    ["node scripts/verify/inspector/runtime-observation.mjs", undefined],
+    ["node scripts/verify-windows-package.mjs", "matrix.suite == 'package'"],
+  ] as const) {
     const step = windowsSteps.findIndex(({ run }) => run === verifier);
     expect(step).toBeGreaterThan(windowsBuild);
-    expect(windowsSteps[step]?.if).toBeUndefined();
+    expect(windowsSteps[step]?.if).toBe(condition);
   }
 });
 
@@ -1000,6 +1043,10 @@ it.each([
   ],
   // The darwin package baseline is the CI run of packaged Hopper commands
   // against the fake bridge and the reply contracts.
+  [
+    "tests/process-global/curatedWindowsLane.test.ts",
+    { code: true, runtime: true, package: true },
+  ],
   [
     "tests/fixtures/fakeHopper.mjs",
     { code: true, runtime: true, package: true },

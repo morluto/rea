@@ -9,6 +9,7 @@ import {
 } from "../domain/go/goBinary.js";
 import {
   BinaryMappingFailure,
+  BinaryReader,
   createFileMappingIndex,
   imageFileMappings,
   type BinaryContainer,
@@ -86,7 +87,11 @@ export const recoverGoStringLiterals = (
     };
 
   const { bits } = container;
-  const little = container.byte_order === "little";
+  const reader = new BinaryReader(
+    bytes,
+    container.byte_order === "little",
+    container.format,
+  );
   const wordBytes = bits === 64 ? 8 : 4;
   const firstTarget = targets[0] as FileMapping;
   const lastTarget = targets[targets.length - 1] as FileMapping;
@@ -107,7 +112,7 @@ export const recoverGoStringLiterals = (
       break;
     }
     remainingBudget -= wordBytes;
-    let word0 = readWord(bytes, startOffset, bits, little);
+    let word0 = reader.word(startOffset, bits);
 
     for (
       let headerOffset = startOffset;
@@ -121,7 +126,7 @@ export const recoverGoStringLiterals = (
         break outer;
       }
       remainingBudget -= wordBytes;
-      const word1 = readWord(bytes, headerOffset + wordBytes, bits, little);
+      const word1 = reader.word(headerOffset + wordBytes, bits);
       const ptr = word0;
       const rawLen = word1;
       word0 = word1;
@@ -225,18 +230,6 @@ export const recoverGoStringLiterals = (
     ...(limitsReached.size === 0 ? {} : { limits_reached: [...limitsReached] }),
   };
 };
-
-const readWord = (
-  bytes: Buffer,
-  offset: number,
-  bits: 32 | 64,
-  little: boolean,
-): bigint =>
-  bits === 32
-    ? BigInt(little ? bytes.readUInt32LE(offset) : bytes.readUInt32BE(offset))
-    : little
-      ? bytes.readBigUInt64LE(offset)
-      : bytes.readBigUInt64BE(offset);
 
 const isPrintableGoUtf8 = (slice: Buffer): boolean => {
   let hasNonAscii = false;
