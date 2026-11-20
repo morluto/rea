@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { malformedInput } from "../domain/parseFailure.js";
 import { crc32 } from "node:zlib";
 
 import { describe, expect, it } from "vitest";
@@ -9,7 +10,7 @@ import {
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import { ExecFileOutputCancelledError } from "../process/ExecFileOutput.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 
 const target: BinaryTarget = {
@@ -80,11 +81,15 @@ it.each([
   },
 );
 describe("native UI screenshot validation", () => {
-  it.each([24, 32, "crc"])(
+  it.each([24, 32, "crc", "invalid filter"])(
     "rejects incomplete or corrupt IHDR despite matching native digest: %s",
     async (kind) => {
       const bytes = Buffer.from(validPng);
       if (kind === "crc") bytes[29] = (bytes[29] ?? 0) ^ 1;
+      if (kind === "invalid filter") {
+        bytes[27] = 1;
+        bytes.writeUInt32BE(crc32(bytes.subarray(12, 29)), 29);
+      }
       const payload =
         typeof kind === "number" ? bytes.subarray(0, kind) : bytes;
       expect((await observeWithScreenshot(screenshotOf(payload))).ok).toBe(
@@ -193,6 +198,47 @@ describe("native UI screenshot validation", () => {
     }
   });
 });
+
+it.each(["observe_native_ui", "capture_native_ui_scenario"] as const)(
+  "keeps the rejected capture mode reason and field corrections for %s",
+  async (operation) => {
+    const result = await observeNativeUi(
+      target,
+      operation,
+      {
+        pid: 123,
+        window_id: 456,
+        screenshot: false,
+        accessibility: false,
+        ...(operation === "capture_native_ui_scenario"
+          ? { steps: [{ kind: "wait", milliseconds: 0 }] }
+          : {}),
+      },
+      {
+        environment: {},
+        invoke: async () => {
+          throw new Error("No native helper should run for this refusal");
+        },
+      },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected capture mode refusal");
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
+        issues: [
+          { path: ["screenshot"], reason: "invalid_value" },
+          { path: ["accessibility"], reason: "invalid_value" },
+        ],
+      },
+    });
+    expect(projected.message).toMatch(/screenshot.*accessibility/iu);
+    expect(projected.remediation.action).toMatch(/screenshot.*accessibility/iu);
+    expect(projected.remediation.action).toMatch(/true/iu);
+  },
+);
 
 describe("native UI capture selection and budgets", () => {
   it("accepts observations and scenarios without compatibility flags", async () => {
@@ -491,8 +537,12 @@ it("classifies a helper subprocess timeout as the selected UI deadline", async (
   const projected = projectAnalysisError(result.error);
   expect(projected.code).toBe("provider_timeout");
   expect(projected.message).toContain("of 2500 ms");
-  expect(projected.message).toContain("native_ui_deadline_ms");
-  expect(projected.remediation.action).toContain("above 2500");
+  expect(projected.details?.limit).toMatchObject({
+    control_kind: "parameter",
+    parameter: "native_ui_deadline_ms",
+    effective_value: 2_500,
+    default_value: 180_000,
+  });
   expect(projected.message).not.toContain("of 30000 ms");
   expect(projected.message).not.toContain("of 60000 ms");
 });
@@ -628,7 +678,9 @@ describe("native UI target and cancellation failures", () => {
     const result = await observeNativeUi(target, "observe_native_ui", scope, {
       environment: {},
       invoke: async () => {
-        throw new Error(
+        // The helper runtime's own report of output that is not JSON.
+        throw malformedInput(
+          "native-ui-helper-output",
           "Native helper returned invalid JSON: Unexpected token",
         );
       },

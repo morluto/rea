@@ -10,6 +10,7 @@ import {
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { scriptCaptureEvidenceFixture } from "../../fixtures/webScriptCapture.js";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
 
 it("preserves producer-owned cleanup failure when service close does not resolve it", async () => {
   const evidence = scriptCaptureEvidenceFixture();
@@ -162,7 +163,7 @@ it("keeps the initial failure snapshot when close resolves its cleanup but fails
     async () => err(primary),
     {
       close: async () => {
-        primary.resolveCleanup();
+        releaseOwnedCleanup(primary);
         controller.abort("cancelled during cleanup retry");
         throw new ProviderCleanupError(
           "fixture-provider",
@@ -219,7 +220,7 @@ it.each([false, true])(
       async () => err(failure),
       {
         close: async () => {
-          failure.resolveCleanup();
+          releaseOwnedCleanup(failure);
           if (cancel) controller.abort("cancelled during successful retry");
         },
       },
@@ -266,7 +267,7 @@ it.each(["unresolved", "ordinary-partial", "initial-projection"] as const)(
       async () => err(failure),
       {
         close: async () => {
-          if (kind !== "unresolved") failure.resolveCleanup();
+          if (kind !== "unresolved") releaseOwnedCleanup(failure);
         },
       },
       "fixture-provider",

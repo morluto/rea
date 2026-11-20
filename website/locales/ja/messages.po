@@ -3401,10 +3401,8 @@ msgctxt "page:get-started/index.html"
 msgid ""
 "Windows x64 has experimental, read-only support for native x86 and x64 PE "
 "applications and DLLs on fixed local NTFS/ReFS drives. Use an existing "
-"Ghidra 12.1.x installation and a 64-bit JDK 21 or newer:"
+"Ghidra 12.2 installation and a 64-bit JDK 25 or newer:"
 msgstr ""
-"Windows x64では、固定ローカルNTFS/ReFSドライブ上のネイティブx86/x64 "
-"PEアプリとDLLに実験的な読み取り専用対応があります。既存のGhidra 12.1.xと64ビットのJDK 21以降を使ってください。"
 
 #: website/public/get-started/index.html:1182
 msgctxt "page:get-started/index.html"
@@ -4856,10 +4854,8 @@ msgstr "REAは、ネイティブプログラムを読むためにこれらのい
 msgctxt "page:guides/native/index.html"
 msgid ""
 "{ph0}Ghidra{ph1} (macOS or Linux; experimental on Windows): free, but needs "
-"an existing Ghidra 12.1.x installation and a 64-bit JDK 21 or newer."
+"an existing Ghidra 12.2 installation and a 64-bit JDK 25 or newer."
 msgstr ""
-"{ph0} Ghidra {ph1} "
-"（macOSまたはLinux;Windowsで実験）：無料ですが、既存のGhidra12.1が必要です。Xのインストールおよび64ビットJDK21以降。"
 
 #. {ph0}: <a href="../../get-started/#native">
 #. {ph1}: </a>
@@ -12836,21 +12832,18 @@ msgstr "Ghidra · 無料の分析ツールとJavaをインストールする"
 #: website/public/get-started/index.html:1111
 msgctxt "page:get-started/index.html"
 msgid ""
-"Install a 64-bit JDK 21 or newer, including the Java compiler. Choose the "
+"Install a 64-bit JDK 25 or newer, including the Java compiler. Choose the "
 "package matching your computer's architecture."
 msgstr ""
-"Javaコンパイラーを含む64ビットのJDK 21以降をインストールしてください。コンピューターのアーキテクチャに合うパッケージを選びます。"
 
 #. {ph0}: <code>ghidra_…_PUBLIC_….zip</code>
 #: website/public/get-started/index.html:1116
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
-"Download Ghidra 12.1.4 from the release's Assets list and extract the {ph0} "
+"Download Ghidra 12.2 from the release's Assets list and extract the {ph0} "
 "archive. Choose the release archive, not “Source code”."
 msgstr ""
-"リリースのAssets一覧からGhidra 12.1.4をダウンロードし、{ph0}アーカイブを展開してください。「Source "
-"code」ではなく、リリース用のアーカイブを選びます。"
 
 #. {ph0}: <code>ghidraRun</code>
 #. {ph1}: <code>ghidraRun.bat</code>
@@ -12863,17 +12856,17 @@ msgid ""
 "{ph2}."
 msgstr "展開したフォルダーのうち、{ph0}または{ph1}が入っているものを探してください。そのフォルダーを{ph2}に指定します。"
 
-#. {ph0}: <a href="https://adoptium.net/temurin/releases/?version=21" >
+#. {ph0}: <a href="https://adoptium.net/temurin/releases/?version=25" >
 #. {ph1}: </a >
 #. {ph2}: <a
-#. href="https://github.com/NationalSecurityAgency/ghidra/releases/tag/Ghidra_12.1.4_build"
+#. href="https://github.com/NationalSecurityAgency/ghidra/releases/tag/Ghidra_12.2_build"
 #. >
 #. {ph3}: </a >
 #: website/public/get-started/index.html:1127
 #, python-brace-format
 msgctxt "page:get-started/index.html"
-msgid "{ph0}Download a JDK{ph1} · {ph2}Download Ghidra 12.1.4{ph3}"
-msgstr "{ph0}JDKをダウンロード{ph1} · {ph2}Ghidra 12.1.4をダウンロード{ph3}"
+msgid "{ph0}Download a JDK{ph1} · {ph2}Download Ghidra 12.2{ph3}"
+msgstr ""
 
 #. {ph0}: <code>java.home</code>
 #. {ph1}: <code>JAVA_HOME</code>
@@ -13427,7 +13420,7 @@ msgid "{ph0}macOS · Apple Silicon{ph1}"
 msgstr "{ph0}macOS · Apple Silicon{ph1}"
 
 #. {ph0}: <a
-#. href="https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.1.4_build/GhidraDocs/GettingStarted.md#building-
+#. href="https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.2_build/GhidraDocs/GettingStarted.md#building-
 #. native-components" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1228

@@ -1,23 +1,17 @@
 import { execFileSync, spawn as spawnChild } from "node:child_process";
-import {
-  chmod,
-  mkdtemp,
-  readFile,
-  realpath,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, readFile, realpath, writeFile } from "node:fs/promises";
+
 import { join } from "node:path";
 import { spawn } from "@lydell/node-pty";
 import { afterEach, expect, it, vi } from "vitest";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import {
   assertRizinProcessStartTimeStable,
   RizinDebugSessionManager,
 } from "../../../src/rizin/RizinDebugSessionManager.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
-import { TOOL_EFFECTS } from "../../../src/contracts/toolEffects.js";
+import { RIZIN_DEBUG_TOOL_CONTRACTS } from "../../../src/contracts/rizinDebugToolContracts.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import {
   createRizinTestManager,
@@ -84,8 +78,6 @@ afterEach(async () => {
     }
   }
   inferiorPid = undefined;
-  if (testDirectory !== undefined)
-    await rm(testDirectory, { recursive: true, force: true });
   testDirectory = undefined;
 });
 
@@ -151,7 +143,11 @@ it.skipIf(process.platform === "win32")(
 );
 
 it("declares that Rizin close can resume target code and mutate target state", () => {
-  expect(TOOL_EFFECTS.close_rizin_debug_session).toMatchObject({
+  expect(
+    RIZIN_DEBUG_TOOL_CONTRACTS.find(
+      ({ name }) => name === "close_rizin_debug_session",
+    )?.effects,
+  ).toMatchObject({
     mutatesTarget: true,
     executesForeignCode: true,
   });
@@ -191,7 +187,7 @@ it.skipIf(process.platform !== "linux").each([
   "validates Rizin `olj` close response: $name",
   async ({ response, closeSucceeds }) => {
     const tty = await rizinTestInferiorTty();
-    testDirectory = await mkdtemp(join(tmpdir(), "rea-rizin-olj-"));
+    testDirectory = await createTestTempDirectory("rea-rizin-olj-");
     const provider = join(testDirectory, "fake-rizin.cjs");
     await writeFile(
       provider,
@@ -304,7 +300,6 @@ it.skipIf(process.platform !== "linux")(
     });
     await expectCloseRejectedAndReleased(sessionId);
   },
-  4_000,
 );
 
 it("rejects changed or missing Rizin inferior identity during detach", () => {
@@ -331,7 +326,11 @@ it.skipIf(process.platform !== "linux")(
           } catch {
             // This fixture verifies the manager's fail-closed read path only.
           }
-          return { status: "incomplete", reason: "unreachable" };
+          return {
+            status: "incomplete",
+            code: "stop-failed",
+            reason: "unreachable",
+          };
         },
       },
     );
@@ -440,7 +439,7 @@ it.skipIf(
       });
     });
     const tty = await realpath(ttyPath);
-    testDirectory = await mkdtemp(join(tmpdir(), "rea-rizin-tty-"));
+    testDirectory = await createTestTempDirectory("rea-rizin-tty-");
     const wrapper = join(testDirectory, "rizin-with-long-lived-inferior.sh");
     const pidPath = join(testDirectory, "target.pid");
     const releasePath = join(testDirectory, "emit-output");
@@ -519,7 +518,7 @@ async function startFakeInferiorSession(
   } = {},
 ): Promise<string> {
   const tty = await realpath(await rizinTestInferiorTty());
-  testDirectory = await mkdtemp(join(tmpdir(), "rea-rizin-protocol-"));
+  testDirectory = await createTestTempDirectory("rea-rizin-protocol-");
   const targetPath = join(testDirectory, "inferior.mjs");
   const pidPath = join(testDirectory, "target.pid");
   const provider = join(testDirectory, "fake-rizin.cjs");

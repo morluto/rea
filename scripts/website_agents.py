@@ -2,6 +2,8 @@
 
 import hashlib
 import json
+from pathlib import Path
+import subprocess
 from urllib.parse import urljoin
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
@@ -20,25 +22,26 @@ def write_json(path, value):
 def prepare_discovery(root, site):
     """Publish the complete skill, including its relative reference documents."""
     source = root / ".agents/skills/reverse-engineer-anything"
-    skill = (source / "SKILL.md").read_text(encoding="utf-8")
-    if not skill.startswith("---\n") or "\n---\n" not in skill[4:]:
-        raise ValueError("Public REA skill needs YAML frontmatter")
-    metadata = yaml.safe_load(skill[4:].split("\n---\n", 1)[0])
-    if not isinstance(metadata, dict):
-        raise ValueError("Public REA skill needs YAML metadata")
+    manifest = source / "SKILL.md"
+    skill = manifest.read_bytes()
+    reader = Path(__file__).with_name("read-authored-skill-manifest.mjs")
+    result = subprocess.run(["node", str(reader)], input=skill, capture_output=True)
+    if result.returncode != 0:
+        raise ValueError(result.stderr.decode("utf-8").strip())
+    metadata = json.loads(result.stdout)
     name, description = metadata["name"], metadata["description"]
-    if name != source.name or not isinstance(description, str) or not description.strip():
-        raise ValueError("Invalid public REA skill metadata")
+    if name != source.name:
+        raise ValueError(f"Public skill name {name!r} must match its folder {source.name!r}")
     discovery = site / ".well-known/agent-skills"
     discovery.mkdir(parents=True, exist_ok=True)
     artifact = discovery / f"{name}.zip"
     with ZipFile(artifact, "w") as archive:
-        for path in [source / "SKILL.md", *sorted(source.glob("references/**/*.md"))]:
+        for path in [manifest, *sorted(source.glob("references/**/*.md"))]:
             relative = path.relative_to(source)
             entry = ZipInfo(f"{name}/{relative.as_posix()}", (1980, 1, 1, 0, 0, 0))
             entry.create_system = 3
             entry.external_attr = 0o100644 << 16
-            archive.writestr(entry, path.read_bytes(), compress_type=ZIP_DEFLATED)
+            archive.writestr(entry, skill if path == manifest else path.read_bytes(), compress_type=ZIP_DEFLATED)
     artifact_url = f"{SITE_ORIGIN}/.well-known/agent-skills/{artifact.name}"
     write_json(discovery / "index.json", {
         "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",

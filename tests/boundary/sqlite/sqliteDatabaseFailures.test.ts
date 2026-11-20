@@ -1,9 +1,18 @@
-import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
-import { expect, it } from "vitest";
+import { SqliteDatabaseProvider } from "../../../src/sqlite/SqliteDatabaseProvider.js";
+import { createSqliteDatabaseFixture } from "../../fixtures/sqlite/database.js";
+import { spawnFailure } from "../../support/process/spawnFailure.js";
+import {
+  createTestWorkspace,
+  removeTestWorkspace,
+} from "../../support/workspace/workspaceFixture.js";
+import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
+import { classifyProviderFailure } from "../../../src/providers/classifyProviderFailure.js";
+import { expect, it, onTestFinished } from "vitest";
 import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-import { sqliteDatabaseFailure } from "../../../src/sqlite/SqliteDatabaseFailures.js";
+import { sqliteDatabaseDialect } from "../../../src/sqlite/SqliteDatabaseFailures.js";
 import { SQLITE_DATABASE_LIMITS } from "../../../src/sqlite/SqliteDatabaseLimits.js";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
 
 it.each([null, "owned stop unconfirmed"])(
   "preserves a selected worker deadline with cleanup=%s",
@@ -21,20 +30,26 @@ it.each([null, "owned stop unconfirmed"])(
       undefined,
       ["pid:owned-fixture"],
     );
-    const failure = sqliteDatabaseFailure(
+    const failure = classifyProviderFailure(
       cause,
-      "/selected.db",
-      "worker",
-      undefined,
-      1234,
+      sqliteDatabaseDialect("/selected.db", "worker", undefined, 1234),
     );
     expect(failure.cause).toBe(cause);
     const projected = projectAnalysisError(failure);
     if (cleanup === null)
       expect(projected).toMatchObject({
         code: "provider_timeout",
-        details: { timeout_ms: 1234 },
-        remediation: { action: expect.stringContaining("--worker-timeout-ms") },
+        details: {
+          timeout_ms: 1234,
+          limit: {
+            control_kind: "parameter",
+            parameter: "worker_timeout_ms",
+            effective_value: 1234,
+          },
+        },
+        remediation: {
+          action: expect.not.stringContaining("--"),
+        },
       });
     else
       expect(projected).toMatchObject({
@@ -61,7 +76,7 @@ it.each([null, "owned stop unconfirmed"])(
         _tag: "AnalysisTimeoutError",
         timeoutMs: 1234,
       });
-      failure.resolveCleanup();
+      releaseOwnedCleanup(failure);
       const resolved = projectAnalysisError(failure);
       expect(resolved).toMatchObject({
         code: "provider_timeout",
@@ -76,31 +91,50 @@ it.each([null, "owned stop unconfirmed"])(
 
 it("does not recommend a timer above the supported maximum", () => {
   const failure = projectAnalysisError(
-    sqliteDatabaseFailure(
+    classifyProviderFailure(
       new OwnedCommandFailure("timeout", "deadline"),
-      "/selected.db",
-      "worker",
-      undefined,
-      2_147_483_647,
+      sqliteDatabaseDialect("/selected.db", "worker", undefined, 2_147_483_647),
     ),
   );
-  expect(failure.details).toMatchObject({ timeout_ms: 2_147_483_647 });
-  expect(failure.remediation.action).toContain("no higher worker deadline");
+  expect(failure.details).toMatchObject({
+    timeout_ms: 2_147_483_647,
+    limit: {
+      control_kind: "parameter",
+      parameter: "worker_timeout_ms",
+      effective_value: 2_147_483_647,
+      maximum: 2_147_483_647,
+      applies_at: "next_call",
+    },
+  });
   expect(failure.remediation.action).not.toContain("Increase");
 });
 
-it("says diagnostic capture has no runtime override", () => {
+it("reports exceeded diagnostic capture as a fixed resource constraint", () => {
   const projected = projectAnalysisError(
-    sqliteDatabaseFailure(
+    classifyProviderFailure(
       new OwnedCommandFailure("output-limit", "diagnostics exceeded"),
-      "/selected.db",
-      "worker",
+      sqliteDatabaseDialect("/selected.db", "worker"),
     ),
   );
+  expect(projected).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: {
+      operation: "inspect_sqlite_database",
+      reported_limits: {
+        diagnostic_capture_bytes: SQLITE_DATABASE_LIMITS.diagnosticBytes,
+      },
+      refusal: {
+        kind: "fixed_ceiling",
+        allowance_kind: "capture",
+        limit: SQLITE_DATABASE_LIMITS.diagnosticBytes,
+        unit: "bytes",
+      },
+    },
+  });
   expect(projected.remediation.action).toContain(
     String(SQLITE_DATABASE_LIMITS.diagnosticBytes),
   );
-  expect(projected.remediation.action).toContain("no runtime override");
   expect(projected.remediation.action).toContain(
     "worker_timeout_ms does not raise it",
   );
@@ -120,8 +154,20 @@ it.each(["/selected.db", "./Database files/another.db"])(
       },
       exitCode: null,
       signal: "SIGABRT",
+      runtimeExhaustion: {
+        runtime: "v8",
+        area: "heap",
+        stream: "stderr",
+        line: stderr.trim(),
+        lineComplete: true,
+        truncated: false,
+        invalidUtf8: false,
+      },
     });
-    const failure = sqliteDatabaseFailure(cause, path, "worker");
+    const failure = classifyProviderFailure(
+      cause,
+      sqliteDatabaseDialect(path, "worker"),
+    );
     expect(failure.cause).toBe(cause);
     expect(projectAnalysisError(failure)).toMatchObject({
       code: "resource_constraint",
@@ -129,7 +175,17 @@ it.each(["/selected.db", "./Database files/another.db"])(
         operation: "inspect_sqlite_database",
         resource: "memory",
         reported_limits: { javascript_heap_bytes: 256 * 1024 * 1024 },
-        diagnostics: { selected_path: path },
+        diagnostics: {
+          selected_path: path,
+          // The runtime's report survives even when retention dropped it.
+          runtime_exhaustion_report: {
+            runtime: "v8",
+            area: "heap",
+            stream: "stderr",
+            line: stderr.trim(),
+            line_complete: true,
+          },
+        },
         captured_output: { stderr },
       },
     });
@@ -142,11 +198,9 @@ it("does not infer cancellation from a later signal when cleanup carries no canc
     cleanup: { reason: "close failed", resources: ["/owned/reply.json"] },
   });
   controller.abort(new Error("later caller cancellation"));
-  const failure = sqliteDatabaseFailure(
+  const failure = classifyProviderFailure(
     cause,
-    "/selected.db",
-    "worker",
-    controller.signal,
+    sqliteDatabaseDialect("/selected.db", "worker", controller.signal),
   );
   expect(failure.cleanupIncomplete).toBe(true);
   expect(failure.cleanupPrimary).toBeUndefined();
@@ -155,3 +209,38 @@ it("does not infer cancellation from a later signal when cleanup carries no canc
     details: { resources: ["/owned/reply.json"] },
   });
 });
+
+// A worker launch failure reaches the shared launch owner even though the
+// SQLite dialect describes no command reports.
+it.each([
+  ["EAGAIN", "resource_constraint", { resource: "capacity" }],
+  ["E2BIG", "resource_constraint", { resource: "transport" }],
+  ["EIO", "capability_unavailable", { provider_id: "sqlite" }],
+] as const)(
+  "classifies a SQLite worker launch failure %s once by errno",
+  async (code, projectedCode, details) => {
+    const workspace = await createTestWorkspace("rea-sqlite-launch-");
+    onTestFinished(() => removeTestWorkspace(workspace.root));
+    const database = createSqliteDatabaseFixture(workspace.root);
+    database.close();
+    const provider = new SqliteDatabaseProvider({}, async (input) => {
+      throw spawnFailure(code, input.command);
+    });
+    onTestFinished(() => provider.close());
+    const result = await provider.inspect({ path: database.path });
+    if (result.ok) throw new Error("Expected the worker launch to fail");
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
+      code: projectedCode,
+      details: {
+        ...details,
+        diagnostics: {
+          system_code: code,
+          syscall: `spawn ${process.execPath}`,
+        },
+      },
+    });
+    expect(projected.message).toContain(code);
+    expect((await provider.inspect({ path: database.path })).ok).toBe(false);
+  },
+);

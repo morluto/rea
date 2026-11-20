@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { FIXTURE_TOOLS, fixtureCommand } from "./fixture-toolchain.mjs";
 
 const execute = promisify(execFile);
 // Stock language is the default; the Gekko override is checked only when installed.
@@ -104,7 +105,7 @@ export function parseReadelfDolSource(text) {
 
 /** Independent GNU readelf reader for the ELF the DOL was converted from. */
 export async function inspectReadelfDolSource(elfPath) {
-  const command = process.env.REA_PPC_READELF ?? "readelf";
+  const command = fixtureCommand(FIXTURE_TOOLS.ppcReadelf);
   const options = {
     env: { ...process.env, LC_ALL: "C" },
     timeout: 10000,

@@ -8,7 +8,7 @@ import {
   MFT_INLINE_ATTRIBUTE_REFERENCE_LIMIT,
   type MftFileReference,
 } from "./ntfsMftAttributes.js";
-export type { MftFileReference } from "./ntfsMftAttributes.js";
+import { BinaryReader } from "../binaryContainer.js";
 import { err, ok, type Result } from "../result.js";
 import type {
   RegionDecodeFailure,
@@ -27,7 +27,7 @@ const hasMftFileRecordSignature = (prefix: Uint8Array): boolean =>
     MFT_FILE_RECORD_MAGIC;
 
 /** A record's declared size is a power of two from 512 upward; 1024 is NTFS's default. */
-export const MFT_DEFAULT_RECORD_BYTES = 1024;
+const MFT_DEFAULT_RECORD_BYTES = 1024;
 const MFT_MIN_RECORD_BYTES = 512;
 const MFT_MAX_RECORD_BYTES = 65536;
 /** An update sequence array holds at least the sequence number and one fixup word. */
@@ -39,7 +39,7 @@ export const FIXUP_SECTOR_BYTES = 512;
  * is fetched, so this is deliberately
  * smaller than a volume's MFT can be.
  */
-export const MFT_MAX_FILE_BYTES = 512 * 1024 * 1024;
+const MFT_MAX_FILE_BYTES = 512 * 1024 * 1024;
 /** Limit the inline header sample independently of full stream coverage. */
 export const MFT_INLINE_HEADER_LIMIT = 32;
 
@@ -217,6 +217,27 @@ const updateSequenceArrayFits = (
   offset % 2 === 0 &&
   offset + entries * 2 <= FIXUP_SECTOR_BYTES - 2;
 
+type UpdateSequenceDeclaration = {
+  readonly offset: number;
+  readonly entries: number;
+};
+
+const mftReader = (bytes: Uint8Array): BinaryReader =>
+  new BinaryReader(
+    Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    true,
+    "ntfs-mft",
+  );
+
+/** These fixed fields are available from both a prefix and a full FILE record. */
+const readRecordDeclarations = (reader: BinaryReader) => ({
+  totalBytes: reader.u32(RECORD_HEADER.totalBytes),
+  updateSequence: {
+    offset: reader.u16(RECORD_HEADER.updateSequenceOffset),
+    entries: reader.u16(RECORD_HEADER.updateSequenceCount),
+  } satisfies UpdateSequenceDeclaration,
+});
+
 /** Recognize a FILE header without requiring its trailers or attributes to verify. */
 export const hasMftFileRecordHeader = (prefix: Uint8Array): boolean => {
   if (
@@ -224,16 +245,14 @@ export const hasMftFileRecordHeader = (prefix: Uint8Array): boolean => {
     !hasMftFileRecordSignature(prefix)
   )
     return false;
-  const view = new DataView(
-    prefix.buffer,
-    prefix.byteOffset,
-    prefix.byteLength,
+  const { totalBytes, updateSequence } = readRecordDeclarations(
+    mftReader(prefix),
   );
   return (
-    isRecordSize(view.getUint32(RECORD_HEADER.totalBytes, true)) ||
+    isRecordSize(totalBytes) ||
     updateSequenceArrayFits(
-      view.getUint16(RECORD_HEADER.updateSequenceOffset, true),
-      view.getUint16(RECORD_HEADER.updateSequenceCount, true),
+      updateSequence.offset,
+      updateSequence.entries,
       MFT_DEFAULT_RECORD_BYTES / FIXUP_SECTOR_BYTES,
     )
   );
@@ -316,12 +335,14 @@ const scanMft = (
     return err(failure("record 0 does not begin with the FILE signature"));
 
   const limitations: string[] = [];
-  const header = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const declaredRecordBytes = header.getUint32(RECORD_HEADER.totalBytes, true);
-  const recordBytes = isRecordSize(declaredRecordBytes)
+  const { totalBytes: declaredRecordBytes } = readRecordDeclarations(
+    mftReader(bytes),
+  );
+  const hasDeclaredRecordSize = isRecordSize(declaredRecordBytes);
+  const recordBytes = hasDeclaredRecordSize
     ? declaredRecordBytes
     : MFT_DEFAULT_RECORD_BYTES;
-  if (!isRecordSize(declaredRecordBytes))
+  if (!hasDeclaredRecordSize)
     limitations.push(
       `record 0 declares a record size of ${String(declaredRecordBytes)} bytes, which is not a supported power of two from ${String(MFT_MIN_RECORD_BYTES)} to ${String(MFT_MAX_RECORD_BYTES)}; records were read at the ${String(MFT_DEFAULT_RECORD_BYTES)}-byte default`,
     );
@@ -355,7 +376,7 @@ const scanMft = (
     ) {
       invalidSlots += 1;
       firstInvalidOffset ??= offset;
-      if (!isRecordSize(declaredRecordBytes)) break;
+      if (!hasDeclaredRecordSize) break;
       continue;
     }
     const record = readRecord(bytes, offset, restored);
@@ -605,31 +626,31 @@ const readRecord = (
   const recordBytes = restored.length;
   const index = fileOffset / recordBytes;
   const record = bytes.subarray(fileOffset, fileOffset + recordBytes);
-  const view = new DataView(
-    record.buffer,
-    record.byteOffset,
-    record.byteLength,
-  );
-
-  const flags = view.getUint16(RECORD_HEADER.flags, true);
-  const baseRecordReference = view.getBigUint64(
+  const reader = mftReader(record);
+  const { totalBytes, updateSequence } = readRecordDeclarations(reader);
+  const { offset: usaOffset, entries: usaEntries } = updateSequence;
+  const flags = reader.u16(RECORD_HEADER.flags);
+  const baseRecordReference = reader.word(
     RECORD_HEADER.baseRecordReference,
-    true,
+    64,
   );
-
-  const usaOffset = view.getUint16(RECORD_HEADER.updateSequenceOffset, true);
-  const fixups = verifyFixups(record, view, usaOffset);
-  const usedBytes = view.getUint32(RECORD_HEADER.usedBytes, true);
-  const totalBytes = view.getUint32(RECORD_HEADER.totalBytes, true);
-  const firstAttributeOffset = view.getUint16(
-    RECORD_HEADER.firstAttributeOffset,
-    true,
-  );
+  const usedBytes = reader.u32(RECORD_HEADER.usedBytes);
+  const firstAttributeOffset = reader.u16(RECORD_HEADER.firstAttributeOffset);
   const usaLayoutValid = updateSequenceArrayFits(
     usaOffset,
-    fixups.entries,
-    recordBytes / FIXUP_SECTOR_BYTES,
+    usaEntries,
+    Math.floor(record.length / FIXUP_SECTOR_BYTES),
   );
+  const fixups: MftRecordFixups = usaLayoutValid
+    ? verifyFixups(reader, updateSequence)
+    : {
+        sequenceNumber: 0,
+        entries: usaEntries,
+        verifiedSectors: 0,
+        coveredSectors: 0,
+        mismatchSector: null,
+        malformed: true,
+      };
   const extentValid =
     totalBytes === recordBytes &&
     usedBytes >= NTFS_MFT_MIN_RECORD_BYTES &&
@@ -638,7 +659,7 @@ const readRecord = (
     firstAttributeOffset % 8 === 0 &&
     firstAttributeOffset >= NTFS_MFT_MIN_RECORD_BYTES &&
     firstAttributeOffset + 4 <= usedBytes &&
-    (!usaLayoutValid || firstAttributeOffset >= usaOffset + fixups.entries * 2);
+    (!usaLayoutValid || firstAttributeOffset >= usaOffset + usaEntries * 2);
   let attributes: MftAttributeScan = {
     attributeIssue: null,
     fileNames: [],
@@ -653,7 +674,7 @@ const readRecord = (
     restored.set(record);
     for (let sector = 1; sector <= fixups.verifiedSectors; sector += 1)
       restored.writeUInt16LE(
-        view.getUint16(usaOffset + sector * 2, true),
+        reader.u16(usaOffset + sector * 2),
         sector * FIXUP_SECTOR_BYTES - 2,
       );
     attributes = readMftAttributes(
@@ -666,14 +687,14 @@ const readRecord = (
 
   const declaredRecordNumber =
     usaLayoutValid && usaOffset >= RECORD_HEADER_WITH_NUMBER_BYTES
-      ? view.getUint32(RECORD_HEADER.recordNumber, true)
+      ? reader.u32(RECORD_HEADER.recordNumber)
       : null;
 
   return {
     index,
     fileOffset,
-    sequenceNumber: view.getUint16(RECORD_HEADER.sequenceNumber, true),
-    hardLinkCount: view.getUint16(RECORD_HEADER.hardLinkCount, true),
+    sequenceNumber: reader.u16(RECORD_HEADER.sequenceNumber),
+    hardLinkCount: reader.u16(RECORD_HEADER.hardLinkCount),
     flags: parseRecordFlags(flags),
     inUse: (flags & FILE_RECORD_IN_USE) !== 0,
     directory: (flags & FILE_RECORD_IS_DIRECTORY) !== 0,
@@ -687,11 +708,11 @@ const readRecord = (
     declaredRecordNumber,
     recordNumberMatchesSlot:
       declaredRecordNumber === null ? null : declaredRecordNumber === index,
-    logFileSequenceNumber: view
-      .getBigUint64(RECORD_HEADER.logFileSequenceNumber, true)
+    logFileSequenceNumber: reader
+      .word(RECORD_HEADER.logFileSequenceNumber, 64)
       .toString(),
     firstAttributeOffset,
-    nextAttributeId: view.getUint16(RECORD_HEADER.nextAttributeId, true),
+    nextAttributeId: reader.u16(RECORD_HEADER.nextAttributeId),
     fixups,
     ...attributes,
   };
@@ -704,26 +725,13 @@ const readRecord = (
  * cleanly written, so the record's attributes cannot be trusted.
  */
 const verifyFixups = (
-  record: Uint8Array,
-  view: DataView,
-  usaOffset: number,
+  reader: BinaryReader,
+  { offset: usaOffset, entries: usaCount }: UpdateSequenceDeclaration,
 ): MftRecordFixups => {
-  const usaCount = view.getUint16(RECORD_HEADER.updateSequenceCount, true);
-  const sectors = Math.floor(record.length / FIXUP_SECTOR_BYTES);
   // Entry 0 holds the sequence number, so sector n's saved trailer is entry n+1.
-  const coveredSectors = Math.max(0, usaCount - 1);
+  const coveredSectors = usaCount - 1;
 
-  if (!updateSequenceArrayFits(usaOffset, usaCount, sectors))
-    return {
-      sequenceNumber: 0,
-      entries: usaCount,
-      verifiedSectors: 0,
-      coveredSectors: 0,
-      mismatchSector: null,
-      malformed: true,
-    };
-
-  const sequenceNumber = view.getUint16(usaOffset, true);
+  const sequenceNumber = reader.u16(usaOffset);
   if (sequenceNumber === 0 || sequenceNumber === 0xffff)
     return {
       sequenceNumber,
@@ -735,7 +743,7 @@ const verifyFixups = (
     };
   for (let sector = 0; sector < coveredSectors; sector += 1) {
     const trailerOffset = sector * FIXUP_SECTOR_BYTES + FIXUP_SECTOR_BYTES - 2;
-    if (view.getUint16(trailerOffset, true) !== sequenceNumber)
+    if (reader.u16(trailerOffset) !== sequenceNumber)
       return {
         sequenceNumber,
         entries: usaCount,

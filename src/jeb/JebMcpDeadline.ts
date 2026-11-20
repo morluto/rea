@@ -1,7 +1,8 @@
 import { SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisTimeoutError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { currentAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
@@ -43,7 +44,16 @@ export const jebMcpTimeoutGuidance = (
   };
 };
 
-/** SDK 2.3.1 preserves an SdkError abort reason by identity. */
+/** Who interrupted a JEB MCP phase before its deadline elapsed. */
+export type JebMcpCancellation = "caller" | "owner";
+
+/**
+ * One JEB MCP phase's deadline. It reports its own interruption when it
+ * aborts: a timeout when its budget elapsed, otherwise a cancellation by the
+ * caller's or the connection owner's signal. SDK 2.3.1 rejects an aborted
+ * request with an `SdkError` abort reason by identity, so that identity maps
+ * back to the report.
+ */
 export class JebMcpDeadline {
   readonly #deadline: ProviderStartupDeadline;
   readonly #controller = new AbortController();
@@ -51,15 +61,44 @@ export class JebMcpDeadline {
     SdkErrorCode.RequestTimeout,
     "JEB MCP interrupted",
   );
-  readonly #onAbort = (): void => this.#controller.abort(this.#interruption);
+  readonly #caller: AbortSignal | undefined;
+  #reported: AnalysisError | undefined;
+  #cancelledBy: JebMcpCancellation | undefined;
+  readonly #onAbort = (): void => {
+    if (this.#deadline.interruption === "timeout")
+      this.#reported = this.#timeout(this.#deadline.signal.reason);
+    else {
+      // The caller's own signal decides whose cancellation this is.
+      this.#cancelledBy = this.#caller?.aborted === true ? "caller" : "owner";
+      this.#reported = cancelledBy(this.operation, this.#deadline.signal);
+    }
+    this.#controller.abort(this.#interruption);
+  };
+
+  readonly timeoutMs: number;
+  readonly source: JebMcpTimeoutSource;
 
   constructor(
-    readonly timeoutMs: number,
-    signal?: AbortSignal,
-    readonly phase: JebMcpDeadlinePhase = "tools/call",
-    readonly source: JebMcpTimeoutSource = "default",
+    selected: ReturnType<typeof selectedJebMcpTimeout>,
+    readonly phase: JebMcpDeadlinePhase,
+    /** The phase operation its interruption is reported under. */
+    readonly operation: string,
+    signals: {
+      /** The caller's cancellation, when the phase has its own caller. */
+      readonly caller?: AbortSignal | undefined;
+      /** The connection owner's invalidation or close. */
+      readonly owner: AbortSignal;
+    },
   ) {
-    this.#deadline = new ProviderStartupDeadline(timeoutMs, signal);
+    this.timeoutMs = selected.ms;
+    this.source = selected.source;
+    this.#caller = signals.caller;
+    this.#deadline = new ProviderStartupDeadline(
+      selected.ms,
+      signals.caller === undefined
+        ? signals.owner
+        : AbortSignal.any([signals.caller, signals.owner]),
+    );
     if (this.#deadline.signal.aborted) this.#onAbort();
     else
       this.#deadline.signal.addEventListener("abort", this.#onAbort, {
@@ -73,25 +112,28 @@ export class JebMcpDeadline {
   remainingMs(): number {
     return this.#deadline.remainingMs();
   }
+  /** Whose signal cancelled this phase; undefined unless one did. */
+  get cancelledBy(): JebMcpCancellation | undefined {
+    return this.#cancelledBy;
+  }
 
-  /** Classify only the rejection produced by this deadline's exact abort. */
-  failure(operation: string, cause: unknown): unknown {
-    if (cause === this.#interruption) {
-      return this.#deadline.interruption === "timeout"
-        ? new AnalysisTimeoutError(operation, this.timeoutMs, {
-            cause: this.#deadline.signal.reason,
-            ...jebMcpTimeoutGuidance(this.phase, this.timeoutMs, this.source),
-          })
-        : new AnalysisCancelledError(operation, {
-            cause: this.#deadline.signal.reason,
-          });
-    }
-    if (cause instanceof SdkError && cause.code === SdkErrorCode.RequestTimeout)
-      return new AnalysisTimeoutError(operation, this.timeoutMs, {
-        cause,
-        ...jebMcpTimeoutGuidance(this.phase, this.timeoutMs, this.source),
-      });
-    return cause;
+  #timeout(cause: unknown): AnalysisTimeoutError {
+    return new AnalysisTimeoutError(this.operation, this.timeoutMs, {
+      cause,
+      ...jebMcpTimeoutGuidance(this.phase, this.timeoutMs, this.source),
+    });
+  }
+
+  /**
+   * This deadline's own report for an SDK rejection it caused: its recorded
+   * interruption, or the SDK's request timeout under this deadline's budget.
+   * Undefined for any other SDK failure.
+   */
+  interruption(rejection: SdkError): AnalysisError | undefined {
+    if (rejection === this.#interruption) return this.#reported;
+    if (rejection.code === SdkErrorCode.RequestTimeout)
+      return this.#timeout(rejection);
+    return undefined;
   }
 
   dispose(): void {

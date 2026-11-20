@@ -115,11 +115,11 @@ after it:
 - A binary entry fails `value_equals null` and `value_absent` into its view in
   both evaluators, its `size` still checked, and the draft suggests no absence
   in an entry that ends binary.
-- REA's own depth check (`deeperThan`, from the state view) also holds one
-  iterator per level: on 800,000 nulls it grows the heap by 7.3 MB of
-  short-lived iterator results, against 72.7 MB when it queued a pair per
-  member, and runs under an 18 MiB old-space limit where the queue needed more
-  than 64 MiB. A test runs it under a 32 MiB limit.
+- REA's shared JSON depth check also holds one iterator per level: on 800,000
+  nulls it grows the heap by 7.3 MB of short-lived iterator results, against
+  72.7 MB when it queued a pair per member, and runs under an 18 MiB old-space
+  limit where the queue needed more than 64 MiB. A test runs it under a 32 MiB
+  limit.
 - The exported reader reads an entry in 64 KiB chunks up to a byte past its
   declared size: a 32,731-byte archive holding 32 MiB of zeros declared as one
   byte peaks at 0.1 MiB of traced allocations, against 77.5 MiB when it read

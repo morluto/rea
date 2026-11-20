@@ -5,7 +5,7 @@ import { expect, it } from "vitest";
 import { LocalWebSourceLocationArtifacts } from "../../../src/browser/assets/WebSourceLocationArtifacts.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { ok } from "../../../src/domain/result.js";
-import { WEB_SOURCE_MAP_LIMITS } from "../../../src/domain/webSourceLocation.js";
+import { WEB_SOURCE_MAP_LIMITS } from "../../../src/domain/sourceMapLimits.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   webSourceLocationArgs,

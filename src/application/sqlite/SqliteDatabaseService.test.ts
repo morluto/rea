@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import { SqliteDatabaseService } from "./SqliteDatabaseService.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 import { err, ok } from "../../domain/result.js";
-import { createAnalysisExecution } from "../AnalysisProvider.js";
+import { createAnalysisExecution } from "../../ports/AnalysisProvider.js";
 import { sqliteDatabaseSchema } from "../../domain/sqlite/sqliteDatabase.js";
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 
@@ -177,10 +177,11 @@ it("accepts sqlite_schema rows without requiring a fabricated declaration", asyn
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
 });
 
-it("parses historical report omissions as unknown without supplying a default", () => {
+// Evidence format 1 requires the reported worker deadline; a report from an
+// earlier format is refused rather than read as unknown.
+it("refuses a report without its worker deadline", () => {
   const { worker_timeout_ms: _default, ...historical } = fixture();
-  const parsed = sqliteDatabaseSchema.parse(historical);
-  expect(parsed).not.toHaveProperty("worker_timeout_ms");
+  expect(sqliteDatabaseSchema.safeParse(historical).success).toBe(false);
 });
 
 it("preserves producer failures and rejects pre-cancelled requests before effects", async () => {
@@ -282,7 +283,7 @@ it.each([false, true])(
       confidence: "observed",
       subject: {
         local_path: "/selected.db",
-        digest: { sha256: "a".repeat(64) },
+        identity: { sha256: "a".repeat(64) },
       },
       normalized_result: value,
       analysis_profile: profile,

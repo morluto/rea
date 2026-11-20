@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   heldOpenLimitation,
@@ -96,7 +96,7 @@ describe("unownedChangedFolders", () => {
     expect(unownedFoldersLimitation([])).toBeUndefined();
   });
 
-  it("collapses tens of thousands of separate folders in time that grows with their number, not its square", () => {
+  it("collapses tens of thousands of separate folders with work that grows with their number, not its square", () => {
     const count = 20_000;
     const files = new Map<string, DesktopStatePath>();
     for (let n = 0; n < count; n += 1)
@@ -106,17 +106,39 @@ describe("unownedChangedFolders", () => {
     files.set("Projects/p1-old/notes.txt", file("unrelated"));
     files.set("Owned/a.txt", file("document"));
 
-    const started = performance.now();
-    const folders = unownedChangedFolders(files, ["Owned/b"]);
-    const elapsedMs = performance.now() - started;
+    // A path is compared with the folders it lies in, by lookup or prefix:
+    // a few comparisons per path and folder level. Comparing each folder with
+    // every other makes count^2 of them; the spies stop such a walk at the
+    // bound instead of letting it run on.
+    const allowed = 24 * files.size;
+    let comparisons = 0;
+    const counted = (original: (...args: never[]) => unknown) =>
+      function (this: unknown, ...args: never[]) {
+        if (++comparisons > allowed)
+          throw new Error("folders compared pairwise");
+        return original.apply(this, args);
+      } as never;
+    const { has } = Set.prototype;
+    const { startsWith } = String.prototype;
+    const spies = [
+      vi.spyOn(Set.prototype, "has").mockImplementation(counted(has)),
+      vi
+        .spyOn(String.prototype, "startsWith")
+        .mockImplementation(counted(startsWith)),
+    ];
+    let folders: readonly string[];
+    try {
+      folders = unownedChangedFolders(files, ["Owned/b"]);
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
 
+    expect(comparisons).toBeLessThanOrEqual(allowed);
     expect(folders).toHaveLength(count + 2);
     expect(folders).toEqual(
       expect.arrayContaining(["Projects/p1", "Projects/p1-old", "Owned/a.txt"]),
     );
     expect(folders).not.toContain("Projects/p1/sub");
-    // Comparing each folder with every other took tens of seconds at this count.
-    expect(elapsedMs).toBeLessThan(2_000);
   });
 });
 
@@ -369,4 +391,20 @@ describe("runtimeSeeds", () => {
       },
     ]);
   });
+});
+
+it.each([
+  [
+    "Documents/quarter\nreport.gnucash",
+    "Documents/quarter\nreport.gnucash.LCK",
+  ],
+  ["Documents/quarter\nreport.gsb", "Documents/.quarter\nreport.gsb.lock"],
+  ["Documents/quarter\nreport.vym", "Documents/quarter\nreport.vym.lock"],
+])("identifies a sibling document lock for %j", (document, lock) => {
+  expect(isLockFile(lock, [], new Set([document]))).toBe(true);
+  expect(isLockFile(lock, [], new Set())).toBe(false);
+});
+
+it("recognizes a LibreOffice lock whose document name contains a line break", () => {
+  expect(isLockFile("Documents/.~lock.quarter\nreport.ods#", [])).toBe(true);
 });

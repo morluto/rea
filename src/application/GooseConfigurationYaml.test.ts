@@ -4,7 +4,6 @@ import { parseDocument } from "yaml";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import {
   editGooseConfigurationYaml,
-  GooseConfigurationYamlError,
   parseGooseConfigurationYaml,
   stringifyGooseConfigurationYaml,
 } from "./GooseConfigurationYaml.js";
@@ -18,6 +17,123 @@ const extension = {
   enabled: true,
   timeout: 300,
 };
+
+describe("Goose YAML source key retention", () => {
+  it("updates and removes an extension selected through aliased path keys", () => {
+    const source =
+      "table: &table extensions\nname: &name rea\n? *table\n:\n  ? *name\n  : {cmd: old, type: stdio}\n";
+    const updated = editGooseConfigurationYaml(source, ["extensions", "rea"], {
+      cmd: "rea",
+      type: "stdio",
+    });
+    expect(updated).toContain("*table");
+    expect(updated).toContain("*name");
+    expect(parseGooseConfigurationYaml(updated)).toMatchObject({
+      extensions: { rea: { cmd: "rea", type: "stdio" } },
+    });
+    const removed = editGooseConfigurationYaml(
+      updated,
+      ["extensions", "rea"],
+      undefined,
+    );
+    expect(removed).not.toContain("*name");
+    expect(parseGooseConfigurationYaml(removed)).toMatchObject({
+      extensions: {},
+    });
+    const ambiguous =
+      "name: &name rea\nextensions:\n  ? *name\n  : {cmd: first}\n  rea: {cmd: second}\n";
+    expect(() =>
+      editGooseConfigurationYaml(ambiguous, ["extensions", "rea"], {
+        cmd: "rea",
+      }),
+    ).toThrow(/more than one key resolving to "rea"/);
+  });
+
+  it("retains a collection mapping key when an adjacent field changes", () => {
+    const source =
+      "extensions:\n  rea:\n    cmd: old\n    ? [one, two]\n    : retained\n";
+    const parsed = parseGooseConfigurationYaml(source) as {
+      extensions: { rea: Record<string, unknown> };
+    };
+    const updated = editGooseConfigurationYaml(source, ["extensions", "rea"], {
+      ...parsed.extensions.rea,
+      cmd: "rea",
+    });
+    const document = parseDocument(updated);
+    expect(document.errors).toEqual([]);
+    const native = document.toJS({ mapAsMap: true }) as Map<string, unknown>;
+    const extensions = native.get("extensions") as Map<string, unknown>;
+    const entry = extensions.get("rea") as Map<unknown, unknown>;
+    expect([...entry.entries()]).toContainEqual([["one", "two"], "retained"]);
+    expect(entry.get("cmd")).toBe("rea");
+  });
+
+  it("retains an aliased mapping key when an adjacent launcher field changes", () => {
+    const source =
+      'label: &label 1\nextensions:\n  rea:\n    cmd: old\n    ? *label\n    : numeric\n    "1": string\n';
+    const parsed = parseGooseConfigurationYaml(source) as {
+      extensions: { rea: Record<string, unknown> };
+    };
+    const updated = editGooseConfigurationYaml(source, ["extensions", "rea"], {
+      ...parsed.extensions.rea,
+      cmd: "rea",
+    });
+    expect(updated).toContain("*label");
+    expect(updated).toContain("numeric");
+    expect(updated).toContain('"1": string');
+  });
+
+  it("preserves the order of an anchor and a retained non-string key alias", () => {
+    const source =
+      'extensions:\n  rea:\n    cmd: old\n    shared: &seed value\n    1: *seed\n    "1": string\n';
+    const parsed = parseGooseConfigurationYaml(source) as {
+      extensions: { rea: Record<string, unknown> };
+    };
+    const updated = editGooseConfigurationYaml(source, ["extensions", "rea"], {
+      ...parsed.extensions.rea,
+      cmd: "rea",
+    });
+    expect(updated.indexOf("&seed")).toBeLessThan(updated.indexOf("*seed"));
+    expect(parseGooseConfigurationYaml(updated)).toMatchObject({
+      extensions: { rea: { shared: "value", cmd: "rea" } },
+    });
+  });
+
+  it("retains distinct keys beside an edited field and rejects an ambiguous edit", () => {
+    const source =
+      'extensions:\n  rea:\n    cmd: old\n    1: numeric\n    "1": string\n';
+    const parsed = parseGooseConfigurationYaml(source) as {
+      extensions: { rea: Record<string, unknown> };
+    };
+    const entry = parsed.extensions.rea;
+    const updated = editGooseConfigurationYaml(source, ["extensions", "rea"], {
+      ...entry,
+      cmd: "rea",
+    });
+    expect(updated).toContain('    1: numeric\n    "1": string');
+    expect(updated).toContain("cmd: rea");
+    expect(() =>
+      editGooseConfigurationYaml(source, ["extensions", "rea"], {
+        ...entry,
+        "1": "changed",
+      }),
+    ).toThrow(/source identity is not a plain string key/);
+  });
+
+  it("keeps distinct native mapping keys in unchanged extension settings", () => {
+    const source =
+      'extensions:\n  rea:\n    cmd: old\n    metadata:\n      1: numeric\n      "1": string\n';
+    const parsed = parseGooseConfigurationYaml(source) as {
+      extensions: { rea: Record<string, unknown> };
+    };
+    const updated = editGooseConfigurationYaml(source, ["extensions", "rea"], {
+      ...parsed.extensions.rea,
+      cmd: "rea",
+    });
+    expect(updated).toContain('      1: numeric\n      "1": string');
+    expect(updated).toContain("cmd: rea");
+  });
+});
 
 describe("Goose YAML 1.2 source facts", () => {
   it("keeps native strings and exact large integer facts distinct", () => {
@@ -111,11 +227,15 @@ describe("Goose YAML 1.2 source facts", () => {
       } catch (cause: unknown) {
         failure = cause;
       }
-      expect(failure).toBeInstanceOf(GooseConfigurationYamlError);
+      expect(failure).toBeInstanceOf(ConfigurationError);
       expect(failure).toMatchObject({ kind: "shadowed_member", path });
+      expect(failure).toHaveProperty(
+        "message",
+        `Goose YAML contains a duplicate mapping member at ${path.join(".")}`,
+      );
       expect(() =>
         editGooseConfigurationYaml(source, ["extensions", "rea"], extension),
-      ).toThrow(GooseConfigurationYamlError);
+      ).toThrow(`duplicate mapping member at ${path.join(".")}`);
     },
   );
 
@@ -340,4 +460,46 @@ describe("pinned Goose serde_yaml scalar resolution", () => {
       expect(() => parseGooseConfigurationYaml(`value: ${source}\n`)).toThrow();
     },
   );
+});
+
+it("materializes an alias whose sibling anchor the refresh replaces", () => {
+  const source =
+    "extensions:\n  rea:\n    cmd: &launcher /old/rea\n    envs: {REA_LAUNCHER: *launcher}\n";
+  const out = editGooseConfigurationYaml(source, ["extensions", "rea"], {
+    cmd: "/new/rea",
+    envs: { REA_LAUNCHER: "/old/rea" },
+  });
+  expect(parseGooseConfigurationYaml(out)).toMatchObject({
+    extensions: {
+      rea: { cmd: "/new/rea", envs: { REA_LAUNCHER: "/old/rea" } },
+    },
+  });
+});
+
+it("edits a field whose key is an alias to a shared string, keeping the alias", () => {
+  const source =
+    "field: &field envs\nextensions:\n  rea:\n    cmd: rea\n    *field : {A: '1'}\n";
+  const out = editGooseConfigurationYaml(source, ["extensions", "rea"], {
+    cmd: "rea",
+    envs: { A: "2" },
+  });
+  expect(out).toContain("*field");
+  expect(parseGooseConfigurationYaml(out)).toMatchObject({
+    field: "envs",
+    extensions: { rea: { cmd: "rea", envs: { A: "2" } } },
+  });
+});
+
+it("keeps an anchored value with an aliased key ahead of its later aliases", () => {
+  const source =
+    "field: &field envs\nextensions:\n  rea:\n    cmd: old\n    *field : &settings {A: '1'}\n    1: *settings\n    \"1\": string\n";
+  const out = editGooseConfigurationYaml(source, ["extensions", "rea"], {
+    cmd: "new",
+    envs: { A: "1" },
+    1: "string",
+  });
+  expect(out.indexOf("&settings")).toBeLessThan(out.indexOf("*settings"));
+  expect(parseGooseConfigurationYaml(out)).toMatchObject({
+    extensions: { rea: { cmd: "new", envs: { A: "1" } } },
+  });
 });

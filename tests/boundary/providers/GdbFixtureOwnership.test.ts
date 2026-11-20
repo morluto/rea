@@ -36,6 +36,13 @@ it.skipIf(process.platform === "win32")(
       runId: randomUUID(),
       stdin: "pipe",
     });
+    // Independent backstop keeps a broken ownership mutation from leaking its
+    // child. Supervise from launch: a supervisor attached after the child closed
+    // never observes that close and waits out the output-close grace.
+    const safety = new ProviderProcessSupervisor(
+      { ...launched, ownsProcessLifetime: true },
+      { captureStdout: false, maxDiagnosticBytes: 0 },
+    );
     const managers = [
       {
         closeAll: async () => {
@@ -73,11 +80,6 @@ it.skipIf(process.platform === "win32")(
       await expect(access(provider)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       refused = false;
-      // Independent backstop keeps a broken ownership mutation from leaking its child.
-      const safety = new ProviderProcessSupervisor(
-        { ...launched, ownsProcessLifetime: true },
-        { captureStdout: false, maxDiagnosticBytes: 0 },
-      );
       expect((await safety.stop()).status).not.toBe("incomplete");
       await fixture.cleanup(managers, remove);
     }

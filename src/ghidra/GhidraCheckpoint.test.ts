@@ -1,8 +1,8 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import {
   chmod,
   access,
-  mkdtemp,
   mkdir,
   readFile,
   writeFile,
@@ -11,9 +11,8 @@ import {
   symlink,
   type FileHandle,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import { acquireOwnedLease } from "../process/OwnedLease.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
@@ -45,7 +44,6 @@ vi.mock("../process/OwnedLease.js", async (importOriginal) => {
   return { ...actual, acquireOwnedLease: vi.fn(actual.acquireOwnedLease) };
 });
 
-const roots: string[] = [];
 const owners: GhidraCheckpoint[] = [];
 afterEach(async () => {
   controls.file = undefined;
@@ -63,8 +61,6 @@ afterEach(async () => {
   vi.mocked(rm).mockReset().mockImplementation(actual.rm);
   vi.mocked(rename).mockReset().mockImplementation(actual.rename);
   for (const owner of owners.splice(0)) await owner.close();
-  for (const root of roots.splice(0))
-    await rm(root, { recursive: true, force: true });
 });
 
 it.skipIf(process.platform === "win32")(
@@ -113,8 +109,7 @@ const profile = createAnalysisProfile(
 );
 const target = "1".repeat(64);
 async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), "rea-checkpoint-test-"));
-  roots.push(root);
+  const root = await createTestTempDirectory("rea-checkpoint-test-");
   const resources = new ArtifactResourceScope();
   const selection = await resolveGhidraCheckpoint(
     root,
@@ -273,7 +268,7 @@ it.skipIf(process.platform === "win32")(
 );
 
 it.skipIf(process.platform === "win32")(
-  "keeps initial identity stable and retains legacy data without guessing its origin",
+  "keeps initial identity stable and rejects an unknown manifest version without rewriting it",
   async () => {
     const f = await fixture();
     await f.owner.acquire("initial");
@@ -290,29 +285,12 @@ it.skipIf(process.platform === "win32")(
     const record = JSON.parse(await readFile(path, "utf8"));
     expect(record.version).toBe(2);
     expect(record.source.kind).toBe("initial-analysis");
-    const legacy = {
-      ...record,
-      version: 1,
-      source: { file: record.source.file, sha256: record.source.sha256 },
-    };
-    await writeFile(path, JSON.stringify(legacy));
-    const selected = await resolveGhidraCheckpoint(
-      f.root,
-      target,
-      profile,
-      f.resources,
-    );
-    expect(selected.state).toEqual({
-      kind: "retained",
-      sha256: record.source.sha256,
-    });
-    const resumed = new GhidraCheckpoint(selected, f.resources);
-    owners.push(resumed);
-    expect((await resumed.acquire("legacy"))?.sha256).toBe(
-      record.source.sha256,
-    );
-    await resumed.close();
-    expect(JSON.parse(await readFile(path, "utf8"))).toEqual(legacy);
+    const unknown = JSON.stringify({ ...record, version: 1 });
+    await writeFile(path, unknown);
+    await expect(
+      resolveGhidraCheckpoint(f.root, target, profile, f.resources),
+    ).rejects.toThrow(/manifest is malformed/);
+    expect(await readFile(path, "utf8")).toBe(unknown);
   },
 );
 

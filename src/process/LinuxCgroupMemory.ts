@@ -1,5 +1,12 @@
 import { open } from "node:fs/promises";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { posix } from "node:path";
+import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import {
+  RegularFileCleanupFailure,
+  withOwnedFileHandle,
+} from "../filesystem/OwnedRegularFile.js";
 
 /** Memory facts for the cgroup v2 group that holds this process. */
 export interface LinuxCgroupMemoryState {
@@ -30,16 +37,25 @@ const KERNEL_FILE_BYTES = 16 * 1024;
 /** Hosts with many container layers publish long mount tables. */
 const MOUNT_INFO_BYTES = 4 * 1024 * 1024;
 
+/** Decode only a selected path field, retaining literal U+FFFD as data. */
+const decodeKernelPath = (raw: string): string | undefined => {
+  try {
+    return decodeStrictUtf8(Buffer.from(raw, "latin1"), "preserve");
+  } catch {
+    return undefined;
+  }
+};
+
 /** Read the single cgroup v2 (`0::`) row of one `/proc/<pid>/cgroup` record. */
-const parseLinuxCgroupV2Path = (value: string): string | undefined => {
+const parseLinuxCgroupV2Path = (value: Buffer): string | undefined => {
   let path: string | undefined;
-  for (const line of value.split("\n")) {
+  for (const line of value.toString("latin1").split("\n")) {
     if (!line.startsWith("0::")) continue;
     if (path !== undefined) return undefined;
     path = line.slice(3);
   }
   if (path === undefined || !path.startsWith("/")) return undefined;
-  return path.split("/").includes("..") ? undefined : path;
+  return path.split("/").includes("..") ? undefined : decodeKernelPath(path);
 };
 
 /** Read the single `oom_kill` counter of one cgroup v2 `memory.events` file. */
@@ -72,23 +88,33 @@ const mountInfoField = (value: string): string =>
   );
 
 /** List the cgroup2 mounts of one `/proc/<pid>/mountinfo` record. */
-const parseLinuxCgroup2Mounts = (value: string): readonly LinuxCgroup2Mount[] =>
-  value.split("\n").flatMap((line) => {
-    const fields = line.split(" ");
-    const separator = fields.indexOf("-");
-    const root = fields[3];
-    const mountPoint = fields[4];
-    if (
-      separator < 6 ||
-      fields[separator + 1] !== "cgroup2" ||
-      root === undefined ||
-      mountPoint === undefined
-    )
-      return [];
-    return [
-      { root: mountInfoField(root), mountPoint: mountInfoField(mountPoint) },
-    ];
-  });
+const parseLinuxCgroup2Mounts = (value: Buffer): readonly LinuxCgroup2Mount[] =>
+  value
+    .toString("latin1")
+    .split("\n")
+    .flatMap((line) => {
+      const fields = line.split(" ");
+      const separator = fields.indexOf("-");
+      const root = fields[3];
+      const mountPoint = fields[4];
+      if (
+        separator < 6 ||
+        fields[separator + 1] !== "cgroup2" ||
+        root === undefined ||
+        mountPoint === undefined
+      )
+        return [];
+      const decodedRoot = decodeKernelPath(root);
+      const decodedMountPoint = decodeKernelPath(mountPoint);
+      return decodedRoot === undefined || decodedMountPoint === undefined
+        ? []
+        : [
+            {
+              root: mountInfoField(decodedRoot),
+              mountPoint: mountInfoField(decodedMountPoint),
+            },
+          ];
+    });
 
 /**
  * Locate a cgroup path below the mount whose root covers it most closely; a
@@ -131,11 +157,15 @@ export const readLinuxCgroupMemoryState = async (
     readonly platform?: NodeJS.Platform;
     readonly procCgroupPath?: string;
     readonly procMountInfoPath?: string;
+    readonly retainFailedClose?: (path: string, owner: OwnedFileHandle) => void;
   } = {},
 ): Promise<LinuxCgroupMemoryState | undefined> => {
-  if ((options.platform ?? process.platform) !== "linux") return undefined;
+  if ((options.platform ?? HOST_PLATFORM.platform) !== "linux")
+    return undefined;
   const membership = await readKernelFile(
     options.procCgroupPath ?? "/proc/self/cgroup",
+    undefined,
+    options.retainFailedClose,
   );
   const path =
     membership === undefined ? undefined : parseLinuxCgroupV2Path(membership);
@@ -143,22 +173,35 @@ export const readLinuxCgroupMemoryState = async (
   const mountInfo = await readKernelFile(
     options.procMountInfoPath ?? "/proc/self/mountinfo",
     MOUNT_INFO_BYTES,
+    options.retainFailedClose,
   );
   const group =
     mountInfo === undefined
       ? undefined
       : linuxCgroupDirectory(parseLinuxCgroup2Mounts(mountInfo), path);
   if (group === undefined) return undefined;
-  const events = await readKernelFile(posix.join(group, "memory.events"));
+  const events = await readKernelFile(
+    posix.join(group, "memory.events"),
+    undefined,
+    options.retainFailedClose,
+  );
   const oomKills =
-    events === undefined ? undefined : parseLinuxCgroupOomKills(events);
+    events === undefined
+      ? undefined
+      : parseLinuxCgroupOomKills(events.toString("utf8"));
   if (oomKills === undefined) return undefined;
-  const limit = await readKernelFile(posix.join(group, "memory.max"));
+  const limit = await readKernelFile(
+    posix.join(group, "memory.max"),
+    undefined,
+    options.retainFailedClose,
+  );
   return {
     path,
     oomKills,
     memoryMax:
-      limit === undefined ? null : (parseLinuxCgroupMemoryMax(limit) ?? null),
+      limit === undefined
+        ? null
+        : (parseLinuxCgroupMemoryMax(limit.toString("utf8")) ?? null),
   };
 };
 
@@ -169,28 +212,38 @@ export const readLinuxCgroupMemoryState = async (
 const readKernelFile = async (
   path: string,
   maxBytes = KERNEL_FILE_BYTES,
-): Promise<string | undefined> => {
+  retainFailedClose?: (path: string, owner: OwnedFileHandle) => void,
+): Promise<Buffer | undefined> => {
   try {
-    const handle = await open(path, "r");
-    try {
-      const buffer = Buffer.alloc(maxBytes + 1);
-      let length = 0;
-      for (;;) {
-        const { bytesRead } = await handle.read(
-          buffer,
-          length,
-          buffer.length - length,
-          null,
-        );
-        if (bytesRead === 0) break;
-        length += bytesRead;
-        if (length > maxBytes) return undefined;
-      }
-      return buffer.subarray(0, length).toString("utf8");
-    } finally {
-      await handle.close();
-    }
-  } catch {
+    return await withOwnedFileHandle(
+      path,
+      new OwnedFileHandle(await open(path, "r")),
+      retainFailedClose === undefined
+        ? {}
+        : { retainFailedClose: (owner) => retainFailedClose(path, owner) },
+      async (handle) => {
+        const buffer = Buffer.alloc(maxBytes + 1);
+        let length = 0;
+        for (;;) {
+          const { bytesRead } = await handle.read(
+            buffer,
+            length,
+            buffer.length - length,
+            null,
+          );
+          if (bytesRead === 0) break;
+          length += bytesRead;
+          if (length > maxBytes) return undefined;
+        }
+        return buffer.subarray(0, length);
+      },
+    );
+  } catch (cause: unknown) {
+    if (
+      cause instanceof RegularFileCleanupFailure &&
+      cause.retention.kind !== "callback_returned"
+    )
+      throw cause;
     return undefined;
   }
 };

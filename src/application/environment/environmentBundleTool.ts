@@ -1,6 +1,8 @@
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
-import { outputDirectoryAdmissionRefusal } from "../../artifacts/SafeOutputTreeAdmission.js";
+import {
+  SafeOutputTree,
+  outputDirectoryAdmissionRefusal,
+} from "../../resources/index.js";
 import type {
   EnvironmentBuildReport,
   ExportEnvironmentBundleInput,

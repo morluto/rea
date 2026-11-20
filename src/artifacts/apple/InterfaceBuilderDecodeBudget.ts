@@ -1,67 +1,58 @@
-/** Reason reported when an archive would exceed the shared decoding budget. */
-export type InterfaceBuilderBudgetReason = "aggregate_decode_budget_exhausted";
+import { Budget } from "../../domain/budget.js";
+import {
+  decodeLimit,
+  type ParseFailureError,
+} from "../../domain/parseFailure.js";
 
-/** A named resource-limit failure that keeps budget exhaustion out of decode errors. */
-export class InterfaceBuilderDecodeBudgetExceeded extends Error {
-  constructor(
-    readonly reason: InterfaceBuilderBudgetReason,
-    message: string,
-  ) {
-    super(message);
-    this.name = "InterfaceBuilderDecodeBudgetExceeded";
-  }
-}
+/** Limit name of the shared Interface Builder representation byte budget. */
+const AGGREGATE_DECODE_LIMIT = "aggregate-decode-bytes";
 
-/** Map shared plist preflight limits to Interface Builder's public reason. */
-export const interfaceBuilderDecodeBudgetFailure = (
-  _kind: "cycle" | "depth" | "expansion",
-  message: string,
-): Error =>
-  new InterfaceBuilderDecodeBudgetExceeded(
-    "aggregate_decode_budget_exhausted",
-    message,
-  );
+/**
+ * An archive would exceed the shared decoding budget of `maximumBytes`. The
+ * archive is omitted, not shown to be malformed.
+ */
+export const interfaceBuilderDecodeBudgetExceeded = (
+  format: string,
+  detail: string,
+  maximumBytes: number,
+): ParseFailureError<"limit"> =>
+  decodeLimit(format, detail, {
+    name: AGGREGATE_DECODE_LIMIT,
+    maximum: maximumBytes,
+  });
 
 /** Shared byte budget for decoder records and projected archive data. */
 export class InterfaceBuilderDecodeBudget {
-  readonly #initialBytes: number;
-  #remainingBytes: number;
+  readonly #bytes: Budget;
 
   constructor(maxBytes: number) {
-    this.#initialBytes = maxBytes;
-    this.#remainingBytes = maxBytes;
+    this.#bytes = new Budget(maxBytes);
   }
 
   /** Representation bytes still available for the current inspection. */
   get remainingBytes(): number {
-    return this.#remainingBytes;
+    return this.#bytes.remaining;
   }
 
   /** Representation bytes reserved so far. */
   get usedBytes(): number {
-    return this.#initialBytes - this.#remainingBytes;
+    return this.#bytes.used;
   }
 
   /** Reserve representation bytes before allocation, or report exhaustion. */
   reserve(bytes: number, message: string): void {
-    if (
-      !Number.isSafeInteger(bytes) ||
-      bytes < 0 ||
-      bytes > this.#remainingBytes
-    )
-      throw new InterfaceBuilderDecodeBudgetExceeded(
-        "aggregate_decode_budget_exhausted",
+    this.#bytes.charge(bytes, () =>
+      interfaceBuilderDecodeBudgetExceeded(
+        "interface-builder",
         message,
-      );
-    this.#remainingBytes -= bytes;
+        this.#bytes.maximum,
+      ),
+    );
   }
 
   /** Return a reservation whose representation was rejected and not retained. */
   release(bytes: number): void {
-    this.#remainingBytes = Math.min(
-      this.#initialBytes,
-      this.#remainingBytes + bytes,
-    );
+    this.#bytes.refund(bytes);
   }
 
   /** Reserve an upper bound for one JSON-serialized string occurrence. */
@@ -93,13 +84,6 @@ export class InterfaceBuilderDecodeBudget {
 
   /** Reserve bytes for an optional projection without throwing on exhaustion. */
   tryReserve(bytes: number): boolean {
-    if (
-      !Number.isSafeInteger(bytes) ||
-      bytes < 0 ||
-      bytes > this.#remainingBytes
-    )
-      return false;
-    this.#remainingBytes -= bytes;
-    return true;
+    return this.#bytes.tryCharge(bytes);
   }
 }

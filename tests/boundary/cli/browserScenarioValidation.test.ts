@@ -1,7 +1,7 @@
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { Cli } from "incur";
 import pino from "pino";
 import { expect, it, vi } from "vitest";
 
@@ -30,7 +30,7 @@ const serveJson = async (
 
 /** Register only the scenario commands, with a provider that must never run. */
 const registerValidatingCli = () => {
-  const cli = Cli.create("rea-scenario-validation-test", { sync: false });
+  const cli = createCommandCli();
   const createProvider = vi.fn((): never => {
     throw new Error("validation must not construct a browser provider");
   });
@@ -240,27 +240,6 @@ it("rejects an unknown field instead of ignoring it", async () => {
   });
 });
 
-it("rejects a scenario whose input file cannot be read", async () => {
-  const cli = registerValidatingCli();
-  let stdout = "";
-  await cli.cli.serve(
-    ["validate-browser-scenario", "missing-scenario.json", "--json"],
-    {
-      env: {},
-      stdout: (text) => {
-        stdout += text;
-      },
-      exit: () => undefined,
-    },
-  );
-  expect(cli.createProvider).not.toHaveBeenCalled();
-  expect(cli.readSecret).not.toHaveBeenCalled();
-  expect(JSON.parse(stdout) as unknown).toMatchObject({
-    input_path: "missing-scenario.json",
-    input_reason: "read-failed",
-  });
-});
-
 it("accepts a disconnected CDP target without constructing a provider", async () => {
   expect(
     await serveJson(registerValidatingCli(), "validate-browser-scenario", {
@@ -389,7 +368,8 @@ cliTest(
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-scenario-validation-");
     const input = JSON.stringify(launchScenario);
-    await writeFile(join(root, "valid.json"), input);
+    const scenarioPaths = ["[scenario].json", "{scenario}.json"];
+    for (const path of scenarioPaths) await writeFile(join(root, path), input);
     await writeFile(
       join(root, "invalid.json"),
       JSON.stringify({
@@ -398,17 +378,25 @@ cliTest(
       }),
     );
     await writeFile(join(root, "malformed.json"), '{"private-value":');
-    for (const arguments_ of [
-      ["validate-browser-scenario", "valid.json", "--json"],
-      ["validate-browser-scenario", "-", "--json"],
-    ]) {
+    for (const path of [...scenarioPaths, "-"]) {
       const result = await cli.run({
-        arguments: arguments_,
+        arguments: ["validate-browser-scenario", path, "--json"],
         cwd: root,
-        ...(arguments_[1] === "-" ? { input } : {}),
+        ...(path === "-" ? { input } : {}),
       });
       expect(result.exitCode, result.stderr).toBe(0);
       expect(result.json).toEqual({ valid: true, actions: 1, secrets: 0 });
+    }
+    for (const path of ["[missing].json", "{missing}.json"]) {
+      const result = await cli.run({
+        arguments: ["validate-browser-scenario", path, "--json"],
+        cwd: root,
+      });
+      expect(result.exitCode, result.stderr).toBe(1);
+      expect(result.json).toMatchObject({
+        input_path: path,
+        input_reason: "read-failed",
+      });
     }
     const rejected = await cli.run({
       arguments: ["validate-browser-scenario", "invalid.json", "--json"],

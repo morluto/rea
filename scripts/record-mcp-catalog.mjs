@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 
 // Runtime discovery is generated from the same canonical registrations, after
-// default identity has been recorded and before bundling. Test catalogs stay separate.
+// default identity has been recorded and before bundling.
 const compiled = resolve(dirname(fileURLToPath(import.meta.url)), "../dist");
 const read = (name) => import(pathToFileURL(join(compiled, name)).href);
 const [
@@ -18,6 +18,8 @@ const [
   { TOOL_CONTRACTS },
   { getEvidenceInputContract },
   { toolOutputSchemaWithMetadata },
+  { toolFamilyId },
+  { requiredPromptTools },
 ] = await Promise.all([
   read("server/createServer.js"),
   read("composition/binary.js"),
@@ -27,12 +29,13 @@ const [
   read("contracts/toolContracts.js"),
   read("domain/evidenceInputContract.js"),
   read("contracts/toolSchemaMetadata.js"),
+  read("contracts/toolFamilies.js"),
+  read("contracts/promptToolFamilyScope.js"),
 ]);
-const recordCatalog = async (profile) => {
+const recordCatalog = async () => {
   // Catalog generation is independent of the host account and user configuration.
   const home = await mkdtemp(join(tmpdir(), "rea-mcp-catalog-"));
   const environment = {
-    REA_MCP_INPUT_SCHEMA_PROFILE: profile,
     HOME: home,
     USERPROFILE: home,
     XDG_CONFIG_HOME: join(home, "config"),
@@ -88,6 +91,20 @@ const recordCatalog = async (profile) => {
       instructions: client.getInstructions(),
       identity: server.catalogIdentity,
       tools,
+      toolFamilies: Object.fromEntries(
+        tools.map(({ name }) => {
+          const family = toolFamilyId(name);
+          if (family === undefined)
+            throw new Error(`Missing family for ${name}`);
+          return [name, family];
+        }),
+      ),
+      promptRequirements: Object.fromEntries(
+        PROMPT_CONTRACTS.map((contract) => [
+          contract.name,
+          requiredPromptTools(contract),
+        ]),
+      ),
       evidenceReferenceAlternatives: TOOL_CONTRACTS.filter(
         (contract) =>
           getEvidenceInputContract(contract.inputSchema)
@@ -97,13 +114,7 @@ const recordCatalog = async (profile) => {
     };
     const encoded = JSON.stringify(catalog);
     const digest = createHash("sha256").update(encoded).digest("hex");
-    await writeFile(
-      join(
-        compiled,
-        profile === "full" ? "mcp-catalog-full.json" : "mcp-catalog.json",
-      ),
-      encoded,
-    );
+    await writeFile(join(compiled, "mcp-catalog.json"), encoded);
     return digest;
   } catch (cause) {
     producerFailure = { cause };
@@ -132,10 +143,8 @@ const recordCatalog = async (profile) => {
   }
 };
 
-const digests = {};
-for (const profile of ["compact", "full"])
-  digests[profile] = await recordCatalog(profile);
+const digest = await recordCatalog();
 await writeFile(
   join(compiled, "recordedMcpCatalog.js"),
-  `/** Recorded from the compiled runtime; do not edit. */\nexport const RECORDED_MCP_CATALOG_SHA256 = ${JSON.stringify(digests)};\n`,
+  `/** Recorded from the compiled runtime; do not edit. */\nexport const RECORDED_MCP_CATALOG_SHA256 = ${JSON.stringify(digest)};\n`,
 );

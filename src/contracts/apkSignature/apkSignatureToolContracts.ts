@@ -4,15 +4,17 @@ import { inspectApkSignatureInputSchema } from "../../domain/apkSignature/apkSig
 import {
   apkSignaturePageViewResultSchema,
   apkSignatureSummaryViewResultSchema,
-} from "../../domain/analysisView/analysisView.js";
+} from "../../domain/analysisView/analysisViewResult.js";
 import type { ToolContract } from "../toolContractTypes.js";
-import { toolContractMetadata } from "../toolEffects.js";
+import { toolContractMetadata, evidenceEffects } from "../toolEffects.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 
 /** Static APK signature-scheme inspection of a selected local archive. */
 export const INSPECT_APK_SIGNATURE_CONTRACT = {
   name: "inspect_apk_signature",
-  ...toolContractMetadata("inspect_apk_signature"),
+  availability: "standalone",
+  cli: true,
+  ...toolContractMetadata("inspect_apk_signature", evidenceEffects),
   kind: "artifact-provider",
   requiresActiveTarget: true,
   description:

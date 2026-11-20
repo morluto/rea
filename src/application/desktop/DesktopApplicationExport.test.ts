@@ -1,6 +1,13 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, readFile, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  readFile,
+  realpath,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -8,9 +15,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
+import { SafeOutputTree } from "../../resources/SafeOutputTree.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
+import type { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
@@ -28,6 +35,7 @@ import type {
   DesktopApplicationCapture,
 } from "../../domain/desktop/desktopCapture.js";
 import { renderBuildBundle } from "../../domain/desktop/appBuild.js";
+import { parseOneLineSources } from "../../domain/desktop/aptRepositories.js";
 import { readDownloadInstall } from "./DesktopExportInstall.js";
 import { exportDesktopApplication } from "./DesktopApplicationExport.js";
 import {
@@ -286,6 +294,268 @@ describe("exportDesktopApplication", () => {
     expect(result.limitations.join("\n")).toContain("/media/usb");
   });
 });
+
+it.skipIf(process.platform === "win32")(
+  "replays a traversing launch root at the same path used for seed files and selected aliases",
+  async () => {
+    const home = await realpath(
+      await createTestTempDirectory("desktop-source-"),
+    );
+    const base = `${home}/profiles//current/..`;
+    const logical = `${base}/./notes`;
+    await mkdir(`${home}/profiles`);
+    await mkdir(`${home}/resolved/profile`, { recursive: true });
+    await mkdir(`${home}/resolved/notes`);
+    await symlink(`${home}/resolved/profile`, `${home}/profiles/current`);
+    const physical = await realpath(logical);
+    const settings = `${physical}/settings.ini`;
+    const text = "[ui]\nwrap=false\n";
+    await writeFile(settings, text);
+    const local = capture();
+    const { result, directory } = await exportCapture({
+      ...local,
+      host: { ...local.host, home },
+      application: {
+        ...local.application,
+        argv: [
+          "env",
+          `XDG_CONFIG_HOME=${base}`,
+          "MODE=dark",
+          "sh",
+          "-c",
+          'test "$MODE" = dark && test "$2" = --theme=dark && test "$3" = --line=10 && cat "$XDG_CONFIG_HOME/notes/settings.ini" "$1" "$4"',
+          "notes",
+          `${logical}/settings.ini`,
+          "--theme=dark",
+          "--line=10",
+          "settings.ini",
+        ],
+        working_directory: logical,
+        state_directories: [{ path: logical, exists_at_start: true }],
+      },
+      state: {
+        ...local.state,
+        roots: [home],
+        content_roots: [physical],
+        state_directories: [physical],
+        selected_paths: [
+          { path: `${home}/settings`, physical, kind: "directory" },
+        ],
+        checkpoints: [
+          checkpoint("baseline", "baseline", [], [retained(settings, text)]),
+        ],
+      },
+    });
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      paths: ["resolved/notes"],
+      seed_files: ["resolved/notes/settings.ini"],
+    });
+
+    const replay = await createTestTempDirectory("desktop-replay-");
+    const { stdout } = await execute("python3", [
+      "-I",
+      "-B",
+      "-c",
+      `import ast, subprocess, sys
+from pathlib import Path
+module = Path(sys.argv[1])
+home = Path(sys.argv[2])
+tree = ast.parse(module.read_text(encoding="utf-8"))
+launch = next(node for node in ast.walk(tree) if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "Launch")
+command = ast.literal_eval(next(key.value for key in launch.keywords if key.arg == "command"))
+tree.body = [node for node in tree.body
+             if not isinstance(node, ast.ClassDef)
+             and (not isinstance(node, ast.ImportFrom) or not node.module.startswith("agentenv_protocol"))]
+scope = {"__file__": str(module)}
+exec(compile(tree, str(module), "exec"), scope)
+scope["_seed_home"](home)
+scope["_ensure_state_aliases"](home)
+assert (home / "settings/settings.ini").read_bytes() == (home / "resolved/notes/settings.ini").read_bytes()
+assert not (home / "profiles").exists()
+subprocess.run(command, env={"HOME": str(home), "PATH": "/usr/bin:/bin"}, check=True)`,
+      join(directory, "envs/notes/notes_app.py"),
+      replay,
+    ]);
+    expect(stdout).toBe(text.repeat(3));
+  },
+);
+
+it.each([
+  { option: "--theme=dark/variant", refused: false },
+  { option: "--settings=dark", refused: true },
+])(
+  "requires observed path evidence before refusing $option",
+  async ({ option, refused }) => {
+    const local = capture();
+    const logical = `${HOME}/profiles/current/../notes`;
+    const physical = `${HOME}/resolved/notes`;
+    const external = "/mnt/shared/themes";
+    const { result, directory } = await exportCapture({
+      ...local,
+      application: {
+        ...local.application,
+        argv: ["notes", option, "settings.ini"],
+        working_directory: logical,
+        state_directories: [
+          { path: logical, exists_at_start: true },
+          { path: `${logical}/dark`, exists_at_start: true },
+        ],
+      },
+      state: {
+        ...local.state,
+        content_roots: [physical, external],
+        state_directories: [physical, external],
+        selected_paths: [],
+        checkpoints: [
+          checkpoint(
+            "baseline",
+            "baseline",
+            [],
+            [retained(`${physical}/settings.ini`, "[ui]\nwrap=false\n")],
+          ),
+        ],
+      },
+    });
+    if (refused) {
+      expect(result).toBeInstanceOf(AnalysisInputError);
+      expect(await exists(directory)).toBe(false);
+      return;
+    }
+    if (result instanceof Error) throw result;
+    const module = await readFile(
+      join(directory, "envs/notes/notes_app.py"),
+      "utf8",
+    );
+    const launch = module
+      .split("\n")
+      .find((line) => line.includes("launch=Launch("));
+    expect(launch).toContain(option);
+    expect(launch).toContain("resolved/notes/settings.ini");
+  },
+);
+
+it("writes portable seed names for state paths with empty or self-directory components", async () => {
+  const local = capture();
+  const physical = `${HOME}/.config/notes`;
+  const { result, directory } = await exportCapture({
+    ...local,
+    application: {
+      ...local.application,
+      state_directories: [
+        { path: `${HOME}/./.config//notes`, exists_at_start: true },
+      ],
+    },
+    state: {
+      ...local.state,
+      content_roots: [physical],
+      state_directories: [physical],
+      checkpoints: [
+        checkpoint(
+          "baseline",
+          "baseline",
+          [],
+          [retained(`${physical}/settings.ini`, "[ui]\nwrap=false\n")],
+        ),
+      ],
+    },
+  });
+  if (result instanceof Error) throw result;
+  expect(result.normalized_result).toMatchObject({
+    seed_files: [".config/notes/settings.ini"],
+  });
+  expect(
+    await readFile(
+      join(directory, "envs/notes/seed/.config/notes/settings.ini"),
+      "utf8",
+    ),
+  ).toBe("[ui]\nwrap=false\n");
+});
+
+it("refuses a traversing launch root with conflicting seed locations", async () => {
+  const local = capture();
+  const base = `${HOME}/profiles/current/..`;
+  const settings = [`${HOME}/first/notes`, `${HOME}/second/notesrc`];
+  const { result, directory } = await exportCapture({
+    ...local,
+    application: {
+      ...local.application,
+      argv: ["env", `XDG_CONFIG_HOME=${base}`, "notes"],
+      state_directories: [
+        { path: `${base}/notes`, exists_at_start: true },
+        { path: `${base}/notesrc`, exists_at_start: true },
+      ],
+    },
+    state: {
+      ...local.state,
+      content_roots: settings,
+      state_directories: settings,
+    },
+  });
+  expect(result).toBeInstanceOf(AnalysisInputError);
+  if (!(result instanceof AnalysisInputError))
+    throw new Error("expected export refusal");
+  expect(result.userMessage).toContain("do not agree on a replay location");
+  expect(await exists(directory)).toBe(false);
+});
+
+it.each(["file", "directory", "ancestor"] as const)(
+  "reconciles a traversing %s launch path with a separately selected seed",
+  async (kind) => {
+    const local = capture();
+    const base = `${HOME}/profiles/current/..`;
+    const logical = `${base}/notes`;
+    const physical = `${HOME}/resolved/notes`;
+    const settings = `${physical}/settings.ini`;
+    const selected = `${HOME}/Documents/settings.ini`;
+    const { result, directory } = await exportCapture({
+      ...local,
+      application: {
+        ...local.application,
+        argv:
+          kind === "file"
+            ? ["notes", `${logical}/settings.ini`]
+            : [
+                "env",
+                `XDG_CONFIG_HOME=${kind === "directory" ? logical : base}`,
+                "notes",
+              ],
+        state_directories: [{ path: logical, exists_at_start: true }],
+      },
+      state: {
+        ...local.state,
+        content_roots: [physical],
+        state_directories: [physical],
+        selected_paths: [{ path: selected, physical: settings, kind: "file" }],
+        checkpoints: [
+          checkpoint(
+            "baseline",
+            "baseline",
+            [],
+            [retained(settings, "[ui]\nwrap=false\n")],
+          ),
+        ],
+      },
+    });
+    if (kind !== "file") {
+      expect(result).toBeInstanceOf(AnalysisInputError);
+      expect(await exists(directory)).toBe(false);
+      return;
+    }
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      seed_files: ["Documents/settings.ini"],
+    });
+    const module = await readFile(
+      join(directory, "envs/notes/notes_app.py"),
+      "utf8",
+    );
+    const launch = module
+      .split("\n")
+      .find((line) => line.includes("launch=Launch("));
+    expect(launch).toContain("Documents/settings.ini");
+  },
+);
 
 it("seeds the app's state at its own path and retains a selected alias", async () => {
   const local = capture();
@@ -1316,6 +1586,43 @@ describe("exportDesktopApplication of a program in another package", () => {
   });
 });
 
+it("exports APT's architecture-independent package after all explicit architectures were removed", async () => {
+  const [entry] = parseOneLineSources(
+    "deb [arch=arm64 arch-=arm64] https://downloads.typora.io/linux ./",
+    "vendor.list",
+  );
+  if (entry === undefined) throw new Error("APT source did not parse");
+  expect(entry.architectures).toEqual(["all"]);
+  const recorded = vendorCapture(VERIFIED_KEY);
+  const installed = recorded.application.package;
+  const repositories = installed.apt_repositories?.map((repository) => ({
+    ...repository,
+    architectures: [...entry.architectures],
+  }));
+  const exportFor = (architecture: string) =>
+    exportVendorCapture({
+      ...recorded,
+      application: {
+        ...recorded.application,
+        package: { ...installed, architecture, apt_repositories: repositories },
+      },
+    });
+
+  const admitted = await exportFor("all");
+  if (admitted.result instanceof Error) throw admitted.result;
+  expect(
+    await readFile(
+      join(admitted.directory, "envs/typora/typora_app.py"),
+      "utf8",
+    ),
+  ).toContain('AptSource(apt="https://downloads.typora.io/linux"');
+
+  const refused = await exportFor("arm64");
+  expect(refused.result).toMatchObject({ _tag: "AnalysisInputError" });
+  expect(JSON.stringify(refused.result)).toContain("it serves only all");
+  expect(await exists(refused.directory)).toBe(false);
+});
+
 describe("exportDesktopApplication from a vendor repository", () => {
   it("copies the verified key, declares the repository and library packages, and turns the sandbox off", async () => {
     const { result, directory } = await exportVendorCapture(
@@ -1373,6 +1680,83 @@ describe("exportDesktopApplication from a vendor repository", () => {
       'packages=Packages(apt=["typora", "libgbm1", "libnss3"]),\n    sources=[AptSource(apt="https://downloads.typora.io/linux", suite="./", components=[], key="apt-keys/typora.gpg")],',
     );
   });
+
+  const withRepositoryUri = (uri: string, repoUri?: string) => {
+    const capture = vendorCapture(VERIFIED_KEY);
+    const installed = capture.application.package;
+    return {
+      ...capture,
+      application: {
+        ...capture.application,
+        package: {
+          ...installed,
+          apt_repositories: installed.apt_repositories?.map((repository) => ({
+            ...repository,
+            uri,
+            ...(repoUri === undefined ? {} : { repo_uri: repoUri }),
+          })),
+        },
+      },
+    };
+  };
+
+  it.each([
+    [
+      "https://vendor.invalid/a%2Cb",
+      "https://vendor.invalid/a,b/",
+      "https://vendor.invalid/a,b",
+    ],
+    [
+      "https://vendor.invalid/a%252Cb",
+      "https://vendor.invalid/a%2Cb/",
+      "https://vendor.invalid/a%2Cb",
+    ],
+  ])(
+    "declares the observed APT repository behind %s",
+    async (authored, observed, declared) => {
+      const local = withRepositoryUri(authored, observed);
+      const { result, directory } = await exportVendorCapture(local);
+      if (result instanceof Error) throw result;
+      const module = await readFile(
+        join(directory, "envs/typora/typora_app.py"),
+        "utf8",
+      );
+      expect(module).toContain(
+        `AptSource(apt="${declared}", suite="./", components=[], key="apt-keys/typora.gpg")`,
+      );
+      expect(await readFile(join(directory, "README.md"), "utf8")).toContain(
+        declared,
+      );
+    },
+  );
+
+  it.each([
+    [
+      "https://vendor.invalid/a%20b",
+      "https://vendor.invalid/a b/",
+      "cannot be represented as one AgentEnv deb822 URI token",
+    ],
+    [
+      "https://vendor.invalid/a%0ab",
+      "https://vendor.invalid/a",
+      "contains an escaped control byte",
+    ],
+    [
+      "https://vendor.invalid/a%2Cb",
+      undefined,
+      "the capture does not record apt's Repo-URI",
+    ],
+  ])(
+    "withholds an APT declaration that cannot preserve %s",
+    async (authored, observed, reason) => {
+      const { result, directory } = await exportVendorCapture(
+        withRepositoryUri(authored, observed),
+      );
+      expect(result).toBeInstanceOf(Error);
+      expect(JSON.stringify(result)).toContain(reason);
+      expect(await exists(directory)).toBe(false);
+    },
+  );
 
   it("refuses a vendor repository whose key the capture did not verify", async () => {
     const { result, directory } = await exportVendorCapture(

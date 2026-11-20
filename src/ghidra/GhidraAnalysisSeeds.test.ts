@@ -1,7 +1,6 @@
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { createHash } from "node:crypto";
 import {
-  mkdtemp,
   mkdir,
   open,
   readFile,
@@ -10,9 +9,9 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { parseConfig } from "../config/parseConfig.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -25,7 +24,6 @@ import {
   ghidraSeedFailure,
   ghidraSeedReportSchema,
   ghidraSeedLimitations,
-  parseGhidraSeeds,
   resolveGhidraAnalysisSeeds,
   snapshotGhidraAnalysisSeeds,
   type GhidraSeedCommitment,
@@ -33,18 +31,15 @@ import {
 } from "./GhidraAnalysisSeeds.js";
 import { ghidraProfileInstallationHost as host } from "./GhidraInstallation.fixture.js";
 import { GhidraProvider } from "./GhidraProvider.js";
+import { parseGhidraSeeds } from "../domain/native/ghidraSeedFile.js";
 
-const directories: string[] = [];
 let resources = new ArtifactResourceScope();
 afterEach(async () => {
   await resources.close();
   resources = new ArtifactResourceScope();
-  for (const directory of directories.splice(0))
-    await rm(directory, { recursive: true, force: true });
 });
 const workspace = async () => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-ghidra-seeds-"));
-  directories.push(directory);
+  const directory = await createTestTempDirectory("rea-ghidra-seeds-");
   return directory;
 };
 

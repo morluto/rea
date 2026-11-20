@@ -13,10 +13,11 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi, onTestFinished } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
-import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ok, err } from "../domain/result.js";
@@ -24,7 +25,7 @@ import {
   NativeCommandFailure,
   XcrunCommandRunner,
   type NativeCommandRunner,
-} from "./CommandRunner.js";
+} from "../providers/NativeCommandRunner.js";
 import { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import type { NativeCallTracer } from "./LldbCallTracer.js";
 import { NativeMacOSProvider } from "./NativeMacOSProvider.js";
@@ -38,6 +39,8 @@ import {
   resolvedAnalysisError,
 } from "../domain/analysisErrorBase.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { signatureInspectionFixture } from "../../tests/fixtures/nativeCommands.js";
 
@@ -45,7 +48,6 @@ const unusedInspection = async (): Promise<never> => {
   throw new Error("Inspection must not run after failed target binding");
 };
 const roots: string[] = [];
-const targets: string[] = [];
 const unusedRunner: NativeCommandRunner = {
   async run() {
     throw new Error("Changed target must be rejected before a command runs");
@@ -62,20 +64,16 @@ const unusedTracer: NativeCallTracer = {
 
 afterEach(async () => {
   await Promise.all(
-    [...roots, ...targets].map((path) =>
-      rm(path, { recursive: true, force: true }),
-    ),
+    roots.map((path) => rm(path, { recursive: true, force: true })),
   );
   roots.length = 0;
-  targets.length = 0;
 });
 
 const createTarget = async (
   bytes: string,
   digest = bytes,
 ): Promise<BinaryTarget> => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-signature-target-"));
-  targets.push(directory);
+  const directory = await createTestTempDirectory("rea-signature-target-");
   const path = join(directory, "target.bin");
   await writeFile(path, bytes);
   return {
@@ -238,20 +236,14 @@ it("retries a retained signature root when the provider client closes", async ()
 
 it("waits for an in-flight signature binding before provider close", async () => {
   const target = await createTarget("observed", "expected");
-  let rootFactoryEntered!: () => void;
-  let releaseRootFactory!: () => void;
-  const entered = new Promise<void>(
-    (resolve) => (rootFactoryEntered = resolve),
-  );
-  const gate = new Promise<void>((resolve) => (releaseRootFactory = resolve));
+  const rootFactory = phaseGate();
   const provider = new NativeMacOSProvider(
     {},
     unusedRunner,
     "darwin",
     () => unusedTracer,
     async () => {
-      rootFactoryEntered();
-      await gate;
+      await rootFactory.hold();
       return createRoot();
     },
   );
@@ -260,17 +252,13 @@ it("waits for an in-flight signature binding before provider close", async () =>
   let closeSettled = false;
   let closing: ReturnType<typeof client.close> | undefined;
   await withVerifierCleanup(async () => {
-    await awaitAcknowledgement(
-      entered,
-      operation,
-      "signature root acquisition",
-    );
+    await rootFactory.reached(operation, "signature root acquisition");
     closing = client.close().finally(() => {
       closeSettled = true;
     });
     await Promise.resolve();
     expect(closeSettled).toBe(false);
-    releaseRootFactory();
+    rootFactory.release();
     await expect(operation).resolves.toMatchObject({
       ok: false,
       error: { _tag: "AnalysisArtifactChangedError" },
@@ -279,7 +267,7 @@ it("waits for an in-flight signature binding before provider close", async () =>
     expect(closeSettled).toBe(true);
     await expect(stat(roots[0]!)).rejects.toMatchObject({ code: "ENOENT" });
   }, [
-    releaseRootFactory,
+    rootFactory.release,
     async () => {
       await operation;
     },
@@ -698,6 +686,13 @@ for (const ownerIndex of [0, 1])
       expect(resolvedAnalysisError(result.error)).toMatchObject({
         _tag: "AnalysisCancelledError",
         cause: reason,
+        // The completed binding is not an observation; it stays as diagnostics.
+        diagnostics: {
+          snapshot_binding: {
+            identity: expect.any(String),
+            snapshot_path: expect.stringContaining("target.bin"),
+          },
+        },
       });
     });
 
@@ -856,6 +851,64 @@ it("does not adopt an inspection's arbitrary thrown cleanup marker", async () =>
   });
   expect(result.error.cleanupResources).toEqual([]);
   await resources.close();
+});
+
+it("releases the private copy before reporting an inspection defect", async () => {
+  const target = await createTarget("same");
+  const resources = new ArtifactResourceScope();
+  const defect = invariantViolation("Signature plan is missing");
+  const result = await withSignatureTarget(
+    target,
+    resources,
+    async () => {
+      throw defect;
+    },
+    undefined,
+    createRoot,
+  );
+  if (result.ok) throw new Error("Expected an adapter failure");
+  expect(result.error).toBeInstanceOf(ProviderAdapterError);
+  expect(result.error).toMatchObject({
+    operation: "inspect_signature",
+    cause: defect,
+    cleanupIncomplete: false,
+  });
+  await expect(stat(roots[0]!)).rejects.toMatchObject({ code: "ENOENT" });
+  await resources.close();
+});
+
+it("keeps an inspection defect primary when releasing the private copy fails", async () => {
+  const target = await createTarget("same");
+  const resources = new ArtifactResourceScope();
+  const defect = invariantViolation("Signature plan is missing");
+  const result = await withSignatureTarget(
+    target,
+    resources,
+    async () => {
+      throw defect;
+    },
+    undefined,
+    () => createRoot(1),
+  );
+  if (result.ok) throw new Error("Expected an adapter failure");
+  expect(result.error.cleanupIncomplete).toBe(true);
+  expect(result.error.cleanupResources).toEqual(roots);
+  const primary = result.error.cleanupPrimary;
+  expect(primary).toBeInstanceOf(ProviderAdapterError);
+  expect(primary?.cause).toBe(defect);
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    details: {
+      diagnostics: {
+        primary_error: { code: "execution_failure" },
+        cleanup_error: { code: "cleanup_incomplete" },
+      },
+    },
+  });
+
+  await resources.close();
+  expect(result.error.cleanupIncomplete).toBe(false);
+  expect(resolvedAnalysisError(result.error)).toBe(primary);
+  await expect(stat(roots[0]!)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
 it.each(["io", "cancelled"] as const)(

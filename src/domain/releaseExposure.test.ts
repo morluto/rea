@@ -4,8 +4,7 @@ import {
   assembleReleaseExposureReport,
   exposureMeetsFailOn,
   PACKAGED_NATIVE_IMAGES,
-  RELEASE_EXPOSURE_CHECK_IDS,
-  RELEASE_EXPOSURE_LIMITATION,
+  type ReleaseExposureCheckId,
   type ReleaseExposureOwnerFacts,
   type ReleaseExposureScan,
 } from "./releaseExposure.js";
@@ -64,16 +63,32 @@ const reportFor = (
 
 const statusOf = (
   report: ReturnType<typeof reportFor>,
-  id: (typeof RELEASE_EXPOSURE_CHECK_IDS)[number],
+  id: ReleaseExposureCheckId,
 ) => report.checks.find((check) => check.id === id)?.status;
 
 describe("release exposure checks", () => {
   it("keeps the fixed check order and the security limitation", () => {
     const report = reportFor();
     expect(report.checks.map((check) => check.id)).toEqual([
-      ...RELEASE_EXPOSURE_CHECK_IDS,
+      "javascript.source_map_sources",
+      "javascript.source_maps",
+      "electron.run_as_node",
+      "electron.asar_integrity",
+      "electron.only_load_from_asar",
+      "electron.node_cli_inspect",
+      "packaging.extractable_payload",
+      "native.debug_companions",
+      "native.pdb_path",
+      "go.build_paths",
+      "rust.dependency_metadata",
+      "text.credential_markers",
+      "native.hardening",
+      "macho.hardened_runtime",
+      "android.manifest",
     ]);
-    expect(report.limitations[0]).toBe(RELEASE_EXPOSURE_LIMITATION);
+    expect(report.limitations[0]).toMatch(
+      /static analysis.*does not establish.*secure/u,
+    );
     expect(report.summary.no_exposure_observed_in_assessed_checks).toBe(true);
     expect(report.summary.by_status.not_assessed).toBe(3);
     expect(report.summary.highest_exposed_severity).toBeNull();

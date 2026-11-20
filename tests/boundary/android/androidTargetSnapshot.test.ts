@@ -182,7 +182,7 @@ it.skipIf(process.platform === "win32")(
               ({ size }) => size > 0,
               () => false,
             ),
-          { timeout: 10_000, interval: 10 },
+          { interval: 10 },
         )
         .toBe(true);
       controller.abort();

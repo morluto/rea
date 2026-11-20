@@ -4,7 +4,7 @@ import {
   valueTraceDiamond,
   valueTraceUnboundArguments,
 } from "../../../src/application/native/NativeValueTrace.fixture.js";
-import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../../../src/ports/AnalysisProvider.js";
 import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
@@ -22,11 +22,12 @@ import {
   closeEnhancedToolResources,
   resources,
 } from "./enhancedToolsHarness.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 afterEach(closeEnhancedToolResources);
 
 const connectTraceSession = async (
-  profile: "full" | "compact",
+  profile: "compact",
   analysis: AnalysisOperationPort,
 ) => {
   const [target] = await createBinarySessionTargets();
@@ -43,7 +44,10 @@ const connectTraceSession = async (
     { kind: "session", session },
     { environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: profile } },
   );
-  const client = new Client({ name: "value-trace-test", version: "1.0.0" });
+  const client = new Client(
+    { name: "value-trace-test", version: "1.0.0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server);
@@ -52,33 +56,30 @@ const connectTraceSession = async (
   return client;
 };
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "separates page omission from named traversal budgets through the advertised %s MCP contract",
   async (profile) => {
     const client = await connectTraceSession(
       profile,
       valueTraceDiamond({ sessionSubject: true }).port,
     );
-    const { toolDefinition, ajv, outputSchema } =
-      await advertisedMcpToolSchemas(client, "trace_native_values");
-    if (profile === "full")
-      for (const field of [
-        "page_truncated",
-        "traversal",
-        "max_nodes",
-        "max_edges",
-      ])
-        expect(JSON.stringify(outputSchema)).toContain(`"${field}"`);
+    const { toolDefinition, outputSchema } = await advertisedMcpToolSchemas(
+      client,
+      "trace_native_values",
+    );
+    for (const field of [
+      "page_truncated",
+      "traversal",
+      "max_nodes",
+      "max_edges",
+    ])
+      expect(JSON.stringify(outputSchema)).toContain(`"${field}"`);
     const trace = async (arguments_: Record<string, unknown>) => {
       const reply = await client.callTool(
         { name: "trace_native_values", arguments: arguments_ },
         { toolDefinition },
       );
       expect(reply.isError).not.toBe(true);
-      expect(
-        ajv.validate(outputSchema, reply.structuredContent),
-        JSON.stringify(ajv.errors),
-      ).toBe(true);
       return nativeValueTraceSchema.parse(
         parseEvidence(reply.structuredContent).normalized_result,
       );
@@ -161,15 +162,17 @@ it.each(["full", "compact"] as const)(
   },
 );
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "retains located call-input gaps and exact source Evidence through %s MCP",
   async (profile) => {
     const client = await connectTraceSession(
       profile,
       valueTraceUnboundArguments({ sessionSubject: true }).port,
     );
-    const { toolDefinition, ajv, outputSchema } =
-      await advertisedMcpToolSchemas(client, "trace_native_values");
+    const { toolDefinition } = await advertisedMcpToolSchemas(
+      client,
+      "trace_native_values",
+    );
     const reply = await client.callTool(
       {
         name: "trace_native_values",
@@ -178,10 +181,6 @@ it.each(["full", "compact"] as const)(
       { toolDefinition },
     );
     expect(reply.isError).not.toBe(true);
-    expect(
-      ajv.validate(outputSchema, reply.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     const trace = nativeValueTraceSchema.parse(
       parseEvidence(reply.structuredContent).normalized_result,
     );

@@ -12,12 +12,14 @@ import {
 } from "../../support/mcp/streamableHttpProcess.js";
 import { processTest } from "../../support/process/processFixture.js";
 import { assertAdvertisedMcpContracts } from "./mcpContractHarness.js";
-
-const HTTP_BOUNDARY_TIMEOUT_MS = 90_000;
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const openSession = async (url: URL, name: string) => {
   const transport = new StreamableHTTPClientTransport(url);
-  const client = new Client({ name, version: "1" });
+  const client = new Client(
+    { name, version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(() => client.close());
   await client.connect(transport);
   expect(transport.sessionId).toEqual(expect.any(String));
@@ -53,7 +55,10 @@ describe("rea mcp --http", () => {
       const started = await startListeningProcess(
         processes,
         ["mcp", "--http", "--port", "0"],
-        { REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold" },
+        // Sessions validate advertised output schemas, which default to off.
+        {
+          REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold",
+        },
       );
       const first = await openSession(started.url, "hot-cold-first");
       const initialNames = (await first.client.listTools()).tools.map(
@@ -95,13 +100,16 @@ describe("rea mcp --http", () => {
       await expectIdentity(second);
       await second.transport.terminateSession();
     },
-    HTTP_BOUNDARY_TIMEOUT_MS,
   );
 
   processTest(
     "serves initialize, tools/list, a tool call and DELETE, then keeps serving later clients",
     async ({ processes }) => {
-      const started = await startMcpHttpProcess(processes);
+      const started = await startListeningProcess(
+        processes,
+        ["mcp", "--http", "--port", "0"],
+        {},
+      );
       expect(started.url.hostname).toBe("127.0.0.1");
       expect(started.url.pathname).toBe("/mcp");
       let stdout = "";
@@ -140,7 +148,6 @@ describe("rea mcp --http", () => {
         "MCP HTTP session replaced by a new client",
       );
     },
-    HTTP_BOUNDARY_TIMEOUT_MS,
   );
 
   processTest(
@@ -150,6 +157,5 @@ describe("rea mcp --http", () => {
       const refused = await expectForeignHostRefused(url);
       expect(refused.body).not.toContain("127.0.0.1");
     },
-    HTTP_BOUNDARY_TIMEOUT_MS,
   );
 });

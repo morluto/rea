@@ -1,151 +1,441 @@
-import { matchesGlob } from "node:path";
+import { matchesGlob, posix } from "node:path";
 
-// Candidate ownership only: these leaf adapters and their producer tests can be
-// compared with full-suite outcomes. This table never changes test execution.
-// Shared application/domain code and dynamic CLI/MCP consumers are not leaf owners.
-const OWNERS = {
-  adb: ["src/adb/**", "tests/boundary/providers/adb/**"],
-  apktool: ["src/apktool/**"],
-  dotnet: ["src/dotnet/**"],
-  evm: ["src/evm/**", "tests/boundary/evm/**"],
-  firmware: ["src/firmware/**", "tests/boundary/firmware/**"],
-  flutter: ["src/flutter/**"],
-  ghidra: ["src/ghidra/**", "tests/boundary/providers/ghidra/**"],
-  hopper: ["src/hopper/**", "tests/boundary/providers/hopper/**"],
-  ida: ["src/ida/**", "tests/boundary/providers/ida/**"],
-  jeb: ["src/jeb/**"],
-  pcap: ["src/pcap/**", "tests/boundary/pcap/**"],
-  sqlite: ["src/sqlite/**", "tests/boundary/sqlite/**"],
-  wasm: ["src/wasm/**"],
-};
-const ownersOf = (path) =>
-  Object.entries(OWNERS)
-    .filter(([, patterns]) => patterns.some((glob) => matchesGlob(path, glob)))
-    .map(([owner]) => owner);
-const validPath = (path) =>
-  typeof path === "string" &&
-  /^(src|tests)\//.test(path) &&
-  !/[\\\0\r\n]/.test(path) &&
-  !path.split("/").some((part) => ["", ".", ".."].includes(part));
-const full = (reason, changedPaths = []) => ({
-  version: 1,
-  mode: "full",
-  owners: [],
-  changedTests: [],
-  changedPaths,
-  reason,
-});
+import { projectForTest } from "../lib/test-projects.mjs";
+import { SHARED_BOUNDARY } from "./scopes.mjs";
 
-/** Plan an observational PR subset from the classifier's existing Git diff. */
-export function planTestSelection(files, event, tier) {
-  if (event !== "pull_request" || tier !== "fast")
-    return full("Only ordinary PRs are candidates", files);
-  if (!files.length) return full("No changed paths available");
-  const owners = new Set();
-  const changedTests = [];
+// Pull-request feedback runs the tests a change most directly affects. Main
+// pushes, schedules, releases and `ci:full` keep the complete suite, so a
+// consumer the selection misses fails on main right after it lands.
+// Selection falls back to the complete suite whenever it cannot decide.
+
+/** More selected files than this run the complete suite instead. */
+const SELECTION_CAP = 400;
+// Selected files per test job, and the most jobs one selection uses. Each job
+// runs one `--shard` of the selection; the CI sequencer balances the shards by
+// main's recorded per-file durations when that history is available.
+const FILES_PER_SHARD = 50;
+const MAX_SHARDS = 8;
+
+// Leaf adapters whose tests also reach their sources through the built CLI,
+// MCP server or a fake provider process rather than an import. An adapter
+// owns `src/<name>/` and every test named for it (`<name>*.test.ts`) or
+// filed under a `<name>/` directory anywhere in `tests/`.
+const OWNERS = [
+  "adb",
+  "apktool",
+  "dotnet",
+  "evm",
+  "firmware",
+  "flutter",
+  "ghidra",
+  "hopper",
+  "ida",
+  "jeb",
+  "pcap",
+  "sqlite",
+  "wasm",
+];
+const ownedTests = (path) =>
+  OWNERS.filter((owner) => path.startsWith(`src/${owner}/`)).flatMap(
+    (owner) => [`tests/**/${owner}/**/*.test.ts`, `tests/**/${owner}*.test.ts`],
+  );
+
+const isTest = (path) => path.endsWith(".test.ts");
+// Owners of what the built CLI and MCP server present: tool contracts,
+// server registration and presentation, entrypoints and CLI commands.
+const isPresentationOwner = (path) =>
+  !isTest(path) &&
+  /^src\/(?:server|contracts|main|cli)\/|^src\/(?:main|cli)\.ts$/u.test(path);
+// A test that starts the built CLI or MCP server instead of importing it:
+// the CLI launcher or this repository's built entry points. Other `dist/`
+// paths (package subpaths such as `ajv/dist/2020.js`, fixture apps) are not.
+const LAUNCHES_BUILT_RUNTIME =
+  /scripts\/rea\.mjs|\bdist\/(?:main|cli)\.js|["'`]dist["'`]\s*,\s*["'`](?:main|cli)\.js/u;
+// Inputs that only a non-test check reads: declarations (typecheck), guard and
+// layer baselines (architecture/boundary guards, static job), git-blame ignore
+// revisions, and the advertised-schema summaries (build job). Any test that
+// directly names one by path still runs via `names`.
+const isCheckerInput = (path) =>
+  /\.d\.m?ts$/u.test(path) ||
+  path === "scripts/lib/module-layers.baseline.json" ||
+  path === "scripts/check-doc-facts.mjs" ||
+  path === ".git-blame-ignore-revs" ||
+  path === "scripts/run-python-tests.py" ||
+  /^tests\/support\/analysis-efficiency\/.+\.py$/u.test(path) ||
+  /^scripts\/verify\/baselines\/[^/]+\.json$/u.test(path) ||
+  /^scripts\/verify\/advertised-schemas\/tools\/[^/]+\.json$/u.test(path);
+// Inputs whose owning tests are not reachable through the selection graph.
+const EXPLICIT_TEST_OWNERS = [
+  [
+    "tests/fixtures/cli-parity/*.txt",
+    "tests/boundary/cli/cliParityGoldens.test.ts",
+  ],
+  [
+    "tests/boundary/cli/cliContractSchemaParity.uncomparable.json",
+    "tests/boundary/cli/cliContractSchemaParity.test.ts",
+  ],
+  [
+    "src/domain/managed/managedMemberPointers.ts",
+    "src/dotnet/ManagedMemberPointers.test.ts",
+  ],
+];
+const explicitTestOwners = (path) =>
+  EXPLICIT_TEST_OWNERS.filter(([pattern]) => matchesGlob(path, pattern)).map(
+    ([, owner]) => owner,
+  );
+// Verifier scripts are imported by their tests like source modules.
+const isVerifier = (path) =>
+  /^scripts\/(verify-[^/]+|verify\/.+)\.mjs$/u.test(path);
+// Shared script and fixture modules. A change is traced through the tests,
+// verifiers and other shared modules that import it; any other consumer (build,
+// test runners, configuration) shapes every run, so it selects the full suite.
+const isScriptLibrary = (path) =>
+  !isCheckerInput(path) &&
+  /^scripts\/(?:lib|fixtures)\/.+\.m?[jt]s$/u.test(path);
+// Other scripts (build, test runners, CI) shape every run and are not traced.
+const isModule = (path) =>
+  !isCheckerInput(path) &&
+  (/^(src|tests)\/.+\.m?ts$/u.test(path) ||
+    isVerifier(path) ||
+    isScriptLibrary(path));
+// Test-only modules pass a change through to the tests that use them.
+// Production importers never widen the selection transitively.
+const isHelper = (path) =>
+  !isTest(path) &&
+  !isCheckerInput(path) &&
+  (/^tests\/.+\.(?:[cm]?[jt]s|d\.m?ts)$/u.test(path) ||
+    /^src\/.+\.fixture[^/]*\.ts$/u.test(path) ||
+    isVerifier(path) ||
+    isScriptLibrary(path));
+const STATIC_CHECKER_CONFIG =
+  /^(?:tsconfig(?:\..+)?\.json|\.oxlintrc\.json|\.oxfmtrc\.json|\.jscpd\.json|knip\.json|stryker(?:\..+)?\.config\.mjs)$/u;
+// Files outside src/ and tests/ that can run or load a shared script module:
+// other scripts, runtime/test configuration, package metadata, hooks and workflows.
+const isScriptConsumer = (path) =>
+  !isHelper(path) &&
+  !isCheckerInput(path) &&
+  !STATIC_CHECKER_CONFIG.test(path) &&
+  !path.startsWith(".github/ISSUE_TEMPLATE/") &&
+  (/^scripts\/.+\.(?:m?[jt]s|cjs)$/u.test(path) ||
+    (/^[^/]+\.(?:m?[jt]s|cjs|json)$/u.test(path) &&
+      path !== "package-lock.json") ||
+    /^\.github\/.+\.ya?ml$/u.test(path) ||
+    /^\.husky\/[^/]+$/u.test(path));
+const DOCS_CODE = /\.(?:[cm]?[jt]s|[jt]sx)$/u;
+// Prose and documentation/license metadata that tests may read by path. Other
+// non-module inputs (unmapped fixtures, data, scripts, workflows, package
+// metadata) are not traced, so they run everything.
+const isProse = (path) =>
+  path === "LICENSE" ||
+  path.startsWith(".github/ISSUE_TEMPLATE/") ||
+  (path.endsWith(".md") && !/^(src|tests)\//u.test(path)) ||
+  (path.startsWith("docs/") &&
+    !DOCS_CODE.test(path) &&
+    !path.endsWith("/package.json")) ||
+  path.startsWith("licenses/");
+const isNonModuleFixture = (path) =>
+  path.startsWith("tests/fixtures/") &&
+  !isModule(path) &&
+  !isProse(path) &&
+  !isCheckerInput(path) &&
+  explicitTestOwners(path).length === 0;
+/** Why a changed path cannot be traced to tests, if it cannot. */
+const untracedInput = (path) =>
+  !isTest(path) && SHARED_BOUNDARY.test(path)
+    ? `Shared boundary: ${path}`
+    : !isModule(path) &&
+        !isProse(path) &&
+        !isCheckerInput(path) &&
+        !isNonModuleFixture(path) &&
+        explicitTestOwners(path).length === 0
+      ? `Input is not traced to tests: ${path}`
+      : undefined;
+
+// Static and literal dynamic imports, mocks, and module URLs such as the
+// `new URL("./x.mts", import.meta.url)` that `importVerifierSource` loads
+// (scripts/lib/import-specifiers.mjs owns the exact parse; the planning job
+// runs before dependencies are installed, so it cannot load that parser).
+const SPECIFIER =
+  /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+|\bvi\.mock\(\s*|\bnew\s+URL\(\s*)["'](\.{1,2}\/[^"']+)["']/gu;
+// TypeScript imports name the emitted `.js`/`.mjs`; scripts are imported as is.
+const importsOf = (path, source) =>
+  [...source.matchAll(SPECIFIER)].flatMap(([, specifier]) => {
+    const target = posix.normalize(posix.join(posix.dirname(path), specifier));
+    return [target, target.replace(/\.(m?)js$/u, ".$1ts")];
+  });
+
+/**
+ * Trace the tests a change affects.
+ *
+ * `snapshot` lists the tracked paths of the revision under test and reads
+ * them. `selected` maps each affected test to the first reason that selected
+ * it: `changed`, `imports`, `built`, `beside`, `owner` or `names`. `untraced` names
+ * inputs whose consumers cannot be traced to tests; CI runs the complete suite
+ * for them, while a bounded local gate runs the traced selection.
+ */
+export function traceAffectedTests({ files, snapshot }) {
+  const untraced = files.flatMap((path) => untracedInput(path) ?? []);
+
+  const tracked = snapshot.list();
+  const trackedSet = new Set(tracked);
+  const tests = tracked.filter(isTest);
+  const helpers = tracked.filter(isHelper);
+  const sources = snapshot.read([...tests, ...helpers]);
+  const imports = new Map(
+    [...tests, ...helpers].map((path) => [
+      path,
+      importsOf(path, sources.get(path) ?? ""),
+    ]),
+  );
+
+  const selected = new Map();
+  const select = (path, reason) => {
+    if (trackedSet.has(path) && !selected.has(path)) selected.set(path, reason);
+  };
+  const changedModules = files.filter(
+    (path) => isModule(path) && !isTest(path),
+  );
+  const changedNonModuleFixtures = files.filter(isNonModuleFixture);
   for (const path of files) {
-    if (!validPath(path))
-      return full(`Shared or unknown input: ${path}`, files);
-    const matches = ownersOf(path);
-    if (!matches.length) return full(`Shared or unknown input: ${path}`, files);
-    for (const owner of matches) owners.add(owner);
-    if (path.endsWith(".test.ts")) changedTests.push(path);
+    if (isTest(path)) select(path, "changed");
+    for (const owner of explicitTestOwners(path)) {
+      if (!trackedSet.has(owner))
+        untraced.push(`Missing test owner ${owner} for ${path}`);
+      else select(owner, "owner");
+    }
   }
+
+  const isNamedTarget = (path) =>
+    path.startsWith("scripts/") || path.startsWith("tests/fixtures/");
+  // A seed and every helper that imports or names it, directly or through another.
+  const throughHelpers = (seed) => {
+    const reached = new Set(seed);
+    for (let grew = true; grew;) {
+      grew = false;
+      const namedReached = [...reached].filter(isNamedTarget);
+      for (const helper of helpers) {
+        if (reached.has(helper)) continue;
+        const source = sources.get(helper) ?? "";
+        if (
+          imports.get(helper).some((target) => reached.has(target)) ||
+          namedReached.some((target) => source.includes(target))
+        ) {
+          reached.add(helper);
+          grew = true;
+        }
+      }
+    }
+    return reached;
+  };
+  // Close over test-only helpers, verifiers and shared script modules, then
+  // take the tests that import a change.
+  const affected = throughHelpers([
+    ...changedModules,
+    ...changedNonModuleFixtures,
+  ]);
+  for (const test of tests)
+    if (imports.get(test).some((target) => affected.has(target)))
+      select(test, "imports");
+  // Script and fixture paths a test can start or read by name: changed files,
+  // plus the verifiers, shared modules and fixtures a change reaches.
+  const named = (reached) => [
+    ...new Set([...files, ...[...reached].filter(isNamedTarget)]),
+  ];
+  const names = (test, paths) =>
+    paths.some((path) => (sources.get(test) ?? "").includes(path));
+
+  // A changed non-module fixture under tests/fixtures/ that no test reaches
+  // via URL/import or path literal (for example, a directory-scanned asset)
+  // fails closed to the complete suite.
+  for (const fixture of changedNonModuleFixtures) {
+    const reached = throughHelpers([fixture]);
+    const paths = [fixture, ...[...reached].filter(isNamedTarget)];
+    if (
+      !tests.some(
+        (test) =>
+          imports.get(test).some((target) => reached.has(target)) ||
+          names(test, paths),
+      )
+    )
+      untraced.push(`Input is not traced to tests: ${fixture}`);
+  }
+
+  // A changed shared module that no test reaches has no coverage in a
+  // selection, even when other changes select tests.
+  for (const library of changedModules.filter(isScriptLibrary)) {
+    const reached = throughHelpers([library]);
+    const paths = [...reached].filter(isNamedTarget);
+    if (
+      !tests.some(
+        (test) =>
+          imports.get(test).some((target) => reached.has(target)) ||
+          names(test, paths),
+      )
+    )
+      untraced.push(`No test reaches shared script module: ${library}`);
+  }
+
+  // A shared script module that another script, configuration file, hook or
+  // workflow imports or names as a standalone file name can shape every run.
+  // Ignore single-line comments and require a non-hyphen token boundary before
+  // the basename so hyphenated wrapper names do not match shared library names.
+  const namesScriptBasename = (source, libraryPath) => {
+    const code = source.replace(/^\s*(?:\/\/|#).*$/gmu, "");
+    const escaped = posix
+      .basename(libraryPath)
+      .replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    return new RegExp(`(?<![\\w-])${escaped}(?![\\w.-])`, "u").test(code);
+  };
+  const libraries = [...affected].filter(isScriptLibrary);
+  if (libraries.length) {
+    const consumers = tracked.filter(isScriptConsumer);
+    const consumerSources = snapshot.read(consumers);
+    for (const consumer of consumers) {
+      const source = consumerSources.get(consumer) ?? "";
+      const targets = new Set(importsOf(consumer, source));
+      const library = libraries.find(
+        (path) =>
+          targets.has(path) ||
+          (consumer !== "scripts/ci/scopes.mjs" &&
+            namesScriptBasename(source, path)),
+      );
+      if (library !== undefined)
+        untraced.push(
+          `Script consumer is not traced: ${consumer} uses ${library}`,
+        );
+    }
+  }
+
+  // Tests that start the built CLI or MCP server reach a presentation owner
+  // through the build rather than an import. Bound them to the tests that
+  // also import a module from a changed owner's directory.
+  const changedOwners = new Set(
+    changedModules
+      .filter(isPresentationOwner)
+      .map((path) => posix.dirname(path)),
+  );
+  if (changedOwners.size) {
+    const launchers = throughHelpers(
+      helpers.filter((path) =>
+        LAUNCHES_BUILT_RUNTIME.test(sources.get(path) ?? ""),
+      ),
+    );
+    for (const test of tests) {
+      const targets = imports.get(test);
+      if (
+        (LAUNCHES_BUILT_RUNTIME.test(sources.get(test) ?? "") ||
+          targets.some((target) => launchers.has(target))) &&
+        targets.some((target) => changedOwners.has(posix.dirname(target)))
+      )
+        select(test, "built");
+    }
+  }
+
+  for (const path of changedModules) {
+    // Same-stem tests, and same-directory tests that scan their directory's
+    // sources by path instead of importing them.
+    const stem = path.replace(/\.m?[jt]s$/u, "");
+    for (const test of tests)
+      if (
+        posix.dirname(test) === posix.dirname(path) &&
+        (test.startsWith(`${stem}.`) ||
+          /\breaddir(?:Sync)?\s*\(/u.test(sources.get(test) ?? ""))
+      )
+        select(test, "beside");
+    // Leaf adapters' boundary tests.
+    const patterns = ownedTests(path);
+    for (const test of tests)
+      if (patterns.some((glob) => matchesGlob(test, glob)))
+        select(test, "owner");
+  }
+  // Tests that name a changed path, or a verifier or shared module the change
+  // reaches, read or start it directly.
+  const reachedPaths = named(affected);
+  for (const test of tests)
+    if (names(test, reachedPaths)) select(test, "names");
+  return { selected, untraced };
+}
+
+const full = (reason) => ({ version: 3, mode: "full", reason });
+
+/**
+ * Plan the portable tests one CI run executes.
+ *
+ * `snapshot` lists the tracked paths of the revision under test and reads
+ * them; it is consulted only when a subset is possible.
+ */
+export function planTestSelection({ files, event, tier, code, snapshot }) {
+  // `ci:full` selects the full tier, so it also lands here.
+  if (event !== "pull_request" || tier !== "fast")
+    return full("Main, ci:full and qualification runs execute every test");
+  if (!code) return full("No portable tests run for this change");
+  if (!files.length) return full("No changed paths available");
+  // Decide from the paths alone before reading the snapshot.
+  const untracedPath = files.map(untracedInput).find(Boolean);
+  if (untracedPath !== undefined) return full(untracedPath);
+  const { selected, untraced } = traceAffectedTests({ files, snapshot });
+  if (untraced.length) return full(untraced[0]);
+  const paths = [...selected.keys()].sort();
+  if (!paths.length)
+    return full("No test imports, names or sits beside a changed path");
+  if (paths.length > SELECTION_CAP)
+    return full(
+      `${paths.length} affected test files exceed the ${SELECTION_CAP}-file selection cap`,
+    );
+  for (const path of paths)
+    try {
+      projectForTest(path);
+    } catch {
+      return full(`No single test project runs ${path}`);
+    }
+  const reasons = Object.groupBy([...selected.values()], (reason) => reason);
   return {
-    version: 1,
-    mode: "candidate",
-    owners: [...owners].sort(),
-    changedTests: [...new Set(changedTests)].sort(),
-    changedPaths: files,
-    reason:
-      "Observe affected leaf owners; retain integration and unowned tests",
+    version: 3,
+    mode: "selected",
+    reason: `Affected tests: ${Object.entries(reasons)
+      .map(([reason, entries]) => `${entries.length} ${reason}`)
+      .join(", ")}`,
+    files: paths,
+    shards: Math.min(MAX_SHARDS, Math.ceil(paths.length / FILES_PER_SHARD)),
   };
 }
 
-/** Compare a proposal with the full run; missing observations never prove parity. */
-export function compareTestSelection(plan, inventory, results) {
-  if (
-    plan?.version !== 1 ||
-    !["full", "candidate"].includes(plan.mode) ||
-    !Array.isArray(plan.owners) ||
-    plan.owners.some((owner) => !Object.hasOwn(OWNERS, owner)) ||
-    !Array.isArray(plan.changedTests) ||
-    !Array.isArray(plan.changedPaths) ||
-    plan.changedPaths.some((path) => typeof path !== "string") ||
-    plan.changedTests.some(
-      (path) => !validPath(path) || !path.endsWith(".test.ts"),
-    ) ||
-    typeof plan.reason !== "string" ||
-    (plan.mode === "candidate" && !plan.owners.length) ||
-    (plan.mode === "full" && (plan.owners.length || plan.changedTests.length))
-  )
-    throw new Error("Invalid observational test selection plan");
-  const expected = new Set(inventory);
-  if (!expected.size || expected.size !== inventory.length)
-    throw new Error("Test selection requires a nonempty unique inventory");
-  const ownersByFile = new Map(
-    plan.mode === "candidate"
-      ? inventory.map((path) => [path, ownersOf(path)])
-      : [],
-  );
-  // Removed/renamed tests have no current executable identity. Keep all tests.
-  const removed = plan.changedTests.filter((path) => !expected.has(path));
-  const missingOwners = plan.owners.filter(
-    (owner) =>
-      ![...ownersByFile.values()].some((owners) => owners.includes(owner)),
-  );
-  const effective = removed.length
-    ? full(
-        `Changed tests absent from current inventory: ${removed.join(", ")}`,
-        plan.changedPaths,
-      )
-    : missingOwners.length
-      ? full(
-          `Owners without executable tests: ${missingOwners.join(", ")}`,
-          plan.changedPaths,
-        )
-      : plan;
-  const selected = [];
-  const omitted = [];
-  for (const path of inventory.toSorted()) {
-    const owners = ownersByFile.get(path) ?? [];
-    const keep =
-      effective.mode === "full" ||
-      !owners.length ||
-      effective.changedTests.includes(path) ||
-      owners.some((owner) => effective.owners.includes(owner));
-    (keep ? selected : omitted).push(path);
-  }
-  const actual = new Set(results.map((file) => file.name));
-  const missing = inventory.filter((path) => !actual.has(path));
-  const unexpected = [...actual].filter((path) => !expected.has(path));
-  const duplicateFiles = results.length - actual.size;
-  const unobserved = results
-    .filter((file) => !["passed", "failed"].includes(file.state))
-    .map((file) => file.name);
-  const omittedSet = new Set(omitted);
-  const missedFailures = results
-    .filter((file) => omittedSet.has(file.name) && file.state === "failed")
-    .map((file) => file.name);
-  return {
-    version: 1,
-    observational: true,
-    plan: effective,
-    selected,
-    omitted,
-    missing,
-    unexpected,
-    duplicateFiles,
-    unobserved,
-    missedFailures,
-    complete:
-      !missing.length &&
-      !unexpected.length &&
-      !duplicateFiles &&
-      !unobserved.length,
-    // Phase totals are scheduling weights, not an estimate of wall-time savings.
-    omittedDurationMs: results
-      .filter((file) => omittedSet.has(file.name))
-      .reduce((sum, file) => sum + file.durationMs, 0),
-  };
+/** Parse a plan produced by `planTestSelection`; anything else fails closed. */
+export function parseTestSelection(value) {
+  const plan = typeof value === "string" ? JSON.parse(value) : value;
+  const files = plan?.files;
+  const valid =
+    plan?.version === 3 &&
+    typeof plan.reason === "string" &&
+    (plan.mode === "full"
+      ? files === undefined && plan.shards === undefined
+      : plan.mode === "selected" &&
+        Array.isArray(files) &&
+        files.length > 0 &&
+        files.length <= SELECTION_CAP &&
+        new Set(files).size === files.length &&
+        files.every(
+          (path) =>
+            typeof path === "string" &&
+            isTest(path) &&
+            /^(src|tests)\//u.test(path) &&
+            !path.split("/").some((part) => ["", ".", ".."].includes(part)),
+        ) &&
+        Number.isInteger(plan.shards) &&
+        plan.shards >= 1 &&
+        plan.shards <= Math.min(MAX_SHARDS, files.length));
+  if (!valid) throw new Error("Invalid portable test selection plan");
+  return plan;
 }
+
+// Fast feedback uses one source group and twelve built groups; full
+// qualification uses twelve complete shards with coverage. Shards are balanced
+// by recorded duration, and twelve shards halve the full-qualification critical
+// path (~14.5m -> ~7.5m) while bounding runner-speed variance at negligible
+// extra setup (~22s/shard). A selection runs its own shard count.
+const shardsOf = (count) =>
+  Array.from({ length: count }, (_, index) => `${index + 1}/${count}`);
+
+/** The `test-shard` matrix labels for a tier and its test selection. */
+export const testShards = (_tier, plan) =>
+  shardsOf(plan.mode === "selected" ? plan.shards : 12);

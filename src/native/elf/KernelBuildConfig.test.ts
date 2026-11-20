@@ -3,7 +3,7 @@ import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
 import { gzipSync } from "node:zlib";
 import { expect, it } from "vitest";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
   inspectKernelBuildConfigInputSchema,
   kernelBuildConfigSchema,
@@ -162,7 +162,6 @@ it("keeps the strict grammar for malformed quoted values", async () => {
     '"a"b"',
     '"tail\\"',
     '"a\rb"',
-    '"a\u2028b"',
     "y\u2028",
   ])
     expect(
@@ -204,7 +203,7 @@ it("reports a framed member whose text fails the grammar as malformed, not absen
     option_count: 0,
     entries: [],
   });
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("unknown");
   expect(
     report.limitations.some((line) => line.includes("not a .config")),
   ).toBe(true);
@@ -219,8 +218,34 @@ it("reports a framed member with a bad CRC-32 as malformed, not absent", async (
     sha256: null,
     option_count: 0,
   });
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("unknown");
   expect(report.limitations.some((line) => line.includes("CRC-32"))).toBe(true);
+});
+
+it("reads the full little-endian gzip extra field before the config", async () => {
+  const member = gzipSync(Buffer.from(SAMPLE_KERNEL_CONFIG, "latin1"));
+  const header = Buffer.from(member.subarray(0, 10));
+  header[3] = 0x04;
+  // XLEN = 260, containing one 256-byte subfield.
+  const extra = Buffer.concat([
+    Buffer.from([4, 1, 0x52, 0x45, 0, 1]),
+    Buffer.alloc(256),
+  ]);
+  const frame = (payload: Buffer) =>
+    Buffer.concat([
+      Buffer.from("IKCFG_ST"),
+      header,
+      extra,
+      payload,
+      Buffer.from("IKCFG_ED"),
+    ]);
+  expect((await parse(frame(member.subarray(10)))).config).toMatchObject({
+    status: "present",
+    option_count: 9,
+  });
+  expect((await parse(frame(Buffer.alloc(0)))).config.status).not.toBe(
+    "present",
+  );
 });
 
 it("checks the optional gzip header CRC before accepting a member", async () => {
@@ -274,7 +299,7 @@ it("reports a framed member that does not decode as malformed, not absent", asyn
       gzip: { space: "file", offset: 8, bytes: body.length },
       end_marker: { space: "file", offset: bytes.length - 8, bytes: 8 },
     });
-    expect(report.coverage.status).toBe("incomplete");
+    expect(report.coverage.status).toBe("unknown");
     expect(
       (await parse(Buffer.concat([bytes, embeddedKernelConfig()]))).config
         .status,
@@ -296,7 +321,7 @@ it("reports a truncated IKCFG member as incomplete, not absent", async () => {
     status: "incomplete",
     reason: "config_gzip_truncated",
   });
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
 });
 
 it("inflates a bzImage gzip payload and reports payload-relative offsets", async () => {
@@ -332,15 +357,16 @@ it("names an xz bzImage payload as unsupported without searching it", async () =
   });
 });
 
-it("keeps truncated and unusable bzImage payloads incomplete", async () => {
+it("keeps coverage unknown for truncated and unusable bzImage payloads", async () => {
   const truncated = await parse(bzImageTruncatedGzipFixture());
   expect(truncated.payload.status).toBe("truncated");
   expect(truncated.config.reason).toBe("payload_truncated");
-  expect(truncated.coverage.status).toBe("incomplete");
+  expect(truncated.coverage.status).toBe("unknown");
 
   const old = await parse(bzImageFixture(gzipSync("x"), { version: 0x0206 }));
   expect(old.payload.status).toBe("unavailable");
   expect(old.config.reason).toBe("setup_header_payload_unavailable");
+  expect(old.coverage).toMatchObject({ status: "unknown", examined_bytes: 0 });
 
   const short = bzImageFixture(gzipSync("x"));
   short.writeUInt32LE(0xffff, 0x24c);
@@ -373,19 +399,21 @@ it("names a whole-file codec stream without inflating it", async () => {
 
 it("fails closed when a config exceeds its entry or inflation budget", async () => {
   // Recovery reads the typed knob, never the message text.
-  for (const [bytes, extra, knob] of [
-    [kernelBuildConfigFixture(), { max_entries: 2 }, "max_entries"],
-    [kernelBuildConfigFixture(), { max_config_bytes: 64 }, "max_config_bytes"],
-    [bzImageGzipFixture(), { max_payload_bytes: 64 }, "max_payload_bytes"],
+  for (const [bytes, knob, maximum] of [
+    [kernelBuildConfigFixture(), "max_entries", 2],
+    [kernelBuildConfigFixture(), "max_config_bytes", 64],
+    [bzImageGzipFixture(), "max_payload_bytes", 64],
   ] as const) {
-    const failure = parse(bytes, extra);
+    const failure = parse(bytes, { [knob]: maximum });
     await expect(failure).rejects.toBeInstanceOf(
       KernelBuildConfigBudgetFailure,
     );
     await expect(failure).rejects.toMatchObject({
-      reason: "limit",
-      boundary: "capacity",
-      knob,
+      failure: {
+        kind: "limit",
+        format: "kernel-build-config",
+        limit: { name: knob, maximum },
+      },
     });
   }
 });
@@ -414,7 +442,7 @@ it("stops inflating decoy candidates after the candidate cap and reports incompl
     reason: "config_search_exhausted",
     marker: null,
   });
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
   expect(
     report.limitations.some((line) => line.includes("16 IKCFG_ST gzip")),
   ).toBe(true);
@@ -737,7 +765,7 @@ it("retains incomplete coverage for a partial config end marker", async () => {
     reason: "config_gzip_truncated",
     entries: [],
   });
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
 });
 
 it("ignores marker bytes inside a gzip member", async () => {

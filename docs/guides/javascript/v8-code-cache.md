@@ -16,13 +16,16 @@ Evidence.
 
 ## What is read
 
-A V8 code cache is a producer-written container, not a documented file format. This reader
-admits one container shape and reports everything else as an observation, so a build it
-has never seen still yields facts instead of a false parse.
+A V8 code cache is a version-dependent container. This reader recognizes a pinned
+layout with both supported header extents and reports observed header values and
+payload bytes.
 
-The 32-byte header is eight little-endian 32-bit words. Every word is reported in
-`header.fields` with its byte offset, its observed value, the role this reader believes it
-has, and how confident that role is:
+The [Node v24.22.1 V8 serializer](https://github.com/nodejs/node/blob/v24.22.1/deps/v8/src/snapshot/code-serializer.h#L106-L119)
+defines seven little-endian 32-bit words followed by pointer-alignment padding.
+Four-byte alignment produces a 28-byte header. Eight-byte alignment produces a
+32-byte header with a zero padding word. The reader derives the candidate header
+extent from the container length and declared payload length. Each observed word
+appears in `header.fields` with its byte offset, value, role, and confidence.
 
 | Offset         | Role           | Status      |
 | -------------- | -------------- | ----------- |
@@ -39,13 +42,15 @@ has, and how confident that role is:
 could plausibly differ. `unconfirmed` means the word is reported and nothing more is
 claimed.
 
-Only three facts gate admission:
+Admission requires the V8 magic high half `0xc0de` and a declared payload
+that reaches the end of the file from a 28- or 32-byte header.
+`ExternalReferenceTable::kSize` accounts for the varying low half of the magic word.
+A candidate 28-byte header followed by a zero word is ambiguous. A 32-byte header
+with a four-byte-truncated payload leaves its zero padding at the same offset as a
+28-byte header whose payload begins with that word. The reader refuses that case.
 
-1. the header size this reader pins (32 bytes);
-2. the V8 code cache magic high half, `0xc0de`. The low half is
-   `ExternalReferenceTable::kSize` and varies per V8 build, so it is reported as a build
-   fingerprint and never required to match a fixed value;
-3. the declared payload length must equal the bytes that follow the header exactly.
+Header extent describes the retained bytes. The synthetic narrow fixture tests
+reader admission. Runtime compatibility remains unverified for a 32-bit producer.
 
 `header.source_length` is the producer's recorded source length in UTF-16 code units.
 V8's serializer calls this field the source hash; on the producers measured here its value
@@ -54,7 +59,8 @@ reader reports it under the name the measurement supports. Treat that name as an
 observation, not as a claim about what any other build stores there.
 `header.producer` names the producer family from the flag bits in that word. Bit 29
 marks `vm.compileFunction` (`compile_function`); bit 30 marks `vm.SourceTextModule`
-(`module`). When neither flag is present, the producer remains `unknown`:
+(`module`). V8 before 13.4, including Node 22, marks a module with bit 31 instead,
+which is also reported as `module`. When no flag is present, the producer remains `unknown`:
 `vm.Script`, bytenode output and older unflagged function caches cannot be
 separated by those bits alone. The source-length mask is `0x1fffffff`, so both
 flags sit outside the reported length. This describes the admitted header

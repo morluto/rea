@@ -7,14 +7,21 @@ import {
   type OwnedProviderProcessSpawnOptions,
   type ProviderProcessSupervisorOptions,
   type ProviderProcessStopResult,
+  type ProviderProcessOutputTokenOptions,
 } from "./ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "./ProcessOwnership.js";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import type {
+  AnalysisCleanupReleaseClaim,
+  AnalysisCleanupResourceOwner,
+  AnalysisError,
+} from "../domain/analysisErrorBase.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 export interface OwnedWorkerRuntimeOptions {
   readonly rootPrefix: string;
   readonly launcher?: typeof spawnOwnedProviderProcess;
-  readonly supervisorOptions?: ProviderProcessSupervisorOptions;
+  readonly supervisorOptions?: ProviderProcessSupervisorOptions &
+    ProviderProcessOutputTokenOptions;
   /** Report request-stream failure at the lifecycle owner observation point. */
   readonly onInputFailure?: (cause: Error) => void;
   /** Let a higher-level owner release its dependent resources before this root. */
@@ -81,30 +88,24 @@ export class OwnedWorkerRuntimeCleanupError extends Error {
     this.#cleanupEpoch = cleanupEpoch;
   }
 
-  bindCleanupFailure(error: OwnedWorkerCleanupFailure | AnalysisError): void {
-    if (this.#cleanupEpoch === undefined) {
-      error.bindCleanupResourceOwner(releasedCleanupOwner);
-      error.resolveCleanup();
-      return;
-    }
-    this.#cleanupEpoch.bind(error);
+  bindCleanupFailure(error: AnalysisError): void {
+    bindCleanupOwner(error, this.#cleanupEpoch);
   }
 }
 
-export interface OwnedWorkerCleanupFailure {
-  bindCleanupResourceOwner(owner: {
-    readonly cleanupResources: readonly string[] | undefined;
-  }): unknown;
-  resolveCleanup(): unknown;
-}
-
-/** A root's cleanup attribution is stable even after this runtime is reused. */
-class OwnedWorkerRuntimeCleanupEpoch {
+/**
+ * A root's cleanup attribution is stable even after this runtime is reused.
+ * Errors read its release when asked; release is never pushed to them.
+ */
+class OwnedWorkerRuntimeCleanupEpoch implements AnalysisCleanupReleaseClaim {
   #released = false;
   #runId: string | undefined;
-  #failures: WeakRef<OwnedWorkerCleanupFailure>[] = [];
 
   constructor(readonly rootPath: string) {}
+
+  get cleanupReleased(): boolean {
+    return this.#released;
+  }
 
   get cleanupResources(): readonly string[] {
     return this.#released
@@ -116,25 +117,26 @@ class OwnedWorkerRuntimeCleanupEpoch {
     if (!this.#released) this.#runId = runId;
   }
 
-  bind(error: OwnedWorkerCleanupFailure | AnalysisError): void {
-    error.bindCleanupResourceOwner(this);
-    if (this.#released) {
-      error.resolveCleanup();
-      return;
-    }
-    this.#failures = [
-      ...this.#failures.filter((reference) => reference.deref() !== undefined),
-      new WeakRef(error),
-    ];
-  }
-
   release(): void {
-    if (this.#released) return;
     this.#released = true;
-    for (const reference of this.#failures) reference.deref()?.resolveCleanup();
-    this.#failures = [];
   }
 }
+
+/** A runtime without a retained root has nothing left to release. */
+const releasedCleanupOwner = {
+  cleanupResources: [],
+  cleanupReleased: true,
+} as const satisfies AnalysisCleanupReleaseClaim & AnalysisCleanupResourceOwner;
+
+/** Attribute an error to the root epoch whose release completes its cleanup. */
+const bindCleanupOwner = (
+  error: AnalysisError,
+  epoch: OwnedWorkerRuntimeCleanupEpoch | undefined,
+): void => {
+  const owner = epoch ?? releasedCleanupOwner;
+  error.bindCleanupResourceOwner(owner);
+  error.bindCleanupReleaseClaim(owner);
+};
 
 /** Own the private root and process lifecycle shared by sequential workers. */
 export class OwnedWorkerRuntime {
@@ -198,13 +200,8 @@ export class OwnedWorkerRuntime {
   }
 
   /** Keep a returned typed cleanup error live until this exact owner releases. */
-  bindCleanupFailure(error: OwnedWorkerCleanupFailure | AnalysisError): void {
-    if (this.#cleanupEpoch === undefined) {
-      error.bindCleanupResourceOwner(releasedCleanupOwner);
-      error.resolveCleanup();
-      return;
-    }
-    this.#cleanupEpoch.bind(error);
+  bindCleanupFailure(error: AnalysisError): void {
+    bindCleanupOwner(error, this.#cleanupEpoch);
   }
 
   /** Mark this still-owned runtime for retry before any consumer starts a child. */
@@ -437,7 +434,7 @@ export class OwnedWorkerRuntime {
         this.#cleanupEpoch = undefined;
       } catch (cause: unknown) {
         this.#registry.add(this);
-        throw this.#cleanupError(message(cause), cause);
+        throw this.#cleanupError(errorMessage(cause), cause);
       }
     }
     this.#closed = true;
@@ -489,8 +486,3 @@ export class OwnedWorkerRuntime {
     );
   }
 }
-
-const releasedCleanupOwner = { cleanupResources: [] } as const;
-
-const message = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);

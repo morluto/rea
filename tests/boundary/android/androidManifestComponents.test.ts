@@ -1,4 +1,5 @@
 import { expect, it, vi } from "vitest";
+import { parseManifestPackage } from "../../../src/apktool/ApktoolDecodeOutput.js";
 import { androidResultSchemas } from "../../../src/domain/android/androidAnalysis.js";
 
 import {
@@ -35,8 +36,8 @@ it.each([
   },
 );
 
-it("keeps pre-projection package parses independent", () => {
-  const older = {
+it("refuses package results without the component projection", () => {
+  const unprojected = {
     engine: {
       name: "jadx",
       version: null,
@@ -60,15 +61,10 @@ it("keeps pre-projection package parses independent", () => {
     resource_count: 0,
     signature_verification: "not_performed",
   };
-  const first = androidResultSchemas.inspect_android_package.parse(older);
-  expect(first.components).toMatchObject({ status: "unavailable", items: [] });
-  first.components.limitations.push("local parse mutation");
-  try {
-    const second = androidResultSchemas.inspect_android_package.parse(older);
-    expect(second.components.limitations).not.toContain("local parse mutation");
-  } finally {
-    first.components.limitations.pop();
-  }
+  expect(
+    androidResultSchemas.inspect_android_package.safeParse(unprojected).error
+      ?.issues,
+  ).toEqual([expect.objectContaining({ path: ["components"] })]);
 });
 
 it("projects exact declared component attributes without inferring runtime defaults", () => {
@@ -151,9 +147,9 @@ it("enforces the process copy budget across individually valid components", () =
   ).toBeLessThanOrEqual(ANDROID_MANIFEST_LIMITS.processBytes);
 });
 
-it("keeps historical declaration omissions unknown rather than absent", () => {
+it("refuses components without their declaration facets", () => {
   const parsed =
-    androidResultSchemas.inspect_android_package.shape.components.parse({
+    androidResultSchemas.inspect_android_package.shape.components.safeParse({
       status: "complete",
       items: [
         {
@@ -174,17 +170,20 @@ it("keeps historical declaration omissions unknown rather than absent", () => {
       ],
       limitations: [],
     });
-  expect(parsed.status).toBe("complete");
-  expect(parsed.items[0]?.declaration_coverage).toBe("unknown");
-  for (const field of [
-    "enabled",
-    "process",
-    "grant_uri_permissions",
-    "intent_filters",
-    "meta_data",
-    "location",
-  ])
-    expect(parsed.items[0]).not.toHaveProperty(field);
+  expect(new Set(parsed.error?.issues.map(({ path }) => path.at(-1)))).toEqual(
+    new Set([
+      "declaration_coverage",
+      "declaration_index",
+      "location",
+      "enabled",
+      "enabled_declaration",
+      "process",
+      "grant_uri_permissions",
+      "grant_uri_permissions_declaration",
+      "intent_filters",
+      "meta_data",
+    ]),
+  );
 });
 
 const MANIFEST = `<?xml version="1.0" encoding="utf-8"?>
@@ -359,14 +358,21 @@ it.each([
   },
 );
 
-it("refuses a namespaced manifest root", () => {
-  const inventory = parseAndroidManifestComponents(
-    '<manifest xmlns="urn:vendor" xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><activity android:name=".Decoy"/></application></manifest>',
-    "complete",
-    "30",
+it("admits the same unqualified manifest root in both Android readers", () => {
+  const manifest = (namespace: string) =>
+    `<manifest xmlns="${namespace}" xmlns:a="http://schemas.android.com/apk/res/android" xmlns:vendor="urn:vendor" package="com.example" vendor:package="com.decoy"><application><activity a:name=".Main"/></application></manifest>`;
+  const valid = manifest("");
+  expect(parseManifestPackage(valid)).toBe("com.example");
+  expect(parseAndroidManifestComponents(valid, "complete", "30")).toMatchObject(
+    { status: "complete", items: [{ name: "com.example.Main" }] },
   );
-  expect(inventory.status).toBe("unavailable");
-  expect(inventory.items).toEqual([]);
+  const unexpected = manifest("urn:vendor");
+  expect(
+    parseAndroidManifestComponents(unexpected, "complete", "30"),
+  ).toMatchObject({ status: "unavailable", items: [] });
+  expect(() => parseManifestPackage(unexpected)).toThrow(
+    "AndroidManifest.xml root must be <manifest>",
+  );
 });
 
 it("does not index foreign activities as alias targets", () => {
@@ -929,12 +935,12 @@ it("reports unavailable inventory for malformed or unexpected manifests", () => 
       "complete",
     ),
   ).toMatchObject({ status: "unavailable", items: [] });
-  expect(
-    parseAndroidManifestComponents(
-      '<?xml version="1.0" encoding="utf-8"?><!DOCTYPE manifest><manifest />',
-      "complete",
-    ),
-  ).toMatchObject({ status: "unavailable", items: [] });
+  const withDoctype =
+    '<?xml version="1.0" encoding="utf-8"?><!DOCTYPE manifest><manifest package="com.example" />';
+  expect(parseAndroidManifestComponents(withDoctype, "complete")).toMatchObject(
+    { status: "unavailable", items: [] },
+  );
+  expect(parseManifestPackage(withDoctype)).toBe("com.example");
 });
 
 it("bounds the component inventory and says so", () => {
@@ -1332,6 +1338,34 @@ it("makes unsupported modern filter constructs partial while retaining their sou
     intent_filters: [{ actions: ["VIEW"], data: [], coverage: "partial" }],
   });
   expect(result.limitations.join(" ")).toContain("unsupported constructs");
+});
+
+it("reports unnamed intent-filter members while retaining named siblings", () => {
+  const xml = [
+    '<manifest xmlns:a="http://schemas.android.com/apk/res/android" xmlns:other="urn:other" package="com.example"><application>',
+    '<activity a:name=".Main"><intent-filter><action other:name="DECOY"/><category/><action a:name="VIEW"/><category a:name="DEFAULT"/></intent-filter>',
+    '<intent-filter><action a:name="EDIT"/></intent-filter></activity>',
+    "</application></manifest>",
+  ].join("\n");
+  const result = parseAndroidManifestComponents(xml, "complete", "30");
+  expect(result.status).toBe("partial");
+  expect(result.items).toMatchObject([
+    {
+      exported_default: true,
+      declaration_coverage: "partial",
+      actions: ["VIEW", "EDIT"],
+      categories: ["DEFAULT"],
+      intent_filters: [
+        { actions: ["VIEW"], categories: ["DEFAULT"], coverage: "partial" },
+        { actions: ["EDIT"], categories: [], coverage: "complete" },
+      ],
+    },
+  ]);
+  expect(result.limitations).toContainEqual(
+    expect.stringContaining(
+      "2 intent-filter action or category declaration(s) without android:name",
+    ),
+  );
 });
 
 it.each([

@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { WabtAdmissionError } from "./WabtAdmissionError.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { wasmInterfaceEntryRepresentationBytes } from "../domain/wasm/wasmInterface.js";
@@ -57,9 +58,7 @@ const splitParts = (form: string, maximumBytes?: number): string[] => {
 const name = (text: string | undefined): string => {
   if (text?.startsWith('"') !== true)
     throw new WabtAdmissionError("name_missing");
-  return new TextDecoder("utf8", { fatal: true, ignoreBOM: true }).decode(
-    watString(text, 1).bytes,
-  );
+  return decodeStrictUtf8(watString(text, 1).bytes, "preserve");
 };
 const integer = (text: string): string | null => {
   if (!/^(?:\d+|0x[\da-f]+)$/iu.test(text)) return null;

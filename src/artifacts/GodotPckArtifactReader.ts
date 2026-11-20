@@ -1,15 +1,22 @@
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
+import { BinaryReader } from "../domain/binaryContainer.js";
 import {
   DEFAULT_GODOT_READER_LIMITS,
   type GodotReaderLimits,
 } from "../domain/artifactReaderLimits.js";
-import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
-import { readGodotPckHeaderFacts } from "../domain/godotPckFormat.js";
+import {
+  godotPckDataStartsAfterHeader,
+  godotPckHeaderEnd,
+  readGodotPckHeaderFacts,
+} from "../domain/godotPckFormat.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 import type { FileHandle } from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+import {
+  ArtifactReaderFailure,
+  assertArtifactReadActive,
+  artifactReaderLimitFailure,
+} from "../resources/index.js";
 import {
   locateGodotPck,
   type GodotPckAdmission,
@@ -23,13 +30,14 @@ import {
   type PositionalArtifactEntries,
   type PositionalArtifactEntry,
 } from "./PositionalArtifactReader.js";
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 
 const PACK_DIR_ENCRYPTED = 1;
 const PACK_REL_FILEBASE = 2;
 const PACK_SPARSE_BUNDLE = 4;
 const PACK_FILE_ENCRYPTED = 1;
 const DIRECTORY_CHUNK_BYTES = 64 * 1024;
-const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const UTF8 = strictUtf8Decoder("preserve");
 
 /** One descriptor, one validated directory, and bounded positional member reads. */
 export class GodotPckArtifactReader extends PositionalArtifactReader {
@@ -123,8 +131,19 @@ export class GodotPckArtifactReader extends PositionalArtifactReader {
         throw metadataLimit(this.limits, retainedBytes);
       entries.push(metadata);
     }
+    const directoryEnd = cursor.offset;
+    for (const entry of entries) {
+      if (
+        entry.declaredSize > 0 &&
+        entry.byteOffset < directoryEnd &&
+        entry.byteOffset + entry.declaredSize > header.directory_start
+      )
+        throw formatFailure(
+          `member overlaps the directory: ${entry.sourcePath}`,
+        );
+    }
     await this.verifyCarrier(signal);
-    return { entries, coverage: undefined };
+    return { entries, coverage: { status: "complete", limitations: [] } };
   }
   async #readEntry(
     cursor: PckCursor,
@@ -162,6 +181,17 @@ export class GodotPckArtifactReader extends PositionalArtifactReader {
       header.pack_end,
       sourcePath,
     );
+    if (start < header.pack_start)
+      throw formatFailure(`member starts before the pack: ${sourcePath}`);
+    if (
+      size > 0n &&
+      !godotPckDataStartsAfterHeader(
+        header.pack_start,
+        header.format_version,
+        start,
+      )
+    )
+      throw formatFailure(`member overlaps the pack header: ${sourcePath}`);
     if (size > BigInt(header.pack_end - start))
       throw formatFailure(`member exceeds the pack: ${sourcePath}`);
     return {
@@ -208,6 +238,7 @@ const readGodotPckHeader = async (
     throw formatFailure("no standalone header or executable trailer");
   const { start, end, embedded } = location;
   const fixed = await readArtifactFileBytes(handle, start, 40, end, signal);
+  const fixedReader = new BinaryReader(fixed, true, "godot-pck");
   const header = readGodotPckHeaderFacts(fixed);
   const version = header.formatVersion;
   if (![1, 2, 3, 4].includes(version))
@@ -215,7 +246,7 @@ const readGodotPckHeader = async (
       "unavailable",
       `Godot PCK format ${String(version)} is unsupported; plain formats 1, 2, 3 and 4 are supported`,
     );
-  const flags = version === 1 ? 0 : fixed.readUInt32LE(20);
+  const flags = version === 1 ? 0 : fixedReader.u32(20);
   if (
     (flags & ~(PACK_DIR_ENCRYPTED | PACK_REL_FILEBASE | PACK_SPARSE_BUNDLE)) !==
     0
@@ -228,18 +259,22 @@ const readGodotPckHeader = async (
     version === 1
       ? 0
       : toSafeOffset(
-          fixed.readBigUInt64LE(24),
+          fixedReader.word(24, 64),
           version >= 3 || (flags & PACK_REL_FILEBASE) !== 0 ? start : 0,
           end,
           "file base",
         );
   const directory =
     version >= 3
-      ? toSafeOffset(fixed.readBigUInt64LE(32), start, end, "directory")
-      : start + (version === 1 ? 84 : 96);
-  const count = (
-    await readArtifactFileBytes(handle, directory, 4, end, signal)
-  ).readUInt32LE(0);
+      ? toSafeOffset(fixedReader.word(32, 64), start, end, "directory")
+      : godotPckHeaderEnd(start, version);
+  if (!godotPckDataStartsAfterHeader(start, version, directory))
+    throw formatFailure("directory overlaps the pack header");
+  const count = new BinaryReader(
+    await readArtifactFileBytes(handle, directory, 4, end, signal),
+    true,
+    "godot-pck",
+  ).u32(0);
   const status =
     (flags & PACK_DIR_ENCRYPTED) !== 0
       ? "encrypted"
@@ -299,6 +334,9 @@ class PckCursor {
       readonly limits: GodotReaderLimits;
     },
   ) {}
+  get offset(): number {
+    return this.position;
+  }
   requireBytes(length: number): void {
     if (length > this.end - this.position)
       throw formatFailure("directory entry exceeds the pack");
@@ -336,10 +374,10 @@ class PckCursor {
     return this.#buffer.subarray(start, start + length);
   }
   async uint32(): Promise<number> {
-    return (await this.bytes(4)).readUInt32LE(0);
+    return new BinaryReader(await this.bytes(4), true, "godot-pck").u32(0);
   }
   async uint64(): Promise<bigint> {
-    return (await this.bytes(8)).readBigUInt64LE(0);
+    return new BinaryReader(await this.bytes(8), true, "godot-pck").word(0, 64);
   }
 }
 

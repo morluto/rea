@@ -5,13 +5,13 @@ export const SHELL_LINK_CLSID = Buffer.from([
   0x00, 0x00, 0x46,
 ]);
 
-export const MY_COMPUTER_CLSID = Buffer.from([
+const MY_COMPUTER_CLSID = Buffer.from([
   0xe0, 0x4f, 0xd0, 0x20, 0xea, 0x3a, 0x69, 0x10, 0xa2, 0xd8, 0x08, 0x00, 0x2b,
   0x30, 0x30, 0x9d,
 ]);
 
 /** 2024-01-15T12:00:00.000Z as FILETIME 100-nanosecond intervals. */
-export const FIXTURE_FILETIME = 133497936000000000n;
+const FIXTURE_FILETIME = 133497936000000000n;
 
 export const LINK_FLAG = {
   HasLinkTargetIDList: 0x00000001,
@@ -26,7 +26,7 @@ export const LINK_FLAG = {
   HasExpIcon: 0x00004000,
 } as const;
 
-export const EXTRA_SIGNATURE = {
+const EXTRA_SIGNATURE = {
   EnvironmentVariable: 0xa0000001,
   Tracker: 0xa0000003,
   ConsoleFE: 0xa0000004,
@@ -40,7 +40,7 @@ export const TRACKER_MAC = Buffer.from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
 /** UUID timestamp 100ns since 1582-10-15 matching 2024-01-15T12:00:00.000Z. */
 export const TRACKER_UUID_TIMESTAMP = 139289664000000000n;
 
-export type FixtureIdListItem =
+type FixtureIdListItem =
   | {
       readonly kind: "root";
       readonly sortIndex?: number;
