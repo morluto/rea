@@ -17,6 +17,7 @@ import {
   createVerifierRun,
   completeVerifierRun,
 } from "./lib/verifier-run.mjs";
+import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
@@ -278,38 +279,51 @@ try {
   if (stderr) process.stderr.write(stderr);
   primaryFailure = cause;
 } finally {
+  // Client, transport, and command cleanup are independent. A failure in one
+  // must not skip the others.
+  const shutdownFailures = [];
   try {
-    await client.close();
-  } finally {
-    await transport.close();
+    await closeVerifierResources([
+      () => client.close(),
+      () => transport.close(),
+    ]);
+  } catch (cause) {
+    shutdownFailures.push(
+      ...(cause instanceof AggregateError ? cause.errors : [cause]),
+    );
+  }
+  try {
+    await workspaceFixture.closeEarly([() => commands.close()]);
+  } catch (cause) {
+    shutdownFailures.push(
+      ...(cause instanceof AggregateError ? cause.errors : [cause]),
+    );
+  }
+  if (shutdownFailures.length > 0) {
+    const shutdown =
+      shutdownFailures.length === 1
+        ? shutdownFailures[0]
+        : new AggregateError(shutdownFailures, "m68k shutdown failed");
+    primaryFailure =
+      primaryFailure === undefined
+        ? shutdown
+        : new AggregateError(
+            [primaryFailure, shutdown],
+            "m68k verification and shutdown both failed",
+          );
   }
 }
 if (primaryFailure === undefined) {
-  const survivors = await readdir(runtime);
-  if (survivors.length > 0)
-    primaryFailure = retainWorkspace(
-      `Runtime resources survived server shutdown (${survivors.join(", ")}); retained workspace: ${workspace}`,
-    );
+  try {
+    const survivors = await readdir(runtime);
+    if (survivors.length > 0)
+      primaryFailure = retainWorkspace(
+        `Runtime resources survived server shutdown (${survivors.join(", ")}); retained workspace: ${workspace}`,
+      );
+  } catch (cause) {
+    primaryFailure = cause;
+  }
 }
-let cleanupFailure;
-try {
-  await workspaceFixture.closeEarly([() => commands.close()]);
-} catch (cause) {
-  cleanupFailure = cause;
-}
-if (cleanupFailure !== undefined)
-  throw retainWorkspace(
-    `m68k command cleanup failed; retained diagnostic workspace: ${workspace}`,
-    {
-      cause:
-        primaryFailure === undefined
-          ? cleanupFailure
-          : new AggregateError(
-              [primaryFailure, cleanupFailure],
-              "m68k verification and command cleanup both failed",
-            ),
-    },
-  );
 const verifierRun = await completeVerifierRun(run);
 try {
   assertVerifierCleanupComplete(verifierRun.process_lineage);
