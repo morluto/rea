@@ -15,7 +15,7 @@ import {
   BinaryReader,
   BinaryResourceFailure,
 } from "../../domain/binaryContainer.js";
-import { readPeHeaders } from "../../domain/pe/peResourceLayout.js";
+import { readPeImageHeaders } from "../../domain/pe/peImageHeaders.js";
 
 /**
  * The caller's entry budget, named on the failure. Consumers read it with
@@ -214,7 +214,7 @@ export const parsePeRichHeader = async (
   signal?: AbortSignal,
 ): Promise<PeRichHeader> => {
   assertArtifactReadActive(signal);
-  const { machine, format, optionalHeaderOffset } = readPeHeaders(bytes);
+  const { machine, format, optionalHeaderOffset } = readPeImageHeaders(bytes);
   const peOffset = optionalHeaderOffset - 24;
   const record = await richRecord(
     new BinaryReader(bytes, true, "pe"),
