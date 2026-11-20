@@ -939,6 +939,9 @@ export const parseOciImageLayout = async (
 
   const blobs: OciImageLayoutBlob[] = [];
   let blobsHashed = 0;
+  // Reference membership is by resolved blob path: a descriptor spelling
+  // such as uppercase hex resolves to the same file as its canonical form.
+  const referencedPaths = new Set<string>();
 
   for (const [digest, reference] of referenced) {
     const parsed = parseOciDigest(digest);
@@ -959,6 +962,7 @@ export const parseOciImageLayout = async (
           digest,
         );
       const path = unverifiedBlobPath(digest);
+      if (path !== undefined) referencedPaths.add(path);
       const entry = path === undefined ? undefined : byPath.get(path);
       blobs.push(
         blobRecord(
@@ -980,6 +984,7 @@ export const parseOciImageLayout = async (
       continue;
     }
     const path = ociBlobPath(parsed);
+    referencedPaths.add(path);
     const entry = byPath.get(path);
     if (entry === undefined) {
       if (
@@ -1139,7 +1144,7 @@ export const parseOciImageLayout = async (
     const parts = entry.path.split("/");
     if (parts.length !== 3) continue;
     const digest = `${parts[1]}:${parts[2]}`;
-    if (referenced.has(digest)) continue;
+    if (referenced.has(digest) || referencedPaths.has(entry.path)) continue;
     if (entry.kind === "directory") continue;
     recordFinding(
       findings,

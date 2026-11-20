@@ -476,6 +476,32 @@ it("records unreferenced blobs, unknown media types and unsupported digests", as
   );
 });
 
+it("treats a blob named by an uppercase-hex descriptor as referenced", async () => {
+  const root = await createTestTempDirectory("rea-oci-uppercase-");
+  await writeOciImageLayoutFixture(root);
+  const blob = await putOciBlob(root, "uppercase-blob");
+  const parsed = parseOciDigest(blob);
+  if (parsed === undefined) throw new Error("expected sha256 blob digest");
+  const indexPath = join(root, "index.json");
+  const index = JSON.parse(await readFile(indexPath, "utf8")) as {
+    manifests: Record<string, unknown>[];
+  };
+  index.manifests.push({
+    mediaType: "application/vnd.example.unknown",
+    digest: `sha256:${parsed.hex.toUpperCase()}`,
+    size: 14,
+  });
+  await writeFile(indexPath, `${JSON.stringify(index)}\n`);
+  const report = await inspectLayout(root);
+  const path = `blobs/sha256/${parsed.hex}`;
+  expect(
+    report.findings.filter((finding) => finding.kind === "unreferenced_blob"),
+  ).toEqual([]);
+  const rows = report.blobs.filter((entry) => entry.path === path);
+  expect(rows).toHaveLength(1);
+  expect(rows[0]?.referenced).toBe(true);
+});
+
 it("reports a descriptor it cannot model instead of dropping it silently", async () => {
   const root = await createTestTempDirectory("rea-oci-malformed-descriptor-");
   await writeOciImageLayoutFixture(root);
