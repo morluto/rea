@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { tmpdir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { dirname, parse, resolve, sep } from "node:path";
 import * as fs from "node:fs/promises";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
@@ -46,8 +46,15 @@ describe("Ghidra temporary directory probe", () => {
   it("probes the Ghidra session root rather than an unusable inherited temp", async () => {
     const dotted = resolve(directory, ".cache", "tmp");
     for (const name of ["TMPDIR", "TMP", "TEMP"]) vi.stubEnv(name, dotted);
+    const { root } = parse(dotted);
+    const elements = dotted.slice(root.length).split(sep);
+    const firstDotted = elements.findIndex((element) =>
+      element.startsWith("."),
+    );
     const expected =
-      process.platform === "win32" ? resolve(directory) : resolve("/tmp");
+      process.platform === "win32"
+        ? resolve(root, ...elements.slice(0, firstDotted))
+        : resolve("/tmp");
     expect(resolve(tmpdir())).toBe(dotted);
     expect(expected).not.toBe(dotted);
     await expect(
