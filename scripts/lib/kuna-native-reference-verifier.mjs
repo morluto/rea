@@ -4,6 +4,7 @@ import { realpath } from "node:fs/promises";
 import { runKunaCommand } from "../../dist/kuna/KunaCommand.js";
 import { kunaProjectDeadline } from "../../dist/kuna/KunaConfiguration.js";
 import { inspectKunaInstallation } from "../../dist/kuna/KunaInstallation.js";
+import { HOST_PLATFORM } from "../../dist/platform/HostPlatform.js";
 import { KUNA_XREF_OUTPUT_BYTES } from "../../dist/kuna/KunaReferenceFiles.js";
 
 /** Independent projection of native exact-target rows, bypassing REA's parser. */
@@ -21,7 +22,7 @@ export const nativeKunaIncomingSites = async ({
       REA_KUNA_COMMAND: executable,
       REA_KUNA_CACHE_DIR: cacheRoot,
     },
-    { resourceScope },
+    { platform: HOST_PLATFORM.platform, resourceScope },
   );
   assert.ok(installed.ok, "Native reference oracle could not inspect Kuna");
   const input = await realpath(binary);

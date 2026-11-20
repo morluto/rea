@@ -30,6 +30,7 @@ const forCredential = (credential: string) =>
     url: "http://127.0.0.1:12345/mcp",
     headers: { Authorization: `Custom ${credential}` },
     mode: "attached",
+    protocol: "native",
     timeoutMs: 1000,
   });
 
@@ -179,6 +180,7 @@ describe("IDA JSON diagnostic source preservation", () => {
       headers: {},
       url: "http://127.0.0.1:12345/mcp",
       mode: "attached",
+      protocol: "native",
       timeoutMs: 1000,
     });
     expect(redactor.json(source)).toBe(source);
@@ -279,6 +281,7 @@ describe("overlapping raw and decoded JSON credential spans", () => {
       url: "http://127.0.0.1:12345/mcp",
       headers: { Authorization: "Custom X]", Cookie: "a=]SECRET" },
       mode: "attached",
+      protocol: "native",
       timeoutMs: 1000,
     });
   it.each([
@@ -303,6 +306,7 @@ describe("overlapping raw and decoded JSON credential spans", () => {
       url: "http://127.0.0.1:12345/mcp",
       headers: { Authorization: "Basic " + encoded, Cookie: "a=]SECRET" },
       mode: "attached",
+      protocol: "native",
       timeoutMs: 1000,
     });
     expect(

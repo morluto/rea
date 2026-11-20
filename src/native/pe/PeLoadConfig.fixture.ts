@@ -70,6 +70,8 @@ export interface PeLoadConfigFixtureOptions {
   /** In-section callbacks when `callbacks` is present. Defaults to the rich trio. */
   readonly callbackCount?: number;
   readonly zeroFillCallback?: boolean;
+  readonly textVirtualSize?: number;
+  readonly rawDataRange?: readonly [number, number];
   readonly securityCookie?: "mapped" | "zero";
   readonly directoryCount?: number;
   readonly malformed?: PeLoadConfigFixtureMalformed;
@@ -106,7 +108,9 @@ export const peLoadConfigImage = (
   bytes.writeUInt32LE(layout.dataFile, optional + 60);
   bytes.writeUInt32LE(directoryCount, optional + directoriesAt - 4);
   const section = optional + optionalSize;
-  const textVirtual = options.zeroFillCallback ? 0x400 : layout.textBytes;
+  const textVirtual =
+    options.textVirtualSize ??
+    (options.zeroFillCallback ? 0x400 : layout.textBytes);
   writeSection(bytes, section, ".data", {
     virtualSize: layout.dataBytes,
     virtualAddress: layout.dataRva,
@@ -146,11 +150,12 @@ export const peLoadConfigImage = (
       const rawStart =
         options.malformed === "raw-data-inverted"
           ? layout.rawDataRva + layout.rawDataSize
-          : layout.rawDataRva;
+          : (options.rawDataRange?.[0] ?? layout.rawDataRva);
       const rawEnd =
         options.malformed === "raw-data-inverted"
           ? layout.rawDataRva
-          : layout.rawDataRva + layout.rawDataSize;
+          : (options.rawDataRange?.[1] ??
+            layout.rawDataRva + layout.rawDataSize);
       writeVa(tlsAt, vaOf(rawStart));
       writeVa(tlsAt + pointerWidth, vaOf(rawEnd));
       writeVa(tlsAt + pointerWidth * 2, vaOf(layout.indexRva));

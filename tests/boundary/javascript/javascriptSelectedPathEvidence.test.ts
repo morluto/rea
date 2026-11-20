@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import {
   mkdir,
   readFile,
@@ -137,8 +138,8 @@ cliTest(
     expect(physicalEvidence.normalized_result).toEqual(
       aliasEvidence.normalized_result,
     );
-    expect(physicalEvidence.subject?.digest.sha256).toBe(
-      aliasEvidence.subject?.digest.sha256,
+    expect(fileIdentity(physicalEvidence.subject).sha256).toBe(
+      fileIdentity(aliasEvidence.subject).sha256,
     );
     expect(physicalEvidence.evidence_id).not.toBe(aliasEvidence.evidence_id);
     const bundlePath = join(root, "retained-evidence.json");
@@ -178,18 +179,9 @@ cliTest(
 );
 
 // Anchoring must not turn an empty selection into the working directory.
-cliTest.for([
-  {
-    command: "analyze-javascript-application",
-    rejection: {
-      code: "invalid_request",
-      details: { issues: [expect.objectContaining({ path: ["input_path"] })] },
-    },
-  },
-  { command: "analyze", rejection: { code: "VALIDATION_ERROR" } },
-])(
-  "$command rejects an empty path instead of analyzing the working directory",
-  async ({ command, rejection }, { cli }) => {
+cliTest.for(["analyze-javascript-application", "analyze"])(
+  "%s rejects an empty path instead of analyzing the working directory",
+  async (command, { cli }) => {
     const root = await createTestTempDirectory("rea-js-empty-path-");
     await writeFile(join(root, "main.js"), "export const value = 7;\n");
     const response = await cli.run({
@@ -198,6 +190,11 @@ cliTest.for([
       environment: { REA_LOG_LEVEL: "silent" },
     });
     expect(response.exitCode, response.stderr).toBe(1);
-    expect(response.json).toMatchObject(rejection);
+    expect(response.json).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fieldErrors: [
+        expect.objectContaining({ path: "path", code: "too_small" }),
+      ],
+    });
   },
 );

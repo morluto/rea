@@ -22,6 +22,54 @@ const releases = (source: string) =>
       resolution,
     }));
 
+it.each([
+  ["net", "connect", "-0"],
+  ["net", "createConnection", "-0.0"],
+  ["tls", "connect", "-0"],
+  ["net", "connect", "typeof 1.5"],
+  ["net", "connect", "~(-1.5)"],
+  ["tls", "connect", "void 0, { port: 443 }"],
+] as const)(
+  "retains %s.%s(%s) and its socket release when the unary result is valid",
+  (module, method, argument) => {
+    expect(
+      operations(
+        `import socket from "node:${module}"; const handle = socket.${method}(${argument}); handle.destroy();`,
+      ).map(({ kind, method, resolution }) => ({ kind, method, resolution })),
+    ).toEqual([
+      { kind: "acquire", method, resolution: "complete" },
+      { kind: "release", method: "destroy", resolution: "complete" },
+    ]);
+  },
+);
+
+it.each([
+  ["connect", "void 0"],
+  ["createConnection", "void value"],
+  ["connect", "undefined"],
+  ["connect", "void 0, { port: 443 }"],
+] as const)(
+  "emits no net.%s acquisition or release for a missing first argument: %s",
+  (method, argument) => {
+    expect(
+      operations(
+        `import net from 'node:net'; const handle = net.${method}(${argument}); handle.destroy();`,
+      ),
+    ).toEqual([]);
+  },
+);
+
+it("retains unknown net argument positions and shadowed undefined values", () => {
+  for (const body of [
+    "function use(undefined) { const handle=net.connect(undefined);handle.destroy(); }",
+    "const handle=net.connect(...args, void 0);handle.destroy();",
+  ])
+    expect(operations(`import net from 'node:net';${body}`)).toEqual([
+      expect.objectContaining({ kind: "acquire", method: "connect" }),
+      expect.objectContaining({ kind: "release", method: "destroy" }),
+    ]);
+});
+
 const commonJsPromise = `const { open } = require("node:fs/promises"); const h = open("input.txt"); h.close();`;
 
 it("keeps conditional release facts when the loader is unknown", () => {
@@ -198,3 +246,17 @@ it("keeps an awaited handle release uncertain after an opaque receiver write", (
     ),
   ).toEqual([{ method: "close", linked: 1, resolution: "partial" }]);
 });
+
+it.each([
+  ["if (flag) handle = createReadStream('input.txt');", "partial"],
+  ["handle = createReadStream('input.txt');", "complete"],
+] as const)(
+  "preserves incoming parameter uncertainty before release: %s",
+  (assignment, resolution) => {
+    expect(
+      releases(
+        `import { createReadStream } from 'node:fs'; function release(handle, flag) { ${assignment} handle.destroy(); }`,
+      ),
+    ).toEqual([{ method: "destroy", linked: 1, resolution }]);
+  },
+);

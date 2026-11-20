@@ -12,6 +12,10 @@ import { createDirectAnalysis } from "../../../src/composition/directAnalysis.js
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import {
+  minimalElfImage,
+  minimalMachoImage,
+} from "../../fixtures/nativeHeaders.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 const android = {
@@ -19,7 +23,7 @@ const android = {
   operation: "project_android_application_graph",
   command: "project-android-application-graph",
   scripts: ["classes.dex", "extra.dex"],
-  nativeBytes: Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0]),
+  nativeBytes: minimalElfImage(),
   libraries: {
     "lib/arm64-v8a/libcommunity.so": "jni-library-convention",
     "lib/arm64-v8a/libpreact.so": "jni-library-convention",
@@ -39,7 +43,7 @@ const apple = {
   operation: "project_apple_application_graph",
   command: "project-apple-application-graph",
   scripts: ["Payload/Fixture.app/main.js", "Payload/Fixture.app/extra.js"],
-  nativeBytes: Buffer.from([0xcf, 0xfa, 0xed, 0xfe, 0x0c, 0, 0, 1]),
+  nativeBytes: minimalMachoImage(),
   libraries: {
     "Payload/Fixture.app/Frameworks/App.framework/App":
       "javascript-and-native-content",
@@ -138,5 +142,4 @@ cliTest(
       }
     }
   },
-  30_000,
 );

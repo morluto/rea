@@ -2,7 +2,7 @@ import { runInNewContext } from "node:vm";
 
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 import {
   analyzeCommonJsStaticFixture,
   analyzeCommonJsSemanticFixture,

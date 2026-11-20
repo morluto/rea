@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -22,7 +23,6 @@ it("checks each model parent digest independently of cached declarations and dis
     });
     if (!inspected.ok) throw inspected.error;
     const original = inspected.value;
-    if (original.subject === null) throw new Error("Missing full-file subject");
     const report = freezeJsonSnapshot(original.normalized_result);
     const parent = (name: string, targetPath: string, digest: string) =>
       createEvidence(
@@ -36,7 +36,7 @@ it("checks each model parent digest independently of cached declarations and dis
           limitations: original.limitations,
         },
       );
-    const digest = original.subject.digest.sha256;
+    const digest = fileIdentity(original.subject).sha256;
     const valid = parent("valid", path, digest);
     const aliasPath = join(root, "other.gguf");
     const rebound = parent("rebound-path", aliasPath, digest);

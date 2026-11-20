@@ -57,7 +57,11 @@ bundle. A failed export, cancellation
 included, removes the bundle it had not yet published, so no partial copy of the
 user's data remains. If the bundle was published but its output handles could
 not be closed, the command reports a cleanup error that carries the export
-Evidence; the bundle itself is complete.
+Evidence; the bundle itself is complete. Cancellation during final output
+handle cleanup also preserves the complete bundle and returns its Evidence
+as a partial observation. If closing the handles fails too, the cleanup
+failure remains primary and cancellation is retained separately. The complete
+bundle remains usable.
 
 ## The bundle
 
@@ -138,8 +142,8 @@ The class declares:
   architecture for a vendor package, since its repository may serve no other.
   A vendor package captured on any other architecture is refused. A package
   installed from its `.deb` file supports only that file's architecture.
-- A launch at boot with the captured command, ready when a window of the
-  captured class appears and one of them is listed in the taskbar and is not
+- A launch at boot with the captured command, ready when a window with the
+  recorded class component of X11 `WM_CLASS` is listed in the taskbar and is not
   typed as a splash: a splash screen or a dialog of the class skips the
   taskbar or says it is a splash, and an app whose splash shows first would
   otherwise count as ready before its own window opens. Arguments that are the captured home or under it, and
@@ -149,7 +153,13 @@ The class declares:
   captured working directory (`"$HOME"` when that was the home, as for a
   desktop entry without `Path`), which a relative argument or program path
   such as `./app` also needs, and still starts if that folder is missing. The
-  export refuses a capture that saw no application window.
+  export refuses a capture that saw no application window. When a launch path
+  traversed a parent directory through a symlink, export uses the recorded
+  physical state paths to place the seed and respell the launch together.
+  A file argument follows the file's seed location. A launch directory must
+  preserve the relative paths to its retained files. If those files cannot
+  share a replay location, capture again with an explicit home or XDG
+  directory without parent traversal.
 - The seed's document, opened at launch, so the app shows it rather than its
   start screen: when the seed holds exactly one file the state view gives the
   `document` role, and the desktop entry's `Exec` takes files (a `%f`, `%F`,
@@ -336,6 +346,9 @@ A withheld file larger than 48 KiB is refused, since its base64 must fit one
 environment variable. `--withheld-copy <folder>` copies the withheld files,
 as captured, into a new or empty folder outside the bundle. The result lists
 them as `withheld_files`, each with its `setting`, `variable` and `handle`.
+REA resolves both destinations before writing either. A path that cannot be
+resolved, including a dangling link, is refused; the copy and bundle cannot
+contain one another, including through symbolic links.
 
 `--consent <file>` ships the person's consents, a `consent.json` that
 `record_build_consent` records, as the bundle's own `consent.json`.
@@ -555,7 +568,10 @@ as their entries, read with Python's `zipfile` from the file in place, with
 REA's entry, size, compression ratio and archive limits and its wording for an
 entry it does not read. The module reads the central directory itself, as REA
 does, and shows `zipfile` only the records it lists, reading each entry in
-bounded chunks no further than a byte past its declared size. A gzip file is
+bounded chunks no further than a byte past its declared size. The reader
+follows a Zip64 locator to the complete end-record span and skips its
+extension bytes before passing the bounded directory to `zipfile`.
+A gzip file is
 the view of the document inside it, with `"compression": "gzip"` beside its
 format, decompressed with Python's `zlib` within the same entry size and ratio
 limits, its members joined as REA joins them. A JSON file
@@ -592,10 +608,11 @@ when a DOCTYPE names a DTD. Known differences remain:
 
 - dconf databases are reported as binary, since REA reads them with `dconf`;
   inside an archive, one is `dconf` with an error, as in REA.
-- Zip entry names: a name in an Info-ZIP Unicode Path extra field is used only
-  where Python's `zipfile` reads it (3.12 and later), and an entry whose local
-  header names it differently from the central directory is damaged rather
-  than read.
+- Zip entries whose local header names them differently from the central
+  directory are damaged rather than read. Entry names follow REA's Unicode
+  Path selection: the final extra field replaces earlier claims, a bad version
+  or CRC falls back to the stored name, and the UTF-8 flag takes precedence.
+  Invalid UTF-8 in the selected name makes the archive view unreadable.
 - SQLite databases are read in place, read-only, rather than from a staged copy;
   a write lock the running app holds is waited out for a quarter of a second
   and then gives the file an `error`, and so does a table or column name that

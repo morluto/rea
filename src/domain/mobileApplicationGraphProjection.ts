@@ -111,6 +111,7 @@ export const projectionCoverage = (
 /** One occurrence with resolved content, unavailable identity, or an unresolved node reference. */
 export type ProjectedInventoryEntry = {
   readonly path: string;
+  readonly sourcePath?: string;
   readonly kind: ParsedInventorySet["inventory"]["occurrences"][number]["entry_kind"];
 } & (
   | { readonly component: ProjectedComponent; readonly unavailable: undefined }
@@ -136,11 +137,16 @@ export const projectedInventoryEntries = (
     .filter(({ logical_path }) => logical_path !== ".")
     .map((occurrence): ProjectedInventoryEntry => {
       const path = occurrence.logical_path;
-      const kind = occurrence.entry_kind;
+      const identity = {
+        path,
+        kind: occurrence.entry_kind,
+        ...(occurrence.source_path === undefined
+          ? {}
+          : { sourcePath: occurrence.source_path }),
+      };
       if (occurrence.artifact_id === null)
         return {
-          path,
-          kind,
+          ...identity,
           component: undefined,
           unavailable: {
             path,
@@ -156,11 +162,10 @@ export const projectedInventoryEntries = (
         limitations.push(
           `Inventory occurrence ${JSON.stringify(path)} references ${occurrence.artifact_id} (${occurrence.artifact_format}), whose node is outside the supplied pages. Its content SHA-256 and component classification remain unknown; the source Evidence retains the occurrence.`,
         );
-        return { path, kind, component: undefined, unavailable: undefined };
+        return { ...identity, component: undefined, unavailable: undefined };
       }
       return {
-        path,
-        kind,
+        ...identity,
         component: {
           path,
           artifact_id: node.artifact_id,

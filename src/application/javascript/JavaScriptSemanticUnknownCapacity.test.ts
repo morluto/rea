@@ -340,3 +340,37 @@ it("bounds reads within unmodeled nested operator operands", () => {
   );
   expect(trace.status).not.toBe("found");
 });
+
+it.each([1, 2])(
+  "reports unavailable-module node omission only when total capacity %s rejects it",
+  (totalNodes) => {
+    const projection = createJavaScriptSemanticGraphProjection({
+      totalNodes,
+      fileNodes: 10,
+    });
+    const retained = source("retained.js", "");
+    projection.projectFile(retained, analyzeJavaScriptSemantics(""));
+    projection.recordUnavailableFile(
+      source("unavailable.js"),
+      "Source unavailable",
+      null,
+      "incomplete-module",
+    );
+    const graph = projection.finish(digest, application);
+    expect(graph.nodes).toHaveLength(totalNodes);
+    expect(graph.unknowns).toHaveLength(12);
+    expect(graph.coverage).toMatchObject({
+      status: "partial",
+      truncated: totalNodes === 1,
+      omitted_nodes: null,
+    });
+    if (totalNodes === 1) {
+      expect(graph.coverage.limits).toContainEqual({
+        name: "max_semantic_nodes",
+        value: 1,
+        unit: "items",
+      });
+      expect(graph.limitations.join("\n")).toContain("max_semantic_nodes is 1");
+    } else expect(graph.coverage.limits).toEqual([]);
+  },
+);

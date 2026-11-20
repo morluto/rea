@@ -1,10 +1,19 @@
 import { FLUTTER_PROVIDER_IDENTITY } from "./FlutterProviderIdentity.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
+  artifactFileCancellationCause,
+  assertArtifactReadActive,
+  ArtifactResourceScope,
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+  ArtifactReaderFailure,
+  type ArtifactEntry,
+  ZipArtifactReader,
+} from "../resources/index.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  providerCleanupErrorFromFailures,
+} from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 import { createHash } from "node:crypto";
 import { chmod, mkdtemp, open as openFile, rm, stat } from "node:fs/promises";
@@ -18,11 +27,13 @@ import {
   type ProviderAvailability,
   createAnalysisExecution,
   type AnalysisExecution,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import {
   MAX_FLUTTER_LIBRARY_PATH_BYTES,
+  dartPoolBudgetLimit,
   dartPoolPolicy,
+  type DartPoolBudget,
   type DartPoolPolicy,
   type FlutterRequest,
 } from "../domain/flutter/flutterBuildAnalysis.js";
@@ -34,7 +45,10 @@ import {
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
   AnalysisProtocolError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
+import { isAbortWithReason } from "../process/SignalAbort.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import {
@@ -43,11 +57,6 @@ import {
 } from "../domain/analysisErrorBase.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
-import {
-  ArtifactReaderFailure,
-  type ArtifactEntry,
-} from "../artifacts/ArtifactReader.js";
-import { ZipArtifactReader } from "../artifacts/ZipArtifactReader.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import {
   NonRegularFileReadError,
@@ -60,14 +69,11 @@ import {
   LabeledStringScanner,
   SnapshotHashScanner,
 } from "./FlutterPayloadScan.js";
-import {
-  ELF_HEADER_MAX_BYTES,
-  readElfHeader,
-  readElfSymbols,
-  readSnapshotHeader,
-} from "./DartElf.js";
+import { ELF_HEADER_MAX_BYTES, readElfHeader } from "./DartElf.js";
+import { observeDartSnapshot } from "./DartSnapshotProfile.js";
 import { readElfBuildIds } from "./ElfBuildId.js";
 import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const APK_METADATA_READ_MAX_BYTES = 8 * 1024 * 1024;
 const LIBRARY_MAX_BYTES = 256 * 1024 * 1024;
@@ -79,11 +85,46 @@ const APK_MAX_BYTES = 2 * 1024 * 1024 * 1024;
 // engine labels this keeps expanded result metadata below 512 KiB for ordinary
 // ABI names, independently of the archive's compressed-byte budget.
 const MAX_FLUTTER_ABIS = 32;
-const flutterBudget = (allowance: string, kind: "parser" | "input") =>
-  fixedAllowanceOptions(allowance, kind);
-/** A complete AOT image carries exactly one VM and one isolate section. */
-const SYMBOL_PAIR_COUNT = 2;
 const IDENTIFIER_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/u;
+
+/** Each release-fixed Flutter ceiling with the value that refused the input. */
+const FLUTTER_ALLOWANCES = {
+  apkMetadataRead: fixedAllowanceOptions(
+    "The Flutter APK metadata read allowance",
+    "parser",
+    { limit: APK_METADATA_READ_MAX_BYTES, unit: "bytes" },
+  ),
+  abiInventory: fixedAllowanceOptions(
+    "The Flutter ABI inventory allowance",
+    "parser",
+    { limit: MAX_FLUTTER_ABIS, unit: "ABIs" },
+  ),
+  libraryPath: fixedAllowanceOptions(
+    "The Flutter library path allowance",
+    "parser",
+    { limit: MAX_FLUTTER_LIBRARY_PATH_BYTES, unit: "bytes" },
+  ),
+  apkSnapshot: fixedAllowanceOptions(
+    "the Flutter APK snapshot allowance",
+    "input",
+    { limit: APK_MAX_BYTES, unit: "bytes" },
+  ),
+  libraryRead: fixedAllowanceOptions(
+    "the Flutter library read allowance",
+    "input",
+    { limit: LIBRARY_MAX_BYTES, unit: "bytes" },
+  ),
+  cumulativeExtraction: fixedAllowanceOptions(
+    "the Flutter cumulative extraction allowance",
+    "input",
+    { limit: TOTAL_EXTRACTION_MAX_BYTES, unit: "bytes" },
+  ),
+  snapshotHashCandidates: fixedAllowanceOptions(
+    "The Flutter snapshot-hash candidate allowance",
+    "parser",
+    { limit: MAX_SNAPSHOT_HASH_CANDIDATES, unit: "candidates" },
+  ),
+} as const;
 
 /**
  * Stream a local file digest without retaining large files in memory.
@@ -94,14 +135,26 @@ const sha256File = async (
   path: string,
   signal: AbortSignal | undefined,
 ): Promise<string> => {
+  assertArtifactReadActive(signal);
   const hash = createHash("sha256");
-  const stream = createReadStream(path, signal === undefined ? {} : { signal });
-  for await (const chunk of stream) {
-    if (signal?.aborted === true)
-      throw new AnalysisCancelledError(operation, { cause: signal.reason });
-    hash.update(chunk as Buffer);
+  const owner = new AbortController();
+  const marker = {};
+  const abort = () => owner.abort(marker);
+  signal?.addEventListener("abort", abort, { once: true });
+  try {
+    const stream = createReadStream(path, { signal: owner.signal });
+    for await (const chunk of stream) {
+      if (signal?.aborted === true) throw cancelledBy(operation, signal);
+      hash.update(chunk as Buffer);
+    }
+    return hash.digest("hex");
+  } catch (cause) {
+    if (isAbortWithReason(cause, marker))
+      throw cancelledBy(operation, carriedReason(signal?.reason));
+    throw cause;
+  } finally {
+    signal?.removeEventListener("abort", abort);
   }
-  return hash.digest("hex");
 };
 
 /** One owned snapshot root: a read-only copy of the admitted input. */
@@ -158,15 +211,16 @@ const emptyFacts = (): LibraryFacts => ({
   },
 });
 
-/** Translate a ZIP reader rejection into the typed analysis error algebra. */
-const isCancellation = (cause: unknown): boolean =>
-  cause instanceof AnalysisCancelledError ||
-  (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled") ||
-  (cause instanceof Error && cause.name === "AbortError") ||
-  (typeof cause === "object" &&
-    cause !== null &&
-    "code" in cause &&
-    cause.code === "ABORT_ERR");
+/** Use the producing reader's cancellation facts rather than its wrapper error. */
+const observedCancellation = (
+  cause: unknown,
+): { readonly reason: unknown } | undefined => {
+  const file = regularFileCancellation(cause);
+  if (file !== undefined) return file;
+  if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
+    return { reason: artifactFileCancellationCause(cause) };
+  return undefined;
+};
 
 const mapInputFailure = (
   operation: string,
@@ -174,13 +228,9 @@ const mapInputFailure = (
   cause: unknown,
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
-  const cancellation = regularFileCancellation(cause);
+  const cancellation = observedCancellation(cause);
   if (cancellation !== undefined)
-    return new AnalysisCancelledError(operation, {
-      cause: cancellation.reason,
-    });
-  if (isCancellation(cause))
-    return new AnalysisCancelledError(operation, { cause });
+    return cancelledBy(operation, carriedReason(cancellation.reason));
   if (
     cause instanceof Error &&
     "code" in cause &&
@@ -190,16 +240,7 @@ const mapInputFailure = (
       cause,
     });
   if (cause instanceof ArtifactReaderFailure && cause.reason === "limit")
-    return new AnalysisResourceConstraintError(
-      operation,
-      "memory",
-      cause.message,
-      { max_metadata_read_bytes: APK_METADATA_READ_MAX_BYTES },
-      {
-        cause,
-        ...flutterBudget("The Flutter APK metadata read allowance", "parser"),
-      },
-    );
+    return readerLimitFailure(operation, cause);
   return new AnalysisInputError(operation, { cause }, [
     {
       path: ["path"],
@@ -207,6 +248,52 @@ const mapInputFailure = (
       message: inputFailureMessage(path, cause),
     },
   ]);
+};
+
+/**
+ * Report the ZIP reader ceiling that refused the APK. A ceiling the reader
+ * names (the Zstandard decoder window) keeps its name. The archive expansion
+ * budget is derived from the APK's size, and Flutter offers no control that
+ * raises it, so it is fixed for this request. The ZIP reader's remaining limit
+ * is the metadata read budget this provider selects.
+ */
+const readerLimitFailure = (
+  operation: string,
+  cause: ArtifactReaderFailure,
+): AnalysisError => {
+  if (cause.fixedAllowance !== undefined)
+    return new AnalysisResourceConstraintError(
+      operation,
+      cause.boundary === "file-size" ? "file-size" : "memory",
+      cause.message,
+      null,
+      { cause, retryable: false, fixedAllowance: cause.fixedAllowance },
+    );
+  if (cause.readerLimit !== undefined) {
+    const { effective_value: limit, required_value: required } =
+      cause.readerLimit;
+    return new AnalysisResourceConstraintError(
+      operation,
+      "memory",
+      `The APK's declared member sizes${required === undefined ? "" : ` (${String(required)} bytes)`} exceed its ${String(limit)}-byte expansion allowance.`,
+      { max_expanded_bytes: limit },
+      {
+        cause,
+        ...fixedAllowanceOptions(
+          "The Flutter APK expansion allowance (derived from the APK size)",
+          "parser",
+          { limit, unit: cause.readerLimit.unit },
+        ),
+      },
+    );
+  }
+  return new AnalysisResourceConstraintError(
+    operation,
+    "memory",
+    cause.message,
+    { max_metadata_read_bytes: APK_METADATA_READ_MAX_BYTES },
+    { cause, ...FLUTTER_ALLOWANCES.apkMetadataRead },
+  );
 };
 
 /** Name a missing or non-file selection instead of blaming package bytes. */
@@ -219,7 +306,7 @@ const inputFailureMessage = (path: string, cause: unknown): string => {
     return `Selected APK does not exist: ${path}`;
   if (cause instanceof NonRegularFileReadError)
     return `Selected APK is not a regular file: ${path}`;
-  const message = cause instanceof Error ? cause.message : String(cause);
+  const message = errorMessage(cause);
   return `The APK could not be read as a package: ${path}: ${message}`;
 };
 
@@ -234,13 +321,9 @@ const mapOwnedIoFailure = (
   workspacePath: string | null,
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
-  const cancellation = regularFileCancellation(cause);
+  const cancellation = observedCancellation(cause);
   if (cancellation !== undefined)
-    return new AnalysisCancelledError(operation, {
-      cause: cancellation.reason,
-    });
-  if (isCancellation(cause))
-    return new AnalysisCancelledError(operation, { cause });
+    return cancelledBy(operation, carriedReason(cancellation.reason));
   if (
     cause instanceof Error &&
     "code" in cause &&
@@ -312,7 +395,9 @@ const collectFlutterLibraries = async (
             max_flutter_abis: MAX_FLUTTER_ABIS,
             max_library_path_bytes: MAX_FLUTTER_LIBRARY_PATH_BYTES,
           },
-          flutterBudget("The Flutter ABI inventory allowance", "parser"),
+          abis.size > MAX_FLUTTER_ABIS
+            ? FLUTTER_ALLOWANCES.abiInventory
+            : FLUTTER_ALLOWANCES.libraryPath,
         );
       libraries.push({
         entry,
@@ -348,14 +433,9 @@ const checkApkSize = (operation: string, bytes: number): void => {
       "file-size",
       `The selected APK exceeds the ${String(APK_MAX_BYTES)}-byte snapshot budget`,
       { max_apk_bytes: APK_MAX_BYTES, observed_bytes: bytes },
-      flutterBudget("the Flutter APK snapshot allowance", "input"),
+      FLUTTER_ALLOWANCES.apkSnapshot,
     );
 };
-
-export interface FlutterProviderOptions {
-  /** Deterministic root removal for tests; production removes recursively. */
-  readonly removeRoot?: (path: string) => Promise<void>;
-}
 
 /**
  * Flutter build identification by pure parsing: reads `lib/<abi>/libapp.so`
@@ -368,16 +448,12 @@ export class FlutterBuildProvider {
     string,
     Set<{ close(): Promise<void> }>
   >();
-  private readonly removeRoot: (path: string) => Promise<void>;
   private readonly cleanupFailures = new Map<string, readonly unknown[]>();
   private readonly rootLeases = new Map<string, AnalysisCleanupLease>();
   private readonly operations = new ArtifactResourceScope();
 
-  constructor(options: FlutterProviderOptions = {}) {
+  constructor() {
     this.operations.addCloseHook(() => this.closeRoots());
-    this.removeRoot =
-      options.removeRoot ??
-      ((path) => rm(path, { recursive: true, force: true }));
   }
 
   /**
@@ -445,7 +521,7 @@ export class FlutterBuildProvider {
       const chunk = Buffer.alloc(64 * 1024);
       let copiedBytes = 0;
       while (copiedBytes <= Number(before.size)) {
-        signal?.throwIfAborted();
+        assertArtifactReadActive(signal);
         const { bytesRead } = await readSource(() =>
           source.handle.read(
             chunk,
@@ -454,7 +530,7 @@ export class FlutterBuildProvider {
             copiedBytes,
           ),
         );
-        signal?.throwIfAborted();
+        assertArtifactReadActive(signal);
         if (bytesRead === 0) break;
         copiedBytes += bytesRead;
         if (BigInt(copiedBytes) > before.size)
@@ -499,13 +575,10 @@ export class FlutterBuildProvider {
       const sha256 = await sha256File(operation, snapshotPath, signal);
       return { root, path: snapshotPath, bytes: info.size, sha256 };
     } catch (cause) {
-      const primary =
-        signal?.aborted === true
-          ? new AnalysisCancelledError(operation, { cause: signal.reason })
-          : mapOwnedIoFailure(operation, cause, root);
+      const primary = mapOwnedIoFailure(operation, cause, root);
       const released = await this.discardRoot(root);
       if (!released)
-        throw this.withCleanup(
+        throw analysisErrorWithCleanupDependencies(
           primary,
           this.cleanupError(root, operation),
           operation,
@@ -564,7 +637,7 @@ export class FlutterBuildProvider {
       return false;
     }
     try {
-      await this.removeRoot(root);
+      await rm(root, { recursive: true, force: true });
       this.ownedRoots.delete(root);
       this.cleanupFailures.delete(root);
       return true;
@@ -594,17 +667,13 @@ export class FlutterBuildProvider {
       FLUTTER_PROVIDER_IDENTITY.id,
       [root],
       {
-        reason: causes
-          .map((cause) =>
-            cause instanceof Error ? cause.message : String(cause),
-          )
-          .join("; "),
+        reason: causes.map((cause) => errorMessage(cause)).join("; "),
         retained_roots: [
           {
             path: root,
             failures: causes.map((cause) => ({
               name: cause instanceof Error ? cause.name : "UnknownError",
-              message: cause instanceof Error ? cause.message : String(cause),
+              message: errorMessage(cause),
               ...(cause instanceof Error &&
               "code" in cause &&
               typeof cause.code === "string"
@@ -625,18 +694,6 @@ export class FlutterBuildProvider {
     return error;
   }
 
-  private withCleanup(
-    primary: AnalysisError,
-    cleanup: AnalysisError,
-    operation: string,
-  ): AnalysisError {
-    return analysisErrorWithCleanupFailure(
-      primary,
-      cleanup,
-      operation,
-    ).bindCleanupDependencies([primary, cleanup]);
-  }
-
   /** Stop admission and drain active snapshots before attempting retained cleanup. */
   async close(): Promise<void> {
     await this.operations.close();
@@ -653,9 +710,9 @@ export class FlutterBuildProvider {
     }
     if (failures.length === 1) throw failures[0];
     if (failures.length > 1)
-      throw new ProviderCleanupError(
+      throw providerCleanupErrorFromFailures(
         FLUTTER_PROVIDER_IDENTITY.id,
-        failures.flatMap((failure) => failure.cleanupResources),
+        failures,
         {
           reason: failures
             .map((failure) => failure.diagnostics?.reason ?? failure.message)
@@ -665,11 +722,8 @@ export class FlutterBuildProvider {
             return Array.isArray(roots) ? roots : [];
           }),
         },
-        {
-          cause: new AggregateError(failures),
-          operation,
-        },
-      ).bindCleanupDependencies(failures);
+        { operation },
+      );
   }
 
   async execute(
@@ -691,9 +745,7 @@ export class FlutterBuildProvider {
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     const cancellation = (): AnalysisCancelledError | undefined =>
       options?.signal?.aborted === true
-        ? new AnalysisCancelledError(request.operation, {
-            cause: options.signal.reason,
-          })
+        ? cancelledBy(request.operation, options.signal)
         : undefined;
     const beforeCleanup = cancellation();
     if (beforeCleanup !== undefined) return err(beforeCleanup);
@@ -705,7 +757,13 @@ export class FlutterBuildProvider {
         request.operation,
       );
     } catch (cause) {
-      return err(mapOwnedIoFailure(request.operation, cause, null));
+      const failure = mapOwnedIoFailure(request.operation, cause, null);
+      const interrupted = cancellation();
+      return err(
+        interrupted === undefined
+          ? failure
+          : analysisErrorWithCancellation(failure, interrupted),
+      );
     }
     const afterCleanup = cancellation();
     if (afterCleanup !== undefined) return err(afterCleanup);
@@ -764,8 +822,7 @@ export class FlutterBuildProvider {
     // the completed facts, composed exactly as the uncancelled Evidence.
     if (signal?.aborted === true && result.ok) {
       result = err(
-        new AnalysisCancelledError(request.operation, {
-          cause: signal.reason,
+        cancelledBy(request.operation, signal, {
           partialObservation: createAnalysisExecutionEvidence(
             request.operation,
             request.input,
@@ -775,9 +832,22 @@ export class FlutterBuildProvider {
         }),
       );
     }
+    if (signal?.aborted === true && !result.ok)
+      result = err(
+        analysisErrorWithCancellation(
+          result.error,
+          cancelledBy(request.operation, signal),
+        ),
+      );
     if (cleanup !== undefined) {
       if (!result.ok)
-        return err(this.withCleanup(result.error, cleanup, request.operation));
+        return err(
+          analysisErrorWithCleanupDependencies(
+            result.error,
+            cleanup,
+            request.operation,
+          ),
+        );
       cleanup.retainPartialObservation(
         createAnalysisExecutionEvidence(
           request.operation,
@@ -807,7 +877,7 @@ export class FlutterBuildProvider {
             "file-size",
             `${entry.path} exceeds the library read budget`,
             { max_library_bytes: LIBRARY_MAX_BYTES, entry_path: entry.path },
-            flutterBudget("the Flutter library read allowance", "input"),
+            FLUTTER_ALLOWANCES.libraryRead,
           ),
         );
     }
@@ -828,7 +898,7 @@ export class FlutterBuildProvider {
             max_total_bytes: TOTAL_EXTRACTION_MAX_BYTES,
             declared_total: declaredTotal,
           },
-          flutterBudget("the Flutter cumulative extraction allowance", "input"),
+          FLUTTER_ALLOWANCES.cumulativeExtraction,
         ),
       );
 
@@ -857,11 +927,7 @@ export class FlutterBuildProvider {
       let headerBytes = 0;
       for await (const chunk of stream) {
         if (signal?.aborted === true)
-          return err(
-            new AnalysisCancelledError(operation, {
-              cause: signal.reason,
-            }),
-          );
+          return err(cancelledBy(operation, signal));
         const view = chunk as Buffer;
         headerBytes += view.copy(
           headerPrefix,
@@ -880,7 +946,7 @@ export class FlutterBuildProvider {
                 max_library_bytes: LIBRARY_MAX_BYTES,
                 entry_path: entry.path,
               },
-              flutterBudget("the Flutter library read allowance", "input"),
+              FLUTTER_ALLOWANCES.libraryRead,
             ),
           );
         hash.update(view);
@@ -898,10 +964,7 @@ export class FlutterBuildProvider {
               "file-size",
               `cumulative library extraction across ${String(flutterEntries.length)} entries exceeds the ${String(TOTAL_EXTRACTION_MAX_BYTES)}-byte budget`,
               { max_total_bytes: TOTAL_EXTRACTION_MAX_BYTES },
-              flutterBudget(
-                "the Flutter cumulative extraction allowance",
-                "input",
-              ),
+              FLUTTER_ALLOWANCES.cumulativeExtraction,
             ),
           );
       }
@@ -920,10 +983,7 @@ export class FlutterBuildProvider {
                 max_snapshot_hash_candidates: MAX_SNAPSHOT_HASH_CANDIDATES,
                 entry_path: entry.path,
               },
-              flutterBudget(
-                "The Flutter snapshot-hash candidate allowance",
-                "parser",
-              ),
+              FLUTTER_ALLOWANCES.snapshotHashCandidates,
             ),
           );
         facts.set(abi, {
@@ -1125,7 +1185,7 @@ export class FlutterBuildProvider {
           "file-size",
           `lib/${selected.abi}/libapp.so declares ${String(declared)} bytes, exceeding the ${String(LIBRARY_MAX_BYTES)}-byte read budget`,
           { max_library_bytes: LIBRARY_MAX_BYTES },
-          flutterBudget("the Flutter library read allowance", "input"),
+          FLUTTER_ALLOWANCES.libraryRead,
         ),
       );
     const imagePath = join(snapshot.root, "libapp.so");
@@ -1145,7 +1205,7 @@ export class FlutterBuildProvider {
       let total = 0;
       for await (const chunk of stream) {
         if (signal?.aborted === true)
-          return err(new AnalysisCancelledError("inspect_dart_aot"));
+          return err(cancelledBy("inspect_dart_aot", signal));
         const view = chunk as Buffer;
         total += view.byteLength;
         if (total > LIBRARY_MAX_BYTES)
@@ -1155,7 +1215,7 @@ export class FlutterBuildProvider {
               "file-size",
               `lib/${selected.abi}/libapp.so exceeds the ${String(LIBRARY_MAX_BYTES)}-byte read budget while streaming`,
               { max_library_bytes: LIBRARY_MAX_BYTES },
-              flutterBudget("the Flutter library read allowance", "input"),
+              FLUTTER_ALLOWANCES.libraryRead,
             ),
           );
         imageHash.update(view);
@@ -1175,141 +1235,46 @@ export class FlutterBuildProvider {
       );
       while (imageLength < image.length) {
         if (signal?.aborted === true)
-          return err(new AnalysisCancelledError("inspect_dart_aot"));
+          return err(cancelledBy("inspect_dart_aot", signal));
         const result = await file.handle.read(
           image,
           imageLength,
           image.length - imageLength,
           null,
         );
-        signal?.throwIfAborted();
+        assertArtifactReadActive(signal);
         if (result.bytesRead === 0) break;
         imageLength += result.bytesRead;
       }
       await this.releaseResource(snapshot.root, file);
     }
-    signal?.throwIfAborted();
+    assertArtifactReadActive(signal);
     const bounded = image.subarray(0, imageLength);
-    const symbolNames = [
-      "_kDartVmSnapshotData",
-      "_kDartVmSnapshotInstructions",
-      "_kDartIsolateSnapshotData",
-      "_kDartIsolateSnapshotInstructions",
-    ];
-    const sections: {
-      name: string;
-      offset: number;
-      size: number;
-      magic_valid: boolean;
-      kind: number | null;
-      header_length: number | null;
-    }[] = [];
-    const dataHeaders: {
-      name: string;
-      offset: number;
-      size: number;
-      header: ReturnType<typeof readSnapshotHeader>;
-    }[] = [];
-    let isolateData: Buffer | null = null;
-    const inventory = await readElfSymbols(bounded, symbolNames, signal);
-    for (const symbol of inventory.symbols) {
-      const name = symbol.name;
-      const header = name.endsWith("Data")
-        ? readSnapshotHeader(
-            bounded.subarray(symbol.offset, symbol.offset + symbol.size),
-            0,
-          )
-        : null;
-      sections.push({
-        name,
-        offset: symbol.offset,
-        size: symbol.size,
-        magic_valid: header?.magicValid ?? false,
-        kind: header?.kind ?? null,
-        header_length: header?.headerLength ?? null,
-      });
-      if (header !== null) dataHeaders.push({ ...symbol, header });
-      if (name === "_kDartIsolateSnapshotData")
-        isolateData = image.subarray(
-          symbol.offset,
-          symbol.offset + symbol.size,
-        );
-    }
-    // Each exported data symbol owns one header at its start. Matching
-    // records elsewhere in a symbol are not evidence for the other
-    // symbol's hash. Count a physical header only once for aliased exports.
-    const observedOffsets = new Set<number>();
-    let aliasedDataSymbols = false;
-    const hashes: string[] = [];
-    for (const section of dataHeaders) {
-      if (observedOffsets.has(section.offset)) {
-        aliasedDataSymbols = true;
-        continue;
-      }
-      observedOffsets.add(section.offset);
-      if (section.header.hash !== null) hashes.push(section.header.hash);
-    }
-    const hashScan = {
-      sources: hashes.length,
-      candidates: [...new Set(hashes)],
-    };
-    const overlappingDataSymbols = dataHeaders.some((section, index) =>
-      dataHeaders
-        .slice(0, index)
-        .some(
-          (previous) =>
-            previous.offset < section.offset + section.size &&
-            section.offset < previous.offset + previous.size,
-        ),
-    );
-    if (sections.length === 0) {
-      // This is a profile diagnostic, not aliases for the split data sources.
-      // Probe only after the legacy selection fails, leaving its normal path
-      // and two-source completeness rule unchanged.
-      const unified = await readElfSymbols(
-        bounded,
-        ["_kDartSnapshotData", "_kDartSnapshotText"],
-        signal,
-      );
-      if (unified.symbols.length > 0)
-        return err(
-          new AnalysisUnsupportedTargetError(
-            "inspect_dart_aot",
-            path,
-            "Observed unified Dart snapshot exports; this reader supports the legacy split VM/isolate profile (Dart 2.14 FullAOT kind 3). The unified profile is unsupported, not missing legacy data",
-            {
-              diagnostics: {
-                supported_profile: "dart-2.14-split-full-aot",
-                observed_exports: unified.symbols.map(
-                  ({ name, offset, size }) => ({ name, offset, size }),
-                ),
-                abi: selected.abi,
-                libapp_sha256: imageSha256,
-                libapp_bytes: imageLength,
-              },
-            },
-          ),
-        );
+    const snapshotFacts = await observeDartSnapshot(bounded, signal);
+    if (!snapshotFacts.observed)
       return err(
         new AnalysisUnsupportedTargetError(
           "inspect_dart_aot",
           path,
-          `No recognizable legacy split Dart snapshot symbols were found: ${inventory.failures.map((failure) => failure.reason).join("; ")}`,
+          `No recognizable Dart snapshot symbols were found: ${snapshotFacts.reasons.join("; ")}`,
         ),
       );
-    }
-    const pool = await projectStringPool(isolateData, signal, poolPolicy);
-    const snapshotPartial =
-      inventory.failures.length > 0 ||
-      aliasedDataSymbols ||
-      overlappingDataSymbols ||
-      sections.length < symbolNames.length ||
-      dataHeaders.length !== SYMBOL_PAIR_COUNT ||
-      dataHeaders.some((section) => !section.header.complete) ||
-      hashScan.candidates.length !== 1 ||
-      hashScan.sources !== SYMBOL_PAIR_COUNT;
+    const pool = await projectStringPool(
+      snapshotFacts.pool,
+      signal,
+      poolPolicy,
+    );
+    const snapshotPartial = !snapshotFacts.complete;
+    const poolBudgetsReached = new Set<DartPoolBudget>(pool.limitsReached);
+    if (
+      pool.packageUriCount > poolPolicy.uri_limit ||
+      pool.dartUriCount > poolPolicy.uri_limit
+    )
+      poolBudgetsReached.add("uri_limit");
+    if (pool.classLikeTokenCount > poolPolicy.token_limit)
+      poolBudgetsReached.add("token_limit");
     const poolPartial =
-      isolateData === null ||
+      snapshotFacts.pool === null ||
       pool.collectionCapped ||
       pool.packageUriCount > poolPolicy.uri_limit ||
       pool.dartUriCount > poolPolicy.uri_limit ||
@@ -1324,10 +1289,13 @@ export class FlutterBuildProvider {
             bytes: imageLength,
             sha256: imageSha256,
             snapshot_hash:
-              hashScan.candidates.length === 1 ? hashScan.candidates[0]! : null,
-            snapshot_hash_candidates: [...hashScan.candidates],
-            snapshot_hash_sources: hashScan.sources,
-            sections,
+              snapshotFacts.hashes.candidates.length === 1
+                ? snapshotFacts.hashes.candidates[0]!
+                : null,
+            snapshot_hash_candidates: snapshotFacts.hashes.candidates,
+            snapshot_hash_sources: snapshotFacts.hashes.sources,
+            snapshot_profile: snapshotFacts.profile,
+            sections: snapshotFacts.sections,
           },
           string_pool: {
             policy: { ...poolPolicy },
@@ -1342,6 +1310,13 @@ export class FlutterBuildProvider {
             ),
             class_like_token_count_at_least: pool.classLikeTokenCount,
             printable_run_count: pool.printableRunCount,
+            ...(poolBudgetsReached.size === 0
+              ? {}
+              : {
+                  limits: [...poolBudgetsReached].map((budget) =>
+                    dartPoolBudgetLimit(budget, poolPolicy),
+                  ),
+                }),
           },
           coverage: snapshotPartial || poolPartial ? "partial" : "complete",
         },
@@ -1352,49 +1327,28 @@ export class FlutterBuildProvider {
           limitations: [
             "The APK is read through an owned read-only snapshot; concurrent changes to the original cannot mix into this observation",
             "Snapshot sections are located through the ELF dynamic symbol table; a payload without exported snapshot symbols is refused rather than guessed",
-            "Snapshot hash sources are the headers at the start of the VM and isolate data symbols; complete decoding supports kind 3 (the Dart 2.14 FullAOT layout), a valid hash and a declared length that fits its symbol, including the four magic bytes; other kind values remain observed with partial coverage",
-            "String-pool entries are byte-pattern observations from the isolate data section, not deserialized cluster semantics; typed class and function recovery needs an SDK-specific parser",
+            "Snapshot hash sources count distinct physical headers. FullAOT kind 3 supports the legacy split profile and kind 2 supports the unified profile when the corresponding exports and header extents agree",
+            "String-pool entries are byte-pattern observations from the selected snapshot data symbol",
             "class_like_tokens are identifier-shaped runs and include incidental matches",
             "URI/token counts are lower bounds for runs matching pool_policy.contains: distinct collection stops at twice each selected projection bound. printable_run_count counts complete printable runs before filtering; overflowed runs are omitted, never fabricated as prefixes",
-            ...inventory.failures.map((failure) => failure.reason),
-            ...(sections.length < symbolNames.length
-              ? [
-                  `Only ${String(sections.length)} of 4 snapshot symbols were present`,
-                ]
-              : []),
-            ...(aliasedDataSymbols
-              ? [
-                  "Two or more snapshot data symbols share one header offset; its hash counts as one source instead of two agreeing ones",
-                ]
-              : []),
-            ...(overlappingDataSymbols && !aliasedDataSymbols
-              ? [
-                  "Snapshot data symbol ranges overlap; independent VM/isolate coverage is not established",
-                ]
-              : []),
-            ...dataHeaders
-              .filter((section) => !section.header.complete)
-              .map(
-                (section) =>
-                  `${section.name} has an incomplete or invalid snapshot header: kind ${String(section.header.kind)} (AOT app requires 3), declared length ${String(section.header.headerLength)} excludes the four magic bytes, symbol size ${String(section.size)}, valid hash ${String(section.header.hash !== null)}`,
-              ),
+            ...snapshotFacts.limitations,
             ...pool.limitsReached.map(
               (limit) =>
-                `String-pool admission reached pool_policy.${limit}=${String(poolPolicy[limit])}. Retry with a narrower pool_policy.contains or increase ${limit} (CLI --pool-policy JSON); no REA restart is required. Counts remain lower bounds and overflowed runs are omitted. APK, library and response limits are unchanged`,
+                `String-pool admission reached pool_policy.${limit}=${String(poolPolicy[limit])}. Retry with a narrower pool_policy.contains or increase ${limit}; string_pool.limits records the control and no REA restart is required. Counts remain lower bounds and overflowed runs are omitted. APK, library and response limits are unchanged`,
             ),
             ...(pool.dartUriCount > poolPolicy.uri_limit
               ? [
-                  `dart_uris reports ${String(poolPolicy.uri_limit)} of at least ${String(pool.dartUriCount)} distinct URIs; narrow pool_policy.contains or raise pool_policy.uri_limit (CLI --pool-policy JSON) on a new call, no restart required`,
+                  `dart_uris reports ${String(poolPolicy.uri_limit)} of at least ${String(pool.dartUriCount)} distinct URIs; narrow pool_policy.contains or raise pool_policy.uri_limit (recorded in string_pool.limits) on a new call, no restart required`,
                 ]
               : []),
             ...(pool.packageUriCount > poolPolicy.uri_limit
               ? [
-                  `package_uris reports ${String(poolPolicy.uri_limit)} of at least ${String(pool.packageUriCount)} distinct URIs; narrow pool_policy.contains or raise pool_policy.uri_limit (CLI --pool-policy JSON) on a new call, no restart required`,
+                  `package_uris reports ${String(poolPolicy.uri_limit)} of at least ${String(pool.packageUriCount)} distinct URIs; narrow pool_policy.contains or raise pool_policy.uri_limit (recorded in string_pool.limits) on a new call, no restart required`,
                 ]
               : []),
             ...(pool.classLikeTokenCount > poolPolicy.token_limit
               ? [
-                  `class_like_tokens reports ${String(poolPolicy.token_limit)} of at least ${String(pool.classLikeTokenCount)} distinct tokens; narrow pool_policy.contains or raise pool_policy.token_limit (CLI --pool-policy JSON) on a new call, no restart required`,
+                  `class_like_tokens reports ${String(poolPolicy.token_limit)} of at least ${String(pool.classLikeTokenCount)} distinct tokens; narrow pool_policy.contains or raise pool_policy.token_limit (recorded in string_pool.limits) on a new call, no restart required`,
                 ]
               : []),
           ],
@@ -1424,13 +1378,13 @@ const projectStringPool = async (
   classLikeTokenCount: number;
   printableRunCount: number;
   collectionCapped: boolean;
-  limitsReached: readonly Exclude<keyof DartPoolPolicy, "contains">[];
+  limitsReached: readonly DartPoolBudget[];
 }> => {
   const packages = new Set<string>();
   const darts = new Set<string>();
   const tokens = new Set<string>();
   let runCount = 0;
-  const limitsReached = new Set<Exclude<keyof DartPoolPolicy, "contains">>();
+  const limitsReached = new Set<DartPoolBudget>();
   const COLLECTION_SLACK = 2;
   // Input bytes bound useful capacity before slack multiplication; large safe
   // integer requests never overflow the collection-budget arithmetic.
@@ -1468,7 +1422,7 @@ const projectStringPool = async (
     let overflowed = false;
     for (let start = 0; start < section.length; start += 64 * 1024) {
       await yieldToEventLoop();
-      signal?.throwIfAborted();
+      assertArtifactReadActive(signal);
       for (const byte of section.subarray(start, start + 64 * 1024)) {
         if (byte >= 0x20 && byte < 0x7f) {
           // A single unbounded run (an adversarial NUL-free section) never
@@ -1490,7 +1444,7 @@ const projectStringPool = async (
     }
     if (!overflowed) consider(run);
   }
-  signal?.throwIfAborted();
+  assertArtifactReadActive(signal);
   return {
     packageUris: [...packages].sort(),
     packageUriCount: packages.size,

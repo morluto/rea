@@ -7,7 +7,7 @@ import { thinMach } from "../../../../src/domain/binaryTarget.fixture.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { err } from "../../../../src/domain/result.js";
 import { LldbCallTracer } from "../../../../src/native/LldbCallTracer.js";
-import { NativeCommandFailure } from "../../../../src/native/CommandRunner.js";
+import { NativeCommandFailure } from "../../../../src/providers/NativeCommandRunner.js";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
 import {
   NativeFixtureRunner,

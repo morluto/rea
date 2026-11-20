@@ -10,18 +10,13 @@ export const readFileHandlePrefix = async (
   let offset = 0;
   while (offset < length) {
     checkCancellation();
-    let bytesRead: number;
-    try {
-      ({ bytesRead } = await handle.read(
-        prefix,
-        offset,
-        length - offset,
-        offset,
-      ));
-    } catch (cause: unknown) {
-      checkCancellation();
-      throw cause;
-    }
+    // A rejected native read remains primary if cancellation arrived in flight.
+    const { bytesRead } = await handle.read(
+      prefix,
+      offset,
+      length - offset,
+      offset,
+    );
     checkCancellation();
     if (bytesRead === 0) break;
     offset += bytesRead;

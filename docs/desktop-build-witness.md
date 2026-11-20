@@ -262,6 +262,11 @@ in the bundle differs from what the export writes for it. A reset
 relaunches the app, and REA waits until the computer is ready again before
 answering, sending progress notifications while it waits.
 
+Re-export bundles whose generated verifier uses an older evaluator before
+witnessing them with current REA. The verifier must match the current export
+exactly; re-exporting uses the existing capture Evidence and task inputs,
+which remain unchanged.
+
 Only a check that fails on what the app's view shows counts as a failure. A
 check that fails because its file or table could not be read, such as an
 SQLite file locked past the reader's wait, or because what it looks for may
@@ -303,7 +308,11 @@ however many entries it dropped. The result returns the same record. When writin
 folder something else wrote into, the witness keeps its stages: check the
 stage that ended it again, with the same task, and REA writes the record
 without checking again. Once it is saved, the same check returns the saved
-record again, so a record saved as its call was cancelled is not lost. A
+record again, so a record saved as its call was cancelled is not lost.
+Cancellation during the published record's final handle cleanup returns the
+record Evidence with the error. When cleanup also fails, the next matching
+check retries those handles and returns the existing record without recording
+or writing it again. A
 computer is witnessed once; witness again from a fresh computer. A bundle of
 several tasks is witnessed one task per fresh computer: the seed stage
 refuses a task whose steps and verifier differ from the bundle's for that

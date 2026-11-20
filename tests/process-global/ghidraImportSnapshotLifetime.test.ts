@@ -70,8 +70,8 @@ import { createGhidraTargetSnapshot } from "../../src/ghidra/GhidraTargetSnapsho
 import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
-} from "../../src/artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+} from "../../src/resources/ArtifactFileOperation.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { ProviderCleanupError } from "../../src/domain/providerCleanupError.js";
 import { GhidraClient } from "../../src/ghidra/GhidraClient.js";
 import { GhidraProvider } from "../../src/ghidra/GhidraProvider.js";
@@ -81,7 +81,7 @@ import { parseBinaryTarget } from "../../src/application/BinaryTargetResolver.js
 import { elf } from "../../src/domain/binaryTarget.fixture.js";
 import { silentLogger } from "../../src/logger.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
-import type { AnalysisClient } from "../../src/application/AnalysisProvider.js";
+import type { AnalysisClient } from "../../src/ports/AnalysisProvider.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 beforeEach(() => {

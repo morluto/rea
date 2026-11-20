@@ -8,12 +8,7 @@ import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js
 import { CPU_ARM64, universalMacho } from "../../../fixtures/universalMacho.js";
 import { thinMach } from "../../../../src/domain/binaryTarget.fixture.js";
 
-import { ArtifactReaderFailure } from "../../../../src/artifacts/ArtifactReader.js";
-import {
-  CPU,
-  fatImage,
-  machoImage,
-} from "../../../../src/artifacts/apple/MachoImage.fixture.js";
+import { ArtifactReaderFailure } from "../../../../src/resources/ArtifactReader.js";
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
 import { artifactExtractionExecutionSchema } from "../../../../src/contracts/artifactToolContracts.js";
 

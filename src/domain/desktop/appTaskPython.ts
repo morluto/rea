@@ -1,7 +1,9 @@
 import type { JsonValue } from "../jsonValue.js";
 import { SETTLE_TIMING } from "./appSettle.js";
+import { renderPythonAppStateViews } from "./appStateViews.js";
 import type { DesktopTask } from "./appTask.js";
 import { PYTHON_POINTER } from "./appTaskPythonPointer.js";
+import { PYTHON_ECMASCRIPT_TRIM_CHARACTERS } from "./desktopTextSyntax.js";
 import {
   PYTHON_READER_VIEWS,
   renderReaderConstants,
@@ -19,6 +21,11 @@ INDEX = re.compile(r"0|[1-9][0-9]*")
 VIEW_FORMATS = ("text", "json", "keyfile", "xml")
 NUMERAL = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
 WHITESPACE_RUN = re.compile(r"[ \t\r\n]+")
+
+
+def _trim(text: str) -> str:
+    """ECMAScript String.trim(), as REA uses for numeral and saved-time recognition."""
+    return text.strip(${PYTHON_ECMASCRIPT_TRIM_CHARACTERS})
 
 
 def _shown(value) -> str:
@@ -44,12 +51,15 @@ def _same(actual, expected) -> bool:
 ${PYTHON_POINTER}
 
 def _number(value):
-    """A number, or a numeral string read as one; None for anything else, a boolean, or a numeral past the doubles."""
+    """A number, or a whitespace-trimmed numeral; None for anything else, a boolean, or a numeral past the doubles."""
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
         return value
-    if not isinstance(value, str) or not NUMERAL.fullmatch(value):
+    if not isinstance(value, str):
+        return None
+    value = _trim(value)
+    if not NUMERAL.fullmatch(value):
         return None
     number = float(value)
     return number if math.isfinite(number) else None
@@ -195,7 +205,7 @@ def _near(at: str, found, expected, tolerance, join: bool):
     """A value compared within a tolerance: numbers, and numeral strings, by their difference. An element's text is
     joined only when join says the view is XML."""
     read = _element_text(found) if join else found
-    number = _number(read.strip() if isinstance(read, str) else read)
+    number = _number(read)
     within = f"within {_shown(tolerance)} of {_shown(expected)}"
     if number is None:
         return False, f"{at} is {_shown(found)}, not a number"
@@ -456,11 +466,10 @@ def _files(answer) -> list:
 
 async def _read(url):
     answer = await protocol.get_data(url, timeout=120)
-    states = [part.data["state"] for part in answer.parts
-              if part.kind == "data" and isinstance(part.data.get("state"), dict)]
-    if not states:
+    views = _app_state_views(answer.parts)
+    if views is None:
         raise RuntimeError(f"the {APP} app's data/get returned no state views")
-    return states[0], _files(answer)
+    return views, _files(answer)
 
 
 async def _settled_views(url):
@@ -492,146 +501,9 @@ async def _settled_views(url):
     return views, True, False
 `;
 
-/** Where the verifier's evaluator begins. The task description is everything before it. */
-const VERIFIER_EVALUATOR = "\nMISSING = object()\n";
-/** The index helper this REA ships, and the one an older export wrote. The older one also accepts a leading zero. */
-const CURRENT_INDEX = 'INDEX = re.compile(r"0|[1-9][0-9]*")';
-const OLDER_INDEX = 'INDEX = re.compile(r"[0-9]+")';
-/** A pointer segment the older index helper reads as an array index and this one does not, such as `01`. */
-const LEADING_ZERO_SEGMENT = /^0\d+$/u;
-
-/**
- * The task a verifier states: the app, the checks and the settle timing,
- * without the evaluator that runs them.
- */
-export const taskVerifierDescription = (source: string): string | undefined => {
-  const at = source.indexOf(VERIFIER_EVALUATOR);
-  return at < 0 ? undefined : source.slice(0, at + 1);
-};
-
-/** The evaluator, from `MISSING` through `verify`, or undefined when that marker is absent. */
-const verifierEvaluator = (source: string): string | undefined => {
-  const at = source.indexOf(VERIFIER_EVALUATOR);
-  return at < 0 ? undefined : source.slice(at);
-};
-
-/** Read one Python literal that `pythonLiteral` wrote, from `source` at `index`. */
-const readPythonLiteral = (
-  source: string,
-  index: number,
-): { readonly value: JsonValue; readonly index: number } | undefined => {
-  let cursor = index;
-  while (cursor < source.length && /\s/u.test(source[cursor] ?? ""))
-    cursor += 1;
-  const character = source[cursor];
-  if (source.startsWith("None", cursor))
-    return { value: null, index: cursor + 4 };
-  if (source.startsWith("True", cursor))
-    return { value: true, index: cursor + 4 };
-  if (source.startsWith("False", cursor))
-    return { value: false, index: cursor + 5 };
-  if (character === '"' || character === "'") {
-    let end = cursor + 1;
-    let escaped = false;
-    while (end < source.length) {
-      const next = source[end] ?? "";
-      if (escaped) escaped = false;
-      else if (next === "\\") escaped = true;
-      else if (next === character) break;
-      end += 1;
-    }
-    if (source[end] !== character) return undefined;
-    const token = source.slice(cursor, end + 1);
-    const value =
-      character === '"'
-        ? (JSON.parse(token) as string)
-        : token.slice(1, -1).replaceAll("\\'", "'");
-    return { value, index: end + 1 };
-  }
-  if (character === "[") {
-    const items: JsonValue[] = [];
-    cursor += 1;
-    while (cursor < source.length) {
-      while (cursor < source.length && /\s/u.test(source[cursor] ?? ""))
-        cursor += 1;
-      if (source[cursor] === "]") return { value: items, index: cursor + 1 };
-      const item = readPythonLiteral(source, cursor);
-      if (item === undefined) return undefined;
-      items.push(item.value);
-      cursor = item.index;
-      while (cursor < source.length && /\s/u.test(source[cursor] ?? ""))
-        cursor += 1;
-      if (source[cursor] === ",") cursor += 1;
-    }
-    return undefined;
-  }
-  if (character === "{") {
-    const record: Record<string, JsonValue> = {};
-    cursor += 1;
-    while (cursor < source.length) {
-      while (cursor < source.length && /\s/u.test(source[cursor] ?? ""))
-        cursor += 1;
-      if (source[cursor] === "}") return { value: record, index: cursor + 1 };
-      const key = readPythonLiteral(source, cursor);
-      if (key === undefined || typeof key.value !== "string") return undefined;
-      cursor = key.index;
-      while (cursor < source.length && /\s/u.test(source[cursor] ?? ""))
-        cursor += 1;
-      if (source[cursor] !== ":") return undefined;
-      const item = readPythonLiteral(source, cursor + 1);
-      if (item === undefined) return undefined;
-      record[key.value] = item.value;
-      cursor = item.index;
-      while (cursor < source.length && /\s/u.test(source[cursor] ?? ""))
-        cursor += 1;
-      if (source[cursor] === ",") cursor += 1;
-    }
-    return undefined;
-  }
-  const number = /^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/u.exec(
-    source.slice(cursor),
-  );
-  if (number?.[0] === undefined) return undefined;
-  return { value: Number(number[0]), index: cursor + number[0].length };
-};
-
-/** Pointers of the checks a verifier states. A pointer inside a check's value is not one. */
-const describedPointers = (description: string): readonly string[] => {
-  const at = description.indexOf("CHECKS = ");
-  if (at < 0) return [];
-  const parsed = readPythonLiteral(description, at + "CHECKS = ".length);
-  if (parsed === undefined || !Array.isArray(parsed.value)) return [];
-  return parsed.value.flatMap((check) =>
-    typeof check === "object" &&
-    check !== null &&
-    !Array.isArray(check) &&
-    typeof check.pointer === "string"
-      ? [check.pointer]
-      : [],
-  );
-};
-
-/**
- * Whether two verifiers grade the same task the same way. The description must
- * match. The evaluator must be this REA's, or the older index helper alone
- * when no pointer segment is a leading-zero number, which that helper would
- * index and this one would not.
- */
-export const sameTaskVerifier = (hosted: string, bundled: string): boolean => {
-  const expected = taskVerifierDescription(hosted);
-  const found = taskVerifierDescription(bundled);
-  if (expected === undefined || expected !== found) return false;
-  const hostedBody = verifierEvaluator(hosted);
-  const bundledBody = verifierEvaluator(bundled);
-  if (hostedBody === undefined || bundledBody === undefined) return false;
-  if (hostedBody === bundledBody) return true;
-  const indexed = describedPointers(expected).some((pointer) =>
-    pointer.split("/").some((segment) => LEADING_ZERO_SEGMENT.test(segment)),
-  );
-  return (
-    bundledBody === hostedBody.replace(CURRENT_INDEX, OLDER_INDEX) && !indexed
-  );
-};
+/** Match the current generated verifier exactly before witnessing its task. Older evaluators require a new export. */
+export const sameTaskVerifier = (hosted: string, bundled: string): boolean =>
+  hosted.includes("\nMISSING = object()\n") && hosted === bundled;
 
 /** The verifier artifact: a screen-judged task's judge, with the build's examples, or else reads of the app's state through its data/get once its files settle and the task's checks on them. */
 export const renderTaskVerifier = (
@@ -680,7 +552,7 @@ SETTLE_WINDOW_S = ${pythonSeconds(SETTLE_TIMING.windowMs)}
 SETTLE_BOUND_S = ${pythonSeconds(SETTLE_TIMING.boundMs)}
 #: Where a data/get file part names its path in the home.
 DATA_OBJECTS = "urn:agentenv:data-objects/v1"
-${task.readers === undefined ? "" : renderReaderConstants(task.readers)}${PYTHON_TASK_EVALUATOR}${PYTHON_SETTLE}${task.readers === undefined ? "" : PYTHON_READER_VIEWS}
+${task.readers === undefined ? "" : renderReaderConstants(task.readers)}${PYTHON_TASK_EVALUATOR}${renderPythonAppStateViews()}${PYTHON_SETTLE}${task.readers === undefined ? "" : PYTHON_READER_VIEWS}
 
 async def verify(mcp_url, env_url):
     card = await protocol.get_card(env_url)

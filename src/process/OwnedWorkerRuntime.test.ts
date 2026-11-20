@@ -2,7 +2,7 @@ import { access } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { expect, it } from "vitest";
 import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
-import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { cleanupOwnedProcessGroup } from "./ProcessOwnership.js";
@@ -37,22 +37,14 @@ const waitFor = async (predicate: () => boolean): Promise<void> => {
 
 it("waits for an admitted late handshake before closing its process and root", async () => {
   const runtime = new OwnedWorkerRuntime(runtimeOptions());
-  let announceInitialize: () => void = () => {};
-  const initializing = new Promise<void>((resolve) => {
-    announceInitialize = resolve;
-  });
-  let releaseInitialize: () => void = () => {};
-  const held = new Promise<void>((resolve) => {
-    releaseInitialize = resolve;
-  });
+  const initialization = phaseGate();
   let closeSettled = false;
   const starting = runtime.start(startOptions(), async () => {
-    announceInitialize();
-    await held;
+    await initialization.hold();
   });
   let closing: Promise<void> | undefined;
   await withVerifierCleanup(async () => {
-    await awaitAcknowledgement(initializing, starting, "worker initialization");
+    await initialization.reached(starting, "worker initialization");
     await waitFor(() => runtime.supervisor !== undefined);
     const rootPath = runtime.rootPath;
     expect(rootPath).toBeDefined();
@@ -62,14 +54,14 @@ it("waits for an admitted late handshake before closing its process and root", a
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(closeSettled).toBe(false);
     expect(runtime.supervisor).toBeDefined();
-    releaseInitialize();
+    initialization.release();
     await expect(starting).rejects.toThrow("closing");
     await closing;
     expect(runtime.supervisor).toBeUndefined();
     expect(runtime.rootPath).toBeUndefined();
     await expect(access(rootPath as string)).rejects.toThrow();
   }, [
-    releaseInitialize,
+    initialization.release,
     async () => {
       await starting.catch(() => undefined);
     },

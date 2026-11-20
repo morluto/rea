@@ -111,11 +111,58 @@ const cStringTable = (
   return { bytes: Buffer.concat(parts), offsets };
 };
 
+/** Linked ELF64 with two unmapped targets beside a one-byte mapped constructor. */
+export const elfUnmappedInitializerTargets = (
+  options: { readonly type?: 2 | 3; readonly metadataAllocated?: boolean } = {},
+): Buffer => {
+  const file = Buffer.alloc(0x600);
+  const names = cStringTable([".text", ".init_array", ".comment", ".shstrtab"]);
+  const comment = Buffer.from(
+    "Unmapped initializer targets must not point into metadata.\0",
+  );
+  elfIdent(file, 64, options.type ?? 2, 62);
+  file.writeBigUInt64LE(64n, 32);
+  file.writeBigUInt64LE(0x400n, 40);
+  file.writeUInt16LE(64, 52);
+  file.writeUInt16LE(56, 54);
+  file.writeUInt16LE(3, 56);
+  file.writeUInt16LE(64, 58);
+  file.writeUInt16LE(5, 60);
+  file.writeUInt16LE(4, 62);
+  phdr64(file, 64, 1, 4, 0, 0x400000, 0x100);
+  phdr64(file, 120, 1, 5, 0x100, 0x401000, 1);
+  phdr64(file, 176, 1, 6, 0x140, 0x402000, 24);
+  file[0x100] = 0xc3;
+  file.writeBigUInt64LE(0n, 0x140);
+  file.writeBigUInt64LE(0x10n, 0x148);
+  file.writeBigUInt64LE(0x401000n, 0x150);
+  comment.copy(file, 0x200);
+  names.bytes.copy(file, 0x280);
+  shdr64(file, 1, 0x400, names.offsets[0]!, 1, 6, 0x401000, 0x100, 1);
+  shdr64(file, 2, 0x400, names.offsets[1]!, 14, 3, 0x402000, 0x140, 24, 0, 8);
+  shdr64(
+    file,
+    3,
+    0x400,
+    names.offsets[2]!,
+    1,
+    options.metadataAllocated === true ? 2 : 0,
+    0,
+    0x200,
+    comment.length,
+  );
+  shdr64(file, 4, 0x400, names.offsets[3]!, 3, 0, 0, 0x280, names.bytes.length);
+  return file;
+};
+
 /**
  * ELF64 PIE: DT_INIT, RELATIVE init_array, one import, one RELR fini slot.
  * `needed` prepends that many DT_NEEDED entries, which repeat by design.
  */
-export const elf64PieInitializers = (needed = 0): Buffer => {
+export const elf64PieInitializers = (
+  needed = 0,
+  relrTags: "standard" | "android" = "standard",
+): Buffer => {
   const file = Buffer.alloc(0xc00);
   const dynstr = cStringTable(["imp_init"]);
   const strtab = cStringTable(["ctor_a", "ctor_b", "fini_fn"]);
@@ -158,9 +205,9 @@ export const elf64PieInitializers = (needed = 0): Buffer => {
     [7, 0x480],
     [8, 96],
     [9, 24],
-    [36, 0x500],
-    [35, 8],
-    [37, 8],
+    [relrTags === "android" ? 0x6fffe000 : 36, 0x500],
+    [relrTags === "android" ? 0x6fffe001 : 35, 8],
+    [relrTags === "android" ? 0x6fffe003 : 37, 8],
     [6, 0x520],
     [5, 0x560],
     [10, dynstr.bytes.length],
@@ -191,6 +238,21 @@ export const elf64PieInitializers = (needed = 0): Buffer => {
   shdr64(file, 9, 0x800, name(8), 2, 0, 0x580, 0x580, 96, 10, 24);
   shdr64(file, 10, 0x800, name(9), 3, 0, 0x600, 0x600, strtab.bytes.length);
   shdr64(file, 11, 0x800, name(10), 3, 0, 0, 0x680, shstr.bytes.length);
+  return file;
+};
+
+/** Two initializer addresses share source bytes; only the original has a section RELA write. */
+export const elf64AliasedInitializers = (): Buffer => {
+  const file = elf64PieInitializers();
+  file.writeUInt16LE(3, 56);
+  phdr64(file, 176, 1, 6, 0x200, 0x1200, 24);
+  // Observe both mappings through independent dynamic array declarations.
+  dyn64(file, 2, 25, 0x1200);
+  dyn64(file, 3, 27, 8);
+  dyn64(file, 6, 32, 0x200);
+  // Exercise the allocated section-relocation fallback rather than DT_RELA.
+  for (let index = 8; index <= 10; index++)
+    dyn64(file, index, 0x70000000 + index, 0);
   return file;
 };
 
@@ -611,6 +673,55 @@ export const machoX8664ObjectInitializers = (): Buffer => {
   nlist(0x250, 1, 0n);
   nlist(0x260, 9, 0x10n);
   strings.copy(file, 0x270);
+  return file;
+};
+
+/**
+ * LLVM 19.1.7 golden: llvm-mc -triple=x86_64-apple-macosx -filetype=obj input.s.
+ * Producer source (Lstartup is a temporary label, absent from the symbol table):
+ *   .text
+ *   .space 8, 0x90
+ *   Lstartup: ret
+ *   .globl _alias
+ *   .set _alias, _external
+ *   .section __DATA,__mod_init_func,mod_init_funcs
+ *   .p2align 3
+ *   .quad Lstartup
+ * llvm-readobj --symbols --relocations confirms N_INDR _alias has n_value=8
+ * (the string index of _external), and the slot has a section-relative relocation.
+ */
+export const machoIndirectInitializerGolden = (): Buffer =>
+  Buffer.from(
+    "z/rt/gcAAAEDAAAAAQAAAAMAAABQAQAAAAAAAAAAAAAZAAAA6AAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+      "AAAAAAAAABgAAAAAAAAAcAEAAAAAAAAYAAAAAAAAAAcAAAAHAAAAAgAAAAAAAABfX3RleHQAAAAA" +
+      "AAAAAAAAX19URVhUAAAAAAAAAAAAAAAAAAAAAAAACQAAAAAAAABwAQAAAAAAAAAAAAAAAAAAAAQA" +
+      "gAAAAAAAAAAAAAAAAF9fbW9kX2luaXRfZnVuYwBfX0RBVEEAAAAAAAAAAAAAEAAAAAAAAAAIAAAA" +
+      "AAAAAIABAAADAAAAiAEAAAEAAAAJAAAAAAAAAAAAAAAAAAAAAgAAABgAAACQAQAAAgAAALABAAAY" +
+      "AAAACwAAAFAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACQkJCQkJCQkMMAAAAAAAAACAAAAAAAAAAAAAAAAQAA" +
+      "BgEAAAALAAAACAAAAAAAAAAIAAAAAQAAAAAAAAAAAAAAAF9hbGlhcwBfZXh0ZXJuYWwAAAAAAAAA",
+    "base64",
+  );
+
+/** An n_value string index collides with a real initializer address. */
+export const machoInitializerSymbolKinds = (type: number): Buffer => {
+  const file = Buffer.alloc(0x400);
+  machoX8664ObjectInitializers().copy(file);
+  // The second, section-relative pointer also selects _startup at 0x10.
+  file.writeBigUInt64LE(0x10n, 0x228);
+  // First symbol: an indirect alias to the unresolved _external, whose string
+  // index (0x10) is not the address of _startup. Defined kinds serve as controls.
+  file.writeUInt8(type | 1, 0x254);
+  file.writeUInt8(type === 0x0e ? 1 : 0, 0x255);
+  file.writeBigUInt64LE(0x10n, 0x258);
+  file.writeUInt32LE(0x20, 0x260);
+  const strings = Buffer.alloc(0x30);
+  strings.write("_alias", 1);
+  strings.write("_external", 0x10);
+  strings.write("_startup", 0x20);
+  file.writeUInt32LE(0x300, 280);
+  file.writeUInt32LE(strings.length, 284);
+  strings.copy(file, 0x300);
   return file;
 };
 

@@ -1,16 +1,31 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
+import {
+  ArtifactReaderFailure,
+  readerIntegrityFailure,
+  readStableArtifact,
+} from "../resources/index.js";
+import {
+  classifyProviderFailure,
+  type ProviderFailureDialect,
+} from "../providers/classifyProviderFailure.js";
+import { classifyProviderOutcome } from "../process/classifyProviderOutcome.js";
 import {
   BOUNDED_PRODUCER_LIMITS as LIMITS,
   resolveProducerLimits,
 } from "../domain/producerResourceLimits.js";
 import { TSHARK_PROVIDER_IDENTITY } from "./TsharkProviderIdentity.js";
-import { artifactFileCancellationCause } from "../artifacts/ArtifactFileOperation.js";
 import {
   type InspectPacketFieldsInput,
   packetFieldsCatalogSchema,
 } from "../domain/captures/packetFields.js";
 import {
+  isParseLimit,
+  parseLimitConstraint,
+} from "../domain/parseFailureAnalysisError.js";
+import {
   parseFieldDiscovery,
-  FieldDiscoveryBudgetError,
+  FIELD_GLOSSARY_FORMAT,
   FIELD_RECORD_BUDGET,
 } from "./parseFieldDiscovery.js";
 import {
@@ -19,6 +34,10 @@ import {
   type LinuxResourceLimits,
 } from "../process/LinuxResourceLimits.js";
 import { parsePacketOutput } from "./parsePacketOutput.js";
+import {
+  capturePacketJsonExpansionError,
+  resolveCapturePacketJsonExpansion,
+} from "../config/capturePacketJsonExpansion.js";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { access, mkdir, writeFile } from "node:fs/promises";
@@ -27,15 +46,17 @@ import {
   createAnalysisExecution,
   type AnalysisExecution,
   type ExecutionOptions,
-} from "../application/AnalysisProvider.js";
-import type { PacketCapturePort } from "../application/captures/PacketCaptureService.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+} from "../ports/AnalysisProvider.js";
+import type { PacketCapturePort } from "../ports/captures/PacketCapturePort.js";
 import {
+  ARTIFACT_PRODUCER_LIMITATION,
   ArtifactAnalysisResources,
-  artifactCommandOutput,
   type ArtifactAnalysisRuntime,
 } from "../process/ArtifactAnalysisResources.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+import {
+  artifactResourceDialect,
+  createArtifactAnalysisResources,
+} from "../providers/artifactResourceFailure.js";
 import {
   assertArtifactCommandPath,
   selectArtifactCommandPath,
@@ -46,12 +67,12 @@ import {
 } from "../domain/analysisErrorBase.js";
 import {
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
-  AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
-import { createEvidence } from "../domain/evidence.js";
+import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import {
@@ -59,6 +80,7 @@ import {
   packetCaptureSchema,
 } from "../domain/captures/packetCapture.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { finalizedResult, runOwned } from "../providers/runOwned.js";
 import {
   runOwnedCommand,
   OwnedCommandFailure,
@@ -73,6 +95,7 @@ import {
   selectWiresharkTool,
 } from "../pcap/PcapConfiguration.js";
 import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_packet_capture";
 
@@ -90,11 +113,11 @@ export class TsharkCaptureProvider implements PacketCapturePort {
     readonly launcher?: Launcher,
     readonly createRuntime: () => Promise<ArtifactAnalysisRuntime> = () =>
       PrivateRuntimeRoot.create({ prefix: "rea-tshark-" }),
-    readonly platform: NodeJS.Platform = process.platform,
+    readonly platform: NodeJS.Platform = HOST_PLATFORM.platform,
     readonly readArtifact: typeof readStableArtifact = readStableArtifact,
     readonly readLimits: typeof readLinuxResourceLimits = readLinuxResourceLimits,
   ) {
-    this.#resources = new ArtifactAnalysisResources(
+    this.#resources = createArtifactAnalysisResources(
       TSHARK_PROVIDER_IDENTITY.id,
       OPERATION,
       readArtifact,
@@ -147,9 +170,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
     let result: Result<AnalysisExecution, AnalysisError>;
     try {
       if (options?.signal?.aborted)
-        throw new AnalysisCancelledError(operation, {
-          cause: options.signal.reason,
-        });
+        throw cancelledBy(operation, options.signal);
       await this.#resources.release();
       if (!tsharkHostSupported(this.platform))
         throw new Error(
@@ -231,7 +252,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
             ...(this.launcher === undefined ? {} : { launcher: this.launcher }),
           },
         );
-        capturedOutput = artifactCommandOutput(output);
+        capturedOutput = capturedProviderOutput(output);
         await assertArtifactCommandPath(selectedCommand, operation, {
           capturedOutput,
         });
@@ -258,9 +279,25 @@ export class TsharkCaptureProvider implements PacketCapturePort {
             operation,
             {
               diagnostics: {
-                exit_code: output.exitCode ?? null,
-                stdout: output.stdout.text,
-                stderr: output.stderr.text,
+                exit_code: capturedOutput.exit_code ?? null,
+                stdout: capturedOutput.stdout,
+                stderr: capturedOutput.stderr,
+              },
+            },
+          );
+        const invalidUtf8Streams = [
+          ...(output.stdout.invalidUtf8 ? ["stdout"] : []),
+          ...(output.stderr.invalidUtf8 ? ["stderr"] : []),
+        ];
+        if (invalidUtf8Streams.length > 0)
+          throw new AnalysisOutputError(
+            operation,
+            "TShark output is not valid UTF-8; retained text contains replacement characters.",
+            {
+              capturedOutput,
+              diagnostics: {
+                stage: phase,
+                invalid_utf8_streams: invalidUtf8Streams,
               },
             },
           );
@@ -318,6 +355,8 @@ export class TsharkCaptureProvider implements PacketCapturePort {
           }),
         );
       } else {
+        const expansion = resolveCapturePacketJsonExpansion(this.environment);
+        if (!expansion.ok) throw expansion.error;
         const selected = await this.#resources.readSelectedArtifact({
           path: input.path,
           maximumBytes: limits.input_bytes,
@@ -369,7 +408,28 @@ export class TsharkCaptureProvider implements PacketCapturePort {
         resourcePath = "path" in input ? input.path : command;
         // TShark resolves `-e` aliases before emitting canonical field names;
         // the command arguments, not output names, own field selection.
-        const matchingPackets = parsePacketOutput(output.stdout.text);
+        const parsedPackets = await parsePacketOutput(
+          output.stdout.text,
+          input.packet_limit,
+          {
+            outputBytes: limits.output_bytes,
+            expansionBytes: expansion.value.maximumBytes,
+          },
+        );
+        if (!parsedPackets.ok) {
+          const failure = parsedPackets.error;
+          if (failure.kind === "expansion")
+            throw capturePacketJsonExpansionError(
+              operation,
+              expansion.value,
+              capturedOutput,
+            );
+          throw new AnalysisOutputError(operation, failure.reason, {
+            ...(failure.cause === undefined ? {} : { cause: failure.cause }),
+            ...(capturedOutput === undefined ? {} : { capturedOutput }),
+          });
+        }
+        const matchingPackets = parsedPackets.value;
         const start = Math.min(input.match_offset, matchingPackets.length);
         const end =
           input.match_limit === null
@@ -408,7 +468,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
               "Packet limits count input packets before display filtering. Filtered results do not establish whole-capture or device traffic absence. Two-pass reassembly cannot recover bytes missing from the recording or beyond the read limit.",
               "Repeated field values remain ordered string arrays; raw packet bytes are included only when explicitly selected as a supported field. Export index/score metadata are omitted. All stderr, including warnings on exit zero, is retained.",
               "A private empty personal configuration is used. Installed libraries, global configuration and dissector plugins are trusted and not fully fingerprinted. File-only analysis and disabled name resolution do not constitute an OS sandbox.",
-              "Linux prlimit enforces the reported per-process address-space, per-file and CPU limits before execution with no core dumps, preserving tighter inherited soft and hard limits. Input, command deadline and retained output budgets are reported in limits; producer_limits can change their requested defaults on the next call without restart. Output overflow fails. Parser and transport bounds remain independent. These are per-process/per-file limits, not aggregate memory or filesystem quotas; caller-supplied tools and the limiter are trusted.",
+              ARTIFACT_PRODUCER_LIMITATION,
             ],
           }),
         );
@@ -421,133 +481,127 @@ export class TsharkCaptureProvider implements PacketCapturePort {
       )
         this.#resources.retain(root, cause.cleanupOwner);
       result = err(
-        this.#failure(
+        classifyProviderFailure(
           cause,
-          phase,
-          resourcePath,
-          root?.path ?? null,
-          effectiveLimits,
-          capturedOutput,
-          operation,
-          limits,
+          this.#failureDialect(
+            phase,
+            resourcePath,
+            root?.path ?? null,
+            effectiveLimits,
+            capturedOutput,
+            operation,
+            limits,
+          ),
         ),
       );
     }
-    return this.#resources.finish(
-      result,
-      (execution) =>
-        createEvidence(execution.subject ?? undefined, execution.provider, {
-          operation,
-          parameters: input,
-          result: execution.result,
-          confidence: "observed",
-          locations: execution.locations,
-          limitations: execution.limitations,
-        }),
-      operation,
-      options?.signal,
+    const completed = result;
+    return finalizedResult(
+      await runOwned(async () => completed, {
+        providerId: this.#resources.providerId,
+        operation,
+        signal: options?.signal,
+        close: () => this.#resources.release(),
+        partial: (execution) =>
+          createAnalysisExecutionEvidence(
+            operation,
+            input,
+            execution,
+            "observed",
+          ),
+      }),
     );
   }
-  #failure(
-    cause: unknown,
+  /** This provider's dialect for the shared provider failure classifier. */
+  #failureDialect(
     phase: "configuration" | "workspace" | "producer" | "integrity",
     path: string,
     workspacePath: string | null,
     effectiveLimits: LinuxResourceLimits | undefined,
     observedOutput: AnalysisCapturedOutput | undefined,
-    operation = OPERATION,
+    operation: string,
     limits: {
       readonly output_bytes: number;
       readonly command_timeout_ms: number;
-    } = LIMITS,
-  ): AnalysisError {
-    if (cause instanceof AnalysisError) return cause;
-    if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
-      return this.#resources.cleanupFailure(
-        cause,
-        (primary) =>
-          this.#failure(
-            primary,
-            phase,
-            path,
-            workspacePath,
-            effectiveLimits,
-            observedOutput,
-            operation,
-            limits,
-          ),
-        observedOutput,
-        operation,
-      );
-    if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-      return new AnalysisCancelledError(operation, {
-        cause: artifactFileCancellationCause(cause),
-        ...(observedOutput === undefined
-          ? {}
-          : { capturedOutput: observedOutput }),
-      });
-    if (cause instanceof FieldDiscoveryBudgetError)
-      return new AnalysisResourceConstraintError(
-        operation,
-        "memory",
-        cause.message,
-        { record_budget_bytes: FIELD_RECORD_BUDGET },
-        {
-          cause,
-          ...(observedOutput === undefined
-            ? {}
-            : { capturedOutput: observedOutput }),
-          ...fixedAllowanceOptions(
-            "The packet-field discovery record allowance",
-            "capture",
-          ),
-        },
-      );
-    const reason = cause instanceof Error ? cause.message : String(cause);
-    if (cause instanceof OwnedCommandFailure)
-      return this.#resources.commandFailure(
-        cause,
-        limits,
-        effectiveLimits,
-        operation,
-        "producer_limits",
-      );
-    if (phase === "workspace")
-      return privateWorkspaceFailure(
-        TSHARK_PROVIDER_IDENTITY.id,
-        operation,
-        cause,
-        workspacePath,
-      );
+    },
+  ): ProviderFailureDialect {
+    const command = this.#resources.commandContext(
+      limits,
+      effectiveLimits,
+      operation,
+      "producer_limits",
+    );
+    // A post-run identity read reports what the resources own about it.
     if (phase === "integrity")
-      return this.#resources.integrityFailure(
-        cause,
+      return artifactResourceDialect(this.#resources, {
+        kind: "integrity",
+        operation,
         path,
-        observedOutput,
-        operation,
-      );
-    if (phase === "configuration")
-      return new AnalysisCapabilityUnavailableError(
-        TSHARK_PROVIDER_IDENTITY.id,
-        operation,
-        reason,
-        {
+        capturedOutput: observedOutput,
+      });
+    return {
+      providerId: TSHARK_PROVIDER_IDENTITY.id,
+      operation,
+      recognise: (cause) =>
+        isParseLimit(cause, FIELD_GLOSSARY_FORMAT)
+          ? parseLimitConstraint(operation, "memory", cause, {
+              ...(observedOutput === undefined
+                ? {}
+                : { capturedOutput: observedOutput }),
+              ...fixedAllowanceOptions(
+                "The packet-field discovery record allowance",
+                "capture",
+                { limit: cause.failure.limit.maximum, unit: "bytes" },
+              ),
+            })
+          : undefined,
+      command: () => command,
+      // The retained workspace owns a command's unresolved cleanup and reports
+      // it when the run finishes; the command reports only its own outcome.
+      commandCleanup: (_failure, _primary, outcome) =>
+        classifyProviderOutcome(outcome, command),
+      readCleanup: (read, primary) =>
+        this.#resources.readCleanupFailure(
+          read,
+          primary,
+          observedOutput,
+          operation,
+        ),
+      observedOutput,
+      unclassified: (cause) => {
+        const reason = errorMessage(cause);
+        if (phase === "workspace")
+          return privateWorkspaceFailure(
+            TSHARK_PROVIDER_IDENTITY.id,
+            operation,
+            cause,
+            workspacePath,
+          );
+        if (phase === "configuration")
+          return new AnalysisCapabilityUnavailableError(
+            TSHARK_PROVIDER_IDENTITY.id,
+            operation,
+            reason,
+            {
+              cause,
+              ...(observedOutput === undefined
+                ? {}
+                : { capturedOutput: observedOutput }),
+              userMessage: `${reason} On Linux, supply TShark 4.x on PATH or through absolute REA_TSHARK_COMMAND, and util-linux prlimit through REA_TSHARK_PRLIMIT_COMMAND (default /usr/bin/prlimit).`,
+            },
+          );
+        if (
+          cause instanceof ArtifactReaderFailure &&
+          cause.reason === "integrity"
+        )
+          return readerIntegrityFailure(operation, path, cause);
+        return new AnalysisOutputError(operation, reason, {
           cause,
           ...(observedOutput === undefined
             ? {}
             : { capturedOutput: observedOutput }),
-          userMessage: `${reason} On Linux, supply TShark 4.x on PATH or through absolute REA_TSHARK_COMMAND, and util-linux prlimit through REA_TSHARK_PRLIMIT_COMMAND (default /usr/bin/prlimit).`,
-        },
-      );
-    if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
-      return new AnalysisArtifactChangedError(operation, path, reason, {
-        cause,
-      });
-    return new AnalysisOutputError(operation, reason, {
-      cause,
-      ...(observedOutput === undefined
-        ? {}
-        : { capturedOutput: observedOutput }),
-    });
+        });
+      },
+    };
   }
 }

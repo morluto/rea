@@ -1,3 +1,4 @@
+import { coverageStatusSchema } from "../coverage.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { z } from "zod";
 import {
@@ -103,7 +104,7 @@ export const protobufViewItemsSchema = z.union([
   ),
 ]);
 export const protobufViewContextSchema = z.strictObject({
-  source_status: z.enum(["complete", "partial", "unknown"]),
+  source_status: coverageStatusSchema,
   retained_decoded_bodies: z.number().int().nonnegative(),
 });
 type Request = z.output<typeof protobufViewRequestSchema>;

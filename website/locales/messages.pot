@@ -5063,7 +5063,7 @@ msgstr ""
 #: website/public/get-started/index.html:1113
 msgctxt "page:get-started/index.html"
 msgid ""
-"Install a 64-bit JDK 21 or newer, including the Java compiler. Choose the package "
+"Install a 64-bit JDK 25 or newer, including the Java compiler. Choose the package "
 "matching your computer's architecture."
 msgstr ""
 
@@ -5072,7 +5072,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
-"Download Ghidra 12.1.4 from the release's Assets list and extract the {ph0} archive. "
+"Download Ghidra 12.2 from the release's Assets list and extract the {ph0} archive. "
 "Choose the release archive, not “Source code”."
 msgstr ""
 
@@ -5085,16 +5085,16 @@ msgctxt "page:get-started/index.html"
 msgid "Find the extracted folder containing {ph0} or {ph1}. Use that folder for {ph2}."
 msgstr ""
 
-#. {ph0}: <a href="https://adoptium.net/temurin/releases/?version=21" >
+#. {ph0}: <a href="https://adoptium.net/temurin/releases/?version=25" >
 #. {ph1}: </a >
 #. {ph2}: <a
-#. href="https://github.com/NationalSecurityAgency/ghidra/releases/tag/Ghidra_12.1.4_build"
+#. href="https://github.com/NationalSecurityAgency/ghidra/releases/tag/Ghidra_12.2_build"
 #. >
 #. {ph3}: </a >
 #: website/public/get-started/index.html:1129
 #, python-brace-format
 msgctxt "page:get-started/index.html"
-msgid "{ph0}Download a JDK{ph1} · {ph2}Download Ghidra 12.1.4{ph3}"
+msgid "{ph0}Download a JDK{ph1} · {ph2}Download Ghidra 12.2{ph3}"
 msgstr ""
 
 #. {ph0}: <code>java.home</code>
@@ -5116,8 +5116,8 @@ msgstr ""
 msgctxt "page:get-started/index.html"
 msgid ""
 "Windows x64 has experimental, read-only support for native x86 and x64 PE applications"
-" and DLLs on fixed local NTFS drives. Use an existing Ghidra 12.1.x installation and a"
-" 64-bit JDK 21 or newer:"
+" and DLLs on fixed local NTFS/ReFS drives. Use an existing Ghidra 12.2 installation "
+"and a 64-bit JDK 25 or newer:"
 msgstr ""
 
 #: website/public/get-started/index.html:1184
@@ -5168,7 +5168,7 @@ msgid "{ph0}macOS · Apple Silicon{ph1}"
 msgstr ""
 
 #. {ph0}: <a
-#. href="https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.1.4_build/GhidraDocs/GettingStarted.md#building-
+#. href="https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.2_build/GhidraDocs/GettingStarted.md#building-
 #. native-components" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1230
@@ -7215,7 +7215,7 @@ msgstr ""
 msgctxt "page:guides/native/index.html"
 msgid ""
 "{ph0}Ghidra{ph1} (macOS or Linux; experimental on Windows): free, but needs an "
-"existing Ghidra 12.1.x installation and a 64-bit JDK 21 or newer."
+"existing Ghidra 12.2 installation and a 64-bit JDK 25 or newer."
 msgstr ""
 
 #. {ph0}: <strong>

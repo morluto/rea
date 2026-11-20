@@ -1,3 +1,4 @@
+import { unknownTarget } from "./targetIdentity.js";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -17,7 +18,7 @@ import {
 
 const PROVIDER = { id: "fixture", name: "Fixture", version: "1" } as const;
 const evidence = (label: string) =>
-  createEvidence(undefined, PROVIDER, {
+  createEvidence(unknownTarget("not-observed"), PROVIDER, {
     operation: "observe",
     parameters: { label },
     result: { label },

@@ -1,3 +1,4 @@
+import { unknownTarget } from "../targetIdentity.js";
 import {
   createEvidence,
   type Evidence,
@@ -49,13 +50,15 @@ export const createGpuCodeObjectsPartialEvidence = (
   provider: EvidenceProvider,
   parameters: GpuCodeObjectsInput,
 ): Evidence =>
-  createEvidence(undefined, provider, {
+  createEvidence(unknownTarget("not-observed"), provider, {
     operation: "inspect_gpu_code_objects",
     parameters: gpuParameters(parameters),
     result: report,
     confidence: "observed",
-    subjectUnavailableReason:
-      "The interrupted inspection did not complete final file identity verification; root digest and completeness are unknown.",
+
     locations: [{ kind: "artifact-path", path: report.artifact.path }],
-    limitations: report.limitations,
+    limitations: [
+      "The interrupted inspection did not complete final file identity verification; root digest and completeness are unknown.",
+      ...report.limitations,
+    ],
   });

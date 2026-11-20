@@ -63,10 +63,6 @@ invalidate that profile even when the model still emits the expected marker.
 Useful controls:
 
 ```sh
-# Compare full input guidance with the default compact input presentation.
-npm run eval:mcp-catalog -- --model gpt-6.1-sol \
-  --output "$HOME/.cache/rea-catalog-full" --input-profile full --repetitions 3
-
 # Choose exact tool names in the working host mode.
 npm run eval:mcp-catalog -- --model gpt-6.1-sol \
   --output "$HOME/.cache/rea-catalog-selected" --modes client-code \

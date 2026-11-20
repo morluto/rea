@@ -39,6 +39,19 @@ sys.modules[spec.name] = bridge
 spec.loader.exec_module(bridge)
 
 
+def _encoded_response(server, value, client_nonce, server_nonce):
+    """Capture the production delivery path without its fallback response."""
+    output = bytearray()
+
+    class Capture:
+        def sendall(self, data):
+            output.extend(data)
+
+    if not server._deliver_authenticated(Capture(), value, client_nonce, server_nonce):
+        return None
+    return bytes(output)
+
+
 def _frame(connection):
     data = bytearray()
     while b"\n" not in data:
@@ -163,6 +176,8 @@ class ServeDispatcher:
                 "ok": False,
                 "error": "active-document-generation-changed",
                 "execution_state": "not_started",
+                "document_generation": self.generation,
+                "output_truncated": False,
             })
             self.completed_commands[request["request_id"]] = "not_started"
         elif request.get("kind") == "command" and request.get("command") == "fixture-unknown":
@@ -181,6 +196,7 @@ class ServeDispatcher:
                 "cutter_version": self.cutter_version,
                 "identity_status": "partial",
                 "execution_state": "complete",
+                "output_truncated": False,
             })
             self.completed_commands[request["request_id"]] = "complete"
             self.fail_next_ack = True
@@ -193,6 +209,7 @@ class ServeDispatcher:
                 "cutter_version": self.cutter_version,
                 "identity_status": "partial",
                 "execution_state": "complete",
+                "output_truncated": False,
             })
             self.completed_commands[request["request_id"]] = "complete"
             self.malformed_next_ack = True
@@ -209,6 +226,7 @@ class ServeDispatcher:
                 "cutter_version": self.cutter_version,
                 "identity_status": "partial",
                 "execution_state": "complete",
+                "output_truncated": False,
             })
             if request.get("kind") == "command":
                 self.completed_commands[request["request_id"]] = "complete"
@@ -251,23 +269,22 @@ class ResponseEncodingTest(unittest.TestCase):
             with self.subTest(suffix=suffix):
                 output = "a" * (5 * 1024 * 1024 - 1) + suffix
                 value = {"ok": True, "output": output, "execution_state": "complete"}
-                encoded = self.server._encode_authenticated_response(value, "a" * 64, "b" * 64)
+                encoded = _encoded_response(self.server, value, "a" * 64, "b" * 64)
                 self.assertIsNotNone(encoded)
                 self.assertLessEqual(len(encoded), bridge.MAX_FRAME_BYTES)
                 frame = json.loads(encoded)
                 self.assertEqual(self.assert_authenticated_response(frame), value)
-        self.assertIsNone(self.server._encode_authenticated_response({
+        self.assertIsNone(_encoded_response(self.server, {
             "ok": True, "output": "😀" * (5 * 1024 * 1024),
             "execution_state": "complete",
         }, "a" * 64, "b" * 64))
 
-    def test_streamed_frame_matches_the_encoded_frame(self):
+    def test_streamed_frame_preserves_unicode_and_authentication(self):
         value = {
             "ok": True,
             "output": 'say "hi"\\\n雪\u2028',
             "execution_state": "complete",
         }
-        encoded = self.server._encode_authenticated_response(value, "a" * 64, "b" * 64)
         sender, receiver = socket.socketpair()
         try:
             receiver.settimeout(2)
@@ -282,8 +299,8 @@ class ResponseEncodingTest(unittest.TestCase):
         finally:
             sender.close()
             receiver.close()
-        self.assertEqual(bytes(streamed), encoded)
-        self.assertEqual(json.loads(json.loads(encoded)["response"]), value)
+        frame = json.loads(bytes(streamed))
+        self.assertEqual(self.assert_authenticated_response(frame), value)
 
     def test_json_pieces_stay_within_one_chunk(self):
         output = 'say "hi"\\\n雪\u0001' * 20000
@@ -364,10 +381,13 @@ class DocumentIdentityTest(unittest.TestCase):
             stale = handle(kind="command", request_id=str(uuid.uuid4()), expected_generation=0, command="iI")
             self.assertEqual(stale["error"], "active-document-generation-changed")
             self.assertEqual(stale["execution_state"], "not_started")
+            self.assertEqual(stale["document_generation"], 1)
+            self.assertIs(stale["output_truncated"], False)
             self.assertEqual(commands, [])
             current = handle(kind="command", request_id=str(uuid.uuid4()), expected_generation=1, command="iI")
             self.assertEqual(current["output"], "observed")
             self.assertEqual(current["document_generation"], 1)
+            self.assertIs(current["output_truncated"], False)
             self.assertEqual(commands, ["iI"])
 
     def test_absent_or_unreadable_document_config_remains_unknown(self):
@@ -891,7 +911,8 @@ class BridgeRequestCeilingTest(unittest.TestCase):
         server.session_id = "00000000-0000-4000-8000-000000000001"
 
         def encode(length):
-            return server._encode_authenticated_response(
+            return _encoded_response(
+                server,
                 {
                     "ok": True,
                     "output": "A" * length,
@@ -942,10 +963,11 @@ class BridgeRequestCeilingTest(unittest.TestCase):
             "completed_connection": "f" * 16,
         }
         self.assertIsNone(
-            server._encode_authenticated_response(status, "a" * 64, "b" * 64)
+            _encoded_response(server, status, "a" * 64, "b" * 64)
         )
         required = server._bounded_status_response(status)
-        encoded = server._encode_authenticated_response(
+        encoded = _encoded_response(
+            server,
             required, "a" * 64, "b" * 64
         )
         self.assertIsNotNone(encoded)
@@ -993,7 +1015,7 @@ class BridgeRequestCeilingTest(unittest.TestCase):
             "identity_status": "partial",
         }
         self.assertIsNone(
-            server._encode_authenticated_response(value, "a" * 64, "b" * 64)
+            _encoded_response(server, value, "a" * 64, "b" * 64)
         )
         captured = bytearray()
 
@@ -1028,7 +1050,7 @@ class BridgeRequestCeilingTest(unittest.TestCase):
         server = module._BridgeServer.__new__(module._BridgeServer)
         server.token = "token"
         server.session_id = "00000000-0000-4000-8000-000000000001"
-        encoded = server._encode_authenticated_response(value, "a" * 64, "b" * 64)
+        encoded = _encoded_response(server, value, "a" * 64, "b" * 64)
         self.assertIsNotNone(encoded)
         response = json.loads(json.loads(encoded)["response"])
         self.assertEqual(response["output"], zeros)

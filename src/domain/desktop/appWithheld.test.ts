@@ -118,7 +118,9 @@ describe("withheld files", () => {
     expect(gapped(4, { truncated: true })).toMatchObject({ ok: true });
     expect(gapped(1, { unconfirmed_changes: 1 })).toMatchObject({ ok: true });
   });
+});
 
+describe("withheld file settings", () => {
   it("names each withheld file's setting, environment variable and handle", () => {
     expect(withheldSettings("typora", [".config/Typora/mAxvdiPNmi"])).toEqual([
       {
@@ -140,8 +142,27 @@ describe("withheld files", () => {
     expect(other?.variable).not.toBe(again?.variable);
   });
 
-  it("names settings Python takes as arguments, distinct whatever the files' order", () => {
-    const files = [".pass", "1license", "file_1license", "class"];
+  it("names settings Python and Pydantic accept, distinct whatever the files' order", () => {
+    const files = [
+      ".pass",
+      "1license",
+      "file_1license",
+      "class",
+      "model_config",
+      "model_extra",
+      "model_fields_set",
+      "file_model_extra",
+      "model_post_init",
+      "model_dump",
+      "model_dump_json",
+      "model_validate",
+      "model_validate_json",
+      "model_validate_strings",
+      "file_model_config",
+      "model_id",
+      "model_copy",
+      "model_fields",
+    ];
     for (const order of [files, [...files].reverse()]) {
       const settings = withheldSettings("an-app", order).map(
         ({ setting }) => setting,
@@ -150,7 +171,21 @@ describe("withheld files", () => {
       for (const setting of settings) {
         expect(setting).toMatch(/^[a-z]\w*$/u);
         expect(["pass", "class"]).not.toContain(setting);
+        expect([
+          "model_config",
+          "model_extra",
+          "model_fields_set",
+          "model_post_init",
+          "model_dump",
+          "model_dump_json",
+          "model_validate",
+          "model_validate_json",
+          "model_validate_strings",
+        ]).not.toContain(setting);
       }
+      expect(settings[order.indexOf("model_id")]).toBe("model_id");
+      expect(settings[order.indexOf("model_copy")]).toBe("model_copy");
+      expect(settings[order.indexOf("model_fields")]).toBe("model_fields");
     }
   });
 
@@ -184,7 +219,7 @@ describe("withheld files", () => {
       "/bin/sh",
       [
         "-c",
-        `${command.replace("base64 -w0", "cat")}\nprintf '%s' \"$${item.variable}\"`,
+        `${command.replace("base64 -w0", "cat")}\nprintf '%s' "$${item.variable}"`,
       ],
       {
         env: { ...process.env, HOME: home },

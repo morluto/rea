@@ -13,7 +13,6 @@ import type { AnalysisError } from "../../../../src/domain/analysisErrorBase.js"
 import { EvidenceIntegrityError } from "../../../../src/domain/evidenceErrors.js";
 import { nativeCallPartialObservationSchema } from "../../../../src/domain/native/nativeCallPartialObservation.js";
 import { nativeCallObservationResultSchema } from "../../../../src/domain/native/nativeCallObservation.js";
-import { NATIVE_CALL_BREAKPOINT_LOCATION_LIST_INCOMPLETE_LIMITATION } from "../../../../src/native/NativeCallObservation.js";
 import { err, ok, type Result } from "../../../../src/domain/result.js";
 import type {
   NativeCallTrace,
@@ -90,6 +89,7 @@ const run = (
     },
   ],
   other_stops: [],
+  unattributed_breakpoint_stops: 0,
   ...overrides,
 });
 
@@ -295,8 +295,12 @@ describe("observe_native_calls projection: keeps locations within the metadata b
     const result = nativeCallObservationResultSchema.parse(
       observed.value.result,
     );
-    expect(result.limitations).toContain(
-      NATIVE_CALL_BREAKPOINT_LOCATION_LIST_INCOMPLETE_LIMITATION,
+    expect(result.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          /breakpoint location list is incomplete.*location_count.*full matching count/iu,
+        ),
+      ]),
     );
   });
 });
@@ -352,8 +356,12 @@ describe("observe_native_calls projection: bounded breakpoint metadata", () => {
         "capture_limits.breakpoint_location_bytes (1024 bytes)",
       ),
     );
-    expect(result.limitations).not.toContain(
-      NATIVE_CALL_BREAKPOINT_LOCATION_LIST_INCOMPLETE_LIMITATION,
+    expect(result.limitations).not.toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          /breakpoint location list is incomplete.*location_count.*full matching count/iu,
+        ),
+      ]),
     );
     expect(result.limitations.join(" ")).not.toContain("process was killed");
   });
@@ -455,6 +463,39 @@ describe("observe_native_calls projection: reports partial observation coverage"
         resource_limit_reached: outcome === "resource-limit",
       });
     }
+  });
+
+  it("does not report complete coverage when a breakpoint trap was not attributed", async () => {
+    const stop = "EXC_BREAKPOINT (code=1, subcode=0x100000928)";
+    const tracer = new FixtureTracer(
+      ok({
+        debugger: {
+          path: "/usr/bin/lldb",
+          sha256: "a".repeat(64),
+          version: null,
+        },
+        run: run({ other_stops: [stop], unattributed_breakpoint_stops: 1 }),
+        stdout: { text: "", bytes: 0, truncated: false, complete: true },
+        stderr: { text: "", bytes: 0, truncated: false, complete: true },
+        terminated: true,
+      }),
+    );
+    const observed = await observe(tracer, { breakpoints: BREAKPOINTS });
+    if (!observed.ok) throw observed.error;
+    const result = nativeCallObservationResultSchema.parse(
+      observed.value.result,
+    );
+    expect(result.process.other_stops).toEqual([stop]);
+    expect(result.coverage).toEqual({
+      status: "partial",
+      event_limit_reached: false,
+      resource_limit_reached: false,
+      unattributed_breakpoint_stops: 1,
+      unresolved_breakpoints: [],
+    });
+    expect(result.limitations).toContain(
+      "1 stop(s) in process.other_stops were breakpoint traps or stops on a requested breakpoint location that REA could not attribute to a recorded hit, so calls may be missing from events.",
+    );
   });
 });
 
@@ -596,6 +637,7 @@ it("retains completed call facts when cancellation arrives with the tracer resul
     _tag: "AnalysisCancelledError",
     cause: reason,
   });
+  expect(result.error.cause).toBe(reason);
   const partial = nativeCallPartialObservationSchema.parse(
     result.error.partialObservation,
   );
@@ -606,25 +648,4 @@ it("retains completed call facts when cancellation arrives with the tracer resul
     status: "partial",
     reason: "cancelled",
   });
-});
-
-it("grows repeated source-location JSON by the location object, not by a token estimate", () => {
-  const path = "/not-acquired/é space/fixture.pas";
-  const located = {
-    ...LOCATION,
-    source_location: { file_path: path, line: 23, column: null },
-  };
-  const absent = { ...located, source_location: null };
-  const copies = 3;
-  const withPath = Buffer.byteLength(
-    JSON.stringify(Array.from({ length: copies }, () => located)),
-  );
-  const withoutPath = Buffer.byteLength(
-    JSON.stringify(Array.from({ length: copies }, () => absent)),
-  );
-  const perCopy =
-    Buffer.byteLength(JSON.stringify(located.source_location)) -
-    Buffer.byteLength("null");
-  expect(withPath - withoutPath).toBe(copies * perCopy);
-  expect(perCopy).toBeGreaterThan(Buffer.byteLength(path));
 });

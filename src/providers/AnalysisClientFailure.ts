@@ -1,8 +1,4 @@
-import {
-  HopperRemoteError,
-  HopperTimeoutError,
-  HopperProcessError,
-} from "../domain/hopperErrors.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import {
   AnalysisError,
   type AnalysisErrorOptions,
@@ -13,15 +9,18 @@ import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisResourceConstraintError,
-  resourceConstraintRecovery,
+  reattributedResourceConstraint,
   AnalysisOutputError,
   AnalysisTimeoutError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import {
+  ArtifactReaderFailure,
+  bindArtifactFileCleanup,
+} from "../resources/index.js";
 
 /** Copy authored outcome facts; semantic attribution never inspects a later signal. */
 export const analysisClientFailureContext = (
@@ -29,25 +28,7 @@ export const analysisClientFailureContext = (
   providerId: string,
   operation: string,
 ): AnalysisErrorOptions => {
-  const providerRequest =
-    cause instanceof HopperRemoteError ||
-    cause instanceof HopperTimeoutError ||
-    cause instanceof HopperProcessError
-      ? {
-          ...(cause.operation === undefined
-            ? {}
-            : { operation: cause.operation }),
-          ...(cause.requestId === undefined
-            ? {}
-            : { request_id: cause.requestId }),
-          ...(cause instanceof HopperRemoteError
-            ? {
-                provider_code: cause.code,
-                diagnostic_type: cause.diagnosticType,
-              }
-            : {}),
-        }
-      : undefined;
+  const providerRequest = cause.providerRequest()?.facts;
   const attribute = (
     recorded: Readonly<Record<string, JsonValue>> | undefined,
   ): Readonly<Record<string, JsonValue>> | undefined =>
@@ -65,6 +46,7 @@ export const analysisClientFailureContext = (
   return {
     cause,
     ...(cause.limit === undefined ? {} : { limit: cause.limit }),
+    ...(cause.related === undefined ? {} : { related: cause.related }),
     ...(cause.continuingCallerGuidance === undefined
       ? {}
       : { continuingCallerGuidance: cause.continuingCallerGuidance }),
@@ -116,10 +98,9 @@ export const analysisClientFailureForOperation = (
     bindArtifactFileCleanup(cause, failure);
     return failure;
   }
+  const providerRequest = cause.providerRequest();
   if (
-    !(cause instanceof HopperRemoteError) &&
-    !(cause instanceof HopperTimeoutError) &&
-    !(cause instanceof HopperProcessError) &&
+    providerRequest === undefined &&
     !(cause instanceof AnalysisCancelledError) &&
     !(cause instanceof ProviderAdapterError) &&
     !(cause instanceof AnalysisCapabilityUnavailableError) &&
@@ -144,37 +125,8 @@ export const analysisClientFailureForOperation = (
         }),
   };
   let result: AnalysisError;
-  if (cause instanceof HopperRemoteError)
-    result = new HopperRemoteError(cause.code, cause.safeMessage, {
-      ...context,
-      operation,
-      requestId: cause.requestId,
-      diagnosticType: cause.diagnosticType,
-    });
-  else if (cause instanceof HopperTimeoutError)
-    result = new HopperTimeoutError(
-      cause.timeoutMs,
-      operation,
-      cause.requestId,
-      cause.providerState,
-      cause.stage,
-      cause.launcherOutcome,
-      context,
-    );
-  else if (cause instanceof HopperProcessError)
-    result = new HopperProcessError(cause.exitCode, {
-      ...context,
-      operation,
-      requestId: cause.requestId,
-      providerState: cause.providerState,
-      stage: cause.stage,
-      ...(cause.diagnostic === undefined
-        ? {}
-        : { diagnostic: cause.diagnostic }),
-      ...(cause.launcherFailure === undefined
-        ? {}
-        : { launcherFailure: cause.launcherFailure }),
-    });
+  if (providerRequest !== undefined)
+    result = providerRequest.reattribute(operation, context);
   else if (cause instanceof ProviderCleanupError) {
     const { diagnostics, ...outcomeContext } = context;
     result = new ProviderCleanupError(
@@ -201,6 +153,7 @@ export const analysisClientFailureForOperation = (
       ...(cause.remediationAction === undefined
         ? {}
         : { remediationAction: cause.remediationAction }),
+      ...(cause.limit === undefined ? {} : { limit: cause.limit }),
     });
   else if (cause instanceof AnalysisOutputError)
     result = new AnalysisOutputError(operation, cause.reason, {
@@ -213,12 +166,10 @@ export const analysisClientFailureForOperation = (
         ? {}
         : { remediationAction: cause.remediationAction }),
     });
-  else if (cause instanceof AnalysisCancelledError)
-    result = new AnalysisCancelledError(operation, {
-      ...context,
-      cause: cause.cause,
-    });
-  else if (cause instanceof AnalysisCapabilityUnavailableError)
+  else if (cause instanceof AnalysisCancelledError) {
+    const { cause: _wrapped, ...cancellationContext } = context;
+    result = cancelledBy(operation, cause, cancellationContext);
+  } else if (cause instanceof AnalysisCapabilityUnavailableError)
     result = new AnalysisCapabilityUnavailableError(
       cause.providerId,
       operation,
@@ -255,17 +206,11 @@ export const analysisClientFailureForOperation = (
       operation,
       cause.path,
       cause.reason,
-      context,
+      { ...context, integrityCheck: cause.integrityCheck },
     );
   else if (cause instanceof AnalysisResourceConstraintError)
-    result = new AnalysisResourceConstraintError(
-      operation,
-      cause.resource,
-      cause.reason,
-      cause.reportedLimits,
-      { ...context, ...resourceConstraintRecovery(cause) },
-    );
-  else
+    result = reattributedResourceConstraint(operation, cause, context);
+  else if (cause instanceof ProviderAdapterError)
     result = new ProviderAdapterError(providerId, operation, {
       ...context,
       ...(cause.userMessage === undefined
@@ -275,7 +220,20 @@ export const analysisClientFailureForOperation = (
         ? {}
         : { remediationAction: cause.remediationAction }),
     });
+  else return cause;
+  for (const secondary of cause.secondaryFailures) {
+    if (secondary instanceof AnalysisCancelledError)
+      result = analysisErrorWithCancellation(result, secondary);
+    else result.retainSecondaryFailure(secondary);
+  }
+  // The attributed error reads its source's cleanup: live resources while it
+  // is pending, otherwise the source's completed release with the resources
+  // kept as history.
   return cause.cleanupIncomplete
     ? result.bindCleanupDependencies([cause])
-    : result.resolveCleanup();
+    : result.bindCleanupReleaseClaim({
+        get cleanupReleased() {
+          return !cause.cleanupIncomplete;
+        },
+      });
 };

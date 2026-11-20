@@ -1,23 +1,25 @@
+import {
+  isPortableBundleName,
+  PORTABLE_BUNDLE_NAME_CONSTRAINT,
+} from "../../domain/portableBundleName.js";
 import { setImmediate } from "node:timers/promises";
 
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import { summarizeEnvironmentCoverage } from "../../domain/analysisView/environmentCoverageView.js";
 import {
   TEMPLATE_RULES,
   type TemplateRule,
 } from "../../domain/analysisView/environmentManifestRules.js";
-import type { Evidence } from "../../domain/evidence.js";
 import type { EnvironmentBuildReport } from "../../domain/environmentBundleExport.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { inspectAnalysisView } from "../analysisView/AnalysisViewService.js";
 import {
-  BUNDLE_NAME_CONSTRAINT,
   ENVIRONMENT_EXPORT_OPERATION,
-  isPortableBundleName,
   planEnvironmentBundle,
   registryPackageSource,
   type EnvironmentPackageSource,
@@ -84,7 +86,7 @@ export const classifyBuildCapture = (
 };
 
 /** Rules in the views' fixed order, so the report and manifest list them canonically. */
-export const canonicalTemplateRules = (
+const canonicalTemplateRules = (
   rules: readonly TemplateRule[],
 ): TemplateRule[] => TEMPLATE_RULES.filter((rule) => rules.includes(rule));
 
@@ -157,15 +159,16 @@ const cancelled = async (
   // The stages are synchronous; yield so a pending interrupt is dispatched before checking.
   if (signal !== undefined) await setImmediate();
   return signal?.aborted === true
-    ? new AnalysisCancelledError(ENVIRONMENT_BUILD_OPERATION, {
-        cause: signal.reason,
-        ...(written === undefined
+    ? cancelledBy(
+        ENVIRONMENT_BUILD_OPERATION,
+        signal,
+        written === undefined
           ? {}
           : {
               userMessage: `The build was cancelled after it wrote the bundle at ${written}.`,
               diagnostics: { output_directory: written, bundle_written: true },
-            }),
-      })
+            },
+      )
     : undefined;
 };
 
@@ -190,7 +193,7 @@ const unnamed = (path: string): AnalysisInputError =>
   new AnalysisInputError(
     ENVIRONMENT_BUILD_OPERATION,
     {
-      userMessage: `The capture's origin is a loopback or IP address, and ${path === "" ? "retained Evidence has no file name to take one from" : `${path} yields no portable environment name (${BUNDLE_NAME_CONSTRAINT})`}; name the environment.`,
+      userMessage: `The capture's origin is a loopback or IP address, and ${path === "" ? "retained Evidence has no file name to take one from" : `${path} yields no portable environment name (${PORTABLE_BUNDLE_NAME_CONSTRAINT})`}; name the environment.`,
     },
     [
       {

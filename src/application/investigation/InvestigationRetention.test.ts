@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { expect, it, vi } from "vitest";
 
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
@@ -13,6 +14,9 @@ import {
 } from "../../domain/residualUnknown.js";
 import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import { estimateJsonStorage } from "../JsonAuthenticationHeadroom.js";
+import { createWorkflowEvidence } from "../WorkflowEvidence.js";
+import { completedOperationEvidence } from "../binary/SessionEvidenceReuse.js";
+import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import { ok } from "../../domain/result.js";
 import { admitCompletedAnalysis } from "./admitCompletedAnalysis.js";
 import { recordEvidenceSources } from "./recordEvidenceSources.js";
@@ -82,7 +86,7 @@ it("returns only authenticated Evidence when a completed record exceeds retentio
   if (invalid.ok) throw new Error("Expected integrity refusal");
   expect(invalid.error._tag).toBe("EvidenceIntegrityError");
   expect(invalid.error.partialObservation).toBeUndefined();
-  const mutable = createEvidence(undefined, provider, {
+  const mutable = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "health",
     parameters: {},
     result: { value: 1 },
@@ -94,6 +98,64 @@ it("returns only authenticated Evidence when a completed record exceeds retentio
     throw new Error("Expected authentication headroom refusal");
   expect(noHeadroom.error._tag).toBe("AnalysisResourceConstraintError");
   expect(noHeadroom.error.partialObservation).toBeUndefined();
+});
+
+it("applies authentication admission to a fresh caller-selected alias", () => {
+  const target: BinaryTarget = {
+    kind: "executable",
+    format: "mach-o",
+    architecture: "arm64",
+    availableArchitectures: ["arm64"],
+    path: "/fixture/target",
+    callerInputPath: "/fixture/alias",
+    sha256: "a".repeat(64),
+  };
+  const workflow = createWorkflowEvidence({
+    target,
+    operation: "binary_overview",
+    parameters: {},
+    result: { value: 1 },
+    upstreamProfile: undefined,
+    upstreamLimitations: [],
+  });
+  const primitive = completedOperationEvidence(
+    "address_name",
+    {},
+    {
+      result: { value: 1 },
+      rawResult: null,
+      provider,
+      locations: [],
+      limitations: [],
+    },
+    {
+      target,
+      admitRecovery: (input) => {
+        expect(input).toMatchObject({
+          caller_input_path: target.callerInputPath,
+        });
+        return ok(undefined);
+      },
+    },
+  );
+  if (!primitive.ok) throw primitive.error;
+  const constrained = new InvestigationRecords({
+    availableAuthenticationBytes: () => 0,
+  });
+  for (const evidence of [workflow, primitive.value]) {
+    expect(evidence.caller_input_path).toBe(target.callerInputPath);
+    const refused = constrained.recordEvidence(evidence);
+    if (refused.ok)
+      throw new Error(
+        `Bypassed authentication admission: ${evidence.operation}`,
+      );
+    expect(refused.error._tag).toBe("AnalysisResourceConstraintError");
+    expect(refused.error.partialObservation).toBeUndefined();
+    expect(constrained.hasEvidence(evidence.evidence_id)).toBe(false);
+    expect(new InvestigationRecords().recordEvidence(evidence)).toEqual(
+      ok("added"),
+    );
+  }
 });
 
 it("admits exact capacity, rejects cumulative growth atomically, and releases accounting on clear", () => {
@@ -373,11 +435,8 @@ it("accounts for the generated subject limitation before admitting a subjectless
     subject: null,
   } as const;
   let admitted: ReturnType<typeof estimateJsonStorage> | undefined;
-  const result = admitCompletedAnalysis(
-    "health",
-    {},
-    observation,
-    (input, _operation, additional) => {
+  const result = admitCompletedAnalysis("health", {}, observation, {
+    admit: (input, _operation, additional) => {
       const estimate = estimateJsonStorage(input);
       admitted = {
         valueBytes: estimate.valueBytes + additional.valueBytes,
@@ -386,7 +445,7 @@ it("accounts for the generated subject limitation before admitting a subjectless
       };
       return ok(undefined);
     },
-  );
+  });
   expect(result.ok).toBe(true);
   const actual = estimateJsonStorage(
     createAnalysisExecutionEvidence("health", {}, observation, "observed"),

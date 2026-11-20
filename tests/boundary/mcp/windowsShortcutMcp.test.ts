@@ -29,11 +29,10 @@ mcpTest(
       createServer({ kind: "session", session }),
     );
     try {
-      const {
-        toolDefinition: advertised,
-        ajv,
-        outputSchema,
-      } = await advertisedMcpToolSchemas(client, "inspect_windows_shortcut");
+      const { toolDefinition: advertised } = await advertisedMcpToolSchemas(
+        client,
+        "inspect_windows_shortcut",
+      );
       expect(advertised?.annotations).toMatchObject({
         readOnlyHint: false,
         idempotentHint: true,
@@ -41,15 +40,11 @@ mcpTest(
       const root = await createTestTempDirectory("rea-windows-shortcut-mcp-");
       const path = join(root, "shortcut.lnk");
       await writeFile(path, powershellHiddenIconSpoofShortcut());
-      const response = await client.callTool({
-        name: "inspect_windows_shortcut",
-        arguments: { path },
-      });
+      const response = await client.callTool(
+        { name: "inspect_windows_shortcut", arguments: { path } },
+        { toolDefinition: advertised },
+      );
       expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
-      expect(
-        ajv.validate(outputSchema, response.structuredContent),
-        JSON.stringify(ajv.errors),
-      ).toBe(true);
       const evidence = shortcutContract.outputSchema.parse(
         response.structuredContent,
       );

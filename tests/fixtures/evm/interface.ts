@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
-import type { EvmInterfaceExecution } from "../../../src/application/evm/EvmInterfacePort.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
+import type { EvmInterfaceExecution } from "../../../src/ports/evm/EvmInterfacePort.js";
 import type { EvmInterface } from "../../../src/domain/evm/evmInterface.js";
 
 /** Source-owned transport seam, independent of real engine verification. */

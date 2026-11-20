@@ -7,19 +7,15 @@ for (const kind of ["proxy", "workers", "storage"] as const) {
   processTest(
     `${kind} HTTP fixture preserves targets and survives invalid requests`,
     async ({ processes }) => {
-      const result = await processes.run(
-        process.execPath,
-        [
-          fileURLToPath(
-            new URL(
-              "../../fixtures/browserFixtureHttpTargets.mjs",
-              import.meta.url,
-            ),
+      const result = await processes.run(process.execPath, [
+        fileURLToPath(
+          new URL(
+            "../../fixtures/browserFixtureHttpTargets.mjs",
+            import.meta.url,
           ),
-          kind,
-        ],
-        { timeoutMs: 15_000 },
-      );
+        ),
+        kind,
+      ]);
       expect(result.signal, result.stderr).toBeNull();
       expect(result.exitCode, result.stderr).toBe(0);
       expect(result.stderr).toBe("");

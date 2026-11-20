@@ -4,7 +4,6 @@ import type {
   JavaScriptRuntimeTargetList,
   JavaScriptRuntimeTargetLocation,
 } from "../domain/javascript/javascriptRuntimeObservation.js";
-import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import { urlDeclaresQueryOrFragment } from "../domain/urlComponents.js";
 import { parseCdpEndpointValue, readCdpJson } from "../browser/CdpEndpoint.js";
