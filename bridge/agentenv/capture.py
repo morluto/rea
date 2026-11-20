@@ -242,14 +242,39 @@ def _request(capture: str, line: str) -> bool:
     return True
 
 
-def _wait_for_capture_handoff(capture: str, timeout_s: float) -> None:
+def _sleep_until(attempt: int, deadline: float) -> bool:
+    """Wait one poll step without crossing deadline. False when no time remains."""
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return False
+    time.sleep(min(_poll_sleep(attempt), remaining))
+    return True
+
+
+def _wait_for_capture_handoff(capture: str, deadline: float) -> None:
     """start() already owns this directory. Wait until its FIFO or exit file appears."""
-    deadline = time.monotonic() + timeout_s
     attempt = 0
     control = os.path.join(capture, "control")
-    while _exit_code(capture) is None and not os.path.exists(control) and time.monotonic() < deadline:
-        time.sleep(_poll_sleep(attempt))
+    while _exit_code(capture) is None and not os.path.exists(control):
+        if not _sleep_until(attempt, deadline):
+            return
         attempt += 1
+
+
+def _request_until(capture: str, line: str, deadline: float) -> bool:
+    """Retry until a reader accepts the line, the capture exits, or the deadline passes.
+
+    start() creates the control FIFO before it opens the reader. One failed
+    nonblocking write in that gap is not proof the capture will never read.
+    """
+    attempt = 0
+    while time.monotonic() < deadline and _exit_code(capture) is None:
+        if _request(capture, line):
+            return True
+        if not _sleep_until(attempt, deadline):
+            return False
+        attempt += 1
+    return False
 
 
 def mark(arguments: dict) -> int:
@@ -273,7 +298,7 @@ def mark(arguments: dict) -> int:
 def stop(arguments: dict) -> int:
     capture = os.path.abspath(arguments["capture"])
     control = os.path.join(capture, "control")
-    timeout_s = arguments.get("timeout_s", 600)
+    deadline = time.monotonic() + arguments.get("timeout_s", 600)
     if _exit_code(capture) is None and not os.path.exists(control):
         # Claim the folder exclusively. exist_ok would adopt a start() directory
         # that does not have its FIFO yet and then report the capture absent.
@@ -283,15 +308,15 @@ def stop(arguments: dict) -> int:
         try:
             os.mkdir(capture, 0o700)
         except FileExistsError:
-            _wait_for_capture_handoff(capture, timeout_s)
+            _wait_for_capture_handoff(capture, deadline)
         else:
             return _say({"absent": True})
     if _exit_code(capture) is None and os.path.exists(control):
-        _request(capture, "stop")
-    deadline = time.monotonic() + arguments.get("timeout_s", 600)
+        _request_until(capture, "stop", deadline)
     attempt = 0
-    while (code := _exit_code(capture)) is None and time.monotonic() < deadline:
-        time.sleep(_poll_sleep(attempt))
+    while (code := _exit_code(capture)) is None:
+        if not _sleep_until(attempt, deadline):
+            break
         attempt += 1
     log = os.path.join(capture, "progress.log")
     if code is None:

@@ -1,5 +1,6 @@
 """Exercise the capture controller's filesystem inventory boundary."""
 
+import errno
 import json
 import io
 from contextlib import redirect_stdout
@@ -113,6 +114,73 @@ class CaptureHandoffTest(unittest.TestCase):
             ):
                 self.assertFalse(capture._request(parent, "stop"))
             close.assert_called_once_with(7)
+
+    def test_stop_retries_until_a_reader_opens(self):
+        with tempfile.TemporaryDirectory() as parent:
+            capture_dir = os.path.join(parent, "cap")
+            os.mkdir(capture_dir)
+            control = os.path.join(capture_dir, "control")
+            open(control, "wb").close()
+            opened = threading.Event()
+            attempts = []
+            written = []
+            real_open = os.open
+            real_write = os.write
+
+            def open_control(path, flags, *args, **kwargs):
+                if os.path.normcase(os.path.abspath(path)) == os.path.normcase(os.path.abspath(control)):
+                    ready = opened.is_set()
+                    attempts.append(ready)
+                    if not ready:
+                        raise OSError(errno.ENXIO, "no reader")
+                return real_open(path, flags, *args, **kwargs)
+
+            def write_control(fd, data):
+                count = real_write(fd, data)
+                written.append(data)
+                return count
+
+            def accept():
+                time.sleep(0.05)
+                opened.set()
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    if any(b"stop\n" in chunk for chunk in written):
+                        (Path(capture_dir) / "capture.out").write_bytes(b"")
+                        (Path(capture_dir) / "exit").write_text("0", encoding="utf-8")
+                        return
+                    time.sleep(0.01)
+
+            thread = threading.Thread(target=accept)
+            thread.start()
+            stdout = io.StringIO()
+            with (
+                patch("bridge.agentenv.capture.os.O_NONBLOCK", 0, create=True),
+                patch("bridge.agentenv.capture.os.open", side_effect=open_control),
+                patch("bridge.agentenv.capture.os.write", side_effect=write_control),
+                redirect_stdout(stdout),
+            ):
+                code = capture.stop({"capture": capture_dir, "timeout_s": 2})
+            thread.join()
+            self.assertEqual(code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload.get("exit_code"), 0, payload)
+            self.assertTrue(any(not ready for ready in attempts), attempts)
+            self.assertTrue(any(attempts), attempts)
+
+    def test_stop_bounds_an_interrupted_startup_to_one_timeout(self):
+        with tempfile.TemporaryDirectory() as parent:
+            capture_dir = os.path.join(parent, "cap")
+            os.mkdir(capture_dir)
+            started = time.monotonic()
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                code = capture.stop({"capture": capture_dir, "timeout_s": 0.3})
+            elapsed = time.monotonic() - started
+            self.assertEqual(code, 0)
+            self.assertTrue(json.loads(stdout.getvalue())["timed_out"])
+            self.assertGreaterEqual(elapsed, 0.3)
+            self.assertLess(elapsed, 0.55)
 
 
 @unittest.skipIf(sys.platform == "win32", "desktop build computers use Linux")
