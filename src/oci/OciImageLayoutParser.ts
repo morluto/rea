@@ -628,6 +628,29 @@ export const parseOciImageLayout = async (
       );
   };
 
+  // Each config blob is read and parsed once; images sharing it reuse those
+  // facts. Every image still carries its own copy of them in the report, so
+  // the config bytes behind each image spend max_config_bytes before the
+  // image is added.
+  const configs = new Map<
+    string,
+    { facts: ReturnType<typeof parseConfig>; bytes: number } | undefined
+  >();
+  let configBytesExpanded = 0;
+  const chargeConfigBytes = (bytes: number): void => {
+    configBytesExpanded += bytes;
+    if (configBytesExpanded > input.max_config_bytes)
+      throw decodeLimit(
+        OCI_IMAGE_LAYOUT_FORMAT,
+        `OCI image layout config facts exceed the ${String(input.max_config_bytes)}-byte budget.`,
+        {
+          name: "max_config_bytes",
+          maximum: input.max_config_bytes,
+          required: configBytesExpanded,
+        },
+      );
+  };
+
   // A referenced index, manifest or config that could not be read leaves its
   // facts unexamined, whatever finding explains why.
   let referencedJsonSkipped = false;
@@ -898,15 +921,28 @@ export const parseOciImageLayout = async (
           `Config media type ${JSON.stringify(configDescriptor.media_type)} is unknown.`,
           configDescriptor.digest,
         );
-      const configDocument = await readReferencedJson(
-        configDescriptor.digest,
-        `config ${configDescriptor.digest}`,
-      );
-      if (configDocument !== undefined)
-        configFacts = parseConfig(
-          configDocument.value,
-          input.include_env_values,
+      let config = configs.get(configDescriptor.digest);
+      if (!configs.has(configDescriptor.digest)) {
+        const configDocument = await readReferencedJson(
+          configDescriptor.digest,
+          `config ${configDescriptor.digest}`,
         );
+        config =
+          configDocument === undefined
+            ? undefined
+            : {
+                facts: parseConfig(
+                  configDocument.value,
+                  input.include_env_values,
+                ),
+                bytes: configDocument.bytes,
+              };
+        configs.set(configDescriptor.digest, config);
+      }
+      if (config !== undefined) {
+        chargeConfigBytes(config.bytes);
+        configFacts = config.facts;
+      }
     }
     images.push({
       digest,

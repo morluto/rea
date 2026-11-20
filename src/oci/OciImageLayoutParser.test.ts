@@ -918,3 +918,86 @@ it("refuses a layout past max_descriptors and names that allowance", async () =>
     await provider.close();
   }
 });
+
+it("reads a config shared by many manifests once", async () => {
+  const root = await createTestTempDirectory("rea-oci-shared-config-");
+  await writeSharedLayerLayout(root, 5, 1);
+  const blobBytes = async (digest: string): Promise<number> => {
+    const parsed = parseOciDigest(digest);
+    if (parsed === undefined) throw new Error(`bad digest ${digest}`);
+    return (await readFile(join(root, "blobs", parsed.algorithm, parsed.hex)))
+      .length;
+  };
+  const index = JSON.parse(
+    await readFile(join(root, "index.json"), "utf8"),
+  ) as { manifests: { digest: string }[] };
+  let expected =
+    (await readFile(join(root, "oci-layout"))).length +
+    (await readFile(join(root, "index.json"))).length;
+  for (const manifest of index.manifests)
+    expected += await blobBytes(manifest.digest);
+  const report = await inspectLayout(root);
+  expect(report.images).toHaveLength(5);
+  const configDigest = report.images[0]?.config_digest;
+  expect(configDigest).toBeTypeOf("string");
+  expect(
+    report.images.every((image) => image.config_digest === configDigest),
+  ).toBe(true);
+  expected += await blobBytes(configDigest!);
+  expect(report.coverage.json_bytes_read).toBe(expected);
+});
+
+it("refuses a layout whose shared config expands past max_config_bytes", async () => {
+  const root = await createTestTempDirectory("rea-oci-config-bytes-");
+  await writeSharedLayerLayout(root, 5, 1);
+  const configBytes = Buffer.byteLength(
+    `${JSON.stringify({
+      architecture: "amd64",
+      os: "linux",
+      rootfs: { type: "layers", diff_ids: [] },
+    })}\n`,
+  );
+  const maximum = configBytes * 2;
+  const reader = new DirectoryArtifactReader(root);
+  try {
+    await expect(
+      parseOciImageLayout(
+        reader,
+        inspectOciImageLayoutInputSchema.parse({
+          path: root,
+          max_config_bytes: maximum,
+        }),
+      ),
+    ).rejects.toSatisfy((cause: unknown) => {
+      expect(cause).toBeInstanceOf(ParseFailureError);
+      if (!(cause instanceof ParseFailureError)) return false;
+      expect(cause.failure).toMatchObject({
+        kind: "limit",
+        limit: {
+          name: "max_config_bytes",
+          maximum,
+          required: configBytes * 3,
+        },
+      });
+      return true;
+    });
+  } finally {
+    await reader.close();
+  }
+  const provider = new OciImageLayoutProvider();
+  try {
+    const result = await provider.inspect(
+      inspectOciImageLayoutInputSchema.parse({
+        path: root,
+        max_config_bytes: maximum,
+      }),
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(JSON.stringify(primaryAnalysisError(result.error))).toContain(
+      "max_config_bytes",
+    );
+  } finally {
+    await provider.close();
+  }
+});

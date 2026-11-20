@@ -33,7 +33,9 @@ image, or contacting a registry.
 - Bound JSON bytes, hashed blob bytes, directory entries, decoded
   descriptors, and nested index depth with named allowances. Directory entries
   and decoded descriptors are separate budgets, so manifests sharing layers do
-  not spend the directory allowance. Refuse oversize or malformed
+  not spend the directory allowance. Config facts expanded into images spend
+  a separate config-byte budget once per image, and a shared config is read
+  once. Refuse oversize or malformed
   `oci-layout` or `index.json` with partial facts preserved when the layout
   file was readable.
 
