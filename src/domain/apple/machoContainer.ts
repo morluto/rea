@@ -1,3 +1,4 @@
+import { BinaryReader } from "../binaryContainer.js";
 import {
   isJvmClassFile,
   JVM_CLASS_IDENTITY_LIMIT_REASON,
@@ -62,26 +63,28 @@ export interface MachoHeaderPrefixFacts {
   } | null;
 }
 
+const machoReader = (bytes: Uint8Array, littleEndian: boolean): BinaryReader =>
+  new BinaryReader(
+    Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    littleEndian,
+    "Mach-O",
+  );
+
 /** Parse only facts present in the observed prefix of a thin Mach-O header. */
 export const readMachoHeaderPrefixFacts = (
   bytes: Uint8Array,
 ): MachoHeaderPrefixFacts => {
   if (bytes.byteLength < 4)
     return { magic: null, format: null, identity: null };
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const magic = view.getUint32(0, false);
+  const magic = machoReader(bytes, false).u32(0);
   const format = thinMachoFormat(magic);
   if (format === null) return { magic, format: null, identity: null };
+  if (bytes.byteLength < 12) return { magic, format, identity: null };
+  const fields = machoReader(bytes, format.littleEndian);
   return {
     magic,
     format,
-    identity:
-      bytes.byteLength < 12
-        ? null
-        : {
-            cpuType: view.getUint32(4, format.littleEndian),
-            cpuSubtype: view.getUint32(8, format.littleEndian),
-          },
+    identity: { cpuType: fields.u32(4), cpuSubtype: fields.u32(8) },
   };
 };
 
@@ -181,13 +184,12 @@ export const machoContainerKindFromMagic = (
 /** Observe the fixed FAT header without table, count-limit or container-identity admission. */
 export const readFatHeaderPrefix = (bytes: Uint8Array): FatHeaderPrefix => {
   if (bytes.byteLength < 4) return { state: "unknown", requiredBytes: 4 };
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const magic = view.getUint32(0, false);
+  const magic = machoReader(bytes, false).u32(0);
   const format = readFatMagicFormat(magic);
   if (format === null) return { state: "not-fat", magic };
   if (bytes.byteLength < 8)
     return { state: "incomplete", ...format, requiredBytes: 8 };
-  const count = view.getUint32(4, format.littleEndian);
+  const count = machoReader(bytes, format.littleEndian).u32(4);
   return {
     state: "parsed",
     ...format,
@@ -380,20 +382,16 @@ export const readFatSliceDeclarations = (
   const entrySize = wide ? 32 : 20;
   if (tableBytes.byteLength < count * entrySize)
     return { status: "malformed", reason: "FAT table is truncated" };
-  const view = new DataView(
-    tableBytes.buffer,
-    tableBytes.byteOffset,
-    tableBytes.byteLength,
-  );
+  const fields = machoReader(tableBytes, littleEndian);
   const slices: FatSliceDeclaration[] = [];
   for (let index = 0; index < count; index++) {
     const base = index * entrySize;
     const offset = wide
-      ? safeNumber(view.getBigUint64(base + 8, littleEndian))
-      : view.getUint32(base + 8, littleEndian);
+      ? safeNumber(fields.word(base + 8, 64))
+      : fields.u32(base + 8);
     const size = wide
-      ? safeNumber(view.getBigUint64(base + 16, littleEndian))
-      : view.getUint32(base + 12, littleEndian);
+      ? safeNumber(fields.word(base + 16, 64))
+      : fields.u32(base + 12);
     if (offset === null || size === null)
       return {
         status: "malformed",
@@ -403,10 +401,10 @@ export const readFatSliceDeclarations = (
       index,
       offset,
       size,
-      alignmentExponent: view.getUint32(base + (wide ? 24 : 16), littleEndian),
-      cpuType: view.getUint32(base, littleEndian),
-      cpuSubtype: view.getUint32(base + 4, littleEndian),
-      reserved: wide ? view.getUint32(base + 28, littleEndian) : null,
+      alignmentExponent: fields.u32(base + (wide ? 24 : 16)),
+      cpuType: fields.u32(base),
+      cpuSubtype: fields.u32(base + 4),
+      reserved: wide ? fields.u32(base + 28) : null,
     });
   }
   return { status: "parsed", slices };
