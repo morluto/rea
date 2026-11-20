@@ -33,9 +33,11 @@ Linux kernel modules. Core dumps are not this inventory; use
 ## Observations
 
 The inline Evidence result contains the artifact path, SHA-256, and byte length.
-`needed[]` lists every `DT_NEEDED` string in dynamic-table order, including
-duplicate names. `dynamic.soname` is the `DT_SONAME` string when that tag is
-present. `dynamic.rpath` and `dynamic.runpath` keep the raw `DT_RPATH` /
+`needed[]` lists every `DT_NEEDED` entry in dynamic-table order, including
+duplicate names. An unreadable name stays null and retains its string-table
+index. If that index has no backed string location, its diagnostic points to
+the dynamic-table entry. `dynamic.soname` is the `DT_SONAME` string when that
+tag is present. `dynamic.rpath` and `dynamic.runpath` keep the raw `DT_RPATH` /
 `DT_RUNPATH` string, the `:`-split entries without dropping empties, and any
 `$ORIGIN`, `$LIB`, or `$PLATFORM` tokens as written, including `${...}` forms.
 Those tokens are not expanded against the host filesystem.

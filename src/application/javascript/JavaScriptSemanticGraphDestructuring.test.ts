@@ -1,5 +1,243 @@
 import { expect, it } from "vitest";
+import {
+  analyzeJavaScriptSemantics,
+  analyzeParsedJavaScriptSemantics,
+} from "../../domain/javascript/javascriptSemanticAnalysis.js";
+import { parseJavaScriptSource } from "../../domain/javascript/javascriptSourceParser.js";
 import { graphForJavaScript } from "../../../tests/fixtures/javascriptSemanticGraph.js";
+
+it.each([
+  [
+    "reflected prototype",
+    "const protos=[...[Object.getPrototypeOf([])]];protos[0][Symbol.iterator]=function*(){};",
+    "candidate",
+  ],
+  [
+    "reflected iterator next",
+    "const protos=[...[Reflect.getPrototypeOf([].values())]];Reflect.set(protos[0], 'next', ()=>({done:true}));",
+    "candidate",
+  ],
+  [
+    "reflective receiver in an earlier call",
+    "configure();function configure(){const protos=[...[Reflect.getPrototypeOf([])]];protos[0][Symbol.iterator]=function*(){}}",
+    "candidate",
+  ],
+  [
+    "a stored prototype passed to an earlier call",
+    "const protos=[...[Object.getPrototypeOf([])]];disable(protos[0]);function disable(p){p[Symbol.iterator]=function*(){}}",
+    "candidate",
+  ],
+  [
+    "an unknown projected index",
+    "const protos=[...[Object.getPrototypeOf([])]];protos[index][Symbol.iterator]=function*(){};",
+    "candidate",
+  ],
+  [
+    "an array operand borrowed through an alias",
+    "const source=[Object.getPrototypeOf([])];const protos=[...source];protos[0][Symbol.iterator]=function*(){};",
+    "candidate",
+  ],
+  [
+    "a prototype selected by destructuring",
+    "const protos=[...[Object.getPrototypeOf([])]];const [p]=protos;p[Symbol.iterator]=function*(){};",
+    "candidate",
+  ],
+  [
+    "a prototype selected by nested destructuring",
+    "const [[p]]=[...[[Object.getPrototypeOf([])]]];p[Symbol.iterator]=function*(){};",
+    "candidate",
+  ],
+  [
+    "a quoted index",
+    'const protos=[...[Object.getPrototypeOf([])]];protos["0"][Symbol.iterator]=function*(){};',
+    "candidate",
+  ],
+  [
+    "a folded index",
+    "const protos=[...[Object.getPrototypeOf([])]];protos[0+0][Symbol.iterator]=function*(){};",
+    "candidate",
+  ],
+  [
+    "an earlier disjoint slot",
+    "const protos=[{},...[Object.getPrototypeOf([])]];protos[0][Symbol.iterator]=function*(){};",
+    "resolved",
+  ],
+  [
+    "a shadowed prototype reader",
+    "const Object={getPrototypeOf(){return {}}};const protos=[...[Object.getPrototypeOf([])]];protos[0][Symbol.iterator]=function*(){};",
+    "resolved",
+  ],
+] as const)(
+  "keeps iterator evidence sound through %s stored in an array with spread",
+  (_name, edit, resolution) => {
+    const graph = graphForJavaScript(
+      `${edit} const pairs=[["before"]];const [[selected]]=pairs;pairs[0][0]="later";`,
+    );
+    const target = graph.nodes.find(
+      (node) => node.kind === "binding" && node.label === "selected",
+    );
+    const relation = graph.relations.find(
+      (edge) =>
+        edge.relation === "destructures" &&
+        edge.target_node_id === target?.node_id,
+    );
+    expect(relation).toMatchObject({ resolution });
+  },
+);
+
+it.each([
+  [
+    "a copied slot",
+    'const items=[...["old"]];const [selected]=items;items[0]="late";',
+    ["0"],
+    "resolved",
+  ],
+  [
+    "indices after a dense spread",
+    'const items=[...["prefix"],"old"];const [,selected]=items;items[1]="late";',
+    ["1"],
+    "resolved",
+  ],
+  [
+    "nested inline spread",
+    'const items=[...[...["prefix","old"]]];const [,selected]=items;items[1]="late";',
+    ["1"],
+    "resolved",
+  ],
+  [
+    "an empty spread",
+    'const items=[...[],"old"];const [selected]=items;items[0]="late";',
+    ["0"],
+    "resolved",
+  ],
+  [
+    "an object reached after a spread",
+    'const items=[...[{mode:"a"}],{mode:"b"}];const [,{mode:selected}]=items;items[1].mode="late";',
+    ["1", "mode"],
+    "resolved",
+  ],
+  [
+    "an opaque operand",
+    'const items=[...other,"old"];const [selected]=items;items[0]="late";',
+    ["0"],
+    "candidate",
+  ],
+  [
+    "a sparse operand",
+    'const items=[...[,],"old"];const [,selected]=items;items[1]="late";',
+    ["1"],
+    "candidate",
+  ],
+  [
+    "iterator replaced during operand evaluation",
+    'const items=[...[(Object.getPrototypeOf([].values()).next=()=>({done:true}),"x")],"old"];const [selected]=items;items[0]="late";',
+    ["0"],
+    "candidate",
+  ],
+  [
+    "iterator replaced between spread and pattern",
+    'const items=[...["x"],"old"];Object.getPrototypeOf([].values()).next=()=>({done:true});const [,selected]=items;',
+    ["1"],
+    "candidate",
+  ],
+  [
+    "iterator replaced after both acquisitions",
+    'const items=[...["x"],"old"];const [,selected]=items;Object.getPrototypeOf([].values()).next=()=>({done:true});items[1]="late";',
+    ["1"],
+    "resolved",
+  ],
+] as const)(
+  "tracks %s in an array literal",
+  (_name, source, path, resolution) => {
+    const graph = graphForJavaScript(source);
+    const target = graph.nodes.find(
+      (node) => node.kind === "binding" && node.label === "selected",
+    );
+    const relation = graph.relations.find(
+      (edge) =>
+        edge.relation === "destructures" &&
+        edge.target_node_id === target?.node_id,
+    );
+    expect(relation).toMatchObject({ resolution });
+    expect(
+      graph.nodes.find((node) => node.node_id === relation?.source_node_id)
+        ?.properties.property_path,
+    ).toEqual(path);
+  },
+);
+
+it.each([
+  [
+    "an earlier call",
+    "configure();",
+    "function configure() { Array.prototype[Symbol.iterator] = function* () {}; }",
+  ],
+  [
+    "a reflected prototype alias",
+    "const proto = Object.getPrototypeOf([]); proto[Symbol.iterator] = function* () {};",
+    "",
+  ],
+  [
+    "an earlier call through a reflected alias",
+    "configure();",
+    "function configure() { const proto = Reflect.getPrototypeOf([]); proto[Symbol.iterator] = function* () {}; }",
+  ],
+  [
+    "a reflected prototype stored by spread",
+    "const protos = [...[Object.getPrototypeOf([])]]; protos[0][Symbol.iterator] = function* () {};",
+    "",
+  ],
+  [
+    "a reflected iterator prototype stored by spread",
+    "const protos = [...[Reflect.getPrototypeOf([].values())]]; Reflect.set(protos[0], 'next', () => ({ done: true }));",
+    "",
+  ],
+])(
+  "keeps the selected reference uncertain when %s replaces the spread iterator",
+  (_name, before, after) => {
+    const graph = graphForJavaScript(`
+    const source = {mode: "source"}, tail = {mode: "tail"};
+    ${before}
+    const items = [...[source], tail];
+    items[0].mode = "changed";
+    const {mode: selected} = tail;
+    ${after}
+  `);
+    const target = graph.nodes.find(
+      (node) => node.kind === "binding" && node.label === "selected",
+    );
+    expect(
+      graph.relations.find(
+        (edge) =>
+          edge.relation === "destructures" &&
+          edge.target_node_id === target?.node_id,
+      ),
+    ).toMatchObject({ resolution: "candidate" });
+  },
+);
+
+it.each([
+  [0, "a", "candidate"],
+  [0, "b", "resolved"],
+  [1, "a", "resolved"],
+  [1, "b", "candidate"],
+] as const)(
+  "retains only actual copies after an array literal write to slot %s, read of %s",
+  (index, receiver, resolution) => {
+    const graph = graphForJavaScript(
+      `const a={mode:"a"},b={mode:"b"};const items=[...[a],b];items[${index}].mode="changed";const {mode:selected}=${receiver};`,
+    );
+    const target = graph.nodes.find(
+      (node) => node.kind === "binding" && node.label === "selected",
+    );
+    const relation = graph.relations.find(
+      (edge) =>
+        edge.relation === "destructures" &&
+        edge.target_node_id === target?.node_id,
+    );
+    expect(relation).toMatchObject({ resolution });
+  },
+);
 
 it.each([
   "const { mode: selected, fallback = 0 } = config;",
@@ -188,6 +426,41 @@ it.each([
     "unrelated custom iterator",
     "const iterator = Object.create({ next: original }); Object.getPrototypeOf(iterator).next = replacement;",
     "resolved",
+  ],
+  [
+    "custom iterator from an inline spread slot",
+    "const items = [...[{ values() { return {}; } }]]; Object.getPrototypeOf(items[0].values()).next = replacement;",
+    "resolved",
+  ],
+  [
+    "native array from an inline spread slot",
+    "const items = [0, ...[[]]]; Object.getPrototypeOf(items[1].values()).next = replacement;",
+    "candidate",
+  ],
+  [
+    "typed array from a borrowed spread slot",
+    "const source = [new Uint8Array()]; const items = [...source]; Object.getPrototypeOf(items[0].values()).next = replacement;",
+    "candidate",
+  ],
+  [
+    "a Map copied by a fresh spread before a later member store",
+    "const source = { value: new Map() }; const items = [0, ...[source.value]]; source.value = []; Object.getPrototypeOf(items[1].values()).next = replacement;",
+    "resolved",
+  ],
+  [
+    "native array written to a source slot before the spread",
+    "const source = [new Map()]; source[0] = []; const items = [...source]; Object.getPrototypeOf(items[0].values()).next = replacement;",
+    "candidate",
+  ],
+  [
+    "source array yielded by its custom iterator",
+    "const source = [{ values() { return {}; } }]; source[Symbol.iterator] = function* () { yield source; }; const items = [...source]; Object.getPrototypeOf(items[0].values()).next = replacement;",
+    "candidate",
+  ],
+  [
+    "borrowed source whose iterator was installed by a descriptor",
+    "const source = [{}]; Object.defineProperty(source, Symbol.iterator, { value: function* () { yield source; } }); const items = [...source]; Object.getPrototypeOf(items[0].values()).next = replacement;",
+    "candidate",
   ],
   [
     "direct prototype assignment",
@@ -500,7 +773,11 @@ it.each([
     "Object.setPrototypeOf(config, { *[Symbol.iterator]() { yield 2; } }); const [selected] = config;",
     "candidate",
   ],
-  ["earlier default", "const [value = 0, selected] = config;", "candidate"],
+  [
+    "earlier inactive default",
+    "const [value = 0, selected] = config;",
+    "resolved",
+  ],
   [
     "earlier setter",
     "let selected; const target = { set value(_) { config[1] = 2; } }; [target.value, selected] = config;",
@@ -1147,13 +1424,28 @@ it.each([
     "candidate",
   ],
   [
+    "global Iterator prototype stored in a spread",
+    `const protos=[...[Iterator.prototype]];protos[0].return=${closeHandler};`,
+    "candidate",
+  ],
+  [
+    "escaped Iterator prototype stored in a spread",
+    "const protos=[...[Iterator.prototype]];configure(protos[0]);",
+    "candidate",
+  ],
+  [
+    "reflected Iterator prototype stored in a spread",
+    `const protos=[...[Object.getPrototypeOf(Object.getPrototypeOf([].values()))]];Reflect.set(protos[0],"return",${closeHandler});`,
+    "candidate",
+  ],
+  [
     "inherited Object prototype",
     "Object.prototype.return = " + closeHandler + ";",
     "candidate",
   ],
   [
     "unrelated Array prototype",
-    "Array.prototype.return = " + closeHandler + ";",
+    `const protos=[...[Array.prototype]];protos[0].return=${closeHandler};`,
     "resolved",
   ],
 ] as const)(
@@ -1190,7 +1482,7 @@ it.each([
   [
     "hook after read",
     "",
-    `Object.getPrototypeOf([].values()).return = ${closeHandler};`,
+    `const protos=[...[Iterator.prototype]];protos[0].return=${closeHandler};`,
     "resolved",
   ],
 ] as const)(
@@ -1755,13 +2047,211 @@ it.each([
     "candidate",
   ],
   [
-    "second nested iterator comes after first close",
+    "second nested iterator after a harmless close",
     'const box={first:[0],items:["one"]};const {first:[used],items:[selected]}=box;box.items[0]="later";',
+    ["items", "0"],
+    "resolved",
+  ],
+  [
+    "second nested iterator below a different own-data object path",
+    'const box={left:{first:[0]},right:{items:["one"]}};const {left:{first:[used]},right:{items:[selected]}}=box;box.right.items[0]="later";',
+    ["right", "items", "0"],
+    "resolved",
+  ],
+  [
+    "second nested iterator before a later return hook",
+    'const box={first:[0],items:["one"]};const {first:[used],items:[selected]}=box;Object.getPrototypeOf([].values()).return=()=>({});box.items[0]="later";',
+    ["items", "0"],
+    "resolved",
+  ],
+  [
+    "second nested iterator after an inherited return hook",
+    'const box={first:[0],items:["one"]};Object.prototype.return=()=>({});const {first:[used],items:[selected]}=box;box.items[0]="later";',
+    ["items", "0"],
+    "candidate",
+  ],
+  [
+    "a defined own object property skips a default",
+    'let touched=0;const box={first:false,items:["one"]};const {first:used=(touched=1),items:[selected]}=box;box.items[0]="later";',
+    ["items", "0"],
+    "resolved",
+  ],
+  [
+    "second nested iterator after an effectful first default",
+    'const box={first:[undefined],items:["one"]};const {first:[used=(box.items[0]="default")],items:[selected]}=box;box.items[0]="later";',
+    ["items", "0"],
+    "candidate",
+  ],
+  [
+    "second nested iterator after an intervening getter",
+    'const box={first:[0],get between(){this.items[0]="getter";},items:["one"]};const {first:[used],between,items:[selected]}=box;box.items[0]="later";',
+    ["items", "0"],
+    "candidate",
+  ],
+  ...[
+    ["null", "null", "candidate"],
+    ["void", "void 0", "candidate"],
+    ["unproved", "unknown()", "candidate"],
+    ["object", "{}", "resolved"],
+    ["array", "[]", "resolved"],
+    ["zero", "0", "resolved"],
+    ["false", "false", "resolved"],
+    ["empty string", '""', "resolved"],
+  ].map(
+    ([label, receiver, resolution]) =>
+      [
+        `second nested iterator after an empty pattern with receiver ${label}`,
+        `const box={first:[0],middle:${receiver},items:["one"]};const {first:[used],middle:{},items:[selected]}=box;box.items[0]="later";`,
+        ["items", "0"],
+        resolution,
+      ] as const,
+  ),
+  [
+    "a numeric own slot on an array RHS",
+    'const pairs=[["one"]];const {0:[selected]}=pairs;pairs[0][0]="later";',
+    ["0", "0"],
+    "resolved",
+  ],
+  [
+    "a numeric own slot on a projected array RHS",
+    'const box={pairs:[["one"]]};const {0:[selected]}=box.pairs;box.pairs[0][0]="later";',
+    ["pairs", "0", "0"],
+    "resolved",
+  ],
+  [
+    "a quoted own slot on a projected const alias",
+    'const box={pairs:[["one"]]};const alias=box;let selected;({"0":[selected]}=alias.pairs);box.pairs[0][0]="later";',
+    ["pairs", "0", "0"],
+    "resolved",
+  ],
+  [
+    "a numeric own slot under an own object path",
+    'const box={nested:{pairs:[["one"]]}};const {0:[selected]}=box.nested.pairs;box.nested.pairs[0][0]="later";',
+    ["nested", "pairs", "0", "0"],
+    "resolved",
+  ],
+  [
+    "a projected array before its whole receiver is replaced",
+    'const box={pairs:[["one"]]};const {0:[selected]}=box.pairs;box.pairs=[];',
+    ["pairs", "0", "0"],
+    "resolved",
+  ],
+  [
+    "a projected array before a later custom receiver",
+    'const box={pairs:[["one"]]};const {0:[selected]}=box.pairs;box.pairs={*[Symbol.iterator](){yield "later";}};',
+    ["pairs", "0", "0"],
+    "resolved",
+  ],
+  [
+    "a deeper projected array before a later parent replacement",
+    'const box={nested:{pairs:[["one"]]}};const {0:[selected]}=box.nested.pairs;box.nested={pairs:[]};',
+    ["nested", "pairs", "0", "0"],
+    "resolved",
+  ],
+  [
+    "an earlier custom inner receiver before the whole array is replaced",
+    'const box={pairs:[["one"]]};box.pairs[0]={*[Symbol.iterator](){yield "earlier";}};const {0:[selected]}=box.pairs;box.pairs=[];',
+    ["pairs", "0", "0"],
+    "candidate",
+  ],
+  [
+    "an earlier default replacing the next own numeric receiver",
+    'const box={pairs:[["one"],["two"]]};const {none=(box.pairs[1]={*[Symbol.iterator](){yield "earlier";}}),1:[selected]}=box.pairs;box.pairs=[];',
+    ["pairs", "1", "0"],
+    "candidate",
+  ],
+  [
+    "a projected array before later receiver and iterator replacements",
+    'const box={pairs:[["one"]]};const {0:[selected]}=box.pairs;Object.getPrototypeOf([].values()).next=()=>({done:true});box.pairs=[];',
+    ["pairs", "0", "0"],
+    "resolved",
+  ],
+  [
+    "an earlier opaque escape from the projected receiver",
+    'const box={pairs:[["one"]]};consume(box.pairs);const {0:[selected]}=box.pairs;box.pairs=[];',
+    ["pairs", "0", "0"],
+    "candidate",
+  ],
+  [
+    "an earlier local iterator override on the selected inner array",
+    'const box={pairs:[["one"]]};box.pairs[0][Symbol.iterator]=function*(){};const {0:[selected]}=box.pairs;box.pairs=[];',
+    ["pairs", "0", "0"],
+    "candidate",
+  ],
+  [
+    "a numeric slot selected through an accessor",
+    'const box={get pairs(){return [["one"]];}};const {0:[selected]}=box.pairs;box.pairs[0][0]="later";',
+    ["pairs", "0", "0"],
+    "candidate",
+  ],
+  [
+    "an earlier replacement of the projected array receiver",
+    'const box={pairs:[["one"]]};box.pairs=[["earlier"]];const {0:[selected]}=box.pairs;box.pairs[0][0]="later";',
+    ["pairs", "0", "0"],
+    "candidate",
+  ],
+  [
+    "a hole in a projected array",
+    'const box={pairs:[,["one"]]};const {0:[selected]}=box.pairs;box.pairs[0]=["later"];',
+    ["pairs", "0", "0"],
+    "candidate",
+  ],
+  [
+    "an early inner iterator overwrite at a projected array slot",
+    'const box={pairs:[["one"]]};Object.getPrototypeOf([].values()).next=()=>({done:true});const {0:[selected]}=box.pairs;box.pairs[0][0]="later";',
+    ["pairs", "0", "0"],
+    "candidate",
+  ],
+  [
+    "a quoted own array slot captured through a const alias",
+    'const pairs=[["one"]];const alias=pairs;let selected;({"0":[selected]}=alias);pairs[0][0]="later";',
+    ["0", "0"],
+    "resolved",
+  ],
+  [
+    "the second numeric own slot without acquiring the outer iterator",
+    'const pairs=[[0],["one"]];const {0:[used],1:[selected]}=pairs;pairs[1][0]="later";',
+    ["1", "0"],
+    "resolved",
+  ],
+  [
+    "an unresolved computed write on the outer array",
+    'const pairs=[["one"]];pairs[Symbol.iterator]=function*(){};const {0:[selected]}=pairs;pairs[0][0]="later";',
+    ["0", "0"],
+    "candidate",
+  ],
+  [
+    "an absent numeric own array slot",
+    'const pairs=[,["one"]];const {0:[selected]}=pairs;pairs[0]=["later"];',
+    ["0", "0"],
+    "candidate",
+  ],
+  [
+    "an earlier replacement of the numeric array slot",
+    'const pairs=[["one"]];pairs[0]=["earlier"];const {0:[selected]}=pairs;pairs[0][0]="later";',
+    ["0", "0"],
+    "candidate",
+  ],
+  [
+    "an overridden inner iterator selected from a numeric property",
+    'const pairs=[["one"]];pairs[0][Symbol.iterator]=function*(){};const {0:[selected]}=pairs;pairs[0][0]="later";',
+    ["0", "0"],
+    "candidate",
+  ],
+  [
+    "an earlier return hook before selecting the second numeric property",
+    'const pairs=[[0],["one"]];Object.prototype.return=()=>({});const {0:[used],1:[selected]}=pairs;pairs[1][0]="later";',
+    ["1", "0"],
+    "candidate",
+  ],
+  [
+    "second nested iterator after a prior assignment target",
+    'const box={first:[0],items:["one"]};let used,selected;({first:[used],items:[selected]}=box);box.items[0]="later";',
     ["items", "0"],
     "candidate",
   ],
 ] as const)(
-  "owns a single native iterator below an object for %s",
+  "owns nested native arrays through an object pattern for %s",
   (_name, code, path, resolution) => {
     const graph = graphForJavaScript(code);
     const selected = graph.nodes.find(
@@ -1823,6 +2313,48 @@ it.each([
     "candidate",
   ],
   [
+    "a defined scalar skips a default before an inner array",
+    'let touched=0;const pairs=[0,["first"]];const [unused=(touched=1),[selected]]=pairs;pairs[1][0]="later";',
+    ["1", "0"],
+    "resolved",
+  ],
+  [
+    "null skips a default and keeps the next inner array read",
+    'const pairs=[null,["first"]];const [unused="default",[selected]]=pairs;pairs[1][0]="later";',
+    ["1", "0"],
+    "resolved",
+  ],
+  [
+    "a present inner array skips its fallback",
+    'const pairs=[[0],["first"]];const [[unused]=[],[selected]]=pairs;pairs[1][0]="later";',
+    ["1", "0"],
+    "resolved",
+  ],
+  [
+    "an unknown value may activate the default before an inner array",
+    'const pairs=[unknown(),["first"]];const [unused="default",[selected]]=pairs;pairs[1][0]="later";',
+    ["1", "0"],
+    "candidate",
+  ],
+  [
+    "void activates the default before an inner array",
+    'const pairs=[void 0,["first"]];const [unused="default",[selected]]=pairs;pairs[1][0]="later";',
+    ["1", "0"],
+    "candidate",
+  ],
+  [
+    "an earlier replacement may activate the default",
+    'const pairs=[0,["first"]];pairs[0]=undefined;const [unused="default",[selected]]=pairs;pairs[1][0]="later";',
+    ["1", "0"],
+    "candidate",
+  ],
+  [
+    "a default inside a destructuring assignment",
+    'const pairs=[0,["first"]];let unused,selected;[unused="default",[selected]]=pairs;pairs[1][0]="later";',
+    ["1", "0"],
+    "candidate",
+  ],
+  [
     "prior ordinary default",
     'const pairs=[undefined,["first"]];const [unused=(pairs[1][0]="earlier"),[selected]]=pairs;',
     ["1", "0"],
@@ -1877,9 +2409,51 @@ it.each([
     "candidate",
   ],
   [
-    "proof stops at the inner close",
+    "next outer slot after a native inner close",
     'const pairs=[[0],"next"];const [[used],selected]=pairs;pairs[1]="later";',
     ["1"],
+    "resolved",
+  ],
+  [
+    "second nested array after a native inner close",
+    'const pairs=[[0],["next"]];const [[used],[selected]]=pairs;pairs[1][0]="later";',
+    ["1", "0"],
+    "resolved",
+  ],
+  [
+    "second nested array after an empty inner pattern",
+    'const pairs=[[0],["next"]];const [[],[selected]]=pairs;pairs[1][0]="later";',
+    ["1", "0"],
+    "resolved",
+  ],
+  [
+    "second nested array after a later-installed close hook",
+    'const pairs=[[0],["next"]];const [[used],[selected]]=pairs;Object.getPrototypeOf([].values()).return=()=>({});pairs[1][0]="later";',
+    ["1", "0"],
+    "resolved",
+  ],
+  [
+    "second nested array after a possible inherited close hook",
+    'const pairs=[[0],["next"]];Object.prototype.return=()=>({});const [[used],[selected]]=pairs;pairs[1][0]="later";',
+    ["1", "0"],
+    "candidate",
+  ],
+  [
+    "second nested array after an effectful default",
+    'const pairs=[[undefined],["next"]];const [[used=(pairs[1][0]="default")],[selected]]=pairs;pairs[1][0]="later";',
+    ["1", "0"],
+    "candidate",
+  ],
+  [
+    "second nested array after an unproved hole",
+    'const pairs=[[,0],["next"]];const [[,used],[selected]]=pairs;pairs[1][0]="later";',
+    ["1", "0"],
+    "candidate",
+  ],
+  [
+    "second nested array after an assignment target",
+    'const pairs=[[0],["next"]];let used,selected;[[used],[selected]]=pairs;pairs[1][0]="later";',
+    ["1", "0"],
     "candidate",
   ],
   [
@@ -1902,6 +2476,265 @@ it.each([
     expect(relation).toMatchObject({ resolution });
     expect(
       graph.nodes.find((n) => n.node_id === relation?.source_node_id)
+        ?.properties.property_path,
+    ).toEqual(path);
+  },
+);
+
+it("keeps a retained alias unknown after a possible close on a captured receiver", () => {
+  const graph = graphForJavaScript(`
+    const box = { pairs: [[0, { mode: "old" }]] };
+    const kept = box.pairs[0][1];
+    Object.getPrototypeOf([].values()).return = function () {
+      const value = this.next().value;
+      if (value) delete value.mode;
+      return {};
+    };
+    const { 0: [used] } = box.pairs;
+    const { mode: selected } = kept;
+    box.pairs = [];
+  `);
+  const target = graph.nodes.find(
+    (node) => node.kind === "binding" && node.label === "selected",
+  );
+  expect(target).toBeDefined();
+  const relation = graph.relations.find(
+    (edge) =>
+      edge.relation === "destructures" &&
+      edge.target_node_id === target?.node_id,
+  );
+  expect(relation).toMatchObject({ resolution: "candidate" });
+  const literalIds = new Set(
+    graph.nodes
+      .filter((node) => node.kind === "literal")
+      .map((node) => node.node_id),
+  );
+  expect(
+    graph.relations.some(
+      (edge) =>
+        edge.relation === "defines" &&
+        edge.target_node_id === target?.node_id &&
+        literalIds.has(edge.source_node_id),
+    ),
+  ).toBe(false);
+});
+
+it.each([
+  [
+    "defined guard",
+    'const xs=[0,["one"]];const [used=(xs[1][0]="dormant"),[selected]]=xs;xs[1][0]="later";',
+    "resolved",
+    "literal",
+  ],
+  [
+    "undefined guard",
+    'const xs=[undefined,["one"]];const [used=(xs[1][0]="active"),[selected]]=xs;xs[1][0]="later";',
+    "candidate",
+    "unknown",
+  ],
+  [
+    "default can change the guard",
+    'const xs=[0,["one"]];const [used=(xs[0]=undefined),[selected]]=xs;xs[1][0]="later";',
+    "candidate",
+    "literal",
+  ],
+  [
+    "default can change the guard and later slot",
+    'const xs=[0,["one"]];const [used=(xs[0]=undefined,xs[1][0]="dormant"),[selected]]=xs;xs[1][0]="later";',
+    "candidate",
+    "unknown",
+  ],
+  [
+    "unknown guard",
+    'const xs=[unknown(),["one"]];const [used=(xs[1][0]="maybe"),[selected]]=xs;xs[1][0]="later";',
+    "candidate",
+    "unknown",
+  ],
+  [
+    "earlier guard write",
+    'const xs=[0,["one"]];xs[0]=undefined;const [used=(xs[1][0]="active"),[selected]]=xs;xs[1][0]="later";',
+    "candidate",
+    "unknown",
+  ],
+  [
+    "custom iterator",
+    'const xs=[0,["one"]];xs[Symbol.iterator]=function*(){yield undefined;yield xs[1]};const [used=(xs[1][0]="active"),[selected]]=xs;xs[1][0]="later";',
+    "candidate",
+    "unknown",
+  ],
+] as const)(
+  "applies a first default's possible effects with %s",
+  (_name, source, resolution, status) => {
+    const semantics = analyzeJavaScriptSemantics(source);
+    const graph = graphForJavaScript(source, semantics);
+    const selected = graph.nodes.find(
+      ({ kind, label }) => kind === "binding" && label === "selected",
+    );
+    expect(selected).toBeDefined();
+    expect(
+      graph.relations.find(
+        (edge) =>
+          edge.relation === "destructures" &&
+          edge.target_node_id === selected?.node_id,
+      ),
+    ).toMatchObject({ resolution });
+    expect(
+      semantics.bindings.find(({ name }) => name === "selected")?.value,
+    ).toMatchObject(
+      status === "literal" ? { status, value: "one" } : { status },
+    );
+  },
+);
+
+it.each([
+  [
+    "immutable array assignment target",
+    'const fixed=0;let selected;const xs=[1,"one"];[fixed,selected]=xs;xs[1]="later";',
+    ["1"],
+    "candidate",
+  ],
+  [
+    "immutable target with a known merged source slot",
+    'const fixed=0;let selected;const xs=[1,"one"];[fixed,selected]=xs;',
+    ["1"],
+    "candidate",
+  ],
+  [
+    "immutable object assignment target",
+    'const fixed=0;let selected;const obj={fixed:1,mode:"one"};({fixed,mode:selected}=obj);obj.mode="later";',
+    ["mode"],
+    "candidate",
+  ],
+  [
+    "immutable target nested inside an array",
+    'const fixed=0;let selected;const xs=[{fixed:1,mode:"one"}];[{fixed,mode:selected}]=xs;xs[0].mode="later";',
+    ["0", "mode"],
+    "candidate",
+  ],
+  [
+    "runtime import assignment target",
+    'import {fixed} from "./hypothetical.js";let selected;const xs=[1,"one"];[fixed,selected]=xs;xs[1]="later";',
+    ["1"],
+    "candidate",
+  ],
+  [
+    "resource assignment target",
+    'using fixed={ [Symbol.dispose]() {} };let selected;const xs=[1,"one"];[fixed,selected]=xs;',
+    ["1"],
+    "candidate",
+  ],
+  [
+    "unknown property key with an immutable target",
+    'const fixed=0;let selected;const obj={fixed:1,mode:"one"};({[key]:fixed,mode:selected}=obj);',
+    ["mode"],
+    "candidate",
+  ],
+  [
+    "nested rest with an immutable target",
+    'const fixed=0;let selected;const xs=[[1],"one"];[[...fixed],selected]=xs;',
+    ["1"],
+    "candidate",
+  ],
+  [
+    "inner class declaration name",
+    'class Fixed { static { let selected; const xs=[1,"one"]; [Fixed,selected]=xs; } }',
+    ["1"],
+    "candidate",
+  ],
+  [
+    "named class expression's inner name",
+    'const Outer=class Fixed { method(){let selected; const xs=[1,"one"]; [Fixed,selected]=xs;} };',
+    ["1"],
+    "candidate",
+  ],
+  [
+    "mutable outer class declaration name",
+    'class Fixed {} let selected; const xs=[1,"one"];[Fixed,selected]=xs;',
+    ["1"],
+    "resolved",
+  ],
+  [
+    "mutable parameter shadowing a class name",
+    'class Fixed { method(Fixed){let selected; const xs=[1,"one"]; [Fixed,selected]=xs;} }',
+    ["1"],
+    "resolved",
+  ],
+  [
+    "strict write to a named function expression's self-binding",
+    'const run=function Fixed(){"use strict";let selected;const xs=[1,"one"];[Fixed,selected]=xs;};',
+    ["1"],
+    "candidate",
+    "app.cjs",
+  ],
+  [
+    "sloppy write to a named function expression's self-binding",
+    'const run=function Fixed(){let selected;const xs=[1,"one"];[Fixed,selected]=xs;};',
+    ["1"],
+    "resolved",
+    "app.cjs",
+  ],
+  [
+    "write to a named function expression's self-binding in unknown mode",
+    'const run=function Fixed(){let selected;const xs=[1,"one"];[Fixed,selected]=xs;};',
+    ["1"],
+    "candidate",
+  ],
+  [
+    "strict nested write to a sloppy named function expression's self-binding",
+    'const run=function Fixed(){function nested(){"use strict";let selected;const xs=[1,"one"];[Fixed,selected]=xs;} nested();};',
+    ["1"],
+    "candidate",
+    "app.cjs",
+  ],
+  [
+    "strict write to a mutable parameter shadowing a named function expression",
+    'const run=function Fixed(Fixed){"use strict";let selected;const xs=[1,"one"];[Fixed,selected]=xs;};',
+    ["1"],
+    "resolved",
+    "app.cjs",
+  ],
+  [
+    "read before an immutable target",
+    "let selected;const fixed=0;let later;const xs=[1,2,3];[selected,fixed,later]=xs;xs[0]=2;",
+    ["0"],
+    "resolved",
+  ],
+  [
+    "initialized mutable target",
+    'let fixed,selected;const xs=[1,"one"];[fixed,selected]=xs;xs[1]="later";',
+    ["1"],
+    "resolved",
+  ],
+  [
+    "immutable lexical declaration",
+    'const xs=[1,"one"];const [fixed,selected]=xs;xs[1]="later";',
+    ["1"],
+    "resolved",
+  ],
+] as const)(
+  "keeps destructuring evidence ordered for %s",
+  (_name, source, path, resolution, sourcePath?: string) => {
+    const file =
+      sourcePath === undefined
+        ? undefined
+        : parseJavaScriptSource(source, sourcePath);
+    expect(file).not.toBeNull();
+    const graph = graphForJavaScript(
+      source,
+      file == null ? undefined : analyzeParsedJavaScriptSemantics(file),
+    );
+    const selected = graph.nodes.find(
+      ({ kind, label }) => kind === "binding" && label === "selected",
+    );
+    expect(selected).toBeDefined();
+    const edge = graph.relations.find(
+      (relation) =>
+        relation.relation === "destructures" &&
+        relation.target_node_id === selected?.node_id,
+    );
+    expect(edge).toMatchObject({ resolution });
+    expect(
+      graph.nodes.find(({ node_id }) => node_id === edge?.source_node_id)
         ?.properties.property_path,
     ).toEqual(path);
   },

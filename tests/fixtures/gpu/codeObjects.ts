@@ -210,6 +210,17 @@ export const cubinFixture = (
   }
   return result;
 };
+/** Wrap stored metadata in an AMDGPU ELF note. */
+export const amdDescriptorNoteFixture = (metadata: Buffer): Buffer => {
+  const note = Buffer.alloc(20 + Math.ceil(metadata.length / 4) * 4);
+  note.writeUInt32LE(7, 0);
+  note.writeUInt32LE(metadata.length, 4);
+  note.writeUInt32LE(32, 8);
+  note.write("AMDGPU\0", 12);
+  metadata.copy(note, 20);
+  return note;
+};
+
 /** One producer-shaped AMDGPU MessagePack note, composable with later notes. */
 export const amdNoteFixture = (
   hidden = false,
@@ -241,13 +252,7 @@ export const amdNoteFixture = (
       ],
     }),
   );
-  const note = Buffer.alloc(20 + Math.ceil(metadata.length / 4) * 4);
-  note.writeUInt32LE(7, 0);
-  note.writeUInt32LE(metadata.length, 4);
-  note.writeUInt32LE(32, 8);
-  note.write("AMDGPU\0", 12);
-  metadata.copy(note, 20);
-  return note;
+  return amdDescriptorNoteFixture(metadata);
 };
 export const amdFixture = (
   hidden = false,

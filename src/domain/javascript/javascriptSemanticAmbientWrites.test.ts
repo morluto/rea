@@ -13,6 +13,44 @@ import {
   createGlobalReferenceReader,
 } from "./javascriptSemanticAmbientWrites.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
+import { ambientPathMayObserveAt } from "./javascriptSemanticEffectLog.js";
+
+it.each([
+  ["writes", "protos[0].return = () => ({});", true],
+  ["escapes", "configure(protos[0]);", true],
+  ["unrelated writes", "protos[0].unrelated = true;", false],
+] as const)(
+  "indexes %s to spread-stored Iterator.prototype before member analysis",
+  (_name, effect, observed) => {
+    const parsed = parseJavaScriptSource(`
+    const protos = [...[Iterator.prototype]];
+    const box = [0, { mode: 'before' }];
+    const [before] = box;
+    ${effect}
+    const [after] = box;
+  `);
+    if (parsed === null) throw new Error("Expected a parsed iterator fixture");
+    const index = completeSemanticSteps(
+      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+    );
+    completeSemanticSteps(index.indexAmbientWritesSteps());
+    const observations: boolean[] = [];
+    traverseJavaScriptAst(parsed.program, {
+      enter(node) {
+        if (t.isArrayPattern(node))
+          observations.push(
+            ambientPathMayObserveAt(
+              index.bindings,
+              node,
+              ["global", "Iterator", "prototype", "return"],
+              "contents",
+            ),
+          );
+      },
+    });
+    expect(observations).toEqual([false, observed]);
+  },
+);
 
 it.each([
   [

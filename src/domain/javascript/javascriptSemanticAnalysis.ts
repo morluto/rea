@@ -18,6 +18,7 @@ import {
   semanticReadMayObserveEffect,
   semanticReferenceRoot,
   type SemanticAmbientRootPaths,
+  retainSemanticInactiveMemberWrites,
 } from "./javascriptSemanticEffectLog.js";
 import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticReceiverFacts.js";
 import * as t from "@babel/types";
@@ -88,6 +89,7 @@ import {
   semanticBundledRequireOriginCandidate,
 } from "./javascriptBundledRequireOrigin.js";
 import { collectSemanticMemberMutationsSteps } from "./javascriptSemanticMemberMutations.js";
+import { semanticInactiveFirstDefaultWritesSteps } from "./javascriptSemanticReadPresence.js";
 import {
   DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
   type JavaScriptMemberMutationAllowance,
@@ -189,6 +191,7 @@ interface AddBindingInput {
   readonly initializer: t.Node | null;
   readonly directOrigin?: JavaScriptModuleOrigin;
   readonly runtimeImport?: boolean;
+  readonly selfNameAssignment?: JavaScriptSemanticBindingState["selfNameAssignment"];
   readonly projection?: readonly (string | number | null)[];
 }
 
@@ -251,7 +254,7 @@ function* indexSemanticMemberMutationFactsSteps(
 ): Generator<void, void> {
   if (state.memberMutationFactsComplete) return;
   yield* indexSemanticAmbientWritesSteps(state);
-  yield* collectSemanticMemberMutationsSteps(
+  const candidateDefaults = yield* collectSemanticMemberMutationsSteps(
     state.program,
     state,
     (site, reference, path) =>
@@ -264,6 +267,15 @@ function* indexSemanticMemberMutationFactsSteps(
       ),
   );
   state.memberMutationFactsComplete = true;
+  const inactiveWrites = yield* semanticInactiveFirstDefaultWritesSteps(
+    state,
+    candidateDefaults,
+  );
+  // Every guard is proved before any inactive write is excluded.
+  if (inactiveWrites.length > 0) {
+    retainSemanticInactiveMemberWrites(state, inactiveWrites);
+    clearSemanticValueCaches(state);
+  }
   invalidateSemanticRequireDelegateWrites(state);
 }
 
@@ -1764,6 +1776,7 @@ const bindInnerDeclaration = (
       name: node.id.name,
       kind: "class",
       mutable: false,
+      selfNameAssignment: "always-throws",
       definitionNode: node.id,
       initializer: node,
     });
@@ -2079,6 +2092,7 @@ const functionNameScope = (
     name: node.id.name,
     kind: "function",
     mutable: false,
+    selfNameAssignment: "throws-in-strict-mode",
     definitionNode: node.id,
     initializer: node,
   });
@@ -2414,6 +2428,8 @@ const addBinding = (input: AddBindingInput): void => {
         : directOrigin,
     );
   binding.runtimeImport ||= runtimeImport === true;
+  if (input.selfNameAssignment !== undefined)
+    binding.selfNameAssignment = input.selfNameAssignment;
 };
 
 const createBinding = (

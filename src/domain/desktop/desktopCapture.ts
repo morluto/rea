@@ -200,7 +200,7 @@ const aptRepositorySchema = z.strictObject({
   suite: z.string().nullable(),
   /** Empty for a flat repository. */
   components: z.array(z.string()),
-  /** The entry's architecture restriction; empty when it names none, absent from captures written before it was recorded. */
+  /** The entry's architecture restriction. `all` allows architecture-independent packages. An empty list depends on the host's APT defaults. Older captures omit this field. */
   architectures: z.array(z.string()).optional(),
   /** The release's Suite (apt's `a=`), or else its Codename, which `<package>/<release>` selects; null when unknown, absent from captures written before it was recorded. */
   release: z.string().nullable().optional(),

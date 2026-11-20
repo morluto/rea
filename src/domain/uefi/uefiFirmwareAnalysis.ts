@@ -108,7 +108,7 @@ export const uefiCompressionSchema = z.union([
     kind: z.enum([
       "lzma-custom",
       "lzmaf86",
-      "ami-zlib",
+      "amd-zlib",
       "tiano",
       "efi-standard",
       "unknown-compression",

@@ -3,7 +3,7 @@ import {
   type BinaryContainer,
 } from "../binaryContainer.js";
 import {
-  classifyFatContainerIdentity,
+  classifyFatContainerEvidence,
   readFatContainerHeader,
   readFatHeaderPrefix,
   readMachoHeaderPrefixFacts,
@@ -46,11 +46,7 @@ const readNonElfContainer = (bytes: Buffer): BinaryContainer => {
         throw new BinaryFormatFailure("malformed", fatHeader.reason);
       const identity =
         fatHeader.state === "parsed"
-          ? classifyFatContainerIdentity(fatHeader, (offset) => {
-              if (offset >= bytes.length) return undefined;
-              if (offset + 4 > bytes.length) return null;
-              return bytes.readUInt32BE(offset);
-            })
+          ? classifyFatContainerEvidence(fatHeader, bytes)
           : undefined;
       // An invalid FAT-shaped table is not proof of a Mach-O container: JVM
       // constant-pool bytes can share both the magic and a known CPU value.

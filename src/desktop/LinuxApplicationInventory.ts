@@ -159,10 +159,8 @@ const locateDesktopEntry = async (
   request: LinuxApplicationRequest,
   selector: string,
   signal?: AbortSignal,
-): Promise<
-  Result<{ path: string; id: string | null }, LinuxApplicationRefusal>
-> => {
-  if (isAbsolute(selector)) return ok({ path: selector, id: null });
+): ReturnType<typeof readDesktopEntry> => {
+  if (isAbsolute(selector)) return readDesktopEntry(selector, null, signal);
   const id = selector.endsWith(".desktop") ? selector : `${selector}.desktop`;
   const searched = desktopEntryDirectories(request.environment, request.home);
   for (const directory of searched) {
@@ -172,25 +170,39 @@ const locateDesktopEntry = async (
     assertArtifactReadActive(signal);
     if (!kind.ok)
       return err({ reason: "desktop_entry_search_incomplete", searched });
-    if (kind.value === "file")
-      return ok({ path, id: id.slice(0, -".desktop".length) });
-    // A nested entry in this directory outranks a flat one in a later root.
-    const nested = await findNestedDesktopEntry(directory, id, signal);
-    assertArtifactReadActive(signal);
-    if (nested !== undefined && "path" in nested)
-      return ok({ path: nested.path, id: id.slice(0, -".desktop".length) });
-    // The bounded search did not establish absence, so a later root must not
-    // supply a different application under the same id.
-    if (nested !== undefined)
-      return err({ reason: "desktop_entry_search_incomplete", searched });
+    let candidate = path;
+    if (kind.value !== "file") {
+      // A nested entry in this directory outranks a flat one in a later root.
+      const nested = await findNestedDesktopEntry(directory, id, signal);
+      assertArtifactReadActive(signal);
+      if (nested === undefined) continue;
+      // A bounded search cannot establish absence in this root.
+      if (!("path" in nested))
+        return err({ reason: "desktop_entry_search_incomplete", searched });
+      candidate = nested.path;
+    }
+    const located = await readDesktopEntry(
+      candidate,
+      id.slice(0, -".desktop".length),
+      signal,
+    );
+    if (!located.ok || !located.value.entry.hidden) return located;
+    // Only a hidden Application masks this ID in the remaining data roots.
+    if (located.value.entry.type === "Application") break;
   }
   return err({ reason: "desktop_entry_not_found", searched });
 };
 
 const readDesktopEntry = async (
   path: string,
+  id: string | null,
   signal: AbortSignal | undefined,
-): Promise<Result<DesktopEntry, LinuxApplicationRefusal>> => {
+): Promise<
+  Result<
+    { path: string; id: string | null; entry: DesktopEntry },
+    LinuxApplicationRefusal
+  >
+> => {
   const options = {
     symlinks: "follow" as const,
     ...(signal === undefined ? {} : { signal }),
@@ -221,12 +233,7 @@ const readDesktopEntry = async (
   const parsed = parseDesktopEntry(text);
   if (!parsed.ok)
     return err({ reason: "desktop_entry_invalid", detail: parsed.error });
-  if (parsed.value.type !== "Application" || parsed.value.exec === null)
-    return err({
-      reason: "desktop_entry_invalid",
-      detail: "not an Application entry with an Exec key",
-    });
-  return ok(parsed.value);
+  return ok({ path, id, entry: parsed.value });
 };
 
 const readHeader = async (
@@ -373,23 +380,28 @@ const launchCommand = async (
     signal,
   );
   if (!located.ok) return located;
-  const entry = await readDesktopEntry(located.value.path, signal);
-  if (!entry.ok) return entry;
-  const tokens = tokenizeDesktopExec(entry.value.exec ?? "");
+  const { entry } = located.value;
+  if (entry.type !== "Application" || entry.exec === null)
+    return err({
+      reason: "desktop_entry_invalid",
+      detail: "not an Application entry with an Exec key",
+    });
+  const tokens = tokenizeDesktopExec(entry.exec);
   if (!tokens.ok)
     return err({ reason: "desktop_entry_invalid", detail: tokens.error });
   const {
     type: _type,
     try_exec: _tryExec,
+    hidden: _hidden,
     path: workingDirectory,
     ...fields
-  } = entry.value;
+  } = entry;
   return ok({
     argv: expandDesktopExec(
       tokens.value,
       {
-        icon: entry.value.icon,
-        name: entry.value.name,
+        icon: entry.icon,
+        name: entry.name,
         location: located.value.path,
       },
       request.arguments,

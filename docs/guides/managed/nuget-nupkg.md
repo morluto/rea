@@ -29,15 +29,20 @@ requires an absolute filesystem path and preserves that exact selection:
 The inline Evidence result contains the artifact path, SHA-256, and byte length.
 
 `identity` reports `id`, `version`, `authors`, and `description` as present in
-the `.nuspec` metadata. Missing fields are `null`. The `.nuspec` and OPC
-relationships go through XML end-of-line handling, as NuGet's reader applies
-it: CRLF and lone CR read as LF. When no `.nuspec` can be
+the `.nuspec` metadata. Authors and description follow NuGet's first eligible
+leaf rule with case-insensitive local names. Empty leaves and ordinary
+whitespace-only leaves are skipped. Whitespace preserved by CDATA or
+`xml:space` can occupy the first slot and yield `null` even when a later leaf
+has text. The package ID and version use their case-sensitive names in the
+metadata namespace. Missing fields are `null`. In the `.nuspec` and OPC
+relationships, XML end-of-line handling maps CRLF and lone CR to LF. When no `.nuspec` can be
 selected, `identity` is `null`.
 
-`license` reports the `.nuspec` license element: `type` is `expression` or
-`file` when that attribute is present, otherwise `null`, and `value` is the
-element text. `repository` reports `type`, `url`, `commit`, and `branch`
-attributes when a repository element is present. Absent elements stay `null`.
+`license` reports the `.nuspec` license element. `type` is `expression` or
+`file` after a case-insensitive match, and `null` for missing or unrecognized
+types. `value` is the element text. `repository` reports `type`, `url`, `commit`,
+and `branch` attributes when a repository element is present. Absent elements
+stay `null`.
 Transport URL userinfo is excluded, with `url_credentials_redacted` marking
 that exclusion; a URL whose credential span cannot be located is `null` with
 that flag set. Other URL spelling and query values are preserved. OPC

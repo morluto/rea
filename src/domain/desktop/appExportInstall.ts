@@ -150,16 +150,19 @@ export const repositoryRefusal = (
 };
 
 /**
- * Why a repository's architecture restriction leaves out the host's. A
- * capture written before restrictions were recorded counts as unrestricted:
- * apt listed the installed version from it on that host.
+ * Why the source cannot replay the package captured on this host. An absent
+ * restriction leaves the decision to APT, which listed the installed version
+ * from this source on the capture host.
  */
 const architectureRefusal = (
   repository: AptRepository,
   architecture: string,
+  packageArchitecture: string | null,
 ): string | undefined => {
   const served = repository.architectures ?? [];
-  return served.length === 0 || served.includes(architecture)
+  return served.length === 0 ||
+    served.includes(architecture) ||
+    (packageArchitecture === "all" && served.includes("all"))
     ? undefined
     : `it serves only ${served.join(", ")}, not the capture host's ${architecture}`;
 };
@@ -173,6 +176,7 @@ const declaredSources = (
   repositories: readonly AptRepository[],
   environment: string,
   architecture: string,
+  packageArchitecture: string | null,
 ) => {
   const declared = new Map<string, ExportAptSource>();
   const keyFiles = new Map<string, string>();
@@ -182,7 +186,7 @@ const declaredSources = (
     const { suite, components, signing_key: key } = repository;
     const replay = repositoryReplay(repository);
     const reason = replay.ok
-      ? architectureRefusal(repository, architecture)
+      ? architectureRefusal(repository, architecture, packageArchitecture)
       : replay.error;
     if (!replay.ok || reason !== undefined || key === null || suite === null) {
       refused.push(`${describe(repository)}: ${reason ?? "it is unusable"}`);
@@ -305,6 +309,7 @@ const vendorInstall = (
     repositories,
     environment,
     architecture,
+    installed.architecture,
   );
   if (sources.length === 0)
     return err({

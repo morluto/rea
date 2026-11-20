@@ -33,6 +33,8 @@ const BASE_LIMITATIONS = [
   "Requested versions, ranges, and property spellings are recorded as written; interpolation and parent/BOM inheritance are not performed.",
 ] as const;
 
+const GRADLE_MODULE_METADATA_VERSION = "1.1";
+
 const isElement = (node: Node | null): node is Element =>
   node !== null && node.nodeType === 1;
 
@@ -47,8 +49,13 @@ const childElements = (element: Element): Element[] => {
   return children;
 };
 
-const childrenNamed = (element: Element, local: string): Element[] =>
-  childElements(element).filter((child) => child.localName === local);
+const childrenNamed = (element: Element, ...names: string[]): Element[] =>
+  childElements(element).filter(
+    (child) =>
+      (child.namespaceURI ?? "") === (element.namespaceURI ?? "") &&
+      child.localName !== null &&
+      names.includes(child.localName),
+  );
 
 const soleNamed = (element: Element, local: string): Element | undefined => {
   const matches = childrenNamed(element, local);
@@ -71,10 +78,7 @@ const isMavenProjectRoot = (root: Node | null): root is Element => {
   if (root.namespaceURI === MAVEN_POM_NAMESPACE) return true;
   return (
     (root.namespaceURI === null || root.namespaceURI === "") &&
-    childElements(root).some(
-      (child) =>
-        child.localName === "modelVersion" || child.localName === "artifactId",
-    )
+    childrenNamed(root, "modelVersion", "artifactId").length > 0
   );
 };
 
@@ -498,11 +502,8 @@ const parseGradle = (
     );
   const component = gradleObject(parsed.component, "component");
   const variantsValue = parsed.variants;
-  if (
-    parsed.formatVersion !== "1.1" &&
-    component === null &&
-    !Array.isArray(variantsValue)
-  )
+  const knownVersion = parsed.formatVersion === GRADLE_MODULE_METADATA_VERSION;
+  if (!knownVersion && component === null && !Array.isArray(variantsValue))
     throw unsupportedInput(
       MAVEN_GRADLE_METADATA_FORMAT,
       "Unrecognized Gradle module metadata formatVersion without component or variants.",
@@ -512,6 +513,10 @@ const parseGradle = (
     "Gradle variant attributes other than category and usage are not decoded.",
     "available-at coordinates are recorded as spelled; the named module file was not fetched.",
   ];
+  if (!knownVersion)
+    limitations.push(
+      `Recognized fields in this unfamiliar format version were interpreted using Gradle module metadata ${GRADLE_MODULE_METADATA_VERSION}. Version-specific declarations may be unreported.`,
+    );
   const unresolved = new MavenGradleUnresolvedCollector();
   const coordinates = {
     group_id: component === null ? null : textOf(component.group),
@@ -552,8 +557,25 @@ const parseGradle = (
   const repeatedVariantNames = new Budget(
     MAVEN_GRADLE_METADATA_REPEATED_VARIANT_NAME_CHARS,
   );
-  for (const variant of variants) {
-    const name = textOf(variant.name);
+  const variantNameIndices = new Map<string, number>();
+  for (const [index, variant] of variants.entries()) {
+    const declaredName = variant.name;
+    if (declaredName !== undefined && typeof declaredName !== "string")
+      throw malformedInput(
+        MAVEN_GRADLE_METADATA_FORMAT,
+        `Gradle module metadata variant.name at index ${String(index)} is not a string.`,
+      );
+    const name =
+      declaredName === undefined || declaredName === "" ? null : declaredName;
+    if (name !== null) {
+      const previous = variantNameIndices.get(name);
+      if (previous !== undefined)
+        throw malformedInput(
+          MAVEN_GRADLE_METADATA_FORMAT,
+          `Gradle module metadata declares a duplicate variant name at indices ${String(previous)} and ${String(index)}.`,
+        );
+      variantNameIndices.set(name, index);
+    }
     const attributes = gradleObject(variant.attributes, "variant.attributes");
     const category = textOf(attributes?.["org.gradle.category"]);
     const usage = textOf(attributes?.["org.gradle.usage"]);

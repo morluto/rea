@@ -2,6 +2,8 @@ import {
   canonicalOutputSchema,
   withCanonicalOutputSchema,
 } from "../fixtures/canonicalOutputSchema.js";
+import { parseZipTail } from "../../src/domain/apkSignature/apkSigningBlock.js";
+import { centralDirectoryV1SignatureEntries } from "../../src/domain/apkSignature/apkV1Signature.js";
 import { apkSignatureResultSchema } from "../../src/domain/apkSignature/apkSignatureReport.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -12,6 +14,7 @@ import { closeVerifierResources } from "../../scripts/lib/verifier-cleanup.mjs";
 import { AnalysisProviderRegistry } from "../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../src/application/binary/BinarySessionComposition.js";
 import { toolContract } from "../../src/contracts/toolContracts.js";
+import { analysisErrorProjectionSchema } from "../../src/domain/analysisErrorProjectionSchema.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { createServer } from "../../src/server/createServer.js";
 import {
@@ -37,6 +40,7 @@ import {
   zipWith,
 } from "../fixtures/apkSignature/v1SignatureBlock.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 import { createTestMcp } from "../support/mcp/mcpFixture.js";
@@ -761,5 +765,85 @@ cliTest(
         decode_error: null,
       },
     ]);
+  },
+);
+
+cliTest(
+  "preserves framing precedence at the APK v1 entry limit across CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-apk-v1-entry-limit-");
+    const entries = Array.from({ length: 4097 }, (_, index) => ({
+      name: `META-INF/F${String(index)}.SF`,
+      data: "",
+      stored: true,
+    }));
+    const bytes = await zipWith(entries, { dataDescriptor: false });
+    const tail = parseZipTail(bytes);
+    if (!tail.ok) throw new Error("Expected a framed ZIP tail");
+    const { centralDirectoryOffset, centralDirectorySize, totalEntries } =
+      tail.value;
+    const parsed = centralDirectoryV1SignatureEntries(
+      bytes,
+      centralDirectoryOffset,
+      centralDirectorySize,
+      totalEntries,
+    );
+    if (parsed.ok || parsed.error.kind !== "limit")
+      throw new Error("Expected a v1 central-directory limit");
+    const parserReason = parsed.error.failure.detail;
+    const malformed = Buffer.from(bytes);
+    const { central } = zipEntryOffsets(bytes, "META-INF/F4096.SF");
+    malformed.writeUInt16LE(0xffff, central + 28);
+
+    const { call } = await connectLocalToolsMcp();
+    for (const [name, selected, expected] of [
+      [
+        "framed",
+        bytes,
+        {
+          code: "resource_constraint",
+          retryable: false,
+          details: {
+            resource: "capacity",
+            reason: parserReason,
+            reported_limits: { max_v1_signature_entries: 4096 },
+          },
+          remediation: {
+            action: expect.stringContaining("no runtime override"),
+          },
+        },
+      ],
+      [
+        "malformed",
+        malformed,
+        {
+          code: "invalid_request",
+          details: {
+            issues: [
+              {
+                path: ["path"],
+                reason: "invalid_value",
+                message: expect.stringContaining(
+                  "central-directory file name runs past the directory",
+                ),
+              },
+            ],
+          },
+        },
+      ],
+    ] as const) {
+      const path = join(root, `${name}.apk`);
+      await writeFile(path, selected);
+      const reply = await cli.run({
+        arguments: ["inspect-apk-signature", path, "--json"],
+      });
+      expect(reply.exitCode, reply.stderr).toBe(1);
+      expect(analysisErrorProjectionSchema.parse(reply.json)).toMatchObject(
+        expected,
+      );
+      expect(
+        parseMcpToolError(await call("inspect_apk_signature", { path })).error,
+      ).toMatchObject(expected);
+    }
   },
 );

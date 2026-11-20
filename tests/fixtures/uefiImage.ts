@@ -37,28 +37,28 @@ export interface FfsFileSpec {
 
 const NORMALIZED_COMPLETE_STATE = 0x07;
 
-/** Build one 24-byte FFS file with correct header checksum and state bits. */
+/** Build one FFS file with the PI header width, checksum and state bits. */
 export function buildFfsFile(spec: FfsFileSpec): Buffer {
   const erasePolarity = spec.erasePolarity ?? true;
-  const header = Buffer.alloc(24, 0);
+  const compactSize = 24 + spec.payload.length;
+  const largeFile = compactSize > 0xff_ffff;
+  const header = Buffer.alloc(largeFile ? 32 : 24);
   guidBytes(spec.guid).copy(header, 0);
-  const size = 24 + spec.payload.length;
-  if (size > 0xffffff) {
-    throw new Error("test FFS files must stay below the extended-size marker");
-  }
-  header[20] = size & 0xff;
-  header[21] = (size >> 8) & 0xff;
-  header[22] = (size >> 16) & 0xff;
+  if (largeFile)
+    header.writeBigUInt64LE(BigInt(header.length + spec.payload.length), 24);
+  else header.writeUIntLE(compactSize, 20, 3);
   header[18] = spec.typeCode;
   const fileChecksumWanted =
     spec.fileChecksum === "correct" || spec.fileChecksum === "wrong";
   header[19] =
-    ((spec.alignmentExponent ?? 0) << 3) | (fileChecksumWanted ? 0x40 : 0);
+    ((spec.alignmentExponent ?? 0) << 3) |
+    (fileChecksumWanted ? 0x40 : 0) |
+    (largeFile ? 1 : 0);
   header[23] = erasePolarity
     ? ~NORMALIZED_COMPLETE_STATE & 0x3f
     : NORMALIZED_COMPLETE_STATE;
   let sum = 0;
-  for (let offset = 0; offset < 24; offset += 1) {
+  for (let offset = 0; offset < header.length; offset += 1) {
     const skip = offset === 23 || offset === 17 || offset === 16;
     sum = (sum + (skip ? 0 : (header[offset] ?? 0))) & 0xff;
   }

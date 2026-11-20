@@ -37,6 +37,7 @@ import {
 } from "./javascriptSemanticState.js";
 import { readSemanticRequireOriginCandidate } from "./javascriptSemanticRequireOriginSlot.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
+import { semanticArrayLiteralLayout } from "./javascriptSemanticArrayLayout.js";
 import {
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
@@ -963,13 +964,14 @@ const evaluateArray = (
   const items: JavaScriptSemanticProperty[] = [];
   let unknownItems = false;
   let omittedItems: number | null = 0;
-  for (const element of node.elements) {
-    if (t.isSpreadElement(element)) {
+  for (const part of semanticArrayLiteralLayout(node, context.state)) {
+    if (part.kind === "opaque-spread") {
       unknownItems = true;
       omittedItems = null;
       // Subsequent elements have no fixed index after an unknown-length spread.
       break;
     }
+    const { element, depth } = part;
     if (element === null) {
       items.push({
         name: String(items.length),
@@ -981,7 +983,7 @@ const evaluateArray = (
     items.push({
       name: String(items.length),
       presence: "present",
-      value: evaluateCapturedExpression(element, nestedContext(context)),
+      value: evaluateCapturedExpression(element, nestedContext(context, depth)),
     });
   }
   return unknownItems
@@ -1450,13 +1452,16 @@ const mergeValues = (
   return merged;
 };
 
-const nestedContext = (context: EvaluationContext): EvaluationContext => ({
+const nestedContext = (
+  context: EvaluationContext,
+  depth = 1,
+): EvaluationContext => ({
   state: context.state,
   primitiveBindingValues: context.primitiveBindingValues,
   ...(context.capturePoint === undefined
     ? {}
     : { capturePoint: context.capturePoint }),
-  expressionDepth: context.expressionDepth + 1,
+  expressionDepth: context.expressionDepth + depth,
   bindings: context.bindings,
   dependence: context.dependence,
   memo: context.memo,

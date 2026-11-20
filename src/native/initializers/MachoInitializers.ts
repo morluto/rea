@@ -216,7 +216,6 @@ interface SymbolTable {
   readonly nsyms: number;
   readonly strings: Buffer;
   readonly width: 12 | 16;
-  readonly little: boolean;
 }
 
 interface MachoSymbols {
@@ -310,30 +309,19 @@ const readSymbols = (
       nsyms: table.nsyms,
       strings,
       width,
-      little,
     };
     const count = Math.min(table.nsyms, budget);
     budget -= count;
     const stopped = table.nsyms > count;
     for (let index = 0; index < count; index += 1) {
       const at = table.symoff + index * width;
-      const type = scan.bytes[at + 4] ?? 0;
+      const type = scan.reader.u8(at + 4);
       // Only N_ABS and N_SECT carry addresses. N_INDR's n_value is a string
       // table index, and N_PBUD is still undefined in this image.
       const kind = type & 0x0e;
       if ((type & 0xe0) !== 0 || (kind !== 0x02 && kind !== 0x0e)) continue;
-      const strx = little
-        ? scan.bytes.readUInt32LE(at)
-        : scan.bytes.readUInt32BE(at);
-      const value = wide
-        ? little
-          ? scan.bytes.readBigUInt64LE(at + 8)
-          : scan.bytes.readBigUInt64BE(at + 8)
-        : BigInt(
-            little
-              ? scan.bytes.readUInt32LE(at + 8)
-              : scan.bytes.readUInt32BE(at + 8),
-          );
+      const strx = scan.reader.u32(at);
+      const value = scan.reader.word(at + 8, wide ? 64 : 32);
       const text = nameAt(scan, strings, strx);
       if (text === null) continue;
       const previous = names.get(value);
@@ -362,18 +350,13 @@ const readSymbols = (
  */
 const uncheckedFixupReason = (
   scan: MachoScan,
-  little: boolean,
   decoded: boolean,
 ): string | null => {
   const header = readMachoLoadCommandTableHeader(scan.bytes, scan.bytes.length);
   if (!header.ok || header.value === null) return null;
   const cursor = new MachoLoadCommandCursor(header.value);
   const word = (at: number): number =>
-    at + 4 > scan.bytes.length
-      ? 0
-      : little
-        ? scan.bytes.readUInt32LE(at)
-        : scan.bytes.readUInt32BE(at);
+    at + 4 > scan.bytes.length ? 0 : scan.reader.u32(at);
   while (cursor.nextOffset !== null) {
     const commandAt = header.value.headerSize + cursor.nextOffset;
     const frame = cursor.read(scan.bytes.subarray(commandAt, commandAt + 8));
@@ -563,10 +546,8 @@ const objectRelocations = (
   for (let index = 0; index < read; index += 1) {
     if (index % 4096 === 0) assertArtifactReadActive(walk.signal);
     const at = offset + index * 8;
-    const first = little ? bytes.readUInt32LE(at) : bytes.readUInt32BE(at);
-    const info = little
-      ? bytes.readUInt32LE(at + 4)
-      : bytes.readUInt32BE(at + 4);
+    const first = walk.scan.reader.u32(at);
+    const info = walk.scan.reader.u32(at + 4);
     // R_SCATTERED: the low 24 bits hold the address in either byte order.
     if ((first & 0x80000000) !== 0) {
       add(first & 0xffffff, 1 << ((first >>> 28) & 3), { kind: "other" });
@@ -612,20 +593,11 @@ const objectSymbol = (
   if (table === null || index >= table.nsyms) return UNRESOLVED;
   const { width } = table;
   const at = table.symoff + index * width;
-  const bytes = walk.scan.bytes;
+  const { reader, bytes } = walk.scan;
   if (at + width > bytes.length) return UNRESOLVED;
-  const strx = table.little ? bytes.readUInt32LE(at) : bytes.readUInt32BE(at);
-  const type = bytes[at + 4] ?? 0;
-  const value =
-    width === 16
-      ? table.little
-        ? bytes.readBigUInt64LE(at + 8)
-        : bytes.readBigUInt64BE(at + 8)
-      : BigInt(
-          table.little
-            ? bytes.readUInt32LE(at + 8)
-            : bytes.readUInt32BE(at + 8),
-        );
+  const strx = reader.u32(at);
+  const type = reader.u8(at + 4);
+  const value = reader.word(at + 8, width === 16 ? 64 : 32);
   // Debugger stabs never name a relocation target.
   if ((type & 0xe0) !== 0) return UNRESOLVED;
   const ownName = () => nameAt(walk.scan, table.strings, strx);
@@ -843,7 +815,7 @@ export const readMachoInitializers = async (
     : await layoutFixups(scan, container.bits, little, cpu, signal);
   const unchecked = object
     ? null
-    : uncheckedFixupReason(scan, little, decoded.fixups !== null);
+    : uncheckedFixupReason(scan, decoded.fixups !== null);
   const base = imageBase(container.mappings, decoded.base);
   const symbols = readSymbols(
     scan,

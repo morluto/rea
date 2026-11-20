@@ -7,8 +7,7 @@ import ts from "typescript6";
 // documented exception with a reason. External behavioral witnesses are
 // reported separately and are not verified by this Node-only scan.
 // Per-call limits belong to ANALYSIS_SETTINGS.
-// The three limits moving on #9868, #9865, and #9836 are not in this tree;
-// once their names appear here they must join ANALYSIS_SETTINGS.
+// A name in REQUIRED_RUNTIME_LIMITS that is absent from source fails closed.
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const definitionsPath = join(root, "src/domain/analysisSettingDefinitions.ts");
@@ -35,14 +34,14 @@ const listFiles = async (dir) => {
 };
 
 /**
- * These limits are moving onto runtime analysis settings on their own PRs.
+ * Limits that must join ANALYSIS_SETTINGS.
  * A producer or a registry entry cannot satisfy that requirement.
+ * Membership also treats a non-pattern name as numeric.
+ * A required name absent from source is stale and fails closed.
+ *
+ * @type {readonly string[]}
  */
-const REQUIRED_RUNTIME_LIMITS = [
-  "REA_NTFS_MFT_MAX_FILE_BYTES",
-  "REA_REGF_HIVE_MAX_FILE_BYTES",
-  "REA_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES",
-];
+const REQUIRED_RUNTIME_LIMITS = [];
 
 const unwrapExpression = (node) => {
   let current = node;
@@ -675,14 +674,38 @@ export const discoverNumericLimitUses = (files) => {
   return discovered;
 };
 
-/** Tracked limits join ANALYSIS_SETTINGS. The exception registry cannot classify them. */
+/**
+ * @typedef {{
+ *   readonly code:
+ *     | "required_runtime_limit_missing"
+ *     | "required_runtime_limit_not_analysis_setting",
+ *   readonly name: string,
+ * }} RequiredRuntimeLimitFailure
+ */
+
+/**
+ * Classify one required runtime limit.
+ * The caller supplies names from REQUIRED_RUNTIME_LIMITS. Absence from
+ * source, the exception registry, and ANALYSIS_SETTINGS is its own failure
+ * so a stale required name cannot be skipped. The registry cannot classify
+ * a required limit as a runtime setting.
+ *
+ * @param {string} name
+ * @param {{
+ *   readonly inSource: boolean,
+ *   readonly inRuntime: boolean,
+ *   readonly inRegistry: boolean,
+ * }} presence
+ * @returns {RequiredRuntimeLimitFailure | undefined}
+ */
 export const requiredRuntimeLimitFailure = (
   name,
-  { inRuntime, inRegistry },
+  { inSource, inRuntime, inRegistry },
 ) => {
-  if (!REQUIRED_RUNTIME_LIMITS.includes(name)) return undefined;
+  if (!inSource && !inRuntime && !inRegistry)
+    return { code: "required_runtime_limit_missing", name };
   if (inRuntime && !inRegistry) return undefined;
-  return `${name} must join ANALYSIS_SETTINGS; numericLimitRegistry cannot classify it`;
+  return { code: "required_runtime_limit_not_analysis_setting", name };
 };
 
 /** Parse the registry as TypeScript so provenance is owned by its entry. */
@@ -981,14 +1004,14 @@ if (direct) {
       );
     }
   }
-  const present = new Set([...discovered.keys(), ...listed.keys(), ...runtime]);
   for (const name of REQUIRED_RUNTIME_LIMITS) {
-    if (!present.has(name)) continue;
     const failure = requiredRuntimeLimitFailure(name, {
+      inSource: discovered.has(name),
       inRuntime: runtime.has(name),
       inRegistry: listed.has(name),
     });
-    if (failure !== undefined) failures.push(failure);
+    if (failure !== undefined)
+      failures.push(`${failure.code}: ${failure.name}`);
   }
 
   const parameterOwners = [

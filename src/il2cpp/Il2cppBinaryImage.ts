@@ -7,6 +7,7 @@ import {
 import {
   BinaryFormatFailure,
   BinaryMappingFailure,
+  BinaryReader,
   BinaryResourceFailure,
   createFileMappingIndex,
   mappedFileOffset,
@@ -73,7 +74,8 @@ export const requireIl2cppBinaryImage = (
   );
 
 export interface NativeImage {
-  readonly bytes: Buffer;
+  /** Stored file coordinates only; virtual translation and fixups stay separate. */
+  readonly stored: BinaryReader;
   readonly container: BinaryContainer;
   /** One image's immutable load mappings, shared by stored and loader-aware reads. */
   readonly fileMappings: FileMappingIndex;
@@ -226,7 +228,7 @@ export function* openImageSteps(
     ) ??
     0n;
   return {
-    bytes: image,
+    stored: new BinaryReader(image, true, container.format),
     container,
     fileMappings: createFileMappingIndex(
       container.mappings,
@@ -242,7 +244,7 @@ export function* openImageSteps(
 const readStoredWord = (image: NativeImage, address: bigint): bigint | null => {
   try {
     const offset = image.fileMappings.offset(address, 8);
-    return image.bytes.readBigUInt64LE(offset);
+    return image.stored.word(offset, 64);
   } catch (cause) {
     if (cause instanceof BinaryFormatFailure) return null;
     throw cause;
@@ -261,7 +263,7 @@ export const readUInt32 = (
       const value = image.elfPointerOverlay.unsignedAt(address, 4);
       return value === undefined ? "unknown" : Number(value);
     }
-    return image.bytes.readUInt32LE(image.fileMappings.offset(address, 4));
+    return image.stored.u32(image.fileMappings.offset(address, 4));
   } catch (cause) {
     if (cause instanceof BinaryFormatFailure) return null;
     throw cause;

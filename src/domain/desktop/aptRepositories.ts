@@ -52,6 +52,19 @@ const fieldValues = (value: string | undefined): readonly string[] =>
 const optionValues = (value: string | undefined): readonly string[] =>
   (value ?? "").split(/[\s,]+/u).filter((part) => part.length > 0);
 
+/** Resolve an explicit list. Modifier-only entries depend on APT's host defaults. */
+const sourceArchitectures = (
+  options: ReadonlyMap<string, string>,
+): string[] => {
+  const base = optionValues(options.get("arch"));
+  if (base.length === 0) return [];
+  const selected = new Set([...base, ...optionValues(options.get("arch+"))]);
+  for (const removed of optionValues(options.get("arch-")))
+    selected.delete(removed);
+  // APT still selects architecture-independent packages when all named targets were removed.
+  return selected.size === 0 ? ["all"] : [...selected];
+};
+
 /** Keep redundant path separators that APT preserves in Repo-URI. */
 const withoutOptionalTrailingSlash = (uri: string): string =>
   uri.replace(/(?<!\/)\/$/u, "");
@@ -132,7 +145,7 @@ const stanza = (
     }),
     suites: fields.suites,
     components: fields.components,
-    architectures: optionValues(fields.options.get("arch")),
+    architectures: sourceArchitectures(fields.options),
     signedBy: inlineKey === null ? optionValues(signedBy) : [],
     inlineKey,
   };
@@ -205,7 +218,15 @@ export const deb822Paragraphs = (
   const finish = () => {
     // A sources-file stanza's position still counts when it cannot be read.
     if (!readable) found.push(new Map());
-    else if (current.size > 0) found.push(current);
+    else if (current.size > 0) {
+      // TagSection trims trailing whitespace but keeps interior continuations.
+      for (const [name, value] of current) {
+        let end = value.length;
+        while (end > 0 && value.charCodeAt(end - 1) === 0x0a) end--;
+        if (end !== value.length) current.set(name, value.slice(0, end));
+      }
+      found.push(current);
+    }
     current = new Map();
     last = undefined;
     readable = true;
@@ -215,11 +236,13 @@ export const deb822Paragraphs = (
       readable = false;
       continue;
     }
-    const content = trimDeb822Line(line);
-    if (content.length === 0) {
+    // APT skips CRs after a line feed before classifying the next record.
+    const afterLeadingCr = line.replace(/^\r+/u, "");
+    if (afterLeadingCr.length === 0) {
       finish();
     } else if (line.startsWith("#")) continue;
-    else if (/^[ \t]/u.test(line) && last !== undefined) {
+    else if (/^[ \t\v\f]/u.test(afterLeadingCr) && last !== undefined) {
+      const content = trimDeb822Line(line);
       const previous = current.get(last) ?? "";
       // APT skips an initial newline only before a space-led continuation.
       current.set(
@@ -264,6 +287,8 @@ export const parseDeb822Sources = (
           options: new Map([
             ["signed-by", fields.get("signed-by") ?? ""],
             ["arch", fields.get("architectures") ?? ""],
+            ["arch+", fields.get("architectures-add") ?? ""],
+            ["arch-", fields.get("architectures-remove") ?? ""],
           ]),
         },
       ),
