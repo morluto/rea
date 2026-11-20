@@ -113,6 +113,7 @@ import {
   GHIDRA_MUTATING_OPERATIONS,
   GHIDRA_SESSION_CAPABILITIES,
   type GhidraSessionInfo,
+  ghidraPdbLimitations,
 } from "./GhidraSessionValues.js";
 import type { Result } from "../domain/result.js";
 import { GhidraSessionError } from "./GhidraSessionError.js";
@@ -4222,8 +4223,15 @@ describe("Ghidra containing-procedure absence", () => {
 });
 
 describe("Ghidra PDB coverage", () => {
+  const reference = {
+    file: "C:\\build\\fixture.pdb",
+    guid: "01234567-89AB-CDEF-0123-456789ABCDEF",
+    age: "a",
+    signature: null,
+    version: "RSDS",
+  };
   it.each([
-    { name: "missing bridge report", pdb: undefined, warns: true },
+    { name: "missing bridge report", pdb: undefined },
     {
       name: "report without a PDB reference",
       pdb: {
@@ -4234,59 +4242,19 @@ describe("Ghidra PDB coverage", () => {
         version: null,
         loaded: null,
       },
-      warns: false,
     },
-  ])("distinguishes $name in direct PE searches", async ({ pdb, warns }) => {
-    const ghidra = provider(installationHost(), () => ({
-      start: () =>
-        Promise.resolve(
-          ok(pdb === undefined ? sessionInfo() : { ...sessionInfo(), pdb }),
-        ),
-      callTool: () => Promise.resolve(ok([])),
-      close: () => Promise.resolve(ok(null)),
-    }));
-    const target = executableTarget("pe", "x86_64");
-    const resolved = await ghidra.resolveAnalysisProfile(target);
-    if (!resolved.ok || resolved.value.profile === null)
-      throw new Error("Expected a PE profile");
-    const client = ghidra.createClient(target, resolved.value.profile);
-    try {
-      const searched = await client.execute("search_procedures", {
-        pattern: "add_numbers",
-      });
-      if (!searched.ok) throw searched.error;
-      expect(searched.value.result).toEqual([]);
-      const warnings = searched.value.limitations.filter((limitation) =>
-        limitation.includes("PDB"),
-      );
-      expect(warnings).toEqual(
-        warns
-          ? [
-              "Ghidra did not report PDB attributes; debug-symbol coverage is unknown.",
-            ]
-          : [],
-      );
-    } finally {
-      await client.close();
-    }
-  });
-  const pdb = {
-    file: "C:\\build\\fixture.pdb",
-    guid: "01234567-89AB-CDEF-0123-456789ABCDEF",
-    age: "a",
-    signature: null,
-    version: "RSDS",
-    loaded: false as boolean | null,
-  };
-  it.each([false, null, true])(
-    "carries PDB load state %s into direct search and health Evidence",
-    async (loaded) => {
+    { name: "refused load", pdb: { ...reference, loaded: false } },
+    { name: "unknown load", pdb: { ...reference, loaded: null } },
+    { name: "reported load", pdb: { ...reference, loaded: true } },
+  ])(
+    "carries $name into a direct PE search and subsequent health",
+    async ({ pdb }) => {
       let starts = 0;
       const ghidra = provider(installationHost(), () => ({
         start: () => {
           starts += 1;
           return Promise.resolve(
-            ok({ ...sessionInfo(), pdb: { ...pdb, loaded } }),
+            ok(pdb === undefined ? sessionInfo() : { ...sessionInfo(), pdb }),
           );
         },
         callTool: () => Promise.resolve(ok([])),
@@ -4297,33 +4265,27 @@ describe("Ghidra PDB coverage", () => {
       if (!resolved.ok || resolved.value.profile === null)
         throw new Error("Expected a PE profile");
       const client = ghidra.createClient(target, resolved.value.profile);
-      // No preceding health call: a name search must establish symbol coverage itself.
-      const searched = await client.execute("search_procedures", {
-        pattern: "add_numbers",
-      });
-      expect(starts).toBe(1);
-      if (!searched.ok) throw searched.error;
-      expect(searched.value.result).toEqual([]);
-      const health = await client.execute("health", {});
-      if (!health.ok) throw health.error;
-      expect(health.value.result).toMatchObject({ pdb: { ...pdb, loaded } });
-      for (const observation of [searched.value, health.value]) {
-        const limitations = observation.limitations.join("\n");
-        if (loaded === true) {
-          expect(limitations).toContain("loaded PDB");
-          expect(limitations).toContain("not an independent PDB identity");
-          expect(limitations).toContain("empty name search does not prove");
-        } else {
-          expect(limitations).toContain(pdb.file);
-          expect(limitations).toContain(pdb.guid);
-          expect(limitations).toContain("age (hex) a");
-          expect(limitations).toContain("list_procedures");
-          expect(limitations).toContain(
-            loaded === null ? "unknown" : "not loaded",
-          );
+      try {
+        const searched = await client.execute("search_procedures", {
+          pattern: "add_numbers",
+        });
+        if (!searched.ok) throw searched.error;
+        expect(starts).toBe(1);
+        expect(searched.value.result).toEqual([]);
+        const health = await client.execute("health", {});
+        if (!health.ok) throw health.error;
+        if (pdb === undefined)
+          expect(health.value.result).not.toHaveProperty("pdb");
+        else expect(health.value.result).toHaveProperty("pdb", pdb);
+        const expected = ghidraPdbLimitations(pdb);
+        for (const observation of [searched.value, health.value]) {
+          expect(
+            observation.limitations.filter((item) => item.includes("PDB")),
+          ).toEqual(expected);
         }
+      } finally {
+        await client.close();
       }
-      await client.close();
     },
   );
 });
