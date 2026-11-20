@@ -1,4 +1,5 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { posix } from "node:path";
 import { afterAll, beforeAll, describe, expect } from "vitest";
 
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
@@ -28,9 +29,11 @@ const RECORD = process.env.REA_RECORD_CLI_PARITY === "1";
 const SAMPLE = Buffer.from("REA\x00\x01\x02parity-golden\n", "latin1");
 const SENSITIVE = "secret-literal";
 
+type ArgumentWorkspace = Pick<TestWorkspace, "root" | "path">;
+
 interface ParityCase {
   readonly name: string;
-  readonly arguments: (workspace: TestWorkspace) => readonly string[];
+  readonly arguments: (workspace: ArgumentWorkspace) => readonly string[];
   /** Shell completion protocol requests. */
   readonly complete?: "bash" | "zsh" | "fish" | "nushell";
   /** Run with stdout on a pseudo-terminal, as a user's terminal would. */
@@ -39,9 +42,9 @@ interface ParityCase {
   readonly environment?: (workspace: TestWorkspace) => NodeJS.ProcessEnv;
 }
 
-const sample = (workspace: TestWorkspace) => workspace.path("sample.bin");
+const sample = (workspace: ArgumentWorkspace) => workspace.path("sample.bin");
 const entropy = (
-  workspace: TestWorkspace,
+  workspace: ArgumentWorkspace,
   ...rest: readonly string[]
 ): readonly string[] => ["inspect-byte-entropy", sample(workspace), ...rest];
 const SELECTION = [
@@ -487,7 +490,10 @@ const render = (
   result: { exitCode: number | null; stdout: string; stderr: string },
 ): string => {
   const command = testCase
-    .arguments(workspace)
+    .arguments({
+      root: "<workspace>",
+      path: (...segments) => posix.join("<workspace>", ...segments),
+    })
     .map((argument) =>
       argument === "" || /\s/u.test(argument)
         ? JSON.stringify(argument)
@@ -508,10 +514,7 @@ const render = (
     "--- stderr",
     `${normalize(result.stderr, workspace)}<end>`,
     "",
-  ]
-    .join("\n")
-    .split(workspace.root)
-    .join("<workspace>");
+  ].join("\n");
 };
 
 describe("CLI parity goldens", () => {
@@ -542,6 +545,27 @@ describe("CLI parity goldens", () => {
       expect(files.filter((file) => !expected.includes(file))).toEqual([]);
     else expect(files.sort()).toEqual(expected);
   });
+
+  cliTest(
+    "renders the workspace root and paths embedded in option values",
+    () => {
+      const report = render(
+        {
+          name: "workspace-arguments",
+          arguments: (w) => [
+            w.root,
+            `--source=${w.path("fixtures", "input.har")}`,
+            w.path("two words"),
+          ],
+        },
+        workspace,
+        { exitCode: 0, stdout: "", stderr: "" },
+      );
+      expect(report.split("\n")[0]).toBe(
+        '$ rea <workspace> --source=<workspace>/fixtures/input.har "<workspace>/two words"',
+      );
+    },
+  );
 
   const check = async (testCase: ParityCase, cli: TestCli): Promise<void> => {
     const result = await cli.run({
