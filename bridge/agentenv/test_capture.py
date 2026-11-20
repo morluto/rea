@@ -110,7 +110,7 @@ class LongRunTest(unittest.TestCase):
             "    while not os.path.exists(sys.argv[2] + '.pid'): time.sleep(0.02)\n"
             "    sys.exit(0)\n"
             "if len(sys.argv) > 1 and sys.argv[1] == 'drop':\n"
-            "    code = 'import os,signal,sys,time\\nsignal.signal(signal.SIGINT, signal.SIG_IGN)\\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\\nsignal.signal(signal.SIGHUP, signal.SIG_IGN)\\ntemporary = sys.argv[1] + \".tmp\"\\nopen(temporary, \"w\").write(str(os.getpid()))\\nos.replace(temporary, sys.argv[1])\\nwhile not os.path.exists(sys.argv[2]): time.sleep(0.02)\\nnull = os.open(\"/dev/null\", os.O_WRONLY)\\nos.dup2(null, 2)\\nos.close(null)\\nopen(sys.argv[1] + \".closed\", \"w\").close()\\nwhile not os.path.exists(sys.argv[3]): time.sleep(0.02)\\n'\n"
+            "    code = 'import os,signal,sys,time\\nsignal.signal(signal.SIGINT, lambda *_: open(sys.argv[1] + \".sigint\", \"w\").close())\\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\\nsignal.signal(signal.SIGHUP, signal.SIG_IGN)\\ntemporary = sys.argv[1] + \".tmp\"\\nopen(temporary, \"w\").write(str(os.getpid()))\\nos.replace(temporary, sys.argv[1])\\nwhile not os.path.exists(sys.argv[2]): time.sleep(0.02)\\nnull = os.open(\"/dev/null\", os.O_WRONLY)\\nos.dup2(null, 2)\\nos.close(null)\\nopen(sys.argv[1] + \".closed\", \"w\").close()\\nwhile not os.path.exists(sys.argv[3]): time.sleep(0.02)\\n'\n"
             "    held = subprocess.Popen([sys.executable, '-c', code, sys.argv[3] + '.pid', sys.argv[2], sys.argv[3]], stdout=subprocess.DEVNULL, stderr=sys.stderr)\n"
             "    open(sys.argv[3] + '.leader.tmp', 'w').write(str(os.getpid()))\n"
             "    os.replace(sys.argv[3] + '.leader.tmp', sys.argv[3] + '.leader')\n"
@@ -119,8 +119,10 @@ class LongRunTest(unittest.TestCase):
             "if len(sys.argv) > 1 and sys.argv[1] == 'resist':\n"
             "    signal.signal(signal.SIGINT, signal.SIG_IGN)\n"
             "    signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
-            "    open(sys.argv[2], 'w').close()\n"
-            "    while True: time.sleep(0.05)\n"
+            "    signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT, signal.SIGTERM})\n"
+            "    open(sys.argv[2] + '.pid.tmp', 'w').write(str(os.getpid()))\n"
+            "    os.replace(sys.argv[2] + '.pid.tmp', sys.argv[2] + '.pid')\n"
+            "    while not os.path.exists(sys.argv[2]): time.sleep(0.02)\n"
             "print(os.environ.get('AGENTENV_CONTROL_TOKEN', 'no token'))\n"
         )
         rea.chmod(0o755)
@@ -334,13 +336,15 @@ class LongRunTest(unittest.TestCase):
         pid_path = self.root / "release.pid"
         leader_path = self.root / "release.leader"
         closed_path = self.root / "release.pid.closed"
+        interrupted_path = self.root / "release.pid.sigint"
         observed = {}
 
         def close_stderr():
-            if not self.wait_until(lambda: (self.job / "cancel").exists(), seconds=10):
-                observed["error"] = "cancel file did not appear"
+            if not self.wait_until(lambda: interrupted_path.exists() or release.exists(), seconds=10):
+                observed["error"] = "child did not acknowledge SIGINT"
                 return
-            time.sleep(0.3)
+            if release.exists():
+                return
             stderr_release.touch()
             if not self.wait_until(lambda: closed_path.exists(), seconds=5):
                 observed["error"] = "child did not close stderr"
@@ -377,15 +381,24 @@ class LongRunTest(unittest.TestCase):
             closer.join(timeout=2)
 
     def test_kills_a_leader_that_ignores_sigint_and_sigterm(self):
-        ready = self.root / "ready"
-        self.assertEqual(self.begin(["resist", str(ready)], timeout=1), {"started": True})
+        release = self.root / "release"
+        # Inherit the mask until the command installs both ignore handlers.
+        # A slow startup can cross the real deadline before Python reaches them.
+        previous_mask = signal.pthread_sigmask(
+            signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM},
+        )
+        try:
+            self.assertEqual(self.begin(["resist", str(release)], timeout=1), {"started": True})
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
         result = self.command(
             "run-poll", job=str(self.job), token="owner-token", timeout_s=12, command_timeout=20,
         )
         self.assertTrue(result["finished"])
         self.assertTrue(result["timed_out"])
         self.assertTrue(result["settled"])
-        self.assertFalse(result.get("pending", False))
+        self.assertFalse(result["cancelled"])
+        self.assertTrue((self.root / "release.pid").is_file())
         self.assertEqual(result["exit_code"], -signal.SIGKILL)
 
     def test_failure_closing_supervisor_log_after_launch_does_not_claim_exit(self):
