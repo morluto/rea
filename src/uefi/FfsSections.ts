@@ -1,4 +1,5 @@
 import { BinaryReader } from "../domain/binaryContainer.js";
+import type { UefiSectionRecord } from "../domain/uefi/uefiFirmwareAnalysis.js";
 import { Buffer } from "node:buffer";
 import {
   absoluteOffset,
@@ -48,15 +49,10 @@ export interface SectionDraft {
   readonly compression:
     | { readonly kind: "none" }
     | {
-        readonly kind:
-          | "lzma-custom"
-          | "lzmaf86"
-          | "amd-zlib"
-          | "tiano"
-          | "unknown-compression"
-          | "efi-standard"
-          | "crc32-guided"
-          | "unknown-guid";
+        readonly kind: Exclude<
+          UefiSectionRecord["compression"]["kind"],
+          "none"
+        >;
         readonly guid: string | null;
         readonly dataOffset: number;
         readonly attributes: number | null;
@@ -305,7 +301,7 @@ export function walkSections(
 export const AMD_ZLIB_HEADER_LENGTH = 0x100;
 
 /** Peel the 0x100-byte AMD header off one amd-zlib payload, or null when short. */
-export function peelAmiZlibPayload(
+export function peelAmdZlibPayload(
   payload: Buffer,
 ): { stream: Buffer; declaredCompressedSize: number } | null {
   if (payload.length < AMD_ZLIB_HEADER_LENGTH) {

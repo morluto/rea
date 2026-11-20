@@ -9,7 +9,7 @@ import {
 import { imageRegion } from "./UefiBytes.js";
 import {
   AMD_ZLIB_HEADER_LENGTH,
-  peelAmiZlibPayload,
+  peelAmdZlibPayload,
   walkSections,
 } from "./FfsSections.js";
 
@@ -69,9 +69,9 @@ it("classifies the AMD-zlib guided section and peels its AMD header", () => {
     start: 24,
     end: 24 + AMD_ZLIB_HEADER_LENGTH + stream.length,
   });
-  const peeled = peelAmiZlibPayload(Buffer.concat([amdHeader, stream]));
+  const peeled = peelAmdZlibPayload(Buffer.concat([amdHeader, stream]));
   expect(peeled).toEqual({ stream, declaredCompressedSize: stream.length });
-  expect(peelAmiZlibPayload(Buffer.alloc(0x40, 0))).toBeNull();
+  expect(peelAmdZlibPayload(Buffer.alloc(0x40, 0))).toBeNull();
 });
 
 it("marks unknown definition GUIDs instead of guessing", () => {
