@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import {
   guestFileAnswerBytes,
   guestFileAnswerCeiling,
@@ -24,6 +25,20 @@ const CONTROLLER = fileURLToPath(
 const FETCH_BATCH_BYTES = 8 * 1024 * 1024;
 /** Default time allowed for one REA command in the build computer. */
 export const BUILD_REA_TIMEOUT_S = 1800;
+
+/** Read a structured build-computer file without exposing parser excerpts. */
+export const parseBuildComputerJson = (
+  bytes: Uint8Array,
+  subject: string,
+): unknown => {
+  try {
+    return JSON.parse(decodeStrictUtf8(bytes, "preserve")) as unknown;
+  } catch {
+    // A parser excerpt can expose part of a value that exact redaction misses.
+    throw new Error(`The build computer's ${subject} is not valid UTF-8 JSON.`);
+  }
+};
+
 /**
  * Linux `MAX_ARG_STRLEN` on a 4 KiB page, excluding the NUL the kernel counts.
  * One argument past this fails with E2BIG before the process starts.
@@ -271,7 +286,7 @@ const listFolder = async (
     output,
   );
   if (content === undefined) throw new Error(`The computer has no ${output}.`);
-  return listingSchema.parse(JSON.parse(content.toString("utf8")));
+  return listingSchema.parse(parseBuildComputerJson(content, "file listing"));
 };
 
 /** One listed file and the answer budget a batch must fit. */

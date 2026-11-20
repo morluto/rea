@@ -5,7 +5,7 @@ import {
 } from "./oneShotOperationInput.js";
 import { completedOperationEvidence } from "./binary/SessionEvidenceReuse.js";
 import type { EspFlashSelection } from "../domain/firmware/espFlashLocation.js";
-import type { ExecutableFormatHint } from "../domain/dosCom.js";
+import type { TargetFormatHint } from "../domain/targetFormats.js";
 import { dispatchQueuedInterrupts } from "../process/queuedInterrupts.js";
 import type {
   BinaryArchitecture,
@@ -126,7 +126,7 @@ export const runDirectAnalysis = async (
     readonly snapshotPath?: string | undefined;
     readonly signal?: AbortSignal;
     readonly providerId?: AnalysisProviderSelector;
-    readonly formatHint?: ExecutableFormatHint;
+    readonly formatHint?: TargetFormatHint;
     readonly architecture?: BinaryArchitecture;
     readonly entryPoint?: string;
     readonly espFlash?: EspFlashSelection;
@@ -160,13 +160,13 @@ export const runDirectAnalysis = async (
 
 /** How the caller asks an artifact target to be read. */
 export interface ArtifactTargetSelection {
-  readonly formatHint?: ExecutableFormatHint;
+  readonly formatHint?: TargetFormatHint;
   readonly espFlash?: EspFlashSelection;
 }
 
 /** The caller's target interpretation, forwarded unchanged to every open. */
 const targetSelection = (options: {
-  readonly formatHint?: ExecutableFormatHint;
+  readonly formatHint?: TargetFormatHint;
   readonly architecture?: BinaryArchitecture;
   readonly entryPoint?: string;
   readonly espFlash?: EspFlashSelection;
@@ -371,7 +371,7 @@ const runAnalysis = async (
     readonly createSession?: () => BinarySession | Promise<BinarySession>;
     readonly includeEvidenceSources?: boolean;
     readonly providerId?: AnalysisProviderSelector;
-    readonly formatHint?: ExecutableFormatHint;
+    readonly formatHint?: TargetFormatHint;
     readonly architecture?: BinaryArchitecture;
     readonly entryPoint?: string;
     readonly espFlash?: EspFlashSelection;
@@ -836,7 +836,7 @@ const prepareSnapshot = async (options: {
     "readAnalysisSnapshot" | "resolveTarget"
   >;
   readonly path: string;
-  readonly formatHint?: ExecutableFormatHint;
+  readonly formatHint?: TargetFormatHint;
   readonly architecture?: BinaryArchitecture;
   readonly entryPoint?: string;
   readonly espFlash?: EspFlashSelection;

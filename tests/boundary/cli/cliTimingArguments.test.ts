@@ -1,7 +1,7 @@
 import { it, expect } from "vitest";
 import {
+  classifyCliEntrypoint,
   parseCliGlobalArguments,
-  productionMcpDoctorArguments,
 } from "../../../src/cliBuiltinArguments.js";
 
 // Observed with Incur 0.6.1 before removing the dependency.
@@ -81,8 +81,12 @@ it.each([
   "--timings=",
 ])("preserves output values and root alias with %s", (flag) => {
   expect(
-    productionMcpDoctorArguments(["mcp", "doctor", "--format", flag]),
-  ).toEqual({ arguments: ["--format", flag], timings: false });
+    classifyCliEntrypoint(["mcp", "doctor", "--format", flag], {}),
+  ).toEqual({
+    kind: "mcp-doctor",
+    arguments: ["--format", flag],
+    timings: false,
+  });
   expect(
     parseCliGlobalArguments([flag, "--update", "--json"]).arguments,
   ).toEqual(["update", flag, "--json"]);
@@ -99,25 +103,33 @@ it("retains the separator and its following timing-shaped data", () => {
     parseCliGlobalArguments(["--", "--update", "--timings=false"]).arguments,
   ).toEqual(["--", "--update", "--timings=false"]);
   expect(
-    productionMcpDoctorArguments([
-      "mcp",
-      "doctor",
-      "--format",
-      "--",
-      "--timings=true",
-    ]),
-  ).toEqual({ arguments: ["--format", "--"], timings: true });
+    classifyCliEntrypoint(
+      ["mcp", "doctor", "--format", "--", "--timings=true"],
+      {},
+    ),
+  ).toEqual({
+    kind: "mcp-doctor",
+    arguments: ["--format", "--"],
+    timings: true,
+  });
 });
 it("takes the doctor words and timing global out of the doctor's arguments", () => {
   expect(
-    productionMcpDoctorArguments([
-      "--timings",
-      "mcp",
-      "--format=json",
-      "doctor",
-      "--no-timings",
-      "--verbose",
-    ]),
-  ).toEqual({ arguments: ["--format", "json", "--verbose"], timings: false });
-  expect(productionMcpDoctorArguments(["mcp", "add"])).toBeUndefined();
+    classifyCliEntrypoint(
+      [
+        "--timings",
+        "mcp",
+        "--format=json",
+        "doctor",
+        "--no-timings",
+        "--verbose",
+      ],
+      {},
+    ),
+  ).toEqual({
+    kind: "mcp-doctor",
+    arguments: ["--format", "json", "--verbose"],
+    timings: false,
+  });
+  expect(classifyCliEntrypoint(["mcp", "add"], {})).toEqual({ kind: "cli" });
 });

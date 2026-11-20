@@ -15,8 +15,16 @@ import {
   parsePythonPyc,
   type PythonPycWork,
 } from "./PythonPycParser.js";
-import { PythonPycResourceFailure } from "./PythonPyc.errors.js";
 import { ParseFailureError } from "../domain/parseFailure.js";
+
+const parserLimit = (name: string) =>
+  expect.objectContaining({
+    failure: expect.objectContaining({
+      kind: "limit",
+      format: "python-pyc",
+      limit: expect.objectContaining({ name }),
+    }),
+  });
 
 const defaults = inspectPythonPycInputSchema.parse({
   path: "/artifacts/sample.pyc",
@@ -452,7 +460,7 @@ it("bounds names repeated through TYPE_REF by what the report carries", () => {
       },
       { ...defaults, max_file_bytes: bytes.length },
     ),
-  ).toThrow(PythonPycResourceFailure);
+  ).toThrow(parserLimit("reported_string_bytes"));
 });
 
 it("charges shared empty name tables against the object budget", () => {
@@ -503,7 +511,7 @@ it("charges shared empty name tables against the object budget", () => {
 it("charges long digits to the string budget and keeps large previews bounded", () => {
   expect(() =>
     parse(withConsts([Buffer.concat([Buffer.from([0x6c]), i32(600_000)])])),
-  ).toThrow(PythonPycResourceFailure);
+  ).toThrow(parserLimit("max_string_bytes"));
   const report = parse(
     withConsts([
       marshalLong([1, 2]),
@@ -792,7 +800,7 @@ it("charges every reported code-constant name against the file budget", () => {
   });
   expect(pythonPycSchema.safeParse(once).success).toBe(true);
   expect(() => parseLimited(file(30), 20_000)).toThrow(
-    PythonPycResourceFailure,
+    parserLimit("reported_string_bytes"),
   );
 });
 
@@ -1049,7 +1057,7 @@ it("rejects a shared tuple key before its expansion doubles without bound", () =
     Buffer.concat([Buffer.from([0x3c]), u32(1), body]),
   ]);
   const work = emptyPythonPycWork();
-  expect(() => parse(bytes, work)).toThrow(PythonPycResourceFailure);
+  expect(() => parse(bytes, work)).toThrow(parserLimit("max_string_bytes"));
   // Refused while the walk and its keys are still linear in the depth.
   expect(work.keySteps).toBeLessThanOrEqual(depth * 4);
   expect(work.keyBytes).toBeLessThanOrEqual(depth * 8);
@@ -1147,7 +1155,7 @@ it("lists a shared container's code objects once per owner and charges each copy
   };
   expect(() =>
     parsePythonPyc(bytes, artifact, { ...defaults, max_objects: constants }),
-  ).toThrow(PythonPycResourceFailure);
+  ).toThrow(parserLimit("reported_rows"));
   expect(
     parsePythonPyc(bytes, artifact, {
       ...defaults,
@@ -1355,7 +1363,10 @@ it("preflights expanded shared code-name keys before building their hex table", 
 
   expect(() => parseWith(bytes, { max_string_bytes: 4096 })).toThrow(
     expect.objectContaining({
-      boundary: "string",
+      failure: expect.objectContaining({
+        kind: "limit",
+        limit: { name: "max_string_bytes", maximum: 4096 },
+      }),
       message: expect.stringContaining("max_string_bytes 4096"),
     }),
   );

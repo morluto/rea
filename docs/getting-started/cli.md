@@ -516,8 +516,8 @@ Inspect ELF PT_NOTE and SHT_NOTE tables without executing the image:
 rea inspect-elf-notes /absolute/path/to/program --json
 ```
 
-The workflow reports note owners, types, descriptor hashes, and GNU build-id
-or ABI-tag fields when those descriptors match. A missing note table is
+The workflow reports note owners, types, descriptor hashes, and supported
+GNU, Linux CORE, Android, and FDO metadata fields. A missing note table is
 observed absence of those declarations. See [ELF note tables](../elf-notes.md).
 
 Inspect DWARF compile units without executing the image:
@@ -930,6 +930,16 @@ the original observation through `evidence_links` and reports that the
 provider was not rerun. The original and its available source records remain
 in the investigation bundle.
 
+### Use snapshot Evidence in file-based workflows
+
+Open the matching target with the saved provider and analysis profile, supplying
+the snapshot as `snapshot_path` to `open_binary`. Then call
+`export_evidence_bundle` in that MCP session. Use the resulting standalone
+Evidence bundle with file-based comparison or inspection. When a reader
+recognizes a snapshot in an Evidence file slot, its diagnostic identifies
+the observed artifact kind. Restoring the snapshot validates its contents and
+checks its binding to the target, provider and profile.
+
 ## Import, export and compare Evidence
 
 Evidence records retain artifact identity, source locations, observations,
@@ -956,6 +966,10 @@ active MCP session, use the MCP tool `import_evidence_bundle` in that session.
 not read artifact contents: the inventories of two builds are unresolved
 records, or one opaque change when you pair them. Use `compare-artifacts`,
 described at the end of this section, to compare their contents.
+
+If a selected file looks like an analysis snapshot, comparison reports the
+wrong artifact kind. Follow the [snapshot Evidence workflow](#use-snapshot-evidence-in-file-based-workflows)
+to export its Evidence for comparison.
 
 `--record_pairs` accepts an inline JSON array or the path to a local JSON
 file containing that array, matching MCP `compare_bundles.record_pairs`. For a
@@ -1007,6 +1021,10 @@ The JSON workflow commands supporting this option are:
 For `inspect-analysis-view`, the request's source reference selects a parent
 from the bundle for every supported view kind. Bundles exported from MCP work
 for these commands. Its inline source form cannot also select a bundle.
+An `evidence-file` source accepts a standalone Evidence record or a bundle.
+When either file input resembles an analysis snapshot, the error identifies
+the snapshot. Follow the [snapshot Evidence workflow](#use-snapshot-evidence-in-file-based-workflows)
+to export session Evidence.
 A missing ID is refused with `details.reason: "missing"`;
 supplying a bundle does not make incompatible Evidence valid for a workflow.
 `compare-managed-members` keeps its two assembly paths and the

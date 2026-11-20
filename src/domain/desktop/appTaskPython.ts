@@ -1,7 +1,9 @@
 import type { JsonValue } from "../jsonValue.js";
 import { SETTLE_TIMING } from "./appSettle.js";
+import { renderPythonAppStateViews } from "./appStateViews.js";
 import type { DesktopTask } from "./appTask.js";
 import { PYTHON_POINTER } from "./appTaskPythonPointer.js";
+import { PYTHON_ECMASCRIPT_TRIM_CHARACTERS } from "./desktopTextSyntax.js";
 import {
   PYTHON_READER_VIEWS,
   renderReaderConstants,
@@ -23,7 +25,7 @@ WHITESPACE_RUN = re.compile(r"[ \t\r\n]+")
 
 def _trim(text: str) -> str:
     """ECMAScript String.trim(), as REA uses for numeral and saved-time recognition."""
-    return text.strip("\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff")
+    return text.strip(${PYTHON_ECMASCRIPT_TRIM_CHARACTERS})
 
 
 def _shown(value) -> str:
@@ -464,11 +466,10 @@ def _files(answer) -> list:
 
 async def _read(url):
     answer = await protocol.get_data(url, timeout=120)
-    states = [part.data["state"] for part in answer.parts
-              if part.kind == "data" and isinstance(part.data.get("state"), dict)]
-    if not states:
+    views = _app_state_views(answer.parts)
+    if views is None:
         raise RuntimeError(f"the {APP} app's data/get returned no state views")
-    return states[0], _files(answer)
+    return views, _files(answer)
 
 
 async def _settled_views(url):
@@ -551,7 +552,7 @@ SETTLE_WINDOW_S = ${pythonSeconds(SETTLE_TIMING.windowMs)}
 SETTLE_BOUND_S = ${pythonSeconds(SETTLE_TIMING.boundMs)}
 #: Where a data/get file part names its path in the home.
 DATA_OBJECTS = "urn:agentenv:data-objects/v1"
-${task.readers === undefined ? "" : renderReaderConstants(task.readers)}${PYTHON_TASK_EVALUATOR}${PYTHON_SETTLE}${task.readers === undefined ? "" : PYTHON_READER_VIEWS}
+${task.readers === undefined ? "" : renderReaderConstants(task.readers)}${PYTHON_TASK_EVALUATOR}${renderPythonAppStateViews()}${PYTHON_SETTLE}${task.readers === undefined ? "" : PYTHON_READER_VIEWS}
 
 async def verify(mcp_url, env_url):
     card = await protocol.get_card(env_url)

@@ -242,3 +242,120 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     }
   },
 );
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "keeps source declarations whose paths cannot be projected into the artifact through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-source-map-path-projection-",
+    );
+    const original = "export const answer = 42;";
+    const cases = [
+      { source: "bad%00.ts", reason: /NUL byte/u },
+      { source: "bad\0.ts", reason: /NUL byte/u },
+      { source: "trailing.ts\0", reason: /NUL byte/u },
+      { source: "file:///bad%00.ts", reason: /NUL byte/u },
+      { source: "https://example.test/bad%00.ts", reason: /NUL byte/u },
+      { source: "C:\\bad\0.ts", reason: /NUL byte/u },
+      { source: "../../source/a.ts", reason: /outside/u },
+      { source: "../../%73ource/a.ts", reason: /outside/u },
+      { source: "../../anchor/a.ts", reason: /outside/u },
+      { source: "../source/a.ts", path: "source/a.ts" },
+      { source: "literal%2500.ts", path: "maps/literal%00.ts" },
+    ];
+    const mapPath = "maps/bundle.js.map";
+    const mapText = JSON.stringify({
+      version: 3,
+      sources: cases.map(({ source }) => source),
+      sourcesContent: cases.map(() => original),
+      names: [],
+      mappings: "",
+    });
+    await writeFixtureFiles(root, { [mapPath]: mapText });
+    const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
+    const originals = graph.nodes.filter(
+      ({ identity }) => identity.strategy === "source-map-original",
+    );
+    expect(originals).toHaveLength(cases.length);
+    const sourceDigest = createHash("sha256").update(original).digest("hex");
+    const mapDigest = createHash("sha256").update(mapText).digest("hex");
+    for (const { source, reason, path } of cases) {
+      const node = originals.find(
+        ({ identity }) =>
+          identity.strategy === "source-map-original" &&
+          identity.original_source === source,
+      );
+      expect(node?.identity).toMatchObject({
+        source_sha256: sourceDigest,
+        source_map_sha256: mapDigest,
+      });
+      expect(node?.observations[0]?.source_map_reference).toEqual({
+        source_name: source,
+        source_root: null,
+        map_path: mapPath,
+        resolution: reason
+          ? { kind: "unresolved", reason: expect.stringMatching(reason) }
+          : { kind: "artifact-relative", path },
+      });
+    }
+    expect(graph.coverage.status).toBe("complete");
+  },
+);
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "keeps local originals but reports incomplete source maps with malformed mappings or offsets through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-malformed-source-map-");
+    const leaf = {
+      version: 3,
+      sources: ["original.ts"],
+      sourcesContent: ["export const answer = 42;"],
+      names: [],
+      mappings: "AAAA",
+    };
+    const maps = {
+      "valid.js.map": leaf,
+      "bad-mapping.js.map": { ...leaf, mappings: "!" },
+      "bad-offset.js.map": {
+        version: 3,
+        sections: [{ offset: { line: -1, column: 0 }, map: leaf }],
+      },
+    };
+    await writeFixtureFiles(
+      root,
+      Object.fromEntries(
+        Object.entries(maps).map(([path, map]) => [path, JSON.stringify(map)]),
+      ),
+    );
+
+    const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
+    expect(graph.coverage.status).toBe("partial");
+    for (const path of Object.keys(maps))
+      expect(graph.nodes).toContainEqual(
+        expect.objectContaining({
+          kind: "source-module",
+          observations: expect.arrayContaining([
+            expect.objectContaining({
+              source_map_reference: expect.objectContaining({
+                map_path: path,
+                source_name: "original.ts",
+              }),
+              properties: expect.objectContaining({ content_available: true }),
+            }),
+          ]),
+        }),
+      );
+
+    const unknownPaths = graph.nodes
+      .filter((node) => node.kind === "unknown")
+      .flatMap((node) => node.observations)
+      .filter(
+        ({ properties }) => properties.operation === "parse-local-source-map",
+      )
+      .map(({ properties }) => properties.path);
+    expect(unknownPaths.toSorted()).toEqual([
+      "bad-mapping.js.map",
+      "bad-offset.js.map",
+    ]);
+  },
+);

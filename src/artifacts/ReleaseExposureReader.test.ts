@@ -1,3 +1,4 @@
+import { WEB_SOURCE_MAP_LIMITS } from "../domain/sourceMapLimits.js";
 import { writeMinimalElfHeader } from "../../tests/fixtures/nativeHeaders.js";
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
@@ -229,6 +230,38 @@ it.each([80, 200])(
     }
   },
 );
+
+describe("ReleaseExposureReader inline base64 map URLs", () => {
+  const encoded = embeddedSourceMap().toString("base64").replace(/=+$/u, "");
+
+  it.each([
+    { separator: "%0A", suffix: "", exposed: true },
+    { separator: "", suffix: "#", exposed: true },
+    { separator: "", suffix: "#ignored,fragment", exposed: true },
+    { separator: "!", suffix: "", exposed: false },
+    { separator: "%21", suffix: "", exposed: false },
+    { separator: "%23", suffix: "#ignored", exposed: false },
+    { separator: "", suffix: "?body#ignored", exposed: false },
+  ])(
+    "treats separator '$separator' and suffix '$suffix' as exposed=$exposed",
+    async ({ separator, suffix, exposed }) => {
+      const root = await createTestTempDirectory("rea-release-inline-map-url-");
+      const path = join(root, "app.js");
+      await writeFile(
+        path,
+        `//${INLINE_MAP_PREFIX}${encoded.slice(0, 4)}${separator}${encoded.slice(4)}${suffix}\n`,
+      );
+      const scanned = await inspect(path);
+      expect(scanned.source_maps).toMatchObject({
+        embedded: exposed ? 1 : 0,
+        unparsed: exposed ? 0 : 1,
+      });
+      expect(sourceMapSourcesStatus(scanned)).toBe(
+        exposed ? "exposed" : "unknown",
+      );
+    },
+  );
+});
 
 describe("ReleaseExposureReader review regressions", () => {
   it("keeps inline CSS source-map coverage unknown in files and packages", async () => {
@@ -647,6 +680,33 @@ describe("ReleaseExposureReader member reads", () => {
   });
 });
 
+it("keeps observed embedded sources when generated coordinates exceed their budget", async () => {
+  const root = await createTestTempDirectory("rea-release-exposure-offset-");
+  const map = {
+    version: 3,
+    sections: [
+      {
+        offset: { line: WEB_SOURCE_MAP_LIMITS.decodedRows - 1, column: 0 },
+        map: {
+          version: 3,
+          sources: ["src/app.ts"],
+          sourcesContent: ["export {};"],
+          mappings: ";",
+        },
+      },
+    ],
+  };
+  await writeFile(join(root, "app.js.map"), JSON.stringify(map));
+  const scanned = await inspect(root);
+  expect(scanned.source_maps).toMatchObject({
+    embedded: 1,
+    unparsed: 1,
+    without_sources: 0,
+    embedded_paths: [join(root, "app.js.map")],
+  });
+  expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
+});
+
 describe("ReleaseExposureReader limits", () => {
   it("counts sourcesContent nested past the old depth-8 walker", async () => {
     const root = await createTestTempDirectory("rea-release-exposure-depth-");
@@ -907,6 +967,25 @@ describe("ReleaseExposureReader unpacked ASAR members", () => {
       await reader.close();
     }
   });
+});
+
+it("does not treat a decoding replacement as observed embedded source", async () => {
+  const root = await createTestTempDirectory("rea-release-lossy-map-");
+  await writeFile(
+    join(root, "app.js.map"),
+    Buffer.concat([
+      Buffer.from('{"version":3,"sources":["a.js"],"sourcesContent":["'),
+      Buffer.from([0xff]),
+      Buffer.from('"],"mappings":""}'),
+    ]),
+  );
+  const scanned = await inspect(root);
+  expect(scanned.source_maps).toMatchObject({
+    embedded: 0,
+    without_sources: 0,
+    unparsed: 1,
+  });
+  expect(sourceMapSourcesStatus(scanned)).toBe("unknown");
 });
 
 describe("ReleaseExposureReader package cleanup", () => {
@@ -1347,6 +1426,30 @@ describe("ReleaseExposureReader sibling map identity", () => {
     expect(scanned.debug_companions).toEqual({ paths: [], skipped: 0 });
     expect(debugCompanionsStatus(scanned)).not.toBe("exposed");
     expect(scanned.source_maps).toMatchObject({ embedded: 0, skipped: 1 });
+  });
+
+  it("keeps a linker map beside a script declared by lossy HTML", async () => {
+    const root = await createTestTempDirectory("rea-release-lossy-sibling-");
+    const page = join(root, "index.html");
+    const linkerMap = join(root, "linker.map");
+    await writeFile(
+      page,
+      Buffer.concat([
+        Buffer.from("<!--"),
+        Buffer.from([0xff]),
+        Buffer.from('--><script src="boot.map"></script>'),
+      ]),
+    );
+    await writeFile(join(root, "boot.map"), "console.log('boot');\n");
+    await writeFile(
+      linkerMap,
+      "Linker script and memory map\n\n.text 0x0000000000401000 0x10 main.o\n",
+    );
+
+    const scanned = await inspect(page);
+    expect(scanned.debug_companions.paths).toEqual([linkerMap]);
+    expect(debugCompanionsStatus(scanned)).toBe("exposed");
+    expect(sourceMapSourcesStatus(scanned)).toBe("unknown");
   });
 
   it("does not report a native image beside a selected file as a linker map", async () => {
@@ -2249,17 +2352,35 @@ describe("ReleaseExposureReader sibling map allowance", () => {
     );
     await writeFile(join(root, "short-json.map"), map);
     await writeFile(join(root, "long-json.map"), "{".padEnd(pastProbe, " "));
+    await writeFile(
+      join(root, "split-utf8.map"),
+      Buffer.concat([
+        Buffer.from(
+          linker.padEnd(MAX_RELEASE_EXPOSURE_MEMBER_PROBE_BYTES - 1, " "),
+        ),
+        Buffer.from("é"),
+      ]),
+    );
+    await writeFile(
+      join(root, "invalid-prefix.map"),
+      Buffer.concat([
+        Buffer.from([0xff]),
+        Buffer.from(linker),
+        Buffer.alloc(pastProbe, 0x20),
+      ]),
+    );
     const { scanned, budgets } = await countSiblingReads(() =>
       inspect(join(root, "app.dll")),
     );
     expect(budgets).toEqual(
-      Array.from({ length: 4 }, () => MAX_RELEASE_EXPOSURE_MEMBER_PROBE_BYTES),
+      Array.from({ length: 6 }, () => MAX_RELEASE_EXPOSURE_MEMBER_PROBE_BYTES),
     );
     expect([...scanned.debug_companions.paths].sort()).toEqual([
       join(root, "long-linker.map"),
       join(root, "short-linker.map"),
+      join(root, "split-utf8.map"),
     ]);
-    expect(scanned.debug_companions.skipped).toBe(2);
+    expect(scanned.debug_companions.skipped).toBe(3);
     expect(scanned.source_maps.skipped).toBe(0);
   });
 });
@@ -2295,7 +2416,7 @@ const binaryPlist = (key: string, value: Buffer): Buffer => {
 const plistObject = (type: number, length: number, body: Buffer): Buffer =>
   Buffer.concat([Buffer.from([(type << 4) | 0x0f, 0x10, length]), body]);
 
-describe("ReleaseExposureReader text encodings", () => {
+const textEncodingFixture = () => {
   const marker = "-----BEGIN PRIVATE KEY-----\n";
   const inlineMap = `//${INLINE_MAP_PREFIX}${Buffer.from(
     JSON.stringify({
@@ -2324,6 +2445,535 @@ describe("ReleaseExposureReader text encodings", () => {
       await reader.close();
     }
   };
+
+  return { marker, inlineMap, utf16, visited };
+};
+
+describe("ReleaseExposureReader text encodings incomplete reads", () => {
+  const { marker, inlineMap, utf16, visited } = textEncodingFixture();
+
+  it("keeps malformed UTF-8 text unassessed while retaining visible markers", async () => {
+    const root = await createTestTempDirectory("rea-release-lossy-text-");
+    await writeFile(
+      join(root, "app.js"),
+      Buffer.concat([
+        Buffer.from(`const key = \`${marker}\`;\n`),
+        Buffer.from([0xff]),
+      ]),
+    );
+    const { texts, members } = await visited(root);
+    expect(texts.join("")).toContain(marker);
+    expect(members).toEqual({ scanned: 0, skipped: 1 });
+  });
+
+  it("keeps a malformed UTF-16 member unassessed", async () => {
+    const root = await createTestTempDirectory("rea-release-lossy-text-");
+    await writeFile(
+      join(root, "app.js"),
+      Buffer.concat([utf16(marker, "le"), Buffer.from([0x61])]),
+    );
+    const { texts, members } = await visited(root);
+    expect(texts.join("")).toContain(marker);
+    expect(members).toEqual({ scanned: 0, skipped: 1 });
+  });
+
+  it("keeps a lossy compressed package member unassessed", async () => {
+    const root = await createTestTempDirectory("rea-release-lossy-package-");
+    const bytes = Buffer.concat([Buffer.from(marker), Buffer.from([0xff])]);
+    await writeFile(
+      join(root, "app.dll"),
+      dotnetBundleFixture([{ path: "app.js", bytes, compressed: true }]).bytes,
+    );
+    const { texts, members } = await visited(root);
+    expect(texts.join("")).toContain(marker);
+    expect(members.skipped).toBeGreaterThan(0);
+  });
+
+  it.each([false, true])(
+    "keeps a malformed source map unparsed and preserves embedded sources (%s)",
+    async (embedded) => {
+      const root = await createTestTempDirectory("rea-release-lossy-map-");
+      const before = '{"version":3,"sources":["src/';
+      const after = embedded
+        ? '"],"sourcesContent":["export {};"],"mappings":""}'
+        : '"],"mappings":""}';
+      await writeFile(
+        join(root, "app.js.map"),
+        Buffer.concat([
+          Buffer.from(before),
+          Buffer.from([0xff]),
+          Buffer.from(after),
+        ]),
+      );
+      const scanned = await inspect(root);
+      expect(scanned.source_maps).toMatchObject({
+        embedded: embedded ? 1 : 0,
+        without_sources: 0,
+        unparsed: 1,
+      });
+      expect(sourceMapSourcesStatus(scanned)).toBe(
+        embedded ? "exposed" : "unknown",
+      );
+    },
+  );
+
+  it("does not infer absent maps from a lossy script", async () => {
+    const root = await createTestTempDirectory("rea-release-lossy-script-");
+    await writeFile(
+      join(root, "app.js"),
+      Buffer.concat([
+        Buffer.from('const x = "'),
+        Buffer.from([0xff]),
+        Buffer.from('";'),
+      ]),
+    );
+    const scanned = await inspect(root);
+    expect(scanned.text_members).toEqual({ scanned: 0, skipped: 1 });
+    expect(sourceMapSourcesStatus(scanned)).toBe("unknown");
+  });
+
+  it("retains a visible inline map when its script is lossy", async () => {
+    const root = await createTestTempDirectory("rea-release-lossy-script-");
+    await writeFile(
+      join(root, "app.js"),
+      Buffer.concat([
+        Buffer.from('const x = "'),
+        Buffer.from([0xff]),
+        Buffer.from(`";\n${inlineMap}\n`),
+      ]),
+    );
+    const scanned = await inspect(root);
+    expect(scanned.source_maps).toMatchObject({ embedded: 1, skipped: 1 });
+    expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
+  });
+});
+
+describe("ReleaseExposureReader lossy source-map URL suffixes", () => {
+  const badByte = Buffer.from([0xff]);
+
+  it.each([
+    {
+      name: "malformed UTF-8 confined to the fragment",
+      prefix: Buffer.alloc(0),
+      fragment: badByte,
+    },
+    {
+      name: "a literal replacement character and unrelated malformed UTF-8",
+      prefix: Buffer.concat([
+        Buffer.from('const value = "'),
+        badByte,
+        Buffer.from('";\n'),
+      ]),
+      fragment: Buffer.from("\ufffd"),
+    },
+  ])("retains an inline map with $name", async ({ prefix, fragment }) => {
+    const root = await createTestTempDirectory("rea-release-inline-fragment-");
+    const path = join(root, "app.js");
+    const encoded = embeddedSourceMap().toString("base64");
+    await writeFile(
+      path,
+      Buffer.concat([
+        prefix,
+        Buffer.from(`//${INLINE_MAP_PREFIX}${encoded}#`),
+        fragment,
+        Buffer.from("\n"),
+      ]),
+    );
+    const scanned = await inspect(path);
+    expect(scanned.source_maps).toMatchObject({ embedded: 1, skipped: 1 });
+    expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
+  });
+
+  it.each(["base64", "percent"] as const)(
+    "retains an inline %s map with an undecodable MIME parameter",
+    async (encoding) => {
+      const root = await createTestTempDirectory("rea-release-inline-mime-");
+      const path = join(root, "app.js");
+      const map = embeddedSourceMap();
+      const body =
+        encoding === "base64"
+          ? `;base64,${map.toString("base64")}`
+          : `,${encodeURIComponent(map.toString("utf8"))}`;
+      await writeFile(
+        path,
+        Buffer.concat([
+          Buffer.from("//# sourceMappingURL=data:application/json;name="),
+          badByte,
+          Buffer.from(`${body}\n`),
+        ]),
+      );
+      const scanned = await inspect(path);
+      expect(scanned.source_maps).toMatchObject({ embedded: 1, skipped: 1 });
+      expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
+    },
+  );
+
+  it.each([
+    { form: "relative", delimiter: "?" },
+    { form: "file:", delimiter: "#" },
+  ])(
+    "resolves a $form map when malformed UTF-8 is in its '$delimiter' suffix",
+    async ({ form, delimiter }) => {
+      const root = await createTestTempDirectory("rea-release-map-suffix-");
+      const mapPath = join(root, "debug.json");
+      const reference =
+        form === "relative" ? "debug.json" : pathToFileURL(mapPath).href;
+      await writeFile(mapPath, embeddedSourceMap());
+      await writeFile(
+        join(root, "app.js"),
+        Buffer.concat([
+          Buffer.from(`//# sourceMappingURL=${reference}${delimiter}`),
+          badByte,
+          Buffer.from("\n"),
+        ]),
+      );
+      const scanned = await inspect(root);
+      expect(scanned.source_maps).toMatchObject({ embedded: 1, skipped: 1 });
+      expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
+    },
+  );
+});
+
+describe("ReleaseExposureReader lossy HTML script URLs", () => {
+  it.each([
+    {
+      field: "script fragment",
+      before: '<script src="z.payload#',
+      after: '"></script>',
+      target: "z.payload",
+      status: "exposed",
+    },
+    {
+      field: "base query",
+      before: '<base href="nested/?v=',
+      after: '"><script src="z.payload"></script>',
+      target: "nested/z.payload",
+      status: "exposed",
+    },
+    {
+      field: "script path",
+      before: '<script src="z',
+      after: '.payload#ignored"></script>',
+      target: "z\ufffd.payload",
+      status: "unknown",
+    },
+    {
+      field: "base path",
+      before: '<base href="nested',
+      after: '/?v=1"><script src="z.payload"></script>',
+      target: "nested\ufffd/z.payload",
+      status: "unknown",
+    },
+    {
+      field: "base path with an explicit file authority",
+      before: '<base href="nested',
+      after: '/"><script src="FILE_URL"></script>',
+      target: "z.payload",
+      status: "exposed",
+    },
+    {
+      field: "base path with a file-scheme relative reference",
+      before: '<base href="nested',
+      after: '/"><script src="file:z.payload"></script>',
+      target: "nested\ufffd/z.payload",
+      status: "unknown",
+    },
+  ] as const)(
+    "reports $status when an HTML $field contains undecodable bytes",
+    async ({ before, after, target, status }) => {
+      const root = await createTestTempDirectory("rea-release-html-loss-");
+      const script = join(root, target);
+      await mkdir(dirname(script), { recursive: true });
+      await writeFile(
+        script,
+        `//${INLINE_MAP_PREFIX}${embeddedSourceMap().toString("base64")}\n`,
+      );
+      await writeFile(
+        join(root, "a.html"),
+        Buffer.concat([
+          Buffer.from(before),
+          Buffer.from([0xff]),
+          Buffer.from(after.replace("FILE_URL", pathToFileURL(script).href)),
+        ]),
+      );
+      const scanned = await inspect(root);
+      expect(scanned.text_members.skipped).toBe(1);
+      expect(scanned.source_maps).toMatchObject({
+        embedded: status === "exposed" ? 1 : 0,
+        skipped: 1,
+      });
+      expect(sourceMapSourcesStatus(scanned)).toBe(status);
+    },
+  );
+});
+
+describe("ReleaseExposureReader text encodings address identity", () => {
+  it.each(["javascript", "html"])(
+    "does not turn a lossy %s declaration into another file's path",
+    async (kind) => {
+      const root = await createTestTempDirectory("rea-release-lossy-path-");
+      const companion = join(root, "bad\ufffd.map");
+      await writeFile(companion, "linker map\n");
+      const before =
+        kind === "javascript"
+          ? `//# ${"sourceMappingURL"}=bad`
+          : '<script src="bad';
+      const after = kind === "javascript" ? ".map\n" : '.map"></script>';
+      await writeFile(
+        join(root, kind === "javascript" ? "app.js" : "index.html"),
+        Buffer.concat([
+          Buffer.from(before),
+          Buffer.from([0xff]),
+          Buffer.from(after),
+        ]),
+      );
+      const scanned = await inspect(root);
+      expect(scanned.debug_companions.paths).toContain(companion);
+      expect(scanned.source_maps.skipped).toBeGreaterThan(0);
+      expect(sourceMapSourcesStatus(scanned)).toBe("unknown");
+    },
+  );
+
+  it("does not parse an inline map whose URL contains a decoding replacement", async () => {
+    const root = await createTestTempDirectory("rea-release-lossy-inline-url-");
+    const encoded = Buffer.from(embeddedSourceMap()).toString("base64");
+    await writeFile(
+      join(root, "app.js"),
+      Buffer.concat([
+        Buffer.from(`//${INLINE_MAP_PREFIX}${encoded.slice(0, 12)}`),
+        Buffer.from([0xff]),
+        Buffer.from(`${encoded.slice(12)}\n`),
+      ]),
+    );
+    const scanned = await inspect(root);
+    expect(scanned.source_maps.embedded).toBe(0);
+    expect(scanned.source_maps.skipped).toBeGreaterThan(0);
+    expect(sourceMapSourcesStatus(scanned)).toBe("unknown");
+  });
+
+  it("retains embedded sources in a lossy inline map", async () => {
+    const root = await createTestTempDirectory("rea-release-lossy-map-");
+    const bytes = Buffer.concat([
+      Buffer.from('{"version":3,"sources":["src/'),
+      Buffer.from([0xff]),
+      Buffer.from('"],"sourcesContent":["export {};"],"mappings":""}'),
+    ]);
+    await writeFile(
+      join(root, "app.js"),
+      `//${INLINE_MAP_PREFIX}${bytes.toString("base64")}\n`,
+    );
+    const scanned = await inspect(root);
+    expect(scanned.source_maps).toMatchObject({
+      embedded: 1,
+      unparsed: 1,
+      without_sources: 0,
+    });
+    expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
+  });
+
+  it("keeps a lossy map loaded as a script unparsed", async () => {
+    const root = await createTestTempDirectory("rea-release-lossy-map-");
+    await writeFile(
+      join(root, "index.html"),
+      '<script src="main.map"></script>',
+    );
+    await writeFile(
+      join(root, "main.map"),
+      Buffer.concat([
+        Buffer.from('{"version":3,"sources":["src/'),
+        Buffer.from([0xff]),
+        Buffer.from('"],"sourcesContent":["export {};"],"mappings":""}'),
+      ]),
+    );
+    const scanned = await inspect(root);
+    expect(scanned.source_maps).toMatchObject({
+      embedded: 1,
+      unparsed: 1,
+      without_sources: 0,
+    });
+    expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
+  });
+
+  it("keeps a lossy generic map's companion classification unknown", async () => {
+    const root = await createTestTempDirectory("rea-release-lossy-map-");
+    await writeFile(
+      join(root, "debug.map"),
+      Buffer.concat([
+        Buffer.from('{"version":3,"sources":["'),
+        Buffer.from([0xff]),
+        Buffer.from('"],"mappings":""}'),
+      ]),
+    );
+    const scanned = await inspect(root);
+    expect(scanned.source_maps.unparsed).toBe(1);
+    expect(scanned.debug_companions.skipped).toBe(1);
+    expect(scanned.omitted).toContainEqual(
+      expect.objectContaining({ subject: "debug companions", count: 1 }),
+    );
+    expect(debugCompanionsStatus(scanned)).toBe("unknown");
+  });
+});
+
+describe("ReleaseExposureReader text encodings roles and identity", () => {
+  const { visited } = textEncodingFixture();
+
+  it("retains an observed linker-map prefix when later text is lossy", async () => {
+    const root = await createTestTempDirectory("rea-release-lossy-map-");
+    const path = join(root, "debug.map");
+    await writeFile(
+      path,
+      Buffer.concat([Buffer.from("linker map "), Buffer.from([0xff])]),
+    );
+    const scanned = await inspect(root);
+    expect(scanned.debug_companions.paths).toContain(path);
+    expect(debugCompanionsStatus(scanned)).toBe("exposed");
+    expect(scanned.text_members.skipped).toBe(1);
+  });
+
+  it("retains a visible linker prefix after a complete XSSI envelope", async () => {
+    const root = await createTestTempDirectory("rea-release-lossy-map-");
+    const path = join(root, "debug.map");
+    await writeFile(
+      path,
+      Buffer.concat([Buffer.from(")]}'\nlinker map "), Buffer.from([0xff])]),
+    );
+    expect((await inspect(root)).debug_companions.paths).toContain(path);
+  });
+
+  it("keeps a package owner's lossy JavaScript .map as a script", async () => {
+    const root = await createTestTempDirectory("rea-release-lossy-bun-");
+    const contents = Buffer.concat([
+      Buffer.from('{"version":3,"sources":["src/'),
+      Buffer.from([0xff]),
+      Buffer.from('"],"sourcesContent":["export {};"],"mappings":""}'),
+    ]);
+    await writeFile(
+      join(root, "app"),
+      elfBunSection(
+        bunPrefixedPayload(
+          bunModuleGraphPayload({
+            modules: [{ name: "/$bunfs/root/main.map", loader: 1, contents }],
+          }),
+        ),
+      ),
+    );
+    const scanned = await inspect(root);
+    expect(scanned.source_maps).toMatchObject({ embedded: 1, unparsed: 1 });
+    expect(scanned.debug_companions).toEqual({ paths: [], skipped: 0 });
+  });
+
+  it("keeps valid UTF-8 replacement characters complete", async () => {
+    const root = await createTestTempDirectory("rea-release-valid-utf8-");
+    await writeFile(join(root, "app.js"), 'const replacement = "\ufffd";');
+    expect((await visited(root)).members).toEqual({ scanned: 1, skipped: 0 });
+  });
+
+  it("keeps each lossy same-path package occurrence unresolved", async () => {
+    const root = await createTestTempDirectory("rea-release-lossy-duplicates-");
+    const map = Buffer.concat([
+      Buffer.from('{"version":3,"sources":["'),
+      Buffer.from([0xff]),
+      Buffer.from('"],"mappings":""}'),
+    ]);
+    await writeFile(
+      join(root, "app.exe"),
+      cArchiveExecutable({
+        carrier: "pe",
+        layout: "2.1",
+        pythonVersion: 310,
+        members: [
+          { name: "debug.map", typeCode: "x", compress: false, payload: map },
+          { name: "debug.map", typeCode: "x", compress: false, payload: map },
+        ],
+      }),
+    );
+    const scanned = await inspect(root);
+    expect(scanned.source_maps.unparsed).toBe(2);
+    expect(scanned.debug_companions.skipped).toBe(2);
+    expect(scanned.omitted).toContainEqual(
+      expect.objectContaining({ subject: "debug companions", count: 2 }),
+    );
+  });
+
+  it.each(["before", "after"])(
+    "keeps duplicate lossy package members ambiguous when declared %s",
+    async (order) => {
+      const root = await createTestTempDirectory(
+        "rea-release-lossy-duplicates-",
+      );
+      const map = Buffer.concat([
+        Buffer.from('{"version":3,"sources":["'),
+        Buffer.from([0xff]),
+        Buffer.from('"],"mappings":""}'),
+      ]);
+      const maps = [
+        { name: "debug.map", typeCode: "x", compress: false, payload: map },
+        { name: "debug.map", typeCode: "x", compress: false, payload: map },
+      ];
+      const script = {
+        name: "app.js",
+        typeCode: "x",
+        compress: false,
+        payload: Buffer.from(`//# ${"sourceMappingURL"}=debug.map\n`),
+      };
+      await writeFile(
+        join(root, "app.exe"),
+        cArchiveExecutable({
+          carrier: "pe",
+          layout: "2.1",
+          pythonVersion: 310,
+          members: order === "before" ? [script, ...maps] : [...maps, script],
+        }),
+      );
+      const scanned = await inspect(root);
+      expect(scanned.source_maps.unparsed).toBe(2);
+      expect(scanned.debug_companions.skipped).toBe(2);
+      expect(debugCompanionsStatus(scanned)).toBe("unknown");
+    },
+  );
+});
+
+describe("ReleaseExposureReader text encodings declaration order", () => {
+  it.each(["map first", "declaration first"])(
+    "retracts only the declared lossy map's uncertain companion role (%s)",
+    async (order) => {
+      const root = await createTestTempDirectory("rea-release-lossy-map-role-");
+      const declared = order === "map first" ? "a.map" : "z.map";
+      const other = order === "map first" ? "b.map" : "y.map";
+      const script = order === "map first" ? "z.js" : "a.js";
+      const map = Buffer.concat([
+        Buffer.from('{"version":3,"sources":["'),
+        Buffer.from([0xff]),
+        Buffer.from('"],"mappings":""}'),
+      ]);
+      await writeFile(join(root, declared), map);
+      await writeFile(join(root, other), map);
+      const directive = `//# ${"sourceMappingURL"}=${declared}\n`;
+      await writeFile(join(root, script), directive.repeat(2));
+      const scanned = await inspect(root);
+      expect(scanned.debug_companions).toEqual({ paths: [], skipped: 1 });
+      expect(scanned.omitted).toContainEqual(
+        expect.objectContaining({ subject: "debug companions", count: 1 }),
+      );
+      expect(debugCompanionsStatus(scanned)).toBe("unknown");
+    },
+  );
+
+  it("keeps an unsupported UTF-32 generic map's companion classification unknown", async () => {
+    const root = await createTestTempDirectory("rea-release-undecodable-map-");
+    await writeFile(
+      join(root, "debug.map"),
+      Buffer.from([0xff, 0xfe, 0, 0, 0x7b, 0, 0, 0]),
+    );
+    const scanned = await inspect(root);
+    expect(scanned.source_maps.unparsed).toBe(1);
+    expect(scanned.debug_companions.skipped).toBe(1);
+    expect(debugCompanionsStatus(scanned)).toBe("unknown");
+  });
+});
+
+describe("ReleaseExposureReader text encodings existing encodings", () => {
+  const { marker, inlineMap, utf16, visited } = textEncodingFixture();
 
   it.each(["le", "be"] as const)(
     "decodes UTF-16 %s members instead of scanning NUL-interleaved bytes",

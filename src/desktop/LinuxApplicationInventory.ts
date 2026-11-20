@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { desktopLibraryPolicy } from "../domain/desktop/libraryPolicy.js";
 import { lstat, realpath, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join } from "node:path";
@@ -158,10 +159,8 @@ const locateDesktopEntry = async (
   request: LinuxApplicationRequest,
   selector: string,
   signal?: AbortSignal,
-): Promise<
-  Result<{ path: string; id: string | null }, LinuxApplicationRefusal>
-> => {
-  if (isAbsolute(selector)) return ok({ path: selector, id: null });
+): ReturnType<typeof readDesktopEntry> => {
+  if (isAbsolute(selector)) return readDesktopEntry(selector, null, signal);
   const id = selector.endsWith(".desktop") ? selector : `${selector}.desktop`;
   const searched = desktopEntryDirectories(request.environment, request.home);
   for (const directory of searched) {
@@ -171,36 +170,55 @@ const locateDesktopEntry = async (
     assertArtifactReadActive(signal);
     if (!kind.ok)
       return err({ reason: "desktop_entry_search_incomplete", searched });
-    if (kind.value === "file")
-      return ok({ path, id: id.slice(0, -".desktop".length) });
-    // A nested entry in this directory outranks a flat one in a later root.
-    const nested = await findNestedDesktopEntry(directory, id, signal);
-    assertArtifactReadActive(signal);
-    if (nested !== undefined && "path" in nested)
-      return ok({ path: nested.path, id: id.slice(0, -".desktop".length) });
-    // The bounded search did not establish absence, so a later root must not
-    // supply a different application under the same id.
-    if (nested !== undefined)
-      return err({ reason: "desktop_entry_search_incomplete", searched });
+    let candidate = path;
+    if (kind.value !== "file") {
+      // A nested entry in this directory outranks a flat one in a later root.
+      const nested = await findNestedDesktopEntry(directory, id, signal);
+      assertArtifactReadActive(signal);
+      if (nested === undefined) continue;
+      // A bounded search cannot establish absence in this root.
+      if (!("path" in nested))
+        return err({ reason: "desktop_entry_search_incomplete", searched });
+      candidate = nested.path;
+    }
+    const located = await readDesktopEntry(
+      candidate,
+      id.slice(0, -".desktop".length),
+      signal,
+    );
+    if (!located.ok || !located.value.entry.hidden) return located;
+    const { type, malformed_line } = located.value.entry;
+    if (type !== "Application") continue;
+    // Claim deletion only after the hidden entry establishes its structure.
+    if (malformed_line !== undefined)
+      return err({
+        reason: "desktop_entry_invalid",
+        detail: `malformed desktop entry structure at line ${String(malformed_line)}`,
+      });
+    break;
   }
   return err({ reason: "desktop_entry_not_found", searched });
 };
 
 const readDesktopEntry = async (
   path: string,
+  id: string | null,
   signal: AbortSignal | undefined,
-): Promise<Result<DesktopEntry, LinuxApplicationRefusal>> => {
+): Promise<
+  Result<
+    { path: string; id: string | null; entry: DesktopEntry },
+    LinuxApplicationRefusal
+  >
+> => {
   const options = {
     symlinks: "follow" as const,
     ...(signal === undefined ? {} : { signal }),
   };
-  let text: string;
+  let bytes: Uint8Array;
   try {
-    text = (
-      await withOwnedRegularFile(path, options, ({ handle }) =>
-        readStableFileBytes(handle, path, DESKTOP_ENTRY_MAX_BYTES, options),
-      )
-    ).toString("utf8");
+    bytes = await withOwnedRegularFile(path, options, ({ handle }) =>
+      readStableFileBytes(handle, path, DESKTOP_ENTRY_MAX_BYTES, options),
+    );
   } catch (cause: unknown) {
     const failure = hostReadFailure(cause);
     if (failure !== cause) throw failure;
@@ -213,15 +231,16 @@ const readDesktopEntry = async (
           : "unreadable",
     });
   }
+  let text: string;
+  try {
+    text = decodeStrictUtf8(bytes, "preserve");
+  } catch {
+    return err({ reason: "desktop_entry_invalid", detail: "not valid UTF-8" });
+  }
   const parsed = parseDesktopEntry(text);
   if (!parsed.ok)
     return err({ reason: "desktop_entry_invalid", detail: parsed.error });
-  if (parsed.value.type !== "Application" || parsed.value.exec === null)
-    return err({
-      reason: "desktop_entry_invalid",
-      detail: "not an Application entry with an Exec key",
-    });
-  return ok(parsed.value);
+  return ok({ path, id, entry: parsed.value });
 };
 
 const readHeader = async (
@@ -251,14 +270,15 @@ const launchEnvironment = (
   wrapper: ReturnType<typeof unwrapDesktopCommand>,
   inherited: LinuxApplicationRequest["environment"],
 ) => {
-  if (!wrapper.clearEnvironment) {
-    const environment = { ...inherited, ...wrapper.environment };
-    return { environment, lookupEnvironment: environment };
-  }
-  const environment = wrapper.environment;
-  // GNU env's execvp searches the Linux system path when PATH is absent.
+  const inheritedEnvironment = wrapper.clearEnvironment ? {} : { ...inherited };
+  for (const name of wrapper.unsetEnvironment ?? [])
+    delete inheritedEnvironment[name];
+  const environment = { ...inheritedEnvironment, ...wrapper.environment };
+  // GNU env's execvp searches the Linux system path when the prefix removes PATH.
+  const pathRemoved =
+    wrapper.clearEnvironment || wrapper.unsetEnvironment?.includes("PATH");
   const lookupEnvironment =
-    environment.PATH === undefined
+    pathRemoved && environment.PATH === undefined
       ? { ...environment, PATH: "/bin:/usr/bin" }
       : environment;
   return { environment, lookupEnvironment };
@@ -367,28 +387,34 @@ const launchCommand = async (
     signal,
   );
   if (!located.ok) return located;
-  const entry = await readDesktopEntry(located.value.path, signal);
-  if (!entry.ok) return entry;
-  const tokens = tokenizeDesktopExec(entry.value.exec ?? "");
+  const { entry } = located.value;
+  if (entry.type !== "Application" || entry.exec === null)
+    return err({
+      reason: "desktop_entry_invalid",
+      detail: "not an Application entry with an Exec key",
+    });
+  const tokens = tokenizeDesktopExec(entry.exec);
   if (!tokens.ok)
     return err({ reason: "desktop_entry_invalid", detail: tokens.error });
   const {
     type: _type,
     try_exec: _tryExec,
+    hidden: _hidden,
+    malformed_line: _malformedLine,
     path: workingDirectory,
     ...fields
-  } = entry.value;
+  } = entry;
   return ok({
     argv: expandDesktopExec(
       tokens.value,
       {
-        icon: entry.value.icon,
-        name: entry.value.name,
+        icon: entry.icon,
+        name: entry.name,
         location: located.value.path,
       },
       request.arguments,
     ),
-    workingDirectory: workingDirectory ?? request.home,
+    workingDirectory: workingDirectory || request.home,
     entry: {
       id: located.value.id,
       path: located.value.path,
@@ -428,13 +454,14 @@ const directLaunchStateHome = (
   wrapper: ReturnType<typeof unwrapDesktopCommand>,
   packageKind: Package["kind"],
   hostHome: string,
-): string => {
+): string | undefined => {
   // Sandbox-managed directories continue to use the host home.
   if (wrapper.kind !== "direct" || packageKind === "snap") return hostHome;
   const launchHome = wrapper.environment.HOME;
-  return launchHome !== undefined && isAbsolute(launchHome)
-    ? launchHome
-    : hostHome;
+  if (launchHome !== undefined && isAbsolute(launchHome)) return launchHome;
+  if (wrapper.clearEnvironment || wrapper.unsetEnvironment?.includes("HOME"))
+    return undefined;
+  return hostHome;
 };
 
 /** Resolve what the request launches, where it came from and where it may keep state. */
@@ -447,6 +474,11 @@ export const inspectLinuxApplication = async (
   if (!command.ok) return command;
   const { argv, workingDirectory, entry } = command.value;
   const wrapper = unwrapDesktopCommand(argv);
+  if (wrapper.invalidUnset)
+    return err({
+      reason: "desktop_entry_invalid",
+      detail: "env unset does not name a variable",
+    });
   const directory = await envApplicationDirectory(
     wrapper.chdir?.path,
     workingDirectory,
@@ -517,6 +549,11 @@ export const inspectLinuxApplication = async (
     wrapper.kind === "flatpak" ? null : path,
     entry,
   );
+  const stateHome = directLaunchStateHome(wrapper, package_.kind, request.home);
+  if (stateHome === undefined)
+    limitations.push(
+      "The launch prefix provides no absolute HOME after removing the inherited value. The application's default home state paths are unknown. Select known locations with --state-path.",
+    );
   return ok({
     inventory: {
       desktop_entry: entry,
@@ -535,7 +572,7 @@ export const inspectLinuxApplication = async (
         names,
         {
           environment,
-          home: directLaunchStateHome(wrapper, package_.kind, request.home),
+          home: stateHome,
         },
         sandboxDirectories,
       ),

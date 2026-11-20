@@ -312,7 +312,7 @@ export const createSemanticElectronAppPathChangeQuery = (
         for (const choice of semanticAliasSelectionChoices(key!)) {
           const sources = t.isObjectExpression(node)
             ? semanticObjectPropertyReferences(node, [choice], state)
-            : semanticArrayPropertyReferences(node, [choice]);
+            : semanticArrayPropertyReferences(node, [choice], state);
           for (const source of sources)
             if (
               !source.inherited ||

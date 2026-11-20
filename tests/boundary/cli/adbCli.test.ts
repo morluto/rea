@@ -35,6 +35,7 @@ it
     "zero height",
     "invalid chunk type",
     "invalid checksum",
+    "invalid truecolor depth",
     "truncated header",
     "valid",
   ] as const)(
@@ -49,6 +50,7 @@ it
     if (kind === "zero width") png.writeUInt32BE(0, 16);
     if (kind === "zero height") png.writeUInt32BE(0, 20);
     if (kind === "invalid chunk type") png[12] = 0xc9;
+    if (kind === "invalid truecolor depth") png[24] = 4;
     if (kind !== "invalid checksum")
       png.writeUInt32BE(crc32(png.subarray(12, 29)), 29);
     else png[29] = png[29]! ^ 0xff;
@@ -100,7 +102,7 @@ exit 1
       ).toMatchObject({ width: 1, height: 1 });
       expect(output.limitations).toContainEqual(
         expect.stringMatching(
-          /PNG signature.*IHDR.*checksum.*dimensions.*validated.*encoding.*image contents.*not validated/iu,
+          /PNG signature.*IHDR.*encoding fields.*validated.*pixel data.*undecoded/iu,
         ),
       );
       expect(
@@ -230,16 +232,19 @@ exit 1
   },
 );
 
+const MISSING_ADB =
+  process.platform === "win32" ? "C:\\nonexistent\\adb" : "/nonexistent/adb";
+
 it.each([
   [
     ["inspect-adb-client", "--json"],
-    "/nonexistent/adb",
-    "The selected adb binary was not found: /nonexistent/adb. Set REA_ADB_PATH",
+    MISSING_ADB,
+    `The selected adb binary was not found: ${MISSING_ADB}. Set REA_ADB_PATH`,
   ],
   [
     ["list-adb-devices", "--json"],
-    "/nonexistent/adb",
-    "The selected adb binary was not found: /nonexistent/adb. Set REA_ADB_PATH",
+    MISSING_ADB,
+    `The selected adb binary was not found: ${MISSING_ADB}. Set REA_ADB_PATH`,
   ],
   [
     ["list-adb-devices", "--json"],

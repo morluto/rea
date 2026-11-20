@@ -1,10 +1,11 @@
-import {
-  BinaryResourceFailure,
-  type ImageSection,
-} from "../domain/binaryContainer.js";
+import type { ImageSection } from "../domain/binaryContainer.js";
 import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
 import { keyedBy, uniqueKeyed } from "../domain/keyedCollection.js";
-import { readBinaryContainer } from "../domain/native/readBinaryContainer.js";
+import type { ZstandardFramePause } from "../domain/compression/zstandardExactFrame.js";
+import {
+  readBinaryContainer,
+  readBinaryContainerCooperative,
+} from "../domain/native/readBinaryContainer.js";
 import type {
   RustAuditableMetadata,
   RustBinary,
@@ -19,7 +20,6 @@ import { RUST_PRODUCER_DEFAULTS } from "../domain/rust/rustResourceLimits.js";
 import {
   readAuditableSection,
   RUST_AUDITABLE_FORMAT,
-  RustAuditableResourceFailure,
 } from "./RustAuditableReader.js";
 import { hasWasmPreamble, readRustWasmSections } from "./RustWasmImage.js";
 
@@ -63,9 +63,44 @@ export const readRustBinaryImage = (
   bytes: Buffer,
   maxRustcHashes = DEFAULT_RUSTC_HASH_LIMIT,
   maxOutputBytes: number = RUST_PRODUCER_DEFAULTS.output_bytes,
+): RustBinaryImage =>
+  finishRustBinaryImage(
+    bytes,
+    maxRustcHashes,
+    maxOutputBytes,
+    hasWasmPreamble(bytes) ? wasmLayout(bytes) : nativeLayout(bytes),
+  );
+
+/** Same image as {@link readRustBinaryImage}. ELF section names yield through `pause`. */
+export const readRustBinaryImageCooperative = async (
+  bytes: Buffer,
+  maxRustcHashes: number | undefined,
+  maxOutputBytes: number | undefined,
+  pause: ZstandardFramePause,
+): Promise<RustBinaryImage> =>
+  finishRustBinaryImage(
+    bytes,
+    maxRustcHashes ?? DEFAULT_RUSTC_HASH_LIMIT,
+    maxOutputBytes ?? RUST_PRODUCER_DEFAULTS.output_bytes,
+    hasWasmPreamble(bytes)
+      ? wasmLayout(bytes)
+      : nativeLayout(
+          bytes,
+          await readBinaryContainerCooperative(
+            bytes,
+            "inspect_rust_binary",
+            pause,
+          ),
+        ),
+  );
+
+const finishRustBinaryImage = (
+  bytes: Buffer,
+  maxRustcHashes: number,
+  maxOutputBytes: number,
+  layout: RustImageLayout,
 ): RustBinaryImage => {
-  const { section_name, dependency, compiler_strings, ...identity } =
-    hasWasmPreamble(bytes) ? wasmLayout(bytes) : nativeLayout(bytes);
+  const { section_name, dependency, compiler_strings, ...identity } = layout;
   return {
     ...identity,
     auditable_metadata:
@@ -89,8 +124,10 @@ export const readRustBinaryImage = (
   };
 };
 
-const nativeLayout = (bytes: Buffer): RustImageLayout => {
-  const container = readContainer(bytes);
+const nativeLayout = (
+  bytes: Buffer,
+  container = readBinaryContainer(bytes, "inspect_rust_binary"),
+): RustImageLayout => {
   const section_name = rustDependencySectionName(container.format);
   const dependency = dependencySection(section_name, container.sections);
   return {
@@ -148,27 +185,6 @@ const duplicateDependencySection = () =>
     RUST_AUDITABLE_FORMAT,
     "Image contains more than one dependency section",
   );
-
-const readContainer = (bytes: Buffer) => {
-  try {
-    return readBinaryContainer(bytes);
-  } catch (cause) {
-    // A container format failure is already a ParseFailureError; it keeps
-    // its own kind and facts instead of being restated as a Rust failure.
-    if (cause instanceof BinaryResourceFailure)
-      throw new RustAuditableResourceFailure(
-        {
-          resource: "memory",
-          reported_limits: { maximum_bytes: cause.maximum_bytes },
-        },
-        cause.message,
-        {
-          cause,
-        },
-      );
-    throw cause;
-  }
-};
 
 const dependencySection = (
   expected: RustAuditableMetadata["section_name"],

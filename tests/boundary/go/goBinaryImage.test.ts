@@ -50,7 +50,7 @@ it("preserves exact Mach-O protection masks for Go fallback selection", () => {
   bytes.writeUInt32LE(3, secondSegment + 56);
   bytes.writeUInt32LE(3, secondSegment + 60);
 
-  const container = readBinaryContainer(bytes);
+  const container = readBinaryContainer(bytes, "elf-directory");
   expect(
     container.load_regions?.map((region) => region.protection_masks),
   ).toEqual([

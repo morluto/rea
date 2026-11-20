@@ -70,6 +70,39 @@ export const createVerifierRun = (options = {}) => {
 };
 
 /**
+ * Time sequential verifier phases with a monotonic clock.
+ * @param {() => number} [now]
+ */
+export const createVerifierPhaseTimings = (now = () => performance.now()) => {
+  /** @type {{ phase: string, duration_ms: number, status: "completed" | "failed" }[]} */
+  const timings = [];
+  /** @type {{ phase: string, started: number } | undefined} */
+  let active;
+
+  /** @param {"completed" | "failed"} [status] */
+  const finish = (status = "completed", ended = now()) => {
+    if (active === undefined) return;
+    timings.push({
+      phase: active.phase,
+      duration_ms: Math.round(ended - active.started),
+      status,
+    });
+    active = undefined;
+  };
+
+  return {
+    /** @param {string} phase */
+    begin(phase) {
+      const started = now();
+      finish("completed", started);
+      active = { phase, started };
+    },
+    finish,
+    snapshot: () => [...timings],
+  };
+};
+
+/**
  * Complete a verifier report with a token-verified point-in-time lineage.
  *
  * An empty descendant list means none were live during this observation. It

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { BinaryReader } from "../binaryContainer.js";
 import { err, ok, type Result } from "../result.js";
 
 export type MftFileReference = z.infer<typeof ntfsFileReferenceSchema>;
@@ -159,34 +160,62 @@ export interface MftAttributeScan {
   readonly attributeCoverage: "complete" | "incomplete";
 }
 
-const readTimes = (value: Buffer) => ({
-  createdFileTime: value.readBigUInt64LE(0).toString(),
-  modifiedFileTime: value.readBigUInt64LE(8).toString(),
-  mftChangedFileTime: value.readBigUInt64LE(16).toString(),
-  accessedFileTime: value.readBigUInt64LE(24).toString(),
+const attributeReader = (bytes: Buffer): BinaryReader =>
+  new BinaryReader(bytes, true, "ntfs-mft");
+
+const readTimes = (value: BinaryReader, offset: number) => ({
+  createdFileTime: value.word(offset, 64).toString(),
+  modifiedFileTime: value.word(offset + 8, 64).toString(),
+  mftChangedFileTime: value.word(offset + 16, 64).toString(),
+  accessedFileTime: value.word(offset + 24, 64).toString(),
 });
 
 const readStandardInformation = (
-  value: Buffer,
+  value: BinaryReader,
 ): z.infer<typeof standardInformationSchema> | undefined => {
-  if (value.length < 48 || (value.length > 48 && value.length < 72))
-    return undefined;
+  const size = value.bytes.length;
+  const extended = size >= 72;
+  if (size !== 48 && !extended) return undefined;
   return {
-    ...readTimes(value),
-    fileAttributes: value.readUInt32LE(32),
-    maximumVersions: value.readUInt32LE(36),
-    version: value.readUInt32LE(40),
-    classId: value.readUInt32LE(44),
-    ownerId: value.length >= 72 ? value.readUInt32LE(48) : null,
-    securityId: value.length >= 72 ? value.readUInt32LE(52) : null,
-    quotaCharged:
-      value.length >= 72 ? value.readBigUInt64LE(56).toString() : null,
-    usn: value.length >= 72 ? value.readBigInt64LE(64).toString() : null,
+    ...readTimes(value, 0),
+    fileAttributes: value.u32(32),
+    maximumVersions: value.u32(36),
+    version: value.u32(40),
+    classId: value.u32(44),
+    ownerId: extended ? value.u32(48) : null,
+    securityId: extended ? value.u32(52) : null,
+    quotaCharged: extended ? value.word(56, 64).toString() : null,
+    usn: extended ? BigInt.asIntN(64, value.word(64, 64)).toString() : null,
   };
 };
 
+const readFileName = (
+  value: BinaryReader,
+  fileOffset: number,
+): Result<MftFileName, string> => {
+  const { bytes } = value;
+  if (bytes.length < 66) return err("Truncated FILE_NAME value");
+  const nameBytes = bytes[64]! * 2;
+  if (66 + nameBytes > bytes.length)
+    return err("FILE_NAME string exceeds its value");
+  const namespace = bytes[65]!;
+  if (namespace > 3)
+    return err("FILE_NAME namespace is outside the NTFS range");
+  return ok({
+    fileOffset,
+    parent: decodeMftFileReference(value.word(0, 64)),
+    ...readTimes(value, 8),
+    namespace,
+    name: bytes.toString("utf16le", 66, 66 + nameBytes),
+    allocatedBytes: value.word(40, 64).toString(),
+    dataBytes: value.word(48, 64).toString(),
+    fileAttributes: value.u32(56),
+    reparseOrEa: value.u32(60),
+  });
+};
+
 const readList = (
-  value: Buffer,
+  value: BinaryReader,
   fileOffset: number,
 ): Result<
   z.infer<typeof listEntrySchema>[],
@@ -202,16 +231,17 @@ const readList = (
       message,
       partialEntries: entries,
     });
-  for (let cursor = 0; cursor < value.length;) {
-    if (value.length - cursor < 26)
+  const { bytes } = value;
+  for (let cursor = 0; cursor < bytes.length;) {
+    if (bytes.length - cursor < 26)
       return malformed(cursor, "Truncated attribute-list entry");
-    const length = value.readUInt16LE(cursor + 4);
-    const nameBytes = value[cursor + 6]! * 2;
-    const nameOffset = value[cursor + 7]!;
+    const length = value.u16(cursor + 4);
+    const nameBytes = bytes[cursor + 6]! * 2;
+    const nameOffset = bytes[cursor + 7]!;
     if (
       length < 26 ||
       length % 8 !== 0 ||
-      length > value.length - cursor ||
+      length > bytes.length - cursor ||
       (nameBytes > 0 &&
         (nameOffset < 26 ||
           nameOffset % 2 !== 0 ||
@@ -221,18 +251,18 @@ const readList = (
     entries.push({
       fileOffset: fileOffset + cursor,
       recordBytes: length,
-      type: value.readUInt32LE(cursor),
+      type: value.u32(cursor),
       name:
         nameBytes === 0
           ? ""
-          : value.toString(
+          : bytes.toString(
               "utf16le",
               cursor + nameOffset,
               cursor + nameOffset + nameBytes,
             ),
-      lowestVcn: value.readBigUInt64LE(cursor + 8).toString(),
-      reference: decodeMftFileReference(value.readBigUInt64LE(cursor + 16)),
-      attributeId: value.readUInt16LE(cursor + 24),
+      lowestVcn: value.word(cursor + 8, 64).toString(),
+      reference: decodeMftFileReference(value.word(cursor + 16, 64)),
+      attributeId: value.u16(cursor + 24),
     });
     cursor += length;
   }
@@ -287,18 +317,25 @@ const readRuns = (bytes: Buffer, expectedClusters: bigint) => {
   return undefined;
 };
 
+type DecodedAttribute = {
+  readonly attribute: MftAttribute;
+  readonly fileName: MftFileName | null;
+};
+
 const readAttribute = (
-  attribute: Buffer,
+  reader: BinaryReader,
+  type: number,
   fileOffset: number,
-): Result<MftAttribute, AttributeIssue> => {
+): Result<DecodedAttribute, AttributeIssue> => {
   const malformed = (message: string): Result<never, AttributeIssue> =>
     err({ kind: "malformed", fileOffset, message });
+  const attribute = reader.bytes;
   const form = attribute[8];
   const headerBytes = form === 0 ? 24 : 64;
   if (form === undefined || form > 1 || attribute.length < headerBytes)
     return malformed("Invalid attribute form or header extent");
   const nameBytes = attribute[9]! * 2;
-  const nameOffset = attribute.readUInt16LE(10);
+  const nameOffset = reader.u16(10);
   if (
     nameBytes > 0 &&
     (nameOffset < headerBytes ||
@@ -310,26 +347,38 @@ const readAttribute = (
   const common = {
     fileOffset,
     recordBytes: attribute.length,
-    type: attribute.readUInt32LE(0),
-    id: attribute.readUInt16LE(14),
-    flags: attribute.readUInt16LE(12),
+    type,
+    id: reader.u16(14),
+    flags: reader.u16(12),
     name:
       nameBytes === 0 ? "" : attribute.toString("utf16le", nameOffset, nameEnd),
   };
   if (form === 1 && (common.type === 0x10 || common.type === 0x30))
     return malformed("Standard information and FILE_NAME must be resident");
   if (form === 0) {
-    const valueBytes = attribute.readUInt32LE(16),
-      valueOffset = attribute.readUInt16LE(20);
+    const valueBytes = reader.u32(16),
+      valueOffset = reader.u16(20);
     if (valueOffset < nameEnd || valueBytes > attribute.length - valueOffset)
       return malformed(
         "Resident value overlaps its header/name or exceeds the attribute",
       );
-    const value = attribute.subarray(valueOffset, valueOffset + valueBytes);
+    const value = reader.range(
+      valueOffset,
+      valueBytes,
+      "resident attribute value",
+    );
+    const valueFileOffset = fileOffset + valueOffset;
     const standardInformation =
-      common.type === 0x10 ? readStandardInformation(value) : null;
+      type === 0x10 ? readStandardInformation(attributeReader(value)) : null;
+    if (standardInformation === undefined)
+      return malformed("Invalid standard-information value");
+    const fileName =
+      type === 0x30
+        ? readFileName(attributeReader(value), valueFileOffset)
+        : null;
+    if (fileName !== null && !fileName.ok) return malformed(fileName.error);
     const list =
-      common.type === 0x20 ? readList(value, fileOffset + valueOffset) : null;
+      type === 0x20 ? readList(attributeReader(value), valueFileOffset) : null;
     const listEntries =
       list === null ? null : list.ok ? list.value : list.error.partialEntries;
     const listIssue =
@@ -340,24 +389,25 @@ const readAttribute = (
             message: list.error.message,
           }
         : null;
-    if (standardInformation === undefined)
-      return malformed("Invalid standard-information value");
     return ok({
-      ...common,
-      storage: {
-        kind: "resident",
-        valueFileOffset: fileOffset + valueOffset,
-        valueBytes,
-        standardInformation,
-        listEntries,
-        listIssue,
+      attribute: {
+        ...common,
+        storage: {
+          kind: "resident",
+          valueFileOffset,
+          valueBytes,
+          standardInformation,
+          listEntries,
+          listIssue,
+        },
       },
+      fileName: fileName?.value ?? null,
     });
   }
-  const lowestVcn = attribute.readBigUInt64LE(16),
-    highestVcn = attribute.readBigUInt64LE(24);
+  const lowestVcn = reader.word(16, 64),
+    highestVcn = reader.word(24, 64);
   const extended = (common.flags & 0x8001) !== 0 && lowestVcn === 0n;
-  const runsOffset = attribute.readUInt16LE(32);
+  const runsOffset = reader.u16(32);
   if (
     runsOffset < Math.max(nameEnd, extended ? 72 : 64) ||
     runsOffset >= attribute.length ||
@@ -373,30 +423,33 @@ const readAttribute = (
   );
   if (runs === undefined)
     return malformed("Invalid mapping pairs or incomplete VCN coverage");
-  const dataBytes = attribute.readBigUInt64LE(48),
-    initializedBytes = attribute.readBigUInt64LE(56);
+  const dataBytes = reader.word(48, 64),
+    initializedBytes = reader.word(56, 64);
   if (lowestVcn === 0n && initializedBytes > dataBytes)
     return malformed("Initialized size exceeds the declared data size");
   return ok({
-    ...common,
-    storage: {
-      kind: "nonresident",
-      lowestVcn: lowestVcn.toString(),
-      highestVcn: highestVcn.toString(),
-      compressionUnit: attribute.readUInt16LE(34),
-      allocatedBytes: attribute.readBigUInt64LE(40).toString(),
-      dataBytes: dataBytes.toString(),
-      initializedBytes: initializedBytes.toString(),
-      physicalBytes: extended ? attribute.readBigUInt64LE(64).toString() : null,
-      mappingPairsFileOffset: fileOffset + runsOffset,
-      mappingPairsHex: attribute.toString(
-        "hex",
-        runsOffset,
-        runsOffset + runs.bytes,
-      ),
-      runCount: runs.runCount,
-      sparseRunCount: runs.sparseRunCount,
+    attribute: {
+      ...common,
+      storage: {
+        kind: "nonresident",
+        lowestVcn: lowestVcn.toString(),
+        highestVcn: highestVcn.toString(),
+        compressionUnit: reader.u16(34),
+        allocatedBytes: reader.word(40, 64).toString(),
+        dataBytes: dataBytes.toString(),
+        initializedBytes: initializedBytes.toString(),
+        physicalBytes: extended ? reader.word(64, 64).toString() : null,
+        mappingPairsFileOffset: fileOffset + runsOffset,
+        mappingPairsHex: attribute.toString(
+          "hex",
+          runsOffset,
+          runsOffset + runs.bytes,
+        ),
+        runCount: runs.runCount,
+        sparseRunCount: runs.sparseRunCount,
+      },
     },
+    fileName: null,
   });
 };
 
@@ -409,6 +462,7 @@ export const readMftAttributes = (
 ): MftAttributeScan => {
   const fileNames: MftFileName[] = [],
     attributes: MftAttribute[] = [];
+  const reader = attributeReader(record.subarray(0, usedBytes));
   let complete = false,
     hasList = false;
   let attributeIssue: AttributeIssue | null = null;
@@ -420,7 +474,8 @@ export const readMftAttributes = (
     };
   };
   for (let cursor = first; cursor + 4 <= usedBytes;) {
-    if (record.readUInt32LE(cursor) === 0xffffffff) {
+    const type = reader.u32(cursor);
+    if (type === 0xffffffff) {
       complete = true;
       break;
     }
@@ -428,58 +483,27 @@ export const readMftAttributes = (
       malformed(cursor, "Truncated attribute header");
       break;
     }
-    const length = record.readUInt32LE(cursor + 4);
+    const length = reader.u32(cursor + 4);
     if (length < 24 || length % 8 !== 0 || length > usedBytes - cursor) {
       malformed(cursor, "Invalid attribute length");
       break;
     }
     const decoded = readAttribute(
-      record.subarray(cursor, cursor + length),
+      attributeReader(reader.range(cursor, length, "attribute record")),
+      type,
       fileOffset + cursor,
     );
     if (!decoded.ok) {
       attributeIssue ??= decoded.error;
       break;
     }
-    const attribute = decoded.value;
+    const { attribute, fileName } = decoded.value;
     if (
       attribute.storage.kind === "resident" &&
       attribute.storage.listIssue !== null
     )
       attributeIssue ??= attribute.storage.listIssue;
-    if (attribute.type === 0x30 && attribute.storage.kind === "resident") {
-      const valueOffset = attribute.storage.valueFileOffset - fileOffset;
-      const valueBytes = attribute.storage.valueBytes;
-      if (valueBytes < 66) {
-        malformed(cursor, "Truncated FILE_NAME value");
-        break;
-      }
-      const nameBytes = record[valueOffset + 64]! * 2;
-      if (66 + nameBytes > valueBytes) {
-        malformed(cursor, "FILE_NAME string exceeds its value");
-        break;
-      }
-      const namespace = record[valueOffset + 65]!;
-      if (namespace > 3) {
-        malformed(cursor, "FILE_NAME namespace is outside the NTFS range");
-        break;
-      }
-      fileNames.push({
-        fileOffset: fileOffset + valueOffset,
-        parent: decodeMftFileReference(record.readBigUInt64LE(valueOffset)),
-        ...readTimes(record.subarray(valueOffset + 8)),
-        namespace,
-        name: record.toString(
-          "utf16le",
-          valueOffset + 66,
-          valueOffset + 66 + nameBytes,
-        ),
-        allocatedBytes: record.readBigUInt64LE(valueOffset + 40).toString(),
-        dataBytes: record.readBigUInt64LE(valueOffset + 48).toString(),
-        fileAttributes: record.readUInt32LE(valueOffset + 56),
-        reparseOrEa: record.readUInt32LE(valueOffset + 60),
-      });
-    }
+    if (fileName !== null) fileNames.push(fileName);
     hasList ||= attribute.type === 0x20;
     attributes.push(attribute);
     cursor += length;

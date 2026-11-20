@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, truncate, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -188,6 +188,65 @@ cliTest("reports a truncated image as invalid input", async ({ cli }) => {
     details: { operation: "inspect_native_initializers" },
   });
 });
+
+const dynamicTableCeiling = 16 * 1024 * 1024;
+
+cliTest.for([
+  {
+    name: "short partial row",
+    size: 33,
+    backed: true,
+    code: "invalid_request",
+  },
+  {
+    name: "oversized unbacked declaration",
+    size: dynamicTableCeiling + 16,
+    backed: false,
+    code: "invalid_request",
+  },
+  {
+    name: "oversized backed partial row",
+    size: dynamicTableCeiling + 1,
+    backed: true,
+    code: "invalid_request",
+  },
+  {
+    name: "oversized backed whole rows",
+    size: dynamicTableCeiling + 16,
+    backed: true,
+    code: "resource_constraint",
+  },
+])(
+  "adjudicates PT_DYNAMIC admission for $name",
+  async ({ size, backed, code }, { cli }) => {
+    const root = await createTestTempDirectory("rea-native-init-dynamic-cli-");
+    const path = join(root, "library.so");
+    const bytes = elf64PieInitializers();
+    // The second ELF64 program header declares PT_DYNAMIC at file offset 0x300.
+    bytes.writeBigUInt64LE(BigInt(size), 120 + 32);
+    bytes.writeBigUInt64LE(BigInt(size), 120 + 40);
+    await writeFile(path, bytes);
+    if (backed && 0x300 + size > bytes.length)
+      await truncate(path, 0x300 + size);
+    const result = await cli.run({
+      arguments: ["inspect-native-initializers", path, "--json"],
+    });
+    expect(result.json).toMatchObject({
+      code,
+      details: {
+        operation: "inspect_native_initializers",
+        ...(code === "invalid_request"
+          ? { issues: [{ path: ["path"], reason: "invalid_format" }] }
+          : {
+              reported_limits: {
+                boundary: "structure",
+                maximum: dynamicTableCeiling,
+              },
+            }),
+      },
+    });
+  },
+);
 
 cliTest(
   "keeps unmapped ELF target locations null in public CLI Evidence",

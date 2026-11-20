@@ -606,19 +606,6 @@ describe("Mach-O encryption reader: defects are never absent", () => {
     });
   });
 
-  it("reports unread load commands as unknown", async () => {
-    const oversized = machoImage({});
-    new DataView(oversized.buffer).setUint32(
-      20,
-      MAX_LOAD_COMMAND_BYTES + 8,
-      true,
-    );
-    expect(await onlySlice(oversized)).toMatchObject({
-      status: "unknown",
-      reason: expect.stringContaining("above the"),
-    });
-  });
-
   it("keeps file-level failures distinct from slice status", async () => {
     expect(await read(Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 8]))).toEqual({
       status: "not-mach-o",
@@ -629,6 +616,24 @@ describe("Mach-O encryption reader: defects are never absent", () => {
       status: "unsupported",
       reason: "big-endian Mach-O images are not supported",
     });
+  });
+});
+
+it("distinguishes unread load commands from a table outside the slice", async () => {
+  const commandBytes = MAX_LOAD_COMMAND_BYTES + 8;
+  const image = machoImage({ commands: [text()] });
+  const header = new DataView(image.buffer, image.byteOffset, image.byteLength);
+  header.setUint32(20, commandBytes, true);
+  const oversized = padded(image, 32 + commandBytes);
+  expect(await onlySlice(oversized)).toMatchObject({
+    status: "unknown",
+    malformed_kind: null,
+    reason: expect.stringContaining("above the"),
+  });
+  expect(await onlySlice(image)).toMatchObject({
+    status: "malformed",
+    malformed_kind: "structure",
+    commands: [],
   });
 });
 

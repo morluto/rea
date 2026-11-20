@@ -15,8 +15,12 @@ const patch = fileURLToPath(
 
 export function describeReleaseProposalError(error) {
   if (!(error instanceof Error)) return String(error);
-  const description = error.message || error.name || "Unknown error";
   const status = error.status;
+  const description = /^\s*<(?:!doctype\s+html\b|html[\s>])/iu.test(
+    error.message,
+  )
+    ? "GitHub returned an HTML error response"
+    : error.message || error.name || "Unknown error";
   return Number.isInteger(status) && status >= 400 && status <= 599
     ? `${description} (HTTP ${status})`
     : description;

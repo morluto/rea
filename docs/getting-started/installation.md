@@ -1017,14 +1017,23 @@ stage `connection`.
 
 If macOS denies Apple Events, REA reports
 `details.launch_rejection.boundary: "apple_events_authorization"` with
-`reason: "not_authorized"`, category `unavailable`, and `retryable: false`.
-Allow the application that starts REA under
-**System Settings → Privacy & Security → Automation** when that client can be
-authorized. A hardened-runtime application requires the
+`reason: "not_authorized"`,
+`responsibility: "client_or_disclaimed_runtime"`,
+`settings_pane: "privacy_security_automation"`, and
+`entitlement_id: "com.apple.security.automation.apple-events"`,
+category `unavailable`, and `retryable: false`. The helper does not identify
+the responsible process, so `responsibility` covers both an authorizable client
+and a client that disclaims TCC responsibility.
+Allow the application that macOS identifies as responsible for REA under
+**System Settings → Privacy & Security → Automation**. Some MCP clients, including
+Claude Desktop, disclaim responsibility, so macOS attributes the request to the
+REA runtime, such as `node`; changing the client's Automation setting cannot
+authorize that runtime. In this case start REA from a client macOS can authorize,
+such as Claude Code or Terminal. A hardened-runtime application requires the
 `com.apple.security.automation.apple-events` entitlement before macOS will
-prompt; without it, ask the client developer to add the entitlement or start
-REA from a client macOS can authorize, such as Terminal. Retrying from the same
-unauthorized client will not succeed until authorization changes. REA releases
+prompt; if the responsible client lacks it, ask its developer to add the
+entitlement. Retrying from the same unauthorized client will not succeed until
+authorization changes. REA releases
 the target reservation when the native helper reports its complete authorization
 rejection after literal argument admission. Before application handoff, REA refuses
 double quotes, backslashes, or line breaks in the final launcher path or arguments,
@@ -1327,8 +1336,10 @@ detected user-level clients and Amp; if none of the other supported clients are
 detected, it selects their full registration catalog and Amp.
 
 REA preserves existing environment overrides, client policy, peer servers and
-unrelated settings. A changed existing file gets a private backup; an identical
-repeat keeps the file and creates no new backup. The result reports exact
+unrelated settings. Registration checks the effective client environment
+before writing and reports the field to repair if it is invalid. A changed
+existing file gets a private backup. Repeating the same registration keeps
+the file and creates no new backup. The result reports exact
 `command` and `args`, each selected client's effective scope, and configured,
 unchanged, failed or not-started outcomes. A partial failure returns a nonzero
 status while retaining successful client outcomes and recovery paths.
@@ -1610,12 +1621,13 @@ test ! -e "$decompiler_dir/decompile" && test ! -L "$decompiler_dir/decompile" &
 rea doctor --json
 ```
 
-Verified end to end on macOS 15.6 arm64 with Apple clang 17 and the stock
-bison 2.3, against Ghidra 12.1.4: the build produces a Mach-O arm64
-`ghidra_opt`, the doctor check `ghidra-native_decompiler` turns healthy with
-"reports mach-o arm64, which matches darwin/arm64", and `rea decompile` on an
-arm64 Mach-O returns decompiled C through the headless provider. The JDK is
-not needed for the make step, only for the Ghidra provider. If your toolchain
+Recorded on Ghidra 12.1.4 (no longer accepted); not yet re-run on 12.2. On
+macOS 15.6 arm64 with Apple clang 17 and the stock bison 2.3, that build
+produced a Mach-O arm64 `ghidra_opt`, the doctor check
+`ghidra-native_decompiler` turned healthy with "reports mach-o arm64, which
+matches darwin/arm64", and `rea decompile` on an arm64 Mach-O returned
+decompiled C through the headless provider. The JDK is not needed for the make
+step, only for the Ghidra provider. If your toolchain
 rejects the inherited `-mmacosx-version-min=10.6` flag, retry the make with
 `ADDITIONAL_FLAGS="-w"`.
 
@@ -2051,7 +2063,7 @@ terminal, use the package runner at the version the plugin pins:
 <!-- x-release-please-start-version -->
 
 ```bash
-npx -y rea-agents@6.9.0 doctor --provider ghidra --json
+npx -y rea-agents@6.10.1 doctor --provider ghidra --json
 ```
 
 <!-- x-release-please-end -->
@@ -2084,7 +2096,7 @@ therefore runs the published package instead of a local build:
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "rea-agents@6.9.0", "mcp"]
+      "args": ["-y", "rea-agents@6.10.1", "mcp"]
     }
   }
 }

@@ -10,6 +10,7 @@ import { z } from "zod";
 import { artifactReaderLimitsSchema } from "./artifactReaderLimits.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 import { inesInventorySchema } from "./inesContainer.js";
+import { ZIP_APPLICATION_PACKAGE_FORMATS } from "./zipPackageFormat.js";
 
 /** Entry kinds or subtrees deliberately excluded by an artifact traversal. */
 export const artifactTraversalOmissionKindSchema = z.enum([
@@ -74,6 +75,7 @@ export const ARTIFACT_FORMAT_IDS = [
   "uimage",
   "android-boot-image",
   "android-ota-payload",
+  "uefi",
   "javascript-bundle",
   "source-map",
   "mach-o-universal",
@@ -86,13 +88,7 @@ export const ARTIFACT_FORMAT_IDS = [
   "gamecube-dol",
   "hopper",
   "analysis-database",
-  "ipa",
-  "apk",
-  "msix",
-  "appx",
-  "hap",
-  "hsp",
-  "app-pack",
+  ...ZIP_APPLICATION_PACKAGE_FORMATS,
   "plist",
   "entitlements",
   "directory",
@@ -124,6 +120,7 @@ const artifactContentFormatSchema = artifactFormatSchema.extract([
   "uimage",
   "android-boot-image",
   "android-ota-payload",
+  "uefi",
   "intel-hex",
   "srec",
   "esp-image",

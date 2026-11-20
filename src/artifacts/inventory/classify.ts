@@ -1,3 +1,5 @@
+import { probeUefiFlashImage } from "../../uefi/UefiFormatProbe.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 import {
   artifactOperationCause,
   ArtifactReaderFailure,
@@ -53,7 +55,7 @@ import { createArtifactClassificationProbe } from "../ArtifactClassificationProb
 import type { ArtifactOccurrence } from "../../domain/artifactGraph.js";
 import {
   hasZipSignature,
-  locateTrailingZipArchive,
+  hasTrailingZipArchive,
   zipRootPackageFormat,
 } from "../../domain/zipPackageFormat.js";
 import { artifactFormatDescriptor } from "../artifactFormats.js";
@@ -370,7 +372,10 @@ const classifyRootFormat = async (
   }
   if (nesContainerFormat(evidence.prefix) !== undefined) {
     const parsed = parseInesLayout(evidence.prefix, archiveBytes);
-    if (!parsed.ok) throw new ArtifactReaderFailure("format", parsed.error);
+    if (!parsed.ok)
+      throw new ArtifactReaderFailure("format", parsed.error.detail, {
+        cause: new ParseFailureError(parsed.error),
+      });
     return "ines";
   }
   const classificationPath = artifactNameForClassification(
@@ -389,6 +394,7 @@ const classifyRootFormat = async (
     (await hasDiskImageSignature(archiveBytes, read))
   )
     return "dmg";
+  if (await probeUefiFlashImage(handle, signal)) return "uefi";
   const pck = await embeddedProbes.godotPck(evidence.prefix);
   if (pck !== undefined) return { kind: "godot-pck", source, location: pck };
   // A C3 or S3 dump begins with its bootloader, so the layout is located
@@ -436,7 +442,7 @@ const classifyRootFormat = async (
   if (
     (format === "file" || format === "unknown") &&
     !claimsExecutableHeader(evidence.prefix, archiveBytes) &&
-    (await locateTrailingZipArchive(archiveBytes, read)) !== undefined
+    (await hasTrailingZipArchive(archiveBytes, read))
   )
     return zipRootPackageFormat(lower);
   if (["elf", "pe", "mach-o", "mach-o-universal"].includes(format)) {

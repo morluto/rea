@@ -11,6 +11,7 @@ import {
   type DesktopTask,
 } from "../../domain/desktop/appTask.js";
 import { SETTLE_TIMING } from "../../domain/desktop/appSettle.js";
+import { appStateViews } from "../../domain/desktop/appStateViews.js";
 import {
   evaluateTaskChecks,
   type TaskCheckOutcome,
@@ -18,7 +19,6 @@ import {
 import { isScreenTask } from "../../domain/desktop/appTaskScreen.js";
 import {
   admitWitnessStage,
-  appStateViews,
   stageExpectation,
   stageVerdict,
   unrestoredChecks,

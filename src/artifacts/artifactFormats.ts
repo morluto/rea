@@ -35,7 +35,7 @@ import { EspImageArtifactReader } from "./EspImageArtifactReader.js";
 import { FitArtifactReader } from "./FitArtifactReader.js";
 import type { GodotPckAdmission } from "./GodotPckLocation.js";
 import { GodotPckArtifactReader } from "./GodotPckArtifactReader.js";
-import { InesArtifactReader, INES_LIMITATION } from "./InesArtifactReader.js";
+import { InesArtifactReader } from "./InesArtifactReader.js";
 import { HexRecordArtifactReader } from "./HexRecordArtifactReader.js";
 import { MachOSliceArtifactReader } from "./MachOSliceArtifactReader.js";
 import { NativeDmgArtifactReader } from "./NativeDmgArtifactReader.js";
@@ -43,6 +43,7 @@ import type { NodeSeaAdmission } from "./nodeSea/NodeSeaAdmission.js";
 import { NodeSeaArtifactReader } from "./NodeSeaArtifactReader.js";
 import type { PyInstallerAdmission } from "./pyinstaller/PyInstallerAdmission.js";
 import { PyInstallerArtifactReader } from "./PyInstallerArtifactReader.js";
+import { UefiArtifactReader } from "../uefi/UefiArtifactReader.js";
 import { Uf2ArtifactReader } from "./Uf2ArtifactReader.js";
 import { NtfsMftArtifactReader } from "./NtfsMftArtifactReader.js";
 import { AndroidOtaPayloadArtifactReader } from "./AndroidOtaPayloadArtifactReader.js";
@@ -295,7 +296,6 @@ const NON_ZIP_FORMATS = {
     retainClassifiedSource: true,
     extractable: true,
     absentInventory: "unavailable",
-    readerLimitation: INES_LIMITATION,
     createReader: (path, options) => {
       const source = sourceOf(options);
       if (source === undefined)
@@ -397,6 +397,13 @@ const NON_ZIP_FORMATS = {
   "gamecube-dol": described("gamecube-dol", plain),
   hopper: described("hopper", plain),
   "analysis-database": described("analysis-database", plain),
+  uefi: described("uefi", {
+    ...plain,
+    retainClassifiedSource: true,
+    absentInventory: "unavailable",
+    createReader: (path, options) =>
+      new UefiArtifactReader(path, sourceOf(options)),
+  }),
   plist: described("plist", plain),
   entitlements: described("entitlements", plain),
   directory: container("directory", {
