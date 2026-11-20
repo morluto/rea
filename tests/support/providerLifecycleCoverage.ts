@@ -1343,7 +1343,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "tests/acceptance/erlangBeamCli.test.ts",
-        "reports BEAM tables and code through the public CLI",
+        "reports BEAM tables and code for a path relative to the CLI working directory",
       ),
     ),
     typedFailures("tests/boundary/filesystem/erlangBeam.test.ts"),
