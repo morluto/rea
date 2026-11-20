@@ -15,7 +15,7 @@ import { expect, it } from "vitest";
 import { ArtifactProvider } from "../../../src/artifacts/ArtifactProvider.js";
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
-import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
 import { inspectBundleKeyedArchive } from "../../../src/artifacts/apple/KeyedArchiveReader.js";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import {

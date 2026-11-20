@@ -124,7 +124,7 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
   expect(response.isError, JSON.stringify(response)).not.toBe(true);
   expect(response.structuredContent).toEqual(evidence);
   await client.ping();
-}, 60000);
+});
 
 it("excludes monkey-patched CommonJS effects from CLI and MCP evidence", async () => {
   const root = await createTestTempDirectory("rea-builtin-mutated-");
@@ -175,7 +175,7 @@ it("excludes monkey-patched CommonJS effects from CLI and MCP evidence", async (
   expect(response.isError, JSON.stringify(response)).not.toBe(true);
   expect(response.structuredContent).toEqual(evidence);
   await client.ping();
-}, 60000);
+});
 
 it("retains CommonJS builtin effects and handle links through CLI and MCP", async () => {
   const root = await createTestTempDirectory("rea-builtin-commonjs-");
@@ -252,7 +252,7 @@ it("retains CommonJS builtin effects and handle links through CLI and MCP", asyn
   expect(response.isError, JSON.stringify(response)).not.toBe(true);
   expect(response.structuredContent).toEqual(evidence);
   await client.ping();
-}, 60000);
+});
 
 it.each([
   "import fs from 'node:fs';",
@@ -294,7 +294,6 @@ it.each([
       ]),
     );
   },
-  20_000,
 );
 
 it("keeps only direct logical defaults and actual argv elements in the public CLI graph", async () => {
@@ -399,4 +398,4 @@ function shadowed(process) { return process.argv[3]; }`,
       },
     ),
   ).toHaveLength(1);
-}, 20_000);
+});

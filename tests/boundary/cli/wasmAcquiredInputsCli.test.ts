@@ -1,10 +1,11 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { createHash } from "node:crypto";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { z } from "zod";
 
-import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import {
   createEvidence,
@@ -21,47 +22,48 @@ import { cliTest } from "../../support/cli/cliFixture.js";
 const sha256 = (bytes: Buffer | string): string =>
   createHash("sha256").update(bytes).digest("hex");
 
-const prepareRejectedWasmFixture = async (directory: string) => {
-  const tools = join(directory, "tools");
-  await mkdir(tools);
-  for (const name of ["wasm-validate", "wasm-objdump", "wasm2wat"]) {
-    const path = join(tools, name);
-    const body =
-      name === "wasm-validate"
-        ? "echo 'fixture validation rejected' >&2\nexit 1"
-        : "exit 0";
-    await writeFile(
-      path,
-      `#!/bin/sh
+// These scripts exercise the public adapters with WABT-shaped responses. They
+// do not establish how the real WABT release classifies the selected bytes.
+cliTest.runIf(process.platform !== "win32")(
+  "retains selected, candidate, and glue facts after simulated WABT rejection through CLI and stdio MCP",
+  async ({ cli }) => {
+    const directory = await createTestTempDirectory("rea-wasm-acquired-");
+    const tools = join(directory, "tools");
+    await mkdir(tools);
+    for (const name of ["wasm-validate", "wasm-objdump", "wasm2wat"]) {
+      const path = join(tools, name);
+      const body =
+        name === "wasm-validate"
+          ? "echo 'fixture validation rejected' >&2\nexit 1"
+          : "exit 0";
+      await writeFile(
+        path,
+        `#!/bin/sh
 if [ "$1" = "--version" ]; then echo '1.0.42'; exit 0; fi
 ${body}
 `,
-      { mode: 0o700 },
-    );
-    await chmod(path, 0o700);
-  }
-  const selected = join(directory, "selected.wasm");
-  const candidate = join(directory, "candidate.wasm");
-  const glue = join(directory, "glue.js");
-  const selectedBytes = Buffer.from("0061736d01000000", "hex");
-  const candidateBytes = Buffer.from("independent candidate bytes");
-  const glueSource = 'fetch("./selected.wasm");';
-  await Promise.all([
-    writeFile(selected, selectedBytes),
-    writeFile(candidate, candidateBytes),
-    writeFile(glue, glueSource),
-  ]);
-  return {
-    environment: {
+        { mode: 0o700 },
+      );
+      await chmod(path, 0o700);
+    }
+    const selected = join(directory, "selected.wasm");
+    const candidate = join(directory, "candidate.wasm");
+    const glue = join(directory, "glue.js");
+    const selectedBytes = Buffer.from("0061736d01000000", "hex");
+    const candidateBytes = Buffer.from("independent candidate bytes");
+    const glueSource = 'fetch("./selected.wasm");';
+    const environment = {
       HOME: directory,
       XDG_CONFIG_HOME: directory,
       XDG_CACHE_HOME: directory,
       REA_WABT_BIN_DIRECTORY: tools,
-    },
-    selected,
-    candidate,
-    glue,
-    expected: {
+    };
+    await Promise.all([
+      writeFile(selected, selectedBytes),
+      writeFile(candidate, candidateBytes),
+      writeFile(glue, glueSource),
+    ]);
+    const expected = {
       artifact: {
         path: selected,
         sha256: sha256(selectedBytes),
@@ -90,6 +92,7 @@ ${body}
           references: [
             {
               value: "./selected.wasm",
+              association: "local-path-candidate",
               candidate_paths: [selected],
             },
           ],
@@ -99,18 +102,7 @@ ${body}
       tool_profile: { release: "1.0.42" },
       exit_code: 1,
       stderr: "fixture validation rejected\n",
-    },
-  };
-};
-
-// These scripts exercise the public adapters with WABT-shaped responses. They
-// do not establish how the real WABT release classifies the selected bytes.
-cliTest.runIf(process.platform !== "win32")(
-  "retains selected, candidate, and glue facts after simulated WABT rejection through CLI and stdio MCP",
-  async ({ cli }) => {
-    const directory = await createTestTempDirectory("rea-wasm-acquired-");
-    const { environment, expected, selected, candidate, glue } =
-      await prepareRejectedWasmFixture(directory);
+    };
     const invocation = await cli.run({
       arguments: [
         "inspect-wasm-artifact",
@@ -196,7 +188,7 @@ cliTest(
       );
       const valid = withEvidenceCallerInputPath(
         createEvidence(
-          undefined,
+          unknownTarget("not-observed"),
           { id: "fixture-wabt", name: "fixture", version: "1" },
           {
             operation: "inspect_wasm_artifact",
@@ -218,5 +210,42 @@ cliTest(
     } finally {
       await client.close();
     }
+  },
+);
+
+cliTest(
+  "names max_artifact_paths by field and the CLI flag that sets it before reading selections",
+  async ({ cli }) => {
+    const directory = await createTestTempDirectory("rea-wasm-paths-");
+    const invocation = await cli.run({
+      arguments: [
+        "inspect-wasm-artifact",
+        "./selected.wasm",
+        "--glue_paths",
+        "./first.js",
+        "--glue_paths",
+        "./second.js",
+        "--max-artifact-paths",
+        "1",
+        "--format",
+        "json",
+      ],
+      environment: { HOME: directory, XDG_CONFIG_HOME: directory },
+      cwd: directory,
+    });
+    expect(invocation.exitCode, invocation.stderr).toBe(1);
+    const cliError = analysisErrorProjectionSchema.parse(invocation.json);
+    expect(cliError).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_artifact_paths",
+          effective_value: 1,
+          cli_flag: "--max-artifact-paths",
+        },
+      },
+    });
+    expect(JSON.stringify(cliError.remediation)).not.toContain("--");
   },
 );

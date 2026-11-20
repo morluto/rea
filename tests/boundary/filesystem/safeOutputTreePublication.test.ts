@@ -27,7 +27,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     },
   };
 });
-import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
+import { SafeOutputTree } from "../../../src/resources/SafeOutputTree.js";
 
 it.skipIf(process.platform === "win32")(
   "syncs nested directory entries before their parents and refuses publication when one cannot sync",

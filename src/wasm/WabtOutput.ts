@@ -1,4 +1,6 @@
 import { WabtAdmissionError } from "./WabtAdmissionError.js";
+import { readLeb128, ULEB32 } from "../domain/leb128.js";
+import { isStrictUtf8 } from "../domain/strictUtf8.js";
 
 /** WABT prints names with %.*s, so an embedded NUL ends their display. */
 const wabtDisplayedName = (name: string | undefined): string | undefined =>
@@ -23,7 +25,7 @@ export const parseWabtOutput = (
   let offset = prefix.length;
   let customIndex = 0;
   const sections = [];
-  const invalidNameEnds: number[] = [];
+  const invalidNameEnds = new Set<number>();
   while (!text.startsWith("\nSection Details:\n", offset)) {
     const match =
       /^[ \t]*(\w+) start=0x([\da-f]+) end=0x([\da-f]+) \(size=0x([\da-f]+)\) /u.exec(
@@ -41,7 +43,7 @@ export const parseWabtOutput = (
       const invalidEnd = invalidCustomNameEnd(artifact, start, end);
       if (invalidEnd === undefined)
         throw new WabtAdmissionError("blank_custom_name");
-      invalidNameEnds.push(invalidEnd);
+      invalidNameEnds.add(invalidEnd);
       description = "";
       // WABT does not terminate a blank-name row when another section follows.
       if (
@@ -99,24 +101,9 @@ const invalidCustomNameEnd = (
 ): number | undefined => {
   if (bytes === undefined || end > bytes.length || start >= end)
     return undefined;
-  let length = 0;
-  let position = start;
-  for (let shift = 0; shift <= 28; shift += 7) {
-    const byte = bytes[position++];
-    if (byte === undefined || position > end || (shift === 28 && byte > 15))
-      return undefined;
-    length += (byte & 0x7f) * 2 ** shift;
-    if ((byte & 0x80) !== 0) continue;
-    const nameEnd = position + length;
-    if (nameEnd > end) return undefined;
-    try {
-      new TextDecoder("utf-8", { fatal: true }).decode(
-        bytes.subarray(position, nameEnd),
-      );
-      return undefined;
-    } catch {
-      return nameEnd;
-    }
-  }
-  return undefined;
+  const read = readLeb128(bytes, start, end, ULEB32);
+  if ("failure" in read) return undefined;
+  const nameEnd = read.next + Number(read.value);
+  if (nameEnd > end) return undefined;
+  return isStrictUtf8(bytes.subarray(read.next, nameEnd)) ? undefined : nameEnd;
 };

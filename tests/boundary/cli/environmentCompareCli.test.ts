@@ -573,61 +573,11 @@ describe("rea environment-compare recorded clock spelling", () => {
         expect(await readFile(path, "utf8")).toBe(text);
     });
   }
-
-  cliTest(
-    "replays compact-offset submillisecond probe timestamps in exact order",
-    async ({ cli }) => {
-      const root = await createTestTempDirectory(
-        "rea-environment-legacy-chronology-",
-      );
-      const originals = await writeExactClockFiles(root);
-      const result = await cli.run({
-        arguments: [
-          "environment-compare",
-          join(root, "manifest.json"),
-          "--evidence",
-          join(root, "capture.json"),
-          "--probe",
-          join(root, "legacy-order.json"),
-          "--json",
-        ],
-      });
-      expect(result.exitCode, result.stderr).toBe(0);
-      expect(result.json).toMatchObject({
-        status: "complete",
-        environment: { state: "served" },
-        summary: { probes: 1, steps: 2, equal: 2, agreement: 1 },
-        probes: [
-          {
-            label: "legacy-order.json",
-            results: [
-              {
-                ordinal: 1,
-                method: "DELETE",
-                live_status: 204,
-                env_status: 204,
-                equal: true,
-              },
-              {
-                ordinal: 0,
-                method: "GET",
-                live_status: 404,
-                env_status: 404,
-                equal: true,
-              },
-            ],
-          },
-        ],
-      });
-      for (const [path, text] of originals)
-        expect(await readFile(path, "utf8")).toBe(text);
-    },
-  );
 });
 
 describe("rea environment-compare replay and chronology", () => {
   cliTest(
-    "preserves exact probe chronology and first-century clock-format differences",
+    "orders precise ISO and compact-offset probes independently and reports first-century clock differences",
     async ({ cli }) => {
       const root = await createTestTempDirectory(
         "rea-environment-exact-clock-",
@@ -642,6 +592,8 @@ describe("rea environment-compare replay and chronology", () => {
           "--probe",
           join(root, "order.json"),
           "--probe",
+          join(root, "legacy-order.json"),
+          "--probe",
           join(root, "clocks.json"),
           "--json",
         ],
@@ -650,10 +602,10 @@ describe("rea environment-compare replay and chronology", () => {
       expect(result.json).toMatchObject({
         status: "complete",
         environment: { state: "served" },
-        summary: { probes: 2, steps: 3, equal: 2 },
+        summary: { probes: 3, steps: 5, equal: 4, agreement: 0.8 },
         probes: [
-          {
-            label: "order.json",
+          ...["order.json", "legacy-order.json"].map((label) => ({
+            label,
             results: [
               {
                 ordinal: 1,
@@ -670,7 +622,7 @@ describe("rea environment-compare replay and chronology", () => {
                 equal: true,
               },
             ],
-          },
+          })),
           {
             label: "clocks.json",
             results: [
@@ -709,7 +661,6 @@ describe("rea environment-compare replay and chronology", () => {
           files.probe,
           "--json",
         ],
-        timeoutMs: 30_000,
       });
       expect(result.exitCode).toBe(0);
       expect(result.json).toMatchObject({
@@ -737,7 +688,6 @@ describe("rea environment-compare replay and chronology", () => {
           files.manifest,
           "--json",
         ],
-        timeoutMs: 30_000,
       });
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({

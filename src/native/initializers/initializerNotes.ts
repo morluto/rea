@@ -9,6 +9,8 @@ const TALLY_TEXT = {
     `${String(count)} symbol name(s) exceeded the ${String(MAX_NATIVE_INITIALIZER_NAME_BYTES)}-byte name budget and were not used.`,
   "unreadable-symbol-name": (count: number) =>
     `${String(count)} symbol name(s) could not be read because the string table is missing or the name offset is outside it.`,
+  "unverified-symbol-terminator": (count: number) =>
+    `${String(count)} symbol name(s) had no verified string-table terminator.`,
   "relocation-entry-size": (count: number) =>
     `${String(count)} relocation section(s) had an unexpected entry size and were not applied.`,
 } as const;

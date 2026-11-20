@@ -125,7 +125,6 @@ const harness = (
     selection: selected,
     limits: scenario.capture.limits,
     secrets,
-    readTimeoutMs: 50,
     ...(signal === undefined ? {} : { signal }),
     emit: (event) => {
       const sequence = events.length + 1;
@@ -257,35 +256,48 @@ it.each([
   },
 );
 
-it("reads and redacts marked gzip content its received size bounds", async () => {
-  const { collector, events, secrets } = harness({
-    request_body: false,
-    response_body: true,
-    header_values: false,
-  });
-  const request = new RequestFixture("marked");
-  const body = '{"token":"secret-token"}';
-  request.responseSize = 20;
-  const response = new ResponseFixture(request, body);
-  vi.spyOn(response, "headers").mockReturnValue({
-    "content-type": "application/json",
-    "content-encoding": "gzip",
-  });
-  secrets.responseProtector("login", [
-    { name: "token", json_pointer: "/token", secret: true },
-  ])?.(request);
-  collector.request(request);
-  collector.response(response);
-  collector.finished(request);
-  await collector.finish();
-  const content = events.find(
-    (event) => event.kind === "network-content" && event.phase === "response",
-  );
-  expect(content).toBeDefined();
-  const text = bodyText(content!);
-  expect(text).not.toContain("secret-token");
-  expect(text).toContain("[REDACTED:page:login.token]");
-});
+it.each([
+  { size: 20, headers: { "content-encoding": "gzip" } },
+  { size: 0, headers: { "content-length": "24" } },
+  { size: 0, headers: { "content-length": "0024" } },
+  { size: 0, headers: { "content-length": "00000000000000000024" } },
+  {
+    size: 0,
+    headers: { "content-encoding": "gzip", "content-length": "0024" },
+  },
+])(
+  "reads and redacts marked content within its decoded bound: %j",
+  async (bounds) => {
+    const { collector, events, secrets } = harness({
+      request_body: false,
+      response_body: true,
+      header_values: false,
+    });
+    const request = new RequestFixture("marked");
+    const body = '{"token":"secret-token"}';
+    request.responseSize = bounds.size;
+    const response = new ResponseFixture(request, body);
+    vi.spyOn(response, "headers").mockReturnValue({
+      "content-type": "application/json",
+      ...bounds.headers,
+    });
+    secrets.responseProtector("login", [
+      { name: "token", json_pointer: "/token", secret: true },
+    ])?.(request);
+    collector.request(request);
+    collector.response(response);
+    collector.finished(request);
+    await collector.finish();
+    const content = events.find(
+      (event) => event.kind === "network-content" && event.phase === "response",
+    );
+    expect(content).toBeDefined();
+    const text = bodyText(content!);
+    expect(text).not.toContain("secret-token");
+    expect(text).toContain("[REDACTED:page:login.token]");
+    expect(response.bodyReads).toBe(1);
+  },
+);
 
 it("preserves unselected source spellings while redacting escaped aliases", async () => {
   const { collector, events, secrets } = harness({
@@ -347,22 +359,28 @@ it("associates sensitive fields by request identity while keeping same-URL unmar
   );
 });
 
-it.each(["br", "cache"])(
-  "withholds marked response content when decoded bounds are unknown: %s",
-  async (kind) => {
+it.each([
+  { size: 64, headers: { "content-encoding": "br" } },
+  { size: 0, headers: {} },
+  { size: 0, headers: { "content-length": "0000" } },
+  { size: 0, headers: { "content-length": "24, 24" } },
+  { size: 0, headers: { "content-length": "0009007199254740993" } },
+  { size: 0, headers: { "content-length": "00012000001" } },
+])(
+  "withholds marked response content when decoded bounds are unknown or over budget: %j",
+  async (bounds) => {
     const { collector, events, secrets } = harness();
     const request = new RequestFixture("marked");
-    if (kind === "cache") request.responseSize = 0;
+    request.responseSize = bounds.size;
     const secret = "private-source-token";
     const response = new ResponseFixture(
       request,
       JSON.stringify({ token: secret }),
     );
-    if (kind === "br")
-      vi.spyOn(response, "headers").mockReturnValue({
-        "content-type": "application/json",
-        "content-encoding": "br",
-      });
+    vi.spyOn(response, "headers").mockReturnValue({
+      "content-type": "application/json",
+      ...bounds.headers,
+    });
     secrets.responseProtector("login", [
       { name: "token", json_pointer: "/token", secret: true },
     ])?.(request);
@@ -549,7 +567,7 @@ it.each([
       response_body: false,
       header_values: false,
     },
-    reads: [1, 0, 0, 0],
+    reads: [1, 1, 0, 0],
     phases: ["request"],
   },
   {
@@ -558,7 +576,7 @@ it.each([
       response_body: true,
       header_values: false,
     },
-    reads: [0, 0, 1, 0],
+    reads: [0, 0, 1, 1],
     phases: ["response"],
   },
   {
@@ -571,7 +589,7 @@ it.each([
     phases: ["request", "response"],
   },
 ])(
-  "reads only the selected content $selection",
+  "reads selected bodies and the headers needed for their type $selection",
   async ({ selection: selected, reads, phases }) => {
     const { collector, events } = harness(selected);
     const request = new RequestFixture("input");
@@ -591,6 +609,12 @@ it.each([
         .filter((event) => event.kind === "network-content")
         .map((event) => event.phase),
     ).toEqual(phases);
+    if (!selected.header_values)
+      expect(
+        events
+          .filter((event) => event.kind === "network-content")
+          .map(({ headers }) => headers),
+      ).toEqual([{ state: "not_requested" }]);
   },
 );
 
@@ -733,7 +757,7 @@ it("starts each queued body's timeout when its read begins", async () => {
     const response = new ResponseFixture(request, "unused");
     response.read = () =>
       new Promise((resolve) => {
-        setTimeout(() => resolve(Buffer.from("captured")), 40);
+        setTimeout(() => resolve(Buffer.from("captured")), 4_000);
       });
     collector.request(request);
     collector.response(response);
@@ -741,8 +765,8 @@ it("starts each queued body's timeout when its read begins", async () => {
   }
 
   const finishing = collector.finish();
-  await vi.advanceTimersByTimeAsync(40);
-  await vi.advanceTimersByTimeAsync(40);
+  await vi.advanceTimersByTimeAsync(4_000);
+  await vi.advanceTimersByTimeAsync(4_000);
   await finishing;
 
   const content = events.filter(
@@ -817,7 +841,7 @@ it("bounds hung completed-body reads and rejects late mutation after finalizatio
   collector.response(response);
   collector.finished(request);
   const finishing = collector.finish();
-  await vi.advanceTimersByTimeAsync(51);
+  await vi.advanceTimersByTimeAsync(5_001);
   await finishing;
   const frozen = JSON.stringify(events);
   expect(events).toContainEqual(
@@ -967,19 +991,20 @@ it("preserves read errors and does not turn unexposed or empty bytes into the sa
   expect(collector.limitations().length).toBeGreaterThan(0);
 });
 
-it("redacts declared encodings in body media metadata", async () => {
+it("keeps a redacted declaration out of body media metadata", async () => {
   const { collector, events } = harness({
     request_body: false,
     response_body: true,
-    header_values: false,
+    header_values: true,
   });
   const request = new RequestFixture("input");
   const response = new ResponseFixture(request, "ordinary-bytes");
-  const headers = response.headers();
-  response.headers = () => ({
-    ...headers,
-    "content-type": `text/plain; fixture=${encodeURIComponent("私密")}`,
-  });
+  response.headersArray = async () => [
+    {
+      name: "Content-Type",
+      value: `text/plain; fixture=${encodeURIComponent("私密")}`,
+    },
+  ];
   collector.request(request);
   collector.response(response);
   collector.finished(request);
@@ -988,13 +1013,93 @@ it("redacts declared encodings in body media metadata", async () => {
     expect.objectContaining({
       kind: "network-content",
       phase: "response",
+      headers: {
+        state: "captured",
+        items: [
+          {
+            name: "Content-Type",
+            value: "text/plain; fixture=[REDACTED:declared]",
+            redacted: true,
+          },
+        ],
+      },
       body: expect.objectContaining({
         state: "captured",
-        media_type: "text/plain; fixture=[REDACTED:declared]",
+        media_type: null,
       }),
     }),
   );
 });
+
+it.each([
+  {
+    declarations: [
+      "application/json; charset=utf-8",
+      "application/octet-stream",
+    ],
+    type: null,
+  },
+  {
+    declarations: [
+      "application/octet-stream",
+      "application/json; charset=utf-8",
+    ],
+    type: null,
+  },
+  {
+    declarations: ["application/json; charset=utf-8, application/octet-stream"],
+    type: null,
+  },
+  {
+    declarations: ["application/json", "application/json"],
+    type: "application/json",
+  },
+  {
+    declarations: ['application/json; note="one,two"'],
+    type: 'application/json; note="one,two"',
+  },
+  { declarations: null, type: null },
+])(
+  "derives body type once from retained declarations $declarations",
+  async ({ declarations, type }) => {
+    const { collector, events } = harness({
+      request_body: false,
+      response_body: true,
+      header_values: false,
+    });
+    const request = new RequestFixture("input");
+    const response = new ResponseFixture(request, '{"value":"\\u79c1\\u5bc6"}');
+    response.headers = () => ({
+      "content-type": declarations?.join(", ") ?? "application/json",
+    });
+    response.headersArray = async () => {
+      response.headerReads += 1;
+      if (declarations === null) throw new Error("Headers unavailable");
+      return declarations.map((value) => ({ name: "Content-Type", value }));
+    };
+    collector.request(request);
+    collector.response(response);
+    collector.finished(request);
+    await collector.finish();
+    const content = events.find(
+      (event) => event.kind === "network-content" && event.phase === "response",
+    );
+    expect(response.headerReads).toBe(1);
+    expect(content).toMatchObject({
+      headers: { state: "not_requested" },
+      body: {
+        state: "captured",
+        media_type: type,
+        media_type_source: "content-type-header",
+      },
+    });
+    if (content?.kind !== "network-content")
+      throw new Error("Missing response content");
+    expect(JSON.parse(bodyText(content))).toEqual({
+      value: "[REDACTED:declared]",
+    });
+  },
+);
 
 it("bounds admitted transactions before invoking content producers", async () => {
   const { collector, events } = harness();

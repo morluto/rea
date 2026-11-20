@@ -110,7 +110,7 @@ it("records an applicable module and its x86_64 architecture", async () => {
   if (!result.ok) throw result.error;
   expect(result.value).toMatchObject({
     confidence: "observed",
-    subject: { format: "elf", architecture: "x86_64" },
+    subject: { identity: { format: "elf", architecture: "x86_64" } },
     normalized_result: report,
   });
 });
@@ -186,7 +186,7 @@ it("retains a completed observation if the caller cancels while the provider com
   expect(parseEvidence(late.error.partialObservation)).toMatchObject({
     operation: "inspect_kernel_module",
     confidence: "observed",
-    subject: { format: "elf", architecture: "x86_64" },
+    subject: { identity: { format: "elf", architecture: "x86_64" } },
     normalized_result: report,
   });
 });

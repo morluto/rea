@@ -112,6 +112,21 @@ event includes that field. Semantic fields such as output, interaction outcome,
 exit status, finalization delivery, process identity/command, and filesystem
 contents still participate in the default comparison.
 
+A located divergence names the compared fields that differed, so a report does
+not have to be diffed by hand: `first_divergence.fields` lists sorted leaf names
+such as `files[0].path`, `pid`, or `finalization.signals[0].delivery`, with array
+positions as bracketed indices, `$` for a whole observation, and at most eight
+names for a wide difference. The names describe only the projection the
+comparison actually judged, so capture-local timing is never named unless a
+`trace_spec` made it part of the question. `left` and `right` still retain the
+complete observations. `fields` is optional in the contract because records
+authenticated before it existed remain readable; new reports always populate it.
+Naming a volatile value is not a claim of equivalence: when a per-run temporary
+path or PID is not behavior, exclude it at capture time with
+`normalization.paths`, `normalization.pids`, or an explicit
+`normalization.patterns` replacement, and recapture both sides under the same
+rules. Comparison refuses captures whose normalization rules differ.
+
 For scenarios where independent scheduling can change event order, the CLI
 also accepts an optional trace-specification JSON file as the third argument.
 That specification must state the exact events and ordering constraints to
@@ -129,6 +144,20 @@ scenarios from the same absolute working directory and observation paths.
 Captures are local Evidence files; keep
 their source artifacts and invocation context available when interpreting a
 difference.
+
+The capture's Evidence subject names the launched root process:
+`{ "kind": "process", "pid", "start_time", "executable_sha256" }`, where
+`start_time` is the platform start identity REA read for that PID at launch,
+bound to the capture's run token, and `executable_sha256` is `null` unless the
+executable's path metadata stayed stable across spawn. `manifest.root_process`
+records the same observation. A PID alone does not identify a process, so when
+the start identity could not be read the subject is
+`{ "kind": "unknown", "reason": "not-observed" }` and `root_process` keeps the
+reason. When PID normalization is selected (the default), REA honours it: the
+raw PID and start identity are not recorded, `root_process` is
+`{ "state": "withheld-by-caller" }`, and the subject is
+`{ "kind": "unknown", "reason": "withheld-by-caller" }`. A planned scenario
+(`dry_run`) launches nothing and stays `not-observed`.
 
 ## Hash a report independently of terminal output
 
@@ -373,8 +402,8 @@ The terminal finalizer then freezes PTY input, retains normalized and rendered
 facts, and releases the renderer. Cleanup retry reuses those completed facts.
 All new captures commit
 `terminal_observation_version: "deferred-rendered-journal-v1"`, including when
-PID and port normalization are disabled. Historical Evidence remains readable;
-recapture both sides with the same observation version before comparison.
+PID and port normalization are disabled. An Evidence bundle or record from an
+earlier Evidence format revision is refused; recreate the observation.
 
 When path normalization is enabled, aliases apply to selected path identities
 at clear text delimiters. A selected executable path does not alias a longer
@@ -638,6 +667,31 @@ An absent or changed token leaves a previously related generation unresolved;
 current token proof is still required before signaling. Swept cleanup verifies the
 remaining family after its group signals. Coverage is bounded by the native
 snapshots and generations inspected; sampled group IDs select candidates.
+
+Settlement records the observation before final owned-process cleanup. Even a
+quiesced sampled group can have token-owned descendants discovered during that
+cleanup. If the ownership layer reports that cleanup sent termination signals,
+`settlement.cleanup_outcome` is `cleaned` on success, and process residual
+unknowns explain that the intervention may have ended further terminal or
+filesystem work. Failed resource cleanup remains `failed` and retains the same
+intervention fact in partial observations. This does not establish how an
+uncaptured run would have continued or change which processes REA may signal.
+
+An observed signal is retained even if a later group signal or final ownership
+verification fails. It does not establish complete cleanup: the failed resource,
+original diagnostic, and retry authority remain visible. A successful retry can
+clear the live cleanup status without rewriting the earlier partial observations.
+
+If capture completion fails before a capture exists, the intervention is retained
+in `partial_observation.observations.residual_unknowns`, alongside the available
+observations and explicit unavailable fields. Older records may omit this optional
+array. No intervention entry is added without an observed signaling fact; absence
+does not prove that cleanup sent no signals.
+
+Readers that previously accepted only `not_required` for a quiesced settlement
+must refresh the advertised MCP schema or update their saved-capture reader to
+accept `cleaned` as well. Existing saved captures remain valid and keep their
+recorded outcome; missing historical signal facts are not reconstructed.
 
 When the host withholds an unrelated process's ownership token, REA leaves that
 process untouched and records its PID and reason in `cleanup.unverified_processes`

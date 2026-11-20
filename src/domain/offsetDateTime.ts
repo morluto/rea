@@ -66,7 +66,7 @@ export interface RecordedDateTimeReading {
 }
 
 /** Distinguish invalid supported spellings from formats this reader does not interpret. */
-export const inspectRecordedDateTime = (
+const inspectRecordedDateTime = (
   value: string,
 ):
   | { readonly kind: "valid"; readonly reading: RecordedDateTimeReading }

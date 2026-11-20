@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { WabtAdmissionError } from "./WabtAdmissionError.js";
 import { parseWabtInterface } from "./WabtInterface.js";
 import { watString, watStringEnd } from "./WabtString.js";
@@ -45,9 +46,7 @@ const moduleNames = (
         if (nameEnd > end)
           throw new WabtAdmissionError("incomplete_module_name");
         names.push(
-          new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-            bytes.subarray(offset, nameEnd),
-          ),
+          decodeStrictUtf8(bytes.subarray(offset, nameEnd), "preserve"),
         );
         // WABT calls OnModuleName before rejecting trailing subsection bytes.
         if (nameEnd !== end)
@@ -121,10 +120,7 @@ export const parseWabtWat = (text: string, maximumInterfaceBytes?: number) => {
             throw new WabtAdmissionError("unsupported_custom_name");
           const nameString = watString(form, prefix[0].length);
           // A WASM name is length-delimited UTF-8; leading U+FEFF is name data.
-          const name = new TextDecoder("utf-8", {
-            fatal: true,
-            ignoreBOM: true,
-          }).decode(nameString.bytes);
+          const name = decodeStrictUtf8(nameString.bytes, "preserve");
           customSectionNames.push(name);
           if (name === "name") {
             const payloadPrefix = /^\s+"/u.exec(form.slice(nameString.end));

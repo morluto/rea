@@ -3,7 +3,7 @@ import { expect, it } from "vitest";
 import {
   createAnalysisExecution,
   type ExecutionOptions,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import { SignalRecordingService } from "./SignalRecordingService.js";
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 import { decodeSignalRecordingInputSchema } from "../../domain/signals/signalRecording.js";

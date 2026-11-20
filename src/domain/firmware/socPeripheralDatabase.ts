@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { invariantViolation } from "../internalInvariant.js";
 import type { HardwareArchitecture } from "./hardwareMemoryMap.js";
 
 /** Supported microcontroller and SoC platform families. */
@@ -986,7 +987,9 @@ const gd32F4Window = (
 ): InternalPeripheralEntry => {
   const name = GD32F4_NAME[entry.name];
   if (name === undefined) {
-    throw new Error(`GD32F4 has no name for the shared ${entry.name} window`);
+    throw invariantViolation(
+      `GD32F4 has no name for the shared ${entry.name} window`,
+    );
   }
   return {
     ...entry,

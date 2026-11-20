@@ -5,12 +5,13 @@ import { expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { providerSnapshot } from "../../tests/support/reverseEngineeringCompositionFixtures.js";
 import * as owned from "../process/OwnedCommand.js";
 import { systemDoctorHost } from "../application/Doctor.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { systemDesktopBuildSetupHost } from "./DesktopBuildSetupHost.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { DESKTOP_EXPORT_FRAMEWORK_VERSION } from "../domain/desktop/appExport.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 
@@ -89,7 +90,11 @@ it("retains installer cancellation, command outcome and output", async () => {
   ).installAgentenv(uv, controller.signal);
   void pending.catch(() => undefined);
   try {
-    await entered.promise;
+    await awaitAcknowledgement(
+      entered.promise,
+      pending,
+      "provider lifecycle boundary",
+    );
     controller.abort(reason);
     const failure: unknown = await pending.catch((cause: unknown) => cause);
     if (!(failure instanceof AnalysisCancelledError)) throw failure;
@@ -103,8 +108,11 @@ it("retains installer cancellation, command outcome and output", async () => {
   } finally {
     controller.abort();
     await Promise.allSettled([pending]);
-    await resources.close();
-    command.mockRestore();
+    try {
+      await resources.close();
+    } finally {
+      command.mockRestore();
+    }
   }
 });
 

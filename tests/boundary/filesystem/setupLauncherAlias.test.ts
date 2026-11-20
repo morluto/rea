@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import {
   access,
   mkdir,
@@ -204,6 +205,7 @@ it.skipIf(process.platform === "win32")(
     await writeFile(config, original);
     const inspect = () =>
       readClientRegistrationInspections(home, script, {
+        platform: HOST_PLATFORM.platform,
         environment: {},
         selectedClientIds: ["cursor"],
       });

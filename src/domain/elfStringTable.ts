@@ -15,6 +15,8 @@ export type ElfStringTableObservation =
   | {
       readonly state: "truncated";
       readonly bytes: null;
+      /** More bytes of this table remain outside the checked window. */
+      readonly scanLimited: boolean;
       readonly examinedBytes: number;
       readonly contentBytes: number;
     };
@@ -33,6 +35,7 @@ export const observeElfStringTableEntry = (
     return {
       state: "truncated",
       bytes: null,
+      scanLimited: window.length < table.length - offset,
       examinedBytes: window.length,
       contentBytes: window.length,
     };
@@ -45,6 +48,14 @@ export const observeElfStringTableEntry = (
 };
 
 /** Project admitted source bytes without inferring an original text encoding. */
-export const elfStringTableText = (
+export function elfStringTableText(
+  observed: Extract<ElfStringTableObservation, { state: "terminated" }>,
+): string;
+export function elfStringTableText(
   observed: ElfStringTableObservation,
-): string | null => observed.bytes?.toString("latin1") ?? null;
+): string | null;
+export function elfStringTableText(
+  observed: ElfStringTableObservation,
+): string | null {
+  return observed.bytes?.toString("latin1") ?? null;
+}

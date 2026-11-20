@@ -24,7 +24,8 @@ export const descendantsOf = (
     if (visited.has(process.pid)) continue;
     visited.add(process.pid);
     descendants.push(process);
-    pending.push(...(childrenByParent.get(process.pid) ?? []));
+    for (const child of childrenByParent.get(process.pid) ?? [])
+      pending.push(child);
   }
   return descendants;
 };

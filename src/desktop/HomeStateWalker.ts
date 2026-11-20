@@ -1,25 +1,13 @@
-import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../resources/index.js";
 import type { BigIntStats } from "node:fs";
 import { lstat, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
-import type {
-  DesktopPathState,
-  DesktopWalk,
-} from "../domain/desktop/desktopStateDiff.js";
+import type { DesktopPathState } from "../domain/desktop/desktopStateDiff.js";
 import { isWithinAny } from "../domain/desktop/desktopStateDiff.js";
+import type { HomeStateWalk } from "../ports/DesktopApplicationSession.js";
 
 const LSTAT_CONCURRENCY = 64;
-
-/** One stat walk of the observed roots. */
-export interface HomeStateWalk extends DesktopWalk {
-  readonly truncated: boolean;
-  readonly unreadableDirectories: number;
-  /** Paths whose state could not be read, and directories on another device left unentered. */
-  readonly uncheckedPaths: number;
-  /** Directories on another device than their walk root, recorded but not entered. */
-  readonly mountPoints: readonly string[];
-}
 
 /** A directory still to list, with the device of the root it was reached from. */
 interface PendingDirectory {

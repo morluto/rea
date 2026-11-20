@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -22,6 +21,7 @@ import {
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
 import { createOpenAiModelFixture } from "./verify/clients/model-fixture.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 const mode = process.argv[2] ?? "call";
 assert(["chat", "call"].includes(mode), "Select chat or call.");
@@ -34,7 +34,9 @@ const { assertClientSchemaPatterns } = await importVerifierSource(
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const runtimeRoot = process.env.REA_VERIFY_RUNTIME_ROOT ?? repo;
 const command = process.env.REA_VERIFY_DEEPSEEK_COMMAND ?? "dsh";
-const lab = await mkdtemp(join(tmpdir(), "rea-deepseek-client-"));
+const { path: lab } = await VerifierFixture.keepArtifacts({
+  prefix: "rea-deepseek-client-",
+});
 const account = join(lab, "account");
 const profile = join(lab, "selected profile");
 const workspace = join(lab, "workspace");

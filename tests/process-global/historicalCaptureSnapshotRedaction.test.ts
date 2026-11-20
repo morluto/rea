@@ -37,15 +37,16 @@ import { HAR_CAPTURE_PROVIDER_IDENTITY } from "../../src/browser/history/Capture
 import { WebNetworkCaptureService } from "../../src/application/WebNetworkCaptureService.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { fileSnapshotPartialObservationSchema } from "../../src/domain/fileSnapshotObservation.js";
-import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../src/domain/analysisErrorProjectionSchema.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { historicalHar } from "../fixtures/historicalHar.js";
-import { readStableArtifact } from "../../src/artifacts/readStableArtifact.js";
+import { readStableArtifact } from "../../src/resources/readStableArtifact.js";
 import { ArtifactOperationError } from "../../src/domain/artifactOperationError.js";
 import { ProviderCleanupError } from "../../src/domain/providerCleanupError.js";
 import { analysisErrorWithCleanupFailure } from "../../src/domain/analysisErrorCleanup.js";
 import { err } from "../../src/domain/result.js";
 import { deliverCliAnalysisEvidence } from "../../src/cli/analysisEvidenceDelivery.js";
+import { releaseOwnedCleanup } from "../support/cleanupRelease.js";
 
 const services: WebNetworkCaptureService[] = [];
 afterEach(async () => {
@@ -256,7 +257,7 @@ it.each(["captured", "over-capacity"] as const)(
     );
     expect(JSON.stringify(projected)).not.toContain("private-read-marker");
     expect(JSON.stringify(projected)).not.toContain(snapshot.sha256);
-    composed.resolveCleanup();
+    releaseOwnedCleanup(composed);
     const finalized = projectAnalysisError(nestedResult.error);
     expect(finalized.details?.partial_observation).toEqual(expected);
   },

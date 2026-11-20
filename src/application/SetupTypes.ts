@@ -1,4 +1,5 @@
 import type { ClientConfigurationWriteProblem } from "./ClientConfigurationPublication.js";
+import type { McpToolCatalogProfile } from "../config/mcpToolCatalogProfile.js";
 import type { DoctorReport, DoctorScope, runDoctor } from "./Doctor.js";
 import type { LinuxDistribution } from "./LinuxHopper.js";
 import type { HopperRequestFailure } from "./HopperDownload.js";
@@ -14,7 +15,7 @@ import type {
   AnalysisError,
 } from "../domain/analysisErrorBase.js";
 import type { SetupClient } from "./SupportedClients.js";
-import type { DesktopBuildSetupHost } from "./SetupDesktopBuild.js";
+import type { DesktopBuildSetupHost } from "../ports/DesktopBuildHost.js";
 import type {
   SetupFailureCode,
   SetupHopperInstallResult,
@@ -39,6 +40,12 @@ export type ClientConfigurationResult =
   | {
       readonly status: "failed";
       readonly reason: "registration_ownership";
+      readonly detail: string;
+    }
+  | {
+      readonly status: "failed";
+      /** A read-only layer above the write target overrides REA's entry. */
+      readonly reason: "read_only_override";
       readonly detail: string;
     }
   | {
@@ -254,6 +261,8 @@ export interface SetupOptions {
   readonly installSkill?: boolean;
   /** Comma-separated tool families the MCP registration advertises. */
   readonly toolFamilies?: string;
+  /** Explicit catalog loading policy; omitted preserves the saved selection. */
+  readonly toolCatalogProfile?: McpToolCatalogProfile;
   readonly readinessScope?: DoctorScope;
   readonly dryRun?: boolean;
   readonly allDetectedClients?: boolean;
@@ -285,6 +294,8 @@ export interface SetupConfirmationContext {
   readonly clientStates: readonly SetupClientState[];
   readonly selectedClientIds: readonly string[];
   readonly clientSelectionAllowed: boolean;
+  /** Known manual completion required after the approved local changes. */
+  readonly remediation?: string;
 }
 
 /** Adapter-owned selection and confirmation for the setup workflow. */

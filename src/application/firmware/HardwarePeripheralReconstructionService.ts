@@ -4,7 +4,7 @@ import type {
   AnalysisExecution,
   AnalysisOperationPort,
   ExecutionOptions,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import {
   attributeHardwareAccess,
   summarizeHardwarePeripheralInteractions,
@@ -55,9 +55,9 @@ import {
 } from "../../domain/firmware/socPeripheralDatabase.js";
 import type { HardwareReconstructionPartialObservation } from "../../domain/firmware/hardwareReconstructionPartial.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -567,9 +567,7 @@ const keepFailure = (
 ): Result<HardwarePeripheralReconstruction, AnalysisError> => {
   if (signal?.aborted) {
     failure.retainSecondaryFailure(
-      new AnalysisCancelledError(HARDWARE_RECONSTRUCTION, {
-        cause: signal.reason,
-      }),
+      cancelledBy(HARDWARE_RECONSTRUCTION, signal),
     );
   }
   return err(failure);
@@ -633,8 +631,7 @@ export const reconstructProcedureHardwareInteractions = async (
   };
   if (signal?.aborted) {
     return err(
-      new AnalysisCancelledError(HARDWARE_RECONSTRUCTION, {
-        cause: signal.reason,
+      cancelledBy(HARDWARE_RECONSTRUCTION, signal, {
         partialObservation: retainedReconstruction(result, source),
       }),
     );

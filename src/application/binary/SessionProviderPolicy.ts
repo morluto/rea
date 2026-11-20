@@ -1,6 +1,6 @@
 import { ENHANCED_TOOL_CONTRACTS } from "../../contracts/enhancedToolContracts.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../../contracts/officialToolContracts.js";
-import type { ProviderIdentity } from "../AnalysisProvider.js";
+import type { ProviderIdentity } from "../../ports/AnalysisProvider.js";
 import type { SessionProviderRoute } from "./SessionProviderRouter.js";
 
 const OFFICIAL_OPERATIONS: ReadonlySet<string> = new Set(

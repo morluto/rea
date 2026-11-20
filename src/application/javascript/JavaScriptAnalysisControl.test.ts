@@ -1,6 +1,6 @@
 import { setImmediate } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { completeJavaScriptAnalysisSteps } from "./JavaScriptAnalysisControl.js";
 
 describe("JavaScript cooperative computation lifecycle", () => {

@@ -38,6 +38,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.NavigableMap;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
@@ -61,6 +62,7 @@ import ghidra.app.decompiler.ClangCaseToken;
 import ghidra.app.decompiler.ClangNode;
 import ghidra.framework.Application;
 import ghidra.app.util.bin.format.pdb.PdbParserConstants;
+import ghidra.app.util.opinion.ElfLoader;
 import ghidra.framework.options.Options;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressIterator;
@@ -75,8 +77,13 @@ import ghidra.program.model.block.CodeBlockReference;
 import ghidra.program.model.block.CodeBlockReferenceIterator;
 import ghidra.program.model.data.StringDataInstance;
 import ghidra.program.model.data.DataType;
+import ghidra.program.model.data.MutabilitySettingsDefinition;
+import ghidra.program.model.data.Undefined;
+import ghidra.program.model.lang.OperandType;
 import ghidra.program.model.lang.Register;
 import ghidra.program.model.scalar.Scalar;
+import ghidra.program.model.listing.Bookmark;
+import ghidra.program.model.listing.BookmarkType;
 import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Data;
 import ghidra.program.model.listing.DataIterator;
@@ -86,6 +93,7 @@ import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.listing.InstructionIterator;
 import ghidra.program.model.listing.Listing;
 import ghidra.program.model.listing.Variable;
+import ghidra.program.model.listing.VariableStorage;
 import ghidra.program.model.mem.MemoryBlock;
 import ghidra.program.model.mem.MemoryBlockSourceInfo;
 import ghidra.program.database.mem.FileBytes;
@@ -115,6 +123,7 @@ import ghidra.program.model.pcode.VarnodeAST;
 import ghidra.program.util.ContextEvaluatorAdapter;
 import ghidra.program.util.SymbolicPropogator;
 import ghidra.program.util.VarnodeContext;
+import ghidra.util.task.TaskMonitor;
 
 public final class ReaGhidraBridge extends HeadlessScript {
     // At most 24 KiB after worst-case JSON escaping (six bytes per UTF-16 unit).
@@ -124,6 +133,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private static final int DEFAULT_HIGH_PCODE_DEF_USE_EDGES = 12000;
     private static final Gson GSON = new GsonBuilder().serializeNulls().create();
     private final Map<FileBytes, Boolean> targetSourceIdentity = new IdentityHashMap<>();
+    private final NavigableMap<Address, LoaderInitializedRelocation> loaderInitializedRelocations =
+        new TreeMap<>();
     private String admittedTargetSha256;
     private static final Set<String> DESCRIPTOR_KEYS = Set.of(
         "transport",
@@ -219,6 +230,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         sessionDefaultAddressSpace =
             currentProgram.getAddressFactory().getDefaultAddressSpace();
+        if (currentProgram.getExecutableFormat().equals("Old-style DOS Executable (COM)") &&
+            !currentProgram.getOptions(ghidra.program.model.listing.Program.PROGRAM_INFO)
+                .getBoolean("REA DOS COM prepared", false)) {
+            throw new IllegalStateException("REA DOS COM entry/context preparation failed");
+        }
         if (currentProgram.getExecutableFormat().equals("Raw Binary")) {
             boolean dosCom = currentProgram.getLanguageID().getIdAsString()
                 .equals("x86:LE:16:Real Mode");
@@ -255,6 +271,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
             if (!descriptor.transport.equals("unix-socket") && descriptor.analysisExtensions.size() > 0)
                 throw new IOException("Windows Ghidra P0 does not admit metadata recovery or database mutation.");
             analysisExtensions.analyze(descriptor.analysisExtensions, currentProgram, monitor);
+            // Read-only sessions keep the discovered limitation but cannot mark blocks volatile.
+            protectLoaderInitializedRelocations(
+                !descriptor.existingProject && descriptor.transport.equals("unix-socket"));
             initializeDecompiler();
             checkpointModification = currentProgram.getModificationNumber();
             serve(descriptor);
@@ -407,7 +426,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     request = parseRequest(line, descriptor.token);
                 }
                 catch (RuntimeException exception) {
-                    writeFailure(writer, 1, "invalid_request", "Bridge request is invalid");
+                    // The request id may not have parsed, so the connection-level
+                    // failure uses id 0, which no client request uses.
+                    writeFailure(writer, CONNECTION_FAILURE_ID, "invalid_request", "Bridge request is invalid");
                     return;
                 }
             }
@@ -867,8 +888,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
         String cursor = params.has("cursor") ? requireString(params, "cursor") : null;
         Address resume = null;
         if (cursor != null) {
+            // The prefix is a one-way digest of target, profile, pattern,
+            // mask, bounds, and document. A mismatch cannot name which one
+            // differs, so this code reports the binding instead of schema repair.
             if (!cursor.startsWith(binding + ":"))
-                throw new RequestFailure("invalid_request", "Byte search cursor does not match the target and query");
+                throw new RequestFailure("byte_search_cursor_mismatch",
+                    "Byte search cursor does not match this search. It is bound to the target, analysis profile (including a selected Ghidra project), pattern, mask, bounds, and document, and does not identify which of those differs.");
             resume = parseReaAddress(cursor.substring(binding.length() + 1));
             MemoryBlock resumedBlock = currentProgram.getMemory().getBlock(resume);
             Address bound = start == null ? end : start;
@@ -1042,6 +1067,130 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.addProperty("address", at);
         result.addProperty("file_offset", fileOffset);
         return result;
+    }
+
+    /**
+     * Ghidra applies most loader relocations, but one it cannot apply (for
+     * example an ELF copy relocation in RELRO, whose value comes from another
+     * object, or a TLS slot that only the dynamic loader fills) keeps its
+     * on-disk bytes while the runtime loader supplies a different value. Mark
+     * such a destination in a non-writable loaded block volatile before opening
+     * the decompiler so those bytes cannot be constant-propagated as if they
+     * were runtime values.
+     *
+     * Volatility is set on the destination's own data item (its Mutability
+     * setting), so the rest of the block, for example the GOT entries Ghidra
+     * applied beside a TLS slot, stays foldable. Where no data item can be
+     * placed on exactly the destination, the whole block is marked volatile
+     * instead. This changes only the ephemeral analysis database: source
+     * FileBytes and the original target remain untouched, and block
+     * permissions are preserved.
+     *
+     * Without database-mutation authority (Windows P0 or a caller's existing
+     * project) the relocations are still recorded so affected procedures carry
+     * the limitation, but nothing is marked volatile.
+     */
+    private void protectLoaderInitializedRelocations(boolean markVolatile) throws Exception {
+        String elfFileType = currentProgram.getOptions(
+            ghidra.program.model.listing.Program.PROGRAM_INFO
+        ).getString(ElfLoader.ELF_FILE_TYPE_PROPERTY, "");
+        // Ghidra also marks ELF ET_DYN and ET_CORE programs relocatable.
+        if (currentProgram.getRelocationTable().isRelocatable() &&
+            !elfFileType.equals("shared object")) return;
+        Map<Address, LoaderInitializedRelocation> discovered = new TreeMap<>();
+        Map<Address, MemoryBlock> blocks = new TreeMap<>();
+        Iterator<Relocation> iterator = currentProgram.getRelocationTable().getRelocations();
+        while (iterator.hasNext()) {
+            monitor.checkCancelled();
+            Relocation relocation = iterator.next();
+            // An applied relocation already holds the value the loader writes
+            // (for example GLOB_DAT or RELATIVE), so folding it is correct and
+            // keeping its block foldable preserves GOT-call pseudocode.
+            Relocation.Status status = relocation.getStatus();
+            if (status == Relocation.Status.APPLIED || status == Relocation.Status.APPLIED_OTHER)
+                continue;
+            Address location = relocation.getAddress();
+            MemoryBlock block = currentProgram.getMemory().getBlock(location);
+            if (block == null || !block.isLoaded() || !block.isInitialized() || block.isWrite())
+                continue;
+            long lengthInBytes = relocation.getLength();
+            int addressableUnitSize = location.getAddressSpace().getAddressableUnitSize();
+            long lengthInAddressableUnits = Math.max(
+                1L,
+                (lengthInBytes + addressableUnitSize - 1L) / addressableUnitSize
+            );
+            discovered.put(
+                location,
+                new LoaderInitializedRelocation(
+                    location,
+                    lengthInAddressableUnits,
+                    block.getName(),
+                    relocation.getSymbolName()
+                )
+            );
+            blocks.put(location, block);
+        }
+        if (discovered.isEmpty()) return;
+        loaderInitializedRelocations.putAll(discovered);
+        if (!markVolatile) return;
+
+        int transaction = currentProgram.startTransaction("REA loader relocation semantics");
+        boolean commit = false;
+        try {
+            Listing listing = currentProgram.getListing();
+            Set<MemoryBlock> wholeBlocks =
+                java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+            for (LoaderInitializedRelocation relocation : discovered.values()) {
+                monitor.checkCancelled();
+                Data data = volatileRelocationData(listing, relocation);
+                if (data == null) wholeBlocks.add(blocks.get(relocation.address()));
+                else MutabilitySettingsDefinition.DEF.setChoice(
+                    data, MutabilitySettingsDefinition.VOLATILE);
+            }
+            for (MemoryBlock block : wholeBlocks) {
+                monitor.checkCancelled();
+                if (!block.isVolatile()) block.setVolatile(true);
+            }
+            commit = true;
+        }
+        finally {
+            currentProgram.endTransaction(transaction, commit);
+        }
+    }
+
+    /**
+     * The data item that starts at this relocation destination and covers it,
+     * created as undefined bytes when nothing is defined there; null when an
+     * instruction occupies it or a data item starts before it.
+     */
+    private Data volatileRelocationData(
+            Listing listing, LoaderInitializedRelocation relocation) throws Exception {
+        Address start = relocation.address();
+        long length = relocation.lengthInAddressableUnits();
+        if (length > Integer.MAX_VALUE) return null;
+        Data existing = listing.getDefinedDataContaining(start);
+        if (existing != null)
+            return existing.getAddress().equals(start) && existing.getLength() >= length
+                ? existing
+                : null;
+        // A range iterator only sees instructions whose start lies in the range.
+        if (listing.getInstructionContaining(start) != null) return null;
+        Address end = start.add(length - 1);
+        if (listing.getInstructions(new ghidra.program.model.address.AddressSet(start, end), true)
+                .hasNext())
+            return null;
+        if (listing.getDefinedData(new ghidra.program.model.address.AddressSet(start, end), true)
+                .hasNext())
+            return null;
+        return listing.createData(start, Undefined.getUndefinedDataType((int) length));
+    }
+
+    private LoaderInitializedRelocation loaderInitializedRelocationAt(Address address) {
+        Map.Entry<Address, LoaderInitializedRelocation> entry =
+            loaderInitializedRelocations.floorEntry(address);
+        if (entry == null) return null;
+        LoaderInitializedRelocation relocation = entry.getValue();
+        return relocation.contains(address) ? relocation : null;
     }
 
     private DecompileOptions decompileOptions(Integer payloadMiB) {
@@ -1797,7 +1946,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.add(
             "native_api",
             decompilerFailure == null
-                ? nativeApiBoundary(function, decompilation)
+                ? nativeApiBoundary(function, decompilation, scan.instructions)
                 : unavailableNativeApiBoundary(decompilerFailure)
         );
         result.add(
@@ -2664,7 +2813,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
     private JsonObject nativeApiBoundary(
         Function function,
-        DecompileResults decompilation
+        DecompileResults decompilation,
+        List<Instruction> instructions
     ) throws Exception {
         if (decompilation == null || decompilation.getHighFunction() == null) {
             return unavailableNativeApiBoundary(
@@ -2750,6 +2900,20 @@ public final class ReaGhidraBridge extends HeadlessScript {
             );
         }
 
+        if (currentProgram.getLanguageID().getIdAsString().startsWith("x86:LE:32:")) {
+            DecompiledFunction inferred = decompilation.getDecompiledFunction();
+            if (signatureSource.equals("analysis") && inferred != null) {
+                result.add(
+                    "prototype_conflicts",
+                    prototypeConflicts(
+                        function, prototype, instructions, inferred.getSignature(), signatureSource)
+                );
+            }
+            limitations.add(
+                "Prototype conflict checks cover direct EBP-framed argument reads and immediate RET cleanup under an inferred stdcall convention in analysis-inferred x86-32 signatures only; no diagnostic does not establish a correct signature."
+            );
+        }
+
         JumpTable[] recoveredJumpTables = highFunction.getJumpTables();
         List<ClangNode> caseTokens = new ArrayList<>();
         if (decompilation.getCCodeMarkup() != null) {
@@ -2759,6 +2923,228 @@ public final class ReaGhidraBridge extends HeadlessScript {
             jumpTables.add(inferredJumpTable(recoveredJumpTables[index], caseTokens));
         }
         return result;
+    }
+
+    private JsonArray prototypeConflicts(
+        Function function,
+        FunctionPrototype prototype,
+        List<Instruction> instructions,
+        String signature,
+        String signatureSource
+    ) throws Exception {
+        JsonArray conflicts = new JsonArray();
+        int count = prototype.getNumParams();
+        if (count == 0) {
+            FrameRead read = framedStackRead(function.getEntryPoint(), instructions, monitor);
+            if (read != null) {
+                JsonObject conflict = prototypeConflict(
+                    "stack-argument-read", signature, signatureSource, count, read.instruction());
+                conflict.addProperty("frame_offset_bytes", read.offset());
+                conflict.add("unresolved_assumptions", GSON.toJsonTree(List.of(
+                    "The frame-relative read is not proof of a source-level parameter or its type.",
+                    "The instruction does not establish the value's origin or the function's complete computation."
+                )));
+                conflicts.add(conflict);
+            }
+        }
+        String convention = prototype.getModelName();
+        if (!"__stdcall".equalsIgnoreCase(convention)) return conflicts;
+        int inferredStackBytes = 0;
+        for (int index = 0; index < count; index++) {
+            HighSymbol parameter = prototype.getParam(index);
+            if (parameter == null) return conflicts;
+            VariableStorage storage = parameter.getStorage();
+            if (storage == null || !storage.isStackStorage() || storage.isCompoundStorage() ||
+                storage.size() != 4 || storage.getStackOffset() != 4 + inferredStackBytes)
+                return conflicts;
+            inferredStackBytes += 4;
+        }
+        for (Instruction instruction : reachablePrototypeInstructions(
+            function.getEntryPoint(), instructions, monitor)) {
+            monitor.checkCancelled();
+            Instruction terminal = instruction;
+            if (instruction.getMnemonicString().equalsIgnoreCase("JMP") &&
+                instruction.getFlows().length == 1) {
+                Address target = instruction.getFlows()[0];
+                // A direct one-hop shared epilogue is evidence, not additional owned
+                // body. A target belonging to another function is a tail call, whose
+                // cleanup belongs to that callee rather than this prototype.
+                if (!function.getBody().contains(target) &&
+                    functionAtOrContaining(target) == null) {
+                    terminal = currentProgram.getListing().getInstructionAt(target);
+                    if (terminal == null) continue;
+                }
+            }
+            Long cleanup = conflictingReturnCleanup(terminal, inferredStackBytes);
+            if (cleanup == null) continue;
+            JsonObject conflict = prototypeConflict(
+                "return-stack-cleanup", signature, signatureSource, count, terminal);
+            conflict.addProperty("cleanup_bytes", cleanup);
+            conflict.addProperty("inferred_stack_bytes", inferredStackBytes);
+            conflict.add("unresolved_assumptions", GSON.toJsonTree(List.of(
+                "The cleanup difference does not establish a missing, extra or differently sized source parameter.",
+                "Hidden arguments, alternate entry paths and the compiler's calling convention remain unverified."
+            )));
+            conflicts.add(conflict);
+            break;
+        }
+        return conflicts;
+    }
+
+    static Long conflictingReturnCleanup(Instruction instruction, int inferredStackBytes) {
+        if (!instruction.getMnemonicString().equalsIgnoreCase("RET") ||
+            instruction.getNumOperands() != 1 ||
+            !OperandType.isScalar(instruction.getOperandType(0))) return null;
+        Object[] objects = instruction.getOpObjects(0);
+        if (objects.length != 1 || !(objects[0] instanceof Scalar immediate)) return null;
+        long cleanup = immediate.getUnsignedValue();
+        return cleanup <= 0xffff && cleanup != inferredStackBytes ? cleanup : null;
+    }
+
+    private static Map<Address, Instruction> decodedByAddress(List<Instruction> instructions) {
+        Map<Address, Instruction> decoded = new HashMap<>();
+        for (Instruction instruction : instructions) decoded.put(instruction.getAddress(), instruction);
+        return decoded;
+    }
+
+    static List<Instruction> reachablePrototypeInstructions(
+        Address entry, List<Instruction> instructions, TaskMonitor monitor
+    ) throws Exception {
+        Map<Address, Instruction> decoded = decodedByAddress(instructions);
+        List<Instruction> reachable = new ArrayList<>();
+        Set<Address> visited = new HashSet<>();
+        ArrayDeque<Address> pending = new ArrayDeque<>();
+        pending.add(entry);
+        while (!pending.isEmpty()) {
+            monitor.checkCancelled();
+            Address address = pending.removeFirst();
+            if (!visited.add(address)) continue;
+            Instruction instruction = decoded.get(address);
+            if (instruction == null) continue;
+            reachable.add(instruction);
+            queuePrototypeSuccessors(instruction, decoded, pending);
+        }
+        return reachable;
+    }
+
+    private static void queuePrototypeSuccessors(
+        Instruction instruction, Map<Address, Instruction> decoded, ArrayDeque<Address> pending
+    ) {
+        Address fallThrough = instruction.getFallThrough();
+        if (fallThrough != null && decoded.containsKey(fallThrough)) pending.add(fallThrough);
+        // A call target's instructions belong to a different invocation.
+        if (instruction.getFlowType().isCall()) return;
+        for (Address destination : instruction.getFlows()) {
+            if (decoded.containsKey(destination)) pending.add(destination);
+        }
+    }
+
+    /** Follow only decoded, reachable instruction edges while the entry EBP frame survives. */
+    static FrameRead framedStackRead(
+        Address entry,
+        List<Instruction> instructions,
+        TaskMonitor monitor
+    ) throws Exception {
+        Map<Address, Instruction> decoded = decodedByAddress(instructions);
+        // An owned block below the entry can precede it in the scan, so the
+        // prologue is located by address instead of list position.
+        Instruction push = decoded.get(entry);
+        Instruction frame = push == null ? null : decoded.get(push.getFallThrough());
+        if (push == null || frame == null ||
+            !push.getMnemonicString().equalsIgnoreCase("PUSH") ||
+            !registerOperand(push, 0, "EBP") ||
+            !frame.getMnemonicString().equalsIgnoreCase("MOV") ||
+            !registerOperand(frame, 0, "EBP") ||
+            !registerOperand(frame, 1, "ESP"))
+            return null;
+        ArrayDeque<Address> pending = new ArrayDeque<>();
+        if (frame.getFallThrough() != null) pending.add(frame.getFallThrough());
+        Set<Address> visited = new HashSet<>();
+        while (!pending.isEmpty()) {
+            monitor.checkCancelled();
+            Address address = pending.removeFirst();
+            if (!visited.add(address)) continue;
+            Instruction instruction = decoded.get(address);
+            if (instruction == null) continue;
+            Long offset = frameArgumentOffset(instruction);
+            if (offset != null) return new FrameRead(instruction, offset);
+            // The read uses the old EBP value; a write invalidates only successors.
+            if (writesFramePointer(instruction)) continue;
+            queuePrototypeSuccessors(instruction, decoded, pending);
+        }
+        return null;
+    }
+
+    static record FrameRead(Instruction instruction, long offset) {}
+
+    private static Long frameArgumentOffset(Instruction instruction) {
+        PcodeOp[] operations = instruction.getPcode();
+        for (int operand = 0; operand < instruction.getNumOperands(); operand++) {
+            int type = instruction.getOperandType(operand);
+            if (!OperandType.isDynamic(type) && !OperandType.isIndirect(type)) continue;
+            Object[] objects = instruction.getOpObjects(operand);
+            if (objects.length != 2) continue;
+            Register base = null;
+            Scalar offset = null;
+            for (Object object : objects) {
+                if (object instanceof Register register) base = register;
+                else if (object instanceof Scalar scalar) offset = scalar;
+            }
+            // An indexed operand has additional objects, not a direct [EBP + disp].
+            if (base == null || offset == null ||
+                !base.getName().equalsIgnoreCase("EBP") || offset.getSignedValue() < 8)
+                continue;
+            PcodeOp[] addressOps = instruction.getPcode(operand);
+            if (addressOps.length == 0) continue;
+            Varnode pointer = addressOps[addressOps.length - 1].getOutput();
+            if (pointer == null) continue;
+            for (PcodeOp operation : operations) {
+                // LOAD's second input is the address being read. A LOAD from
+                // ESP (POP's source) cannot justify a read through [EBP + disp].
+                if (operation.getOpcode() == PcodeOp.LOAD &&
+                    pointer.equals(operation.getInput(1))) return offset.getSignedValue();
+            }
+        }
+        return null;
+    }
+
+    private static boolean writesFramePointer(Instruction instruction) {
+        Register frame = instruction.getProgram().getRegister("EBP");
+        if (frame == null) return true;
+        for (Object object : instruction.getResultObjects()) {
+            if (object instanceof Register register &&
+                register.getBaseRegister().equals(frame.getBaseRegister())) return true;
+        }
+        // Include implicit and partial-register writes even when the listing's
+        // result-object summary omits them (for example LEAVE or XCHG).
+        for (PcodeOp operation : instruction.getPcode()) {
+            Varnode output = operation.getOutput();
+            if (output == null || !output.isRegister()) continue;
+            Register register = instruction.getProgram().getRegister(output);
+            if (register != null &&
+                register.getBaseRegister().equals(frame.getBaseRegister())) return true;
+        }
+        return false;
+    }
+
+    private static boolean registerOperand(Instruction instruction, int index, String name) {
+        if (instruction.getNumOperands() <= index) return false;
+        Object[] objects = instruction.getOpObjects(index);
+        return objects.length == 1 && objects[0] instanceof Register register &&
+            register.getName().equalsIgnoreCase(name);
+    }
+
+    private static JsonObject prototypeConflict(
+        String kind, String signature, String source, int count, Instruction instruction
+    ) {
+        JsonObject conflict = new JsonObject();
+        conflict.addProperty("kind", kind);
+        conflict.addProperty("inferred_signature", signature);
+        conflict.addProperty("signature_source", source);
+        conflict.addProperty("inferred_parameter_count", count);
+        conflict.addProperty("instruction_address", canonicalAddress(instruction.getAddress()));
+        conflict.addProperty("instruction", renderInstruction(instruction));
+        return conflict;
     }
 
     private static JsonObject unavailableNativeValueFlow(String reason) {
@@ -3994,6 +4380,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private final class FunctionBoundaryLimitations {
         private final Function function;
         private final List<String> limitations = new ArrayList<>();
+        private boolean inferredNoReturnCall;
+        private final Set<Address> observedLoaderRelocations = new HashSet<>();
         private Instruction beforePrevious;
         private Instruction previous;
 
@@ -4003,8 +4391,20 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
         private void observe(Instruction instruction) throws Exception {
             monitor.checkCancelled();
-            String limitation = terminalCallLimitation(instruction);
-            if (limitation != null) limitations.add(limitation);
+            TerminalCall terminal = terminalCall(instruction);
+            if (terminal != null) {
+                limitations.add(terminal.limitation());
+                if (terminal.inferredNoReturn()) inferredNoReturnCall = true;
+            }
+            for (Reference reference : instruction.getReferencesFrom()) {
+                if (!reference.getReferenceType().isRead()) continue;
+                LoaderInitializedRelocation relocation = loaderInitializedRelocationAt(
+                    reference.getToAddress()
+                );
+                if (relocation == null || !observedLoaderRelocations.add(relocation.address()))
+                    continue;
+                limitations.add(loaderInitializedRelocationLimitation(relocation));
+            }
             if (beforePrevious != null && previous != null) {
                 String seh = borlandSehHandlerLimitation(
                     function, beforePrevious, previous, instruction);
@@ -4015,8 +4415,54 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
 
         private List<String> values() {
-            return List.copyOf(limitations);
+            if (!inferredNoReturnCall) return List.copyOf(limitations);
+            List<String> result = new ArrayList<>();
+            // One consequence and recovery per function, ahead of the call-specific facts so a
+            // bounded summary that admits limitations in order keeps it. The text names no
+            // address, so those summaries also deduplicate it across functions.
+            result.add("A terminal call in this function targets a callee that " +
+                "Ghidra's Non-Returning Functions - Discovered analyzer inferred cannot return, so Ghidra " +
+                "excluded that call's fall-through from the analyzed body and from the pseudocode and facts " +
+                "derived from it. If the callee returns, code reachable only through that fall-through is " +
+                "missing from this result. To compare, analyze a fresh import with " +
+                "REA_GHIDRA_DISABLED_ANALYZERS='Non-Returning Functions - Discovered'.");
+            result.addAll(limitations);
+            return result;
         }
+    }
+
+    /** A terminal call's limitation and whether its no-return flag was analyzer-inferred. */
+    private record TerminalCall(String limitation, boolean inferredNoReturn) {}
+
+    /**
+     * Ghidra's Non-Returning Functions - Discovered analyzer bookmarks each entry it marks with
+     * this Analysis comment; the name-list Known analyzer uses "Non-Returning Function Identified".
+     * A missing bookmark leaves the flag's origin unknown, never declared.
+     */
+    private boolean discoveredNoReturn(Function target) {
+        Function thunked = target.isThunk() ? target.getThunkedFunction(true) : null;
+        return hasDiscoveredNoReturnBookmark(target) ||
+            (thunked != null && hasDiscoveredNoReturnBookmark(thunked));
+    }
+
+    private boolean hasDiscoveredNoReturnBookmark(Function function) {
+        Bookmark bookmark = currentProgram.getBookmarkManager().getBookmark(
+            function.getEntryPoint(), BookmarkType.ANALYSIS, "Non-Returning Function");
+        return bookmark != null && "Non-Returning Function Found".equals(bookmark.getComment());
+    }
+
+    private static String loaderInitializedRelocationLimitation(
+            LoaderInitializedRelocation relocation) {
+        String symbol = relocation.symbolName();
+        String symbolDetail = symbol == null || symbol.isBlank()
+            ? "an unnamed relocation"
+            : "the relocation for " + symbol;
+        return "This procedure reads bytes affected by the loader relocation at " +
+            canonicalAddress(relocation.address()) + " in non-writable block " +
+            relocation.blockName() +
+            ", which contains " + symbolDetail +
+            "; the file-backed value may differ from the loader-initialized runtime value, " +
+            "so constants derived from this location are not authoritative.";
     }
 
     private String borlandSehHandlerLimitation(
@@ -4111,9 +4557,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
     }
 
-    private String terminalCallLimitation(Instruction instruction) {
+    private TerminalCall terminalCall(Instruction instruction) {
         if (!instruction.getFlowType().isCall() || !instruction.getFlowType().isTerminal())
             return null;
+        boolean inferred = false;
         Address[] destinations = instruction.getFlows();
         StringBuilder limitation = new StringBuilder();
         limitation.append("Ghidra Listing reports a terminal call at ")
@@ -4142,14 +4589,18 @@ public final class ReaGhidraBridge extends HeadlessScript {
             Function target = destinations.length == 1
                 ? currentProgram.getFunctionManager().getFunctionAt(destinations[0])
                 : null;
-            if (target != null && target.hasNoReturn()) {
+            if (target != null && target.hasNoReturn() && discoveredNoReturn(target)) {
+                inferred = true;
+                limitation.append(" Ghidra's Non-Returning Functions - Discovered analyzer bookmarked this callee as a non-returning function it found; the flag is an analysis inference, not an independent verification that the callee cannot return.");
+            }
+            else if (target != null && target.hasNoReturn()) {
                 limitation.append(" This records Ghidra's FunctionManager flag, not an independent verification that the callee cannot return.");
             }
             else {
                 limitation.append(" The reason for the terminal flow is not established by this observation.");
             }
         }
-        return limitation.toString();
+        return new TerminalCall(limitation.toString(), inferred);
     }
 
     private static String renderAssembly(List<Instruction> instructions) {
@@ -4159,17 +4610,21 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private static List<String> renderAssemblyLines(List<Instruction> instructions) {
         List<String> result = new ArrayList<>();
         for (Instruction instruction : instructions) {
-            StringBuilder line = new StringBuilder();
-            line.append(canonicalAddress(instruction.getAddress()));
-            line.append(": ");
-            line.append(instruction.getMnemonicString());
-            for (int index = 0; index < instruction.getNumOperands(); index += 1) {
-                line.append(index == 0 ? " " : ", ");
-                line.append(instruction.getDefaultOperandRepresentation(index));
-            }
-            result.add(line.toString());
+            result.add(
+                canonicalAddress(instruction.getAddress()) + ": " + renderInstruction(instruction)
+            );
         }
         return result;
+    }
+
+    private static String renderInstruction(Instruction instruction) {
+        StringBuilder line = new StringBuilder();
+        line.append(instruction.getMnemonicString());
+        for (int index = 0; index < instruction.getNumOperands(); index += 1) {
+            line.append(index == 0 ? " " : ", ");
+            line.append(instruction.getDefaultOperandRepresentation(index));
+        }
+        return line.toString();
     }
 
     private List<Reference> collectReferences(
@@ -5387,6 +5842,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
         writeResponse(writer, response);
     }
 
+    /** Reserved response id for a failure not tied to one parsed request. */
+    private static final int CONNECTION_FAILURE_ID = 0;
+
     private static void writeFailure(
             BufferedWriter writer,
             int id,
@@ -5448,6 +5906,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
     private record AddressNameConflict(Namespace namespace, String leaf, List<Address> requesters, List<Address> holders) {}
     private record AddressNameFailure(String reason, AddressNameConflict conflict) {}
+    private record LoaderInitializedRelocation(
+        Address address, long lengthInAddressableUnits, String blockName, String symbolName
+    ) {
+        private boolean contains(Address candidate) {
+            if (!candidate.hasSameAddressSpace(address) || candidate.compareTo(address) < 0)
+                return false;
+            long displacement = candidate.subtract(address);
+            return displacement >= 0 && displacement < lengthInAddressableUnits;
+        }
+    }
     private record FunctionEntry(Function function, InventoryItem item) {}
     private record ProcedureNameMatch(boolean primary, List<String> aliases) {
         boolean matched() {

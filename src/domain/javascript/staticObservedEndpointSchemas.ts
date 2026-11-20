@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { coverageStatusSchema } from "../coverage.js";
 import { digestSchema, prefixedDigestSchema } from "../digests.js";
 import { ROUTE_RULES } from "../analysisView/webNetworkRouteTemplates.js";
 
@@ -80,7 +81,7 @@ export const staticObservedEndpointComparisonSchema = z.strictObject({
   }),
   source_coverage: z.strictObject({
     application: z.strictObject({
-      status: z.enum(["complete", "partial", "unknown", "unavailable"]),
+      status: z.enum([...coverageStatusSchema.options, "unavailable"]),
       truncated: z.boolean(),
       omitted_count: z.int().nonnegative().nullable(),
       limit_count: z.int().nonnegative(),

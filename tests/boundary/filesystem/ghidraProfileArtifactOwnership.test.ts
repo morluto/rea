@@ -6,8 +6,7 @@ import { GhidraHeadlessLauncher } from "../../../src/ghidra/GhidraLauncher.js";
 import { GhidraProvider } from "../../../src/ghidra/GhidraProvider.js";
 import { ghidraProfileInstallationHost } from "../../../src/ghidra/GhidraInstallation.fixture.js";
 import { silentLogger } from "../../../src/logger.js";
-import { createDeferred } from "../../fixtures/binarySession.js";
-import { STARTUP_OWNER_CLOSED } from "../../../src/process/SharedStartupAttempt.js";
+import { OwnerCancellation } from "../../../src/domain/analysisErrorCore.js";
 import {
   readFile,
   rename,
@@ -16,18 +15,19 @@ import {
   type FileHandle,
 } from "node:fs/promises";
 import { afterEach, expect, it, vi } from "vitest";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
 import {
   resolveGhidraAnalysisSeeds,
   snapshotGhidraAnalysisSeeds,
-  MAX_GHIDRA_SEED_BYTES,
 } from "../../../src/ghidra/GhidraAnalysisSeeds.js";
 import {
   resolveGhidraExtensions,
   snapshotGhidraExtensions,
 } from "../../../src/ghidra/extensions/GhidraExtensions.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { MAX_GHIDRA_SEED_BYTES } from "../../../src/domain/native/ghidraSeedFile.js";
 
 const controls = vi.hoisted(() => ({
   realpath: undefined as ((path: string) => Promise<void>) | undefined,
@@ -378,50 +378,54 @@ it("joins whole provider resolution before shutdown and gates the next admission
     {},
     ghidraProfileInstallationHost,
   );
-  const entered = createDeferred<void>();
-  const release = createDeferred<void>();
+  const profileResolution = phaseGate();
   controls.realpath = async (path) => {
     if (path !== seed) return;
     controls.realpath = undefined;
-    entered.resolve();
-    await release.promise;
+    await profileResolution.hold();
   };
   let opens = 0;
   controls.file = () => {
     opens++;
   };
   const resolving = provider.resolveAnalysisProfile(target);
-  await entered.promise;
-  const count = opens;
-  let closed = false;
-  const closing = provider.closeOwnedResources().then((result) => {
-    closed = true;
-    return result;
-  });
-  const next = provider.resolveAnalysisProfile(target);
+  let closing: ReturnType<typeof provider.closeOwnedResources> | undefined;
+  let next: ReturnType<typeof provider.resolveAnalysisProfile> | undefined;
   try {
+    await profileResolution.reached(resolving, "profile resolution");
+    const count = opens;
+    let closed = false;
+    closing = provider.closeOwnedResources().then((result) => {
+      closed = true;
+      return result;
+    });
+    next = provider.resolveAnalysisProfile(target);
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(closed).toBe(false);
     expect(opens).toBe(count);
     expect(provider.hasPendingOwnedResources()).toBe(true);
-    release.resolve();
+    profileResolution.release();
     const stopped = await resolving;
     if (stopped.ok) throw new Error("Expected owned resolution cancellation");
-    expect(stopped.error.cause).toBe(STARTUP_OWNER_CLOSED);
+    expect(stopped.error.cause).toBe(OwnerCancellation.startupOwnerClosed);
     expect(stopped).toMatchObject({
       ok: false,
       error: {
         _tag: "AnalysisCancelledError",
         operation: "open_binary",
-        cause: STARTUP_OWNER_CLOSED,
+        cause: OwnerCancellation.startupOwnerClosed,
       },
     });
     expect(await closing).toEqual({ ok: true, value: null });
     expect((await next).ok).toBe(true);
     expect(provider.hasPendingOwnedResources()).toBe(false);
   } finally {
-    release.resolve();
-    await Promise.all([resolving, closing, next]);
+    profileResolution.release();
+    await Promise.allSettled([
+      resolving,
+      ...(closing ? [closing] : []),
+      ...(next ? [next] : []),
+    ]);
     await provider.closeOwnedResources();
   }
 });

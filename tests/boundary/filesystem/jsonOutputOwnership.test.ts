@@ -5,16 +5,13 @@ import * as fs from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { EvidenceFileError } from "../../../src/domain/evidenceErrors.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
-import {
-  identityFromRetainedHandle,
-  OwnedStagedOutput,
-} from "../../../src/filesystem/OwnedStagedOutput.js";
+import { OwnedStagedOutput } from "../../../src/filesystem/OwnedStagedOutput.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-import { writeTextParts } from "../../../src/application/JsonFiles.js";
+import { writeTextParts } from "../../../src/resources/TextFileWrite.js";
 import { StagedOutputError } from "../../../src/filesystem/StagedOutputError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -421,30 +418,6 @@ function replacingStagedParts(root: string): Iterable<string> {
 
 const requireStages = (root: string): string[] =>
   readdirSync(root).filter((entry) => entry.startsWith(".rea-write-"));
-
-it("keeps a directory identity handle when its close fails", async () => {
-  const retained: OwnedFileHandle[] = [];
-  let attempts = 0;
-  const seen: { dev: number; ino: number }[] = [];
-  const raw = {
-    fd: 4,
-    stat: async () => ({ dev: 7, ino: 11 }),
-    close: async () => {
-      attempts += 1;
-      if (attempts === 1) throw new Error("injected close failure");
-    },
-  };
-
-  await expect(
-    identityFromRetainedHandle(retained, raw as never, (identity) => {
-      seen.push(identity);
-    }),
-  ).rejects.toThrow("injected close failure");
-  expect(seen).toEqual([{ dev: 7, ino: 11 }]);
-  expect(retained).toHaveLength(1);
-  await retained[0]?.close();
-  expect(attempts).toBe(2);
-});
 
 it("retains a failed file close owner and retries before removing its stage", async () => {
   const root = await createTestTempDirectory("rea-staged-close-");

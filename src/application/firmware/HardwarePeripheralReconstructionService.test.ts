@@ -8,7 +8,7 @@ import type { AnalyzedInstructionReference } from "../../domain/firmware/hardwar
 import type {
   AnalysisExecution,
   AnalysisOperationPort,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import { err, ok } from "../../domain/result.js";
 import {
   AnalysisInputError,

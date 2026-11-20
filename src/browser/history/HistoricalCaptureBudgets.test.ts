@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 import { writeFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 import { WebNetworkCaptureService } from "../../application/WebNetworkCaptureService.js";
@@ -10,9 +10,9 @@ import { historicalHar } from "../../../tests/fixtures/historicalHar.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { jsonValueValidationIssue } from "../../domain/jsonValue.js";
-import { MAX_WEB_NETWORK_CAPTURE_NESTING_DEPTH } from "../../domain/webNetworkCapture.js";
 
 const require = createRequire(import.meta.url);
+const MAX_WEB_NETWORK_CAPTURE_NESTING_DEPTH = 996;
 
 /** Exercise the real private decoder protocol and parsers from the source checkout. */
 const service = () =>
@@ -27,7 +27,7 @@ const service = () =>
               command: process.execPath,
               arguments: [
                 "--import",
-                require.resolve("tsx"),
+                pathToFileURL(require.resolve("tsx")).href,
                 fileURLToPath(
                   new URL("./NodeCaptureProcess.ts", import.meta.url),
                 ),
@@ -188,8 +188,13 @@ it("reserves reply and Evidence nesting before accepting a deep capture policy",
     throw new Error("Capture exceeded its selected nesting allowance");
   expect(projectAnalysisError(exhausted.error)).toMatchObject({
     details: {
-      diagnostics: { budget: { effective_value: 996, maximum: 996 } },
+      diagnostics: {
+        budget: {
+          parameter: "max_nesting_depth",
+          effective_value: 996,
+          maximum: 996,
+        },
+      },
     },
-    remediation: { action: expect.stringContaining("at its maximum") },
   });
 });

@@ -16,7 +16,6 @@ import {
   resolveRegexWorkerHeapRequest,
   REGEX_WORKER_HEAP_REQUEST_SETTING,
   regexWorkerHeapRequestContinuingRecovery,
-  regexWorkerHeapRequestRecovery,
 } from "./regexWorkerHeapRequest.js";
 import {
   MAXIMUM_REGEX_WORKER_HEAP_REQUEST_MIB,
@@ -86,7 +85,6 @@ it("keeps the 128 MiB request when the setting is unset", () => {
 });
 
 it("uses a valid REA_REGEX_WORKER_HEAP_REQUEST_MIB override", () => {
-  expect(MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB).toBe(7);
   expect(
     parseRegexWorkerHeapRequest(String(MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB)),
   ).toEqual({

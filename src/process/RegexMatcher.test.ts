@@ -1,18 +1,6 @@
 import { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { parseConfig } from "../config/parseConfig.js";
 import { runtimeAnalysisConfig } from "../config/runtimeAnalysisSettings.js";
-import {
-  matchRegexValues,
-  execArgvFromCommandLine,
-  readLaunchExecArgv,
-  readLaunchNodeOptions,
-  regexMatchingDeadlineError,
-  regexMatchingLimitation,
-  regexWorkerHeapError,
-  resolveLaunchRegexWorkerHeap,
-  resolveRegexWorkerHeap,
-  type RegexWorkerHeapLimit,
-} from "./RegexMatcher.js";
 import { expect, it } from "vitest";
 
 import {
@@ -25,6 +13,17 @@ import {
   DEFAULT_REGEX_WORKER_HEAP_REQUEST,
 } from "../config/regexWorkerHeapRequest.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import {
+  matchRegexValues,
+  execArgvFromCommandLine,
+  readLaunchExecArgv,
+  readLaunchNodeOptions,
+  regexMatchingLimitation,
+  regexWorkerHeapError,
+  resolveLaunchRegexWorkerHeap,
+  resolveRegexWorkerHeap,
+  type RegexWorkerHeapLimit,
+} from "./RegexMatcher.js";
 
 const effective = (mib: number, overridden: boolean): RegexWorkerHeapLimit => ({
   kind: "effective",
@@ -224,12 +223,19 @@ it.each([
   },
 );
 
+it("leaves launch flags unrecoverable on platforms without /proc/self", () => {
+  for (const platform of ["darwin", "win32"] as const) {
+    expect(readLaunchNodeOptions(platform)).toEqual({ kind: "unrecoverable" });
+    expect(readLaunchExecArgv(platform)).toEqual({ kind: "unrecoverable" });
+  }
+});
+
 it("does not treat a rewritten NODE_OPTIONS value as the launch heap", () => {
   const previous = process.env.NODE_OPTIONS;
   const rewritten = "--max-old-space-size=61-rewritten";
   process.env.NODE_OPTIONS = rewritten;
   try {
-    const launch = readLaunchNodeOptions();
+    const launch = readLaunchNodeOptions(process.platform);
     if (process.platform === "linux") {
       expect(launch.kind).toBe("recovered");
       if (launch.kind === "recovered")
@@ -357,12 +363,12 @@ it("recovers launch exec argv from the command line, not process.execArgv", () =
     kind: "recovered",
     value: [],
   });
-  const before = readLaunchExecArgv();
+  const before = readLaunchExecArgv(process.platform);
   const snapshot = [...process.execArgv];
   process.execArgv.length = 0;
   try {
     expect(process.execArgv).toEqual([]);
-    expect(readLaunchExecArgv()).toEqual(before);
+    expect(readLaunchExecArgv(process.platform)).toEqual(before);
     if (before.kind === "recovered") expect(before.value).toEqual(snapshot);
     else expect(before).toEqual({ kind: "unrecoverable" });
   } finally {

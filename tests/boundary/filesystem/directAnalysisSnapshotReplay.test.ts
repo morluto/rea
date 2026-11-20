@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import {
   parseEvidenceBundle,
@@ -18,14 +19,14 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { runDirectAnalysis } from "../../../src/application/DirectAnalysis.js";
-import type {
-  AnalysisProvider,
-  CapabilityDescriptor,
-  ProviderIdentity,
-} from "../../../src/application/AnalysisProvider.js";
+import {
+  createAnalysisExecution,
+  type AnalysisProvider,
+  type CapabilityDescriptor,
+  type ProviderIdentity,
+} from "../../../src/ports/AnalysisProvider.js";
 import type { DirectAnalysisDependencies } from "../../../src/application/DirectAnalysisDependencies.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
 import { err, ok } from "../../../src/domain/result.js";
 import {
   readAnalysisSnapshot,
@@ -33,6 +34,7 @@ import {
 } from "../../../src/application/binary/AnalysisSnapshotFiles.js";
 import {
   createEvidence,
+  evidenceSubject,
   parseEvidence,
   type Evidence,
 } from "../../../src/domain/evidence.js";
@@ -383,7 +385,7 @@ describe("one-shot Ghidra pseudocode snapshots", () => {
         parameters,
         options,
       );
-      expect(first.ok).toBe(true);
+      if (!first.ok) throw new Error(JSON.stringify(first.error));
       const second = await runDirectAnalysis(
         dependencies,
         fixture.path,
@@ -398,6 +400,12 @@ describe("one-shot Ghidra pseudocode snapshots", () => {
       expect(saved.value.entries).toMatchObject([
         { operation: "procedure_pseudo_code", parameters },
       ]);
+      expect(first.value.caller_input_path).toBe(fixture.path);
+      expect(
+        saved.value.evidence_bundle.records.filter(
+          ({ operation }) => operation === "procedure_pseudo_code",
+        ),
+      ).toEqual([first.value]);
     },
   );
 
@@ -508,11 +516,11 @@ const withAlternateWorkflowProfile = (
   const result = current.normalized_result;
   const subject = {
     path,
-    sha256: snapshot.target.sha256,
-    format: snapshot.target.format,
-    ...(snapshot.target.architecture === null
+    sha256: snapshot.target.identity.sha256,
+    format: snapshot.target.identity.format,
+    ...(snapshot.target.identity.architecture === null
       ? {}
-      : { architecture: snapshot.target.architecture }),
+      : { architecture: snapshot.target.identity.architecture }),
   };
   const alternateEvidence = createEvidence(subject, REA_WORKFLOW_PROVIDER, {
     operation: current.operation,
@@ -536,7 +544,7 @@ const withAlternateWorkflowProfile = (
       analysisProfile: alternateProfile,
       limitations: current.limitations,
       locations: current.locations,
-      subject,
+      subject: alternateEvidence.subject,
     },
   });
   return {
@@ -558,7 +566,7 @@ const withEarlierHistoricalEvidence = (
     createEvidence(
       {
         path,
-        sha256: snapshot.target.sha256,
+        sha256: snapshot.target.identity.sha256,
         format: "analysis-database",
       },
       REA_WORKFLOW_PROVIDER,
@@ -606,11 +614,15 @@ describe("snapshot output cleanup lifecycle", () => {
               ["fixture provider"],
               {},
               {
-                partialObservation: createEvidence(undefined, IDENTITY, {
-                  operation: "health",
-                  parameters: {},
-                  result: "cleanup facts",
-                }),
+                partialObservation: createEvidence(
+                  unknownTarget("not-observed"),
+                  IDENTITY,
+                  {
+                    operation: "health",
+                    parameters: {},
+                    result: "cleanup facts",
+                  },
+                ),
               },
             )
           : new AnalysisCancelledError("close_binary");
@@ -718,7 +730,7 @@ describe("snapshot output cleanup lifecycle", () => {
         if (!saved.ok) throw saved.error;
         const loaded = await readAnalysisSnapshot(path);
         if (!loaded.ok) throw loaded.error;
-        expect(loaded.value.target.sha256).toBe(opened.value.sha256);
+        expect(loaded.value.target.identity.sha256).toBe(opened.value.sha256);
       }
     } finally {
       const closed = await session.close();
@@ -1533,8 +1545,10 @@ describe("snapshot replay provider identity", () => {
       details: {
         binding_mismatch: {
           target: {
-            snapshot: { sha256: firstSnapshot.value.target.sha256 },
-            selected: { sha256: expect.any(String) },
+            snapshot: {
+              identity: { sha256: firstSnapshot.value.target.identity.sha256 },
+            },
+            selected: { identity: { sha256: expect.any(String) } },
           },
           profile_comparison: "not_compared",
         },
@@ -1767,7 +1781,7 @@ const expectProfilelessWorkflowSnapshotRejections = async (
             analysisProfile: mixedProfile,
             limitations: [],
             locations: [],
-            subject: null,
+            subject: evidenceSubject(unknownTarget("not-observed")),
           },
         }),
       ],
@@ -1816,20 +1830,7 @@ const expectProfilelessWorkflowSnapshotRejections = async (
                     originalWorkflow.execution.relationship_coverage,
                 }),
             locations: originalWorkflow.execution.locations,
-            subject:
-              originalWorkflow.execution.subject === null
-                ? null
-                : {
-                    path: originalWorkflow.execution.subject.path,
-                    sha256: originalWorkflow.execution.subject.sha256,
-                    format: originalWorkflow.execution.subject.format,
-                    ...(originalWorkflow.execution.subject.architecture === null
-                      ? {}
-                      : {
-                          architecture:
-                            originalWorkflow.execution.subject.architecture,
-                        }),
-                  },
+            subject: originalWorkflow.execution.subject,
           },
         }),
       ],
@@ -2054,8 +2055,8 @@ it.each([true, false])(
     const historical = createEvidence(
       {
         path: fixture.path,
-        sha256: saved.value.target.sha256,
-        format: saved.value.target.format,
+        sha256: saved.value.target.identity.sha256,
+        format: saved.value.target.identity.format,
       },
       evidence.provider,
       {
@@ -2163,7 +2164,6 @@ it("replays source-bearing direct analysis only while snapshot source Evidence i
     "replayed-evidence.json",
   );
   await publishCliAnalysisEvidence(replayed, {
-    providerId: IDENTITY.id,
     operation: "procedure_pseudo_code",
     signal: new AbortController().signal,
     detail: "complete",
@@ -2225,7 +2225,6 @@ it("preserves captured sources when a transitive source is missing", async () =>
   expect(result.sourceEvidence).toHaveLength(1);
   const outputPath = join(dirname(fixture.snapshotPath), "missing-source.json");
   const output = await publishCliAnalysisEvidence(result, {
-    providerId: IDENTITY.id,
     operation: "procedure_pseudo_code",
     signal: new AbortController().signal,
     detail: "complete",
@@ -2280,7 +2279,6 @@ it("retains completed function sources when cancellation arrives as execution re
   expect(result.ok).toBe(false);
   const outputPath = join(dirname(fixture.snapshotPath), "cancelled.json");
   const output = await publishCliAnalysisEvidence(result, {
-    providerId: IDENTITY.id,
     operation: "analyze_function",
     signal: controller.signal,
     detail: "complete",
@@ -2328,7 +2326,6 @@ it("publishes captured function sources when completed parent admission fails", 
   expect(sourceIds).toHaveLength(1);
   const outputPath = join(dirname(fixture.snapshotPath), "refused.json");
   const output = await publishCliAnalysisEvidence(result, {
-    providerId: IDENTITY.id,
     operation: "analyze_function",
     signal: new AbortController().signal,
     detail: "complete",

@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 
 import { afterEach, expect, it, vi } from "vitest";
 
-import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../../src/resources/ArtifactResourceScope.js";
 import { AnalysisCancelledError } from "../../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../../../../src/domain/providerCleanupError.js";
@@ -13,6 +13,7 @@ import {
   RegularFileCancelled,
 } from "../../../../src/filesystem/OwnedRegularFile.js";
 import { run, session } from "./kunaSessionFixture.js";
+import { waitFor } from "../../../support/testWait.js";
 
 const fault = vi.hoisted(() => ({
   fail: false,
@@ -144,7 +145,8 @@ it.each([
       if (handle === undefined) throw new Error("missing span descriptor");
       if (short) {
         expect(result.error.cleanupPrimary?.cause).toMatchObject({
-          _tag: "KunaDocumentError",
+          name: "KunaDocumentError",
+          kind: "truncated",
           code: "span_short",
         });
         expect(result.error.diagnostics?.span_read).toBeUndefined();
@@ -375,7 +377,7 @@ it("does not open a second span while a peer still holds a failed close", async 
       { procedure: "main" },
       {},
     );
-    await vi.waitFor(() => {
+    await waitFor(() => {
       expect(fault.closeEntered).toBe(1);
     });
     const second = client.execute(
@@ -440,7 +442,7 @@ it("does not open a queued span after its caller aborts", async () => {
       { procedure: "main" },
       {},
     );
-    await vi.waitFor(() => {
+    await waitFor(() => {
       expect(fault.closeEntered).toBe(1);
     });
     const abort = new AbortController();
@@ -504,7 +506,7 @@ it.each(["before close", "during verification", "during close"] as const)(
         { signal: abort.signal },
       );
       if (when === "during close") {
-        await vi.waitFor(() => {
+        await waitFor(() => {
           expect(fault.closeEntered).toBe(1);
         });
         abort.abort(reason);
