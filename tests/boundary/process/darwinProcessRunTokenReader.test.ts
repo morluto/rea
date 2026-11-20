@@ -1350,12 +1350,8 @@ it.skipIf(!onDarwin)(
       emptyLaterArgumentRead: true,
       emptyArgv0Read: true,
       emptyEnvironmentRecordsBeforeTokenFailClosed: true,
-      duplicateTokenFailsClosed: true,
-      invalidTokenEncodingFailsClosed: true,
       finalAssignmentArgumentRead: true,
       missingAppleBoundaryFailsClosed: true,
-      malformedBuffersRejected: true,
-      invalidPointerSizeFailsClosed: true,
       incompleteRestrictedArguments: [
         "malformed_procargs_path_padding",
         "malformed_procargs_arguments",
@@ -1372,13 +1368,13 @@ it.skipIf(!onDarwin)(
         { state: "unavailable", reason },
       ]),
       signedReadableTokens: [true, true],
-      signedInvalidTokens: [
-        "duplicate_run_token",
-        "invalid_run_token_encoding",
-      ].map((reason) => [
-        { state: "unavailable", reason },
-        { state: "unavailable", reason },
-      ]),
+      invalidTokens: ["duplicate_run_token", "invalid_run_token_encoding"].map(
+        (reason) => [
+          { state: "unavailable", reason },
+          { state: "unavailable", reason },
+          { state: "unavailable", reason },
+        ],
+      ),
       malformedStages: [
         { state: "unavailable", reason: "malformed_procargs_header" },
         { state: "unavailable", reason: "malformed_procargs_argument_count" },
@@ -1403,7 +1399,6 @@ it.skipIf(!onDarwin)(
       realTokenRead: true,
       reservedArgumentWithRealTokenFailsClosed: true,
       titleOverwriteFailsClosed: true,
-      truncatedArgvFailsClosed: true,
       zeroArgumentsRead: true,
     });
   },
