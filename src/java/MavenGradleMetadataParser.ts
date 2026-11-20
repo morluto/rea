@@ -93,8 +93,7 @@ const nonempty = (value: string | null | undefined): string | null => {
   return trimmed === "" ? null : trimmed;
 };
 
-const elementText = (element: Element | undefined): string | null => {
-  if (element === undefined) return null;
+const elementText = (element: Element): string => {
   const parts: string[] = [];
   for (
     let child = element.firstChild;
@@ -104,11 +103,20 @@ const elementText = (element: Element | undefined): string | null => {
     // Text (3) and CDATA section (4) nodes both carry character data.
     if (child.nodeType === 3 || child.nodeType === 4)
       parts.push(child.nodeValue ?? "");
-  return nonempty(parts.join(""));
+  return parts.join("");
 };
 
-const childText = (element: Element, local: string): string | null =>
-  elementText(soleNamed(element, local));
+const childText = (element: Element, local: string): string | null => {
+  const child = soleNamed(element, local);
+  if (child === undefined) return null;
+  const text = elementText(child);
+  // Maven's model reader applies Java String.trim() to these fields.
+  let start = 0;
+  let end = text.length;
+  while (start < end && text.charCodeAt(start) <= 0x20) start += 1;
+  while (end > start && text.charCodeAt(end - 1) <= 0x20) end -= 1;
+  return start === end ? null : text.slice(start, end);
+};
 
 const textOf = (value: unknown): string | null =>
   typeof value === "string" ? nonempty(value) : null;
@@ -342,7 +350,7 @@ const parsePom = (
           const {
             url: value,
             url_credentials_redacted: value_credentials_redacted,
-          } = redactRecordedTransportUrl(elementText(property));
+          } = redactRecordedTransportUrl(nonempty(elementText(property)));
           // Maven property keys are the written qualified names, not XML
           // expanded names: different prefixes remain different keys.
           return { name: property.tagName, value, value_credentials_redacted };
