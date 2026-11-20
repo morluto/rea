@@ -24,6 +24,7 @@ import { promisify } from "node:util";
 import { _electron as electron } from "playwright-core";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { z } from "zod";
+import { writeFakeXcrun } from "../../fixtures/darwinHelperToolchain.js";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { processTest } from "../../support/process/processFixture.js";
@@ -487,6 +488,85 @@ const existsPath = async (target: string) =>
     () => true,
     () => false,
   );
+
+it.skipIf(process.platform === "win32").each(["token", "identity"] as const)(
+  "admits a complete PID-keyed %s reply and rejects malformed or mismatched replies",
+  async (mode) => {
+    const directory = await createTestTempDirectory("rea-helper-reply-");
+    const xcrun = await writeFakeXcrun(directory);
+    const reader = createDarwinProcessRunTokenReader({
+      compiler: { kind: "xcrun", executable: xcrun.executable },
+    });
+    const tokenMode = mode === "token";
+    const reply = join(directory, "reply");
+    const arguments_ = tokenMode ? ["71", "84"] : ["--identities", "71", "84"];
+    const read = tokenMode ? reader.read : reader.identities;
+    const processes = [{ pid: 71 }, { pid: 84 }];
+    const row = (pid: number, value: string) => ({
+      pid,
+      state: "readable",
+      ...(tokenMode ? { run_id: value } : { identity: value }),
+    });
+    const response = (...rows: ReturnType<typeof row>[]) =>
+      JSON.stringify({ results: rows });
+    const first = row(71, "first");
+    const second = row(84, "second");
+    try {
+      // Use the real helper launcher with a controlled reply from the fixture.
+      const helper = await reader.prepare();
+      await writeFile(
+        helper,
+        `#!/usr/bin/env node
+const expected = ${JSON.stringify(arguments_)};
+if (JSON.stringify(process.argv.slice(2)) !== JSON.stringify(expected)) process.exit(64);
+process.stdout.write(process.getBuiltinModule("node:fs").readFileSync(${JSON.stringify(reply)}));
+`,
+      );
+      await writeFile(reply, response(second, first));
+      const observed = (value: string) => ({
+        state: "readable",
+        ...(tokenMode ? { runId: value } : { identity: value }),
+      });
+      expect(await read(processes)).toEqual(
+        new Map([
+          [71, observed("first")],
+          [84, observed("second")],
+        ]),
+      );
+      for (const [scenario, body, code] of [
+        ["invalid JSON", "{", "json_invalid"],
+        [
+          "wrong row type",
+          JSON.stringify({ results: [{ ...first, pid: "71" }, second] }),
+          "response_invalid",
+        ],
+        [
+          "foreign PID in complete reply",
+          response(first, row(97, "foreign")),
+          "pid_set",
+        ],
+        [
+          "duplicate PID in complete reply",
+          response(first, first, second),
+          "pid_set",
+        ],
+        ["omitted PID", response(first), "pid_incomplete"],
+      ] as const) {
+        await writeFile(reply, body);
+        const failure = await read(processes).then(
+          () => undefined,
+          (cause: unknown) => cause,
+        );
+        expect(failure, scenario).toMatchObject({
+          _tag: "ProcessAdmissionError",
+          code: `${mode}_${code}`,
+        });
+      }
+    } finally {
+      await reader.close();
+    }
+  },
+);
 
 it
   .skipIf(process.platform === "win32")
@@ -1434,6 +1514,11 @@ it.skipIf(!onDarwin)(
       env: { ...process.env, REA_PROCESS_RUN_ID: "rea-snapshot-probe" },
       timeout: 10_000,
     });
+    const invalidated = {
+      state: "unavailable",
+      reason: "process_identity_changed_during_token_read",
+      tokenPresent: false,
+    };
     expect(JSON.parse(stdout)).toEqual({
       preservedOtherErrno: true,
       retriedAfterFreshSize: true,
@@ -1446,13 +1531,17 @@ it.skipIf(!onDarwin)(
       absentRunTokens: [
         { pid: 42, state: "unavailable", reason: "process_not_in_snapshot" },
       ],
-      failedConfirmingRunTokens: [
-        {
-          state: "unavailable",
-          reason: "process_table_failed_5",
-          tokenPresent: false,
-        },
-      ],
+      refusedConfirmations: {
+        failed: [
+          {
+            state: "unavailable",
+            reason: "process_table_failed_5",
+            tokenPresent: false,
+          },
+        ],
+        changedGeneration: [invalidated],
+        changedPointerWidth: [invalidated],
+      },
       confirmedRunTokens: [{ state: "readable", matchesFixtureToken: true }],
       successfulSnapshotMissingPidIsAbsent: true,
       failedSnapshotMissingPidIsUnavailable: true,
