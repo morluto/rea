@@ -14,7 +14,7 @@ import { inspectWebNetworkCaptureInputSchema } from "../../domain/webNetworkCapt
 import {
   EFFECTIVE_DECODER_CPU_RECORD,
   historicalCaptureFailure,
-  parseRecordedCpuSeconds,
+  parseRecordedCpuCeiling,
   protobufCaptureFailure,
   recordedDecoderCpuSeconds,
 } from "./CaptureFailures.js";
@@ -273,7 +273,7 @@ it("reports SIGXCPU with the CPU ceiling the decoder recorded", () => {
       undefined,
       undefined,
       undefined,
-      1,
+      { seconds: 1, requestedSeconds: 30 },
     ),
   );
   expect(analysisErrorProjectionSchema.parse(projected)).toMatchObject({
@@ -283,6 +283,7 @@ it("reports SIGXCPU with the CPU ceiling the decoder recorded", () => {
       resource: "cpu",
       reported_limits: {
         cpu_seconds: 1,
+        requested_cpu_seconds: 30,
         observed_signal: "SIGXCPU",
         format: "mitmproxy",
       },
@@ -292,6 +293,42 @@ it("reports SIGXCPU with the CPU ceiling the decoder recorded", () => {
     },
   });
   expect(JSON.stringify(projected)).not.toContain("768");
+});
+
+it("reports the decoder CPU budget without asking to raise RLIMIT_CPU", () => {
+  const input = inspectWebNetworkCaptureInputSchema.parse({
+    capture_path: "/selected/input.mitm",
+    format: "mitmproxy",
+  });
+  const projected = projectAnalysisError(
+    historicalCaptureFailure(
+      input,
+      cpuSignalFailure("SIGXCPU"),
+      "decoder",
+      undefined,
+      undefined,
+      undefined,
+      { seconds: 30, requestedSeconds: 30 },
+    ),
+  );
+  expect(analysisErrorProjectionSchema.parse(projected)).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: {
+      resource: "cpu",
+      refusal: {
+        kind: "fixed_ceiling",
+        allowance_kind: "work",
+        limit: 30,
+        unit: "seconds",
+      },
+    },
+    remediation: {
+      action: expect.stringContaining("do not raise"),
+    },
+  });
+  expect(projected.remediation.action).not.toContain("RLIMIT_CPU above");
+  expect(projected.details?.reported_limits).toBeNull();
 });
 
 it("reports SIGXCPU without inventing a CPU ceiling", () => {
@@ -325,22 +362,39 @@ it("leaves SIGXFSZ on the adapter failure path", () => {
   ).toMatchObject({ code: "execution_failure" });
 });
 
-it("reads only a single recorded CPU ceiling", async () => {
-  expect(parseRecordedCpuSeconds(Buffer.from('{"seconds":1}'))).toBe(1);
-  expect(parseRecordedCpuSeconds(Buffer.from('{"seconds":1,"other":2}'))).toBe(
-    undefined,
-  );
-  expect(parseRecordedCpuSeconds(Buffer.from('{"seconds":1.5}'))).toBe(
-    undefined,
-  );
+it("reads only a recorded CPU ceiling at or below its budget", async () => {
+  expect(
+    parseRecordedCpuCeiling(
+      Buffer.from('{"requested_seconds":30,"seconds":1}'),
+    ),
+  ).toEqual({ seconds: 1, requestedSeconds: 30 });
+  expect(parseRecordedCpuCeiling(Buffer.from('{"seconds":1}'))).toBe(undefined);
+  expect(
+    parseRecordedCpuCeiling(
+      Buffer.from('{"requested_seconds":30,"seconds":1,"other":2}'),
+    ),
+  ).toBe(undefined);
+  expect(
+    parseRecordedCpuCeiling(
+      Buffer.from('{"requested_seconds":30,"seconds":1.5}'),
+    ),
+  ).toBe(undefined);
+  expect(
+    parseRecordedCpuCeiling(
+      Buffer.from('{"requested_seconds":1,"seconds":30}'),
+    ),
+  ).toBe(undefined);
   const root = await createTestTempDirectory("rea-cpu-limit-");
   await writeFile(
     join(root, EFFECTIVE_DECODER_CPU_RECORD),
-    '{"seconds":1}',
+    '{"requested_seconds":30,"seconds":1}',
     "utf8",
   );
   const cause = cpuSignalFailure("SIGXCPU");
-  expect(await recordedDecoderCpuSeconds(root, cause)).toBe(1);
+  expect(await recordedDecoderCpuSeconds(root, cause)).toEqual({
+    seconds: 1,
+    requestedSeconds: 30,
+  });
   expect(
     await recordedDecoderCpuSeconds(root, cpuSignalFailure("SIGXFSZ")),
   ).toBe(undefined);
