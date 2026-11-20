@@ -557,8 +557,25 @@ const parseGradle = (
   const repeatedVariantNames = new Budget(
     MAVEN_GRADLE_METADATA_REPEATED_VARIANT_NAME_CHARS,
   );
-  for (const variant of variants) {
-    const name = textOf(variant.name);
+  const variantNameIndices = new Map<string, number>();
+  for (const [index, variant] of variants.entries()) {
+    const declaredName = variant.name;
+    if (declaredName !== undefined && typeof declaredName !== "string")
+      throw malformedInput(
+        MAVEN_GRADLE_METADATA_FORMAT,
+        `Gradle module metadata variant.name at index ${String(index)} is not a string.`,
+      );
+    const name =
+      declaredName === undefined || declaredName === "" ? null : declaredName;
+    if (name !== null) {
+      const previous = variantNameIndices.get(name);
+      if (previous !== undefined)
+        throw malformedInput(
+          MAVEN_GRADLE_METADATA_FORMAT,
+          `Gradle module metadata declares a duplicate variant name at indices ${String(previous)} and ${String(index)}.`,
+        );
+      variantNameIndices.set(name, index);
+    }
     const attributes = gradleObject(variant.attributes, "variant.attributes");
     const category = textOf(attributes?.["org.gradle.category"]);
     const usage = textOf(attributes?.["org.gradle.usage"]);
