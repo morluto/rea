@@ -279,6 +279,16 @@ def preview_handler(site, prefix):
                 return None
             return super().send_head()
 
+        def end_headers(self):
+            path_part = urlsplit(self.path).path
+            if "/assets/" in path_part:
+                self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+            else:
+                self.send_header("Cache-Control", "public, max-age=0, must-revalidate")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
+            super().end_headers()
+
         def translate_path(self, path):
             return super().translate_path("/" + path[len(prefix):])
 
@@ -305,6 +315,7 @@ def main():
     translations.add_argument("--strict", action="store_true", help="Fail on missing or fuzzy translations")
     serve = commands.add_parser("serve", help="Prepare and preview the static site")
     serve.add_argument("--port", type=int, default=4173)
+    serve.add_argument("--host", default="127.0.0.1", help="Host interface to bind")
     serve.add_argument("--base-path", choices=("/", "/rea/"), default="/")
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
@@ -340,8 +351,8 @@ def main():
             prefix = args.base_path
 
             handler = preview_handler(root / "website/_site", prefix)
-            with ThreadingHTTPServer(("127.0.0.1", args.port), handler) as server:
-                print(f"Preview: http://127.0.0.1:{server.server_port}{prefix}", flush=True)
+            with ThreadingHTTPServer((args.host, args.port), handler) as server:
+                print(f"Preview: http://{args.host}:{server.server_port}{prefix}", flush=True)
                 server.serve_forever()
     except (OSError, ValueError, KeyError) as error:
         print(str(error), file=sys.stderr)

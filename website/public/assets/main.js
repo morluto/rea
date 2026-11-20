@@ -165,6 +165,64 @@ async function initializeWebsite() {
     }
   }
 
+  function initializeInteractions() {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+    // Ambient cursor glow (pointer only)
+    if (window.matchMedia("(pointer: fine)").matches) {
+      const glow = document.createElement("div");
+      glow.id = "neu-cursor-glow";
+      document.body.appendChild(glow);
+
+      let rafId = null;
+      let cx = -999,
+        cy = -999;
+      window.addEventListener(
+        "mousemove",
+        (e) => {
+          cx = e.clientX;
+          cy = e.clientY;
+          if (rafId !== null) return;
+          rafId = requestAnimationFrame(() => {
+            glow.style.setProperty("--cx", cx + "px");
+            glow.style.setProperty("--cy", cy + "px");
+            rafId = null;
+          });
+        },
+        { passive: true },
+      );
+    }
+
+    // Header scroll elevation
+    const header = document.querySelector(".site-header");
+    if (header) {
+      const onScroll = () => {
+        header.classList.toggle("neu-scrolled", window.scrollY > 8);
+      };
+      window.addEventListener("scroll", onScroll, { passive: true });
+      onScroll();
+    }
+
+    // Card hover 3D tilt
+    const cards = document.querySelectorAll(
+      ".home-case-card, .contributor-card, .home-workflow li",
+    );
+    const MAX_TILT = 3;
+    cards.forEach((card) => {
+      card.addEventListener("mousemove", (e) => {
+        const rect = card.getBoundingClientRect();
+        const x = (e.clientX - rect.left) / rect.width - 0.5;
+        const y = (e.clientY - rect.top) / rect.height - 0.5;
+        card.style.transform = `translateY(-2px) rotateX(${(-y * MAX_TILT).toFixed(2)}deg) rotateY(${(x * MAX_TILT).toFixed(2)}deg)`;
+      });
+      card.addEventListener("mouseleave", () => {
+        card.style.transform = "";
+      });
+    });
+  }
+
+  initializeInteractions();
+
   return initializeGitHubStars();
 }
 

@@ -86,6 +86,14 @@ To test the GitHub Pages prefix, use
 `python3 scripts/website.py serve --port 4174 --base-path /rea/` and open
 <http://127.0.0.1:4174/rea/>.
 
+To expose the server on your local network (LAN) for other devices:
+
+```sh
+python3 scripts/website.py serve --host 0.0.0.0
+```
+
+Then access it from other devices via `http://<your-lan-ip>:4173/`.
+
 ## Contribute a page or correction
 
 Edit the page's HTML in `public/`. Keep the question, evidence and result easy to
