@@ -399,19 +399,21 @@ it("names a whole-file codec stream without inflating it", async () => {
 
 it("fails closed when a config exceeds its entry or inflation budget", async () => {
   // Recovery reads the typed knob, never the message text.
-  for (const [bytes, extra, knob] of [
-    [kernelBuildConfigFixture(), { max_entries: 2 }, "max_entries"],
-    [kernelBuildConfigFixture(), { max_config_bytes: 64 }, "max_config_bytes"],
-    [bzImageGzipFixture(), { max_payload_bytes: 64 }, "max_payload_bytes"],
+  for (const [bytes, knob, maximum] of [
+    [kernelBuildConfigFixture(), "max_entries", 2],
+    [kernelBuildConfigFixture(), "max_config_bytes", 64],
+    [bzImageGzipFixture(), "max_payload_bytes", 64],
   ] as const) {
-    const failure = parse(bytes, extra);
+    const failure = parse(bytes, { [knob]: maximum });
     await expect(failure).rejects.toBeInstanceOf(
       KernelBuildConfigBudgetFailure,
     );
     await expect(failure).rejects.toMatchObject({
-      reason: "limit",
-      boundary: "capacity",
-      knob,
+      failure: {
+        kind: "limit",
+        format: "kernel-build-config",
+        limit: { name: knob, maximum },
+      },
     });
   }
 });
