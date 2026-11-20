@@ -100,6 +100,33 @@ const finishCommandInterruption = () => {
     ? commandInterruption.signal.reason
     : undefined;
 };
+const throwIfInterrupted = () => {
+  if (commandInterruption.signal.aborted)
+    throw commandInterruption.signal.reason;
+};
+// Analysis calls do not share the command process group. Stop waiting for them
+// on interrupt, then let the existing cleanup run.
+const untilInterrupted = (promise) =>
+  new Promise((resolve, reject) => {
+    if (commandInterruption.signal.aborted) {
+      reject(commandInterruption.signal.reason);
+      return;
+    }
+    const onAbort = () => reject(commandInterruption.signal.reason);
+    commandInterruption.signal.addEventListener("abort", onAbort, {
+      once: true,
+    });
+    Promise.resolve(promise).then(
+      (value) => {
+        commandInterruption.signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (cause) => {
+        commandInterruption.signal.removeEventListener("abort", onAbort);
+        reject(cause);
+      },
+    );
+  });
 
 /** Load every relocated word through the public read_bytes operation. */
 async function loadedWords(call, independent, segments, byteOrder) {
@@ -158,13 +185,20 @@ async function verifyFixture(byteOrder, kernelModule) {
   transport.stderr?.on("data", (chunk) => {
     stderr = (stderr + chunk.toString()).slice(-65536);
   });
-  const call = async (name, args = {}) =>
-    requireMcpOperationResult(
-      await client.callTool({ name, arguments: args }, { timeout: 180000 }),
+  const call = async (name, args = {}) => {
+    throwIfInterrupted();
+    return requireMcpOperationResult(
+      await client.callTool(
+        { name, arguments: args },
+        { timeout: 180000, signal: commandInterruption.signal },
+      ),
       name,
     );
+  };
   try {
-    await client.connect(transport);
+    await untilInterrupted(
+      client.connect(transport, { signal: commandInterruption.signal }),
+    );
     const target = await call("open_binary", {
       path: fixture.path,
       provider_id: "ghidra",

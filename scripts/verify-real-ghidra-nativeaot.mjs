@@ -141,6 +141,33 @@ const finishCommandInterruption = () => {
     ? commandInterruption.signal.reason
     : undefined;
 };
+const throwIfInterrupted = () => {
+  if (commandInterruption.signal.aborted)
+    throw commandInterruption.signal.reason;
+};
+// Analysis calls do not share the command process group. Stop waiting for them
+// on interrupt, then let the existing cleanup run.
+const untilInterrupted = (promise) =>
+  new Promise((resolve, reject) => {
+    if (commandInterruption.signal.aborted) {
+      reject(commandInterruption.signal.reason);
+      return;
+    }
+    const onAbort = () => reject(commandInterruption.signal.reason);
+    commandInterruption.signal.addEventListener("abort", onAbort, {
+      once: true,
+    });
+    Promise.resolve(promise).then(
+      (value) => {
+        commandInterruption.signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (cause) => {
+        commandInterruption.signal.removeEventListener("abort", onAbort);
+        reject(cause);
+      },
+    );
+  });
 async function prepareLoaderFailure() {
   const source = join(workspace, "NativeAotExtension.java");
   const classes = join(workspace, "classes");
@@ -205,14 +232,16 @@ await withVerifierFixture(workspaceFixture, async () => {
   let primaryFailure;
   try {
     if (mode === "loader-failure") await prepareLoaderFailure();
-    await client.connect(transport);
+    await untilInterrupted(
+      client.connect(transport, { signal: commandInterruption.signal }),
+    );
     connected = true;
     const response = await client.callTool(
       {
         name: "open_binary",
         arguments: { path: target, provider_id: "ghidra" },
       },
-      { timeout: 360000 },
+      { timeout: 360000, signal: commandInterruption.signal },
     );
     if (
       ["unsupported", "malformed", "ambiguous", "loader-failure"].includes(mode)
@@ -223,7 +252,7 @@ await withVerifierFixture(workspaceFixture, async () => {
         opened = true;
         failure = await client.callTool(
           { name: "inspect_native_load_image", arguments: {} },
-          { timeout: 360000 },
+          { timeout: 360000, signal: commandInterruption.signal },
         );
       }
       assert.equal(failure.isError, true, JSON.stringify(failure));
@@ -474,9 +503,10 @@ function hash(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 async function call(name, args = {}) {
+  throwIfInterrupted();
   const response = await client.callTool(
     { name, arguments: args },
-    { timeout: 360000 },
+    { timeout: 360000, signal: commandInterruption.signal },
   );
   if (name === "close_binary") return requireMcpLifecycleResult(response, name);
   const evidence = parseEvidence(requireMcpOutput(response, name));

@@ -77,6 +77,33 @@ const finishCommandInterruption = () => {
     ? commandInterruption.signal.reason
     : undefined;
 };
+const throwIfInterrupted = () => {
+  if (commandInterruption.signal.aborted)
+    throw commandInterruption.signal.reason;
+};
+// Analysis calls do not share the command process group. Stop waiting for them
+// on interrupt, then let the existing cleanup run.
+const untilInterrupted = (promise) =>
+  new Promise((resolve, reject) => {
+    if (commandInterruption.signal.aborted) {
+      reject(commandInterruption.signal.reason);
+      return;
+    }
+    const onAbort = () => reject(commandInterruption.signal.reason);
+    commandInterruption.signal.addEventListener("abort", onAbort, {
+      once: true,
+    });
+    Promise.resolve(promise).then(
+      (value) => {
+        commandInterruption.signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (cause) => {
+        commandInterruption.signal.removeEventListener("abort", onAbort);
+        reject(cause);
+      },
+    );
+  });
 const toolchain = {
   gcc: process.env.REA_GCC ?? "gcc",
   clang: process.env.REA_CLANG ?? "clang",
@@ -321,7 +348,9 @@ async function verifyTarget(path, sha256, fixtures, variant) {
   let stderr = "";
   const observations = [];
   return withVerifierCleanup(async () => {
-    await client.connect(transport);
+    await untilInterrupted(
+      client.connect(transport, { signal: commandInterruption.signal }),
+    );
     transport.stderr?.on("data", (chunk) => {
       stderr = (stderr + chunk.toString()).slice(-65536);
     });
@@ -429,17 +458,19 @@ function expectedResidualUnknowns(boundary, fixture) {
   return [...new Set(unknowns)];
 }
 async function toolResult(client, name, arguments_ = {}) {
+  throwIfInterrupted();
   const result = await client.callTool(
     { name, arguments: arguments_ },
-    { timeout: 240000 },
+    { timeout: 240000, signal: commandInterruption.signal },
   );
   assert.ok(result.structuredContent, `${name} omitted structured result`);
   return requireMcpOutput(result, name);
 }
 async function call(client, name, arguments_ = {}) {
+  throwIfInterrupted();
   const result = await client.callTool(
     { name, arguments: arguments_ },
-    { timeout: 240000 },
+    { timeout: 240000, signal: commandInterruption.signal },
   );
   return requireMcpOperationResult(result, name);
 }

@@ -79,6 +79,33 @@ const finishCommandInterruption = () => {
     ? commandInterruption.signal.reason
     : undefined;
 };
+const throwIfInterrupted = () => {
+  if (commandInterruption.signal.aborted)
+    throw commandInterruption.signal.reason;
+};
+// Analysis calls do not share the command process group. Stop waiting for them
+// on interrupt, then let the existing cleanup run.
+const untilInterrupted = (promise) =>
+  new Promise((resolve, reject) => {
+    if (commandInterruption.signal.aborted) {
+      reject(commandInterruption.signal.reason);
+      return;
+    }
+    const onAbort = () => reject(commandInterruption.signal.reason);
+    commandInterruption.signal.addEventListener("abort", onAbort, {
+      once: true,
+    });
+    Promise.resolve(promise).then(
+      (value) => {
+        commandInterruption.signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (cause) => {
+        commandInterruption.signal.removeEventListener("abort", onAbort);
+        reject(cause);
+      },
+    );
+  });
 const reports = [];
 let failure;
 try {
@@ -138,9 +165,10 @@ try {
       });
       let calls = 0;
       const reply = async (name, args = {}) => {
+        throwIfInterrupted();
         const response = await client.callTool(
           { name, arguments: args },
-          { timeout: 180000 },
+          { timeout: 180000, signal: commandInterruption.signal },
         );
         await writeFile(
           join(workspace, `${byteOrder}-${variant}-${++calls}-${name}.json`),
@@ -152,8 +180,12 @@ try {
         requireMcpOperationResult(await reply(name, args), name);
       const original = await readFile(fixture.path);
       try {
-        await client.connect(transport);
-        await client.listTools();
+        await untilInterrupted(
+          client.connect(transport, { signal: commandInterruption.signal }),
+        );
+        await untilInterrupted(
+          client.listTools(undefined, { signal: commandInterruption.signal }),
+        );
         if (
           variant === "symbol-relative" ||
           variant === "section-relocations"
@@ -172,7 +204,9 @@ try {
               : /section relocation declarations/u,
           );
           assert.deepEqual(await readFile(fixture.path), original);
-          await client.ping();
+          await untilInterrupted(
+            client.ping({ signal: commandInterruption.signal }),
+          );
           reports.push({ ...fixture, status: "refused", ping: true });
           continue;
         }
@@ -314,7 +348,9 @@ try {
           firstInstruction,
         );
         await call("close_binary");
-        await client.ping();
+        await untilInterrupted(
+            client.ping({ signal: commandInterruption.signal }),
+          );
         const cli = await execOwned(
           process.execPath,
           [

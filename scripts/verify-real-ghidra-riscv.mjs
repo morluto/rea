@@ -111,6 +111,33 @@ const finishCommandInterruption = () => {
     ? commandInterruption.signal.reason
     : undefined;
 };
+const throwIfInterrupted = () => {
+  if (commandInterruption.signal.aborted)
+    throw commandInterruption.signal.reason;
+};
+// Analysis calls do not share the command process group. Stop waiting for them
+// on interrupt, then let the existing cleanup run.
+const untilInterrupted = (promise) =>
+  new Promise((resolve, reject) => {
+    if (commandInterruption.signal.aborted) {
+      reject(commandInterruption.signal.reason);
+      return;
+    }
+    const onAbort = () => reject(commandInterruption.signal.reason);
+    commandInterruption.signal.addEventListener("abort", onAbort, {
+      once: true,
+    });
+    Promise.resolve(promise).then(
+      (value) => {
+        commandInterruption.signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (cause) => {
+        commandInterruption.signal.removeEventListener("abort", onAbort);
+        reject(cause);
+      },
+    );
+  });
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
@@ -158,8 +185,12 @@ const OUTCOME =
 const reports = [];
 let failure;
 try {
-  await client.connect(transport);
-  const catalog = await client.listTools();
+  await untilInterrupted(
+    client.connect(transport, { signal: commandInterruption.signal }),
+  );
+  const catalog = await untilInterrupted(
+    client.listTools(undefined, { signal: commandInterruption.signal }),
+  );
   const ajv = new Ajv({ strict: false });
   addFormats(ajv);
   const validators = new Map();
@@ -231,9 +262,10 @@ try {
       }
     };
     const call = async (name, args = {}) => {
+      throwIfInterrupted();
       const reply = await client.callTool(
         { name, arguments: args },
-        { timeout: 240000 },
+        { timeout: 240000, signal: commandInterruption.signal },
       );
       const lifecycle = [
         "open_binary",
@@ -496,7 +528,7 @@ try {
           name: "open_binary",
           arguments: { path: sharedPath, provider_id: "ghidra" },
         },
-        { timeout: 60000 },
+        { timeout: 60000, signal: commandInterruption.signal },
       );
       const error = requireMcpToolError(reply);
       assert.equal(error.details?.selection_reason, "target_unsupported");
@@ -543,7 +575,7 @@ try {
             name: "open_binary",
             arguments: { path: mutatedPath, provider_id: "ghidra" },
           },
-          { timeout: 240000 },
+          { timeout: 240000, signal: commandInterruption.signal },
         );
         const cliArguments = [
           entrypoint,
@@ -569,7 +601,7 @@ try {
           requireMcpLifecycleResult(
             await client.callTool(
               { name: "close_binary", arguments: {} },
-              { timeout: 240000 },
+              { timeout: 240000, signal: commandInterruption.signal },
             ),
             "close_binary",
           );

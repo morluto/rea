@@ -83,6 +83,33 @@ const finishCommandInterruption = () => {
     ? commandInterruption.signal.reason
     : undefined;
 };
+const throwIfInterrupted = () => {
+  if (commandInterruption.signal.aborted)
+    throw commandInterruption.signal.reason;
+};
+// Analysis calls do not share the command process group. Stop waiting for them
+// on interrupt, then let the existing cleanup run.
+const untilInterrupted = (promise) =>
+  new Promise((resolve, reject) => {
+    if (commandInterruption.signal.aborted) {
+      reject(commandInterruption.signal.reason);
+      return;
+    }
+    const onAbort = () => reject(commandInterruption.signal.reason);
+    commandInterruption.signal.addEventListener("abort", onAbort, {
+      once: true,
+    });
+    Promise.resolve(promise).then(
+      (value) => {
+        commandInterruption.signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (cause) => {
+        commandInterruption.signal.removeEventListener("abort", onAbort);
+        reject(cause);
+      },
+    );
+  });
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 // The workspace stays while an owned Ghidra process or server may still use
 // it: this cleanup confirms only once their cleanup was verified.
@@ -147,6 +174,7 @@ await withVerifierFixture(workspaceFixture, async () => {
       ],
       runId: run.run_id,
       expectedCommand: null,
+      signal: commandInterruption.signal,
     });
     const supervisor = new ProviderProcessSupervisor({
       ...launch,
@@ -156,11 +184,11 @@ await withVerifierFixture(workspaceFixture, async () => {
     let probe;
     try {
       assert.ok(
-        await supervisor.waitForExit(120000),
+        await untilInterrupted(supervisor.waitForExit(120000)),
         "No-return probe timed out",
       );
       assert.ok(
-        await supervisor.waitForOutputClose(1000),
+        await untilInterrupted(supervisor.waitForOutputClose(1000)),
         "No-return probe output did not close",
       );
       const snapshot = supervisor.snapshot();
@@ -225,9 +253,14 @@ await withVerifierFixture(workspaceFixture, async () => {
         "read_function_instructions",
         "analyze_function",
       ]) {
-        const result = await client.execute(operation, {
-          procedure: procedureName("rea_abort"),
-        });
+        throwIfInterrupted();
+        const result = await untilInterrupted(
+          client.execute(
+            operation,
+            { procedure: procedureName("rea_abort") },
+            { signal: commandInterruption.signal },
+          ),
+        );
         if (!result.ok) throw result.error;
         const warnings = result.value.limitations.filter((value) =>
           /terminal call/u.test(value),
@@ -240,9 +273,14 @@ await withVerifierFixture(workspaceFixture, async () => {
         );
         observations.push({ operation, warnings });
       }
-      const healthy = await client.execute("procedure_pseudo_code", {
-        procedure: procedureName("rea_tls"),
-      });
+      throwIfInterrupted();
+      const healthy = await untilInterrupted(
+        client.execute(
+          "procedure_pseudo_code",
+          { procedure: procedureName("rea_tls") },
+          { signal: commandInterruption.signal },
+        ),
+      );
       if (!healthy.ok) throw healthy.error;
       assert.ok(
         !healthy.value.limitations.some((value) =>

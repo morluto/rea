@@ -123,6 +123,33 @@ const finishCommandInterruption = () => {
     ? commandInterruption.signal.reason
     : undefined;
 };
+const throwIfInterrupted = () => {
+  if (commandInterruption.signal.aborted)
+    throw commandInterruption.signal.reason;
+};
+// Analysis calls do not share the command process group. Stop waiting for them
+// on interrupt, then let the existing cleanup run.
+const untilInterrupted = (promise) =>
+  new Promise((resolve, reject) => {
+    if (commandInterruption.signal.aborted) {
+      reject(commandInterruption.signal.reason);
+      return;
+    }
+    const onAbort = () => reject(commandInterruption.signal.reason);
+    commandInterruption.signal.addEventListener("abort", onAbort, {
+      once: true,
+    });
+    Promise.resolve(promise).then(
+      (value) => {
+        commandInterruption.signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (cause) => {
+        commandInterruption.signal.removeEventListener("abort", onAbort);
+        reject(cause);
+      },
+    );
+  });
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
@@ -162,9 +189,15 @@ workspaceFixture.releaseAfter(async () => {
 await withVerifierFixture(workspaceFixture, async () => {
   let primaryFailure;
   try {
-    await client.connect(transport);
+    await untilInterrupted(
+      client.connect(transport, { signal: commandInterruption.signal }),
+    );
     connected = true;
-    const listedSearch = (await client.listTools()).tools.find(
+    const listedSearch = (
+      await untilInterrupted(
+        client.listTools(undefined, { signal: commandInterruption.signal }),
+      )
+    ).tools.find(
       (tool) => tool.name === "search_bytes",
     );
     assert.ok(listedSearch);
@@ -249,15 +282,19 @@ await withVerifierFixture(workspaceFixture, async () => {
       name: "retained_after_failed_open",
       comment: "Owned session annotation",
     });
-    const rejected = await client.callTool({
-      name: "open_binary",
-      arguments: {
-        path,
-        format: "raw-binary",
-        architecture: "arm64",
-        entry_point: "0x8000001",
+    throwIfInterrupted();
+    const rejected = await client.callTool(
+      {
+        name: "open_binary",
+        arguments: {
+          path,
+          format: "raw-binary",
+          architecture: "arm64",
+          entry_point: "0x8000001",
+        },
       },
-    });
+      { signal: commandInterruption.signal },
+    );
     const rejection = requireMcpToolError(rejected);
     // admitRawBinary refuses an arm64 entry that is not a multiple of 4.
     // The completion facts are the session that the failed open must leave in place.
@@ -418,10 +455,14 @@ await withVerifierFixture(workspaceFixture, async () => {
       overlapping.normalized_result.matches.map((match) => match.address),
       ["0x1002", "0x1003"],
     );
-    const wrongCursor = await client.callTool({
-      name: "search_bytes",
-      arguments: { pattern: "c3", cursor: page.normalized_result.next_cursor },
-    });
+    throwIfInterrupted();
+    const wrongCursor = await client.callTool(
+      {
+        name: "search_bytes",
+        arguments: { pattern: "c3", cursor: page.normalized_result.next_cursor },
+      },
+      { signal: commandInterruption.signal },
+    );
     const cursorError = requireMcpToolError(wrongCursor);
     assert.partialDeepStrictEqual(cursorError, {
       code: "invalid_request",
@@ -704,10 +745,12 @@ async function call(
   targetSha256 = sha256,
   targetFormat = "raw-binary",
 ) {
+  throwIfInterrupted();
   const result = await client.callTool(
     { name, arguments: args },
     {
       timeout: 240000,
+      signal: commandInterruption.signal,
       ...(name === "search_bytes" ? { toolDefinition: searchDefinition } : {}),
     },
   );
@@ -772,6 +815,7 @@ async function verifyCrossBlockProject(target, targetSha256) {
     env,
     runId: run.run_id,
     expectedCommand: null,
+    signal: commandInterruption.signal,
   });
   fixtureCleaned = false;
   const supervisor = new ProviderProcessSupervisor({
@@ -780,9 +824,12 @@ async function verifyCrossBlockProject(target, targetSha256) {
     cleanup: () => cleanupOwnedProcessGroup(launch.ownership),
   });
   await withVerifierCleanup(async () => {
-    assert.ok(await supervisor.waitForExit(180000), "Fixture setup timed out");
     assert.ok(
-      await supervisor.waitForOutputClose(1000),
+      await untilInterrupted(supervisor.waitForExit(180000)),
+      "Fixture setup timed out",
+    );
+    assert.ok(
+      await untilInterrupted(supervisor.waitForOutputClose(1000)),
       "Fixture output did not close",
     );
     const snapshot = supervisor.snapshot();
@@ -814,16 +861,28 @@ async function verifyCrossBlockProject(target, targetSha256) {
     version: "1",
   });
   try {
-    await projectClient.connect(projectTransport);
-    const definition = (await projectClient.listTools()).tools.find(
+    await untilInterrupted(
+      projectClient.connect(projectTransport, {
+        signal: commandInterruption.signal,
+      }),
+    );
+    const definition = (
+      await untilInterrupted(
+        projectClient.listTools(undefined, {
+          signal: commandInterruption.signal,
+        }),
+      )
+    ).tools.find(
       (tool) => tool.name === "search_bytes",
     );
     assert.ok(definition);
     const projectCall = async (name, args) => {
+      throwIfInterrupted();
       const reply = await projectClient.callTool(
         { name, arguments: args },
         {
           timeout: 240000,
+          signal: commandInterruption.signal,
           ...(name === "search_bytes" ? { toolDefinition: definition } : {}),
         },
       );

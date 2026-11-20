@@ -55,6 +55,33 @@ const finishCommandInterruption = () => {
     ? commandInterruption.signal.reason
     : undefined;
 };
+const throwIfInterrupted = () => {
+  if (commandInterruption.signal.aborted)
+    throw commandInterruption.signal.reason;
+};
+// Analysis calls do not share the command process group. Stop waiting for them
+// on interrupt, then let the existing cleanup run.
+const untilInterrupted = (promise) =>
+  new Promise((resolve, reject) => {
+    if (commandInterruption.signal.aborted) {
+      reject(commandInterruption.signal.reason);
+      return;
+    }
+    const onAbort = () => reject(commandInterruption.signal.reason);
+    commandInterruption.signal.addEventListener("abort", onAbort, {
+      once: true,
+    });
+    Promise.resolve(promise).then(
+      (value) => {
+        commandInterruption.signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (cause) => {
+        commandInterruption.signal.removeEventListener("abort", onAbort);
+        reject(cause);
+      },
+    );
+  });
 try {
   await execOwned("swiftc", ["--version"], { timeout: 10_000 });
 } catch (cause) {
@@ -162,7 +189,9 @@ await withVerifierFixture(rootFixture, async () => {
       { timeout: 60_000 },
     );
     await verifyDecoderSafeguards();
-    await client.connect(transport);
+    await untilInterrupted(
+      client.connect(transport, { signal: commandInterruption.signal }),
+    );
     connected = true;
     for (const [variant, path] of [
       ["debug", binary],
@@ -287,9 +316,10 @@ console.log(
 );
 
 async function call(name, arguments_) {
+  throwIfInterrupted();
   const response = await client.callTool(
     { name, arguments: arguments_ },
-    { timeout: 180_000 },
+    { timeout: 180_000, signal: commandInterruption.signal },
   );
   if (name === "analyze_swift_types")
     assert.ok(response.structuredContent, `${name} omitted structured result`);
@@ -443,7 +473,7 @@ async function runDecoderProbe(scripts, report) {
         : "Swift decoder probe timed out",
     );
     assert.ok(
-      await supervisor.waitForOutputClose(1_000),
+      await untilInterrupted(supervisor.waitForOutputClose(1_000)),
       "Swift decoder probe output did not close",
     );
     const snapshot = supervisor.snapshot();
