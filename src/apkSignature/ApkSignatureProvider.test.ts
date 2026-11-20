@@ -20,7 +20,7 @@ import {
   withSigningBlock,
   zipWith,
 } from "../../tests/fixtures/apkSignature/v1SignatureBlock.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { apkSignatureResultSchema } from "../domain/apkSignature/apkSignatureReport.js";
 import { ApkSignatureProvider } from "./ApkSignatureProvider.js";
 import { apkSignatureFailure } from "./apkSignatureFailures.js";

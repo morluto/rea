@@ -168,7 +168,7 @@ export const projectNativeProcedureReferencesView = (
       kind: "summary" as const,
       view,
       summary,
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     };
     return jsonValueByteLength(result as JsonValue, PAGE_BYTES - DIGEST_BYTES) >
       PAGE_BYTES - DIGEST_BYTES

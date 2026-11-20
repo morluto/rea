@@ -1,3 +1,4 @@
+import { unescapeJsonPointerToken } from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
 import { isTimestamp } from "./appTask.js";
 import {
@@ -12,6 +13,7 @@ import { idReferencesOf, mirrorsOf } from "./appTaskDraftMirrors.js";
 import { isPositionalKey, positionalKeys } from "./positionalKeys.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
 import { elementText, isXmlElement, resolvePointer } from "./viewPointer.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /** Why a change is what an app writes as it saves or shows a document, rather than what its user made. */
 export const NOISE_REASONS = [
@@ -124,7 +126,7 @@ const COUNTER = /count|cycles?|revision/iu;
 export const attributeKeyOf = (pointer: string): string | undefined => {
   const segments = pointer.split("/");
   return segments.at(-2) === "attributes"
-    ? segments.at(-1)?.replaceAll("~1", "/").replaceAll("~0", "~")
+    ? unescapeJsonPointerToken(segments.at(-1)!)
     : undefined;
 };
 
@@ -136,11 +138,6 @@ type Element = Record<string, JsonValue> & {
   name: string;
   children: JsonValue[];
 };
-
-const isRecord = (
-  value: JsonValue | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** The elements a pointer steps into through `children`, read from the view, outermost first. */
 const elementsAlong = (
@@ -506,7 +503,7 @@ const COORDINATES =
   /^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?(?:[,;] ?-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)*$/u;
 
 /** Whether a value is a coordinate or a list of them, which an app may derive rather than its user enter. */
-export const isCoordinates = (value: JsonValue | undefined): boolean =>
+export const isCoordinates = (value: JsonValue | undefined): value is string =>
   typeof value === "string" && COORDINATES.test(value.trim());
 
 /** How far above an attribute's element the element whose text changed may sit for the attribute to be its layout. */
@@ -568,7 +565,7 @@ const derivedLayout = (
       // A lone number is layout only where a name on its way says so; a list of them always is.
       return (
         at >= 0 &&
-        (/[,;]/u.test(String(value)) ||
+        (/[,;]/u.test(value) ||
           namesLayout(ends.final, pointer, [owner, ...above.slice(0, at)]))
       );
     }),
@@ -622,7 +619,7 @@ const drawingLayout = (
       attributeKeyOf(pointer) !== undefined &&
       isCoordinates(value) &&
       drawn(pointer) &&
-      (/[,;]/u.test(String(value)) ||
+      (/[,;]/u.test(value) ||
         namesLayout(viewOf(pointer), pointer, [ownerOfAttribute(pointer)]))
     );
   };

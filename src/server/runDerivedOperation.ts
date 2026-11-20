@@ -2,7 +2,7 @@ import type { ServerContext } from "@modelcontextprotocol/server";
 import { setImmediate } from "node:timers/promises";
 
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { cancelledBy } from "../domain/analysisErrorCore.js";
 import { err, ok } from "../domain/result.js";
 import { mcpProgressReporter, type McpProgressContext } from "./mcpProgress.js";
 import type { EvidenceWorkflowExecution } from "../application/investigation/EvidenceWorkflowExecution.js";
@@ -32,11 +32,7 @@ export const runDerivedOperation = async <Value>(
   });
   await setImmediate();
   if (context.mcpReq.signal.aborted)
-    return err(
-      new AnalysisCancelledError(operation, {
-        cause: context.mcpReq.signal.reason,
-      }),
-    );
+    return err(cancelledBy(operation, context.mcpReq.signal));
   let value: Value;
   try {
     value = compute();
@@ -49,12 +45,13 @@ export const runDerivedOperation = async <Value>(
     const completed = retainCompleted?.(value);
     return withEvidenceSources(
       err(
-        new AnalysisCancelledError(operation, {
-          cause: context.mcpReq.signal.reason,
-          ...(completed === undefined
+        cancelledBy(
+          operation,
+          context.mcpReq.signal,
+          completed === undefined
             ? {}
-            : { partialObservation: completed.evidence }),
-        }),
+            : { partialObservation: completed.evidence },
+        ),
       ),
       completed?.sources ?? [],
     );

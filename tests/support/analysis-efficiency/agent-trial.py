@@ -126,7 +126,7 @@ def main():
         'Preserve observations, derivations, inferences, limitations, and real Evidence IDs. '
         'An Evidence value has evidence_id, normalized_result and limitations; '
         'non-Evidence session values have result. '
-        'The analyzed target digest is Evidence.subject.digest.sha256. '
+        'The analyzed target digest is Evidence.subject.identity.sha256. '
         'normalized_result.engine.artifact_sha256 identifies the analysis engine '
         'artifact and must never be substituted for the target digest. '
         'Prefer summary/focused views where appropriate. Do not invent successful facts '

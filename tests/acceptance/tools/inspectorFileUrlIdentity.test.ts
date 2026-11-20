@@ -53,7 +53,7 @@ it("preserves file URL scheme spelling and script identity after real Inspector 
     stderr += chunk.toString();
   });
   const address = /ws:\/\/127\.0\.0\.1:\d+\/[^\s]+/u;
-  await expect.poll(() => stderr, { timeout: 5000 }).toMatch(address);
+  await expect.poll(() => stderr).toMatch(address);
   const socket = address.exec(stderr)?.[0];
   if (socket === undefined) throw new Error("Node omitted its Inspector URL");
   const endpoint = `http://127.0.0.1:${new URL(socket).port}`;
@@ -131,4 +131,4 @@ it("preserves file URL scheme spelling and script identity after real Inspector 
   expect(original.predicate_type).toBe(first.predicate_type);
   expect(original.normalized_result).toEqual(first.normalized_result);
   expect(await readFile(source, "utf8")).toBe(sourceText);
-}, 30_000);
+});

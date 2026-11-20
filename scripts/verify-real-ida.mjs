@@ -4,7 +4,10 @@ import {
   findMappedNonFunction,
 } from "./lib/ida-feature-trace.mjs";
 import { requireMcpToolError } from "./lib/mcp-verifier-results.mjs";
-import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import {
+  verifierFailureReasons,
+  withVerifierCleanup,
+} from "./lib/verifier-cleanup.mjs";
 import { withVerifierResourceOwner } from "./lib/verifier-file-resources.mjs";
 
 import assert from "node:assert/strict";
@@ -210,9 +213,6 @@ const mcp = async (cliDossier) => {
       ["procedure_address", { procedure: dossier.procedure.name }],
       ["procedure_assembly", { procedure: dossier.procedure.address }],
       ["procedure_callees", { procedure: dossier.procedure.address }],
-      ...(config.mode === "attached" && config.protocol !== "native"
-        ? [["procedure_callers", { procedure: dossier.procedure.address }]]
-        : []),
       ["search_procedures", { pattern: dossier.procedure.name }],
       ["procedure_pseudo_code", { procedure: dossier.procedure.address }],
       ["read_function_instructions", { procedure: dossier.procedure.address }],
@@ -249,16 +249,12 @@ const mcp = async (cliDossier) => {
         case "procedure_pseudo_code":
           assert.equal(value, dossier.pseudocode);
           break;
-        case "procedure_callers":
-        case "procedure_callees": {
-          const expected =
-            name === "procedure_callers" ? dossier.callers : dossier.callees;
+        case "procedure_callees":
           assert.deepEqual(
             [...value].sort(),
-            expected.map((item) => item.address).sort(),
+            dossier.callees.map((item) => item.address).sort(),
           );
           break;
-        }
         case "read_function_instructions":
           assert.deepEqual(value.procedure.address, dossier.procedure.address);
           assert.deepEqual(value.instructions, dossier.assembly);
@@ -411,14 +407,13 @@ const mcp = async (cliDossier) => {
 };
 const cleanup = async () => {
   phase = "upstream lifecycle verification";
-  const upstream = createIdaMcpConnection(config, process.env);
+  const upstream = createIdaMcpConnection(config, process.env, {
+    platform: process.platform,
+  });
   try {
     await upstream.connect();
     if (config.mode === "attached") {
-      const metadata =
-        config.protocol === "native"
-          ? await upstream.readResource("ida://idb/metadata")
-          : await upstream.call("get_metadata", {});
+      const metadata = await upstream.readResource("ida://idb/metadata");
       assert.equal(metadata.sha256.toLowerCase(), await digest());
       report.checks.push(
         "existing GUI target remains open with the original input identity",
@@ -452,11 +447,7 @@ try {
     phase,
     message: cause instanceof Error ? cause.message : String(cause),
     ...(cause instanceof AggregateError
-      ? {
-          causes: cause.errors.map((failure) =>
-            failure instanceof Error ? failure.message : String(failure),
-          ),
-        }
+      ? { causes: verifierFailureReasons(cause) }
       : {}),
   };
   process.exitCode = 1;

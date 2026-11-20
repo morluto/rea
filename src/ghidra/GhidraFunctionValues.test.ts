@@ -44,6 +44,29 @@ const parseFunctionValueFixture = (
   return parsed.ok ? { ok: true as const, value: parsed.value.value } : parsed;
 };
 
+it("names the failing fields when a function reply or its envelope misses its contract", () => {
+  const dossier = ghidraFunctionDossier() as Record<string, JsonValue>;
+  const envelope = parseGhidraFunctionResult("analyze_function", {
+    value: dossier,
+    limitations: "none",
+  });
+  expect(envelope.ok ? undefined : envelope.error.diagnostics).toMatchObject({
+    contract_issues: expect.arrayContaining([
+      expect.objectContaining({ path: ["limitations"], code: "invalid_type" }),
+    ]),
+  });
+
+  const reply = parseGhidraFunctionResult("analyze_function", {
+    value: { ...dossier, pseudocode: 7 },
+    limitations: [],
+  });
+  expect(reply.ok ? undefined : reply.error.diagnostics).toMatchObject({
+    contract_issues: expect.arrayContaining([
+      expect.objectContaining({ path: ["pseudocode"], received: "number" }),
+    ]),
+  });
+});
+
 describe("Ghidra unresolved call locations", () => {
   it("rejects a noncanonical unresolved call site rather than retaining unverifiable location evidence", () => {
     expect(

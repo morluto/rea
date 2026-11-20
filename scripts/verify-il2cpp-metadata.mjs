@@ -7,7 +7,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { absoluteCallerPath } from "../dist/filesystem/callerPath.js";
 import { toolContract } from "../dist/contracts/toolContracts.js";
 import { il2cppMetadataViewRequestSchema } from "../dist/domain/analysisView/il2cppMetadataView.js";
-import { ArtifactResourceScope } from "../dist/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../dist/resources/ArtifactResourceScope.js";
 import {
   requireMcpOutput,
   requireMcpToolError,

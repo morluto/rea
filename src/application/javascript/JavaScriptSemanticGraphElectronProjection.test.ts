@@ -2,7 +2,10 @@ import { expect, it } from "vitest";
 import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 import { analyzeJavaScriptSemantics } from "../../domain/javascript/javascriptSemanticAnalysis.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
-import { projectJavaScriptSemanticFileSteps } from "./JavaScriptSemanticGraphBuilder.js";
+import {
+  createJavaScriptSemanticGraphProjection,
+  projectJavaScriptSemanticFileSteps,
+} from "./JavaScriptSemanticGraphBuilder.js";
 
 const source = `${Array.from({ length: 40 }, (_, i) => `function library${String(i)}(){return ${String(i)}}`).join("\n")}
   const e=require("electron");
@@ -20,53 +23,53 @@ const file: JavaScriptArtifactFile = {
 };
 const facts = analyzeJavaScriptStaticSource(source);
 const ir = analyzeJavaScriptSemantics(source);
-const project = (budget: number) => {
-  const steps = projectJavaScriptSemanticFileSteps(
-    file,
-    ir,
-    { nodes: budget, unknowns: budget },
-    facts.electron.call_paths,
-  );
-  let result = steps.next();
-  while (!result.done) result = steps.next();
-  return result.value;
-};
+it("retains Electron boundary evidence until the node budget cuts the path", () => {
+  for (const budget of [3, 20]) {
+    const projection = createJavaScriptSemanticGraphProjection({
+      totalNodes: budget,
+      fileNodes: budget,
+    });
+    const steps = projectJavaScriptSemanticFileSteps(
+      file,
+      ir,
+      projection.remainingFileCapacity(),
+      facts.electron.call_paths,
+    );
+    let result = steps.next();
+    while (!result.done) result = steps.next();
+    projection.adoptFileProjection(result.value);
+    const graph = projection.finish(file.container_sha256, {
+      graph_id: `jag_${"c".repeat(64)}`,
+      nodes: [],
+    });
 
-it("retains Electron calls before library definitions consume the node budget", () => {
-  const result = project(20);
-  expect(result.nodes).toHaveLength(20);
-  expect(result.nodesTruncated).toBe(true);
-  const terminal = result.nodes.find(
-    (node) => node.label === "ipc-event.sender.copy",
-  );
-  expect(terminal).toBeDefined();
-  expect(
-    result.relations.some(
-      (r) =>
-        r.target_node_id === terminal?.node_id && r.resolution === "candidate",
-    ),
-  ).toBe(true);
-  expect(
-    result.nodes.some(
-      (node) =>
-        node.properties.entry === "test:copy" &&
-        Array.isArray(node.properties.conditions) &&
-        node.properties.conditions.length === 1,
-    ),
-  ).toBe(true);
-});
-
-it("reports truncation and keeps referential integrity even within a boundary path", () => {
-  const result = project(3);
-  expect(result.nodes).toHaveLength(3);
-  expect(result.nodesTruncated).toBe(true);
-  expect(
-    result.nodes.some((node) => node.label === "ipc-event.sender.copy"),
-  ).toBe(false);
-  const retained = new Set(result.nodes.map((node) => node.node_id));
-  expect(
-    result.relations.every(
-      (r) => retained.has(r.source_node_id) && retained.has(r.target_node_id),
-    ),
-  ).toBe(true);
+    expect(graph.nodes).toHaveLength(budget);
+    expect(graph.coverage).toMatchObject({
+      status: "partial",
+      truncated: true,
+    });
+    const terminal = graph.nodes.find(
+      ({ label }) => label === "ipc-event.sender.copy",
+    );
+    if (budget === 3) {
+      expect(terminal).toBeUndefined();
+      continue;
+    }
+    if (terminal === undefined)
+      throw new Error("Expected the Electron terminal");
+    expect(graph.relations).toContainEqual(
+      expect.objectContaining({
+        target_node_id: terminal.node_id,
+        resolution: "candidate",
+      }),
+    );
+    expect(graph.nodes).toContainEqual(
+      expect.objectContaining({
+        properties: expect.objectContaining({
+          entry: "test:copy",
+          conditions: [expect.anything()],
+        }),
+      }),
+    );
+  }
 });

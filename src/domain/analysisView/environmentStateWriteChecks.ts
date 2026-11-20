@@ -2,6 +2,10 @@ import { ServedOrder } from "./environmentStateWriteOrder.js";
 import type { JsonValue } from "../jsonValue.js";
 import { compositeKey } from "../unicodeCodePointOrder.js";
 import {
+  environmentCollectionKey,
+  environmentEntityKey,
+} from "./environmentStateIdentity.js";
+import {
   ownMember,
   at,
   decodedSegment,
@@ -35,9 +39,9 @@ import type { InsertRule } from "./environmentStateWriteRules.js";
 import { withoutMembers } from "./environmentStateResponseMembers.js";
 
 export const entityTarget = (type: string, collection: string, id: string) =>
-  `e${compositeKey([type, collection, id])}`;
+  `e${environmentEntityKey(type, collection, id)}`;
 export const collectionTarget = (type: string, collection: string) =>
-  `c${compositeKey([type, collection])}`;
+  `c${environmentCollectionKey(type, collection)}`;
 export const documentTarget = (tool: string) => `d${compositeKey([tool])}`;
 
 /** A target `remove` dropped, so a later absence can still name the collection and id serving resolved. */

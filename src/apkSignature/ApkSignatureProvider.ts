@@ -1,19 +1,19 @@
 import { createHash } from "node:crypto";
 import { apkSignatureAdmission } from "./ApkSignatureAdmission.js";
 
-import { createAnalysisExecution } from "../application/AnalysisProvider.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type {
   ApkSignatureExecution,
   ApkSignaturePort,
-} from "../application/apkSignature/ApkSignaturePort.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+} from "../ports/apkSignature/ApkSignaturePort.js";
 import {
+  readStableArtifact,
+  ArtifactReaderFailure,
   assertArtifactReadActive,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+  ArtifactResourceScope,
+} from "../resources/index.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
@@ -165,12 +165,13 @@ interface DecodedScheme {
 
 const lineageOf = (
   signer: ApkSigner,
+  version: Exclude<ApkSchemeVersion, "v2">,
 ): Result<DecodedSigner["rotation"], ApkSchemeError> => {
   const attribute = signer.attributes.find(
     (a) => a.id === PROOF_OF_ROTATION_ATTR_ID,
   );
   if (attribute === undefined) return ok({ present: false });
-  const nodes = decodeRotationLineage(attribute.value);
+  const nodes = decodeRotationLineage(attribute.value, version);
   if (nodes.ok) return ok({ present: true, nodes: nodes.value });
   // A malformed lineage is reported, not dropped; an over-cap lineage is refused.
   return nodes.error.kind === "malformed-signer"
@@ -415,11 +416,11 @@ export class ApkSignatureProvider implements ApkSignaturePort {
     const { v1, decoded: v1Decoded, duplicates } = v1Read.value;
 
     const v2 = decodeScheme(block.value, APK_BLOCK_ID.signatureV2, "v2");
-    if (!v2.ok) return err(v2.error);
+    if (!v2.ok) return v2;
     const v3 = decodeScheme(block.value, APK_BLOCK_ID.signatureV3, "v3");
-    if (!v3.ok) return err(v3.error);
+    if (!v3.ok) return v3;
     const v31 = decodeScheme(block.value, APK_BLOCK_ID.signatureV31, "v3.1");
-    if (!v31.ok) return err(v31.error);
+    if (!v31.ok) return v31;
 
     // Account for representation expansion before allocating the report.
     const projected = projectedOutputBytes(
@@ -589,10 +590,7 @@ const sourceStampFacts = (
     : {
         present: true,
         certificate: null,
-        decode_error:
-          certificate.error.kind === "malformed-signer"
-            ? certificate.error.detail
-            : `more ${certificate.error.resource} than ${String(certificate.error.limit)}`,
+        decode_error: certificate.error.detail,
       };
 };
 
@@ -610,7 +608,9 @@ const decodeScheme = (
   const decoded: DecodedSigner[] = [];
   for (const signer of signers.value.signers) {
     const rotation =
-      version === "v2" ? ok({ present: false } as const) : lineageOf(signer);
+      version === "v2"
+        ? ok({ present: false } as const)
+        : lineageOf(signer, version);
     if (!rotation.ok) return err(mapApkSchemeError(rotation.error, version));
     decoded.push({ signer, rotation: rotation.value });
   }

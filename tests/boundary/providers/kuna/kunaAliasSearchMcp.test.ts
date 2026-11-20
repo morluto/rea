@@ -263,7 +263,7 @@ test("reports lookup failures with recovery for the selected target, not the inp
   for (const [procedure, guidance] of [
     ["0x1335", "list_procedures"],
     ["absent_name", "search_procedures"],
-    ["audit_transform", "exact address"],
+    ["audit_transform", "details.refusal.candidates"],
   ]) {
     const response = await client.callTool({
       name: "procedure_address",

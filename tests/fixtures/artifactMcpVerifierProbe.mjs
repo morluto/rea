@@ -14,7 +14,6 @@ assert.ok(
     "reuse",
     "concurrent",
     "reconnect",
-    "missing-schema",
     "duplicate-first",
     "duplicate-last",
     "override",
@@ -59,15 +58,6 @@ Client.prototype.request = async function (input, options) {
     return { ...result, structuredContent: { result: 777 } };
   }
   if (input.method === "tools/list") {
-    if (mode === "missing-schema")
-      return {
-        ...result,
-        tools: result.tools.map((tool) => {
-          if (tool.name !== "open_bundle_resources") return tool;
-          const { outputSchema: _schema, ...withoutSchema } = tool;
-          return withoutSchema;
-        }),
-      };
     if (mode === "duplicate-first" || mode === "duplicate-last") {
       const listed = result.tools.find(
         (tool) => tool.name === "open_bundle_resources",
@@ -85,21 +75,6 @@ Client.prototype.request = async function (input, options) {
             : [...result.tools, duplicate],
       };
     }
-    if (mode === "reconnect" && connection === 2)
-      return {
-        ...result,
-        tools: result.tools.map((tool) =>
-          tool.name === "binary_session"
-            ? {
-                ...tool,
-                outputSchema: {
-                  type: "object",
-                  required: ["__rea_second_connection"],
-                },
-              }
-            : tool,
-        ),
-      };
   }
   if (
     mode !== "corrupt" ||

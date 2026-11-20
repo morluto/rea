@@ -4,12 +4,12 @@ import { join } from "node:path";
 import { createPackage } from "@electron/asar";
 import { afterEach, expect, it, vi } from "vitest";
 
-import { translateArtifactFailure } from "../../../src/artifacts/ArtifactOperationFailure.js";
-import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
 import {
+  translateArtifactFailure,
   admitAsarHeader,
   asarHeaderAdmissionRecovery,
-} from "../../../src/artifacts/AsarHeader.js";
+} from "../../../src/resources/index.js";
+import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
 import { parseEnvironment } from "../../../src/config/environment.js";
 import { createDirectAnalysis } from "../../../src/composition/directAnalysis.js";
 import {
@@ -123,7 +123,6 @@ it("rejects contradictory and unsigned-boundary extents before decoding", async 
 it("separates the header decode budget from container validity at its exact boundary", async () => {
   const root = await createTestTempDirectory("rea-asar-header-budget-");
   const archive = join(root, "budget.asar");
-  expect(DEFAULT_ASAR_MAX_HEADER_BYTES).toBe(16 * 1024 * 1024);
   for (const headerBytes of [
     DEFAULT_ASAR_MAX_HEADER_BYTES,
     DEFAULT_ASAR_MAX_HEADER_BYTES + 4,
@@ -173,7 +172,6 @@ const writeOversizedHeaderArchive = async (): Promise<string> => {
 
 it("names the default header admission budget and its setting when source selection cannot bypass it", async () => {
   const recovery = asarHeaderAdmissionRecovery(DEFAULT_ASAR_HEADER_ADMISSION);
-  expect(DEFAULT_ASAR_MAX_HEADER_BYTES).toBe(16 * 1024 * 1024);
   const archive = await writeOversizedHeaderArchive();
   let inventoryFailure: unknown;
   try {

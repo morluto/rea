@@ -31,6 +31,30 @@ describe("enhanced MCP input validation", () => {
     expect(nestedMisspelled.structuredContent).toBeUndefined();
   });
 
+  it("refuses empty address and procedure selectors before the provider runs", async () => {
+    const calls: string[] = [];
+    const client = await connect({
+      execute: (name) => {
+        calls.push(name);
+        return Promise.resolve(ok([]));
+      },
+    });
+    for (const [name, selector] of [
+      ["xrefs", { address: "" }],
+      ["read_function_instructions", { procedure: "" }],
+      ["procedure_references", { procedure: "" }],
+      ["procedure_pseudo_code", { procedure: "" }],
+      ["set_comment", { address: "", comment: "x" }],
+    ] as const) {
+      const result = await client.callTool({ name, arguments: selector });
+      expect(result.isError, name).toBe(true);
+    }
+    expect(calls).toEqual([]);
+    const omitted = await client.callTool({ name: "xrefs", arguments: {} });
+    expect(omitted.isError).not.toBe(true);
+    expect(calls).toEqual(["xrefs"]);
+  });
+
   it("returns a typed tool error for malformed Hopper boundary values", async () => {
     const client = await connect({
       execute: () => Promise.resolve(ok(["not", "a", "procedure", "map"])),

@@ -63,7 +63,7 @@ original compiler or ABI of a headerless target. Ghidra's x86 languages do not
 provide a compiler specification named `default`.
 
 Those settings, the caller-supplied entry, and `language_selection:
-caller-supplied-v1` are committed in the analysis profile. A different entry
+caller-supplied` are committed in the analysis profile. A different entry
 or architecture is a different profile; snapshots from header-detected targets
 do not replay.
 
@@ -142,8 +142,8 @@ entry explicitly. Windows Ghidra P0 does not admit m68k.
 annotated hex in the verifier, so it needs no assembler. The lane checks real
 CLI/MCP load-image parity, mapped bytes, a decoded call, decompilation by address
 and file offset, misaligned and out-of-range mappings, unchanged source bytes and
-runtime cleanup. It has been run with Ghidra 12.1.4 on macOS; Linux has not been
-exercised.
+runtime cleanup. Recorded on Ghidra 12.1.4 (no longer accepted); not yet re-run
+on 12.2. The recorded run was on macOS; Linux has not been exercised.
 
 ## Limitations
 

@@ -4,11 +4,9 @@ import {
   mkdir,
   writeFile,
   readFile,
-  mkdtemp,
   realpath,
   symlink,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
@@ -26,10 +24,13 @@ import {
 } from "./verify/clients/result-discovery.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const runtimeRoot = process.env.REA_VERIFY_RUNTIME_ROOT ?? repo;
-const lab = await mkdtemp(join(tmpdir(), "rea-qwen-client-"));
+const { path: lab } = await VerifierFixture.keepArtifacts({
+  prefix: "rea-qwen-client-",
+});
 const client = "qwen";
 const mode = process.argv[2] ?? "call";
 assert(

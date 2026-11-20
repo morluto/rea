@@ -5,8 +5,6 @@ import {
   type TimedCaptureRow,
 } from "../../../tests/fixtures/analysisView.js";
 import {
-  BULK_TASK_ROWS,
-  COUNTED_TASK_ROWS,
   MISLINKED_TASK_ROWS,
   ONE_TASK_ROWS,
   RESPELLED_TASK_ROWS,
@@ -52,31 +50,6 @@ describe("values an application counts and makes with each created entity", () =
     expect(plan).toMatchObject({ served: false });
     expect(ruleFor(plan, "index")).toBeUndefined();
   });
-  it("learns a counter from where the first create stood, a template around it and the object made with each task", () => {
-    const plan = createOf(COUNTED_TASK_ROWS);
-    expect(plan).toMatchObject({
-      served: true,
-      checked_record_ordinals: [4, 7],
-    });
-    expect(ruleFor(plan, "index")).toEqual({
-      field: "index",
-      rule: "sequence",
-      scope: "collection",
-      start: 15,
-    });
-    expect(ruleFor(plan, "identifier")).toEqual({
-      field: "identifier",
-      rule: "template",
-      from: "index",
-    });
-    expect(ruleFor(plan, "subscription")).toMatchObject({
-      rule: "made-object",
-      clocks: ["created"],
-      own: ["entity_id"],
-      counts: [{ member: "id", start: 21 }],
-    });
-  });
-
   it("keeps a value one create alone shows past what the type held", () => {
     const plan = createOf(ONE_TASK_ROWS);
     expect(ruleFor(plan, "index")).toBeUndefined();
@@ -86,12 +59,7 @@ describe("values an application counts and makes with each created entity", () =
     });
   });
 
-  it("links a create whose answer wraps the entity in a one-element array member", () => {
-    expect(createOf(BULK_TASK_ROWS)).toMatchObject({
-      tool: "post_projects_tasks_bulk_by_id",
-      served: true,
-      body: { envelope: "tasks" },
-    });
+  it("takes an identity from a sole wrapped entity and refuses an ambiguous array", () => {
     expect(respondedIds({ tasks: [{ id: 14 }] })).toEqual(["14"]);
     expect(respondedIds({ tasks: [{ id: 14 }, { id: 15 }] })).toEqual([]);
   });

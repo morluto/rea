@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { constants as fsConstants } from "node:fs";
 import {
   chmod,
@@ -18,10 +19,8 @@ import { parse as parseJsonc, type ParseError } from "jsonc-parser";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { ClientConfigurationPublication } from "../../../src/application/ClientConfigurationPublication.js";
 import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
-import {
-  supportedClientRegistrationProfile,
-  supportedClients,
-} from "../../../src/application/SupportedClients.js";
+import { supportedClients } from "../../../src/application/SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../../fixtures/clientRegistrationProfile.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 
@@ -42,50 +41,83 @@ const ownedSkillManifest = `---\nname: ${PRODUCT_IDENTITY.skillName}\n---\n# REA
 beforeEach(clearClientLocationEnvironment);
 afterEach(() => vi.unstubAllEnvs());
 
+// Detection reports clients in the client table's order.
+const DETECTED_CLIENT_ORDER = [
+  "claude_code",
+  "claude_desktop",
+  "codex",
+  "cursor",
+  "codebuddy",
+  "cline",
+  "gemini_cli",
+  "windsurf",
+  "devin",
+  "opencode",
+  "antigravity",
+  "copilot_cli",
+  "commandcode",
+  "qwen_code",
+  "kimi",
+  "vscode",
+  "trae",
+  "workbuddy",
+  "lm_studio",
+  "grok_build",
+  "omp",
+  "pi",
+  "hermes",
+  "qoder",
+  "droid",
+  "zcode",
+  "dsh",
+  "freebuff",
+  "cline_vscode",
+  "cline_vscode_insiders",
+  "cline_vscodium",
+  "cline_cursor",
+  "cline_windsurf",
+  "kiro",
+  "mastracode",
+  "zed",
+  "amp",
+  "fx",
+  "junie",
+  "goose",
+  "kilo",
+  "grok_bot",
+];
+
 describe("client configuration filesystem lifecycle", () => {
   it("detects every supported client and skips absent clients", async () => {
     const home = await createTestTempDirectory("rea-detect-");
-    for (const client of supportedClients(home))
+    for (const client of supportedClients(home, HOST_PLATFORM.platform))
       if (client.markerPath !== undefined)
         await mkdir(client.markerPath, { recursive: true });
+    // Gemini CLI follows its own session state, not the shared .gemini root.
+    await mkdir(join(home, ".gemini", "tmp"), { recursive: true });
     const detected = await detectClients(home);
-    expect(detected.map(({ name }) => name)).toEqual([
-      "claude_code",
-      "claude_desktop",
-      "codex",
-      "cursor",
-      "codebuddy",
-      "cline",
-      "gemini_cli",
-      "windsurf",
-      "devin",
-      "opencode",
-      "antigravity",
-      "copilot_cli",
-      "commandcode",
-      "qwen_code",
-      "kimi",
-      "vscode",
-      "trae",
-      "workbuddy",
-      "lm_studio",
-      "grok_build",
-      "omp",
-      "pi",
-      "hermes",
-      "qoder",
-      "droid",
-      "zcode",
-      "dsh",
-      "freebuff",
-      "grok_bot",
-    ]);
+    expect(detected.map(({ name }) => name)).toEqual(DETECTED_CLIENT_ORDER);
     expect(
       detected.find(({ name }) => name === "claude_code")?.configPath,
     ).toBe(join(home, ".claude.json"));
     expect(detected.find(({ name }) => name === "devin")?.format).toBe("json");
     const emptyHome = await createTestTempDirectory("rea-empty-");
     expect(await detectClients(emptyHome)).toEqual([]);
+  });
+
+  it("does not detect Gemini CLI from Antigravity's shared .gemini storage", async () => {
+    const home = await createTestTempDirectory("rea-detect-gemini-");
+    const antigravity = supportedClients(home, HOST_PLATFORM.platform).find(
+      ({ name }) => name === "antigravity",
+    );
+    if (antigravity?.markerPath === undefined)
+      throw new Error("Antigravity marker is missing");
+    await mkdir(antigravity.markerPath, { recursive: true });
+    const names = async () =>
+      (await detectClients(home)).map(({ name }) => name);
+    expect(await names()).toEqual(["antigravity"]);
+    await writeFile(join(home, ".gemini", "settings.json"), "{}\n");
+    expect(await names()).toEqual(["gemini_cli", "antigravity"]);
   });
 
   it("preserves unrelated Codex TOML and supports an installed command", async () => {
@@ -1529,7 +1561,7 @@ describe("Grok Bot registration", () => {
     const original =
       '{"mcpServers":{"other":{"command":"other"},"rea":{"command":"rea","args":["mcp"]}}}\n';
     await writeFile(configPath, original);
-    const client = supportedClients(home).find(
+    const client = supportedClients(home, HOST_PLATFORM.platform).find(
       ({ name }) => name === "grok_bot",
     );
     if (client === undefined) throw new Error("missing grok_bot");
@@ -1541,6 +1573,7 @@ describe("Grok Bot registration", () => {
     expect(await readFile(configPath, "utf8")).toBe(original);
     expect(
       await readClientRegistrationStatuses(home, "/current/rea", {
+        platform: HOST_PLATFORM.platform,
         environment: {},
       }),
     ).toEqual([

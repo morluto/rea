@@ -1,3 +1,8 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it, onTestFinished } from "vitest";
@@ -12,6 +17,7 @@ import {
   recordedCrashFixture,
   RECORDED_CRASH_TEST_PROVIDER,
 } from "../../fixtures/binaryDiagnostics/recordedCrash.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("records inline recorded-core evidence with compact schemas and canonical path checks", async () => {
   const value = recordedCrashFixture();
@@ -37,7 +43,10 @@ it("records inline recorded-core evidence with compact schemas and canonical pat
     { kind: "session", session },
     { recordedCrash: service },
   );
-  const client = new Client({ name: "recorded-crash-contract", version: "1" });
+  const client = new Client(
+    { name: "recorded-crash-contract", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -51,11 +60,13 @@ it("records inline recorded-core evidence with compact schemas and canonical pat
   const advertised = (await client.listTools()).tools.find(
     (tool) => tool.name === "inspect_recorded_crash",
   );
-  if (advertised?.outputSchema === undefined)
+  if (advertised === undefined)
     throw new Error("recorded crash must publish both schemas");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   const inputSchema: Record<string, unknown> = advertised.inputSchema;
-  const outputSchema: Record<string, unknown> = advertised.outputSchema;
+  const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+    advertised.name,
+  );
   expect(ajv.validateSchema(inputSchema)).toBe(true);
   expect(ajv.validateSchema(outputSchema)).toBe(true);
   expect(ajv.validate(inputSchema, { path: value.artifact.path })).toBe(true);
@@ -65,21 +76,20 @@ it("records inline recorded-core evidence with compact schemas and canonical pat
       approval: true,
     }),
   ).toBe(false);
-  const response = await client.callTool({
-    name: "inspect_recorded_crash",
-    arguments: { path: value.artifact.path },
-  });
+  const response = await client.callTool(
+    {
+      name: "inspect_recorded_crash",
+      arguments: { path: value.artifact.path },
+    },
+    { toolDefinition: withCanonicalOutputSchema(advertised) },
+  );
   expect(response.isError).not.toBe(true);
-  expect(
-    ajv.validate(outputSchema, response.structuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
   const parsed = toolContract("inspect_recorded_crash").outputSchema.parse(
     response.structuredContent,
   );
   const evidence = parseEvidence(parsed);
   expect(evidence.confidence).toBe("observed");
-  expect(evidence.subject?.digest.sha256).toBe(value.artifact.sha256);
+  expect(fileIdentity(evidence.subject).sha256).toBe(value.artifact.sha256);
   expect(parsed.normalized_result).toEqual(value);
   expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
   const relative = await client.callTool({

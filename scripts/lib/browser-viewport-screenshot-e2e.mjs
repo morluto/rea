@@ -3,7 +3,8 @@ import { chromium } from "playwright-core";
 import { CdpConnection } from "../../dist/browser/CdpConnection.js";
 import { discoverCdpEndpoint } from "../../dist/browser/CdpEndpoint.js";
 import { captureCdpScreenshot } from "../../dist/browser/CdpScreenshot.js";
-import { comparePngScreenshots } from "../../dist/browser/PngVisualDiff.js";
+import { newPlaywrightCdpSession } from "../../dist/browser/PlaywrightCdpSession.js";
+import { comparePngScreenshots } from "../../dist/domain/pngVisualDiff.js";
 import { createWebScreenshotArtifact } from "../../dist/domain/webScreenshot.js";
 
 /** Exercise the production capture boundary on a real, undersized surface. */
@@ -30,7 +31,11 @@ export async function verifyViewportScreenshotE2e(endpoint, origin) {
       target.webSocket.url,
       "capture_web_screenshot",
     );
-    const emulation = await context.newCDPSession(page);
+    const emulation = await newPlaywrightCdpSession(
+      context,
+      page,
+      "capture_web_screenshot",
+    );
     const cases = [];
     for (const scale of [1, 2]) {
       await connection.send("Emulation.setDeviceMetricsOverride", {

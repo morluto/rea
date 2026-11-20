@@ -5,14 +5,12 @@ import {
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
-import {
   ArtifactResourceRetryFailure,
   ArtifactResourceScope,
-} from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { processInspectionCleanupFailures } from "../process/ProcessInspectionCleanup.js";
@@ -142,11 +140,7 @@ export class ApktoolCommandCleanup {
     this.#bind(cleanup, retained);
     return bindProcessInspectionCancellations(
       cause,
-      analysisErrorWithCleanupFailure(
-        primary,
-        cleanup,
-        operation,
-      ).bindCleanupDependencies([primary, cleanup]),
+      analysisErrorWithCleanupDependencies(primary, cleanup, operation),
       operation,
     );
   }

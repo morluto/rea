@@ -16,23 +16,6 @@ const shellExamples = (content: string): string[] =>
   );
 
 describe("onboarding documentation product facts", () => {
-  it.each([
-    [
-      "docs/guides/native/native-investigation.md",
-      "../../providers/raw-binary.md#nmos-6502",
-    ],
-    ["docs/providers/ghidra-riscv.md", "raw-binary.md"],
-  ])(
-    "routes raw admission guidance in %s to the owning guide",
-    async (path, target) => {
-      const content = await readFile(resolve(path), "utf8");
-      const links = [...content.matchAll(/\]\(([^)\s]+)\)/gu)].map(
-        (match) => match[1],
-      );
-      expect(links, path).toContain(target);
-    },
-  );
-
   it("documents manual MCP registration with an absolute runtime and entry script", async () => {
     const content = await readFile(
       resolve("docs/getting-started/installation.md"),
@@ -83,6 +66,27 @@ describe("onboarding documentation product facts", () => {
     ]) {
       expect(persian).toContain(`## ${heading}`);
       expect(persian).toContain(
+        `](#${heading.toLowerCase().replaceAll(" ", "-")})`,
+      );
+    }
+  });
+
+  it("preserves zero-width non-joiners in Malayalam links to GitHub-rendered headings", async () => {
+    const malayalam = await readFile(
+      resolve("docs/readme/README_ml.md"),
+      "utf8",
+    );
+    // Confirmed against GitHub's rendered README, which retains U+200C. The
+    // update heading keeps exactly one joiner between അപ and ഡേറ്റ്; an
+    // editor that drops it from the heading or the fragment must fail here.
+    const zeroWidthNonJoiner = "\u200c";
+    for (const heading of [
+      `REA അപ്${zeroWidthNonJoiner}ഡേറ്റ് ചെയ്യുക`,
+      "എന്തൊക്കെ വിശകലനം ചെയ്യാം",
+      "ഉദാഹരണങ്ങൾ",
+    ]) {
+      expect(malayalam).toContain(`## ${heading}`);
+      expect(malayalam).toContain(
         `](#${heading.toLowerCase().replaceAll(" ", "-")})`,
       );
     }

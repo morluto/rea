@@ -204,10 +204,6 @@ export const projectBinaryLayoutView = (
           layout.segments.length +
           layout.symbols.length +
           layout.relocations.length,
-        layout.sections.length +
-          layout.segments.length +
-          layout.symbols.length +
-          layout.relocations.length,
       ),
       ...shared,
     });
@@ -218,7 +214,7 @@ export const projectBinaryLayoutView = (
       kind: "facet" as const,
       view,
       facet: view.facet === "mitigations" ? layout.mitigations : layout.linkage,
-      coverage: completeCoverage(1, 1),
+      coverage: completeCoverage(1),
       ...shared,
     });
   }
@@ -239,12 +235,7 @@ export const projectBinaryLayoutView = (
       kind: "item" as const,
       view,
       item: selected.value,
-      coverage: completeCoverage(
-        1,
-        view.collection === "sections"
-          ? layout.sections.length
-          : layout.symbols.length,
-      ),
+      coverage: completeCoverage(1),
       ...shared,
     });
   }

@@ -1,6 +1,7 @@
 import type { JsonValue } from "../../src/domain/jsonValue.js";
 import type { CdpEvent } from "../../src/browser/CdpConnection.js";
 import type { ServerResponse } from "node:http";
+import type { PhaseGate } from "../support/lifecycleHarness.js";
 export interface FakeCdpCommand {
   readonly id: number;
   readonly method: string;
@@ -51,8 +52,11 @@ export interface FakeOptions {
   ) => readonly CdpEvent[] | undefined;
   /** Delay each HTTP discovery document so a short command deadline can be observed separately. */
   readonly discoveryDelayMs?: number;
-  /** Delay WebSocket upgrade acceptance so handshake and attach deadlines stay distinct. */
-  readonly handshakeDelayMs?: number;
+  /**
+   * Hold each WebSocket upgrade (by request URL) until the test releases the
+   * gate. A held socket the client abandons is destroyed, not accepted.
+   */
+  readonly handshakeGate?: PhaseGate<string>;
   /** Delay selected wire replies so one caller's discovery deadline can expire alongside an active peer. */
   readonly commandDelayMs?: (command: FakeCdpCommand) => number | undefined;
   readonly malformedDiscovery?: boolean;
@@ -77,7 +81,6 @@ export interface FakeOptions {
   readonly navigateDuringObservationUrl?: string;
   readonly navigateDuringCaptureUrl?: string;
   readonly navigateDuringScreenshotUrl?: string;
-  readonly screenshotDocumentLoader?: string;
   readonly extraCollections?: boolean;
   readonly indexedDbDateKeys?: boolean;
   readonly foreignSessionEvents?: boolean;
@@ -105,8 +108,6 @@ export interface FakeOptions {
     | "outside_policy"
     | "target_detached"
     | "target_crashed";
-  readonly sessionTimelineEventCount?: number;
-  readonly sessionRedirectResourceType?: "Document" | "Fetch" | "Script";
   readonly closeAfterMethod?: string;
   readonly sensitiveShapes?: boolean;
   /** Deliver a console argument the protocol spells as `{ type: "object", subtype: "null" }`. */
@@ -114,16 +115,10 @@ export interface FakeOptions {
   readonly cachedResponseBody?: string;
   readonly invalidResponseBodyBase64?: boolean;
   readonly webMcpTools?: boolean;
-  readonly webMcpConsequential?: JsonValue;
   /** Replaces the primary tool's registration stack; returning `undefined` omits it. */
   readonly webMcpStackTrace?: (origin: string) => JsonValue | undefined;
-  readonly webMcpSameUrlRegistrations?: "retain" | "remove-second";
   readonly webMcpFrameCount?: number;
-  readonly webMcpSchemaPropertyCount?: number;
   readonly webMcpChildLeavesScope?: boolean;
-  readonly webMcpChildTransientBlank?: boolean;
-  readonly webMcpChildRecoversAfterTransient?: boolean;
-  readonly webMcpChildNavigatesAllowed?: boolean;
   readonly electronFileUrl?: string;
   /** Omit attached from the Electron page's HTTP discovery target. */
   readonly omitElectronTargetAttachmentState?: boolean;

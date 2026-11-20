@@ -2,7 +2,11 @@ import { z } from "zod";
 
 import { uniqueSorted } from "./canonicalOrdering.js";
 import { digestSchema, prefixedDigestSchema } from "./digests.js";
-import { evidenceSchema, type Evidence } from "./evidence.js";
+import {
+  evidenceFileTarget,
+  evidenceSchema,
+  type Evidence,
+} from "./evidence.js";
 import type { EvidenceBundle } from "./evidenceBundle.js";
 import { nativeValueFlowMetadataSchema } from "./native/nativeValueFlow.js";
 
@@ -31,9 +35,9 @@ const nativeSummarySchema = z.discriminatedUnion("available", [
       z.strictObject({
         status: z.literal("observed"),
         truncated: z.boolean(),
-        omitted_operations_lower_bound: countSchema.nullable(),
-        known_omitted_inputs: countSchema.nullable(),
-        known_omitted_edges: countSchema.nullable(),
+        omitted_operations_lower_bound: countSchema,
+        known_omitted_inputs: countSchema,
+        known_omitted_edges: countSchema,
       }),
       z.strictObject({ status: z.literal("unavailable"), reason: z.string() }),
       z.strictObject({ status: z.literal("not-recorded") }),
@@ -106,9 +110,9 @@ const nativeSummary = (
                 status: "observed",
                 truncated: flow.data.truncated,
                 omitted_operations_lower_bound:
-                  flow.data.omitted_operations_lower_bound ?? null,
-                known_omitted_inputs: flow.data.known_omitted_inputs ?? null,
-                known_omitted_edges: flow.data.known_omitted_edges ?? null,
+                  flow.data.omitted_operations_lower_bound,
+                known_omitted_inputs: flow.data.known_omitted_inputs,
+                known_omitted_edges: flow.data.known_omitted_edges,
               }
             : { status: "unavailable", reason: flow.data.reason },
   };
@@ -139,7 +143,7 @@ function* matchingEvidenceRecords(
       (filters.operation !== undefined &&
         filters.operation !== evidence.operation) ||
       (filters.target_sha256 !== undefined &&
-        filters.target_sha256 !== evidence.subject?.digest.sha256) ||
+        filters.target_sha256 !== evidenceFileTarget(evidence)?.sha256) ||
       (filters.analysis_profile_digest !== undefined &&
         filters.analysis_profile_digest !== evidence.analysis_profile?.digest)
     )
@@ -202,7 +206,7 @@ export const summarizeEvidenceBundle = (
 export const EVIDENCE_RECORD_SELECTION_LIMIT = 8;
 
 /** Labels every record selection as historical and as distinct from an importable bundle. */
-export const EVIDENCE_RECORD_SELECTION_LIMITATIONS = [
+const EVIDENCE_RECORD_SELECTION_LIMITATIONS = [
   "Selected records are retained historical observations; they do not establish current live provider or database state.",
   "A record selection is not an Evidence bundle: it omits manifests and residual unknowns and cannot be imported. Use export_evidence_bundle for a portable bundle.",
 ] as const;
@@ -237,6 +241,7 @@ export const selectEvidenceRecords = (
     readonly limit?: number | undefined;
   } = {},
 ): EvidenceRecordSelection => {
+  // optional-fact-default: a request default for paging, not an observed fact.
   const offset = page.offset ?? 0;
   const limit = page.limit ?? EVIDENCE_RECORD_SELECTION_LIMIT;
   const records: Evidence[] = [];
@@ -280,7 +285,7 @@ export const evidenceLinkStatusFilterSchema = z.enum([
 export const EVIDENCE_LINK_INSPECTION_LIMIT = 64;
 
 /** Bounds what link membership establishes, in every inspection. */
-export const EVIDENCE_LINK_INSPECTION_LIMITATIONS = [
+const EVIDENCE_LINK_INSPECTION_LIMITATIONS = [
   "Link status is membership in this session or bundle: missing means absent here, not nonexistent, and neither status describes analysis coverage or a record's meaning.",
 ] as const;
 
@@ -302,6 +307,7 @@ export const evidenceLinkInspectionSchema = z.strictObject({
       missing: countSchema,
     })
     .describe("Every link read from the examined records, before link_status."),
+  // domain-vocabulary: whether every direct evidence_link in the walked subgraph is retained in this bundle, not analysis coverage.
   retained_closure: z
     .enum(["complete", "incomplete"])
     .nullable()
@@ -342,23 +348,26 @@ export const inspectEvidenceLinks = (
 ): EvidenceLinkInspection => {
   const traversal = options.traversal ?? "direct";
   const linkStatus = options.linkStatus ?? "missing";
+  // optional-fact-default: a request default for paging, not an observed fact.
   const offset = options.offset ?? 0;
   const limit = options.limit ?? EVIDENCE_LINK_INSPECTION_LIMIT;
   const retained = new Map(
     bundle.records.map((record) => [record.evidence_id, record]),
   );
   const examined = new Set<string>();
-  const pending: string[] = [];
+  const pending: Evidence[] = [];
   for (const { evidence } of matchingEvidenceRecords(bundle, filters))
-    pending.push(evidence.evidence_id);
+    pending.push(evidence);
   const matching = pending.length;
   while (pending.length > 0) {
-    const id = pending.pop();
-    if (id === undefined || examined.has(id)) continue;
-    examined.add(id);
+    const record = pending.pop();
+    if (record === undefined || examined.has(record.evidence_id)) continue;
+    examined.add(record.evidence_id);
     if (traversal === "direct") continue;
-    for (const link of retained.get(id)?.evidence_links ?? [])
-      if (retained.has(link) && !examined.has(link)) pending.push(link);
+    for (const link of record.evidence_links) {
+      const linked = retained.get(link);
+      if (linked !== undefined && !examined.has(link)) pending.push(linked);
+    }
   }
   const rows: EvidenceLinkInspection["rows"] = [];
   const counts = { total: 0, retained: 0, missing: 0 };

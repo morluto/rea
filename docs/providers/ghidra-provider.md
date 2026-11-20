@@ -17,7 +17,7 @@ database state into a fresh discovery. The default remains ephemeral.
 Use [installation](../getting-started/installation.md#ghidra) for supported hosts, prerequisites,
 configuration, startup deadlines, resource controls, and cleanup recovery.
 [Linux Ghidra launches](../getting-started/installation.md#linux-owned-process-prerequisite) also
-require a procps-compatible `ps` on REA's `PATH` for process ownership checks.
+require a procps-compatible system `ps` for process ownership checks.
 [Windows P0](windows-ghidra-p0.md) has its own admission and lifecycle boundary;
 [NativeAOT observations](ghidra-nativeaot.md) include a built-in read-only PE
 snapshot parser and a separate optional annotation extension. Check the
@@ -32,6 +32,11 @@ catalog remains a read failure; it does not prove that a configured language is
 undefined. Installation `application.properties` has a fixed 1 MiB read allowance
 with no runtime override. The failure retains that allowance and directs recovery
 at the selected installation metadata.
+
+Xtensa ELF files (`EM_XTENSA = 94`) use the header-selected Ghidra import
+language and report the canonical `xtensa` architecture in CLI/MCP results.
+Processor extensions and calling-convention compatibility remain specific to
+the selected Ghidra language; family recognition alone does not establish them.
 
 Retained process diagnostics can report termination by `SIGKILL`; the signal alone
 cannot establish an OOM kill. REA gives neutral recovery guidance and preserves the
@@ -143,6 +148,9 @@ PDB identity or complete symbol-coverage attestation, and retains an inline
 coverage caveat. Handshake PDB strings share a 4096 UTF-16-unit serialization
 budget (at most 24 KiB after JSON escaping); whole attributes that do not fit
 are omitted with an explicit resource limitation, rather than truncated.
+When the CodeView path's text encoding is unknown, the caveat identifies that
+uncertainty and retains the original path bytes in hex when they fit the inline
+locator budget. This observation is independent of Ghidra's reported filename.
 
 Original names and types may be missing even when auto-analysis completes.
 An empty name search does not establish that a function is absent; use
@@ -230,8 +238,7 @@ status and limitations state.
 
 Relocation rows retain Ghidra's `symbol` value, including an empty string or
 null when returned by Ghidra. It is a provider observation, not proof of the
-runtime-resolved address. Older Evidence may not have recorded this field;
-a relocation page requesting it reports that uncertainty.
+runtime-resolved address. Every relocation row records the field.
 
 For large relocation inventories, select MCP `inspect_native_load_image` with
 `detail: "summary"`. It returns verification state, observed identity and counts,
@@ -314,6 +321,11 @@ same function can be retried after raising the limit. See the
 [settings design](../design/limits-and-recovery.md) for snapshots, precedence,
 and provider integration.
 
+Every Ghidra analysis profile commits `producer`: the REA release and a SHA-256
+of the packaged bridge scripts. A snapshot replays only under the same
+producer, so after an REA upgrade or a bridge script change an older snapshot is
+refused; open the target without it and save a fresh snapshot.
+
 When `inspect_native_instruction` selects a byte inside a listed instruction,
 `containing_instruction` reports its separate start, length and Ghidra Listing
 text, retaining any non-default address space. The requested address remains
@@ -338,7 +350,18 @@ handler execution or change the body. Instruction windows and dossiers also
 retain these warnings in their result limitations. An unresolved callee or
 unestablished terminal-flow basis remains explicit. These observations qualify
 the analysis; they do not prove that a no-return flag is incorrect or recover
-excluded code. Analysis profiles version this observation contract so older
+excluded code. When the callee's entry, or the function a thunk forwards to,
+carries the `Non-Returning Function Found` analysis bookmark that Ghidra's
+`Non-Returning Functions - Discovered` analyzer writes, the call's limitation
+says the flag was inferred, and the function's limitations add one statement
+that Ghidra excluded that call's fall-through from the body and pseudocode, so
+code reachable only through it is missing if the callee returns. That analyzer can mark returning callees, such as an
+imported `operator new` thunk, so a constructor may decompile to a few lines. To
+compare, open a fresh import with
+`REA_GHIDRA_DISABLED_ANALYZERS='Non-Returning Functions - Discovered'`; an
+existing project (`REA_GHIDRA_PROJECT_PATH`) keeps the flags its analysis
+already stored. A flag without that bookmark keeps an unknown origin; REA does
+not treat it as declared. Analysis profiles version this observation contract so older
 snapshots cannot replay unqualified results.
 
 On non-Windows hosts, the ephemeral import repair clears no-return flags on the
@@ -351,15 +374,34 @@ flag and affected callers are repaired in the same pass. Unknown imports and
 genuine no-return imports keep their flags. Analysis profiles version this repair
 so snapshots produced before it are not reused. Windows P0 does not run it.
 
+Ghidra applies most loader relocations, but it cannot apply some, such as an
+ELF copy relocation into RELRO (for example musl's `stderr`) or a TLS slot that
+only the runtime loader fills. Those destinations keep their file bytes while
+the runtime loader writes another value. Before decompiling, a fresh
+non-Windows import marks each such destination in a loaded, initialized,
+non-writable block volatile in the ephemeral database, so the decompiler
+cannot fold the on-disk value into a constant. Volatility is set on the
+destination's own data item (an undefined item of the relocation's length is
+created where nothing is defined), so applied relocations in the same block,
+such as the GOT entries beside a TLS slot, stay foldable and external calls
+keep their names. Only when an instruction or a data item starting before the
+destination occupies it is the whole block marked volatile instead.
+Permissions and source `FileBytes` are unchanged. A procedure that reads an
+unapplied destination adds a limitation naming the relocation. Windows P0 and
+existing projects (`REA_GHIDRA_PROJECT_PATH`) have no database-mutation
+authority: they add the same limitation, but their pseudocode may still show
+the file-backed value. ELF relocatable objects and core files are excluded.
+Analysis profiles version this behavior.
+
 `npm run verify:ghidra` compiles the versioned C oracle into debug and stripped
 host-native targets (x86-64/AArch64 ELF on Linux or Mach-O on macOS), plus a native
 DWARF 4 type-layout object. It proves the admitted operations, external functions, resolved thunks, exports, stripped-name
 behavior, direct and targetless indirect calls, typed references, strings/xrefs,
 multi-block CFG, bounded p-code def-use/effect links, semantic enhanced workflows, cancellation, startup deadlines,
 serialized concurrency, malformed-target rejection, profile identity, and
-process/project cleanup against real Ghidra 12.1.4. Unit fixtures separately
-cover startup deadlines, process exit, queued cancellation, and malformed wire
-output.
+process/project cleanup. Recorded on Ghidra 12.1.4 (no longer accepted); not
+yet re-run on 12.2. Unit fixtures separately cover startup deadlines, process
+exit, queued cancellation, and malformed wire output.
 
 `npm run verify:ghidra:cross-format` adds AArch64 ELF, x86-64 PE, and x86-64
 Mach-O target coverage. It requires `clang`, LLD, and `lld-link`; set
@@ -412,10 +454,17 @@ offset for that starting address (or null), and containing procedure (or null).
 A starting offset does not imply the full match is contiguous in the file.
 
 Pages default to 100 matches and accept 1 to 1000. Pass `next_cursor` as `cursor`
-with the same target, profile, pattern, mask and bounds to continue. `complete`
-means no further matches remain. `searched.blocks` and `searched.bytes` describe
-the inclusive memory ranges examined for this page, including lookahead for the
-next match. Coverage can overlap between pages; do not sum it as unique memory.
+with the same target, analysis profile or selected project, pattern, mask,
+bounds, and document to continue. A cursor from a different binding is
+rejected. The message names those bound values and states that the cursor does
+not identify which one differs; select the original context or start a new
+search without the cursor. The request matches the input schema, so the error
+carries no `inspect_input_contract` recovery. `details.issues[0].path` is
+`cursor`, and `details.issues[0].observed.differing_component` is `unknown`.
+`complete` means no further matches remain. `searched.blocks` and
+`searched.bytes` describe the inclusive memory ranges examined for this page,
+including lookahead for the next match. Coverage can overlap between pages; do
+not sum it as unique memory.
 `searched.skipped_uninitialized` lists eligible uninitialized blocks on every
 page. These blocks are never searched. Cancellation returns a typed error,
 discards the active Ghidra database, and does not return a successful partial page.

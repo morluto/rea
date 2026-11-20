@@ -1,3 +1,7 @@
+import {
+  escapeJsonPointerToken,
+  unescapeJsonPointerToken,
+} from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
 import { collapseWhitespace, type DesktopTaskCheckInput } from "./appTask.js";
 import {
@@ -16,13 +20,9 @@ import {
   rankAttributes,
 } from "./attributeRank.js";
 import { pairMembers } from "./memberPairing.js";
-import {
-  elementText,
-  escapeToken,
-  isXmlElement,
-  resolvePointer,
-} from "./viewPointer.js";
+import { elementText, isXmlElement, resolvePointer } from "./viewPointer.js";
 import { selectorOf } from "./viewSelector.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 type Suggestion = DesktopTaskCheckInput;
 
@@ -68,11 +68,6 @@ type Element = Extract<JsonValue, Record<string, JsonValue>> & {
   readonly name: string;
   readonly children: JsonValue[];
 };
-
-const isRecord = (
-  value: JsonValue | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const attributesOf = (element: Element) =>
   isRecord(element.attributes) ? element.attributes : {};
@@ -136,9 +131,7 @@ const idsIn = (roots: readonly JsonValue[]): ReadonlySet<string> => {
 
 /** The attribute keys the last segment of a pointer selects by. */
 const selectorKeys = (pointer: string): ReadonlySet<string> => {
-  const segment = (pointer.split("/").at(-1) ?? "")
-    .replaceAll("~1", "/")
-    .replaceAll("~0", "~");
+  const segment = unescapeJsonPointerToken(pointer.split("/").at(-1) ?? "");
   return new Set(
     [...segment.matchAll(/\[@(?<key>[^=\]]+)=/gu)].map(
       (match) => match.groups?.key ?? "",
@@ -212,23 +205,30 @@ export const attributeChecks = (
       ) &&
       !isViewStateName(key),
   );
-  return rankAttributes(
-    eligible.filter(({ key, value }) =>
-      checkFits(context, `${pointer}/attributes/${escapeToken(key)}`, value),
-    ),
-  )
-    .toSorted(
-      (left, right) =>
-        usual(left.key, left.value) - usual(right.key, right.value),
-    )
-    .slice(0, MAX_ATTRIBUTE_CHECKS)
-    .map(({ key, value }) =>
-      valueEqualsCheck(
-        file,
-        `${pointer}/attributes/${escapeToken(key)}`,
-        value,
+  return (
+    rankAttributes(
+      eligible.filter(({ key, value }) =>
+        checkFits(
+          context,
+          `${pointer}/attributes/${escapeJsonPointerToken(key)}`,
+          value,
+        ),
       ),
-    );
+    )
+      .toSorted(
+        (left, right) =>
+          usual(left.key, left.value) - usual(right.key, right.value),
+      )
+      // generation-cap: suggested attribute checks
+      .slice(0, MAX_ATTRIBUTE_CHECKS)
+      .map(({ key, value }) =>
+        valueEqualsCheck(
+          file,
+          `${pointer}/attributes/${escapeJsonPointerToken(key)}`,
+          value,
+        ),
+      )
+  );
 };
 
 /**
@@ -329,7 +329,7 @@ export const fieldChecks = (
   element.children.forEach((field, index) => {
     if (!isXmlElement(field)) return;
     const key = keys[index] ?? String(index);
-    const fieldAt = `${pointer}/children/${key.startsWith("[") ? escapeToken(key) : key}`;
+    const fieldAt = `${pointer}/children/${key.startsWith("[") ? escapeJsonPointerToken(key) : key}`;
     if (
       ID_FIELD.test(field.name) ||
       inSplitDate(ends.final, fieldAt) ||
@@ -357,6 +357,7 @@ export const fieldChecks = (
     }
   });
   if (texts.length > 0)
+    // generation-cap: suggested field checks
     return [...new Set(texts)].slice(0, MAX_FIELD_CHECKS).map((value) => ({
       kind: "text_contains" as const,
       file,
@@ -420,11 +421,8 @@ const sharedFields = (
 const selectorFields = (pointer: string): ReadonlySet<string> =>
   new Set(
     (
-      selectorOf(
-        (pointer.split("/").at(-1) ?? "")
-          .replaceAll("~1", "/")
-          .replaceAll("~0", "~"),
-      ) ?? []
+      selectorOf(unescapeJsonPointerToken(pointer.split("/").at(-1) ?? "")) ??
+      []
     )
       .filter(({ prefix }) => prefix === ">")
       .map(({ key, value }) => `${key}\u0000${value}`),
@@ -456,10 +454,14 @@ export const recordChecks = (
   const fields = fieldsOf(context, pointer, element, { nested: true });
   // A record whose one field is the one its selector names it by, as a VYM branch its heading, is checked by that field.
   return (
-    fields.length > 0
-      ? fields
-      : fieldsOf(context, pointer, element, { nested: true, selector: true })
-  ).slice(0, MAX_FIELD_CHECKS);
+    (
+      fields.length > 0
+        ? fields
+        : fieldsOf(context, pointer, element, { nested: true, selector: true })
+    )
+      // generation-cap: suggested field checks
+      .slice(0, MAX_FIELD_CHECKS)
+  );
 };
 
 /** Whether an element holds an identifier of its own among its descendants, as GnuCash's `<trn:splits>` holds each split's `<split:id>`, so its whole text holds ids a later save makes anew. */
@@ -495,7 +497,7 @@ const fieldsOf = (
   ]);
   return element.children.flatMap((field, index): Suggestion[] => {
     const key = keys[index] ?? "";
-    const at = `${pointer}/children/${escapeToken(key)}`;
+    const at = `${pointer}/children/${escapeJsonPointerToken(key)}`;
     if (
       !isXmlElement(field) ||
       !key.startsWith("[") ||
@@ -515,7 +517,7 @@ const fieldsOf = (
         isXmlElement(record)
           ? fieldsOf(
               context,
-              `${at}/children/${escapeToken(records[place] ?? "")}`,
+              `${at}/children/${escapeJsonPointerToken(records[place] ?? "")}`,
               record,
               { nested: false },
             )

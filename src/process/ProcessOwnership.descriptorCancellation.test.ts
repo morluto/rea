@@ -1,14 +1,9 @@
-import {
-  mkdtemp,
-  mkdir,
-  rm,
-  writeFile,
-  type FileHandle,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 
 const fixture = vi.hoisted(() => ({
   files: new Map<string, string>(),
@@ -78,8 +73,7 @@ const prepare = async () => {
   fixture.onReadFailure = undefined;
   fixture.onClosed = undefined;
   fixture.onDeniedClose = undefined;
-  const root = await mkdtemp(join(tmpdir(), "rea-inspection-descriptor-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const root = await createTestTempDirectory("rea-inspection-descriptor-");
   const rows = [42, 43, 44].map((pid) => ({
     pid,
     parentPid: 1,
@@ -146,8 +140,12 @@ it("joins a pending successful native read before reporting explicit cancellatio
     .finally(() => {
       settled = true;
     });
-  await entered.promise;
-  await completed.promise;
+  await awaitAcknowledgement(entered.promise, pending, "identity read");
+  await awaitAcknowledgement(
+    completed.promise,
+    pending,
+    "sibling identity close",
+  );
   // Let the completed sibling publish its parsed identity after descriptor close.
   await new Promise<void>((resolve) => setImmediate(resolve));
   controller.abort(reason);
@@ -194,7 +192,7 @@ it("drains mixed identity outcomes and transfers every exact failed-close owner 
     .finally(() => {
       settled = true;
     });
-  await entered.promise;
+  await awaitAcknowledgement(entered.promise, pending, "identity read");
   await new Promise<void>((resolve) => setImmediate(resolve));
   expect(settled).toBe(false);
   release.resolve();
@@ -263,10 +261,22 @@ it("keeps an actual physical read primary alongside a sibling's explicit cancell
     host,
     controller.signal,
   ).catch((cause: unknown) => cause);
-  await completed.promise;
-  await siblingStarted.promise;
+  await awaitAcknowledgement(
+    completed.promise,
+    pending,
+    "sibling identity close",
+  );
+  await awaitAcknowledgement(
+    siblingStarted.promise,
+    pending,
+    "sibling identity read",
+  );
   physical.resolve();
-  await observedFailure.promise;
+  await awaitAcknowledgement(
+    observedFailure.promise,
+    pending,
+    "physical read failure",
+  );
   sibling.resolve();
   const failure = await pending;
   expect(failure).toBeInstanceOf(ProcessOwnershipIdentityBatchFailure);

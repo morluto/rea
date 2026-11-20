@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { traceCallPath } from "./CallPathTracing.js";
-import { createAnalysisExecution } from "./AnalysisProvider.js";
+import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,

@@ -1,22 +1,10 @@
-import { rm } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  createIdaTarget,
-  RecordingIdaMcp,
-} from "../../tests/fixtures/idaMcp.js";
 import {
   callGraphSession as session,
   removeCallGraphSessions,
 } from "../../tests/fixtures/idaCallGraph.js";
 
-import { IdaSessionClient } from "./IdaSessionClient.js";
-
-const attachedRoots: string[] = [];
-afterEach(async () => {
-  await removeCallGraphSessions();
-  for (const root of attachedRoots.splice(0))
-    await rm(root, { recursive: true, force: true });
-});
+afterEach(removeCallGraphSessions);
 
 const xrefs = async (more: boolean | undefined) => {
   const { client, producer } = await session({ callees: [] }, "x86_64");
@@ -61,31 +49,6 @@ describe("headless IDA reference coverage", () => {
       const result = await client.execute("procedure_callees", {
         procedure: "main",
       });
-
-      if (!result.ok) throw result.error;
-      expect(result.value.referencesTruncated).toBeUndefined();
-    } finally {
-      expect((await client.close()).ok).toBe(true);
-    }
-  });
-
-  it("reports nothing for the legacy profile, whose producer has no cap flag", async () => {
-    const { root, target } = await createIdaTarget("x86_64");
-    attachedRoots.push(root);
-    const client = new IdaSessionClient(
-      {
-        command: "fixture",
-        args: [],
-        env: {},
-        mode: "attached",
-        timeoutMs: 1000,
-        workspaceRoot: root,
-      },
-      target,
-      new RecordingIdaMcp(target, "attached"),
-    );
-    try {
-      const result = await client.execute("xrefs", { address: "0x1000" });
 
       if (!result.ok) throw result.error;
       expect(result.value.referencesTruncated).toBeUndefined();

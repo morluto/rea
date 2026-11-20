@@ -1,6 +1,6 @@
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { access } from "node:fs/promises";
 import { join } from "node:path";
-import { Cli } from "incur";
 import pino from "pino";
 import { expect, it } from "vitest";
 
@@ -8,7 +8,7 @@ import { registerBrowserScenarioCommands } from "../../../src/cliBrowserScenario
 import { ok } from "../../../src/domain/result.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";
-import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../../src/resources/AnalysisCleanupLease.js";
 import { PlaywrightBrowserScenarioProvider } from "../../../src/browser/PlaywrightBrowserScenarioProvider.js";
 import { scenarioCaptureFixture } from "../../fixtures/browserScenarioCapture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -33,7 +33,7 @@ it.each([false, true])(
         );
       },
     );
-    const cli = Cli.create("rea-browser-startup-cleanup-test", { sync: false });
+    const cli = createCommandCli();
     let stdout = "";
     registerBrowserScenarioCommands(
       cli,
@@ -101,7 +101,7 @@ it.each(["complete", "summary"] as const)(
     const destination = join(root, "evidence.json");
     const originalExit = process.exitCode;
     const listeners = new Set(process.listeners("SIGINT"));
-    const cli = Cli.create("rea-browser-summary-test", { sync: false });
+    const cli = createCommandCli();
     let stdout = "";
     let closed = false;
     registerBrowserScenarioCommands(
@@ -173,7 +173,7 @@ it.each(["complete", "summary"] as const)(
 it("keeps the provider's cleanup failure and completed Evidence without publishing a summary bundle", async () => {
   const root = await createTestTempDirectory("rea-browser-summary-cleanup-");
   const destination = join(root, "evidence.json");
-  const cli = Cli.create("rea-browser-cleanup-test", { sync: false });
+  const cli = createCommandCli();
   let stdout = "";
   const failure = new ProviderCleanupError(
     "owned-browser",

@@ -1,7 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../../tests/support/lifecycleHarness.js";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { elf } from "../../domain/binaryTarget.fixture.js";
 import { describe, expect, it, onTestFinished } from "vitest";
@@ -16,7 +16,7 @@ import {
   type ProviderAvailability,
   type ProviderIdentity,
   type ProviderTargetSupport,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import type { ProviderOperationHealth } from "../../domain/providerOperationHealth.js";
@@ -141,7 +141,9 @@ it("keeps unbound observations out of persisted target snapshots", async () => {
   expect(session.exportEvidenceBundle().records).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
-        subject: null,
+        subject: expect.objectContaining({
+          identity: { kind: "unknown", reason: "not-observed" },
+        }),
         normalized_result: "unbound observation",
       }),
     ]),
@@ -349,21 +351,11 @@ describe("BinarySession open liveness", () => {
 });
 
 it("clears retired runtime availability after cancelled-switch restoration", async () => {
-  let closeStarted!: () => void;
-  const closing = new Promise<void>((resolve) => {
-    closeStarted = resolve;
-  });
-  let releaseClose!: () => void;
-  const closeGate = new Promise<void>((resolve) => {
-    releaseClose = resolve;
-  });
+  const closing = phaseGate();
   const { session, deep } = openSession({
     failOperationInitially: true,
-    releaseBeforeCleanup: releaseClose,
-    beforeFirstClose: async () => {
-      closeStarted();
-      await closeGate;
-    },
+    releaseBeforeCleanup: closing.release,
+    beforeFirstClose: () => closing.hold(),
   });
   expect((await session.open(process.execPath)).ok).toBe(true);
   expect((await session.execute("address_name", {})).ok).toBe(false);
@@ -387,12 +379,12 @@ it("clears retired runtime availability after cancelled-switch restoration", asy
   await writeFile(alternate, elf(2, 1, 62));
   const switching = session.open(alternate, { signal: controller.signal });
   const cancelled = await withVerifierCleanup(async () => {
-    await awaitAcknowledgement(closing, switching, "provider close");
+    await closing.reached(switching, "provider close");
     controller.abort();
-    releaseClose();
+    closing.release();
     return await switching;
   }, [
-    releaseClose,
+    closing.release,
     async () => {
       await switching;
     },
