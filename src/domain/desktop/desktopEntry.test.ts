@@ -334,13 +334,13 @@ it.each([
 it.each([
   ["1", true],
   ["true", true],
-  ["True", true],
-  ["TRUE", true],
+  ["True", false],
+  ["TRUE", false],
   ["0", false],
   ["false", false],
   ["False", false],
   ["FALSE", false],
-])("parses Terminal=%s as %s", (flag, expected) => {
+])("parses Terminal=%s as %s matching GLib's accepted spellings", (flag, expected) => {
   const result = parseDesktopEntry(
     `[Desktop Entry]\nType=Application\nName=App\nExec=app\nTerminal=${flag}\n`,
   );
@@ -363,13 +363,13 @@ it("defaults terminal to false when the Terminal key is omitted", () => {
 it.each([
   ["1", true],
   ["true", true],
-  ["True", true],
-  ["TRUE", true],
+  ["True", false],
+  ["TRUE", false],
   ["0", false],
   ["false", false],
   ["False", false],
   ["FALSE", false],
-])("parses Hidden=%s as %s", (flag, expected) => {
+])("parses Hidden=%s as %s matching GLib's accepted spellings", (flag, expected) => {
   const result = parseDesktopEntry(
     `[Desktop Entry]\nType=Application\nName=App\nExec=app\nHidden=${flag}\n`,
   );
