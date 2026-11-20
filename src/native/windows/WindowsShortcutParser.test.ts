@@ -1095,6 +1095,35 @@ it("marks an IDList without a TerminalID as partial", async () => {
   );
 });
 
+it("reports bytes after an early TerminalID and preserves the next section", async () => {
+  const valid = windowsShortcutBytes({
+    idList: [{ kind: "volume", name: "C:" }],
+    name: "Example shortcut",
+  });
+  const size = valid.readUInt16LE(76);
+  const tailOffset = 78 + size;
+  const tail = Buffer.from([1, 2, 3]);
+  const bytes = Buffer.concat([
+    valid.subarray(0, tailOffset),
+    tail,
+    valid.subarray(tailOffset),
+  ]);
+  bytes.writeUInt16LE(size + tail.length, 76);
+  const report = await parse(bytes);
+  expect(report.id_list?.item_count).toBe(1);
+  expect(report.string_data.name?.value).toBe("Example shortcut");
+  expect(report.coverage).toMatchObject({
+    status: "partial",
+    failing_offset: tailOffset,
+  });
+  expect(report.issues).toContainEqual(
+    expect.objectContaining({
+      code: "malformed_structure",
+      offset: tailOffset,
+    }),
+  );
+});
+
 const iconDifference = (
   report: Awaited<ReturnType<typeof parse>>,
 ): boolean | null | undefined => {
