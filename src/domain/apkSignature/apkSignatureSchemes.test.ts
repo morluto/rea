@@ -127,7 +127,7 @@ describe("APK scheme signer decoder", () => {
     "refuses lineage nodes missing required algorithm/signature framing",
     ({ node }) => {
       expect(
-        decodeRotationLineage(Uint8Array.from([...u32(1), ...lp(node)])),
+        decodeRotationLineage(Uint8Array.from([...u32(1), ...lp(node)]), "v3"),
       ).toMatchObject({ ok: false, error: { kind: "malformed-signer" } });
     },
   );
@@ -208,13 +208,24 @@ describe("APK scheme signer decoder", () => {
     );
     expect(tooMany.ok).toBe(false);
     if (!tooMany.ok)
-      expect(tooMany.error).toEqual({
-        kind: "budget-exceeded",
-        resource: "signers",
-        limit: MAX_SIGNERS,
+      expect(tooMany.error).toMatchObject({
+        kind: "limit",
+        failure: {
+          limit: { name: "signers", maximum: MAX_SIGNERS },
+        },
       });
   });
 
+  it("maps signature-algorithm ids to content-digest algorithms", () => {
+    expect(contentDigestAlgorithm(0x0103)).toBe("sha256");
+    expect(contentDigestAlgorithm(0x0104)).toBe("sha512");
+    expect(contentDigestAlgorithm(0x0421)).toBe("verity-sha256");
+    expect(contentDigestAlgorithm(0x0425)).toBe("verity-sha256");
+    expect(contentDigestAlgorithm(0x9999)).toBeNull();
+  });
+});
+
+describe("APK proof-of-rotation lineage", () => {
   it("decodes lineage nodes with each node's own retained flags", () => {
     const node = (cert: number[], flags: number): number[] =>
       lp([
@@ -225,6 +236,7 @@ describe("APK scheme signer decoder", () => {
       ]);
     const lineage = decodeRotationLineage(
       Uint8Array.from([...u32(1), ...node([1, 2], 22), ...node([3, 4], 21)]),
+      "v3",
     );
     expect(lineage.ok).toBe(true);
     if (!lineage.ok) return;
@@ -235,7 +247,7 @@ describe("APK scheme signer decoder", () => {
   });
 
   it("refuses an unknown lineage version and an over-cap lineage", () => {
-    const badVersion = decodeRotationLineage(Uint8Array.from(u32(2)));
+    const badVersion = decodeRotationLineage(Uint8Array.from(u32(2)), "v3");
     expect(badVersion.ok).toBe(false);
     if (!badVersion.ok) expect(badVersion.error.kind).toBe("malformed-signer");
     const node = lp([
@@ -249,16 +261,15 @@ describe("APK scheme signer decoder", () => {
         ...u32(1),
         ...Array.from({ length: MAX_LINEAGE_NODES + 1 }, () => node).flat(),
       ]),
+      "v3.1",
     );
     expect(tooLong.ok).toBe(false);
-    if (!tooLong.ok) expect(tooLong.error.kind).toBe("budget-exceeded");
-  });
-
-  it("maps signature-algorithm ids to content-digest algorithms", () => {
-    expect(contentDigestAlgorithm(0x0103)).toBe("sha256");
-    expect(contentDigestAlgorithm(0x0104)).toBe("sha512");
-    expect(contentDigestAlgorithm(0x0421)).toBe("verity-sha256");
-    expect(contentDigestAlgorithm(0x0425)).toBe("verity-sha256");
-    expect(contentDigestAlgorithm(0x9999)).toBeNull();
+    if (!tooLong.ok)
+      expect(tooLong.error).toMatchObject({
+        kind: "limit",
+        failure: {
+          limit: { name: "lineage-nodes", maximum: MAX_LINEAGE_NODES },
+        },
+      });
   });
 });

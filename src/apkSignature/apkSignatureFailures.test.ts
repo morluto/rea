@@ -3,7 +3,6 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   apkOutputBudgetError,
   mapApkBlockError,
-  mapApkSchemeError,
   mapCentralDirectoryError,
   v1SignerCapacityError,
 } from "./apkSignatureFailures.js";
@@ -18,15 +17,6 @@ it.each([
     ),
     "max_signing_block_pairs",
     4096,
-  ],
-  [
-    "scheme signers",
-    mapApkSchemeError(
-      { kind: "budget-exceeded", resource: "signers", limit: 32 },
-      "v2",
-    ),
-    "max_signers",
-    32,
   ],
   [
     "v1 entries",
