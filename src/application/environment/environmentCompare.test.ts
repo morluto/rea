@@ -65,6 +65,36 @@ const compare = (...probes: (readonly TimedCaptureRow[])[]) => {
 };
 
 describe("step difference coverage", () => {
+  it("counts a reorder of a complete duplicate ID list in strict agreement", () => {
+    const capture = timedCaptureEvidence([
+      ["GET", "/api/selection", { ids: [2, 1, 1] }],
+    ]);
+    const served = environmentStateServeFixture(capture);
+    const report = compareEnvironment({
+      source: environmentServeSource(served),
+      captureValue: capture,
+      probes: [
+        {
+          label: "reordered",
+          value: timedCaptureEvidence([
+            ["GET", "/api/selection", { ids: [1, 1, 2] }],
+          ]),
+        },
+      ],
+      operation: "environment-compare",
+    });
+    if (!report.ok) throw report.error;
+    expect(report.value.probes[0]?.results[0]).toMatchObject({
+      equal: false,
+      equal_ignoring_order: true,
+      differences: [{ category: "order", pointer: "/ids" }],
+    });
+    expect(report.value.summary).toMatchObject({
+      agreement: 0,
+      agreement_ignoring_order: 1,
+    });
+  });
+
   it("keeps categories from differences beyond the returned prefix", () => {
     const fields = Object.fromEntries(
       Array.from({ length: 20 }, (_, index) => [`field${String(index)}`, 0]),

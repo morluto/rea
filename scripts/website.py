@@ -158,14 +158,16 @@ class PageMetadata(HTMLParser):
 
 
 def page_route(site, path):
-    """Map an HTML file to its public route without a separate page registry."""
+    """Map an HTML file to its encoded public route relative to the site root."""
     route = path.relative_to(site).as_posix()
-    return route.removesuffix("index.html") if path.name == "index.html" else route
+    if path.name == "index.html":
+        route = route.removesuffix("index.html")
+    return quote(route, safe="/")
 
 
 def page_url(site, path):
     """Return the canonical public URL of an authored HTML file."""
-    return f"{SITE_ORIGIN}/{quote(page_route(site, path), safe='/')}"
+    return f"{SITE_ORIGIN}/{page_route(site, path)}"
 
 
 def shared_blocks(root, path, source):

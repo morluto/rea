@@ -29,6 +29,7 @@ export const javaScriptStaticCoverageSchema = z.strictObject({
         "returned-reference-widening",
         "type-only-module-side-effect",
         "conditional-loader",
+        "commonjs-wrapper-redeclaration",
       ]),
     ),
   }),

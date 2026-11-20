@@ -327,8 +327,10 @@ it("keeps collections that member Evidence never examined unknown", async () => 
       })
     ).structuredContent,
   );
+  const { unresolved_definitions: _projection, ...historical } =
+    managedMemberInspectionSchema.parse(parent.normalized_result);
   const recorded = {
-    ...managedMemberInspectionSchema.parse(parent.normalized_result),
+    ...historical,
     exported_types: null,
     user_strings: null,
     selection: null,
@@ -361,10 +363,17 @@ it("keeps collections that member Evidence never examined unknown", async () => 
   expect(view.summary.reported_counts.exported_types).toBeNull();
   expect(view.summary.signature_resolution).toBeNull();
   expect(view.summary.reported_counts.user_strings).toBeNull();
+  expect(view.summary.reported_counts).not.toHaveProperty(
+    "unresolved_definitions",
+  );
   expect(view.summary.user_strings).toBeNull();
   expect(view.summary.selection).toBeNull();
   expect(view.unknowns.join(" ")).toContain("no recorded subject");
-  for (const collection of ["exported_types", "user_strings"] as const)
+  for (const collection of [
+    "exported_types",
+    "user_strings",
+    "unresolved_definitions",
+  ] as const)
     expect(
       await inspectAnalysisView({
         source: { kind: "inline", evidence: unexamined },

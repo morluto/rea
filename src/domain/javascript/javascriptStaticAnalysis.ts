@@ -19,8 +19,7 @@ import { RETURNED_REFERENCE_WIDENING_LIMITATION } from "./javascriptSemanticCove
 import { collectElectronWrappedCallPathsSteps } from "./electronWrappedCallPaths.js";
 import {
   ELECTRON_IDENTITY_LIMITATION,
-  ELECTRON_MODULE,
-  ELECTRON_REFERENCE_KINDS,
+  referencesElectronModule,
 } from "./javascriptElectronMemberWrites.js";
 
 import { traverseJavaScriptAstSteps } from "./javascriptSemanticTraversal.js";
@@ -74,7 +73,9 @@ import {
   indexJavaScriptBindingsWithReceiversSteps,
 } from "./javascriptSemanticAnalysis.js";
 import {
+  commonJsWrapperRedeclarationCount,
   javaScriptSourceLoaderCondition,
+  recoveredJavaScriptSyntaxErrorCount,
   type ParsedJavaScriptSource,
 } from "./javascriptSourceParser.js";
 
@@ -101,7 +102,8 @@ export const memberMutationRefusedJavaScriptStaticAnalysis = (
   file: ParsedJavaScriptSource,
   refusal: AnalysisResourceConstraintError,
 ): JavaScriptStaticAnalysis => {
-  const parserErrors = file.errors.length;
+  const parserErrors = recoveredJavaScriptSyntaxErrorCount(file.errors);
+  const wrapperRedeclarations = commonJsWrapperRedeclarationCount(file.errors);
   const loaderCondition = javaScriptSourceLoaderCondition(file.program);
   const accumulator = createJavaScriptAnalysisAccumulator(source.length);
   addSourceMapDirectives(source, file.comments ?? [], accumulator);
@@ -113,7 +115,14 @@ export const memberMutationRefusedJavaScriptStaticAnalysis = (
         : { status: "recovered", error_count: parserErrors },
     semantics: {
       unknown_findings: null,
-      uncertainty: loaderCondition === undefined ? [] : ["conditional-loader"],
+      uncertainty: [
+        ...(loaderCondition === undefined
+          ? []
+          : ["conditional-loader" as const]),
+        ...(wrapperRedeclarations === 0
+          ? []
+          : ["commonjs-wrapper-redeclaration" as const]),
+      ],
     },
     examination: {
       status: "not-examined",
@@ -223,6 +232,7 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     source,
     accumulator,
     electronIdentity,
+    () => index.indexMemberMutationFactsSteps(),
   );
   addSourceMapDirectives(source, file.comments ?? [], accumulator);
   return finalizeStaticAnalysis(source, file, accumulator, bindings, routes);
@@ -255,26 +265,10 @@ const finalizeStaticAnalysis = (
   bindings: JavaScriptSemanticAnalysisState,
   routes: JavaScriptRouteSourceFacts,
 ): JavaScriptStaticAnalysis => {
-  const parserErrors = file.errors.length;
+  const parserErrors = recoveredJavaScriptSyntaxErrorCount(file.errors);
+  const wrapperRedeclarations = commonJsWrapperRedeclarationCount(file.errors);
   const typeOnlySideEffect = hasUncertainTypeOnlyModuleSideEffect(file.program);
-  // A `worker` or `service-worker` reference records a URL relative to the
-  // importing source, so `new Worker(new URL("electron", import.meta.url))` is
-  // not an Electron module. Read the same kinds the Electron boundary owner uses.
-  // Only a loaded module establishes Electron applicability: `require.resolve`
-  // locates the module without loading it, so no boundary fact is expected.
-  const electronObserved = accumulator.references.some(
-    ({ value }) =>
-      value.specifier !== null &&
-      value.operation === "load" &&
-      ELECTRON_REFERENCE_KINDS.has(value.kind) &&
-      ELECTRON_MODULE.test(value.specifier) &&
-      value.loader_authority !== "candidate" &&
-      // A `factory-loader` reference names a recovered bundle module, so its
-      // specifier is a module key inside the artifact rather than a package. A
-      // real external load in the same file keeps its `commonjs-loader`
-      // identity, so it is still counted.
-      value.loader !== "factory-loader",
-  );
+  const electronObserved = referencesElectronModule(accumulator.references);
   const resourceLimits = [...bindings.valueResourceLimits].sort();
   const controls = semanticPrecisionControls(
     resourceLimits,
@@ -310,6 +304,9 @@ const finalizeStaticAnalysis = (
         ...(typeOnlySideEffect
           ? ["type-only-module-side-effect" as const]
           : []),
+        ...(wrapperRedeclarations === 0
+          ? []
+          : ["commonjs-wrapper-redeclaration" as const]),
       ],
     },
     examination: {
@@ -351,6 +348,11 @@ const finalizeStaticAnalysis = (
       ? []
       : [
           "The parser recovered from syntax errors; affected facts are partial.",
+        ]),
+    ...(wrapperRedeclarations === 0
+      ? []
+      : [
+          "A top-level lexical declaration redeclares a CommonJS wrapper parameter, so this module cannot evaluate. Recovered syntax was examined completely.",
         ]),
     ...(accumulator.unknownFindings === 0
       ? []

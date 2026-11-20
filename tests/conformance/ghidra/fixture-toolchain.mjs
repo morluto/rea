@@ -131,6 +131,11 @@ export const LANE_TOOLCHAINS = Object.freeze({
     ...targets(tools.ppcClang, "powerpc-unknown-linux-gnu", { lld: true }),
     runs(tools.ppcReadelf, gnuReadelf),
   ],
+  ppc64: [
+    ...targets(tools.ppcClang, "powerpc64le-unknown-linux-gnu", { lld: true }),
+    ...targets(tools.ppcClang, "powerpc64-unknown-linux-gnu", { lld: true }),
+    runs(tools.ppcReadelf, gnuReadelf),
+  ],
   dol: [
     ...targets(tools.ppcClang, "powerpc-unknown-linux-gnu", { lld: true }),
     runs(tools.ppcReadelf, gnuReadelf),

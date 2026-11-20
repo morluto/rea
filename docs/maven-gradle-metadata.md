@@ -21,9 +21,12 @@ requires an absolute filesystem path and preserves that exact selection:
 }
 ```
 
-Classification is from content, not the suffix: a well-formed Maven `<project>`
-document is `maven-pom`; a JSON object with `formatVersion` and a `component`
-or `variants` array is `gradle-module`.
+REA classifies files by their content. A Maven `<project>` uses the Maven POM
+namespace or legacy unqualified elements. REA reads structural declarations
+in the project's namespace. A Gradle metadata object starts with `formatVersion`.
+Version `1.1` can omit `component` and `variants`. For other revisions, REA
+also requires a `component` object or `variants` array as format evidence.
+[Gradle Module Metadata 1.1 specification](https://github.com/gradle/gradle/blob/v9.2.1/platforms/documentation/docs/src/docs/design/gradle-module-metadata-latest-specification.md#contents)
 
 ## Observations
 
@@ -44,7 +47,10 @@ coordinate: [only group/version coordinates may be inherited](https://maven.apac
 For a POM, `parent` records the declared parent coordinates and `relative_path`
 when present. `relative_path_declared` distinguishes an empty `<relativePath/>`,
 which disables Maven's local parent lookup, from an omitted tag. `properties`
-lists each child of `<properties>` as name and value. URL userinfo
+lists each child of `<properties>` as its written qualified name and value.
+Prefixes remain part of the key: `a:revision` and `b:revision` stay distinct
+even when both prefixes bind to the same XML namespace URI, and match the
+spelling kept in `${a:revision}` and `${b:revision}` references. URL userinfo
 credentials in a property value are removed and `value_credentials_redacted`
 is `true`; when the credential span cannot be located, `value` is `null`.
 `dependencies` comes from the project's `<dependencies>` list.
@@ -61,7 +67,9 @@ Gradle's `+` prefix (`1.+`) or a `latest.<status>` selector
 For Gradle module metadata, `gradle` records `format_version`,
 `created_by_gradle`, and each variant's name, `org.gradle.category`,
 `org.gradle.usage`, `available-at` coordinates as spelled, and declared
-dependency and constraint counts. Variant dependencies are `origin`
+dependency and constraint counts. Nonempty variant names retain their exact
+spelling and identify their dependency and constraint rows. Duplicate names
+fail with `invalid_format`. Variant dependencies are `origin`
 `variant-dependencies`; `dependencyConstraints` are `origin`
 `variant-constraints`. Rich versions keep `requires`, `prefers`, `strictly`,
 and `rejects`. A variant whose category is `platform` or `enforced-platform`
@@ -69,6 +77,11 @@ marks its constraints `platform: true`. `available-at` is not fetched. URL
 userinfo credentials in `available_at.url` are removed and
 `url_credentials_redacted` is `true`; when the credential span cannot be
 located, `url` is `null`.
+
+For unfamiliar Gradle format versions with a recognizable metadata structure,
+REA interprets familiar fields using the 1.1 rules and reports the limitation.
+Complete byte coverage means the whole file was examined. Declarations specific
+to an unfamiliar format version may still be unreported.
 
 `unresolved` names every property reference in the coordinates, packaging, and
 each dependency's scope, type, classifier, and optional, plus missing

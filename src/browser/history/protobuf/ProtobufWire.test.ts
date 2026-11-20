@@ -1,10 +1,14 @@
 import { expect, it } from "vitest";
 import { create, toBinary } from "@bufbuild/protobuf";
 import { FileDescriptorSetSchema } from "@bufbuild/protobuf/wkt";
+import { getTextEncoding } from "@bufbuild/protobuf/wire";
 import { decodeProtobufWire, ProtobufBudget } from "./ProtobufWire.js";
 import { decodeProtobufBody } from "./ProtobufBody.js";
 import { ProtobufSchema } from "./ProtobufSchema.js";
-import { protobufCaptureDescriptor } from "../../../../tests/fixtures/protobufCapture.js";
+import {
+  protobufBomDescriptor,
+  protobufCaptureDescriptor,
+} from "../../../../tests/fixtures/protobufCapture.js";
 
 const same = (value: string) => value;
 const wire = (hex: string) => {
@@ -23,6 +27,89 @@ const readSchema = async (...args: Parameters<typeof ProtobufSchema.read>) => {
   if (!admitted.ok) throw new Error(admitted.error.message);
   return admitted.value;
 };
+
+it("keeps protoc's distinct BOM-prefixed import identities when annotating nested wire fields", async () => {
+  const encoding = getTextEncoding();
+  const budget = new ProtobufBudget();
+  const schema = await readSchema(
+    protobufBomDescriptor(),
+    "capture.Root",
+    budget,
+    same,
+  );
+  const bytes = Buffer.from("0a02080712050a036f6e65", "hex");
+  const decoded = await decodeProtobufWire(
+    bytes,
+    0,
+    bytes.length,
+    0,
+    budget,
+    same,
+    schema,
+  );
+  expect(decoded.error).toBeUndefined();
+  expect(decoded.fields).toMatchObject([
+    { schema_name: "plain", schema_type: "plain.Item" },
+    { schema_name: "number", schema_type: "uint32", schema_value: "7" },
+    { schema_name: "marked", schema_type: "marked.Item" },
+    { schema_name: "text", schema_type: "string", schema_value: "one" },
+  ]);
+  expect(getTextEncoding()).toEqual(encoding);
+});
+
+it("retains BOM-bearing option differences in repeated descriptor files", async () => {
+  const encoding = getTextEncoding();
+  const file = {
+    name: "same.proto",
+    syntax: "proto3",
+    messageType: [{ name: "M" }],
+  };
+  const bytes = toBinary(
+    FileDescriptorSetSchema,
+    create(FileDescriptorSetSchema, {
+      file: [
+        { ...file, options: { javaPackage: "plain" } },
+        { ...file, options: { javaPackage: "\uFEFFplain" } },
+      ],
+    }),
+  );
+  expect(
+    await ProtobufSchema.read(bytes, "M", new ProtobufBudget(), same),
+  ).toMatchObject({
+    ok: false,
+    error: {
+      kind: "malformed-descriptor",
+      message: "Conflicting file identity in FileDescriptorSet",
+    },
+  });
+  expect(getTextEncoding()).toEqual(encoding);
+});
+
+it("restores SDK encoding after a descriptor string fails UTF-8 decoding", async () => {
+  const encoding = getTextEncoding();
+  const bytes = toBinary(
+    FileDescriptorSetSchema,
+    create(FileDescriptorSetSchema, {
+      file: [
+        {
+          name: "bad.proto",
+          messageType: [{ name: "M" }],
+          options: { javaPackage: "unique-invalid-text" },
+        },
+      ],
+    }),
+  );
+  // A string option has no registry-name constraints that could hide a lossy
+  // SDK decode. Corrupt its first byte without changing any wire extents.
+  bytes[Buffer.from(bytes).indexOf("unique-invalid-text")] = 0xff;
+  expect(
+    await ProtobufSchema.read(bytes, "M", new ProtobufBudget(), same),
+  ).toMatchObject({
+    ok: false,
+    error: { kind: "malformed-descriptor" },
+  });
+  expect(getTextEncoding()).toEqual(encoding);
+});
 const source = {
   pointer: "/response/content/text",
   content_type: "application/grpc-web+proto",

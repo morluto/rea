@@ -46,6 +46,18 @@ it("reports an HTTP status when a release proposal error has no message", () => 
   expect(describeReleaseProposalError(new Error("broken"))).toBe("broken");
 });
 
+it("reports a gateway error without logging the HTML response page", () => {
+  const failure = Object.assign(
+    new Error("<!DOCTYPE html>\n<html><title>Unicorn!</title></html>"),
+    {
+      status: 504,
+    },
+  );
+  expect(describeReleaseProposalError(failure)).toBe(
+    "GitHub returned an HTML error response (HTTP 504)",
+  );
+});
+
 beforeAll(async () => {
   upstream = await import("release-please");
   githubRuntime = require("release-please/build/src/github.js");
@@ -138,6 +150,140 @@ function respond(value: unknown, status = 200) {
   });
 }
 
+it.each([true, false])(
+  "handles an HTTP 200 Git blob without content (recovers: %s)",
+  async (recovers) => {
+    const sleep = vi
+      .spyOn(githubRuntime, "sleepInMs")
+      .mockResolvedValue(undefined);
+    const path = "CHANGELOG.md";
+    const contents = "# Changelog\n";
+    let reads = 0;
+    const github = await upstream.GitHub.create({
+      owner: "fixture",
+      repo: "rea",
+      defaultBranch: "main",
+      logger: silent,
+      fetch: async (input: string, options: { method?: string }) => {
+        const { pathname } = new URL(input);
+        expect(options.method).toBe("GET");
+        if (pathname === "/repos/fixture/rea/git/trees/main")
+          return respond({ tree: [{ path, sha: baseline, type: "blob" }] });
+        expect(pathname).toBe(`/repos/fixture/rea/git/blobs/${baseline}`);
+        reads += 1;
+        return respond({
+          sha: baseline,
+          encoding: "base64",
+          ...(recovers && reads > 1
+            ? { content: Buffer.from(contents).toString("base64") }
+            : {}),
+        });
+      },
+    });
+    const result = github.getFileContentsOnBranch(path, "main");
+    if (recovers)
+      await expect(result).resolves.toMatchObject({ parsedContent: contents });
+    else
+      await expect(result).rejects.toThrow(
+        "GitHub returned an incomplete Git blob for CHANGELOG.md on main",
+      );
+    expect(reads).toBe(recovers ? 2 : 3);
+    expect(sleep.mock.calls).toEqual(recovers ? [[1000]] : [[1000], [2000]]);
+  },
+);
+
+it.each([0, 12])(
+  "checks an empty Git blob response declaring size %s",
+  async (size) => {
+    const sleep = vi
+      .spyOn(githubRuntime, "sleepInMs")
+      .mockResolvedValue(undefined);
+    let reads = 0;
+    const github = await upstream.GitHub.create({
+      owner: "fixture",
+      repo: "rea",
+      defaultBranch: "main",
+      logger: silent,
+      fetch: async (input: string) => {
+        const { pathname } = new URL(input);
+        if (pathname === "/repos/fixture/rea/git/trees/main")
+          return respond({
+            tree: [{ path: "CHANGELOG.md", sha: baseline, type: "blob" }],
+          });
+        expect(pathname).toBe(`/repos/fixture/rea/git/blobs/${baseline}`);
+        reads += 1;
+        return respond({
+          sha: baseline,
+          encoding: "base64",
+          content: "",
+          size,
+        });
+      },
+    });
+    const result = github.getFileContentsOnBranch("CHANGELOG.md", "main");
+    if (size === 0) {
+      await expect(result).resolves.toMatchObject({ parsedContent: "" });
+      expect(reads).toBe(1);
+      expect(sleep).not.toHaveBeenCalled();
+    } else {
+      await expect(result).rejects.toThrow(
+        "GitHub returned an incomplete Git blob",
+      );
+      expect(reads).toBe(3);
+      expect(sleep.mock.calls).toEqual([[1000], [2000]]);
+    }
+  },
+);
+
+it.each([
+  { statuses: [504, 200], expectedReads: 2, status: null },
+  { statuses: [504, 504, 504], expectedReads: 3, status: 504 },
+  { statuses: [403], expectedReads: 1, status: 403 },
+])(
+  "retries release note reads with HTTP responses $statuses",
+  async ({ statuses, expectedReads, status }) => {
+    const sleep = vi
+      .spyOn(githubRuntime, "sleepInMs")
+      .mockResolvedValue(undefined);
+    const branch = "proposal--release-notes";
+    const path = "release-notes.md";
+    const notes = "Existing release notes";
+    const reads: string[] = [];
+    const github = await upstream.GitHub.create({
+      owner: "fixture",
+      repo: "rea",
+      defaultBranch: "main",
+      logger: silent,
+      fetch: async (input: string, options: { method?: string }) => {
+        const { pathname } = new URL(input);
+        expect(options.method).toBe("GET");
+        if (pathname === `/repos/fixture/rea/git/trees/${branch}`) {
+          reads.push(pathname);
+          const responseStatus = statuses[reads.length - 1];
+          if (responseStatus !== 200) return respond({}, responseStatus);
+          return respond({ tree: [{ path, sha: baseline, type: "blob" }] });
+        }
+        expect(pathname).toBe(`/repos/fixture/rea/git/blobs/${baseline}`);
+        return respond({
+          sha: baseline,
+          content: Buffer.from(notes).toString("base64"),
+          encoding: "base64",
+        });
+      },
+    });
+    const result = github.getFileContentsOnBranch(path, branch);
+    if (status === null) {
+      await expect(result).resolves.toMatchObject({ parsedContent: notes });
+    } else {
+      await expect(result).rejects.toMatchObject({ status });
+    }
+    expect(reads).toHaveLength(expectedReads);
+    expect(sleep.mock.calls).toEqual(
+      [[1000], [2000]].slice(0, expectedReads - 1),
+    );
+  },
+);
+
 function associatedPullRequest(number = 42, mergeCommit = latest) {
   return {
     number,
@@ -169,6 +315,7 @@ type HistoryFailure = {
   cursor?: string;
   errors: { message: string; type?: string }[];
   status?: number;
+  html?: string;
 };
 const internalError = {
   message:
@@ -348,6 +495,11 @@ async function releaseFixture({
         const failure = failures[0];
         if (failure && failure.cursor === query.variables.cursor) {
           failures.shift();
+          if (failure.html !== undefined)
+            return new Response(failure.html, {
+              status: failure.status ?? 504,
+              headers: { "content-type": "text/html; charset=utf-8" },
+            });
           return respond(
             {
               ...historyPage(commits, query.variables, pullRequest),
@@ -864,9 +1016,15 @@ it.each([
     status: 200,
   },
   { name: "HTTP 502 error", error: internalError, status: 502 },
+  {
+    name: "HTTP 504 HTML error",
+    error: internalError,
+    status: 504,
+    html: "<!DOCTYPE html><html><title>Unicorn!</title></html>",
+  },
 ])(
   "retries the same history cursor after $name and discards partial data",
-  async ({ error, status }) => {
+  async ({ error, status, html }) => {
     const sleep = vi
       .spyOn(githubRuntime, "sleepInMs")
       .mockResolvedValue(undefined);
@@ -878,7 +1036,14 @@ it.each([
     commits.push({ sha: baseline, message: "chore: release 6.7.0", files: [] });
     const fixture = await releaseFixture({
       commits,
-      historyFailures: [{ cursor: "10", errors: [error], status }],
+      historyFailures: [
+        {
+          cursor: "10",
+          errors: [error],
+          status,
+          ...(html === undefined ? {} : { html }),
+        },
+      ],
     });
     const candidates = await fixture.manifest.buildPullRequests();
     const body = candidates[0]?.body.toString();
@@ -1053,7 +1218,7 @@ const releasePatchFixture = async (outsideProject = false) => {
     project,
     source,
   );
-  for (const dependency of ["semver", "zod"])
+  for (const dependency of ["markdown-it", "semver", "zod"])
     await symlink(
       dirname(require.resolve(`${dependency}/package.json`)),
       join(dependencies, dependency),

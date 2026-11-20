@@ -93,7 +93,6 @@ export default defineConfig({
         text: "Documentation directory",
         items: [
           { text: "All guides", link: "/documentation" },
-          { text: "Authoring conventions", link: "/development/documentation" },
           { text: "Feature specifications", link: "/specs/" },
           { text: "Architecture decisions", link: "/adr/" },
         ],

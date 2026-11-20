@@ -96,6 +96,12 @@ Coordinate expensive checks across agents. If a test unexpectedly consumes heavy
 
 For tool design, follow [docs/development/tool-design.md](docs/development/tool-design.md): start from the analyst question, reuse existing contracts, preserve caller choices, and return useful evidence inline. Limits must follow real format, protocol, authority, or resource constraints. Account for representation expansion before allocation; derive completeness from examined coverage.
 
+Choose the scope of a new limit from [analysis settings, limits, and recovery](docs/design/limits-and-recovery.md).
+A registered runtime setting may have an optional launch seed. Per-call and
+launch-only controls have their own contracts. Report the effective limit and
+recovery for the control that stopped the work, and document the setting ID
+and `update_analysis_settings` for changes that apply at runtime.
+
 For user- or agent-facing tool problems, prioritize fixing the owning behavior,
 contract, and actionable result or recovery at the point of use. Document the
 result in product docs when explanation is needed. Add skill guidance only for
@@ -104,7 +110,15 @@ a skill as the primary repair for a discoverability or contract defect.
 
 For test changes or provider claims, use [docs/development/testing.md](docs/development/testing.md). Select applicable [boundary regressions](docs/development/testing.md#boundary-regressions) for parser, inventory, snapshot, and projection fixes. Prefer real public CLI/MCP workflows, then production-boundary integration, then producer goldens. Keep module tests for distinct semantics stronger workflows cannot reliably reproduce. Preserve malformed-input, cancellation, cleanup, permission, capacity, and target-identity coverage when pruning. Report unverified coverage explicitly; simulated providers do not establish real-provider behavior.
 
-Use Conventional Commit subjects and PR titles. Mark breaking changes with `!` or a `BREAKING CHANGE:` footer. Describe behavior changes, relevant validation, and real-provider verification scope.
+Use structured facts to test behavior and assert wording when wording is part
+of the contract. Follow [test design and pruning](docs/development/testing.md#test-design-and-pruning)
+and use the [supervised command owner](docs/development/testing.md#verifier-scripts)
+for commands launched by a verifier.
+
+Follow the [feature lifecycle](docs/development/documentation.md#feature-lifecycle)
+to decide when a new capability needs a feature record.
+
+Use Conventional Commit subjects and PR titles as specified under [pull request ownership and readiness](CONTRIBUTING.md#pull-request-ownership-and-readiness). Mark breaking changes with `!` or a `BREAKING CHANGE:` footer. Describe behavior changes, relevant validation, and real-provider verification scope.
 
 ## Issue Reports
 
@@ -120,23 +134,7 @@ required to open an issue.
 ## Pull Request Readiness
 
 Follow [human ownership and readiness](CONTRIBUTING.md#pull-request-ownership-and-readiness)
-when preparing a PR. AI-assisted contributions are welcome; a human must review
-and own the final diff, check the validation evidence and its limitations, and
-explicitly declare the PR ready for initial maintainer review.
-
-Keep the PR body concise and current, with the concrete problem, observable
-outcome, approach, and evidence. Report only checks that actually ran as executed;
-distinguish source-derived conclusions, proposed checks, and unavailable coverage.
-Address actionable automated review findings and explain disagreements.
-
-Leave the template's **Author readiness** declarations unchecked for the human
-owner to complete. Never attest to human review on their behalf. Draft status
-is optional; preserve the PR's current draft status unless the user asks to change
-it. Later pushes do not invalidate the readiness declaration or require another
-human sign-off. Keep the PR body and affected validation current as work changes.
-The readiness check validates the filled declaration or the author exemption
-listed in CONTRIBUTING.md; CI and automated review results do not establish that
-human review occurred, maintainer scope approval, or merge permission.
+when preparing a PR. Leave human readiness declarations to the human owner.
 
 <!-- BEGIN:turborepo-agent-rules -->
 

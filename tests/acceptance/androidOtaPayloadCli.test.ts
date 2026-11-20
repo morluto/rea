@@ -1,4 +1,5 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, readdir, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 
 import { expect } from "vitest";
@@ -11,11 +12,247 @@ import {
   artifactExtractionResultSchema,
   artifactInventoryResultSchema,
 } from "../../src/domain/artifactGraph.js";
+import { ANDROID_OTA_MAX_SIGNATURE_BYTES } from "../../src/domain/firmware/androidOtaPayload.js";
 import {
+  androidOtaSignatureBlob,
+  buildAndroidOtaPayload,
   deltaAndroidOtaPayload,
   fullAndroidOtaPayload,
   v1AndroidOtaPayload,
 } from "../../src/domain/firmware/androidOtaPayload.fixture.js";
+
+cliTest.for([
+  { signaturesOffset: 0, signaturesSize: null },
+  {
+    signaturesOffset: null,
+    signaturesSize: ANDROID_OTA_MAX_SIGNATURE_BYTES + 1,
+  },
+])(
+  "preserves one declared OTA signature field and extracts the partition ($signaturesOffset, $signaturesSize)",
+  async ({ signaturesOffset, signaturesSize }, { cli }) => {
+    const root = await createTestTempDirectory("rea-ota-signature-field-cli-");
+    const source = join(root, "payload.bin");
+    const data = Buffer.from("BOOT");
+    await writeFile(
+      source,
+      buildAndroidOtaPayload({
+        signaturesOffset,
+        signaturesSize,
+        payloadSignature: new Uint8Array(),
+        partitions: [{ name: "boot", operations: [{ type: 0, data }] }],
+      }),
+    );
+    const inspected = await cli.run({
+      arguments: ["inspect-artifact", source, "--json"],
+    });
+    expect(inspected.exitCode, inspected.stderr).toBe(0);
+    const inspection = artifactInspectionResultSchema.parse(
+      parseEvidence(inspected.json).normalized_result,
+    );
+    const graph = artifactInventoryResultSchema.parse(
+      inspection.substeps[0]?.evidence.normalized_result,
+    );
+    expect(
+      graph.occurrences.find((row) => row.logical_path === ".")
+        ?.format_metadata,
+    ).toMatchObject({
+      kind: "android-ota-payload",
+      signatures_offset: signaturesOffset,
+      signatures_size: signaturesSize,
+      payload_signature_blob_size: null,
+      payload_signature_count: null,
+    });
+    expect(
+      graph.occurrences.find((row) => row.logical_path === "boot.img")
+        ?.hash_status,
+    ).toBe("verified");
+    const extracted = await cli.run({
+      arguments: ["extract-artifact", source, "--json"],
+      environment: { TMPDIR: root, TMP: root, TEMP: root },
+    });
+    expect(extracted.exitCode, extracted.stderr).toBe(0);
+    const result = artifactExtractionResultSchema.parse(
+      parseEvidence(extracted.json).normalized_result,
+    );
+    expect(
+      (await readFile(join(result.output_root, "boot.img"))).equals(data),
+    ).toBe(true);
+  },
+);
+
+cliTest(
+  "retains verified operation data beside an incomplete oversized payload signature",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-ota-truncated-signature-cli-",
+    );
+    const source = join(root, "payload.bin");
+    const payloadSignature = androidOtaSignatureBlob(
+      Buffer.alloc(ANDROID_OTA_MAX_SIGNATURE_BYTES),
+    );
+    const image = buildAndroidOtaPayload({
+      payloadSignature,
+      partitions: [
+        { name: "boot", operations: [{ type: 0, data: Buffer.from("BOOT") }] },
+      ],
+    });
+    await writeFile(source, image);
+    const complete = await cli.run({
+      arguments: ["inspect-artifact", source, "--json"],
+    });
+    expect(complete.exitCode).toBe(1);
+    expect(complete.json).toMatchObject({
+      details: { reason: "limit", boundary: "capacity" },
+    });
+
+    await writeFile(source, image.subarray(0, -1));
+    const incomplete = await cli.run({
+      arguments: ["inspect-artifact", source, "--json"],
+    });
+    expect(incomplete.exitCode, incomplete.stderr).toBe(0);
+    const inspection = artifactInspectionResultSchema.parse(
+      parseEvidence(incomplete.json).normalized_result,
+    );
+    const graph = artifactInventoryResultSchema.parse(
+      inspection.substeps[0]?.evidence.normalized_result,
+    );
+    expect(
+      graph.occurrences.find((row) => row.logical_path === ".")
+        ?.format_metadata,
+    ).toMatchObject({
+      blob_truncated: true,
+      payload_signature_blob_size: payloadSignature.length,
+      payload_signature_count: null,
+    });
+    expect(
+      graph.occurrences.find((row) => row.logical_path === "boot.img")
+        ?.hash_status,
+    ).toBe("verified");
+  },
+);
+
+cliTest.for([false, true])(
+  "retains split partition metadata and extracts verified bytes (hash first: %s)",
+  async (hashFirst, { cli }) => {
+    const root = await createTestTempDirectory("rea-ota-partition-info-cli-");
+    const source = join(root, "payload.bin");
+    const data = Buffer.from("BOOT");
+    const hash = createHash("sha256").update(data).digest();
+    const fragments = hashFirst
+      ? [{ hash }, { size: data.length }]
+      : [{ size: data.length }, { hash }];
+    const bytes = buildAndroidOtaPayload({
+      partitions: [
+        {
+          name: "boot",
+          oldInfoFragments: fragments,
+          newInfoFragments: fragments,
+          operations: [{ type: 0, data }],
+        },
+      ],
+    });
+    await writeFile(source, bytes);
+    const inspected = await cli.run({
+      arguments: ["inspect-artifact", source, "--json"],
+    });
+    expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
+    const inspection = artifactInspectionResultSchema.parse(
+      parseEvidence(inspected.json).normalized_result,
+    );
+    const graph = artifactInventoryResultSchema.parse(
+      inspection.substeps[0]?.evidence.normalized_result,
+    );
+    expect(
+      graph.occurrences.find((row) => row.logical_path === "boot.img"),
+    ).toMatchObject({
+      hash_status: "verified",
+      format_metadata: {
+        new_partition_info: {
+          size: data.length,
+          hash_hex: hash.toString("hex"),
+        },
+        old_partition_info: {
+          size: data.length,
+          hash_hex: hash.toString("hex"),
+        },
+      },
+    });
+    const extracted = await cli.run({
+      arguments: ["extract-artifact", source, "--json"],
+      environment: { TMPDIR: root, TMP: root, TEMP: root },
+    });
+    expect(extracted.exitCode, extracted.stdout + extracted.stderr).toBe(0);
+    const result = artifactExtractionResultSchema.parse(
+      parseEvidence(extracted.json).normalized_result,
+    );
+    expect(
+      (await readFile(join(result.output_root, "boot.img"))).equals(data),
+    ).toBe(true);
+    expect((await readFile(source)).equals(bytes)).toBe(true);
+  },
+);
+
+cliTest(
+  "enforces a split declared hash through shared integrity policies",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-ota-split-hash-cli-");
+    const source = join(root, "payload.bin");
+    const data = Buffer.from("BOOT");
+    const bytes = buildAndroidOtaPayload({
+      partitions: [
+        {
+          name: "boot",
+          newInfoFragments: [
+            { hash: Buffer.alloc(32, 0xab) },
+            { size: data.length },
+          ],
+          operations: [{ type: 0, data }],
+        },
+      ],
+    });
+    await writeFile(source, bytes);
+    const environment = { TMPDIR: root, TMP: root, TEMP: root };
+    const refused = await cli.run({
+      arguments: ["extract-artifact", source, "--json"],
+      environment,
+    });
+    expect(refused.exitCode).toBe(1);
+    expect(refused.json).toMatchObject({
+      code: "artifact_integrity_mismatch",
+      details: {
+        logical_path: "boot.img",
+        declared_sha256: "ab".repeat(32),
+        calculated_sha256: createHash("sha256").update(data).digest("hex"),
+      },
+    });
+    expect(await readdir(root)).toEqual(["payload.bin"]);
+    const recorded = await cli.run({
+      arguments: [
+        "inspect-artifact",
+        source,
+        "--integrity-policy",
+        "record-and-continue",
+        "--json",
+      ],
+    });
+    expect(recorded.exitCode, recorded.stdout + recorded.stderr).toBe(0);
+    const inspection = artifactInspectionResultSchema.parse(
+      parseEvidence(recorded.json).normalized_result,
+    );
+    const graph = artifactInventoryResultSchema.parse(
+      inspection.substeps[0]?.evidence.normalized_result,
+    );
+    expect(graph.integrity_contradictions).toEqual([
+      expect.objectContaining({
+        logical_path: "boot.img",
+        declared_sha256: "ab".repeat(32),
+        observed_sha256: createHash("sha256").update(data).digest("hex"),
+        trust: "observed-untrusted",
+      }),
+    ]);
+    expect((await readFile(source)).equals(bytes)).toBe(true);
+  },
+);
 
 cliTest(
   "inspects and extracts a full Android OTA payload through the compiled CLI",

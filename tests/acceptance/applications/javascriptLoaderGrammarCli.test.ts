@@ -44,15 +44,15 @@ const accepted = [
   "module/override.cjs",
   "unspecified/main.js",
 ] as const;
-const rejected = [
+const syntaxRecovery = [
   "explicit.mjs",
   "explicit.mts",
   "module/main.js",
   "unspecified/module.js",
   "native.cts",
   "native.ts",
-  "collision.cjs",
 ] as const;
+const rejected = [...syntaxRecovery, "collision.cjs"] as const;
 
 cliTest.for(["CLI", "stdio MCP"] as const)(
   "uses observed loader grammar without contaminating source Evidence through %s",
@@ -99,7 +99,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         }),
       );
     }
-    for (const path of rejected)
+    for (const path of syntaxRecovery)
       expect(observations, path).toContainEqual(
         expect.objectContaining({
           properties: expect.objectContaining({
@@ -110,6 +110,19 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
           }),
         }),
       );
+    expect(observations, "collision.cjs").toContainEqual(
+      expect.objectContaining({
+        properties: expect.objectContaining({
+          path: "collision.cjs",
+          analysis_coverage: expect.objectContaining({
+            syntax: { status: "complete", error_count: 0 },
+            semantics: expect.objectContaining({
+              uncertainty: ["commonjs-wrapper-redeclaration"],
+            }),
+          }),
+        }),
+      }),
+    );
   },
 );
 

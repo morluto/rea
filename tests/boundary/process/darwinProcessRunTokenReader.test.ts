@@ -1482,7 +1482,7 @@ it.skipIf(!onDarwin)(
 );
 
 it.skipIf(!onDarwin)(
-  "retries a growing process table after ENOMEM and preserves other sysctl errors",
+  "preserves process-table failures and confirms run-token identity",
   { tags: ["long-running"] },
   async () => {
     const root = await mkdtemp(
@@ -1509,11 +1509,29 @@ it.skipIf(!onDarwin)(
       );
       const { stdout } = await execFileAsync(executable, [], {
         encoding: "utf8",
+        env: { ...process.env, REA_PROCESS_RUN_ID: "rea-snapshot-probe" },
         timeout: 10_000,
       });
       expect(JSON.parse(stdout)).toEqual({
         preservedOtherErrno: true,
         retriedAfterFreshSize: true,
+        openingRunTokenSnapshotReads: 1,
+        failedOpeningRunTokens: [42, 43].map((pid) => ({
+          pid,
+          state: "unavailable",
+          reason: "process_table_failed_13",
+        })),
+        absentRunTokens: [
+          { pid: 42, state: "unavailable", reason: "process_not_in_snapshot" },
+        ],
+        failedConfirmingRunTokens: [
+          {
+            state: "unavailable",
+            reason: "process_table_failed_5",
+            tokenPresent: false,
+          },
+        ],
+        confirmedRunTokens: [{ state: "readable", matchesFixtureToken: true }],
         successfulSnapshotMissingPidIsAbsent: true,
         failedSnapshotMissingPidIsUnavailable: true,
         invalidPidIsUnavailable: true,

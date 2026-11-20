@@ -18,6 +18,7 @@ import {
   semanticReadMayObserveEffect,
   semanticReferenceRoot,
   type SemanticAmbientRootPaths,
+  retainSemanticInactiveMemberWrites,
 } from "./javascriptSemanticEffectLog.js";
 import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticReceiverFacts.js";
 import * as t from "@babel/types";
@@ -88,6 +89,7 @@ import {
   semanticBundledRequireOriginCandidate,
 } from "./javascriptBundledRequireOrigin.js";
 import { collectSemanticMemberMutationsSteps } from "./javascriptSemanticMemberMutations.js";
+import { semanticInactiveFirstDefaultWritesSteps } from "./javascriptSemanticReadPresence.js";
 import {
   DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
   type JavaScriptMemberMutationAllowance,
@@ -133,6 +135,7 @@ import {
   javaScriptSourceLoaderCondition,
   javaScriptStrictnessAt,
   parseJavaScriptSource,
+  recoveredJavaScriptSyntaxErrorCount,
   type ParsedJavaScriptSource,
 } from "./javascriptSourceParser.js";
 
@@ -152,6 +155,7 @@ interface BindPatternInput {
   readonly state: JavaScriptSemanticAnalysisState;
   readonly mutable: boolean;
   readonly declarationKind?: "var" | "let" | "const" | "using" | "await using";
+  readonly letDeclarator?: t.VariableDeclarator;
   readonly kind?: JavaScriptSemanticDefinition["kind"];
   readonly projection?: readonly (string | number | null)[];
   readonly referenceOnly?: boolean;
@@ -184,10 +188,12 @@ interface AddBindingInput {
   readonly kind: JavaScriptSemanticDefinition["kind"];
   readonly mutable: boolean;
   readonly declarationKind?: "var" | "let" | "const" | "using" | "await using";
+  readonly letDeclarator?: t.VariableDeclarator;
   readonly definitionNode: t.Node;
   readonly initializer: t.Node | null;
   readonly directOrigin?: JavaScriptModuleOrigin;
   readonly runtimeImport?: boolean;
+  readonly selfNameAssignment?: JavaScriptSemanticBindingState["selfNameAssignment"];
   readonly projection?: readonly (string | number | null)[];
 }
 
@@ -250,7 +256,7 @@ function* indexSemanticMemberMutationFactsSteps(
 ): Generator<void, void> {
   if (state.memberMutationFactsComplete) return;
   yield* indexSemanticAmbientWritesSteps(state);
-  yield* collectSemanticMemberMutationsSteps(
+  const candidateDefaults = yield* collectSemanticMemberMutationsSteps(
     state.program,
     state,
     (site, reference, path) =>
@@ -263,6 +269,15 @@ function* indexSemanticMemberMutationFactsSteps(
       ),
   );
   state.memberMutationFactsComplete = true;
+  const inactiveWrites = yield* semanticInactiveFirstDefaultWritesSteps(
+    state,
+    candidateDefaults,
+  );
+  // Every guard is proved before any inactive write is excluded.
+  if (inactiveWrites.length > 0) {
+    retainSemanticInactiveMemberWrites(state, inactiveWrites);
+    clearSemanticValueCaches(state);
+  }
   invalidateSemanticRequireDelegateWrites(state);
 }
 
@@ -311,7 +326,7 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
   });
   yield;
   const references = yield* collectSemanticReferencesSteps(file.program, state);
-  const parserPartial = file.errors.length > 0;
+  const parserPartial = recoveredJavaScriptSyntaxErrorCount(file.errors) > 0;
   const bindings = immutableSemanticBindings(state);
   yield;
   const callables = collectSemanticReturns(state, parserPartial);
@@ -1755,6 +1770,9 @@ const bindInnerDeclaration = (
       ...(parent !== null && t.isVariableDeclaration(parent)
         ? { declarationKind: parent.kind }
         : {}),
+      ...(t.isVariableDeclaration(parent, { kind: "let" })
+        ? { letDeclarator: node }
+        : {}),
     });
   else if (t.isClass(node) && t.isIdentifier(node.id))
     addBinding({
@@ -1763,6 +1781,7 @@ const bindInnerDeclaration = (
       name: node.id.name,
       kind: "class",
       mutable: false,
+      selfNameAssignment: "always-throws",
       definitionNode: node.id,
       initializer: node,
     });
@@ -2078,6 +2097,7 @@ const functionNameScope = (
     name: node.id.name,
     kind: "function",
     mutable: false,
+    selfNameAssignment: "throws-in-strict-mode",
     definitionNode: node.id,
     initializer: node,
   });
@@ -2245,6 +2265,9 @@ const bindPattern = (input: BindPatternInput): void => {
       kind,
       mutable,
       ...(declarationKind === undefined ? {} : { declarationKind }),
+      ...(input.letDeclarator === undefined
+        ? {}
+        : { letDeclarator: input.letDeclarator }),
       definitionNode: pattern,
       initializer,
       projection,
@@ -2395,6 +2418,12 @@ const addBinding = (input: AddBindingInput): void => {
   binding.mutable ||= mutable;
   if (declarationKind !== undefined)
     binding.declarationKinds.add(declarationKind);
+  if (input.letDeclarator !== undefined)
+    binding.letDeclarator =
+      binding.letDeclarator === undefined ||
+      binding.letDeclarator === input.letDeclarator
+        ? input.letDeclarator
+        : null;
   binding.definitions.push({ kind, location: range(definitionNode) });
   if (initializer !== null)
     binding.initializers.push({
@@ -2413,6 +2442,8 @@ const addBinding = (input: AddBindingInput): void => {
         : directOrigin,
     );
   binding.runtimeImport ||= runtimeImport === true;
+  if (input.selfNameAssignment !== undefined)
+    binding.selfNameAssignment = input.selfNameAssignment;
 };
 
 const createBinding = (

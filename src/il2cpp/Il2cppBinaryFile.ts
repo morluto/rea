@@ -1,6 +1,12 @@
 import type { Il2cppMethodAddress } from "../domain/il2cpp/il2cppMetadata.js";
 import { Il2cppBinaryFormatFailure } from "./Il2cppBinaryFormat.js";
-import { openImageSteps, readSlot, isExecutable } from "./Il2cppBinaryImage.js";
+import {
+  openImageSteps,
+  readSlot,
+  isExecutable,
+  readIl2cppBinaryContainerCooperative,
+  type NativeImage,
+} from "./Il2cppBinaryImage.js";
 import {
   findModules,
   findCodeRegistration,
@@ -74,6 +80,15 @@ export type Il2cppBinaryReadOptions = Pick<
   readonly genericInstances?: boolean;
 };
 
+const assertGenericLinkLayout = (
+  metadata: Il2cppMetadataDecoded,
+  options: Il2cppBinaryReadOptions,
+): void => {
+  // Refuse an undecoded version before any binary tables are read.
+  if (options.genericInstances === true)
+    genericMethodLayouts(metadata.metadata_version);
+};
+
 /**
  * Link metadata methods to native code addresses without executing the image.
  * A method token's row id selects its module's methodPointers slot.
@@ -84,11 +99,43 @@ export function* linkIl2cppBinarySteps(
   facts: Il2cppMetadataLinkFacts,
   options: Il2cppBinaryReadOptions = {},
 ): Generator<void, Il2cppBinaryLink> {
-  const version = metadata.metadata_version;
-  // Refuse an undecoded version before any table is read.
-  if (options.genericInstances === true) genericMethodLayouts(version);
+  assertGenericLinkLayout(metadata, options);
   yield;
-  const image = yield* openImageSteps(bytes);
+  return yield* linkImageSteps(openImageSteps(bytes), metadata, facts, options);
+}
+
+export const linkIl2cppBinaryCooperative = async (
+  bytes: Buffer,
+  metadata: Il2cppMetadataDecoded,
+  facts: Il2cppMetadataLinkFacts,
+  options: Il2cppBinaryReadOptions,
+  pause: () => Promise<void>,
+): Promise<Il2cppBinaryLink> => {
+  assertGenericLinkLayout(metadata, options);
+  await pause();
+  const container = await readIl2cppBinaryContainerCooperative(bytes, pause);
+  const steps = linkImageSteps(
+    openImageSteps(bytes, container),
+    metadata,
+    facts,
+    options,
+  );
+  let step = steps.next();
+  while (!step.done) {
+    await pause();
+    step = steps.next();
+  }
+  return step.value;
+};
+
+function* linkImageSteps(
+  opening: Generator<void, NativeImage>,
+  metadata: Il2cppMetadataDecoded,
+  facts: Il2cppMetadataLinkFacts,
+  options: Il2cppBinaryReadOptions,
+): Generator<void, Il2cppBinaryLink> {
+  const image = yield* opening;
+  const version = metadata.metadata_version;
   const modules = yield* findModules(image, metadata);
   const registration_ = yield* findCodeRegistration(image, modules);
   const methodImage = new Int32Array(metadata.methods.length).fill(-1);

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  chmod,
   mkdir,
   mkdtemp,
   readFile,
@@ -7,13 +8,16 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { expect, it, onTestFinished } from "vitest";
 
 import { splitNmSymbolRecords } from "../../../scripts/lib/conformance-fixtures.mjs";
 import { createVerifierCommands } from "../../../scripts/lib/verify-commands.mjs";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { runningTestDeadline } from "../../support/runningTestDeadline.js";
+import { waitFor } from "../../support/testWait.js";
 import { removeTestWorkspace } from "../../support/workspace/workspaceFixture.js";
 
 const digest = (bytes: string | Buffer) =>
@@ -35,6 +39,7 @@ const ownedFixture = async (prefix: string) => {
 
 it.skipIf(process.platform !== "darwin" && process.platform !== "linux").each([
   { mode: "complete", marker: "REA_C_ENTRY" },
+  { mode: "cancelled", marker: "REA_C_ENTRY" },
   { mode: "renamed", marker: "REA_C_ENTRY" },
   { mode: "wrong-prefix", marker: "REA_C_ENTRY" },
   { mode: "prefix-complete", marker: "REA_C_ENTRY" },
@@ -68,7 +73,7 @@ it.skipIf(process.platform !== "darwin" && process.platform !== "linux").each([
       await commands.exec(
         "cc",
         ["-c", join(sources, path), "-o", join(output, artifact)],
-        { timeout: 10_000 },
+        { timeout: runningTestDeadline() },
       );
       const bytes = await readFile(join(output, artifact));
       fixtures.push({
@@ -97,12 +102,51 @@ it.skipIf(process.platform !== "darwin" && process.platform !== "linux").each([
         fixtures,
       }),
     );
+    if (mode === "cancelled") {
+      const helper = join(root, "file");
+      const ready = join(root, "file-started");
+      await writeFile(
+        helper,
+        `#!/usr/bin/env node
+const { writeFileSync } = require("node:fs");
+writeFileSync(process.env.CONFORMANCE_FILE_STARTED, String(process.pid));
+setTimeout(() => {}, 15_000);
+`,
+      );
+      await chmod(helper, 0o755);
+      const controller = new AbortController();
+      const pending = commands.exec(
+        process.execPath,
+        [verifier, manifest, sources],
+        {
+          cwd: root,
+          env: {
+            ...process.env,
+            PATH: [root, process.env.PATH ?? ""].join(delimiter),
+            CONFORMANCE_FILE_STARTED: ready,
+          },
+          signal: controller.signal,
+          timeout: runningTestDeadline(),
+        },
+      );
+      await awaitAcknowledgement(
+        waitFor(() => readFile(ready)),
+        pending,
+        "conformance file probe",
+      );
+      controller.abort();
+      await expect(pending).rejects.toMatchObject({
+        reason: "cancelled",
+        cleanupFailure: null,
+      });
+      return;
+    }
     const result = commands.exec(
       process.execPath,
       [verifier, manifest, sources],
       {
         cwd: root,
-        timeout: 25_000,
+        timeout: runningTestDeadline(),
       },
     );
     if (!["complete", "fragment", "prefix-complete"].includes(mode))
@@ -148,7 +192,7 @@ it.each([
   await expect(
     commands.exec(process.execPath, [verifier, manifest, root], {
       cwd: root,
-      timeout: 10_000,
+      timeout: runningTestDeadline(),
     }),
   ).rejects.toMatchObject({
     code: 1,
@@ -169,4 +213,23 @@ it("preserves a carriage return that belongs to an nm symbol name", () => {
     "rea_entry\r",
     "rea_inventory_0000\r",
   ]);
+});
+
+it("refuses a missing explicit source root even when a default exists", async () => {
+  const { commands, root } = await ownedFixture("rea-fixture-source-root-");
+  await mkdir(join(root, "tests", "conformance"), { recursive: true });
+  const manifest = join(root, "manifest.json");
+  await writeFile(manifest, "{}");
+  const selected = join(root, "selected-sources");
+  await expect(
+    commands.exec(process.execPath, [verifier, manifest, selected], {
+      cwd: root,
+      timeout: 10_000,
+    }),
+  ).rejects.toMatchObject({
+    code: 1,
+    snapshot: {
+      stderr: { text: expect.stringContaining(selected) },
+    },
+  });
 });

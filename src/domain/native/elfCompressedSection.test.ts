@@ -1,5 +1,12 @@
 import { deflateSync, zstdCompressSync } from "node:zlib";
+import { ConfigurationError } from "../configurationErrors.js";
+import { ZSTD_MAX_FRAMES_ENVIRONMENT } from "../compression/zstandardFrameAllowance.js";
 import { describe, expect, it } from "vitest";
+import { runWithAnalysisOperationSnapshot } from "../analysisOperationSnapshot.js";
+import {
+  MAXIMUM_ZSTD_MAX_FRAMES,
+  MINIMUM_ZSTD_MAX_FRAMES,
+} from "../analysisResourceLimits.js";
 import {
   decodeElfCompressedSection,
   decodeElfGnuZlibSection,
@@ -13,6 +20,7 @@ const chdr = (
   little: boolean,
   type: number,
   size: number,
+  alignment = 1n,
 ): Buffer => {
   const header = Buffer.alloc(bits === 64 ? 24 : 12);
   if (little) header.writeUInt32LE(type, 0);
@@ -20,17 +28,17 @@ const chdr = (
   if (bits === 64) {
     if (little) {
       header.writeBigUInt64LE(BigInt(size), 8);
-      header.writeBigUInt64LE(1n, 16);
+      header.writeBigUInt64LE(alignment, 16);
     } else {
       header.writeBigUInt64BE(BigInt(size), 8);
-      header.writeBigUInt64BE(1n, 16);
+      header.writeBigUInt64BE(alignment, 16);
     }
   } else if (little) {
     header.writeUInt32LE(size, 4);
-    header.writeUInt32LE(1, 8);
+    header.writeUInt32LE(Number(alignment), 8);
   } else {
     header.writeUInt32BE(size, 4);
-    header.writeUInt32BE(1, 8);
+    header.writeUInt32BE(Number(alignment), 8);
   }
   return header;
 };
@@ -187,4 +195,148 @@ describe("ELF compressed section payloads", () => {
       inflatedBytes: 0,
     });
   });
+});
+
+const zstdFrame = (byte: number): Buffer =>
+  Buffer.from([0x28, 0xb5, 0x2f, 0xfd, 0x20, 0x01, 0x09, 0x00, 0x00, byte]);
+
+it("accepts a Zstandard skippable suffix and rejects a trailing byte", () => {
+  const payload = zstdCompressSync(plain);
+  const skip = Buffer.alloc(8);
+  skip.writeUInt32LE(0x184d2a50, 0);
+  const decode = (body: Buffer) =>
+    decodeElfCompressedSection(
+      Buffer.concat([chdr(64, true, 2, plain.length), body]),
+      0x800n,
+      64,
+      true,
+      1024,
+      "ELF sample section",
+    );
+  expect(decode(payload)).toMatchObject({ state: "available" });
+  expect(decode(Buffer.concat([payload, skip]))).toMatchObject({
+    state: "available",
+    compression: "zstd",
+  });
+  expect(decode(Buffer.concat([payload, Buffer.of(0)]))).toMatchObject({
+    state: "malformed",
+    reason: "trailing_bytes",
+  });
+});
+
+it("keeps an invalid frame allowance out of the malformed path", () => {
+  const payload = zstdCompressSync(plain);
+  const bytes = Buffer.concat([chdr(64, true, 2, plain.length), payload]);
+  const decode = () =>
+    decodeElfCompressedSection(
+      bytes,
+      0x800n,
+      64,
+      true,
+      1024,
+      "ELF sample section",
+    );
+  const previous = process.env[ZSTD_MAX_FRAMES_ENVIRONMENT];
+  process.env[ZSTD_MAX_FRAMES_ENVIRONMENT] = "0";
+  try {
+    expect(decode()).toMatchObject({
+      state: "configuration",
+      error: expect.any(ConfigurationError),
+    });
+    expect(
+      runWithAnalysisOperationSnapshot(
+        { revision: 1, overrides: { "zstd.max_frames": 8 } },
+        decode,
+      ),
+    ).toMatchObject({ state: "available" });
+  } finally {
+    if (previous === undefined) delete process.env[ZSTD_MAX_FRAMES_ENVIRONMENT];
+    else process.env[ZSTD_MAX_FRAMES_ENVIRONMENT] = previous;
+  }
+});
+
+it("refuses a Zstandard section that exceeds zstd.max_frames", () => {
+  const body = Buffer.concat([zstdFrame(0x61), zstdFrame(0x62)]);
+  const bytes = Buffer.concat([chdr(64, true, 2, 2), body]);
+  const decode = () =>
+    decodeElfCompressedSection(
+      bytes,
+      0x800n,
+      64,
+      true,
+      1024,
+      "ELF sample section",
+    );
+  expect(decode()).toMatchObject({ state: "available" });
+  expect(
+    runWithAnalysisOperationSnapshot(
+      { revision: 1, overrides: { "zstd.max_frames": 1 } },
+      decode,
+    ),
+  ).toMatchObject({
+    state: "work_limit",
+    reason: "work_limit",
+    setting: "zstd.max_frames",
+    value: 1,
+    source: "runtime",
+    minimum: MINIMUM_ZSTD_MAX_FRAMES,
+    maximum: MAXIMUM_ZSTD_MAX_FRAMES,
+  });
+});
+
+describe("ELF compressed section declaration admission", () => {
+  it.each([
+    [32, false, 0x8000_0000n],
+    [64, true, 0x8000_0000_0000_0000n],
+  ] as const)(
+    "admits zero and the largest power-of-two alignment in an ELF%s header",
+    (bits, little, alignment) => {
+      for (const value of [0n, alignment]) {
+        const bytes = Buffer.concat([
+          chdr(bits, little, 1, plain.length, value),
+          deflateSync(plain),
+        ]);
+        expect(
+          decodeElfSectionNameTable(bytes, 0x800n, bits, little, 1024),
+        ).toMatchObject({ state: "available", bytes: plain });
+      }
+    },
+  );
+
+  it.each([
+    [32, false, 3n],
+    [64, true, 0x8000_0000_0000_0001n],
+  ] as const)(
+    "rejects a non-power-of-two alignment in an ELF%s header before inflation",
+    (bits, little, alignment) => {
+      const bytes = Buffer.concat([
+        chdr(bits, little, 1, plain.length, alignment),
+        deflateSync(plain),
+      ]);
+      expect(
+        decodeElfSectionNameTable(bytes, 0x800n, bits, little, 1024),
+      ).toMatchObject({
+        state: "malformed",
+        message:
+          "ELF compressed section-name table has an invalid decoded alignment",
+        inflatedBytes: 0,
+      });
+    },
+  );
+
+  it.each([Buffer.from([0]), deflateSync("another stream")])(
+    "rejects bytes beyond the single zlib stream in a section-name table",
+    (suffix) => {
+      const payload = Buffer.concat([deflateSync(plain), suffix]);
+      const bytes = Buffer.concat([chdr(64, true, 1, plain.length), payload]);
+      expect(
+        decodeElfSectionNameTable(bytes, 0x800n, 64, true, 1024),
+      ).toMatchObject({
+        state: "malformed",
+        message:
+          "ELF compressed section-name table has bytes after its zlib stream",
+        inflatedBytes: payload.length,
+      });
+    },
+  );
 });

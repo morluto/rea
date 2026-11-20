@@ -320,6 +320,7 @@ jobs:
         if: ${{ !cancelled() }}
         with:
           name: vitest-report-source
+          overwrite: true
           path: .vitest/blob/*
           include-hidden-files: true
           if-no-files-found: error
@@ -480,6 +481,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: rea-test-runtime
+          overwrite: true
           path: |
             dist/
             skills/
@@ -501,6 +503,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: rea-build-cache
+          overwrite: true
           path: .cache/ci-build-cache/
           include-hidden-files: true
           if-no-files-found: error
@@ -631,6 +634,7 @@ jobs:
         if: needs.changes.outputs.code == 'true' && !cancelled() && hashFiles('test-results.json') != ''
         with:
           name: test-results
+          overwrite: true
           path: |
             test-results.xml
             test-results.json
@@ -655,6 +659,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: test-timings-${{ needs.changes.outputs.tier }}
+          overwrite: true
           path: .cache/ci-test-history/test-results.json
           include-hidden-files: true
           if-no-files-found: error
@@ -699,7 +704,7 @@ jobs:
       - name: Compute Windows native cache key
         id: windows-native-key
         env:
-          SOURCE_HASH: ${{ hashFiles('native/windows/**', 'src/domain/windowsNativeArtifact*.ts', 'src/domain/dosMz*.ts', 'src/domain/peCoffHeader*.ts', 'scripts/build-windows-native.mjs', 'scripts/verify-windows-native-artifact.mjs', 'scripts/lib/verifier-source-loader.mjs', 'tests/fixtures/windows-native-inspection-failure.cc', 'tests/fixtures/windows/processBoundary.cc', '.github/actions/windows-cross-compiler/action.yml', '.github/actions/ubuntu-archive/action.yml', 'package.json') }}
+          SOURCE_HASH: ${{ hashFiles('native/windows/**', 'src/domain/windowsNativeArtifact*.ts', 'src/domain/dosMz*.ts', 'src/domain/peCoffHeader*.ts', 'scripts/build-windows-native.mjs', 'scripts/verify-windows-native-artifact.mjs', 'scripts/lib/verifier-source-loader.mjs', 'tests/fixtures/windows-native-inspection-failure.cc', 'tests/fixtures/windows/processBoundary.cc', '.github/actions/windows-cross-compiler/action.yml', '.github/actions/ubuntu-archive/action.yml', '.github/actions/host-apt-packages/action.yml', 'package.json') }}
         run: |
           utc_date="$(date -u +%Y-%m-%d)"
           printf 'key=rea-windows-native-v3-%s-%s-%s-%s-%s-%s\n' \
@@ -948,9 +953,13 @@ jobs:
           retention-days: 30
 
   windows-curated:
-    name: Windows capability and package lane
+    name: Windows capability and package lane (${{ matrix.suite }})
     needs: [changes, static, build, windows-native-build]
     if: needs.changes.outputs.package == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [capabilities, package]
     runs-on: windows-latest
     timeout-minutes: 25
     steps:
@@ -962,7 +971,7 @@ jobs:
         id: npm-cache
         uses: ./.github/actions/npm-cache
         with:
-          save: "true"
+          save: ${{ matrix.suite == 'capabilities' }}
       - run: npm ci
       - name: Restore Windows Turbo build cache
         id: windows-build-cache
@@ -984,15 +993,17 @@ jobs:
       - run: npm run build:cached
       - name: Save validated Windows Turbo build cache
         if: >-
-          success() && steps.npm-cache.outputs.can-save == 'true' &&
+          success() && matrix.suite == 'capabilities' && steps.npm-cache.outputs.can-save == 'true' &&
           steps.windows-build-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .turbo/cache/
           key: ${{ steps.windows-build-cache.outputs.cache-primary-key }}
       - name: Record named Windows host capabilities
+        if: matrix.suite == 'capabilities'
         run: node scripts/windows-capabilities.mjs | Out-File -Encoding utf8NoBOM windows-capabilities.json
       - name: Validate Windows host capability report
+        if: matrix.suite == 'capabilities'
         run: >-
           node -e "const report = JSON.parse(require('node:fs').readFileSync('windows-capabilities.json', 'utf8'));
           if (report.platform !== 'win32' || report.architecture !== 'x64')
@@ -1008,22 +1019,27 @@ jobs:
       # Run native proofs before the broad curated suite so an unrelated
       # fixture failure cannot hide the real control and recovery checks.
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: matrix.suite == 'capabilities'
         with:
           name: windows-process-boundary-fixture
           path: .cache/windows-process-boundary/
       # Passing the fixture adds the breakaway, caller/child token, environment
       # semantics and ancestor reparse observations, which the lane skips
       # entirely when it is absent.
-      - run: >-
+      - if: matrix.suite == 'capabilities'
+        run: >-
           npm run verify:windows-native -- .
           "${{ github.workspace }}\.cache\windows-process-boundary\process-boundary.exe"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: matrix.suite == 'capabilities'
         with:
           name: windows-native-inspection-fixture
           path: .cache/windows-native-inspection-fixture/
       - name: Verify native inspection failure ownership and recovery
+        if: matrix.suite == 'capabilities'
         run: node scripts/verify-windows-native-inspection.mjs
       - name: Run curated Windows capability tests
+        if: matrix.suite == 'capabilities'
         run: >-
           npx vitest run --coverage.enabled=false
           src/process/capture/FilesystemSnapshot.test.ts
@@ -1083,17 +1099,22 @@ jobs:
           tests/boundary/filesystem/directoryArtifactReaderOpen.test.ts
           tests/boundary/filesystem/javascriptPackagePrecedence.test.ts
           tests/boundary/filesystem/javascriptArtifactContentIdentity.test.ts
+      # Use the runtime prepared above. npm pack still runs prepack.
       - name: Verify real Node Inspector discovery and observation
         timeout-minutes: 10
         env:
           NODE_OPTIONS: "--max-old-space-size=1024"
           UV_THREADPOOL_SIZE: "2"
-        run: npm run verify:inspector
-      - run: npm run verify:package:windows
+        run: node scripts/verify/inspector/runtime-observation.mjs
+      - name: Verify installed Windows package
+        if: matrix.suite == 'package'
+        run: node scripts/verify-windows-package.mjs
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        if: matrix.suite == 'package'
         with:
           node-version: 22.23.4
       - name: Verify native path boundaries on Node 22
+        if: matrix.suite == 'package'
         run: >-
           npx vitest run --coverage.enabled=false
           tests/boundary/filesystem/directoryArtifactReaderOpen.test.ts
@@ -1101,7 +1122,7 @@ jobs:
           tests/boundary/filesystem/javascriptArtifactContentIdentity.test.ts
           tests/boundary/process/sourceMapUncHosts.test.ts
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: always()
+        if: always() && matrix.suite == 'capabilities'
         with:
           name: windows-capabilities
           path: windows-capabilities.json

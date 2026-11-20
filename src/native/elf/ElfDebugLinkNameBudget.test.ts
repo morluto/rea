@@ -23,6 +23,7 @@ import {
   elfDebugCandidateFixture,
   elfDebugLinkFixture,
 } from "./ElfDebugLink.fixture.js";
+import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import { ParseFailureError } from "../../domain/parseFailure.js";
 
 const SHF_COMPRESSED = 0x800n;
@@ -97,6 +98,34 @@ it("refuses compressed image names above the selected budget before inflating th
   ).toThrow(ParseFailureError);
   expect(zlib.inflated).toBe(0);
 });
+
+it.each(["unbacked", "wrong type"] as const)(
+  "validates a %s section-name table before charging its declared decoded size",
+  (fault) => {
+    const image = withCompressedNames(elfDebugLinkFixture());
+    const sectionTable = Number(image.readBigUInt64LE(40));
+    const namesHeader = sectionTable + (image.readUInt16LE(60) - 1) * 64;
+    if (fault === "unbacked")
+      image.writeBigUInt64LE(
+        image.readBigUInt64LE(namesHeader + 32) + 1n,
+        namesHeader + 32,
+      );
+    else image.writeUInt32LE(1, namesHeader + 4);
+
+    expect(() =>
+      parseElfDebugLink(
+        image,
+        {
+          path: "/artifacts/prog",
+          sha256: "ab".repeat(32),
+          bytes: image.length,
+        },
+        inputFor(image.length + 1),
+      ),
+    ).toThrow(BinaryFormatFailure);
+    expect(zlib.inflated).toBe(0);
+  },
+);
 
 it("leaves compressed candidate names above the selected budget undecoded", () => {
   const candidate = withCompressedNames(elfDebugCandidateFixture());

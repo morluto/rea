@@ -1,7 +1,4 @@
-import {
-  BinaryFormatFailure,
-  mappedFileOffset,
-} from "../domain/binaryContainer.js";
+import { BinaryFormatFailure } from "../domain/binaryContainer.js";
 import { Il2cppBinaryFormatFailure } from "./Il2cppBinaryFormat.js";
 import {
   isMapped,
@@ -138,9 +135,10 @@ function* nameAddresses(
   }
   const found = new Map<bigint, readonly number[]>();
   for (const mapping of image.container.mappings) {
-    const region = image.bytes.subarray(
+    const region = image.stored.range(
       mapping.offset,
-      mapping.offset + mapping.size,
+      mapping.size,
+      "module-name load range",
     );
     for (let chunk = 0; chunk < region.length; chunk += SCAN_BYTES) {
       yield;
@@ -222,7 +220,7 @@ export function* findModules(
       if ((at & 0xffff) < 8) yield;
       const offset = mapping.offset + at;
       const address = mapping.address + BigInt(at);
-      const raw = image.bytes.readBigUInt64LE(offset);
+      const raw = image.stored.word(offset, 64);
       const elfSlot =
         image.elfPointerOverlay === undefined
           ? undefined
@@ -276,12 +274,7 @@ export function* findModules(
       if (indices === undefined) continue;
       let recordOffset: number;
       try {
-        recordOffset = mappedFileOffset(
-          image.container.mappings,
-          address,
-          24,
-          image.container.zero_fills,
-        );
+        recordOffset = image.fileMappings.offset(address, 24);
       } catch (cause) {
         if (cause instanceof BinaryFormatFailure)
           throw new Il2cppBinaryFormatFailure(
@@ -458,7 +451,7 @@ function* findModuleArrayByCode(
     let duplicateValues = 0;
     for (let at = start; at + 8 <= mapping.size; at += 8) {
       if ((at & 0xffff) < 8) yield;
-      const raw = image.bytes.readBigUInt64LE(mapping.offset + at);
+      const raw = image.stored.word(mapping.offset + at, 64);
       const address = mapping.address + BigInt(at);
       const elfSlot =
         image.elfPointerOverlay === undefined
@@ -514,7 +507,7 @@ function* findModuleArrayByCode(
               image.elfPointerOverlay !== undefined ||
               unresolvedPointerMatcher(image, [expectedXor ^ possibleXor])(
                 mapping.address + BigInt(unknownAt),
-                image.bytes.readBigUInt64LE(mapping.offset + unknownAt),
+                image.stored.word(mapping.offset + unknownAt, 64),
               ) !== undefined
             )
               return null;
@@ -557,7 +550,6 @@ function* ripRelativeReferences(
 ): Generator<void, Set<bigint>> {
   const referenced = new Set<bigint>();
   for (const mapping of image.container.executable_mappings ?? []) {
-    const bytes = image.bytes;
     const loaded =
       image.elfPointerOverlay?.hasWrites(mapping.address, mapping.size) ===
       true;
@@ -565,9 +557,7 @@ function* ripRelativeReferences(
     for (let at = mapping.offset; at <= end; at++) {
       if ((at & 0xffff) < 8) yield;
       const address = mapping.address + BigInt(at - mapping.offset);
-      const prefix = loaded
-        ? readUInt32(image, address)
-        : bytes.readUInt32LE(at);
+      const prefix = loaded ? readUInt32(image, address) : image.stored.u32(at);
       if (typeof prefix !== "number") continue;
       const rex = prefix & 0xff;
       if ((rex & 0xfb) !== 0x48) continue; // REX.W, optionally REX.R
@@ -577,7 +567,7 @@ function* ripRelativeReferences(
       const next = mapping.address + BigInt(at - mapping.offset + 7);
       const displacement = loaded
         ? readUInt32(image, address + 3n)
-        : bytes.readUInt32LE(at + 3);
+        : image.stored.u32(at + 3);
       if (typeof displacement !== "number") continue;
       const target = next + BigInt(displacement | 0);
       if (arrays.has(target)) referenced.add(target);
@@ -598,7 +588,6 @@ function* arm64PageReferences(
   arrays: ReadonlySet<bigint>,
 ): Generator<void, Set<bigint>> {
   const referenced = new Set<bigint>();
-  const bytes = image.bytes;
   for (const mapping of image.container.executable_mappings ?? []) {
     const loaded =
       image.elfPointerOverlay?.hasWrites(mapping.address, mapping.size) ===
@@ -609,12 +598,12 @@ function* arm64PageReferences(
       const address = mapping.address + BigInt(at);
       const adrp = loaded
         ? readUInt32(image, address)
-        : bytes.readUInt32LE(mapping.offset + at);
+        : image.stored.u32(mapping.offset + at);
       if (typeof adrp !== "number") continue;
       if ((adrp & 0x9f000000) >>> 0 !== 0x90000000) continue;
       const add = loaded
         ? readUInt32(image, address + 4n)
-        : bytes.readUInt32LE(mapping.offset + at + 4);
+        : image.stored.u32(mapping.offset + at + 4);
       if (typeof add !== "number") continue;
       if ((add & 0xffc00000) >>> 0 !== 0x91000000) continue;
       const register = adrp & 0x1f;
@@ -850,7 +839,7 @@ function* findTypeTableByCode(
       const address = mapping.address + BigInt(at);
       let endUnknown = at + 8 > mapping.size;
       if (!endUnknown) {
-        const raw = image.bytes.readBigUInt64LE(mapping.offset + at);
+        const raw = image.stored.word(mapping.offset + at, 64);
         let state: "type" | "other" | "unknown";
         if (image.elfPointerOverlay === undefined) {
           if (

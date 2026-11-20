@@ -179,6 +179,19 @@ const COMMONJS_WRAPPER_PARAMETERS = new Set([
   "__dirname",
 ]);
 
+/** Token recovery drops syntax. A wrapper redeclaration does not. */
+export const recoveredJavaScriptSyntaxErrorCount = (
+  errors: readonly ParsedJavaScriptSource["errors"][number][],
+): number =>
+  errors.filter((error) => !(error instanceof JavaScriptLoaderSyntaxError))
+    .length;
+
+/** Top-level lexical names that collide with Node's CommonJS parameters. */
+export const commonJsWrapperRedeclarationCount = (
+  errors: readonly ParsedJavaScriptSource["errors"][number][],
+): number =>
+  errors.filter((error) => error instanceof JavaScriptLoaderSyntaxError).length;
+
 /** Only top-level lexical bindings conflict with the wrapper's parameters. */
 const lexicalWrapperBindings = (program: t.Program): t.Identifier[] => {
   const bindings = new Map<string, t.Identifier>();
@@ -212,6 +225,7 @@ const parserOptionsForLoader = (
   // semantic context. Recovery options must not admit a wrapper return in ESM.
   const parserOptions: ParserOptions = {
     ...options,
+    plugins: options.plugins ?? parserPluginsForPath(sourcePath),
     ...(module
       ? {
           sourceType: "module",
@@ -225,7 +239,7 @@ const parserOptionsForLoader = (
             allowNewTargetOutsideFunction: true,
           }
         : detectsJavaScriptLoader(sourcePath, packageContext) ||
-            /\.(?:ts|tsx|mts|cts)$/iu.test(sourcePath ?? "")
+            isTypeScriptSourcePath(sourcePath)
           ? {
               allowReturnOutsideFunction: false,
               allowNewTargetOutsideFunction: false,
@@ -246,9 +260,17 @@ const parseBabelFile = (
   source: string,
   options: ParserOptions,
 ): ParsedJavaScriptSource => {
-  const { comments, tokens, ...file } = parse(source, options);
+  const { comments, tokens, errors, ...file } = parse(source, options);
   return {
     ...file,
+    // Babel couples the ambiguous generic-arrow diagnostic with a legacy
+    // assertion restriction. Modern TypeScript accepts the recovered assertion.
+    errors:
+      errors.length === 0
+        ? errors
+        : errors.filter(
+            ({ reasonCode }) => reasonCode !== "ReservedTypeAssertion",
+          ),
     ...(comments === undefined ? {} : { comments }),
     ...(tokens === undefined ? {} : { tokens }),
   };
@@ -315,7 +337,8 @@ const parseWithRuntimeContext = (
   // ESM and TypeScript file loading remove the UTF-8 signature before a
   // hashbang; JavaScript CommonJS loading does not. Preserve original indexes
   // through Babel's origin options rather than repairing downstream ranges.
-  const compilerSource = /\.(?:jsx|ts|tsx|mts|cts)$/iu.test(sourcePath ?? "");
+  const compilerSource =
+    /\.jsx$/iu.test(sourcePath ?? "") || isTypeScriptSourcePath(sourcePath);
   const signedHashbang = source.startsWith("\uFEFF#!");
   const conditionalCommonJs =
     signedHashbang &&
@@ -407,6 +430,18 @@ const parseWithRuntimeContext = (
   return file;
 };
 
+const sourceSyntaxPlugins: ParserPlugin[] = [
+  "decorators-legacy",
+  "sourcePhaseImports",
+];
+const javaScriptPlugins = (): ParserPlugin[] => [...sourceSyntaxPlugins, "jsx"];
+const typeScriptSourceSuffix =
+  /\.(?:(?<declaration>d)\.)?(?:(?<module>[cm])ts|ts(?<jsx>x)?)$/iu;
+
+/** Whether the filename supplies TypeScript grammar, independent of loader mode. */
+export const isTypeScriptSourcePath = (sourcePath?: string): boolean =>
+  typeScriptSourceSuffix.test(sourcePath ?? "");
+
 /**
  * Babel plugins for one source path. Single owner for TypeScript/JSX
  * mode selection (tsc + Babel `typescript` plugin semantics).
@@ -418,31 +453,33 @@ const parseWithRuntimeContext = (
  *   `a<b>(c)` as a generic call), so it must not select their meaning.
  * - JSX enabled for `.tsx` and unknown paths; disabled for plain
  *   `.ts/.cts/.mts` (angle-bracket assertions, not JSX) and for all
- *   declaration files. `.mts` (including `.d.mts`) sets
- *   `disallowAmbiguousJSXLike`, matching tsc's `.mts` mode.
+ *   declaration files. `.cts/.mts` and their declaration files report
+ *   ambiguous generic arrows using Babel's explicit-module-suffix option.
  * - `sourcePhaseImports` retains Node-supported WASM source imports as AST data.
  * - `decorators-legacy` always present: without it decorated sources fail
  *   hard instead of reporting recovered syntax, losing every derived fact.
  * - Unknown paths retain the existing JSX- and TypeScript-capable contract
  *   (best-effort parse; failures surface via `errorRecovery`).
  */
-export const parserPluginsForPath = (sourcePath?: string): ParserPlugin[] => {
+const parserPluginsForPath = (sourcePath?: string): ParserPlugin[] => {
   const path = sourcePath ?? "";
-  const syntax: ParserPlugin[] = ["decorators-legacy", "sourcePhaseImports"];
-  if (/\.(?:js|jsx|mjs|cjs)$/iu.test(path)) return [...syntax, "jsx"];
-  const dts = /\.d\.(?:ts|mts|cts)$/iu.test(path);
-  const isTsLike = /\.(?:ts|cts|mts)$/iu.test(path);
-  const isTsx = /\.tsx$/iu.test(path);
-  const isMts = /\.mts$/iu.test(path);
+  if (/\.(?:js|jsx|mjs|cjs)$/iu.test(path)) return javaScriptPlugins();
+  const suffix = typeScriptSourceSuffix.exec(path)?.groups;
+  const jsx = suffix?.jsx !== undefined;
+  const dts = suffix?.declaration !== undefined && !jsx;
   const typescript: ParserPlugin = [
     "typescript",
     {
       dts,
-      ...(isMts ? { disallowAmbiguousJSXLike: true } : {}),
+      ...(suffix?.module === undefined
+        ? {}
+        : { disallowAmbiguousJSXLike: true }),
     },
   ];
-  const jsxCapable = !dts && (isTsx || !isTsLike);
-  return jsxCapable ? [...syntax, "jsx", typescript] : [...syntax, typescript];
+  const jsxCapable = suffix === undefined || jsx;
+  return jsxCapable
+    ? [...sourceSyntaxPlugins, "jsx", typescript]
+    : [...sourceSyntaxPlugins, typescript];
 };
 
 const runtimeSourceTypeForPath = (
@@ -482,7 +519,7 @@ export interface RecoveredJavaScriptParse {
 export const parseRecoveredJavaScript = (
   source: string,
   sourcePath: string | undefined,
-  options: Omit<ParserOptions, "sourceType" | "errorRecovery">,
+  options: Omit<ParserOptions, "sourceType" | "errorRecovery" | "plugins">,
   observedPackageType?: JavaScriptPackageType,
 ): RecoveredJavaScriptParse => {
   const filenameType = runtimeSourceTypeForPath(sourcePath);
@@ -550,15 +587,11 @@ export const parseRecoveredJavaScript = (
   };
 };
 
-/**
- * Parse inert JavaScript or TypeScript facts without attaching comments to AST
- * nodes. An observed package type selects the runtime context of .js/.ts
- * sources as it does for reference imports, including their wrapper grammar.
- */
-export const parseJavaScriptSource = (
+const parseStaticJavaScriptSource = (
   source: string,
-  sourcePath?: string,
-  observedPackageType?: JavaScriptPackageType,
+  sourcePath: string | undefined,
+  observedPackageType: JavaScriptPackageType | undefined,
+  plugins?: ParserPlugin[],
 ): ParsedJavaScriptSource | null => {
   try {
     const runtimeSourceType = runtimeSourceTypeForPath(sourcePath);
@@ -570,7 +603,7 @@ export const parseJavaScriptSource = (
     const options = {
       errorRecovery: true,
       attachComment: false,
-      plugins: parserPluginsForPath(sourcePath),
+      ...(plugins === undefined ? {} : { plugins }),
     };
     const file = parseWithRuntimeContext(
       source,
@@ -622,6 +655,30 @@ export const parseJavaScriptSource = (
     return null;
   }
 };
+
+/**
+ * Parse inert JavaScript or TypeScript facts without attaching comments to AST
+ * nodes. An observed package type selects the runtime context of .js/.ts
+ * sources as it does for reference imports, including their wrapper grammar.
+ */
+export const parseJavaScriptSource = (
+  source: string,
+  sourcePath?: string,
+  observedPackageType?: JavaScriptPackageType,
+): ParsedJavaScriptSource | null =>
+  parseStaticJavaScriptSource(source, sourcePath, observedPackageType);
+
+/** An observed browser language selects syntax without implying a Node loader. */
+export const parseCapturedJavaScriptSource = (
+  source: string,
+  observedLanguage: string | null,
+): ParsedJavaScriptSource | null =>
+  parseStaticJavaScriptSource(
+    source,
+    undefined,
+    undefined,
+    observedLanguage === "JavaScript" ? javaScriptPlugins() : undefined,
+  );
 
 /** A script's top-level lexical this may be its ambient global; wrappers and modules isolate it. */
 export const javaScriptThisOwner = (
