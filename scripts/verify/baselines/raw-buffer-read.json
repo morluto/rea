@@ -2,7 +2,7 @@
   "src/domain/apple/machoLoadCommandReader.ts": 2,
   "src/domain/desktop/openPgpKeys.ts": 2,
   "src/domain/managed/managedMetadataInventoryRows.ts": 2,
-  "src/native/AppleDispatchMetadata.ts": 3,
+  "src/native/AppleDispatchMetadata.ts": 1,
   "src/native/elf/ElfNoteParser.ts": 6,
   "src/native/pe/PeCertificateAsn1.ts": 2
 }

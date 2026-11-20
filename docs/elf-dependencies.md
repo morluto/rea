@@ -59,6 +59,10 @@ out of the derived set. `version_definitions` summarizes the image's own
 each import keeps its version index, hidden bit, and a resolved
 `library@version` when a matching verneed record exists. Index 0 and 1 stay
 `unversioned`. A missing matching record is `unknown` and is an issue.
+For `DT_VERSYM`, the reader keeps the contiguous prefix of complete slots
+that share one unambiguous file translation. It stops at the first slot that
+cannot be admitted, even if later slots map independently. Later import
+versions remain unexamined and coverage is `partial`.
 
 A missing `PT_DYNAMIC` is an observed empty load-time dependency inventory. It
 is not proof another overlay or container carried dynamic linking metadata.
@@ -92,9 +96,11 @@ path, SHA-256, and byte count as a partial observation. Cyclic `vn_next` /
 unsupported ELF extended numbering return no complete inventory.
 
 Each dynamic string and `PT_INTERP` path is scanned for its terminator across at
-most 65536 bytes. Unreadable dynamic strings, `PT_INTERP` paths that are
-unterminated or end past that limit, and tables that cannot be located from
-section headers or `DT_*` tags are reported as partial coverage with `issues`.
+most 65536 bytes. A scan-limit issue means the admitted extent continues beyond
+the checked bytes. If the scan reaches the end of the extent without a
+terminator, the issue identifies an unterminated string. Unreadable strings and
+tables that cannot be located from section headers or `DT_*` tags yield partial
+coverage with `issues`.
 When the symbol count from `DT_HASH` or `DT_GNU_HASH` exceeds the located
 `.dynsym` table, only the symbols inside that table are read and coverage is
 partial. A GNU version chain whose links and declared count
