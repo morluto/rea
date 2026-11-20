@@ -20,6 +20,7 @@ import { acquireOwnedLease } from "../process/OwnedLease.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import {
   GhidraCheckpoint,
+  hashGhidraPackedProgram,
   resolveGhidraCheckpoint,
 } from "./GhidraCheckpoint.js";
 
@@ -182,6 +183,18 @@ it.skipIf(process.platform === "win32").each(
     }
   },
 );
+
+it("hashes packed checkpoint bytes beyond the first buffer", async () => {
+  const bytes = Buffer.concat([
+    Buffer.alloc(64 * 1024, 0x61),
+    Buffer.from("packed bytes beyond the initial read"),
+  ]);
+  const { packed, resources } = await fixture(bytes);
+  const expected = createHash("sha256").update(bytes).digest("hex");
+  await expect(hashGhidraPackedProgram(packed, resources)).resolves.toBe(
+    expected,
+  );
+});
 
 it.skipIf(process.platform === "win32")(
   "refuses a concurrent owner and admits it after the original owner closes",
