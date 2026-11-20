@@ -245,18 +245,24 @@ describe("Zstandard frame header widths", () => {
     const dictionary2 = magic([0x22, 0, 0, 0x00, 0x01, 0, 0]);
     const dictionary4 = magic([0x23, 0, 0, 0, 0, 0x00, 0x01, 0, 0]);
     const rle = magic([0x20, 0x04, 0x23, 0, 0, 0x41]);
-    const a = Buffer.from("A");
-    expect(decode(fcs4)).toMatchObject({ frames: 1, bytes: a });
-    expect(decode(fcs8)).toMatchObject({ ok: true, frames: 1 });
-    expect(decode(fcs2)).toMatchObject({
-      frames: 1,
-      bytes: Buffer.alloc(256, 0x42),
-    });
-    expect(decode(windowed)).toMatchObject({ bytes: Buffer.alloc(0) });
-    expect(decode(rle)).toMatchObject({ bytes: Buffer.from("AAAA") });
-    expect(decode(dictionary1).ok).toBe(true);
-    expect(decode(dictionary2).ok).toBe(true);
-    expect(decode(dictionary4).ok).toBe(true);
+    for (const [frame, expected] of [
+      [fcs4, "A"],
+      [fcs8, "A"],
+      [fcs2, "B".repeat(256)],
+      [rle, "AAAA"],
+      [windowed, ""],
+      [dictionary1, ""],
+      [dictionary2, ""],
+      [dictionary4, ""],
+    ] as const) {
+      const result = decode(frame);
+      if (!result.ok) throw new Error(result.reason);
+      expect(result.frames).toBe(1);
+      expect(
+        result.bytes.equals(Buffer.from(expected)),
+        frame.toString("hex"),
+      ).toBe(true);
+    }
   });
 
   it.each([
