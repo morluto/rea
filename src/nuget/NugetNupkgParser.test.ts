@@ -469,30 +469,46 @@ it("stops expanding an OPC relationships member at the budget when its declared 
   }
 });
 
-it("leaves an external manifest relationship unfollowed even when it names a ZIP member", async () => {
-  const bytes = await nugetNupkgFixture({
-    includeRels: false,
-    extraMembers: {
-      "_rels/.rels": `<?xml version="1.0" encoding="utf-8"?>
+it.each([
+  { mode: "External", selected: false, limitation: "is external" },
+  { mode: "Internal", selected: true, limitation: null },
+  { mode: "Unknown", selected: false, limitation: "has an invalid TargetMode" },
+  { mode: "", selected: false, limitation: "has an invalid TargetMode" },
+  {
+    mode: "internal",
+    selected: false,
+    limitation: "has an invalid TargetMode",
+  },
+])(
+  "uses the declared OPC manifest TargetMode $mode",
+  async ({ mode, selected, limitation }) => {
+    const bytes = await nugetNupkgFixture({
+      includeRels: false,
+      extraMembers: {
+        "_rels/.rels": `<?xml version="1.0" encoding="utf-8"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Type="http://schemas.microsoft.com/packaging/2010/07/manifest" Target="content/Other.nuspec" TargetMode="External" Id="R1" />
+  <Relationship Type="http://schemas.microsoft.com/packaging/2010/07/manifest" Target="content/Other.nuspec" TargetMode="${mode}" Id="R1" />
 </Relationships>
 `,
-      "content/Other.nuspec": ungroupedNuspec,
-    },
-  });
-  const report = nugetNupkgSchema.parse(
-    await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
-  );
-  expect(report.nuspec).toMatchObject({
-    path: "Demo.Package.nuspec",
-    source: "root-nuspec",
-  });
-  expect(report.identity?.id).toBe("Demo.Package");
-  expect(report.limitations).toContain(
-    'OPC manifest relationship Target "content/Other.nuspec" is external and was not followed.',
-  );
-});
+        "content/Other.nuspec": ungroupedNuspec,
+      },
+    });
+    const report = nugetNupkgSchema.parse(
+      await parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+    );
+    expect(report.nuspec).toMatchObject({
+      path: selected ? "content/Other.nuspec" : "Demo.Package.nuspec",
+      source: selected ? "opc-relationship" : "root-nuspec",
+    });
+    expect(report.identity?.id).toBe(
+      selected ? "Ungrouped.Package" : "Demo.Package",
+    );
+    if (limitation !== null)
+      expect(report.limitations).toContain(
+        `OPC manifest relationship Target "content/Other.nuspec" ${limitation} and was not followed.`,
+      );
+  },
+);
 
 const manifestRels = (target: string) => `<?xml version="1.0" encoding="utf-8"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">

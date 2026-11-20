@@ -294,10 +294,17 @@ const opcManifestTargets = (
     const target = attribute(relationship, "Target");
     if (target === null) continue;
     const displayedTarget = redactRecordedTransportUrl(target).url;
-    // OPC external targets may be relative, so the mode decides, not the URI shape.
-    if (attribute(relationship, "TargetMode")?.toLowerCase() === "external") {
+    // Only an absent mode defaults to Internal. External targets can be relative.
+    const mode = relationship.getAttributeNS(null, "TargetMode");
+    if (mode === "External") {
       limitations.push(
         `OPC manifest relationship Target ${targetLabel(displayedTarget)} is external and was not followed.`,
+      );
+      continue;
+    }
+    if (mode !== null && mode !== "Internal") {
+      limitations.push(
+        `OPC manifest relationship Target ${targetLabel(displayedTarget)} has an invalid TargetMode and was not followed.`,
       );
       continue;
     }
