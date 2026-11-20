@@ -76,7 +76,7 @@ const main = async (): Promise<void> => {
     const carrier = (
       await readStableArtifact(request.snapshot_path, limits.input_bytes)
     ).bytes;
-    const compilerSelection = evmCompilerSelection(request.encoding);
+    const compilerSelection = evmCompilerSelection(request);
     if (compilerSelection !== undefined)
       compilerFailureContext = {
         carrier_sha256: sha256Hex(carrier),
@@ -117,7 +117,7 @@ const main = async (): Promise<void> => {
         };
       let bytes: Uint8Array | null;
       if (selected?.ok) bytes = selected.value.bytes;
-      else if (typeof request.encoding === "string")
+      else if (request.encoding !== "solc-json")
         bytes = decodeEvmBytecodeCarrier(carrier, request.encoding);
       else
         throw invariantViolation(

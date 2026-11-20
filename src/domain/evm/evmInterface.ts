@@ -56,32 +56,42 @@ const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
 /** Owned EVMole worker deadline. Omission keeps this value. */
 export const DEFAULT_EVM_TIMEOUT_MS = 30_000;
 
-/** Keep each selected compiler encoding self-contained in advertised JSON Schemas. */
-export const evmEncodingSchema = z.union([
-  z.enum(["raw", "hex"]),
-  compilerSelectionSchema.safeExtend({ kind: z.literal("solc-json") }),
-]);
+/** One scalar encoding keeps the advertised input within the portable schema dialect. */
+export const evmEncodingSchema = z.enum(["raw", "hex", "solc-json"]);
 export type EvmEncoding = z.infer<typeof evmEncodingSchema>;
-export const evmEncodingKind = (
-  encoding: EvmEncoding,
-): "raw" | "hex" | "solc-json" =>
-  typeof encoding === "string" ? encoding : encoding.kind;
+interface EvmEncodingSelection {
+  readonly encoding: EvmEncoding;
+  readonly compiler_selection?: CompilerSelection | undefined;
+}
+/** Exact compiler identity belongs to solc-json only; the other encodings carry none. */
+export const evmCompilerSelectionIssue = ({
+  encoding,
+  compiler_selection: selection,
+}: EvmEncodingSelection): string | undefined => {
+  if (encoding === "solc-json" && selection === undefined)
+    return "solc-json encoding requires compiler_selection.";
+  if (encoding !== "solc-json" && selection !== undefined)
+    return "compiler_selection is valid only with solc-json encoding.";
+  return undefined;
+};
 /** One owner projects exact compiler identity from the selected representation. */
 export const evmCompilerSelection = (
-  encoding: EvmEncoding,
-): CompilerSelection | undefined => {
-  if (typeof encoding === "string") return undefined;
-  const { kind: _kind, ...selection } = encoding;
-  return selection;
-};
+  input: EvmEncodingSelection,
+): CompilerSelection | undefined =>
+  input.encoding === "solc-json" ? input.compiler_selection : undefined;
 /** Explicit local carrier; compiler identities are opaque keys rather than paths. */
 export const inspectEvmInterfaceInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
     "Absolute caller-selected bytecode or solc Standard JSON carrier",
   ),
   encoding: evmEncodingSchema.describe(
-    "raw/hex, or {kind: solc-json, source_unit, contract_name, bytecode_kind: creation|deployed} for exact compiler selection",
+    "raw or hex bytecode, or solc-json to select an exact compiler object with compiler_selection",
   ),
+  compiler_selection: compilerSelectionSchema
+    .optional()
+    .describe(
+      "Required with solc-json and refused otherwise: exact source_unit and contract_name keys plus bytecode_kind creation|deployed",
+    ),
   producer_limits: evmProducerLimitsSchema
     .optional()
     .describe(
@@ -253,10 +263,11 @@ export const matchesEvmInterfaceInput = (
   report: EvmInterface,
   input: InspectEvmInterfaceInput,
 ): boolean => {
-  const selection = evmCompilerSelection(input.encoding);
+  const selection = evmCompilerSelection(input);
   return (
+    evmCompilerSelectionIssue(input) === undefined &&
     report.artifact.path === input.path &&
-    report.artifact.encoding === evmEncodingKind(input.encoding) &&
+    report.artifact.encoding === input.encoding &&
     (selection === undefined ||
       (report.compiler_artifact?.selection.source_unit ===
         selection.source_unit &&

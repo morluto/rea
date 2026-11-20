@@ -28,7 +28,7 @@ export const registerEvmCommands = (
         "Infer interface candidates from explicit local EVM bytecode. solc-json requires --source-unit, --contract-name, and --bytecode-kind together.",
       positionals: ["path"],
       // The encoding positional is one CLI-only value the handler folds into
-      // the contract's encoding field; argv never supplies that field itself.
+      // the contract's encoding and compiler_selection fields; argv never supplies them.
       cliOptions: {
         encoding: z
           .enum(["raw", "hex", "solc-json"])
@@ -52,7 +52,7 @@ export const registerEvmCommands = (
         contractName: ["sourceUnit", "bytecodeKind"],
         bytecodeKind: ["sourceUnit", "contractName"],
       },
-      handlerFields: ["encoding"],
+      handlerFields: ["encoding", "compiler_selection"],
       callerPaths: ["path"],
       jsonText: ["producer_limits"],
       fields: {
@@ -97,15 +97,16 @@ export const registerEvmCommands = (
       return inspectWithService(() => service, "evmole-interface")(
         {
           ...input,
-          encoding:
-            encoding === "solc-json"
-              ? {
-                  kind: "solc-json",
+          encoding,
+          ...(encoding === "solc-json"
+            ? {
+                compiler_selection: {
                   source_unit: sourceUnit,
                   contract_name: contractName,
                   bytecode_kind: bytecodeKind,
-                }
-              : encoding,
+                },
+              }
+            : {}),
         },
         context,
       );

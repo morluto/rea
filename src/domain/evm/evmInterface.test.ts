@@ -10,8 +10,8 @@ import { evmInterfaceFixture } from "../../../tests/fixtures/evm/interface.js";
 it("rejects compiler identities no admitted carrier could contain", () => {
   const result = inspectEvmInterfaceInputSchema.safeParse({
     path: "/carrier.json",
-    encoding: {
-      kind: "solc-json",
+    encoding: "solc-json",
+    compiler_selection: {
       source_unit: "a".repeat(SOLC_JSON_LIMITS.inputBytes + 1),
       contract_name: "C",
       bytecode_kind: "creation",

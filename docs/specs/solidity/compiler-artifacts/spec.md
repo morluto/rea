@@ -10,10 +10,13 @@ candidates can REA recover from those bytes?
 
 ## Contract
 
-Extend `inspect_evm_interface` with `encoding` equal to `raw`, `hex`, or a
-self-contained object `{kind: "solc-json", source_unit, contract_name,
-bytecode_kind}`. Compiler kind is `creation` or `deployed`, and every compiler
-selector is required by both the advertised schema and the handler. The CLI
+Extend `inspect_evm_interface` with `encoding` equal to `raw`, `hex` or
+`solc-json`. `solc-json` requires `compiler_selection: {source_unit,
+contract_name, bytecode_kind}` and the other encodings refuse it. One scalar
+encoding keeps the advertised input inside the portable schema dialect, which
+rejects a string-or-object union. Compiler kind is `creation` or `deployed`,
+every selector is required by the schema, and the service enforces the
+encoding/selection agreement. The CLI
 uses positional encoding `solc-json` with `--source-unit`, `--contract-name` and
 `--bytecode-kind`. Raw and hex inputs keep their current defaults and result
 fields; compiler-selection CLI options are invalid with those encodings.

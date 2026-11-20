@@ -33,15 +33,16 @@ it.each(["hex", "solc-json"] as const)(
           snapshot_path: snapshot,
           reply_path: reply,
           failure_marker_path: join(root, `failure-${index}`),
-          encoding:
-            encoding === "hex"
-              ? "hex"
-              : {
-                  kind: "solc-json",
+          encoding,
+          ...(encoding === "hex"
+            ? {}
+            : {
+                compiler_selection: {
                   source_unit: "a.sol",
                   contract_name: "C",
                   bytecode_kind: "creation",
                 },
+              }),
           file_size_bytes: selectedEvmProducerLimits({
             output_bytes: outputBytes,
           }).file_bytes,

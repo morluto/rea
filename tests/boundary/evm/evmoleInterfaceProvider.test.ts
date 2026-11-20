@@ -1063,8 +1063,8 @@ it
     });
     const result = await provider.inspect({
       path,
-      encoding: {
-        kind: "solc-json",
+      encoding: "solc-json",
+      compiler_selection: {
         source_unit: "a.sol",
         contract_name: "C",
         bytecode_kind: "creation",
@@ -1098,8 +1098,8 @@ it.runIf(!unsupportedHost)(
     });
     const result = await provider.inspect({
       path,
-      encoding: {
-        kind: "solc-json",
+      encoding: "solc-json",
+      compiler_selection: {
         source_unit: "a".repeat(64),
         contract_name: "C",
         bytecode_kind: "creation",
@@ -1143,8 +1143,8 @@ it.runIf(!unsupportedHost)(
     });
     await provider.inspect({
       path,
-      encoding: {
-        kind: "solc-json",
+      encoding: "solc-json",
+      compiler_selection: {
         source_unit: sourceUnit,
         contract_name: "C",
         bytecode_kind: "creation",

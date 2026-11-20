@@ -78,7 +78,8 @@ const compilerParent = (
     operation: "inspect_evm_interface",
     parameters: {
       path: report.artifact.path,
-      encoding: { kind: "solc-json", ...selection },
+      encoding: "solc-json",
+      compiler_selection: selection,
     },
     normalizedResult: report,
     subject: {
@@ -253,13 +254,13 @@ it.each([
   (field) => {
     const parent = compilerParent("6001");
     const parameters = inspectEvmInterfaceInputSchema.parse(parent.parameters);
-    if (typeof parameters.encoding === "string")
+    if (parameters.compiler_selection === undefined)
       throw new Error("Compiler selection missing");
     if (field === "path") parameters.path = "/other/carrier.json";
     else if (field === "encoding") parameters.encoding = "hex";
     else if (field === "bytecode_kind")
-      parameters.encoding.bytecode_kind = "deployed";
-    else parameters.encoding[field] = "Other";
+      parameters.compiler_selection.bytecode_kind = "deployed";
+    else parameters.compiler_selection[field] = "Other";
     for (const view of [
       { kind: "summary" },
       { kind: "evm", facet: "functions", offset: 0, limit: 1 },

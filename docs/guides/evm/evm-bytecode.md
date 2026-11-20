@@ -40,8 +40,7 @@ util-linux compatibility, and REA does not substitute another command.
 
 ## Evidence semantics
 
-- `encoding` is required: `"raw"`, `"hex"`, or an exact compiler-selection object
-  with `kind: "solc-json"`. Hex permits an optional `0x` prefix and
+- `encoding` is required: `"raw"`, `"hex"` or `"solc-json"` with an exact `compiler_selection`. Hex permits an optional `0x` prefix and
   outer ASCII whitespace. Odd hex, interior separators, BOM, non-ASCII whitespace
   and invalid UTF-8 are rejected. Empty bytecode is valid and has unknown coverage.
 - Carrier SHA-256 identifies the exact original file, including prefix/casing
@@ -82,8 +81,8 @@ Select an existing solc Standard JSON output with:
 ```json
 {
   "path": "/artifacts/compiler-output.json",
-  "encoding": {
-    "kind": "solc-json",
+  "encoding": "solc-json",
+  "compiler_selection": {
     "source_unit": "contracts/Example.sol",
     "contract_name": "Example",
     "bytecode_kind": "deployed"
@@ -91,7 +90,7 @@ Select an existing solc Standard JSON output with:
 }
 ```
 
-All three selection identities are required within `encoding`;
+All three selection identities are required within `compiler_selection`;
 use `creation` to select `evm.bytecode`, or `deployed` for `evm.deployedBytecode`.
 Source-unit keys are exact compiler identities, not filesystem paths. REA does
 not match basenames, choose another contract or run a compiler. Selection is

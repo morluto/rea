@@ -68,7 +68,6 @@ import {
   selectedEvmProducerLimits,
   type InspectEvmInterfaceInput,
   evmInterfaceSchema,
-  evmEncodingKind,
   evmCompilerSelection,
   evmProducerLimitRecovery,
 } from "../domain/evm/evmInterface.js";
@@ -505,8 +504,8 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
     environment: Readonly<NodeJS.ProcessEnv>,
     options?: ExecutionOptions,
   ): Promise<Result<EvmInterfaceExecution, AnalysisError>> {
-    const encoding = evmEncodingKind(input.encoding);
-    const compilerSelection = evmCompilerSelection(input.encoding);
+    const { encoding } = input;
+    const compilerSelection = evmCompilerSelection(input);
     const pending = await this.#retire();
     if (pending !== undefined) return err(pending);
     let root: Pick<PrivateRuntimeRoot, "path" | "close"> | undefined;
@@ -666,6 +665,9 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
         failure_marker_path: join(root.path, "resource.failure"),
         file_size_bytes: workerLimits.file_bytes,
         encoding: input.encoding,
+        ...(input.compiler_selection === undefined
+          ? {}
+          : { compiler_selection: input.compiler_selection }),
         producer_limits: producerLimits,
       });
       // The worker reads this file under the same ceiling; refuse before it starts.
@@ -936,7 +938,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
             { capturedOutput },
           );
       } else {
-        if (typeof input.encoding !== "string")
+        if (input.encoding === "solc-json")
           throw new AnalysisOutputError(
             OPERATION,
             "Compiler encoding has no parsed compiler selection.",

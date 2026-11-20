@@ -126,17 +126,18 @@ mcpTest(
     expect(
       ajv.validate(inputSchema, { path: value.artifact.path, encoding: "raw" }),
     ).toBe(true);
-    const compilerEncoding = {
-      kind: "solc-json",
+    const compilerSelection = {
       source_unit: "contracts/Example.sol",
       contract_name: "Example",
       bytecode_kind: "deployed",
     };
+    const compilerInput = {
+      path: value.artifact.path,
+      encoding: "solc-json",
+      compiler_selection: compilerSelection,
+    };
     expect(
-      ajv.validate(inputSchema, {
-        path: value.artifact.path,
-        encoding: compilerEncoding,
-      }),
+      ajv.validate(inputSchema, compilerInput),
       JSON.stringify(ajv.errors),
     ).toBe(true);
     for (const missing of [
@@ -144,31 +145,32 @@ mcpTest(
       "contract_name",
       "bytecode_kind",
     ] as const) {
-      const incomplete: Record<string, string> = { ...compilerEncoding };
+      const incomplete: Record<string, string> = { ...compilerSelection };
       delete incomplete[missing];
       expect(
         ajv.validate(inputSchema, {
-          path: value.artifact.path,
-          encoding: incomplete,
+          ...compilerInput,
+          compiler_selection: incomplete,
         }),
       ).toBe(false);
     }
-    for (const encoding of [
-      "solc-json",
-      { ...compilerEncoding, bytecode_kind: "runtime" },
-      { ...compilerEncoding, extra: true },
-      { ...compilerEncoding, kind: "raw" },
+    for (const selection of [
+      { ...compilerSelection, bytecode_kind: "runtime" },
+      { ...compilerSelection, extra: true },
     ])
       expect(
-        ajv.validate(inputSchema, { path: value.artifact.path, encoding }),
+        ajv.validate(inputSchema, {
+          ...compilerInput,
+          compiler_selection: selection,
+        }),
       ).toBe(false);
+    // The two-field agreement is checked by the service, not the schema.
     expect(
       ajv.validate(inputSchema, {
         path: value.artifact.path,
-        encoding: "hex",
-        compiler_selection: compilerEncoding,
+        encoding: "solc-json",
       }),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       ajv.validate(inputSchema, {
         path: value.artifact.path,
@@ -244,11 +246,8 @@ mcpTest(
     expect(inputSchema.properties).toEqual({});
     const arguments_ = {
       path: "/selected.json",
-      encoding: {
-        kind: "solc-json",
-        contract_name: "C",
-        bytecode_kind: "creation",
-      },
+      encoding: "solc-json",
+      compiler_selection: { contract_name: "C", bytecode_kind: "creation" },
     };
     const response = await client.callTool({
       name: "inspect_evm_interface",

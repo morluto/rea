@@ -87,10 +87,8 @@ try {
     } = options;
     const input = {
       path,
-      encoding:
-        encoding === "solc-json"
-          ? { kind: "solc-json", ...selection }
-          : encoding,
+      encoding,
+      ...(encoding === "solc-json" ? { compiler_selection: selection } : {}),
       ...(detail === undefined ? {} : { detail }),
       ...(timeoutMs === undefined ? {} : { timeout_ms: timeoutMs }),
       ...(producerLimits === undefined
@@ -199,7 +197,7 @@ try {
     assert.equal(report.artifact.bytes, carrier.length);
     assert.equal(report.artifact.encoding, encoding);
     assert.equal(report.runtime_execution, "not-performed");
-    assert.equal(evidence.subject.digest.sha256, sha256(carrier));
+    assert.equal(evidence.subject.identity.sha256, sha256(carrier));
     if (report.bytecode.hex !== null) {
       assert.equal(report.bytecode.bytes, report.bytecode.hex.length / 2);
       assert.equal(
@@ -633,7 +631,8 @@ try {
         name: "inspect_evm_interface",
         arguments: {
           path: expandedPath,
-          encoding: { kind: "solc-json", ...selection },
+          encoding: "solc-json",
+          compiler_selection: selection,
         },
       },
       { signal: controller.signal },
@@ -805,7 +804,7 @@ try {
     encoding: "hex",
     compiler_selection: selection,
   };
-  assert.equal(validate.validate(inputSchema, invalidRawInput), false);
+  // The scalar schema cannot express the pairing; the service refuses it.
   const rawRejection = await artifactMcpCall(client, {
     name: "inspect_evm_interface",
     arguments: invalidRawInput,

@@ -185,8 +185,8 @@ it.each([false, true])(
     }).inspect(
       {
         path: fixture.artifact.path,
-        encoding: {
-          kind: "solc-json",
+        encoding: "solc-json",
+        compiler_selection: {
           ...selection,
           ...(mismatched ? { contract_name: "Other" } : {}),
         },
@@ -199,7 +199,7 @@ it.each([false, true])(
     } else {
       expect(result.error).toBeInstanceOf(AnalysisCancelledError);
       expect(parseEvidence(result.error.partialObservation)).toMatchObject({
-        parameters: { encoding: { kind: "solc-json", ...selection } },
+        parameters: { encoding: "solc-json", compiler_selection: selection },
         normalized_result: report,
       });
     }
