@@ -1,4 +1,5 @@
 import { LC } from "./machoLoadCommandCodes.js";
+import { BinaryReader } from "../binaryContainer.js";
 import {
   malformedInput,
   ParseFailureError,
@@ -754,14 +755,20 @@ const decodeCommand = (
         "malformed",
         `load command ${index} is too short for LC_BUILD_VERSION`,
       );
-    const view = viewOf(body);
-    const toolCount = view.getUint32(20, true);
+    // `LC_BUILD_VERSION` carries a little-endian header; the body's 24-byte minimum is
+    // established above, so both reads below stay inside it.
+    const reader = new BinaryReader(
+      Buffer.from(body.buffer, body.byteOffset, body.byteLength),
+      true,
+      "macho-build-version",
+    );
+    const toolCount = reader.u32(20);
     if (toolCount > Math.floor((body.byteLength - 24) / 8))
       throw machoIssue(
         "malformed",
         `load command ${index} LC_BUILD_VERSION tool records exceed cmdsize`,
       );
-    const platform = view.getUint32(8, true);
+    const platform = reader.u32(8);
     slice.platforms.push(platform);
     return;
   }

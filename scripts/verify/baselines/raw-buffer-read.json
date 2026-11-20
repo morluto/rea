@@ -1,5 +1,4 @@
 {
-  "src/domain/apple/machoLoadCommandReader.ts": 2,
   "src/domain/desktop/openPgpKeys.ts": 2,
   "src/domain/managed/managedMetadataInventoryRows.ts": 2,
   "src/native/AppleDispatchMetadata.ts": 1,
