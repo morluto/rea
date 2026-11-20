@@ -156,12 +156,20 @@ FileBytes digests, every source mapping and its memory digest, relocation record
 module partitions, relocation fixups and linear coordinates rather than relying
 on the imported executable SHA alone.
 
-REA computes expected MZ relocation records in table order. Each expected
-record keeps the word before and after its fixup, and its memory-byte window
-comes from the completed image. Ghidra supplies the observed relocation
-records and final mapped memory separately. A historical Ghidra 12.1.4 probe
-found a relocation-record mismatch despite identical final bytes. The overlap
-case is still unverified on Ghidra 12.2. [Verification issue](https://github.com/morluto/rea/issues/12590)
+REA derives each Ghidra MZ relocation value from its original file word.
+Exact duplicate writes and equivalent segment:offset locations retain separate
+records and produce the same final word. When adjacent relocation words propose
+different values for their shared byte, verification returns `unsupported` with
+the measured relocation records, byte windows and mapping digests. Ghidra
+applies these writes without an established order.
+
+In three paired Ghidra 12.2 imports on macOS ARM64 with Temurin 25.0.5.1,
+the authored table order gave final bytes `00 14 10` and the reversed table
+gave `00 04 10`. A separate original-order import also gave `00 04 10`.
+The paired results agreed on both original-word relocation values and a direct
+read confirmed each final window. The run used the release archive with
+locally built macOS ARM64 native helpers. This evidence covers the authored
+fixtures and this runtime. [Verification issue](https://github.com/morluto/rea/issues/12590)
 
 The result is `verified`, `mismatch`, or `unsupported`. Every check retains its
 expected and observed values. A memory-digest mismatch identifies the source

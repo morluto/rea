@@ -129,7 +129,7 @@ cliTest(
 );
 
 cliTest(
-  "matches NuGet's field namespace rules through CLI and MCP",
+  "matches NuGet's field namespaces and license type through CLI and MCP",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-nupkg-cli-mcp-");
     const path = join(root, "Demo.Package.nupkg");
@@ -140,7 +140,7 @@ cliTest(
           <ext:metadata>
             <ext:id>Extension</ext:id><id>Demo.Package</id>
             <ext:version>9.0.0</ext:version><version>1.2.3</version>
-            <ext:license type="expression">ISC</ext:license><license type="expression">MIT</license>
+            <ext:license type="expression">ISC</ext:license><license type="EXPRESSION">MIT</license>
             <ext:repository type="git" url="https://example.invalid/extension" />
             <repository type="git" url="https://example.invalid/declared" />
             <ext:authors>Alice</ext:authors><authors>Second author</authors>

@@ -218,7 +218,15 @@ export const deb822Paragraphs = (
   const finish = () => {
     // A sources-file stanza's position still counts when it cannot be read.
     if (!readable) found.push(new Map());
-    else if (current.size > 0) found.push(current);
+    else if (current.size > 0) {
+      // TagSection trims trailing whitespace but keeps interior continuations.
+      for (const [name, value] of current) {
+        let end = value.length;
+        while (end > 0 && value.charCodeAt(end - 1) === 0x0a) end--;
+        if (end !== value.length) current.set(name, value.slice(0, end));
+      }
+      found.push(current);
+    }
     current = new Map();
     last = undefined;
     readable = true;
@@ -228,11 +236,13 @@ export const deb822Paragraphs = (
       readable = false;
       continue;
     }
-    const content = trimDeb822Line(line);
-    if (content.length === 0) {
+    // APT skips CRs after a line feed before classifying the next record.
+    const afterLeadingCr = line.replace(/^\r+/u, "");
+    if (afterLeadingCr.length === 0) {
       finish();
     } else if (line.startsWith("#")) continue;
-    else if (/^[ \t]/u.test(line) && last !== undefined) {
+    else if (/^[ \t\v\f]/u.test(afterLeadingCr) && last !== undefined) {
+      const content = trimDeb822Line(line);
       const previous = current.get(last) ?? "";
       // APT skips an initial newline only before a space-led continuation.
       current.set(

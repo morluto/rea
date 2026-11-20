@@ -424,7 +424,9 @@ const parseNuspecDocument = (
     return element === undefined ? null : elementText(element);
   };
   const licenseElement = firstNamed(metadata, "license", metadataNamespace);
-  const licenseType = licenseElement ? attribute(licenseElement, "type") : null;
+  const licenseType = licenseElement
+    ? attribute(licenseElement, "type")?.toLowerCase()
+    : undefined;
   const repositoryElement = firstNamed(
     metadata,
     "repository",
