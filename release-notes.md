@@ -498,6 +498,7 @@
 * **gradle:** disclose unfamiliar metadata revisions ([#12648](https://github.com/morluto/rea/issues/12648)) ([78fdc7e](https://github.com/morluto/rea/commit/78fdc7ecf7f2e4c6780ec1ea487661fb510bddbe))
 * **gradle:** preserve variant identity in metadata evidence ([#12677](https://github.com/morluto/rea/issues/12677)) ([9c95d0d](https://github.com/morluto/rea/commit/9c95d0ded384072fd1fd1f46ba5c44cf38de4343))
 * **guards:** refuse a counted-baseline file that is not in its written order ([#11150](https://github.com/morluto/rea/issues/11150)) ([2c7c59e](https://github.com/morluto/rea/commit/2c7c59e14ebcae81b2d2e7245819451d7acdbf35))
+* **harmony:** match manifests at exact archive root paths ([#12700](https://github.com/morluto/rea/issues/12700)) ([2245d25](https://github.com/morluto/rea/commit/2245d25aaa48b297c0a0e130434498fc026822d4))
 * **har:** preserve failed Playwright requests with unavailable timings ([#11758](https://github.com/morluto/rea/issues/11758)) ([bb6e307](https://github.com/morluto/rea/commit/bb6e307de5c5fbdca8ccc9425e68ca3841485492))
 * **har:** retain Playwright 1.64.1 bracketed IPv6 addresses ([#12456](https://github.com/morluto/rea/issues/12456)) ([2837de5](https://github.com/morluto/rea/commit/2837de5159cd070d19bdd6845e1d07bf12270c1c))
 * **hopper:** explain disclaimed Apple Events responsibility ([#12309](https://github.com/morluto/rea/issues/12309)) ([0c672c1](https://github.com/morluto/rea/commit/0c672c19a9f908172e2896a1e55afe5d1adee137))
