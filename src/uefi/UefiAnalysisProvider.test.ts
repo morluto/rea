@@ -1791,8 +1791,8 @@ it("caps decompilation to max_modules while discovering all candidate modules", 
     const result = executed.value.result as UefiDecompileResult;
     expect(result.total_modules_found).toBe(3);
     expect(result.total_modules_decompiled).toBe(2);
-    expect(result.limitations).toContain(
-      "Decompilation capped at 2 of 3 discovered modules.",
+    expect(result.limitations.some((l) => l.includes("capped at 2 of 3"))).toBe(
+      true,
     );
   } finally {
     await provider.close();
