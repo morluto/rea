@@ -79,9 +79,11 @@ still succeeds with a limitation.
 
 The `.nuspec` is chosen from a unique OPC relationship with Type
 `http://schemas.microsoft.com/packaging/2010/07/manifest` when that target
-exists in the ZIP. Both `Relationships` and `Relationship` must use the OPC
-relationships namespace. The inspector skips other child elements and still
-considers eligible relationships beside them. Without an eligible target, it
+exists in the ZIP. `TargetMode` must be omitted or exactly `Internal` for
+the relationship to select a package member. Both `Relationships` and
+`Relationship` must use the OPC relationships namespace. The inspector skips
+other child elements and considers eligible relationships beside them.
+Without an eligible target, it
 uses a unique `.nuspec` at the package root. Multiple conflicting manifests
 are not decoded.
 
