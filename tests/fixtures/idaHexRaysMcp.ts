@@ -38,6 +38,7 @@ export class RecordingHexRaysIdaMcp implements IdaMcpConnection {
     "save_database",
   ];
   openBackend = "idalib";
+  inventoryBackend: string | undefined;
   rejectOpen = false;
   /** Lose the open reply in transport, optionally after the lease exists. */
   loseOpenReply: { leased: boolean } | undefined;
@@ -101,7 +102,7 @@ export class RecordingHexRaysIdaMcp implements IdaMcpConnection {
           instances: [
             ...[...this.leases].map(([instance_id, lease]) => ({
               path: lease.path,
-              backend: lease.backend,
+              backend: this.inventoryBackend ?? lease.backend,
               status: "attached",
               instance_id,
               error: null,
@@ -130,7 +131,16 @@ export class RecordingHexRaysIdaMcp implements IdaMcpConnection {
           );
         if (this.recordedInputPath !== undefined)
           await appendFile(lease.path, "repacked");
-        return { closed: true };
+        const idbPath = this.reads.idbPath ?? lease.path + ".i64";
+        return {
+          closed: true,
+          final_lease: !this.peers.some(
+            ({ path, status }) =>
+              (path === lease.path || path === idbPath) &&
+              status !== "unavailable",
+          ),
+          idb_path: idbPath,
+        };
       }
       case "execute_python": {
         const id = z.string().parse(args.instance_id);

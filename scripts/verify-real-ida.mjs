@@ -37,6 +37,7 @@ const { values } = parseArgs({
     "second-marker": { type: "string" },
     "expected-string": { type: "string" },
     "expected-xref": { type: "string" },
+    "expected-backend": { type: "string" },
     "package-root": { type: "string" },
     report: { type: "string" },
   },
@@ -95,6 +96,15 @@ if (
   throw new Error(
     "Native IDA verification requires --second-procedure and --second-marker to verify distinct-function switching; see docs/providers/ida-provider.md.",
   );
+const expectedBackend = values["expected-backend"];
+if (
+  expectedBackend !== undefined &&
+  (config.protocol !== "hexrays" ||
+    (expectedBackend !== "idat" && expectedBackend !== "idalib"))
+)
+  throw new Error(
+    "--expected-backend requires a Hex-Rays registration and an idat or idalib value.",
+  );
 const environment = Object.fromEntries(
   Object.entries({
     ...process.env,
@@ -106,6 +116,7 @@ const report = {
   passed: false,
   mode: config.mode,
   protocol: idaCompatibilityProfile(config).protocol,
+  worker_backends: [],
   checks: [],
   observations: [],
   unverified: [],
@@ -135,6 +146,21 @@ const observe = (input) => {
   assert.ok(
     evidence.locations.some((location) => location.kind === "artifact-path"),
   );
+  if (config.protocol === "hexrays") {
+    const backend = evidence.raw_result.worker_backend;
+    assert.ok(
+      backend === "idalib" || backend === "idat",
+      "Hex-Rays evidence must identify the bound worker backend.",
+    );
+    if (expectedBackend !== undefined)
+      assert.equal(
+        backend,
+        expectedBackend,
+        "Hex-Rays worker backend differed from the requested verification lane.",
+      );
+    if (!report.worker_backends.includes(backend))
+      report.worker_backends.push(backend);
+  }
   if (config.mode === "headless") {
     workspaces.add(
       dirname(
@@ -510,6 +536,9 @@ try {
       {
         passed: report.passed,
         mode: report.mode,
+        ...(report.worker_backends.length === 0
+          ? {}
+          : { worker_backends: report.worker_backends }),
         checks: report.checks,
         unverified: report.unverified,
         ...(report.passed

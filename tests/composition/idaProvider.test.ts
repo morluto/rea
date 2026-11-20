@@ -464,9 +464,10 @@ describe("IDA database targets", () => {
     };
   };
 
-  it("analyzes a private copy of an IDA database and leaves the selected database unchanged", async () => {
+  it("analyzes a private database copy through idat and leaves the selected database unchanged", async () => {
     const { root, path, bytes, target, producer, provider, session } =
       await hexRaysSession();
+    producer.openBackend = "idat";
     expect(
       provider.inspectTargetSupport({
         path: join(root, "sample.hop"),

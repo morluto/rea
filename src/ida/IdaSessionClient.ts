@@ -34,6 +34,7 @@ import {
   hexRaysTools,
   runHexRaysQuery,
   type HexRaysBackend,
+  type HexRaysCloseReceipt,
   type HexRaysStatus,
 } from "./IdaHexRaysProtocol.js";
 import { idaCompatibilityProfile } from "./IdaConfiguration.js";
@@ -83,8 +84,6 @@ import {
   analysisClientFailureForOperation,
 } from "../providers/AnalysisClientFailure.js";
 import { errorMessage } from "../kernel/errorMessage.js";
-import { isPathWithinRoot } from "../domain/localPath.js";
-import { isQualifiedCallerPath } from "../filesystem/callerPath.js";
 
 const modernTools = [
   "idb_open",
@@ -139,6 +138,7 @@ class IdaCleanupError extends ProviderAdapterError {
     path: string,
     cause: unknown,
     sessions?: readonly UpstreamSession[],
+    hexRaysClose?: HexRaysCloseReceipt,
   ) {
     super("ida", "close", {
       cause,
@@ -158,6 +158,9 @@ class IdaCleanupError extends ProviderAdapterError {
             ? (cause.diagnostics?.reason ?? cause.message)
             : errorMessage(cause),
         workspace: path,
+        ...(hexRaysClose === undefined
+          ? {}
+          : { hexrays_close: jsonValueSchema.parse(hexRaysClose) }),
         ...(sessions === undefined
           ? {}
           : {
@@ -306,6 +309,8 @@ export class IdaSessionClient implements AnalysisClient {
   #database: string | undefined;
   /** The upstream session id this client requested or was assigned; unknown before then. */
   #expectedSession: string | undefined;
+  #hexRaysOpenedBackend: HexRaysBackend | undefined;
+  #hexRaysCloseReceipt: HexRaysCloseReceipt | undefined;
   #databaseCloseCompleted = false;
   #openAttempted = false;
   #openCompleted = false;
@@ -469,6 +474,9 @@ export class IdaSessionClient implements AnalysisClient {
             metadata_before: before,
             metadata_after: after,
             observations: jsonValueSchema.parse(runner.raw),
+            ...(this.#hexRaysOpenedBackend === undefined
+              ? {}
+              : { worker_backend: this.#hexRaysOpenedBackend }),
             ...this.#healthEvidence(),
           },
           limitations: [...this.#limitations(), ...runner.limitations],
@@ -778,13 +786,14 @@ export class IdaSessionClient implements AnalysisClient {
       if (
         entry?.owned !== true ||
         entry.backend !== "worker" ||
-        (protocol === "hexrays" && entry.hexrays_backend !== "idalib") ||
+        (protocol === "hexrays" &&
+          entry.hexrays_backend !== this.#hexRaysOpenedBackend) ||
         entry.is_active !== true ||
         !sameIdaHostPath(entry.input_path, workspace.inputPath)
       )
         throw new IdaIdentityRefusal(
           "IDA did not return an active owned headless worker for the private input copy.",
-          "Configure the supervisor to return an active owned worker for the private input. Confirm retained cleanup before reopening the target.",
+          "Configure the server to report the same owned worker for the private input in its open and inventory replies. Confirm retained cleanup before reopening the target.",
           "owned_worker_binding",
         );
       this.#database = session;
@@ -825,7 +834,7 @@ export class IdaSessionClient implements AnalysisClient {
   }
 
   /**
-   * Lease an idalib worker for the private input copy. Hex-Rays assigns the
+   * Lease a headless worker for the private input copy. Hex-Rays assigns the
    * instance id, so the binding is the returned id plus its inventory row.
    */
   async #openHexRays(workspace: IdaWorkspace): Promise<string> {
@@ -848,15 +857,10 @@ export class IdaSessionClient implements AnalysisClient {
     this.#lifecycle.push(raw);
     const opened = hexRaysOpenSchema.parse(raw);
     this.#expectedSession = opened.instance_id;
-    if (opened.backend === "idat")
-      throw new IdaIdentityRefusal(
-        "The Hex-Rays server opened an idat worker. This profile requires idalib.",
-        'Set "env": { "IDA_NEXUS_IDALIB_ONLY": "1" } in the Hex-Rays stdio registration, then reopen the target after cleanup.',
-        "headless_backend",
-      );
+    this.#hexRaysOpenedBackend = opened.backend;
     if (opened.backend === "gui")
       throw new AnalysisProtocolError(
-        "IDA attached a GUI database instead of a private idalib worker for the private input copy.",
+        "IDA attached a GUI database instead of a private headless worker for the private input copy.",
       );
     return opened.instance_id;
   }
@@ -895,9 +899,7 @@ export class IdaSessionClient implements AnalysisClient {
         hexrays_status: entry.status,
         hexrays_backend: entry.backend,
         // Nexus may list the private database path in place of the input.
-        referencesWorkspace:
-          isQualifiedCallerPath(entry.path) &&
-          isPathWithinRoot(workspace.directory, entry.path),
+        referencesWorkspace: workspace.containsPath(entry.path),
         // Every listed workspace path blocks release, including unleased rows.
         released: false,
       })),
@@ -985,6 +987,9 @@ export class IdaSessionClient implements AnalysisClient {
           ? metadata.idb_path === null ||
             !sameIdaHostPath(metadata.idb_path, this.#workspace.inputPath)
           : !sameIdaHostPath(metadata.input_path, this.#workspace.inputPath) ||
+            (this.#hexRaysOpenedBackend === "idat" &&
+              (metadata.idb_path === null ||
+                !this.#workspace.containsPath(metadata.idb_path))) ||
             (metadata.input_sha256 != null &&
               metadata.input_sha256.toLowerCase() !==
                 this.#workspace.inputSha256) ||
@@ -1090,7 +1095,7 @@ export class IdaSessionClient implements AnalysisClient {
   async #closeDatabase(database: string): Promise<boolean> {
     if (idaCompatibilityProfile(this.config).protocol === "hexrays") {
       try {
-        hexRaysCloseSchema.parse(
+        this.#hexRaysCloseReceipt = hexRaysCloseSchema.parse(
           await this.connection.call("close_database", {
             instance_id: database,
           }),
@@ -1144,6 +1149,8 @@ export class IdaSessionClient implements AnalysisClient {
             (entry) =>
               entry.owned &&
               entry.backend === "worker" &&
+              (this.#hexRaysOpenedBackend === undefined ||
+                entry.hexrays_backend === this.#hexRaysOpenedBackend) &&
               (entry.session_id === expected || adoptByPath) &&
               sameIdaHostPath(entry.input_path, workspace.inputPath),
           )?.session_id;
@@ -1209,6 +1216,7 @@ export class IdaSessionClient implements AnalysisClient {
         path,
         cause,
         this.#unreleasedSessions(),
+        this.#hexRaysCloseReceipt,
       );
       const client = this;
       // The failure reads this client's later successful close.

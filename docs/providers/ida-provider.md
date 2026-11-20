@@ -209,16 +209,15 @@ The `hexrays` protocol drives the [Hex-Rays IDA MCP](https://github.com/HexRaysS
   "command": "ida-mcp",
   "args": ["stdio", "--agent=rea"],
   "mode": "headless",
-  "protocol": "hexrays",
-  "env": { "IDA_NEXUS_IDALIB_ONLY": "1" }
+  "protocol": "hexrays"
 }
 ```
 
 The profile is headless and stdio only. Hex-Rays database leases belong to the MCP server process, so REA's own stdio child is what makes a lease provably REA's. Attached and HTTP Hex-Rays registrations are rejected, and analyzing a database already open in the IDA GUI is not supported. A registration that omits `protocol` but reaches a Hex-Rays server fails at startup with `advertised_tools` and a recovery naming the `hexrays` registration.
 
-Use the stdio launch command and arguments from your existing installation. Set `IDA_NEXUS_IDALIB_ONLY=1` in the registration as shown above. [Hex-Rays documents](https://github.com/HexRaysSA/ida-mcp#manual-installation) that its GUI plugin can select an `idat` worker for headless analysis. REA supports `idalib` in this profile and reports the setting when a server returns an `idat` lease. The upstream `uvx --exclude-newer=1s` example can resolve newer releases than the version listed in [verification coverage](#verification).
+Use the stdio launch command and arguments from your existing installation. This profile accepts the `idalib` and `idat` headless backends. With the official plugin installed, [Hex-Rays can select `idat`](https://github.com/HexRaysSA/ida-mcp#manual-installation), which uses IDA's Python and installed plugins. To use `idalib` even with the plugin installed, add `"env": { "IDA_NEXUS_IDALIB_ONLY": "1" }` to the registration. The upstream `uvx --exclude-newer=1s` example can resolve newer releases than the version listed in [verification coverage](#verification).
 
-REA copies and verifies the input in a private workspace as for the database supervisor, then calls `open_database` on that copy with `set_current: false`. Hex-Rays assigns the instance id; REA binds the session only when the reply reports an `idalib` backend and `list_databases` shows that id leased for the private input. A GUI database is refused, and the open is treated as unverified.
+REA copies and verifies the input in a private workspace as for the database supervisor, then calls `open_database` on that copy with `set_current: false`. Hex-Rays assigns the instance ID. REA checks that the open reply and inventory agree on the lease and headless backend, and that the inventory path binds it to the private input. Analysis Evidence records the bound backend as `raw_result.worker_backend`. An `idat` worker must also report its database path inside the private workspace. A GUI database is refused, and the open is treated as unverified.
 
 ### Start from an existing IDA database
 
@@ -285,6 +284,8 @@ Complete body ranges, typed reference edges, CFG, referenced data, source locals
 ## Verification
 
 Run `npm run verify:ida -- --target /absolute/path/to/program --procedure main` with a configured upstream server. It exercises production CLI and MCP tools, validates their output contracts and Evidence, checks original-input preservation and session cleanup, and keeps local target data out of its console summary. Supply `--package-root` to verify an extracted or installed package. See [testing](../development/testing.md) for the distinction between adapter tests and real-provider evidence.
+
+For the Hex-Rays profile, pass `--expected-backend idat` or `--expected-backend idalib` to verify the backend that served the CLI and MCP reads. The verifier records the observed backends. For `idat` verification, use an IDA installation with the official plugin and record the MCP and Nexus versions in both Python environments. Full REA `idat` verification is tracked in [issue #12921](https://github.com/morluto/rea/issues/12921).
 
 Native verification requires `--second-procedure other_function --second-marker unique_second_body_text`; these options remain optional for the other profiles. The marker must occur in the second function's pseudocode and be absent from the first; the verifier also checks that returning to the first restores its text.
 

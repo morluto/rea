@@ -165,6 +165,28 @@ describe("Hex-Rays query line", () => {
 });
 
 describe("Hex-Rays IDA MCP startup profile", () => {
+  it("refuses an inconsistent open and inventory backend without querying or closing the worker", async () => {
+    const { root, producer, client } = await fixture();
+    producer.openBackend = "idat";
+    producer.inventoryBackend = "idalib";
+    const result = await client.execute("list_procedures", {});
+    if (result.ok) throw new Error("expected inconsistent backend refusal");
+    expect(projectAnalysisError(result.error).details).toMatchObject({
+      diagnostics: { identity_check: "owned_worker_binding" },
+    });
+    expect((await client.close()).ok).toBe(false);
+    expect(
+      producer.calls.some(
+        ({ name }) => name === "execute_python" || name === "close_database",
+      ),
+    ).toBe(false);
+    expect(await workspaces(root)).toHaveLength(1);
+
+    producer.inventoryBackend = undefined;
+    expect((await client.close()).ok).toBe(true);
+    expect(await workspaces(root)).toEqual([]);
+  });
+
   it("names the Hex-Rays profile when the catalog lacks execute_python", async () => {
     const { producer, client } = await fixture();
     producer.tools = ["open_database", "list_databases", "close_database"];
@@ -278,6 +300,19 @@ describe("Hex-Rays IDA MCP evidence", () => {
     expect((await client.close()).ok).toBe(true);
   });
 
+  it("refuses an idat database path outside the verified private workspace", async () => {
+    const { producer, client } = await fixture();
+    producer.openBackend = "idat";
+    expect((await client.execute("list_procedures", {})).ok).toBe(true);
+    producer.reads.idbPath = "/elsewhere/target.i64";
+    const result = await client.execute("list_procedures", {});
+    if (result.ok) throw new Error("expected a private database path refusal");
+    expect(projectAnalysisError(result.error).details).toMatchObject({
+      diagnostics: { identity_check: "headless_input" },
+    });
+    expect((await client.close()).ok).toBe(true);
+  });
+
   it("keeps the bridge digest and engine output of identity and operation reads", async () => {
     const { producer, client } = await fixture();
     producer.engineOutput = { stdout: "", stderr: "engine warning" };
@@ -305,60 +340,67 @@ describe("Hex-Rays IDA MCP evidence", () => {
 });
 
 describe("Hex-Rays IDA MCP session", () => {
-  it("leases a private idalib worker, answers reads through the query bridge, and releases it", async () => {
-    const { root, target, producer, client } = await fixture();
-    const result = await client.execute("analyze_function", {
-      procedure: "main",
-    });
-    if (!result.ok) throw result.error;
-    const dossier = functionDossierSchema.parse(result.value.result);
-    expect(dossier.pseudocode).toBe("int main(void) { return 42; }");
-    expect(dossier.callees.map(({ name }) => name)).toEqual(["puts"]);
+  it.each(["idalib", "idat"])(
+    "leases a private %s worker, answers reads through the query bridge, and releases it",
+    async (backend) => {
+      const { root, target, producer, client } = await fixture();
+      producer.openBackend = backend;
+      const result = await client.execute("analyze_function", {
+        procedure: "main",
+      });
+      if (!result.ok) throw result.error;
+      const dossier = functionDossierSchema.parse(result.value.result);
+      expect(dossier.pseudocode).toBe("int main(void) { return 42; }");
+      expect(dossier.callees.map(({ name }) => name)).toEqual(["puts"]);
 
-    const [open] = producer.calls;
-    expect(open?.name).toBe("open_database");
-    expect(open?.args.set_current).toBe(false);
-    expect(open?.args.path).not.toBe(target.path);
-    expect(String(open?.args.path)).toContain(root);
-    // Every read is the fixed bridge; no other tool can reach the database.
-    const reads = producer.calls.filter(
-      ({ name }) => !["open_database", "list_databases"].includes(name),
-    );
-    expect(new Set(reads.map(({ name }) => name))).toEqual(
-      new Set(["execute_python"]),
-    );
-    expect(reads.every(({ args }) => args.instance_id === "lease1")).toBe(true);
-    expect(
-      reads.every(({ args }) =>
-        String(args.code).startsWith('"""Read-only REA queries'),
-      ),
-    ).toBe(true);
-    const raw = result.value.rawResult as {
-      observations: { tool: string; arguments: { query: string } }[];
-    };
-    expect(raw.observations.map(({ tool }) => tool)).toEqual(
-      raw.observations.map(() => "execute_python"),
-    );
-    expect(raw.observations.map(({ arguments: args }) => args.query)).toEqual(
-      expect.arrayContaining([
-        "lookup_funcs",
-        "disasm",
-        "decompile",
-        "callees",
-      ]),
-    );
+      const [open] = producer.calls;
+      expect(open?.name).toBe("open_database");
+      expect(open?.args.set_current).toBe(false);
+      expect(open?.args.path).not.toBe(target.path);
+      expect(String(open?.args.path)).toContain(root);
+      // Every read is the fixed bridge; no other tool can reach the database.
+      const reads = producer.calls.filter(
+        ({ name }) => !["open_database", "list_databases"].includes(name),
+      );
+      expect(new Set(reads.map(({ name }) => name))).toEqual(
+        new Set(["execute_python"]),
+      );
+      expect(reads.every(({ args }) => args.instance_id === "lease1")).toBe(
+        true,
+      );
+      expect(
+        reads.every(({ args }) =>
+          String(args.code).startsWith('"""Read-only REA queries'),
+        ),
+      ).toBe(true);
+      expect(result.value.rawResult).toMatchObject({ worker_backend: backend });
+      const raw = result.value.rawResult as {
+        observations: { tool: string; arguments: { query: string } }[];
+      };
+      expect(raw.observations.map(({ tool }) => tool)).toEqual(
+        raw.observations.map(() => "execute_python"),
+      );
+      expect(raw.observations.map(({ arguments: args }) => args.query)).toEqual(
+        expect.arrayContaining([
+          "lookup_funcs",
+          "disasm",
+          "decompile",
+          "callees",
+        ]),
+      );
 
-    expect((await client.close()).ok).toBe(true);
-    expect(producer.calls.at(-2)).toMatchObject({
-      name: "close_database",
-      args: { instance_id: "lease1" },
-    });
-    expect(producer.calls.at(-1)?.name).toBe("list_databases");
-    expect(producer.leases.size).toBe(0);
-    expect(producer.closes).toBe(1);
-    expect(await workspaces(root)).toEqual([]);
-    await access(target.path);
-  });
+      expect((await client.close()).ok).toBe(true);
+      expect(producer.calls.at(-2)).toMatchObject({
+        name: "close_database",
+        args: { instance_id: "lease1" },
+      });
+      expect(producer.calls.at(-1)?.name).toBe("list_databases");
+      expect(producer.leases.size).toBe(0);
+      expect(producer.closes).toBe(1);
+      expect(await workspaces(root)).toEqual([]);
+      await access(target.path);
+    },
+  );
 
   it("refuses a GUI database and retains the workspace it cannot prove released", async () => {
     const { root, producer, client } = await fixture();
@@ -367,7 +409,7 @@ describe("Hex-Rays IDA MCP session", () => {
     expect(result.ok).toBe(false);
     if (!result.ok)
       expect(result.error.message).toContain(
-        "instead of a private idalib worker",
+        "instead of a private headless worker",
       );
     const closed = await client.close();
     expect(closed.ok).toBe(false);
@@ -378,26 +420,9 @@ describe("Hex-Rays IDA MCP session", () => {
     );
   });
 
-  it("refuses idat with idalib-only recovery and releases the private lease", async () => {
-    const { root, producer, client } = await fixture();
-    producer.openBackend = "idat";
-    const result = await client.execute("list_procedures", {});
-    if (result.ok) throw new Error("expected idat refusal");
-    expect(projectAnalysisError(result.error).details).toMatchObject({
-      diagnostics: {
-        recovery: expect.stringContaining("IDA_NEXUS_IDALIB_ONLY"),
-      },
-    });
-    expect(producer.calls.some(({ name }) => name === "execute_python")).toBe(
-      false,
-    );
-    expect((await client.close()).ok).toBe(true);
-    expect(producer.leases.size).toBe(0);
-    expect(await workspaces(root)).toEqual([]);
-  });
-
   it("adopts and releases a late lease when the open reply was lost", async () => {
     const { root, producer, client } = await fixture();
+    producer.openBackend = "idat";
     producer.loseOpenReply = { leased: true };
     expect((await client.execute("list_procedures", {})).ok).toBe(false);
     expect((await client.close()).ok).toBe(false);
@@ -479,12 +504,13 @@ describe("Hex-Rays unleased database inventory", () => {
 
   it.each([
     ["idalib", "available", ""],
-    ["idalib", "unavailable", ".i64"],
+    ["idat", "unavailable", ".i64"],
     ["idat", "available", ".i64"],
   ] as const)(
     "retains the private workspace while an unleased %s database is %s",
     async (backend, status, suffix) => {
       const { root, producer, client } = await fixture();
+      producer.openBackend = backend;
       expect((await client.execute("list_procedures", {})).ok).toBe(true);
       const path = String(
         producer.calls.find(({ name }) => name === "open_database")?.args.path,
@@ -497,6 +523,11 @@ describe("Hex-Rays unleased database inventory", () => {
       expect(closed.error.cleanupIncomplete).toBe(true);
       expect(projectAnalysisError(closed.error).details).toMatchObject({
         diagnostics: {
+          hexrays_close: {
+            closed: true,
+            final_lease: status === "unavailable",
+            idb_path: path + ".i64",
+          },
           upstream_sessions: {
             state: "unverified",
             sessions: [

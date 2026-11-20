@@ -67,9 +67,12 @@ export const hexRaysListSchema = z
   })
   .passthrough();
 
-export const hexRaysCloseSchema = z
-  .object({ closed: z.literal(true) })
-  .passthrough();
+export const hexRaysCloseSchema = z.object({
+  closed: z.literal(true),
+  final_lease: z.boolean().optional(),
+  idb_path: z.string().min(1).optional(),
+});
+export type HexRaysCloseReceipt = z.infer<typeof hexRaysCloseSchema>;
 
 const executionSchema = z
   .object({ result: jsonValueSchema, stdout: z.string(), stderr: z.string() })
