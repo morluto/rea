@@ -757,6 +757,38 @@ it.each(["{not json", "[]", "null"])(
   },
 );
 
+it("does not use index files when the directory package.json is duplicated", async () => {
+  const packageJson = JSON.stringify({
+    name: "hello",
+    publisher: "demo",
+    version: "1.2.3",
+    engines: { vscode: "^1.74.0" },
+    main: "./out",
+  });
+  const directoryManifest = JSON.stringify({ main: "./start.js" });
+  const bytes = await vsixPackageFixture({
+    packageJson,
+    extraMembers: {
+      "extension/out/package.json": directoryManifest,
+      "./extension/out/package.json": directoryManifest,
+      "extension/out/start.js": "exports.activate = () => {};",
+      "extension/out/index.js": "exports.activate = () => {};",
+    },
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.entry_points.main).toEqual({
+    path: "extension/out",
+    present: false,
+  });
+  expect(report.limitations).toContain(
+    VSIX_LIMITATIONS.unreadMainDirectoryPackageJson(
+      "extension/out/package.json",
+    ),
+  );
+});
+
 it("does not use index files when the directory package.json exceeds the manifest budget", async () => {
   const packageJson = JSON.stringify({
     name: "hello",

@@ -61,6 +61,8 @@ export const VSIX_LIMITATIONS = {
     "The selected extension/package.json is not well-formed JSON.",
   oversizedMainDirectoryPackageJson: (path: string, limit: number): string =>
     `Member ${JSON.stringify(path)} exceeds the ${String(limit)}-byte manifest budget and was not read, so the directory main is unresolved; its index files were not used.`,
+  unreadMainDirectoryPackageJson: (path: string): string =>
+    `Member ${JSON.stringify(path)} is encrypted or duplicated and was not read, so the directory main is unresolved; its index files were not used.`,
   malformedMainDirectoryPackageJson: (path: string): string =>
     `Member ${JSON.stringify(path)} is not a JSON object, so the directory main does not resolve; its index files were not used.`,
   entryPointCaseOnlyMatch: (path: string, member: string): string =>
@@ -1082,13 +1084,30 @@ export const parseVsixPackage = async (
         : files.filter((file) => file.path === `${mainPath}/package.json`);
     const mainManifest =
       mainManifestMatches.length === 1 ? mainManifestMatches[0] : undefined;
-    if (
-      mainManifest !== undefined &&
-      !mainManifest.traverses &&
-      !mainManifest.encrypted &&
+    const directoryLookupApplies =
       mainPath !== null &&
       (mainDirectoryOnly ||
-        !resolveEntryPoint(mainPath, NODE_FILE_CANDIDATES, memberPaths).present)
+        !resolveEntryPoint(mainPath, NODE_FILE_CANDIDATES, memberPaths)
+          .present);
+    if (
+      directoryLookupApplies &&
+      mainManifestMatches.length > 0 &&
+      (mainManifest === undefined ||
+        mainManifest.traverses ||
+        mainManifest.encrypted)
+    ) {
+      // A present directory package.json that cannot be read may name another
+      // file or be invalid, so it stops the lookup as an oversized one does.
+      mainDirectoryMain = { kind: "unread" };
+      limitations.push(
+        VSIX_LIMITATIONS.unreadMainDirectoryPackageJson(
+          `${mainPath}/package.json`,
+        ),
+      );
+    } else if (
+      mainManifest !== undefined &&
+      mainPath !== null &&
+      directoryLookupApplies
     ) {
       let decoded: Uint8Array | undefined;
       try {
