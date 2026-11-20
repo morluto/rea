@@ -195,6 +195,32 @@ export async function requireCurrentMainCheckpoint(run, api, source) {
     );
 }
 
+/** Retire publication authority, including when the label was already removed. */
+export async function retireAbandonedRelease(run, api, repository, source, pr) {
+  const pending = "autorelease: pending";
+  if (pr.labels.some(({ name }) => name === pending)) {
+    const removed = await api(
+      `issues/${pr.number}/labels/${encodeURIComponent(pending)}`,
+      undefined,
+      "DELETE",
+    );
+    if (!removed.ok && removed.status !== 404)
+      throw new Error(
+        `Cannot retire the abandoned release PR: HTTP ${removed.status}`,
+      );
+    const current = await readMergedReleasePullRequest(run, {
+      repository,
+      source,
+      targetBranch: "main",
+      pr: pr.number,
+    });
+    if (!current || current.labels.some(({ name }) => name === pending))
+      throw new Error(
+        "The abandoned release PR still has pending publication authority",
+      );
+  }
+}
+
 async function main() {
   const [decision, ...extra] = process.argv.slice(2);
   if (
@@ -261,28 +287,7 @@ async function main() {
     throw new Error("The candidate did not advance the release version");
   await requireUnpublished(api, source, version);
   await recordReleaseAttempt(api, source, parent, decision);
-  const pending = "autorelease: pending";
-  if (pr.labels.some(({ name }) => name === pending)) {
-    const removed = await api(
-      `issues/${pr.number}/labels/${encodeURIComponent(pending)}`,
-      undefined,
-      "DELETE",
-    );
-    if (removed.status !== 204 && removed.status !== 404)
-      throw new Error(
-        `Cannot retire the abandoned release PR: HTTP ${removed.status}`,
-      );
-    const current = await readMergedReleasePullRequest(command, {
-      repository: GITHUB_REPOSITORY,
-      source,
-      targetBranch: "main",
-      pr: pr.number,
-    });
-    if (!current || current.labels.some(({ name }) => name === pending))
-      throw new Error(
-        "The abandoned release PR still has pending publication authority",
-      );
-  }
+  await retireAbandonedRelease(command, api, GITHUB_REPOSITORY, source, pr);
   console.log(
     `Release ${version} at ${source} is abandoned. Revert its release metadata through a reviewed pull request and retain Release-As: ${version} when recutting.`,
   );

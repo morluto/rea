@@ -279,6 +279,7 @@ it("limits recovery to verification and dependent MCP publication from the relea
   expect(workflow.jobs.verify.permissions).toEqual({
     contents: "read",
     actions: "read",
+    "pull-requests": "read",
   });
   const steps = workflow.jobs.verify.steps;
   for (const name of ["verified-release-package", "rea-test-runtime"])

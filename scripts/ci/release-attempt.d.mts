@@ -27,3 +27,15 @@ export function githubApi(
   body?: Record<string, string>,
   method?: string,
 ) => Promise<Response>;
+
+export function retireAbandonedRelease(
+  run: (program: string, args: string[]) => Promise<string>,
+  api: (
+    path: string,
+    body?: Record<string, string>,
+    method?: string,
+  ) => Promise<Response>,
+  repository: string,
+  source: string,
+  pr: { number: number; labels: { name: string }[] },
+): Promise<void>;

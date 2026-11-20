@@ -6,6 +6,7 @@ import {
   inspectGithubRelease,
   recordReleaseAttempt,
   requireCurrentMainCheckpoint,
+  retireAbandonedRelease,
   verifyFrozenReleaseBranch,
 } from "../../../scripts/ci/release-attempt.mjs";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -14,6 +15,60 @@ import { workflowGit } from "../../support/workflowGit.js";
 const source = "a".repeat(40);
 const parent = "b".repeat(40);
 const ref = `refs/tags/rea-release-attempt/${source}`;
+
+it.each([
+  { status: 200, stillPending: false },
+  { status: 404, stillPending: false },
+  { status: 200, stillPending: true },
+  { status: 403, stillPending: true },
+])(
+  "verifies withdrawal of a pending release label after HTTP $status (still pending: $stillPending)",
+  async ({ status, stillPending }) => {
+    const pending = { name: "autorelease: pending" };
+    const pr = {
+      number: 1,
+      body: null,
+      merged_at: "2026-11-20T04:57:56Z",
+      merge_commit_sha: source,
+      base: { ref: "main" },
+      head: {
+        ref: "release-please--branches--main--components--rea-agents",
+        repo: { full_name: "fixture/rea" },
+      },
+      labels: [pending],
+    };
+    const reread = vi.fn(async () =>
+      JSON.stringify({ ...pr, labels: stillPending ? [pending] : [] }),
+    );
+    const result = retireAbandonedRelease(
+      reread,
+      async (path, _body, method) => {
+        expect(path).toBe("issues/1/labels/autorelease%3A%20pending");
+        expect(method).toBe("DELETE");
+        return status === 200
+          ? Response.json([], { status })
+          : new Response(null, { status });
+      },
+      "fixture/rea",
+      source,
+      pr,
+    );
+    if (status === 403) {
+      await expect(result).rejects.toThrow("HTTP 403");
+      expect(reread).not.toHaveBeenCalled();
+    } else if (stillPending) {
+      await expect(result).rejects.toThrow(
+        "still has pending publication authority",
+      );
+    } else {
+      await expect(result).resolves.toBeUndefined();
+      expect(reread).toHaveBeenCalledWith("gh", [
+        "api",
+        "repos/fixture/rea/pulls/1",
+      ]);
+    }
+  },
+);
 
 it("sends authenticated release requests only to the fixed GitHub API endpoint", async () => {
   const request = vi.fn(async (url: URL, options: RequestInit) => {
