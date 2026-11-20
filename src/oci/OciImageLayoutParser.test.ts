@@ -728,6 +728,41 @@ it("keeps the directory reader's unknown coverage and its limitation", async () 
   }
 });
 
+it("keeps unknown coverage when the reader omits a non-file blob entry", async () => {
+  const root = await createTestTempDirectory("rea-oci-traversal-omission-");
+  await writeOciImageLayoutFixture(root);
+  class OmittingReader extends DirectoryArtifactReader {
+    override async *entries(
+      ...args: Parameters<DirectoryArtifactReader["entries"]>
+    ): ReturnType<DirectoryArtifactReader["entries"]> {
+      const [signal, selection] = args;
+      const options =
+        typeof selection === "function"
+          ? { descendInto: selection }
+          : selection;
+      options?.onOmission?.({ path: "blobs/sha256/pipe", kind: "fifo" });
+      yield* super.entries(signal, options);
+    }
+  }
+  const reader = new OmittingReader(root);
+  try {
+    const report = ociImageLayoutSchema.parse(
+      await parseOciImageLayout(
+        reader,
+        inspectOciImageLayoutInputSchema.parse({ path: root }),
+      ),
+    );
+    expect(report.coverage.status).toBe("unknown");
+    expect(
+      report.limitations.some((limitation) =>
+        limitation.includes("blobs/sha256/pipe (fifo)"),
+      ),
+    ).toBe(true);
+  } finally {
+    await reader.close();
+  }
+});
+
 it("keeps a reader failure on a referenced blob instead of a JSON finding", async () => {
   const root = await createTestTempDirectory("rea-oci-blob-close-");
   const written = await writeOciImageLayoutFixture(root);

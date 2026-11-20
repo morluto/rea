@@ -33,6 +33,7 @@ import {
   readArtifactFileChunks,
   streamChunkToBuffer,
   type ArtifactReaderTraversal,
+  type ArtifactTraversalOmission,
   type DirectoryArtifactEntry,
   type DirectoryArtifactReader,
 } from "../resources/index.js";
@@ -464,12 +465,18 @@ export const parseOciImageLayout = async (
       limitations: ["Directory traversal did not report its coverage."],
     },
   };
+  // Directories outside blobs/ are skipped on purpose; any other omission is
+  // an entry the inventory cannot account for.
+  const omitted: ArtifactTraversalOmission[] = [];
   try {
     for await (const entry of reader.entries(signal, {
       maximumEntries: input.max_entries,
       descendInto: (path) => path === "blobs" || path.startsWith("blobs/"),
       onCoverage: (coverage) => {
         traversal.current = coverage;
+      },
+      onOmission: (omission) => {
+        if (omission.kind !== "directory-descendants") omitted.push(omission);
       },
     }))
       entries.push(entry);
@@ -487,6 +494,14 @@ export const parseOciImageLayout = async (
       );
     throw cause;
   }
+  if (omitted.length > 0)
+    traversal.current = {
+      status: "unknown",
+      limitations: [
+        ...traversal.current.limitations,
+        `Directory traversal omitted ${String(omitted.length)} entr${omitted.length === 1 ? "y" : "ies"} that are not regular files, directories, or symlinks; they are absent from the blob inventory. First omitted: ${omitted[0]?.path ?? "unknown"} (${omitted[0]?.kind ?? "unknown"}).`,
+      ],
+    };
   for (const limitation of traversal.current.limitations)
     if (!limitations.includes(limitation)) limitations.push(limitation);
 
