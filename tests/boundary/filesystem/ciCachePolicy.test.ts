@@ -130,7 +130,16 @@ const readWorkflows = async () => {
               z.string(),
               z
                 .object({
-                  steps: z.array(z.record(z.string(), z.unknown())).optional(),
+                  steps: z
+                    .array(
+                      z
+                        .object({
+                          uses: z.string().optional(),
+                          with: z.record(z.string(), z.unknown()).optional(),
+                        })
+                        .passthrough(),
+                    )
+                    .optional(),
                 })
                 .passthrough(),
             )
