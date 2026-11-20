@@ -1135,6 +1135,8 @@
 * **model:** report capped metadata array values as partial coverage ([#11469](https://github.com/morluto/rea/issues/11469)) ([08b5f60](https://github.com/morluto/rea/commit/08b5f60142ad5f6a13c6d95536ef72558675e028))
 * **nativeaot:** read ReadyToRun directories within their PE section ([#12592](https://github.com/morluto/rea/issues/12592)) ([d48f21b](https://github.com/morluto/rea/commit/d48f21bf87bab1e919313d4799ae0296b4e4f39b))
 * **nativeaot:** share checked MethodTable framing ([#12375](https://github.com/morluto/rea/issues/12375)) ([cf9b474](https://github.com/morluto/rea/commit/cf9b474292ae9a6fab6f5107739ac667832079aa))
+* **nativeaot:** share mapped PE scalar reads ([#12610](https://github.com/morluto/rea/issues/12610)) ([c98b956](https://github.com/morluto/rea/commit/c98b956da15ede7a6c45e48ba17723c4b2dbf8a5))
+* **nativeaot:** share mapped scalar reads ([c98b956](https://github.com/morluto/rea/commit/c98b956da15ede7a6c45e48ba17723c4b2dbf8a5))
 * **native:** build debugger and native cancellations with a required reason ([#10599](https://github.com/morluto/rea/issues/10599)) ([57f75bb](https://github.com/morluto/rea/commit/57f75bb723d43d3541bc0a3e68dbefb9c50a7a86))
 * **native:** parse native inventory results once at the operation port ([#10880](https://github.com/morluto/rea/issues/10880)) ([66d1527](https://github.com/morluto/rea/commit/66d1527a3da3dfd2e463c82c0a8c5830da377bc0))
 * **native:** read Mach-O initializer symbols and relocations with the image reader ([#12571](https://github.com/morluto/rea/issues/12571)) ([6f3c016](https://github.com/morluto/rea/commit/6f3c016a5a173ec1a381cc625a76f80769dd43c2))
