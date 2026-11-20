@@ -318,8 +318,8 @@ Runtime updates apply to newly accepted operations on the existing Program.
 They preserve accepted budgets and do not clear cleanup blockers or change the
 client deadline. Transient decompile timeout failures remain uncached so the
 same function can be retried after raising the limit. See the
-[settings design](../design/limits-and-recovery.md) for snapshots, precedence,
-and provider integration.
+[analysis settings and recovery](../reference/limits-and-recovery.md#precedence-and-lifetime)
+for precedence and lifetime.
 
 Every Ghidra analysis profile commits `producer`: the REA release and a SHA-256
 of the packaged bridge scripts. A snapshot replays only under the same

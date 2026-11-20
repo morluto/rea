@@ -1,168 +1,17 @@
 # Analysis settings, limits, and recovery
 
-This guide explains the runtime settings design for maintainers and developers:
-who owns each value, when an update takes effect, how providers enforce it, and
-how to extend the system. The public tool contract is in
-[MCP contracts](../reference/mcp-contracts.md#editable-analysis-settings); recorded runtime
-checks and their limitations are in the
-[verification report](../verification/runtime-analysis-settings.md). The
-[limit inventory](rea-limit-inventory.md) lists every numeric `REA_` limit, which
-of them are runtime settings, and which stay restart-only.
-
-## Problem and design boundary
-
-A valid workload can exceed a conservative default. An oversized ASAR header
-may prevent analysis of the entire archive; a slow Ghidra function may exceed
-its decompile deadline. Requiring a new REA process to change either budget
-interrupts the investigation and can discard reusable provider state.
-
-REA exposes a curated set of analysis defaults through MCP so callers can
-adjust a reported limit and retry the same workload in the running runtime.
-Each setting has a typed value, resource bounds, an enforcement owner, and a
-defined application point. The design applies across archive admission,
-provider startup, operation deadlines, and worker memory requests.
-
-The setter changes in-memory defaults. It does not edit arbitrary environment
-variables, configuration files, MCP registrations, or provider installations.
-Those mechanisms have different owners and lifetimes. It also cannot change a
-client deadline, extend accepted work, release retained resources, or remove a
-fixed representation limit. Exposing a setting requires a working enforcement
-path, not just an entry in the tool schema.
-
-Further ceilings that should become settings are tracked in
-[#6176](https://github.com/morluto/rea/issues/6176). Naming honesty for limit
-errors is [#5910](https://github.com/morluto/rea/issues/5910).
-
-## Ownership and data flow
-
-| Owner                                                                                                                                                                                                              | Responsibility                                                                                                                                                                                     |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Domain definitions](https://github.com/morluto/rea/blob/main/src/domain/analysisSettingDefinitions.ts) and [types](https://github.com/morluto/rea/blob/main/src/domain/analysisSettings.ts)                       | Exact setting IDs, value types, shared bounds/defaults, units, provider/operation associations, application points, and structured limit metadata. Numeric constants stay with their domain owner. |
-| [Launch parser](https://github.com/morluto/rea/blob/main/src/config/analysisSettings.ts)                                                                                                                           | Parse selected launch values once, preserving an invalid value as a typed configuration failure rather than substituting a default.                                                                |
-| [AnalysisSettings](https://github.com/morluto/rea/blob/main/src/application/AnalysisSettings.ts)                                                                                                                   | Own one runtime's launch baseline, immutable override revisions, atomic updates, inspection, and accepted-operation snapshots. It does not own provider lifecycle or cleanup.                      |
-| [Composition](https://github.com/morluto/rea/blob/main/src/main/eagerRuntime.ts) and [typed configuration views](https://github.com/morluto/rea/blob/main/src/config/runtimeAnalysisSettings.ts)                   | Inject the same settings reader into providers and workflows; translate overrides into the configuration each consumer understands.                                                                |
-| Provider or resource owner                                                                                                                                                                                         | Resolve the effective budget, enforce it at the applicable boundary, and attach the actual value and known source to failures.                                                                     |
-| [MCP registration boundary](https://github.com/morluto/rea/blob/main/src/server/EvidenceMcpServerCore.ts)                                                                                                          | Enter the operation's settings scope before invoking its handler.                                                                                                                                  |
-| [Settings contracts](https://github.com/morluto/rea/blob/main/src/contracts/analysisSettingsContracts.ts) and [settings tool bindings](https://github.com/morluto/rea/blob/main/src/server/serviceToolBindings.ts) | Validate named requests and deliver inspection/update results without requiring an open target or healthy analysis provider.                                                                       |
-
-The normal path is: composition creates the store, an MCP handler captures its
-current revision, and providers read that snapshot when resolving budgets.
-If an owner rejects work, it reports the effective limit through the shared
-error projection. A subsequent settings update publishes a new revision for
-later handlers. It does not reach into the failed operation or retry it.
-
-### Accepted-operation snapshots
-
-`AnalysisSettings.run()` installs the current immutable snapshot in
-`AsyncLocalStorage`. Its `read` function returns that snapshot inside the
-operation and the latest revision outside it. Providers depend on the reader
-contract rather than on the mutable store or an ambient environment lookup.
-
-Acceptance here is entry into the registered handler's settings scope, not
-arrival of bytes at the MCP transport. Work queued or awaited within that scope
-keeps its snapshot. Deferred server initialization must still dispatch through
-the canonical scoped handler.
-
-| Event                                                     | Revision used                       |
-| --------------------------------------------------------- | ----------------------------------- |
-| Operation A enters its handler, then waits for a provider | Current revision 0                  |
-| A settings update publishes revision 1                    | Future handlers can read revision 1 |
-| Operation A resumes and starts its worker                 | Its accepted revision 0             |
-| Operation B enters its handler                            | Revision 1                          |
-
-This gives each operation stable budget semantics even if another connection
-updates settings while it waits. `next_worker` and `next_startup` describe where
-an accepted value is applied; they do not cause workers or startups belonging
-to an older operation to adopt a newer revision.
-
-Inspection deliberately reads the store's current defaults, rather than the
-calling operation's snapshot. It reports `active_values.status: "not_observed"`:
-an inspection result cannot establish the budget or remaining time of an
-already-running worker.
-
-### Composition and embedding
-
-The MCP runtime creates one store and supplies its reader to provider factories.
-`createServer` uses a supplied store or creates one, and wires its default
-providers to that store. An embedder supplying a custom binary session or other
-provider must also inject the same reader into that provider's composition and
-pass the store to `createServer`. Merely exposing the settings tools cannot
-make a custom provider consume updates.
-
-Keep default factories, explicitly supplied providers, transport composition,
-and deferred handler dispatch covered separately where their wiring differs.
-Resolve settings at the operation boundary; copying a runtime value into a
-provider constructor would freeze it at launch. For entrypoints outside the
-MCP wrapper, an embedder needing the same snapshot guarantee must establish
-the operation scope with `AnalysisSettings.run()`.
-
-## Turn a hardcoded limit into a runtime setting
-
-A hardcoded limit becomes an `REA_` runtime setting. Give it a default, a
-floor, and a maximum. An error names the setting, the effective value, the
-source, and the range.
-
-Put the number in a named constant with a unit. Do not leave it as a magic
-number at the call site. The setting's unset value is that constant. Pure
-numeric contracts live in `src/domain/analysisResourceLimits.ts`
-or their existing domain owner. `analysisSettingDefinitions.ts` binds the
-curated runtime IDs to those same bounds, defaults and application points.
-Environment parsers and recovery text stay under `src/config/`; register launch
-schemas on `environmentSchema` so startup and doctor agree. Add launch settings
-to `SELECTED_REGISTRATION_SETTINGS` when setup should forward them. Unset keeps
-today's behavior. An invalid launch value remains a configuration failure,
-never a silent fallback; its validation boundary determines whether MCP can
-start (see [invalid launch configuration](#invalid-launch-configuration)). An
-invalid runtime write is `invalid_request` and changes nothing.
-
-For example, `regex.matching_deadline_ms` and its launch seed
-`REA_REGEX_MATCHING_DEADLINE_MS` share a 5000 ms default, 1 ms floor and
-2147483647 ms maximum. Node schedules a longer `setTimeout` delay as 1 ms.
-Changing the runtime setting affects the next accepted search; changing the
-launch environment affects the next REA process.
-
-[`REA_MCP_MAX_RESPONSE_BYTES`](https://github.com/morluto/rea/blob/main/src/config/mcpResponseBudget.ts)
-is the byte-budget shape: a decimal safe integer with a 10 MiB floor
-(`MINIMUM_RESPONSE_BYTES`), the same shared schema, and no silent fallback. A
-change needs a REA restart and a matching client receive buffer. It does not
-raise REA's reserved string limit or Node's string ceiling. Like the regex
-deadline, it is in `SELECTED_REGISTRATION_SETTINGS`, so setup forwards an
-explicit selection into the client registration.
-
-Windows ChangeTime admission waits out a fresh timestamp before recording a
-baseline. `REA_WINDOWS_CHANGE_TIME_DRIFT_MS` (default 2000 ms, floor 1 ms,
-maximum 60000 ms), `REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS` (default 25 ms,
-floor 1 ms, maximum 1000 ms), and `REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS`
-(default 40, floor 1, maximum 1000) are runtime settings. Unset keeps those
-defaults. An invalid launch value is a configuration error: it names the
-setting, the rejected value, source `setting`, the default, the floor, the
-maximum, and `update_mode: "runtime"`. It omits `pending_restart` because
-the rejected value is not an accepted configuration. Change the
-active value with `update_analysis_settings`. The launch seed must be a
-positive decimal integer in that range. Setup forwards an explicit selection.
-When the poll budget runs out, admission keeps the last observation
-instead of failing the readable file. Raising a setting only changes how long
-that wait can last. It does not change Windows ChangeTime itself.
-
-A per-call budget can have a runtime default without having an environment
-setting. JavaScript `max_heap_mb`
-(CLI `--max-heap-mb`) is an integer from 128 to 16384 MiB, default 1024. It
-applies on the next analysis, which starts a new worker, and does not restart
-REA. It does not raise the parent result budget, transfer ceilings, or fixed
-parser limits.
-
-Host memory and `NODE_OPTIONS` do not raise a REA admission unless that
-admission's recovery says so. The JavaScript parent result budget is one that
-does: its recovery says to set `NODE_OPTIONS` (for example
-`--max-old-space-size=<MiB>`) on the process that starts REA, then restart
-that process. `max_heap_mb` does not raise it.
+Use this guide to inspect and change REA analysis budgets, and to recover from
+a resource limit. See the [MCP contracts](mcp-contracts.md#editable-analysis-settings),
+the [limit inventory](rea-limit-inventory.md), and the
+[verification report](../verification/runtime-analysis-settings.md).
 
 ## Runtime settings through MCP
 
 `inspect_analysis_settings` lists the curated settings, their current and launch
 values, source, bounds, application point and relevant operation names. Filters
-by exact setting IDs, provider or operation intersect. Active worker values are explicitly `not_observed`; a configured default is
-not a measurement of active work. Inspection also separates known server limits from unknown client deadlines and receive buffers.
+by exact setting IDs, provider or operation intersect. Inspection marks active
+worker values as `not_observed` and distinguishes known server limits from
+unknown client deadlines and receive buffers.
 
 `update_analysis_settings` accepts an atomic `changes` array. Each entry names
 an exact `setting` and either `action: "set"` with a schema-validated `value`, or
@@ -177,23 +26,6 @@ effective number stays the same. Validation, revision checks, and duplicate-key
 checks all happen before publishing the replacement snapshot; a rejected batch
 cannot partially apply. Clients coordinating writes can supply
 `expected_revision`; without it, valid updates apply to the current state.
-
-| Runtime setting                                                                                                 | Application point                                                                            |
-| --------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `asar.max_header_bytes`                                                                                         | Next archive operation, including full JavaScript application analysis                       |
-| `asar.max_listing_bytes`                                                                                        | Next expanded ASAR listing, independently of packed header bytes                             |
-| `ghidra.startup_timeout_ms`, `hopper.startup_timeout_ms`                                                        | Next provider startup attempt                                                                |
-| `ghidra.decompile_timeout_seconds`                                                                              | Next operation on the existing Ghidra Program; `null` means unbounded                        |
-| `ghidra.decompile_max_payload_mib`                                                                              | Next native decompile; `null` preserves the selected provider's payload default              |
-| `ghidra.value_flow_max_operations`, `ghidra.value_flow_max_inputs_per_operation`, `ghidra.value_flow_max_edges` | Next function value-flow projection on the existing Program                                  |
-| `jadx.operation_timeout_ms`                                                                                     | Next JADX operation                                                                          |
-| `regex.matching_deadline_ms`, `regex.worker_heap_request_mib`                                                   | Next search / new regex worker                                                               |
-| `capture.decoder_old_generation_mib`                                                                            | Next owned capture decoder                                                                   |
-| `javascript.analysis_timeout_ms`, `javascript.max_heap_mb`                                                      | Next source analysis / new JavaScript worker                                                 |
-| `javascript.member_mutation_alias_states`                                                                       | Next JavaScript application, web bundle or reference-source analysis                         |
-| `wasm.command_timeout_ms`                                                                                       | Next WABT operation                                                                          |
-| `native.matching_representation_bytes`                                                                          | Next `match_native_functions` request                                                        |
-| `zstd.max_frames`                                                                                               | Next exact Zstandard decode for an ELF section, OTA `REPLACE_ZSTD` operation, or GPU payload |
 
 ### Precedence and lifetime
 

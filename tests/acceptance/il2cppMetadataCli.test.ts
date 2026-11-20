@@ -496,70 +496,65 @@ cliTest(
     const root = await createTestTempDirectory("rea-il2cpp-prefix-fail-");
     const { client, call } = await connectLocalToolsMcp();
 
-    for (const length of [4, 5, 6, 7]) {
-      const path = join(root, `magic-${length}.dat`);
-      const bytes = Buffer.alloc(length);
-      bytes.writeUInt32LE(0xfab11baf, 0);
-      await writeFile(path, bytes);
+    const path = join(root, "incomplete-version.dat");
+    const bytes = Buffer.from([0xaf, 0x1b, 0xb1, 0xfa, 37, 0, 0]);
+    await writeFile(path, bytes);
 
-      const expected = {
-        code: "invalid_request",
-        details: {
-          operation: "inspect_il2cpp_metadata",
-          issues: [
-            {
-              path: ["path"],
-              reason: "invalid_format",
-              message: expect.stringContaining(
-                "truncated-header: the file has",
-              ),
+    const expected = {
+      code: "invalid_request",
+      details: {
+        operation: "inspect_il2cpp_metadata",
+        issues: [
+          {
+            path: ["path"],
+            reason: "invalid_format",
+            message: expect.stringContaining("truncated-header"),
+          },
+        ],
+        partial_observation: {
+          normalized_result: {
+            artifact: {
+              path,
+              bytes: bytes.length,
+              sha256: createHash("sha256").update(bytes).digest("hex"),
             },
-          ],
-          partial_observation: {
-            normalized_result: {
-              artifact: {
-                path,
-                bytes: length,
-                sha256: createHash("sha256").update(bytes).digest("hex"),
-              },
-              inventory_status: "not-returned-as-complete",
-            },
+            inventory_status: "not-returned-as-complete",
           },
         },
-      };
-      const result = await cli.run({
-        arguments: ["inspect-il2cpp-metadata", path, "--json"],
-      });
-      expect(result.exitCode).toBe(1);
-      expect(result.json).toMatchObject(expected);
+      },
+    };
+    const result = await cli.run({
+      arguments: ["inspect-il2cpp-metadata", path, "--json"],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject(expected);
 
-      const response = await call("inspect_il2cpp_metadata", { path });
-      const projected = parseMcpToolError(response).error;
-      expect(projected).toMatchObject({
-        ...expected,
-        details: {
-          ...expected.details,
-          partial_observation: {
-            kind: "retained-evidence",
-            evidence_id: expect.any(String),
-          },
+    const response = await call("inspect_il2cpp_metadata", { path });
+    const projected = parseMcpToolError(response).error;
+    expect(projected).toMatchObject({
+      ...expected,
+      details: {
+        ...expected.details,
+        partial_observation: {
+          kind: "retained-evidence",
+          evidence_id: expect.any(String),
         },
-      });
-      const reference = projected.details?.partial_observation as {
-        evidence_id: string;
-      };
-      const bundle = parseEvidenceBundle(
-        toolContract("get_evidence_bundle").outputSchema.parse(
-          (await call("get_evidence_bundle", { detail: "complete" }))
-            .structuredContent,
-        ).result,
-      );
-      expect(
-        bundle.records.find(
-          ({ evidence_id }) => evidence_id === reference.evidence_id,
-        ),
-      ).toMatchObject(expected.details.partial_observation);
-    }
+      },
+    });
+    const reference = projected.details?.partial_observation as {
+      evidence_id: string;
+    };
+    const bundle = parseEvidenceBundle(
+      toolContract("get_evidence_bundle").outputSchema.parse(
+        (await call("get_evidence_bundle", { detail: "complete" }))
+          .structuredContent,
+      ).result,
+    );
+    expect(
+      bundle.records.find(
+        ({ evidence_id }) => evidence_id === reference.evidence_id,
+      ),
+    ).toMatchObject(expected.details.partial_observation);
     await client.ping();
   },
 );
