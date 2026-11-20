@@ -9,8 +9,6 @@
   "src/domain/native/readBinaryContainer.ts": 1,
   "src/domain/pngVisualDiff.ts": 2,
   "src/ghidra/extensions/GhidraExtensions.ts": 1,
-  "src/il2cpp/Il2cppBinaryImage.ts": 2,
-  "src/il2cpp/Il2cppBinaryRegistration.ts": 8,
   "src/native/AppleDispatchMetadata.ts": 4,
   "src/native/AppleObjcDispatchFacets.ts": 1,
   "src/native/AppleSwiftDispatchFacets.ts": 1,
