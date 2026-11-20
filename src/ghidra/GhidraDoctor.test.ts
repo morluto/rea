@@ -170,7 +170,7 @@ describe("Ghidra doctor selection admission", () => {
       );
       expect(result).toMatchObject({
         available,
-        providerVersion: "12.1.4",
+        providerVersion: SUPPORTED_GHIDRA_VERSION,
         registrationEnvironment: { GHIDRA_INSTALL_DIR: INSTALL },
       });
       expect(
