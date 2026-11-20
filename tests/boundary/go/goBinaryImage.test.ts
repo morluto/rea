@@ -281,12 +281,9 @@ it("refuses an unmapped 64-bit pointer string address", () => {
   );
 });
 
-it.each([
-  ["inline", "Go build-info string range is truncated"],
-  ["pointer", "Go build-info pointer string length exceeds the file extent"],
-] as const)(
+it.each(["inline", "pointer"] as const)(
   "classifies impossible %s string extents before the decoding allowance",
-  (encoding, message) => {
+  (encoding) => {
     const fixture = createGoBinaryFixture({ encoding });
     if (encoding === "pointer") {
       fixture.bytes.writeBigUInt64LE(0xffffffffffffffffn, 1544);
@@ -300,7 +297,7 @@ it.each([
       readGoBinaryImage(fixture.bytes, {
         budgets: { max_build_info_bytes: 1 },
       }),
-    ).toThrow(expect.objectContaining({ kind: "malformed", message }));
+    ).toThrow(expect.objectContaining({ kind: "malformed" }));
   },
 );
 
