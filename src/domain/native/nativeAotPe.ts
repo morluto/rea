@@ -932,23 +932,32 @@ const findDirectory = (
   );
   let truncated = false;
   scan: for (const { section, begin, end, first } of ranges) {
-    for (let offset = first; offset <= end - 16; offset += 8) {
+    const fields = new BinaryReader(
+      bytes.subarray(begin, end),
+      true,
+      NATIVE_AOT_FORMAT,
+    );
+    for (
+      let offset = first - begin;
+      offset <= fields.bytes.length - 16;
+      offset += 8
+    ) {
       if (!budget.consumeWork(8)) {
         truncated = true;
         break scan;
       }
       scanBytesExamined += 8;
-      if (bytes.readUInt32LE(offset) !== RTR_SIGNATURE) continue;
+      if (fields.u32(offset) !== RTR_SIGNATURE) continue;
       if (!budget.consumeWork(16)) {
         truncated = true;
         break scan;
       }
-      const count = bytes.readUInt16LE(offset + 12);
+      const count = fields.u16(offset + 12);
       if (
-        bytes.readUInt8(offset + 14) !== RTR_ROW_SIZE ||
-        bytes.readUInt8(offset + 15) !== RTR_ROW_TYPE ||
+        fields.u8(offset + 14) !== RTR_ROW_SIZE ||
+        fields.u8(offset + 15) !== RTR_ROW_TYPE ||
         count < 1 ||
-        offset > end - (16 + count * RTR_ROW_SIZE)
+        offset > fields.bytes.length - (16 + count * RTR_ROW_SIZE)
       )
         continue;
       const rows: RtrSection[] = [];
@@ -959,9 +968,9 @@ const findDirectory = (
           break scan;
         }
         const p = offset + 16 + row * RTR_ROW_SIZE;
-        const type = bytes.readUInt32LE(p);
-        const start = bytes.readBigUInt64LE(p + 8);
-        const finish = bytes.readBigUInt64LE(p + 16);
+        const type = fields.u32(p);
+        const start = fields.word(p + 8, 64);
+        const finish = fields.word(p + 16, 64);
         const isConsumedRange =
           type === FROZEN_OBJECT_REGION || type === DEHYDRATED_DATA;
         const isTypeManagerIndirection = type === 204;
@@ -993,7 +1002,7 @@ const findDirectory = (
           }
           rows.push({
             type,
-            flags: bytes.readUInt32LE(p + 4),
+            flags: fields.u32(p + 4),
             start,
             end: finish,
           });
@@ -1003,9 +1012,9 @@ const findDirectory = (
         matches++;
         if (found === null)
           found = {
-            address: image.addressForRva(section.rva + offset - begin),
-            major: bytes.readUInt16LE(offset + 4),
-            minor: bytes.readUInt16LE(offset + 6),
+            address: image.addressForRva(section.rva + offset),
+            major: fields.u16(offset + 4),
+            minor: fields.u16(offset + 6),
             sections: rows,
           };
       }

@@ -30,7 +30,10 @@ import {
   elfNoteTypeName,
   elfObjectTypeName,
 } from "../../domain/native/elfNotes.js";
-import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
+import {
+  BinaryFormatFailure,
+  BinaryReader,
+} from "../../domain/binaryContainer.js";
 import { decodeLimit, ParseFailureError } from "../../domain/parseFailure.js";
 import {
   decodeElfSectionNameRequest,
@@ -394,27 +397,17 @@ const decodeCorePrpsinfo = (
 const decodeCoreFile = (
   descriptor: Buffer,
   little: boolean,
-  wide: boolean,
+  bits: 32 | 64,
   text: TextBudget,
 ): ElfNotes["entries"][number]["core"] => {
-  const wordSize = wide ? 8 : 4;
+  const wordSize = bits / 8;
   const headerSize = wordSize * 2;
   if (descriptor.length < headerSize) return null;
 
-  const readWord = (off: number): bigint => {
-    if (wide) {
-      return little
-        ? descriptor.readBigUInt64LE(off)
-        : descriptor.readBigUInt64BE(off);
-    }
-    const val = little
-      ? descriptor.readUInt32LE(off)
-      : descriptor.readUInt32BE(off);
-    return BigInt(val);
-  };
+  const reader = new BinaryReader(descriptor, little, "elf-notes");
 
-  const countBig = readWord(0);
-  const pageSizeBig = readWord(wordSize);
+  const countBig = reader.word(0, bits);
+  const pageSizeBig = reader.word(wordSize, bits);
   if (countBig > 0xffffffffn || pageSizeBig > 0xffffffffn || pageSizeBig === 0n)
     return null;
   const count = Number(countBig);
@@ -425,7 +418,7 @@ const decodeCoreFile = (
   if (BigInt(descriptor.length) < neededBytes) return null;
   const tableBytes = Number(neededBytes);
 
-  const rowBytes = count * (wide ? 54 : 30);
+  const rowBytes = count * (bits === 64 ? 54 : 30);
   if (rowBytes > text.limit - text.used) {
     throw noteTextLimit(text);
   }
@@ -475,9 +468,9 @@ const decodeCoreFile = (
   strPos = tableBytes;
   for (let i = 0; i < count; i++) {
     const entryOff = headerSize + i * entrySize;
-    const start = readWord(entryOff);
-    const end = readWord(entryOff + wordSize);
-    const offsetPages = readWord(entryOff + wordSize * 2);
+    const start = reader.word(entryOff, bits);
+    const end = reader.word(entryOff + wordSize, bits);
+    const offsetPages = reader.word(entryOff + wordSize * 2, bits);
     const nullIdx = descriptor.indexOf(0, strPos);
     const pathBuf = descriptor.subarray(strPos, nullIdx);
     strPos = nullIdx + 1;
@@ -529,10 +522,10 @@ const decodeCoreSiginfo = (
 const decodeCoreAuxv = (
   descriptor: Buffer,
   little: boolean,
-  wide: boolean,
+  bits: 32 | 64,
   text: TextBudget,
 ): ElfNotes["entries"][number]["core"] => {
-  const wordSize = wide ? 8 : 4;
+  const wordSize = bits / 8;
   const entrySize = wordSize * 2;
   if (descriptor.length < entrySize || descriptor.length % entrySize !== 0)
     return null;
@@ -542,23 +535,14 @@ const decodeCoreAuxv = (
   let nullIndex = text.scans.get(scanKey);
   if (nullIndex === -1) return null;
 
-  const readWord = (off: number): bigint => {
-    if (wide) {
-      return little
-        ? descriptor.readBigUInt64LE(off)
-        : descriptor.readBigUInt64BE(off);
-    }
-    return BigInt(
-      little ? descriptor.readUInt32LE(off) : descriptor.readUInt32BE(off),
-    );
-  };
+  const reader = new BinaryReader(descriptor, little, "elf-notes");
 
   if (nullIndex === undefined) {
     chargeText(text, descriptor.length, "scanned");
     let found = false;
     for (let i = 0; i < totalPairs; i++) {
       const off = i * entrySize;
-      const aTypeBig = readWord(off);
+      const aTypeBig = reader.word(off, bits);
       if (aTypeBig > 0xffffffffn) {
         text.scans.set(scanKey, -1);
         return null;
@@ -582,15 +566,15 @@ const decodeCoreAuxv = (
     text.scans.set(scanKey, nullIndex);
   }
 
-  const rowBytes = nullIndex * (wide ? 38 : 30);
+  const rowBytes = nullIndex * (bits === 64 ? 38 : 30);
   chargeText(text, rowBytes);
 
   const auxv: { type: number; type_name: string | null; value: string }[] =
     new Array(nullIndex);
   for (let i = 0; i < nullIndex; i++) {
     const off = i * entrySize;
-    const aType = Number(readWord(off));
-    const aVal = readWord(off + wordSize);
+    const aType = Number(reader.word(off, bits));
+    const aVal = reader.word(off + wordSize, bits);
     auxv[i] = {
       type: aType,
       type_name: AUXV_TYPE_NAMES[aType] ?? null,
@@ -611,17 +595,18 @@ const decodeCore = (
   type: number,
   descriptor: Buffer,
   little: boolean,
-  wide: boolean,
+  bits: 32 | 64,
   machine: number,
   text: TextBudget,
 ): ElfNotes["entries"][number]["core"] => {
   if (owner !== "CORE") return null;
-  if (type === 3) return decodeCorePrpsinfo(descriptor, little, wide, text);
+  if (type === 3)
+    return decodeCorePrpsinfo(descriptor, little, bits === 64, text);
   if (type === 0x46494c45)
-    return decodeCoreFile(descriptor, little, wide, text);
+    return decodeCoreFile(descriptor, little, bits, text);
   if (type === 0x53494749)
     return decodeCoreSiginfo(descriptor, little, machine);
-  if (type === 6) return decodeCoreAuxv(descriptor, little, wide, text);
+  if (type === 6) return decodeCoreAuxv(descriptor, little, bits, text);
   return null;
 };
 
@@ -1081,7 +1066,7 @@ const toEntry = (
           note.type,
           note.descriptor,
           little,
-          header.elfClass === 64,
+          header.elfClass,
           header.machine,
           text,
         )

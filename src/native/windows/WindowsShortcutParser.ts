@@ -344,10 +344,11 @@ type RecordedPath = {
   readonly extension: string | null;
 };
 
-type LinkInfoPathUncertainty = {
+type TargetPathUncertainty = {
   local: boolean;
   network: boolean;
   suffix: boolean;
+  environment: boolean;
 };
 
 const isAscii = (text: string): boolean =>
@@ -418,7 +419,7 @@ const iconDiffersFromTarget = (
 /** LinkInfo local and network base paths, each joined with CommonPathSuffix. */
 const linkInfoTargets = (
   info: NonNullable<WindowsShortcut["link_info"]>,
-  uncertainty: LinkInfoPathUncertainty,
+  uncertainty: TargetPathUncertainty,
 ): RecordedPath[] => {
   // Neither joined LinkInfo path can be proven complete without its suffix.
   if (uncertainty.suffix) return [];
@@ -471,7 +472,7 @@ const targetPaths = (
     readonly id_list: WindowsShortcut["id_list"];
     readonly extra_data: WindowsShortcut["extra_data"];
   },
-  uncertainty: LinkInfoPathUncertainty,
+  uncertainty: TargetPathUncertainty,
 ): RecordedPath[] => {
   const values: RecordedPath[] =
     report.link_info === null
@@ -507,7 +508,7 @@ const observationsOf = (
     WindowsShortcut,
     "header" | "link_info" | "string_data" | "id_list" | "extra_data"
   >,
-  uncertainty: LinkInfoPathUncertainty,
+  uncertainty: TargetPathUncertainty,
 ): WindowsShortcut["observations"] => {
   const argumentsDeclared = (report.header.link_flags.raw & 0x00000020) !== 0;
   const argumentsField = report.string_data.arguments;
@@ -520,7 +521,10 @@ const observationsOf = (
         : "";
   const targets = targetPaths(report, uncertainty);
   const targetPathUnknown =
-    uncertainty.local || uncertainty.network || uncertainty.suffix;
+    uncertainty.local ||
+    uncertainty.network ||
+    uncertainty.suffix ||
+    uncertainty.environment;
   const iconDifference = iconDiffersFromTarget(
     report.string_data.icon_location,
     targets,
@@ -556,11 +560,10 @@ const observationsOf = (
 };
 
 const decodeIdListItem = (
-  bytes: Buffer,
+  data: Buffer,
   offset: number,
   size: number,
 ): WindowsShortcutIdListItem => {
-  const data = bytes.subarray(offset + 2, offset + size);
   const typeByte = data.length === 0 ? 0 : (data[0] ?? 0);
   const raw = (): WindowsShortcutIdListItem => ({
     kind: "raw",
@@ -602,7 +605,7 @@ const decodeIdListItem = (
       size,
       type_byte: typeByte,
       entry_class: (typeByte & 0x01) !== 0 ? "directory" : "file",
-      file_size: data.readUInt32LE(2),
+      file_size: new BinaryReader(data, true, "windows-shortcut").u32(2),
       short_name: name,
     };
   }
@@ -616,7 +619,7 @@ type Walk = {
   stopped: boolean;
   stringBytes: number;
   maxStringBytes: number;
-  pathUncertainty: LinkInfoPathUncertainty;
+  pathUncertainty: TargetPathUncertainty;
 };
 
 /** A declared preferred path that could not be decoded cannot be treated as absent. */
@@ -724,13 +727,14 @@ const readUtf16At = (
 };
 
 const parseVolume = (
-  view: Buffer,
+  linkInfo: BinaryReader,
   base: number,
   offset: number,
   field: number,
   walk: Walk,
 ): NonNullable<WindowsShortcut["link_info"]>["volume"] => {
   if (offset === 0) return null;
+  const view = linkInfo.bytes;
   if (!fits(view, offset, 16)) {
     note(
       walk,
@@ -740,7 +744,7 @@ const parseVolume = (
     );
     return null;
   }
-  const size = view.readUInt32LE(offset);
+  const size = linkInfo.u32(offset);
   if (size < 16 || !fits(view, offset, size)) {
     note(
       walk,
@@ -751,7 +755,8 @@ const parseVolume = (
     return null;
   }
   const volume = view.subarray(offset, offset + size);
-  const labelOffset = volume.readUInt32LE(12);
+  const reader = new BinaryReader(volume, linkInfo.little, linkInfo.format);
+  const labelOffset = reader.u32(12);
   // MS-SHLLINK 2.3.1: exactly 0x14 selects VolumeLabelOffsetUnicode, and that
   // field exists for no other value. The two label encodings never coexist.
   const hasUnicodeLabel = labelOffset === VOLUME_UNICODE_LABEL_SELECTOR;
@@ -763,27 +768,20 @@ const parseVolume = (
       "VolumeID ends before VolumeLabelOffsetUnicode",
     );
   return {
-    drive_type: driveType(volume.readUInt32LE(4)),
-    serial: volume.readUInt32LE(8).toString(16).toUpperCase().padStart(8, "0"),
+    drive_type: driveType(reader.u32(4)),
+    serial: reader.u32(8).toString(16).toUpperCase().padStart(8, "0"),
     label: hasUnicodeLabel
       ? null
       : readAnsiAt(volume, base + offset, labelOffset, 12, walk, 16),
     label_unicode:
       hasUnicodeLabel && size >= 20
-        ? readUtf16At(
-            volume,
-            base + offset,
-            volume.readUInt32LE(16),
-            16,
-            walk,
-            20,
-          )
+        ? readUtf16At(volume, base + offset, reader.u32(16), 16, walk, 20)
         : null,
   };
 };
 
 const parseNetwork = (
-  view: Buffer,
+  linkInfo: BinaryReader,
   base: number,
   offset: number,
   field: number,
@@ -792,6 +790,7 @@ const parseNetwork = (
   WindowsShortcut["link_info"]
 >["common_network_relative_link"] => {
   if (offset === 0) return null;
+  const view = linkInfo.bytes;
   if (!fits(view, offset, 20)) {
     note(
       walk,
@@ -801,7 +800,7 @@ const parseNetwork = (
     );
     return null;
   }
-  const size = view.readUInt32LE(offset);
+  const size = linkInfo.u32(offset);
   if (size < 20 || !fits(view, offset, size)) {
     note(
       walk,
@@ -812,13 +811,14 @@ const parseNetwork = (
     return null;
   }
   const block = view.subarray(offset, offset + size);
+  const reader = new BinaryReader(block, linkInfo.little, linkInfo.format);
   // MS-SHLLINK 2.3.2: DeviceNameOffset (and its Unicode twin) are only
   // meaningful when ValidDevice is set; otherwise the fields are ignored.
-  const flags = block.readUInt32LE(4);
+  const flags = reader.u32(4);
   const validDevice = (flags & 0x1) !== 0;
   const validNetType = (flags & 0x2) !== 0;
-  const netNameOffset = block.readUInt32LE(8);
-  const deviceNameOffset = validDevice ? block.readUInt32LE(12) : 0;
+  const netNameOffset = reader.u32(8);
+  const deviceNameOffset = validDevice ? reader.u32(12) : 0;
   const declaresUnicode = netNameOffset > 0x14;
   if (declaresUnicode && size < 0x1c)
     note(
@@ -828,9 +828,8 @@ const parseNetwork = (
       "CommonNetworkRelativeLink ends before its declared Unicode offsets",
     );
   const unicode = declaresUnicode && size >= 0x1c;
-  const netNameOffsetUnicode = unicode ? block.readUInt32LE(20) : 0;
-  const deviceNameOffsetUnicode =
-    unicode && validDevice ? block.readUInt32LE(24) : 0;
+  const netNameOffsetUnicode = unicode ? reader.u32(20) : 0;
+  const deviceNameOffsetUnicode = unicode && validDevice ? reader.u32(24) : 0;
   // If the optional header is truncated, keep readable ANSI data after the
   // fixed header while the existing truncation issue marks coverage partial.
   const dataOffset = unicode ? 0x1c : 0x14;
@@ -867,7 +866,7 @@ const parseNetwork = (
       walk,
       dataOffset,
     ),
-    network_provider_type: validNetType ? block.readUInt32LE(16) : null,
+    network_provider_type: validNetType ? reader.u32(16) : null,
   };
   walk.pathUncertainty.network ||=
     (declaresUnicode && !unicode) ||
@@ -881,14 +880,15 @@ const parseNetwork = (
 };
 
 const parseLinkInfo = (
-  bytes: Buffer,
+  file: BinaryReader,
   walk: Walk,
 ): WindowsShortcut["link_info"] => {
+  const { bytes } = file;
   if (!fits(bytes, walk.offset, 8)) {
     note(walk, "truncated", walk.offset, "LinkInfo is truncated", true);
     return null;
   }
-  const size = bytes.readUInt32LE(walk.offset);
+  const size = file.u32(walk.offset);
   if (size < LINK_INFO_FIXED_HEADER_BYTES || !fits(bytes, walk.offset, size)) {
     note(
       walk,
@@ -900,7 +900,8 @@ const parseLinkInfo = (
     return null;
   }
   const view = bytes.subarray(walk.offset, walk.offset + size);
-  const headerSize = view.readUInt32LE(4);
+  const reader = new BinaryReader(view, file.little, file.format);
+  const headerSize = reader.u32(4);
   const declaresUnicodeOffsets = headerSize >= LINK_INFO_UNICODE_HEADER_BYTES;
   if (
     headerSize > size ||
@@ -912,15 +913,15 @@ const parseLinkInfo = (
       walk.offset + 4,
       `LinkInfoHeaderSize ${String(headerSize)} must be 0x1C or at least 0x24 and fit within LinkInfoSize (${String(size)})`,
     );
-  const flags = view.readUInt32LE(8);
-  const volumeOffset = view.readUInt32LE(12);
-  const localOffset = view.readUInt32LE(16);
-  const networkOffset = view.readUInt32LE(20);
-  const suffixOffset = view.readUInt32LE(24);
+  const flags = reader.u32(8);
+  const volumeOffset = reader.u32(12);
+  const localOffset = reader.u32(16);
+  const networkOffset = reader.u32(20);
+  const suffixOffset = reader.u32(24);
   const hasUnicodeOffsets =
     declaresUnicodeOffsets && size >= LINK_INFO_UNICODE_HEADER_BYTES;
-  const localUnicodeOffset = hasUnicodeOffsets ? view.readUInt32LE(28) : 0;
-  const suffixUnicodeOffset = hasUnicodeOffsets ? view.readUInt32LE(32) : 0;
+  const localUnicodeOffset = hasUnicodeOffsets ? reader.u32(28) : 0;
+  const suffixUnicodeOffset = hasUnicodeOffsets ? reader.u32(32) : 0;
   // A declared HeaderSize below the mandatory 0x1C must not expose those
   // fields as string data. Larger declared headers, including reserved
   // 0x1D..0x23 sizes, keep their own end as the floor.
@@ -935,7 +936,7 @@ const parseLinkInfo = (
     },
     volume:
       (flags & 0x1) !== 0
-        ? parseVolume(view, walk.offset, volumeOffset, 12, walk)
+        ? parseVolume(reader, walk.offset, volumeOffset, 12, walk)
         : null,
     local_base_path:
       (flags & 0x1) !== 0
@@ -954,7 +955,7 @@ const parseLinkInfo = (
         : null,
     common_network_relative_link:
       (flags & 0x2) !== 0
-        ? parseNetwork(view, walk.offset, networkOffset, 20, walk)
+        ? parseNetwork(reader, walk.offset, networkOffset, 20, walk)
         : null,
     common_path_suffix: readAnsiAt(
       view,
@@ -1044,10 +1045,19 @@ const parseStringField = (
   }
 };
 
+// MS-SHLLINK 2.5 defines exact sizes for these decoded blocks.
+const FIXED_EXTRA_PAYLOAD_BYTES: Readonly<Partial<Record<number, number>>> = {
+  0xa0000001: 780,
+  0xa0000003: 88,
+  0xa0000004: 4,
+  0xa0000005: 8,
+  0xa0000007: 780,
+  0xa000000b: 20,
+};
+
 const environmentTargets = (
   payload: Buffer,
-): { target_ansi: string; target_unicode: string } | null => {
-  if (payload.length < 780) return null;
+): { target_ansi: string; target_unicode: string } => {
   return {
     target_ansi: latin1Z(payload.subarray(0, 260)),
     target_unicode: utf16Z(payload.subarray(260, 780)),
@@ -1060,37 +1070,30 @@ const decodeExtra = (
   walk: Walk,
   offset: number,
 ): WindowsShortcutExtraDataBlock["decoded"] => {
-  if (signature === 0xa0000001 || signature === 0xa0000007) {
+  const isEnvironmentTarget = signature === 0xa0000001;
+  const expectedBytes = FIXED_EXTRA_PAYLOAD_BYTES[signature];
+  if (expectedBytes !== undefined && payload.length !== expectedBytes) {
+    walk.pathUncertainty.environment ||= isEnvironmentTarget;
+    note(
+      walk,
+      payload.length < expectedBytes ? "truncated" : "malformed_structure",
+      offset,
+      `${extraSignatureName(signature)} requires a ${expectedBytes + 8}-byte block, got ${payload.length + 8} bytes`,
+    );
+    return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
+  }
+  if (isEnvironmentTarget || signature === 0xa0000007) {
     const targets = environmentTargets(payload);
-    if (targets === null) {
-      note(
-        walk,
-        "truncated",
-        offset,
-        "Environment ExtraData payload is shorter than 780 bytes",
-      );
-      return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
-    }
     charge(
       walk,
       targets.target_ansi.length + targets.target_unicode.length * 2,
     );
     return {
-      kind:
-        signature === 0xa0000001 ? "environment_variable" : "icon_environment",
+      kind: isEnvironmentTarget ? "environment_variable" : "icon_environment",
       ...targets,
     };
   }
   if (signature === 0xa0000003) {
-    if (payload.length < 88) {
-      note(
-        walk,
-        "truncated",
-        offset,
-        "TrackerDataBlock payload is shorter than 0x58 bytes",
-      );
-      return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
-    }
     const length = payload.readUInt32LE(0);
     const version = payload.readUInt32LE(4);
     if (length !== 0x58 || version !== 0) {
@@ -1118,17 +1121,9 @@ const decodeExtra = (
     };
   }
   if (signature === 0xa0000004) {
-    if (payload.length < 4) {
-      note(walk, "truncated", offset, "ConsoleFEDataBlock is truncated");
-      return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
-    }
     return { kind: "console_fe", code_page: payload.readUInt32LE(0) };
   }
   if (signature === 0xa0000005) {
-    if (payload.length < 8) {
-      note(walk, "truncated", offset, "SpecialFolderDataBlock is truncated");
-      return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
-    }
     return {
       kind: "special_folder",
       folder_id: payload.readUInt32LE(0),
@@ -1136,10 +1131,6 @@ const decodeExtra = (
     };
   }
   if (signature === 0xa000000b) {
-    if (payload.length < 20) {
-      note(walk, "truncated", offset, "KnownFolderDataBlock is truncated");
-      return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
-    }
     return {
       kind: "known_folder",
       folder_id: formatGuid(payload, 0),
@@ -1163,11 +1154,12 @@ const decodeExtra = (
 };
 
 const parseIdList = async (
-  bytes: Buffer,
+  file: BinaryReader,
   walk: Walk,
   maxItems: number,
   signal?: AbortSignal,
 ): Promise<WindowsShortcut["id_list"]> => {
+  const { bytes } = file;
   if (!fits(bytes, walk.offset, 2)) {
     note(
       walk,
@@ -1178,7 +1170,7 @@ const parseIdList = async (
     );
     return null;
   }
-  const byteSize = bytes.readUInt16LE(walk.offset);
+  const byteSize = file.u16(walk.offset);
   const start = walk.offset;
   if (!fits(bytes, walk.offset + 2, byteSize)) {
     note(
@@ -1190,27 +1182,39 @@ const parseIdList = async (
     );
     return null;
   }
-  const end = walk.offset + 2 + byteSize;
-  let cursor = walk.offset + 2;
+  const itemStart = start + 2;
+  const list = new BinaryReader(
+    file.range(itemStart, byteSize, "LinkTargetIDList"),
+    file.little,
+    file.format,
+  );
+  let cursor = 0;
   const items: WindowsShortcutIdListItem[] = [];
   let terminated = false;
   let malformed = false;
-  while (cursor + 2 <= end) {
+  while (cursor + 2 <= byteSize) {
     if (items.length > 0 && items.length % ENTRIES_PER_YIELD === 0) {
       await setImmediate();
       assertArtifactReadActive(signal);
     }
-    const size = bytes.readUInt16LE(cursor);
+    const size = list.u16(cursor);
     if (size === 0) {
       cursor += 2;
+      if (cursor < byteSize)
+        note(
+          walk,
+          "malformed_structure",
+          itemStart + cursor,
+          "Bytes follow TerminalID inside the declared LinkTargetIDList",
+        );
       terminated = true;
       break;
     }
-    if (size < 2 || cursor + size > end) {
+    if (size < 2 || cursor + size > byteSize) {
       note(
         walk,
         "malformed_structure",
-        cursor,
+        itemStart + cursor,
         "ItemID size overruns the IDList",
       );
       malformed = true;
@@ -1222,17 +1226,23 @@ const parseIdList = async (
         maxItems,
         `LinkTargetIDList declares more than the ${String(maxItems)}-item allowance`,
       );
-    items.push(decodeIdListItem(bytes, cursor, size));
+    items.push(
+      decodeIdListItem(
+        list.range(cursor + 2, size - 2, "ItemID data"),
+        itemStart + cursor,
+        size,
+      ),
+    );
     cursor += size;
   }
   if (!terminated && !malformed)
     note(
       walk,
       "malformed_structure",
-      cursor,
+      itemStart + cursor,
       "LinkTargetIDList has no TerminalID inside its declared size",
     );
-  walk.offset = end;
+  walk.offset = itemStart + byteSize;
   return {
     location: { offset: start, bytes: 2 + byteSize },
     byte_size: byteSize,
@@ -1329,7 +1339,8 @@ export const parseWindowsShortcut = async (
       "windows-shortcut",
       `File is ${String(bytes.length)} bytes, below the 76-byte ShellLinkHeader`,
     );
-  const headerSize = bytes.readUInt32LE(0);
+  const reader = new BinaryReader(bytes, true, "windows-shortcut");
+  const headerSize = reader.u32(0);
   if (headerSize !== HEADER_BYTES)
     throw malformedInput(
       "windows-shortcut",
@@ -1343,21 +1354,21 @@ export const parseWindowsShortcut = async (
       `LinkCLSID ${clsid} is not ${SHELL_LINK_CLSID}`,
       { offset: 4, field: "LinkCLSID" },
     );
-  const flags = bytes.readUInt32LE(20);
+  const flags = reader.u32(20);
   const unicode = (flags & 0x00000080) !== 0;
   const header: WindowsShortcut["header"] = {
     location: { offset: 0, bytes: HEADER_BYTES },
     header_size: headerSize,
     clsid,
     link_flags: namedBits(flags, LINK_FLAG_NAMES),
-    file_attributes: namedBits(bytes.readUInt32LE(24), FILE_ATTRIBUTE_NAMES),
-    creation_time: fileTime(bytes.readBigUInt64LE(28)),
-    access_time: fileTime(bytes.readBigUInt64LE(36)),
-    write_time: fileTime(bytes.readBigUInt64LE(44)),
-    file_size: bytes.readUInt32LE(52),
-    icon_index: bytes.readInt32LE(56),
-    show_command: showCommand(bytes.readUInt32LE(60)),
-    hotkey: hotKey(bytes.readUInt16LE(64)),
+    file_attributes: namedBits(reader.u32(24), FILE_ATTRIBUTE_NAMES),
+    creation_time: fileTime(reader.word(28, 64)),
+    access_time: fileTime(reader.word(36, 64)),
+    write_time: fileTime(reader.word(44, 64)),
+    file_size: reader.u32(52),
+    icon_index: reader.i32(56),
+    show_command: showCommand(reader.u32(60)),
+    hotkey: hotKey(reader.u16(64)),
   };
   const walk: Walk = {
     offset: HEADER_BYTES,
@@ -1366,15 +1377,20 @@ export const parseWindowsShortcut = async (
     stopped: false,
     stringBytes: 0,
     maxStringBytes: input.max_string_bytes,
-    pathUncertainty: { local: false, network: false, suffix: false },
+    pathUncertainty: {
+      local: false,
+      network: false,
+      suffix: false,
+      environment: false,
+    },
   };
   const idList =
     (flags & 0x00000001) !== 0
-      ? await parseIdList(bytes, walk, input.max_id_list_items, signal)
+      ? await parseIdList(reader, walk, input.max_id_list_items, signal)
       : null;
   const linkInfo =
     (flags & 0x00000002) !== 0 && !walk.stopped
-      ? parseLinkInfo(bytes, walk)
+      ? parseLinkInfo(reader, walk)
       : null;
   const stringData: WindowsShortcut["string_data"] = {
     name: null,
@@ -1393,7 +1409,6 @@ export const parseWindowsShortcut = async (
     [0x00000040, "icon_location", "ICON_LOCATION"],
   ];
   if (!walk.stopped) {
-    const reader = new BinaryReader(bytes, true, "windows-shortcut");
     for (const [bit, key, label] of stringFlags) {
       if ((flags & bit) === 0) continue;
       const field = parseStringField(reader, walk, unicode, label);

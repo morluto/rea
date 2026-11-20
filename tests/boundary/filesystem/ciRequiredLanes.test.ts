@@ -56,6 +56,14 @@ it("opts only the Noble binary-layout toolchain into the Ubuntu Azure archive fa
     "real-binary-layout"
   ];
   expect(layout?.["runs-on"]).toBe("ubuntu-24.04");
+  expect(layout?.["timeout-minutes"]).toBe(25);
+  const toolchain = steps
+    .parse(layout?.steps)
+    .find((step) => step.uses === "./.github/actions/host-apt-packages");
+  expect(toolchain?.with).toMatchObject({
+    "download-timeout-seconds": "900",
+    "install-recommends": "false",
+  });
   expect(
     steps.parse(layout?.steps).filter((step) => step.uses === archive),
   ).toEqual([{ uses: archive, with: { [input]: "true" } }]);

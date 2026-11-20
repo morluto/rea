@@ -240,6 +240,7 @@ const PATH_SCOPES = {
     "scripts/run-exclusive-command.mjs",
     "tests/process-global/runnerCancellation.test.ts",
     "tests/process-global/windowsOwnedCommand.test.ts",
+    "tests/process-global/curatedWindowsLane.test.ts",
     "src/ghidra/GhidraBridgeSources.ts",
     "native/windows/**",
     "src/process/capture/FilesystemSnapshot.ts",
