@@ -38,7 +38,10 @@ const command = vi.hoisted(() => {
           const gate = new Promise<void>((resolve) => {
             release = resolve;
           });
-          return [request.arguments.join(" "), { ...request, gate, release }];
+          return [
+            JSON.stringify(request.arguments),
+            { ...request, gate, release },
+          ];
         }),
       );
     },
@@ -47,7 +50,7 @@ const command = vi.hoisted(() => {
       for (const helper of helpers.values()) helper.release();
     },
     releaseHelper(pid: number) {
-      const helper = helpers.get(String(pid));
+      const helper = helpers.get(JSON.stringify([String(pid)]));
       if (helper === undefined) throw new Error(`Unexpected helper PID ${pid}`);
       helper.release();
     },
@@ -71,11 +74,12 @@ const command = vi.hoisted(() => {
         await fs.writeFile(output, "fixture helper");
         return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
       }
+      const key = JSON.stringify(args);
+      const helper = helpers.get(key);
+      if (helper === undefined || startedRequests.has(key))
+        throw new Error(`Unexpected helper request ${key}`);
+      startedRequests.add(key);
       const request = args.join(" ");
-      const helper = helpers.get(request);
-      if (helper === undefined || startedRequests.has(request))
-        throw new Error(`Unexpected helper request ${request}`);
-      startedRequests.add(request);
       events.push(`start:${request}`);
       if (startedRequests.size === helpers.size) acknowledge();
       try {
