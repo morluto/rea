@@ -1067,6 +1067,10 @@ export const parseVsixPackage = async (
               cause.failure.kind === "limit" &&
               cause.failure.limit?.name === "max_member_bytes"
             ) {
+              // A member whose header understates its size decodes its whole
+              // allowance before failing, so that work counts against the
+              // package ceiling as a successful read would.
+              expansion.chargeOverCommitting(allowance);
               limitations.push(unread());
             } else throw cause;
           }

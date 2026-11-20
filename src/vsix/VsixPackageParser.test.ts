@@ -28,6 +28,23 @@ import {
 import { ArtifactReaderFailure } from "../resources/index.js";
 import { VSIX_LIMITATIONS, parseVsixPackage } from "./VsixPackageParser.js";
 
+const expansionBudget = vi.hoisted(() => ({
+  override: undefined as number | undefined,
+}));
+
+vi.mock("../domain/artifactExpansionBudget.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import("../domain/artifactExpansionBudget.js")
+    >();
+  return {
+    ...actual,
+    artifactExpansionBudgetBytes: (archiveBytes: number): number =>
+      expansionBudget.override ??
+      actual.artifactExpansionBudgetBytes(archiveBytes),
+  };
+});
+
 const defaults = inspectVsixPackageInputSchema.parse({
   path: "/artifacts/demo.hello-1.2.3.vsix",
 });
@@ -308,6 +325,72 @@ it(
     ).toBe(true);
   },
 );
+
+it("charges members that inflate past an understated size to the package budget", async () => {
+  // Each member declares one byte but its decoder keeps producing output, so
+  // every read fails after decoding its full 16 KiB allowance. Three such
+  // failures spend the 48 KiB package budget; later members must not get a
+  // fresh allowance.
+  const names = Array.from(
+    { length: 6 },
+    (_, index) => `extension/dist/module-${String(index)}.wasm`,
+  );
+  const bytes = await vsixPackageFixture({
+    extraBinaryMembers: Object.fromEntries(names.map((name) => [name, WASM])),
+  });
+  const chunk = new Uint8Array(4 * 1024);
+  let decoded = 0;
+  const original = ZipReader.prototype.getEntriesGenerator;
+  const enumeration = vi
+    .spyOn(ZipReader.prototype, "getEntriesGenerator")
+    .mockImplementation(async function* (this: ZipReader<unknown>, options) {
+      for await (const entry of original.call(this, options)) {
+        if (!entry.directory && names.includes(entry.filename)) {
+          entry.uncompressedSize = 1;
+          entry.getData = (async (writer: {
+            init?: (size?: number) => Promise<void>;
+            writeUint8Array: (array: Uint8Array) => Promise<void>;
+          }) => {
+            await writer.init?.();
+            for (let index = 0; index < 16; index++) {
+              await writer.writeUint8Array(chunk);
+              decoded += chunk.length;
+            }
+            throw new Error("decoder overran its declared size");
+          }) as unknown as typeof entry.getData;
+        }
+        yield entry;
+      }
+      return true;
+    });
+  const maximum = 48 * 1024;
+  expansionBudget.override = maximum;
+  try {
+    const report = vsixPackageSchema.parse(
+      await parseVsixPackage(bytes, artifactOf(bytes), {
+        ...defaults,
+        max_member_bytes: 16 * 1024,
+      }),
+    );
+    expect(decoded).toBe(maximum);
+    expect(
+      report.interesting_members
+        .filter((entry) => entry.path.endsWith(".wasm"))
+        .every((entry) => entry.sha256 === null),
+    ).toBe(true);
+    for (const name of names.slice(0, 3))
+      expect(report.limitations).toContain(
+        VSIX_LIMITATIONS.memberOversize(name, 16 * 1024),
+      );
+    for (const name of names.slice(3))
+      expect(report.limitations).toContain(
+        VSIX_LIMITATIONS.packageExpansionSpent(name, maximum),
+      );
+  } finally {
+    expansionBudget.override = undefined;
+    enumeration.mockRestore();
+  }
+});
 
 it("inventories a package with no vsixmanifest and leaves vsix identity unknown", async () => {
   const bytes = await vsixPackageMissingManifestFixture();
