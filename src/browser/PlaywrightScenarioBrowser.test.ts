@@ -966,13 +966,15 @@ it("serializes concurrent attach across loopback spellings of one browser", asyn
     isConnected: () => true,
     version: () => "fixture",
   });
+  let settled: Awaited<typeof outcomes>;
   try {
     await firstClose.reached(first, "first transport close");
   } finally {
     firstClose.release();
+    settled = await outcomes;
   }
 
-  expect(await outcomes).toMatchObject([
+  expect(settled).toMatchObject([
     {
       status: "rejected",
       reason: { _tag: "BrowserObservationError", reason: "target_not_found" },
