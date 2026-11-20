@@ -19,15 +19,13 @@ import {
 /** Kuna caps its own decode lanes and worker pool at 32. */
 export const MAXIMUM_KUNA_JOBS = 32;
 
-/** One job is the serial reference export. Zero is not a pool. */
-export const MINIMUM_KUNA_JOBS = 1;
-
 /**
  * A serial (`--jobs 1`) export is Kuna's reference answer: it decompiles
  * callees before callers, which recovers prototypes that parallel workers
  * cannot. Measured on coreutils sort, 40-60% of functions differ otherwise.
+ * The serial export is the default and the minimum supported job count.
  */
-export const DEFAULT_KUNA_JOBS = MINIMUM_KUNA_JOBS;
+export const SERIAL_KUNA_JOBS = 1;
 
 /** Measured sqlite3 exports occupy ~25 MiB; four GiB retains many projects. */
 export const DEFAULT_KUNA_CACHE_MAX_BYTES = 4 * 1024 ** 3;
@@ -251,15 +249,11 @@ export const readKunaConfiguration = (
 
   const rawJobs = environment.REA_KUNA_JOBS;
   const jobs =
-    rawJobs === undefined ? DEFAULT_KUNA_JOBS : positiveInteger(rawJobs);
-  if (
-    jobs === undefined ||
-    jobs < MINIMUM_KUNA_JOBS ||
-    jobs > MAXIMUM_KUNA_JOBS
-  )
+    rawJobs === undefined ? SERIAL_KUNA_JOBS : positiveInteger(rawJobs);
+  if (jobs === undefined || jobs < SERIAL_KUNA_JOBS || jobs > MAXIMUM_KUNA_JOBS)
     return failure(
       "open_options_invalid",
-      `REA_KUNA_JOBS must be an integer from ${String(MINIMUM_KUNA_JOBS)} to ${String(MAXIMUM_KUNA_JOBS)}; received ${String(rawJobs)}.`,
+      `REA_KUNA_JOBS must be an integer from ${String(SERIAL_KUNA_JOBS)} to ${String(MAXIMUM_KUNA_JOBS)}; received ${String(rawJobs)}.`,
       "REA_KUNA_JOBS",
     );
 
