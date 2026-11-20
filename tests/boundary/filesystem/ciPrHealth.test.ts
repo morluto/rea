@@ -551,14 +551,17 @@ it.each([
   ["2026-10-13T00:00:00Z", "unknown"],
   ["2026-10-12T23:00:00Z", "unknown"],
   ["invalid", "unknown"],
+  ["2026-10-13T01:00:00Z", "queued_pending_executing", "in_progress"],
+  ["2026-10-13T01:00:00Z", "unknown", "queued"],
 ])(
   "uses the attempt start %s to order a retry and a separate run",
-  (startedAt, category) => {
+  (startedAt, category, status = "completed") => {
     const retried = run({
       id: 78,
       run_attempt: 2,
       created_at: "2026-10-12T23:00:00Z",
       run_started_at: startedAt,
+      status,
       conclusion: "failure",
     });
     const fresh = run({ run_attempt: 1 });
