@@ -903,6 +903,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 ["-d", "--no-show-raw-insn", tempEfiPath],
                 {
                   signal,
+                  stopSignal: "SIGTERM",
                   timeout: 15_000,
                   maxBuffer: MAX_DISASSEMBLY_MODULE_BYTES,
                 },
@@ -917,6 +918,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   ["-d", tempEfiPath],
                   {
                     signal,
+                    stopSignal: "SIGTERM",
                     timeout: 15_000,
                     maxBuffer: MAX_DISASSEMBLY_MODULE_BYTES,
                   },
