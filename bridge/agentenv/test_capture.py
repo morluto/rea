@@ -88,10 +88,6 @@ class LongRunTest(unittest.TestCase):
             "if len(sys.argv) > 1 and sys.argv[1] == 'wait':\n"
             "    open(sys.argv[2], 'w').close()\n"
             "    time.sleep(30)\n"
-            "if len(sys.argv) > 1 and sys.argv[1] == 'ignore':\n"
-            "    signal.signal(signal.SIGINT, signal.SIG_IGN)\n"
-            "    open(sys.argv[2], 'w').close()\n"
-            "    while not os.path.exists(sys.argv[3]): time.sleep(0.02)\n"
             "if len(sys.argv) > 1 and sys.argv[1] == 'stderr':\n"
             "    sys.stderr.write('x' * 100000 + 'TAIL')\n"
             "    print(hashlib.sha256(json.dumps(sys.argv[2:]).encode()).hexdigest())\n"
@@ -251,16 +247,18 @@ class LongRunTest(unittest.TestCase):
         self.assertTrue(result["pending"])
 
     def test_reports_a_timed_out_child_that_has_not_stopped(self):
-        ready, release = self.root / "ready", self.root / "release"
-        self.assertEqual(self.begin(["ignore", str(ready), str(release)], timeout=3), {"started": True})
+        release = self.start_resistant_child()
         try:
-            result = self.command("run-poll", job=str(self.job), token="owner-token", timeout_s=4)
+            self.assertTrue(self.wait_until((self.job / "timed_out").exists))
+            self.assertTrue(self.wait_until((self.root / "release.pid").is_file))
+            result = self.command("run-poll", job=str(self.job), token="owner-token", timeout_s=0)
             self.assertTrue(result["pending"])
             self.assertTrue(result["timed_out"])
-            self.assertTrue(ready.exists())
         finally:
             release.touch()
-            self.command("run-poll", job=str(self.job), token="owner-token", timeout_s=5)
+            finished = self.command("run-poll", job=str(self.job), token="owner-token", timeout_s=5)
+        self.assertTrue(finished["finished"] and finished["settled"])
+        self.assertEqual(finished["exit_code"], 0)
 
     def start_foreign_stderr_holder(self, timeout):
         release = self.root / "release"
@@ -380,7 +378,7 @@ class LongRunTest(unittest.TestCase):
             release.touch()
             closer.join(timeout=2)
 
-    def test_kills_a_leader_that_ignores_sigint_and_sigterm(self):
+    def start_resistant_child(self):
         release = self.root / "release"
         # Inherit the mask until the command installs both ignore handlers.
         # A slow startup can cross the real deadline before Python reaches them.
@@ -391,6 +389,10 @@ class LongRunTest(unittest.TestCase):
             self.assertEqual(self.begin(["resist", str(release)], timeout=1), {"started": True})
         finally:
             signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+        return release
+
+    def test_kills_a_leader_that_ignores_sigint_and_sigterm(self):
+        self.start_resistant_child()
         result = self.command(
             "run-poll", job=str(self.job), token="owner-token", timeout_s=12, command_timeout=20,
         )
