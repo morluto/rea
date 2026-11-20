@@ -2138,36 +2138,52 @@ describe("managed derived edges", () => {
 });
 
 describe("managed derived caller names", () => {
-  it("admits a caller name before building it", () => {
-    let built = false;
-    // A string-like type name records whether the caller was interpolated.
-    const declaringType = {
-      length: 2048,
-      charCodeAt: () => 0x54,
-      toString: () => {
-        built = true;
-        return "T";
-      },
-    } as unknown as string;
-    const method = {
-      token: "0x06000001",
-      declaring_type: declaringType,
-      name: "m",
-    } as unknown as ManagedMethod;
-
+  it("admits the transient caller name alongside the retained edge", () => {
+    const declaringType = "T".repeat(2048);
+    const bytes = buildManagedPeFixture({
+      typeName: declaringType,
+      typeNamespace: "",
+    });
+    const method = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    ).methods[0];
+    if (method === undefined) throw new Error("Fixture has no method");
     const decoded: DecodedMethod = {
       method,
       tokenInstructions: decodedTokenInstructions(0x28, [0x0a000001]),
       catchTokens: new Map(),
     };
-
-    const budget = new ManagedDecodeBudget();
-    // Only the remaining capacity matters to refusal before interpolation.
-    budget.reserve(64 * 1024 * 1024 - 1024, null);
-    expect(() => edges([decoded], new Map(), budget)).toThrow(
-      ManagedReaderFailure,
+    const caller = `${declaringType}.Main`;
+    const edge = {
+      caller_token: "0x06000001",
+      il_offset: 0,
+      target_identity_sha256: null,
+      target_row_resolved: false,
+      caller,
+      opcode: "call",
+      target_token: "0x0a000001",
+      target_kind: "member-ref",
+      target_name: null,
+      target_declaring_type: null,
+    };
+    // Allow record bookkeeping, with no room for another copy of the name.
+    const retainedOnly = Buffer.byteLength(JSON.stringify(edge)) + 32;
+    const withTransient =
+      retainedOnly + Buffer.byteLength(JSON.stringify(caller));
+    expect(() =>
+      edges([decoded], new Map(), new ManagedDecodeBudget(retainedOnly)),
+    ).toThrow(
+      expect.objectContaining({
+        issue: expect.objectContaining({
+          code: "resource-limit",
+          scope: "metadata.representation",
+        }),
+      }),
     );
-    expect(built).toBe(false);
+    expect(
+      edges([decoded], new Map(), new ManagedDecodeBudget(withTransient)),
+    ).toEqual({ callEdges: [edge], fieldAccesses: [] });
   });
 });
 
@@ -3139,6 +3155,61 @@ describe("managed member type selection", () => {
 });
 
 describe("managed member method paging", () => {
+  it("records a checked unresolved MethodDef only inside the source interval and selected type", () => {
+    const bytes = buildManagedPeFixture({ methodRowCount: 3 });
+    const pe = readManagedPeLayout(bytes);
+    if (pe.cli === null) throw new Error("Fixture omitted CLI metadata");
+    const { rva, size } = pe.cli.metadata;
+    const layout = readManagedMetadataLayout(
+      bytes,
+      pe.rvaToOffset(rva, size, "fixture"),
+      size,
+    );
+    const first = metadataRowOffset(layout, 6, 1);
+    const third = metadataRowOffset(layout, 6, 3);
+    bytes.writeUInt16LE(0xffff, first + 8);
+    bytes.writeUInt16LE(0, third + 8);
+    const target = managedPeFixtureTarget(bytes);
+    const report = inspectManagedMembersBytes(bytes, target, {
+      typeNames: ["Fixture.Program"],
+      methodOffset: 1,
+      methodLimit: 2,
+    });
+    expect(report.method_rows).toEqual({ offset: 1, count: 2, total: 3 });
+    expect(report.methods.map(({ token }) => token)).toEqual(["0x06000002"]);
+    expect(report.unresolved_definitions).toEqual({
+      method_names_examined: true,
+      rows: [
+        {
+          kind: "MethodDef",
+          token: "0x06000003",
+          row_offset: third,
+          declaring_type_token: "0x02000001",
+          rva: bytes.readUInt32LE(third),
+          failed_fields: [
+            {
+              field: "Name",
+              field_offset: third + 8,
+              heap_index: 0,
+              reason: "empty-required-name",
+            },
+          ],
+        },
+      ],
+    });
+    expect(
+      inspectManagedMembersBytes(bytes, target, { typeNames: ["Other.Type"] })
+        .unresolved_definitions,
+    ).toEqual({ method_names_examined: true, rows: [] });
+    const invalid = structuredClone(report);
+    if (invalid.unresolved_definitions?.rows[0] === undefined)
+      throw new Error("Missing MethodDef coordinate");
+    invalid.unresolved_definitions.rows[0].token = "0x06000001";
+    expect(managedMemberInspectionSchema.safeParse(invalid).success).toBe(
+      false,
+    );
+  });
+
   it("returns only the requested MethodDef rows", () => {
     const image = buildMultiMethodManagedPeFixture({
       methods: [

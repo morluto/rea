@@ -1,5 +1,9 @@
-import { readFieldDefinitionRow } from "./ManagedFieldDefinitionRows.js";
 import {
+  readFieldDefinitionName,
+  readFieldDefinitionRow,
+} from "./ManagedFieldDefinitionRows.js";
+import {
+  readMethodDefinitionName,
   readMethodDefinitionRow,
   type ManagedMethodImplementationFlags,
 } from "./ManagedMethodDefinitionRows.js";
@@ -93,12 +97,9 @@ export const parseFields = (
   const table = layout.table(4);
   for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
     readManagedValue(() => {
-      const { token, rowOffset, flags, nameIndex } = readFieldDefinitionRow(
-        bytes,
-        layout,
-        row,
-      );
-      const name = readMetadataString(bytes, layout, nameIndex);
+      const definition = readFieldDefinitionRow(bytes, layout, row);
+      const { token, rowOffset, flags } = definition;
+      const name = readFieldDefinitionName(bytes, layout, definition);
       fields.set(token, {
         token,
         rowOffset,
@@ -122,16 +123,10 @@ export const parseMethods = (
   const table = layout.table(6);
   for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
     readManagedValue(() => {
-      const {
-        token,
-        rowOffset,
-        rva,
-        implFlags,
-        flags,
-        nameIndex,
-        implementation,
-      } = readMethodDefinitionRow(bytes, layout, row);
-      const name = readMetadataString(bytes, layout, nameIndex);
+      const definition = readMethodDefinitionRow(bytes, layout, row);
+      const { token, rowOffset, rva, implFlags, flags, implementation } =
+        definition;
+      const name = readMethodDefinitionName(bytes, layout, definition);
       methods.set(token, {
         token,
         rowOffset,

@@ -2,6 +2,7 @@ import { observeMzWindowsHeader } from "../domain/dosMz.js";
 import {
   malformedInput,
   unsupportedInput,
+  ParseFailureError,
   type LimitRef,
 } from "../domain/parseFailure.js";
 import { readPeCoffHeader } from "../domain/peCoffHeader.js";
@@ -65,14 +66,14 @@ interface SliceRange {
 }
 
 /** A measured bound was hit before a complete fuse report could be returned. */
-export class ElectronFuseResourceFailure extends Error {
+export class ElectronFuseResourceFailure extends ParseFailureError<"limit"> {
   constructor(
     readonly limit: LimitRef & {
       readonly name: "maximum_input_bytes" | "maximum_sentinels_per_slice";
     },
     message: string,
   ) {
-    super(message);
+    super({ kind: "limit", format: "electron-fuses", detail: message, limit });
     this.name = "ElectronFuseResourceFailure";
   }
 }
@@ -135,6 +136,7 @@ export const readElectronFuseImage = async (
       {
         name: "maximum_input_bytes",
         maximum: ELECTRON_FUSE_LIMITS.maximumFileBytes,
+        required: before.size,
       },
       `Selected artifact exceeds ${ELECTRON_FUSE_LIMITS.maximumFileBytes} bytes: ${path}`,
     );

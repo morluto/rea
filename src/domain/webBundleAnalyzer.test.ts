@@ -98,7 +98,7 @@ it("reports a browser request whose URL is not a literal as an unknown endpoint 
   expect(result.unknowns).toContainEqual({
     dimension: "endpoints",
     reason:
-      "A browser request's URL argument is not a string literal, so the endpoint it reaches is unknown.",
+      "A browser request's endpoint could not be resolved from its URL argument.",
     affected_script_keys: [scriptKey],
     call_sites: [
       {
@@ -111,6 +111,42 @@ it("reports a browser request whose URL is not a literal as an unknown endpoint 
       },
     ],
   });
+});
+
+it("recovers inline Request inputs only for proven fetch calls", () => {
+  const source = [
+    'fetch(new Request("/bare"));',
+    "window.fetch(new globalThis.Request(`/qualified`));",
+    'function local(Request) { fetch(new Request("/shadowed")); }',
+    "fetch(new Request(dynamic));",
+    'new WebSocket(new Request("wss://app.example.test/coerced"));',
+  ].join("\n");
+  const result = analyzeWebBundleFixture(inspection(source));
+  expect(
+    result.observations.endpoints.map(({ value, mechanism }) => ({
+      value,
+      mechanism,
+    })),
+  ).toEqual([
+    { value: "/bare", mechanism: "call:fetch" },
+    { value: "/qualified", mechanism: "call:window.fetch" },
+  ]);
+  expect(result.unknowns).toContainEqual(
+    expect.objectContaining({
+      dimension: "endpoints",
+      call_sites: [
+        expect.objectContaining({
+          location: expect.objectContaining({ line: 3 }),
+        }),
+        expect.objectContaining({
+          location: expect.objectContaining({ line: 4 }),
+        }),
+        expect.objectContaining({
+          location: expect.objectContaining({ line: 5 }),
+        }),
+      ],
+    }),
+  );
 });
 
 it("reads an XMLHttpRequest URL from open's second argument on an inline receiver", () => {
@@ -2012,7 +2048,7 @@ it("does not infer call names from dynamic computed identifiers", () => {
   expect(result.observations.webmcp_declarations).toEqual([]);
 });
 
-it("retains direct and literal computed call names", () => {
+it("retains literal calls and requires ambient identity for require edges", () => {
   const result = analyzeWebBundleFixture(
     inspection(`
         window.fetch("/direct");
@@ -2020,6 +2056,11 @@ it("retains direct and literal computed call names", () => {
     window[receiver].fetch("/nested-receiver");
         window.require("./direct.js");
         window["require"]("./literal.js");
+        require("./bare.js");
+        const vendor = { require() {} };
+        vendor.require("./vendor.js");
+        function local(require) { require("./local.js"); }
+        function withWindow(window) { window["require"]("./shadowed.js"); }
         document.modelContext["registerTool"]({ name: "literal-tool" });
       `),
   );
@@ -2030,7 +2071,7 @@ it("retains direct and literal computed call names", () => {
   ]);
   expect(
     result.observations.chunks.edges.map(({ specifier }) => specifier),
-  ).toEqual(["./direct.js", "./literal.js"]);
+  ).toEqual(["./direct.js", "./literal.js", "./bare.js"]);
   expect(result.observations.webmcp_declarations).toEqual([
     expect.objectContaining({ name: "literal-tool" }),
   ]);

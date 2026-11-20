@@ -364,7 +364,6 @@ npx rea-agents@latest setup
 - [CLI と Evidence](../getting-started/cli.md)：コマンド、プロバイダーの選択、スナップショット、インポート／エクスポート、終了ステータス。
 - [MCP 契約](../reference/mcp-contracts.md)と[エージェント向けプロンプト](../getting-started/mcp-prompts.md)：ツールの結果、セッション、ガイド付き調査。
 - [ツールカタログ](../reference/mcp-contracts.md#generated-catalog)：ビルド時に生成されるツール、プロバイダー、CLI コマンドの一覧。
-- [ロードマップ](../development/roadmap.md)：計画中の作業と機能の進捗。
 
 脆弱性の報告は [SECURITY.md](../../SECURITY.md) に従ってください。
 
@@ -394,7 +393,7 @@ REA は、法令に従った研究、教育、相互運用性の確保、ソフ�
 
 REA への貢献を歓迎します！[issue を作成](https://github.com/morluto/rea/issues)してバグや機能の提案を報告したり、[pull request を送信](https://github.com/morluto/rea/pulls)してコードやドキュメントを改善したりできます。
 
-開発環境とチェックは [CONTRIBUTING.md](../../CONTRIBUTING.md)、検証レーンは[テストガイド](../development/testing.md)、プロジェクト構造は[アーキテクチャ図](../architecture/architecture.mermaid)を参照してください。
+開発環境とチェックは [CONTRIBUTING.md](../../CONTRIBUTING.md)、検証レーンは[テストガイド](../development/testing.md)を参照してください。
 
 ## ライセンス
 

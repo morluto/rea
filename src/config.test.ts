@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { launchAnalysisSetting } from "./config/analysisSettings.js";
 import { runtimeAnalysisConfig } from "./config/runtimeAnalysisSettings.js";
 import { runWithAnalysisOperationSnapshot } from "./domain/analysisOperationSnapshot.js";
+import { DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS } from "./domain/analysisResourceLimits.js";
 import { ConfigurationError } from "./domain/configurationErrors.js";
 import {
   inspectNativeAnalysisConfiguration,
@@ -23,8 +24,21 @@ it("still rejects a NUL in an unresolved expression", () => {
   if (!result.ok) expect(JSON.stringify(result.error)).not.toContain("private");
 });
 
+it("refuses an unsafe ASAR listing launch value at registration", () => {
+  const setting = "REA_ASAR_MAX_LISTING_BYTES";
+  const environment = { [setting]: "9007199254740992" };
+  expect(
+    launchAnalysisSetting("asar.max_listing_bytes", environment),
+  ).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "ConfigurationError",
+      settings: [expect.objectContaining({ setting })],
+    },
+  });
+});
+
 it.each([
-  ["asar.max_listing_bytes", "REA_ASAR_MAX_LISTING_BYTES", "9007199254740992"],
   [
     "ghidra.value_flow_max_operations",
     "REA_GHIDRA_VALUE_FLOW_MAX_OPERATIONS",
@@ -53,7 +67,6 @@ it.each([
     );
     const live = runtimeAnalysisConfig(parsed.value);
     const read = (): unknown => {
-      if (id === "asar.max_listing_bytes") return live;
       if (id === "ghidra.value_flow_max_operations")
         return live.ghidraValueFlowMaxOperations;
       if (id === "ghidra.value_flow_max_inputs_per_operation")
@@ -62,8 +75,7 @@ it.each([
         return live.ghidraValueFlowMaxEdges;
       return live.ghidraDecompileMaxPayloadMiB;
     };
-    if (id !== "asar.max_listing_bytes")
-      expect(read).toThrow(ConfigurationError);
+    expect(read).toThrow(ConfigurationError);
   },
 );
 
@@ -432,7 +444,7 @@ describe("configuration failure diagnostics", () => {
         ok: true,
         value: {
           hopperStartupTimeoutMs: Number(value),
-          ghidraStartupTimeoutMs: 330_000,
+          ghidraStartupTimeoutMs: DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
         },
       });
     },
