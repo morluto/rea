@@ -72,17 +72,16 @@ export const mapApkBlockError = (
       return inputError(
         `Malformed APK Signing Block at byte ${String(error.offset)}: ${error.detail}.`,
       );
-    case "budget-exceeded":
-      return new AnalysisResourceConstraintError(
-        OPERATION,
-        "capacity",
-        `APK Signing Block holds more ${error.resource} than the ${String(error.limit)} limit.`,
-        { max_signing_block_pairs: error.limit },
-        fixedAllowanceOptions(
-          `The APK Signing Block allowance of ${String(error.limit)} pairs (this release has no runtime override)`,
+    case "limit": {
+      const { name, maximum } = error.failure.limit;
+      return parseLimitConstraint(OPERATION, "capacity", error, {
+        legacyMaximumKey: name,
+        ...fixedAllowanceOptions(
+          `The APK Signing Block allowance of ${String(maximum)} pairs (this release has no runtime override)`,
           "count",
         ),
-      );
+      });
+    }
   }
 };
 

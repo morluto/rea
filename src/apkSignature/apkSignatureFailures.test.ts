@@ -13,7 +13,10 @@ it.each([
   [
     "block pairs",
     mapApkBlockError(
-      { kind: "budget-exceeded", resource: "signing-block-pairs", limit: 4096 },
+      decodeLimit("apk-signing-block", "Fixture limit reached.", {
+        name: "max_signing_block_pairs",
+        maximum: 4096,
+      }),
       "/selected.apk",
     ),
     "max_signing_block_pairs",

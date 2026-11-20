@@ -1,8 +1,12 @@
 import { createHash } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 
+import {
+  locateApkSigningBlock,
+  parseZipTail,
+} from "../../src/domain/apkSignature/apkSigningBlock.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { analysisErrorProjectionSchema } from "../../src/domain/analysisErrorProjectionSchema.js";
 import { apkSignatureSummaryViewResultSchema } from "../../src/domain/analysisView/analysisViewResult.js";
@@ -29,6 +33,7 @@ cliTest(
     ]);
     const paths = new Map<number, string>();
     const digests = new Map<number, string>();
+    const malformedPath = join(root, "pair-overrun.apk");
     for (const count of [1, 4096, 4097]) {
       const path = join(root, `pairs-${count}.apk`);
       const bytes = withSigningBlock(
@@ -41,7 +46,23 @@ cliTest(
       await writeFile(path, bytes);
       digests.set(count, createHash("sha256").update(bytes).digest("hex"));
       paths.set(count, path);
+      if (count === 4097) {
+        const malformed = Buffer.from(bytes);
+        const directoryOffset = malformed.readUInt32LE(
+          malformed.length - 22 + 16,
+        );
+        // The last pair has room for its ID only. Its declared value would
+        // cross into the 24-byte block footer.
+        malformed.writeBigUInt64LE(5n, directoryOffset - 24 - 12);
+        await writeFile(malformedPath, malformed);
+      }
     }
+    const bytes = await readFile(paths.get(4097)!);
+    const tail = parseZipTail(bytes);
+    if (!tail.ok) throw new Error("Expected a framed ZIP tail");
+    const parsed = locateApkSigningBlock(bytes, tail.value);
+    if (parsed.ok || parsed.error.kind !== "limit")
+      throw new Error("Expected a signing-block pair limit");
     const expected = {
       code: "resource_constraint",
       category: "resource_constraint",
@@ -49,6 +70,7 @@ cliTest(
       details: {
         operation: "inspect_apk_signature",
         resource: "capacity",
+        reason: parsed.error.failure.detail,
         reported_limits: { max_signing_block_pairs: 4096 },
       },
     };
@@ -65,6 +87,25 @@ cliTest(
         "Waiting for an active analysis to finish does not raise it",
       );
     }
+    const malformedExpected = {
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: ["path"],
+            reason: "invalid_value",
+            message: expect.stringContaining("pair length out of range"),
+          },
+        ],
+      },
+    };
+    const malformedReply = await cli.run({
+      arguments: ["inspect-apk-signature", malformedPath, "--json"],
+    });
+    expect(malformedReply.exitCode, malformedReply.stderr).toBe(1);
+    expect(
+      analysisErrorProjectionSchema.parse(malformedReply.json),
+    ).toMatchObject(malformedExpected);
     const { call } = await connectLocalToolsMcp({
       REA_MCP_OUTPUT_SCHEMA_PROFILE: "off",
     });
@@ -72,6 +113,10 @@ cliTest(
       path: paths.get(4097),
     });
     expect(parseMcpToolError(rejected).error).toMatchObject(expected);
+    const malformed = await call("inspect_apk_signature", {
+      path: malformedPath,
+    });
+    expect(parseMcpToolError(malformed).error).toMatchObject(malformedExpected);
     for (const count of [4096, 1]) {
       const path = paths.get(count)!;
       const reply = await call("inspect_apk_signature", { path });
