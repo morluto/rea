@@ -246,6 +246,8 @@ Destructuring retains dependencies from the source slots proved at the time
 of the read. A later write does not replace an earlier proved dependency.
 After a nested pattern is proved to receive a nullish value and throw, later
 bindings in that pattern retain candidate paths with no proven initializer.
+If the selected slot is known to be undefined, the proof includes the nested
+pattern's default initializer.
 A numeric key in an object pattern selects a named property directly.
 Nested array patterns can preserve dependencies for later bindings when
 element selection is known and iterator closing cannot invoke a return hook.

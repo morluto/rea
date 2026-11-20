@@ -262,12 +262,12 @@ const collectDestructuring = (
       ? unwrapJavaScriptExpression(occurrence.left).node
       : occurrence;
     const plainObjectPath = next.plainObjectPath === true && !hasDefault;
-    // A default can replace undefined. It cannot replace a known null.
+    // Only undefined selects the default, whose result can also be nullish.
     if (
       selected !== undefined &&
       (t.isObjectPattern(pattern) || t.isArrayPattern(pattern)) &&
-      (!hasDefault || t.isNullLiteral(selected)) &&
-      isNullish(selected)
+      isNullish(selected) &&
+      (!hasDefault || t.isNullLiteral(selected) || isNullish(occurrence.right))
     ) {
       abrupt = true;
       ownSlot = undefined;
