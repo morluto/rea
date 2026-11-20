@@ -216,13 +216,8 @@ export function* decodeAppleDispatchMetadataSteps(
   };
   const readers = {
     u32,
-<<<<<<< HEAD
     i32: (address: bigint) => metadata.i32(offset(address, 4)),
-    u64: (address: bigint) => bytes.readBigUInt64LE(offset(address, 8)),
-=======
-    i32: (address: bigint) => bytes.readInt32LE(offset(address, 4)),
     u64,
->>>>>>> origin/main
     pointer,
     resolvePointer: decodePointer,
     bound,
