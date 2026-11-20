@@ -136,6 +136,7 @@ it("records attempts when a self-exit notification arrives after escalation", as
 });
 
 it("kills at once when cancelled during the finalization interval", async () => {
+  fakePollingClock();
   const fake = fakeTerminal();
   const controller = new AbortController();
   const pending = start(
@@ -143,9 +144,12 @@ it("kills at once when cancelled during the finalization interval", async () => 
     { timeout_ms: 100, finalization_ms: 60_000 },
     controller.signal,
   );
-  await expect.poll(() => fake.signals).toContain("SIGTERM");
+  await vi.advanceTimersByTimeAsync(100);
+  expect(fake.signals).toEqual(["SIGTERM"]);
   controller.abort();
-  await expect.poll(() => fake.signals).toContain("SIGKILL");
+  // A few polls are enough for cancellation. The 60s interval stays open.
+  await vi.advanceTimersByTimeAsync(100);
+  expect(fake.signals).toEqual(["SIGTERM", "SIGKILL"]);
   fake.deliverExit({ exitCode: 0, signal: 9 });
 
   const exit = observed(await pending);
@@ -154,17 +158,9 @@ it("kills at once when cancelled during the finalization interval", async () => 
     "cancelled",
   );
   expect(
-    fake.signals.filter((signal) => signal === "SIGKILL"),
-    "the abort branch itself sent one SIGKILL, long before the interval ended",
-  ).toHaveLength(1);
-  expect(
     exit.finalization?.signals.map(({ signal }) => signal),
     "cancellation records both attempts",
   ).toEqual(["SIGTERM", "SIGKILL"]);
-  expect(
-    fake.signals.filter((signal) => signal.startsWith("terminal:")),
-    "cancellation during finalization never uses a bare terminal kill",
-  ).toEqual([]);
 });
 
 it("records escalation attempts alongside an observed SIGKILL exit", async () => {
@@ -296,6 +292,7 @@ it.each(["identity-changed", "unverified"] as const)(
 );
 
 it("returns at once when a cancellation kill cannot be delivered", async () => {
+  fakePollingClock();
   const fake = fakeTerminal({ SIGKILL: "unverified" });
   const controller = new AbortController();
   const pending = start(
@@ -303,8 +300,11 @@ it("returns at once when a cancellation kill cannot be delivered", async () => {
     { timeout_ms: 100, finalization_ms: 60_000 },
     controller.signal,
   );
-  await expect.poll(() => fake.signals).toContain("SIGTERM");
+  await vi.advanceTimersByTimeAsync(100);
+  expect(fake.signals).toEqual(["SIGTERM"]);
   controller.abort();
+  await vi.advanceTimersByTimeAsync(100);
+  expect(fake.signals).toEqual(["SIGTERM", "SIGKILL"]);
 
   const result = await pending;
 
