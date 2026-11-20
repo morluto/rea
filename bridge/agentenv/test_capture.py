@@ -71,6 +71,50 @@ class CaptureListingTest(unittest.TestCase):
             self.assertFalse(output.exists())
 
 
+class CaptureHandoffTest(unittest.TestCase):
+    def test_stop_claims_a_missing_capture_directory(self):
+        with tempfile.TemporaryDirectory() as parent:
+            capture_dir = os.path.join(parent, "cap")
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                code = capture.stop({"capture": capture_dir, "timeout_s": 1})
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(stdout.getvalue()), {"absent": True})
+            self.assertTrue(os.path.isdir(capture_dir))
+
+    def test_stop_waits_when_start_already_owns_the_directory(self):
+        with tempfile.TemporaryDirectory() as parent:
+            capture_dir = os.path.join(parent, "cap")
+            os.mkdir(capture_dir)
+
+            def finish():
+                time.sleep(0.05)
+                (Path(capture_dir) / "capture.out").write_bytes(b"")
+                (Path(capture_dir) / "exit").write_text("0", encoding="utf-8")
+
+            thread = threading.Thread(target=finish)
+            thread.start()
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                code = capture.stop({"capture": capture_dir, "timeout_s": 2})
+            thread.join()
+            self.assertEqual(code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertNotIn("absent", payload)
+            self.assertEqual(payload["exit_code"], 0)
+
+    def test_request_returns_false_when_the_fifo_write_fails(self):
+        with tempfile.TemporaryDirectory() as parent:
+            with (
+                patch("bridge.agentenv.capture.os.O_NONBLOCK", 0, create=True),
+                patch("bridge.agentenv.capture.os.open", return_value=7),
+                patch("bridge.agentenv.capture.os.write", side_effect=BrokenPipeError),
+                patch("bridge.agentenv.capture.os.close") as close,
+            ):
+                self.assertFalse(capture._request(parent, "stop"))
+            close.assert_called_once_with(7)
+
+
 @unittest.skipIf(sys.platform == "win32", "desktop build computers use Linux")
 class LongRunTest(unittest.TestCase):
     def setUp(self):

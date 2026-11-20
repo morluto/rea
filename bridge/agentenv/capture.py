@@ -235,9 +235,21 @@ def _request(capture: str, line: str) -> bool:
         return False
     try:
         os.write(fd, (line + "\n").encode("utf-8"))
+    except OSError:
+        return False
     finally:
         os.close(fd)
     return True
+
+
+def _wait_for_capture_handoff(capture: str, timeout_s: float) -> None:
+    """start() already owns this directory. Wait until its FIFO or exit file appears."""
+    deadline = time.monotonic() + timeout_s
+    attempt = 0
+    control = os.path.join(capture, "control")
+    while _exit_code(capture) is None and not os.path.exists(control) and time.monotonic() < deadline:
+        time.sleep(_poll_sleep(attempt))
+        attempt += 1
 
 
 def mark(arguments: dict) -> int:
@@ -260,11 +272,21 @@ def mark(arguments: dict) -> int:
 
 def stop(arguments: dict) -> int:
     capture = os.path.abspath(arguments["capture"])
-    if _exit_code(capture) is None and not os.path.exists(os.path.join(capture, "control")):
-        # Never launched: claim the folder, so a start still on its way finds it used and launches nothing.
-        os.makedirs(capture, exist_ok=True)
-        return _say({"absent": True})
-    if _exit_code(capture) is None:
+    control = os.path.join(capture, "control")
+    timeout_s = arguments.get("timeout_s", 600)
+    if _exit_code(capture) is None and not os.path.exists(control):
+        # Claim the folder exclusively. exist_ok would adopt a start() directory
+        # that does not have its FIFO yet and then report the capture absent.
+        parent = os.path.dirname(capture)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        try:
+            os.mkdir(capture, 0o700)
+        except FileExistsError:
+            _wait_for_capture_handoff(capture, timeout_s)
+        else:
+            return _say({"absent": True})
+    if _exit_code(capture) is None and os.path.exists(control):
         _request(capture, "stop")
     deadline = time.monotonic() + arguments.get("timeout_s", 600)
     attempt = 0
