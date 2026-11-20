@@ -291,6 +291,17 @@ export const comparisonLimitations = (
     limitations.push(
       "Field Constant-table defaults are not compared; field matching and change detection cover names, flags and signatures only.",
     );
+  if (
+    [left, right].some((report) =>
+      report.methods.some(
+        ({ parameter_defaults: defaults }) =>
+          defaults === null || defaults.length > 0,
+      ),
+    )
+  )
+    limitations.push(
+      "Parameter Constant-table defaults are not compared; method matching and change detection do not examine them.",
+    );
   const namesTypes = (result: ManagedMemberInspection) =>
     result.methods.some(
       ({ signature }) =>

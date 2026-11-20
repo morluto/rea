@@ -45,13 +45,26 @@ file size, the artifact inspection retains PE identity and reports partial
 coverage with the offset of that field. Managed metadata and CIL remain
 unavailable because the section table cannot establish their file mappings.
 
-### Field constant defaults
+### Field and parameter constant defaults
 
-`inspect_managed_members` reads field-owned values from the ECMA-335 `Constant`
-table without loading the assembly. Each selected field's `constant` contains
-the declaration's row offset, element-type code, blob index and exact `raw_hex`,
-plus its decoded `element_type` and `value`. For example, an `i4` declaration
-with bytes `865d0000` returns `23942`.
+`inspect_managed_members` reads field- and parameter-owned values from the
+ECMA-335 `Constant` table without loading the assembly. Each selected field's
+`constant` contains the declaration's row offset, element-type code, blob index
+and exact `raw_hex`, plus its decoded `element_type` and `value`. For example,
+an `i4` declaration with bytes `865d0000` returns `23942`.
+
+Each selected method's `parameter_defaults` lists, in `ParamList` order, the
+`Param` rows that declare `HasDefault` or own a `Constant` row: the Param
+token, row offset, `sequence` (`0` is the return value), name, flags and the
+same `constant` record. Parameters without a default are omitted, so an empty
+list means the method's Param rows were examined and none declares one.
+`parameter_defaults: null` means the method's `ParamList` run could not be
+attributed: an out-of-range coordinate, a run that ends before it starts or is
+out of order with another method's run, or an invalid `ParamPtr` table. It is
+also `null` for every method when a `Param` row that no method owns declares a
+default: no `ParamPtr` row lists it, or its list position precedes every
+method's run. Such a default could belong to any method. Methods keep their
+other facts and coverage is partial.
 
 Boolean, character, signed/unsigned integers, floating-point, UTF-16 strings
 and class-null declarations are supported. `i8` and `u8` values are decimal
@@ -61,18 +74,19 @@ NaN and infinities are the strings `-0`, `NaN`, `Infinity` or `-Infinity`;
 NULs and unpaired surrogates, are preserved.
 
 `constant: null` means neither a Constant declaration nor `HasDefault` was
-observed. Missing or duplicate declarations,
-inconsistent flags, malformed values and unsupported element types return
-`state: "unavailable"`, a limitation and partial coverage while retaining other
-member facts. This decoding shares the existing metadata representation budget
-and only decodes blobs for the selected fields.
+observed. Missing or duplicate declarations, inconsistent flags, malformed
+values and unsupported element types return `state: "unavailable"`, a
+limitation and partial coverage while retaining other member facts. Fields and
+parameters share one `Constant` table index and the existing metadata
+representation budget, and only decode blobs for the selected members.
 
-Retained `managed-members` field pages can select `fields: ["constant"]` while
-keeping original field identity and source offsets. These values are metadata
-declarations, including enum members' encoded underlying constants, not observed
-runtime state or inferred enum-name mappings. Parameter/property defaults are
-not exposed by this field-focused reader. Member comparison still covers field
-names, flags and signatures; it does not compare constant defaults.
+Retained `managed-members` pages can select `fields: ["constant"]` for fields
+or `fields: ["parameter_defaults"]` for methods while keeping original member
+identity and source offsets. These values are metadata declarations, including
+enum members' encoded underlying constants, not observed runtime state or
+inferred enum-name mappings. Property defaults are not exposed. Member
+comparison does not compare field or parameter constant defaults; field
+matching still covers names, flags and signatures.
 
 The encoding follows [ECMA-335, Partition II, sections 22.9 and 23.1.16](https://ecma-international.org/publications-and-standards/standards/ecma-335/).
 

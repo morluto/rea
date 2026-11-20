@@ -1,15 +1,32 @@
 import { Buffer } from "node:buffer";
 
 /**
+ * `params` are the Param rows the method owns; a row's sequence defaults to its
+ * one-based position, and `nameIndex` is a raw #Strings index that replaces
+ * `name`'s entry. `paramList` is a raw ParamList coordinate that defaults to
+ * the run after earlier methods' params. `signature` is the MethodDefSig blob,
+ * by default a static void method without parameters. An explicit `rva` of
+ * zero represents a method without an IL body.
  * @typedef {{
  *   readonly body?: Buffer;
  *   readonly flags?: number;
  *   readonly implFlags?: number;
  *   readonly name: string;
+ *   readonly params?: readonly {
+ *     readonly name: string;
+ *     readonly flags?: number;
+ *     readonly sequence?: number;
+ *     readonly nameIndex?: number;
+ *   }[];
+ *   readonly paramList?: number;
+ *   readonly signature?: Buffer;
  *   readonly rva?: number;
  * }} ManagedPeFixtureMethod
  */
 /**
+ * A Constant row's HasConstant parent defaults to Field row 1; Param row r is
+ * `(r << 2) | 1`. `paramPointers` are ParamPtr rows, which method ParamList
+ * coordinates then index.
  * @typedef {{
  *   readonly cliFlags?: number;
  *   readonly corruptMetadataSignature?: boolean;
@@ -32,6 +49,7 @@ import { Buffer } from "node:buffer";
  *   readonly methodName?: string;
  *   readonly methods?: readonly ManagedPeFixtureMethod[];
  *   readonly mvid?: Buffer;
+ *   readonly paramPointers?: readonly number[];
  *   readonly pinvoke?: {
  *     readonly importName?: string;
  *     readonly mappingFlags?: number;
@@ -162,6 +180,7 @@ const fieldRow = (name, signature, flags = 0x0001) =>
  *   readonly flags?: number;
  *   readonly implFlags?: number;
  *   readonly name: number;
+ *   readonly paramList: number;
  *   readonly rva: number;
  *   readonly signature: number;
  * }} row
@@ -170,6 +189,7 @@ const methodDefRow = ({
   flags = 0x0016,
   implFlags = 0,
   name,
+  paramList,
   rva,
   signature,
 }) =>
@@ -179,8 +199,18 @@ const methodDefRow = ({
     u16(flags),
     u16(name),
     u16(signature),
-    u16(0),
+    u16(paramList),
   ]);
+
+/**
+ * @param {{
+ *   readonly flags?: number;
+ *   readonly name: number;
+ *   readonly sequence: number;
+ * }} row
+ */
+const paramRow = ({ flags = 0, name, sequence }) =>
+  Buffer.concat([u16(flags), u16(sequence), u16(name)]);
 
 /**
  * @param {number} name
@@ -420,13 +450,33 @@ const buildManagedMetadata = (options, methods) => {
       options.targetFramework ?? ".NETCoreApp,Version=v8.0",
     ),
   );
-  const methodRows = namedMethods.map(({ method, name }) =>
+  // Each method's run starts after the preceding methods' Param rows.
+  let nextParamList = 1;
+  const paramLists = methods.map((method) => {
+    const start = nextParamList;
+    nextParamList += method.params?.length ?? 0;
+    return start;
+  });
+  const paramRows = methods.flatMap((method) =>
+    (method.params ?? []).map((param, index) =>
+      paramRow({
+        flags: param.flags ?? 0,
+        sequence: param.sequence ?? index + 1,
+        name: param.nameIndex ?? strings.add(param.name),
+      }),
+    ),
+  );
+  const methodRows = namedMethods.map(({ method, name }, index) =>
     methodDefRow({
       name,
-      signature: methodSignature,
+      signature:
+        method.signature === undefined
+          ? methodSignature
+          : blobs.add(method.signature),
       rva: method.rva,
       flags: method.flags ?? 0x0016,
       implFlags: method.implFlags ?? 0,
+      paramList: method.paramList ?? paramLists[index] ?? 1,
     }),
   );
   // Rows by metadata table number; the stream orders tables by number.
@@ -443,6 +493,12 @@ const buildManagedMetadata = (options, methods) => {
     [35, referenceStringIndexes.map((name) => assemblyRefRow(name, tokenBlob))],
     [40, [manifestResourceRow(resourceName)]],
   ]);
+  if (options.paramPointers !== undefined)
+    rows.set(
+      7,
+      options.paramPointers.map((row) => u16(row)),
+    );
+  if (paramRows.length > 0) rows.set(8, paramRows);
   if (constantRows.length > 0) rows.set(11, constantRows);
   if (pinvokeModuleName !== null)
     rows.set(26, [moduleRefRow(pinvokeModuleName)]);

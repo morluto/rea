@@ -41,6 +41,7 @@ for new work, roadmap granularity and producer-owned contracts.
 - [Native initializers](native/native-initializers/spec.md) ([plan](native/native-initializers/plan.md), [tasks](native/native-initializers/tasks.md))
 - [Rust dependency metadata in WebAssembly modules](native/rust-wasm-auditable/spec.md) ([plan](native/rust-wasm-auditable/plan.md), [tasks](native/rust-wasm-auditable/tasks.md))
 - [PPC64 ELFv2 Power ISA 3.0 lane](native/ppc64-elfv2/spec.md) ([plan](native/ppc64-elfv2/plan.md), [tasks](native/ppc64-elfv2/tasks.md))
+- [Managed parameter constant defaults](managed/parameter-constant-defaults/spec.md) ([plan](managed/parameter-constant-defaults/plan.md), [tasks](managed/parameter-constant-defaults/tasks.md))
 
 - [Release exposure audit](artifacts/release-exposure/spec.md) ([plan](artifacts/release-exposure/plan.md), [tasks](artifacts/release-exposure/tasks.md))
 - [CycloneDX dependency view](analysis-views/cyclonedx-dependencies/spec.md) ([plan](analysis-views/cyclonedx-dependencies/plan.md), [tasks](analysis-views/cyclonedx-dependencies/tasks.md))

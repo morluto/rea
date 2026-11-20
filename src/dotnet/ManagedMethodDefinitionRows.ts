@@ -1,4 +1,8 @@
-import type { ManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
+import { BinaryReader } from "../domain/binaryContainer.js";
+import {
+  metadataRowOffset,
+  type ManagedMetadataLayout,
+} from "../domain/managed/managedMetadataLayout.js";
 import {
   metadataRowCursor,
   metadataToken,
@@ -52,6 +56,31 @@ export const readMethodDefinitionRow = (
       pinvokeFlag: (flags & 0x2000) !== 0,
       internalCall: (implFlags & 0x1000) !== 0,
     },
+  };
+};
+
+/**
+ * The raw first ParamList coordinate of a MethodDef row. Attributing one
+ * method's run reads every row's coordinate, so this reads the admitted table
+ * extent directly instead of retaining per-row cursor bookkeeping for rows the
+ * caller did not select.
+ */
+export const readMethodParamList = (
+  bytes: Buffer,
+  layout: ManagedMetadataLayout,
+  row: number,
+): { readonly raw: number; readonly offset: number } => {
+  // The admitted MethodDef row size gives ParamList a Param-table index width.
+  const offset =
+    metadataRowOffset(layout, 6, row) +
+    8 +
+    layout.stringIndexSize +
+    layout.blobIndexSize;
+  const reader = new BinaryReader(bytes, true, "managed");
+  return {
+    raw:
+      layout.tableIndexSize(8) === 2 ? reader.u16(offset) : reader.u32(offset),
+    offset,
   };
 };
 
