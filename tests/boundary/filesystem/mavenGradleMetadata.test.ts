@@ -26,6 +26,9 @@ describe("Maven POM and Gradle module metadata stable filesystem boundary", () =
         dependencies: [],
         coverage: { status: "complete" },
       });
+      expect(minimal.value.limitations).not.toContainEqual(
+        expect.stringContaining("interpreted using Gradle module metadata 1.1"),
+      );
       for (const invalid of [
         '{"variants":[],"formatVersion":"1.1"}',
         '{"formatVersion":"1.1","component":null,"variants":[]}',
@@ -39,11 +42,17 @@ describe("Maven POM and Gradle module metadata stable filesystem boundary", () =
           error: { issues: [{ reason: "invalid_format" }] },
         });
       }
-      const unfamiliar = await inspect('{"formatVersion":"2.0","variants":[]}');
+      const unfamiliar = await inspect(
+        '{"formatVersion":"2.0","component":{"module":"demo"},"variants":[]}',
+      );
       if (!unfamiliar.ok) throw unfamiliar.error;
       expect(unfamiliar.value.normalized_result).toMatchObject({
+        coordinates: { artifact_id: "demo" },
         gradle: { format_version: "2.0", variants: [] },
       });
+      expect(unfamiliar.value.limitations).toContainEqual(
+        expect.stringContaining("interpreted using Gradle module metadata 1.1"),
+      );
     } finally {
       await service.close();
     }
