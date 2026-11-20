@@ -32,7 +32,10 @@ export interface DesktopEntry {
   readonly malformed_line?: number;
 }
 
-const GROUP = new RegExp(`^${DESKTOP_GROUP}$`, "u");
+// Capture tolerant padding separately so it stays available for validation.
+const GROUP = new RegExp(String.raw`^(\s*)${DESKTOP_GROUP}(\s*)$`, "u");
+const GLIB_GROUP_LEADING_SPACE = /^[ \t\f\r]*$/u;
+const GLIB_GROUP_TRAILING_SPACE = /^[ \t]*$/u;
 const INVALID_GROUP_NAME_CHARACTER = /[[\]\u0000-\u001f\u007f]/u;
 const LINE_WITH_SEPARATOR = new RegExp(`(${DESKTOP_LINE_BREAK})`, "u");
 // Only LF separates records; Unicode line/paragraph separators are value data.
@@ -123,11 +126,13 @@ const readDesktopEntryFields = (text: string) => {
     const raw = parts[index]!;
     const line = raw.trim();
     if (line.length === 0 || line.startsWith("#")) continue;
-    const header = GROUP.exec(line)?.[1];
+    const [, leading = "", header, trailing = ""] = GROUP.exec(raw) ?? [];
     if (header !== undefined) {
       if (
         (group === undefined && header !== DESKTOP_ENTRY_GROUP) ||
-        INVALID_GROUP_NAME_CHARACTER.test(header)
+        INVALID_GROUP_NAME_CHARACTER.test(header) ||
+        !GLIB_GROUP_LEADING_SPACE.test(leading) ||
+        !GLIB_GROUP_TRAILING_SPACE.test(trailing)
       )
         malformedLine ??= index / 2 + 1;
       // Preserve the group boundary for tolerant field and rewrite consumers.
