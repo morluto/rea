@@ -34,7 +34,9 @@ describe("derived MCP operation boundary", () => {
         mcpReq: {
           ...context(controller).mcpReq,
           notify: async (notification) => {
-            if (!notification.params?.message?.startsWith("complete:")) return;
+            const message = notification.params?.message;
+            if (typeof message !== "string" || !message.startsWith("complete:"))
+              return;
             await Promise.resolve();
             controller.abort(reason);
           },
