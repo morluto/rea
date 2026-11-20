@@ -59,6 +59,10 @@ out of the derived set. `version_definitions` summarizes the image's own
 each import keeps its version index, hidden bit, and a resolved
 `library@version` when a matching verneed record exists. Index 0 and 1 stay
 `unversioned`. A missing matching record is `unknown` and is an issue.
+For `DT_VERSYM`, the reader keeps the contiguous prefix of complete slots
+that share one unambiguous file translation. It stops at the first slot that
+cannot be admitted, even if later slots map independently. Later import
+versions remain unexamined and coverage is `partial`.
 
 A missing `PT_DYNAMIC` is an observed empty load-time dependency inventory. It
 is not proof another overlay or container carried dynamic linking metadata.
