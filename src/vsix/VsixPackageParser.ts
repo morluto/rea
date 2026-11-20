@@ -702,9 +702,13 @@ const parsePackageJsonDocument = (
     if (item === null || typeof item !== "object" || Array.isArray(item))
       return { command: null, title: null };
     const command = item as Record<string, unknown>;
+    // VS Code registers and invokes a command by its exact identifier, as it
+    // matches the onCommand activation event, so keep the declared text.
     return {
       command:
-        typeof command.command === "string" ? nonempty(command.command) : null,
+        typeof command.command === "string" && command.command !== ""
+          ? command.command
+          : null,
       title: typeof command.title === "string" ? nonempty(command.title) : null,
     };
   });

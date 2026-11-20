@@ -725,6 +725,34 @@ it("keeps activation events literal before classifying them as eager", async () 
   ]);
 });
 
+it("keeps contributed command identifiers literal next to their activation events", async () => {
+  const bytes = await vsixPackageFixture({
+    packageJson: JSON.stringify({
+      name: "hello",
+      publisher: "demo",
+      version: "1.2.3",
+      engines: { vscode: "^1.74.0" },
+      activationEvents: ["onCommand:demo.run "],
+      contributes: {
+        commands: [
+          { command: "demo.run ", title: "Run" },
+          { command: "", title: "Empty" },
+        ],
+      },
+    }),
+  });
+  const report = vsixPackageSchema.parse(
+    await parseVsixPackage(bytes, artifactOf(bytes), defaults),
+  );
+  expect(report.contributes.commands).toEqual([
+    { command: "demo.run ", title: "Run" },
+    { command: null, title: "Empty" },
+  ]);
+  expect(report.activation_events).toEqual([
+    { event: "onCommand:demo.run ", eager: false },
+  ]);
+});
+
 it("resolves dot segments in entry points under extension/", async () => {
   const bytes = await vsixPackageFixture({
     packageJson: JSON.stringify({
