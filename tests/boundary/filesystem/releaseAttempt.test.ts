@@ -1,7 +1,8 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import {
+  githubApi,
   inspectGithubRelease,
   recordReleaseAttempt,
   requireCurrentMainCheckpoint,
@@ -13,6 +14,30 @@ import { workflowGit } from "../../support/workflowGit.js";
 const source = "a".repeat(40);
 const parent = "b".repeat(40);
 const ref = `refs/tags/rea-release-attempt/${source}`;
+
+it("sends authenticated release requests only to the fixed GitHub API endpoint", async () => {
+  const request = vi.fn(async (url: URL, options: RequestInit) => {
+    expect(url.href).toBe(
+      "https://api.github.com/repos/fixture/rea/issues/1/labels/autorelease%3A%20pending",
+    );
+    expect(options).toMatchObject({ redirect: "error", method: "DELETE" });
+    return new Response(null, { status: 204 });
+  });
+  vi.stubGlobal("fetch", request);
+  try {
+    const api = githubApi("fixture/rea", "fixture-token");
+    expect(() => api("../../outside")).toThrow("Invalid GitHub API path");
+    expect(() => githubApi("../rea", "fixture-token")("git/refs")).toThrow(
+      "Invalid GitHub API path",
+    );
+    expect(request).not.toHaveBeenCalled();
+    await expect(
+      api("issues/1/labels/autorelease%3A%20pending", undefined, "DELETE"),
+    ).resolves.toMatchObject({ status: 204 });
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
 
 it("proves the live main checkpoint while keeping the qualified checkout pinned", async () => {
   const remote = await createTestTempDirectory("rea-release-main-");

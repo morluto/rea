@@ -486,8 +486,8 @@ it("binds npm and MCP publication to the same immutable release SHA", async () =
     step.run?.includes("release-notes.mjs publication"),
   );
   const tagIndex = tag.steps.findIndex((step) => step.id === "release");
-  const inspectIndex = tag.steps.findIndex(
-    (step) => step.run === "node scripts/ci/release-attempt.mjs inspect-github",
+  const inspectIndex = tag.steps.findIndex((step) =>
+    step.run?.includes("node scripts/ci/release-attempt.mjs inspect-github"),
   );
   expect(inspectIndex).toBeGreaterThanOrEqual(0);
   expect(inspectIndex).toBeLessThan(notesIndex);
@@ -495,6 +495,7 @@ it("binds npm and MCP publication to the same immutable release SHA", async () =
     id: "github",
     env: { RELEASE_BRANCH: "${{ inputs.release_branch }}" },
   });
+  expect(tag.steps[inspectIndex]?.run).toContain('>> "$GITHUB_OUTPUT"');
   expect(notesIndex).toBeLessThan(tagIndex);
   expect(tag.steps.at(-1)?.run).toContain(
     "node scripts/ci/release-attempt.mjs verify-github",

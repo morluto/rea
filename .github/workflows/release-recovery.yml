@@ -117,7 +117,7 @@ jobs:
         id: github
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/ci/release-attempt.mjs inspect-github
+        run: node scripts/ci/release-attempt.mjs inspect-github >> "$GITHUB_OUTPUT"
       - name: Validate finalized notes before release creation
         if: steps.github.outputs.published == 'false'
         env:

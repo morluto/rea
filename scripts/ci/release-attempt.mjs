@@ -1,5 +1,4 @@
 import { execFile } from "node:child_process";
-import { appendFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
@@ -62,8 +61,13 @@ export async function recordReleaseAttempt(api, source, parent, decision) {
 export function githubApi(repository, token) {
   if (!/^[\w.-]+\/[\w.-]+$/u.test(repository ?? "") || !token)
     throw new Error("Expected GITHUB_REPOSITORY and GH_TOKEN");
-  return (path, body, method = body === undefined ? "GET" : "POST") =>
-    fetch(`https://api.github.com/repos/${repository}/${path}`, {
+  return (path, body, method = body === undefined ? "GET" : "POST") => {
+    const pathname = `/repos/${repository}/${path}`;
+    const url = new URL("https://api.github.com");
+    url.pathname = pathname;
+    if (url.origin !== "https://api.github.com" || url.pathname !== pathname)
+      throw new Error("Invalid GitHub API path");
+    return fetch(url, {
       method,
       headers: {
         Authorization: `Bearer ${token}`,
@@ -72,8 +76,10 @@ export function githubApi(repository, token) {
         "X-GitHub-Api-Version": "2022-11-28",
       },
       body: body === undefined ? undefined : JSON.stringify(body),
+      redirect: "error",
       signal: AbortSignal.timeout(30_000),
     });
+  };
 }
 
 async function versionAt(source) {
@@ -221,7 +227,7 @@ async function main() {
           await verifyFrozenReleaseBranch(api, RELEASE_BRANCH, source);
         else await requireCurrentMainCheckpoint(command, api, source);
       }
-      await appendFile(process.env.GITHUB_OUTPUT, `published=${published}\n`);
+      process.stdout.write(`published=${published}\n`);
     } else if (!published) {
       throw new Error(`GitHub release ${tag} is not public`);
     }
