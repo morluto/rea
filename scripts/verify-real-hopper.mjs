@@ -531,14 +531,19 @@ try {
       ]);
       await call("close_binary");
     }
-    const lifecycleAndCli = await verifyHopperLifecycleAndCli(client, options, {
-      primary: targetA,
-      secondary: targetB,
-      ...(fixtureTargets.unicode === undefined
-        ? {}
-        : { unicode: fixtureTargets.unicode.path }),
-      ownedProcessIds,
-    });
+    const lifecycleAndCli = await verifyHopperLifecycleAndCli(
+      client,
+      options,
+      {
+        primary: targetA,
+        secondary: targetB,
+        ...(fixtureTargets.unicode === undefined
+          ? {}
+          : { unicode: fixtureTargets.unicode.path }),
+        ownedProcessIds,
+      },
+      commands,
+    );
     const closedSession = requireMcpLifecycleResult(
       await fullSessionStatus(),
       "binary_session",
@@ -622,6 +627,7 @@ try {
       serverCommand,
       serverArgs,
       environment: serverEnvironment,
+      commands,
     });
 } catch (cause) {
   primaryFailure = cause;
