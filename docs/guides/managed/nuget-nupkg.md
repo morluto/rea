@@ -29,12 +29,13 @@ requires an absolute filesystem path and preserves that exact selection:
 The inline Evidence result contains the artifact path, SHA-256, and byte length.
 
 `identity` reports `id`, `version`, `authors`, and `description` as present in
-the `.nuspec` metadata. For authors and description, NuGet indexes the first
-nonempty leaf with a matching local name, ignoring case. The package ID and
-version use their case-sensitive names in the metadata namespace. Missing
-fields are `null`. The `.nuspec` and OPC
-relationships go through XML end-of-line handling, as NuGet's reader applies
-it: CRLF and lone CR read as LF. When no `.nuspec` can be
+the `.nuspec` metadata. Authors and description follow NuGet's first eligible
+leaf rule with case-insensitive local names. Empty leaves and ordinary
+whitespace-only leaves are skipped. Whitespace preserved by CDATA or
+`xml:space` can occupy the first slot and yield `null` even when a later leaf
+has text. The package ID and version use their case-sensitive names in the
+metadata namespace. Missing fields are `null`. In the `.nuspec` and OPC
+relationships, XML end-of-line handling maps CRLF and lone CR to LF. When no `.nuspec` can be
 selected, `identity` is `null`.
 
 `license` reports the `.nuspec` license element: `type` is `expression` or

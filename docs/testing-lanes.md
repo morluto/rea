@@ -826,8 +826,8 @@ its own complete result at the exact released revision.
 Package lanes assert the actual Node platform/architecture before verification
 and record those values with the Node version. The package matrix runs up to
 four jobs concurrently on independent hosted runners with explicit
-timeouts and per-runner Node heap/thread limits; Windows retains its curated
-capability lane. Package checks cover installation, CLI/MCP discovery,
+timeouts and per-runner Node heap and thread limits. Windows runs its curated
+capabilities and installed-package suites in separate jobs. Package checks cover installation, CLI/MCP discovery,
 target-free analysis, configuration backups/recovery, Evidence and owned
 lifecycle; Inspector checks execute source-owned loopback targets and special
 filename cases.
@@ -854,13 +854,10 @@ catalog, and managed-conformance metadata. Each shard still installs the locked
 dependencies and runs its assigned tests; full qualification enables coverage. It no longer
 regenerates the same metadata independently.
 
-The build job finds the newest trusted timing artifact for its tier
-(`test-timings-fast` or `test-timings-full`) from a successful default-branch
-push, schedule, or manual CI run, and includes that same report in each shard's
-snapshot. The bounded lookup verifies the producer. Pull-request runs and other
-branches are not producers. A tier with no qualifying artifact leaves history
-unset, and Vitest uses its own assignment. A later schedule that reuses
-qualification without uploading timings leaves the previous artifact in place.
+The build job includes any
+[verified timing history for its tier](development/testing.md#coverage-and-timing)
+in each shard's snapshot. A later schedule that reuses qualification without
+uploading timings leaves the previous artifact in place.
 
 Each tier keeps its own history because stale weights from another tier, or
 from before a large test change, unbalance the shards.

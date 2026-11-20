@@ -382,7 +382,7 @@ for commands, test placement, pruning, and real-provider prerequisites.
 Before requesting review, run relevant tests and `npm run check`; add
 `npm run docs:check` when contracts or generated metadata change. Record the
 checks and unavailable coverage. CI owns the full deterministic suite and
-coverage. `npm run check:pr` is an optional full local gate for broad changes or
+coverage. `npm run check:pr` is an optional broad local suite for large changes or
 CI diagnosis. Packaging/setup/distribution changes additionally require
 `npm run verify:package` and `npm pack --dry-run`; provider changes require the
 matching real-provider lane. State which host/provider workflows ran.
