@@ -133,7 +133,8 @@ it.each([
           diagnostics: [
             {
               severity: "error",
-              raw_json: expect.stringContaining("Recorded compiler diagnostic"),
+              json_pointer: "/errors/0",
+              source_range: expect.anything(),
             },
           ],
         },

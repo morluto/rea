@@ -6,7 +6,11 @@ import {
   inspectEvmInterfaceInputSchema,
   matchesEvmInterfaceInput,
 } from "../evm/evmInterface.js";
-import { solcArtifactSchema, type SolcArtifact } from "../evm/solcArtifact.js";
+import {
+  solcArtifactSchema,
+  solcSourceRangeSchema,
+  type SolcArtifact,
+} from "../evm/solcArtifact.js";
 import { err, ok, type Result } from "../result.js";
 import { parseAnalysisViewResult } from "./analysisViewParent.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
@@ -39,7 +43,7 @@ export const evmViewItemSchema = z.union([
   analysisTextPageItemSchema,
 ]);
 
-/** Selected compiler facts without duplicate bytecode, raw metadata or settings text. */
+/** Selected compiler facts without duplicate bytecode, raw metadata, settings or diagnostic JSON. */
 const {
   object: _objectSchema,
   metadata: _metadataSchema,
@@ -47,6 +51,16 @@ const {
 } = solcArtifactSchema.shape;
 const compilerArtifactSummarySchema = z.strictObject({
   ...compilerFactsShape,
+  // Coordinates and severity locate each diagnostic; exact JSON stays in the parent Evidence.
+  diagnostics: z
+    .array(
+      z.strictObject({
+        json_pointer: z.string(),
+        severity: z.string().nullable(),
+        source_range: solcSourceRangeSchema,
+      }),
+    )
+    .nullable(),
   object_code_units: z.number().int().nonnegative().nullable(),
   metadata: solcArtifactSchema.shape.metadata
     .omit({ raw: true, settings_json: true })
@@ -57,10 +71,16 @@ const compilerArtifactSummarySchema = z.strictObject({
 });
 
 const compilerArtifactSummary = (artifact: SolcArtifact) => {
-  const { object, metadata, ...facts } = artifact;
+  const { object, metadata, diagnostics, ...facts } = artifact;
   const { raw, settings_json: settings, ...metadataFacts } = metadata;
   return {
     ...facts,
+    diagnostics:
+      diagnostics?.map(({ json_pointer, severity, source_range }) => ({
+        json_pointer,
+        severity,
+        source_range,
+      })) ?? null,
     object_code_units: object?.length ?? null,
     metadata: {
       ...metadataFacts,

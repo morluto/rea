@@ -146,9 +146,9 @@ remains `inferred`. It preserves stderr/truncation and records stdout text lengt
 Complete-within-view coverage covers returned candidates; discovery completeness
 remains unknown even for an empty or exhausted collection. Analysis still runs;
 delivery selection does not save interpreter work or change source parameters.
-Compiler-artifact summaries retain exact selection, diagnostics and reference
-facts. They omit the object bytecode text, raw metadata text and settings JSON,
-recording `object_code_units`, metadata `raw_code_units` and
+Compiler-artifact summaries retain exact selection, reference facts and each
+diagnostic's JSON pointer, severity and source range. They omit the object
+bytecode text, raw metadata text, settings JSON and diagnostic JSON, recording `object_code_units`, metadata `raw_code_units` and
 `settings_code_units` instead (null means absent). Parsed compiler version and
 metadata parse status remain visible; read settings from the parent Evidence.
 Access exact omitted source fields from the complete parent Evidence through the
