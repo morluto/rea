@@ -93,7 +93,6 @@ try {
   const sessionsBefore = (
     await snapshotHopperRuntime(runtimeParent, HOPPER_TARGET_LEASE_DIRECTORY)
   ).paths;
-  const ownedProcessIds = new Set();
   const textValue = mcpTextValue;
 
   const requireOverview = (value, operation) => {
@@ -301,7 +300,6 @@ try {
     await client.connect(transport);
     if (transport.pid === null)
       throw new Error("The verifier did not capture its MCP process identity");
-    ownedProcessIds.add(transport.pid);
     const progressUpdates = [];
     const options = {
       timeout,
@@ -540,7 +538,6 @@ try {
         ...(fixtureTargets.unicode === undefined
           ? {}
           : { unicode: fixtureTargets.unicode.path }),
-        ownedProcessIds,
       },
       commands,
     );
