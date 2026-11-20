@@ -117,9 +117,12 @@ export const isOneColourPng = (dataBase64: string): boolean | undefined => {
   } catch {
     return undefined;
   }
-  const first = rgba.readUInt32BE(0);
-  for (let offset = 4; offset < rgba.length; offset += 4)
-    if (rgba.readUInt32BE(offset) !== first) return false;
+  // The decoder allocates whole RGBA pixels. Equality of their four bytes
+  // is independent of the host byte order.
+  const pixels = new Uint32Array(rgba.buffer, rgba.byteOffset, rgba.length / 4);
+  const first = pixels[0];
+  for (let index = 1; index < pixels.length; index += 1)
+    if (pixels[index] !== first) return false;
   return true;
 };
 

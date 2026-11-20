@@ -210,6 +210,9 @@ describe("isOneColourPng", () => {
     expect(
       isOneColourPng(base64([...black, ...black, ...black, 0, 0, 1, 255])),
     ).toBe(false);
+    expect(
+      isOneColourPng(base64([...black, ...black, ...black, 0, 0, 0, 254])),
+    ).toBe(false);
     expect(isOneColourPng("AAAA")).toBeUndefined();
   });
 });
