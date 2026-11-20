@@ -455,7 +455,12 @@ describe("IDA database targets", () => {
       target,
       producer,
       provider,
-      session: createTestBinarySession(provider),
+      session: new BinarySession(
+        SessionProviderRouter.selectable(
+          new AnalysisProviderRegistry([provider]),
+          [],
+        ),
+      ),
     };
   };
 
@@ -504,6 +509,28 @@ describe("IDA database targets", () => {
     expect(
       (await readdir(root)).filter((name) => name.startsWith("rea-ida-")),
     ).toEqual([]);
+  });
+
+  it("refuses a signature-recognized database without the upstream filename suffix before opening it", async () => {
+    const { root, bytes, producer, session } = await hexRaysSession();
+    const path = join(root, "saved-database");
+    await writeFile(path, bytes);
+
+    const opened = await session.open(path, { providerId: "ida" });
+    expect(opened).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "ProviderSelectionError",
+        rejections: [
+          {
+            providerId: "ida",
+            code: "target_format_unsupported",
+            reason: expect.stringContaining(".idb or .i64"),
+          },
+        ],
+      },
+    });
+    expect(producer.calls).toEqual([]);
   });
 
   it("binds the database by its opened path, not the input it records", async () => {

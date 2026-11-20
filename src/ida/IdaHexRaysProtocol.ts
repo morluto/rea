@@ -29,10 +29,20 @@ const hexRaysQueries: ReadonlySet<string> = new Set([
   "survey_binary",
 ]);
 
+const hexRaysBackend = z.enum(["gui", "idalib", "idat"]);
+const hexRaysStatus = z.enum([
+  "available",
+  "attached",
+  "current",
+  "unavailable",
+]);
+export type HexRaysBackend = z.infer<typeof hexRaysBackend>;
+export type HexRaysStatus = z.infer<typeof hexRaysStatus>;
+
 export const hexRaysOpenSchema = z
   .object({
     instance_id: z.string().min(1),
-    backend: z.enum(["gui", "idalib"]),
+    backend: hexRaysBackend,
     status: z.string(),
   })
   .passthrough();
@@ -48,8 +58,8 @@ export const hexRaysListSchema = z
       z
         .object({
           path: z.string(),
-          backend: z.enum(["gui", "idalib", "idat"]),
-          status: z.enum(["available", "attached", "current", "unavailable"]),
+          backend: hexRaysBackend,
+          status: hexRaysStatus,
           instance_id: z.string().nullable(),
         })
         .passthrough(),

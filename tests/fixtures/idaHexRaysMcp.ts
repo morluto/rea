@@ -49,6 +49,7 @@ export class RecordingHexRaysIdaMcp implements IdaMcpConnection {
    * database, and releasing the lease repacks the opened file like idalib.
    */
   recordedInputPath: string | undefined;
+  recordedInputSha256: string | null = null;
   /** Engine output reported beside every execute_python result. */
   engineOutput = { stdout: "", stderr: "" };
   closes = 0;
@@ -144,7 +145,16 @@ export class RecordingHexRaysIdaMcp implements IdaMcpConnection {
           .record(z.string(), jsonValueSchema)
           .parse(JSON.parse(z.string().parse(JSON.parse(match[2] ?? ""))));
         const result = await this.reads.call(tool, { ...query, database: id });
-        return { result, ...this.engineOutput };
+        return {
+          result:
+            tool === "server_health" &&
+            result !== null &&
+            typeof result === "object" &&
+            !Array.isArray(result)
+              ? { ...result, input_sha256: this.recordedInputSha256 }
+              : result,
+          ...this.engineOutput,
+        };
       }
       default:
         throw new Error(`Unimplemented producer tool ${name}`);

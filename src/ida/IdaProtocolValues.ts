@@ -49,6 +49,10 @@ export const modernHealthSchema = z
   .object({
     status: z.literal("ok"),
     input_path: z.string().min(1),
+    input_sha256: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/iu)
+      .nullish(),
     idb_path: z.string().nullable(),
     imagebase: idaAddressSchema,
     auto_analysis_ready: z.boolean().nullable(),

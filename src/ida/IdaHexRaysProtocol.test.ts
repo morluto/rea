@@ -265,6 +265,19 @@ it.skipIf(!hasPython)(
 );
 
 describe("Hex-Rays IDA MCP evidence", () => {
+  it("refuses a conflicting IDA input hash even when the private file is unchanged", async () => {
+    const { target, producer, client } = await fixture();
+    producer.recordedInputSha256 = target.sha256.toUpperCase();
+    expect((await client.execute("list_procedures", {})).ok).toBe(true);
+    producer.recordedInputSha256 = "f".repeat(64);
+    const result = await client.execute("list_procedures", {});
+    if (result.ok) throw new Error("expected input identity refusal");
+    expect(projectAnalysisError(result.error).details).toMatchObject({
+      diagnostics: { identity_check: "headless_input" },
+    });
+    expect((await client.close()).ok).toBe(true);
+  });
+
   it("keeps the bridge digest and engine output of identity and operation reads", async () => {
     const { producer, client } = await fixture();
     producer.engineOutput = { stdout: "", stderr: "engine warning" };
@@ -365,6 +378,24 @@ describe("Hex-Rays IDA MCP session", () => {
     );
   });
 
+  it("refuses idat with idalib-only recovery and releases the private lease", async () => {
+    const { root, producer, client } = await fixture();
+    producer.openBackend = "idat";
+    const result = await client.execute("list_procedures", {});
+    if (result.ok) throw new Error("expected idat refusal");
+    expect(projectAnalysisError(result.error).details).toMatchObject({
+      diagnostics: {
+        recovery: expect.stringContaining("IDA_NEXUS_IDALIB_ONLY"),
+      },
+    });
+    expect(producer.calls.some(({ name }) => name === "execute_python")).toBe(
+      false,
+    );
+    expect((await client.close()).ok).toBe(true);
+    expect(producer.leases.size).toBe(0);
+    expect(await workspaces(root)).toEqual([]);
+  });
+
   it("adopts and releases a late lease when the open reply was lost", async () => {
     const { root, producer, client } = await fixture();
     producer.loseOpenReply = { leased: true };
@@ -447,18 +478,19 @@ describe("Hex-Rays unleased database inventory", () => {
   );
 
   it.each([
-    ["idalib", "available"],
-    ["idalib", "unavailable"],
-    ["idat", "available"],
+    ["idalib", "available", ""],
+    ["idalib", "unavailable", ".i64"],
+    ["idat", "available", ".i64"],
   ] as const)(
     "retains the private workspace while an unleased %s database is %s",
-    async (backend, status) => {
+    async (backend, status, suffix) => {
       const { root, producer, client } = await fixture();
       expect((await client.execute("list_procedures", {})).ok).toBe(true);
       const path = String(
         producer.calls.find(({ name }) => name === "open_database")?.args.path,
       );
-      producer.peers = [{ path, backend, status }];
+      const listedPath = path + suffix;
+      producer.peers = [{ path: listedPath, backend, status }];
       const closed = await client.close();
       expect(closed.ok).toBe(false);
       if (closed.ok) throw new Error("expected retained cleanup");
@@ -472,8 +504,9 @@ describe("Hex-Rays unleased database inventory", () => {
                 session_id: "",
                 backend: "worker",
                 owned: false,
-                input_path: path,
-                is_active: true,
+                input_path: listedPath,
+                is_active: status === "unavailable" ? null : false,
+                hexrays_status: status,
               },
             ],
           },
@@ -481,6 +514,14 @@ describe("Hex-Rays unleased database inventory", () => {
       });
       expect(producer.leases.size).toBe(0);
       expect(await workspaces(root)).toHaveLength(1);
+      await access(path);
+
+      producer.peers = [];
+      expect((await client.close()).ok).toBe(true);
+      expect(await workspaces(root)).toEqual([]);
+      expect(
+        producer.calls.filter(({ name }) => name === "close_database"),
+      ).toHaveLength(1);
     },
   );
 });

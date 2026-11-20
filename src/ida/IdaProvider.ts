@@ -349,21 +349,30 @@ export class IdaProvider implements AnalysisProviderCandidate {
       };
     // Only a Hex-Rays lease opens a private database copy; attached GUIs and
     // database supervisors have no verified route for an existing database.
-    if (target.kind === "database")
-      return config.value.protocol === "hexrays"
-        ? {
-            status: "supported",
-            code: null,
-            reason: null,
-            diagnostics: base.diagnostics,
-          }
-        : {
-            status: "unsupported",
-            code: "target_kind_unsupported",
-            reason:
-              'Opening an existing IDA database requires the "hexrays" headless registration. Select the original input binary with this registration.',
-            diagnostics: base.diagnostics,
-          };
+    if (target.kind === "database") {
+      if (config.value.protocol !== "hexrays")
+        return {
+          status: "unsupported",
+          code: "target_kind_unsupported",
+          reason:
+            'Opening an existing IDA database requires the "hexrays" headless registration. Select the original input binary with this registration.',
+          diagnostics: base.diagnostics,
+        };
+      if (!/\.(?:idb|i64)$/iu.test(target.path))
+        return {
+          status: "unsupported",
+          code: "target_format_unsupported",
+          reason:
+            "The Hex-Rays IDA MCP requires a .idb or .i64 filename for a saved database. Select a packed database with its filename suffix.",
+          diagnostics: base.diagnostics,
+        };
+      return {
+        status: "supported",
+        code: null,
+        reason: null,
+        diagnostics: base.diagnostics,
+      };
+    }
     // Attached identity is the recorded whole-input digest, which every slice
     // of a universal file shares, so it cannot prove the GUI loaded the slice
     // admission selected. Headless mode thins that slice into its own input.
