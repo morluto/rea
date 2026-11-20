@@ -553,8 +553,9 @@ editable setting or active worker telemetry.
 
 ## Artifact reader admission
 
-The same request provides `dotnet_bundle`, `node_sea` and `godot` groups. Their
-controls apply when recognition or inventory encounters that format; supplying
+`inspect_artifact` and `extract_artifact` accept `dotnet_bundle`, `node_sea`
+and `godot` groups in `artifact_limits`. Their controls apply when recognition
+or inventory encounters that format; supplying
 a policy does not assert the format is present. Unsupported keys are rejected.
 Each group follows one domain-owned default policy. See [.NET bundles](../dotnet-bundles.md),
 [Node SEA](../node-sea.md), [Godot PCK](../godot-pck.md) and

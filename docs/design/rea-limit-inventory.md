@@ -38,7 +38,7 @@ None pending. No numeric `REA_` limit is absent from this tree.
 
 | Category                                                              |                                                                        Count |
 | --------------------------------------------------------------------- | ---------------------------------------------------------------------------: |
-| Runtime analysis settings                                             |                  32 (29 have an `REA_` seed; 3 are per-call parameters only) |
+| Runtime analysis settings                                             |   32 (29 have an `REA_` seed; 3 have a per-call override and no launch seed) |
 | Per-call numeric `REA_` limits still read from the launch environment |                                                                            0 |
 | Restart-only numeric `REA_` limits                                    |                                                                           15 |
 | Numeric `REA_` candidates recognized in TypeScript source             |                                                                           41 |
@@ -48,8 +48,8 @@ None pending. No numeric `REA_` limit is absent from this tree.
 
 ## Runtime analysis settings
 
-Already adjustable with `update_analysis_settings`. This table and the per-call
-table below are the 32 `ANALYSIS_SETTINGS` entries. Each call reads the snapshot
+Both runtime tables cover the 32 `ANALYSIS_SETTINGS` entries adjustable with
+`update_analysis_settings`. Each call reads the snapshot
 accepted for that operation. Launch source is `default` or `setting`; a runtime
 override is `source: "runtime"`. The structured field is `update_mode: "runtime"` and `pending_restart: false`.
 `applies_at` is the finer point
