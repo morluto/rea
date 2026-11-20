@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { WindowsPrivateRuntime } from "../windows/WindowsPrivateRuntime.js";
-import { PrivateRuntimeRootUnavailableError } from "./PrivateRuntimeRootUnavailableError.js";
+import { PrivateRuntimeRootUnavailableError } from "../domain/privateRuntimeRootUnavailableError.js";
 
 import {
   windowsNativeCapabilities,

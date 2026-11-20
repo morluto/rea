@@ -3,7 +3,7 @@ import {
   schemaDepth,
   serializedBytes,
 } from "./compactJsonSchema.js";
-import { isRecord } from "../domain/isRecord.js";
+import { isRecord } from "../kernel/isRecord.js";
 import {
   schemaArrays,
   schemaChildren,
@@ -35,7 +35,8 @@ export type AdvertisedDialectRule =
   | "tool-name"
   // Claude Code truncates a tool description at 4,096 characters.
   | "tool-description-length"
-  // Moonshot rejects a parameters schema above its literal size cap (#1484).
+  // Moonshot rejects a parameters schema above its literal size cap (#1484),
+  // measured after clients such as Kimi expand its references.
   | "input-bytes"
   // OpenCode and Muse Spark reject nesting deeper than ten levels (#2813, #919).
   | "input-depth"
@@ -560,38 +561,3 @@ export const advertisedOutputPatternViolations = (
   tool.outputSchema === undefined
     ? []
     : patternViolations(tool.name, "output", tool.outputSchema);
-
-/** Stable count key: schema, rule and, when present, the specific construct. */
-export const advertisedDialectViolationKey = (
-  violation: AdvertisedDialectViolation,
-): string =>
-  [violation.schema, violation.rule, violation.detail]
-    .filter((part) => part !== undefined)
-    .join(" ");
-
-/** Occurrences per violation key, in key order. */
-export const countAdvertisedDialectViolations = (
-  violations: Iterable<AdvertisedDialectViolation>,
-): Readonly<Record<string, number>> => {
-  const counts = new Map<string, number>();
-  for (const violation of violations) {
-    const key = advertisedDialectViolationKey(violation);
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-  }
-  return Object.fromEntries(
-    [...counts].sort(([left], [right]) => (left < right ? -1 : 1)),
-  );
-};
-
-/**
- * Keys whose observed count exceeds the recorded allowance. A key absent from
- * `allowed` is enforced at zero, so a new construct fails immediately.
- */
-export const advertisedDialectRegressions = (
-  observed: Readonly<Record<string, number>>,
-  allowed: Readonly<Record<string, number>>,
-): readonly string[] =>
-  Object.entries(observed).flatMap(([key, count]) => {
-    const limit = Object.hasOwn(allowed, key) ? allowed[key]! : 0;
-    return count > limit ? [`${key}: ${String(count)} > ${String(limit)}`] : [];
-  });

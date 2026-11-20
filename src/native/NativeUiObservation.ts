@@ -23,7 +23,7 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ExecFileOutputCancelledError } from "../process/ExecFileOutput.js";
 import { NativeUiCleanupError } from "./NativeUiCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -36,6 +36,7 @@ import {
   NATIVE_UI_OUTPUT_WEIGHT,
 } from "./NativeUiOutputBudget.js";
 import { NativeUiInterruptionControl } from "./NativeUiInterruptionControl.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const helper = fileURLToPath(
   new URL("../../bridge/native/ReaNativeUI.swift", import.meta.url),
@@ -127,11 +128,11 @@ export const observeNativeUi = async (
         return result.ok
           ? err(cleanup)
           : err(
-              analysisErrorWithCleanupFailure(
+              analysisErrorWithCleanupDependencies(
                 result.error,
                 cleanup,
                 operation,
-              ).bindCleanupDependencies([result.error, cleanup]),
+              ),
             );
       }
     }
@@ -284,7 +285,7 @@ const observeWithHelper = async (
               cause,
               diagnostics: {
                 helper_path: helper,
-                reason: cause instanceof Error ? cause.message : String(cause),
+                reason: errorMessage(cause),
                 remediation:
                   "Native helper failed, timed out, or returned malformed capture data; install compatible Xcode command-line tools and inspect local OS permissions",
               },

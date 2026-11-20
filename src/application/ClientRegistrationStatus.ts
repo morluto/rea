@@ -21,7 +21,7 @@ import {
   recommendedMcpToolTimeoutMs,
   recommendedMcpToolTimeoutSeconds,
   type McpToolTimeoutInputs,
-} from "../mcpStartupPolicy.js";
+} from "../config/mcpStartupPolicy.js";
 import {
   inspectClientRegistrationCommand,
   type ClientRegistrationCommandFacts,
@@ -40,12 +40,12 @@ import {
   clientRegistrationEnvironmentDetailsWithBudget,
   recordedProviderSettings,
 } from "./ClientRegistrationEnvironment.js";
+import type { ProviderRequestBudgetResolver } from "./ClientRegistrationEnvironment.js";
 import type {
   OwnedProviderSetting,
-  ProviderRequestBudgetResolver,
   RecordedProviderSettings,
-} from "./ClientRegistrationEnvironment.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+} from "../ports/DesktopBuildHost.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 
 import {
   parseClientRegistrationPolicy,
@@ -55,6 +55,7 @@ import {
   type ClientRegistration,
 } from "./ClientRegistration.js";
 import { admitClientStdioConnection } from "./ClientRegistrationConnection.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 interface ClientRegistrationStatusBase {
   readonly client: string;
@@ -360,7 +361,8 @@ export const readClientRegistrationInspections = async (
       const registrationEnvironment =
         client.name === "kimi" ||
         client.name === "codex" ||
-        client.name === "lm_studio"
+        client.name === "lm_studio" ||
+        client.name === "dsh"
           ? await clientRegistrationEnvironmentDetailsWithBudget(
               parsed,
               client,
@@ -560,6 +562,10 @@ const registrationAligned = ({
   // Native transport is admitted separately; the Harness route must name REA.
   if (client.format === "dsh" && registration.serverName !== "rea")
     return "stale";
+  // Setup repairs missing or malformed literals. Doctor reports the unknown
+  // value of a caller-owned expression as an advisory.
+  if (client.format === "dsh" && registration.toolCallTimeoutMs === undefined)
+    return "stale";
   // Legacy package runners remain owned, but setup migrates them to the selected installation.
   if (commandFacts.package !== undefined) return "stale";
   // Owning the script does not establish how its shebang interpreter resolves
@@ -639,12 +645,16 @@ const timeoutAdvisory = (
       ? registration.toolTimeoutMs
       : client.name === "codex"
         ? registration.tool_timeout_sec
-        : undefined;
+        : client.name === "dsh"
+          ? registration.toolCallTimeoutMs
+          : undefined;
   if (toolTimeout === undefined) return undefined;
+  if (client.name === "dsh" && toolTimeout === null)
+    return "The effective timeout is unknown because toolCallTimeoutMs is a caller-owned Cordis expression.";
   const providerAllowance = mcpProviderDeadlineAllowanceMs(timeoutInputs);
-  const isKimi = client.name === "kimi";
+  const inMilliseconds = client.name === "kimi" || client.name === "dsh";
   // A bigint is beyond the safe Number range, so rounding cannot cross the allowance.
-  const toolTimeoutMs = Number(toolTimeout) * (isKimi ? 1 : 1000);
+  const toolTimeoutMs = Number(toolTimeout) * (inMilliseconds ? 1 : 1000);
   const batchScope =
     timeoutInputs.ghidraDecompileTimeoutMs !== undefined &&
     (timeoutInputs.analysisProvider === "ghidra" ||
@@ -652,14 +662,19 @@ const timeoutAdvisory = (
       ? "The derived Ghidra deadline is a single-decompile estimate. For multi-function workflows such as batch_decompile, decompile_all or trace_native_values, allow startup plus every attempted function's limit and other work; split calls, reduce trace_native_values max_functions, or select a larger client deadline when needed. Explicit caller deadlines remain unchanged."
       : undefined;
   if (toolTimeoutMs >= providerAllowance) return batchScope;
-  const setting = isKimi ? "toolTimeoutMs" : "tool_timeout_sec";
-  const currentValue = isKimi
+  const setting =
+    client.name === "kimi"
+      ? "toolTimeoutMs"
+      : client.name === "dsh"
+        ? "toolCallTimeoutMs"
+        : "tool_timeout_sec";
+  const currentValue = inMilliseconds
     ? `${String(toolTimeout)} ms`
     : `${String(toolTimeout)} seconds`;
-  const recommendedValue = isKimi
+  const recommendedValue = inMilliseconds
     ? `${String(recommendedMcpToolTimeoutMs(timeoutInputs))} ms`
     : `${String(recommendedMcpToolTimeoutSeconds(timeoutInputs))} seconds`;
-  const headroom = isKimi
+  const headroom = inMilliseconds
     ? `${String(MCP_STARTUP_POLICY.toolOperationHeadroomMs)} ms`
     : `${String(MCP_STARTUP_POLICY.toolOperationHeadroomMs / 1000)} seconds`;
   const recommendation = `The configured ${setting} (${currentValue}) is shorter than REA's known provider allowance (${String(providerAllowance)} ms), so provider startup or an upstream request may exceed this client deadline. REA recommends ${setting} = ${recommendedValue} to cover that allowance plus ${headroom} of operation headroom; this additional headroom is a recommendation, not a guarantee for every analysis.`;
@@ -720,7 +735,7 @@ const clientEvidencePresent = async (
       if (!isMissing(cause))
         unavailable ??= {
           path,
-          detail: `Client configuration evidence at ${path} could not be inspected: ${cause instanceof Error ? cause.message : String(cause)}. Check file permissions and rerun rea doctor.`,
+          detail: `Client configuration evidence at ${path} could not be inspected: ${errorMessage(cause)}. Check file permissions and rerun rea doctor.`,
         };
     }
   }

@@ -1,3 +1,4 @@
+import { displayedEvidenceSubject } from "../../fixtures/evidenceSubject.js";
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -51,7 +52,9 @@ it("checks native client fixture Evidence, provenance, and every result observat
     assertClientJavaScriptFixtureEvidence(
       {
         ...evidence,
-        subject: { ...evidence.subject, local_path: target + "/other" },
+        subject: displayedEvidenceSubject(evidence.subject, {
+          local_path: target + "/other",
+        }),
       },
       target,
     ),

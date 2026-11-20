@@ -1,6 +1,5 @@
 import type { Logger } from "pino";
 
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { createSqliteDatabaseService } from "../composition/sqlite.js";
 import { SQLITE_TOOL_CONTRACTS } from "../contracts/sqlite/sqliteToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
@@ -26,7 +25,6 @@ export const registerSqliteCommands = (
     logger,
     contract,
     {
-      command: CLI_COMMANDS.inspectSqliteDatabase,
       description:
         "Inspect SQLite schema and optional ordinary-table rows from a local snapshot",
       positionals: ["path"],

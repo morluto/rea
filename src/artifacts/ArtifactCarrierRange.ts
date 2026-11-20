@@ -1,7 +1,7 @@
 import type { FileHandle } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
-import { abortIfNeeded } from "./ArtifactHash.js";
+import { abortIfNeeded } from "../resources/index.js";
 
 interface ArtifactRangeCarrier {
   readonly handle: FileHandle;

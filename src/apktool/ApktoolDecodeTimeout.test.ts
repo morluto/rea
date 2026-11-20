@@ -120,8 +120,16 @@ it("applies the omitted 600000 ms decode deadline and a selected value on the ne
     const projected = projectAnalysisError(timedOut.error);
     expect(projected).toMatchObject({
       code: "provider_timeout",
-      details: { timeout_ms: 200 },
+      details: {
+        timeout_ms: 200,
+        limit: {
+          control_kind: "parameter",
+          parameter: "decode_timeout_ms",
+          effective_value: 200,
+        },
+      },
     });
+    expect(projected.remediation.action).not.toContain("--");
     expect(projected.message).toContain("200 ms");
     expect(projected.remediation.action).toContain("decode_timeout_ms");
     expect(projected.remediation.action).toContain(

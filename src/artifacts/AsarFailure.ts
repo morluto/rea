@@ -1,4 +1,4 @@
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/index.js";
 
 /** Preserve cancellation at the ASAR boundary with its original abort reason. */
 export const asarCancellationFailure = (

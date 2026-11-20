@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { inspectSolidityMetadata } from "./SolidityMetadata.js";
 
 const bytecode = (hex: string) => {
@@ -158,10 +158,22 @@ it.each([
 
 it("rejects repeated deeply nested container keys promptly", () => {
   const key = "81".repeat(62) + "00";
-  const started = performance.now();
-  expect(
-    inspectSolidityMetadata(bytecode("a2" + key + "01" + key + "02")),
-  ).toMatchObject({
+  // Each key's identity serializes its one leaf scalar once; a per-level
+  // re-serialization of nested keys would grow with depth or worse.
+  const stringify = JSON.stringify.bind(JSON);
+  let serialized = 0;
+  const spy = vi.spyOn(JSON, "stringify").mockImplementation((...args) => {
+    if (++serialized > 4) throw new Error("Key identity budget exceeded");
+    return stringify(...(args as Parameters<typeof JSON.stringify>));
+  });
+  let result: ReturnType<typeof inspectSolidityMetadata>;
+  try {
+    result = inspectSolidityMetadata(bytecode("a2" + key + "01" + key + "02"));
+  } finally {
+    spy.mockRestore();
+  }
+  expect(serialized).toBe(2);
+  expect(result).toMatchObject({
     status: "not-decoded",
     diagnostic: "repeated_map_key",
     admission: {
@@ -169,7 +181,6 @@ it("rejects repeated deeply nested container keys promptly", () => {
       detail: { key_length: expect.any(Number) },
     },
   });
-  expect(performance.now() - started).toBeLessThan(1000);
 });
 
 it("records the profile depth when CBOR nesting is refused", () => {

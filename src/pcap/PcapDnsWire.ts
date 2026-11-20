@@ -1,5 +1,8 @@
 import { isIPv4, isIPv6 } from "node:net";
+import { BinaryReader } from "../domain/binaryContainer.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { byteToHex } from "../kernel/byteToHex.js";
+import { isRecord as object } from "../kernel/isRecord.js";
 
 interface DnsWireFailure {
   readonly kind: "invalid_dns_wire";
@@ -20,8 +23,6 @@ export interface DnsMessageFacts {
   readonly incomplete: boolean;
   readonly incomplete_reasons?: readonly string[];
 }
-const object = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** Read named producer fields, retaining occurrence order within one PDU. */
 const fields = (source: unknown): Map<string, unknown[]> => {
@@ -125,11 +126,7 @@ const decodeName = (
       labels.push(label.toString("hex"));
       folded.push(
         [...label]
-          .map((byte) =>
-            (byte >= 65 && byte <= 90 ? byte + 32 : byte)
-              .toString(16)
-              .padStart(2, "0"),
-          )
+          .map((byte) => byteToHex(byte >= 65 && byte <= 90 ? byte + 32 : byte))
           .join(""),
       );
       at += length;
@@ -147,7 +144,10 @@ const canonicalAddress = (value: string, type: number): string | null => {
 const decodeMessage = (
   raw: unknown,
   ids: readonly unknown[],
-): Result<Buffer, DnsWireFailure> => {
+): Result<
+  { readonly reader: BinaryReader; readonly flags: number },
+  DnsWireFailure
+> => {
   if (
     !Array.isArray(raw) ||
     raw.length !== 5 ||
@@ -173,11 +173,16 @@ const decodeMessage = (
     return invalidWire(
       "DNS raw bytes, message framing or header coordinates are unavailable or invalid",
     );
-  if (header === 2 && bytes.readUInt16BE(0) !== bytes.length - 2)
+  const wire = new BinaryReader(bytes, false, "dns");
+  if (header === 2 && wire.u16(0) !== bytes.length - 2)
     return invalidWire(
       "DNS raw bytes, message framing or header coordinates are unavailable or invalid",
     );
-  return ok(bytes.subarray(header));
+  const reader =
+    header === 0
+      ? wire
+      : new BinaryReader(bytes.subarray(header), false, "dns");
+  return ok({ reader, flags: reader.u16(2) });
 };
 
 const addressInventory = (observed: readonly ObservedAddress[]) => {
@@ -196,7 +201,7 @@ const addressInventory = (observed: readonly ObservedAddress[]) => {
 };
 
 const decodeRecords = (
-  message: Buffer,
+  reader: BinaryReader,
   start: number,
   classValue: (value: number) => number,
   observed: readonly ObservedAddress[],
@@ -204,8 +209,8 @@ const decodeRecords = (
   { records: readonly RecordFact[]; extendedRcode: number },
   DnsWireFailure
 > => {
-  const u16 = (at: number): number => message.readUInt16BE(at);
-  const counts = [u16(6), u16(8), u16(10)];
+  const message = reader.bytes;
+  const counts = [reader.u16(6), reader.u16(8), reader.u16(10)];
   let at = start;
   const addressesByIdentity = addressInventory(observed);
   const records: RecordFact[] = [];
@@ -218,22 +223,22 @@ const decodeRecords = (
       const owner = ownerResult.value;
       if (owner.end + 10 > message.length)
         return invalidWire("DNS record header is truncated");
-      const type = u16(owner.end)!;
-      const dnsClass = classValue(u16(owner.end + 2)!);
-      const size = u16(owner.end + 8)!;
+      const type = reader.u16(owner.end);
+      const dnsClass = classValue(reader.u16(owner.end + 2));
+      const size = reader.u16(owner.end + 8);
       at = owner.end + 10;
       const end = at + size;
       if (end > message.length)
         return invalidWire("DNS record data is truncated");
       // EDNS: an OPT pseudo-RR in the additional section carries the
       // upper eight bits of the extended RCODE in its TTL field.
-      if (section === 2 && type === 41 && owner.end + 8 <= message.length) {
+      if (section === 2 && type === 41) {
         // RFC 6891 6.1.1: more than one OPT record is a format error, so no
         // later record may choose or clear the extended RCODE.
         optRecords += 1;
         if (optRecords > 1)
           return invalidWire("DNS message carries more than one OPT record");
-        extendedRcode = message.readUInt32BE(owner.end + 4) >>> 24;
+        extendedRcode = reader.u32(owner.end + 4) >>> 24;
       }
       let target: string | null = null;
       let address: string | null = null;
@@ -252,7 +257,7 @@ const decodeRecords = (
           type === 1
             ? [...message.subarray(at, end)].join(".")
             : Array.from({ length: 8 }, (_, index) =>
-                message.readUInt16BE(at + index * 2).toString(16),
+                reader.u16(at + index * 2).toString(16),
               ).join(":");
         const canonical = canonicalAddress(wireAddress, type);
         const queue = addressesByIdentity.get(`${type}:${canonical}`);
@@ -415,23 +420,31 @@ export const parseDnsMessageRaw = (
     query,
     labels_hex: null,
   }));
+  const messageResult = decodeMessage(raw, producer.get("dns.id_raw") ?? []);
+  // RFC 1035 §4.1.1 defines TC as a truncation fact in the header. RFC 6762
+  // §18.5 gives mDNS TC distinct meanings that depend on transport context.
+  const wireLimitations =
+    messageResult.ok &&
+    family !== "mdns" &&
+    (messageResult.value.flags & 0x0200) !== 0
+      ? [
+          "DNS message declares truncation (TC); captured records are incomplete",
+        ]
+      : [];
   const unknown = (reason: string): DnsMessageFacts => ({
     questions,
     assigned: [],
     unattributed: [...ipv4, ...ipv6],
     incomplete: true,
-    incomplete_reasons: [reason],
+    incomplete_reasons: [reason, ...wireLimitations],
   });
   // The high class bit has QU/cache-flush semantics only for mDNS.
   const classValue = (value: number): number =>
     family === "mdns" ? value & 0x7fff : value;
-  const messageResult = decodeMessage(raw, producer.get("dns.id_raw") ?? []);
   if (!messageResult.ok) return unknown(messageResult.error.reason);
-  const message = messageResult.value;
-  const u16 = (at: number): number | null =>
-    at >= 0 && at + 2 <= message.length ? message.readUInt16BE(at) : null;
-  const flags = u16(2)!;
-  const qd = u16(4)!;
+  const { reader, flags } = messageResult.value;
+  const message = reader.bytes;
+  const qd = reader.u16(4);
   let at = 12;
   const decodedQuestions: WireQuestion[] = [];
   for (let index = 0; index < qd; index += 1) {
@@ -442,8 +455,8 @@ export const parseDnsMessageRaw = (
       return unknown("DNS question fields are truncated");
     decodedQuestions.push({
       name: decoded,
-      type: u16(decoded.end)!,
-      dnsClass: classValue(u16(decoded.end + 2)!),
+      type: reader.u16(decoded.end),
+      dnsClass: classValue(reader.u16(decoded.end + 2)),
     });
     at = decoded.end + 4;
   }
@@ -463,7 +476,7 @@ export const parseDnsMessageRaw = (
     canonical: canonicalAddress(entry.value, entry.type),
     used: false,
   }));
-  const records = decodeRecords(message, at, classValue, observed);
+  const records = decodeRecords(reader, at, classValue, observed);
   if (!records.ok) return unknown(records.error.reason);
   const extendedRcode = records.value.extendedRcode;
   const fullRcode = (extendedRcode << 4) | (flags & 0x000f);
@@ -474,18 +487,13 @@ export const parseDnsMessageRaw = (
     records.value.records,
     observed,
   );
-  // A structurally complete packet can carry only part of the DNS response.
-  // RFC 1035 section 4.1.1 makes TC an explicit producer truncation fact.
-  // RFC 6762 section 18.5 gives mDNS TC distinct semantics: multicast responses
-  // ignore it; queries signal further Known Answers. This owner has no transport
-  // context to identify legacy unicast responses, so do not infer that reading.
-  if (family === "mdns" || (flags & 0x0200) === 0) return facts;
+  if (wireLimitations.length === 0) return facts;
   return {
     ...facts,
     incomplete: true,
     incomplete_reasons: [
       ...(facts.incomplete_reasons ?? []),
-      "DNS message declares truncation (TC); captured records are incomplete",
+      ...wireLimitations,
     ],
   };
 };

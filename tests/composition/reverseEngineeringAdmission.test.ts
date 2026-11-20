@@ -1,3 +1,4 @@
+import { spawnFailure } from "../support/process/spawnFailure.js";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,7 +8,6 @@ import { expect, it } from "vitest";
 import { TestReverseEngineeringService } from "../support/reverseEngineeringService.js";
 import {
   ownedFailure,
-  ownedLaunchRefusal,
   ownedOutput,
 } from "../support/reverseEngineeringCompositionFixtures.js";
 
@@ -34,8 +34,7 @@ it.each([
     const service = new TestReverseEngineeringService({
       runOwned: async (spawn) => {
         calls += 1;
-        if (mode === "failure")
-          throw ownedLaunchRefusal("ENOENT", spawn.command);
+        if (mode === "failure") throw spawnFailure("ENOENT", spawn.command);
         if (mode === "timeout") throw ownedFailure("timeout", null);
         await gate;
         return ownedOutput();
@@ -235,6 +234,32 @@ it("keeps an unrelated digest ABORT_ERR as an adapter failure", async () => {
   }
 });
 
+it("does not report a command ABORT_ERR without the caller's abort as cancellation", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "rea-reverse-command-abort-"));
+  const path = join(directory, "fixture.bin");
+  await writeFile(path, "fixture");
+  const failure = Object.assign(new Error("aborted by another signal"), {
+    code: "ABORT_ERR",
+  });
+  const service = new TestReverseEngineeringService({
+    runOwned: async () => {
+      throw failure;
+    },
+  });
+  try {
+    const result = await service.inspectWithObjdump(
+      { path, operation: "symbols" },
+      { signal: new AbortController().signal },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).not.toBe("AnalysisCancelledError");
+  } finally {
+    await service.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 it.each([
   {
     captured: false,
@@ -273,7 +298,7 @@ it.each([
     const controller = new AbortController();
     const failure =
       code === "EACCES"
-        ? ownedLaunchRefusal(code, "objdump")
+        ? spawnFailure(code, "objdump")
         : ownedFailure(
             code,
             captured

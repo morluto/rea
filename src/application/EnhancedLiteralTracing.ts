@@ -8,7 +8,7 @@ import type {
   AnalysisExecution,
   AnalysisOperation,
   AnalysisOperationPort,
-} from "./AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,

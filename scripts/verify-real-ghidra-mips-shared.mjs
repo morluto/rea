@@ -275,7 +275,7 @@ try {
         );
         assert.equal(
           snapshot.binding.analysis_profile.parameters.language_selection,
-          "provider-pinned-v1",
+          "provider-pinned",
         );
         assert.equal(
           snapshot.binding.analysis_profile.parameters.language_id,

@@ -1,15 +1,15 @@
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import type {
   DoctorProviderCheck,
   DoctorProviderInspection,
-} from "../application/Doctor.js";
-import { admitGhidraInstallation } from "./GhidraAdmission.js";
+} from "../ports/DoctorProviderInspection.js";
 import {
+  admitGhidraInstallation,
   EXISTING_PROJECT_WINDOWS_REMEDIATION,
   EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
-} from "./GhidraProviderCapabilities.js";
+} from "./GhidraAdmission.js";
 import {
   inspectGhidraInstallation,
   type GhidraInstallationCheck,

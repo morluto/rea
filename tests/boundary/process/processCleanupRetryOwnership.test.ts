@@ -3,8 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setImmediate } from "node:timers/promises";
 import { expect, it } from "vitest";
-import { createDeferred } from "../../fixtures/binarySession.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { ProcessCaptureError } from "../../../src/process/capture/ProcessCaptureError.js";
@@ -193,21 +192,19 @@ it("keeps mixed root errors and retry aggregates bound to only unresolved roots"
 it("joins an already-started release when shutdown begins", async () => {
   const scope = new ProcessCaptureResourceScope();
   const root = await createRoot();
-  const entered = createDeferred<void>();
-  const unblock = createDeferred<void>();
+  const resourceRelease = phaseGate();
   let attempts = 0;
   const releasing = scope.release(
     cleanupOptions(root, async (path) => {
       attempts += 1;
-      entered.resolve();
-      await unblock.promise;
+      await resourceRelease.hold();
       await rm(path, { recursive: true });
     }),
   );
   let closed = false;
   let closing: Promise<void> | undefined;
   try {
-    await awaitAcknowledgement(entered.promise, releasing, "resource release");
+    await resourceRelease.reached(releasing, "resource release");
     closing = scope.close().then(() => {
       closed = true;
     });
@@ -215,7 +212,7 @@ it("joins an already-started release when shutdown begins", async () => {
     expect(closed).toBe(false);
     await expect(stat(root)).resolves.toBeDefined();
   } finally {
-    unblock.resolve();
+    resourceRelease.release();
     await Promise.allSettled([releasing, ...(closing ? [closing] : [])]);
     await scope.close();
     await rm(root, { recursive: true, force: true });

@@ -9,7 +9,7 @@ import { z } from "zod";
 
 import { createServer } from "../../../src/server/createServer.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import type { AnalysisProvider } from "../../../src/application/AnalysisProvider.js";
+import type { AnalysisProvider } from "../../../src/ports/AnalysisProvider.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { err, ok } from "../../../src/domain/result.js";
@@ -23,6 +23,7 @@ import { silentLogger } from "../../../src/logger.js";
 import { GHIDRA_PROVIDER_IDENTITY } from "../../../src/ghidra/GhidraProviderMetadata.js";
 import { RAW_ONLY_ARCHITECTURES } from "../../../src/domain/binaryTargetTypes.js";
 import type { CallToolResult } from "@modelcontextprotocol/server";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const connect = async (
   provider: AnalysisProvider = createCacheProvider([]),
@@ -32,7 +33,10 @@ const connect = async (
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const client = new Client({ name: "raw-binary-mcp", version: "1" });
+  const client = new Client(
+    { name: "raw-binary-mcp", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();

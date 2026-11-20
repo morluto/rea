@@ -21,7 +21,7 @@ it("retains an undefined verifier failure alongside real descriptor cleanup and 
     import assert from 'node:assert/strict';
     import { open } from 'node:fs/promises';
     import { withVerifierResourceOwner } from ${JSON.stringify(new URL("../../../scripts/lib/verifier-file-resources.mjs", import.meta.url).href)};
-    import { ArtifactResourceRetryFailure } from ${JSON.stringify(new URL("../../../dist/artifacts/ArtifactResourceScope.js", import.meta.url).href)};
+    import { ArtifactResourceRetryFailure } from ${JSON.stringify(new URL("../../../dist/resources/ArtifactResourceScope.js", import.meta.url).href)};
     const [path, peerPath] = process.argv.slice(1);
     const retained = await open(path, 'r');
     const closeRetained = retained.close.bind(retained);
@@ -103,7 +103,7 @@ it("retains and retries the exact descriptor after a verifier hash close failure
   const bytes = Buffer.from("owned verifier fixture");
   await writeFile(path, bytes);
   const script = `
-    import { ArtifactResourceScope } from ${JSON.stringify(new URL("../../../dist/artifacts/ArtifactResourceScope.js", import.meta.url).href)};
+    import { ArtifactResourceScope } from ${JSON.stringify(new URL("../../../dist/resources/ArtifactResourceScope.js", import.meta.url).href)};
     import { OwnedFileHandle } from ${JSON.stringify(new URL("../../../dist/filesystem/OwnedFileHandle.js", import.meta.url).href)};
     import { hashVerifierFile } from ${JSON.stringify(new URL("../../../scripts/lib/verifier-file-resources.mjs", import.meta.url).href)};
     const path = process.argv[1];
@@ -152,7 +152,7 @@ it("hashes and closes a clean verifier input", async () => {
   const bytes = Buffer.from("clean verifier fixture");
   await writeFile(path, bytes);
   const script = `
-    import { ArtifactResourceScope } from ${JSON.stringify(new URL("../../../dist/artifacts/ArtifactResourceScope.js", import.meta.url).href)};
+    import { ArtifactResourceScope } from ${JSON.stringify(new URL("../../../dist/resources/ArtifactResourceScope.js", import.meta.url).href)};
     import { hashVerifierFile } from ${JSON.stringify(new URL("../../../scripts/lib/verifier-file-resources.mjs", import.meta.url).href)};
     const resources = new ArtifactResourceScope();
     const identity = await hashVerifierFile(process.argv[1], resources);
@@ -285,7 +285,7 @@ it
     import { syncBuiltinESMExports } from 'node:module';
     import { validateVerifierJadxConfiguration } from ${JSON.stringify(new URL("../../../scripts/lib/jadx-configuration-inspection.mjs", import.meta.url).href)};
     import { OwnedFileHandle } from ${JSON.stringify(new URL("../../../dist/filesystem/OwnedFileHandle.js", import.meta.url).href)};
-    import { ArtifactResourceRetryFailure } from ${JSON.stringify(new URL("../../../dist/artifacts/ArtifactResourceScope.js", import.meta.url).href)};
+    import { ArtifactResourceRetryFailure } from ${JSON.stringify(new URL("../../../dist/resources/ArtifactResourceScope.js", import.meta.url).href)};
     const [serializedConfiguration, mode] = process.argv.slice(1);
     const configuration = JSON.parse(serializedConfiguration);
     const handles = new Set();
@@ -386,7 +386,7 @@ it.each(["late-close", "retry-close", "retained-close", "opaque-cancellation"])(
       import { SUPPORTED_GHIDRA_VERSION, SUPPORTED_GHIDRA_JAVA_MAJOR } from ${JSON.stringify(new URL("../../../dist/ghidra/GhidraReleasePolicy.js", import.meta.url).href)};
       import { OwnedFileHandle } from ${JSON.stringify(new URL("../../../dist/filesystem/OwnedFileHandle.js", import.meta.url).href)};
       import { RegularFileCleanupFailure } from ${JSON.stringify(new URL("../../../dist/filesystem/OwnedRegularFile.js", import.meta.url).href)};
-      import { ArtifactResourceRetryFailure } from ${JSON.stringify(new URL("../../../dist/artifacts/ArtifactResourceScope.js", import.meta.url).href)};
+      import { ArtifactResourceRetryFailure } from ${JSON.stringify(new URL("../../../dist/resources/ArtifactResourceScope.js", import.meta.url).href)};
       const root = process.argv[1], mode = process.argv[2], options = JSON.parse(process.argv[3]);
       await mkdir(join(root, 'Ghidra'));
       await writeFile(join(root, 'Ghidra', 'application.properties'), 'application.version=' + SUPPORTED_GHIDRA_VERSION + '\napplication.java.min=' + SUPPORTED_GHIDRA_JAVA_MAJOR + '\n');

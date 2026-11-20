@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, expect, it } from "vitest";
+import { phaseArrival } from "../../support/lifecycleHarness.js";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 
 import { RizinDebugSessionManager } from "../../../src/rizin/RizinDebugSessionManager.js";
@@ -14,8 +15,6 @@ import {
 import { evidenceSchema } from "../../../src/domain/evidence.js";
 import { OwnerCancellation } from "../../../src/domain/analysisErrorCore.js";
 import { absoluteCallerPath } from "../../../src/filesystem/callerPath.js";
-import { createDeferred } from "../../fixtures/binarySession.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import {
   createRizinTestManager,
   rizinTestInferiorTty,
@@ -151,7 +150,7 @@ process.stdin.on("data", (chunk) => {
 it.skipIf(process.platform === "win32")(
   "aborts an in-flight Rizin start as owner-closed when the manager closes",
   async () => {
-    const spawnEntered = createDeferred<void>();
+    const rizinSpawn = phaseArrival();
     const manager = new RizinDebugSessionManager(process.env, {
       platform: "linux",
       // Ownership preparation that only an abort of the start ends.
@@ -162,7 +161,7 @@ it.skipIf(process.platform === "win32")(
             () => reject(options.signal?.reason),
             { once: true },
           );
-          spawnEntered.resolve();
+          rizinSpawn.arrive();
         }),
     });
     managers.push(manager);
@@ -170,7 +169,7 @@ it.skipIf(process.platform === "win32")(
       path: "/tmp/fixture.bin",
       inferior_tty: await rizinTestInferiorTty(),
     });
-    await awaitAcknowledgement(spawnEntered.promise, starting, "Rizin spawn");
+    await rizinSpawn.reached(starting, "Rizin spawn");
 
     await manager.closeAll();
     const started = await starting;
@@ -819,13 +818,13 @@ it.skipIf(process.platform === "win32")(
       `#!/usr/bin/env node\nprocess.stdin.resume();\nsetInterval(() => {}, 1000);\n`,
     );
     await chmod(provider, 0o700);
-    const spawned = createDeferred<void>();
+    const rizinSpawn = phaseArrival();
     const manager = createRizinTestManager(
       { REA_RIZIN_COMMAND: provider },
       {
         spawnProcess: async (options) => {
           const launched = await spawnOwnedProviderProcess(options);
-          spawned.resolve();
+          rizinSpawn.arrive();
           return launched;
         },
       },
@@ -837,7 +836,7 @@ it.skipIf(process.platform === "win32")(
       controller.signal,
     );
     const started = await withVerifierCleanup(async () => {
-      await awaitAcknowledgement(spawned.promise, starting, "Rizin spawn");
+      await rizinSpawn.reached(starting, "Rizin spawn");
       controller.abort();
       return await starting;
     }, [
@@ -930,6 +929,7 @@ process.stdin.on("data", (chunk) => {
           }
           return {
             status: "incomplete",
+            code: "stop-failed",
             reason: "owned output writer is still active",
           };
         },

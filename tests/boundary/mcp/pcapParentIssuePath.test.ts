@@ -6,6 +6,7 @@ import { createEvidence } from "../../../src/domain/evidence.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("locates malformed pcap parent fields beneath the analysis-view source", async () => {
   const target = { path: "example.pcap", sha256: "a".repeat(64), bytes: 24 };
@@ -69,7 +70,10 @@ it("locates malformed pcap parent fields beneath the analysis-view source", asyn
     throw new Error("provider must not run");
   });
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "pcap-parent-path-repro", version: "1" });
+  const client = new Client(
+    { name: "pcap-parent-path-repro", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   await withVerifierCleanup(async () => {
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();

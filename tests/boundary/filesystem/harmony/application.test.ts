@@ -1,3 +1,7 @@
+import {
+  fileIdentity,
+  fileSubjectDisplay,
+} from "../../../fixtures/evidenceSubject.js";
 import { projectCliAnalysisResult } from "../../../../src/cli/projectCliAnalysisResult.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -24,6 +28,7 @@ import {
 } from "../../../../src/domain/harmony/harmonyApplication.js";
 import { artifactInventoryResultSchema } from "../../../../src/domain/artifactGraph.js";
 import { createEvidence } from "../../../../src/domain/evidence.js";
+import { AnalysisCancelledError } from "../../../../src/domain/analysisErrorCore.js";
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
 import {
   ZIP_PACKAGE_FORMATS,
@@ -220,7 +225,7 @@ describe("HarmonyOS application projection", () => {
       stageHapEntries,
     );
     const inventory = await inventoryApplicationPackage(path);
-    expect(inventory.subject?.format).toBe("hap");
+    expect(fileIdentity(inventory.subject).format).toBe("hap");
     const left = requireDeterministicProjection(
       projectHarmonyApplicationEvidence,
       inventory,
@@ -286,7 +291,7 @@ describe("HarmonyOS application projection", () => {
       },
     ]);
     const inventory = await inventoryApplicationPackage(path);
-    expect(inventory.subject?.format).toBe("app-pack");
+    expect(fileIdentity(inventory.subject).format).toBe("app-pack");
     const projection = requireDeterministicProjection(
       projectHarmonyApplicationEvidence,
       inventory,
@@ -322,7 +327,7 @@ describe("HarmonyOS packaging boundaries", () => {
       },
     ]);
     const inventory = await inventoryApplicationPackage(path);
-    expect(inventory.subject?.format).toBe("ipa");
+    expect(fileIdentity(inventory.subject).format).toBe("ipa");
     const occurrences = (
       inventory.normalized_result as {
         occurrences: Array<{
@@ -392,6 +397,38 @@ describe("HarmonyOS packaging boundaries", () => {
     ]);
   });
 
+  it("stops resolving retained inventory pages when the caller cancels mid-request", async () => {
+    const path = await writeApplicationZip("rea-harmony-cancel-", "entry.hap", [
+      { path: "module.json", content: '{"module":{"name":"entry"}}' },
+      { path: "resources.index", content: "resource index" },
+    ]);
+    const pages = fragmentInventoryEvidence(
+      await inventoryApplicationPackage(path),
+      2,
+    );
+    const controller = new AbortController();
+    const reason = { request: "cancel Harmony projection" };
+    const looked: string[] = [];
+    const result = projectHarmonyApplicationEvidence(
+      {
+        inventory_evidence: pages.map(({ evidence_id }) => ({
+          kind: "retained-evidence",
+          evidence_id,
+        })),
+      },
+      (id) => {
+        looked.push(id);
+        controller.abort(reason);
+        return pages.find(({ evidence_id }) => evidence_id === id);
+      },
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected cancellation");
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cause).toBe(reason);
+    expect(looked).toEqual([pages[0]?.evidence_id]);
+  });
+
   it("rejects non-HarmonyOS inventory Evidence", async () => {
     const inventory = await createNonApplicationZipInventory(
       "rea-harmony-invalid-",
@@ -434,15 +471,14 @@ describe("HarmonyOS partial inventory classification", () => {
       ],
     );
     const inventory = await inventoryApplicationPackage(path);
-    if (inventory.subject === null) throw new Error("Missing fixture subject");
     const result = artifactInventoryResultSchema.parse(
       inventory.normalized_result,
     );
     const partial = createEvidence(
       {
-        path: inventory.subject.local_path,
-        sha256: inventory.subject.digest.sha256,
-        format: inventory.subject.format,
+        path: fileSubjectDisplay(inventory.subject).local_path,
+        sha256: fileIdentity(inventory.subject).sha256,
+        format: fileIdentity(inventory.subject).format,
       },
       inventory.provider,
       {

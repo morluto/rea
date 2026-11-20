@@ -35,9 +35,19 @@ const { StdioClientTransport } = await import(
 const { parseConfig } = await import(
   pathToFileURL(join(root, "dist/config/parseConfig.js"))
 );
+const { selectedHopperLauncherPath } = await import(
+  pathToFileURL(join(root, "dist/hopperPaths/HopperLauncherDiscovery.js")).href
+);
 const config = parseConfig(process.env);
 if (!config.ok) throw config.error;
-await access(config.value.hopperLauncherPath, constants.X_OK);
+await access(
+  selectedHopperLauncherPath(
+    config.value.hopperLauncherPath,
+    process.platform,
+    process.env,
+  ),
+  constants.X_OK,
+);
 const run = promisify(execFile);
 const clang = (await run("xcrun", ["--find", "clang"])).stdout.trim();
 const sdk = (

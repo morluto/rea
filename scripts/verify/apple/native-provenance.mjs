@@ -35,7 +35,7 @@ export async function verifyNativeProvenance(app, executable) {
   const resourcePlistCli = toolContract("inspect_plist").outputSchema.parse(
     await artifactCliEvidence("inspect-plist", app),
   );
-  assert.equal(resourcePlistCli.subject, null);
+  assert.equal(resourcePlistCli.subject.identity.kind, "unknown");
   assert.equal(resourcePlistCli.raw_result, null);
   await withBundleResourcesMcp(app, async (client) => {
     const response = await artifactMcpCall(client, {
@@ -46,7 +46,7 @@ export async function verifyNativeProvenance(app, executable) {
     const mcp = toolContract("inspect_plist").outputSchema.parse(
       response.structuredContent,
     );
-    assert.equal(mcp.subject, null);
+    assert.equal(mcp.subject.identity.kind, "unknown");
     assert.equal(mcp.raw_result, null);
     assert.deepEqual(mcp.normalized_result, resourcePlistCli.normalized_result);
     assert.deepEqual(
@@ -65,7 +65,7 @@ export async function verifyNativeProvenance(app, executable) {
   const binaryPlistCli = toolContract("inspect_plist").outputSchema.parse(
     await artifactCliEvidence("inspect-plist", executable),
   );
-  assert.equal(binaryPlistCli.subject?.digest.sha256, sha256);
+  assert.equal(binaryPlistCli.subject?.identity.sha256, sha256);
   assert.equal(binaryPlistCli.raw_result, null);
   assert.equal(binaryPlistCli.normalized_result.resource_root, undefined);
   await withArtifactMcp(app, async (client) => {
@@ -77,7 +77,7 @@ export async function verifyNativeProvenance(app, executable) {
     const binaryPlistMcp = toolContract("inspect_plist").outputSchema.parse(
       plistResponse.structuredContent,
     );
-    assert.equal(binaryPlistMcp.subject?.digest.sha256, sha256);
+    assert.equal(binaryPlistMcp.subject?.identity.sha256, sha256);
     assert.equal(binaryPlistMcp.raw_result, null);
     assert.equal(binaryPlistMcp.normalized_result.resource_root, undefined);
     assert.deepEqual(

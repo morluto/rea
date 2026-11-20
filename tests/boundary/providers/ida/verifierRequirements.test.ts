@@ -14,7 +14,6 @@ it.each([
     flags: ["--second-procedure", "other", "--second-marker", "unique"],
     required: false,
   },
-  { protocol: "legacy", flags: [], required: false },
   { protocol: "modern", flags: [], required: false },
 ])(
   "enforces native switching requirements for $protocol with $flags",

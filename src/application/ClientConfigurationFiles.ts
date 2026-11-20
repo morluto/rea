@@ -1,6 +1,6 @@
 import { err, ok, type Result } from "../domain/result.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
-import { readRegularFileText } from "./RegularFileRead.js";
+import { readRegularFileText } from "../process/RegularFileRead.js";
 import {
   effectiveClientServer,
   parseClientConfiguration,
@@ -12,11 +12,12 @@ import {
 } from "./ClientConfigurationDocument.js";
 import type { SetupClient } from "./SupportedClients.js";
 import { clientRegistrationEnvironment } from "./ClientRegistrationEnvironment.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import type { ConfigurationError } from "../domain/configurationErrors.js";
 import { mergeEnvironmentOverrides } from "../process/snapshotEnvironment.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
-import { isRecord } from "../domain/isRecord.js";
+import { isRecord } from "../kernel/isRecord.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /**
  * A parsed layer retains its path so rereading the write target replaces only
@@ -59,7 +60,7 @@ const invalidEnvironment = (
   return {
     kind: "malformed",
     path,
-    detail: `${location}: ${constraints}${constraints.endsWith(".") ? "" : "."} ${overrideNames.size === 0 ? "Repair it" : "Check the launch environment and any existing registration settings"} before rerunning setup.`,
+    detail: `${location}: ${constraints}${constraints.endsWith(".") ? "" : "."} ${overrideNames.size === 0 ? "Repair it" : "Check the launch environment and any existing registration settings"} before retrying.`,
   };
 };
 
@@ -70,6 +71,50 @@ export interface ClientConfigurationFileError {
   readonly detail: string;
   readonly cleanupFailure?: RegularFileCleanupFailure;
 }
+
+type ClientConfigurationLocation = Pick<
+  SetupClient,
+  | "name"
+  | "registrationProfile"
+  | "configPath"
+  | "configPaths"
+  | "configPathError"
+  | "readOnlyLowerLayers"
+  | "inlineConfiguration"
+> & { readonly format?: ClientConfigurationFormat };
+
+interface ClientConfigurationReadOptions {
+  readonly writeOverrides?: Readonly<Record<string, string>>;
+  /** The writer's verified snapshot of the selected path, which must not be reopened here. */
+  readonly targetDocument?: ClientConfigurationDocument;
+}
+
+const configurationEnvironmentFailure = (
+  client: ClientConfigurationLocation,
+  platform: NodeJS.Platform,
+  {
+    path,
+    document,
+    validation,
+    overrides,
+  }: {
+    readonly path: string;
+    readonly document: ClientConfigurationDocument | undefined;
+    readonly validation: "fragment" | "effective";
+    readonly overrides?: Readonly<Record<string, string>> | undefined;
+  },
+): ClientConfigurationFileError | undefined => {
+  const environment = clientRegistrationEnvironment(
+    document,
+    client,
+    platform,
+    overrides,
+    validation,
+  );
+  return environment.ok
+    ? undefined
+    : invalidEnvironment(path, environment.error, overrides, platform);
+};
 
 /** Preserve named read failures and distinguish a missing source from an empty file. */
 export const readConfigurationText = async (
@@ -89,7 +134,7 @@ export const readConfigurationText = async (
     return err({
       kind: "unreadable",
       path,
-      detail: `Configuration ${path} could not be read: ${cause instanceof Error ? cause.message : String(cause)}`,
+      detail: `Configuration ${path} could not be read: ${errorMessage(cause)}`,
       ...(cause instanceof RegularFileCleanupFailure
         ? { cleanupFailure: cause }
         : {}),
@@ -115,17 +160,17 @@ export const readConfigurationFile = async (
     return err({
       kind: "malformed",
       path,
-      detail: `Configuration ${path} is malformed: ${cause instanceof Error ? cause.message : String(cause)}`,
+      detail: `Configuration ${path} is malformed: ${errorMessage(cause)}`,
     });
   }
 };
 
 /** Read each layer; setup may validate its writable layer with proposed overrides. */
 export const readClientConfigurationFiles = async (
-  client: SetupClient,
+  client: ClientConfigurationLocation,
   resources: ArtifactResourceScope | undefined,
   platform: NodeJS.Platform,
-  writeOverrides?: Readonly<Record<string, string>>,
+  { writeOverrides, targetDocument }: ClientConfigurationReadOptions = {},
 ): Promise<
   Result<readonly ClientConfigurationSource[], ClientConfigurationFileError>
 > => {
@@ -138,39 +183,35 @@ export const readClientConfigurationFiles = async (
       path: client.configPath,
       detail: client.configPathError,
     });
+  const paths = client.configPaths ?? [client.configPath];
+  if (targetDocument !== undefined && !paths.includes(client.configPath))
+    return err({
+      kind: "unreadable",
+      path: client.configPath,
+      detail:
+        "The selected configuration is missing from the native load order.",
+    });
   const documents: ClientConfigurationSource[] = [];
-  for (const path of client.configPaths ?? [client.configPath]) {
-    const document = await readConfigurationFile(
-      path,
-      client.format,
-      resources,
-    );
+  for (const path of paths) {
+    const isTarget = path === client.configPath;
+    const document =
+      isTarget && targetDocument !== undefined
+        ? ok(targetDocument)
+        : await readConfigurationFile(path, client.format, resources);
     if (!document.ok) return document;
+    if (document.value === undefined) continue;
     // A read-only lower layer's environment can be replaced as a whole map
     // by a later layer (Goose), so only the effective view is validated.
-    const validatesLayer =
-      client.readOnlyLowerLayers !== true || path === client.configPath;
-    if (document.value !== undefined && !validatesLayer)
-      documents.push({ ...document.value, sourcePath: path });
-    else if (document.value !== undefined) {
-      const environment = clientRegistrationEnvironment(
-        document.value,
-        client,
-        platform,
-        path === client.configPath ? writeOverrides : undefined,
-        "fragment",
-      );
-      if (!environment.ok)
-        return err(
-          invalidEnvironment(
-            path,
-            environment.error,
-            path === client.configPath ? writeOverrides : undefined,
-            platform,
-          ),
-        );
-      documents.push({ ...document.value, sourcePath: path });
+    if (isTarget || client.readOnlyLowerLayers !== true) {
+      const failure = configurationEnvironmentFailure(client, platform, {
+        path,
+        document: document.value,
+        validation: "fragment",
+        overrides: isTarget ? writeOverrides : undefined,
+      });
+      if (failure !== undefined) return err(failure);
     }
+    documents.push({ ...document.value, sourcePath: path });
   }
   // The inline layer is read-only and may replace a lower environment map,
   // so like a read-only lower layer only the effective view is validated.
@@ -179,23 +220,42 @@ export const readClientConfigurationFiles = async (
       ...client.inlineConfiguration.parsed,
       inlineOrigin: client.inlineConfiguration.origin,
     });
-  const environment = clientRegistrationEnvironment(
-    effectiveClientConfiguration(documents, undefined, platform),
-    client,
+  const failure = configurationEnvironmentFailure(client, platform, {
+    path: client.configPath,
+    document: mergeClientConfigurationDocuments(documents, platform),
+    validation: "effective",
+    overrides: writeOverrides,
+  });
+  return failure === undefined ? ok(documents) : err(failure);
+};
+
+/** Reuse admitted peers and substitute the candidate at every occurrence of the write target. */
+export const admitClientConfigurationCandidate = (
+  client: ClientConfigurationLocation,
+  sources: readonly ClientConfigurationSource[],
+  candidate: ClientConfigurationDocument,
+  platform: NodeJS.Platform,
+): Result<
+  ClientConfigurationDocument | undefined,
+  ClientConfigurationFileError
+> => {
+  const path = client.configPath;
+  const fragment = configurationEnvironmentFailure(client, platform, {
+    path,
+    document: candidate,
+    validation: "fragment",
+  });
+  if (fragment !== undefined) return err(fragment);
+  const effective = mergeClientConfigurationDocuments(
+    sources.map((source) => (source.sourcePath === path ? candidate : source)),
     platform,
-    writeOverrides,
-    "effective",
   );
-  if (!environment.ok)
-    return err(
-      invalidEnvironment(
-        client.configPath,
-        environment.error,
-        writeOverrides,
-        platform,
-      ),
-    );
-  return ok(documents);
+  const failure = configurationEnvironmentFailure(client, platform, {
+    path,
+    document: effective,
+    validation: "effective",
+  });
+  return failure === undefined ? ok(effective) : err(failure);
 };
 
 /** OpenCode merges server objects in file order, replacing arrays and scalar values. */

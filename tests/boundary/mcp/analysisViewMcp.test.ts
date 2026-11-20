@@ -1,6 +1,7 @@
 import {
   canonicalInputSchema,
   canonicalOutputSchema,
+  withCanonicalOutputSchema,
 } from "../../fixtures/canonicalOutputSchema.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
@@ -1005,7 +1006,7 @@ it("delivers a bounded native dossier view over MCP without a Ghidra provider or
   ).toBe(true);
   const response = await client.callTool(
     { name: "inspect_analysis_view", arguments: arguments_ },
-    { toolDefinition: advertised },
+    { toolDefinition: withCanonicalOutputSchema(advertised) },
   );
   expect(response.isError).not.toBe(true);
   const parsed = toolContract("inspect_analysis_view").outputSchema.parse(

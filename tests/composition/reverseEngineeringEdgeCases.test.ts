@@ -1,3 +1,4 @@
+import { spawnFailure } from "../support/process/spawnFailure.js";
 import { rm } from "node:fs/promises";
 import type { Stats } from "node:fs";
 
@@ -102,7 +103,7 @@ it("records pathless objdump architecture support as provider capability evidenc
       operation: "architectures",
     });
     if (!result.ok) throw result.error;
-    expect(result.value.subject).toBeNull();
+    expect(result.value.subject.identity.kind).toBe("unknown");
     expect(result.value.parameters).not.toHaveProperty("path");
     expect(result.value.parameters).not.toHaveProperty(
       "artifact_sha256_before",
@@ -430,7 +431,7 @@ it("rejects work after reaching the concurrent provider-operation limit", async 
   await withVerifierCleanup(async () => {
     const rejection = service.executeRizinCommand({ path, command: "iI" });
     await awaitAcknowledgement(
-      rejection.then(() => {}),
+      rejection,
       Promise.all(admitted),
       "capacity response",
     );
@@ -838,6 +839,69 @@ it("releases a retained provider owner after cleanup succeeds", async () => {
   }
 });
 
+it("retains an objdump command's unverified process owner until a later inspection stops it", async () => {
+  const { directory, path } = await createArtifact();
+  let stopped = false;
+  const cleanupOwner = {
+    stop: vi.fn(async () =>
+      stopped
+        ? { status: "verified-cleanup" as const }
+        : { status: "incomplete" as const, reason: "objdump group remains" },
+    ),
+  } as unknown as ProviderProcessSupervisor;
+  const runOwned = vi
+    .fn<typeof runOwnedCommand>()
+    .mockRejectedValueOnce(
+      new OwnedCommandFailure(
+        "process",
+        "objdump cleanup could not be verified",
+        providerSnapshot({ exitCode: null }),
+        "objdump group remains",
+        undefined,
+        ["run-id", "pid:42"],
+        cleanupOwner,
+      ),
+    )
+    .mockResolvedValue(providerSnapshot());
+  const service = new ReverseEngineeringService({ runOwned });
+
+  try {
+    const first = await service.inspectWithObjdump({
+      path,
+      operation: "symbols",
+    });
+    if (first.ok) throw new Error("Expected retained objdump cleanup");
+    expect(first.error.cleanupIncomplete).toBe(true);
+    expect(first.error.cleanup).toMatchObject({
+      reason: "objdump group remains",
+      resources: ["run-id", "pid:42"],
+    });
+
+    const blocked = await service.inspectWithObjdump({
+      path,
+      operation: "symbols",
+    });
+    expect(blocked).toMatchObject({
+      ok: false,
+      error: { cleanupIncomplete: true },
+    });
+    expect(runOwned).toHaveBeenCalledOnce();
+
+    stopped = true;
+    const recovered = await service.inspectWithObjdump({
+      path,
+      operation: "symbols",
+    });
+    if (!recovered.ok) throw recovered.error;
+    expect(first.error.cleanupIncomplete).toBe(false);
+    expect(cleanupOwner.stop).toHaveBeenCalledTimes(2);
+    expect(runOwned).toHaveBeenCalledTimes(2);
+  } finally {
+    await service.close().catch(() => undefined);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 it("retains a capability failure when its injected owned runner also reports incomplete cleanup", async () => {
   const { directory, path } = await createArtifact();
   const capability = new AnalysisCapabilityUnavailableError(
@@ -943,26 +1007,12 @@ it("preserves a provider timeout when cancellation arrives during the final dige
 
 it("classifies E2BIG as a provider command resource constraint", async () => {
   const { directory, path } = await createArtifact();
-  const cleanupOwner = {
-    stop: vi.fn(async () => ({ status: "verified-cleanup" as const })),
-  } as unknown as ProviderProcessSupervisor;
+  // The owned supervisor rethrows the launcher's spawn error unchanged.
   const runOwned = vi
     .fn<typeof runOwnedCommand>()
-    .mockRejectedValueOnce(
-      new OwnedCommandFailure(
-        "process",
-        "Command launch failed.",
-        null,
-        "owned descendant remains",
-        {
-          cause: Object.assign(new Error("argument list too long"), {
-            code: "E2BIG",
-          }),
-        },
-        ["run-id", "pid:42"],
-        cleanupOwner,
-      ),
-    )
+    .mockImplementationOnce(async (spawn) => {
+      throw spawnFailure("E2BIG", spawn.command);
+    })
     .mockResolvedValue(providerSnapshot());
   const service = new ReverseEngineeringService({
     runOwned,
@@ -970,31 +1020,20 @@ it("classifies E2BIG as a provider command resource constraint", async () => {
 
   try {
     const result = await service.executeRizinCommand({ path, command: "iI" });
-    expect(result).toMatchObject({
-      ok: false,
-      error: {
-        _tag: "AnalysisResourceConstraintError",
-        resource: "transport",
-        operation: "execute_rizin_command",
+    if (result.ok) throw new Error("Expected an argument-list constraint");
+    expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
+    expect(result.error).toMatchObject({
+      resource: "transport",
+      operation: "execute_rizin_command",
+      reportedLimits: {
+        spawn_error: "E2BIG",
+        argument_bytes: expect.any(Number),
       },
+      retryable: false,
     });
-    if (!result.ok)
-      expect(result.error.message).toContain(
-        "The host rejected the provider command because its argument list exceeds the process launch limit.",
-      );
-    if (!result.ok) {
-      expect(result.error.cleanupIncomplete).toBe(true);
-      expect(result.error.cleanup?.resources).toEqual(["run-id", "pid:42"]);
-      expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
-      if (result.error instanceof AnalysisResourceConstraintError)
-        expect(result.error.reportedLimits).toMatchObject({
-          argument_bytes: expect.any(Number),
-        });
-    }
+    expect(result.error.cleanupIncomplete).toBe(false);
     const retried = await service.executeRizinCommand({ path, command: "iI" });
     expect(retried.ok).toBe(true);
-    if (!result.ok) expect(result.error.cleanupIncomplete).toBe(false);
-    expect(cleanupOwner.stop).toHaveBeenCalledOnce();
     expect(runOwned).toHaveBeenCalledTimes(2);
   } finally {
     await rm(directory, { recursive: true, force: true });

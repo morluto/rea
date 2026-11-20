@@ -53,8 +53,8 @@ await withVerifierFixture(workspaceFixture, async () => {
   );
   const inspection = parseEvidence(JSON.parse(inspectResponse.stdout));
   assert.equal(inspection.operation, "inspect_artifact");
-  assert.equal(inspection.subject?.format, "hap");
-  assert.equal(inspection.subject?.digest.sha256, fixture.sha256);
+  assert.equal(inspection.subject?.identity.format, "hap");
+  assert.equal(inspection.subject?.identity.sha256, fixture.sha256);
   console.log("PASS CLI inspect_artifact");
 
   const projectionInput = JSON.stringify({

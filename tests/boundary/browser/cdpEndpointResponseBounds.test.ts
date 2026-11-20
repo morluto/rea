@@ -2,8 +2,8 @@ import { createServer } from "node:http";
 import type { RequestListener, Server } from "node:http";
 
 import { afterEach, describe, expect, it } from "vitest";
+import { phaseArrival } from "../../support/lifecycleHarness.js";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 import {
   discoverCdpEndpoint,
@@ -151,15 +151,12 @@ describe("CDP discovery response bounds", () => {
 
   it("ends a response that exceeds the total elapsed deadline", async () => {
     let responseClosed = false;
-    let requestStarted: (() => void) | undefined;
-    const started = new Promise<void>((resolve) => {
-      requestStarted = resolve;
-    });
+    const cdpRequest = phaseArrival();
     const server = await startServer((_request, response) => {
       response.once("close", () => {
         responseClosed = true;
       });
-      requestStarted?.();
+      cdpRequest.arrive();
     });
     const controller = new AbortController();
     const pending = readCdpJson(
@@ -172,7 +169,7 @@ describe("CDP discovery response bounds", () => {
       },
     );
     await withVerifierCleanup(async () => {
-      await awaitAcknowledgement(started, pending, "CDP request");
+      await cdpRequest.reached(pending, "CDP request");
       await expect(pending).rejects.toMatchObject({
         _tag: "BrowserObservationError",
         reason: "timeout",
@@ -188,15 +185,12 @@ describe("CDP discovery response bounds", () => {
 
   it("preserves caller cancellation and closes the response", async () => {
     let responseClosed = false;
-    let requestStarted: (() => void) | undefined;
-    const started = new Promise<void>((resolve) => {
-      requestStarted = resolve;
-    });
+    const cdpRequest = phaseArrival();
     const server = await startServer((_request, response) => {
       response.once("close", () => {
         responseClosed = true;
       });
-      requestStarted?.();
+      cdpRequest.arrive();
     });
     const controller = new AbortController();
     const pending = readCdpJson(
@@ -209,7 +203,7 @@ describe("CDP discovery response bounds", () => {
       },
     );
     await withVerifierCleanup(async () => {
-      await awaitAcknowledgement(started, pending, "CDP request");
+      await cdpRequest.reached(pending, "CDP request");
       controller.abort();
       await expect(pending).rejects.toMatchObject({
         _tag: "AnalysisCancelledError",

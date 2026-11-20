@@ -41,31 +41,34 @@ const byCodeUnit = ([left], [right]) =>
   left < right ? -1 : left > right ? 1 : 0;
 
 /**
- * The baseline file's one written form: guard keys keep their order and each
- * guard's paths are sorted by code unit. The guard rejects a file in any other
- * form, so a hand edit or merge cannot leave an order the next
- * `--shrink-baselines` would silently rewrite in an unrelated change.
+ * One guard's baseline file in its one written form: paths sorted by code
+ * unit. Each guard has its own file, so changes to different guards never
+ * touch the same file. The guard rejects a file in any other form, so a hand
+ * edit or merge cannot leave an order the next `--shrink-baselines` would
+ * silently rewrite in an unrelated change.
  */
-export const serializeCountedBaselines = (baselines) =>
+export const serializeCountedBaseline = (counts) =>
   `${JSON.stringify(
-    Object.fromEntries(
-      Object.entries(baselines).map(([key, counts]) => [
-        key,
-        Object.fromEntries(Object.entries(counts).sort(byCodeUnit)),
-      ]),
-    ),
+    Object.fromEntries(Object.entries(counts).sort(byCodeUnit)),
     null,
     2,
   )}\n`;
 
 /**
- * What the guard does with the baseline file it read as `text`, given the
- * baselines after comparison: nothing when the file is already in its written
- * form; otherwise `write` that form when shrinking (even if no count was
- * lowered), or `reject` the file so a hand edit is fixed in its own change.
+ * What the guard does with one guard's baseline file, read as `text`
+ * (`undefined` when there is none), given that guard's counts after comparison
+ * (`undefined` or empty when it has none left): nothing when the file is
+ * already in its written form or absent with no counts; otherwise, when
+ * shrinking, `write` that form (even if no count was lowered) or `delete` a
+ * file with no counts left; without shrinking, `reject` the file so a hand
+ * edit is fixed in its own change.
  */
-export const reconcileBaselineFile = (text, baselines, shrink) => {
-  const written = serializeCountedBaselines(baselines);
+export const reconcileBaselineFile = (text, counts, shrink) => {
+  if (counts === undefined || Object.keys(counts).length === 0) {
+    if (text === undefined) return { action: "none" };
+    return shrink ? { action: "delete" } : { action: "reject" };
+  }
+  const written = serializeCountedBaseline(counts);
   if (written === text) return { action: "none" };
   return shrink ? { action: "write", text: written } : { action: "reject" };
 };

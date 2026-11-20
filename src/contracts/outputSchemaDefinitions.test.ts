@@ -9,7 +9,7 @@ import {
 } from "./outputSchemaDefinitions.js";
 import { ANALYSIS_VIEW_TOOL_CONTRACTS } from "./analysisViewToolContracts.js";
 import { advertisedOutputJsonSchema } from "./toolSchemaMetadata.js";
-import { isRecord } from "../domain/isRecord.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 // An object alternative whose serialized size exceeds the inline bound.
 const largeAlternative = (kind: string, reference: string) => ({

@@ -1,3 +1,4 @@
+import { fileIdentity } from "../fixtures/evidenceSubject.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -52,8 +53,8 @@ it("refuses a historical alias summary with recreate guidance and rejects reseal
   const alias = join(root, "caller-selected-alias.plist");
   const aliasedParent = rebindEvidenceToTargetPath(parent, {
     path: alias,
-    sha256: parent.subject!.digest.sha256,
-    format: parent.subject!.format,
+    sha256: fileIdentity(parent.subject).sha256,
+    format: fileIdentity(parent.subject).format,
   });
   expect(aliasedParent.evidence_id).toBe(parent.evidence_id);
   const projected = await call("inspect_analysis_view", {

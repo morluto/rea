@@ -1,10 +1,10 @@
 import { captureBudgets } from "./CaptureBudgets.js";
-import { createHash } from "node:crypto";
 import { isUtf8 } from "node:buffer";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js";
 import { CaptureRedaction, capturePointer } from "./CaptureRedaction.js";
 import { CaptureFormatError } from "./CaptureFormatError.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 export type SazValue =
   | JsonValue
@@ -35,7 +35,7 @@ export const projectSazRecord = (
       return redactor.credential(pointer);
     if (Buffer.isBuffer(value)) {
       const base64 = value.toString("base64");
-      const sha256 = createHash("sha256").update(value).digest("hex");
+      const sha256 = sha256Hex(value);
       const hidden =
         redactor.sensitiveBytes(value) ||
         sensitiveValues.some(

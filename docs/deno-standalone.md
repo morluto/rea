@@ -11,6 +11,17 @@ In MCP, open the executable with `open_binary`, then call `inspect_artifact`. Us
 
 The recognized carriers are a Mach-O `__SUI` section named `d3n0l4nd`, an Intel Mach-O `<~sui-data~>` trailer, an ELF `PT_NOTE` or `SHT_NOTE` owned by `SUI` with type `0x53554901` and descriptor name `d3n0l4nd`, and a PE `RT_RCDATA` resource named `D3N0L4ND`. These are structural layouts. The metadata JSON has no Deno version field, so the compiler version stays unknown unless another record establishes it. Other layouts, including older eszip trailers, are unsupported.
 
+The PE probe follows the DOS header's PE offset and reads the declared header
+records and matching resource directories by file position. After confirming
+the resource name, it reports malformed ranges separately from the fixed
+65,536-entry inspection allowance. It validates the declared extent of a
+different-length name without reading that name's bytes.
+
+The ELF probe skips malformed section tables, including tables with a reserved
+direct `e_shnum` count, and still checks independently readable program
+headers. A program note that confirms the Deno carrier alongside such damage
+produces a format error.
+
 Root metadata reports the carrier, entry point, argv, V8 flags, permission options, unstable configuration, application name, self-extracting marker, virtual-filesystem case sensitivity, and the npm snapshot byte length. The npm snapshot is not decoded. Each virtual file is one occurrence with its logical path, size, and SHA-256. Transpiled output, CJS export analysis, and source maps are separate occurrences beside that file. Each has the same `index` as the file and its own `role`. A region normally has the logical path of the file plus a `.deno-*` suffix. When that path belongs to another stored file, the region moves to an indexed path such as `deno-vfs/0.vfs-transpiled`, so read the reported `logical_path` instead of building it from the file name. They are not linked by `parent_occurrence_id`, which follows directories and expanded containers. Symlink targets stay recorded path parts and are never followed.
 
 `Metadata.env_vars_from_env_file` holds values from a compile-time `--env-file`, and `ca_data` holds certificate bytes. Inventory retains the variable names and values, certificate bytes, counts, and byte lengths in local Evidence, so sharing that Evidence shares them. Extraction does not write them as files.

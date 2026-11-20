@@ -3,7 +3,7 @@ import { expect, it } from "vitest";
 import { browserScenarioBrowserSchema } from "../../../src/domain/browserScenarioValues.js";
 
 import { BROWSER_TOOL_CONTRACTS } from "../../../src/contracts/browserToolContracts.js";
-import { comparePngScreenshots } from "../../../src/browser/PngVisualDiff.js";
+import { comparePngScreenshots } from "../../../src/domain/pngVisualDiff.js";
 import { compareWebScreenshotsInputSchema } from "../../../src/domain/webScreenshot.js";
 
 it("executes the advertised screenshot comparison example through PNG checksum validation", () => {

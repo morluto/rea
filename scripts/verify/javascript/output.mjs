@@ -10,12 +10,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { finished } from "node:stream/promises";
 
-import { Cli } from "incur";
+import { createCliShell } from "#dist/cli/cliShell.js";
+import { registerCliCommand } from "#dist/cli/commandRegistry.js";
 import { estimateTokenCount } from "tokenx";
 
-import { parseCliOutputArguments } from "../../../dist/cliOutput.js";
-import { createCliResultOutput } from "../../../dist/cli/cliResultOutput.js";
-import { createEvidence } from "../../../dist/domain/evidence.js";
+import { parseCliOutputArguments } from "#dist/cliOutput.js";
+import { createCliResultOutput } from "#dist/cli/cliResultOutput.js";
+import { createEvidence } from "#dist/domain/evidence.js";
+import { unknownTarget } from "#dist/domain/targetIdentity.js";
 import {
   VerifierFixture,
   withVerifierFixture,
@@ -38,6 +40,7 @@ const fixture = await VerifierFixture.open({
 });
 const workspace = fixture.path;
 const path = join(workspace, "result.json");
+/** @type {import("node:fs").WriteStream | undefined} */
 let destination;
 let peakRss = process.memoryUsage().rss;
 const sampleRss = () => {
@@ -59,7 +62,7 @@ fixture.releaseAfter(async () => {
 });
 await withVerifierFixture(fixture, async () => {
   const evidence = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "large-output-fixture", name: "Large output fixture", version: "1" },
     {
       operation: "inspect_fixture",
@@ -128,23 +131,24 @@ await withVerifierFixture(fixture, async () => {
   assert.ok(output);
   let unexpectedOutputBytes = 0;
   let exitCode = 0;
-  await Cli.create("rea-output-verifier", { sync: false })
-    .command(metadata.command, {
-      run: async ({ format: selectedFormat }) => {
-        assert.equal(
-          await output.write(evidence, { ...metadata, format: selectedFormat }),
-          true,
-        );
-      },
-    })
-    .serve(argv, {
-      stdout: (text) => {
-        if (!output.handled) unexpectedOutputBytes += Buffer.byteLength(text);
-      },
-      exit: (code) => {
-        exitCode = code;
-      },
-    });
+  const cli = createCliShell({
+    selectedEnvironment: {},
+    registrations: [],
+    resultOutput: output,
+  });
+  registerCliCommand(cli, metadata.command, {
+    run: async () => {
+      assert.equal(await output.write(evidence, metadata), true);
+    },
+  });
+  await cli.serve(argv, {
+    stdout: (text) => {
+      if (!output.handled) unexpectedOutputBytes += Buffer.byteLength(text);
+    },
+    exit: (code) => {
+      exitCode = code;
+    },
+  });
   destination.end();
   await finished(destination);
   assert.equal(exitCode, 0);
@@ -185,7 +189,7 @@ await withVerifierFixture(fixture, async () => {
       counterDestination,
     );
     assert.ok(counter);
-    assert.equal(await counter.write(evidence, { ...metadata, format }), true);
+    assert.equal(await counter.write(evidence, metadata), true);
     assert.equal(counter.error, undefined);
     assert.equal(counter.failed, false);
     counterDestination.end();

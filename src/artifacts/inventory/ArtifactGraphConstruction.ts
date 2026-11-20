@@ -1,8 +1,10 @@
 import { artifactFormatDescriptor } from "../artifactFormats.js";
 import { recognizeArtifactFormat } from "../../domain/artifactFormatRecognition.js";
 import type { ArtifactClassificationEvidence } from "../ArtifactClassificationProbe.js";
-import { asarHeaderAdmissionFailure } from "../AsarHeader.js";
-import { hasDestinationPath } from "../ArtifactPaths.js";
+import {
+  hasDestinationPath,
+  asarHeaderAdmissionFailure,
+} from "../../resources/index.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import { isJavaScriptSourcePath } from "../../domain/javascript/javascriptArtifactFiles.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
@@ -12,7 +14,7 @@ import {
 } from "../../domain/apple/appleArchiveFormat.js";
 import {
   artifactEdgeId,
-  artifactIdForContent,
+  artifactIdForNode,
   occurrenceIdForLocation,
   logicalPathNfc,
 } from "../../domain/artifactIdentity.js";
@@ -20,7 +22,7 @@ import type {
   ArtifactEntry,
   ArtifactReader,
   ArtifactReaderTraversal,
-} from "../ArtifactReader.js";
+} from "../../resources/index.js";
 import type {
   ArtifactCommand,
   ArtifactEdge,
@@ -36,7 +38,10 @@ import {
   classifyFatContainerEvidence,
   readFatContainerHeader,
 } from "../../domain/apple/machoContainer.js";
-import { readNativeHeaderFormat } from "../../domain/binaryTarget.js";
+import {
+  parsePeRecordStructure,
+  readNativeHeaderFormat,
+} from "../../domain/binaryTarget.js";
 
 /** Mutable internal occurrence used until root-bound IDs are known. */
 export interface MutableOccurrence {
@@ -252,7 +257,10 @@ export const createArtifactNode = (input: {
   readonly format: ArtifactNode["format"];
   readonly contentState: ArtifactNode["content_state"];
 }): ArtifactNode => ({
-  artifact_id: artifactIdForContent(input.sha256),
+  artifact_id: artifactIdForNode({
+    sha256: input.sha256,
+    content_state: input.contentState,
+  }),
   format: input.format,
   sha256: input.sha256,
   size: input.size,
@@ -589,6 +597,7 @@ const artifactRoleForFormat = (
       kind: "container",
       format: zipPackageFormatForPath(path) ?? format,
     };
+  if (format === "uefi") return { kind: "resource", format };
   if (format === "plist") return { kind: "plist", format };
   if (artifactFormatDescriptor(format)?.roleContainer === true)
     return { kind: "container", format };
@@ -605,7 +614,8 @@ export const classifyArtifactBytes = (
   evidence: ArtifactClassificationEvidence,
   fileSize: number,
 ): ArtifactNode["format"] => {
-  const { prefix, suffix, mzWindowsHeaderSignature } = evidence;
+  const { prefix, suffix, mzWindowsHeaderSignature, mzWindowsHeaderRecord } =
+    evidence;
   // A refused claim falls through: a header-only iNES region, for example,
   // has the signature but not the declared cartridge extent, so it stays a
   // file instead of becoming another container. A claim that needs more
@@ -648,14 +658,20 @@ export const classifyArtifactBytes = (
     if (windowsHeader.state === "candidate") return "unknown";
     if (windowsHeader.state === "declared") {
       const windowsOffset = windowsHeader.offset;
-      if (
-        windowsHeader.signature === "PE" &&
-        windowsOffset >= 64 &&
-        (windowsOffset <= prefix.length - 4 ||
-          (mzWindowsHeaderSignature?.offset === windowsOffset &&
-            mzWindowsHeaderSignature.bytes.length >= 4))
-      )
-        return "pe";
+      if (windowsHeader.signature === "PE" && windowsOffset >= 64) {
+        const inline =
+          windowsOffset < prefix.length
+            ? prefix.subarray(windowsOffset)
+            : undefined;
+        const observed =
+          mzWindowsHeaderRecord?.offset === windowsOffset
+            ? mzWindowsHeaderRecord.bytes
+            : undefined;
+        const record =
+          (observed?.length ?? 0) > (inline?.length ?? 0) ? observed : inline;
+        if (record !== undefined && parsePeRecordStructure(record).ok)
+          return "pe";
+      }
       return "unknown";
     }
     if (mzEvidence.dos.ok) return "dos-mz";

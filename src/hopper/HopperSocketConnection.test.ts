@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
-import { HopperCancelledError } from "../domain/hopperErrors.js";
+import { HopperCancelledError } from "./HopperErrors.js";
 import { connectHopperSocketOnce } from "./HopperSocketConnection.js";
 
 it("retains the caller abort reason when the socket signal is already aborted", async () => {

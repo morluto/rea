@@ -147,6 +147,8 @@ const redactFailure = (
   const context = {
     cause: error,
     ...(error.limit === undefined ? {} : { limit: error.limit }),
+
+    ...(error.related === undefined ? {} : { related: error.related }),
     ...(guidance === undefined
       ? {}
       : {
@@ -246,6 +248,8 @@ const redactFailure = (
         ? {}
         : { remediationAction: text(error.remediationAction) }),
       ...(error.limit === undefined ? {} : { limit: error.limit }),
+
+      ...(error.related === undefined ? {} : { related: error.related }),
     });
   if (error instanceof AnalysisAccessDeniedError)
     return new AnalysisAccessDeniedError(
@@ -331,6 +335,8 @@ const redactFailure = (
         ...context,
         ...resourceConstraintRecovery(error, text),
         ...(error.limit === undefined ? {} : { limit: error.limit }),
+
+        ...(error.related === undefined ? {} : { related: error.related }),
         ...(error.requestSent === undefined
           ? {}
           : { requestSent: error.requestSent }),

@@ -4,6 +4,7 @@ import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 
 import { DesktopBuildComputers } from "../../../src/application/desktop/DesktopBuildComputers.js";
+import { readHostFile } from "../../../src/desktop/HostFileRead.js";
 
 const execute = promisify(execFile);
 const docker = process.env.REA_DOCKER_COMMAND ?? "";
@@ -18,7 +19,7 @@ describe.skipIf(process.env.REA_BUILD_COMPUTER_REAL !== "1")(
   "real agentenv build computer",
   () => {
     it("builds Mousepad with REA inside, drives it, records it and leaves no container", async () => {
-      const computers = new DesktopBuildComputers(process.env);
+      const computers = new DesktopBuildComputers(process.env, readHostFile);
       const signal = new AbortController().signal;
       const started = await computers.start(
         {

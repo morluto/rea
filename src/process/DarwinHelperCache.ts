@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { constants, type Stats } from "node:fs";
 import {
@@ -26,6 +25,7 @@ import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { withOwnedRegularFile } from "../filesystem/OwnedRegularFile.js";
 import { readStableFileBytes } from "../filesystem/readStableFileBytes.js";
 import { execFileOutput } from "./ExecFileOutput.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 /** Bumped when the entry layout or the key material changes meaning. */
 const CACHE_FORMAT = 2;
@@ -46,9 +46,6 @@ const manifestSchema = z.strictObject({
 
 // Sticky directories let only an entry's owner rename or remove it.
 const STICKY = 0o1000;
-
-const sha256 = (value: string | Uint8Array): string =>
-  createHash("sha256").update(value).digest("hex");
 
 /** Per-user namespace REA owns for the compiled Darwin ownership helper. */
 export const defaultDarwinHelperCacheDirectory = (home: string): string =>
@@ -206,7 +203,9 @@ export const createDarwinHelperCache = (options: {
       [string[], string, string]
     >([
       Promise.all(
-        options.sources.map(async (source) => sha256(await readFile(source))),
+        options.sources.map(async (source) =>
+          sha256Hex(await readFile(source)),
+        ),
       ),
       xcrun(["--find", "swiftc"], signal),
       xcrun(["--show-sdk-path"], signal),
@@ -220,7 +219,7 @@ export const createDarwinHelperCache = (options: {
       fileIdentity(compilerPath),
       fileIdentity(join(sdkPath, "SDKSettings.json")),
     ]);
-    return sha256(
+    return sha256Hex(
       JSON.stringify({
         format: CACHE_FORMAT,
         sources,
@@ -327,7 +326,7 @@ export const createDarwinHelperCache = (options: {
     );
     return helper !== undefined &&
       helper.byteLength === manifest.data.size &&
-      sha256(helper) === manifest.data.sha256
+      sha256Hex(helper) === manifest.data.sha256
       ? executable
       : undefined;
   };
@@ -407,7 +406,7 @@ export const createDarwinHelperCache = (options: {
         JSON.stringify({
           format: CACHE_FORMAT,
           key: entryKey,
-          sha256: sha256(helper),
+          sha256: sha256Hex(helper),
           size: helper.byteLength,
         }),
         { mode: 0o600, flag: "wx" },

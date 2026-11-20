@@ -1,6 +1,5 @@
 import { ARTIFACT_TOOL_CONTRACTS } from "../contracts/artifactToolContracts.js";
 import { OPEN_BINARY_TOOL_CONTRACT } from "../contracts/sessionToolContracts.js";
-import { ARTIFACT_GRAPH_PROVIDER } from "../domain/investigationProviders.js";
 import {
   contractNamed,
   type CliSessionTarget,
@@ -13,7 +12,6 @@ import {
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { createArtifactExtractionDestination } from "../application/artifacts/ArtifactExtractionDestination.js";
 import { registerArtifactComparisonCommand } from "./artifactComparisonCommand.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 
@@ -69,17 +67,12 @@ const registerInventoryCommands = (
   logger: Logger,
   runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
 ): void => {
-  const run = runOnSessionTarget(
-    runProviderAnalysis,
-    logger,
-    ARTIFACT_GRAPH_PROVIDER.id,
-  );
+  const run = runOnSessionTarget(runProviderAnalysis, logger);
   registerContractCommand(
     cli,
     logger,
     contractNamed(ARTIFACT_TOOL_CONTRACTS, "inspect_artifact"),
     {
-      command: CLI_COMMANDS.inspectArtifact,
       description:
         "Inspect one artifact and return all available observations and next probes",
       sessionTarget: artifactTarget,
@@ -94,7 +87,6 @@ const registerInventoryCommands = (
     logger,
     contractNamed(ARTIFACT_TOOL_CONTRACTS, "extract_artifact"),
     {
-      command: CLI_COMMANDS.extractArtifact,
       description:
         "Extract all or selected regular artifact contents safely; DMG extraction is unavailable",
       sessionTarget: artifactTarget,
@@ -140,7 +132,6 @@ const registerAppleBundleCommands = (
     logger,
     contract("inspect_keyed_archive"),
     {
-      command: CLI_COMMANDS.inspectKeyedArchive,
       description:
         "Inspect a Foundation keyed archive as an object-reference graph",
       sessionTarget: {
@@ -164,7 +155,6 @@ const registerAppleBundleCommands = (
     logger,
     contract("trace_dylib_resolution"),
     {
-      command: CLI_COMMANDS.traceDylibResolution,
       description:
         "Trace dyld load-path resolution for a Mach-O or every executable in an app bundle",
       sessionTarget: { description: "Mach-O file or Apple .app bundle path" },
@@ -184,7 +174,6 @@ const registerAppleBundleCommands = (
     logger,
     contract("inspect_asset_catalog"),
     {
-      command: CLI_COMMANDS.inspectAssetCatalog,
       description: "Inspect compiled Apple asset catalog metadata",
       sessionTarget: { description: "Apple .app bundle path" },
       fields: {
@@ -199,7 +188,6 @@ const registerAppleBundleCommands = (
     logger,
     contract("decode_interface_builder"),
     {
-      command: CLI_COMMANDS.decodeInterfaceBuilder,
       description:
         "Decode compiled storyboard and nib archives from an app bundle",
       sessionTarget: { description: "Apple .app bundle path" },

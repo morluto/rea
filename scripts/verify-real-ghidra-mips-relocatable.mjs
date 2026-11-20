@@ -233,7 +233,7 @@ async function verifyFixture(byteOrder, kernelModule) {
     assert.equal(parameters.mips_elf.type, 1);
     assert.equal(
       parameters.mips_support_lane,
-      "elf32-rel-o32-arch32r2-standard-v1",
+      "elf32-rel-o32-arch32r2-standard",
     );
     assert.equal(
       parameters.mips_soft_float_storage,
@@ -278,8 +278,8 @@ async function verifyFixture(byteOrder, kernelModule) {
       { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
     );
     const evidence = parseEvidence(JSON.parse(cli.stdout));
-    assert.equal(evidence.subject?.architecture, "mips");
-    assert.equal(evidence.subject?.digest.sha256, fixture.sha256);
+    assert.equal(evidence.subject?.identity.architecture, "mips");
+    assert.equal(evidence.subject?.identity.sha256, fixture.sha256);
     assert.equal(
       functionDossierSchema.parse(evidence.normalized_result).procedure.address,
       dossier.procedure.address,

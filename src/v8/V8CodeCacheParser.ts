@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import {
   MAX_INSPECT_V8_CODE_CACHE_STRING_BYTES,
   V8_CODE_CACHE_COMPILE_FUNCTION_BIT,
@@ -13,14 +12,19 @@ import {
   type V8CodeCache,
 } from "../domain/v8/v8CodeCache.js";
 import type { V8CodeCacheInputBudget } from "../domain/v8/v8CodeCacheBudget.js";
-import { V8CodeCacheBudgetFailure } from "../v8/V8CodeCache.errors.js";
+import {
+  V8_CODE_CACHE_FORMAT,
+  v8CodeCacheBudgetFailure,
+} from "../v8/V8CodeCache.errors.js";
+import { BinaryReader } from "../domain/binaryContainer.js";
 import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const unsupported = (message: string): never => {
-  throw unsupportedInput("v8-code-cache", message);
+  throw unsupportedInput(V8_CODE_CACHE_FORMAT, message);
 };
 const malformed = (message: string): never => {
-  throw malformedInput("v8-code-cache", message);
+  throw malformedInput(V8_CODE_CACHE_FORMAT, message);
 };
 
 /**
@@ -57,9 +61,6 @@ const MODULE_BITS = V8_CODE_CACHE_MODULE_BIT | V8_CODE_CACHE_LEGACY_MODULE_BIT;
 const isPrintable = (byte: number): boolean =>
   (byte >= 0x20 && byte <= 0x7e) || byte === 0x09;
 
-const payloadSha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
-
 /**
  * Read one V8 code cache container without executing it.
  *
@@ -80,17 +81,26 @@ export const parseV8CodeCache = (
       `Selected file is shorter than the ${String(V8_CODE_CACHE_MIN_HEADER_BYTES)}-byte V8 code cache header.`,
     );
 
-  const field = (index: number): number => bytes.readUInt32LE(index * 4);
-  const magic = field(0);
+  const headerReader = new BinaryReader(
+    bytes.subarray(0, V8_CODE_CACHE_HEADER_BYTES),
+    true,
+    V8_CODE_CACHE_FORMAT,
+  );
+  const readField = (entry: (typeof HEADER_ROLES)[number], index: number) => {
+    const offset = index * 4;
+    return { offset, value: headerReader.u32(offset), ...entry };
+  };
+  const commonFieldCount = V8_CODE_CACHE_NARROW_HEADER_BYTES / 4;
+  const fields = HEADER_ROLES.slice(0, commonFieldCount).map(readField);
+  const magic = fields[0]!.value;
   const magicHigh = magic >>> 16;
   if (magicHigh !== V8_CODE_CACHE_MAGIC_HIGH)
     unsupported(
       `Container magic 0x${magic.toString(16).padStart(8, "0")} does not carry the V8 code cache high half 0x${V8_CODE_CACHE_MAGIC_HIGH.toString(16)}; this file is not a V8 code cache.`,
     );
 
-  // The pinned layout aligns the seven header words after the last word.
-  // The declared payload length gives the candidate header extent.
-  const declaredPayload = field(5);
+  // The declared payload length gives the candidate aligned header extent.
+  const declaredPayload = fields[5]!.value;
   const payloadOffset = bytes.length - declaredPayload;
   if (!V8_CODE_CACHE_HEADER_SIZES.includes(payloadOffset))
     malformed(
@@ -102,13 +112,16 @@ export const parseV8CodeCache = (
   if (
     payloadOffset === V8_CODE_CACHE_NARROW_HEADER_BYTES &&
     bytes.length >= V8_CODE_CACHE_HEADER_BYTES &&
-    field(V8_CODE_CACHE_NARROW_HEADER_BYTES / 4) === 0
+    headerReader.u32(V8_CODE_CACHE_NARROW_HEADER_BYTES) === 0
   )
     malformed(
       "A 28-byte header extent followed by a zero word is ambiguous: the file may have a zero-leading narrow payload or a truncated 32-byte layout.",
     );
 
-  const sourceWord = field(2);
+  if (payloadOffset === V8_CODE_CACHE_HEADER_BYTES)
+    fields.push(readField(HEADER_ROLES[commonFieldCount]!, commonFieldCount));
+
+  const sourceWord = fields[2]!.value;
   const sourceLength = sourceWord & V8_CODE_CACHE_SOURCE_LENGTH_MASK;
   // Bit 30 marks a `vm.SourceTextModule` cache and bit 29 a `vm.compileFunction` one.
   // Measured on Node 24.22.1, a 19-unit module source reads `0x40000013` while a script of
@@ -138,7 +151,7 @@ export const parseV8CodeCache = (
       if (observations.length >= input.max_strings)
         // The message states the fact. Recovery advice belongs to the provider, which
         // can see whether either budget still has headroom before recommending a retry.
-        throw new V8CodeCacheBudgetFailure(
+        throw v8CodeCacheBudgetFailure(
           "max_strings",
           input.max_strings,
           `Payload contains more than ${String(input.max_strings)} printable runs of at least ${String(input.min_string_bytes)} bytes, so the max_strings observation budget was exhausted before the scan finished.`,
@@ -177,13 +190,7 @@ export const parseV8CodeCache = (
     header: {
       magic,
       magic_build_stable: magicHigh,
-      // The narrow layout has no trailing alignment word.
-      fields: HEADER_ROLES.slice(0, payloadOffset / 4).map((entry, index) => ({
-        offset: index * 4,
-        value: field(index),
-        role: entry.role,
-        status: entry.status,
-      })),
+      fields,
       header_bytes: payloadOffset,
       source_length: sourceLength,
       producer,
@@ -191,7 +198,7 @@ export const parseV8CodeCache = (
     payload: {
       offset: payloadOffset,
       bytes: payload.length,
-      sha256: payloadSha256(payload),
+      sha256: sha256Hex(payload),
       trailing_bytes: 0,
     },
     embedded_strings: observations,

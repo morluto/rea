@@ -18,7 +18,7 @@ import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import { forgetPendingMcpRequest } from "./EvidenceMcpServerCore.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
-import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import { createToolResultDelivery } from "./toolResult.js";
 
 const firstText = (result: {
@@ -130,9 +130,8 @@ it("passes the owned cancellation signal to a tool without an input schema", asy
     (evidence) => records.recordEvidence(evidence),
     createToolResultDelivery(4096),
   );
-  const entered = createDeferred<void>();
+  const handler = phaseGate();
   const observed = createDeferred<unknown>();
-  const release = createDeferred<void>();
   const finished = createDeferred<void>();
   let started = false;
   server.registerTool("held", {}, async (context) => {
@@ -141,9 +140,8 @@ it("passes the owned cancellation signal to a tool without an input schema", asy
       once: true,
     });
     started = true;
-    entered.resolve();
     try {
-      await release.promise;
+      await handler.hold();
       return { content: [{ type: "text", text: "finished" }] };
     } finally {
       finished.resolve();
@@ -162,11 +160,7 @@ it("passes the owned cancellation signal to a tool without an input schema", asy
     const pending = client
       .callTool({ name: "held" }, { signal: controller.signal })
       .catch(() => undefined);
-    await awaitAcknowledgement(
-      entered.promise,
-      pending,
-      "held tool handler entry",
-    );
+    await handler.reached(pending, "held tool handler entry");
     controller.abort("stop no-input tool");
     await pending;
     expect(await observed.promise).toMatchObject({
@@ -174,7 +168,7 @@ it("passes the owned cancellation signal to a tool without an input schema", asy
       clientReason: "stop no-input tool",
     });
   } finally {
-    release.resolve();
+    handler.release();
     if (started) await finished.promise;
     await Promise.all([client.close(), serving.close()]);
   }
@@ -188,9 +182,8 @@ it("aborts a running tool with a caller abort that keeps the client's reason", a
     (evidence) => records.recordEvidence(evidence),
     createToolResultDelivery(4096),
   );
-  const entered = createDeferred<void>();
+  const handler = phaseGate();
   const observed = createDeferred<unknown>();
-  const release = createDeferred<void>();
   const finished = createDeferred<void>();
   let started = false;
   server.registerTool(
@@ -202,9 +195,8 @@ it("aborts a running tool with a caller abort that keeps the client's reason", a
         once: true,
       });
       started = true;
-      entered.resolve(undefined);
       try {
-        await release.promise;
+        await handler.hold();
         return { content: [{ type: "text", text: "finished" }] };
       } finally {
         finished.resolve();
@@ -226,11 +218,7 @@ it("aborts a running tool with a caller abort that keeps the client's reason", a
       { signal: controller.signal },
     );
     const rejected = expect(pending).rejects.toBeDefined();
-    await awaitAcknowledgement(
-      entered.promise,
-      pending,
-      "held tool handler entry",
-    );
+    await handler.reached(pending, "held tool handler entry");
     controller.abort("user stopped");
     await rejected;
 
@@ -242,7 +230,7 @@ it("aborts a running tool with a caller abort that keeps the client's reason", a
       name: "AbortError",
     });
   } finally {
-    release.resolve();
+    handler.release();
     if (started) await finished.promise;
     await Promise.all([client.close(), serving.close()]);
   }
@@ -256,9 +244,8 @@ it("reports owner shutdown to the handler when transport close invokes onclose",
     (evidence) => records.recordEvidence(evidence),
     createToolResultDelivery(4096),
   );
-  const entered = createDeferred<void>();
+  const handler = phaseGate();
   const observed = createDeferred<unknown>();
-  const release = createDeferred<void>();
   const finished = createDeferred<void>();
   let started = false;
   server.registerTool(
@@ -271,9 +258,8 @@ it("reports owner shutdown to the handler when transport close invokes onclose",
         { once: true },
       );
       started = true;
-      entered.resolve();
       try {
-        await release.promise;
+        await handler.hold();
         return { content: [{ type: "text", text: "finished" }] };
       } finally {
         finished.resolve();
@@ -292,16 +278,12 @@ it("reports owner shutdown to the handler when transport close invokes onclose",
     const pending = client
       .callTool({ name: "held", arguments: {} })
       .catch(() => undefined);
-    await awaitAcknowledgement(
-      entered.promise,
-      pending,
-      "held tool handler entry",
-    );
+    await handler.reached(pending, "held tool handler entry");
     await server.close();
     expect(await observed.promise).toBe(OwnerCancellation.ownerClosed);
     await pending;
   } finally {
-    release.resolve();
+    handler.release();
     if (started) await finished.promise;
     await Promise.all([client.close(), serving.close()]);
   }

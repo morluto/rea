@@ -9,8 +9,8 @@ import {
   withVerifierFixture,
 } from "./lib/verifier-fixture.mjs";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
-import { ArtifactResourceScope } from "../dist/artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../dist/artifacts/AnalysisCleanupLease.js";
+import { ArtifactResourceScope } from "../dist/resources/ArtifactResourceScope.js";
+import { AnalysisCleanupLease } from "../dist/resources/AnalysisCleanupLease.js";
 import { resolveHopperAnalysisProfile } from "../dist/hopper/HopperAnalysisProfile.js";
 import { HopperApplicationLauncher } from "../dist/hopper/BridgeLauncher.js";
 import { HopperClient } from "../dist/hopper/HopperClient.js";

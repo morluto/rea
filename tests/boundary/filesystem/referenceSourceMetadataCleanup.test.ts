@@ -13,7 +13,7 @@ import { constants } from "node:fs";
 
 import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
 
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { importReferenceSource } from "../../../src/application/ReferenceSourceImport.js";
 import { readReferenceSourceVcs } from "../../../src/application/ReferenceSourceVcsAdapter.js";
 import { execFileOutput } from "../../../src/process/ExecFileOutput.js";
@@ -490,6 +490,59 @@ it.each([
     }
   },
 );
+
+it("preserves cancellation during final policy close and retains the descriptor for retry", async () => {
+  const root = await createTestTempDirectory("rea-reference-policy-cancel-");
+  const policyPath = join(root, ".gitignore");
+  await writeFile(policyPath, "ignored\n");
+  const resources = new ArtifactResourceScope();
+  const controller = new AbortController();
+  const reason = { source: "caller" };
+  const closeFailure = new Error("policy close failed");
+  let policyHandle: FileHandle | undefined;
+  let closeAttempts = 0;
+  let allowClose = false;
+  openMock.mockImplementation(async (...args) => {
+    const handle = await actual.open(...args);
+    if (resolve(String(args[0])) !== resolve(policyPath)) return handle;
+    policyHandle = handle;
+    const close = handle.close.bind(handle);
+    vi.spyOn(handle, "close").mockImplementation(async () => {
+      closeAttempts += 1;
+      controller.abort(reason);
+      if (!allowClose) throw closeFailure;
+      await close();
+    });
+    return handle;
+  });
+  try {
+    const result = await importReferenceSource(
+      {
+        root,
+        caller: "test",
+        policy: { secretPatterns: [] },
+        signal: controller.signal,
+      },
+      resources,
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: "cancelled", cleanup: { resources: [policyPath] } },
+    });
+    if (result.ok) throw new Error("Expected policy cancellation");
+    expect(result.error.cause).toBe(reason);
+    expect(result.error.secondaryCancellation).toBeUndefined();
+    expect(result.error.cleanup?.reason).toContain(closeFailure.message);
+    expect(closeAttempts).toBe(2);
+    expect(policyHandle?.fd).toBeGreaterThanOrEqual(0);
+    expect(resources.cleanupResources).toEqual([policyPath]);
+  } finally {
+    allowClose = true;
+    await resources.close();
+  }
+  expect(policyHandle?.fd).toBe(-1);
+  expect(resources.hasPending).toBe(false);
+});
 
 it.each([false, true])(
   "preserves a policy read failure and later cancellation (close fails: %s)",

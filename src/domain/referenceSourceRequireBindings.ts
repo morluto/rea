@@ -1,3 +1,4 @@
+import type { JavaScriptMemberMutationAllowance } from "./javascript/javascriptSemanticWorkAllowance.js";
 import * as t from "@babel/types";
 import { posix } from "node:path";
 
@@ -47,6 +48,7 @@ export type ReferenceSourceRequireInvocation =
 export const referenceSourceRequireCalls = (
   file: Pick<ParsedJavaScriptSource, "program">,
   path: string,
+  memberMutationAllowance?: JavaScriptMemberMutationAllowance,
 ): ReadonlyMap<
   ReferenceSourceRequireInvocation,
   ReferenceSourceRequireCall
@@ -58,6 +60,8 @@ export const referenceSourceRequireCalls = (
     indexJavaScriptBindingsWithReceiversSteps(
       file.program,
       runtimeContext === "module" ? undefined : "commonjs-wrapper",
+      undefined,
+      memberMutationAllowance,
     ),
   );
   const factoryBindings: ReadonlySet<string> = new Set();

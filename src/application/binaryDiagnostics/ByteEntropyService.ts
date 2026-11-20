@@ -3,7 +3,7 @@ import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { open, realpath, stat } from "node:fs/promises";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { BYTE_ENTROPY_PROVIDER } from "../../domain/investigationProviders.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
@@ -29,8 +29,8 @@ import {
   type ByteEntropy,
 } from "../../domain/native/byteEntropy.js";
 import { err, type Result } from "../../domain/result.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import {
+  ArtifactResourceScope,
   withArtifactFileHandle,
   bindArtifactFileCleanup,
   ArtifactFileCleanupFailure,
@@ -38,9 +38,9 @@ import {
   assertArtifactReadActive,
   artifactFileCancellationCause,
   artifactSelectedPathErrno,
-} from "../../artifacts/ArtifactFileOperation.js";
+  ArtifactReaderFailure,
+} from "../../resources/index.js";
 import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { sameRegularFileState } from "../../filesystem/RegularFile.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";

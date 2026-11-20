@@ -5,7 +5,7 @@ import {
   applyWindowsChangeTimeSnapshot,
   resolveWindowsChangeTimeSettle,
 } from "../config/windowsChangeTimeSettle.js";
-import { pwntoolsInputBytes } from "../native/pwntools/PwntoolsInputLimit.js";
+import { pwntoolsInputBytes } from "../config/pwntoolsInputLimit.js";
 import { resolveCaptureDecoderHeap } from "../config/captureDecoderHeap.js";
 import { resolveRegexMatchingDeadline } from "../config/regexMatchingDeadline.js";
 import { resolveRegexWorkerHeapRequest } from "../config/regexWorkerHeapRequest.js";
@@ -154,6 +154,53 @@ it("keeps accepted operations and their typed provider views stable across concu
     expect(live.ghidraStartupTimeoutMs).toBe(999999);
     expect(live.regexMatchingDeadline.deadlineMs).toBe(10000);
   });
+});
+
+it("lists zstd.max_frames for every operation that enforces the cap", () => {
+  const store = new AnalysisSettings({});
+  for (const operation of [
+    "inspect_artifact",
+    "extract_artifact",
+    "inspect_gpu_code_objects",
+    "inspect_dwarf_units",
+    "inspect_elf_notes",
+    "inspect_binary_hardening",
+    "inspect_elf_unwind_ranges",
+    "inspect_native_exports",
+    "inspect_native_initializers",
+    "inspect_kernel_module",
+    "inspect_elf_debug_link",
+    "inspect_go_binary",
+    "inspect_rust_binary",
+    "inspect_il2cpp_metadata",
+    "inspect_android_jni_bindings",
+  ])
+    expect(
+      store.inspect({ operation }).settings.map(({ setting }) => setting),
+    ).toContain("zstd.max_frames");
+  for (const provider of [
+    "gpu-code-objects",
+    "rea-dwarf-units",
+    "rea-elf-notes",
+    "rea-binary-hardening",
+    "rea-elf-unwind-ranges",
+    "rea-native-exports",
+    "rea-native-initializers",
+    "rea-kernel-module",
+    "rea-elf-debug-link",
+    "go-build-info",
+    "rust-auditable",
+    "il2cpp-metadata",
+    "jadx",
+  ])
+    expect(
+      store.inspect({ provider }).settings.map(({ setting }) => setting),
+    ).toContain("zstd.max_frames");
+  expect(
+    store
+      .inspect({ operation: "inspect_binary_layout" })
+      .settings.map(({ setting }) => setting),
+  ).not.toContain("zstd.max_frames");
 });
 
 it("exposes shared provider controls and preserves the explicit unbounded decompile value", () => {

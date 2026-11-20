@@ -19,6 +19,7 @@ import {
   runOwnedCommand,
 } from "../dist/process/OwnedCommand.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
+import { isOwnershipPsExecution } from "./lib/ownership-ps-trace.mjs";
 import {
   requireMcpOutput,
   requireMcpToolError,
@@ -1477,9 +1478,7 @@ try {
         line.endsWith(" = 0") || / = -1 [A-Z]+/.test(line),
         `Incomplete exec observation: ${line}`,
       );
-      const ownershipInspection =
-        ["/usr/bin/ps", "/bin/ps"].includes(match[1]) &&
-        line.includes('["ps", "-axo", "pid=,ppid=,pgid=,uid=,stat=,command="]');
+      const ownershipInspection = isOwnershipPsExecution(line);
       assert.ok(
         [process.execPath, python].includes(match[1]) || ownershipInspection,
         `Unexpected attempted host execution: ${line}`,

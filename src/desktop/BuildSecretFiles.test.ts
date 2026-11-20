@@ -34,13 +34,13 @@ const refusal = async (directory: string, handle: string) => {
 
 describe("build secret files", () => {
   it("keeps secrets under the XDG config folder, or ~/.config without one", () => {
-    expect(buildSecretsDirectory({ XDG_CONFIG_HOME: "/cfg", HOME: "/h" })).toBe(
-      "/cfg/rea/build-secrets",
-    );
-    expect(buildSecretsDirectory({ XDG_CONFIG_HOME: "cfg", HOME: "/h" })).toBe(
-      "/h/.config/rea/build-secrets",
-    );
-    expect(buildSecretsDirectory({ HOME: "/h" })).toBe(
+    expect(
+      buildSecretsDirectory({ XDG_CONFIG_HOME: "/cfg", HOME: "/h" }, "linux"),
+    ).toBe("/cfg/rea/build-secrets");
+    expect(
+      buildSecretsDirectory({ XDG_CONFIG_HOME: "cfg", HOME: "/h" }, "linux"),
+    ).toBe("/h/.config/rea/build-secrets");
+    expect(buildSecretsDirectory({ HOME: "/h" }, "linux")).toBe(
       "/h/.config/rea/build-secrets",
     );
     // An absolute XDG_CONFIG_HOME decides the folder without consulting the

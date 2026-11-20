@@ -10,7 +10,7 @@ import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { err, ok } from "../../domain/result.js";
 import { executeFact } from "../AnalysisOperationFacts.js";
-import type { AnalysisOperationPort } from "../AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../../ports/AnalysisProvider.js";
 import type { EnhancedResult } from "../EnhancedToolTypes.js";
 
 /** Source operations for this workflow, shared with capability discovery. */

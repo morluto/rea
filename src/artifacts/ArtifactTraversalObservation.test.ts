@@ -4,7 +4,7 @@ import type {
   ArtifactEntry,
   ArtifactReader,
   ArtifactReaderTraversal,
-} from "./ArtifactReader.js";
+} from "../resources/ArtifactReader.js";
 import { ArtifactTraversalObservation } from "./ArtifactTraversalObservation.js";
 
 const entry = (path: string): ArtifactEntry => ({

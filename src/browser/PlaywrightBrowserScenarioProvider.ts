@@ -2,17 +2,20 @@ import {
   withPlaywrightExecutionBoundary,
   PLAYWRIGHT_CLEANUP_CONFIRMATION_TIMEOUT_MS,
 } from "./PlaywrightExecutionBoundary.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  providerCleanupErrorFromFailures,
+} from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
+} from "../resources/index.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import type { BrowserScenarioCapturePort } from "../application/BrowserScenarioCapturePort.js";
+import type { BrowserScenarioCapturePort } from "../ports/BrowserScenarioCapturePort.js";
 import type {
   ExecutionOptions,
   ProviderIdentity,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import type { BrowserScenario } from "../domain/browserScenario.js";
 import {
   BROWSER_SCENARIO_START_STEP_ID,
@@ -62,6 +65,7 @@ import {
 
 const OPERATION = "capture_browser_scenario" as const;
 import { PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY } from "./providerIdentities.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 type SnapshotKind = BrowserScenario["capture"]["after_each_step"][number];
 const SNAPSHOT_KINDS = [
@@ -475,11 +479,7 @@ export class PlaywrightBrowserScenarioProvider implements BrowserScenarioCapture
       );
       this.#bindCleanup(cleanup, retained);
       return err(
-        analysisErrorWithCleanupFailure(
-          primary,
-          cleanup,
-          OPERATION,
-        ).bindCleanupDependencies([primary, cleanup]),
+        analysisErrorWithCleanupDependencies(primary, cleanup, OPERATION),
       );
     }
   }
@@ -544,9 +544,7 @@ export class PlaywrightBrowserScenarioProvider implements BrowserScenarioCapture
           PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY.id,
           (pending.cleanupResources ?? []).map(redactText),
           {
-            reason: redactText(
-              cause instanceof Error ? cause.message : String(cause),
-            ),
+            reason: redactText(errorMessage(cause)),
           },
           { operation: OPERATION, cause },
         );
@@ -556,14 +554,11 @@ export class PlaywrightBrowserScenarioProvider implements BrowserScenarioCapture
     }
     if (failures.length === 0) return undefined;
     if (failures.length === 1) return failures[0];
-    return new ProviderCleanupError(
+    return providerCleanupErrorFromFailures(
       PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY.id,
-      failures.flatMap((failure) => failure.cleanupResources),
-      { reason: "One or more browser scenario resources remain owned." },
-      {
-        operation: OPERATION,
-        cause: new AggregateError(failures, "Browser scenario cleanup failed"),
-      },
-    ).bindCleanupDependencies(failures);
+      failures,
+      "One or more browser scenario resources remain owned.",
+      { operation: OPERATION, message: "Browser scenario cleanup failed" },
+    );
   }
 }

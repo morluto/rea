@@ -4,7 +4,7 @@ import { isAbsolute, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { cancelledBy, carriedReason } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -13,10 +13,12 @@ import {
   assertArtifactReadActive,
   bindArtifactFileCleanup,
   withArtifactFileHandle,
-} from "../artifacts/ArtifactFileOperation.js";
-import { asarNodeSchema } from "../artifacts/AsarNode.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+  admitAsarHeader,
+  asarHeaderAdmissionFailure,
+} from "../resources/index.js";
+import { asarNodeSchema } from "../domain/asarNode.js";
 import {
   regularFileState,
   sameRegularFileState,
@@ -24,15 +26,11 @@ import {
 } from "../filesystem/RegularFile.js";
 
 import {
-  admitAsarHeader,
-  asarHeaderAdmissionFailure,
-} from "../artifacts/AsarHeader.js";
-import {
   DEFAULT_ASAR_HEADER_ADMISSION,
   type AsarHeaderAdmission,
 } from "../config/asarHeaderAdmission.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
-import { isRecord } from "../domain/isRecord.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 type ElectronFileOperation =
   | "inspect_electron_page"
@@ -141,11 +139,11 @@ export const mapElectronFileAuthorizationFailure = (
   if (diagnostics !== undefined)
     (primary ?? cleanup).retainDiagnostics(diagnostics);
   if (primary === undefined) return cleanup;
-  const composed = analysisErrorWithCleanupFailure(
+  const composed = analysisErrorWithCleanupDependencies(
     primary,
     cleanup,
     operation,
-  ).bindCleanupDependencies([primary, cleanup]);
+  );
   bindArtifactFileCleanup(cause, composed);
   return composed;
 };

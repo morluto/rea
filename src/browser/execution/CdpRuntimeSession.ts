@@ -1,4 +1,4 @@
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisTimeoutError,
@@ -42,6 +42,7 @@ import {
   type CdpTargetSession,
 } from "../CdpTargetSession.js";
 import { CdpTargetDocument } from "../CdpTargetDocument.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 /** A domain this session can both enable and, on cleanup, disable. */
 export type CdpRuntimeDomain = CdpDomainWith<"enable"> &
@@ -299,7 +300,7 @@ export class CdpRuntimeSession {
         );
       } catch (cause: unknown) {
         failures.push(
-          `${method}: ${cause instanceof AnalysisError ? (cause.userMessage ?? cause.message) : cause instanceof Error ? cause.message : String(cause)}`,
+          `${method}: ${cause instanceof AnalysisError ? (cause.userMessage ?? cause.message) : errorMessage(cause)}`,
         );
       }
     };
@@ -320,7 +321,7 @@ export class CdpRuntimeSession {
           );
         } catch (cause: unknown) {
           failures.push(
-            `Target.detachFromTarget: ${cause instanceof AnalysisError ? (cause.userMessage ?? cause.message) : cause instanceof Error ? cause.message : String(cause)}`,
+            `Target.detachFromTarget: ${cause instanceof AnalysisError ? (cause.userMessage ?? cause.message) : errorMessage(cause)}`,
           );
         }
       }
@@ -337,8 +338,7 @@ export class CdpRuntimeSession {
                 "rea-cdp-browser",
                 [this.target.target_id],
                 {
-                  reason:
-                    cause instanceof Error ? cause.message : String(cause),
+                  reason: errorMessage(cause),
                 },
                 { operation: this.operation, cause },
               );

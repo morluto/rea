@@ -24,7 +24,7 @@ import {
 import { hashReadable } from "../../../src/artifacts/ArtifactHash.js";
 import { ARTIFACT_CLASSIFICATION_PREFIX_BYTES } from "../../../src/artifacts/ArtifactClassificationProbe.js";
 import { asarHeaderBytes } from "../../fixtures/asarHeader.js";
-import { readArtifactFileChunks } from "../../../src/artifacts/readArtifactFileChunks.js";
+import { readArtifactFileChunks } from "../../../src/resources/readArtifactFileChunks.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const memberBytes = 64 * 1024 * 1024;

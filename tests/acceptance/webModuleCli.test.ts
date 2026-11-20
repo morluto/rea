@@ -8,6 +8,7 @@ import { createTestBinarySession } from "../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { webModuleArtifactsFixture } from "../fixtures/webModuleTrace.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 cliTest(
   "accepts zero-based numeric source indices and returns the same engine-free CLI/MCP trace",
@@ -77,7 +78,10 @@ cliTest(
         webModuleTrace: createWebModuleTraceService(environment),
       },
     );
-    const client = new Client({ name: "module-cli-parity", version: "1" });
+    const client = new Client(
+      { name: "module-cli-parity", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     onTestFinished(async () => {
       await client.close();
       await server.close();

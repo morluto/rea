@@ -1,4 +1,4 @@
-import type { CapabilityDescriptor } from "../application/AnalysisProvider.js";
+import type { CapabilityDescriptor } from "../ports/AnalysisProvider.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "../domain/investigationProviders.js";
 import { ARTIFACT_ANALYSIS_OPERATIONS } from "../contracts/artifactToolContracts.js";
 

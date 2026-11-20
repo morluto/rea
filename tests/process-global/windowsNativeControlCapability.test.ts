@@ -15,6 +15,7 @@ import {
   webSourceLocationArgs,
   webSourceLocationFixture,
 } from "../fixtures/webSourceLocation.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 // The owned launcher selects the Windows native path from HOST_PLATFORM.
 vi.mock("../../src/platform/HostPlatform.js", () => ({
@@ -108,7 +109,10 @@ it("reports a missing Windows native control as an unavailable capability", asyn
         ),
       },
     );
-    client = new Client({ name: "native-control-capability", version: "1" });
+    client = new Client(
+      { name: "native-control-capability", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);

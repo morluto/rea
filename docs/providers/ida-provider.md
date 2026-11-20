@@ -1,12 +1,12 @@
 # IDA provider
 
-REA adapts an existing IDA MCP server into its native analysis tools. Existing IDA Pro profiles use [mrexodia/ida-pro-mcp](https://github.com/mrexodia/ida-pro-mcp); an optional native bridge for IDA Pro and IDA Free is described below. Install and configure your selected engine and upstream MCP using their instructions. REA does not install, upgrade, activate, or license them, and does not bundle another IDA server.
+REA adapts an existing IDA MCP server into its native analysis tools. Headless IDA Pro analysis uses the [mrexodia/ida-pro-mcp](https://github.com/mrexodia/ida-pro-mcp) database supervisor; analysis of a database already open in the IDA GUI uses the separate [ida-free-mcp native plugin](https://github.com/0xshlomil/ida-free-mcp) for IDA Pro and IDA Free. Install and configure your selected engine and upstream MCP using their instructions. REA does not install, upgrade, activate, or license them, and does not bundle another IDA server.
 
-Choose one lifecycle mode in an upstream MCP JSON registration. An attached registration (the default mode) must also name its upstream `protocol`: `"legacy"` for the ida-pro-mcp 1.4 GUI proxy or `"native"` for the ida-free-mcp plugin. Headless registrations omit `protocol`. An attached registration without `protocol` is refused with a configuration error naming the choice; REA no longer assumes the legacy proxy. Set `REA_IDA_MCP_CONFIG` to that file, then select `ida` once through `REA_ANALYSIS_PROVIDER`, the CLI's `--provider ida`, or MCP's `open_binary.provider_id`. No provider startup occurs during discovery.
+Choose one lifecycle mode in an upstream MCP JSON registration. An attached registration (the default mode) must also name its upstream protocol, `"protocol": "native"`. Headless registrations omit `protocol`. An attached registration without `protocol` is refused with a configuration error naming the choice. A registration that still names `"protocol": "legacy"` is refused with guidance to [migrate it](#migrate-a-legacy-attached-registration): the ida-pro-mcp 1.4 attached protocol has been removed, and REA never reads that value as another protocol. Set `REA_IDA_MCP_CONFIG` to that file, then select `ida` once through `REA_ANALYSIS_PROVIDER`, the CLI's `--provider ida`, or MCP's `open_binary.provider_id`. No provider startup occurs during discovery.
 
 ## Supported upstream versions
 
-Each mode accepts one upstream tool profile, checked against `tools/list` before any analysis runs. The attached profile requires the legacy GUI tool names; upstream 2.0.0 renamed those tools, and REA has not established an equivalent attached-mode lifecycle and ownership contract for that catalog. It therefore fails closed with the missing tool names in the error diagnostics.
+Each mode accepts one upstream tool profile, checked against `tools/list` before any analysis runs. The attached profile requires the native plugin's tool catalog and its `ida://idb/metadata` resource. REA has not established an attached-mode lifecycle and ownership contract for the mrexodia 2.x GUI tool catalog, so an attached registration that reaches it fails closed with the missing tool names in the error diagnostics.
 
 Startup failures identify the accepted REA analysis operation. Missing-profile and typed startup transport failures retain the original stage in `details.diagnostics.startup_operation`; existing diagnostics, timeout budgets and resource limits remain available. Startup remains shared within a session; each caller receives its own operation attribution. Cancellation retains live cleanup ownership, so a successful retry releases the originating cancellation outcome as well.
 
@@ -14,26 +14,20 @@ The headless profile is defined by the database-supervisor API, not by an upstre
 
 | Mode                              | Upstream profile    | Known working                                          |
 | --------------------------------- | ------------------- | ------------------------------------------------------ |
-| attached (`"protocol": "legacy"`) | legacy GUI tools    | 1.4.0                                                  |
+| attached (`"protocol": "native"`) | ida-free-mcp plugin | see [the native bridge](#native-ida-mcp-bridge)        |
 | headless                          | database supervisor | builds serving `idb_open`, `idb_list`, and `idb_close` |
 
 ## Analyze an already-open GUI target
 
-The attached profile supports upstream **1.4.0 legacy tools**, including `get_metadata`, `list_functions`, and `decompile_function`. Copy the upstream registration's `command`, `args`, and optional `env` into a JSON file and add `"protocol": "legacy"`. An existing `mcpServers` object with an `ida-pro-mcp` entry is also accepted; add `"protocol": "legacy"` to that entry. For example:
+Attached analysis uses the [native IDA MCP bridge](#native-ida-mcp-bridge). Write its local endpoint to a JSON file with `"protocol": "native"`. An existing `mcpServers` object with an `ida-pro-mcp` entry is also accepted; add `"protocol": "native"` to that entry. For example:
 
 ```json
 {
-  "protocol": "legacy",
-  "command": "python",
-  "args": [
-    "/absolute/path/to/ida_pro_mcp/server.py",
-    "--ida-rpc",
-    "http://127.0.0.1:13337"
-  ]
+  "mode": "attached",
+  "protocol": "native",
+  "url": "http://127.0.0.1:13337/mcp"
 }
 ```
-
-Use the executable and arguments from your working upstream registration. The legacy GUI's `/mcp` endpoint is its internal RPC endpoint; connect REA through the upstream stdio proxy rather than treating that URL as Streamable HTTP.
 
 ```bash
 export REA_IDA_MCP_CONFIG=/absolute/path/to/ida-mcp.json
@@ -62,19 +56,11 @@ Open the **original input binary** in REA, not an `.idb` or `.i64` database. Its
 
 REA's close operation releases its MCP connection or proxy. It never saves or closes the existing GUI database. External edits remain visible because results are live and are not replayed from snapshots. These checks do not lock the GUI or prove that the database is unpatched.
 
-## Optional native IDA MCP bridge
+## Native IDA MCP bridge
 
-IDA Pro and IDA Free can use the separate [ida-free-mcp native plugin](https://github.com/0xshlomil/ida-free-mcp) through an explicit attached registration. Install and start that plugin using its upstream instructions, open the original binary in the IDA GUI, and wait for analysis. The native MCP 1.1.2 release binds `0.0.0.0` without a listen-address setting. Restrict inbound access with the host firewall or use an upstream build that binds only to loopback before starting it. REA's local URL restriction does not change the plugin's listener. REA does not install IDA, build the plugin, activate a license, or launch the GUI.
+IDA Pro and IDA Free use the separate [ida-free-mcp native plugin](https://github.com/0xshlomil/ida-free-mcp) through an explicit attached registration. Install and start that plugin using its upstream instructions, open the original binary in the IDA GUI, and wait for analysis. The native MCP 1.1.2 release binds `0.0.0.0` without a listen-address setting. Restrict inbound access with the host firewall or use an upstream build that binds only to loopback before starting it. REA's local URL restriction does not change the plugin's listener. REA does not install IDA, build the plugin, activate a license, or launch the GUI.
 
-```json
-{
-  "mode": "attached",
-  "protocol": "native",
-  "url": "http://127.0.0.1:13337/mcp"
-}
-```
-
-Set `REA_IDA_MCP_CONFIG` to this file and select `ida` using the same CLI/MCP commands above. Attached IDA Pro registrations name `"protocol": "legacy"` instead. Native mode requires `resources/read` for `ida://idb/metadata` and its recorded input SHA-256; it never substitutes a digest of an unrelated local file. The native resource's `path` describes the IDB in the upstream protocol, not the original input path. REA retains it and checks database identity and image base before and after requests.
+Set `REA_IDA_MCP_CONFIG` to the [attached registration](#analyze-an-already-open-gui-target) and select `ida` using the same CLI/MCP commands. Native mode requires `resources/read` for `ida://idb/metadata` and its recorded input SHA-256; it never substitutes a digest of an unrelated local file. The native resource's `path` describes the IDB in the upstream protocol, not the original input path. REA retains it and checks database identity and image base before and after requests.
 
 This experimental profile provides function/string inventory and search, function lookup, assembly, GUI pseudocode, callees, address xrefs, instruction windows, and function dossiers. Direct callers remain unavailable: native code/data xref labels do not prove call edges. It requires neither IDAPython nor idalib. Native headless registrations are rejected.
 
@@ -90,8 +76,20 @@ Native tool observations retain actual tool names and complete JSON text. Upstre
 
 ### Migrate a legacy attached registration
 
-Both attached profiles remain supported. Migrating replaces the upstream server;
-adding `"protocol": "native"` to a legacy Python proxy registration is insufficient.
+REA no longer supports the ida-pro-mcp 1.4 attached GUI proxy. A registration
+that names `"protocol": "legacy"` is refused at configuration with a
+`REA_IDA_MCP_CONFIG` constraint naming this section; REA never connects to the
+proxy or reads the value as another protocol, and it does not rewrite the file.
+Replace the registration yourself with one of the supported profiles:
+
+- the native plugin below, to keep analyzing the database already open in the
+  IDA GUI; or
+- an ida-pro-mcp 2.x database supervisor in
+  [headless mode](#give-rea-a-target-for-headless-analysis), where REA opens and
+  closes its own private copy of the input instead of the GUI database.
+
+Migrating to the native plugin replaces the upstream server; changing
+`"protocol"` to `"native"` in a legacy Python proxy registration is insufficient.
 The native plugin is separate from mrexodia/ida-pro-mcp, and upgrading mrexodia to
 its modern tool catalog does not select this profile.
 
@@ -121,7 +119,7 @@ its modern tool catalog does not select this profile.
    }
    ```
 
-   becomes:
+   becomes (REA refuses the first form):
 
    ```json
    {
@@ -151,10 +149,11 @@ its modern tool catalog does not select this profile.
    connection, target identity, or function switching.
 
 REA continues to verify identity and image base around requests and closes only
-its connection, preserving the attached database. Restore the backed-up legacy
-registration and its upstream endpoint to return to the legacy profile.
+its connection, preserving the attached database. The removed legacy profile was
+the only one that reported direct `procedure_callers`; no supported profile
+replaces it, so caller questions remain unknown rather than inferred from xrefs.
 
-The legacy producer moves the active GUI as a side effect: assembly and raw function instructions jump to the function, and successful pseudocode opens or reuses a pseudocode view. A function dossier does both. Native GUI decompilation also changes the active view. `binary_session` reports these operations with `effects.may_show_ui: true`; headless operations and the other attached operations report `false`.
+Native GUI decompilation changes the active view as a side effect. `binary_session` reports pseudocode and function dossiers with `effects.may_show_ui: true`; assembly, raw function instructions, the other attached operations, and headless operations report `false`.
 
 ## Give REA a target for headless analysis
 
@@ -239,7 +238,7 @@ All profiles support procedure/string inventory and literal or regex search, pro
 
 All profiles expose `list_documents` as the single target admitted for the session. Attached mode verifies its digest against IDA metadata before returning it; headless mode binds the digest-checked private input. `inspect_address_context`, `trace_feature`, and `binary_overview` can therefore resolve that identity without upstream document-listing tools. Segment enumeration is optional: when the selected profile cannot provide it, `binary_overview` still returns document and procedure/string counts and omits `segments` and `segment_count`; omission means unobserved, not empty. The modern headless profile also supports `resolve_containing_procedure`. An address resolves through upstream `lookup_funcs` to the canonical entry of the function that contains it; the body stays unavailable like other IDA identities. When no function contains it, REA reads the database-scoped minimal `survey_binary` and reports `not_in_procedure` for an address inside one of its segments (ends are exclusive) and `outside_segments` otherwise. A missing, truncated or inconsistent survey fails the read instead of guessing a reason. `trace_feature` marks a trace truncated, with a residual unknown for that address, when upstream caps the references it returned. Attached profiles do not declare address containment resolution.
 
-The legacy profile additionally supports direct callers. Its producer may report call-site or interior addresses; REA resolves the reported function symbol to its canonical entry. The modern and native profiles do not prove direct callers from its code/data xref labels, so that capability is unavailable and the dossier marks it unknown.
+No profile supports direct callers. Upstream code/data xref labels do not prove call edges, so `procedure_callers` is unavailable and the dossier marks callers unknown.
 
 Complete body ranges, typed reference edges, CFG, referenced data, source locals, comment kinds, and database revision are unavailable. Empty unsupported dossier facets mean **unknown**, not observed absence. Whole-symbol inventory, mutation, debugging, arbitrary Python forwarding, and requested GUI navigation are outside this adapter's coverage. Check session availability before composing a workflow that needs those facets.
 
@@ -253,7 +252,7 @@ Native verification requires `--second-procedure other_function --second-marker 
 
 The verifier requires the resolved procedure in both inventory and procedure search, then compares address, assembly, pseudocode, instruction windows and relationship results with the CLI/MCP dossier. Supply `--expected-string known_literal` to check a known positive string inventory/search result and `--expected-xref 0xSOURCE` to check a known reference source address. Choose those oracles independently from the operation under test. Without them, string and xref correctness are listed in `unverified`; valid output shapes alone do not establish those behaviors. Callee parity does not independently establish semantic completeness. Native callee successes must report an explicit truncation marker; missing markers remain protocol failures.
 
-The initial real workflows use stdio registrations for the legacy Windows GUI profile and a Windows x64 headless supervisor with IDA 9.3. The headless workflow has also passed on macOS arm64 with IDA Professional 9.1 (build 9.1.250226) against the same upstream commit `c133c3853faa111a9b00ee615c013b720d0c4acd`, using a source-built arm64 Mach-O fixture; Mach-O C symbols carry a leading underscore, so the procedure name is `_rea_fixture_add`. Streamable HTTP is tested against a loopback MCP fixture with the pinned client SDK; a real IDA HTTP-supervisor workflow remains unverified. Linux headless engine operation, other IDA releases, architectures, and modern attached GUI tools require their corresponding real workflows before support is claimed.
+The initial real workflows used stdio registrations for the since-removed legacy Windows GUI profile and a Windows x64 headless supervisor with IDA 9.3. The headless workflow has also passed on macOS arm64 with IDA Professional 9.1 (build 9.1.250226) against the same upstream commit `c133c3853faa111a9b00ee615c013b720d0c4acd`, using a source-built arm64 Mach-O fixture; Mach-O C symbols carry a leading underscore, so the procedure name is `_rea_fixture_add`. Streamable HTTP is tested against a loopback MCP fixture with the pinned client SDK; a real IDA HTTP-supervisor workflow remains unverified. Linux headless engine operation, other IDA releases, architectures, and modern attached GUI tools require their corresponding real workflows before support is claimed.
 
 Native Windows verification uses IDA Pro 9.3 with the public two-function fixture and Windows `whoami.exe`, using upstream `c9d15d98e8a143fc74f6e14037c48f63889b6d6c` with a loopback-listener change. It covers production CLI/MCP parity, distinct-function switching, identity and connection cleanup. See the [correctness and performance measurements](https://github.com/morluto/rea/blob/a2e2c29b59e8775b0e6aedb09a9eb16adf32646b/experiments/analysis-efficiency/ida-native-windows.md). This follow-up did not run Windows IDA Free or native macOS.
 

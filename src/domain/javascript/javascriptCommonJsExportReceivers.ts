@@ -13,47 +13,25 @@ import {
 } from "./javascriptSemanticState.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
 import { traverseJavaScriptValueAstSteps } from "./javascriptSemanticTraversal.js";
-import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
-import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
+import { semanticModuleInteropWithAmbientWrites } from "./javascriptModuleInterop.js";
+import {
+  ambientPathWriteSites,
+  bindingMemberEffectMayPrecede,
+} from "./javascriptSemanticEffectLog.js";
 import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
 import type { JavaScriptSemanticPropertyPath } from "./javascriptSemanticPropertyPaths.js";
 import { semanticProjectedSourcesAtRead } from "./javascriptSemanticProjectedSources.js";
 import {
   isUnshadowedGlobal,
   semanticBindingHasPriorValueWrite,
-  semanticEffectTiming,
 } from "./javascriptSemanticMutationInitializers.js";
 import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
-
-const exportInvocations = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  ReturnType<typeof createSemanticModuleInterop>
->();
 
 /** Share the intrinsic owner's positional and capture proofs across CJS consumers. */
 const commonJsExportInvocation = (
   node: t.CallExpression,
   state: JavaScriptSemanticAnalysisState,
-) => {
-  let interop = exportInvocations.get(state);
-  if (interop === undefined) {
-    interop = createSemanticModuleInterop(state);
-    for (const { node: write, path } of state.ambientWriteEffects)
-      if (write !== undefined && path[0] === "global")
-        interop.retainWrite(write, [
-          "intrinsic",
-          ...path
-            .slice(1)
-            .map((key) =>
-              typeof key === "string" || typeof key === "number"
-                ? String(key)
-                : null,
-            ),
-        ]);
-    exportInvocations.set(state, interop);
-  }
-  return interop.intrinsicInvocation(node);
-};
+) => semanticModuleInteropWithAmbientWrites(state).intrinsicInvocation(node);
 
 type ReceiverStatus = "connected" | "detached" | "uncertain";
 export interface CommonJsExportReceiverEffect {
@@ -99,22 +77,7 @@ const copiedOwnFields = (
     if (t.isIdentifier(node)) {
       const binding = resolveSemanticBindingState(state, node, node.name);
       if (binding === undefined) return unknown;
-      if (
-        binding.memberWrites.some(
-          (effect) =>
-            semanticEffectTiming(source, effect.node, state) !== "after",
-        ) ||
-        binding.escapedPaths.some(
-          (effect) =>
-            effect.node !== undefined &&
-            !(
-              (effect.node.start ?? -1) <= (source.start ?? -1) &&
-              (effect.node.end ?? -1) >= (source.end ?? -1)
-            ) &&
-            semanticEffectTiming(source, effect.node, state) !== "after",
-        )
-      )
-        return unknown;
+      if (bindingMemberEffectMayPrecede(state, binding, source)) return unknown;
       const selected = semanticProjectedSourcesAtRead(
         binding,
         node,
@@ -445,16 +408,12 @@ export function* indexCommonJsExportReceiversSteps(
   const publicCallWrites = new WeakSet<t.Node>();
   // Consume the shared write owner's resolved aliases, intrinsic invocation
   // and keyed mutator facts instead of reinterpreting call names here.
-  for (const { node, path } of state.ambientWriteEffects) {
-    if (
-      (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
-      path[0] === "commonjs-module" &&
-      path.length <= 2 &&
-      (path.length === 1 ||
-        semanticPropertyPathKeyMatches(path[1] ?? null, "exports"))
-    )
+  for (const node of ambientPathWriteSites(state, [
+    "commonjs-module",
+    "exports",
+  ]))
+    if (t.isCallExpression(node) || t.isOptionalCallExpression(node))
       publicCallWrites.add(node);
-  }
   const valueOf = (node: t.Node): Identity => {
     const value = unwrapJavaScriptExpression(node).node;
     // An opaque result may alias another object, but reading the current

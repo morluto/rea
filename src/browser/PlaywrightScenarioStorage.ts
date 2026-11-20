@@ -1,4 +1,4 @@
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/index.js";
 import { randomUUID } from "node:crypto";
 
 import { z } from "zod";
@@ -30,6 +30,7 @@ import {
   scenarioCommandTimeoutMs,
   withScenarioCommandDeadline,
 } from "./ScenarioCommandDeadline.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 type StorageEventMethod =
   | "Runtime.executionContextCreated"
@@ -745,7 +746,7 @@ export class PlaywrightScenarioStorage {
         {
           cause,
           cleanup: {
-            reason: cause instanceof Error ? cause.message : String(cause),
+            reason: errorMessage(cause),
             resources: ["browser_transport", "browser_storage_bootstrap"],
           },
         },

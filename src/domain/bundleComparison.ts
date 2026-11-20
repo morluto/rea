@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import { z } from "zod";
 
 import {
@@ -13,6 +11,7 @@ import type { ResidualUnknown } from "./residualUnknown.js";
 import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 import { comparisonStatusSchema } from "./comparisonStatus.js";
 import { localPathStringSchema } from "./localPath.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const classificationSchema = z.enum([
@@ -305,7 +304,7 @@ const historyEvidenceIds = (history: readonly ResidualUnknown[]): string[] =>
   [...new Set(history.flatMap(referencedEvidenceIds))].sort(ascii);
 
 const bundleDigest = (bundle: EvidenceBundle): string =>
-  createHash("sha256").update(serializeEvidenceBundle(bundle)).digest("hex");
+  sha256Hex(serializeEvidenceBundle(bundle));
 
 const same = (left: readonly string[], right: readonly string[]): boolean =>
   left.length === right.length &&

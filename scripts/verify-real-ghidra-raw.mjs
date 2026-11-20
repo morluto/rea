@@ -274,7 +274,7 @@ await withVerifierFixture(workspaceFixture, async () => {
       { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
     );
     const cli = parseEvidence(JSON.parse(stdout));
-    assert.equal(cli.subject.digest.sha256, sha256);
+    assert.equal(cli.subject.identity.sha256, sha256);
     assert.equal(cli.normalized_result.status, "verified");
     assert.equal(cli.normalized_result.base_address, "0x8000000");
     assert.equal(cli.analysis_profile.digest, profiles[0]);
@@ -646,8 +646,8 @@ async function call(
     return requireMcpLifecycleResult(result, name);
   const output = requireMcpOutput(result, name);
   const evidence = parseEvidence(output);
-  assert.equal(evidence.subject.digest.sha256, targetSha256);
-  assert.equal(evidence.subject.format, targetFormat);
+  assert.equal(evidence.subject.identity.sha256, targetSha256);
+  assert.equal(evidence.subject.identity.format, targetFormat);
   return evidence;
 }
 
@@ -762,7 +762,7 @@ async function verifyCrossBlockProject(target, targetSha256) {
         return requireMcpLifecycleResult(reply, name);
       const output = requireMcpOutput(reply, name);
       const evidence = parseEvidence(output);
-      assert.equal(evidence.subject.digest.sha256, targetSha256);
+      assert.equal(evidence.subject.identity.sha256, targetSha256);
       return evidence.normalized_result;
     };
     await projectCall("open_binary", { path: target, provider_id: "ghidra" });

@@ -1,7 +1,7 @@
 import { throwIfJadxInterrupted } from "./JadxInterruption.js";
 import { OwnedMcpClient } from "../process/OwnedMcpClient.js";
-import { createAnalysisExecution } from "../application/AnalysisProvider.js";
-import type { AndroidAnalysisExecution } from "../application/android/AndroidAnalysisPort.js";
+import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
+import type { AndroidAnalysisExecution } from "../ports/android/AndroidAnalysisPort.js";
 import type { AndroidRequest } from "../domain/android/androidAnalysis.js";
 import {
   type AndroidMappingSource,
@@ -33,7 +33,7 @@ import {
   readAndroidJniLibraries,
   type AndroidJniLibraries,
 } from "./AndroidJniLibraries.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import { jadxOperationTimeoutGuidance } from "./JadxOperationTimeout.js";
 import { JadxMcpTransport, type JadxLauncher } from "./JadxMcpTransport.js";
 import {
@@ -397,8 +397,9 @@ export class JadxSession {
               "External DEX reference metadata exceeds the bounded transport representation allowance.",
               { stage: failure.stage, limit_bytes: failure.limit_bytes },
               fixedAllowanceOptions(
-                `The external DEX ${failure.stage} representation allowance of ${String(failure.limit_bytes)} bytes`,
+                `The external DEX ${failure.stage} representation allowance`,
                 "report",
+                { limit: failure.limit_bytes, unit: "bytes" },
               ),
             );
           if (name === "load_apk" && failure.kind === "jvm-memory-failure")

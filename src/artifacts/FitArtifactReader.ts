@@ -3,6 +3,11 @@ import { Readable, Transform } from "node:stream";
 import { setImmediate } from "node:timers/promises";
 
 import type { FitMetadata } from "../domain/artifactFormatMetadata.js";
+import { BinaryFormatFailure } from "../domain/binaryContainer.js";
+import {
+  FDT_MAX_HEADER_BYTES,
+  readDevicetreeHeader,
+} from "../domain/firmware/devicetreeHeader.js";
 import { MAX_DEVICETREE_FILE_BYTES } from "../domain/firmware/devicetree.js";
 import {
   ArtifactReaderFailure,
@@ -12,11 +17,11 @@ import {
   type ArtifactReader,
   type ArtifactReaderTraversal,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+  ArtifactResourceScope,
+  assertArtifactReadActive,
+  ArtifactFileSource,
+} from "../resources/index.js";
 import { ownArtifactStream } from "./OwnedArtifactStream.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import {
   createFitDigest,
   readFitStructure,
@@ -25,8 +30,6 @@ import {
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
-
-const FDT_HEADER_BYTES = 40;
 
 /** Inventory U-Boot FIT /images nodes as stored byte ranges without loading them. */
 export class FitArtifactReader implements ArtifactReader {
@@ -151,18 +154,23 @@ export class FitArtifactReader implements ArtifactReader {
   async #prepare(signal?: AbortSignal): Promise<void> {
     const { handle, initial } = await this.#source.read(signal);
     const assertActive = (): void => this.#assertOpen(signal);
-    const header = await readFileHandleRange(
+    const prefix = await readFileHandleRange(
       handle,
       0,
-      FDT_HEADER_BYTES,
+      FDT_MAX_HEADER_BYTES,
       assertActive,
     );
-    if (header.length < FDT_HEADER_BYTES)
-      throw new ArtifactReaderFailure(
-        "format",
-        "FIT devicetree header is truncated",
-      );
-    const totalsize = header.readUInt32BE(4);
+    let totalsize: number;
+    try {
+      ({ totalsize } = readDevicetreeHeader(prefix).header);
+    } catch (cause) {
+      if (cause instanceof BinaryFormatFailure)
+        throw new ArtifactReaderFailure(
+          "format",
+          `FIT devicetree header: ${cause.message}`,
+        );
+      throw cause;
+    }
     if (totalsize > initial.size)
       throw new ArtifactReaderFailure(
         "format",

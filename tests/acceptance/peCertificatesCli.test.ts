@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { toolContract } from "../../src/contracts/toolContracts.js";
+import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../src/contracts/native/binaryDiagnosticsToolContracts.js";
 import {
   peCertificateFixture,
   peWithoutCertificateTableFixture,
@@ -13,6 +13,132 @@ import { repeatedCertificateSignedData } from "../fixtures/peCertificateAllowanc
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+
+const contract = BINARY_DIAGNOSTICS_TOOL_CONTRACTS.find(
+  (item) => item.name === "inspect_pe_certificates",
+);
+if (contract === undefined)
+  throw new Error("Missing inspect_pe_certificates contract");
+
+cliTest(
+  "checks the next PE certificate frame before reporting the entry limit through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-pe-cert-limit-framing-");
+    const path = join(root, "table.exe");
+    const single = peCertificateFixture(false, Buffer.from([0x61]), 0x0001);
+    const table = single.subarray(0x200);
+    const tableSizeAt = 0x98 + 96 + 4 * 8 + 4;
+    const valid = Buffer.concat([single, table]);
+    valid.writeUInt32LE(table.length * 2, tableSizeAt);
+    const badLength = Buffer.from(valid);
+    badLength.writeUInt32LE(table.length + 1, single.length);
+    const badAlignment = Buffer.from(valid.subarray(0, valid.length - 1));
+    badAlignment.writeUInt32LE(table.length * 2 - 1, tableSizeAt);
+    const call = await cli.sharedMcpCall!();
+    for (const { bytes, message } of [
+      { bytes: valid },
+      { bytes: badLength, message: "dwLength exceeds" },
+      { bytes: badAlignment, message: "alignment padding is truncated" },
+    ]) {
+      const expectedError =
+        message === undefined
+          ? {
+              code: "resource_constraint",
+              details: {
+                resource: "capacity",
+                reported_limits: { max_entries: 1 },
+              },
+            }
+          : {
+              code: "invalid_request",
+              details: {
+                issues: [
+                  expect.objectContaining({
+                    reason: "invalid_format",
+                    message: expect.stringContaining(message),
+                  }),
+                ],
+              },
+            };
+      await writeFile(path, bytes);
+      const inspected = await cli.run({
+        arguments: [
+          "inspect-pe-certificates",
+          path,
+          "--max-entries",
+          "1",
+          "--json",
+        ],
+      });
+      expect(inspected.exitCode, inspected.stdout).toBe(1);
+      expect.soft(inspected.json).toMatchObject(expectedError);
+      const rejected = await call("inspect_pe_certificates", {
+        path,
+        max_entries: 1,
+      });
+      expect(rejected.isError, JSON.stringify(rejected)).toBe(true);
+      expect
+        .soft(parseMcpToolError(rejected).error)
+        .toMatchObject(expectedError);
+    }
+  },
+);
+
+cliTest.for([false, true])(
+  "rejects incomplete certificate alignment and recovers through CLI/MCP (PE32+ = %s)",
+  async (plus, { cli }) => {
+    const root = await createTestTempDirectory("rea-pe-alignment-cli-");
+    const path = join(root, "signed.exe");
+    const valid = peCertificateFixture(plus);
+    const directoryAt = 0x98 + (plus ? 112 : 96) + 4 * 8;
+    const tableSize = valid.readUInt32LE(directoryAt + 4);
+    const length = valid.readUInt32LE(0x200);
+    expect(length).toBeLessThan(tableSize);
+    const truncated = Buffer.from(valid.subarray(0, valid.length - 1));
+    truncated.writeUInt32LE(tableSize - 1, directoryAt + 4);
+    await writeFile(path, truncated);
+    const invalid = await cli.run({
+      arguments: ["inspect-pe-certificates", path, "--json"],
+    });
+    const error = {
+      code: "invalid_request",
+      details: {
+        operation: "inspect_pe_certificates",
+        issues: [
+          expect.objectContaining({
+            path: ["path"],
+            reason: "invalid_format",
+          }),
+        ],
+      },
+    };
+    expect.soft(invalid.exitCode, invalid.stdout).toBe(1);
+    expect.soft(invalid.json).toMatchObject(error);
+    const call = await cli.sharedMcpCall!();
+    const rejected = await call("inspect_pe_certificates", { path });
+    expect.soft(rejected.isError, JSON.stringify(rejected)).toBe(true);
+    if (rejected.isError)
+      expect(parseMcpToolError(rejected).error).toMatchObject(error);
+    expect((await readFile(path)).equals(truncated)).toBe(true);
+    // The same session and selected path must recover after the source is
+    // repaired, preserving the complete source identity and payload facts.
+    await writeFile(path, valid);
+    const recovered = await cli.run({
+      arguments: ["inspect-pe-certificates", path, "--json"],
+    });
+    expect(recovered.exitCode, recovered.stderr).toBe(0);
+    const response = await call("inspect_pe_certificates", { path });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    for (const value of [recovered.json, response.structuredContent]) {
+      const report = contract.outputSchema.parse(value).normalized_result;
+      expect(report.coverage.status).toBe("complete");
+      expect(report.artifact.sha256).toBe(
+        createHash("sha256").update(valid).digest("hex"),
+      );
+      expect(report.entries[0]?.length).toBe(length);
+    }
+  },
+);
 
 cliTest.for([0x00, 0x01, 0x7f, 0xfe, 0xff, null])(
   "requires canonical extension critical encoding %s through CLI and MCP",
@@ -56,9 +182,7 @@ cliTest.for([0x00, 0x01, 0x7f, 0xfe, 0xff, null])(
       valid ? response.structuredContent : parseMcpToolError(response).error,
     ]) {
       if (valid) {
-        const report = toolContract(
-          "inspect_pe_certificates",
-        ).outputSchema.parse(value).normalized_result;
+        const report = contract.outputSchema.parse(value).normalized_result;
         expect(report.coverage.status).toBe("complete");
         expect(report.entries[0]?.pkcs7?.certificates[0]?.serial_hex).toBe(
           "11223344",
@@ -163,9 +287,7 @@ cliTest.for(["pubkey", "signature"])(
       arguments: ["inspect-pe-certificates", path, "--json"],
     });
     expect(valid.exitCode, valid.stderr).toBe(0);
-    const evidence = toolContract("inspect_pe_certificates").outputSchema.parse(
-      valid.json,
-    );
+    const evidence = contract.outputSchema.parse(valid.json);
     expect(
       evidence.normalized_result.entries[0]?.pkcs7?.certificates[0]?.serial_hex,
     ).toBe("11223344");
@@ -186,9 +308,7 @@ cliTest(
     const response = await call("inspect_pe_certificates", { path });
     expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
     for (const value of [result.json, response.structuredContent]) {
-      const report = toolContract("inspect_pe_certificates").outputSchema.parse(
-        value,
-      ).normalized_result;
+      const report = contract.outputSchema.parse(value).normalized_result;
       const pkcs7 = report.entries[0]?.pkcs7;
       expect(pkcs7?.certificates[0]?.serial_hex).toBe("11223344");
       for (const name of [
@@ -218,9 +338,7 @@ cliTest("reports unsigned attributes through CLI and MCP", async ({ cli }) => {
   const response = await call("inspect_pe_certificates", { path });
   expect(response.isError, JSON.stringify(response)).not.toBe(true);
   for (const value of [result.json, response.structuredContent]) {
-    const report = toolContract("inspect_pe_certificates").outputSchema.parse(
-      value,
-    ).normalized_result;
+    const report = contract.outputSchema.parse(value).normalized_result;
     expect(report.coverage.status).toBe("partial");
     expect(
       report.entries[0]?.pkcs7?.signers[0]?.unsigned_attribute_oids,
@@ -244,9 +362,7 @@ cliTest(
     });
 
     expect(result.exitCode, result.stderr).toBe(0);
-    const evidence = toolContract("inspect_pe_certificates").outputSchema.parse(
-      result.json,
-    );
+    const evidence = contract.outputSchema.parse(result.json);
     const entry = evidence.normalized_result.entries[0];
     expect(entry?.pkcs7?.certificates[0]).toMatchObject({
       serial_hex: "11223344",
@@ -268,12 +384,13 @@ cliTest(
       cwd: root,
     });
     expect(result.exitCode, result.stderr).toBe(0);
-    const evidence = toolContract("inspect_pe_certificates").outputSchema.parse(
-      result.json,
-    );
+    const evidence = contract.outputSchema.parse(result.json);
     expect(evidence).toMatchObject({
       confidence: "observed",
-      subject: { local_path: path, format: "pe", architecture: "x86" },
+      subject: {
+        local_path: path,
+        identity: { format: "pe", architecture: "x86" },
+      },
       normalized_result: {
         artifact: {
           path,
@@ -322,9 +439,7 @@ cliTest(
       arguments: ["inspect-pe-certificates", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
-    const evidence = toolContract("inspect_pe_certificates").outputSchema.parse(
-      result.json,
-    );
+    const evidence = contract.outputSchema.parse(result.json);
     expect(
       evidence.normalized_result.entries[0]?.pkcs7?.certificates[0]?.issuer
         .text,
@@ -386,9 +501,7 @@ cliTest(
       arguments: ["inspect-pe-certificates", path, "--json"],
     });
     expect(valid.exitCode, valid.stderr).toBe(0);
-    const evidence = toolContract("inspect_pe_certificates").outputSchema.parse(
-      valid.json,
-    );
+    const evidence = contract.outputSchema.parse(valid.json);
     expect(
       evidence.normalized_result.entries[0]?.pkcs7?.certificates[0]?.issuer
         .text,
@@ -421,9 +534,7 @@ cliTest(
       arguments: ["inspect-pe-certificates", path, "--json"],
     });
     expect(valid.exitCode, valid.stderr).toBe(0);
-    const evidence = toolContract("inspect_pe_certificates").outputSchema.parse(
-      valid.json,
-    );
+    const evidence = contract.outputSchema.parse(valid.json);
     expect(
       evidence.normalized_result.entries[0]?.pkcs7?.certificates[0]?.not_before,
     ).toBe("240229000000Z");
@@ -445,9 +556,7 @@ cliTest(
     });
 
     expect(result.exitCode, result.stderr).toBe(0);
-    const evidence = toolContract("inspect_pe_certificates").outputSchema.parse(
-      result.json,
-    );
+    const evidence = contract.outputSchema.parse(result.json);
     expect(
       evidence.normalized_result.entries[0]?.pkcs7?.certificates,
     ).toHaveLength(200);
@@ -536,9 +645,7 @@ cliTest.for([
       arguments: ["inspect-pe-certificates", path, "--json"],
     });
     expect(valid.exitCode, valid.stderr).toBe(0);
-    const evidence = toolContract("inspect_pe_certificates").outputSchema.parse(
-      valid.json,
-    );
+    const evidence = contract.outputSchema.parse(valid.json);
     expect(
       evidence.normalized_result.entries[0]?.pkcs7?.certificates[0]?.issuer
         .attributes[0]?.value,

@@ -1,3 +1,4 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
 import { expect, it } from "vitest";
 
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
@@ -6,7 +7,7 @@ import { err } from "../domain/result.js";
 import { ToolResultDelivery } from "./ToolResultDelivery.js";
 
 const evidence = createEvidence(
-  undefined,
+  unknownTarget("not-observed"),
   { id: "fixture", name: "Fixture", version: "1" },
   { operation: "observe", parameters: {}, result: { observed: true } },
 );

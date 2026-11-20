@@ -4,7 +4,7 @@ import {
   valueTraceDiamond,
   valueTraceUnboundArguments,
 } from "../../../src/application/native/NativeValueTrace.fixture.js";
-import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../../../src/ports/AnalysisProvider.js";
 import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
@@ -22,6 +22,7 @@ import {
   closeEnhancedToolResources,
   resources,
 } from "./enhancedToolsHarness.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 afterEach(closeEnhancedToolResources);
 
@@ -43,7 +44,10 @@ const connectTraceSession = async (
     { kind: "session", session },
     { environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: profile } },
   );
-  const client = new Client({ name: "value-trace-test", version: "1.0.0" });
+  const client = new Client(
+    { name: "value-trace-test", version: "1.0.0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server);

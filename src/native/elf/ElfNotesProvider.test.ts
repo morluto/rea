@@ -1,14 +1,25 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { scheduler } from "node:timers/promises";
+import { describe, expect, it, vi } from "vitest";
+import { runWithAnalysisOperationSnapshot } from "../../domain/analysisOperationSnapshot.js";
+import {
+  MAXIMUM_ZSTD_MAX_FRAMES,
+  MINIMUM_ZSTD_MAX_FRAMES,
+} from "../../domain/analysisResourceLimits.js";
 import { ElfNotesService } from "../../application/binaryDiagnostics/ElfNotesService.js";
 import {
+  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
 } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
-import { elfNotesSchema } from "../../domain/native/elfNotes.js";
+import { analysisRefusalRemediation } from "../../domain/analysisRefusal.js";
+import {
+  elfNotesSchema,
+  inspectElfNotesInputSchema,
+} from "../../domain/native/elfNotes.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import {
   compressedElfNoteFixture,
@@ -18,6 +29,26 @@ import {
   elfExtendedSectionCountFixture,
 } from "./ElfNotes.fixture.js";
 import { ElfNotesProvider } from "./ElfNotesProvider.js";
+
+const manyProductiveFrames = (count: number): Buffer => {
+  const frame = zstdByteFrame(0x61);
+  const bytes = Buffer.alloc(frame.length * count);
+  for (let index = 0; index < count; index += 1)
+    frame.copy(bytes, index * frame.length);
+  return bytes;
+};
+
+const abortOnFirstYield = (reason: Error): AbortSignal => {
+  const controller = new AbortController();
+  const yieldImpl = scheduler.yield.bind(scheduler);
+  let yields = 0;
+  vi.spyOn(scheduler, "yield").mockImplementation(async () => {
+    yields += 1;
+    await yieldImpl();
+    if (yields === 1) controller.abort(reason);
+  });
+  return controller.signal;
+};
 
 const inspect = async (
   path: string,
@@ -30,6 +61,77 @@ const inspect = async (
     await service.close();
   }
 };
+
+const zstdByteFrame = (byte: number): Buffer =>
+  Buffer.from([0x28, 0xb5, 0x2f, 0xfd, 0x20, 0x01, 0x09, 0x00, 0x00, byte]);
+
+it("projects a Zstandard frame-cap on section names as an adjustable limit", async () => {
+  const root = await createTestTempDirectory("rea-elf-note-zstd-frames-");
+  const path = join(root, "notes.elf");
+  await writeFile(
+    path,
+    compressedElfNoteFixture(
+      64,
+      true,
+      2,
+      ".note.gnu.build-id",
+      Buffer.concat([zstdByteFrame(0x61), zstdByteFrame(0x62)]),
+    ),
+  );
+  const result = await runWithAnalysisOperationSnapshot(
+    { revision: 1, overrides: { "zstd.max_frames": 1 } },
+    () => inspect(path),
+  );
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisResourceConstraintError",
+    resource: "cpu",
+    limit: {
+      setting: "zstd.max_frames",
+      effective_value: 1,
+      source: "runtime",
+      minimum: MINIMUM_ZSTD_MAX_FRAMES,
+      maximum: MAXIMUM_ZSTD_MAX_FRAMES,
+      unit: "count",
+    },
+  });
+});
+
+it("cancels a many-frame compressed section-name table", async () => {
+  const root = await createTestTempDirectory("rea-elf-note-zstd-cancel-");
+  const path = join(root, "notes.elf");
+  await writeFile(
+    path,
+    compressedElfNoteFixture(
+      64,
+      true,
+      2,
+      ".note.gnu.build-id",
+      manyProductiveFrames(32),
+    ),
+  );
+  const reason = new Error("stop note frames");
+  const provider = new ElfNotesProvider();
+  const signal = abortOnFirstYield(reason);
+  try {
+    const result = await provider.inspect(
+      inspectElfNotesInputSchema.parse({ path }),
+      { signal },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisCancelledError",
+      operation: "inspect_elf_notes",
+      cause: reason,
+    });
+  } finally {
+    vi.restoreAllMocks();
+    await provider.close();
+  }
+});
 
 describe("ELF note provider failures", () => {
   it("projects compressed note sections as unsupported rather than malformed input", async () => {
@@ -85,26 +187,38 @@ describe("ELF note provider failures", () => {
   it("names the note text budget instead of host memory", async () => {
     const root = await createTestTempDirectory("rea-elf-note-text-budget-");
     const path = join(root, "program");
-    await writeFile(
-      path,
-      elfNoteFixture({
-        ownership: "program",
-        notes: elfNote("GNU", 3, Buffer.alloc(4096, 1)),
-      }),
-    );
+    const bytes = elfNoteFixture({
+      ownership: "program",
+      notes: elfNote("GNU", 3, Buffer.alloc(4096, 1)),
+    });
+    await writeFile(path, bytes);
     const result = await inspect(path);
     if (result.ok) throw new Error("Expected a text budget refusal");
     const error = result.error as AnalysisResourceConstraintError;
     expect(error.resource).toBe("memory");
+    expect(error.reportedLimits).toEqual({
+      boundary: "note_text_bytes",
+      maximum: bytes.length,
+    });
     expect(error.message).toMatch(/byte budget/u);
     const projected = projectAnalysisError(error);
     expect(projected.retryable).toBe(false);
-    expect(projected.remediation.action).toContain(
-      "ELF note text, hash, and scan budget",
+    // The ceiling is the image length plus decoded section names; this
+    // program-only fixture has no section names.
+    expect(projected.details?.refusal).toMatchObject({
+      kind: "fixed_ceiling",
+      allowance_kind: "parser",
+      limit: bytes.length,
+      unit: "bytes",
+    });
+    expect(error.fixedAllowance).toBeDefined();
+    expect(projected.remediation.action).toBe(
+      analysisRefusalRemediation({
+        kind: "fixed_ceiling",
+        operation: "inspect_elf_notes",
+        ceiling: error.fixedAllowance!,
+      }),
     );
-    expect(projected.remediation.action).toMatch(/admitted image length/u);
-    expect(projected.remediation.action).toMatch(/do not raise it/u);
-    expect(projected.remediation.action).not.toMatch(/available host memory/u);
   });
 
   it("keeps a caller file-size budget distinct from host memory", async () => {
@@ -140,8 +254,9 @@ describe("ELF note provider failures", () => {
     expect(refused.error).toMatchObject({
       resource: "memory",
       reportedLimits: {
-        max_file_bytes: bytes.length + 1,
-        minimum_required_bytes: String(minimumMaxFileBytes),
+        boundary: "max_file_bytes",
+        maximum: bytes.length + 1,
+        required: String(minimumMaxFileBytes),
       },
       retryable: false,
     });

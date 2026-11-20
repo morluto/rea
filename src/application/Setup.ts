@@ -38,7 +38,7 @@ import {
   cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
-import { assertSetupActive } from "./SetupCancellation.js";
+import { assertSetupActive } from "../domain/setupCancellation.js";
 import type {
   SetupSkillInstallError,
   SkillInstallResult,

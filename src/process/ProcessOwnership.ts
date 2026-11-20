@@ -6,7 +6,6 @@ import { promisify } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 
 import {
-  errorMessage,
   readNativeProcessIdentityMap,
   readProcessOwnershipFacts,
   reobserveUnavailableTokenFacts,
@@ -34,6 +33,7 @@ import {
   type ProcessLifecycleObservation,
   type ProcessExitSettlementBudget,
 } from "./ProcessLifecycle.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const execFileAsync = promisify(execFile);
 

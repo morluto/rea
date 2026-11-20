@@ -1,8 +1,9 @@
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import {
   AnalysisCleanupLeaseGroup,
   AnalysisCleanupLease,
-} from "../artifacts/AnalysisCleanupLease.js";
+} from "../resources/AnalysisCleanupLease.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { PlaywrightBrowserScenarioProvider } from "./PlaywrightBrowserScenarioProvider.js";
@@ -1662,10 +1663,6 @@ it("keeps the session's exact cleanup lease pending after response timeout until
 });
 
 it("retains late opening failure cleanup after cancellation until the exact profile lease recovers", async () => {
-  let finishOpening: () => void = () => {};
-  const terminal = new Promise<void>((resolve) => {
-    finishOpening = resolve;
-  });
   let profileStarted: () => void = () => {};
   const profileAttempt = new Promise<void>((resolve) => {
     profileStarted = resolve;
@@ -1679,18 +1676,14 @@ it("retains late opening failure cleanup after cancellation until the exact prof
     reason: "late opening profile cleanup",
   });
   new AnalysisCleanupLeaseGroup(failure, [lease]);
-  let launchStarted: () => void = () => {};
-  const started = new Promise<void>((resolve) => {
-    launchStarted = resolve;
-  });
+  const launch = phaseGate();
   mocks.openBrowser.mockImplementation(
     async (
       _scenario: unknown,
       _env: unknown,
       options: { retainCleanup?: (lease: AnalysisCleanupLease) => void },
     ) => {
-      launchStarted();
-      await terminal;
+      await launch.hold();
       options.retainCleanup?.(lease);
       throw failure;
     },
@@ -1704,12 +1697,12 @@ it("retains late opening failure cleanup after cancellation until the exact prof
     const pending = provider.captureScenario(scenario, {
       signal: caller.signal,
     });
-    await awaitAcknowledgement(started, pending, "browser launch start");
+    await launch.reached(pending, "browser launch start");
     caller.abort(reason);
     const result = await pending;
     if (result.ok) throw new Error("Expected cancelled opening");
     expect(result.error.cleanupIncomplete).toBe(true);
-    finishOpening();
+    launch.release();
     await profileAttempt;
     await expect(provider.close()).rejects.toMatchObject({
       cleanupIncomplete: true,
@@ -1728,7 +1721,7 @@ it("retains late opening failure cleanup after cancellation until the exact prof
   } finally {
     caller.abort(reason);
     denied = false;
-    finishOpening();
+    launch.release();
     await provider.close();
   }
 });

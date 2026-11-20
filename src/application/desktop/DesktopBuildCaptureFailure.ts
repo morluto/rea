@@ -6,11 +6,11 @@ import {
   type DesktopApplicationCapture,
 } from "../../domain/desktop/desktopCapture.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
-import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
 import type {
-  Answer,
+  BuildControllerAnswer,
   ControlledComputer,
-} from "../../desktop/BuildComputerController.js";
+} from "../../ports/BuildComputerControl.js";
 import {
   adapterError,
   readOutput,
@@ -75,7 +75,7 @@ const unredacted: Redact = (text) => text;
 /** Why the capture is not answering, from what the controller saw instead of the event; its output stays out of the message. */
 export const notAnswered = (
   operation: string,
-  answer: Answer,
+  answer: BuildControllerAnswer,
   redact: Redact = unredacted,
 ): AnalysisError => {
   if (answer.error !== undefined) return adapterError(operation, answer.error);
@@ -151,7 +151,7 @@ const appExited = (
 export const endedCapture = async (
   computer: ControlledComputer,
   step: CaptureStep & { readonly folder: string; readonly redact?: Redact },
-  answer: Answer,
+  answer: BuildControllerAnswer,
   signal: AbortSignal,
 ): Promise<AnalysisError> => {
   const { redact = unredacted } = step;

@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
@@ -29,7 +30,7 @@ it.each(["compact"] as const)(
   async (profile) => {
     const result = traceFixture();
     const parent = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "rea-workflow", name: "REA workflow", version: "1" },
       {
         operation: "trace_feature",

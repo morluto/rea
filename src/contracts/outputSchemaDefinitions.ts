@@ -4,7 +4,7 @@ import {
   schemaMaps,
   schemaSubschemas,
 } from "./jsonSchemaKeywords.js";
-import { isRecord } from "../domain/isRecord.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 type Schema = Record<string, unknown>;
 

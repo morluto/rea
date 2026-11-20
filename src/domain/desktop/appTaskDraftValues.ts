@@ -16,7 +16,7 @@ import { holdsFields, isRecordAt } from "./appTaskDraftText.js";
 import { attributesOf, compactValue, previewWriter } from "./compactValue.js";
 import { pairMembers, pairedAtSeed } from "./memberPairing.js";
 import { isXmlElement, locatePointer, resolvePointer } from "./viewPointer.js";
-import { isRecord } from "../isRecord.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /** Why a value's pointer cannot go into a check as it is, or why the value is noise. */
 export const VALUE_NOTES = ["by_position", ...NOISE_REASONS] as const;
@@ -336,6 +336,7 @@ const referencesOf = (
       ...attributeReferences(resolve, value),
       ...recordListsOf(value)
         .flatMap(({ records }) => records)
+        // generation-cap: nested records read for references
         .slice(0, MAX_NESTED_RECORDS)
         .flatMap((record) => attributeReferences(resolve, record)),
       // A field holding another element's id as its text, as a split's `<split:account>`.

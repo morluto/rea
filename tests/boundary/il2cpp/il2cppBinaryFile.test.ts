@@ -1,6 +1,6 @@
 import { javaClassFile } from "../../fixtures/javaClassFile.js";
 import { Il2cppBinaryFormatFailure } from "../../../src/il2cpp/Il2cppBinaryFormat.js";
-import { readBinaryContainer } from "../../../src/native/metadata/readBinaryContainer.js";
+import { readBinaryContainer } from "../../../src/domain/native/readBinaryContainer.js";
 import {
   openImageSteps,
   readUInt32,
@@ -67,6 +67,18 @@ const link = (bytes: Buffer, architecture?: Il2cppBinaryArchitecture) =>
     metadata,
     facts,
   );
+it.each([183, 62])(
+  "links IL2CPP registration and method pointers through APS2 on machine %d",
+  (machine) => {
+    const bytes = createElfFixture(createIl2cppBinaryFixture(), {
+      machine,
+      androidPacked: "aps2",
+    });
+    const original = Buffer.from(bytes);
+    expect(link(bytes).method_addresses).toEqual(expectedAddresses);
+    expect(bytes.equals(original)).toBe(true);
+  },
+);
 it.each([183, 62])(
   "links past unrelated ABS64 and GLOB_DAT records on ELF machine %d",
   (machine) => {
@@ -501,17 +513,23 @@ it("does not apply symbol relocations as RELATIVE ones", () => {
   ).toThrow(Il2cppBinaryFormatFailure);
 });
 
-it("reads a method pointer array in zero-fill as methods without bodies", () => {
-  // An iOS-only assembly in an Android build keeps its array in .bss.
-  const linked = link(
-    createElfFixture(createIl2cppBinaryFixture(), { zeroFilledTable: true }),
-  );
-  expect(linked.method_addresses).toEqual([
-    ...expectedAddresses.slice(0, 3),
-    expectedAddress("no-body"),
-    expectedAddress("no-body"),
-  ]);
-});
+it.each([undefined, "aps2"] as const)(
+  "reads a method pointer array in zero-fill as methods without bodies (packing: %s)",
+  (androidPacked) => {
+    // An iOS-only assembly in an Android build keeps its array in .bss.
+    const linked = link(
+      createElfFixture(createIl2cppBinaryFixture(), {
+        zeroFilledTable: true,
+        ...(androidPacked === undefined ? {} : { androidPacked }),
+      }),
+    );
+    expect(linked.method_addresses).toEqual([
+      ...expectedAddresses.slice(0, 3),
+      expectedAddress("no-body"),
+      expectedAddress("no-body"),
+    ]);
+  },
+);
 
 it("reads a PE pointer array across file bytes and the declared zero-fill tail", () => {
   const bytes = createSplitPointerPeFixture();
@@ -1094,7 +1112,7 @@ it.each(["outside", "misaligned", "duplicate"] as const)(
       bytes.copy(bytes, 176, 120, 176);
       bytes.writeUInt16LE(3, 56);
     }
-    expect(() => readBinaryContainer(bytes)).not.toThrow();
+    expect(() => readBinaryContainer(bytes, "elf-directory")).not.toThrow();
     expect(() => link(bytes)).toThrow(
       shape === "duplicate"
         ? "multiple PT_DYNAMIC segments"
@@ -1105,8 +1123,8 @@ it.each(["outside", "misaligned", "duplicate"] as const)(
 
 it.each([
   [{ dynamic: false }, "unsupported-container"],
-  [{ machine: 243 }, "unsupported-container"],
-  [{ androidPacked: true }, "unsupported-pointer-encoding"],
+  [{ machine: 21 }, "unsupported-container"], // EM_PPC64 has no pointer profile.
+  [{ androidPacked: "aps1" }, "unsupported-pointer-encoding"],
 ] as const)(
   "refuses ELF relocations it cannot apply (%o)",
   (options, reason) => {

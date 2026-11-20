@@ -303,8 +303,8 @@ async function call(name, args = {}) {
 
 function evidence(value) {
   const result = parseEvidence(value);
-  assert.equal(result.subject.digest.sha256, sha256);
-  assert.equal(result.subject.architecture, "m68k");
-  assert.equal(result.subject.format, "raw-binary");
+  assert.equal(result.subject.identity.sha256, sha256);
+  assert.equal(result.subject.identity.architecture, "m68k");
+  assert.equal(result.subject.identity.format, "raw-binary");
   return result;
 }

@@ -1,6 +1,6 @@
 # Kuna provider
 
-[Kuna](https://github.com/Noelo-Lab/kuna) is an Apache-2.0 decompiler distributed as one `kuna` executable. For a new installation, use Kuna 1.990, REA's recommended verified release. REA uses a `kuna` you supply; it does not download, install, update or bundle Kuna. REA accepts other releases; `rea doctor` and analysis Evidence report them as unverified. Verification compares the reported version; it does not authenticate the executable. Analysis profiles retain the observed version and executable digest, independently of REA's current verified-release policy. The 1.990 real-provider checks ran on macOS arm64; Linux and other hosts have not been verified with that release.
+[Kuna](https://github.com/Noelo-Lab/kuna) is an Apache-2.0 decompiler distributed as one `kuna` executable. For a new installation, use Kuna 1.1000, REA's recommended verified release. REA uses a `kuna` you supply; it does not download, install, update or bundle Kuna. REA accepts other releases; `rea doctor` and analysis Evidence report them as unverified. Verification compares the reported version; it does not authenticate the executable. Analysis profiles retain the observed version and executable digest, independently of REA's current verified-release policy. The 1.1000 real-provider checks ran on macOS arm64; Linux and other hosts have not been verified with that release.
 
 Kuna is static: it reads the selected image and never executes it.
 
@@ -167,6 +167,7 @@ rollback permits another setup attempt.
 
 ## Provenance and limitations
 
+- For arm64 Mach-O, `procedure_pseudo_code` with `analysis: "call_destination"` or `rea decompile --analysis call_destination` accepts an exact hexadecimal address outside the procedure inventory. REA requires file-backed executable section bytes and an exact direct call from a procedure Kuna already reports. The Evidence includes the call site and the incoming-reference reply digest. The body comes from a standalone Kuna run and does not establish function boundaries or add an inventory or project-export entry. If the call cannot be established, REA refuses the attempt. The mode is advertised as `call_destination_decompile` in `binary_session`.
 - If a completed project export reports a failed function, `procedure_pseudo_code` with `analysis: "independent_fresh"` or `rea decompile --analysis independent_fresh` requests a new single-function attempt. It bypasses the project result and prior single-function and snapshot results; it does not replace the original observation. On a cold session it obtains an inventory without starting a project export. The independent attempt can use different analysis context and may also fail. Identical results can share an Evidence ID because Evidence is content-addressed.
 - Addresses and bytes are Kuna's observations of the image. Procedure entries and extents are its derivations: extents are upper bounds clipped at the next entry, and Kuna can split one function at an entry its own analysis infers. Pseudocode is its reconstruction, never original source.
 - Pseudocode and assembly are exact Kuna text; text from Kuna and from another provider is not comparable as equal or different.
@@ -183,8 +184,9 @@ REA writes Kuna's exports only inside `REA_KUNA_CACHE_DIR`:
 
 The cache key includes the selected launcher and resolved executable paths, plus
 the target's native basename: that name determines the export filenames and
-appears in generated source. REA accepts one current manifest layout. Older
-exports are rebuilt on demand and retired through normal owned-cache cleanup;
+appears in generated source. The key and manifest also name the REA release
+that wrote the entry, and REA accepts only entries from its own release. Exports
+from other releases are rebuilt on demand and retired through normal owned-cache cleanup;
 no manual deletion or migration is needed. Manifests must name the producer's
 exact flat file layout, with matching basenames and producing inputs. Replaced
 entry, project or manifest symlinks are refused before their targets are read;

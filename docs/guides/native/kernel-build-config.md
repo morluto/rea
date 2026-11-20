@@ -59,7 +59,7 @@ reported as a config. When `IKCFG_ST`, gzip magic, and a later `IKCFG_ED` frame
 a member that does not decode, a deflate stream cut off by that marker, a
 member that fails its CRC-32 or ISIZE check, or text that fails the grammar,
 the config is `malformed` with coverage
-`incomplete`, and `marker`, `gzip`, and `end_marker` locate the blob. A
+`unknown`, and `marker`, `gzip`, and `end_marker` locate the blob. A
 malformed blob is never reported as an absent config. A valid config later in
 the searched bytes still wins. `marker`, `gzip`, and `end_marker` give
 the three ranges. `sha256` hashes the inflated text. `option_count` counts
@@ -72,11 +72,14 @@ Each entry has a `name`, a `kind`, and a `value`:
 | `kind`    | Source line                | `value`                   |
 | --------- | -------------------------- | ------------------------- |
 | `y`, `m`  | `CONFIG_X=y`, `CONFIG_X=m` | `y` or `m`                |
-| `number`  | decimal or `0x` hex        | the text as written       |
+| `number`  | Kconfig integer or hex     | the text as written       |
 | `string`  | `CONFIG_X="..."`           | decoded text (`\"`, `\\`) |
 | `not_set` | `# CONFIG_X is not set`    | `null`                    |
 
-Banner text and configuration values are target-derived and untrusted.
+Kconfig can write hexadecimal values without a `0x` prefix. REA preserves
+the spelling and leaves the numeric base unresolved when the value alone
+cannot establish it. Banner text and configuration values are target-derived
+and untrusted.
 
 ## bzImage payloads
 
@@ -115,7 +118,8 @@ times `max_config_bytes` of output across them. A candidate whose stream fails
 partway through is charged its full per-candidate allowance, since its partial
 output is not measured. When that search budget runs
 out before a config is accepted, the config is `incomplete` with reason
-`config_search_exhausted` instead of failing or reporting an absent config.
+`config_search_exhausted` and coverage `partial` instead of failing or
+reporting an absent config.
 Inflation runs off the event loop. Every scan, including marker
 searches that find nothing, config text checks, validation of one long value,
 and hashing, yields to it at least once
@@ -124,7 +128,11 @@ at the next check. One inflate call runs to its output bound once started.
 
 Results that could not search or read the kernel bytes stay `incomplete`,
 `malformed`, or `unsupported` and are never
-reported as an absent config:
+reported as an absent config. `coverage.status` is `partial` when the config
+is known to extend past what was examined (`config_gzip_truncated`,
+`config_search_exhausted`), `unknown` when a framed config is malformed or the
+payload could not be searched (`examined_bytes` is 0), and `unsupported` for a
+payload codec REA does not inflate:
 
 | `config.reason`                    | Meaning                                                                      |
 | ---------------------------------- | ---------------------------------------------------------------------------- |

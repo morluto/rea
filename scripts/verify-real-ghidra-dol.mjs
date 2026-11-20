@@ -248,14 +248,14 @@ async function runPass({ fixture, languageOverride, label, layout }) {
       { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
     );
     const evidence = parseEvidence(JSON.parse(cli.stdout));
-    assert.equal(evidence.subject?.architecture, "powerpc");
-    assert.equal(evidence.subject?.digest.sha256, fixture.sha256);
+    assert.equal(evidence.subject?.identity.architecture, "powerpc");
+    assert.equal(evidence.subject?.identity.sha256, fixture.sha256);
     const cliDossier = functionDossierSchema.parse(evidence.normalized_result);
     assert.equal(BigInt(cliDossier.procedure.address), layout.entry);
     assert.ok(cliDossier.pseudocode.includes("__start"));
     report.cli = {
       entry: cliDossier.procedure.address,
-      subject_format: evidence.subject?.format ?? null,
+      subject_format: evidence.subject?.identity.format ?? null,
     };
   }
   return report;

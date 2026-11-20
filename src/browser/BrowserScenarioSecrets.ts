@@ -5,6 +5,10 @@ import {
 } from "./BrowserScenarioSerialization.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { redactSensitiveFailure } from "../domain/explicitSensitiveFailure.js";
+import {
+  explicitTextSpellings,
+  lowercasePercentEscapes,
+} from "../domain/explicitSensitiveValues.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { createHash } from "node:crypto";
@@ -46,16 +50,6 @@ const normalizedSecretValues = (value: string): readonly string[] => [
   ...new Set([value.replace(/^[\t ]+|[\t ]+$/gu, ""), value]),
 ];
 
-const encodedSecretValues = (scalar: string): ReadonlySet<string> => {
-  const component = encodeURIComponent(scalar);
-  return new Set([
-    component,
-    // Special-URL queries escape apostrophes while keeping the component's tilde.
-    component.replace(/'/gu, "%27"),
-    new URLSearchParams([["value", scalar]]).toString().slice("value=".length),
-  ]);
-};
-
 type SecretSpellings = "url" | "text";
 interface SecretPattern {
   readonly text: string;
@@ -72,11 +66,6 @@ interface SecretNeedle {
   readonly marker: Buffer;
 }
 
-const normalizePercentEscapes = (value: string): string => {
-  if (!value.includes("%")) return value;
-  return value.replace(/%[0-9a-f]{2}/giu, (escape) => escape.toLowerCase());
-};
-
 const secretPatterns = (
   secret: string,
   spellings: SecretSpellings,
@@ -92,19 +81,25 @@ const secretPatterns = (
       searchText: text,
       percentInsensitive: false,
     })),
-    ...[...encodedSecretValues(scalar)].map((text) => ({
+    ...explicitTextSpellings(scalar, [
+      "uri-component",
+      "uri-query",
+      "form",
+    ]).map((text) => ({
       text,
-      searchText: normalizePercentEscapes(text),
+      searchText: lowercasePercentEscapes(text),
       percentInsensitive: true,
     })),
   ];
   if (spellings === "text")
     patterns.push(
-      ...literals.map((text) => ({
-        text: JSON.stringify(text).slice(1, -1),
-        searchText: JSON.stringify(text).slice(1, -1),
-        percentInsensitive: false,
-      })),
+      ...literals.flatMap((text) =>
+        explicitTextSpellings(text, ["json-escaped"]).map((escaped) => ({
+          text: escaped,
+          searchText: escaped,
+          percentInsensitive: false,
+        })),
+      ),
     );
   const seen = new Set<string>();
   return patterns.filter(({ text, percentInsensitive }) => {
@@ -245,7 +240,7 @@ const redactionMarker = (
         (pattern) =>
           !patternMatches(
             candidate,
-            normalizePercentEscapes(candidate),
+            lowercasePercentEscapes(candidate),
             pattern,
           ),
       ),
@@ -262,7 +257,7 @@ const replaceSecretLiterals = (
   const normalizedValue = replacements.some(
     ({ percentInsensitive }) => percentInsensitive,
   )
-    ? normalizePercentEscapes(value)
+    ? lowercasePercentEscapes(value)
     : value;
   const parts: string[] = [];
   let offset = 0;
@@ -571,10 +566,10 @@ export class BrowserScenarioSecrets {
       retention.maxAllocationBytes,
     );
     if (!redacted.ok) throw new Error(redacted.error.message);
-    return redacted.value ?? body;
+    return redacted.value.bytes ?? body;
   }
 
-  /** Decode JSON only when redaction is active; other bytes retain their existing binary policy. */
+  /** Check JSON spellings only while redaction is active, including bodies of unknown type. */
   redactJsonBody(
     body: Buffer,
     retention: {
@@ -582,7 +577,8 @@ export class BrowserScenarioSecrets {
       readonly maxAllocationBytes: number;
     },
     scope: ScenarioRedactionScope = "current",
-  ): Buffer {
+    mode: "json" | "unknown" = "json",
+  ): { readonly bytes: Buffer; readonly json: boolean } {
     if (
       body.length === 0 ||
       (scope === "response"
@@ -590,17 +586,24 @@ export class BrowserScenarioSecrets {
         : this.textPatterns
       ).length === 0
     )
-      return body;
-    const text = decodeStrictUtf8(body, "preserve");
+      return { bytes: body, json: mode === "json" };
+    let text: string;
+    try {
+      text = decodeStrictUtf8(body, "preserve");
+    } catch (cause: unknown) {
+      if (mode === "unknown") return { bytes: body, json: false };
+      throw cause;
+    }
     const redacted = redactResponseSource(
       text,
       [],
       (value) => this.redact(value, scope),
       retention.maxBytes,
       retention.maxAllocationBytes,
+      mode === "unknown",
     );
     if (!redacted.ok) throw new Error(redacted.error.message);
-    return redacted.value ?? body;
+    return { bytes: redacted.value.bytes ?? body, json: redacted.value.json };
   }
 
   private retainSavedRedactions(
@@ -729,7 +732,7 @@ export class BrowserScenarioSecrets {
     );
     return containsSecretPattern(
       output,
-      normalizePercentEscapes(output),
+      lowercasePercentEscapes(output),
       patterns,
     )
       ? ""
@@ -817,7 +820,7 @@ export class BrowserScenarioSecrets {
       this.urlPatterns,
     );
     if (
-      containsSecretPattern(output, normalizePercentEscapes(output), patterns)
+      containsSecretPattern(output, lowercasePercentEscapes(output), patterns)
     )
       return {
         url: "",
@@ -836,7 +839,7 @@ export class BrowserScenarioSecrets {
     const patterns = this.textPatterns;
     if (
       patterns.length > 0 &&
-      containsSecretPattern(value, normalizePercentEscapes(value), patterns)
+      containsSecretPattern(value, lowercasePercentEscapes(value), patterns)
     )
       return { value_state: "redacted-secret", value_sha256: null };
     const hash = createHash("sha256");

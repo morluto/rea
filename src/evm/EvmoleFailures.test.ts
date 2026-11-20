@@ -8,7 +8,7 @@ import { classifyProviderFailure } from "../providers/classifyProviderFailure.js
 
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   DEFAULT_EVM_TIMEOUT_MS,
@@ -84,6 +84,10 @@ it.each([
     expect(result.capturedOutput).toEqual({
       stdout: "selected output",
       stderr: "warning",
+      stdout_bytes: 15,
+      stderr_bytes: 7,
+      exit_code: 0,
+      signal: null,
       truncated: false,
     });
     expect(result.cleanupIncomplete).toBe(false);
@@ -110,7 +114,13 @@ it("names timeout_ms, the omitted default, and the caps it does not raise", () =
   });
   expect(projected.message).toContain("timeout_ms");
   expect(projected.message).toContain(String(DEFAULT_EVM_TIMEOUT_MS));
-  expect(projected.remediation.action).toContain("--timeout-ms");
+  expect(projected.remediation.action).not.toContain("--");
+  expect(projected.details?.limit).toMatchObject({
+    control_kind: "parameter",
+    parameter: "timeout_ms",
+    effective_value: 45_000,
+    default_value: DEFAULT_EVM_TIMEOUT_MS,
+  });
   expect(projected.remediation.action).toContain(
     String(MAX_NODE_TIMER_DELAY_MS),
   );
@@ -134,9 +144,9 @@ it("names the selected CPU budget separately from tighter inherited limits", () 
       phase: "worker",
       path: "/selected.hex",
       workerLimits: {
-        addressSpaceBytes: 1024,
-        cpuSeconds: 30,
-        fileSizeBytes: 1024,
+        address_space_bytes: 1024,
+        cpu_seconds: 30,
+        file_bytes: 1024,
       },
     }),
   );

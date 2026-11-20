@@ -151,15 +151,28 @@ __attribute__((noinline)) int rea_checkpoint_leaf(CheckpointRecord *record) { re
 int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf(&record); }
 `,
   );
+  // The name and type checks read the fixture's DWARF. A linked Mach-O keeps
+  // DWARF only in its objects or a dSYM beside it, and REA imports an
+  // immutable copy of the selected file alone, so on macOS the target is the
+  // object itself, which carries its DWARF.
   await compilerCommands.exec(
     "cc",
-    ["-O0", "-g", "-gdwarf-4", "-fno-inline", sourcePath, "-o", target],
+    [
+      "-O0",
+      "-g",
+      "-gdwarf-4",
+      "-fno-inline",
+      ...(process.platform === "darwin" ? ["-c"] : []),
+      sourcePath,
+      "-o",
+      target,
+    ],
     { timeout: 120_000, maxBuffer: 16 * 1024 * 1024 },
   );
   const targetDigest = await sha(target);
   report.target = {
     sha256: targetDigest,
-    source: "self-built C struct/function fixture; never executed",
+    source: `self-built C struct/function ${process.platform === "darwin" ? "object" : "executable"} fixture; never executed`,
     host: process.platform,
     architecture: process.arch,
   };

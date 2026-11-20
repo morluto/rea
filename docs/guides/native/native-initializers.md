@@ -99,10 +99,24 @@ Symbol and section names are untrusted file text and carry
 For PIE executables and shared objects the array slots are usually zero on
 disk. A slot is reported `unresolved`, never as its stored zero, when the
 dynamic relocation tables use an encoding this inspection does not decode
-(for example Android packed relocations or an unsupported machine). Relative
-relocations are decoded for x86-64, i386, AArch64 and 32-bit ARM. A slot is
-also `unresolved` when a dynamic relocation writes only part of it, starts
+(for example legacy Android APS1 relocations or an unsupported machine). Relative
+relocations are decoded for x86-64, i386, AArch64, 32-bit ARM and RISC-V
+(RV32/RV64). RISC-V word-sized absolute relocations also resolve defined
+symbols in section tables; imported symbols remain unresolved imports. TLS
+and indirect-function resolver results are not treated as function addresses.
+A slot is also `unresolved` when a dynamic relocation writes only part of it, starts
 inside it, or writes it more than once with different values.
+
+Android APS2 packed REL/RELA tables are decoded through the same relocation
+rules, including grouped offsets, signed addend deltas and zero-addend groups.
+Their relative slots use `relative_addend`; unresolved symbolic or indirect
+values remain unresolved. APS2 and standard RELR tables can coexist.
+
+RELR address/bitmap tables support both standard `DT_RELR`/`DT_RELRSZ`/
+`DT_RELRENT` and Android's older `DT_ANDROID_RELR`/`DT_ANDROID_RELRSZ`/
+`DT_ANDROID_RELRENT` tags. Both retain `relr` slot provenance and the original
+record file offsets. Repeated declarations and mixtures of the two tag
+families are refused instead of choosing, combining or applying tables twice.
 
 A `COPY` relocation writes as many bytes as the image's own dynamic symbol
 records, and a TLS descriptor relocation writes two words. A slot outside
@@ -134,6 +148,13 @@ Relocation ownership follows virtual addresses in linked images and section
 identity plus offset in relocatable objects. Distinct slots that share source
 file bytes keep independent values and overlap checks; a write to one does not
 relocate or invalidate the other.
+
+ELF symbols using `SHN_XINDEX` get their actual section from the uniquely
+linked `SHT_SYMTAB_SHNDX` table. Missing, conflicting, compressed or malformed
+companions leave affected symbols unresolved with incomplete coverage; ordinary
+symbols remain available. Extended section numbers stay distinct from equally
+numbered special markers. `SHN_ABS` values have no section-relative file mapping,
+and tentative `SHN_COMMON` values are not treated as allocated addresses.
 
 An absolute relocation against an `STT_GNU_IFUNC` symbol is `unresolved`: the
 symbol value is the resolver, and the loader stores whatever the resolver
@@ -169,11 +190,28 @@ visible.
 
 ## Paging and limits
 
+Each APS2 table has a fixed 16 MiB compressed-input and decode-work allowance.
+Before group expansion, the declared count multiplied by the equivalent
+unpacked REL/RELA record width must fit 16 MiB. This bounds interpretation work
+even when a tiny group encodes millions of records; it is separate from retained
+pointer-index and result limits, and has no runtime override. Decoding yields
+within groups for cancellation. Only zero linker padding is accepted after the
+declared records.
+
 `offset` and `limit` page the ordered list (default limit 64, maximum 4096).
 `coverage.examined_entries` counts every slot read, including omitted
 sentinels, and `total_entries` (the listed entries) is set when the inventory
-is complete. At most 65536 slots are examined; beyond that, or when relocation
-coverage is unknown, `status` and `coverage.status` are `incomplete`.
+is complete. At most 65536 slots are examined. Any gap makes `status`
+`incomplete`, and `coverage.status` says which kind it is:
+
+- `partial`: declared slots or names were examined but not reported. Examples
+  are the 65536-slot budget, an array that is compressed, not file-backed,
+  has no size tag or has trailing bytes, and a name over the 1024-byte budget.
+- `unknown`: whether the listed facts are complete cannot be determined.
+  Examples are unknown relocation, fixup, symbol or mapping coverage, a
+  duplicate dynamic tag and a `PT_DYNAMIC` without `DT_NULL`.
+
+When both kinds occur, `coverage.status` is `unknown`.
 
 ELF symbol names come from at most 65536 symbols across all `SHT_SYMTAB` and
 `SHT_DYNSYM` tables together, and section `REL` / `RELA` relocations from at
@@ -183,9 +221,14 @@ together; a repeated `LC_SYMTAB` over the same ranges is ignored with a
 limitation. Reaching any of these budgets makes the report `incomplete` with a
 limitation.
 
-A symbol name that cannot be read, because its string table is missing or its
-offset lies outside the table, is reported as no name and makes the report
-`incomplete` with a counted limitation. Name offset 0 is the empty name.
+A symbol name that cannot be read, because its string table is missing, its
+offset lies outside the table, or its terminator cannot be established, is
+reported as no name. It makes coverage `unknown` with a counted limitation.
+Name offset 0 is the empty name. When the name crosses the byte budget, a
+NUL at the end of the table establishes a terminator without a longer scan.
+A name withheld in this way makes coverage `partial` when a collected
+initializer needs it. A long name that does
+not label a collected initializer does not widen coverage.
 
 ELF sections marked `SHF_COMPRESSED` are not decoded as initializer slots,
 symbols, names or relocation records. Affected facts remain unresolved and

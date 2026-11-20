@@ -20,12 +20,14 @@ import {
 import {
   ArtifactFileCleanupFailure,
   withArtifactFileHandle,
-} from "../artifacts/ArtifactFileOperation.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+  type ArtifactResourceScope,
+} from "../resources/index.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import type { ComputerRelease } from "../domain/desktop/computerRelease.js";
+import { AGENTENV_PROVIDER } from "./AgentEnvProviderIdentity.js";
 
 const execFileAsync = promisify(execFile);
 
-export const AGENTENV_PROVIDER = "agentenv";
 const HELPER = fileURLToPath(
   new URL("../../bridge/agentenv/computer.py", import.meta.url),
 );
@@ -46,18 +48,6 @@ const handshakeSchema = z.union([
 ]);
 /** The helper's one JSON line: where the kept computer is, or why there is none. */
 export type Handshake = z.infer<typeof handshakeSchema>;
-
-/** How a computer's teardown ended: confirmed by agentenv or by removing its containers, or not confirmed. */
-export type ComputerRelease =
-  | {
-      readonly verified: true;
-      readonly teardown: "agentenv" | "container_label";
-    }
-  | {
-      readonly verified: false;
-      readonly reason: string;
-      readonly resources: readonly string[];
-    };
 
 const unavailable = (operation: string, reason: string, cause?: unknown) =>
   new AnalysisCapabilityUnavailableError(AGENTENV_PROVIDER, operation, reason, {
@@ -178,7 +168,7 @@ export const removeSandbox = async (
       await execFileAsync(docker, ["rm", "-f", ...containers], options);
     return undefined;
   } catch (cause: unknown) {
-    return `Removing sandbox ${sandbox}'s containers failed: ${cause instanceof Error ? cause.message : String(cause)}. ${manual}`;
+    return `Removing sandbox ${sandbox}'s containers failed: ${errorMessage(cause)}. ${manual}`;
   }
 };
 
@@ -277,7 +267,12 @@ export class ComputerHelper {
       if (first !== undefined) continue;
       first = line.ok
         ? parseHandshake(line.value)
-        : { error: "the helper's handshake line is too long" };
+        : {
+            error:
+              line.error._tag === "ControlLineMalformedUtf8"
+                ? "the helper's handshake is not valid UTF-8"
+                : "the helper's handshake line is too long",
+          };
       if ("sandbox_id" in first) {
         this.#sandboxId = first.sandbox_id;
         this.#token = first.control_token;

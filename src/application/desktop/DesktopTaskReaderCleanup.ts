@@ -11,6 +11,7 @@ import {
   type RetainedWorkerCleanup,
 } from "../../process/OwnedWorkerRuntime.js";
 import { DESKTOP_PROVIDER } from "./DesktopCaptureRefusals.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "export_desktop_application";
 
@@ -26,7 +27,7 @@ const primaryFailure = (cause: unknown): AnalysisError | undefined => {
     ? cancelledBy(OPERATION, carriedReason(cause.cancellation?.reason))
     : new ProviderAdapterError(DESKTOP_PROVIDER.id, OPERATION, {
         cause,
-        userMessage: `The task reader could not complete: ${cause instanceof Error ? cause.message : String(cause)}`,
+        userMessage: `The task reader could not complete: ${errorMessage(cause)}`,
       });
 };
 
@@ -91,7 +92,7 @@ class ReaderCleanup implements RetainedWorkerCleanup {
       this.#released.confirm();
     } catch (cause: unknown) {
       this.failure.retainDiagnostics({
-        retry_failure: cause instanceof Error ? cause.message : String(cause),
+        retry_failure: errorMessage(cause),
       });
       throw this.failure;
     }
@@ -118,7 +119,7 @@ export const retainReaderCleanup = (
     DESKTOP_PROVIDER.id,
     resources,
     {
-      reason: problem instanceof Error ? problem.message : String(problem),
+      reason: errorMessage(problem),
       ...readerDiagnostics(facts),
     },
     {

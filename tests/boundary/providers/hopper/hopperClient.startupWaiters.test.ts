@@ -11,7 +11,7 @@ import { expect, it, vi } from "vitest";
 import {
   HopperCancelledError,
   HopperProcessError,
-} from "../../../../src/domain/hopperErrors.js";
+} from "../../../../src/hopper/HopperErrors.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
 import { ok } from "../../../../src/domain/result.js";
 import { ProviderRunLineage } from "../../../../src/process/ProviderRunLineage.js";

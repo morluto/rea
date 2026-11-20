@@ -17,13 +17,14 @@ import { parseArgs, promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { inspectKunaInstallation } from "../dist/kuna/KunaInstallation.js";
+import { HOST_PLATFORM } from "../dist/platform/HostPlatform.js";
 import {
   KUNA_RELEASE_VERIFICATION_EXPLANATION,
   KUNA_UNVERIFIED_VERSION_REMEDIATION,
   KUNA_VERIFIED_VERSION,
 } from "../dist/kuna/KunaRelease.js";
-import { ArtifactResourceScope } from "../dist/artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../dist/artifacts/AnalysisCleanupLease.js";
+import { ArtifactResourceScope } from "../dist/resources/ArtifactResourceScope.js";
+import { AnalysisCleanupLease } from "../dist/resources/AnalysisCleanupLease.js";
 import {
   KUNA_XREF_MISSING_NAME_REMEDIATION,
   missingKunaXrefNameMessage,
@@ -72,7 +73,7 @@ if (values["compare-ghidra"]) {
   );
   assert.ok(
     process.env.GHIDRA_INSTALL_DIR,
-    "Ghidra comparison prerequisite missing: GHIDRA_INSTALL_DIR (bring your own Ghidra 12.1.4 and JDK 21)",
+    "Ghidra comparison prerequisite missing: GHIDRA_INSTALL_DIR (bring your own Ghidra 12.2 and JDK 25)",
   );
 }
 const run = createVerifierRun();
@@ -513,7 +514,7 @@ const verifyKuna = async (
       const pseudocode = await cold.call("procedure_pseudo_code", {
         procedure: address,
       });
-      assert.equal(pseudocode.structured.subject.digest.sha256, sha256);
+      assert.equal(pseudocode.structured.subject.identity.sha256, sha256);
       assert.equal(pseudocode.structured.provider.id, "kuna");
       const source = pseudocode.structured.raw_result?.source?.kind;
       // A fast export can finish before the first request reaches the
@@ -739,7 +740,7 @@ let inspectionResourcesClean = true;
 try {
   const installation = await inspectKunaInstallation(
     { REA_KUNA_COMMAND: kuna, REA_KUNA_CACHE_DIR: cacheRoot },
-    { resourceScope },
+    { platform: HOST_PLATFORM.platform, resourceScope },
   );
   assert.ok(
     installation.ok,

@@ -135,8 +135,21 @@ describe("portable advertised dialect projection", () => {
     ],
     [
       "pattern-only allOf members",
-      { type: "string", allOf: [{ pattern: "^a" }, { pattern: "b$" }] },
-      { type: "string", pattern: "^a" },
+      {
+        type: "string",
+        allOf: [{ pattern: "^a[a-z]*$" }, { pattern: "^[a-z]*b$" }],
+      },
+      { type: "string", pattern: "^a[a-z]*$" },
+    ],
+    [
+      "pattern in its portable form",
+      { type: "string", pattern: "^\\d+$" },
+      { type: "string", pattern: "^[0-9]+$" },
+    ],
+    [
+      "pattern without a portable form",
+      { type: "string", pattern: "^😀$" },
+      { type: "string" },
     ],
     [
       "string literal union",

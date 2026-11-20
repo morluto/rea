@@ -9,7 +9,6 @@ export interface OwnershipTraceExecution {
 export function collectOwnershipTraceFacts(options: {
   readonly traces: readonly { readonly pid: number; readonly text: string }[];
   readonly nodeExecutable: string;
-  readonly psExecutables: ReadonlySet<string>;
 }): {
   readonly ownershipThreads: ReadonlySet<number>;
   readonly psProcesses: ReadonlySet<number>;

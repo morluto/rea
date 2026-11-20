@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 import { writeFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 import { WebNetworkCaptureService } from "../../application/WebNetworkCaptureService.js";
@@ -27,7 +27,7 @@ const service = () =>
               command: process.execPath,
               arguments: [
                 "--import",
-                require.resolve("tsx"),
+                pathToFileURL(require.resolve("tsx")).href,
                 fileURLToPath(
                   new URL("./NodeCaptureProcess.ts", import.meta.url),
                 ),

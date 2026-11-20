@@ -1,3 +1,5 @@
+import { displayedEvidenceSubject } from "../../fixtures/evidenceSubject.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { writeFile } from "node:fs/promises";
@@ -22,10 +24,11 @@ import {
 } from "../../../src/domain/evidenceBundle.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const sourceEvidence = (label: string) =>
   createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       operation: "observe",
@@ -62,11 +65,10 @@ describe("bundle comparison MCP semantic status", () => {
     const left = createEvidenceBundle([record]);
     const displayRecord = {
       ...record,
-      subject: {
-        ...record.subject!,
+      subject: displayedEvidenceSubject(record.subject, {
         name: "renamed.elf",
         local_path: join(root, "renamed.elf"),
-      },
+      }),
     };
     const displayOnly = { ...left, records: [displayRecord] };
     const changedRecord = createEvidence(
@@ -448,7 +450,10 @@ const connect = async () => {
     close: () => Promise.resolve(resultOk(null)),
   }));
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "bundle-comparison-test", version: "1" });
+  const client = new Client(
+    { name: "bundle-comparison-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);

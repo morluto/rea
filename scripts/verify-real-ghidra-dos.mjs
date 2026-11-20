@@ -546,20 +546,13 @@ function hexBytes(bytes) {
   return bytes.replace(/\s/gu, "").toLowerCase();
 }
 function assertProfile(profile) {
-  assert.equal(
-    profile.parameters.load_image_evidence,
-    "independent-mz-mapping-relocations-v2",
-  );
-  assert.equal(
-    profile.parameters.function_body_evidence,
-    "complete-inclusive-ranges-v1",
-  );
+  assert.match(profile.parameters.producer.sources_sha256, /^[0-9a-f]{64}$/u);
   assert.equal(profile.provider.id, "ghidra");
   assert.equal(profile.parameters.target_format, "dos-mz");
   assert.equal(profile.parameters.import_mode, "ephemeral-source-immutable");
   assert.equal(
     profile.parameters.annotation_policy,
-    "atomic-function-entry-metadata-v1",
+    "atomic-function-entry-metadata",
   );
   assert.equal(profile.parameters.loader, "MzLoader");
   assert.equal(profile.parameters.language_id, "x86:LE:16:Real Mode");
@@ -611,7 +604,7 @@ async function evidenceCall(name, arguments_) {
     { timeout: 240000 },
   );
   const evidence = parseEvidence(requireMcpOutput(result, name));
-  assert.equal(evidence.subject.digest.sha256, sha256);
+  assert.equal(evidence.subject.identity.sha256, sha256);
   assert.equal(evidence.provider.id, "ghidra");
   assertProfile(evidence.analysis_profile);
   return evidence;
@@ -632,7 +625,7 @@ async function cliEvidence(command, procedure, options = []) {
     { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
   );
   const evidence = parseEvidence(JSON.parse(stdout));
-  assert.equal(evidence.subject.digest.sha256, sha256);
+  assert.equal(evidence.subject.identity.sha256, sha256);
   assert.equal(evidence.provider.id, "ghidra");
   assertProfile(evidence.analysis_profile);
   assert.equal(digest(await readFile(targetPath)), sha256);

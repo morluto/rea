@@ -12,17 +12,17 @@ import { build } from "plist";
 import { withVerifierCleanup } from "../../../../scripts/lib/verifier-cleanup.mjs";
 
 import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
+import { phaseArrival, phaseGate } from "../../../support/lifecycleHarness.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
 import {
-  NATIVE_COMMAND_OUTPUT_BUDGET_BYTES,
   NATIVE_FAILURE_DIAGNOSTIC_BYTES,
   NativeCommandFailure,
   XcrunCommandRunner,
   type NativeCommandLauncher,
   type NativeCommandRunner,
-} from "../../../../src/native/CommandRunner.js";
+} from "../../../../src/providers/NativeCommandRunner.js";
 import { err, ok } from "../../../../src/domain/result.js";
 import { parseLipoFixture } from "../../../fixtures/lipo.js";
 import {
@@ -56,6 +56,7 @@ import {
   nativeResolvedToolFixture,
 } from "../../../fixtures/nativeCommands.js";
 import { releaseOwnedCleanup } from "../../../support/cleanupRelease.js";
+import { NATIVE_COMMAND_OUTPUT_BUDGET_BYTES } from "../../../../src/domain/native/nativeCommandOutput.js";
 
 /** The file runner identifies selected .plist inputs as XML. */
 const writeFixturePlist = async (path: string): Promise<void> => {
@@ -880,18 +881,8 @@ describe("native late cancellation with cleanup", () => {
   it("keeps a late cancellation fact with the physical command failure and retries its retained owner", async () => {
     const cancellationReason = { caller: "stop after process failure" };
     const controller = new AbortController();
-    let commandStarted!: () => void;
-    const started = new Promise<void>((resolve) => {
-      commandStarted = resolve;
-    });
-    let cleanupStarted!: () => void;
-    const cleanupAttempt = new Promise<void>((resolve) => {
-      cleanupStarted = resolve;
-    });
-    let releaseFirstCleanup!: () => void;
-    const firstCleanup = new Promise<void>((resolve) => {
-      releaseFirstCleanup = resolve;
-    });
+    const commandStart = phaseArrival();
+    const nativeCleanupStart = phaseGate();
     let cleanupCalls = 0;
     let launches = 0;
     const launcher: NativeCommandLauncher = async (options) => {
@@ -911,7 +902,7 @@ describe("native late cancellation with cleanup", () => {
         child.exitCode = 7;
         child.emit("exit", 7, null);
         child.emit("close", 7, null);
-        commandStarted();
+        commandStart.arrive();
       });
       return {
         process: child,
@@ -924,8 +915,7 @@ describe("native late cancellation with cleanup", () => {
         cleanup: async () => {
           cleanupCalls += 1;
           if (cleanupCalls === 1) {
-            cleanupStarted();
-            await firstCleanup;
+            await nativeCleanupStart.hold();
             return {
               cleaned: false,
               reason: "controlled cleanup remains incomplete",
@@ -952,14 +942,10 @@ describe("native late cancellation with cleanup", () => {
         {},
         { signal: controller.signal },
       );
-      await awaitAcknowledgement(started, pending, "native command start");
-      await awaitAcknowledgement(
-        cleanupAttempt,
-        pending,
-        "native cleanup start",
-      );
+      await commandStart.reached(pending, "native command start");
+      await nativeCleanupStart.reached(pending, "native cleanup start");
       controller.abort(cancellationReason);
-      releaseFirstCleanup();
+      nativeCleanupStart.release();
 
       const result = await pending;
       if (result.ok)
@@ -988,7 +974,7 @@ describe("native late cancellation with cleanup", () => {
       expect(cleanupCalls).toBe(2);
       expect(launches).toBe(1);
     } finally {
-      releaseFirstCleanup();
+      nativeCleanupStart.release();
       await client.close();
     }
   });
@@ -1107,24 +1093,13 @@ describe("native command cleanup lifecycle", () => {
   });
 
   it("waits for an active command before retrying its failed owner at close", async () => {
-    let finishCommand!: (
-      result: Awaited<ReturnType<NativeCommandRunner["run"]>>,
-    ) => void;
-    let commandStarted!: () => void;
-    const started = new Promise<void>((resolve) => {
-      commandStarted = resolve;
-    });
-    const command = new Promise<
+    const commandRun = phaseGate<
+      void,
       Awaited<ReturnType<NativeCommandRunner["run"]>>
-    >((resolve) => {
-      finishCommand = resolve;
-    });
+    >();
     let cleanupRetries = 0;
     const runner: NativeCommandRunner = {
-      run: () => {
-        commandStarted();
-        return command;
-      },
+      run: () => commandRun.hold(),
       retryCleanup: async () => {
         cleanupRetries += 1;
         return cleanupRetries === 1
@@ -1160,11 +1135,11 @@ describe("native command cleanup lifecycle", () => {
       }),
     );
     try {
-      await awaitAcknowledgement(started, execution, "native command start");
+      await commandRun.reached(execution, "native command start");
       const closing = client.close();
       await Promise.resolve();
       expect(cleanupRetries).toBe(0);
-      finishCommand(commandResult);
+      commandRun.release(commandResult);
 
       const [observed, closed] = await Promise.all([execution, closing]);
       expect(observed.ok).toBe(false);
@@ -1194,7 +1169,7 @@ describe("native command cleanup lifecycle", () => {
       await expect(client.close()).resolves.toMatchObject({ ok: true });
       expect(cleanupRetries).toBe(2);
     } finally {
-      finishCommand(commandResult);
+      commandRun.release(commandResult);
       try {
         await execution;
       } finally {
@@ -1563,7 +1538,7 @@ describe("native plist defaults for iOS-style bundles", () => {
   });
 });
 
-it("rejects malformed selected plist bytes before mocked conversion can invent facts", async () => {
+it("rejects malformed selected plist bytes that plutil also rejects instead of inventing facts", async () => {
   directory = await createTestTempDirectory("rea-native-malformed-plist-");
   const app = join(directory, "Malformed.app");
   const path = join(app, "Contents/Info.plist");
@@ -1572,9 +1547,19 @@ it("rejects malformed selected plist bytes before mocked conversion can invent f
   const tools: string[] = [];
   const replay = new FixtureRunner();
   const runner: NativeCommandRunner = {
-    run(tool, arguments_, options) {
+    async run(tool, arguments_, options) {
       tools.push(tool);
-      return replay.run(tool, arguments_, options);
+      const result = await replay.run(tool, arguments_, options);
+      // REA's XML reader refuses these bytes, so plutil decides (#12234);
+      // like the real tool, it rejects them rather than printing a plist.
+      if (tool !== "plutil" || !result.ok) return result;
+      return ok({
+        ...result.value,
+        stdout: "",
+        stdoutBytes: 0,
+        stderr: `${path}: Property List error`,
+        exitCode: 1,
+      });
     },
   };
   const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
@@ -1590,7 +1575,14 @@ it("rejects malformed selected plist bytes before mocked conversion can invent f
       error: { _tag: tag, operation: "inspect_plist" },
     });
   }
-  expect(tools).toEqual(["file", "file"]);
+  expect(tools).toEqual([
+    "file",
+    "plutil",
+    "plutil",
+    "file",
+    "plutil",
+    "plutil",
+  ]);
   expect(await readFile(path, "utf8")).toBe("fixture");
 });
 

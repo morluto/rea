@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../../tests/support/lifecycleHarness.js";
 
 import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";
 import {
@@ -12,7 +13,7 @@ import {
   type ProviderAvailability,
   type ProviderIdentity,
   type ProviderTargetSupport,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -978,20 +979,12 @@ describe("analysis provider registry: profile and cleanup failures", () => {
   it("owns a signal-ignoring profile probe until final completion and joins shutdown", async () => {
     const alpha = candidate("alpha");
     let observedSignal: AbortSignal | undefined;
-    let finish: (() => void) | undefined;
-    let started: (() => void) | undefined;
-    const pending = new Promise<void>((resolve) => {
-      started = resolve;
-    });
-    const gate = new Promise<void>((resolve) => {
-      finish = resolve;
-    });
+    const probe = phaseGate();
     const ignoresCancellation: AnalysisProviderCandidate = {
       ...alpha.provider,
       resolveAnalysisProfile: async (target, options) => {
         observedSignal = options?.signal;
-        started?.();
-        await gate;
+        await probe.hold();
         return alpha.provider.resolveAnalysisProfile(target);
       },
     };
@@ -1008,7 +1001,7 @@ describe("analysis provider registry: profile and cleanup failures", () => {
     let closed = false;
     let closing: ReturnType<typeof registry.closeOwnedResources> | undefined;
     await withVerifierCleanup(async () => {
-      await awaitAcknowledgement(pending, selecting, "profile probe");
+      await probe.reached(selecting, "profile probe");
       controller.abort(reason);
       closing = registry.closeOwnedResources().then((result) => {
         closed = true;
@@ -1020,7 +1013,7 @@ describe("analysis provider registry: profile and cleanup failures", () => {
       expect(registry.hasPendingOwnedResources()).toBe(true);
       expect(observedSignal?.aborted).toBe(true);
       expect(observedSignal?.reason).toBe(reason);
-      finish?.();
+      probe.release();
       const result = await selecting;
       expect(result).toMatchObject({
         ok: false,
@@ -1032,7 +1025,7 @@ describe("analysis provider registry: profile and cleanup failures", () => {
     }, [
       () => {
         controller.abort(reason);
-        finish?.();
+        probe.release();
       },
       async () => {
         await Promise.allSettled([selecting, closing]);
@@ -1397,22 +1390,14 @@ describe("automatic profile cleanup ownership", () => {
 it("registers before production and gates fresh selections until shutdown has joined finalization", async () => {
   const alpha = candidate("alpha");
   let calls = 0;
-  let enter: (() => void) | undefined;
-  let finish: (() => void) | undefined;
-  const entered = new Promise<void>((resolve) => {
-    enter = resolve;
-  });
-  const gate = new Promise<void>((resolve) => {
-    finish = resolve;
-  });
+  const finalization = phaseGate();
   const registry = new AnalysisProviderRegistry([
     {
       ...alpha.provider,
       resolveAnalysisProfile: async (target) => {
         calls++;
         if (calls === 1) {
-          enter?.();
-          await gate;
+          await finalization.hold();
         }
         return alpha.provider.resolveAnalysisProfile(target);
       },
@@ -1422,13 +1407,13 @@ it("registers before production and gates fresh selections until shutdown has jo
   let closing: ReturnType<typeof registry.closeOwnedResources> | undefined;
   let next: ReturnType<typeof registry.select> | undefined;
   await withVerifierCleanup(async () => {
-    await awaitAcknowledgement(entered, selecting, "profile finalization");
+    await finalization.reached(selecting, "profile finalization");
     closing = registry.closeOwnedResources();
     next = registry.select(DATABASE_TARGET, "alpha");
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(calls).toBe(1);
     expect(registry.hasPendingOwnedResources()).toBe(true);
-    finish?.();
+    finalization.release();
     expect(await selecting).toMatchObject({
       ok: false,
       error: { _tag: "AnalysisCancelledError" },
@@ -1438,7 +1423,7 @@ it("registers before production and gates fresh selections until shutdown has jo
     expect(calls).toBe(2);
     expect(registry.hasPendingOwnedResources()).toBe(false);
   }, [
-    () => finish?.(),
+    () => finalization.release(),
     async () => {
       await Promise.allSettled([selecting, closing, next]);
     },
@@ -1450,14 +1435,7 @@ it("registers before production and gates fresh selections until shutdown has jo
 
 it("joins cancelled readiness finalization and shutdown before admitting another observation", async () => {
   const base = candidate("alpha").provider;
-  let enter!: () => void;
-  let finish!: () => void;
-  const entered = new Promise<void>((resolve) => {
-    enter = resolve;
-  });
-  const gate = new Promise<void>((resolve) => {
-    finish = resolve;
-  });
+  const readiness = phaseGate();
   let calls = 0;
   let observed: AbortSignal | undefined;
   const registry = new AnalysisProviderRegistry([
@@ -1469,8 +1447,7 @@ it("joins cancelled readiness finalization and shutdown before admitting another
         calls++;
         if (calls === 1) {
           observed = signal;
-          enter();
-          await gate;
+          await readiness.hold();
         }
         return base.inspectAvailability();
       },
@@ -1489,7 +1466,7 @@ it("joins cancelled readiness finalization and shutdown before admitting another
   let closing: ReturnType<typeof registry.closeOwnedResources> | undefined;
   let next: ReturnType<typeof registry.candidates> | undefined;
   await withVerifierCleanup(async () => {
-    await awaitAcknowledgement(entered, observing, "readiness observation");
+    await readiness.reached(observing, "readiness observation");
     controller.abort(reason);
     closing = registry.closeOwnedResources().then((value) => {
       closed = true;
@@ -1502,7 +1479,7 @@ it("joins cancelled readiness finalization and shutdown before admitting another
     expect(calls).toBe(1);
     expect(observed?.reason).toBe(reason);
     expect(registry.hasPendingOwnedResources()).toBe(true);
-    finish();
+    readiness.release();
     const failure = await observing;
     expect(failure).toBeInstanceOf(AnalysisCancelledError);
     expect(failure.cause).toBe(reason);
@@ -1521,7 +1498,7 @@ it("joins cancelled readiness finalization and shutdown before admitting another
   }, [
     () => {
       controller.abort(reason);
-      finish();
+      readiness.release();
     },
     async () => {
       await Promise.allSettled([observing, closing, next]);
@@ -1632,14 +1609,7 @@ it("joins every candidate and retains physical failure with exact mixed cleanup 
   const alpha = candidate("alpha").provider;
   const beta = candidate("beta").provider;
   const gamma = candidate("gamma").provider;
-  let finish!: () => void;
-  let enter!: () => void;
-  const entered = new Promise<void>((resolve) => {
-    enter = resolve;
-  });
-  const gate = new Promise<void>((resolve) => {
-    finish = resolve;
-  });
+  const observation = phaseGate();
   const physical = new ProviderAdapterError("alpha", "binary_session", {
     diagnostics: { reason: "physical observation failed" },
   });
@@ -1659,8 +1629,7 @@ it("joins every candidate and retains physical failure with exact mixed cleanup 
     {
       ...beta,
       inspectAvailability: async () => {
-        enter();
-        await gate;
+        await observation.hold();
         throw cleanup;
       },
       closeOwnedResources: async () => {
@@ -1677,14 +1646,10 @@ it("joins every candidate and retains physical failure with exact mixed cleanup 
     return cause;
   });
   await withVerifierCleanup(async () => {
-    await awaitAcknowledgement(
-      entered,
-      observing,
-      "mixed readiness observation",
-    );
+    await observation.reached(observing, "mixed readiness observation");
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(settled).toBe(false);
-    finish();
+    observation.release();
     const failure = await observing;
     expect(failure.cleanupIncomplete).toBe(true);
     expect(failure.cleanupResources).toContain("beta retained prerequisite");
@@ -1718,7 +1683,7 @@ it("joins every candidate and retains physical failure with exact mixed cleanup 
     });
     expect(registry.hasPendingOwnedResources()).toBe(false);
   }, [
-    finish,
+    observation.release,
     async () => {
       await observing;
     },
@@ -1882,14 +1847,7 @@ it("does not inspect a new selection after cancellation while its retained candi
   const failure = new ProviderCleanupError("alpha", ["profile-reader"], {});
   let allowClose = false;
   let inspections = 0;
-  let enter!: () => void;
-  let finish!: () => void;
-  const entered = new Promise<void>((resolve) => {
-    enter = resolve;
-  });
-  const gate = new Promise<void>((resolve) => {
-    finish = resolve;
-  });
+  const cleanupRetry = phaseGate();
   const registry = new AnalysisProviderRegistry([
     {
       ...base,
@@ -1899,8 +1857,7 @@ it("does not inspect a new selection after cancellation while its retained candi
       },
       closeOwnedResources: async () => {
         if (!allowClose) throw failure;
-        enter();
-        await gate;
+        await cleanupRetry.hold();
         return ok(null);
       },
     },
@@ -1914,9 +1871,9 @@ it("does not inspect a new selection after cancellation while its retained candi
     selecting = registry.select(DATABASE_TARGET, "alpha", {
       signal: controller.signal,
     });
-    await awaitAcknowledgement(entered, selecting, "candidate cleanup retry");
+    await cleanupRetry.reached(selecting, "candidate cleanup retry");
     controller.abort(reason);
-    finish();
+    cleanupRetry.release();
     const result = await selecting;
     expect(result).toMatchObject({
       ok: false,
@@ -1930,7 +1887,7 @@ it("does not inspect a new selection after cancellation while its retained candi
   }, [
     () => {
       allowClose = true;
-      finish();
+      cleanupRetry.release();
     },
     async () => {
       await selecting;

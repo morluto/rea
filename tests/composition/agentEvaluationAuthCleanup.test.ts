@@ -40,15 +40,16 @@ it.each([false, true])(
     if (!authFails)
       await expect(stat(auth)).rejects.toMatchObject({ code: "ENOENT" });
     expect(failure).toBeInstanceOf(AggregateError);
+    // One level: the command failure and the retained root, then the
+    // independent auth failure; the failure carries its fixture for a retry.
+    expect(failure).toMatchObject({ cleanupLeases: [fixture] });
     const errors = (failure as AggregateError).errors;
-    expect(errors).toHaveLength(authFails ? 2 : 1);
-    // The retained root is named and carries its fixture for a retry.
-    expect(errors[0]).toMatchObject({ cleanupLeases: [fixture] });
-    const retained = (errors[0] as AggregateError).errors;
-    expect(retained[0]).toBe(commandFailure);
-    expect(String(retained.at(-1))).toContain(root);
+    expect(errors).toHaveLength(authFails ? 3 : 2);
+    expect(errors[0]).toBe(commandFailure);
+    expect(errors[1]).not.toBeInstanceOf(AggregateError);
+    expect(String(errors[1])).toContain(root);
     if (authFails) {
-      expect(errors[1]).toMatchObject({ code: "ERR_FS_EISDIR", path: auth });
+      expect(errors[2]).toMatchObject({ code: "ERR_FS_EISDIR", path: auth });
       expect((await stat(auth)).isDirectory()).toBe(true);
     }
     expect(await readFile(ordinary, "utf8")).toBe("retained observation");

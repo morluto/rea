@@ -1,6 +1,6 @@
 import { performance } from "node:perf_hooks";
 import { z } from "zod";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
@@ -23,6 +23,7 @@ import {
   type HopperReply,
 } from "./HopperReplyContracts.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
+import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
 import {
   hopperCallerScanBudgetForMilliseconds,
   hopperCallerScanRecovery,
@@ -358,10 +359,16 @@ export const reconcileHopperCallers = async (
     typeof budget === "number"
       ? hopperCallerScanBudgetForMilliseconds(budget)
       : budget;
-  const budgetMs = scanBudget.milliseconds;
+  const admittedBudget = readRuntimeSetting(() => ({
+    ...scanBudget,
+    milliseconds: scanBudget.milliseconds,
+    source: scanBudget.source,
+  }));
+  if (!admittedBudget.ok) return admittedBudget;
+  const budgetMs = admittedBudget.value.milliseconds;
   const describeScan = (facts: HopperCallerScanFacts): string => {
     const observed = formatHopperCallerScanReason(facts);
-    const recovery = hopperCallerScanRecovery(facts, scanBudget);
+    const recovery = hopperCallerScanRecovery(facts, admittedBudget.value);
     return recovery === "" ? observed : `${observed} ${recovery}`;
   };
   const retainNative = (
@@ -495,10 +502,16 @@ export const reconcileHopperCallers = async (
   }
   const addresses = new Set(instructions);
   addresses.add(target.address);
-  const selectedDestination = index.destinations.get(target.address);
-  const callers = new Map(selectedDestination?.callers ?? []);
+  // The index holds forward observations from the examined procedures only. A
+  // miss means none of them named the target: it adds no callers, and does
+  // not show there are none. Relationship coverage stays unknown, with the
+  // scan facts as its reason, whatever the index holds.
+  const selectedDestination: Destination = index.destinations.get(
+    target.address,
+  ) ?? { callers: new Map(), references: [] };
+  const callers = new Map(selectedDestination.callers);
   const selectedReferences: Array<{ caller: Identity; edge: CompactEdge }> = [];
-  for (const item of selectedDestination?.references ?? []) {
+  for (const item of selectedDestination.references) {
     if (!addresses.has(item.edge.target_address)) continue;
     const source =
       item.edge.source_procedure === "caller"
@@ -547,7 +560,7 @@ export const reconcileHopperCallers = async (
   const compactReferences = selectedReferences.map(({ caller, edge }) =>
     compactCallReference(caller, edge),
   );
-  const inventoryCallers = selectedDestination?.callers ?? new Map();
+  const inventoryCallers = selectedDestination.callers;
   const siteCallers = new Map<string, Identity>();
   for (const { caller } of selectedReferences)
     if (
@@ -659,9 +672,7 @@ export const reconcileHopperCallers = async (
       native_result: retainedNativeResult,
       forward_observations: {
         target,
-        callee_inventory_callers: [
-          ...(selectedDestination?.callers.values() ?? []),
-        ],
+        callee_inventory_callers: [...selectedDestination.callers.values()],
         call_site_callers: [...siteCallers.values()],
         call_references: compactReferences,
         provenance:

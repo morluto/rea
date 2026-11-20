@@ -1,10 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import type {
-  ReferenceSourceEntry,
-  TraversalState,
-} from "./ReferenceSourceReaderTypes.js";
-import { reconcileUnobservedSymlinkTargets } from "./ReferenceSourceReader.js";
+import type { ReferenceSourceEntry } from "./ReferenceSourceReaderTypes.js";
+import type { TraversalState } from "./ReferenceSourceReaderTraversal.js";
+import { reconcileUnobservedSymlinkTargets } from "./ReferenceSourceSymlinkTargets.js";
 
 const failedDirectory = (
   path: string,

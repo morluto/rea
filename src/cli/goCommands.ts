@@ -1,6 +1,5 @@
 import type { Logger } from "pino";
 
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { createGoBinaryService } from "../composition/go.js";
 import { GO_TOOL_CONTRACTS } from "../contracts/go/goToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
@@ -18,7 +17,6 @@ export const registerGoCommands = (cli: CliInstance, logger: Logger): void => {
     logger,
     contract,
     {
-      command: CLI_COMMANDS.inspectGoBinary,
       description:
         "Inspect embedded Go compiler, modules, build settings and optional static (ptr, len) string literals without target execution",
       positionals: ["path"],

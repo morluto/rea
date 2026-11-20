@@ -17,6 +17,7 @@ import {
 } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { itWithCaptureCapability } from "./processCaptureCapability.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const fixture = fileURLToPath(
   new URL("../../fixtures/processCaptureCancellation.mjs", import.meta.url),
@@ -268,10 +269,13 @@ itWithCaptureCapability(
       },
     );
     const server = createServer({ kind: "session", session }, { logger });
-    const client = new Client({
-      name: "process-settlement-cancellation",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "process-settlement-cancellation",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     let marker: Marker | undefined;
     onTestFinished(async () => {
       await finishCleanup([

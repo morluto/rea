@@ -1,9 +1,9 @@
-import type { AnalysisOperation } from "../application/AnalysisProvider.js";
+import type { AnalysisOperation } from "../ports/AnalysisProvider.js";
 import type {
   AnalysisError,
   AnalysisPartialObservation,
 } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisArtifactChangedError,
   type AnalysisCancelledError,
@@ -219,11 +219,11 @@ export class GhidraNativeAotSnapshotOwner {
         },
       );
       return failure.cleanupFailure?.cleanupIncomplete
-        ? analysisErrorWithCleanupFailure(
+        ? analysisErrorWithCleanupDependencies(
             primary,
             failure.cleanupFailure,
             operation,
-          ).bindCleanupDependencies([primary, failure.cleanupFailure])
+          )
         : primary;
     }
     if (failure.kind !== "cancelled" || this.#conflict === undefined)
@@ -391,11 +391,7 @@ export class GhidraNativeAotSnapshotOwner {
     });
     const cleanup = source?.cleanupFailure ?? this.cleanupFailure;
     return cleanup?.cleanupIncomplete
-      ? analysisErrorWithCleanupFailure(
-          primary,
-          cleanup,
-          operation,
-        ).bindCleanupDependencies([primary, cleanup])
+      ? analysisErrorWithCleanupDependencies(primary, cleanup, operation)
       : primary;
   }
 }

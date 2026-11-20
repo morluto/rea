@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { afterEach, expect, it, vi } from "vitest";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 
 const injected = vi.hoisted(() => ({
   path: "",
@@ -255,14 +255,7 @@ it.each([
     if (systemError) Object.assign(primary, { code: "EIO", syscall: "read" });
     const reason = { request: "cancel while the descriptor read is pending" };
     const controller = new AbortController();
-    let enter!: () => void;
-    let release!: () => void;
-    const entered = new Promise<void>((resolve) => {
-      enter = resolve;
-    });
-    const pending = new Promise<void>((resolve) => {
-      release = resolve;
-    });
+    const selectedExecutableRead = phaseGate();
     injected.path = path;
     injected.closeFailure = closeDenied
       ? new Error("descriptor close denied after failed read")
@@ -272,8 +265,7 @@ it.each([
       open: async (selected: string, flags: number) => {
         const handle = await open(selected, flags);
         handle.read = async () => {
-          enter();
-          await pending;
+          await selectedExecutableRead.hold();
           throw primary;
         };
         return handle;
@@ -287,9 +279,9 @@ it.each([
       ),
     );
     await withVerifierCleanup(async () => {
-      await awaitAcknowledgement(entered, reading, "selected executable read");
+      await selectedExecutableRead.reached(reading, "selected executable read");
       controller.abort(reason);
-      release();
+      selectedExecutableRead.release();
       const failure = await reading;
       expect(failure.cause).toBe(primary);
       expect(failure.outcome).toMatchObject({ kind: "failed", cause: primary });
@@ -316,7 +308,7 @@ it.each([
       await scope.close();
     }, [
       () => controller.abort(),
-      release,
+      selectedExecutableRead.release,
       async () => {
         await reading;
       },

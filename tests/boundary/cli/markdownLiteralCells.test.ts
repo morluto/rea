@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -120,6 +121,7 @@ cliTest(
     const row = {
       [literal]: literal,
       punctuation,
+      "List<T>": "&copy; <br> left|right\\path\r\nnext",
       nested: { text: literal, values: ["__name__", "plain"] },
       empty: "",
       zero: 0,
@@ -130,7 +132,7 @@ cliTest(
     };
     const result = { scalar: { [literal]: literal }, rows: [row] };
     const record = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       { operation: "ordinary-json", parameters: {}, result },
     );
@@ -166,6 +168,7 @@ cliTest(
       ...Object.keys(row),
       literal,
       punctuation,
+      "&copy; <br> left|right\\pathnext",
       JSON.stringify(row.nested),
       "",
       "0",
@@ -175,6 +178,7 @@ cliTest(
       ...Object.values(edgeSpaceEntries),
     ];
     expect(renderedCells(html)).toEqual(expectedCells);
+    expect(html).toContain("left|right\\path<br>next");
     expect(html).not.toMatch(/<(?:em|strong|s|code|img)(?:\s|>)/u);
 
     // Standalone reports share the same table owner as command output.
@@ -191,7 +195,7 @@ cliTest(
     const path = join(root, "bundle.json");
     const literal = `left${"\u00a0\u202f\u2003".repeat(80_000)}right`;
     const record = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "ordinary-json",
@@ -265,7 +269,7 @@ cliTest(
       after: "still visible",
     };
     const record = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       { operation: "ordinary-json", parameters: {}, result },
     );
@@ -386,7 +390,7 @@ cliTest(
       nested: { value: 1 },
     };
     const record = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       { operation: "ordinary-json", parameters: {}, result },
     );

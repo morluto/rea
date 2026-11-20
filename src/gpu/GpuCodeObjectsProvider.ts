@@ -1,12 +1,22 @@
-import { readerIntegrityFailure } from "../artifacts/StableArtifactFailure.js";
+import {
+  readerIntegrityFailure,
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+  withArtifactRegularFile,
+  bindArtifactFileCleanup,
+  artifactFilePrimaryFacts,
+  artifactFileCancellationCause,
+  artifactFileCompletion,
+  selectedFileTargetError,
+} from "../resources/index.js";
 import { GPU_CODE_OBJECTS_PROVIDER_IDENTITY } from "./GpuCodeObjectsProviderIdentity.js";
 import { lstat, type FileHandle } from "node:fs/promises";
-import type { GpuCodeObjectsPort } from "../application/gpu/GpuCodeObjectsPort.js";
+import type { GpuCodeObjectsPort } from "../ports/gpu/GpuCodeObjectsPort.js";
 import {
   createGpuCodeObjectsEvidence,
   createGpuCodeObjectsPartialEvidence,
 } from "../domain/gpu/gpuCodeObjectsEvidence.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type {
   GpuCodeObjects,
   GpuCodeObjectsInput,
@@ -24,19 +34,14 @@ import {
   carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
+import {
+  projectZstandardFrameAllowance,
+  ZstandardFrameAllowanceError,
+} from "../domain/compression/zstandardFrameAllowance.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import {
-  withArtifactRegularFile,
-  bindArtifactFileCleanup,
-  artifactFilePrimaryFacts,
-  artifactFileCancellationCause,
-  artifactFileCompletion,
-} from "../artifacts/ArtifactFileOperation.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { BinaryResourceFailure } from "../native/metadata/BinaryContainer.js";
+import { BinaryResourceFailure } from "../domain/binaryContainer.js";
 import {
   GpuFileSource,
   gpuCount,
@@ -45,11 +50,11 @@ import {
 } from "./GpuSource.js";
 import { GpuInventory } from "./GpuInventory.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { selectedFileTargetError } from "../artifacts/RegularFileErrorProjection.js";
 import {
   isSelectedRegularFileError,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_gpu_code_objects";
 
@@ -113,8 +118,19 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
         input.path,
         primary,
       );
+      const frameAllowance =
+        primary instanceof ZstandardFrameAllowanceError
+          ? primary
+          : cause instanceof ZstandardFrameAllowanceError
+            ? cause
+            : undefined;
       let error: AnalysisError;
-      if (origin === "owned-or-classified" && primary instanceof AnalysisError)
+      if (frameAllowance !== undefined)
+        error = projectZstandardFrameAllowance(OPERATION, frameAllowance);
+      else if (
+        origin === "owned-or-classified" &&
+        primary instanceof AnalysisError
+      )
         error = primary;
       else if (primary instanceof BinaryResourceFailure)
         error = new AnalysisResourceConstraintError(
@@ -184,8 +200,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
           cause,
           diagnostics: {
             path: input.path,
-            reason:
-              primary instanceof Error ? primary.message : String(primary),
+            reason: errorMessage(primary),
           },
         });
       if (

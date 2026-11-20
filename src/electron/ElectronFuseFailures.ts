@@ -1,14 +1,14 @@
 import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 import { ELECTRON_FUSE_PROVIDER_IDENTITY } from "./ElectronFuseProviderIdentity.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  ArtifactReaderFailure,
   ArtifactFileCleanupFailure,
   artifactFileCompletion,
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
@@ -29,6 +29,7 @@ import {
 } from "../filesystem/RegularFile.js";
 import { ElectronFusePathFailure } from "./ElectronFusePath.js";
 import { ElectronFuseResourceFailure } from "./ElectronFuseReader.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_electron_fuses";
 
@@ -57,11 +58,11 @@ export const electronFuseFailure = (
             ? undefined
             : cancelledBy(operation, carriedReason(cancellation.reason));
       if (primary !== undefined)
-        return analysisErrorWithCleanupFailure(
+        return analysisErrorWithCleanupDependencies(
           primary,
           cleanup,
           operation,
-        ).bindCleanupDependencies([primary, cleanup]);
+        );
     }
     return cleanup;
   }
@@ -77,24 +78,26 @@ export const electronFuseFailure = (
     return new AnalysisInputError(operation, { cause }, [
       { path: ["path"], reason: cause.reason, message: cause.message },
     ]);
-  if (cause instanceof ElectronFuseResourceFailure)
+  if (cause instanceof ElectronFuseResourceFailure) {
+    const { name, maximum } = cause.limit;
+    const fileSize = name === "maximum_input_bytes";
     return new AnalysisResourceConstraintError(
       operation,
-      cause.boundary === "file-size" ? "file-size" : "capacity",
+      fileSize ? "file-size" : "capacity",
       cause.message,
-      cause.boundary === "file-size"
-        ? { maximum_input_bytes: 1024 * 1024 * 1024 }
-        : { maximum_sentinels_per_slice: 32 },
+      { [name]: maximum },
       {
         cause,
         ...fixedAllowanceOptions(
-          cause.boundary === "file-size"
-            ? "the 1 GiB Electron fuse input allowance"
+          fileSize
+            ? "the Electron fuse input allowance"
             : "The Electron fuse sentinel inventory",
-          cause.boundary === "file-size" ? "input" : "count",
+          fileSize ? "input" : "count",
+          { limit: maximum, unit: fileSize ? "bytes" : "sentinels per slice" },
         ),
       },
     );
+  }
   const formatFailure = parseFailureAnalysisError(operation, path, cause);
   if (formatFailure !== undefined) return formatFailure;
   if (cause instanceof RegularFileChangedError)
@@ -140,7 +143,7 @@ export const electronFuseFailure = (
       cause,
       diagnostics: {
         path,
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       },
     },
   );

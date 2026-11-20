@@ -1,4 +1,5 @@
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { unknownTarget } from "../domain/targetIdentity.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import {
   artifactResourceDialect,
   createArtifactAnalysisResources,
@@ -7,19 +8,19 @@ import { classifyProviderFailure } from "../providers/classifyProviderFailure.js
 import {
   ArtifactResourceRetryFailure,
   ArtifactResourceScope,
-} from "../artifacts/ArtifactResourceScope.js";
-import { withArtifactRegularFile } from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/ArtifactResourceScope.js";
+import { withArtifactRegularFile } from "../resources/ArtifactFileOperation.js";
 import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
 import { OwnedCommandFailure } from "./OwnedCommand.js";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { expect, it } from "vitest";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { readStableArtifact } from "../resources/readStableArtifact.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
@@ -27,6 +28,7 @@ import {
 import { createEvidence } from "../domain/evidence.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { UnclassifiedProviderFailure } from "../domain/unclassifiedProviderFailure.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok } from "../domain/result.js";
 import { ArtifactAnalysisResources } from "./ArtifactAnalysisResources.js";
@@ -251,7 +253,7 @@ it("preserves the primary error and resolves cleanup status after retry", async 
     "producer returned malformed output",
     {
       partialObservation: createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         {
           id: "fixture",
           name: "Fixture",
@@ -324,7 +326,7 @@ it("resolves each returned cleanup error with its own retained root", async () =
     },
   });
   const partial = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: null },
     {
       operation: "fixture-operation",
@@ -769,6 +771,7 @@ it("treats a fixed command-output cap as a non-retryable capture allowance", asy
       resource: "memory",
       reportedLimits: { output_bytes: 1024 },
       retryable: false,
+      fixedAllowance: { kind: "capture", limit: 1024, unit: "bytes" },
     });
     const projected = projectAnalysisError(error);
     expect(projected.retryable).toBe(false);
@@ -811,7 +814,12 @@ it("retains a physical command failure when the owner also observed late cancell
       { command_timeout_ms: 100, output_bytes: 1024 },
       undefined,
     );
-    expect(error).toMatchObject({ _tag: "AnalysisOutputError" });
+    expect(error).toBeInstanceOf(UnclassifiedProviderFailure);
+    expect(error).toMatchObject({
+      providerId: "fixture",
+      examined: { failure_kind: "protocol", reason: "physical failure" },
+    });
+    expect(projectAnalysisError(error).code).toBe("execution_failure");
     expect(error.cause).toBe(failure);
   } finally {
     await resources.close();
@@ -859,14 +867,7 @@ it("preserves typed caller cancellation through failed workspace cleanup and ret
 
 it("observes cancellation after pending descriptor cleanup before admitting replacement work", async () => {
   let closes = 0;
-  let cleanupStarted: () => void = () => {};
-  const started = new Promise<void>((resolve) => {
-    cleanupStarted = resolve;
-  });
-  let releaseCleanup: () => void = () => {};
-  const held = new Promise<void>((resolve) => {
-    releaseCleanup = resolve;
-  });
+  const descriptorCleanup = phaseGate();
   const readArtifact: typeof readStableArtifact = async (
     _path,
     _limit,
@@ -881,8 +882,7 @@ it("observes cancellation after pending descriptor cleanup before admitting repl
       lease: new AnalysisCleanupLease(async () => {
         closes++;
         if (closes === 1) throw new Error("descriptor close denied");
-        cleanupStarted();
-        await held;
+        await descriptorCleanup.hold();
       }, ["descriptor"]),
     } as const;
     await scope.release(retained);
@@ -920,9 +920,9 @@ it("observes cancellation after pending descriptor cleanup before admitting repl
       calls++;
       return ok("Must not run");
     }, caller.signal);
-    await awaitAcknowledgement(started, pending, "descriptor cleanup");
+    await descriptorCleanup.reached(pending, "descriptor cleanup");
     caller.abort(reason);
-    releaseCleanup();
+    descriptorCleanup.release();
     const result = await pending;
     if (result.ok) throw new Error("Expected cancelled replacement");
     expect(result.error.cause).toBe(reason);
@@ -930,7 +930,7 @@ it("observes cancellation after pending descriptor cleanup before admitting repl
     if (!first.ok) expect(first.error.cleanupIncomplete).toBe(false);
   }, [
     () => caller.abort(),
-    releaseCleanup,
+    descriptorCleanup.release,
     async () => {
       await pending;
     },

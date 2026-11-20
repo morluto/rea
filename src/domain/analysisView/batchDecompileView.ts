@@ -13,7 +13,7 @@ import {
   type BatchDecompileItem,
   type BatchDecompileResult,
 } from "../native/batchDecompile.js";
-import { analysisErrorProjectionSchema } from "../../contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../analysisErrorProjectionSchema.js";
 import { err, ok } from "../result.js";
 import {
   boundedViewMessages,

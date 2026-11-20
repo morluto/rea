@@ -1,4 +1,8 @@
 import { freezeOwnedJsonTreeSnapshot } from "../immutableJson.js";
+import {
+  changedEvidenceSubject,
+  fileIdentity,
+} from "../../../tests/fixtures/evidenceSubject.js";
 import { expect, it } from "vitest";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 import { createEvidence } from "../evidence.js";
@@ -74,11 +78,12 @@ it.each(["digest", "format"] as const)(
   "rejects a Go parent whose authenticated %s conflicts with its report",
   (field) => {
     const input = parent();
-    if (input.subject == null) throw new Error("Expected artifact subject");
-    const subject = {
-      ...input.subject,
-      ...(field === "digest" ? { digest: { sha256: "b".repeat(64) } } : {}),
-    };
+    if (input.subject === undefined || input.subject.identity.kind !== "file")
+      throw new Error("Expected artifact subject");
+    const subject = changedEvidenceSubject(
+      input.subject,
+      field === "digest" ? { sha256: "b".repeat(64) } : {},
+    );
     const result = projectAnalysisView(
       {
         ...input,
@@ -108,12 +113,14 @@ it.each([
   "checks report architecture %j against subject %j for every Go view",
   (architecture, subjectArchitecture, accepted) => {
     const input = parent();
-    if (input.subject?.format !== "elf")
+    if (
+      input.subject === undefined ||
+      fileIdentity(input.subject).format !== "elf"
+    )
       throw new Error("Expected ELF subject");
-    const subject = {
-      ...input.subject,
+    const subject = changedEvidenceSubject(input.subject, {
       architecture: subjectArchitecture,
-    };
+    });
     const normalizedResult = { ...report, architecture };
     for (const view of [
       { kind: "summary" },
@@ -136,12 +143,15 @@ it("revalidates the parent subject after immutable Go report facts have been cac
     sealedResult: true,
   };
   expect(projectAnalysisView(input, { kind: "summary" }).ok).toBe(true);
-  if (input.subject == null) throw new Error("Expected artifact subject");
+  if (input.subject === undefined || input.subject.identity.kind !== "file")
+    throw new Error("Expected artifact subject");
   expect(
     projectAnalysisView(
       {
         ...input,
-        subject: { ...input.subject, digest: { sha256: "b".repeat(64) } },
+        subject: changedEvidenceSubject(input.subject, {
+          sha256: "b".repeat(64),
+        }),
       },
       { kind: "summary" },
     ).ok,

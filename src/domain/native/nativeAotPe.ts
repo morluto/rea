@@ -1,13 +1,19 @@
+import { Budget } from "../budget.js";
+import { BinaryReader } from "../binaryContainer.js";
 import { observeMzWindowsHeader } from "../dosMz.js";
-import { createHash } from "node:crypto";
 import { readPeOptionalHeaderFixedFields } from "../peOptionalHeader.js";
 import { readPeCoffHeader } from "../peCoffHeader.js";
-import { readPeSectionHeader } from "../peSectionHeader.js";
+import {
+  observePeHeaderExtent,
+  PE_SECTION_HEADER_BYTES,
+  readPeSectionHeader,
+} from "../peSectionHeader.js";
 import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../analysisErrorCore.js";
 import { allKeyed, keyedBy, uniqueKeyed } from "../keyedCollection.js";
+import { decodeLimit, ParseFailureError } from "../parseFailure.js";
 import type { NativeMetadataRecovery } from "./nativeMetadataRecovery.js";
 import {
   NativeAotAdmissionError,
@@ -18,6 +24,7 @@ import {
   type NativeAotReason,
   type NativeAotTruncationReason,
 } from "./nativeAotReason.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const RTR_SIGNATURE = 0x00525452;
 const RTR_ROW_SIZE = 24;
@@ -36,9 +43,6 @@ export const NATIVE_AOT_BASE_WORK_UNITS = 64 * 1024 * 1024;
  */
 export const NATIVE_AOT_WORK_UNITS_PER_SOURCE_BYTE = 8;
 export const NATIVE_AOT_MAX_WORKING_MEMORY_BYTES = 64 * 1024 * 1024;
-/** Version of the built-in read-only PE metadata interpretation in profiles. */
-export const NATIVE_AOT_PROFILE_CONTRACT_REVISION =
-  "rtr-9.1-x64-pe-read-only-v11";
 
 export type NativeAotParserLimits = {
   readonly sourceBytes: number;
@@ -62,8 +66,8 @@ export const DEFAULT_NATIVE_AOT_PARSER_LIMITS: NativeAotParserLimits =
   nativeAotParserLimitsFor(NATIVE_AOT_MAX_SOURCE_BYTES);
 
 class NativeAotParserBudget {
-  workUnits = 0;
-  workingMemoryBytes = 0;
+  readonly #work: Budget;
+  readonly #workingMemory: Budget;
   workingMemoryBytesPeak = 0;
   truncationReason:
     | "work-unit-budget"
@@ -71,40 +75,41 @@ class NativeAotParserBudget {
     | "response-budget"
     | undefined;
 
-  constructor(readonly limits: NativeAotParserLimits) {}
+  constructor(readonly limits: NativeAotParserLimits) {
+    this.#work = new Budget(limits.workUnits);
+    this.#workingMemory = new Budget(limits.workingMemoryBytes);
+  }
+
+  /** Work units consumed so far. */
+  get workUnits(): number {
+    return this.#work.used;
+  }
+
+  /** Working-memory bytes still available. */
+  get remainingWorkingMemoryBytes(): number {
+    return this.#workingMemory.remaining;
+  }
 
   consumeWork(bytes: number): boolean {
-    if (
-      !Number.isSafeInteger(bytes) ||
-      bytes < 0 ||
-      bytes > this.limits.workUnits - this.workUnits
-    ) {
-      this.truncationReason ??= "work-unit-budget";
-      return false;
-    }
-    this.workUnits += bytes;
-    return true;
+    if (this.#work.tryCharge(bytes)) return true;
+    this.truncationReason ??= "work-unit-budget";
+    return false;
   }
 
   reserveWorkingMemory(bytes: number): boolean {
-    if (
-      !Number.isSafeInteger(bytes) ||
-      bytes < 0 ||
-      bytes > this.limits.workingMemoryBytes - this.workingMemoryBytes
-    ) {
+    if (!this.#workingMemory.tryCharge(bytes)) {
       this.truncationReason ??= "working-memory-budget";
       return false;
     }
-    this.workingMemoryBytes += bytes;
     this.workingMemoryBytesPeak = Math.max(
       this.workingMemoryBytesPeak,
-      this.workingMemoryBytes,
+      this.#workingMemory.used,
     );
     return true;
   }
 
   releaseWorkingMemory(bytes: number): void {
-    this.workingMemoryBytes = Math.max(0, this.workingMemoryBytes - bytes);
+    this.#workingMemory.refund(bytes);
   }
 }
 
@@ -121,29 +126,55 @@ export class NativeAotSnapshotIdentityError extends Error {
   }
 }
 
+const NATIVE_AOT_FORMAT = "native-aot-pe";
+
+/** Limit names of the two hydration budgets, as `decodeLimit` reports them. */
+const NATIVE_AOT_BUDGET_LIMIT = {
+  work: "work-units",
+  "working-memory": "working-memory-bytes",
+} as const;
+
 /** Hydration stops by throwing; other scans record truncation and continue. */
-class NativeAotParserBudgetError extends Error {
-  readonly code = "parser_budget" as const;
-
-  constructor(readonly budget: "work" | "working-memory") {
-    super(budget);
-    this.name = "NativeAotParserBudgetError";
-  }
-}
-
 const parserBudgetExhausted = (
-  budget: NativeAotParserBudgetError["budget"],
+  budget: NativeAotParserBudget,
+  kind: keyof typeof NATIVE_AOT_BUDGET_LIMIT,
 ): never => {
-  throw new NativeAotParserBudgetError(budget);
+  const maximum =
+    kind === "work"
+      ? budget.limits.workUnits
+      : budget.limits.workingMemoryBytes;
+  throw decodeLimit(
+    NATIVE_AOT_FORMAT,
+    `NativeAOT hydration stopped at its ${String(maximum)} ${kind === "work" ? "work-unit" : "working-memory byte"} budget`,
+    { name: NATIVE_AOT_BUDGET_LIMIT[kind], maximum },
+  );
+};
+
+/** Which hydration budget a cause reports, if it is one. */
+const exhaustedParserBudget = (
+  cause: unknown,
+): keyof typeof NATIVE_AOT_BUDGET_LIMIT | undefined => {
+  if (
+    !(cause instanceof ParseFailureError) ||
+    cause.failure.kind !== "limit" ||
+    cause.failure.format !== NATIVE_AOT_FORMAT
+  )
+    return undefined;
+  const { name } = cause.failure.limit;
+  if (name === NATIVE_AOT_BUDGET_LIMIT.work) return "work";
+  if (name === NATIVE_AOT_BUDGET_LIMIT["working-memory"])
+    return "working-memory";
+  return undefined;
 };
 
 const nativeAotHydrationFailure = (
   cause: unknown,
   budget: NativeAotParserBudget,
 ): NativeAotHydrationFacts => {
-  if (cause instanceof NativeAotParserBudgetError)
+  const exhausted = exhaustedParserBudget(cause);
+  if (exhausted !== undefined)
     return nativeAotHydrationFacts(
-      cause.budget === "work" ? "work_budget" : "working_memory_budget",
+      exhausted === "work" ? "work_budget" : "working_memory_budget",
     );
   if (
     cause instanceof NativeAotAdmissionError &&
@@ -203,6 +234,35 @@ type MethodTable = {
   readonly slotsCount: number;
   readonly interfacesCount: number;
 };
+
+const METHOD_TABLE_HEADER_BYTES = 24;
+const METHOD_TABLE_POINTER_BYTES = 8;
+const METHOD_TABLE_FORMAT = "NativeAOT MethodTable";
+const methodTableSlotOffset = (slot: number): number =>
+  METHOD_TABLE_HEADER_BYTES + slot * METHOD_TABLE_POINTER_BYTES;
+const methodTableInterfaceOffset = (
+  slotsCount: number,
+  index: number,
+): number => methodTableSlotOffset(slotsCount + index);
+const methodTableByteLength = (
+  slotsCount: number,
+  interfacesCount: number,
+): number => methodTableInterfaceOffset(slotsCount, interfacesCount);
+const methodTablePointerAddress = (
+  table: MethodTable,
+  offset: number,
+): bigint => table.address + BigInt(offset);
+const readMethodTablePointer = (
+  image: PeImage,
+  address: bigint,
+  budget: NativeAotParserBudget,
+): bigint | null => {
+  const bytes = image.read(address, METHOD_TABLE_POINTER_BYTES, budget);
+  return bytes === null
+    ? null
+    : new BinaryReader(bytes, true, METHOD_TABLE_FORMAT).word(0, 64);
+};
+
 const METHOD_TABLE_RECORD_BYTES = 32;
 class MethodTableIndex {
   #records = Buffer.alloc(0);
@@ -306,13 +366,15 @@ class MethodTableIndex {
           include(child);
         }
         for (let index = 0; index < base.interfacesCount; index += 1) {
-          if (!this.budget.consumeWork(8)) return false;
-          const address = readU64(
-            image.read(
-              base.address + 24n + BigInt((base.slotsCount + index) * 8),
-              8,
-              this.budget,
+          if (!this.budget.consumeWork(METHOD_TABLE_POINTER_BYTES))
+            return false;
+          const address = readMethodTablePointer(
+            image,
+            methodTablePointerAddress(
+              base,
+              methodTableInterfaceOffset(base.slotsCount, index),
             ),
+            this.budget,
           );
           if (address === null) continue;
           const interfaceIndex = this.find(address, this.budget);
@@ -643,17 +705,25 @@ class PeImage {
       throw new NativeAotAdmissionError({ code: "unsupported_image_extent" });
     if (this.imageBase + BigInt(this.sizeOfImage) > 1n << 64n)
       throw new NativeAotAdmissionError({ code: "address_domain" });
-    const sectionOffset = optional + optionalSize;
-    this.#range(sectionOffset, count * 40);
+    const { sectionTableOffset, sectionTableBytes, sizeOfHeadersState } =
+      observePeHeaderExtent({
+        optionalHeaderOffset: optional,
+        optionalHeaderSize: optionalSize,
+        sectionCount: count,
+        sizeOfHeaders: this.#sizeOfHeaders,
+        fileSize: bytes.length,
+      });
+    this.#range(sectionTableOffset, sectionTableBytes);
     if (
-      this.#sizeOfHeaders < sectionOffset + count * 40 ||
-      this.#sizeOfHeaders > this.#bytes.length ||
+      sizeOfHeadersState !== "valid" ||
       this.#sizeOfHeaders > this.sizeOfImage
     )
       throw new NativeAotAdmissionError({ code: "headers_do_not_fit" });
     this.sections = Array.from({ length: count }, (_, index) => {
-      const p = sectionOffset + index * 40;
-      const parsed = readPeSectionHeader(bytes.subarray(p, p + 40));
+      const p = sectionTableOffset + index * PE_SECTION_HEADER_BYTES;
+      const parsed = readPeSectionHeader(
+        bytes.subarray(p, p + PE_SECTION_HEADER_BYTES),
+      );
       if (!parsed.ok)
         throw new NativeAotAdmissionError({ code: "section_header_truncated" });
       const section = parsed.value;
@@ -862,23 +932,32 @@ const findDirectory = (
   );
   let truncated = false;
   scan: for (const { section, begin, end, first } of ranges) {
-    for (let offset = first; offset <= end - 16; offset += 8) {
+    const fields = new BinaryReader(
+      bytes.subarray(begin, end),
+      true,
+      NATIVE_AOT_FORMAT,
+    );
+    for (
+      let offset = first - begin;
+      offset <= fields.bytes.length - 16;
+      offset += 8
+    ) {
       if (!budget.consumeWork(8)) {
         truncated = true;
         break scan;
       }
       scanBytesExamined += 8;
-      if (bytes.readUInt32LE(offset) !== RTR_SIGNATURE) continue;
+      if (fields.u32(offset) !== RTR_SIGNATURE) continue;
       if (!budget.consumeWork(16)) {
         truncated = true;
         break scan;
       }
-      const count = bytes.readUInt16LE(offset + 12);
+      const count = fields.u16(offset + 12);
       if (
-        bytes.readUInt8(offset + 14) !== RTR_ROW_SIZE ||
-        bytes.readUInt8(offset + 15) !== RTR_ROW_TYPE ||
+        fields.u8(offset + 14) !== RTR_ROW_SIZE ||
+        fields.u8(offset + 15) !== RTR_ROW_TYPE ||
         count < 1 ||
-        offset > end - (16 + count * RTR_ROW_SIZE)
+        offset > fields.bytes.length - (16 + count * RTR_ROW_SIZE)
       )
         continue;
       const rows: RtrSection[] = [];
@@ -889,9 +968,9 @@ const findDirectory = (
           break scan;
         }
         const p = offset + 16 + row * RTR_ROW_SIZE;
-        const type = bytes.readUInt32LE(p);
-        const start = bytes.readBigUInt64LE(p + 8);
-        const finish = bytes.readBigUInt64LE(p + 16);
+        const type = fields.u32(p);
+        const start = fields.word(p + 8, 64);
+        const finish = fields.word(p + 16, 64);
         const isConsumedRange =
           type === FROZEN_OBJECT_REGION || type === DEHYDRATED_DATA;
         const isTypeManagerIndirection = type === 204;
@@ -923,7 +1002,7 @@ const findDirectory = (
           }
           rows.push({
             type,
-            flags: bytes.readUInt32LE(p + 4),
+            flags: fields.u32(p + 4),
             start,
             end: finish,
           });
@@ -933,9 +1012,9 @@ const findDirectory = (
         matches++;
         if (found === null)
           found = {
-            address: image.addressForRva(section.rva + offset - begin),
-            major: bytes.readUInt16LE(offset + 4),
-            minor: bytes.readUInt16LE(offset + 6),
+            address: image.addressForRva(section.rva + offset),
+            major: fields.u16(offset + 4),
+            minor: fields.u16(offset + 6),
             sections: rows,
           };
       }
@@ -957,34 +1036,43 @@ const parseMethodTable = (
   budget: NativeAotParserBudget,
   validation: { itemsExamined: number },
 ): MethodTable | null => {
-  const header = image.read(address, 24, budget);
+  const header = image.read(address, METHOD_TABLE_HEADER_BYTES, budget);
   if (header === null) return null;
-  const flags = header.readUInt32LE(0),
-    baseSize = header.readUInt32LE(4),
-    related = header.readBigUInt64LE(8);
+  const fields = new BinaryReader(header, true, METHOD_TABLE_FORMAT);
+  const flags = fields.u32(0),
+    baseSize = fields.u32(4),
+    related = fields.word(8, 64);
   const elementType = (flags & 0x7c000000) >>> 26;
   if (
     (elementType !== 0x14 && elementType !== 0x15) ||
     baseSize < 16 ||
     baseSize > 0x10000000 ||
-    (related !== 0n && image.read(related, 24, budget) === null)
+    (related !== 0n &&
+      image.read(related, METHOD_TABLE_HEADER_BYTES, budget) === null)
   )
     return null;
-  const slotsCount = header.readUInt16LE(16),
-    interfacesCount = header.readUInt16LE(18);
-  const tableBytes = 24 + (slotsCount + interfacesCount) * 8;
-  const table = image.read(address, tableBytes, budget);
-  if (table === null) return null;
+  const slotsCount = fields.u16(16);
+  const interfacesCount = fields.u16(18);
+  const bytes = image.read(
+    address,
+    methodTableByteLength(slotsCount, interfacesCount),
+    budget,
+  );
+  if (bytes === null) return null;
+  const pointers = new BinaryReader(bytes, true, METHOD_TABLE_FORMAT);
   for (let slot = 0; slot < slotsCount; slot++) {
-    if (!budget.consumeWork(8)) return null;
+    if (!budget.consumeWork(METHOD_TABLE_POINTER_BYTES)) return null;
     validation.itemsExamined++;
-    const target = table.readBigUInt64LE(24 + slot * 8);
+    const target = pointers.word(methodTableSlotOffset(slot), 64);
     if (target !== 0n && !image.isExecutable(target, budget)) return null;
   }
   for (let index = 0; index < interfacesCount; index++) {
-    if (!budget.consumeWork(8)) return null;
+    if (!budget.consumeWork(METHOD_TABLE_POINTER_BYTES)) return null;
     validation.itemsExamined++;
-    const iface = table.readBigUInt64LE(24 + (slotsCount + index) * 8);
+    const iface = pointers.word(
+      methodTableInterfaceOffset(slotsCount, index),
+      64,
+    );
     if (iface !== 0n && image.read(iface, 20, budget) === null) return null;
   }
   return { address, flags, baseSize, related, slotsCount, interfacesCount };
@@ -1076,10 +1164,10 @@ const hydrate = (
   const initialCapacity = Math.min(
     outputLimit,
     64 * 1024,
-    budget.limits.workingMemoryBytes - budget.workingMemoryBytes,
+    budget.remainingWorkingMemoryBytes,
   );
   if (!budget.reserveWorkingMemory(initialCapacity))
-    parserBudgetExhausted("working-memory");
+    parserBudgetExhausted(budget, "working-memory");
   let output = Buffer.alloc(initialCapacity);
   let outputLength = 0;
   let cursor = 4;
@@ -1110,7 +1198,7 @@ const hydrate = (
         ),
       );
       if (!budget.reserveWorkingMemory(capacity))
-        parserBudgetExhausted("working-memory");
+        parserBudgetExhausted(budget, "working-memory");
       const expanded = Buffer.allocUnsafe(capacity);
       output.copy(expanded, 0, 0, outputLength);
       budget.releaseWorkingMemory(output.byteLength);
@@ -1120,15 +1208,16 @@ const hydrate = (
     return output.subarray(start, required);
   };
   const append = (chunk: Buffer): void => {
-    if (!budget.consumeWork(chunk.length)) parserBudgetExhausted("work");
+    if (!budget.consumeWork(chunk.length))
+      parserBudgetExhausted(budget, "work");
     chunk.copy(reserveOutput(chunk.length));
   };
   const appendZero = (length: number): void => {
-    if (!budget.consumeWork(length)) parserBudgetExhausted("work");
+    if (!budget.consumeWork(length)) parserBudgetExhausted(budget, "work");
     reserveOutput(length).fill(0);
   };
   const appendRel = (target: bigint): void => {
-    if (!budget.consumeWork(4)) parserBudgetExhausted("work");
+    if (!budget.consumeWork(4)) parserBudgetExhausted(budget, "work");
     const delta = target - (base + BigInt(outputLength));
     if (delta < -0x80000000n || delta > 0x7fffffffn)
       throw new NativeAotAdmissionError({
@@ -1138,7 +1227,7 @@ const hydrate = (
     reserveOutput(4).writeInt32LE(Number(delta), 0);
   };
   const appendPtr = (target: bigint): void => {
-    if (!budget.consumeWork(8)) parserBudgetExhausted("work");
+    if (!budget.consumeWork(8)) parserBudgetExhausted(budget, "work");
     // writeBigUInt64LE throws RangeError outside the unsigned 64-bit domain.
     // That is a malformed fixup, not an unexpected parser failure.
     if (target < 0n || target > 0xffffffffffffffffn)
@@ -1160,7 +1249,7 @@ const hydrate = (
   };
   try {
     while (cursor < first.length) {
-      if (!budget.consumeWork(1)) parserBudgetExhausted("work");
+      if (!budget.consumeWork(1)) parserBudgetExhausted(budget, "work");
       const encoded = first[cursor];
       if (encoded === undefined) break;
       cursor++;
@@ -1199,7 +1288,8 @@ const hydrate = (
           appendPtr(readFixup(payload));
           break;
         case 4:
-          if (!budget.consumeWork(payload * 4)) parserBudgetExhausted("work");
+          if (!budget.consumeWork(payload * 4))
+            parserBudgetExhausted(budget, "work");
           if (
             payload > Math.floor((first.length - cursor) / 4) ||
             payload > Math.floor((outputLimit - outputLength) / 4)
@@ -1224,7 +1314,8 @@ const hydrate = (
           }
           break;
         case 5:
-          if (!budget.consumeWork(payload * 4)) parserBudgetExhausted("work");
+          if (!budget.consumeWork(payload * 4))
+            parserBudgetExhausted(budget, "work");
           if (
             payload > Math.floor((first.length - cursor) / 4) ||
             payload > Math.floor((outputLimit - outputLength) / 8)
@@ -1261,7 +1352,7 @@ const hydrate = (
     throw cause;
   }
   const hydrated = output.subarray(0, outputLength);
-  const sha256 = createHash("sha256").update(hydrated).digest("hex");
+  const sha256 = sha256Hex(hydrated);
   image.addOverlay({ base, sizeBytes: outputLength, sha256, bytes: hydrated });
   return { base, sizeBytes: outputLength, sha256 };
 };
@@ -1373,17 +1464,31 @@ const discoverTables = (
       candidate.interfacesCount !== 0
     )
       return;
-    if (!budget.consumeWork(32)) {
+    // The root heuristic samples its three declared slots and one following
+    // word. That extra word is outside the declared slot/interface arrays.
+    const sampleBytes = (candidate.slotsCount + 1) * METHOD_TABLE_POINTER_BYTES;
+    if (!budget.consumeWork(sampleBytes)) {
       truncated = true;
       return;
     }
-    const vtable = image.read(candidate.address + 24n, 32, budget);
+    const vtable = image.read(
+      methodTablePointerAddress(candidate, methodTableSlotOffset(0)),
+      sampleBytes,
+      budget,
+    );
+    if (vtable === null) return;
+    const sample = new BinaryReader(vtable, true, METHOD_TABLE_FORMAT);
     if (
-      vtable !== null &&
-      image.isExecutable(vtable.readBigUInt64LE(0), budget) &&
-      image.isExecutable(vtable.readBigUInt64LE(8), budget) &&
-      image.isExecutable(vtable.readBigUInt64LE(16), budget) &&
-      !image.isExecutable(vtable.readBigUInt64LE(24), budget)
+      image.isExecutable(sample.word(0, 64), budget) &&
+      image.isExecutable(sample.word(METHOD_TABLE_POINTER_BYTES, 64), budget) &&
+      image.isExecutable(
+        sample.word(2 * METHOD_TABLE_POINTER_BYTES, 64),
+        budget,
+      ) &&
+      !image.isExecutable(
+        sample.word(3 * METHOD_TABLE_POINTER_BYTES, 64),
+        budget,
+      )
     ) {
       objectRoot = index;
       objectCount++;
@@ -1455,7 +1560,7 @@ export const parseNativeAotPe = (
       ),
       maximumSummaryBytes,
     );
-  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const sha256 = sha256Hex(bytes);
   if (sha256 !== expectedSha256)
     throw new NativeAotSnapshotIdentityError(expectedSha256, sha256);
   let image: PeImage;
@@ -1941,7 +2046,7 @@ export const parseNativeAotPe = (
         interfacesOmitted += table.interfacesCount - index;
         break;
       }
-      if (!detailBudget.consumeWork(8)) {
+      if (!detailBudget.consumeWork(METHOD_TABLE_POINTER_BYTES)) {
         interfacesOmitted += table.interfacesCount - index;
         break;
       }
@@ -1949,12 +2054,13 @@ export const parseNativeAotPe = (
         address: hex(table.address),
         type: null,
       };
-      const value = readU64(
-        image.read(
-          table.address + 24n + BigInt((table.slotsCount + index) * 8),
-          8,
-          detailBudget,
+      const value = readMethodTablePointer(
+        image,
+        methodTablePointerAddress(
+          table,
+          methodTableInterfaceOffset(table.slotsCount, index),
         ),
+        detailBudget,
       );
       if (value === null) {
         interfacesOmitted += table.interfacesCount - index;
@@ -1986,20 +2092,22 @@ export const parseNativeAotPe = (
         slotsOmitted += table.slotsCount - slot;
         break;
       }
-      if (!detailBudget.consumeWork(8)) {
+      if (!detailBudget.consumeWork(METHOD_TABLE_POINTER_BYTES)) {
         slotsOmitted += table.slotsCount - slot;
         break;
       }
-      const value = readU64(
-        image.read(table.address + 24n + BigInt(slot * 8), 8, detailBudget),
+      const slotAddress = methodTablePointerAddress(
+        table,
+        methodTableSlotOffset(slot),
       );
+      const value = readMethodTablePointer(image, slotAddress, detailBudget);
       if (value === null) {
         slotsOmitted += table.slotsCount - slot;
         break;
       }
       const row = {
         slot,
-        slot_address: hex(table.address + 24n + BigInt(slot * 8)),
+        slot_address: hex(slotAddress),
         target_address: value === 0n ? null : hex(value),
         procedure_name: null,
         basis: "method-table-pointer" as const,
@@ -2014,7 +2122,10 @@ export const parseNativeAotPe = (
       metadata.virtual_slots.push(row);
       remaining -= rowBytes;
     }
-    const tableBytes = 24 + (table.slotsCount + table.interfacesCount) * 8;
+    const tableBytes = methodTableByteLength(
+      table.slotsCount,
+      table.interfacesCount,
+    );
     // The descriptor size is independent of the source table size. Admit the
     // output representation first, then bound source hashing by parser work.
     const descriptor = {
@@ -2032,7 +2143,7 @@ export const parseNativeAotPe = (
       if (raw !== null) {
         metadata.derived_memory = {
           ...descriptor,
-          sha256: createHash("sha256").update(raw).digest("hex"),
+          sha256: sha256Hex(raw),
         };
         remaining -= descriptorBytes;
       }

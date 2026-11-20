@@ -10,15 +10,15 @@ import {
   BLOCK_INTEGRITY_LIMITATION,
   readAsarListing,
 } from "../../../src/artifacts/AsarListing.js";
-import { resolveAsarHeaderAdmission } from "../../../src/artifacts/AsarHeader.js";
 import {
   asarHeaderBytes,
   nestedAsarHeader,
 } from "../../fixtures/asarHeader.js";
 import { inventoryArtifact } from "../../fixtures/artifactInventory.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { extractArtifact } from "../../../src/artifacts/extraction/ArtifactExtraction.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { resolveAsarHeaderAdmission } from "../../../src/resources/index.js";
 
 const archiveWith = async (bytes: Buffer) => {
   const root = await createTestTempDirectory("rea-asar-listing-");
@@ -181,7 +181,7 @@ it("bounds the quoted unsafe ASAR path component", async () => {
   await expect(inventoryArtifact(path)).rejects.toMatchObject({
     reason: "path",
     message: inArchive(
-      `ASAR header has an unsafe path component under the archive root: ${JSON.stringify("a".repeat(256))}... (302 UTF-16 code units)`,
+      `ASAR header has an unsafe path component under the archive root: ${JSON.stringify("a".repeat(256))}… (302 UTF-16 code units)`,
       path,
     ),
   });
@@ -196,7 +196,7 @@ it("bounds the quoted parent of an unsafe ASAR path component", async () => {
   await expect(inventoryArtifact(path)).rejects.toMatchObject({
     reason: "path",
     message: inArchive(
-      `ASAR header has an unsafe path component under ${JSON.stringify("d".repeat(256))}... (300 UTF-16 code units): ".."`,
+      `ASAR header has an unsafe path component under ${JSON.stringify("d".repeat(256))}… (300 UTF-16 code units): ".."`,
       path,
     ),
   });
@@ -306,6 +306,14 @@ const unretainedSize =
 it.each([
   ["-1000", invalidSize("size -1000")],
   ["1.5", invalidSize("size 1.5")],
+  [
+    "1.0000000000000000001",
+    'ASAR entry declares numeric size "1.0000000000000000001", which does not exactly represent a non-negative safe integer.',
+  ],
+  [
+    "1e-1000",
+    'ASAR entry declares numeric size "1e-1000", which does not exactly represent a non-negative safe integer.',
+  ],
   ['"12"', invalidSize('size "12"')],
   ["null", invalidSize("a null size")],
   ["true", invalidSize("a boolean size")],
@@ -314,7 +322,7 @@ it.each([
   [
     JSON.stringify("9".repeat(300)),
     invalidSize(
-      `size ${JSON.stringify("9".repeat(256))}... (300 UTF-16 code units)`,
+      `size ${JSON.stringify("9".repeat(256))}… (300 UTF-16 code units)`,
     ),
   ],
   ["9007199254740992", unretainedSize],
@@ -386,6 +394,30 @@ it.each([
     });
     expect(occurrence("main.js")?.hash_status).toBe("verified");
     expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
+  },
+);
+
+it.each(["1.0000000000000000000", "10e-1"] as const)(
+  "uses an exactly integral ASAR size spelled %s",
+  async (sizeText) => {
+    const bytes = Buffer.concat([
+      asarHeaderBytes(
+        `{"files":{"member.txt":{"size":${sizeText},"offset":"0"}}}`,
+      ),
+      Buffer.from("x"),
+    ]);
+    const path = await archiveWith(bytes);
+    const reader = new AsarArtifactReader(path);
+    try {
+      for await (const entry of reader.entries()) {
+        expect(entry.declaredSize).toBe(1);
+        expect((await buffer(await reader.open(entry))).toString()).toBe("x");
+        return;
+      }
+      throw new Error("The member was not listed");
+    } finally {
+      await reader.close();
+    }
   },
 );
 

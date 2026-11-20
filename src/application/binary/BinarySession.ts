@@ -41,7 +41,7 @@ import type {
   AnalysisOperationPort,
   ProviderIdentity,
   AnalysisOperation,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import type {
   BinarySessionPort,
   BinaryOpenResult,
@@ -79,9 +79,12 @@ import {
   commitExecutionProfile,
   prepareSessionExecution,
 } from "./BinarySessionExecution.js";
-import { closeAnalysisClient } from "../AnalysisClientCleanup.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
-import { ConfigurationError } from "../../domain/configurationErrors.js";
+import { closeAnalysisClient } from "../../providers/AnalysisClientCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  analysisErrorWithCloseRejection,
+  analysisErrorWithCloseRejections,
+} from "../../domain/analysisErrorCleanup.js";
 import type { AnalysisCleanupRetry } from "../../domain/analysisErrorRecovery.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -92,15 +95,13 @@ import {
   parseBinaryTarget,
   type BinaryTargetResolverOptions,
 } from "../BinaryTargetResolver.js";
-import {
-  resolveAppBundleResourceRoot,
-  type ResolvedAppBundleResourceRoot,
-} from "../AppBundleExecutable.js";
-import {
-  BUNDLE_RESOURCE_OPERATIONS,
-  type ActiveBundleResourceSession,
-  type BundleResourceClientFactory,
+import { resolveAppBundleResourceRoot } from "../AppBundleExecutable.js";
+import type { ResolvedAppBundleResourceRoot } from "../../domain/apple/bundleResourceRoot.js";
+import type {
+  ActiveBundleResourceSession,
+  BundleResourceClientFactory,
 } from "./BundleResourceSession.js";
+import { BUNDLE_RESOURCE_OPERATIONS } from "../../ports/BundleResourceOperations.js";
 
 interface SessionRun {
   readonly client: AnalysisClient;
@@ -119,30 +120,6 @@ interface CleanupFailureTracker {
   readonly error: AnalysisError | undefined;
   readonly onFailure: (failure: AnalysisError) => void;
 }
-
-/** Compose live cleanup facts without treating an unowned rejection as completion. */
-const sessionCleanupFailure = (
-  primary: AnalysisError,
-  cleanup: AnalysisError,
-  operation: string,
-): AnalysisError => {
-  const failure = analysisErrorWithCleanupFailure(primary, cleanup, operation);
-  return cleanup.cleanupIncomplete
-    ? failure.bindCleanupDependencies([primary, cleanup])
-    : failure;
-};
-
-/**
- * Let a cleanup failure the client's close reported read that close. A failure
- * whose cleanup already follows its own owner keeps reading that owner.
- */
-const bindClientRelease = (
-  release: AnalysisCleanupRelease,
-  failure: AnalysisError,
-): void => {
-  if (failure.cleanupIncomplete && !failure.hasCleanupOwner)
-    release.bind(failure);
-};
 
 const trackCleanupFailures = (
   signal: AbortSignal | undefined,
@@ -170,14 +147,20 @@ const trackCleanupFailures = (
       } else {
         // Both operands are cleanup observations here. An earlier rejection
         // without a live lifecycle must not disappear when a later owner resolves.
-        cleanupFailure = cleanupFailure.cleanupIncomplete
-          ? sessionCleanupFailure(cleanupFailure, failure, operation)
-          : analysisErrorWithCleanupFailure(cleanupFailure, failure, operation);
+        cleanupFailure = analysisErrorWithCloseRejections(
+          cleanupFailure,
+          failure,
+          operation,
+        );
       }
       error =
         cancellation === undefined
           ? cleanupFailure
-          : sessionCleanupFailure(cancellation, cleanupFailure, operation);
+          : analysisErrorWithCloseRejection(
+              cancellation,
+              cleanupFailure,
+              operation,
+            );
     },
   };
 };
@@ -236,6 +219,11 @@ export class BinarySession
     super(records);
     this.#providerRouter = providerRouter;
     this.#bundleResourceFactory = bundleResourceFactory;
+  }
+
+  /** Create an isolated session over this session's auxiliary providers. */
+  createManagedBinarySession(): BinarySession {
+    return new BinarySession(this.#providerRouter.auxiliaryOnly());
   }
 
   /** Open an app resource root without requiring CFBundleExecutable. */
@@ -305,7 +293,7 @@ export class BinarySession
         return err(
           closed.ok
             ? started.error
-            : sessionCleanupFailure(
+            : analysisErrorWithCloseRejection(
                 started.error,
                 closed.error,
                 "open_bundle_resources",
@@ -319,7 +307,7 @@ export class BinarySession
         return err(
           closed.ok
             ? cancelled
-            : sessionCleanupFailure(
+            : analysisErrorWithCloseRejection(
                 cancelled,
                 closed.error,
                 "open_bundle_resources",
@@ -342,7 +330,7 @@ export class BinarySession
           cleanupFailures.error ??
             (candidateClosed.ok
               ? primary
-              : analysisErrorWithCleanupFailure(
+              : analysisErrorWithCloseRejections(
                   primary,
                   candidateClosed.error,
                   "open_bundle_resources",
@@ -360,7 +348,7 @@ export class BinarySession
           cleanupFailures.error ??
             (candidateClosed.ok
               ? cancelled
-              : sessionCleanupFailure(
+              : analysisErrorWithCloseRejection(
                   cancelled,
                   candidateClosed.error,
                   "open_bundle_resources",
@@ -394,6 +382,9 @@ export class BinarySession
       const imported = this.importAnalysisSnapshot(options.snapshot);
       if (!imported.ok) return imported;
     }
+    // The same bytes can be selected through a different spelling without retiring the engine.
+    if (retained.target.callerInputPath !== target.callerInputPath)
+      this.#active = { ...retained, target };
     return ok(target);
   }
 
@@ -407,10 +398,6 @@ export class BinarySession
     if (operation === "decompile_all") return false;
     if (this.#activeBundleResources !== undefined) return false;
     return routeAllowsSnapshotReplay(this.#active?.route, operation);
-  }
-
-  invalidateSnapshotForExternalMutation(): void {
-    this.invalidateSnapshot();
   }
 
   /** Return the selected immutable profile, optionally scoped to an operation. */
@@ -557,6 +544,9 @@ export class BinarySession
         kind: "binary",
         path: this.#active.target.path,
         sha256: this.#active.target.sha256,
+        ...(this.#active.target.callerInputPath === undefined
+          ? {}
+          : { caller_input_path: this.#active.target.callerInputPath }),
       };
     if (this.#activeBundleResources !== undefined)
       return {
@@ -631,11 +621,11 @@ export class BinarySession
         this.#clearRuntimeAvailability();
         if (isAborted(options.signal))
           return err(
-            analysisErrorWithCleanupFailure(
+            analysisErrorWithCleanupDependencies(
               cancelledBy("open_binary", options.signal),
               closed.error,
               "open_binary",
-            ).bindCleanupDependencies([closed.error]),
+            ),
           );
         return closed;
       }
@@ -671,27 +661,11 @@ export class BinarySession
       profile = route.profile;
     }
     const runId = randomUUID();
-    let client: ReturnType<typeof route.createClient>;
-    try {
-      client = route.createClient(target, {
-        runId,
-      });
-    } catch (cause: unknown) {
-      if (!(cause instanceof ConfigurationError)) throw cause;
-      return err(
-        previous === undefined
-          ? cause
-          : await this.#restoreAfterFailedOpen(previous, cause),
-      );
-    }
+    const client = route.createClient(target, {
+      runId,
+    });
     const run: SessionRun = { client, route, runId };
-    let started: Awaited<ReturnType<typeof client.execute>>;
-    try {
-      started = await client.execute("health", {}, options);
-    } catch (cause: unknown) {
-      if (!(cause instanceof ConfigurationError)) throw cause;
-      return err(await this.#failedOpen(run, previous, cause));
-    }
+    const started = await client.execute("health", {}, options);
     if (!started.ok) {
       return err(await this.#failedOpen(run, previous, started.error));
     }
@@ -857,11 +831,11 @@ export class BinarySession
           const primary = completionFailure(value, retired.error);
           const failure =
             retired.error.cleanupIncomplete && primary !== retired.error
-              ? analysisErrorWithCleanupFailure(
+              ? analysisErrorWithCleanupDependencies(
                   primary,
                   retired.error,
                   operationName,
-                ).bindCleanupDependencies([primary, retired.error])
+                )
               : primary;
           return err(
             isAborted(signal)
@@ -1138,24 +1112,20 @@ export class BinarySession
     let resourceFailure = resourceFailures[0];
     for (const next of resourceFailures.slice(1))
       if (resourceFailure !== undefined) {
-        const previous = resourceFailure;
-        resourceFailure = analysisErrorWithCleanupFailure(
-          previous,
+        resourceFailure = analysisErrorWithCloseRejections(
+          resourceFailure,
           next,
           "close_binary",
         );
-        if (previous.cleanupIncomplete && next.cleanupIncomplete)
-          resourceFailure.bindCleanupDependencies([previous, next]);
       }
     if (!closed.ok && resourceFailure !== undefined) {
-      const combined = analysisErrorWithCleanupFailure(
-        closed.error,
-        resourceFailure,
-        "close_binary",
+      return err(
+        analysisErrorWithCloseRejections(
+          closed.error,
+          resourceFailure,
+          "close_binary",
+        ),
       );
-      if (closed.error.cleanupIncomplete && resourceFailure.cleanupIncomplete)
-        combined.bindCleanupDependencies([closed.error, resourceFailure]);
-      return err(combined);
     }
     if (!closed.ok) return closed;
     return resourceFailure === undefined ? ok(null) : err(resourceFailure);
@@ -1180,20 +1150,14 @@ export class BinarySession
       );
       if (!closed.ok) {
         retained.push(session);
-        const previous = failure;
         failure =
-          previous === undefined
+          failure === undefined
             ? closed.error
-            : analysisErrorWithCleanupFailure(
-                previous,
+            : analysisErrorWithCloseRejections(
+                failure,
                 closed.error,
                 "close_binary",
               );
-        if (
-          previous?.cleanupIncomplete === true &&
-          closed.error.cleanupIncomplete
-        )
-          failure.bindCleanupDependencies([previous, closed.error]);
       }
     }
     this.#pendingBundleResourceCleanup = retained;
@@ -1237,7 +1201,7 @@ export class BinarySession
         ...(progress === undefined ? {} : { progress }),
         ...(pending.retainDocument ? { retainDocument: true } : {}),
         onCleanupFailure: (failure) => {
-          bindClientRelease(pending.release, failure);
+          pending.release.bindUnowned(failure);
           onCleanupFailure?.(failure);
         },
       },
@@ -1245,7 +1209,7 @@ export class BinarySession
     if (closed.ok) {
       pending.release.confirm();
       this.#pendingCleanup = undefined;
-    } else bindClientRelease(pending.release, closed.error);
+    } else pending.release.bindUnowned(closed.error);
     return closed;
   }
 
@@ -1260,7 +1224,11 @@ export class BinarySession
       onCleanupFailure === undefined ? {} : { onCleanupFailure },
     );
     if (!closed.ok)
-      return sessionCleanupFailure(primary, closed.error, "open_binary");
+      return analysisErrorWithCloseRejection(
+        primary,
+        closed.error,
+        "open_binary",
+      );
     return this.#restoreAfterFailedOpen(previous, primary);
   }
 
@@ -1276,7 +1244,7 @@ export class BinarySession
       ),
     });
     return restored.error.cleanupIncomplete
-      ? sessionCleanupFailure(primary, restored.error, "open_binary")
+      ? analysisErrorWithCloseRejection(primary, restored.error, "open_binary")
       : primary;
   }
 
@@ -1506,12 +1474,13 @@ export class BinarySession
       const execution = { ...result.value, subject: null };
       return ok(execution);
     }
+    const sessionBinding = this.#active;
     const prepared = prepareSessionExecution({
-      active: this.#active,
+      active: sessionBinding,
       operation: name,
       parameters: arguments_,
       snapshotContext: options?.snapshotContext,
-      nativeSourceAdmitted: this.#active?.nativeSourceAdmitted === true,
+      nativeSourceAdmitted: sessionBinding?.nativeSourceAdmitted === true,
       isOperationAvailable: (operation) => this.#currentlyAvailable(operation),
       isOperationAdvertised: options?.isOperationAdvertised,
       unboundOperationError: (operation, route) =>
@@ -1526,13 +1495,7 @@ export class BinarySession
     // Stop replay before dispatch, including reads overlapping the write.
     if (capability.effects.mutatesArtifact) this.invalidateSnapshot();
     const dispatch = this.#runtimeAvailability.dispatch();
-    let dispatched: Awaited<ReturnType<typeof active.client.execute>>;
-    try {
-      dispatched = await active.client.execute(name, arguments_, options);
-    } catch (cause: unknown) {
-      if (cause instanceof ConfigurationError) return err(cause);
-      throw cause;
-    }
+    const dispatched = await active.client.execute(name, arguments_, options);
     const result = unrecordedExecution(dispatched);
     const profiled = bindExecutionTarget(
       commitExecutionProfile(name, result, profile),
@@ -1554,12 +1517,14 @@ export class BinarySession
         : profiled;
     // A successful Ghidra operation proves this client's native source snapshot
     // was admitted; a composite health response and parsed path do not.
+    const currentBinding = this.#active;
     if (
       execution.ok &&
       capability.provider.id === "ghidra" &&
-      this.#active === active
+      currentBinding !== undefined &&
+      currentBinding.runId === sessionBinding?.runId
     )
-      this.#active.nativeSourceAdmitted = true;
+      currentBinding.nativeSourceAdmitted = true;
     if (
       this.#runtimeAvailability.observe(
         dispatch,
@@ -1615,7 +1580,10 @@ export class BinarySession
         name,
         arguments_,
         evidenceExecution,
-        this.admitRecoveryObservation.bind(this),
+        {
+          callerTarget: active.target,
+          admit: this.admitRecoveryObservation.bind(this),
+        },
       );
       if (!admitted.ok) return admitted;
       const evidence = createAnalysisExecutionEvidence(
@@ -1623,6 +1591,7 @@ export class BinarySession
         arguments_,
         evidenceExecution,
         "observed",
+        { callerTarget: active.target },
       );
       const recorded = this.recordEvidence(evidence);
       if (!recorded.ok) {
@@ -1637,6 +1606,7 @@ export class BinarySession
           : bindSessionEvidenceExecution(
               { ...execution.value, evidenceId: evidence.evidence_id },
               authenticated,
+              active.target.callerInputPath,
             );
       if (cacheable && execution.value.cachePolicy !== "live")
         this.recordSnapshot({
@@ -1782,7 +1752,13 @@ export class BinarySession
     const closed = await this.#retireClient(run);
     return closed.ok
       ? err(started.error)
-      : err(sessionCleanupFailure(started.error, closed.error, "open_binary"));
+      : err(
+          analysisErrorWithCloseRejection(
+            started.error,
+            closed.error,
+            "open_binary",
+          ),
+        );
   }
 
   async #waitForTransition(

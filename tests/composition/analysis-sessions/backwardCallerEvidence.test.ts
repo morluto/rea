@@ -1,5 +1,5 @@
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
-import type { AnalysisProvider } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
+import type { AnalysisProvider } from "../../../src/ports/AnalysisProvider.js";
 import {
   executeComposedWorkflow,
   createWorkflowEvidence,
@@ -92,9 +92,9 @@ it("links backward caller observations into workflow Evidence without a document
     const opened = await session.open(target);
     if (!opened.ok) throw opened.error;
     const composed = await executeComposedWorkflow(session, (observed) =>
-      new EnhancedTools(observed).execute("get_call_graph", {
-        address: "0x1000",
-        direction: "backward",
+      new EnhancedTools(observed).executeValidated({
+        name: "get_call_graph",
+        input: { address: "0x1000", direction: "backward" },
       }),
     );
     if (!composed.ok) throw composed.error;

@@ -1,3 +1,5 @@
+import { spawnFailure } from "../support/process/spawnFailure.js";
+import { fileIdentity } from "../fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
 import type { Stats } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -5,7 +7,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { PassThrough } from "node:stream";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { digestFile } from "../../src/application/reverse/ReverseEngineeringService.js";
 import { ok } from "../../src/domain/result.js";
@@ -13,7 +15,6 @@ import { TestReverseEngineeringService as ReverseEngineeringService } from "../s
 import {
   fixtureCommandRepair,
   ownedFailure,
-  ownedLaunchRefusal,
   ownedOutput,
   providerSnapshot,
 } from "../support/reverseEngineeringCompositionFixtures.js";
@@ -63,11 +64,23 @@ it.each(["objdump", "rizin"] as const)(
         output_budget_bytes: 8,
         output_budget_source: "request",
         output_truncated: true,
+        output_limit: {
+          control_kind: "parameter",
+          parameter: "max_output_bytes",
+          effective_value: 8,
+          unit: "bytes",
+          minimum: 1,
+          default_value: 16 * 1024 * 1024,
+          applies_at: "next_call",
+        },
         completion_status: "unknown",
       });
       expect(limited.value.parameters).toMatchObject({ max_output_bytes: 8 });
       expect(limited.value.limitations).toContainEqual(
         expect.stringContaining("max_output_bytes=8"),
+      );
+      expect(limited.value.limitations.join(" ")).not.toContain(
+        "--max-output-bytes",
       );
       const recovered = await inspect(32);
       if (!recovered.ok) throw recovered.error;
@@ -78,6 +91,9 @@ it.each(["objdump", "rizin"] as const)(
         output_truncated: false,
         completion_status: "complete",
       });
+      expect(recovered.value.normalized_result).not.toHaveProperty(
+        "output_limit",
+      );
       expect(recovered.value.parameters).toMatchObject({
         max_output_bytes: 32,
       });
@@ -184,7 +200,7 @@ describe("reverse engineering command services", () => {
     await writeFile(path, "fixture");
     const service = new ReverseEngineeringService({
       runOwned: async (spawn) => {
-        throw ownedLaunchRefusal("ENOENT", spawn.command);
+        throw spawnFailure("ENOENT", spawn.command);
       },
     });
 
@@ -447,7 +463,7 @@ describe("Rizin command service", () => {
       if (!result.ok) return;
       const lookupPath = result.value.subject?.local_path;
       expect(isAbsolute(lookupPath ?? "")).toBe(true);
-      expect(result.value.subject?.digest.sha256).toBe(
+      expect(fileIdentity(result.value.subject).sha256).toBe(
         createHash("sha256").update("fixture").digest("hex"),
       );
       expect(calls).toEqual([
@@ -541,7 +557,7 @@ describe("Rizin command service", () => {
       });
       expect(result.ok).toBe(true);
       if (!result.ok) return;
-      expect(result.value.subject?.digest.sha256).toBe(
+      expect(fileIdentity(result.value.subject).sha256).toBe(
         createHash("sha256").update("before").digest("hex"),
       );
       expect(result.value.raw_result).toMatchObject({
@@ -816,11 +832,31 @@ it("shares one preflight deadline across stat and digest", async () => {
       typeof import("node:fs").createReadStream
     >;
   };
-  const started = performance.now();
-  await expect(
-    digestFile("/tmp/rea-preflight-deadline", undefined, stat, 200, open),
-  ).rejects.toMatchObject({ code: "ETIMEDOUT" });
-  expect(performance.now() - started).toBeLessThan(280);
+  // The 150 ms stat and the stalled digest share one 200 ms deadline on a
+  // fake clock: the digest must time out at 200 ms, not 150 + 200 ms.
+  vi.useFakeTimers();
+  onTestFinished(() => {
+    vi.useRealTimers();
+  });
+  let outcome: unknown;
+  void digestFile(
+    "/tmp/rea-preflight-deadline",
+    undefined,
+    stat,
+    200,
+    open,
+  ).then(
+    () => {
+      outcome = "digested";
+    },
+    (cause: unknown) => {
+      outcome = cause;
+    },
+  );
+  await vi.advanceTimersByTimeAsync(199);
+  expect(outcome).toBeUndefined();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(outcome).toMatchObject({ code: "ETIMEDOUT" });
 });
 
 it("retains an explicit null reason when digest admission is already cancelled", async () => {

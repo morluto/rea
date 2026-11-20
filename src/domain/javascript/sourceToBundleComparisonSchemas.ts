@@ -115,9 +115,7 @@ export const sourceToBundleComparisonResultSchema = z.strictObject({
       ),
     reference_inventory_state: coverageStatusSchema,
     application_graph_status: z.enum([
-      "complete",
-      "partial",
-      "unknown",
+      ...coverageStatusSchema.options,
       "unavailable",
     ]),
     retained_source_files: z.int().min(0),

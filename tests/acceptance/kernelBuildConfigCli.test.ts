@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { gzipSync } from "node:zlib";
+import { fileIdentity } from "../fixtures/evidenceSubject.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -5,6 +8,7 @@ import { toolContract } from "../../src/contracts/toolContracts.js";
 import {
   bzImageGzipFixture,
   bzImageXzFixture,
+  embeddedKernelConfig,
   kernelBuildConfigFixture,
 } from "../../src/native/elf/KernelBuildConfig.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -36,7 +40,7 @@ cliTest(
       matched_count: 1,
       entries: [{ name: "CONFIG_SECURITY_SELINUX", kind: "y", value: "y" }],
     });
-    expect(evidence.subject?.format).toBe("elf");
+    expect(fileIdentity(evidence.subject).format).toBe("elf");
   },
 );
 
@@ -108,6 +112,91 @@ cliTest(
       payload: { codec: "xz", status: "unsupported" },
       next_probe: { operation: "external_decompression" },
       config: { status: "unsupported" },
+    });
+  },
+);
+
+cliTest(
+  "retains Kconfig-produced Unicode separators inside quoted values",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-kconfig-unicode-cli-");
+    const path = join(root, "vmlinux");
+    // Linux Kconfig conf emits these Unicode characters literally, escaping
+    // only the quote and backslash; they do not terminate a .config line.
+    const value = 'oracle"quote\\slash\u2028line\u2029paragraph';
+    const text = `CONFIG_LOCALVERSION=${JSON.stringify(value)}\nCONFIG_OK=y\n`;
+    const config = Buffer.from(text, "utf8");
+    await writeFile(
+      path,
+      Buffer.concat([
+        kernelBuildConfigFixture().subarray(0, 64),
+        Buffer.from("IKCFG_ST"),
+        gzipSync(config),
+        Buffer.from("IKCFG_ED"),
+      ]),
+    );
+    const result = await cli.run({
+      arguments: ["inspect-kernel-build-config", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = contract.outputSchema.parse(result.json);
+    expect(evidence.normalized_result.config).toMatchObject({
+      status: "present",
+      reason: null,
+      sha256: createHash("sha256").update(config).digest("hex"),
+      option_count: 2,
+      matched_count: 2,
+      entries: [
+        { name: "CONFIG_LOCALVERSION", kind: "string", value },
+        { name: "CONFIG_OK", kind: "y", value: "y" },
+      ],
+    });
+  },
+);
+
+cliTest(
+  "preserves the spelling of Kconfig hex values without a 0x prefix",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-kconfig-hex-cli-");
+    const path = join(root, "vmlinux");
+    const prefix = kernelBuildConfigFixture().subarray(0, 64);
+    const entries = [
+      { name: "CONFIG_BARE_HEX", kind: "number", value: "AbCd" },
+      { name: "CONFIG_PADDED_HEX", kind: "number", value: "00042" },
+      { name: "CONFIG_PREFIXED_HEX", kind: "number", value: "0xABcd" },
+      { name: "CONFIG_NEGATIVE_INT", kind: "number", value: "-42" },
+    ];
+    const text = entries
+      .map(({ name, value }) => `${name}=${value}\n`)
+      .join("");
+    await writeFile(path, Buffer.concat([prefix, embeddedKernelConfig(text)]));
+
+    const result = await cli.run({
+      arguments: ["inspect-kernel-build-config", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(
+      contract.outputSchema.parse(result.json).normalized_result.config,
+    ).toMatchObject({
+      status: "present",
+      option_count: entries.length,
+      entries,
+    });
+
+    await writeFile(
+      path,
+      Buffer.concat([prefix, embeddedKernelConfig("CONFIG_NOT_HEX=xyz\n")]),
+    );
+    const invalid = await cli.run({
+      arguments: ["inspect-kernel-build-config", path, "--json"],
+    });
+    expect(invalid.exitCode, invalid.stderr).toBe(0);
+    expect(
+      contract.outputSchema.parse(invalid.json).normalized_result.config,
+    ).toMatchObject({
+      status: "malformed",
+      reason: "config_text_invalid",
+      entries: [],
     });
   },
 );

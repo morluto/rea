@@ -1,3 +1,4 @@
+import { spawnFailure } from "../support/process/spawnFailure.js";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -5,14 +6,13 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
 import { ReverseEngineeringService } from "../../src/application/reverse/ReverseEngineeringService.js";
-import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../src/domain/analysisErrorProjectionSchema.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { ok } from "../../src/domain/result.js";
 import { createReverseEngineeringCommandPort } from "../../src/composition/reverseEngineering.js";
 import type { runOwnedCommand } from "../../src/process/OwnedCommand.js";
 import {
   fixtureCommandRepair,
-  ownedLaunchRefusal,
   ownedOutput,
 } from "../support/reverseEngineeringCompositionFixtures.js";
 
@@ -402,7 +402,7 @@ it("reports a launch refusal with the repair the command port names", async () =
   const service = new ReverseEngineeringService({
     commands: { objdump: () => ok(profile), rizin: () => ok(profile) },
     runOwned: async (spawn) => {
-      throw ownedLaunchRefusal("ENOENT", spawn.command);
+      throw spawnFailure("ENOENT", spawn.command);
     },
   });
   try {

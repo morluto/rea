@@ -3,11 +3,10 @@ import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import * as filesystemSnapshot from "../../process/capture/FilesystemSnapshot.js";
 
-import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../../tests/support/lifecycleHarness.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { processScenarioSchema } from "../../domain/process/processScenario.js";
-import { err, ok, type Result } from "../../domain/result.js";
+import { err, ok } from "../../domain/result.js";
 import { ProcessCaptureError } from "../../process/capture/ProcessCaptureError.js";
 import { prepareProcessScenarioPlan } from "./ProcessScenarioPreparation.js";
 
@@ -88,25 +87,16 @@ it("reports cancellation after the last awaited admission step", async () => {
     working_directory: ".",
   });
   const controller = new AbortController();
-  let admissionEntered!: () => void;
-  const entered = new Promise<void>((resolve) => {
-    admissionEntered = resolve;
-  });
-  let release!: () => void;
-  const pendingAdmission = new Promise<Result<void, AnalysisError>>(
-    (resolve) => {
-      release = () => resolve(ok(undefined));
-    },
-  );
+  const admission = phaseGate();
   let admissionCalls = 0;
 
   vi.spyOn(
     filesystemSnapshot,
     "admitFilesystemObservationRoots",
-  ).mockImplementationOnce(() => {
+  ).mockImplementationOnce(async () => {
     admissionCalls += 1;
-    admissionEntered();
-    return pendingAdmission;
+    await admission.hold();
+    return ok(undefined);
   });
   const planning = prepareProcessScenarioPlan(
     scenario,
@@ -119,7 +109,7 @@ it("reports cancellation after the last awaited admission step", async () => {
   // observed by the pre-admission check and would leave the post-admission
   // check untested.
   try {
-    await awaitAcknowledgement(entered, planning, "root admission");
+    await admission.reached(planning, "root admission");
     expect(admissionCalls).toBe(1);
     expect(controller.signal.aborted).toBe(false);
     controller.abort("caller stopped after admission");
@@ -127,7 +117,7 @@ it("reports cancellation after the last awaited admission step", async () => {
     // Admission still succeeds after the abort, so only the check that runs
     // after it can turn the planning result into a cancellation.
   } finally {
-    release();
+    admission.release();
     await planning;
   }
 

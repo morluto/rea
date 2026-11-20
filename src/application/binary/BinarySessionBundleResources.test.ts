@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,7 +8,7 @@ import {
   createAnalysisExecution,
   type AnalysisClient,
   type ProviderIdentity,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import { parseBinaryTarget } from "../BinaryTargetResolver.js";
 import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
 import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";
@@ -837,7 +838,7 @@ it("cancels a binary switch during resource retirement and retains null-subject 
   const observed = await session.execute("inspect_plist", {});
   if (!observed.ok) throw observed.error;
   const recorded = session.recordEvidence(
-    createEvidence(undefined, identity, {
+    createEvidence(unknownTarget("not-observed"), identity, {
       operation: "inspect_plist",
       parameters: {},
       result: observed.value.result,
@@ -871,7 +872,9 @@ it("cancels a binary switch during resource retirement and retains null-subject 
   expect(result.error.cleanupIncomplete).toBe(true);
   expect(await session.status()).toMatchObject({ open: false });
   expect(session.exportEvidenceBundle().records).toHaveLength(1);
-  expect(session.evidenceById(evidenceId)).toMatchObject({ subject: null });
+  expect(session.evidenceById(evidenceId)).toMatchObject({
+    subject: { identity: { kind: "unknown" } },
+  });
   expect(await session.status()).toMatchObject({ cleanup_pending: true });
   expect(await session.close()).toMatchObject({ ok: true });
   expect(resourceCloseAttempts).toBe(2);

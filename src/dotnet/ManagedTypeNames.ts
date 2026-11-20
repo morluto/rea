@@ -1,22 +1,22 @@
-import type { ManagedTypeReferenceLookup } from "./ManagedTypeReferences.js";
+import type { ManagedTypeReferenceLookup } from "../domain/managed/managedTypeReferences.js";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
 import {
   fullName,
   specSignatureFacts,
   type SignatureTypeName,
   type TypeRange,
-} from "./ManagedMemberInspectorCore.js";
+} from "../domain/managed/managedMemberInspectorCore.js";
 import {
   metadataRowOffset,
   type ManagedMetadataLayout,
-} from "./ManagedMetadataLayout.js";
+} from "../domain/managed/managedMetadataLayout.js";
 import {
   metadataRowCursor,
   type MetadataTokenFact,
   metadataToken,
   readMetadataBlob,
-} from "./ManagedMetadataHeaps.js";
-import { readManagedValue } from "./ManagedReaderFailure.js";
+} from "../domain/managed/managedMetadataHeaps.js";
+import { readManagedValue } from "../domain/managed/managedReaderFailure.js";
 
 /**
  * Name the type a TypeDef, TypeRef, or generic-instantiation TypeSpec token
@@ -56,7 +56,6 @@ export const typeNameLookup = (
       bytes,
       layout,
       cursor.readIndex(layout.blobIndexSize),
-      layout.blob?.size ?? 0,
     );
     const owner = {
       form: "type",

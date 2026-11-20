@@ -38,8 +38,10 @@ it.each([
       const result = await service.inspect({ path });
       if (!result.ok) throw result.error;
       expect(result.value.subject).toMatchObject({
-        architecture: canonical,
-        digest: { sha256: createHash("sha256").update(bytes).digest("hex") },
+        identity: {
+          architecture: canonical,
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+        },
       });
       expect(result.value.normalized_result).toMatchObject({
         architecture: local,

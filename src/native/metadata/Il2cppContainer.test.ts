@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import { readGoBinaryImage } from "../../go/GoBinaryImage.js";
 import { createRustImageWithGoSection } from "../../../tests/fixtures/rust/image.js";
 import { openImageSteps } from "../../il2cpp/Il2cppBinaryImage.js";
-import { readBinaryContainer } from "./readBinaryContainer.js";
+import { readBinaryContainer } from "../../domain/native/readBinaryContainer.js";
 
 it.each(["unmapped", "zero-fill", "duplicate", "out-of-file"] as const)(
   "keeps IL2CPP admission independent of a Mach-O Go build-info %s failure",
@@ -15,8 +15,8 @@ it.each(["unmapped", "zero-fill", "duplicate", "out-of-file"] as const)(
 
     expect(() => readGoBinaryImage(goNamed)).toThrow(/build-info|mapped/i);
     expect(readGoBinaryImage(control).build_info).toBeNull();
-    expect(readBinaryContainer(goNamed).load_regions).toEqual(
-      readBinaryContainer(control).load_regions,
+    expect(readBinaryContainer(goNamed, "elf-directory").load_regions).toEqual(
+      readBinaryContainer(control, "elf-directory").load_regions,
     );
 
     const image = openImageSteps(goNamed).next();

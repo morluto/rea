@@ -3,6 +3,7 @@ import { posix, win32 } from "node:path";
 import {
   absoluteCallerPath,
   appendCallerPath,
+  isQualifiedCallerPath,
 } from "../filesystem/callerPath.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { snapshotEnvironment } from "./snapshotEnvironment.js";
@@ -11,7 +12,10 @@ import { snapshotEnvironment } from "./snapshotEnvironment.js";
 export interface PathSearchCandidate {
   /** The absolute file the launch would execute from this entry. */
   readonly path: string;
-  /** An empty or relative PATH entry, which depends on the working directory. */
+  /**
+   * An empty or relative PATH entry, or on Windows a rooted entry without a
+   * drive (`\tools`), which depends on the working directory or its drive.
+   */
   readonly relativeEntry: boolean;
 }
 
@@ -118,10 +122,11 @@ export interface WindowsPathSearchFailure {
  * The files Windows' PATH/PATHEXT search tries for commands, in order: a
  * path-qualified command (`C:\Python\python`, `.venv\Scripts\python`) only at
  * its own location, resolved against `cwd`, and never on PATH; then for each
- * PATH entry (relative ones resolve against `cwd`, or against this process's
- * directory, read only when such an entry is reached and skipped once
- * removed), each bare command with every PATHEXT extension,
- * or as written when it already names an extension. Only `.com` and `.exe`
+ * PATH entry, each bare command with every PATHEXT extension, or as written
+ * when it already names an extension. A PATH entry that depends on the working
+ * directory is marked `relativeEntry` and resolved against `cwd` or the current
+ * working directory. With `relativeEntries: "skip"`, the search omits those
+ * entries before reading the working directory. Only `.com` and `.exe`
  * images are searched unless `allowBatch`; a `.bat` or `.cmd` launcher must
  * then be started through src/process/WindowsBatchCommand. An invalid
  * PATHEXT entry fails a search that would append extensions; a command that
@@ -131,7 +136,11 @@ export interface WindowsPathSearchFailure {
 export const windowsPathCandidates = (
   commands: string | readonly string[],
   environment: Readonly<NodeJS.ProcessEnv>,
-  search: { readonly cwd?: string; readonly allowBatch?: boolean } = {},
+  search: {
+    readonly cwd?: string;
+    readonly allowBatch?: boolean;
+    readonly relativeEntries?: "skip";
+  } = {},
 ): Result<Iterable<PathSearchCandidate>, WindowsPathSearchFailure> => {
   const selected = snapshotEnvironment(environment, "win32");
   const listed = typeof commands === "string" ? [commands] : commands;
@@ -166,7 +175,7 @@ export const windowsPathCandidates = (
   return ok({
     *[Symbol.iterator]() {
       for (const name of located) {
-        const workingDirectory = win32.isAbsolute(name)
+        const workingDirectory = isQualifiedCallerPath(name, "win32")
           ? name
           : (search.cwd ?? currentDirectory());
         if (workingDirectory === undefined) continue;
@@ -179,14 +188,16 @@ export const windowsPathCandidates = (
       for (const directory of entries) {
         // Only an entry without a drive or UNC root reads the working
         // directory; a removed one holds nothing, and later entries count.
-        const workingDirectory = /^(?:[A-Za-z]:[\\/]|[\\/]{2})/u.test(directory)
-          ? directory
-          : (search.cwd ?? currentDirectory());
+        const relativeEntry = !isQualifiedCallerPath(directory, "win32");
+        if (relativeEntry && search.relativeEntries === "skip") continue;
+        const workingDirectory = relativeEntry
+          ? (search.cwd ?? currentDirectory())
+          : directory;
         if (workingDirectory === undefined) continue;
         for (const name of names)
           yield {
             path: win32.resolve(workingDirectory, directory, name),
-            relativeEntry: !win32.isAbsolute(directory),
+            relativeEntry,
           };
       }
     },

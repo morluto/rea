@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { expect, it, vi } from "vitest";
@@ -12,7 +13,7 @@ import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err, ok } from "../../domain/result.js";
 import type { RecordUnknownInput } from "../../domain/residualUnknown.js";
 import { OwnedStagedOutput } from "../../filesystem/OwnedStagedOutput.js";
-import type { AnalysisProviderCandidate } from "../AnalysisProvider.js";
+import type { AnalysisProviderCandidate } from "../../ports/AnalysisProvider.js";
 import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";
 import { BinarySession } from "./BinarySession.js";
 import { SessionProviderRouter } from "./SessionProviderRouter.js";
@@ -28,7 +29,7 @@ import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowled
 
 const observation = (label: string) =>
   createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Lifecycle fixture", version: "1" },
     { operation: label, parameters: {}, result: { fixture: label } },
   );

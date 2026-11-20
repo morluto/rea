@@ -110,7 +110,7 @@ it("runs every managed static inspection independently of an active native targe
   expect(artifact).toMatchObject({
     operation: "inspect_managed_artifact",
     provider: { id: "rea-dotnet-static" },
-    subject: { local_path: path, format: "pe" },
+    subject: { local_path: path, identity: { format: "pe" } },
   });
   const misspelledPath = await client.callTool({
     name: "inspect_managed_members",
@@ -142,7 +142,7 @@ it("runs every managed static inspection independently of an active native targe
   expect(members).toMatchObject({
     operation: "inspect_managed_members",
     provider: { id: "rea-dotnet-static" },
-    subject: { local_path: path, format: "pe" },
+    subject: { local_path: path, identity: { format: "pe" } },
   });
   const otherArtifact = structured(
     await client.callTool({
@@ -151,14 +151,14 @@ it("runs every managed static inspection independently of an active native targe
     }),
   );
   expect(otherArtifact).toMatchObject({
-    subject: { local_path: otherPath, format: "pe" },
+    subject: { local_path: otherPath, identity: { format: "pe" } },
   });
   const reusedOtherTarget = structured(
     await client.callTool({ name: "inspect_managed_members", arguments: {} }),
   );
   expect(reusedOtherTarget).toMatchObject({
     operation: "inspect_managed_members",
-    subject: { local_path: otherPath, format: "pe" },
+    subject: { local_path: otherPath, identity: { format: "pe" } },
   });
   await verifyManagedTypeSelection(client, path, otherPath);
   const boundaries = structured(
@@ -170,7 +170,7 @@ it("runs every managed static inspection independently of an active native targe
   expect(boundaries).toMatchObject({
     operation: "inspect_managed_native_boundaries",
     provider: { id: "rea-dotnet-static" },
-    subject: { local_path: path, format: "pe" },
+    subject: { local_path: path, identity: { format: "pe" } },
   });
   const partial = structured(
     await client.callTool({
@@ -179,7 +179,7 @@ it("runs every managed static inspection independently of an active native targe
     }),
   );
   expect(partial).toMatchObject({
-    subject: { local_path: partialPath, format: "pe" },
+    subject: { local_path: partialPath, identity: { format: "pe" } },
     normalized_result: {
       methods: [
         {
@@ -402,7 +402,7 @@ const inspectManagedStaticWorkflow = async (
   expect(inlineEvidence(inspected)).toMatchObject({
     operation: "inspect_managed_artifact",
     provider: { id: "rea-dotnet-static" },
-    subject: { local_path: path, format: "pe" },
+    subject: { local_path: path, identity: { format: "pe" } },
   });
   const members = inlineEvidence(
     structured(
@@ -416,7 +416,7 @@ const inspectManagedStaticWorkflow = async (
   expect(members).toMatchObject({
     operation: "inspect_managed_members",
     provider: { id: "rea-dotnet-static" },
-    subject: { local_path: path, format: "pe" },
+    subject: { local_path: path, identity: { format: "pe" } },
     normalized_result: {
       identity_scope: { token_identity: "build-local" },
       methods: [expect.objectContaining({ token: expect.any(String) })],
@@ -622,7 +622,7 @@ const verifyManagedTypeSelection = async (
     }),
   );
   expect(reselectedOtherTarget).toMatchObject({
-    subject: { local_path: otherPath, format: "pe" },
+    subject: { local_path: otherPath, identity: { format: "pe" } },
   });
 };
 

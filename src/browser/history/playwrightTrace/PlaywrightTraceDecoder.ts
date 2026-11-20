@@ -1,21 +1,22 @@
 import type { StableRegularFileDescriptor } from "../../../filesystem/RegularFile.js";
-import type { PlaywrightTracePort } from "../../../application/playwrightTrace/PlaywrightTracePort.js";
-import { ArtifactResourceScope } from "../../../artifacts/ArtifactResourceScope.js";
-import type { ArtifactEntry } from "../../../artifacts/ArtifactReader.js";
-import { ZipArtifactReader } from "../../../artifacts/ZipArtifactReader.js";
+import type { PlaywrightTracePort } from "../../../ports/playwrightTrace/PlaywrightTracePort.js";
 import {
+  ArtifactResourceScope,
+  type ArtifactEntry,
   artifactFilePrimaryFacts,
   assertArtifactReadActive,
   withArtifactRegularFile,
-} from "../../../artifacts/ArtifactFileOperation.js";
-import { projectStableArtifactFailure } from "../../../artifacts/StableArtifactFailure.js";
-import { assertArtifactFileSelectedSource } from "../../../artifacts/ArtifactFileSource.js";
-import { hashStableRootArtifactHandle } from "../../../artifacts/inventory/hashStableRootArtifact.js";
+  projectStableArtifactFailure,
+  hashStableRootArtifactHandle,
+  assertArtifactFileSelectedSource,
+  ZipArtifactReader,
+} from "../../../resources/index.js";
 import {
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
   cancelledBy,
 } from "../../../domain/analysisErrorCore.js";
+import { analysisErrorWithCancellation } from "../../../domain/analysisErrorCancellation.js";
 import { fixedAllowanceOptions } from "../../../domain/fixedAllowanceRemediation.js";
 import { err, ok } from "../../../domain/result.js";
 import {
@@ -116,6 +117,11 @@ class TraceArchiveRead {
           ? this.inventory.finish(true)
           : this.identity);
       if (partial !== undefined) error.retainPartialObservation(partial);
+      if (this.signal?.aborted)
+        analysisErrorWithCancellation(
+          error,
+          cancelledBy(operation, this.signal),
+        );
       return err(
         projectStableArtifactFailure(
           cause,

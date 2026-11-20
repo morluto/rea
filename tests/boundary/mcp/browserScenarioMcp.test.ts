@@ -3,12 +3,12 @@ import { describe, expect, test } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { z } from "zod";
 
-import type { BrowserScenarioCapturePort } from "../../../src/application/BrowserScenarioCapturePort.js";
+import type { BrowserScenarioCapturePort } from "../../../src/ports/BrowserScenarioCapturePort.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import type {
   ExecutionOptions,
   ProviderIdentity,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { sanitizeBrowserUrl } from "../../../src/domain/browserObservation.js";
 import type { BrowserScenario } from "../../../src/domain/browserScenario.js";

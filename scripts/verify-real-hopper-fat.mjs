@@ -19,6 +19,7 @@ import { snapshotHopperRuntime } from "./lib/real-hopper-cleanup.mjs";
 import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
 import { HOPPER_TARGET_LEASE_DIRECTORY } from "../dist/process/HopperLease.js";
 import { parseConfig } from "../dist/config/parseConfig.js";
+import { selectedHopperLauncherPath } from "../dist/hopperPaths/HopperLauncherDiscovery.js";
 import {
   verifyHopperSourceBinding,
   relocateSingleFatSlice,
@@ -37,9 +38,14 @@ if (process.platform !== "darwin" || !["arm64", "x64"].includes(process.arch))
   );
 const config = parseConfig(process.env);
 if (!config.ok) throw config.error;
-await access(config.value.hopperLauncherPath, constants.X_OK).catch((cause) => {
+const hopperLauncherPath = selectedHopperLauncherPath(
+  config.value.hopperLauncherPath,
+  process.platform,
+  process.env,
+);
+await access(hopperLauncherPath, constants.X_OK).catch((cause) => {
   throw new Error(
-    `Hopper FAT verification requires the configured executable: ${config.value.hopperLauncherPath}`,
+    `Hopper FAT verification requires the configured executable: ${hopperLauncherPath}`,
     { cause },
   );
 });

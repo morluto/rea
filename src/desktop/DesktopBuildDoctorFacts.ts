@@ -8,27 +8,29 @@ import type {
   DesktopBuildCommand,
   DesktopBuildFacts,
   DesktopBuildFactsInput,
-} from "../application/DesktopBuildDoctor.js";
+} from "../ports/DesktopBuildHost.js";
 import {
   AnalysisCancelledError,
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { safeParseJson } from "../domain/safeJson.js";
+import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 import {
   readRegularFileText,
   RetainedRegularFileCleanupFailure,
-} from "../application/RegularFileRead.js";
+} from "../process/RegularFileRead.js";
 import { DESKTOP_EXPORT_FRAMEWORK_VERSION } from "../domain/desktop/appExport.js";
+import { PYTHON_BUILD_ARCHIVE_PROBE } from "../domain/desktop/appBuildArchive.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { execFileOutputFailure } from "../process/ExecFileOutput.js";
 import { describeSystemPs, resolveSystemPs } from "../process/systemPs.js";
 import { agentEnvInterpreter } from "./AgentEnvComputerHelper.js";
-import { ArtifactFileCleanupFailure } from "../artifacts/ArtifactFileOperation.js";
 import {
+  ArtifactFileCleanupFailure,
   AnalysisCleanupLeaseGroup,
   type AnalysisCleanupLease,
-} from "../artifacts/AnalysisCleanupLease.js";
+} from "../resources/index.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   agentEnvReportedVersion,
@@ -38,31 +40,13 @@ import {
   type BuildComputerSetting,
 } from "./BuildComputerEnvironment.js";
 import { BUILD_COMPUTER_SETTINGS } from "../domain/desktop/buildComputerSettings.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const DEFAULT_DOCKER_ROOT = "/var/lib/docker";
 const CONFIG_BYTES = 1024 * 1024;
 
 const missingPath = (cause: unknown): boolean =>
   cause instanceof Error && "code" in cause && cause.code === "ENOENT";
-
-/** Inspect the same tar compression formats as the build's Python extractor without extracting files. */
-const ARCHIVE_VERSION = String.raw`
-import json, pathlib, sys, tarfile
-roots, versions = set(), {}
-with tarfile.open(sys.argv[1], "r|*") as archive:
-    for entry in archive:
-        parts = pathlib.PurePosixPath(entry.name).parts
-        if len(parts) == 3 and parts[1:] == ("scripts", "rea.mjs") and (entry.isfile() or entry.issym()):
-            roots.add(parts[0])
-        elif len(parts) == 2 and parts[1] == "package.json" and entry.isfile() and entry.size <= 1048576:
-            stream = archive.extractfile(entry)
-            if stream is not None:
-                try:
-                    versions[parts[0]] = json.load(stream).get("version")
-                except (ValueError, UnicodeError, AttributeError):
-                    pass
-print(json.dumps({"version": versions.get(next(iter(roots))) if len(roots) == 1 else None}))
-`;
 
 /** Read what a desktop build needs from this host, changing nothing. */
 export const readDesktopBuildFacts = async (
@@ -170,12 +154,7 @@ const attempt = async (
     const stderr = failure?.stderr.trim() ?? "";
     return {
       ok: false,
-      reason:
-        stderr === ""
-          ? cause instanceof Error
-            ? cause.message
-            : String(cause)
-          : stderr,
+      reason: stderr === "" ? errorMessage(cause) : stderr,
     };
   }
 };
@@ -266,7 +245,7 @@ const freeSpace = async (path: string): Promise<DesktopBuildFacts["disk"]> => {
       if (parent === candidate || !missingPath(cause))
         return {
           path,
-          error: cause instanceof Error ? cause.message : String(cause),
+          error: errorMessage(cause),
         };
       candidate = parent;
     }
@@ -281,7 +260,12 @@ const agentEnvVersion = async (
   return reported.ok ? agentEnvReportedVersion(reported.stdout) : undefined;
 };
 
-/** The setup-packed archive is named by its version; another is read for its package version. */
+const archiveObservationSchema = z.object({
+  version: z.string().nullable(),
+  problem: z.string().nullable(),
+});
+
+/** Read layout and package version for the selected archive without extracting it. */
 const archiveFact = async (
   input: DesktopBuildFactsInput,
   pythonForArchive: () => Promise<string | undefined>,
@@ -303,10 +287,9 @@ const archiveFact = async (
           path,
           source,
           status: "unknown",
-          detail: `REA could not inspect ${path}: ${cause instanceof Error ? cause.message : String(cause)}`,
+          detail: `REA could not inspect ${path}: ${errorMessage(cause)}`,
         };
   }
-  if (source === "cache") return { path, source, status: "current" };
   const python = await pythonForArchive();
   if (python === undefined)
     return {
@@ -318,7 +301,7 @@ const archiveFact = async (
   const packed = await attempt(input, python, [
     "-I",
     "-c",
-    ARCHIVE_VERSION,
+    PYTHON_BUILD_ARCHIVE_PROBE,
     path,
   ]);
   if (!packed.ok)
@@ -328,15 +311,24 @@ const archiveFact = async (
       status: "unknown",
       detail: `REA could not inspect ${path}: ${packed.reason}`,
     };
-  let version: unknown;
-  try {
-    version = (JSON.parse(packed.stdout) as { version?: unknown }).version;
-  } catch {
-    version = undefined;
+  const parsed = safeParseJson(packed.stdout);
+  const observation = parsed.ok
+    ? archiveObservationSchema.safeParse(parsed.value)
+    : undefined;
+  if (observation?.success === true && observation.data.problem !== null) {
+    const { version, problem } = observation.data;
+    return {
+      path,
+      source,
+      status: "invalid",
+      detail: `${version === null ? path : `${path} declares REA ${version}`}. ${problem}`,
+    };
   }
+  const version =
+    observation?.success === true ? observation.data.version : null;
   return version === PRODUCT_IDENTITY.packageVersion
     ? { path, source, status: "current" }
-    : typeof version !== "string"
+    : version === null
       ? {
           path,
           source,
@@ -347,7 +339,7 @@ const archiveFact = async (
           path,
           source,
           status: "stale",
-          detail: `${path} holds REA ${typeof version === "string" ? version : "of an unknown version"}; this is REA ${PRODUCT_IDENTITY.packageVersion}.`,
+          detail: `${path} holds REA ${version}; this is REA ${PRODUCT_IDENTITY.packageVersion}.`,
         };
 };
 
@@ -557,12 +549,13 @@ const doctorFileCleanupFailure = (
   resources: readonly string[],
   reason: string,
   cause: unknown,
+  cleanupPrimary?: AnalysisCancelledError,
 ): ProviderCleanupError => {
   const failure = new ProviderCleanupError(
     "rea",
     resources,
     { reason },
-    { operation: "doctor", cause },
+    { operation: "doctor", cause, cleanupPrimary },
   );
   new AnalysisCleanupLeaseGroup(failure, [lease]);
   return failure;
@@ -600,11 +593,15 @@ const canReadModelConfig = async (
   } catch (cause: unknown) {
     if (cause instanceof RetainedRegularFileCleanupFailure) {
       input.resources.retain(cause.cleanupOwner);
+      const cancellation = regularFileCancellation(cause);
       throw doctorFileCleanupFailure(
         cause.cleanupLease,
         [cause.path],
         cause.message,
         cause,
+        cancellation === undefined
+          ? undefined
+          : cancelledBy("doctor", carriedReason(cancellation.reason)),
       );
     }
     if (cause instanceof AnalysisCancelledError) throw cause;

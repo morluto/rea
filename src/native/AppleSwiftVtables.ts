@@ -13,7 +13,10 @@ import type {
   SwiftRelativeValue,
 } from "./AppleSwiftDispatchFacets.js";
 import { unresolvedSwiftRelativeReason } from "./AppleSwiftDispatchFacets.js";
-import { issue, type FacetDecodeFacts } from "./AppleDispatchDecodeFacts.js";
+import {
+  issue,
+  type FacetDecodeFacts,
+} from "../domain/apple/appleDispatchDecodeFacts.js";
 import type {
   SwiftNominalDescriptor,
   SwiftNominalRecordFailure,

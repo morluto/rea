@@ -110,7 +110,7 @@ describe("PE import stable filesystem boundary", () => {
     if (dlls.ok) throw new Error("Expected DLL budget failure");
     expect(dlls.error).toMatchObject({
       _tag: "AnalysisResourceConstraintError",
-      reportedLimits: { limit: "dlls", maximum: 1 },
+      reportedLimits: { boundary: "dlls", maximum: 1 },
       remediationAction: expect.stringContaining("Raise max_dlls above 1"),
       retryable: false,
     });
@@ -121,11 +121,13 @@ describe("PE import stable filesystem boundary", () => {
     if (text.ok) throw new Error("Expected retained-text failure");
     expect(text.error).toMatchObject({
       _tag: "AnalysisResourceConstraintError",
-      reportedLimits: { limit: "retained_text", maximum: 16777216 },
+      reportedLimits: { boundary: "retained_text", maximum: 16777216 },
       remediationAction: undefined,
       fixedAllowance: {
-        name: expect.stringContaining("16777216-byte PE import retained-text"),
+        name: expect.stringContaining("PE import retained-text allowance"),
         kind: "bytes",
+        limit: 16777216,
+        unit: "bytes",
       },
       retryable: false,
     });

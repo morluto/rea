@@ -1,6 +1,6 @@
 import type { Logger } from "pino";
 
-import type { FridaInstrumentationPort } from "../application/frida/FridaInstrumentationPort.js";
+import type { FridaInstrumentationPort } from "../ports/frida/FridaInstrumentationPort.js";
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import type { CliInstance } from "./types.js";
 

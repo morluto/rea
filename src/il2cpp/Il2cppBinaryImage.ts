@@ -13,24 +13,27 @@ import {
   isZeroFilledSpan,
   type BinaryContainer,
   type FileMappingIndex,
-} from "../native/metadata/BinaryContainer.js";
-import { readBinaryContainer } from "../native/metadata/readBinaryContainer.js";
+} from "../domain/binaryContainer.js";
+import {
+  readBinaryContainer,
+  readBinaryContainerCooperative,
+} from "../domain/native/readBinaryContainer.js";
 import {
   requireSelectedNativeImage,
   type SelectedNativeImage,
   type SliceSelectionInput,
   selectMachoSlice,
-} from "../native/metadata/MachoSliceSelection.js";
+} from "../domain/apple/machoSliceSelection.js";
 import {
   parsePointerFixupsSteps,
   type PointerFixups,
-} from "../native/AppleMachoFixups.js";
-import { parseMachoLayout } from "../native/AppleMachoSelection.js";
+} from "../domain/apple/appleMachoFixups.js";
+import { parseMachoLayout } from "../domain/apple/appleMachoSelection.js";
 import {
   readElfPointerValuesSteps,
   ElfPointerRelocationFailure,
   type ElfVirtualPointerWrites,
-} from "../native/metadata/ElfPointerRelocations.js";
+} from "../domain/native/elfPointerRelocations.js";
 import {
   Il2cppBinaryFormatFailure,
   IL2CPP_BINARY_BYTES,
@@ -81,28 +84,51 @@ export interface NativeImage {
   readonly machoPointerFixups?: PointerFixups;
 }
 
-/** Open one thin image; a universal Mach-O slice is selected before this. */
-export function* openImageSteps(image: Buffer): Generator<void, NativeImage> {
-  let container: BinaryContainer;
+const OPERATION = "inspect_il2cpp_metadata";
+
+const rejectContainer = (cause: unknown): never => {
+  if (cause instanceof BinaryResourceFailure)
+    throw new Il2cppBinaryFormatFailure(
+      "native-index-capacity",
+      cause.message,
+      cause.failure.limit.maximum,
+      "bytes",
+    );
+  if (cause instanceof BinaryFormatFailure)
+    throw new Il2cppBinaryFormatFailure(
+      cause.kind === "unsupported"
+        ? "unsupported-container"
+        : "malformed-container",
+      cause.message,
+    );
+  throw cause;
+};
+
+const readContainer = (image: Buffer): BinaryContainer => {
   try {
-    container = readBinaryContainer(image);
+    return readBinaryContainer(image, OPERATION);
   } catch (cause) {
-    if (cause instanceof BinaryResourceFailure)
-      throw new Il2cppBinaryFormatFailure(
-        "native-index-capacity",
-        cause.message,
-        cause.failure.limit.maximum,
-        "bytes",
-      );
-    if (cause instanceof BinaryFormatFailure)
-      throw new Il2cppBinaryFormatFailure(
-        cause.kind === "unsupported"
-          ? "unsupported-container"
-          : "malformed-container",
-        cause.message,
-      );
-    throw cause;
+    return rejectContainer(cause);
   }
+};
+
+export const readIl2cppBinaryContainerCooperative = async (
+  image: Buffer,
+  pause: () => Promise<void>,
+): Promise<BinaryContainer> => {
+  try {
+    return await readBinaryContainerCooperative(image, OPERATION, pause);
+  } catch (cause) {
+    return rejectContainer(cause);
+  }
+};
+
+/** Open one thin image; a universal Mach-O slice is selected before this. */
+export function* openImageSteps(
+  image: Buffer,
+  preparedContainer?: BinaryContainer,
+): Generator<void, NativeImage> {
+  const container = preparedContainer ?? readContainer(image);
   if (container.bits !== 64 || container.byte_order !== "little")
     throw new Il2cppBinaryFormatFailure(
       "unsupported-container",

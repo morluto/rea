@@ -42,8 +42,8 @@ export const artifactMcpResult=async(_client,name)=>{if(name==='observe_native_u
         join(directory, "hook.mjs"),
         `
 import {registerHooks} from 'node:module';import {pathToFileURL} from 'node:url';
-Object.defineProperty(process,'platform',{value:'darwin'});process.kill=()=>{const open=globalThis.reaOpenChild;if(open?.exitCode===null){open.exitCode=0;queueMicrotask(()=>open.emit('exit',0,null));}return true;};
-registerHooks({resolve(specifier,context,next){if(context.parentURL?.endsWith('/scripts/verify-native-ui.mjs')&&['node:child_process','../dist/application/BinaryTargetResolver.js','../dist/native/NativeUiObservation.js','./lib/artifact-e2e.mjs','../dist/process/ProcessOwnershipObservation.js'].includes(specifier))return {shortCircuit:true,url:pathToFileURL(process.env.RECORDING).href};return next(specifier,context);}});
+const darwinHost='data:text/javascript,'+encodeURIComponent('export const HOST_PLATFORM=Object.freeze({platform:"darwin",architecture:'+JSON.stringify(process.arch)+'});');process.kill=()=>{const open=globalThis.reaOpenChild;if(open?.exitCode===null){open.exitCode=0;queueMicrotask(()=>open.emit('exit',0,null));}return true;};
+registerHooks({resolve(specifier,context,next){if(context.parentURL?.endsWith('/scripts/verify-native-ui.mjs')&&specifier==='../dist/platform/HostPlatform.js')return {shortCircuit:true,url:darwinHost};if(context.parentURL?.endsWith('/scripts/verify-native-ui.mjs')&&['node:child_process','../dist/application/BinaryTargetResolver.js','../dist/native/NativeUiObservation.js','./lib/artifact-e2e.mjs','../dist/process/ProcessOwnershipObservation.js'].includes(specifier))return {shortCircuit:true,url:pathToFileURL(process.env.RECORDING).href};return next(specifier,context);}});
 `,
       );
       const result = execute(

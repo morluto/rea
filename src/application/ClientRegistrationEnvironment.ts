@@ -1,3 +1,7 @@
+import type {
+  OwnedProviderSetting,
+  RecordedProviderSettings,
+} from "../ports/DesktopBuildHost.js";
 import { validateRegistrationEnvironment } from "./RegistrationEnvironmentValidation.js";
 import {
   clientRegistrationSource,
@@ -25,13 +29,22 @@ import {
   snapshotEnvironment,
 } from "../process/snapshotEnvironment.js";
 import { dshDocument } from "./DshCordisPatch.js";
-import type { McpToolTimeoutInputs } from "../mcpStartupPolicy.js";
+import type { McpToolTimeoutInputs } from "../config/mcpStartupPolicy.js";
 import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
 
-export type ProviderRequestBudgetResolver = (
-  analysisProvider: AnalysisProviderSelector,
-  environment: Readonly<Record<string, string>>,
-) => Promise<Result<number | undefined, ConfigurationError>>;
+export interface ProviderRequestBudgetResolver {
+  (
+    analysisProvider: AnalysisProviderSelector,
+    environment: Readonly<Record<string, string>>,
+  ): Promise<Result<number | undefined, ConfigurationError>>;
+  /**
+   * Environment settings this resolver may read. Unresolved expressions in
+   * these settings block budget derivation; expressions in other settings
+   * stay preserved. An omitted set keeps the fail-closed whole-environment
+   * gate: every unresolved expression blocks the budget.
+   */
+  readonly budgetSettings?: ReadonlySet<string>;
+}
 
 export interface ClientRegistrationEnvironmentDetails {
   readonly values: Readonly<Record<string, string>>;
@@ -179,21 +192,6 @@ export const clientRegistrationEnvironmentDetails = (
   );
 };
 
-/** Setting names a registration does not carry as the value selected here. */
-export interface RecordedProviderSettings {
-  /** Selected here and absent from the registration's recorded environment. */
-  readonly unrecorded: readonly string[];
-  /** Recorded with text other than the value selected here. */
-  readonly differing: readonly string[];
-  /** Recorded as an expression, or in a map REA could not read. */
-  readonly unresolved: readonly string[];
-  /** Recorded with a value the caller owns, as an archive setup packed for another version. */
-  readonly owned?: readonly string[];
-}
-
-/** Whether a recorded value is the caller's own, which it may replace; the value never leaves the reader. */
-export type OwnedProviderSetting = (name: string, value: string) => boolean;
-
 /** Consume a resolved setting inside its reader without including its value in diagnostics. */
 export type ProviderSettingObserver = (name: string, value: string) => void;
 
@@ -285,9 +283,14 @@ export const clientRegistrationEnvironmentDetailsWithBudget = async (
     validation,
   );
   if (!details.ok) return details;
+  // The budget gate stays fail-closed: settings the resolver may read must be
+  // literals, and an undeclared read set keeps every unresolved expression
+  // blocking, because an unreadable budget cannot be treated as absent.
+  const budgetSettings = resolveProviderRequestBudget?.budgetSettings;
   const unresolved = [...details.value.unresolvedSettings].filter(
     (setting) =>
-      resolveProviderRequestBudget !== undefined ||
+      (resolveProviderRequestBudget !== undefined &&
+        (budgetSettings === undefined || budgetSettings.has(setting))) ||
       TIMEOUT_INPUT_SETTINGS.has(setting),
   );
   if (details.value.timeoutInputs === undefined || unresolved.length > 0)

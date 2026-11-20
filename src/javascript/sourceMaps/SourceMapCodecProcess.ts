@@ -1,4 +1,4 @@
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
+import { readStableArtifact } from "../../resources/index.js";
 import {
   selectedSourceMapLimits,
   sourceMapLimitRecovery,
@@ -9,7 +9,7 @@ import {
   isSourceMapFailure,
   SOURCE_MAP_FORMAT,
   sourceMapLimitFailure,
-} from "./SourceMapFormat.js";
+} from "../../domain/sourceMapFormat.js";
 import { malformedInput } from "../../domain/parseFailure.js";
 import {
   sourceMapCodecInputSchema,

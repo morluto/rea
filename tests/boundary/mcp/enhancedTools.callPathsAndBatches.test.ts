@@ -1,8 +1,8 @@
 import { canonicalInputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../../../src/ports/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisCancelledError,
@@ -126,7 +126,6 @@ describe("enhanced MCP graph caveats", () => {
     });
     expect(graph.structuredContent).toMatchObject({
       limitations: [
-        expect.stringMatching(/artifact identity.*unavailable/iu),
         "Derived by an REA composed workflow.",
         `Fixture analysis provider (fixture 1) procedure_callees: ${caveat}`,
         `Fixture analysis provider (fixture 1) procedure_callees: ${leafCaveat}`,
@@ -458,46 +457,68 @@ describe("enhanced MCP batch cancellation", () => {
   );
 });
 
-describe("enhanced MCP batches", () => {
-  it("advertises and enforces the batch input budget before provider calls", async () => {
-    let calls = 0;
-    const client = await connect(
-      {
-        execute: async () => {
-          calls += 1;
-          throw new Error("provider must not be called for invalid input");
-        },
+it("advertises and enforces the batch input budget before provider calls", async () => {
+  let calls = 0;
+  const client = await connect(
+    {
+      execute: async () => {
+        calls += 1;
+        throw new Error("provider must not be called for invalid input");
       },
-      {
-        // Admit the array plus its object member before schema validation.
-        REA_MCP_MAX_INPUT_ELEMENTS: String(MAX_ENHANCED_RECORDS + 2),
-      },
-    );
-    const { tools } = await client.listTools();
-    expect(tools.some(({ name }) => name === "batch_decompile")).toBe(true);
-    // The budget is a canonical input constraint; the server enforces it
-    // whatever the compact advertisement retains.
-    expect(canonicalInputSchema("batch_decompile")).toMatchObject({
-      properties: { addresses: { maxItems: MAX_ENHANCED_RECORDS } },
-    });
-
-    const result = await client.callTool({
-      name: "batch_decompile",
-      arguments: {
-        addresses: Array.from(
-          { length: MAX_ENHANCED_RECORDS + 1 },
-          () => "0x0",
-        ),
-      },
-    });
-
-    expect(result.isError).toBe(true);
-    expect(parseMcpToolError(result)).toMatchObject({
-      error: { code: "invalid_request", category: "invalid_input" },
-    });
-    expect(calls).toBe(0);
+    },
+    {
+      // Admit the array plus its object member before schema validation.
+      REA_MCP_MAX_INPUT_ELEMENTS: String(MAX_ENHANCED_RECORDS + 2),
+    },
+  );
+  const { tools } = await client.listTools();
+  expect(tools.some(({ name }) => name === "batch_decompile")).toBe(true);
+  // The budget is a canonical input constraint; the server enforces it
+  // whatever the compact advertisement retains.
+  expect(canonicalInputSchema("batch_decompile")).toMatchObject({
+    properties: { addresses: { maxItems: MAX_ENHANCED_RECORDS } },
   });
 
+  const result = await client.callTool({
+    name: "batch_decompile",
+    arguments: {
+      addresses: Array.from({ length: MAX_ENHANCED_RECORDS + 1 }, () => "0x0"),
+    },
+  });
+
+  expect(result.isError).toBe(true);
+  expect(parseMcpToolError(result)).toMatchObject({
+    error: {
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
+        issues: [
+          {
+            path: ["addresses"],
+            reason: "out_of_range",
+            maximum: MAX_ENHANCED_RECORDS,
+          },
+        ],
+      },
+    },
+  });
+  const malformed = await client.callTool({
+    name: "batch_decompile",
+    arguments: { addresses: "bad" },
+  });
+  expect(malformed.isError).toBe(true);
+  expect(parseMcpToolError(malformed)).toMatchObject({
+    error: {
+      code: "invalid_request",
+      details: {
+        issues: [{ path: ["addresses"], reason: "invalid_type" }],
+      },
+    },
+  });
+  expect(calls).toBe(0);
+});
+
+describe("enhanced MCP batches", () => {
   it("returns every batch item in caller order with its own result", async () => {
     const addresses = Array.from(
       { length: 37 },

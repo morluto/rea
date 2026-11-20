@@ -1,4 +1,4 @@
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { readClientPolicyBlock } from "./GeminiClientSettings.js";
 import {
@@ -59,6 +59,7 @@ import {
   clientRegistrationOwnershipRemediation,
   refreshClientRegistration,
 } from "./ClientRegistration.js";
+import { recommendedMcpToolTimeoutMs } from "../config/mcpStartupPolicy.js";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
@@ -69,7 +70,7 @@ import {
   readRegularFileText,
   readRegularFileTextSnapshot,
   InvalidUtf8FileError,
-} from "./RegularFileRead.js";
+} from "../process/RegularFileRead.js";
 import {
   preserveCurrentRecoveryBackup,
   selectCurrentRecoveryBackup,
@@ -84,6 +85,8 @@ import {
   registrationWriteBlocker,
   type SetupClient,
 } from "./SupportedClients.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 export class ClientConfigurationCleanupRollbackFailure extends RegularFileCleanupFailure<string> {
   constructor(
@@ -167,7 +170,7 @@ const configureClientDocument = async (
     client,
     undefined,
     platform,
-    environment,
+    { writeOverrides: environment },
   );
   if (!files.ok) {
     throwCleanupFailure(files.error);
@@ -555,7 +558,7 @@ const readClientRefresh = async (
     client,
     resources,
     platform,
-    providerEnvironment,
+    { writeOverrides: providerEnvironment },
   );
   if (!files.ok) {
     throwCleanupFailure(files.error);
@@ -754,7 +757,7 @@ export const clientRefreshRefusal = async (
         `${cause.message}: ${cause.settings.map(({ setting, constraint }) => `${setting}: ${constraint}`).join("; ")}`,
       );
     return refused(
-      `The configuration could not be read. Check its permissions before rerunning setup. ${cause instanceof Error ? cause.message : String(cause)}`,
+      `The configuration could not be read. Check its permissions before rerunning setup. ${errorMessage(cause)}`,
     );
   }
 };
@@ -869,7 +872,7 @@ const inspectClientDocument = async (
     client,
     undefined,
     platform,
-    providerEnvironment,
+    { writeOverrides: providerEnvironment },
   );
   if (!files.ok) {
     throwCleanupFailure(files.error);
@@ -943,7 +946,7 @@ const inspectClientDocument = async (
     }
     return {
       status: "invalid",
-      remediation: `The configuration file could not be read. Check its permissions before rerunning setup. ${cause instanceof Error ? cause.message : String(cause)}`,
+      remediation: `The configuration file could not be read. Check its permissions before rerunning setup. ${errorMessage(cause)}`,
     };
   }
   try {
@@ -1137,9 +1140,7 @@ const registrationOwnershipBlocker = (
   const inheritsLauncher =
     effective !== undefined &&
     effective !== parsed &&
-    typeof fragment === "object" &&
-    fragment !== null &&
-    !Array.isArray(fragment) &&
+    isRecord(fragment) &&
     !Object.hasOwn(fragment, "command");
   if (Object.hasOwn(parsed.servers, name) && !inheritsLauncher)
     entries.push({ value: parsed.servers[name], paths: [client.configPath] });
@@ -1224,7 +1225,7 @@ const readZcodeFallbackServers = async (
     return err({
       kind: "malformed",
       path,
-      detail: `${detail} ${cause instanceof Error ? cause.message : String(cause)}`,
+      detail: `${detail} ${errorMessage(cause)}`,
     });
   }
 };
@@ -1250,7 +1251,7 @@ const restoreConfig = async (
     return err({
       kind: "restore",
       path: publication.path,
-      detail: errorDetail(cause),
+      detail: errorMessage(cause),
     });
   }
 };
@@ -1294,9 +1295,6 @@ const conflictFailure = (
   reason: "conflict",
   ...(backupPath === undefined ? {} : { backupPath }),
 });
-
-const errorDetail = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
 
 /** Whether REA's entry matches, no legacy entry remains, and no client disable list suppresses it. */
 const registrationCurrent = (
@@ -1349,18 +1347,28 @@ const clientConfigurationDesired = async (
   const launcher =
     command.length === 0 ? [PRODUCT_IDENTITY.cliBinary, "mcp"] : command;
   if (format === "dsh") {
-    const validated = clientRegistrationEnvironment(
+    // The budget resolver's declared read set keeps the gate fail-closed only
+    // for settings the derivation may actually read, so unrelated Cordis
+    // expressions stay preserved while the budget still resolves.
+    const validated = await clientRegistrationEnvironmentDetailsWithBudget(
       effective,
       client,
-      platform,
       providerEnvironment,
+      "effective",
+      resolveProviderRequestBudget,
+      platform,
     );
     if (!validated.ok) throw validated.error;
     const desired = (
       parsed === undefined
         ? new DshCordisDocument("")
         : dshDocument(parsed.document)
-    ).desired(launcher, providerEnvironment, platform);
+    ).desired(
+      launcher,
+      providerEnvironment,
+      platform,
+      recommendedMcpToolTimeoutMs(validated.value.timeoutInputs),
+    );
     if (!desired.ok) throw desired.error;
     return desired.value;
   }

@@ -285,7 +285,16 @@ export const javascriptRuntimeReconciliationResultSchema = z.strictObject({
     limitation: nonEmptyTextSchema,
   }),
   coverage: z.strictObject({
-    status: z.enum(["complete-within-inputs", "partial", "truncated"]),
+    /**
+     * `unknown` when a static graph's coverage is unknown or unavailable;
+     * `truncated` and `partial` are known gaps.
+     */
+    status: z.enum([
+      "complete-within-inputs",
+      "partial",
+      "truncated",
+      "unknown",
+    ]),
     truncated: z.boolean(),
     omitted_runtime_entities: z.int().min(0),
     omitted_reconciliation_items: z.int().min(0),

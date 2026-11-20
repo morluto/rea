@@ -3,6 +3,7 @@ import { expect, it } from "vitest";
 import {
   analysisSearchPredicate,
   literalSubstringPredicate,
+  matchProcedureNames,
 } from "./analysisSearch.js";
 
 it("uses Unicode simple case folding for literal substrings", () => {
@@ -84,4 +85,19 @@ it("keeps explicit regex semantics and invalid-pattern input errors", () => {
   expect(() => analysisSearchPredicate({ ...common, pattern: "[" })).toThrow(
     "search",
   );
+});
+
+it("preserves single-alias matches, primary fallback and duplicate ordering", () => {
+  const row = { value: "qualified::name" };
+  const matches = (name: string) => name.includes("name");
+  expect(matchProcedureNames(row, ["other"], matches)).toBe(row);
+  expect(matchProcedureNames(row, [row.value], matches)).toBe(row);
+  expect(matchProcedureNames(row, ["name"], matches)).toEqual({
+    value: row.value,
+    matched_aliases: ["name"],
+  });
+  expect(matchProcedureNames(row, ["name", "name2", "name"], matches)).toEqual({
+    value: row.value,
+    matched_aliases: ["name", "name2"],
+  });
 });
