@@ -345,8 +345,7 @@ it("opens another target after a failed switch cannot restore the previous one",
   };
   try {
     const target = await session.resolveTarget(process.execPath);
-    expect(target.ok).toBe(true);
-    if (!target.ok) return;
+    if (!target.ok) throw target.error;
     expect(
       (await session.openResolvedTarget({ target: target.value, route })).ok,
     ).toBe(true);
@@ -409,7 +408,8 @@ it("keeps an imported snapshot when the first open fails and its cleanup fails",
     binding: null,
     selection: undefined,
     createClient: () => ({
-      execute: async () => err(new AnalysisOutputError("health", "Open failed")),
+      execute: async () =>
+        err(new AnalysisOutputError("health", "Open failed")),
       close: async () => {
         closes += 1;
         if (closes === 1) return err(cleanupFailure);
@@ -420,8 +420,7 @@ it("keeps an imported snapshot when the first open fails and its cleanup fails",
   };
   try {
     const target = await session.resolveTarget(process.execPath);
-    expect(target.ok).toBe(true);
-    if (!target.ok) return;
+    if (!target.ok) throw target.error;
     expect(
       session.importAnalysisSnapshot(
         analysisSnapshotSchema.parse({
@@ -487,8 +486,7 @@ it("opens another profile after a failed switch whose cleanup later succeeds", a
   };
   try {
     const target = await session.resolveTarget(process.execPath);
-    expect(target.ok).toBe(true);
-    if (!target.ok) return;
+    if (!target.ok) throw target.error;
     expect(
       (await session.openResolvedTarget({ target: target.value, route })).ok,
     ).toBe(true);
