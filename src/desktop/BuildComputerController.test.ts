@@ -1,12 +1,11 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getHeapStatistics } from "node:v8";
 
 import { describe, expect, it } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { guestFileAnswerBytes } from "./AgentEnvComputer.js";
@@ -303,27 +302,21 @@ describe("controller arguments", () => {
       );
       expect(Buffer.from(piece, "utf8").toString("utf8") === piece).toBe(true);
     }
-    const root = await mkdtemp(join(tmpdir(), "rea-controller-args-"));
-    try {
-      const output = join(root, "listing.json");
-      const payload = JSON.stringify({ root, output });
-      const mid = Math.floor(payload.length / 2);
-      const script = fileURLToPath(
-        new URL("../../bridge/agentenv/capture.py", import.meta.url),
-      );
-      const stdout = execFileSync(
-        "python3",
-        ["-I", "-B", script, "list", payload.slice(0, mid), payload.slice(mid)],
-        { encoding: "utf8" },
-      );
-      const answer: unknown = JSON.parse(
-        stdout.trim().split("\n").at(-1) ?? "",
-      );
-      expect(answer).toMatchObject({
-        listing_bytes: expect.any(Number),
-      });
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+    const root = await createTestTempDirectory("rea-controller-args-");
+    const output = join(root, "listing.json");
+    const payload = JSON.stringify({ root, output });
+    const mid = Math.floor(payload.length / 2);
+    const script = fileURLToPath(
+      new URL("../../bridge/agentenv/capture.py", import.meta.url),
+    );
+    const stdout = execFileSync(
+      "python3",
+      ["-I", "-B", script, "list", payload.slice(0, mid), payload.slice(mid)],
+      { encoding: "utf8" },
+    );
+    const answer: unknown = JSON.parse(stdout.trim().split("\n").at(-1) ?? "");
+    expect(answer).toMatchObject({
+      listing_bytes: expect.any(Number),
+    });
   });
 });

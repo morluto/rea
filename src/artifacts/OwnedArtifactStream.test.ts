@@ -12,6 +12,7 @@ import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import * as regularFile from "../filesystem/RegularFile.js";
 import { BunStandaloneArtifactReader } from "./BunStandaloneArtifactReader.js";
 import { DenoStandaloneArtifactReader } from "./DenoStandaloneArtifactReader.js";
+import { FitArtifactReader } from "./FitArtifactReader.js";
 import { GodotPckArtifactReader } from "./GodotPckArtifactReader.js";
 import { NodeSeaArtifactReader } from "./NodeSeaArtifactReader.js";
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
@@ -20,6 +21,7 @@ import {
   elfAppendedBunPayload,
 } from "./bun/BunStandalone.fixture.js";
 import { denoElf } from "./deno/DenoStandalone.fixture.js";
+import { FIT_EXTERNAL } from "./fit/FitImage.fixture.js";
 import { nodeSeaElf } from "./nodeSea/NodeSea.fixture.js";
 
 const godot = {
@@ -86,6 +88,17 @@ it.for([
         owned,
       })),
     ),
+  ),
+  ...["read", "validation"].flatMap((stage) =>
+    [false, true].map((fail) => ({
+      label: "FIT",
+      Reader: FitArtifactReader,
+      fixture: () => FIT_EXTERNAL,
+      stage,
+      fail,
+      order: "close",
+      owned: false,
+    })),
   ),
 ])(
   "settles admitted $label $stage after $order (owned: $owned, I/O fault: $fail)",

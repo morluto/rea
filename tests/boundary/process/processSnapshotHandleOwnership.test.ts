@@ -114,11 +114,10 @@ import {
 } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 import { ProcessCaptureError } from "../../../src/process/capture/ProcessCaptureError.js";
 import { classifyFilesystemEffects } from "../../../src/process/capture/ProcessFilesystemEffects.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-const roots: string[] = [];
 const trackedRoot = async (): Promise<string> => {
-  const root = await mkdtemp(join(tmpdir(), "rea-snapshot-handle-owner-"));
-  roots.push(root);
+  const root = await createTestTempDirectory("rea-snapshot-handle-owner-");
   return root;
 };
 
@@ -210,9 +209,6 @@ afterEach(async () => {
       }
     });
   }
-  await Promise.all(
-    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
-  );
 });
 
 it("retains a completed file hash and its exact descriptor owner when close fails", async () => {

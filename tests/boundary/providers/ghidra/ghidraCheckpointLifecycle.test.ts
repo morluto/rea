@@ -1,14 +1,8 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { createHash } from "node:crypto";
-import {
-  access,
-  mkdtemp,
-  readFile,
-  readdir,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, readFile, readdir, rm, writeFile } from "node:fs/promises";
+
 import { join } from "node:path";
 import { ArtifactResourceScope } from "../../../../src/resources/ArtifactResourceScope.js";
 import { createAnalysisProfile } from "../../../../src/domain/analysisProfile.js";
@@ -23,8 +17,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   return { ...actual, rm: vi.fn(actual.rm) };
 });
 
-const roots: string[] = [],
-  clients: GhidraClient[] = [],
+const clients: GhidraClient[] = [],
   launchers: GhidraFixtureLauncher[] = [];
 afterEach(async () => {
   const actual =
@@ -36,8 +29,6 @@ afterEach(async () => {
     for (const child of launcher.processes)
       if (child.connected) child.send("release_checkpoint");
   for (const client of clients.splice(0)) await client.close();
-  for (const root of roots.splice(0))
-    await rm(root, { recursive: true, force: true });
 });
 
 it.skipIf(process.platform === "win32")(
@@ -76,8 +67,7 @@ async function fixture(
   mode: ConstructorParameters<typeof GhidraFixtureLauncher>[0] = "checkpoint",
   bridgeMaxReplyBytes?: BridgeMaxReplyBytes,
 ) {
-  const root = await mkdtemp(join(tmpdir(), "rea-checkpoint-lifecycle-"));
-  roots.push(root);
+  const root = await createTestTempDirectory("rea-checkpoint-lifecycle-");
   const targetPath = join(root, "target");
   await writeFile(targetPath, "source target bytes");
   const sha256 = createHash("sha256")

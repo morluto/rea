@@ -90,20 +90,25 @@ export function parseMipsRelocatableReadelf(text) {
 }
 
 /** Independent reader is a bounded test prerequisite, never an REA provider. */
-export async function inspectMipsRelocatableReadelf(path, byteOrder, floatAbi) {
+export async function inspectMipsRelocatableReadelf(
+  path,
+  byteOrder,
+  floatAbi,
+  run = execute,
+) {
   const command = fixtureCommand(FIXTURE_TOOLS.mipsReadelf);
   const options = {
     env: { ...process.env, LC_ALL: "C" },
     timeout: 10000,
     maxBuffer: 4 * 1024 * 1024,
   };
-  const version = await execute(command, ["--version"], options);
+  const version = await run(command, ["--version"], options);
   assert.match(
     version.stdout,
     /^GNU readelf\b/u,
     "This lane requires GNU readelf",
   );
-  const result = await execute(
+  const result = await run(
     command,
     ["-h", "-A", "-S", "-s", "-r", "-W", path],
     options,

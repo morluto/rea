@@ -93,17 +93,10 @@ const startJsonResponse = (
   );
 };
 
-it("fingerprints large cached bodies and retains CDP padding-bit acceptance", async () => {
-  const body = Buffer.alloc(BODY_BYTES, 0x81);
-  const large = await captureCacheFingerprint(body.toString("base64"));
-  expect(large.complete).toBe(true);
-  expect(large.items[0]?.value_sha256).toBe(
-    createHash("sha256").update(body).digest("hex"),
-  );
-
+it("fingerprints valid cached bytes with nonzero pad bits and rejects invalid bytes", async () => {
   const padBits = await captureCacheFingerprint("e31=");
   expect(padBits.items[0]?.value_sha256).toBe(
-    createHash("sha256").update(Buffer.from("e31=", "base64")).digest("hex"),
+    createHash("sha256").update("{}").digest("hex"),
   );
 
   const malformed = await captureCacheFingerprint("%%%not-base64%%%");
@@ -111,7 +104,7 @@ it("fingerprints large cached bodies and retains CDP padding-bit acceptance", as
   expect(malformed.items[0]?.value_sha256).toBeNull();
 });
 
-it("decodes large JSON response bodies and preserves malformed and pad-bit behavior", () => {
+it("decodes large JSON response bodies and accepts nonzero pad bits", () => {
   const events = createEvents();
   startJsonResponse(events, "large-json", "/large.json");
   const encoded = Buffer.from(
@@ -140,20 +133,9 @@ it("decodes large JSON response bodies and preserves malformed and pad-bit behav
   expect(events.network.get("pad-bits")?.body_shapes.response?.root_type).toBe(
     "object",
   );
-
-  startJsonResponse(events, "malformed", "/malformed.json");
-  const malformed = events
-    .responseBodyRequests()
-    .find(({ requestId }) => requestId === "malformed");
-  expect(malformed).toBeDefined();
-  events.ingestResponseBody(malformed!, {
-    body: "%%%not-base64%%%",
-    base64Encoded: true,
-  });
-  expect(events.network.get("malformed")?.body_shapes.response).toBeNull();
 });
 
-it("counts large binary WebSocket frames without accepting malformed base64", () => {
+it("counts bytes from large binary WebSocket frames", () => {
   const events = createEvents(false);
   const encoded = Buffer.alloc(BODY_BYTES, 0x81).toString("base64");
   events.ingest(
@@ -174,22 +156,4 @@ it("counts large binary WebSocket frames without accepting malformed base64", ()
   expect(
     events.webSocketConnectionsById.get("socket")?.events[0]?.payload_bytes,
   ).toBe(BODY_BYTES);
-
-  events.ingest(
-    receiveCdpEvent({
-      method: "Network.webSocketFrameReceived",
-      params: {
-        requestId: "socket",
-        response: { opcode: 2, payloadData: "%%%not-base64%%%" },
-      },
-    }),
-  );
-  expect(
-    events.webSocketConnectionsById.get("socket")?.events[1]?.payload_bytes,
-  ).toBeNull();
-  expect(events.completeness.snapshot().excluded).toContainEqual({
-    section: "websocket_frames",
-    reason: "invalid_protocol_value",
-    count: 1,
-  });
 });

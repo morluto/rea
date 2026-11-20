@@ -116,9 +116,8 @@ export const admitElfFixedHeaderFacts = (
 };
 
 /**
- * The CPU family an ELF machine names. A machine that is a family only for one
- * ELF class needs that class from the caller; without it the machine stays
- * unclassified.
+ * The CPU family an ELF machine names, with class checks where required.
+ * Callers that read only the machine retain their historical inventory labels.
  */
 export const elfArchitecture = (
   machine: number,
@@ -131,8 +130,8 @@ export const elfArchitecture = (
       return "x86_64";
     case 8: // EM_MIPS: ISA, ABI and byte order remain separate ELF facts.
       return "mips";
-    case 20: // EM_PPC; byte order and processor variant remain ELF declarations.
-      return "powerpc";
+    case 20: // EM_PPC is the 32-bit machine. Preserve machine-only inventory labels.
+      return elfClass === 64 ? undefined : "powerpc";
     case 21:
       // EM_PPC64 objects are ELF64. An ELF32 header that claims it would pass
       // for EM_PPC downstream, where only class and byte order remain.

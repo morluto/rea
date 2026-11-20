@@ -8,61 +8,42 @@ import { ManagedReaderFailure } from "./managedReaderFailure.js";
 import { InternalInvariantError } from "../internalInvariant.js";
 
 describe("managed projection admission", () => {
-  it("charges decoded strings by their JSON bytes", () => {
-    const name = "a".repeat(12 * 1024 * 1024);
-
-    expect(admitManagedProjection({ name })).toEqual({ name });
+  it("charges escaped and multibyte strings by their exact JSON byte length", () => {
+    for (const text of [
+      "plain ASCII",
+      "\u0001",
+      "€",
+      '\u0001"\\€😀\ud800\udc00\ud800',
+    ]) {
+      const length = Buffer.byteLength(JSON.stringify(text));
+      expect(
+        admitManagedProjection(text, new ManagedDecodeBudget(length)),
+      ).toBe(text);
+      expect(() =>
+        admitManagedProjection(text, new ManagedDecodeBudget(length - 1)),
+      ).toThrow(ManagedReaderFailure);
+    }
   });
 
-  it("charges escaped and multibyte characters at their encoded size", () => {
-    expect(() =>
-      admitManagedProjection({ name: "\u0001".repeat(12 * 1024 * 1024) }),
-    ).toThrow(ManagedReaderFailure);
-    expect(() =>
-      admitManagedProjection({ name: "€".repeat(23 * 1024 * 1024) }),
-    ).toThrow(ManagedReaderFailure);
-  });
+  it("spends a record's prepaid charge once across and within containing projections", () => {
+    const record = { name: "a".repeat(60) };
+    const budget = new ManagedDecodeBudget(120);
+    admitManagedProjection(record, budget);
 
-  it("counts escaped JSON bytes exactly at the budget boundary", () => {
-    // Control escapes, quotes, three-byte text, surrogate pairs and lone
-    // surrogates each have a distinct JSON size; fill the rest with ASCII.
-    const mixed = "\u0001".repeat(4096) + '"\\' + "€😀\ud800\udc00\ud800";
-    const used = Buffer.byteLength(JSON.stringify(mixed));
-    const filled = (extra: number) =>
-      mixed + "a".repeat(64 * 1024 * 1024 - used + extra);
-
-    expect(() => admitManagedProjection(filled(0))).not.toThrow();
-    expect(() => admitManagedProjection(filled(1))).toThrow(
+    // The first containing projection can spend the credit. A fresh containing
+    // projection must charge the record again.
+    expect(admitManagedProjection({ records: [record] }, budget)).toEqual({
+      records: [record],
+    });
+    expect(() => admitManagedProjection({ records: [record] }, budget)).toThrow(
       ManagedReaderFailure,
     );
-  });
 
-  it("charges an admitted record once inside its containing projection", () => {
-    const budget = new ManagedDecodeBudget();
-    const record = admitManagedProjection(
-      { name: "a".repeat(40 * 1024 * 1024) },
-      budget,
-    );
-
+    // Two appearances in one result also consume one credit, then pay again.
+    const repeated = new ManagedDecodeBudget(120);
+    admitManagedProjection(record, repeated);
     expect(() =>
-      admitManagedProjection({ records: [record] }, budget),
-    ).not.toThrow();
-    // The containing projection spent the credit, so later reuse pays again.
-    expect(() =>
-      admitManagedProjection({ records: [record, record] }, budget),
-    ).toThrow(ManagedReaderFailure);
-  });
-
-  it("charges a repeated occurrence of an admitted record again", () => {
-    const budget = new ManagedDecodeBudget();
-    const record = admitManagedProjection(
-      { name: "a".repeat(40 * 1024 * 1024) },
-      budget,
-    );
-
-    // The first occurrence spends the credit; the second serializes again.
-    expect(() =>
-      admitManagedProjection({ records: [record, record] }, budget),
+      admitManagedProjection({ records: [record, record] }, repeated),
     ).toThrow(ManagedReaderFailure);
   });
 });

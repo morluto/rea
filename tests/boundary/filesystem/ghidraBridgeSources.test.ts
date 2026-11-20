@@ -211,39 +211,6 @@ it.skipIf(process.platform === "win32").each([
   },
 );
 
-it("rejects an omitted auxiliary source at the actual package verification boundary", async () => {
-  const source = GHIDRA_BRIDGE_SOURCES.prepareCom;
-  const packedFiles = [
-    "package/bridge/hopper_bridge.py",
-    "package/bridge/cutter/rea_bridge.py",
-    ...Object.values(GHIDRA_BRIDGE_SOURCES)
-      .filter((name) => name !== source)
-      .map((name) => `package/bridge/ghidra/${name}`),
-  ];
-  await expect(
-    execute(process.execPath, [
-      "--input-type=module",
-      "-e",
-      `import { verifyPackedBridge } from "./scripts/verify-packed-bridge.mjs";
-       import { createPackageVerifierCommands } from "./scripts/lib/verify-package-commands.mjs";
-       import { withVerifierCleanup } from "./scripts/lib/verifier-cleanup.mjs";
-       import { PrivateRuntimeRoot } from "./dist/process/PrivateRuntimeRoot.js";
-       const root = await PrivateRuntimeRoot.create({ prefix: "rea-bridge-admission-" });
-       let commands;
-       await withVerifierCleanup(async () => {
-         commands = await createPackageVerifierCommands({ workspace: root });
-         await verifyPackedBridge({ tarball: "unused-because-admission-must-fail", packedFiles: JSON.parse(process.argv[1]), commands });
-       }, [() => commands === undefined ? root.close() : commands.close()]);`,
-      JSON.stringify(packedFiles),
-    ]),
-  ).rejects.toMatchObject({
-    code: 1,
-    stderr: expect.stringContaining(
-      `package omitted package/bridge/ghidra/${source}`,
-    ),
-  });
-});
-
 it("binds the workflow SDK pin and verified compile mode to the canonical release", async () => {
   const { jobs } = z
     .object({

@@ -1,10 +1,10 @@
 import { createServer } from "node:http";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { expect, it, onTestFinished, vi } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { WebSocketServer } from "ws";
 import {
   withVerifierCleanup,
@@ -24,7 +24,7 @@ import {
 } from "./V8InspectorProvider.js";
 
 const inspectorCloseFixture = async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-inspector-close-owner-"));
+  const root = await createTestTempDirectory("rea-inspector-close-owner-");
   const scriptPath = join(root, "target.js");
   await writeFile(scriptPath, "globalThis.fixture = true;\n");
   const scriptUrl = pathToFileURL(scriptPath).href;
@@ -109,7 +109,6 @@ const inspectorCloseFixture = async () => {
         if (server.listening)
           await new Promise<void>((resolve) => server.close(() => resolve()));
       },
-      () => rm(root, { recursive: true, force: true }),
     ]);
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

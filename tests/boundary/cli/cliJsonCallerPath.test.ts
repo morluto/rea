@@ -27,6 +27,7 @@ import {
   analysisViewJavaScriptEvidence,
   analysisViewLayoutEvidence,
 } from "../../fixtures/analysisView.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const providerIdentity = {
   id: "test.path-boundary",
@@ -53,7 +54,7 @@ const serveJson = async (
 it.skipIf(process.platform === "win32")(
   "keeps caller-selected JSON paths through the public CLI and provider boundaries",
   async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-cli-json-path-"));
+    const root = await createTestTempDirectory("rea-cli-json-path-");
     const originalCwd = process.cwd();
     const originalExitCode = process.exitCode;
     try {
@@ -167,7 +168,6 @@ it.skipIf(process.platform === "win32")(
     } finally {
       process.chdir(originalCwd);
       process.exitCode = originalExitCode;
-      await rm(root, { recursive: true, force: true });
     }
   },
 );
@@ -175,7 +175,7 @@ it.skipIf(process.platform === "win32")(
 it.skipIf(process.platform === "win32")(
   "reads the caller-selected Evidence file through the registered CLI",
   async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-cli-evidence-path-"));
+    const root = await createTestTempDirectory("rea-cli-evidence-path-");
     const originalCwd = process.cwd();
     const originalExitCode = process.exitCode;
     try {
@@ -220,7 +220,6 @@ it.skipIf(process.platform === "win32")(
     } finally {
       process.chdir(originalCwd);
       process.exitCode = originalExitCode;
-      await rm(root, { recursive: true, force: true });
     }
   },
 );

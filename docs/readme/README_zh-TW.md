@@ -362,7 +362,6 @@ npx rea-agents@latest setup
 - [CLI 與 Evidence](../getting-started/cli.md)：命令、提供者選擇、快照、匯入/匯出和退出狀態。
 - [MCP 契約](../reference/mcp-contracts.md)和[AI 代理提示詞](../getting-started/mcp-prompts.md)：工具結果、會話和引導式調查。
 - [工具目錄](../reference/mcp-contracts.md#generated-catalog)：建置時生成的工具、提供者和 CLI 命令清單。
-- [路線圖](../development/roadmap.md)：計劃中的工作和能力跟蹤。
 
 請按照 [SECURITY.md](../../SECURITY.md) 報告漏洞。
 
@@ -393,7 +392,7 @@ REA 用於合法的研究、教育、互通性、軟體保存，以及分析你�
 
 歡迎幫助改進 REA！你可以[提交 issue](https://github.com/morluto/rea/issues) 報告錯誤或建議功能，也可以[提交 pull request](https://github.com/morluto/rea/pulls) 改進程式碼或文件。
 
-開發設定和檢查見 [CONTRIBUTING.md](../../CONTRIBUTING.md)，驗證流程見[測試指南](../development/testing.md)，專案結構見[架構圖](../architecture/architecture.mermaid)。
+開發設定和檢查見 [CONTRIBUTING.md](../../CONTRIBUTING.md)，驗證流程見[測試指南](../development/testing.md)。
 
 ## 授權條款
 

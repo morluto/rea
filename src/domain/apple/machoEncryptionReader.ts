@@ -1,4 +1,5 @@
 import { LC } from "./machoLoadCommandCodes.js";
+import { machoWordReader } from "./machoLoadCommands.js";
 import type {
   MachoEncryptedRange,
   MachoEncryptionCommand,
@@ -264,9 +265,9 @@ const decodeEncryptionCommand = ({
   body,
   index,
 }: MachoLoadCommand): MachoEncryptionCommand => {
-  const view = viewOf(body);
+  const reader = machoWordReader(body, true);
   const word = (at: number): number | null =>
-    body.byteLength >= at + 4 ? view.getUint32(at, true) : null;
+    body.byteLength >= at + 4 ? reader.u32(at) : null;
   const wide = command === LC.ENCRYPTION_INFO_64;
   return {
     kind: wide ? "LC_ENCRYPTION_INFO_64" : "LC_ENCRYPTION_INFO",
@@ -533,6 +534,3 @@ const fixedName = (bytes: Uint8Array): string => {
 };
 
 const hex = (value: bigint): string => `0x${value.toString(16)}`;
-
-const viewOf = (bytes: Uint8Array): DataView =>
-  new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);

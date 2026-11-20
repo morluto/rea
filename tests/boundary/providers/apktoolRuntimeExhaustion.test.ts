@@ -1,7 +1,8 @@
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, writeFile } from "node:fs/promises";
+
 import { join } from "node:path";
 import { expect, onTestFinished, test } from "vitest";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { ApktoolProvider } from "../../../src/apktool/ApktoolProvider.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 
@@ -9,8 +10,7 @@ const it = test.skipIf(process.platform === "win32");
 
 /** A launcher whose decode prints the given stderr and exits with status 1. */
 const failingDecode = async (stderr: string) => {
-  const root = await mkdtemp(join(tmpdir(), "rea-apktool-oom-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const root = await createTestTempDirectory("rea-apktool-oom-");
   const command = join(root, "apktool");
   await writeFile(
     command,

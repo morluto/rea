@@ -224,16 +224,16 @@ async function validateCandidate(git, sha, version, commits) {
     sha,
     "server.json",
     versionSchema.extend({
-      packages: z.array(
-        z.object({ identifier: z.string(), version: z.string() }),
-      ),
+      packages: z.tuple([
+        z.object({
+          registryType: z.literal("npm"),
+          identifier: z.literal("rea-agents"),
+          version: z.string(),
+        }),
+      ]),
     }),
   );
-  const npmPackage = server.packages.find(
-    (entry) => entry.identifier === "rea-agents",
-  );
-  if (npmPackage === undefined)
-    throw new Error("server.json is missing the rea-agents package.");
+  const [npmPackage] = server.packages;
   versions.push(
     ["server.json", server.version],
     ["server.json rea-agents package", npmPackage.version],

@@ -1,6 +1,7 @@
 import { lstat } from "node:fs/promises";
 import { Readable } from "node:stream";
 
+import { Budget } from "../domain/budget.js";
 import type { ArtifactCommand } from "../domain/artifactGraph.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import {
@@ -11,8 +12,9 @@ import {
   type StableRegularFileDescriptor,
 } from "../filesystem/RegularFile.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
-import { nextFfsFileLocal, readFfsHeader } from "./FfsFile.js";
+import { readFfsHeader, type FfsPaddingRange } from "./FfsFile.js";
 import {
+  inspectFirmwareVolumeExtension,
   scanFirmwareVolumes,
   unsupportedVolumeBodyReason,
   type FirmwareVolumeHeader,
@@ -88,11 +90,16 @@ export class UefiArtifactReader implements ArtifactReader {
     };
     const imageTruncated = source.initial.size > image.length;
     if (imageTruncated) omit("image-truncated", IMAGE_TRUNCATION_LIMITATION);
-    const scan = scanFirmwareVolumes(
-      imageRegion(image, 0, image.length),
-      UEFI_FIRMWARE_LIMITS.maxVolumes,
-      { checkpoint: () => assertArtifactReadActive(signal) },
-    );
+    const region = imageRegion(image, 0, image.length);
+    const records = new Budget(UEFI_FIRMWARE_LIMITS.scanRecords);
+    const checkpoint = () => assertArtifactReadActive(signal);
+    const reserve = (): boolean => {
+      checkpoint();
+      return records.tryCharge(1);
+    };
+    const scan = scanFirmwareVolumes(region, UEFI_FIRMWARE_LIMITS.maxVolumes, {
+      reserve,
+    });
     if (scan.limit !== null) {
       omit(
         "volume-scan-limit",
@@ -133,27 +140,37 @@ export class UefiArtifactReader implements ArtifactReader {
       };
       this.#entries.set(entry.adapterKey, entry);
       yield entry;
+      let observedFileEnd: number | undefined;
       if (header.fileSystem === "unsupported") {
         omit(
           name,
           "Volumes with unsupported file-system GUIDs were retained without FFS entries.",
         );
-        continue;
-      }
-      for await (const file of this.#volumeFiles(
-        header,
-        image,
-        name,
-        omit,
-        signal,
-      )) {
-        if (filesMapped >= UEFI_FIRMWARE_LIMITS.maxFiles) {
-          fileBudgetExhausted = true;
-          break;
+      } else {
+        for await (const file of this.#volumeFiles(header, image, name, {
+          omit,
+          reserve,
+          checkpoint,
+        })) {
+          if (filesMapped >= UEFI_FIRMWARE_LIMITS.maxFiles) {
+            fileBudgetExhausted = true;
+            break;
+          }
+          this.#entries.set(file.adapterKey, file);
+          filesMapped += 1;
+          if (file.byteOffset !== null && file.declaredSize !== null)
+            observedFileEnd = file.byteOffset + file.declaredSize;
+          yield file;
         }
-        this.#entries.set(file.adapterKey, file);
-        filesMapped += 1;
-        yield file;
+      }
+      for (const issue of inspectFirmwareVolumeExtension(
+        region,
+        header,
+        reserve,
+        checkpoint,
+        observedFileEnd,
+      )) {
+        omit(`${name}/fv-extension-${hex(issue.offset)}`, issue.detail);
       }
       if (fileBudgetExhausted) {
         omit(name, "UEFI inventory reached its FFS file limit.");
@@ -171,22 +188,48 @@ export class UefiArtifactReader implements ArtifactReader {
     header: FirmwareVolumeHeader,
     image: Buffer,
     volumeName: string,
-    omit: (path: string, limitation: string) => void,
-    signal?: AbortSignal,
+    {
+      omit,
+      reserve,
+      checkpoint,
+    }: {
+      omit: (path: string, limitation: string) => void;
+      reserve: () => boolean;
+      checkpoint: () => void;
+    },
   ): AsyncGenerator<ArtifactEntry> {
     const region = imageRegion(
       image,
       header.absoluteBase,
       Math.min(header.absoluteBase + header.declaredLength, image.length),
     );
+    const omitPadding = ({ offset, length }: FfsPaddingRange): void =>
+      omit(
+        `${volumeName}/ffs-padding-${hex(offset)}`,
+        `Unexpected FFS alignment bytes at ${hex(offset)}: ${length} bytes.`,
+      );
+    for (const padding of header.filePrefixPadding) omitPadding(padding);
     let local = header.firstFileLocal;
     while (local < region.end) {
-      assertArtifactReadActive(signal);
-      const read = readFfsHeader(region, local, header.erasePolarity);
+      checkpoint();
+      const read = readFfsHeader(region, local, header, reserve);
+      if (read.kind === "limited") {
+        omit(
+          `${volumeName}/ffs-scan-limit-${hex(local)}`,
+          `UEFI inventory reached the structural record limit of ${UEFI_FIRMWARE_LIMITS.scanRecords} before the FFS header at ${hex(local)}.`,
+        );
+        break;
+      }
+      if (read.kind === "unusable-header") {
+        omit(`${volumeName}/ffs-header-${hex(read.offset)}`, read.detail);
+        local = read.nextLocal;
+        continue;
+      }
       if (read.kind === "unparsed") {
         omit(
           `${volumeName}/ffs-suffix-${hex(read.offset)}`,
-          `Unparsed FFS suffix at ${hex(read.offset)}: ${read.length} bytes.`,
+          read.detail ??
+            `Unparsed FFS suffix at ${hex(read.offset)}: ${read.length} bytes.`,
         );
       }
       if (read.kind !== "file") break;
@@ -220,11 +263,18 @@ export class UefiArtifactReader implements ArtifactReader {
           name,
           `Incomplete FFS extent at ${hex(fileHeader.absoluteBase)}: declared ${fileHeader.declaredLength} bytes, observed ${fileHeader.observedLength} (${fileHeader.extentIssue}).`,
         );
+      if (
+        fileHeader.bodyIssue !== null &&
+        fileHeader.body !== null &&
+        fileHeader.body.start < fileHeader.body.end
+      )
+        omit(
+          name,
+          `FFS file at ${hex(fileHeader.absoluteBase)} has a valid header but its data is not marked valid.`,
+        );
       yield entry;
-      if (fileHeader.extentIssue === "declared-length-truncates-region") break;
-      const next = nextFfsFileLocal(fileHeader, header.localBase);
-      if (next <= local) break;
-      local = next;
+      if (read.padding !== null) omitPadding(read.padding);
+      local = read.nextLocal;
     }
   }
 
