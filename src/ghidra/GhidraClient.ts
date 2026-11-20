@@ -100,6 +100,7 @@ import {
   readArtifactFileChunks,
 } from "../resources/index.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
+import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import {
   assertRegularFileActive,
   RegularFileChangedError,
@@ -696,12 +697,40 @@ export class GhidraClient {
     );
   }
 
+  /**
+   * Read caller-chosen positional ranges of the private immutable source. A
+   * range past the end returns the bytes that exist. Nothing is retained as a
+   * partial observation, so callers use this only for advisory reads.
+   */
+  readTargetSnapshotRanges<T>(
+    read: (
+      range: (position: number, length: number) => Promise<Uint8Array>,
+      size: number,
+    ) => Promise<T>,
+    signal?: AbortSignal,
+  ): Promise<Result<T, GhidraSessionError>> {
+    return this.#withTargetSnapshot(
+      (handle, initial) =>
+        read(
+          (position, length) =>
+            readFileHandleRange(handle, position, length, () =>
+              assertRegularFileActive(signal),
+            ),
+          initial.size,
+        ),
+      undefined,
+      signal,
+    );
+  }
+
   async #withTargetSnapshot<T>(
     read: (handle: FileHandle, initial: Stats, path: string) => Promise<T>,
-    observe: (
-      value: T,
-      path: string,
-    ) => FileSnapshotPartialObservation | NativeLoadImagePartialObservation,
+    observe:
+      | ((
+          value: T,
+          path: string,
+        ) => FileSnapshotPartialObservation | NativeLoadImagePartialObservation)
+      | undefined,
     signal?: AbortSignal,
   ): Promise<Result<T, GhidraSessionError>> {
     let completedObservation:
@@ -737,7 +766,7 @@ export class GhidraClient {
               assertRegularFileActive(signal);
               if (!sameRegularFileState(initial, after))
                 throw new RegularFileChangedError(path);
-              completedObservation = observe(value, path);
+              completedObservation = observe?.(value, path);
               return value;
             },
           ),
