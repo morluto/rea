@@ -96,7 +96,7 @@ const platformOf = (
     os: nonempty(value.os),
     architecture: nonempty(value.architecture),
     variant: nonempty(value.variant),
-    os_version: nonempty(value.osVersion) ?? nonempty(value.os_version),
+    os_version: nonempty(value["os.version"]),
   };
 };
 

@@ -140,6 +140,26 @@ it("includes Env values when include_env_values is selected", async () => {
   );
 });
 
+it("reads the platform os.version member", async () => {
+  const root = await createTestTempDirectory("rea-oci-os-version-");
+  await writeOciImageLayoutFixture(root);
+  const indexPath = join(root, "index.json");
+  const index = JSON.parse(await readFile(indexPath, "utf8")) as {
+    manifests: { platform: Record<string, string> }[];
+  };
+  index.manifests[0]!.platform = {
+    ...index.manifests[0]!.platform,
+    os: "windows",
+    "os.version": "10.0.17763.1879",
+  };
+  await writeFile(indexPath, JSON.stringify(index));
+  const report = await inspectLayout(root);
+  expect(report.indexes[0]?.entries[0]?.platform).toMatchObject({
+    os: "windows",
+    os_version: "10.0.17763.1879",
+  });
+});
+
 it("inventories a multi-platform index", async () => {
   const root = await createTestTempDirectory("rea-oci-multi-");
   const written = await writeMultiPlatformOciImageLayoutFixture(root);
