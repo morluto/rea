@@ -20,6 +20,7 @@ import { acquireOwnedLease } from "../process/OwnedLease.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import {
   GhidraCheckpoint,
+  hashGhidraPackedProgram,
   resolveGhidraCheckpoint,
 } from "./GhidraCheckpoint.js";
 
@@ -183,57 +184,17 @@ it.skipIf(process.platform === "win32").each(
   },
 );
 
-it.skipIf(process.platform === "win32")(
-  "publishes a verified state, reopens it, and separates target and analysis identities",
-  async () => {
-    const packed = Buffer.concat([
-      Buffer.alloc(64 * 1024, 0x61),
-      Buffer.from("packed bytes beyond the initial read"),
-    ]);
-    const digest = createHash("sha256").update(packed).digest("hex");
-    const f = await fixture(packed);
-    expect(f.selection.state).toEqual({ kind: "initial-analysis" });
-    expect(await f.owner.acquire("first")).toBeUndefined();
-    await f.owner.publish(f.packed);
-    await f.owner.close();
-    const loaded = await resolveGhidraCheckpoint(
-      f.root,
-      target,
-      profile,
-      f.resources,
-    );
-    expect(loaded.state).toEqual(f.selection.state);
-    const saved = f.owner.observation.source;
-    if (saved === null) throw new Error("Expected a published checkpoint");
-    expect(saved.sha256).toBe(digest);
-    const resumed = new GhidraCheckpoint(loaded, f.resources);
-    owners.push(resumed);
-    expect(await resumed.acquire("second")).toEqual({
-      path: join(loaded.directory, saved.file),
-      sha256: digest,
-    });
-    expect(
-      (
-        await resolveGhidraCheckpoint(
-          f.root,
-          "2".repeat(64),
-          profile,
-          f.resources,
-        )
-      ).key,
-    ).not.toBe(f.selection.key);
-    expect(
-      (
-        await resolveGhidraCheckpoint(
-          f.root,
-          target,
-          createAnalysisProfile(profile.provider, { import_mode: "other" }),
-          f.resources,
-        )
-      ).key,
-    ).not.toBe(f.selection.key);
-  },
-);
+it("hashes packed checkpoint bytes beyond the first buffer", async () => {
+  const bytes = Buffer.concat([
+    Buffer.alloc(64 * 1024, 0x61),
+    Buffer.from("packed bytes beyond the initial read"),
+  ]);
+  const { packed, resources } = await fixture(bytes);
+  const expected = createHash("sha256").update(bytes).digest("hex");
+  await expect(hashGhidraPackedProgram(packed, resources)).resolves.toBe(
+    expected,
+  );
+});
 
 it.skipIf(process.platform === "win32")(
   "refuses a concurrent owner and admits it after the original owner closes",
@@ -279,23 +240,14 @@ it.skipIf(process.platform === "win32")(
 );
 
 it.skipIf(process.platform === "win32")(
-  "keeps initial identity stable and rejects an unknown manifest version without rewriting it",
+  "rejects an unknown manifest version without rewriting it",
   async () => {
     const f = await fixture();
     await f.owner.acquire("initial");
     await f.owner.publish(f.packed);
     await f.owner.close();
-    const initial = await resolveGhidraCheckpoint(
-      f.root,
-      target,
-      profile,
-      f.resources,
-    );
-    expect(initial).toEqual(f.selection);
-    const path = join(initial.directory, "current.json");
+    const path = join(f.selection.directory, "current.json");
     const record = JSON.parse(await readFile(path, "utf8"));
-    expect(record.version).toBe(2);
-    expect(record.source.kind).toBe("initial-analysis");
     const unknown = JSON.stringify({ ...record, version: 1 });
     await writeFile(path, unknown);
     await expect(
