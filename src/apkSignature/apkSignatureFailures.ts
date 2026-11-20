@@ -20,6 +20,7 @@ import {
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
+import { parseLimitConstraint } from "../domain/parseFailureAnalysisError.js";
 import type { ApkSchemeError } from "../domain/apkSignature/apkSignatureSchemes.js";
 import type { ApkSigningBlockError } from "../domain/apkSignature/apkSigningBlock.js";
 import type { ApkCentralDirectoryError } from "../domain/apkSignature/apkV1Signature.js";
@@ -108,21 +109,20 @@ export const mapApkSchemeError = (
 /** A central directory that cannot be walked leaves v1 presence unknown: refuse. */
 export const mapCentralDirectoryError = (
   error: ApkCentralDirectoryError,
-): AnalysisError =>
-  error.kind === "budget-exceeded"
-    ? new AnalysisResourceConstraintError(
-        OPERATION,
-        "capacity",
-        `The central directory holds more than ${String(error.limit)} META-INF v1 signing entries.`,
-        { max_v1_signature_entries: error.limit },
-        fixedAllowanceOptions(
-          `The APK v1 allowance of ${String(error.limit)} META-INF signing entries (this release has no runtime override)`,
-          "count",
-        ),
-      )
-    : inputError(
-        `Malformed ZIP central directory at byte ${String(error.offset)}: ${error.detail}.`,
-      );
+): AnalysisError => {
+  if (error.kind !== "limit")
+    return inputError(
+      `Malformed ZIP central directory at byte ${String(error.offset)}: ${error.detail}.`,
+    );
+  const { name, maximum } = error.failure.limit;
+  return parseLimitConstraint(OPERATION, "capacity", error, {
+    legacyMaximumKey: name,
+    ...fixedAllowanceOptions(
+      `The APK v1 allowance of ${String(maximum)} META-INF signing entries (this release has no runtime override)`,
+      "count",
+    ),
+  });
+};
 
 /** More v1 signers than a signed APK carries: refused rather than decoded. */
 export const v1SignerCapacityError = (limit: number): AnalysisError =>

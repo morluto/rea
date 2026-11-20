@@ -18,6 +18,7 @@
  */
 import { boundedList } from "../boundedList.js";
 import { BinaryReader } from "../binaryContainer.js";
+import { decodeLimit, type ParseFailureError } from "../parseFailure.js";
 import { type Result, err, ok } from "../result.js";
 import {
   ZIP_CENTRAL_HEADER,
@@ -47,11 +48,7 @@ export type ApkCentralDirectoryError =
       readonly offset: number;
       readonly detail: string;
     }
-  | {
-      readonly kind: "budget-exceeded";
-      readonly resource: "v1-signature-entries";
-      readonly limit: number;
-    };
+  | ParseFailureError<"limit">;
 
 /**
  * Signing-relevant `META-INF/` entries retained. A signed APK holds a manifest
@@ -321,11 +318,17 @@ export const centralDirectoryV1SignatureEntries = (
       const name = decodeZipName(rawName);
       if (isV1SignatureMetadataName(name)) {
         if (entries.length >= MAX_V1_SIGNATURE_ENTRIES)
-          return err({
-            kind: "budget-exceeded",
-            resource: "v1-signature-entries",
-            limit: MAX_V1_SIGNATURE_ENTRIES,
-          });
+          return err(
+            decodeLimit(
+              "apk-v1-central-directory",
+              `The central directory holds more than ${String(MAX_V1_SIGNATURE_ENTRIES)} META-INF v1 signing entries.`,
+              {
+                name: "max_v1_signature_entries",
+                maximum: MAX_V1_SIGNATURE_ENTRIES,
+              },
+              { offset: at },
+            ),
+          );
         entries.push({
           name,
           rawName,

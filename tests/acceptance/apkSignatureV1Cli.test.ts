@@ -12,6 +12,7 @@ import { closeVerifierResources } from "../../scripts/lib/verifier-cleanup.mjs";
 import { AnalysisProviderRegistry } from "../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../src/application/binary/BinarySessionComposition.js";
 import { toolContract } from "../../src/contracts/toolContracts.js";
+import { analysisErrorProjectionSchema } from "../../src/domain/analysisErrorProjectionSchema.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { createServer } from "../../src/server/createServer.js";
 import {
@@ -37,6 +38,7 @@ import {
   zipWith,
 } from "../fixtures/apkSignature/v1SignatureBlock.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 import { createTestMcp } from "../support/mcp/mcpFixture.js";
@@ -761,5 +763,73 @@ cliTest(
         decode_error: null,
       },
     ]);
+  },
+);
+
+cliTest(
+  "preserves framing precedence at the APK v1 entry limit across CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-apk-v1-entry-limit-");
+    const entries = Array.from({ length: 4097 }, (_, index) => ({
+      name: `META-INF/F${String(index)}.SF`,
+      data: "",
+      stored: true,
+    }));
+    const bytes = await zipWith(entries, { dataDescriptor: false });
+    const malformed = Buffer.from(bytes);
+    const { central } = zipEntryOffsets(bytes, "META-INF/F4096.SF");
+    malformed.writeUInt16LE(0xffff, central + 28);
+
+    const { call } = await connectLocalToolsMcp();
+    for (const [name, selected, expected] of [
+      [
+        "framed",
+        bytes,
+        {
+          code: "resource_constraint",
+          retryable: false,
+          details: {
+            resource: "capacity",
+            reason:
+              "The central directory holds more than 4096 META-INF v1 signing entries.",
+            reported_limits: { max_v1_signature_entries: 4096 },
+          },
+          remediation: {
+            action: expect.stringContaining("no runtime override"),
+          },
+        },
+      ],
+      [
+        "malformed",
+        malformed,
+        {
+          code: "invalid_request",
+          details: {
+            issues: [
+              {
+                path: ["path"],
+                reason: "invalid_value",
+                message: expect.stringContaining(
+                  "central-directory file name runs past the directory",
+                ),
+              },
+            ],
+          },
+        },
+      ],
+    ] as const) {
+      const path = join(root, `${name}.apk`);
+      await writeFile(path, selected);
+      const reply = await cli.run({
+        arguments: ["inspect-apk-signature", path, "--json"],
+      });
+      expect(reply.exitCode, reply.stderr).toBe(1);
+      expect(analysisErrorProjectionSchema.parse(reply.json)).toMatchObject(
+        expected,
+      );
+      expect(
+        parseMcpToolError(await call("inspect_apk_signature", { path })).error,
+      ).toMatchObject(expected);
+    }
   },
 );

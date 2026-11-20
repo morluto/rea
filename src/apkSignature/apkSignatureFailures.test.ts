@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { decodeLimit } from "../domain/parseFailure.js";
 import {
   apkOutputBudgetError,
   mapApkBlockError,
@@ -30,11 +31,12 @@ it.each([
   ],
   [
     "v1 entries",
-    mapCentralDirectoryError({
-      kind: "budget-exceeded",
-      resource: "v1-signature-entries",
-      limit: 4096,
-    }),
+    mapCentralDirectoryError(
+      decodeLimit("apk-v1-central-directory", "Fixture limit reached.", {
+        name: "max_v1_signature_entries",
+        maximum: 4096,
+      }),
+    ),
     "max_v1_signature_entries",
     4096,
   ],
