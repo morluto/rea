@@ -52,6 +52,14 @@ export const evmWorkerReplySchema = z.discriminatedUnion("ok", [
         "unsupported",
       ]),
       message: z.string(),
+      /** The named ceiling that stopped a resource refusal, as its parser reported it. */
+      limit: z
+        .strictObject({
+          name: z.string().min(1),
+          maximum: z.number().nonnegative(),
+          required: z.number().nonnegative().optional(),
+        })
+        .optional(),
       compiler_diagnostics: solcCompilerDiagnosticsSchema.optional(),
       compiler_diagnostics_omitted: z.literal("reply-budget").optional(),
       carrier_sha256: z

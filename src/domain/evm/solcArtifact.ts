@@ -3,15 +3,35 @@ import {
   compilerMetadataFacts,
   compilerDiagnosticSeverity,
   strictTree,
+  SOLC_JSON_LIMITS,
 } from "./solcCompilerJson.js";
 import { inspectSolcBytecodeObject } from "./solcBytecodeObject.js";
+import { decodeStrictUtf8 } from "../strictUtf8.js";
 
-/** Exact compiler identities; source-unit names are not filesystem paths. */
-export const compilerSelectionSchema = z.strictObject({
-  source_unit: z.string(),
-  contract_name: z.string(),
-  bytecode_kind: z.enum(["creation", "deployed"]),
-});
+/** Combined UTF-8 size of the exact keys one selection must find in a carrier. */
+export const compilerIdentityBytes = (selection: {
+  readonly source_unit: string;
+  readonly contract_name: string;
+}): number =>
+  Buffer.byteLength(selection.source_unit, "utf8") +
+  Buffer.byteLength(selection.contract_name, "utf8");
+
+/** Exact compiler identities; source-unit names are not filesystem paths.
+ * No admitted carrier can contain identities whose serialized keys outgrow the
+ * fixed compiler-input allowance, so that bound applies before any effect. */
+export const compilerSelectionSchema = z
+  .strictObject({
+    source_unit: z.string(),
+    contract_name: z.string(),
+    bytecode_kind: z.enum(["creation", "deployed"]),
+  })
+  .superRefine((value, context) => {
+    if (compilerIdentityBytes(value) > SOLC_JSON_LIMITS.inputBytes)
+      context.addIssue({
+        code: "custom",
+        message: `Exact compiler identities exceed the fixed ${SOLC_JSON_LIMITS.inputBytes} byte compiler JSON input allowance; no admitted carrier can contain these exact keys`,
+      });
+  });
 export type CompilerSelection = z.infer<typeof compilerSelectionSchema>;
 export const solcBytecodeProperty = (
   kind: CompilerSelection["bytecode_kind"],
@@ -34,15 +54,51 @@ const containsProperty = (
       array ? 1 : 0,
     ) && parent.end - nested.end >= keys.length + (array ? 1 : 0);
 
-/** Shared by retained successful reports and worker failures after row admission. */
+/** Bounds-only check for summaries that retain carrier sizes but not its text;
+ * exposing boundaries also bind each row with compilerDiagnosticsBindCarrier. */
 export const compilerDiagnosticsFitCarrier = (
   diagnostics: readonly { source_range: SyntaxRange }[] | null | undefined,
   carrierBytes: number,
 ) =>
   diagnostics?.every(({ source_range }) => source_range.end <= carrierBytes) ??
   true;
+
+/**
+ * Bind retained rows to the carrier they claim: each row's coordinates must
+ * slice the strictly decoded carrier text (the worker's own decode policy) to
+ * exactly its retained `raw_json`, so a fabricated range inside the bounds can
+ * never pass as diagnostics from this carrier. A carrier that is not valid
+ * UTF-8 binds no rows.
+ */
+export const compilerDiagnosticsBindCarrier = (
+  diagnostics:
+    | readonly { raw_json: string; source_range: SyntaxRange }[]
+    | null
+    | undefined,
+  carrierBytes: Uint8Array,
+): boolean => {
+  if (diagnostics === null || diagnostics === undefined) return true;
+  let carrierText: string;
+  try {
+    carrierText = decodeStrictUtf8(carrierBytes, "preserve");
+  } catch {
+    return false;
+  }
+  return diagnostics.every(
+    ({ raw_json, source_range }) =>
+      source_range.end <= carrierText.length &&
+      carrierText.slice(source_range.start, source_range.end) === raw_json,
+  );
+};
 const overlaps = (left: SyntaxRange, right: SyntaxRange) =>
   left.start < right.end && right.start < left.end;
+/** Minimal `] , "contracts" : { "<src>" : { "<name>" :` between a diagnostic
+ * that precedes its selected contract and the contract object itself; source
+ * escapes and whitespace only lengthen it. */
+const DIAGNOSTIC_BEFORE_CONTRACT_WRAPPERS = 18;
+/** Minimal `} } , "errors" : [` between the selected contract and a diagnostic
+ * that follows it; extra contract wrappers only lengthen it. */
+const CONTRACT_BEFORE_DIAGNOSTIC_WRAPPERS = 13;
 const orderedDisjoint = (ranges: readonly SyntaxRange[]) =>
   ranges.every(
     (range, index) => index === 0 || ranges[index - 1]!.end <= range.start,
@@ -278,20 +334,44 @@ export const solcArtifactSchema = z
       });
     const firstDiagnostic = value.diagnostics?.at(0)?.source_range;
     const lastDiagnostic = value.diagnostics?.at(-1)?.source_range;
-    if (
-      firstDiagnostic !== undefined &&
-      lastDiagnostic !== undefined &&
-      overlaps(value.contract_range, {
+    if (firstDiagnostic !== undefined && lastDiagnostic !== undefined) {
+      const diagnosticsSpan = {
         start: firstDiagnostic.start,
         end: lastDiagnostic.end,
-      })
-    )
-      context.addIssue({
-        code: "custom",
-        path: ["diagnostics"],
-        message:
-          "Compiler diagnostics region overlaps or straddles selected contract",
-      });
+      };
+      if (overlaps(value.contract_range, diagnosticsSpan))
+        context.addIssue({
+          code: "custom",
+          path: ["diagnostics"],
+          message:
+            "Compiler diagnostics region overlaps or straddles selected contract",
+        });
+      else if (value.contract_range.start >= diagnosticsSpan.end) {
+        // The errors array closes and the `contracts` path reopens the
+        // contract, so ordered siblings must leave every wrapper token between
+        // them: `] , "contracts" : { "<src>" : { "<name>" :`.
+        const wrappers =
+          DIAGNOSTIC_BEFORE_CONTRACT_WRAPPERS +
+          JSON.stringify(value.selection.source_unit).length +
+          JSON.stringify(value.selection.contract_name).length;
+        if (value.contract_range.start - diagnosticsSpan.end < wrappers)
+          context.addIssue({
+            code: "custom",
+            path: ["diagnostics"],
+            message:
+              "Compiler diagnostics region leaves no room for the JSON wrappers between it and the selected contract",
+          });
+      } else if (
+        firstDiagnostic.start - value.contract_range.end <
+        CONTRACT_BEFORE_DIAGNOSTIC_WRAPPERS
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["diagnostics"],
+          message:
+            "Compiler diagnostics region leaves no room for the JSON wrappers between the selected contract and it",
+        });
+    }
   })
   .superRefine((value, context) => {
     const issue = (message: string) =>

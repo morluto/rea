@@ -990,6 +990,7 @@ it
     "valid",
     "valid-diagnostic",
     "outside-diagnostic",
+    "mismatched-diagnostic",
     "missing",
     "wrong",
     "invalid-omission",
@@ -1007,7 +1008,9 @@ it
       const start =
         scenario === "outside-diagnostic"
           ? snapshot.length + 1
-          : snapshot.toString().indexOf("{}");
+          : scenario === "mismatched-diagnostic"
+            ? snapshot.toString().indexOf('":[') + 1
+            : snapshot.toString().indexOf("{}");
       const digest = createHash("sha256").update(snapshot).digest("hex");
       await writeFile(
         request.reply_path,
@@ -1024,7 +1027,11 @@ it
           ...(["invalid-omission", "rows-and-omission"].includes(scenario)
             ? { compiler_diagnostics_omitted: "reply-budget" }
             : {}),
-          ...(["valid-diagnostic", "outside-diagnostic"].includes(scenario)
+          ...([
+            "valid-diagnostic",
+            "outside-diagnostic",
+            "mismatched-diagnostic",
+          ].includes(scenario)
             ? {
                 compiler_diagnostics: [
                   {
@@ -1074,5 +1081,44 @@ it
         "exact source-unit and contract keys",
       );
     }
+  },
+);
+
+it.runIf(!unsupportedHost)(
+  "refuses compiler identities above the selected input budget before worker effects",
+  async () => {
+    const { path } = await fixture();
+    let spawned = false;
+    const provider = new EvmoleInterfaceProvider({}, async () => {
+      spawned = true;
+      throw new Error("Worker must not start for an oversized selection");
+    });
+    const result = await provider.inspect({
+      path,
+      encoding: {
+        kind: "solc-json",
+        source_unit: "a".repeat(64),
+        contract_name: "C",
+        bytecode_kind: "creation",
+      },
+      producer_limits: { input_bytes: 32 },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected identity budget refusal");
+    expect(result.error._tag).toBe("AnalysisInputError");
+    expect(result.error).toMatchObject({
+      issues: [
+        {
+          path: ["encoding"],
+          reason: "out_of_range",
+          maximum: 32,
+          observed: 65,
+        },
+      ],
+    });
+    expect(projectAnalysisError(result.error).remediation.action).toContain(
+      "producer_limits.input_bytes",
+    );
+    expect(spawned).toBe(false);
   },
 );

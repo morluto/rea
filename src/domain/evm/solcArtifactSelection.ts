@@ -13,17 +13,22 @@ import {
   type SolcArtifact,
 } from "./solcArtifact.js";
 import { inspectSolcBytecodeObject } from "./solcBytecodeObject.js";
+import { decodeStrictUtf8 } from "../strictUtf8.js";
 import { err, ok, type Result } from "../result.js";
+import type { LimitRef } from "../parseFailure.js";
 
 export interface SolcArtifactSelectionError {
   readonly reason: "format" | "selection" | "resource";
   readonly message: string;
+  /** The named ceiling that stopped a resource-limited selection. */
+  readonly limit?: LimitRef;
   readonly compiler_diagnostics?: NonNullable<SolcArtifact["diagnostics"]>;
 }
 const failure = (
   reason: SolcArtifactSelectionError["reason"],
   message: string,
-) => err({ reason, message });
+  limit?: LimitRef,
+) => err({ reason, message, ...(limit === undefined ? {} : { limit }) });
 const range = (node: Node) => ({
   start: node.offset,
   end: node.offset + node.length,
@@ -136,7 +141,11 @@ export function selectSolcArtifact(
   SolcArtifactSelectionError
 > {
   if (bytes.byteLength > SOLC_JSON_LIMITS.inputBytes)
-    return failure("resource", "Compiler JSON exceeds the 4 MiB input limit");
+    return failure("resource", "Compiler JSON exceeds the 4 MiB input limit", {
+      name: "compiler_json_input_bytes",
+      maximum: SOLC_JSON_LIMITS.inputBytes,
+      required: bytes.byteLength,
+    });
   const selected = compilerSelectionSchema.safeParse(selection);
   if (!selected.success)
     return failure(
@@ -145,9 +154,7 @@ export function selectSolcArtifact(
     );
   let text: string;
   try {
-    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-      bytes,
-    );
+    text = decodeStrictUtf8(bytes, "preserve");
   } catch {
     return failure("format", "Compiler JSON is not valid UTF-8");
   }

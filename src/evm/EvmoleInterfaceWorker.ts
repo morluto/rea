@@ -1,5 +1,4 @@
 import { EvmAdmissionError } from "./EvmAdmissionError.js";
-import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { z } from "zod";
 import {
@@ -9,6 +8,7 @@ import {
 import type { SolcArtifact } from "../domain/evm/solcArtifact.js";
 import { jsonParts } from "../domain/jsonSerialization.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 import {
   decodeEvmBytecodeCarrier,
   EvmCarrierFailure,
@@ -21,6 +21,7 @@ import { EVM_FILE_SIZE_FAILURE_EXIT } from "./EvmoleRelease.js";
 import { parseJsonWithDuplicatePolicy } from "../domain/jsonDuplicateMember.js";
 import { readStableArtifact } from "../resources/index.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 /** Maximum UTF-8 byte size of the REA-authored worker request JSON file. */
 const MAX_EVM_WORKER_REQUEST_BYTES = 64 * 1024;
@@ -77,7 +78,7 @@ const main = async (): Promise<void> => {
     const compilerSelection = evmCompilerSelection(request.encoding);
     if (compilerSelection !== undefined)
       compilerFailureContext = {
-        carrier_sha256: createHash("sha256").update(carrier).digest("hex"),
+        carrier_sha256: sha256Hex(carrier),
       };
     const selected =
       compilerSelection === undefined
@@ -96,6 +97,9 @@ const main = async (): Promise<void> => {
         ok: false,
         reason: selected.error.reason,
         message: selected.error.message,
+        ...(selected.error.limit === undefined
+          ? {}
+          : { limit: selected.error.limit }),
         ...compilerFailureContext,
       };
     } else {
@@ -115,7 +119,9 @@ const main = async (): Promise<void> => {
       else if (typeof request.encoding === "string")
         bytes = decodeEvmBytecodeCarrier(carrier, request.encoding);
       else
-        throw new Error("Compiler encoding has no parsed compiler selection.");
+        throw invariantViolation(
+          "Compiler encoding has no parsed compiler selection.",
+        );
       const compilerFacts =
         compilerArtifact === undefined
           ? {}
@@ -167,7 +173,7 @@ const main = async (): Promise<void> => {
           ok: true,
           version: metadata.version,
           bytecode: {
-            sha256: createHash("sha256").update(bytes).digest("hex"),
+            sha256: sha256Hex(bytes),
             bytes: bytes.length,
             hex: Buffer.from(bytes).toString("hex"),
             metadata: inspectSolidityMetadata(bytes),

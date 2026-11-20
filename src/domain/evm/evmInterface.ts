@@ -3,7 +3,7 @@ import {
   timerDurationMsSchema,
 } from "../analysisResourceLimits.js";
 import { z } from "zod";
-import { createHash } from "node:crypto";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { solidityMetadataSchema } from "./solidityMetadata.js";
@@ -205,9 +205,8 @@ export const evmInterfaceSchema = z
             : undefined) !== value.bytecode.bytes ||
         (compiler.status === "concrete" &&
           (compiler.object?.toLowerCase() !== value.bytecode.hex ||
-            createHash("sha256")
-              .update(Buffer.from(value.bytecode.hex ?? "", "hex"))
-              .digest("hex") !== value.bytecode.sha256)) ||
+            sha256Hex(Buffer.from(value.bytecode.hex ?? "", "hex")) !==
+              value.bytecode.sha256)) ||
         (compiler.status !== "concrete" &&
           (value.bytecode.hex !== null ||
             value.bytecode.sha256 !== null ||

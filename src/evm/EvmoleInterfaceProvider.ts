@@ -8,7 +8,7 @@ import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { safeParseUtf8Json } from "../domain/safeJson.js";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { access, stat, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { isAbsolute, join } from "node:path";
@@ -56,7 +56,6 @@ import {
   cancelledBy,
   carriedReason,
   type AbortedSignal,
-  AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import { isAbortOf } from "../process/SignalAbort.js";
 import {
@@ -71,6 +70,7 @@ import {
   evmInterfaceSchema,
   evmEncodingKind,
   evmCompilerSelection,
+  evmProducerLimitRecovery,
 } from "../domain/evm/evmInterface.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -94,11 +94,21 @@ import {
 } from "./EvmoleRelease.js";
 import { evmWorkerReplySchema } from "./EvmInterfaceWorkerContract.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
-import { SOLC_JSON_LIMITS } from "../domain/evm/solcCompilerJson.js";
-import { compilerDiagnosticsFitCarrier } from "../domain/evm/solcArtifact.js";
+import { decodeLimit } from "../domain/parseFailure.js";
+import { parseLimitConstraint } from "../domain/parseFailureAnalysisError.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
+import {
+  SOLC_JSON_FORMAT,
+  SOLC_JSON_LIMITS,
+} from "../domain/evm/solcCompilerJson.js";
+import {
+  compilerDiagnosticsBindCarrier,
+  compilerIdentityBytes,
+} from "../domain/evm/solcArtifact.js";
 import { EVMOLE_PROVIDER_IDENTITY } from "./EvmoleProviderIdentity.js";
 import { decodeEvmBytecodeCarrier } from "./EvmBytecodeCarrier.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const OPERATION = "inspect_evm_interface";
 
@@ -553,6 +563,39 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
     try {
       if (options?.signal?.aborted)
         throw cancelledBy(OPERATION, options.signal);
+      if (compilerSelection !== undefined) {
+        // The worker request carries these identities verbatim, so refuse
+        // sizes no admitted carrier could contain before any process effect.
+        const identityBytes = compilerIdentityBytes(compilerSelection);
+        const carrierBudget = Math.min(
+          producerLimits.input_bytes,
+          SOLC_JSON_LIMITS.inputBytes,
+        );
+        if (identityBytes > carrierBudget)
+          throw new AnalysisInputError(
+            OPERATION,
+            {
+              conformsToInputContract: true,
+              ...(identityBytes > producerLimits.input_bytes
+                ? {
+                    remediationAction: evmProducerLimitRecovery(
+                      producerLimits,
+                      "input_bytes",
+                    ),
+                  }
+                : {}),
+            },
+            [
+              {
+                path: ["encoding"],
+                reason: "out_of_range",
+                message: `Exact compiler identities occupy ${String(identityBytes)} UTF-8 bytes above the admitted carrier budget of ${String(carrierBudget)} bytes; no admitted carrier can contain these exact keys.`,
+                maximum: carrierBudget,
+                observed: identityBytes,
+              },
+            ],
+          );
+      }
       if (!evmHostSupported(this.host.platform, this.host.architecture))
         throw new AnalysisCapabilityUnavailableError(
           EVMOLE_PROVIDER_IDENTITY.id,
@@ -744,9 +787,9 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
         if (
           compilerSelection !== undefined
             ? reply.carrier_sha256 !== carrier.sha256 ||
-              !compilerDiagnosticsFitCarrier(
+              !compilerDiagnosticsBindCarrier(
                 reply.compiler_diagnostics,
-                carrier.bytes.length,
+                carrier.bytes,
               )
             : reply.compiler_diagnostics !== undefined ||
               reply.compiler_diagnostics_omitted !== undefined ||
@@ -782,12 +825,22 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
             reply.message,
             { capturedOutput, diagnostics },
           );
-        if (reply.reason === "resource")
-          throw new AnalysisResourceConstraintError(
+        if (reply.reason === "resource") {
+          if (reply.limit === undefined)
+            throw invariantViolation(
+              "A compiler JSON resource refusal carries the parser ceiling that stopped it.",
+            );
+          const { name, maximum, required } = reply.limit;
+          throw parseLimitConstraint(
             OPERATION,
             "capacity",
-            reply.message,
-            null,
+            decodeLimit(
+              SOLC_JSON_FORMAT,
+              reply.message,
+              required === undefined
+                ? { name, maximum }
+                : { name, maximum, required },
+            ),
             {
               capturedOutput,
               diagnostics,
@@ -797,6 +850,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
               ),
             },
           );
+        }
         if (reply.reason === "format" || reply.reason === "selection")
           throw new AnalysisInputError(
             OPERATION,
@@ -865,6 +919,17 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
             "Compiler worker changed the selected carrier or exact compiler selection.",
             { capturedOutput },
           );
+        if (
+          !compilerDiagnosticsBindCarrier(
+            compilerArtifact.diagnostics,
+            carrier.bytes,
+          )
+        )
+          throw new AnalysisOutputError(
+            OPERATION,
+            "Compiler worker diagnostics do not match the retained carrier text.",
+            { capturedOutput },
+          );
       } else {
         if (typeof input.encoding !== "string")
           throw new AnalysisOutputError(
@@ -889,9 +954,8 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
       }
       if (
         reply.bytecode.hex !== null &&
-        (createHash("sha256")
-          .update(Buffer.from(reply.bytecode.hex, "hex"))
-          .digest("hex") !== reply.bytecode.sha256 ||
+        (sha256Hex(Buffer.from(reply.bytecode.hex, "hex")) !==
+          reply.bytecode.sha256 ||
           reply.bytecode.hex.length / 2 !== reply.bytecode.bytes)
       )
         throw new AnalysisOutputError(

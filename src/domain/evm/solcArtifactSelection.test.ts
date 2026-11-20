@@ -487,3 +487,57 @@ describe("compiler property wrapper ranges", () => {
     expect(solcArtifactSchema.safeParse(artifact).success).toBe(false);
   });
 });
+
+describe("diagnostic and contract wrapper syntax", () => {
+  it("rejects a preceding diagnostic that leaves less than the wrappers before its contract", () => {
+    const artifact = successful(
+      JSON.stringify({
+        errors: [{}],
+        contracts: {
+          [selection.source_unit]: {
+            C: { evm: { bytecode: { object: "6000" } } },
+          },
+        },
+      }),
+    ).artifact;
+    // The genuine carrier keeps every wrapper token between its siblings.
+    expect(solcArtifactSchema.safeParse(artifact).success).toBe(true);
+    artifact.diagnostics![0]!.source_range = {
+      start: artifact.contract_range.start - 2,
+      end: artifact.contract_range.start,
+      unit: "utf16-code-unit",
+    };
+    expect(solcArtifactSchema.safeParse(artifact).success).toBe(false);
+  });
+
+  it("rejects a following diagnostic that leaves less than the wrappers after its contract", () => {
+    const artifact = successful(carrier("6000")).artifact;
+    // Contract first: `}},"errors":[` is the minimum distance after it.
+    artifact.diagnostics = [
+      {
+        raw_json: "{}",
+        json_pointer: "/errors/0",
+        severity: null,
+        source_range: {
+          start: artifact.contract_range.end + 13,
+          end: artifact.contract_range.end + 15,
+          unit: "utf16-code-unit",
+        },
+      },
+    ];
+    expect(solcArtifactSchema.safeParse(artifact).success).toBe(true);
+    artifact.diagnostics = [
+      {
+        raw_json: "{}",
+        json_pointer: "/errors/0",
+        severity: null,
+        source_range: {
+          start: artifact.contract_range.end + 12,
+          end: artifact.contract_range.end + 14,
+          unit: "utf16-code-unit",
+        },
+      },
+    ];
+    expect(solcArtifactSchema.safeParse(artifact).success).toBe(false);
+  });
+});

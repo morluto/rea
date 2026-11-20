@@ -1,10 +1,42 @@
 import { expect, it, vi } from "vitest";
 
-const filesystem = vi.hoisted(() => ({ readFile: vi.fn() }));
-vi.mock("node:fs/promises", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("node:fs/promises")>()),
-  readFile: filesystem.readFile,
+const filesystem = vi.hoisted(() => ({
+  readFile: vi.fn(),
+  readlink: vi.fn(async (_path: string) => "user:[1]"),
+  // Host procfs ownership must never leak into fixture PIDs.
+  stat: vi.fn(async () => {
+    throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+  }),
 }));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...original,
+    open: async (path: unknown) => {
+      if (!String(path).startsWith("/proc/"))
+        throw new Error(`Unexpected descriptor open: ${String(path)}`);
+      let bytes: Buffer | undefined;
+      return {
+        fd: 42,
+        close: async () => {},
+        read: async (
+          buffer: Buffer,
+          offset: number,
+          length: number,
+          position: bigint,
+        ) => {
+          bytes ??= Buffer.from(await filesystem.readFile(path));
+          const start = Number(position);
+          const count = bytes.copy(buffer, offset, start, start + length);
+          return { bytesRead: count, buffer };
+        },
+      };
+    },
+    readlink: filesystem.readlink,
+    stat: filesystem.stat,
+  };
+});
 
 import {
   createSystemProcessOwnershipHost,
@@ -122,37 +154,63 @@ it.each(["environ", "status"])(
     const controller = new AbortController();
     const reason = new Error("cancel native credential inspection");
     filesystem.readFile.mockReset();
-    filesystem.readFile.mockImplementation(
-      async (path: string, options: { signal?: AbortSignal }) => {
-        expect(options.signal).toBe(controller.signal);
-        if (path.endsWith("/stat")) {
-          const fields = Array<string>(20).fill("0");
-          fields[0] = "S";
-          fields[1] = "1";
-          fields[2] = "900";
-          fields[19] = "100";
-          return `900 (fixture) ${fields.join(" ")}`;
-        }
-        if (!path.endsWith(`/${stage}`)) throw denied("EACCES");
+    filesystem.readFile.mockImplementation(async (path: string) => {
+      if (path === "/proc/900/stat") {
+        const fields = Array<string>(20).fill("0");
+        fields[0] = "S";
+        fields[1] = "1";
+        fields[2] = "900";
+        fields[19] = "100";
+        return `900 (fixture) ${fields.join(" ")}`;
+      }
+      // The run token must stay unreadable for the status stage so PID 900
+      // enters the credential set and the "after" identity probe reads its
+      // status content; only the selected stage cancels.
+      if (path === "/proc/900/environ") {
+        if (stage !== "environ") throw denied("EACCES");
         controller.abort(reason);
-        throw reason;
-      },
-    );
+        return "";
+      }
+      if (path === "/proc/900/status") {
+        if (stage !== "status") throw denied("EACCES");
+        controller.abort(reason);
+        return "";
+      }
+      throw new Error(`unexpected proc read: ${path}`);
+    });
     const host = createSystemProcessOwnershipHost("linux", {});
-    await expect(
-      readProcessOwnershipFacts(
-        [
+    const facts = readProcessOwnershipFacts(
+      [
+        {
+          pid: 900,
+          parentPid: 1,
+          processGroupId: 900,
+          state: "S",
+          command: "fixture",
+        },
+      ],
+      host,
+      controller.signal,
+    );
+    if (stage === "environ")
+      await expect(facts).rejects.toMatchObject({
+        _tag: "ProcessOwnershipInspectionCancelled",
+        reason,
+        cause: reason,
+      });
+    else
+      await expect(facts).rejects.toMatchObject({
+        _tag: "ProcessOwnershipIdentityBatchFailure",
+        failures: [
           {
             pid: 900,
-            parentPid: 1,
-            processGroupId: 900,
-            state: "S",
-            command: "fixture",
+            cause: {
+              _tag: "ProcessOwnershipInspectionCancelled",
+              reason,
+              cause: reason,
+            },
           },
         ],
-        host,
-        controller.signal,
-      ),
-    ).rejects.toBe(reason);
+      });
   },
 );

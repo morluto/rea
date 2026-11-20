@@ -10,7 +10,7 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { mcpTextValue } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
@@ -44,7 +44,7 @@ const run = createVerifierRun();
 const environment = Object.fromEntries(
   Object.entries(process.env).filter(([, value]) => typeof value === "string"),
 );
-const root = await PrivateRuntimeRoot.create({ prefix: "rea-solc-verifier-" });
+const root = await VerifierFixture.open({ prefix: "rea-solc-verifier-" });
 const client = new Client({ name: "solc-artifact-verifier", version: "1" });
 const transport = new StdioClientTransport({
   command: process.execPath,
@@ -894,7 +894,7 @@ try {
   for (const close of [
     () => client.close(),
     () => transport.close(),
-    () => root.close(),
+    () => root.release(),
   ]) {
     try {
       await close();

@@ -1,9 +1,13 @@
 import { parseTree, visit, type Node, type ParseError } from "jsonc-parser";
 import { err, ok, type Result } from "../result.js";
+import { decodeLimit, type LimitRef } from "../parseFailure.js";
+import { isParseLimit } from "../parseFailureAnalysisError.js";
 
 interface SolcJsonError {
   readonly reason: "format" | "resource";
   readonly message: string;
+  /** The named ceiling that stopped a resource-limited parse. */
+  readonly limit?: LimitRef;
 }
 
 /** Pre-allocation ceilings within the existing 256 MiB EVM worker heap.
@@ -17,13 +21,18 @@ export const SOLC_JSON_LIMITS = {
   nodes: 65_536,
   estimatedBytesPerNode: 512,
 } as const;
+/** The format identity this parser reports its failures under. */
+export const SOLC_JSON_FORMAT = "solc-json";
 const strictOptions = {
   disallowComments: true,
   allowTrailingComma: false,
   allowEmptyContent: false,
 };
-const failure = (reason: SolcJsonError["reason"], message: string) =>
-  err({ reason, message });
+const failure = (
+  reason: SolcJsonError["reason"],
+  message: string,
+  limit?: LimitRef,
+) => err({ reason, message, ...(limit === undefined ? {} : { limit }) });
 export const child = (
   node: Node | undefined,
   name: string,
@@ -42,15 +51,25 @@ export const compilerDiagnosticSeverity = (node: Node): string | null => {
 export function strictTree(text: string): Result<Node, SolcJsonError> {
   let depth = 0;
   let invalid = false;
-  let excessive: "depth" | "nodes" | null = null;
   let nodes = 0;
   const account = (count: number) => {
     nodes += count;
-    if (nodes > SOLC_JSON_LIMITS.nodes) {
-      excessive = "nodes";
-      throw new Error("nodes");
-    }
+    if (nodes > SOLC_JSON_LIMITS.nodes)
+      throw decodeLimit(
+        SOLC_JSON_FORMAT,
+        `Compiler JSON exceeds ${SOLC_JSON_LIMITS.nodes} AST nodes`,
+        { name: "compiler_json_ast_nodes", maximum: SOLC_JSON_LIMITS.nodes },
+      );
   };
+  const nestingExceeded = () =>
+    decodeLimit(
+      SOLC_JSON_FORMAT,
+      `Compiler JSON nesting exceeds ${SOLC_JSON_LIMITS.depth} levels`,
+      {
+        name: "compiler_json_nesting_levels",
+        maximum: SOLC_JSON_LIMITS.depth,
+      },
+    );
   const objects: Set<string>[] = [];
   try {
     visit(
@@ -58,10 +77,7 @@ export function strictTree(text: string): Result<Node, SolcJsonError> {
       {
         onObjectBegin: () => {
           account(1);
-          if (++depth > SOLC_JSON_LIMITS.depth) {
-            excessive = "depth";
-            throw new Error("depth");
-          }
+          if (++depth > SOLC_JSON_LIMITS.depth) throw nestingExceeded();
           objects.push(new Set());
           return true;
         },
@@ -77,10 +93,7 @@ export function strictTree(text: string): Result<Node, SolcJsonError> {
         },
         onArrayBegin: () => {
           account(1);
-          if (++depth > SOLC_JSON_LIMITS.depth) {
-            excessive = "depth";
-            throw new Error("depth");
-          }
+          if (++depth > SOLC_JSON_LIMITS.depth) throw nestingExceeded();
           return true;
         },
         onArrayEnd: () => {
@@ -95,16 +108,11 @@ export function strictTree(text: string): Result<Node, SolcJsonError> {
       },
       strictOptions,
     );
-  } catch (cause) {
-    if (!excessive) throw cause;
+  } catch (cause: unknown) {
+    if (isParseLimit(cause, SOLC_JSON_FORMAT))
+      return failure("resource", cause.failure.detail, cause.failure.limit);
+    throw cause;
   }
-  if (excessive)
-    return failure(
-      "resource",
-      excessive === "depth"
-        ? `Compiler JSON nesting exceeds ${SOLC_JSON_LIMITS.depth} levels`
-        : `Compiler JSON exceeds ${SOLC_JSON_LIMITS.nodes} AST nodes`,
-    );
   if (invalid)
     return failure(
       "format",
