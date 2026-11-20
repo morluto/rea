@@ -206,6 +206,32 @@ describe("parseOneLineSources", () => {
       },
     ]);
   });
+
+  it("decodes quoted or escaped option assignments and keeps option names case-sensitive", () => {
+    expect(
+      parseOneLineSources(
+        'deb [arch%3D"amd64" Arch=arm64 signed-by="/usr/share/keyrings/vendor[1]%2Egpg"] https://vendor.invalid/archive stable main',
+        TYPORA_LIST,
+      ),
+    ).toMatchObject([
+      {
+        architectures: ["amd64"],
+        signedBy: ["/usr/share/keyrings/vendor[1].gpg"],
+      },
+    ]);
+  });
+
+  it.each(['arch="amd64', "arch", "arch="])(
+    "does not attribute a repository to a malformed option (%s)",
+    (option) => {
+      expect(
+        parseOneLineSources(
+          `deb [${option}] https://vendor.invalid/archive stable main`,
+          TYPORA_LIST,
+        ),
+      ).toEqual([]);
+    },
+  );
 });
 
 describe("parseDeb822Sources", () => {

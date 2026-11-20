@@ -202,6 +202,8 @@ const aptRepositorySchema = z.strictObject({
   repo_suite: z.string().min(1).optional(),
   /** Empty for a flat repository. */
   components: z.array(z.string()),
+  /** Configured component words after one-line decoding, when their spelling differs. */
+  repo_components: z.array(z.string()).optional(),
   /** The entry's architecture restriction. `all` allows architecture-independent packages. An empty list depends on the host's APT defaults. Older captures omit this field. */
   architectures: z.array(z.string()).optional(),
   /** The release's Suite (apt's `a=`), or else its Codename, which `<package>/<release>` selects; null when unknown, absent from captures written before it was recorded. */

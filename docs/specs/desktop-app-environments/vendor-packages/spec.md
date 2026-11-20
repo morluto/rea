@@ -15,13 +15,17 @@ that key, with those libraries, and starts it.
   the source as `apt-cache policy` lists it, and the sources file entry
   `apt-get indextargets` names for it (its `Sourcesentry` file and line or
   deb822 stanza; `sources.list`, one-line `*.list` or deb822 `*.sources`) with
-  its authored URI, suite, components and architecture restriction. The optional
+  its authored URI, suite and components, and its architecture restriction. The optional
   `repo_uri` field records the index's sanitized `Repo-URI` independently of
   the authored URI. When APT selects a different suite, `repo_suite`
   records the index's source suite separately from the authored value.
-  Undecodable UTF-8 entries and index paragraphs are withheld
-  without substituting replacement characters. A policy query with undecodable
-  bytes leaves repository attribution unknown. Flat repositories
+  One-line source words keep their authored spelling, including quotes and
+  escapes. `repo_components` records the effective component words when
+  one-line parsing changes their spelling. Architecture and signing-key options
+  use APT's decoded option values. Undecodable UTF-8 entries and index
+  paragraphs are withheld without substituting replacement characters.
+  A policy query with undecodable bytes leaves repository attribution unknown.
+  Flat repositories
   (suite `./` or `/`, no components), `[signed-by=…]` and `Signed-By:` options
   and architecture options are read; a deb822 stanza's URIs and suites are
   kept as lists, never expanded into every pair. REA matches `$(ARCH)` in
@@ -98,10 +102,12 @@ that key, with those libraries, and starts it.
   `uri` still holds them is refused whole, since its library packages counted
   that repository), it is reached over http or https, and its architecture
   restriction includes the host's. AgentEnv writes a deb822 source. The
-  exporter and package attribution share the URI and concrete suite that
-  reproduce the observed index identity. A capture with a templated suite
-  needs `repo_suite` to replay it. A legacy one-line source with percent escapes
-  needs a new capture with `repo_uri`. A URI that cannot be represented as
+  exporter and package attribution share the URI, concrete suite and
+  components that reproduce the observed index identity. A capture with
+  a templated suite needs `repo_suite` to replay it. A legacy one-line URI
+  with percent escapes needs a new capture with `repo_uri`. Older captures
+  can replay complete one-line words. When a word was split during capture,
+  capture the application again. A value that cannot be represented as
   one deb822 token is withheld with the reason. With none usable, the export is refused
   naming each repository, by its URI without credentials, and its reason; the
   credentials reason names no URI. A capture written before

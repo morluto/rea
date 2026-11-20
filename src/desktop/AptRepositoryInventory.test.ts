@@ -17,6 +17,7 @@ import {
   VENDOR_A,
   VENDOR_B,
 } from "../domain/desktop/aptKeys.fixture.js";
+import { exportInstall } from "../domain/desktop/appExportInstall.js";
 import {
   aptListFileName,
   declaredPackageFiles,
@@ -218,6 +219,107 @@ it.each([
     expect(JSON.stringify(facts.repositories)).not.toMatch(
       /test-user|test-secret/u,
     );
+  },
+);
+
+it.skipIf(process.platform === "win32").each([
+  {
+    authored: "ma%69n cont%72ib",
+    effective: ["main", "contrib"],
+    replayable: true,
+  },
+  { authored: '"main extra"', effective: ["main extra"], replayable: false },
+])(
+  "uses the same replay decision for one-line repository components $authored",
+  async ({ authored, effective, replayable }) => {
+    const root = await createTestTempDirectory("apt-list-replay-");
+    const file = join(root, "vendor.list");
+    const key = join(root, "vendor.gpg");
+    const uri = "https://vendor.invalid/apt";
+    const suite = '"st%61ble"';
+    const baseUri = `${uri}/dists/stable/`;
+    await writeFile(key, VENDOR_A.key);
+    await writeFile(
+      join(root, `${aptListFileName(baseUri)}InRelease`),
+      "controlled release",
+    );
+    await writeFile(
+      file,
+      `deb [signed-by=${key}] "${uri}" ${suite} ${authored}\n`,
+    );
+    const descriptions = effective.map(
+      (component) => `${uri} stable/${component} amd64 Packages`,
+    );
+    const output = effective
+      .map((component, index) =>
+        [
+          `Description: ${descriptions[index]}`,
+          `Sourcesentry: ${file}:1`,
+          `Repo-URI: ${uri}/`,
+          "Release: stable",
+          "Suite: stable",
+          `Component: ${component}`,
+          `Base-URI: ${baseUri}`,
+          `Filename: ${join(root, "Packages")}`,
+        ].join("\n"),
+      )
+      .join("\n\n");
+    const runQuery: QueryRunner = async (command) => {
+      if (command === "apt-get") return { stdout: output, exitCode: 0 };
+      if (command === "gpgv") return { stdout: GPGV_A_ONLY, exitCode: 2 };
+      throw new Error(`Unexpected query ${command}`);
+    };
+    const sources = descriptions.slice(0, 1);
+    const facts = await inspectAptRepositories(
+      { sources, origins: ["Vendor"] },
+      { runQuery, apt: { lists: root, trustedParts: root, trusted: key } },
+      undefined,
+    );
+    expect(facts.repositories).toEqual([
+      expect.objectContaining({
+        uri: `"${uri}"`,
+        repo_uri: `${uri}/`,
+        suite,
+        repo_suite: "stable",
+        repo_components: effective,
+        signing_key: expect.objectContaining({
+          fingerprint: VENDOR_A.fingerprint,
+        }),
+      }),
+    ]);
+    expect(
+      declaredPackageFiles(facts.repositories, facts.indexTargets),
+    ).toEqual(new Set(replayable ? descriptions : []));
+    const install = exportInstall(
+      {
+        kind: "deb",
+        name: "example:amd64",
+        version: "1.0",
+        architecture: "amd64",
+        sources,
+        source_origins: ["Vendor"],
+        package_lists_present: true,
+        apt_repositories: [...facts.repositories],
+      },
+      "example",
+      "x64",
+    );
+    if (replayable)
+      expect(install).toMatchObject({
+        ok: true,
+        value: {
+          sources: [{ uri, suite: "stable", components: effective }],
+        },
+      });
+    else
+      expect(install).toMatchObject({
+        ok: false,
+        error: {
+          reason: expect.stringContaining(
+            "one AgentEnv deb822 component token",
+          ),
+        },
+      });
   },
 );
 

@@ -181,7 +181,7 @@ const declaredSources = (
   const refused: string[] = [];
   const kept: AptRepository[] = [];
   for (const repository of repositories) {
-    const { components, signing_key: key } = repository;
+    const { signing_key: key } = repository;
     const replay = repositoryReplay(repository);
     const reason = replay.ok
       ? architectureRefusal(repository, architecture, packageArchitecture)
@@ -190,7 +190,7 @@ const declaredSources = (
       refused.push(`${describe(repository)}: ${reason ?? "it is unusable"}`);
       continue;
     }
-    const { uri, repoUri, suite } = replay.value;
+    const { uri, repoUri, suite, components } = replay.value;
     const id = `${repoUri}\n${suite}`;
     const existing = declared.get(id);
     if (existing !== undefined && existing.keySha256 !== key.sha256) {

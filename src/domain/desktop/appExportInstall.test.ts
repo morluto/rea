@@ -73,6 +73,45 @@ it("replays the observed suite of a repository whose authored suite is templated
   );
 });
 
+it("replays complete one-line words in older capture evidence", () => {
+  const installed = exportInstall(
+    typora([
+      repository({
+        uri: '"https://vendor.invalid/apt"',
+        suite: '"st%61ble"',
+        components: ["main%252Cextra", "cont%72ib"],
+      }),
+    ]),
+    "typora",
+    "arm64",
+  );
+  expect(installed).toMatchObject({
+    ok: true,
+    value: {
+      sources: [
+        {
+          uri: "https://vendor.invalid/apt",
+          suite: "stable",
+          components: ["main%2Cextra", "contrib"],
+        },
+      ],
+    },
+  });
+});
+
+it.each([
+  { uri: '"https://vendor.invalid/a' },
+  { suite: '"stable', components: ['testing"', "main"] },
+  { suite: "stable", components: ['"main', 'extra"'] },
+])(
+  "requests recapture of an incomplete historical one-line word",
+  (overrides) => {
+    expect(repositoryRefusal(repository(overrides))).toContain(
+      "Capture the application again",
+    );
+  },
+);
+
 describe("exportInstall", () => {
   it("installs from a vendor repository whose key the capture verified", () => {
     const install = exportInstall(typora([repository()]), "typora", "arm64");
