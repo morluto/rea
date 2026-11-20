@@ -167,7 +167,6 @@ it("projects the retained process root through close_binary and resolves its ret
     async () => {
       await closeSession(resources);
     },
-    async () => {},
   ]);
 });
 
@@ -268,7 +267,6 @@ it.each(["returned", "thrown", "synchronous"] as const)(
       async () => {
         await closeSession(resources);
       },
-      async () => {},
     ]);
   },
 );

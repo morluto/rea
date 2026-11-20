@@ -28,9 +28,8 @@ const identitySchema = z.object({
   session_id: z.number().int().positive(),
 });
 
-const itWithLinuxCaptureCapability = it.skipIf(
-  process.platform !== "linux" || CAPTURE_SKIP_REASON !== false,
-);
+const linuxCaptureSkip =
+  process.platform !== "linux" || CAPTURE_SKIP_REASON !== false;
 
 itWithCaptureCapability(
   "captures a POSIX PATH executable with a literal backslash in its basename",
@@ -184,8 +183,10 @@ itWithCaptureCapability.each([
   20_000,
 );
 
-itWithLinuxCaptureCapability.each([false, true])(
-  "honors pids=%s in owned Linux capture samples and committed Evidence",
+it.skipIf(linuxCaptureSkip).each([false, true])(
+  linuxCaptureSkip && CAPTURE_SKIP_REASON !== false
+    ? `honors pids=%s in owned Linux capture samples and committed Evidence — ${CAPTURE_SKIP_REASON}`
+    : "honors pids=%s in owned Linux capture samples and committed Evidence",
   async (pids) => {
     const root = await createTestTempDirectory("rea-process-identifiers-");
     const identityPath = join(root, "identity.json");
