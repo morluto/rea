@@ -4,7 +4,7 @@
   "src/domain/managed/managedMetadataInventoryRows.ts": 2,
   "src/domain/native/elfPointerRelocations.ts": 6,
   "src/domain/native/readBinaryContainer.ts": 1,
-  "src/native/AppleDispatchMetadata.ts": 4,
+  "src/native/AppleDispatchMetadata.ts": 1,
   "src/native/AppleObjcDispatchFacets.ts": 1,
   "src/native/AppleSwiftDispatchFacets.ts": 1,
   "src/native/elf/ElfNoteParser.ts": 6,
