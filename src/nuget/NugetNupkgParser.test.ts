@@ -1002,7 +1002,7 @@ it("keeps foreign groups and attributes from hiding declared dependencies when d
       <metadata>
         <id>Demo.Package</id><version>1.0.0</version>
         <dependencies>
-          <ext:foreignGroup xmlns:ext="urn:example"><ext:dependency id="Extension" /></ext:foreignGroup>
+          <ext:group xmlns:ext="urn:example"><ext:dependency id="Extension" /></ext:group>
           <group targetFramework="net8.0" xmlns:ext="urn:example" ext:extra="custom">
             <dependency id="DeclaredNoNs" version="1.5.0" ext:tag="annotated" />
           </group>
