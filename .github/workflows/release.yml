@@ -120,8 +120,6 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
-    outputs:
-      sha: ${{ github.event.pull_request.merge_commit_sha }}
     steps:
       - name: Check out reviewed release merge
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -155,8 +153,6 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-    outputs:
-      sha: ${{ steps.branch.outputs.sha }}
     steps:
       - name: Validate release selection
         shell: bash
@@ -298,7 +294,7 @@ jobs:
     secrets:
       TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
     with:
-      source_sha: ${{ needs.merged-release.outputs.sha || needs.release-please.outputs.sha }}
+      source_sha: ${{ github.sha }}
       remote_cache_write: true
 
   rehearsal:
@@ -306,7 +302,7 @@ jobs:
     env:
       TURBO_TOKEN: ""
       TURBO_CACHE: local:rw
-    needs: [merged-release, release-please, qualification]
+    needs: qualification
     if: >-
       always() && !cancelled() && needs.qualification.result == 'success'
     runs-on: ubuntu-latest
@@ -317,7 +313,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          ref: ${{ needs.merged-release.outputs.sha || needs.release-please.outputs.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
@@ -332,18 +328,16 @@ jobs:
           VERIFIED_PACKAGE_VERSION: ${{ steps.package.outputs.version }}
         run: node scripts/verify-release-artifact.mjs "$VERIFIED_PACKAGE_TARBALL" "$VERIFIED_PACKAGE_VERSION"
 
-  tag-release:
-    name: Create qualified GitHub release
-    needs: [merged-release, release-please, qualification, rehearsal]
+  authorize-npm:
+    name: Authorize qualified npm publication
+    needs: [qualification, rehearsal]
     if: >-
       always() && !cancelled() &&
       needs.qualification.result == 'success' && needs.rehearsal.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      pull-requests: write
-    outputs:
-      sha: ${{ steps.release.outputs.sha }}
+      pull-requests: read
     steps:
       - name: Check out qualified release revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -359,6 +353,9 @@ jobs:
 
       - run: npm ci
 
+      - name: Verify package and registry metadata versions before publication
+        run: npm run mcp-registry:check
+
       - name: Validate finalized notes before release creation
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
@@ -371,43 +368,16 @@ jobs:
           fi
           node scripts/release-notes.mjs publication "${args[@]}"
 
-      - name: Recheck the frozen branch before tagging
-        if: github.event_name == 'workflow_dispatch'
+      - name: Claim the candidate before writing to npm
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_BRANCH: ${{ inputs.release_branch }}
-        run: |
-          sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${RELEASE_BRANCH}" --jq '.object | select(.type == "commit") | .sha')"
-          if [[ "${sha}" != "${GITHUB_SHA}" ]]; then
-            echo "The release branch moved during qualification; refusing to tag a different source." >&2
-            exit 1
-          fi
-
-      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
-        id: release
-        with:
-          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
-          target-branch: ${{ inputs.release_branch || 'main' }}
-          skip-github-release: false
-          skip-github-pull-request: true
-
-      - name: Bind publication to the qualified revision
-        env:
-          RELEASE_CREATED: ${{ steps.release.outputs.release_created }}
-          RELEASE_SHA: ${{ steps.release.outputs.sha }}
-        run: |
-          if [[ "${RELEASE_CREATED}" != true ]]; then
-            echo "Release Please did not create a release for the qualified revision. Check its pending label and release metadata; for a partial publication, re-run failed jobs in the original run." >&2
-            exit 1
-          fi
-          if [[ "${RELEASE_SHA}" != "${GITHUB_SHA}" ]]; then
-            echo "The tagged release differs from the qualified revision; refusing mismatched publication provenance. The GitHub release already exists; do not create another release as a retry." >&2
-            exit 1
-          fi
+        run: node scripts/ci/release-attempt.mjs publish
 
   publish:
     name: Publish to npm
-    needs: tag-release
+    needs: authorize-npm
+    if: ${{ always() && !cancelled() && needs.authorize-npm.result == 'success' }}
     runs-on: ubuntu-latest
     env:
       TURBO_TOKEN: ""
@@ -418,7 +388,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          ref: ${{ needs.tag-release.outputs.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
@@ -443,7 +413,7 @@ jobs:
 
   verify-npm:
     name: Verify published npm package
-    needs: [tag-release, publish]
+    needs: publish
     if: >-
       always() && !cancelled() && needs.publish.result == 'success'
     runs-on: ubuntu-latest
@@ -456,7 +426,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          ref: ${{ needs.tag-release.outputs.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
@@ -475,12 +445,77 @@ jobs:
           VERIFIED_PACKAGE_VERSION: ${{ steps.package.outputs.version }}
         run: node scripts/verify-published-package.mjs "$VERIFIED_PACKAGE_VERSION"
 
+  tag-release:
+    name: Create qualified GitHub release
+    needs: verify-npm
+    if: ${{ always() && !cancelled() && needs.verify-npm.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Check out qualified release revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+
+      - run: npm ci
+
+      - name: Check for a previously completed GitHub release
+        id: github
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_BRANCH: ${{ inputs.release_branch }}
+        run: node scripts/ci/release-attempt.mjs inspect-github
+
+      - name: Validate finalized notes before release creation
+        if: steps.github.outputs.published == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_PR: ${{ github.event.pull_request.number }}
+        run: |
+          args=(--repository "$GH_REPO" --source "$GITHUB_SHA")
+          if [[ -n "$RELEASE_PR" ]]; then
+            args+=(--pr "$RELEASE_PR")
+          fi
+          node scripts/release-notes.mjs publication "${args[@]}"
+
+      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
+        id: release
+        if: steps.github.outputs.published == 'false'
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          target-branch: ${{ inputs.release_branch || 'main' }}
+          skip-github-release: false
+          skip-github-pull-request: true
+
+      - name: Bind publication to the qualified revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_CREATED: ${{ steps.release.outputs.release_created }}
+          RELEASE_SHA: ${{ steps.release.outputs.sha }}
+        run: |
+          if [[ "${RELEASE_CREATED}" == true && "${RELEASE_SHA}" != "${GITHUB_SHA}" ]]; then
+            echo "The tagged release differs from the qualified revision; refusing mismatched publication provenance." >&2
+            exit 1
+          fi
+          node scripts/ci/release-attempt.mjs verify-github
+
   publish-mcp:
     name: Publish to MCP Registry
     env:
       TURBO_TOKEN: ""
       TURBO_CACHE: local:rw
-    needs: [tag-release, verify-npm]
+    needs: tag-release
+    if: ${{ always() && !cancelled() && needs.tag-release.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -488,7 +523,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          ref: ${{ needs.tag-release.outputs.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Verify package and registry metadata versions

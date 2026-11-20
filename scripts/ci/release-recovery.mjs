@@ -8,6 +8,8 @@ import { z } from "zod";
 
 import { validateVerifiedPackage } from "./verified-package.mjs";
 import { verifyPublishedPackageIntegrity } from "./qualified-package-envelope.mjs";
+import { readMergedReleasePullRequest } from "../lib/release-pull-request.mjs";
+import { githubApi } from "./release-attempt.mjs";
 
 const execute = promisify(execFile);
 const sha = z.string().regex(/^[a-f0-9]{40}$/u);
@@ -35,11 +37,13 @@ export function selectRecoveryRelease({
 }) {
   repositorySchema.parse(repository);
   versionSchema.parse(version);
-  sha.parse(tagSha);
   const original = z
     .object({
       id: positive,
       run_attempt: positive,
+      referenced_workflows: z
+        .array(z.object({ path: z.string(), sha }))
+        .default([]),
       path: z.literal(".github/workflows/release.yml"),
       event: z.literal("pull_request"),
       status: z.literal("completed"),
@@ -47,16 +51,22 @@ export function selectRecoveryRelease({
       head_repository: z.object({ full_name: z.literal(repository) }),
     })
     .parse(run);
-  z.object({
-    tag_name: z.literal(`rea-agents-${version}`),
-    draft: z.literal(false),
-    published_at: z.string().min(1),
-  }).parse(release);
-  const parsedJobs = z
+  if (tagSha !== undefined) {
+    sha.parse(tagSha);
+    z.object({
+      tag_name: z.literal(`rea-agents-${version}`),
+      draft: z.literal(false),
+      published_at: z.string().min(1),
+    }).parse(release);
+  } else if (release !== undefined) {
+    throw new Error("Expected consistent GitHub release identity");
+  }
+  const allJobs = z
     .array(
       z.object({
         name: z.string(),
         status: z.string(),
+        run_attempt: positive.optional(),
         conclusion: z.string().nullable(),
         steps: z
           .array(
@@ -66,6 +76,20 @@ export function selectRecoveryRelease({
       }),
     )
     .parse(jobs);
+  const runAttempt = original.run_attempt;
+  const newestAttempt = new Map();
+  for (const job of allJobs) {
+    const attempt = job.run_attempt ?? runAttempt;
+    if (attempt > runAttempt)
+      throw new Error("Original job belongs to a future attempt");
+    newestAttempt.set(
+      job.name,
+      Math.max(newestAttempt.get(job.name) ?? 0, attempt),
+    );
+  }
+  const parsedJobs = allJobs.filter(
+    (job) => (job.run_attempt ?? runAttempt) === newestAttempt.get(job.name),
+  );
   const requireJob = (...names) => {
     const matches = parsedJobs.filter((job) => names.includes(job.name));
     if (matches.length !== 1 || matches[0].status !== "completed")
@@ -74,11 +98,32 @@ export function selectRecoveryRelease({
       );
     return matches[0];
   };
+  const hasAuthorization = parsedJobs.some(
+    ({ name }) => name === "Authorize qualified npm publication",
+  );
+  let source = tagSha;
+  if (hasAuthorization || source === undefined) {
+    const qualification = original.referenced_workflows.filter(
+      ({ path, sha: revision }) =>
+        path === `${repository}/.github/workflows/ci.yml@${revision}`,
+    );
+    if (qualification.length !== 1)
+      throw new Error(
+        "Expected one source revision from the original CI workflow reference",
+      );
+    if (source !== undefined && source !== qualification[0].sha)
+      throw new Error(
+        "The release tag differs from the original qualified source",
+      );
+    source = qualification[0].sha;
+  }
   for (const job of [
-    requireJob(
-      "Create qualified GitHub release",
-      "Release reviewed main merge",
-    ),
+    hasAuthorization || tagSha === undefined
+      ? requireJob("Authorize qualified npm publication")
+      : requireJob(
+          "Create qualified GitHub release",
+          "Release reviewed main merge",
+        ),
     requireJob("Qualify exact release revision / CI required"),
   ])
     if (job.conclusion !== "success")
@@ -109,7 +154,7 @@ export function selectRecoveryRelease({
     );
   return {
     version,
-    source_sha: tagSha,
+    source_sha: source,
     run_id: original.id,
     run_attempt: original.run_attempt,
   };
@@ -167,27 +212,73 @@ async function main() {
             "api",
             "--paginate",
             "--slurp",
-            `repos/${repository}/actions/runs/${runId}/attempts/${positive.parse(run.run_attempt)}/jobs?per_page=100`,
+            `repos/${repository}/actions/runs/${runId}/jobs?filter=all&per_page=100`,
           ]),
         ),
       );
-    const release = await api(`releases/tags/rea-agents-${version}`);
     const tagSha = await command("git", [
       "rev-parse",
       "--verify",
+      "--quiet",
       `refs/tags/rea-agents-${version}^{commit}`,
-    ]);
+    ]).catch((error) => {
+      if (error.code !== 1) throw error;
+      return undefined;
+    });
+    const releaseResponse = await githubApi(
+      repository,
+      process.env.GH_TOKEN,
+    )(`releases/tags/rea-agents-${version}`);
+    if (releaseResponse.status !== 404 && !releaseResponse.ok)
+      throw new Error(
+        `GitHub release lookup failed: HTTP ${releaseResponse.status}`,
+      );
+    const release = releaseResponse.ok
+      ? await releaseResponse.json()
+      : undefined;
     const selection = selectRecoveryRelease({
       repository,
       version,
       run,
       jobs: pages.flatMap((page) => page.jobs),
       release,
-      tagSha,
+      tagSha: release === undefined ? undefined : tagSha,
     });
+    if (tagSha !== undefined && tagSha !== selection.source_sha)
+      throw new Error("The existing tag differs from the recovered source");
+    let pr;
+    if (release === undefined) {
+      const source = selection.source_sha;
+      pr = await readMergedReleasePullRequest(command, {
+        repository,
+        source,
+        targetBranch: "main",
+      });
+      if (!pr)
+        throw new Error(
+          "The recovered candidate is not a merged main release PR",
+        );
+      const checkpoint = await command("git", [
+        "log",
+        "-1",
+        "--first-parent",
+        "--format=%H",
+        "HEAD",
+        "--",
+        ".release-please-manifest.json",
+      ]);
+      if (checkpoint !== source)
+        throw new Error(
+          "The recovered candidate does not own the current release manifest",
+        );
+    }
     await appendFile(
       z.string().min(1).parse(process.env.GITHUB_OUTPUT),
-      Object.entries(selection)
+      Object.entries({
+        ...selection,
+        github_published: release !== undefined,
+        release_pr: pr?.number ?? "",
+      })
         .map(([key, value]) => `${key}=${value}\n`)
         .join(""),
     );

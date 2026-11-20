@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Existing npm and GitHub release version
+        description: Existing npm release version
         required: true
         type: string
       release_run_id:
@@ -28,6 +28,8 @@ jobs:
     outputs:
       source_sha: ${{ steps.release.outputs.source_sha }}
       version: ${{ steps.release.outputs.version }}
+      github_published: ${{ steps.release.outputs.github_published }}
+      release_pr: ${{ steps.release.outputs.release_pr }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -90,9 +92,59 @@ jobs:
         working-directory: .cache/release-source
         run: npm run mcp-registry:check
 
+  tag-release:
+    name: Finish GitHub release publication
+    needs: verify
+    if: needs.verify.outputs.github_published == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      HUSKY: "0"
+      RELEASE_SOURCE: ${{ needs.verify.outputs.source_sha }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - run: npm ci
+      - name: Check for a previously completed GitHub release
+        id: github
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci/release-attempt.mjs inspect-github
+      - name: Validate finalized notes before release creation
+        if: steps.github.outputs.published == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          RELEASE_PR: ${{ needs.verify.outputs.release_pr }}
+        run: >-
+          node scripts/release-notes.mjs publication --repository "$GITHUB_REPOSITORY"
+          --source "$RELEASE_SOURCE" --pr "$RELEASE_PR"
+      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
+        if: steps.github.outputs.published == 'false'
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          target-branch: main
+          skip-github-release: false
+          skip-github-pull-request: true
+      - name: Verify the recovered GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci/release-attempt.mjs verify-github
+
   publish-mcp:
     name: Finish MCP Registry publication
-    needs: verify
+    needs: [verify, tag-release]
+    if: >-
+      always() && !cancelled() && needs.verify.result == 'success' &&
+      (needs.tag-release.result == 'success' ||
+      (needs.tag-release.result == 'skipped' && needs.verify.outputs.github_published == 'true'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

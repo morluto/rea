@@ -45,6 +45,7 @@ async function readReleaseWorkflow() {
           secrets: z.record(z.string(), z.string()),
           with: z.record(z.string(), z.union([z.string(), z.boolean()])),
         }),
+        "authorize-npm": jobSchema,
         "tag-release": jobSchema,
         publish: jobSchema,
         "verify-npm": jobSchema,
@@ -136,9 +137,6 @@ it("keeps main pushes proposal-only and gates merged-release automation", async 
   expect(merged.if).toContain("github.event.pull_request.merged == true");
   expect(merged.if).toContain("github.repository");
   expect(merged.if).toContain("release-please--branches--main--");
-  expect(merged.outputs).toEqual({
-    sha: "${{ github.event.pull_request.merge_commit_sha }}",
-  });
   expect(workflow.jobs["release-please"].if).toBe(
     "github.event_name == 'workflow_dispatch'",
   );
@@ -430,17 +428,13 @@ it.skipIf(process.platform === "win32").each([
 
 it("binds npm and MCP publication to the same immutable release SHA", async () => {
   const workflow = await readReleaseWorkflow();
-  expect(workflow.jobs["release-please"].outputs).toEqual({
-    sha: "${{ steps.branch.outputs.sha }}",
-  });
   const {
     qualification,
     rehearsal,
     publish,
     "tag-release": tag,
   } = workflow.jobs;
-  const source =
-    "${{ needs.merged-release.outputs.sha || needs.release-please.outputs.sha }}";
+  const source = "${{ github.sha }}";
   expect(qualification.needs).toEqual(["merged-release", "release-please"]);
   expect(qualification.if).toContain("inputs.phase == 'publish'");
   expect(qualification.uses).toBe("./.github/workflows/ci.yml");
@@ -451,7 +445,7 @@ it("binds npm and MCP publication to the same immutable release SHA", async () =
     source_sha: source,
     remote_cache_write: true,
   });
-  expect(rehearsal.needs).toContain("qualification");
+  expect(rehearsal.needs).toBe("qualification");
   expect(rehearsal.if).toContain("needs.qualification.result == 'success'");
   expect(rehearsal.steps[0]?.with?.ref).toBe(source);
 
@@ -468,6 +462,7 @@ it("binds npm and MCP publication to the same immutable release SHA", async () =
     {
       id: "tag-release",
       step: expect.objectContaining({
+        if: "steps.github.outputs.published == 'false'",
         with: {
           token: "${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}",
           "target-branch": "${{ inputs.release_branch || 'main' }}",
@@ -477,43 +472,60 @@ it("binds npm and MCP publication to the same immutable release SHA", async () =
       }),
     },
   ]);
-  expect(tag.needs).toContain("qualification");
-  expect(tag.needs).toContain("rehearsal");
-  const tagCondition = tag.if ?? "";
-  expect(tagCondition).toContain("needs.qualification.result == 'success'");
-  expect(tagCondition).toContain("needs.rehearsal.result == 'success'");
+  const authorization = workflow.jobs["authorize-npm"];
+  expect(authorization.needs).toContain("qualification");
+  expect(authorization.needs).toContain("rehearsal");
+  expect(authorization.if).toContain("needs.qualification.result == 'success'");
+  expect(authorization.if).toContain("needs.rehearsal.result == 'success'");
+  expect(authorization.steps.at(-1)).toMatchObject({
+    run: "node scripts/ci/release-attempt.mjs publish",
+    env: { RELEASE_BRANCH: "${{ inputs.release_branch }}" },
+  });
   const notesIndex = tag.steps.findIndex((step) =>
     step.run?.includes("release-notes.mjs publication"),
   );
-  const branchIndex = tag.steps.findIndex(
-    (step) => step.name === "Recheck the frozen branch before tagging",
-  );
   const tagIndex = tag.steps.findIndex((step) => step.id === "release");
-  expect(notesIndex).toBeGreaterThanOrEqual(0);
-  expect(notesIndex).toBeLessThan(branchIndex);
-  expect(branchIndex).toBeLessThan(tagIndex);
+  const inspectIndex = tag.steps.findIndex(
+    (step) => step.run === "node scripts/ci/release-attempt.mjs inspect-github",
+  );
+  expect(inspectIndex).toBeGreaterThanOrEqual(0);
+  expect(inspectIndex).toBeLessThan(notesIndex);
+  expect(tag.steps[inspectIndex]).toMatchObject({
+    id: "github",
+    env: { RELEASE_BRANCH: "${{ inputs.release_branch }}" },
+  });
+  expect(notesIndex).toBeLessThan(tagIndex);
+  expect(tag.steps.at(-1)?.run).toContain(
+    "node scripts/ci/release-attempt.mjs verify-github",
+  );
   expect(tag.steps[notesIndex]?.run).toContain('--source "$GITHUB_SHA"');
   expect(tag.steps[notesIndex]?.run).toContain('--pr "$RELEASE_PR"');
-  expect(tag.steps[branchIndex]?.if).toBe(
-    "github.event_name == 'workflow_dispatch'",
-  );
-  expect(tag.outputs).toEqual({ sha: "${{ steps.release.outputs.sha }}" });
-  expect(publish.needs).toBe("tag-release");
-  expect(workflow.jobs["verify-npm"].needs).toEqual(["tag-release", "publish"]);
-  expect(workflow.jobs["publish-mcp"].needs).toEqual([
-    "tag-release",
-    "verify-npm",
-  ]);
+  expect(publish.needs).toBe("authorize-npm");
+  expect(workflow.jobs["verify-npm"].needs).toBe("publish");
+  expect(tag.needs).toBe("verify-npm");
+  expect(workflow.jobs["publish-mcp"].needs).toBe("tag-release");
+  for (const [job, dependency] of [
+    [publish, "authorize-npm"],
+    [workflow.jobs["verify-npm"], "publish"],
+    [tag, "verify-npm"],
+    [workflow.jobs["publish-mcp"], "tag-release"],
+  ] as const) {
+    expect(job.if).toContain(
+      `always() && !cancelled() && needs.${dependency}.result == 'success'`,
+    );
+  }
   for (const job of [
+    authorization,
     publish,
     workflow.jobs["verify-npm"],
+    tag,
     workflow.jobs["publish-mcp"],
   ]) {
     const checkout = job.steps.find((step) =>
       step.uses?.startsWith("actions/checkout@"),
     );
     expect(checkout?.with).toMatchObject({
-      ref: "${{ needs.tag-release.outputs.sha }}",
+      ref: "${{ github.sha }}",
       "persist-credentials": false,
     });
   }
@@ -540,58 +552,6 @@ it("binds npm and MCP publication to the same immutable release SHA", async () =
     '--registry=https://registry.npmjs.org --access=public --tag="$NPM_RELEASE_TAG"',
   );
 });
-
-it.skipIf(process.platform === "win32").each([
-  {
-    created: "false",
-    releaseSha: "1111111111111111111111111111111111111111",
-    succeeds: false,
-    reason: "did not create a release",
-  },
-  {
-    created: "true",
-    releaseSha: "1111111111111111111111111111111111111111",
-    succeeds: true,
-  },
-  {
-    created: "true",
-    releaseSha: "2222222222222222222222222222222222222222",
-    succeeds: false,
-    reason: "refusing mismatched publication provenance",
-  },
-])(
-  "publishes a merged release only when Release Please creates it at the reviewed SHA: $created/$releaseSha",
-  async ({ created, releaseSha, succeeds, reason }) => {
-    const workflow = await readReleaseWorkflow();
-    const command = z
-      .string()
-      .parse(
-        workflow.jobs["tag-release"].steps.find(
-          (step) => step.name === "Bind publication to the qualified revision",
-        )?.run,
-      );
-    const result = execFileAsync(
-      "bash",
-      ["-e", "-o", "pipefail", "-c", command],
-      {
-        env: {
-          ...process.env,
-          GITHUB_SHA: "1111111111111111111111111111111111111111",
-          RELEASE_CREATED: created,
-          RELEASE_SHA: releaseSha,
-        },
-      },
-    );
-    if (succeeds) {
-      await expect(result).resolves.toMatchObject({ stderr: "" });
-    } else {
-      await expect(result).rejects.toMatchObject({
-        code: 1,
-        stderr: expect.stringContaining(z.string().parse(reason)),
-      });
-    }
-  },
-);
 
 it
   .skipIf(process.platform === "win32")
@@ -756,51 +716,6 @@ it.skipIf(process.platform === "win32").each([true, false])(
   },
 );
 
-it.skipIf(process.platform === "win32").each([true, false])(
-  "rechecks the frozen branch after qualification (match: %s)",
-  async (match) => {
-    const workflow = await readReleaseWorkflow();
-    const command = z
-      .string()
-      .parse(
-        workflow.jobs["tag-release"].steps.find(
-          (step) => step.name === "Recheck the frozen branch before tagging",
-        )?.run,
-      );
-    const directory = await createTestTempDirectory("rea-release-branch-");
-    await writeFile(
-      join(directory, "gh"),
-      '#!/bin/sh\nprintf "%s\n" "$BRANCH_SHA"\n',
-      { mode: 0o755 },
-    );
-    const source = "1".repeat(40);
-    const result = execFileAsync(
-      "bash",
-      ["-e", "-o", "pipefail", "-c", command],
-      {
-        env: {
-          ...process.env,
-          PATH: `${directory}${delimiter}${process.env.PATH ?? ""}`,
-          GITHUB_REPOSITORY: "fixture/rea",
-          RELEASE_BRANCH: "release/5.0.0",
-          GITHUB_SHA: source,
-          BRANCH_SHA: match ? source : "2".repeat(40),
-        },
-      },
-    );
-    if (match) {
-      await expect(result).resolves.toMatchObject({ stderr: "" });
-    } else {
-      await expect(result).rejects.toMatchObject({
-        code: 1,
-        stderr: expect.stringContaining(
-          "release branch moved during qualification",
-        ),
-      });
-    }
-  },
-);
-
 it("runs release PR CI without enabling implementation pushes on release branches", async () => {
   const workflow = z
     .object({
@@ -870,7 +785,7 @@ it("rehearses the qualified archive before npm authority and retains registry ve
   const rehearsal = workflow.jobs.rehearsal;
   expect(rehearsal.permissions).toEqual({ contents: "read", actions: "read" });
   expect(rehearsal["continue-on-error"]).toBeUndefined();
-  expect(rehearsal.needs).toContain("qualification");
+  expect(rehearsal.needs).toBe("qualification");
   expect(rehearsal.if).toContain("needs.qualification.result == 'success'");
   const exerciseIndex = rehearsal.steps.findIndex((step) =>
     step.run?.includes("verify-release-artifact.mjs"),
@@ -883,8 +798,8 @@ it("rehearses the qualified archive before npm authority and retains registry ve
   expect(exercise?.if).toBeUndefined();
   expect(exercise?.["continue-on-error"]).toBeUndefined();
   const publish = workflow.jobs.publish;
-  expect(publish.needs).toBe("tag-release");
-  expect(workflow.jobs["tag-release"].needs).toContain("rehearsal");
+  expect(publish.needs).toBe("authorize-npm");
+  expect(workflow.jobs["authorize-npm"].needs).toContain("rehearsal");
   const verification = workflow.jobs["verify-npm"];
   for (const job of [rehearsal, verification]) {
     const inputs = job.steps.findIndex(
@@ -973,7 +888,6 @@ it("rehearses the qualified archive before npm authority and retains registry ve
     expect(verification.steps[index]?.if).toBeUndefined();
     expect(verification.steps[index]?.["continue-on-error"]).toBeUndefined();
   }
-  expect(workflow.jobs["publish-mcp"].needs).toContain("verify-npm");
   for (const job of [
     rehearsal,
     publish,
