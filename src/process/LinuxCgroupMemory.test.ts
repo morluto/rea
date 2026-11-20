@@ -50,6 +50,12 @@ it("retains a failed kernel file close for the caller to retry", async () => {
 const events = (oomKill: number) =>
   `low 0\nhigh 0\nmax 772\noom 3\noom_kill ${String(oomKill)}\noom_group_kill 0\n`;
 
+// The fixture tree is mounted at a temporary folder. The reader resolves mount
+// points as POSIX paths, and a Windows drive path (`E:\...`) is not one. Cases
+// that expect to read the tree would fail there, or pass without reading it.
+const posixMountHost = process.platform !== "win32";
+const POSIX_MOUNT_ONLY = "the mount point is a Windows drive path";
+
 const mountInfoRow = (root: string, mountPoint: string, type = "cgroup2") =>
   `35 24 0:30 ${root} ${mountPoint} rw,nosuid,nodev,noexec,relatime shared:9 - ${type} cgroup2 rw,nsdelegate`;
 
@@ -91,7 +97,8 @@ it.each([
   },
 );
 
-it("selects the v2 membership among v1 rows", async () => {
+it("selects the v2 membership among v1 rows", async (context) => {
+  context.skip(!posixMountHost, POSIX_MOUNT_ONLY);
   const options = await cgroupTree(
     { "memory.events": events(1) },
     "12:memory:/docker/abc\n0::/jobs/rea\n",
@@ -102,16 +109,22 @@ it("selects the v2 membership among v1 rows", async () => {
   });
 });
 
-it.each([
-  "oom 3\noom_group_kill 2\n",
-  "oom_kill 1\noom_kill 2\n",
-  "oom_kill 9007199254740992\n",
-])("rejects a missing, duplicated, or unsafe kill count: %j", async (value) => {
-  const options = await cgroupTree({ "memory.events": value });
-  await expect(readLinuxCgroupMemoryState(options)).resolves.toBeUndefined();
-});
+it
+  .runIf(posixMountHost)
+  .each([
+    "oom 3\noom_group_kill 2\n",
+    "oom_kill 1\noom_kill 2\n",
+    "oom_kill 9007199254740992\n",
+  ])(
+  "rejects a missing, duplicated, or unsafe kill count: %j",
+  async (value) => {
+    const options = await cgroupTree({ "memory.events": value });
+    await expect(readLinuxCgroupMemoryState(options)).resolves.toBeUndefined();
+  },
+);
 
-it("retains an unknown memory limit when the token is malformed", async () => {
+it("retains an unknown memory limit when the token is malformed", async (context) => {
+  context.skip(!posixMountHost, POSIX_MOUNT_ONLY);
   const options = await cgroupTree({
     "memory.events": events(0),
     "memory.max": "3g\n",
@@ -121,7 +134,8 @@ it("retains an unknown memory limit when the token is malformed", async () => {
   });
 });
 
-it("selects the closest covering cgroup2 mount and decodes escaped mount paths", async () => {
+it("selects the closest covering cgroup2 mount and decodes escaped mount paths", async (context) => {
+  context.skip(!posixMountHost, POSIX_MOUNT_ONLY);
   const root = await createTestTempDirectory("rea-cgroup-mounts-");
   const full = join(root, "full");
   const subtree = join(root, "cgroup root");
@@ -178,7 +192,8 @@ it("selects the closest covering cgroup2 mount and decodes escaped mount paths",
   await expect(readLinuxCgroupMemoryState(options)).resolves.toBeUndefined();
 });
 
-it("reads the process's own group below a subtree cgroup2 mount", async () => {
+it("reads the process's own group below a subtree cgroup2 mount", async (context) => {
+  context.skip(!posixMountHost, POSIX_MOUNT_ONLY);
   const options = await cgroupTree({
     "memory.events": events(1),
     "memory.max": "3221225472\n",
@@ -190,7 +205,8 @@ it("reads the process's own group below a subtree cgroup2 mount", async () => {
   });
 });
 
-it("keeps an unlimited group apart from an unreadable limit", async () => {
+it("keeps an unlimited group apart from an unreadable limit", async (context) => {
+  context.skip(!posixMountHost, POSIX_MOUNT_ONLY);
   const unlimited = await cgroupTree({
     "memory.events": events(0),
     "memory.max": "max\n",
@@ -225,7 +241,8 @@ it("is unavailable without memory.events, a covering mount, cgroup v2, or Linux"
   ).resolves.toBeUndefined();
 });
 
-it("does not alias an undecodable cgroup path to a real replacement-character directory", async () => {
+it("does not alias an undecodable cgroup path to a real replacement-character directory", async (context) => {
+  context.skip(!posixMountHost, POSIX_MOUNT_ONLY);
   const root = await createTestTempDirectory("rea-cgroup-non-utf8-");
   const group = join(root, "group-�");
   const procCgroupPath = join(root, "proc-self-cgroup");
@@ -255,7 +272,8 @@ it("does not alias an undecodable cgroup path to a real replacement-character di
   await expect(readLinuxCgroupMemoryState(options)).resolves.toBeUndefined();
 });
 
-it("uses valid cgroup mounts alongside unrelated non-UTF-8 mount records", async () => {
+it("uses valid cgroup mounts alongside unrelated non-UTF-8 mount records", async (context) => {
+  context.skip(!posixMountHost, POSIX_MOUNT_ONLY);
   const root = await createTestTempDirectory("rea-cgroup-mount-encoding-");
   const mount = join(root, "mount-�");
   const procCgroupPath = join(root, "proc-self-cgroup");

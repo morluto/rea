@@ -153,7 +153,13 @@ describe.skipIf(
   );
 });
 
-it.each([
+// These replays name sources files under a temporary folder. APT reports
+// `Sourcesentry` and `Filename` as POSIX paths, and a Windows drive path
+// (`E:\...`) is not one, so the index target parser drops the entry there.
+const onPosixHost = process.platform !== "win32";
+const aptPathIt = it.runIf(onPosixHost);
+
+aptPathIt.each([
   [
     "https://vendor.invalid/a%2Cb",
     "https://vendor.invalid/a,b/",
@@ -221,7 +227,8 @@ it.each([
   },
 );
 
-it("withholds an undecodable APT index and preserves an intact peer", async () => {
+it("withholds an undecodable APT index and preserves an intact peer", async (context) => {
+  context.skip(!onPosixHost, "the sources entry is a Windows drive path");
   const root = await createTestTempDirectory("apt-index-encoding-");
   const file = join(root, "vendor.list");
   await writeFile(
@@ -288,7 +295,7 @@ it("withholds an undecodable APT index and preserves an intact peer", async () =
   );
 });
 
-it.each(["list", "sources"] as const)(
+aptPathIt.each(["list", "sources"] as const)(
   "does not broaden %s Signed-By fingerprint restrictions to every key in a keyring",
   async (format) => {
     const root = await createTestTempDirectory("apt-signed-by-");
