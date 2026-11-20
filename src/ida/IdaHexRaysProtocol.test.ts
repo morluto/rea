@@ -7,6 +7,7 @@ import { createIdaTarget } from "../../tests/fixtures/idaMcp.js";
 import { RecordingHexRaysIdaMcp } from "../../tests/fixtures/idaHexRaysMcp.js";
 import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import type { IdaMcpConnection } from "./IdaMcpConnection.js";
 import { readCallGraphCallees } from "./IdaCallGraph.js";
 import { readIdaConfiguration } from "./IdaConfiguration.js";
 import { IdaSessionClient } from "./IdaSessionClient.js";
@@ -107,6 +108,36 @@ describe("Hex-Rays IDA MCP registration", () => {
 });
 
 const hasPython = spawnSync("python3", ["--version"]).status === 0;
+
+it.each([1, 500, 1000, 300_000])(
+  "keeps the Hex-Rays Python deadline inside the %sms MCP deadline",
+  async (timeoutMs) => {
+    const producerCall = vi.fn<IdaMcpConnection["call"]>(async () => ({
+      result: null,
+      stdout: "",
+      stderr: "",
+    }));
+    await runHexRaysQuery(
+      {
+        connect: async () => [],
+        serverInfo: () => null,
+        close: async () => undefined,
+        detach: () => undefined,
+        call: producerCall,
+      },
+      "lease",
+      "server_health",
+      {},
+      timeoutMs,
+    );
+    const [tool, args, options] = producerCall.mock.calls[0] ?? [];
+    expect(tool).toBe("execute_python");
+    expect(options).toMatchObject({ timeoutMs });
+    const engineTimeout = Number(args?.timeout) * 1000;
+    expect(engineTimeout).toBeGreaterThan(0);
+    expect(engineTimeout).toBeLessThan(timeoutMs);
+  },
+);
 
 describe("Hex-Rays query line", () => {
   it.skipIf(!hasPython)(

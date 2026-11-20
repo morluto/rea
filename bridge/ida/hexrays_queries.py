@@ -202,8 +202,7 @@ def _imports():
     return found
 
 
-def _call_targets(f):
-    """Code and pointer targets of every call instruction in `f`, in address order."""
+def _call_instructions(f):
     insn = ida_ua.insn_t()
     for ea in idautils.FuncItems(f.start_ea):
         # Inline data, such as a jump table, can decode as a call and refer to a function.
@@ -211,18 +210,29 @@ def _call_targets(f):
             continue
         if not ida_ua.decode_insn(insn, ea) or not ida_idp.is_call_insn(insn):
             continue
+        yield ea
+
+
+def _call_targets(f):
+    """Code and pointer references from the x86 callee scan."""
+    for ea in _call_instructions(f):
         yield from idautils.CodeRefsFrom(ea, False)
         yield from idautils.DataRefsFrom(ea)
 
 
 def _function_entry_targets(f):
-    return sorted(
-        {
-            to
-            for to in _call_targets(f)
-            if (callee := ida_funcs.get_func(to)) is not None and callee.start_ea == to
-        }
-    )
+    targets = set()
+    for ea in _call_instructions(f):
+        for xref in idautils.XrefsFrom(ea, ida_xref.XREF_FAR):
+            # Data and jump references at a call site do not establish call edges.
+            if not xref.iscode or (xref.type & ida_xref.XREF_MASK) not in (
+                ida_xref.fl_CN, ida_xref.fl_CF
+            ):
+                continue
+            callee = ida_funcs.get_func(xref.to)
+            if callee is not None and callee.start_ea == xref.to:
+                targets.add(xref.to)
+    return sorted(targets)
 
 
 def callees(addrs, limit):

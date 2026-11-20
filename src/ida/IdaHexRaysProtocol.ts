@@ -115,15 +115,16 @@ export const runHexRaysQuery = async (
   // The lease is selected by instance_id; the supervisor `database` argument has no bridge meaning.
   const { database: _database, ...queryArguments } = args;
   const bridge = queryBridge();
+  const timeoutSeconds = timeoutMs / 1000;
   const raw = await connection.call(
     "execute_python",
     {
       instance_id: instanceId,
       // A JSON string literal is also a valid Python string literal.
       code: `${bridge.code}\n_rea_query(${JSON.stringify(query)}, ${JSON.stringify(JSON.stringify(queryArguments))})`,
-      // Leave the engine deadline inside the request deadline, so upstream
-      // can stop the script and answer before REA abandons the request.
-      timeout: Math.max(1, Math.floor(timeoutMs / 1000) - 5),
+      // Reserve up to five seconds for the reply, including on short budgets.
+      // Upstream times the initial auto-analysis separately.
+      timeout: timeoutSeconds - Math.min(5, timeoutSeconds / 2),
     },
     { timeoutMs, ...(signal === undefined ? {} : { signal }) },
   );

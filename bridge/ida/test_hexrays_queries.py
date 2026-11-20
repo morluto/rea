@@ -129,6 +129,23 @@ def stand_ins():
     m["idautils"].FuncItems = lambda start: [ea for ea in sorted(INSNS) if get_func(ea).start_ea == start]
     m["idautils"].CodeRefsFrom = lambda ea, flow: list(INSNS[ea][2])
     m["idautils"].DataRefsFrom = lambda ea: list(INSNS[ea][3])
+    m["ida_xref"].fl_CF = 16
+    m["ida_xref"].fl_CN = 17
+    m["ida_xref"].fl_JN = 19
+    m["ida_xref"].dr_O = 1
+    m["ida_xref"].XREF_MASK = 31
+
+    def xrefs_from(ea, flags=0):
+        _, _, code_refs, data_refs = INSNS[ea]
+        return [
+            types.SimpleNamespace(to=target, type=m["ida_xref"].fl_CN, iscode=True)
+            for target in code_refs
+        ] + [
+            types.SimpleNamespace(to=target, type=m["ida_xref"].dr_O, iscode=False)
+            for target in data_refs
+        ]
+
+    m["idautils"].XrefsFrom = xrefs_from
 
     def xrefs_to(ea, flags=0):
         return [x for x in XREFS.get(ea, []) if not (flags & XREF_FAR and x.flow)]
@@ -213,6 +230,30 @@ class BridgeTest(unittest.TestCase):
         [row] = self.query("callgraph", {"roots": ["0x1000"], "max_depth": 0})
         # Interior, non-function and import targets are not graph edges.
         self.assertEqual(row["edges"], [{"from": "0x1000", "to": "0x2000", "type": "call"}])
+        FUNCS.extend([Func(0x4000, 0x4008, "referenced_data"), Func(0x4100, 0x4108, "jump_target")])
+        self.addCleanup(lambda: FUNCS.__delitem__(slice(-2, None)))
+        xrefs_from = sys.modules["idautils"].XrefsFrom
+        code_refs_from = sys.modules["idautils"].CodeRefsFrom
+        data_refs_from = sys.modules["idautils"].DataRefsFrom
+        sys.modules["idautils"].CodeRefsFrom = lambda ea, flow: (
+            code_refs_from(ea, flow) + ([0x4100] if ea == 0x1010 else [])
+        )
+        sys.modules["idautils"].DataRefsFrom = lambda ea: (
+            data_refs_from(ea) + ([0x4000] if ea == 0x1010 else [])
+        )
+
+        def mixed_xrefs(ea, flags):
+            refs = xrefs_from(ea, flags)
+            if ea == 0x1010:
+                refs.extend([
+                    types.SimpleNamespace(to=0x4000, type=sys.modules["ida_xref"].dr_O, iscode=False),
+                    types.SimpleNamespace(to=0x4100, type=sys.modules["ida_xref"].fl_JN, iscode=True),
+                ])
+            return refs
+
+        sys.modules["idautils"].XrefsFrom = mixed_xrefs
+        [mixed] = self.query("callgraph", {"roots": ["0x1000"], "max_depth": 0})
+        self.assertEqual(mixed["edges"], row["edges"])
         with self.assertRaises(ValueError):
             self.query("callgraph", {"roots": ["0x1000"], "max_depth": 1})
 
