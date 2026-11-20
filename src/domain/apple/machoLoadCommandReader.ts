@@ -236,7 +236,7 @@ const readSliceMagic = async (
   offset: number,
 ): Promise<number | null> => {
   const bytes = await readAt(offset, 4);
-  return bytes.byteLength < 4 ? null : viewOf(bytes).getUint32(0, false);
+  return readMachoHeaderPrefixFacts(bytes).magic;
 };
 
 /** Decode every slice's dylib-loading load commands without reading code. */
