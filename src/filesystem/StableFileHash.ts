@@ -15,6 +15,7 @@ import {
   type StableRegularFileDescriptor,
 } from "./RegularFile.js";
 import type { OwnedFileHandle } from "./OwnedFileHandle.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 export interface StableFileHashOptions {
   readonly signal?: AbortSignal;
@@ -43,10 +44,7 @@ export class StableFileHashFailure extends Error {
     readonly path: string,
     override readonly cause: unknown,
   ) {
-    super(
-      `Could not hash ${path}: ${cause instanceof Error ? cause.message : String(cause)}`,
-      { cause },
-    );
+    super(`Could not hash ${path}: ${errorMessage(cause)}`, { cause });
     this.name = this._tag;
   }
 }

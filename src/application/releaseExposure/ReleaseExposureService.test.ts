@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
@@ -25,8 +25,8 @@ import {
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { ReleaseExposurePort } from "./ReleaseExposurePort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { ReleaseExposurePort } from "../../ports/releaseExposure/ReleaseExposurePort.js";
 import { ReleaseExposureService } from "./ReleaseExposureService.js";
 import { releaseOwnedCleanup } from "../../../tests/support/cleanupRelease.js";
 
@@ -2239,6 +2239,32 @@ describe("ReleaseExposureService compiler path separators", () => {
   );
 });
 
+describe("ReleaseExposureService compiler profile paths", () => {
+  it.each([
+    ["CGO_CFLAGS", "-O2 -fprofile-use=internal/profiles", "internal/profiles"],
+    ["CGO_CFLAGS", "'-fprofile-dir=private profiles'", "private profiles"],
+    ["-ldflags", "-extldflags=-fprofile-generate=private/gcov", "private/gcov"],
+  ])("reports the named directory in %s %s", async (key, value, path) => {
+    const report = await goReport(goModule([{ key, value }]));
+    const check = report.checks.find((item) => item.id === "go.build_paths");
+    expect(check?.status).toBe("exposed");
+    expect(check?.observation.samples).toEqual([path]);
+  });
+
+  it("finds no profile path for options without directory operands", async () => {
+    const report = await goReport(
+      goModule([
+        {
+          key: "CGO_CFLAGS",
+          value: "-fprofile-use -fprofile-generate -O2",
+        },
+      ]),
+    );
+    const check = report.checks.find((item) => item.id === "go.build_paths");
+    expect(check?.status).toBe("not_observed");
+  });
+});
+
 describe("ReleaseExposureService Go linker -r search list", () => {
   it.each([["-r=$ORIGIN/../lib -s -w"], ["-r ${ORIGIN}/lib:$ORIGIN"]])(
     "does not read the ELF loader-expanded entries in %s as build paths",
@@ -2252,6 +2278,7 @@ describe("ReleaseExposureService Go linker -r search list", () => {
   it.each([
     ["-r=$ORIGIN/../lib:/opt/private-runtime", ["/opt/private-runtime"]],
     ["-r /opt/a:$ORIGIN/lib:vendor/lib", ["/opt/a", "vendor/lib"]],
+    ["-r a:$ORIGIN:/opt/private-runtime", ["a", "/opt/private-runtime"]],
   ])("reads each ELF entry of the search list in %s", async (value, paths) => {
     const report = await goReport(goModule([{ key: "-ldflags", value }]));
     const check = report.checks.find((item) => item.id === "go.build_paths");
@@ -2332,6 +2359,8 @@ describe("ReleaseExposureService Go forwarded linker search paths", () => {
       ["/opt/a", "/opt/b"],
     ],
     ["-Wl,-rpath-link,/opt/a:vendor/lib", ["/opt/a", "vendor/lib"]],
+    ["-Wl,-rpath,a:/opt/private-runtime", ["a", "/opt/private-runtime"]],
+    ["-Wl,-rpath-link,a:vendor/lib", ["a", "vendor/lib"]],
   ])("reads each entry of the search list in %s", async (value, paths) => {
     const report = await goReport(goModule([{ key: "CGO_LDFLAGS", value }]));
     const check = report.checks.find((item) => item.id === "go.build_paths");
@@ -3262,4 +3291,51 @@ describe("ReleaseExposureService parsed field trailing characters", () => {
       ).toEqual([path]);
     },
   );
+});
+
+it("attempts later release-exposure owners after a synchronous close rejection", async () => {
+  const { service, desktop, goBinaries, rustBinaries } = owners(scan());
+  const failed = new Error("desktop close failed");
+  desktop.close.mockImplementationOnce(() => {
+    throw failed;
+  });
+  await expect(service.close()).rejects.toBe(failed);
+  expect(goBinaries.close).toHaveBeenCalledOnce();
+  expect(rustBinaries.close).toHaveBeenCalledOnce();
+});
+
+it("follows the remaining release-exposure owner when a sibling has already released", async () => {
+  const { service, desktop, goBinaries } = owners(scan());
+  const first = new ProviderCleanupError("desktop", ["desktop-root"], {});
+  const second = new ProviderCleanupError("go", ["go-root"], {});
+  desktop.close.mockRejectedValue(first);
+  goBinaries.close.mockImplementationOnce(async () => {
+    releaseOwnedCleanup(first);
+    throw second;
+  });
+  const failure: unknown = await service
+    .close()
+    .catch((cause: unknown) => cause);
+  if (!(failure instanceof ProviderCleanupError))
+    throw new Error("Expected a combined close error");
+  expect(failure.cleanupResources).toEqual(["go-root"]);
+  expect(failure.cleanupIncomplete).toBe(true);
+  releaseOwnedCleanup(second);
+  expect(failure.cleanupIncomplete).toBe(false);
+});
+
+it("drops a released typed resource even while another owner remains unconfirmed", async () => {
+  const { service, desktop, goBinaries } = owners(scan());
+  const typed = new ProviderCleanupError("desktop", ["desktop-root"], {});
+  const opaque = new Error("cannot confirm Go owner closed");
+  desktop.close.mockRejectedValue(typed);
+  goBinaries.close.mockRejectedValue(opaque);
+  const failure = await service.close().catch((cause: unknown) => cause);
+  if (!(failure instanceof ProviderCleanupError))
+    throw new Error("expected typed aggregate");
+  expect(failure.cleanupResources).toEqual(["desktop-root"]);
+  expect(failure.cleanupIncomplete).toBe(true);
+  releaseOwnedCleanup(typed);
+  expect(failure.cleanupIncomplete).toBe(true);
+  expect(failure.cleanupResources).toEqual([]);
 });

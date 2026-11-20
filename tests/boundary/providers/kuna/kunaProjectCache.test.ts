@@ -15,6 +15,7 @@ import {
 } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 import canonicalize from "canonicalize";
+import { PRODUCT_IDENTITY } from "../../../../src/identity.js";
 
 import { expect, it as test, vi } from "vitest";
 
@@ -28,7 +29,7 @@ import {
 } from "../../../../src/kuna/KunaProjectCache.js";
 import type { KunaExportStatus } from "../../../../src/kuna/KunaProjectExport.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
-import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../../support/lifecycleHarness.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import { RegularFileCleanupFailure } from "../../../../src/filesystem/OwnedRegularFile.js";
 import * as stableFileHash from "../../../../src/filesystem/StableFileHash.js";
@@ -112,18 +113,8 @@ const processGone = (pid: number): boolean => {
   }
 };
 
-const deferred = <T>() => {
-  let resolve!: (value: T) => void;
-  let reject!: (cause: unknown) => void;
-  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise;
-    reject = rejectPromise;
-  });
-  return { promise, resolve, reject };
-};
-
-it.each([1, 2])(
-  "regenerates layout %i once and retires it without touching unrelated cache resources",
+it.each([1, 2, 3, "release"] as const)(
+  "regenerates layout %s once and retires it without touching unrelated cache resources",
   async (layout) => {
     const { kuna, installation, cacheRoot, cache, target } = await fixture(
       "rea-kuna-cache-format-transition-",
@@ -136,13 +127,21 @@ it.each([1, 2])(
     expect((await cache.close()).ok).toBe(true);
     // Seed the previously shipped manifest and content-key format using a real
     // authored export; omitted launcher identity must never be invented or reused.
+    // "release": the current entry format written by another REA release.
+    const marker =
+      layout === "release"
+        ? { producer: { rea_version: "0.0.0-another-release" } }
+        : { layout };
     const legacyKey = createHash("sha256")
       .update(
         canonicalize({
-          layout,
+          ...marker,
           target_sha256: input.targetSha256,
+          ...(layout === 3 || layout === "release"
+            ? { target_basename: basename(input.targetPath) }
+            : {}),
           kuna_sha256: installation.sha256,
-          ...(layout === 2
+          ...(layout !== 1
             ? {
                 kuna_command: installation.configuration.command,
                 kuna_executable: installation.executable,
@@ -161,13 +160,18 @@ it.each([1, 2])(
     await writeFile(
       join(legacyEntry, "manifest.json"),
       JSON.stringify({
-        ...initial.value.manifest,
-        layout,
+        ...(({ producer: _producer, ...manifest }) => manifest)(
+          initial.value.manifest,
+        ),
+        ...marker,
         key: legacyKey,
         inputs: {
           target_sha256: input.targetSha256,
+          ...(layout === 3 || layout === "release"
+            ? { target_basename: basename(input.targetPath) }
+            : {}),
           kuna_sha256: installation.sha256,
-          ...(layout === 2
+          ...(layout !== 1
             ? {
                 kuna_command: installation.configuration.command,
                 kuna_executable: installation.executable,
@@ -195,7 +199,7 @@ it.each([1, 2])(
       });
       expect(built.value.key).not.toBe(legacyKey);
       expect(built.value.manifest).toMatchObject({
-        layout: 3,
+        producer: { rea_version: PRODUCT_IDENTITY.packageVersion },
         inputs: {
           kuna_command: installation.configuration.command,
           kuna_executable: installation.executable,
@@ -266,7 +270,7 @@ it("publishes a verified export and serves later requests from the cache", async
     value: {
       key: keyOf(installation, input),
       manifest: {
-        layout: 3,
+        producer: { rea_version: PRODUCT_IDENTITY.packageVersion },
         inputs: {
           target_sha256: input.targetSha256,
           kuna_sha256: installation.sha256,
@@ -381,10 +385,8 @@ it.each(["success", "failure"] as const)(
     const warmCache = newCache(installation);
     const initialCloseFailure = new Error("initial descriptor close failure");
     const retryCloseFailure = new Error("concurrent retry close failure");
-    const initialClose = deferred<void>();
-    const retryGate = deferred<void>();
-    const initialCloseEntered = deferred<void>();
-    const retryEntered = deferred<void>();
+    const initialClose = phaseGate();
+    const retryClose = phaseGate();
     const closeCounts = new Map<OwnedFileHandle, number>();
     let retainedOwner: OwnedFileHandle | undefined;
     let concurrentLookup: Promise<unknown> | undefined;
@@ -396,12 +398,10 @@ it.each(["success", "failure"] as const)(
         closeCounts.set(this, count);
         if (count === 1 && retainedOwner === undefined) {
           retainedOwner = this;
-          initialCloseEntered.resolve();
-          return initialClose.promise;
+          return initialClose.hold();
         }
         if (this === retainedOwner && count === 2) {
-          retryEntered.resolve();
-          return retryGate.promise.then(async () => {
+          return retryClose.hold().then(async () => {
             if (retryOutcome === "failure") throw retryCloseFailure;
             await closeOwner.call(this);
           });
@@ -413,28 +413,20 @@ it.each(["success", "failure"] as const)(
       .lookup(built.value.key)
       .catch((cause: unknown) => cause);
     try {
-      await awaitAcknowledgement(
-        initialCloseEntered.promise,
-        firstLookup,
-        "initial descriptor close",
-      );
+      await initialClose.reached(firstLookup, "initial descriptor close");
       initialClose.reject(initialCloseFailure);
       // The failed descriptor is retained before the first lookup binds its
       // originating error, so this lookup begins the retry in that window.
       concurrentLookup = Promise.resolve().then(() =>
         warmCache.lookup(built.value.key).catch((cause: unknown) => cause),
       );
-      await awaitAcknowledgement(
-        retryEntered.promise,
-        concurrentLookup,
-        "descriptor close retry",
-      );
+      await retryClose.reached(concurrentLookup, "descriptor close retry");
 
       const firstFailure = await firstLookup;
       expect(firstFailure).toBeInstanceOf(ProviderCleanupError);
       if (!(firstFailure instanceof ProviderCleanupError)) throw firstFailure;
       expect(firstFailure.cleanupIncomplete).toBe(true);
-      retryGate.resolve();
+      retryClose.release();
       if (concurrentLookup === undefined)
         throw new Error("Concurrent lookup did not start");
       const retryResult = await concurrentLookup;
@@ -463,8 +455,8 @@ it.each(["success", "failure"] as const)(
         expect(retryResult.cleanupIncomplete).toBe(false);
       }
     } finally {
-      initialClose.resolve();
-      retryGate.resolve();
+      initialClose.release();
+      retryClose.release();
       await Promise.allSettled([
         firstLookup,
         ...(concurrentLookup === undefined ? [] : [concurrentLookup]),
@@ -488,8 +480,7 @@ it("resolves a hash failure delivered after its retained owner was released", as
   );
   if (!built.ok) throw built.error;
   const warmCache = newCache(installation);
-  const failureRetained = deferred<void>();
-  const deliverFailure = deferred<void>();
+  const hashFailure = phaseGate();
   const hashFile = stableFileHash.observeStableFile;
   const hash = vi
     .spyOn(stableFileHash, "observeStableFile")
@@ -498,8 +489,7 @@ it("resolves a hash failure delivered after its retained owner was released", as
         return await hashFile(...args);
       } catch (cause: unknown) {
         if (!(cause instanceof RegularFileCleanupFailure)) throw cause;
-        failureRetained.resolve();
-        await deliverFailure.promise;
+        await hashFailure.hold();
         throw cause;
       }
     });
@@ -511,17 +501,13 @@ it("resolves a hash failure delivered after its retained owner was released", as
     .lookup(built.value.key)
     .catch((cause: unknown) => cause);
   try {
-    await awaitAcknowledgement(
-      failureRetained.promise,
-      firstLookup,
-      "retained hash failure",
-    );
+    await hashFailure.reached(firstLookup, "retained hash failure");
     expect(warmCache.hasPendingCleanup).toBe(true);
     expect(await warmCache.lookup(built.value.key)).toMatchObject({
       key: built.value.key,
     });
     expect(warmCache.hasPendingCleanup).toBe(false);
-    deliverFailure.resolve();
+    hashFailure.release();
     const error = await firstLookup;
     expect(error).toBeInstanceOf(ProviderCleanupError);
     if (!(error instanceof ProviderCleanupError)) throw error;
@@ -531,7 +517,7 @@ it("resolves a hash failure delivered after its retained owner was released", as
     expect(error.cause.cleanupCause).toBe(closeCause);
     expect(error.cause.owner.handle.fd).toBe(-1);
   } finally {
-    deliverFailure.resolve();
+    hashFailure.release();
     await firstLookup;
     hash.mockRestore();
     close.mockRestore();
@@ -1238,8 +1224,7 @@ it("reports an abandoned build's unproven cleanup even after a retry replaced it
     { project: "hang" },
   );
   let exports = 0;
-  const cleanupStarted = deferred<void>();
-  const releaseCleanup = deferred<void>();
+  const exportCleanup = phaseGate();
   const cache = new KunaProjectCache(cacheRoot, {
     maxBytes: 64 * 1024 ** 2,
     launcher: async (options) => {
@@ -1250,8 +1235,7 @@ it("reports an abandoned build's unproven cleanup even after a retry replaced it
       return {
         ...spawned,
         cleanup: async () => {
-          cleanupStarted.resolve();
-          await releaseCleanup.promise;
+          await exportCleanup.hold();
           await cleanupOwnedProcessGroup(spawned.ownership);
           return { cleaned: false, reason: "first export unverified" };
         },
@@ -1275,11 +1259,7 @@ it("reports an abandoned build's unproven cleanup even after a retry replaced it
     first.abort();
     await firstBuild;
     stopping = cache.settled(keyOf(installation, input));
-    await awaitAcknowledgement(
-      cleanupStarted.promise,
-      stopping,
-      "abandoned export cleanup",
-    );
+    await exportCleanup.reached(stopping, "abandoned export cleanup");
 
     // A retry for the same key starts while the first is still stopping.
     secondBuild = cache.build(
@@ -1292,7 +1272,7 @@ it("reports an abandoned build's unproven cleanup even after a retry replaced it
     await expect.poll(() => callsOf(kuna, "decompile-project")).toHaveLength(2);
     second.abort();
     await secondBuild;
-    releaseCleanup.resolve();
+    exportCleanup.release();
 
     expect(await cache.close()).toMatchObject({
       ok: false,
@@ -1301,7 +1281,7 @@ it("reports an abandoned build's unproven cleanup even after a retry replaced it
   } finally {
     first.abort();
     second.abort();
-    releaseCleanup.resolve();
+    exportCleanup.release();
     await Promise.allSettled([
       firstBuild,
       ...(secondBuild === undefined ? [] : [secondBuild]),

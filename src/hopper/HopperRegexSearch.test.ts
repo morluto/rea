@@ -13,7 +13,7 @@ import {
   HopperRemoteError,
   HopperTimeoutError,
   HopperProcessError,
-} from "../domain/hopperErrors.js";
+} from "./HopperErrors.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { parseConfig } from "../config/parseConfig.js";
 import { silentLogger } from "../logger.js";

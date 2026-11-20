@@ -35,10 +35,12 @@ with a source that `inspect_analysis_view` also accepts:
 this session, or `{"kind": "evidence-file", "path": "/absolute/evidence.json"}`
 for a saved record or bundle. Add `evidence_id` to select one record from a
 bundle that holds more than one. Complete inline Evidence is still accepted as
-the third form. The comparison cites the records that the sources resolve to,
-so all three forms give the same comparison Evidence. A retained reference that
-the session cannot resolve is refused with `evidence_integrity_mismatch` and
-`details.reason: "missing"`.
+the third form. For Evidence stored in a snapshot, follow the
+[snapshot Evidence workflow](../getting-started/cli.md#use-snapshot-evidence-in-file-based-workflows)
+before selecting the exported file. The comparison cites the records that the
+sources resolve to, so all three forms give the same comparison Evidence. A
+retained reference that the session cannot resolve is refused with
+`evidence_integrity_mismatch` and `details.reason: "missing"`.
 
 `compare_artifacts` can also resolve an artifact summary to its exact retained
 parent in the session, or from the authenticated bundle containing a file-selected
@@ -160,6 +162,14 @@ when its records account for every byte before the directory (a well-formed
 APK signing block is accounted for); otherwise coverage is `unknown` and a
 limitation gives the unaccounted bytes, which may hold local entries the
 directory does not list.
+An extent must fit before the directory and agree with the local header's
+size or deferred-size mode, including local Zip64 sizes. A deferred extent
+requires a matching data descriptor. Conflicting or unreadable extent claims
+leave coverage unknown even for directory or
+encrypted entries whose content is not opened; the listing remains available.
+Local Zip64 extra-field walks share a budget derived from the member region's
+byte length. Repeated references to one physical header reuse its parsed size;
+overlapping metadata that exhausts this proof budget stays unknown.
 PyInstaller inventory also preserves distinct table rows that share a logical
 path, including decoded children beneath a colliding file/directory path.
 Inventory coverage describes observed archive facts; extraction still refuses
@@ -352,7 +362,8 @@ Omit `fields` for complete records; a selected field list always retains
 remain distinguishable. Search tools apply their existing filters before retention.
 Follow `coverage.next_offset`; exhaustion describes the retained list, not
 complete discovery of all code or strings. An unbound source keeps
-`artifact: null` and the derived Evidence keeps `subject: null`.
+`artifact: null`, and the derived Evidence names an unknown subject
+(`subject.identity.kind: "unknown"`).
 
 The CLI uses the same projector. For an original complete Evidence JSON file,
 write `{"source":{"kind":"evidence-file","path":"/absolute/source.json"},"view":{"kind":"native-inventory","limit":32}}`
@@ -1015,11 +1026,47 @@ whether it was never recorded, cleared, or retained by another connection.
 Supply complete inline Evidence, repeat its producer, or import an exported
 Evidence bundle before referencing that imported record. Export a bundle or use
 `reset_investigation(save_path)` before ending the process if the investigation
-needs it later. Exported bundles carry `evidence_format`, the Evidence format revision
-(currently `1`). Import, comparison and every other bundle reader refuse a
-bundle without it, or with another revision, as an integrity mismatch whose
-recovery is to recreate the observations with the current release;
-re-exporting an earlier bundle does not update its format or identities. Retention has no automatic persistence or silent eviction.
+needs it later. Exported bundles and every Evidence record carry
+`evidence_format`, the Evidence format revision (currently `2`). Import,
+comparison and every other Evidence reader refuse a bundle or record without
+it, or with another revision, as an integrity mismatch whose recovery is to
+recreate the observations with the current release; re-exporting an earlier
+bundle does not update its format or identities. Revision 2 names the subject
+by its target identity, `subject.identity` (`kind: "file"`, `sha256`, `format`,
+`architecture` and `selection`: the raw or DOL entry point, the ESP flash
+offsets, or the universal Mach-O slice (`offset`, `size`, and the FAT
+`cpu_type` and `cpu_subtype`, `null` when the FAT table was not admitted) that
+select what was analysed, otherwise `null`), and the Evidence ID
+commits to that identity; `subject.name` and `subject.local_path` are display
+facts outside the ID. The subject has no separate `digest`, `format` or
+`architecture` members; read them from `subject.identity`. A live browser page
+observation names the page's reported URL,
+`{ "kind": "url", "url": …, "origin": … }`, with userinfo removed and `origin`
+`null` for an opaque origin; its `name` and `local_path` are `null`. A process
+capture names its launched root,
+`{ "kind": "process", "pid": …, "start_time": …, "executable_sha256": … }`,
+where `start_time` is the platform start identity read for that PID at launch
+and `executable_sha256` is `null` when the executable was not stable across
+spawn; its `name` and `local_path` are `null`. A Rizin or GDB debugger
+command names its session,
+`{ "kind": "session", "session_kind": …, "id": …, "target": … }`, where `id`
+is the session ID REA minted and `target` is the launch file hashed when the
+session started (validated like a file subject), or an `unknown` target when
+REA did not observe one. `start_gdb_session` accepts an optional absolute
+`executable` path: REA hashes the initial file, disables automatic loading, and
+loads it without running an inferior. Omission leaves the target unknown. A
+physical hash failure also leaves it unknown and records the reason; a failed
+descriptor close or cancellation fails startup and retains cleanup ownership.
+GDB Evidence records the original and absolute paths in `parameters.launch_provenance`;
+later debugger commands do not rebind it. Every
+record has a subject: one whose target REA did not identify names
+`{ "kind": "unknown", "reason": … }`, where the reason is
+`derived-from-linked-evidence` (comparisons and workflows, whose sources are
+committed through `evidence_links`), `not-observed`, `unsupported-subject`, or
+`withheld-by-caller` (REA observed the target and the caller chose not to
+record its identity, as with process capture PID normalization), and its
+`name` and `local_path` are `null`. Retention has no
+automatic persistence or silent eviction.
 `binary_session.investigation` reports record/revision/head counts, estimated
 retained representation bytes and the fixed allowance derived from initial V8
 heap headroom. A capacity refusal preserves the existing investigation; checkpoint
@@ -1214,9 +1261,25 @@ An unverified release may still be usable; the optional remediation preserves
 the caller's choice. Omission means verification was not reported. Target-free
 discovery does not probe a version solely to populate this fact.
 
+`open_binary` and `binary_session` report the inspected file in `path` and its
+SHA-256. When the selected spelling differs, `caller_input_path` carries that
+spelling verbatim. An alias that changes only this spelling, such as a second
+POSIX symlink to the same executable, refreshes the selection and can reuse the
+live analysis engine. Reuse still requires the same provider profile, source
+admission path, and artifact selection and companions. Use the canonical `path`
+for an explicit provider `document` selector when that provider identifies its
+document by path.
+
+Inline provider and composed workflow Evidence for that file includes the
+current `caller_input_path` when the selection differs from the canonical path. The alias is outside the
+Evidence ID and snapshot binding. Ordinary recording of a duplicate retains the
+first record, including its selection metadata, so later inline responses may
+carry a different alias from the bundled record with the same ID. The bundle
+records retained observations and does not log every target selection.
+
 When an admitted `open_binary` attempt fails, `error.details.selection_at_failure`
-records the canonical binary path and SHA-256, resource root (including its
-caller-selected path), or absence of selection at
+records the canonical binary path and SHA-256 with its differing caller path,
+a resource root with its caller-selected path, or absence of selection at
 the end of that serialized attempt. This is a past observation: a queued or
 later operation may already have changed the selection. No selection does not
 establish that cleanup is complete. Call `binary_session` for current state
@@ -1273,7 +1336,17 @@ resource readers remain read-only within the selected bundle.
 `inspect_plist` requires an open binary or bundle-resource session. An explicit
 `path` selects a plist in that context and does not create a session;
 `binary_session` reports `target_required` while neither session is open.
+`source_sha256` records the SHA-256 of the plist bytes read. While an
+executable is open, the Evidence subject remains that program.
+REA writes a private temporary copy for the native commands and leaves the
+selected plist untouched. The tool advertises the temporary filesystem write.
+An app-bundle or resource-only session accepts only plists that resolve inside
+its root. To inspect an outside plist, open the plist itself with `open_binary`
+or pass its path directly to the CLI.
 Use `open_bundle_resources` for a bundle whose executable cannot be resolved.
+When `path` is omitted and the open target is itself a plist, a plist that
+cannot be read or decoded is reported against that target
+(`target_unavailable`), not as an input issue on `path`.
 The CLI `rea inspect-plist <path>` opens its selected artifact for one invocation.
 
 Each provider client receives `binary_session.analysis_run.run_id` before any
@@ -1479,6 +1552,10 @@ reported only when its owning ledger confirms it; an inline result with
 observation cannot fit the MCP response, its corresponding `_omitted` detail
 reports the delivery limit. Cleanup failure and other completed source failures
 remain visible separately.
+A composite request that completes one argument's observation before another
+step fails reports it in `details.argument_observations` as
+`{argument, observation}`, named by the composite's input field, beside the
+failing step's own `partial_observation`.
 For these tools, cancellation observed during result finalization or owned
 cleanup also returns typed cancellation with the available observations.
 A normal target exit does not establish request completion. Incomplete cleanup
@@ -1680,11 +1757,8 @@ failing owner supports runtime recovery; `inspect_analysis_settings` is optional
 when those facts are supplied. Updates are atomic, apply to new work, survive
 target close/open, and vanish when REA exits. Explicit per-call arguments take
 precedence. Neither tool changes host deadlines or resolves retained cleanup.
-See [runtime settings and recovery](../design/limits-and-recovery.md#runtime-settings-through-mcp)
-for the full setting list, reset/revision semantics and ASAR retry example.
-For implementation ownership, accepted-operation snapshots, provider wiring,
-and extension guidance, see the
-[maintainer design](../design/limits-and-recovery.md#ownership-and-data-flow).
+See [runtime settings and recovery](limits-and-recovery.md#runtime-settings-through-mcp)
+for inspection, reset and revision semantics and an ASAR retry example.
 
 Ghidra and Hopper startup updates apply to the next startup attempt without
 restarting REA. Ghidra decompile timeout updates apply on the existing Program.
@@ -1774,10 +1848,11 @@ deadline still applies. Choose the total budget for the expected workload;
 neither server configuration nor progress can override a remote caller's
 deadline.
 
-The 240-second setting is a measured example, not a universal timeout: a
-controlled Linux x64/WSL2 fixture took about 64 seconds for its first overview
-with Ghidra 12.1.4 on a mounted NTFS installation, native JDK 21, two CPUs, and a
-512 MiB Java heap. Target size, storage, and analysis work can change that time.
+The 240-second setting is a measured example, not a universal timeout. Recorded
+on Ghidra 12.1.4 with native JDK 21 (no longer accepted); not yet re-run on
+12.2. A controlled Linux x64/WSL2 fixture took about 64 seconds for its first
+overview on a mounted NTFS installation, with two CPUs and a 512 MiB Java heap.
+Target size, storage, and analysis work can change that time.
 Configure the deadline in the caller's existing request settings; it is not a
 tool argument, setup grant, or server-side automatic extension. CLI analysis has
 no MCP client request deadline, but keeps the provider startup deadline and
@@ -1808,8 +1883,9 @@ connection cannot apply a changed launch environment. See the
 
 This close/reopen flow was exercised on one real Linux stdio connection after a
 controlled startup timeout, followed by a successful overview and function
-analysis. A separate Windows x64 stdio run with Ghidra 12.1.4, JDK 21 and Node
-22.19.0 exercised the same connection and caller-selected native PE: the default
+analysis. Recorded on Ghidra 12.1.4 with JDK 21 (no longer accepted); not yet
+re-run on 12.2. A separate Windows x64 stdio run with Node 22.19.0 exercised the
+same connection and caller-selected native PE: the default
 60-second client request timed out, close succeeded, and reopening before a
 240-second request completed the cold overview in about 163 seconds. The next
 overview took about 19 ms. The cold and warm overviews reported two procedures
@@ -2428,12 +2504,13 @@ Custom clients upgrading from 6.1 should follow the
 [6.2 migration guide](../migrations/migration-6.2.md#mcp-results-and-evidence).
 
 Run `npm run docs:generate` in a source checkout to generate the machine-readable
-catalog at `docs/public/product-catalog.json`. Documentation deployments serve
-the same file at [/rea/product-catalog.json](../public/product-catalog.json). PR CI retains it with the packaged
-skill and portable conformance projections in the `generated-docs` artifact.
-These outputs describe the exact source revision being built; they are not
-checked-in snapshots. For a running server, `binary_session` remains the
-authoritative source of catalog identity and tool availability.
+catalog at `docs/public/product-catalog.json`. Run `npm run docs:build` and
+`npm run docs:preview` to serve it locally at `/rea/product-catalog.json`. A
+successful [CI documentation job](https://github.com/morluto/rea/blob/main/.github/workflows/ci.yml)
+uploads the catalog, packaged skill, and portable conformance projections in
+the `generated-docs` artifact. These copies describe the source revision that
+generated them. For a running server, use `binary_session` for catalog identity
+and tool availability.
 
 ## Offline Playwright traces
 

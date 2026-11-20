@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 
 // Runtime discovery is generated from the same canonical registrations, after
-// default identity has been recorded and before bundling. Test catalogs stay separate.
+// default identity has been recorded and before bundling.
 const compiled = resolve(dirname(fileURLToPath(import.meta.url)), "../dist");
 const read = (name) => import(pathToFileURL(join(compiled, name)).href);
 const [
@@ -18,6 +18,8 @@ const [
   { TOOL_CONTRACTS },
   { getEvidenceInputContract },
   { toolOutputSchemaWithMetadata },
+  { toolFamilyId },
+  { requiredPromptTools },
 ] = await Promise.all([
   read("server/createServer.js"),
   read("composition/binary.js"),
@@ -27,6 +29,8 @@ const [
   read("contracts/toolContracts.js"),
   read("domain/evidenceInputContract.js"),
   read("contracts/toolSchemaMetadata.js"),
+  read("contracts/toolFamilies.js"),
+  read("contracts/promptToolFamilyScope.js"),
 ]);
 const recordCatalog = async () => {
   // Catalog generation is independent of the host account and user configuration.
@@ -87,6 +91,20 @@ const recordCatalog = async () => {
       instructions: client.getInstructions(),
       identity: server.catalogIdentity,
       tools,
+      toolFamilies: Object.fromEntries(
+        tools.map(({ name }) => {
+          const family = toolFamilyId(name);
+          if (family === undefined)
+            throw new Error(`Missing family for ${name}`);
+          return [name, family];
+        }),
+      ),
+      promptRequirements: Object.fromEntries(
+        PROMPT_CONTRACTS.map((contract) => [
+          contract.name,
+          requiredPromptTools(contract),
+        ]),
+      ),
       evidenceReferenceAlternatives: TOOL_CONTRACTS.filter(
         (contract) =>
           getEvidenceInputContract(contract.inputSchema)

@@ -4,7 +4,9 @@ import { digestCanonicalValue } from "../canonicalDigest.js";
 import { emptyArraySchema } from "../emptyArraySchema.js";
 import { evidenceInputSchema } from "../evidenceReference.js";
 import {
+  managedInspectionStateSchema,
   cliMetadataGuidSchema,
+  managedMetadataStatusSchema,
   managedMetadataTokenSchema,
   managedMemberInspectionSchema,
   type ManagedMemberInspection,
@@ -130,9 +132,42 @@ const comparisonItemSchema = <
     }),
   ]);
 
+/** Stable codes for why one comparison item's facts stayed limited. */
+export const MANAGED_MEMBER_COMPARISON_LIMITATION_CODES = [
+  "declaring-type-name-not-resolved",
+  "counterpart-declaring-type-name-not-resolved",
+  "unknown-within-incomplete-metadata",
+  "signature-not-decoded",
+  "counterpart-signature-not-decoded",
+  "signature-not-resolved",
+  "counterpart-signature-not-resolved",
+  "signature-malformed",
+  "ambiguous-signature",
+  "ambiguous-il-signature",
+  "ambiguous-method-shape",
+  "local-signature-unknown",
+  "local-signature-bytes-changed",
+  "body-unavailable",
+  "call-target-unavailable",
+  "field-target-unavailable",
+  "catch-type-unavailable",
+] as const;
+
+/** One reason a comparison item's facts stayed limited, with its explanation. */
+const comparisonItemLimitationSchema = z.strictObject({
+  code: z.enum(MANAGED_MEMBER_COMPARISON_LIMITATION_CODES),
+  side: z
+    .enum(["left", "right"])
+    .optional()
+    .describe(
+      "The inventory this limitation concerns when it is the other side's, such as an incomplete or ambiguous counterpart inventory.",
+    ),
+  message: nonEmptyTextSchema,
+});
+
 const comparisonItemContextShape = {
   evidence_links: z.array(evidenceIdSchema).length(2),
-  limitations: z.array(nonEmptyTextSchema),
+  limitations: z.array(comparisonItemLimitationSchema),
 };
 
 const methodComparisonItemSchema = comparisonItemSchema(
@@ -172,7 +207,7 @@ const comparisonSideSchema = z.strictObject({
   artifact_sha256: digestSchema,
   mvid: cliMetadataGuidSchema.nullable(),
   module_name: z.string().nullable(),
-  metadata_status: z.enum(["absent", "complete", "partial", "malformed"]),
+  metadata_status: managedMetadataStatusSchema,
   methods_total: z.int().min(0),
   fields_total: z.int().min(0),
   resource_limits: z
@@ -214,9 +249,13 @@ export const managedMemberComparisonResultSchema = z.strictObject({
   methods: z.array(methodComparisonItemSchema),
   fields: z.array(fieldComparisonItemSchema),
   coverage: z.strictObject({
-    status: z.enum(["complete-within-inputs", "partial"]),
-    left_status: z.enum(["complete", "partial", "unavailable"]),
-    right_status: z.enum(["complete", "partial", "unavailable"]),
+    status: z
+      .enum(["complete-within-inputs", "partial", "unknown"])
+      .describe(
+        "complete-within-inputs only when both observations are complete over the same selected scope and method rows; unknown when a side is unavailable or the selected scope agreement cannot be established.",
+      ),
+    left_status: managedInspectionStateSchema,
+    right_status: managedInspectionStateSchema,
   }),
   evidence_links: z.array(evidenceIdSchema).length(2),
   limitations: z.array(nonEmptyTextSchema),
@@ -252,6 +291,7 @@ const callEdgesByCaller = (
 
 const fieldAccessesByCaller = (
   result: ManagedMemberInspection,
+  emptyFieldTokens: ReadonlySet<string>,
 ): ReadonlyMap<
   string,
   readonly ManagedMemberInspection["field_accesses"][number][]
@@ -261,10 +301,15 @@ const fieldAccessesByCaller = (
     ManagedMemberInspection["field_accesses"][number][]
   >();
   for (const access of result.field_accesses) {
+    const observed =
+      emptyFieldTokens.has(access.field_token) &&
+      access.target_identity_sha256 !== null
+        ? { ...access, target_identity_sha256: null }
+        : access;
     const callerAccesses = accesses.get(access.method_token);
     if (callerAccesses === undefined)
-      accesses.set(access.method_token, [access]);
-    else callerAccesses.push(access);
+      accesses.set(access.method_token, [observed]);
+    else callerAccesses.push(observed);
   }
   return accesses;
 };
@@ -279,39 +324,38 @@ export const compareManagedMembers = (
   const itemContext = {
     leftEvidenceId: left.evidenceId,
     rightEvidenceId: right.evidenceId,
-    leftComplete: left.result.metadata.status === "complete",
-    rightComplete: right.result.metadata.status === "complete",
+    leftComplete: scope.left.metadataComplete,
+    rightComplete: scope.right.metadataComplete,
     leftMethodsComplete:
-      left.result.metadata.status === "complete" &&
-      hasCompleteMethodRows(left.result),
+      scope.left.metadataComplete && hasCompleteMethodRows(left.result),
     rightMethodsComplete:
-      right.result.metadata.status === "complete" &&
-      hasCompleteMethodRows(right.result),
+      scope.right.metadataComplete && hasCompleteMethodRows(right.result),
     scope,
     sameArtifact: left.result.artifact.sha256 === right.result.artifact.sha256,
     leftAssembly: left.result.assembly,
     rightAssembly: right.result.assembly,
     leftCallEdgesByCaller: callEdgesByCaller(left.result),
     rightCallEdgesByCaller: callEdgesByCaller(right.result),
-    leftFieldAccessesByCaller: fieldAccessesByCaller(left.result),
-    rightFieldAccessesByCaller: fieldAccessesByCaller(right.result),
+    leftFieldAccessesByCaller: fieldAccessesByCaller(
+      left.result,
+      scope.left.emptyFieldTokens,
+    ),
+    rightFieldAccessesByCaller: fieldAccessesByCaller(
+      right.result,
+      scope.right.emptyFieldTokens,
+    ),
   };
   const methodItems = buildMethodItems(methodMatches, itemContext);
   const fieldItems = buildFieldItems(fieldMatches, itemContext);
   const allItems = [...methodItems, ...fieldItems];
   const summary = buildComparisonSummary(allItems);
   const matching = buildComparisonMatching(methodItems, fieldItems);
-  const selectionAgreement = scope.agreement;
   const coverage = buildComparisonCoverage({
     left: left.result,
     right: right.result,
-    selectionAgreement,
+    scope,
   });
-  const limitations = comparisonLimitations(
-    left.result,
-    right.result,
-    selectionAgreement,
-  );
+  const limitations = comparisonLimitations(left.result, right.result, scope);
   const result = {
     comparison_id: `mmc_${digestCanonicalValue(
       {

@@ -6,16 +6,14 @@ import { err, ok, type Result } from "../domain/result.js";
 import type { ClientConfigurationDocument } from "./ClientConfigurationDocument.js";
 import { CordisExpression, DshCordisYaml } from "./DshCordisYaml.js";
 import { mergeEnvironmentOverrides } from "../process/snapshotEnvironment.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 export const DSH_ENTRY_ID = "rea-mcp";
 export const DSH_CLIENT_PACKAGE = "@deepseek-ai/dsh-mcp-client";
 const LAUNCHER_KEYS = new Set(["serverName", "transport", "command", "args"]);
 const SELECTOR_KEYS = new Set(["id", "name"]);
 const isPatchRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" &&
-  value !== null &&
-  !Array.isArray(value) &&
-  !(value instanceof CordisExpression);
+  isRecord(value) && !(value instanceof CordisExpression);
 
 interface PatchOperation {
   readonly source: unknown;
@@ -264,6 +262,7 @@ export class DshCordisDocument {
     command: readonly string[],
     overrides: Readonly<Record<string, string>>,
     platform: NodeJS.Platform,
+    toolCallTimeoutMs?: number,
   ): Result<Record<string, unknown>, ConfigurationError> {
     if (this.#editabilityError !== undefined)
       return err(this.#editabilityError);
@@ -277,6 +276,11 @@ export class DshCordisDocument {
     const desired = { ...this.config, ...dshClientRegistrationEntry(command) };
     delete desired.env;
     if (Object.keys(env).length > 0) desired.env = env;
+    if (
+      toolCallTimeoutMs !== undefined &&
+      dshToolCallTimeout(this.config?.toolCallTimeoutMs) === undefined
+    )
+      desired.toolCallTimeoutMs = toolCallTimeoutMs;
     return ok(desired);
   }
 
@@ -383,6 +387,12 @@ export class DshCordisDocument {
     // Caller nodes keep their tags and spelling; only literal launcher values change.
     for (const key of LAUNCHER_KEYS)
       this.#yaml.setValue(config, key, desired[key]);
+    if (typeof desired.toolCallTimeoutMs === "number")
+      this.#yaml.setValue(
+        config,
+        "toolCallTimeoutMs",
+        desired.toolCallTimeoutMs,
+      );
     const env = this.#map(this.#yaml.field(sourceConfig, "env"));
     const desiredEnv = desired.env;
     if (isPatchRecord(desiredEnv)) {
@@ -464,6 +474,16 @@ export const serializeDshDocument = (
     throw new ConfigurationError("Missing Cordis edit plan");
   return document.cordis.source.serialize(document.cordis.registration);
 };
+/** Read a positive literal deadline or null for a caller-owned expression of unknown value. */
+export const dshToolCallTimeout = (
+  value: unknown,
+): number | null | undefined => {
+  if (value instanceof CordisExpression) return null;
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : undefined;
+};
+
 export const dshClientRegistrationEntry = (
   command: readonly string[],
   environment: Readonly<Record<string, string>> = {},

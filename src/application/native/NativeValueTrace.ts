@@ -11,7 +11,7 @@ import {
   cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import { err, ok } from "../../domain/result.js";
-import type { AnalysisOperationPort } from "../AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { stopsTraversal } from "../CallRelationshipTraversal.js";
 import {

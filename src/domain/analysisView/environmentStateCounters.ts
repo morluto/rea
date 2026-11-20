@@ -1,6 +1,6 @@
 import { jsonPointerTokens } from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
-import { isRecord } from "../isRecord.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 type JsonObject = { [key: string]: JsonValue };
 

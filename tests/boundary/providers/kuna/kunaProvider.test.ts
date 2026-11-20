@@ -11,7 +11,7 @@ import {
 import { join } from "node:path";
 
 import { expect, it as test, vi } from "vitest";
-import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../../support/lifecycleHarness.js";
 
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
 import type { JsonValue } from "../../../../src/domain/jsonValue.js";
@@ -112,21 +112,13 @@ it("waits for an aborted pre-session hash before retrying its late close owner",
   );
   const nativeClose = OwnedFileHandle.prototype.close;
   let closeCalls = 0;
-  let enteredClose!: () => void;
-  let releaseClose!: () => void;
-  const closeEntered = new Promise<void>((resolve) => {
-    enteredClose = resolve;
-  });
-  const closeGate = new Promise<void>((resolve) => {
-    releaseClose = resolve;
-  });
+  const hashClose = phaseGate();
   const close = vi
     .spyOn(OwnedFileHandle.prototype, "close")
     .mockImplementation(async function (this: OwnedFileHandle) {
       closeCalls += 1;
       if (closeCalls === 1) {
-        enteredClose();
-        await closeGate;
+        await hashClose.hold();
       }
       if (closeCalls <= 2)
         throw new Error("injected Kuna profile close failure");
@@ -143,7 +135,7 @@ it("waits for an aborted pre-session hash before retrying its late close owner",
         previewSettled = true;
         return result;
       });
-    await closeEntered;
+    await hashClose.reached(previewWork, "Kuna profile hash close");
     controller.abort();
     let closeSettled = false;
     const closing = binary.close().then((result) => {
@@ -154,7 +146,7 @@ it("waits for an aborted pre-session hash before retrying its late close owner",
     expect(previewSettled).toBe(false);
     expect(closeSettled).toBe(false);
     expect(await binary.status()).toMatchObject({ cleanup_pending: true });
-    releaseClose();
+    hashClose.release();
     const preview = await previewWork;
     expect(preview).toMatchObject({
       ok: false,
@@ -179,7 +171,7 @@ it("waits for an aborted pre-session hash before retrying its late close owner",
     expect(preview.error.cleanupIncomplete).toBe(false);
     expect(firstClose.error.cleanupIncomplete).toBe(false);
   } finally {
-    releaseClose();
+    hashClose.release();
     close.mockRestore();
     await binary.close();
   }
@@ -187,13 +179,13 @@ it("waits for an aborted pre-session hash before retrying its late close owner",
 
 it("commits the observed Kuna release and digest to the analysis profile", async () => {
   const { profile, kuna } = await session("rea-kuna-profile-", {
-    version: { stdout: "kuna 1.990\n" },
+    version: { stdout: "kuna 1.1000\n" },
   });
 
   expect(profile).toMatchObject({
-    provider: { id: "kuna", name: "Kuna", version: "1.990" },
+    provider: { id: "kuna", name: "Kuna", version: "1.1000" },
     parameters: {
-      kuna_version: "1.990",
+      kuna_version: "1.1000",
       kuna_sha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
       kuna_command: kuna,
       jobs: 1,
@@ -204,16 +196,16 @@ it("commits the observed Kuna release and digest to the analysis profile", async
 
 it("reports an unverified release on observations without binding policy into the profile", async () => {
   const { profile, open } = await session("rea-kuna-policy-", {
-    version: { stdout: "kuna 1.988\n" },
+    version: { stdout: "kuna 1.990\n" },
   });
   expect(profile.parameters).not.toHaveProperty("verified_release");
   expect(profile.parameters).toMatchObject({
-    kuna_version: "1.988",
+    kuna_version: "1.990",
     kuna_sha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
   });
   const client = open();
   const inventory = await run(client, "list_procedures");
-  const warning = "Kuna 1.988 is not REA's verified 1.990 release";
+  const warning = "Kuna 1.990 is not REA's verified 1.1000 release";
   expect(inventory.limitations.join("\n")).toContain(warning);
   const dossier = await run(client, "analyze_function", { procedure: "main" });
   expect(dossier.limitations.join("\n")).toContain(warning);
@@ -735,10 +727,7 @@ it("keeps answering pseudocode one function at a time when the export fails", as
 });
 
 it("keeps an overflow as the primary failure when cancellation arrives during final cleanup", async () => {
-  let enteredCleanup!: () => void;
-  let releaseCleanup!: () => void;
-  const entered = new Promise<void>((resolve) => (enteredCleanup = resolve));
-  const released = new Promise<void>((resolve) => (releaseCleanup = resolve));
+  const finalCleanup = phaseGate();
   const launcher: KunaProcessLauncher = async (options) => {
     const spawned = await spawnOwnedProviderProcess(options);
     if (options.arguments[0] !== "decompile") return spawned;
@@ -746,8 +735,7 @@ it("keeps an overflow as the primary failure when cancellation arrives during fi
       ...spawned,
       cleanup: async () => {
         const result = await cleanupOwnedProcessGroup(spawned.ownership);
-        enteredCleanup();
-        await released;
+        await finalCleanup.hold();
         return result;
       },
     };
@@ -766,9 +754,9 @@ it("keeps an overflow as the primary failure when cancellation arrives during fi
     { signal: caller.signal },
   );
   try {
-    await awaitAcknowledgement(entered, pending, "Kuna overflow cleanup");
+    await finalCleanup.reached(pending, "Kuna overflow cleanup");
     caller.abort("cancel during overflow cleanup");
-    releaseCleanup();
+    finalCleanup.release();
     const result = await pending;
     expect(result.ok).toBe(false);
     if (!result.ok)
@@ -779,7 +767,7 @@ it("keeps an overflow as the primary failure when cancellation arrives during fi
         },
       });
   } finally {
-    releaseCleanup();
+    finalCleanup.release();
     caller.abort();
     await pending;
     expect(await client.close()).toEqual({ ok: true, value: null });

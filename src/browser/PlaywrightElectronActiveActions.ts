@@ -2,18 +2,18 @@ import type { ElectronApplication, JSHandle, Page } from "playwright-core";
 import { z } from "zod";
 import { runWithExecutionLimits } from "./PlaywrightElectronExecution.js";
 
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type {
   ArtifactResourceScope,
   ArtifactResourceOwner,
-} from "../artifacts/ArtifactResourceScope.js";
+} from "../resources/index.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
   cancelledBy,
 } from "../domain/analysisErrorCore.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { describeValidationFailure } from "../domain/validationFailure.js";
 import {
@@ -249,11 +249,7 @@ const releaseActionWindow = async (
   const cancellation = cancelledBy(OPERATION, signal);
   return actionStatus === "failed"
     ? error.retainSecondaryFailure(cancellation)
-    : analysisErrorWithCleanupFailure(
-        cancellation,
-        error,
-        OPERATION,
-      ).bindCleanupDependencies([cancellation, error]);
+    : analysisErrorWithCleanupDependencies(cancellation, error, OPERATION);
 };
 
 type RunActionContext = {

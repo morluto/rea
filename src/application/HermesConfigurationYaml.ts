@@ -26,6 +26,7 @@ import {
   retainYamlScalarSource,
   yamlNumericValuesEqual,
 } from "./YamlConfigurationSource.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 const SOURCE_SCALAR_TAGS = new Set([
   "tag:yaml.org,2002:int",
@@ -434,9 +435,7 @@ export const editHermesConfigurationYaml = (
     ? "absent"
     : projectedYamlValue(document, path);
   if (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
+    isRecord(value) &&
     inheritedRegistration !== "absent" &&
     typeof inheritedRegistration.value === "object" &&
     inheritedRegistration.value !== null &&

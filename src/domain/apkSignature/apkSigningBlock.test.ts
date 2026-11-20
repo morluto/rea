@@ -1,3 +1,4 @@
+import { isParseLimit } from "../parseFailureAnalysisError.js";
 import { describe, expect, it } from "vitest";
 import { zip64Tail } from "../../../tests/fixtures/apkSignature/zip64Tail.js";
 
@@ -112,6 +113,22 @@ describe("APK signing block locator", () => {
     expect([...block.value.pairs[0]!.value]).toEqual([0xaa, 0xbb, 0xcc, 0xdd]);
   });
 
+  it("names the enforced limit for a physically framed extra pair", () => {
+    const bytes = apkWithBlock(
+      Array.from({ length: 4097 }, () => ({ id: 0xffffffff, value: [] })),
+    );
+    const tail = parseZipTail(bytes);
+    if (!tail.ok) throw new Error("Expected a framed ZIP tail");
+    const result = locateApkSigningBlock(bytes, tail.value);
+    if (result.ok) throw new Error("Expected a signing-block pair refusal");
+    expect(isParseLimit(result.error, "apk-signing-block")).toBe(true);
+    expect(result.error).toMatchObject({
+      failure: {
+        limit: { name: "max_signing_block_pairs", maximum: 4096 },
+      },
+    });
+  });
+
   it("returns null when no block magic precedes the central directory", () => {
     const bytes = apkWithBlock(
       [{ id: APK_BLOCK_ID.signatureV2, value: [1, 2, 3, 4] }],
@@ -176,6 +193,34 @@ describe("APK signing block locator", () => {
     expect(block.ok).toBe(false);
     if (block.ok) return;
     expect(block.error.kind).toBe("malformed-block");
+  });
+});
+
+describe("Zip64 volume declarations", () => {
+  it.each([16, 20])(
+    "refuses a Zip64 end record naming another volume at field %s",
+    async (field) => {
+      const { bytes, recordOffset } = await zip64Tail();
+      expect(parseZipTail(bytes).ok).toBe(true);
+      new DataView(bytes.buffer).setUint32(recordOffset + field, 1, true);
+      expect(parseZipTail(bytes)).toMatchObject({
+        ok: false,
+        error: { kind: "zip64-unsupported" },
+      });
+    },
+  );
+
+  it("accepts deferred classic disk fields but refuses another disk", async () => {
+    const { bytes, eocdOffset } = await zip64Tail();
+    const view = new DataView(bytes.buffer);
+    view.setUint16(eocdOffset + 4, 0xffff, true);
+    view.setUint16(eocdOffset + 6, 0xffff, true);
+    expect(parseZipTail(bytes).ok).toBe(true);
+    view.setUint16(eocdOffset + 6, 1, true);
+    expect(parseZipTail(bytes)).toMatchObject({
+      ok: false,
+      error: { kind: "zip64-unsupported" },
+    });
   });
 });
 

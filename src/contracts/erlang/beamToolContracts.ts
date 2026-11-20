@@ -3,7 +3,7 @@ import {
   erlangBeamSchema,
 } from "../../domain/erlang/beam.js";
 import type { ToolContract } from "../toolContractTypes.js";
-import { toolContractMetadata } from "../toolEffects.js";
+import { toolContractMetadata, evidenceEffects } from "../toolEffects.js";
 import { analysisDetailOutputSchemaOf } from "../analysisDetail.js";
 import { z } from "zod";
 import {
@@ -29,7 +29,9 @@ export const inspectErlangBeamRequestSchema = presentRootDiscriminator(
 export const ERLANG_BEAM_TOOL_CONTRACTS = [
   {
     name: "inspect_erlang_beam",
-    ...toolContractMetadata("inspect_erlang_beam"),
+    availability: "standalone",
+    cli: true,
+    ...toolContractMetadata("inspect_erlang_beam", evidenceEffects),
     kind: "artifact-provider",
     requiresActiveTarget: true,
     description:

@@ -1,11 +1,12 @@
 import { contractNamed } from "./contractCliDescription.js";
-import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
-import { z } from "incur";
+import { resolveJavaScriptMemberMutationAllowance } from "../config/javascriptMemberMutationAllowance.js";
+import { z } from "zod";
 import { cliDecimalField } from "./options.js";
+import { requirePresence } from "../domain/schemaConstraints.js";
 
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { createHistoricalSourceSummary } from "../domain/referenceSourceSummary.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/index.js";
 import { importReferenceSource } from "../application/ReferenceSourceImport.js";
 import {
   referenceSourceImportAnalysisError,
@@ -24,10 +25,10 @@ import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { isCliOperationFailure, logCliCommand } from "../cliLogging.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
+import { CLI_COMMANDS, cliCommandFor } from "../contracts/cliCommandNames.js";
 import { localPathStringSchema } from "../domain/localPath.js";
-import { nativeCommandTimeoutField } from "../domain/native/nativeDeadlines.js";
 import type { Logger } from "pino";
+import { registerCliCommand } from "./commandRegistry.js";
 import type { CliInstance } from "./types.js";
 import { registerNativeCallCommands } from "./nativeCallCommands.js";
 import { NATIVE_TOOL_CONTRACTS } from "../contracts/native/nativeToolContracts.js";
@@ -72,7 +73,6 @@ const registerNativeUiCommands = (
     logger,
     contractNamed(NATIVE_TOOL_CONTRACTS, "observe_native_ui"),
     {
-      command: CLI_COMMANDS.observeNativeUi,
       description:
         "Observe one already-running native application window by PID and window ID",
       sessionTarget,
@@ -85,7 +85,6 @@ const registerNativeUiCommands = (
     logger,
     contractNamed(NATIVE_TOOL_CONTRACTS, "capture_native_ui_scenario"),
     {
-      command: CLI_COMMANDS.captureNativeUiScenario,
       description:
         "Run declarative AX actions or waits in one exact native application window",
       sessionTarget,
@@ -111,7 +110,7 @@ const registerCapabilityCommands = (
     CLI_COMMANDS.capabilities,
     CLI_COMMANDS.providers,
   ] as const) {
-    cli.command(command, {
+    registerCliCommand(cli, command, {
       description:
         command === "capabilities"
           ? "List provider capabilities and side effects"
@@ -133,16 +132,15 @@ const registerNativeCommands = (
     logger,
     contractNamed(NATIVE_TOOL_CONTRACTS, "inspect_macho"),
     {
-      command: CLI_COMMANDS.inspectMacho,
       description: "Run inspect_macho without launching Hopper",
       sessionTarget: machoTarget,
-      omit: { detail: "The CLI returns the complete inspection Evidence" },
+      evidenceDelivery: true,
     },
     run,
   );
   for (const [command, tool] of [
-    [CLI_COMMANDS.inspectSignature, "inspect_signature"],
-    [CLI_COMMANDS.listArchitectures, "list_architectures"],
+    [cliCommandFor("inspect_signature"), "inspect_signature"],
+    [cliCommandFor("list_architectures"), "list_architectures"],
   ] as const)
     registerContractCommand(
       cli,
@@ -155,45 +153,28 @@ const registerNativeCommands = (
       },
       run,
     );
-  // inspect_plist reports a plist the target itself selects under the
-  // contract's `path` field, which this command spells --relative-path, so
-  // it keeps its own option until that producer names the target apart.
-  cli.command(CLI_COMMANDS.inspectPlist, {
-    description: "Parse app plist metadata without launching Hopper",
-    args: z.object({
-      path: localPathStringSchema.describe("App or Mach-O path"),
-    }),
-    options: z.object({
-      relativePath: localPathStringSchema
-        .optional()
-        .describe(
-          "Plist path relative to the app root, or an absolute path (default: the bundle's Info.plist)",
-        ),
-      nativeCommandTimeoutMs: cliDecimalField(nativeCommandTimeoutField),
-    }),
-    run: ({ args, options }) =>
-      logCliCommand(logger, "inspect-plist", () =>
-        runProviderAnalysis(
-          args.path,
-          "inspect_plist",
-          {
-            ...(options.relativePath === undefined
-              ? {}
-              : { path: options.relativePath }),
-            ...(options.nativeCommandTimeoutMs === undefined
-              ? {}
-              : { native_command_timeout_ms: options.nativeCommandTimeoutMs }),
-          },
-          logger,
-        ).then(projectCliAnalysisResult),
-      ),
-  });
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(NATIVE_TOOL_CONTRACTS, "inspect_plist"),
+    {
+      description: "Parse app plist metadata without launching Hopper",
+      sessionTarget: { description: "App, Mach-O or plist path" },
+      fields: {
+        path: {
+          name: "relativePath",
+          description:
+            "Plist path relative to the app root, or an absolute path within the opened bundle (default: its Info.plist)",
+        },
+      },
+    },
+    run,
+  );
   registerContractCommand(
     cli,
     logger,
     contractNamed(NATIVE_TOOL_CONTRACTS, "demangle_swift"),
     {
-      command: CLI_COMMANDS.demangleSwift,
       description: "Demangle Swift symbols without Hopper",
       sessionTarget: {
         description: "Artifact path used for evidence identity",
@@ -272,15 +253,15 @@ const registerReferenceSourceCommand = (
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
 ): void => {
-  cli.command(CLI_COMMANDS.importReferenceSource, {
+  registerCliCommand(cli, CLI_COMMANDS.importReferenceSource, {
     description: "Import a source tree as historical reference only",
     args: z.object({
       root: localPathStringSchema.describe(
         "Local source directory to import as historical reference",
       ),
     }),
-    options: z
-      .object({
+    options: requirePresence(
+      z.object({
         excludePaths: z
           .string()
           .optional()
@@ -302,22 +283,16 @@ const registerReferenceSourceCommand = (
               "Summary outline path depth (default: 2; 0 omits entries); requires --detail summary",
             ),
         ),
-      })
-      .superRefine((options, context) => {
-        if (options.outlineDepth !== undefined && options.detail !== "summary")
-          context.addIssue({
-            code: "custom",
-            path: ["outlineDepth"],
-            message: "--outline-depth requires --detail summary",
-          });
-      })
-      .meta({
-        if: { required: ["outlineDepth"] },
-        then: {
-          required: ["detail"],
-          properties: { detail: { const: "summary" } },
-        },
       }),
+      [
+        {
+          when: "outlineDepth",
+          requires: "detail",
+          requiresValue: "summary",
+          message: "--outline-depth requires --detail summary",
+        },
+      ],
+    ),
     run: ({ args, options }) =>
       logCliCommand(
         logger,
@@ -333,10 +308,18 @@ const registerReferenceSourceCommand = (
               error: "Import failed",
               ...projectAnalysisError(config.error),
             };
+          const memberMutationAllowance =
+            resolveJavaScriptMemberMutationAllowance(environment);
+          if (!memberMutationAllowance.ok)
+            return {
+              error: "Import failed",
+              ...projectAnalysisError(memberMutationAllowance.error),
+            };
           return withCommandCancellation((signal) =>
             runReferenceSourceImport(
               {
                 root: args.root,
+                memberMutationAllowance: memberMutationAllowance.value,
                 caller: "rea-cli",
                 policy: config.value.referenceSourcePolicy,
                 importer: PRODUCT_IDENTITY.packageName,

@@ -1,4 +1,7 @@
-import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, expect } from "vitest";
@@ -92,7 +95,7 @@ const goViewTest = mcpTest.extend<{
         ).toBe(true);
         const reply = await client.callTool(
           { name, arguments: input },
-          { toolDefinition: tool },
+          { toolDefinition: withCanonicalOutputSchema(tool) },
         );
         expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
         return parseEvidence(reply.structuredContent);

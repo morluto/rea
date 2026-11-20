@@ -1,4 +1,4 @@
-import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
 // Fake-backed composition coverage; real provider verification lives in
 // `npm run verify:hopper` and `npm run verify:ghidra`.
 import { describe, expect, it } from "vitest";
@@ -8,7 +8,7 @@ import {
   createAnalysisExecution,
   type AnalysisExecution,
   type AnalysisOperation,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
@@ -878,7 +878,7 @@ describe("native UI trace boundaries", () => {
     });
   });
 
-  it("matches handlers after the dispatch inventory's former default limit", async () => {
+  it("matches a handler listed after 5,000 unrelated names", async () => {
     const names = Array.from({ length: 5_000 }, (_, index) => ({
       address: `0x${(index + 1).toString(16)}`,
       value: `unrelated_symbol_${index}`,
@@ -1101,4 +1101,40 @@ it("keeps a complete UI graph trace untruncated when no bound is reached", async
       "The supplied graph was truncated; relationships omitted from that source remain unknown.",
     ]),
   );
+});
+
+describe("native UI action archive coverage", () => {
+  it("keeps archive coverage unknown when the decoder did not report it", async () => {
+    const trace = async (
+      coverage: z.input<typeof nativeInvestigationGraphSchema>["coverage"],
+    ) => {
+      const result = await new EnhancedTools(
+        testAnalysis({}, { ...graph, coverage }),
+      ).execute("trace_native_ui_action", { action: "missing-selector" });
+      if (!result.ok) throw result.error;
+      return nativeInvestigationTraceSchema
+        .parse(result.value)
+        .coverage.filter(({ facet }) => facet === "interface_builder_archives");
+    };
+    // One document was found but no archive_decode facet was reported.
+    expect(await trace([])).toEqual([
+      {
+        facet: "interface_builder_archives",
+        status: "unknown",
+        reason: "archive_decode_coverage_not_reported",
+        examined: 1,
+        omitted: null,
+      },
+    ]);
+    const reported = {
+      facet: "archive_decode",
+      status: "partial" as const,
+      reason: "archive_decode_failed",
+      examined: 2,
+      omitted: 1,
+    };
+    expect(await trace([reported])).toEqual([
+      { ...reported, facet: "interface_builder_archives" },
+    ]);
+  });
 });

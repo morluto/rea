@@ -17,15 +17,13 @@ import {
   nativeMachoTargetForFile,
 } from "../../../fixtures/nativeCommands.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
-import { NATIVE_COMMAND_OUTPUT_BUDGET_BYTES } from "../../../../src/native/CommandRunner.js";
-import {
-  LipoFieldRetentionError,
-  parseLipoCapture,
-} from "../../../../src/native/parsers/lipo.js";
+import { parseLipoCapture } from "../../../../src/native/parsers/lipo.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
-} from "../../../../src/artifacts/ArtifactReader.js";
+} from "../../../../src/resources/ArtifactReader.js";
+import { NATIVE_COMMAND_OUTPUT_BUDGET_BYTES } from "../../../../src/domain/native/nativeCommandOutput.js";
+import { LipoFieldRetentionError } from "../../../../src/domain/apple/lipo.js";
 
 it.each(["absent", "valid", "uninterpretable"] as const)(
   "preserves %s lipo fields through native observations and structural slice inventory",

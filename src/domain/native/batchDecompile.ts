@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { analysisErrorProjectionSchema } from "../../contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../analysisErrorProjectionSchema.js";
 import { pseudocodeAbsenceSchema } from "./pseudocodeAbsence.js";
 
 /** Identity facts attached to one requested batch selector. */

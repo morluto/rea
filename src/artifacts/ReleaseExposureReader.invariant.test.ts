@@ -18,20 +18,27 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
  */
 const decoder = vi.hoisted(() => ({ broken: false }));
 
-vi.mock("./apple/BinaryPlistMaterializer.js", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("./apple/BinaryPlistMaterializer.js")>();
-  return {
-    ...actual,
-    decodeBinaryPlistText: (
-      ...args: Parameters<typeof actual.decodeBinaryPlistText>
-    ) => {
-      if (decoder.broken)
-        throw invariantViolation("binary plist decoder copy lost its trailer");
-      return actual.decodeBinaryPlistText(...args);
-    },
-  };
-});
+vi.mock(
+  "../domain/apple/binaryPlistMaterializer.js",
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import("../domain/apple/binaryPlistMaterializer.js")
+      >();
+    return {
+      ...actual,
+      decodeBinaryPlistText: (
+        ...args: Parameters<typeof actual.decodeBinaryPlistText>
+      ) => {
+        if (decoder.broken)
+          throw invariantViolation(
+            "binary plist decoder copy lost its trailer",
+          );
+        return actual.decodeBinaryPlistText(...args);
+      },
+    };
+  },
+);
 
 afterEach(() => {
   decoder.broken = false;

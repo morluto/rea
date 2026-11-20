@@ -13,7 +13,10 @@ import {
   expectForeignHostRefused,
   rawHttpRequest,
 } from "../../../tests/support/http/rawRequest.js";
-import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
+import {
+  phaseArrival,
+  phaseGate,
+} from "../../../tests/support/lifecycleHarness.js";
 import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
 import {
   hostHeaderAllowlist,
@@ -23,7 +26,8 @@ import {
 } from "./serveStreamableHttp.js";
 import { StreamableHttpListenError } from "./streamableHttpListenError.js";
 import { mcpAllowedHostsTextSchema } from "../../config/mcpHttpEndpoint.js";
-import { parseMcpHttpArguments } from "../../main/mcpHttpArguments.js";
+import { classifyCliEntrypoint } from "../../cliBuiltinArguments.js";
+import { validateMcpHttpCommand } from "../../main/mcpHttpArguments.js";
 import { RequestTrackingMcpServer } from "../RequestTrackingMcpServer.js";
 import { waitFor } from "../../../tests/support/testWait.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
@@ -36,14 +40,6 @@ import { createToolResultDelivery } from "../toolResult.js";
 import { ok } from "../../domain/result.js";
 
 const servers: StreamableHttpServer[] = [];
-
-const createGate = () => {
-  let release!: () => void;
-  const promise = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  return { promise, release };
-};
 
 afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => server.close()));
@@ -359,12 +355,18 @@ it.each([
 });
 
 it("serves every declared repeated host while refusing undeclared hosts and origins", async () => {
-  const parsed = parseMcpHttpArguments([
-    "--http",
-    "--allowed-hosts",
-    "a.example",
-    "--allowed-hosts=b.example",
-  ]);
+  const entry = classifyCliEntrypoint(
+    [
+      "mcp",
+      "--http",
+      "--allowed-hosts",
+      "a.example",
+      "--allowed-hosts=b.example",
+    ],
+    {},
+  );
+  if (entry.kind !== "mcp-http") throw new Error("Expected an MCP HTTP entry");
+  const parsed = validateMcpHttpCommand(entry.command);
   if (!parsed.ok || parsed.allowedHosts === undefined)
     throw new Error("Expected valid repeated host lists");
   const { served } = await start({
@@ -1075,18 +1077,8 @@ it("does not let a zero-quality, quoted or SDK-refused Accept qualify a session 
 it.each(["replacement", "DELETE"])(
   "waits for a cancelled tool's finally block before reusing the instance after %s",
   async (ending) => {
-    let release!: () => void;
-    let entered!: () => void;
-    let cancelled!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const started = new Promise<void>((resolve) => {
-      entered = resolve;
-    });
-    const aborted = new Promise<void>((resolve) => {
-      cancelled = resolve;
-    });
+    const toolRun = phaseGate();
+    const toolAbort = phaseArrival();
     let state = "initial";
     let connections = 0;
     const { served } = await start({
@@ -1101,12 +1093,13 @@ it.each(["replacement", "DELETE"])(
           "slow",
           { inputSchema: z.object({}) },
           async (_args, context) => {
-            context.mcpReq.signal.addEventListener("abort", cancelled, {
-              once: true,
-            });
-            entered();
+            context.mcpReq.signal.addEventListener(
+              "abort",
+              () => toolAbort.arrive(),
+              { once: true },
+            );
             try {
-              await gate;
+              await toolRun.hold();
               return { content: [] };
             } finally {
               state = "old-finally";
@@ -1126,23 +1119,23 @@ it.each(["replacement", "DELETE"])(
       .callTool({ name: "slow", arguments: {} })
       .catch(() => undefined);
     try {
-      await awaitAcknowledgement(started, request, "tool start");
+      await toolRun.reached(request, "tool start");
       deletion =
         ending === "DELETE" ? first.transport.terminateSession() : undefined;
       if (deletion !== undefined)
-        await awaitAcknowledgement(aborted, deletion, "tool cancellation");
+        await toolAbort.reached(deletion, "tool cancellation");
       let connected = false;
       replacement = connect(served.url).then((value) => {
         connected = true;
         next = value;
         return value;
       });
-      await awaitAcknowledgement(aborted, replacement, "tool cancellation");
+      await toolAbort.reached(replacement, "tool cancellation");
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(connections).toBe(1);
       expect(connected).toBe(false);
       expect(state).toBe("initial");
-      release();
+      toolRun.release();
       await deletion;
       const connectedNext = await replacement;
       expect(state).toBe("old-finally");
@@ -1150,7 +1143,7 @@ it.each(["replacement", "DELETE"])(
         { type: "text", text: "new session" },
       ]);
     } finally {
-      release();
+      toolRun.release();
       await closeVerifierResources([
         () => first.client.close(),
         async () => {
@@ -1170,16 +1163,14 @@ it.each(["ready", "failure"] as const)(
     const reserved = await start();
     const url = new URL(reserved.served.url);
     await reserved.served.close();
-    const factoryStarted = createGate();
-    const factoryGate = createGate();
+    const factoryStart = phaseGate();
     const failure = new Error("provider unavailable");
     const handled = vi.fn(() => new Response("ready"));
     const starting = serveStreamableHttp({
       host: "127.0.0.1",
       port: Number(url.port),
       createMcpServer: async () => {
-        factoryStarted.release();
-        await factoryGate.promise;
+        await factoryStart.hold();
         if (outcome === "failure") throw failure;
         return createEchoServer(() => undefined);
       },
@@ -1187,14 +1178,10 @@ it.each(["ready", "failure"] as const)(
     });
     const settled = starting.catch(() => undefined);
     try {
-      await awaitAcknowledgement(
-        factoryStarted.promise,
-        starting,
-        "factory start",
-      );
+      await factoryStart.reached(starting, "factory start");
       expect((await fetch(new URL("/pending", url))).status).toBe(503);
       expect(handled).not.toHaveBeenCalled();
-      factoryGate.release();
+      factoryStart.release();
       if (outcome === "failure") {
         await expect(starting).rejects.toBe(failure);
         await expect(rawHttpRequest(url)).rejects.toMatchObject({
@@ -1206,7 +1193,7 @@ it.each(["ready", "failure"] as const)(
         expect(handled).toHaveBeenCalledTimes(1);
       }
     } finally {
-      factoryGate.release();
+      factoryStart.release();
       await (await settled)?.close();
     }
   },
@@ -1215,16 +1202,15 @@ it.each(["ready", "failure"] as const)(
 it.each(["open stream", "late response"])(
   "joins response-body cancellation before provider hooks for %s",
   async (timing) => {
-    const entered = createGate();
-    const cancelling = createGate();
-    const cleanup = createGate();
+    const routeStart = phaseArrival();
+    const bodyCancel = phaseGate();
     const { served, shutdownHooks } = await start({
       routes: [
         {
           method: "GET",
           path: "/stream",
           handle: async (request) => {
-            entered.release();
+            routeStart.arrive();
             if (timing === "late response")
               await new Promise<void>((resolve) => {
                 request.signal.addEventListener("abort", () => resolve(), {
@@ -1239,8 +1225,7 @@ it.each(["open stream", "late response"])(
                   );
                 },
                 async cancel() {
-                  cancelling.release();
-                  await cleanup.promise;
+                  await bodyCancel.hold();
                 },
               }),
             );
@@ -1253,25 +1238,21 @@ it.each(["open stream", "late response"])(
     );
     let closing: Promise<void> | undefined;
     try {
-      await awaitAcknowledgement(entered.promise, response, "route start");
+      await routeStart.reached(response, "route start");
       if (timing === "open stream") await response;
       let closed = false;
       closing = served.prepareShutdown().then(() => {
         closed = true;
       });
-      await awaitAcknowledgement(
-        cancelling.promise,
-        closing,
-        "body cancellation",
-      );
+      await bodyCancel.reached(closing, "body cancellation");
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(closed).toBe(false);
       expect(shutdownHooks()).toBe(0);
-      cleanup.release();
+      bodyCancel.release();
       await closing;
       expect(shutdownHooks()).toBe(1);
     } finally {
-      cleanup.release();
+      bodyCancel.release();
       await closeVerifierResources([
         async () => {
           await (closing ?? served.close());
@@ -1287,7 +1268,7 @@ it.each(["open stream", "late response"])(
 it.each(["chunk", "headers"])(
   "joins response cleanup after an output failure in %s",
   async (failure) => {
-    const cleanup = createGate();
+    const responseCleanup = phaseGate();
     let cancelled = 0;
     const source = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -1300,7 +1281,7 @@ it.each(["chunk", "headers"])(
       },
       async cancel() {
         cancelled += 1;
-        await cleanup.promise;
+        await responseCleanup.hold();
       },
     });
     const { served, shutdownHooks } = await start({
@@ -1338,12 +1319,12 @@ it.each(["chunk", "headers"])(
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(closed).toBe(false);
       expect(shutdownHooks()).toBe(0);
-      cleanup.release();
+      responseCleanup.release();
       await closing;
       expect(shutdownHooks()).toBe(1);
       expect(cancelled).toBe(1);
     } finally {
-      cleanup.release();
+      responseCleanup.release();
       await source.cancel().catch(() => undefined);
       await closing;
       await received;
@@ -1435,8 +1416,7 @@ it("retains failed response cleanup and blocks provider teardown and further adm
 });
 
 it("retains plain-response admission until asynchronous cancellation settles", async () => {
-  const cancelling = createGate();
-  const cleanup = createGate();
+  const streamCancel = phaseGate();
   const health = vi.fn(() => new Response("ok"));
   const { served } = await start({
     maxConcurrentDispatches: 1,
@@ -1452,8 +1432,7 @@ it("retains plain-response admission until asynchronous cancellation settles", a
                 controller.enqueue(new TextEncoder().encode("ready"));
               },
               async cancel() {
-                cancelling.release();
-                await cleanup.promise;
+                await streamCancel.hold();
               },
             }),
           ),
@@ -1464,15 +1443,19 @@ it("retains plain-response admission until asynchronous cancellation settles", a
   try {
     expect((await fetch(new URL("/health", served.url))).status).toBe(503);
     await response.body?.cancel();
-    await cancelling.promise;
+    // The client-side cancel has already settled; only the deadline bounds this wait.
+    await streamCancel.reached(
+      new Promise(() => {}),
+      "server stream cancellation",
+    );
     expect((await fetch(new URL("/health", served.url))).status).toBe(503);
     expect(health).not.toHaveBeenCalled();
-    cleanup.release();
+    streamCancel.release();
     await waitFor(async () => {
       expect((await fetch(new URL("/health", served.url))).status).toBe(200);
     });
   } finally {
-    cleanup.release();
+    streamCancel.release();
     await response.body?.cancel();
   }
 });
@@ -1505,14 +1488,14 @@ it("supports sequential keep-alive requests on the same connection", async () =>
 it.each(["pending handler", "open response"])(
   "closes a peer pipelining behind a %s without queuing refusals",
   async (mode) => {
-    const first = createGate();
-    const fallback = createGate();
+    const firstRoute = phaseArrival();
+    const fallback = phaseGate();
     let finalized = 0;
     let secondCalled = 0;
     const held = async (request: Request) => {
       try {
         await Promise.race([
-          fallback.promise,
+          fallback.hold(),
           new Promise<void>((resolve) => {
             request.signal.addEventListener("abort", () => resolve(), {
               once: true,
@@ -1532,7 +1515,7 @@ it.each(["pending handler", "open response"])(
           method: "GET",
           path: "/first",
           handle: (request) => {
-            first.release();
+            firstRoute.arrive();
             return mode === "pending handler"
               ? held(request)
               : new Response(
@@ -1567,8 +1550,11 @@ it.each(["pending handler", "open response"])(
       await new Promise<void>((resolve) => {
         socket.once("connect", resolve);
       });
+      const socketClosed = new Promise<void>((resolve) => {
+        socket.once("close", () => resolve());
+      });
       socket.write(request("/first"));
-      await first.promise;
+      await firstRoute.reached(socketClosed, "first pipelined route");
       socket.write(request("/second"));
       socket.write(request("/health").repeat(32));
       await waitFor(() => {
@@ -1589,25 +1575,15 @@ it.each(["pending handler", "open response"])(
 it.each(["prepareShutdown", "close"] as const)(
   "waits for plain-route finalizers before provider hooks during %s",
   async (method) => {
-    let entered!: () => void;
-    let finalizing!: () => void;
-    let release!: () => void;
-    const started = new Promise<void>((resolve) => {
-      entered = resolve;
-    });
-    const cleanupStarted = new Promise<void>((resolve) => {
-      finalizing = resolve;
-    });
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
+    const routeStart = phaseArrival();
+    const routeFinalizer = phaseGate();
     const { served, shutdownHooks } = await start({
       routes: [
         {
           method: "GET",
           path: "/pending",
           handle: async (request) => {
-            entered();
+            routeStart.arrive();
             try {
               await new Promise<void>((resolve) => {
                 request.signal.addEventListener("abort", () => resolve(), {
@@ -1615,8 +1591,7 @@ it.each(["prepareShutdown", "close"] as const)(
                 });
               });
             } finally {
-              finalizing();
-              await gate;
+              await routeFinalizer.hold();
             }
             return new Response("done");
           },
@@ -1628,20 +1603,20 @@ it.each(["prepareShutdown", "close"] as const)(
     );
     let closing: Promise<void> | undefined;
     try {
-      await awaitAcknowledgement(started, response, "route start");
+      await routeStart.reached(response, "route start");
       let closed = false;
       closing = served[method]().then(() => {
         closed = true;
       });
-      await awaitAcknowledgement(cleanupStarted, closing, "route finalizer");
+      await routeFinalizer.reached(closing, "route finalizer");
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(closed).toBe(false);
       expect(shutdownHooks()).toBe(0);
-      release();
+      routeFinalizer.release();
       await closing;
       expect(shutdownHooks()).toBe(1);
     } finally {
-      release();
+      routeFinalizer.release();
       await closeVerifierResources([
         async () => {
           await (closing ?? served.close());
@@ -1913,19 +1888,11 @@ it.each(["replacement", "DELETE", "shutdown"])(
     const opened = await slot.handle(initializeRequest());
     const sessionId = opened.headers.get("mcp-session-id");
     expect(sessionId).toEqual(expect.any(String));
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    let reading!: () => void;
-    const readStarted = new Promise<void>((resolve) => {
-      reading = resolve;
-    });
+    const requestBodyRead = phaseGate();
     const body = new ReadableStream<Uint8Array>(
       {
         async pull(controller) {
-          reading();
-          await gate;
+          await requestBodyRead.hold();
           controller.enqueue(
             new TextEncoder().encode(
               JSON.stringify({
@@ -1956,7 +1923,7 @@ it.each(["replacement", "DELETE", "shutdown"])(
     );
     try {
       // With no stream prefetch, this proves the SDK is waiting on the old body.
-      await awaitAcknowledgement(readStarted, pending, "request body read");
+      await requestBodyRead.reached(pending, "request body read");
       if (ending === "shutdown") await slot.close();
       else {
         if (ending === "DELETE") {
@@ -1972,7 +1939,7 @@ it.each(["replacement", "DELETE", "shutdown"])(
         expect(next.status).toBe(200);
         expect(next.headers.get("mcp-session-id")).not.toBe(sessionId);
       }
-      release();
+      requestBodyRead.release();
       const refused = await pending;
       expect(refused.status).toBe(404);
       await expect(refused.json()).resolves.toMatchObject({
@@ -1980,7 +1947,7 @@ it.each(["replacement", "DELETE", "shutdown"])(
       });
       expect(called).not.toHaveBeenCalled();
     } finally {
-      release();
+      requestBodyRead.release();
       await pending;
       await slot.close();
     }
@@ -2047,18 +2014,8 @@ it.each(["replacement", "shutdown"])(
 it.each(["after timeout", "during drain"])(
   "automatically completes shutdown %s when the retained handler settles",
   async (shutdownTiming) => {
-    let release!: () => void;
-    let entered!: () => void;
-    let draining!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const started = new Promise<void>((resolve) => {
-      entered = resolve;
-    });
-    const drainStarted = new Promise<void>((resolve) => {
-      draining = resolve;
-    });
+    const toolStart = phaseGate();
+    const sessionDrain = phaseArrival();
     let shutdowns = 0;
     const { served } = await start({
       sessionDrainTimeoutMs: 0,
@@ -2069,12 +2026,11 @@ it.each(["after timeout", "during drain"])(
         const drain = server.drainRequests.bind(server);
         vi.spyOn(server, "drainRequests").mockImplementation((timeoutMs) => {
           const result = drain(timeoutMs);
-          draining();
+          sessionDrain.arrive();
           return result;
         });
         server.registerTool("slow", { inputSchema: z.object({}) }, async () => {
-          entered();
-          await gate;
+          await toolStart.hold();
           return { content: [] };
         });
         return server;
@@ -2087,7 +2043,7 @@ it.each(["after timeout", "during drain"])(
     let replacement: Promise<Response | undefined> | undefined;
     let pendingClose: Promise<void> | undefined;
     try {
-      await awaitAcknowledgement(started, request, "tool start");
+      await toolStart.reached(request, "tool start");
       replacement = fetch(served.url, {
         method: "POST",
         headers: {
@@ -2100,7 +2056,7 @@ it.each(["after timeout", "during drain"])(
         if (shutdownTiming === "during drain") return undefined;
         throw cause;
       });
-      await awaitAcknowledgement(drainStarted, replacement, "session drain");
+      await sessionDrain.reached(replacement, "session drain");
       pendingClose =
         shutdownTiming === "during drain" ? served.close() : undefined;
       const refused = await replacement;
@@ -2112,11 +2068,11 @@ it.each(["after timeout", "during drain"])(
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(closed).toBe(false);
       expect(shutdowns).toBe(0);
-      release();
+      toolStart.release();
       await closing;
       expect(shutdowns).toBe(1);
     } finally {
-      release();
+      toolStart.release();
       await closeVerifierResources([
         () => first.client.close(),
         async () => {
@@ -2133,18 +2089,8 @@ it.each(["after timeout", "during drain"])(
 it.each(["replacement", "shutdown", "DELETE"] as const)(
   "tells a pending Evidence tool who ended its session after %s",
   async (ending) => {
-    let release!: () => void;
-    let entered!: () => void;
-    let observed!: (reason: unknown) => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const started = new Promise<void>((resolve) => {
-      entered = resolve;
-    });
-    const aborted = new Promise<unknown>((resolve) => {
-      observed = resolve;
-    });
+    const toolStart = phaseGate();
+    const toolAbort = phaseArrival<unknown>();
     const { served } = await start({
       createMcpServer: () => {
         const server = new EvidenceMcpServer(
@@ -2159,11 +2105,10 @@ it.each(["replacement", "shutdown", "DELETE"] as const)(
           async (_args, context) => {
             context.mcpReq.signal.addEventListener(
               "abort",
-              () => observed(context.mcpReq.signal.reason),
+              () => toolAbort.arrive(context.mcpReq.signal.reason),
               { once: true },
             );
-            entered();
-            await gate;
+            await toolStart.hold();
             return { content: [] };
           },
         );
@@ -2176,23 +2121,18 @@ it.each(["replacement", "shutdown", "DELETE"] as const)(
       .catch(() => undefined);
     let ended: Promise<unknown> | undefined;
     try {
-      await awaitAcknowledgement(started, request, "tool start");
+      await toolStart.reached(request, "tool start");
       ended =
         ending === "DELETE"
           ? first.transport.terminateSession()
           : ending === "shutdown"
             ? served.prepareShutdown()
             : connect(served.url).then((next) => next.client.close());
-      await awaitAcknowledgement(
-        aborted.then(() => undefined),
-        ended,
-        "tool abort",
-      );
-      const reason = await aborted;
+      const reason = await toolAbort.reached(ended, "tool abort");
       if (ending === "DELETE") expect(reason).toBeInstanceOf(CallerAbort);
       else expect(reason).toBe(OwnerCancellation.ownerClosed);
     } finally {
-      release();
+      toolStart.release();
       await closeVerifierResources([
         () => first.client.close(),
         async () => {

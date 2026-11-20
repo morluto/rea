@@ -1,3 +1,4 @@
+import { managedModuleRow } from "./managedModuleIdentity.js";
 import { z } from "zod";
 
 import type { Evidence } from "../evidence.js";
@@ -118,7 +119,11 @@ export const managedApplicationGraphResultSchema = z
     }),
     graph: javascriptApplicationGraphSchema,
     coverage: z.strictObject({
-      status: z.enum(["complete-within-inputs", "partial"]),
+      status: z
+        .enum(["complete-within-inputs", "partial", "unknown"])
+        .describe(
+          "complete-within-inputs when every supplied managed Evidence record is complete and nothing was omitted; unknown when a supplied record is unavailable.",
+        ),
     }),
     evidence_links: z.array(evidenceIdSchema).min(1).max(3),
     limitations: z.array(nonEmptyTextSchema),
@@ -371,11 +376,15 @@ const artifactMismatch = (
 const moduleIdentityMismatch = (
   parsed: ParsedManagedGraphInput,
 ): string | null => {
+  const modules = [parsed.artifact, parsed.members, parsed.boundaries].flatMap(
+    (source) => {
+      const row = source === null ? null : managedModuleRow(source.result);
+      return row === null ? [] : [row];
+    },
+  );
   const mvidClaims = [
-    parsed.artifact?.result.module?.mvid,
-    parsed.members?.result.module?.mvid,
+    ...modules.map(({ mvid }) => mvid),
     parsed.members?.result.identity_scope.requires_mvid,
-    parsed.boundaries?.result.module?.mvid,
     parsed.boundaries?.result.identity_scope.requires_mvid,
   ]
     .filter((mvid): mvid is string => mvid !== undefined && mvid !== null)
@@ -383,16 +392,10 @@ const moduleIdentityMismatch = (
   if (new Set(mvidClaims).size > 1)
     return "Managed graph inputs report conflicting known module MVIDs or token scopes";
 
-  const modules = [
-    parsed.artifact?.result.module,
-    parsed.members?.result.module,
-    parsed.boundaries?.result.module,
-  ].filter(
-    (module): module is NonNullable<ManagedArtifactInspection["module"]> =>
-      module !== undefined && module !== null,
-  );
   for (const field of ["name", "generation", "token", "row_offset"] as const) {
-    const values = new Set(modules.map((module) => module[field]));
+    const values = new Set(
+      modules.map((module) => module[field]).filter((value) => value !== null),
+    );
     if (values.size > 1)
       return `Managed graph inputs report conflicting module ${field} values`;
   }
@@ -428,8 +431,13 @@ const projectionLimitations = (
         "Managed native-boundary Evidence was not supplied; P/Invoke and native-implementation nodes are absent.",
       ]
     : []),
-  ...(omissions.partialInput
+  ...(omissions.inputStates.includes("partial")
     ? ["At least one supplied managed Evidence record has partial coverage."]
+    : []),
+  ...(omissions.inputStates.includes("unavailable")
+    ? [
+        "At least one supplied managed Evidence record is unavailable; what the graph omits is unknown.",
+      ]
     : []),
   ...(omissions.selectedTypes === null
     ? []

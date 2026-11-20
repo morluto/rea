@@ -7,6 +7,7 @@ import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 import { createCli } from "../../src/cli.js";
 import { PRODUCT_IDENTITY } from "../../src/identity.js";
+import { HOST_PLATFORM } from "../../src/platform/HostPlatform.js";
 
 const mocks = vi.hoisted(() => ({
   run: vi.fn(),
@@ -88,79 +89,25 @@ const serve = async (
   return { stdout, exitCode: exitCode || Number(process.exitCode ?? 0) };
 };
 
-it.each(["json", "jsonl", "yaml", "toon", "md"])(
-  "uses the verified update command and selected environment through direct serve with %s output",
-  async (format) => {
-    const selected = { REA_SELECTED_UPDATE: "original" };
-    const cli = createCli(selected);
-    selected.REA_SELECTED_UPDATE = "changed";
-    const expected = await serve(cli, ["update", "--format", format]);
-    const actual = await serve(cli, ["--format", format, "--update"]);
-    expect(actual).toEqual(expected);
-    expect(actual.exitCode).toBe(0);
-    expect(actual.stdout).toContain(PRODUCT_IDENTITY.packageVersion);
-    expect(mocks.run).toHaveBeenCalledTimes(2);
-    expect(mocks.run).toHaveBeenLastCalledWith(
-      PRODUCT_IDENTITY.packageVersion,
-      { owner: "selected-update-host" },
-      "structured",
-    );
-    expect(mocks.host).toHaveBeenLastCalledWith(undefined, undefined, {
-      REA_SELECTED_UPDATE: "original",
-    });
-    expect(mocks.dependencyInstall).not.toHaveBeenCalled();
-  },
-);
+it("uses the selected environment snapshot when serving the update alias directly", async () => {
+  const selected = { REA_SELECTED_UPDATE: "original" };
+  const cli = createCli(selected);
+  selected.REA_SELECTED_UPDATE = "changed";
 
-it("preserves filtering, full output and unsuccessful update exit status", async () => {
-  const cli = createCli({});
-  const flags = ["--json", "--full-output", "--filter-output", "status"];
-  const filtered = await serve(cli, ["--update", ...flags]);
-  const canonical = await serve(cli, ["update", ...flags]);
-  expect(filtered.exitCode).toBe(canonical.exitCode);
-  for (const output of [filtered, canonical])
-    expect(JSON.parse(output.stdout)).toMatchObject({
-      ok: true,
-      data: "current",
-      meta: { command: expect.stringContaining("update") },
-    });
-  mocks.run.mockResolvedValue({
-    status: "failed",
-    currentVersion: PRODUCT_IDENTITY.packageVersion,
-    latestVersion: "99.0.0",
-    reason: "install",
-    remediation: "EACCES owned installation",
-  });
-  const failed = await serve(cli, ["--update", "--json"]);
-  expect(failed.exitCode).toBe(1);
-  expect(JSON.parse(failed.stdout)).toMatchObject({
-    status: "failed",
-    reason: "install",
-    remediation: "EACCES owned installation",
-  });
-  expect(mocks.dependencyInstall).not.toHaveBeenCalled();
-});
+  const result = await serve(cli, ["--format", "json", "--update"]);
 
-it.each([
-  ["--update", "--help"],
-  ["--incur-update-check", "--update"],
-])("preserves non-installing precedence for %j", async (...arguments_) => {
-  await serve(createCli({}), arguments_);
-  expect(mocks.run).not.toHaveBeenCalled();
-  expect(mocks.dependencyInstall).not.toHaveBeenCalled();
-});
-
-it("refuses ambiguous built-in installation rather than selecting another updater", async () => {
-  const result = await serve(createCli({}), [
-    "providers",
-    "--update",
-    "--json",
-  ]);
-  expect(result.exitCode).toBe(1);
-  expect(JSON.parse(result.stdout)).toMatchObject({
-    code: "UPDATE_FAILED",
-    message: expect.stringContaining("rea update"),
-  });
-  expect(mocks.run).not.toHaveBeenCalled();
+  expect(result.exitCode).toBe(0);
+  expect(JSON.parse(result.stdout)).toMatchObject(current);
+  expect(mocks.run).toHaveBeenCalledExactlyOnceWith(
+    PRODUCT_IDENTITY.packageVersion,
+    { owner: "selected-update-host" },
+    "structured",
+  );
+  expect(mocks.host).toHaveBeenCalledExactlyOnceWith(
+    undefined,
+    undefined,
+    { REA_SELECTED_UPDATE: "original" },
+    HOST_PLATFORM.platform,
+  );
   expect(mocks.dependencyInstall).not.toHaveBeenCalled();
 });

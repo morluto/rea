@@ -8,7 +8,7 @@ import {
 import type {
   AnalysisOperation,
   ExecutionOptions,
-} from "./AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { isAborted, cancelledBy } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";

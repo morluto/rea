@@ -18,6 +18,7 @@ import {
   analysisTextPage,
   analysisTextPageItemSchema,
 } from "./analysisViewText.js";
+import { evidenceFileTarget } from "../evidence.js";
 
 /** Retained inferred candidates or exact text; offsets for text count UTF-16 code units. */
 export const evmViewRequestSchema = z.strictObject({
@@ -69,11 +70,11 @@ export const projectEvmInterfaceView = (
   const parsed = parseAnalysisViewResult(evmInterfaceSchema, parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
-  const subject = parent.subject;
+  const subject = evidenceFileTarget(parent);
   if (
     subject == null ||
     subject.format !== "file" ||
-    subject.digest.sha256 !== report.artifact.sha256
+    subject.sha256 !== report.artifact.sha256
   )
     return err(
       analysisViewInputError([

@@ -2,7 +2,7 @@ import { permitsCapabilityFallback } from "./CapabilityFallback.js";
 import type {
   AnalysisExecution,
   AnalysisOperationPort,
-} from "./AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import {
   AnalysisOutputError,

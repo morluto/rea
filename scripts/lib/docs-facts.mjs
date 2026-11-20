@@ -94,8 +94,7 @@ export const skillReferenceIssues = async (skillRoot) => {
 };
 
 // Living prose that would restate the catalog size. Dated records keep the
-// count they measured: release notes, feature specs, verification records and
-// decision records describe a past build.
+// count they measured in release notes and verification records.
 export const LIVING_PROSE_ROOTS = [
   "README.md",
   "CONTRIBUTING.md",
@@ -104,8 +103,7 @@ export const LIVING_PROSE_ROOTS = [
   ".agents/skills",
   "website/public",
 ];
-const SKIPPED_PROSE =
-  /^docs\/(?:releases|specs|verification|adr|\.vitepress\/dist)\//u;
+const SKIPPED_PROSE = /^docs\/(?:releases|verification|\.vitepress\/dist)\//u;
 const PROSE_FILE = /\.(?:md|html)$/u;
 // A count of ten or more tools, such as "240 tools" or "all 1,024 MCP tools".
 const LITERAL_TOOL_COUNT =

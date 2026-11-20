@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
 import type { ProviderProcessSnapshot } from "../../process/ProviderProcess.js";
 import { readPwntoolsFailureEvidence } from "./PwntoolsResourceLimits.js";

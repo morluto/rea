@@ -16,6 +16,7 @@ import {
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { startListeningProcess } from "../support/mcp/streamableHttpProcess.js";
 import { processTest } from "../support/process/processFixture.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 const rowsWithClocks = (
   mode:
@@ -133,7 +134,10 @@ for (const [mode, appended] of [
         "--port",
         "0",
       ]);
-      const client = new Client({ name: "sparse-clock-writes", version: "1" });
+      const client = new Client(
+        { name: "sparse-clock-writes", version: "1" },
+        { jsonSchemaValidator: createMcpSchemaValidation() },
+      );
       try {
         await client.connect(new StreamableHTTPClientTransport(started.url));
         await checkCreatedItems(client, appended);

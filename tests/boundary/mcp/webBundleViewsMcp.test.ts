@@ -1,3 +1,4 @@
+import { browserUrlTargetIdentity } from "../../../src/domain/browserObservation.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, expect, it } from "vitest";
@@ -18,7 +19,7 @@ afterAll(() => schemaValidation.clear());
 
 const makeParent = () =>
   createEvidence(
-    undefined,
+    browserUrlTargetIdentity("https://example.test/app"),
     { id: "rea-browser", name: "REA Browser", version: "6.8.0" },
     {
       operation: "analyze_web_bundle",
@@ -63,6 +64,10 @@ it("projects web bundle summary views over MCP using retained and inline sources
     { toolDefinition: schemas.toolDefinition },
   );
   expect(summaryCall.isError, JSON.stringify(summaryCall)).not.toBe(true);
+  // A view names the page its parent observed.
+  expect(parseEvidence(summaryCall.structuredContent).subject).toEqual(
+    parent.subject,
+  );
 
   const summaryResult = webBundleSummaryViewResultSchema.parse(
     parseEvidence(summaryCall.structuredContent).normalized_result,

@@ -1,6 +1,5 @@
 import type { Logger } from "pino";
 
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { createBeamService } from "../composition/erlang.js";
 import { ERLANG_BEAM_TOOL_CONTRACTS } from "../contracts/erlang/beamToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
@@ -20,7 +19,6 @@ export const registerErlangCommands = (
     logger,
     contractNamed(ERLANG_BEAM_TOOL_CONTRACTS, "inspect_erlang_beam"),
     {
-      command: CLI_COMMANDS.inspectErlangBeam,
       description:
         "Inspect Erlang BEAM atoms, exports, imports and Code header without executing bytecode",
       positionals: ["path"],

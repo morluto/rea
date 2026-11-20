@@ -5,11 +5,11 @@ import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
 import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
-import * as artifactPaths from "../ArtifactPaths.js";
+import { phaseGate } from "../../../tests/support/lifecycleHarness.js";
+import * as artifactPaths from "../../resources/ArtifactPaths.js";
 import { BunStandaloneArtifactReader } from "../BunStandaloneArtifactReader.js";
 import { inventoryArtifact } from "../inventory/ArtifactInventory.js";
-import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { resolveArtifactReaderLimits } from "../../domain/artifactReaderLimits.js";
 import {
   bunModuleGraphPayload,
@@ -154,6 +154,70 @@ it("keeps exhausted Bun recognition distinct from a native ELF inventory and rec
   });
 });
 
+it.each([
+  { declaration: "file-backed .bun", format: "bun-standalone" },
+  { declaration: "SHT_NOBITS .bun", format: "elf" },
+  { declaration: "inactive .bun", format: "elf" },
+  { declaration: "non-string section-name table", format: "elf" },
+  { declaration: "unterminated .bun name", format: "elf" },
+  { declaration: "truncated section-name table", format: "elf" },
+  { declaration: "truncated section-header table", format: "elf" },
+] as const)(
+  "inventories an ELF carrier with $declaration as $format",
+  async ({ declaration, format }) => {
+    const bytes = elfBunSection(
+      bunPrefixedPayload(
+        bunModuleGraphPayload({
+          modules: [
+            { name: "main.js", contents: Buffer.from("fixture member") },
+          ],
+        }),
+      ),
+    );
+    const sectionTable = Number(bytes.readBigUInt64LE(40));
+    if (declaration === "SHT_NOBITS .bun")
+      bytes.writeUInt32LE(8, sectionTable + 128 + 4);
+    if (declaration === "inactive .bun")
+      bytes.writeUInt32LE(0, sectionTable + 128 + 4);
+    if (declaration === "non-string section-name table")
+      bytes.writeUInt32LE(1, sectionTable + 64 + 4);
+    const stringTableSize = sectionTable + 64 + 32;
+    if (declaration === "truncated section-name table") {
+      const stringTableOffset = bytes.readBigUInt64LE(sectionTable + 64 + 24);
+      bytes.writeBigUInt64LE(
+        BigInt(bytes.length) - stringTableOffset + 1n,
+        stringTableSize,
+      );
+    }
+    if (declaration === "unterminated .bun name") {
+      bytes.writeBigUInt64LE(
+        bytes.readBigUInt64LE(stringTableSize) - 1n,
+        stringTableSize,
+      );
+    }
+    const path = join(
+      await createTestTempDirectory("rea-bun-elf-section-"),
+      "app",
+    );
+    await writeFile(
+      path,
+      declaration === "truncated section-header table"
+        ? bytes.subarray(0, -1)
+        : bytes,
+    );
+    const scope = new ArtifactResourceScope();
+    try {
+      const result = await inventoryArtifact(path, { resourceScope: scope });
+      expect(result.manifest.root_format).toBe(format);
+      expect(result.occurrences.map((entry) => entry.logical_path)).toEqual(
+        format === "bun-standalone" ? [".", "main.js"] : ["."],
+      );
+    } finally {
+      await scope.close();
+    }
+  },
+);
+
 async function collect<T>(values: AsyncIterable<T>): Promise<T[]> {
   const result: T[] = [];
   for await (const value of values) result.push(value);
@@ -256,14 +320,7 @@ it("keeps another caller's in-flight inventory independent of cancelled preparat
   const observed = await open(path, "r");
   const prototype = Object.getPrototypeOf(observed) as FileHandle;
   const original = prototype.read;
-  let entered!: () => void;
-  let resume!: () => void;
-  const started = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
-  const gate = new Promise<void>((resolve) => {
-    resume = resolve;
-  });
+  const artifactRead = phaseGate();
   let firstRead = true;
   const spy = vi.spyOn(prototype, "read").mockImplementation(async function (
     this: FileHandle,
@@ -272,8 +329,7 @@ it("keeps another caller's in-flight inventory independent of cancelled preparat
     const result = await original.apply(this, args);
     if (firstRead) {
       firstRead = false;
-      entered();
-      await gate;
+      await artifactRead.hold();
     }
     return result;
   });
@@ -285,17 +341,17 @@ it("keeps another caller's in-flight inventory independent of cancelled preparat
       },
       (cause: unknown) => cause,
     );
-    await awaitAcknowledgement(started, first, "Bun artifact read");
+    await artifactRead.reached(first, "Bun artifact read");
     const second = collect(reader.entries());
     controller.abort(reason);
-    resume();
+    artifactRead.release();
     expect(await rejected).toMatchObject({
       reason: "cancelled",
       cause: reason,
     });
     expect((await second).map((entry) => entry.path)).toEqual(["$bunfs/a.js"]);
   } finally {
-    resume();
+    artifactRead.release();
     spy.mockRestore();
     await observed.close();
     await reader.close();

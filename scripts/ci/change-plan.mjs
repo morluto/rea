@@ -5,22 +5,24 @@ import {
   CI_FLAGS as flags,
   MANUAL_VERIFIERS,
   CI_LANES,
+  SHARED_BOUNDARY,
   WINDOWS_EXECUTABLE_SELECTION_INPUTS,
 } from "./scopes.mjs";
-import { planTestSelection } from "./test-selection.mjs";
+import { planTestSelection, testShards } from "./test-selection.mjs";
 
 // Actionlint validates workflow syntax only. The semantic suite asserts these
 // workflows' release, publication and self-hosted runner safeguards.
 const GUARDED_WORKFLOWS = new Set([
   ".github/workflows/codeql.yml",
   ".github/workflows/pr-title.yml",
-  ".github/workflows/pr-readiness.yml",
   ".github/workflows/ci-full-pr.yml",
   ".github/workflows/release.yml",
   ".github/workflows/release-recovery.yml",
+  ".github/workflows/release-abandon.yml",
   ".github/workflows/real-ghidra-windows.yml",
   ".github/workflows/sqlite-runtime.yml",
   ".github/workflows/ci-timings.yml",
+  ".github/workflows/cache-retention.yml",
   ".github/workflows/mutation.yml",
 ]);
 // Sources compiled by build-conformance-fixtures.mjs. The readiness journey
@@ -44,6 +46,43 @@ const PORTABLE_CI_REPORTERS = new Set([
   "scripts/ci/test-timing-reporter.mjs",
   "scripts/ci/test-history.mjs",
 ]);
+// Static architecture/lint/schema/test-project verifiers and baselines run in
+// static/build/portable lanes (`code: true`) without requiring host package lanes.
+const STATIC_CODE_ONLY_INPUTS = [
+  "scripts/lib/module-layers.baseline.json",
+  "scripts/lib/module-layers.*",
+  "scripts/lib/module-boundaries.*",
+  "scripts/verify-module-boundaries.mjs",
+  "scripts/verify/architecture-guards.mjs",
+  "scripts/verify/*-guard.*",
+  "scripts/verify/rea-numeric-limits.mjs",
+  "scripts/verify/source-tokens.*",
+  "scripts/verify/keyed-first-match.*",
+  "scripts/verify/reason-marker.*",
+  "scripts/verify/baselines/*.json",
+  "scripts/lint/**",
+  ".oxlintrc.json",
+  ".oxfmtrc.json",
+  ".jscpd.json",
+  "knip.json",
+  "tsconfig.scripts.json",
+  "scripts/verify-advertised-schemas.mjs",
+  "scripts/verify/advertised-schemas/**",
+  "scripts/verify/mcp-client-validation.*",
+  "scripts/verify-test-discovery.mjs",
+  "scripts/verify-test-temp-hygiene.mjs",
+  "scripts/lib/test-projects.mjs",
+];
+// Documentation and product-catalog verifiers/generators exercised by `docs:check`
+// and portable tests without changing packaged host behavior.
+const DOCS_AND_CODE_INPUTS = [
+  "scripts/check-doc-facts.mjs",
+  "scripts/generate-error-schema.mjs",
+  "scripts/generate-third-party-inventory.mjs",
+  "scripts/lib/product-catalog.*",
+  "scripts/lib/catalog-core.*",
+  "scripts/lib/catalog-cli.*",
+];
 const matchesAny = (file, patterns) =>
   patterns.some((pattern) => matchesGlob(file, pattern));
 
@@ -58,11 +97,6 @@ const matchesAny = (file, patterns) =>
 export function planChanges(request, repository) {
   const selected = Object.fromEntries(flags.map((flag) => [flag, false]));
   const reasons = [];
-  // Shared process, contract, CLI, and CI-script edits are not a specific provider.
-  // Fast qualification keeps the portable suite and the Linux x64 runtime
-  // baseline. Full qualification still selects every lane.
-  const SHARED_BOUNDARY =
-    /^(src\/process\/|src\/filesystem\/|src\/contracts\/tool|src\/server\/createServer|src\/cli\.ts|scripts\/ci\/)/;
   const full = (reason) => {
     if (tier === "full") {
       for (const flag of flags) selected[flag] = true;
@@ -191,8 +225,20 @@ export function planChanges(request, repository) {
     ))
       if (matchesAny(file, earlyAll ? paths : earlyInputs))
         selected[owner] = true;
-    // The documentation check scans living prose outside docs/ too.
-    if (isLivingProsePath(file)) selected.docs = true;
+    // The documentation check validates living prose and the lockfile inventory.
+    if (isLivingProsePath(file) || file === "package-lock.json")
+      selected.docs = true;
+    if (file === ".git-blame-ignore-revs") return;
+    if (
+      file.startsWith("licenses/") ||
+      file === "THIRD_PARTY_NOTICES.md" ||
+      file === "DISCLAIMER.md" ||
+      file === "LICENSE"
+    ) {
+      selected.docs = true;
+      selected.code = true;
+      return;
+    }
     if (
       /^(README(?:_[^/]+)?\.md|AGENTS\.md|CONTRIBUTING\.md|CHANGELOG\.md|SECURITY\.md|native\/windows\/README\.md|\.github\/pull_request_template\.md)$/.test(
         file,
@@ -226,15 +272,30 @@ export function planChanges(request, repository) {
       selected.code = true;
       return;
     }
+    if (matchesAny(file, DOCS_AND_CODE_INPUTS)) {
+      selected.docs = true;
+      selected.code = true;
+      return;
+    }
+    if (matchesAny(file, STATIC_CODE_ONLY_INPUTS)) {
+      selected.code = true;
+      return;
+    }
     // A shared boundary is not evidence that every provider or host changed.
-    // One matching owner is path evidence. Several owners means the same
-    // registration file is listed by many lanes; fast qualification does not
-    // fan those out or start the multi-host package matrix.
+    // One lane that names the file is path evidence; a lane that only covers
+    // it through a `**` directory glob is not. Several naming lanes means the
+    // same registration file is listed by many lanes; fast qualification does
+    // not fan those out or start the multi-host package matrix.
     if (tier !== "full" && SHARED_BOUNDARY.test(file)) {
       selected.code = true;
       selected.runtime = true;
       const owners = Object.entries(CI_LANES)
-        .filter(([, { paths }]) => matchesAny(file, paths))
+        .filter(([, { paths }]) =>
+          matchesAny(
+            file,
+            paths.filter((pattern) => !pattern.includes("**")),
+          ),
+        )
         .map(([owner]) => owner);
       if (owners.length === 1) selected[owners[0]] = true;
       reasons.push(`Shared boundary on fast tier: ${file}`);
@@ -244,10 +305,12 @@ export function planChanges(request, repository) {
       .filter(([, { paths }]) => matchesAny(file, paths))
       .map(([owner]) => owner);
     for (const owner of owners) selected[owner] = true;
+    // Workflow callers can become invalid when local action inputs or outputs change.
+    selected.workflows ||= /^\.github\/actions\/.+\/action\.ya?ml$/u.test(file);
     if (
       file.startsWith(".github/workflows/") ||
       file.startsWith(".github/codeql/") ||
-      file === ".github/actionlint.yaml"
+      /^\.github\/actionlint\.ya?ml$/u.test(file)
     ) {
       selected.workflows = true;
       if (GUARDED_WORKFLOWS.has(file) || file.startsWith(".github/codeql/"))
@@ -269,11 +332,7 @@ export function planChanges(request, repository) {
       selected.readiness = true;
     }
     if (file.startsWith("tests/")) return;
-    if (
-      /^(src\/process\/|src\/filesystem\/|src\/contracts\/tool|src\/server\/createServer|src\/cli\.ts|scripts\/ci\/)/.test(
-        file,
-      )
-    ) {
+    if (SHARED_BOUNDARY.test(file)) {
       full(`Shared boundary: ${file}`);
     } else if (owners.length) {
       if (file.startsWith("src/") || file.startsWith("bridge/"))
@@ -283,7 +342,10 @@ export function planChanges(request, repository) {
       // full qualification retains every native host.
       selected.runtime = true;
       reasons.push(`Unowned runtime source: ${file}`);
-    } else if (file.startsWith(".agents/skills/")) {
+    } else if (
+      file.startsWith(".agents/skills/") ||
+      file.startsWith(".cursor-plugin/skills/")
+    ) {
       selected.runtime = true;
       selected.docs = true;
     } else {
@@ -343,8 +405,27 @@ export function planChanges(request, repository) {
         ]
       : [linux],
   };
-  const testSelection = planTestSelection(files, event, tier);
-  return { ...selected, tier, matrix, files, reasons, testSelection };
+  const testSelection = planTestSelection({
+    files,
+    event,
+    tier,
+    code: selected.code,
+    // The checked-out revision is the one whose tests run. Script and
+    // configuration files are listed so shared script modules can be traced.
+    snapshot: {
+      list: () => repository.listFiles("HEAD", []),
+      read: (paths) => repository.readFiles("HEAD", paths),
+    },
+  });
+  return {
+    ...selected,
+    tier,
+    matrix,
+    files,
+    reasons,
+    testSelection,
+    testShards: testShards(tier, testSelection),
+  };
 }
 
 /** Answer the plan's Git questions from the repository in `cwd`. */
@@ -370,5 +451,32 @@ export const gitRepository = (cwd = process.cwd()) => {
         .split("\0")
         .filter(Boolean),
     readFile: (revision, path) => git("show", `${revision}:${path}`),
+    listFiles: (revision, directories) =>
+      git("ls-tree", "-r", "-z", "--name-only", revision, "--", ...directories)
+        .split("\0")
+        .filter(Boolean),
+    // NUL-terminate requests so a line break in a path remains part of its name.
+    readFiles: (revision, paths) => {
+      const output = execFileSync("git", ["cat-file", "--batch", "-z"], {
+        cwd,
+        input: paths.map((path) => `${revision}:${path}\0`).join(""),
+        maxBuffer: 512 * 1024 * 1024,
+      });
+      const contents = new Map();
+      let offset = 0;
+      for (const path of paths) {
+        const end = output.indexOf(10, offset);
+        const [, type, size] = output.toString("utf8", offset, end).split(" ");
+        if (type !== "blob")
+          throw new Error(`Git could not read ${revision}:${path}`);
+        const start = end + 1;
+        contents.set(
+          path,
+          output.toString("utf8", start, start + Number(size)),
+        );
+        offset = start + Number(size) + 1;
+      }
+      return contents;
+    },
   };
 };

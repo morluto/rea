@@ -1,4 +1,7 @@
-import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -13,6 +16,7 @@ import { webNetworkCaptureSchema } from "../../../src/domain/webNetworkCapture.j
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestMcp } from "../../support/mcp/mcpFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const syntheticCaptureService = () =>
   new WebNetworkCaptureService({
@@ -45,10 +49,13 @@ it("publishes valid SDK schemas and retains historical inline Evidence with the 
     { kind: "session", session },
     { webNetworkCapture: service },
   );
-  const client = new Client({
-    name: "historical-capture-contract",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "historical-capture-contract",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -74,7 +81,7 @@ it("publishes valid SDK schemas and retains historical inline Evidence with the 
   expect(ajv.validate(inputSchema, args)).toBe(true);
   const response = await client.callTool(
     { name: "inspect_web_network_capture", arguments: args },
-    { toolDefinition: advertised },
+    { toolDefinition: withCanonicalOutputSchema(advertised) },
   );
   expect(response.isError).not.toBe(true);
   const parsed = toolContract("inspect_web_network_capture").outputSchema.parse(

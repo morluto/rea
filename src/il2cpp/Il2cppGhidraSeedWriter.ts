@@ -1,15 +1,17 @@
 import { lstat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type {
   Il2cppSeedWriterPort,
   Il2cppSeedOutput,
   Il2cppSeedReceipt,
-} from "../application/il2cpp/Il2cppSeedWriterPort.js";
-import { writeTextParts } from "../application/JsonFiles.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+} from "../ports/il2cpp/Il2cppSeedWriterPort.js";
+import {
+  writeTextParts,
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+  AnalysisCleanupLease,
+} from "../resources/index.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisInputError,

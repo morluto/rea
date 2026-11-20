@@ -6,7 +6,7 @@ import { z } from "zod";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { createTestProcessRegistry } from "../../tests/support/process/processFixture.js";
 import { resolveMcpRegistrationClients } from "./McpRegistrationCatalog.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 
 const selectAgent = async (agent: string) => {
   const root = await createTestTempDirectory("rea-mcp-alias-");
@@ -134,7 +134,7 @@ const CATALOG_PROGRAM = `
         if (path.startsWith('..') || isAbsolute(path)) throw Error('Fixture location escaped: ' + key);
       }
       const { resolveMcpRegistrationClients } = await import(${JSON.stringify(new URL("./McpRegistrationCatalog.ts", import.meta.url).href)});
-      const { ArtifactResourceScope } = await import(${JSON.stringify(new URL("../artifacts/ArtifactResourceScope.ts", import.meta.url).href)});
+      const { ArtifactResourceScope } = await import(${JSON.stringify(new URL("../resources/ArtifactResourceScope.ts", import.meta.url).href)});
       const resources = new ArtifactResourceScope();
       try {
       const posix = process.platform !== 'win32';

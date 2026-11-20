@@ -2,13 +2,21 @@ import { projectAnalysisError } from "../../../domain/analysisErrorProjection.js
 import { createHash } from "node:crypto";
 import { readFile, writeFile, open } from "node:fs/promises";
 import { expect, it } from "vitest";
-import { ArtifactResourceScope } from "../../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../resources/ArtifactResourceScope.js";
 import { PlaywrightTraceDecoder } from "./PlaywrightTraceDecoder.js";
 import { playwrightTraceSchema } from "../../../domain/playwrightTrace/playwrightTrace.js";
 import {
   playwrightTraceFixture,
   playwrightTracePathFixture,
 } from "../../../../tests/fixtures/playwrightTrace.js";
+import { createTestTempDirectory } from "../../../../tests/fixtures/temporaryDirectory.js";
+import {
+  zstandardWindowFrameFixture,
+  zstandardZipFixture,
+} from "../../../../tests/fixtures/zipZstandard.js";
+import { join } from "node:path";
+import { analysisRefusalRemediation } from "../../../domain/analysisRefusal.js";
+import { ZIP_ZSTANDARD_WINDOW_CEILING } from "../../../resources/ZipArtifactReader.js";
 
 it("imports real v10 recorder text with per-stream identity and resource presence, preserving source bytes", async () => {
   const fixture = await playwrightTraceFixture({ resources: true });
@@ -146,6 +154,59 @@ it("keeps missing resource references explicit without turning page exhaustion i
 const header =
   JSON.stringify({ type: "context-options", version: 10, origin: "library" }) +
   "\n";
+it("keeps failed-request status sentinels unknown without losing recorded response facts", async () => {
+  const statuses = [-1, 0, 99, 200.5, 1000, 100, 200, 600, 999];
+  const fixture = await playwrightTraceFixture({
+    trace: header,
+    network:
+      statuses
+        .map((status) =>
+          JSON.stringify({
+            type: "resource-snapshot",
+            snapshot: {
+              request: { method: "GET", url: "http://127.0.0.1/failed" },
+              response: { status, _failureText: "net::ERR_EMPTY_RESPONSE" },
+            },
+          }),
+        )
+        .join("\n") + "\n",
+  });
+  const resources = new ArtifactResourceScope();
+  try {
+    const result = await new PlaywrightTraceDecoder(resources).inspect(
+      fixture.path,
+    );
+    if (!result.ok) throw result.error;
+    const report = playwrightTraceSchema.parse(result.value);
+    expect(report.events.map((event) => event.status)).toEqual([
+      null,
+      null,
+      null,
+      null,
+      null,
+      100,
+      200,
+      600,
+      999,
+    ]);
+    expect(report.events[0]).toMatchObject({
+      source: { line: 1, record_pointer: "/snapshot" },
+      reported: {
+        response: { status: -1, _failureText: "net::ERR_EMPTY_RESPONSE" },
+      },
+      numeric_literals: [{ pointer: "/response/status", literal: "-1" }],
+    });
+    expect(report.source_coverage.interpretation).toBe("partial");
+    expect(
+      report.diagnostics
+        .filter((row) => row.code === "partial-event")
+        .map((row) => row.line),
+    ).toEqual([1, 2, 3, 4, 5]);
+  } finally {
+    await resources.close();
+  }
+});
+
 const before =
   JSON.stringify({
     type: "before",
@@ -383,6 +444,11 @@ it("bounds JSON node expansion even when many tokens fit inside a small physical
     expect(result.error._tag).toBe("AnalysisResourceConstraintError");
     expect(projectAnalysisError(result.error).details).toMatchObject({
       refusal: { limit: 131072, unit: "parser nodes" },
+      reported_limits: {
+        boundary: "parser-nodes",
+        maximum: 131072,
+        parser_nodes: 131072,
+      },
     });
     expect(resources.hasPending).toBe(false);
   } finally {
@@ -472,6 +538,39 @@ it("keeps duplicate resource names ambiguous instead of selecting one ZIP occurr
       }),
     );
     expect(result.value.source_coverage.interpretation).toBe("partial");
+  } finally {
+    await resources.close();
+  }
+});
+
+it("names the ZIP decoder window for a large-window recorder stream", async () => {
+  const root = await createTestTempDirectory("rea-trace-zstd-");
+  const path = join(root, "trace.zip");
+  // Window descriptor 0x90 declares 256 MiB, above the ZIP reader's window.
+  const { content, compressed } = zstandardWindowFrameFixture(0x90);
+  await writeFile(
+    path,
+    zstandardZipFixture(content, { compressed, name: "trace.trace" }),
+  );
+  const resources = new ArtifactResourceScope();
+  try {
+    const result = await new PlaywrightTraceDecoder(resources).inspect(path);
+    if (result.ok) throw new Error("Expected decoder window refusal");
+    const projected = projectAnalysisError(result.error);
+    expect(projected.code).toBe("resource_constraint");
+    expect(projected.details?.refusal).toMatchObject({
+      kind: "fixed_ceiling",
+      allowance: "The ZIP Zstandard decoder window allowance",
+      limit: 2 ** 27,
+    });
+    // The recovery is the reader's ceiling through the refusal formatter.
+    expect(projected.remediation.action).toBe(
+      analysisRefusalRemediation({
+        kind: "fixed_ceiling",
+        operation: "inspect_playwright_trace",
+        ceiling: ZIP_ZSTANDARD_WINDOW_CEILING,
+      }),
+    );
   } finally {
     await resources.close();
   }

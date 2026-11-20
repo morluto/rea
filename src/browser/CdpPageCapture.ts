@@ -1,6 +1,6 @@
 import type { InspectWebPageInput } from "../domain/browserObservation.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
-import type { ProgressReporter } from "../application/ProgressReporter.js";
+import type { ProgressReporter } from "../ports/ProgressReporter.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {

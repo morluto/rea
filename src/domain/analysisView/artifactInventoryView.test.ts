@@ -14,6 +14,7 @@ import {
   projectArtifactInventoryView,
 } from "./artifactInventoryView.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { changedEvidenceSubject } from "../../../tests/fixtures/evidenceSubject.js";
 
 const carrier = ARTIFACT_COMPARISON_EXAMPLE.left;
 const freshInventory = (version: "current" | "historical" = "current") => {
@@ -88,10 +89,10 @@ const parent = (normalizedResult: unknown): AnalysisViewParent => ({
   predicateType: carrier.predicate_type,
   evidenceId: carrier.evidence_id,
   operation: "inventory_artifact",
-  subject:
-    carrier.subject === null
-      ? null
-      : { ...carrier.subject, format: "zip", architecture: null },
+  subject: changedEvidenceSubject(carrier.subject, {
+    format: "zip",
+    architecture: null,
+  }),
   normalizedResult,
   sealedResult: true,
   limitations: [],
@@ -327,13 +328,13 @@ it("binds reused facts to the current Evidence ID and validates its subject on e
       .inventory_evidence_ids,
   ).toEqual([next.evidenceId]);
   const subject = next.subject;
-  if (subject === null || subject === undefined)
+  if (subject === undefined || subject.identity.kind !== "file")
     throw new Error("Expected a subject");
   expect(() =>
     page(
       {
         ...next,
-        subject: { ...subject, digest: { sha256: "f".repeat(64) } },
+        subject: changedEvidenceSubject(subject, { sha256: "f".repeat(64) }),
       },
       { kind: "inventory", collection: "nodes" },
     ),

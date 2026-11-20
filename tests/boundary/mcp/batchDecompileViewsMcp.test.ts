@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -29,6 +30,7 @@ import {
   closeEnhancedToolResources,
   connect as connectFixedAnalysis,
 } from "./enhancedToolsHarness.js";
+import { SUPPORTED_GHIDRA_VERSION } from "../../../src/ghidra/GhidraReleasePolicy.js";
 import { connectGhidraMcp, ghidraFixtureResult } from "./ghidraMcpHarness.js";
 
 const MAIN_BODY = "int main(void) { return 0; }";
@@ -256,7 +258,10 @@ it.each(["compact"] as const)(
         batch: { total: 6, succeeded: 4, failed: 2 },
         source_provider: parent.provider,
         source_analysis_profile_digest: parent.analysis_profile?.digest,
-        decompiling_provider: { id: "ghidra", version: "12.1.4" },
+        decompiling_provider: {
+          id: "ghidra",
+          version: SUPPORTED_GHIDRA_VERSION,
+        },
         procedures: {
           distinct_resolved: 3,
           unknown_identity: 1,
@@ -612,7 +617,7 @@ it("reads historical batch Evidence with the prior null-pseudocode error", async
     limitations: [NO_BODY_REASON],
   } as const;
   const historical = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       operation: "batch_decompile",
@@ -646,7 +651,7 @@ it("keeps the caller's own source when a page cannot fit, without retaining its 
     pseudocode: body,
   };
   const parent = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       operation: "batch_decompile",
@@ -728,10 +733,13 @@ it("keeps the caller's own source when a page cannot fit, without retaining its 
     },
     { delivery: createToolResultDelivery(budget) },
   );
-  const fixedClient = new Client({
-    name: "batch-unretained",
-    version: "1.0.0",
-  });
+  const fixedClient = new Client(
+    {
+      name: "batch-unretained",
+      version: "1.0.0",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   onTestFinished(async () => {
@@ -889,7 +897,7 @@ it("binds views to their parent and each page to its own collection", async () =
       {
         kind: "inline",
         evidence: createEvidence(
-          undefined,
+          unknownTarget("not-observed"),
           { id: "fixture", name: "Fixture", version: "1" },
           {
             operation: "batch_decompile",

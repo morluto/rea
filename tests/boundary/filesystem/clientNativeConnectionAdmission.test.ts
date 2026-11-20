@@ -27,7 +27,7 @@ const PROGRAM = `
   const { supportedClients } = await import(${JSON.stringify(new URL("../../../src/application/SupportedClients.ts", import.meta.url).href)});
   const { registerMcpClient } = await import(${JSON.stringify(new URL("../../../src/application/McpClientRegistration.ts", import.meta.url).href)});
   const { mcpClientRegistrationProfile } = await import(${JSON.stringify(new URL("../../../src/application/McpRegistrationCatalog.ts", import.meta.url).href)});
-  const { ArtifactResourceScope } = await import(${JSON.stringify(new URL("../../../src/artifacts/ArtifactResourceScope.ts", import.meta.url).href)});
+  const { ArtifactResourceScope } = await import(${JSON.stringify(new URL("../../../src/resources/ArtifactResourceScope.ts", import.meta.url).href)});
   const { ConfigurationError } = await import(${JSON.stringify(new URL("../../../src/domain/configurationErrors.ts", import.meta.url).href)});
   const [command, ...args] = currentClientRegistrationCommand();
   if (!command || !CURRENT_ENTRYPOINT_PATH) throw Error('Missing owned fixture entrypoint.');
@@ -69,13 +69,13 @@ const PROGRAM = `
   };
   const resources = new ArtifactResourceScope();
   try {
-    const conflict = await registerMcpClient(client, { command, args }, undefined, resources);
+    const conflict = await registerMcpClient(client, { command, args }, undefined, resources, process.platform);
     const refused = { ok: conflict.ok, typed: !conflict.ok && conflict.error instanceof ConfigurationError,
       targetExists: await exists(target), backupExists: await exists(target + '.rea.backup'),
       higherUnchanged: await readFile(higher, 'utf8') === source };
     const harmless = JSON.stringify({ mcpServers: { rea: { ...row, operator: { preserve: true } } } });
     await writeFile(higher, harmless);
-    const control = await registerMcpClient(client, { command, args }, undefined, resources);
+    const control = await registerMcpClient(client, { command, args }, undefined, resources, process.platform);
     console.log(JSON.stringify({ statuses, refused, control: { ok: control.ok,
       status: control.ok ? control.value.status : control.error.message,
       targetExists: await exists(target), higherUnchanged: await readFile(higher, 'utf8') === harmless } }));

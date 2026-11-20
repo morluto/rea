@@ -101,6 +101,7 @@ export const artifactComparisonResultSchema = z
         result.summary.changed > 0 ||
         result.summary.unknown > 0 ||
         result.summary.contradiction > 0 ||
+        // optional-fact-default: an unchanged result may not retain any mismatch IDs.
         (result.integrity_mismatch_evidence_ids?.length ?? 0) > 0)
     )
       context.addIssue({

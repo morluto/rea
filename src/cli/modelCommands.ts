@@ -1,6 +1,5 @@
 import type { Logger } from "pino";
 
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { createModelArtifactService } from "../composition/model.js";
 import { INSPECT_MODEL_ARTIFACT_CONTRACT } from "../contracts/model/modelToolContracts.js";
 import {
@@ -23,7 +22,6 @@ export const registerModelCommands = (
     logger,
     INSPECT_MODEL_ARTIFACT_CONTRACT,
     {
-      command: CLI_COMMANDS.inspectModelArtifact,
       description:
         "Inspect GGUF or safetensors headers without loading model weights",
       positionals: ["path"],

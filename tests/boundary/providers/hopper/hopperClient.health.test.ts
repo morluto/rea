@@ -6,7 +6,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 
 import { describe, expect, it, onTestFinished } from "vitest";
-import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../../support/lifecycleHarness.js";
 
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { ok } from "../../../../src/domain/result.js";
@@ -75,38 +75,30 @@ const start = async (owned: boolean) => {
 
 it("reports launch work until the first authenticated handshake completes", async () => {
   const fixture = new HopperFixtureLauncher(undefined, "quiet", "gated");
-  let enterLaunch: (() => void) | undefined;
-  let releaseLaunch: (() => void) | undefined;
-  const entered = new Promise<void>((resolve) => {
-    enterLaunch = resolve;
-  });
-  const release = new Promise<void>((resolve) => {
-    releaseLaunch = resolve;
-  });
+  const hopperLaunch = phaseGate();
   const client = new HopperClient({
     replyContracts: transportReplyContracts,
     startupTimeoutMs: 10_000,
     launcher: {
       async launch(session) {
-        enterLaunch?.();
-        await release;
+        await hopperLaunch.hold();
         return fixture.launch(session);
       },
     },
   });
   onTestFinished(async () => {
-    releaseLaunch?.();
+    hopperLaunch.release();
     await client.close();
   });
   const starting = client.callTool("current_document");
-  await awaitAcknowledgement(entered, starting, "Hopper launch");
+  await hopperLaunch.reached(starting, "Hopper launch");
   expect(client.requestActivity()).toBeNull();
   expect(client.operationHealth()).toMatchObject({
     state: "busy",
     stage: "launch",
     retryAction: "wait",
   });
-  releaseLaunch?.();
+  hopperLaunch.release();
   const handshake = await fixture.waitForRequest("health");
   expect(client.operationHealth()).toMatchObject({
     state: "busy",

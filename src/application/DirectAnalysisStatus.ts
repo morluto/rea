@@ -1,5 +1,5 @@
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
-import { createServerIdentity } from "../serverIdentity.js";
+import { createServerIdentity } from "../process/ServerIdentity.js";
 import { silentLogger } from "../logger.js";
 import type { Logger } from "pino";
 import type { DirectAnalysisDependencies } from "./DirectAnalysisDependencies.js";
@@ -7,16 +7,18 @@ import { providerCapabilitySet } from "../contracts/toolOutputSchemaPrimitives.j
 import { providerCapabilitySets } from "./binary/BinarySessionStatus.js";
 import { sqliteDatabaseCapability } from "./sqlite/SqliteDatabaseCapability.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
-import { catalogIdentityForToolFamilies } from "../catalogIdentity.js";
-import { progressiveCatalogIdentity } from "../catalogDiscovery.js";
-import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "../config/mcpInputSchemaProfile.js";
-import { resolveMcpOutputSchemaProfile } from "../config/mcpOutputSchemaProfile.js";
+import { catalogIdentityForToolFamilies } from "../contracts/catalog/catalogIdentity.js";
+import { progressiveCatalogIdentity } from "../contracts/catalog/catalogDiscovery.js";
 import {
   directAnalysisCleanupFailure,
   projectInvocationFailure,
   withSessionCleanup,
 } from "./DirectAnalysisCleanup.js";
 import { ok } from "../domain/result.js";
+import {
+  COMPACT_INPUT_SCHEMA_PRESENTATION,
+  resolveMcpOutputSchemaProfile,
+} from "../contracts/mcpSchemaPresentation.js";
 
 /** Read target-free provider status and operation availability. */
 export const runSessionStatus = async (

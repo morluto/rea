@@ -1,9 +1,9 @@
 import { registerPlaywrightTraceCommand } from "./playwrightTraceCommand.js";
 import { registerApiContractCommand } from "./apiContractCommand.js";
 import { registerNtfsJournalCommand } from "./ntfsJournalCommand.js";
-import { Cli } from "incur";
+import type { CliInstance } from "./types.js";
 
-import { CLI_COMMANDS } from "../cliCommandNames.js";
+import { cliCommandFor } from "../contracts/cliCommandNames.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -21,8 +21,6 @@ import {
   runEvidenceInputCommand,
 } from "./evidenceInputCommand.js";
 
-type CliInstance = ReturnType<typeof Cli.create>;
-
 /** Application workflows whose CLI input is one Evidence-carrying JSON document. */
 type EvidenceWorkflowOperation =
   | "trace_application_feature"
@@ -37,13 +35,13 @@ const workflowJsonDescription = "Inline workflow JSON or JSON file path";
 
 /** Register CLI equivalents of provider-neutral application graph workflows. */
 export const registerApplicationCommands = (
-  cli: ReturnType<typeof Cli.create>,
+  cli: CliInstance,
   logger: Logger,
 ): void => {
   registerEvidenceJsonCommand({
     cli,
     logger,
-    name: CLI_COMMANDS.traceApplicationFeature,
+    name: cliCommandFor("trace_application_feature"),
     operation: "trace_application_feature",
     omit: {
       view: "A one-shot command retains no session Evidence for a selected view; save the complete trace and query it with inspect-analysis-view",
@@ -60,7 +58,7 @@ export const registerApplicationCommands = (
   registerEvidenceJsonCommand({
     cli,
     logger,
-    name: CLI_COMMANDS.traceJavaScriptSemantics,
+    name: cliCommandFor("trace_javascript_semantics"),
     operation: "trace_javascript_semantics",
     description:
       "Trace bounded static semantic relations through authenticated application Evidence",
@@ -76,7 +74,7 @@ export const registerApplicationCommands = (
   registerEvidenceJsonCommand({
     cli,
     logger,
-    name: CLI_COMMANDS.compareApplicationVersions,
+    name: cliCommandFor("compare_application_versions"),
     operation: "compare_application_versions",
     description:
       "Compare two authenticated JavaScript Application Graph versions",
@@ -97,7 +95,7 @@ export const registerApplicationCommands = (
   registerEvidenceJsonCommand({
     cli,
     logger,
-    name: CLI_COMMANDS.compareJavaScriptExportShapes,
+    name: cliCommandFor("compare_javascript_export_shapes"),
     operation: "compare_javascript_export_shapes",
     description:
       "Compare exact static JavaScript export return shapes without execution",
@@ -115,7 +113,7 @@ export const registerApplicationCommands = (
   registerEvidenceJsonCommand({
     cli,
     logger,
-    name: CLI_COMMANDS.projectAndroidApplicationGraph,
+    name: cliCommandFor("project_android_application_graph"),
     operation: "project_android_application_graph",
     description:
       "Project authenticated APK inventory Evidence into an Android application graph",
@@ -131,7 +129,7 @@ export const registerApplicationCommands = (
   registerEvidenceJsonCommand({
     cli,
     logger,
-    name: CLI_COMMANDS.projectAppleApplicationGraph,
+    name: cliCommandFor("project_apple_application_graph"),
     operation: "project_apple_application_graph",
     description:
       "Project authenticated IPA or macOS app inventory Evidence into an Apple application graph",
@@ -145,7 +143,7 @@ export const registerApplicationCommands = (
   registerEvidenceJsonCommand({
     cli,
     logger,
-    name: CLI_COMMANDS.projectHarmonyApplicationGraph,
+    name: cliCommandFor("project_harmony_application_graph"),
     operation: "project_harmony_application_graph",
     description:
       "Project authenticated HarmonyOS HAP, HSP, or App Pack inventory Evidence into an application graph",
@@ -205,7 +203,7 @@ const registerObligationLedgerCommand = (
     cli,
     logger,
     "build_reconstruction_obligation_ledger",
-    CLI_COMMANDS.buildReconstructionObligationLedger,
+    cliCommandFor("build_reconstruction_obligation_ledger"),
     "Generate a deterministic Evidence-backed reconstruction obligation ledger page",
     async (input) => {
       const { buildReconstructionObligationLedgerEvidence } =
@@ -219,7 +217,7 @@ const registerCoverageCommand = (cli: CliInstance, logger: Logger): void =>
     cli,
     logger,
     "evaluate_reconstruction_coverage",
-    CLI_COMMANDS.evaluateReconstructionCoverage,
+    cliCommandFor("evaluate_reconstruction_coverage"),
     "Evaluate inline fail-closed reconstruction coverage",
     async (input) => {
       const { evaluateReconstructionCoverage } =
@@ -261,11 +259,10 @@ const registerEvidenceJsonCommand = ({
       ...(omit === undefined ? {} : { omit }),
       cliOptions: { evidenceBundle: evidenceBundleOption },
     },
-    async (input, { signal, cliOptions }) => {
+    async (input, { signal, frame, cliOptions }) => {
       const result = await runEvidenceInputCommand(
-        operation,
-        cliOptions.evidenceBundle,
-        signal,
+        input,
+        { operation, signal, frame, cliOptions },
         (lookup) => workflow(input, lookup, signal),
       );
       return result.ok

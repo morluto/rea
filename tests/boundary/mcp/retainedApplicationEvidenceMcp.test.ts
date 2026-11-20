@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { afterAll, expect, it } from "vitest";
@@ -256,12 +257,12 @@ it("preserves validation for the referenced record's operation, predicate, and s
   const { client, session } = await connect();
   for (const record of [
     createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       { operation: "inventory_artifact", parameters: {}, result: {} },
     ),
     createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "analyze_javascript_application",

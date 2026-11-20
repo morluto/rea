@@ -7,9 +7,9 @@ import {
 } from "../../../src/artifacts/apple/MachoImage.fixture.js";
 import { readGoBinaryImage } from "../../../src/go/GoBinaryImage.js";
 import { goBuildInfoSearch } from "../../../src/go/GoBuildInfoSearch.js";
-import { BinaryResourceFailure } from "../../../src/native/metadata/BinaryContainer.js";
-import { readMachoImage } from "../../../src/native/metadata/MachoImage.js";
-import { readBinaryContainer } from "../../../src/native/metadata/readBinaryContainer.js";
+import { BinaryResourceFailure } from "../../../src/domain/binaryContainer.js";
+import { readMachoImage } from "../../../src/domain/apple/machoImage.js";
+import { readBinaryContainer } from "../../../src/domain/native/readBinaryContainer.js";
 import {
   createGoBinaryFixture,
   createGoBinaryByteStringFixture,
@@ -50,7 +50,7 @@ it("preserves exact Mach-O protection masks for Go fallback selection", () => {
   bytes.writeUInt32LE(3, secondSegment + 56);
   bytes.writeUInt32LE(3, secondSegment + 60);
 
-  const container = readBinaryContainer(bytes);
+  const container = readBinaryContainer(bytes, "elf-directory");
   expect(
     container.load_regions?.map((region) => region.protection_masks),
   ).toEqual([
@@ -63,24 +63,19 @@ it("preserves exact Mach-O protection masks for Go fallback selection", () => {
   expect(readGoBinaryImage(bytes).build_info?.go_version).toBe("go1.26.0");
 });
 
-it("bounds cumulative header searches across overlapping ELF file spans", () => {
-  const bytes = createGoOverlappingElfFixture();
-  expect(() => readGoBinaryImage(bytes)).toThrow(BinaryResourceFailure);
-  expect(() => readGoBinaryImage(bytes)).toThrow(
-    /max_header_search_bytes=268435456/,
+it("counts overlapping ELF spans once per distinct search", () => {
+  const inspect = (max_header_search_bytes: number, duplicate = false) =>
+    readGoBinaryImage(
+      createGoOverlappingElfFixture({ duplicate, count: 3, size: 64 }),
+      {
+        budgets: { max_header_search_bytes },
+      },
+    );
+  expect(inspect(192).build_info).toBeNull();
+  expect(() => inspect(191)).toThrow(
+    expect.objectContaining({ boundary: "search", maximum_bytes: 191 }),
   );
-});
-
-it("does not charge duplicate ELF search spans repeatedly", () => {
-  expect(
-    readGoBinaryImage(createGoOverlappingElfFixture(true)).build_info,
-  ).toBeNull();
-});
-
-it("accepts a search exactly at the cumulative byte limit", () => {
-  const bytes = createGoOverlappingElfFixture();
-  bytes.writeUInt16LE(256, 56);
-  expect(readGoBinaryImage(bytes).build_info).toBeNull();
+  expect(inspect(64, true).build_info).toBeNull();
 });
 
 it("keeps different virtual alignments distinct when file spans match", () => {

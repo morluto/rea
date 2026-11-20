@@ -120,6 +120,7 @@ sliceTest(
     if (armSlice === undefined) throw new Error("Fixture lacks a slice");
     expect(report.artifact).toEqual({
       path,
+      file_name: "universal-go",
       sha256: sha256(universal.bytes),
       bytes: universal.bytes.length,
     });
@@ -151,9 +152,11 @@ sliceTest(
         .toString(),
     ).toBe("go1.26.1");
     expect(evidence.subject).toMatchObject({
-      format: "mach-o-universal",
-      architecture: "arm64",
-      digest: { sha256: sha256(universal.bytes) },
+      identity: {
+        format: "mach-o-universal",
+        architecture: "arm64",
+        sha256: sha256(universal.bytes),
+      },
     });
     expect(evidence.parameters).toEqual({ path, architecture: "arm64" });
     // A retained report cannot claim a slice its own container or CPU contradicts.

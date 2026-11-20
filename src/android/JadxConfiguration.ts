@@ -36,21 +36,21 @@ import {
 import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
-import type { ProviderAvailability } from "../application/AnalysisProvider.js";
-import { ownedProcessPrerequisiteAvailability } from "../application/ownedProcessAvailability.js";
+import type { ProviderAvailability } from "../ports/AnalysisProvider.js";
+import { ownedProcessPrerequisiteAvailability } from "../providers/ownedProcessAvailability.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  ArtifactReaderFailure,
   ArtifactFileCancelled,
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
+  ZipArtifactReader,
+} from "../resources/index.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
-import { ZipArtifactReader } from "../artifacts/ZipArtifactReader.js";
-import type { DoctorProviderCheck } from "../application/Doctor.js";
+import type { DoctorProviderCheck } from "../ports/DoctorProviderInspection.js";
 import {
   JADX_JAR_CONFIGURATION_REMEDIATION,
   JADX_JAVA_PROBE_REMEDIATION,
@@ -59,6 +59,7 @@ import {
   JADX_UNSUPPORTED_HOST_REMEDIATION,
   JADX_WINDOWS_NATIVE_REMEDIATION,
 } from "./JadxRelease.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 // Bound ZIP metadata allocation during discovery. The audited 0.7.1 JAR's
 // central directory occupies 2,294,350 bytes; class bodies are not read here.
@@ -450,7 +451,7 @@ const requireEngineArchive = async (
 };
 
 const archiveInspectionFailure = (jar: string, cause: unknown) => {
-  const reason = cause instanceof Error ? cause.message : String(cause);
+  const reason = errorMessage(cause);
   return configurationFailure(
     "version_unresolved",
     `Cannot inspect REA_JADX_MCP_JAR ${jar} as a Java archive: ${reason}. ${JADX_JAR_CONFIGURATION_REMEDIATION}`,
@@ -585,7 +586,7 @@ const resolveJar = async (
     if (cause instanceof JadxConfigurationFailure) throw cause;
     throw configurationFailure(
       "executable_missing",
-      `Cannot read REA_JADX_MCP_JAR ${jar}: ${cause instanceof Error ? cause.message : String(cause)}`,
+      `Cannot read REA_JADX_MCP_JAR ${jar}: ${errorMessage(cause)}`,
       { jar_path: jar },
       "jar",
       cause,
@@ -637,7 +638,7 @@ const resolveJava = async (
           continue;
         throw configurationFailure(
           "runtime_missing",
-          `Cannot inspect selected Java executable ${candidate}: ${errorText(cause)}`,
+          `Cannot inspect selected Java executable ${candidate}: ${errorMessage(cause)}`,
           { java_executable: candidate },
           "java_runtime",
           cause,
@@ -684,7 +685,7 @@ const requireJavaHomeExecutable = async (
     if (cause instanceof JadxConfigurationFailure) throw cause;
     throw configurationFailure(
       "runtime_missing",
-      `Cannot execute JAVA_HOME java ${java}: ${cause instanceof Error ? cause.message : String(cause)}`,
+      `Cannot execute JAVA_HOME java ${java}: ${errorMessage(cause)}`,
       { java_executable: java },
       "java_runtime",
       cause,
@@ -692,8 +693,35 @@ const requireJavaHomeExecutable = async (
   }
 };
 
+/** Smallest heap MiB or processor count. Zero is neither a heap size nor a count. */
+export const JADX_JVM_NUMERIC_MINIMUM = 1;
+
+/**
+ * Omitted `REA_JADX_HEAP_MIB` and `REA_JADX_ACTIVE_PROCESSOR_COUNT` pass no
+ * flag, so the JVM keeps its own default.
+ */
+export const JADX_JVM_DEFAULT = null;
+
+/** Heap MiB must be an exact safe integer. A larger flag cannot round-trip. */
+export const JADX_HEAP_MIB_MAXIMUM = Number.MAX_SAFE_INTEGER;
+
 /** `-XX:ActiveProcessorCount` is a Java `int`; this is a count, not a duration. */
-const JAVA_INT_MAX = 2_147_483_647;
+export const JADX_ACTIVE_PROCESSOR_COUNT_MAXIMUM = 2_147_483_647;
+
+const jadxJvmBounds = (
+  name: "REA_JADX_HEAP_MIB" | "REA_JADX_ACTIVE_PROCESSOR_COUNT",
+) =>
+  name === "REA_JADX_HEAP_MIB"
+    ? {
+        defaultValue: JADX_JVM_DEFAULT,
+        minimum: JADX_JVM_NUMERIC_MINIMUM,
+        maximum: JADX_HEAP_MIB_MAXIMUM,
+      }
+    : {
+        defaultValue: JADX_JVM_DEFAULT,
+        minimum: JADX_JVM_NUMERIC_MINIMUM,
+        maximum: JADX_ACTIVE_PROCESSOR_COUNT_MAXIMUM,
+      };
 
 const resolveJvmArguments = (
   environment: Readonly<Record<string, string | undefined>>,
@@ -703,26 +731,32 @@ const resolveJvmArguments = (
     ["REA_JADX_HEAP_MIB", "-Xmx", "m"],
     ["REA_JADX_ACTIVE_PROCESSOR_COUNT", "-XX:ActiveProcessorCount=", ""],
   ] as const) {
-    const value = environment[name];
-    if (value === undefined) continue;
-    if (!/^[1-9]\d*$/u.test(value) || !Number.isSafeInteger(Number(value)))
+    const bounds = jadxJvmBounds(name);
+    const selected =
+      environment[name] ??
+      (bounds.defaultValue === null ? undefined : String(bounds.defaultValue));
+    if (selected === undefined) continue;
+    const parsed =
+      /^[1-9]\d*$/u.test(selected) && Number.isSafeInteger(Number(selected))
+        ? Number(selected)
+        : undefined;
+    if (parsed === undefined || parsed < bounds.minimum)
       throw configurationFailure(
         "open_options_invalid",
-        `${name} must be a positive safe integer; received ${value}.`,
-        { setting: name, value },
+        `${name} must be a positive safe integer; received ${selected}.`,
+        { setting: name, value: selected },
         "jvm_options",
       );
-    if (
-      name === "REA_JADX_ACTIVE_PROCESSOR_COUNT" &&
-      Number(value) > JAVA_INT_MAX
-    )
+    if (parsed > bounds.maximum)
       throw configurationFailure(
         "open_options_invalid",
-        `${name} exceeds the JVM's signed 32-bit processor-count range.`,
-        { setting: name, value },
+        name === "REA_JADX_ACTIVE_PROCESSOR_COUNT"
+          ? `${name} exceeds the JVM's signed 32-bit processor-count range.`
+          : `${name} must be a positive safe integer; received ${selected}.`,
+        { setting: name, value: selected },
         "jvm_options",
       );
-    result.push(`${prefix}${value}${suffix}`);
+    result.push(`${prefix}${selected}${suffix}`);
   }
   return result;
 };
@@ -776,6 +810,3 @@ const configurationFailure = (
     kind,
     cause === undefined ? undefined : { cause },
   );
-
-const errorText = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);

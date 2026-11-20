@@ -16,7 +16,7 @@ import type {
 } from "../domain/browserScenarioCapture.js";
 import { err, ok } from "../domain/result.js";
 import { scriptScenarioFixture } from "../../tests/fixtures/webScriptCapture.js";
-import type { BrowserScenarioCapturePort } from "./BrowserScenarioCapturePort.js";
+import type { BrowserScenarioCapturePort } from "../ports/BrowserScenarioCapturePort.js";
 import { captureBrowserScenario } from "./BrowserScenarioCaptureService.js";
 import {
   expectDroppedPartial,

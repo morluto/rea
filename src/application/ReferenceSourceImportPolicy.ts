@@ -13,21 +13,24 @@ import {
   readRegularFileText,
   RegularFileReadFailure,
   retryRegularFileCleanup,
-} from "./RegularFileRead.js";
+} from "../process/RegularFileRead.js";
 
 import { err, ok, type Result } from "../domain/result.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  type ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import {
   DEFAULT_REFERENCE_SOURCE_IGNORE_PATTERNS,
   type ReferenceSourceImportError,
   type ReferenceSourceImportOptions,
 } from "./ReferenceSourceImportTypes.js";
-import { rootFilesystemFailure } from "../reference/ReferenceSourceReaderErrors.js";
 import {
   RegularFileCleanupFailure,
   regularFileCancellation,
 } from "../filesystem/OwnedRegularFile.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { rootFilesystemFailure } from "../reference/ReferenceSourceFailureBuilders.js";
 
 /** Validated inputs ready for filesystem traversal. */
 export interface PreparedReferenceSourceImport {
@@ -159,42 +162,36 @@ const readPolicyFile = async (
             new IgnorePolicyReadCancelled(reason),
         });
       } catch (cause: unknown) {
-        if (cause instanceof IgnorePolicyReadCancelled) throw cause;
         if (!(cause instanceof RegularFileCleanupFailure)) throw cause;
+        const cancellation = regularFileCancellation(cause);
         const retry = await retryRegularFileCleanup(cause, resources, signal);
-        const operationCancellation =
-          cause.outcome.kind === "failed"
-            ? regularFileCancellation(cause)
-            : undefined;
+        const cancellationFailure =
+          cancellation === undefined
+            ? undefined
+            : new IgnorePolicyReadCancelled(cancellation.reason);
         if (retry.cleanup !== undefined) {
           const primary =
-            retry.outcome.kind === "failed"
+            cancellationFailure ??
+            (retry.outcome.kind === "failed"
               ? retry.outcome.cause
-              : cause.cleanupCause;
+              : cause.cleanupCause);
           const primaryCause = ignorePolicyCause(primary);
           return err({
             ...failure(
-              isIgnorePolicyCancellation(primary) ||
-                operationCancellation !== undefined
-                ? "cancelled"
-                : "io",
+              isIgnorePolicyCancellation(primary) ? "cancelled" : "io",
               `Reference source ignore policy could not be read at ${policyPath}: ${errorMessage(primaryCause)}`,
             ),
             cleanup: retry.cleanup,
             cause: primaryCause,
             ...(signal !== undefined &&
             isAborted(signal) &&
-            !isIgnorePolicyCancellation(primary) &&
-            operationCancellation === undefined
+            !isIgnorePolicyCancellation(primary)
               ? { secondaryCancellation: { cause: signal.reason } }
               : {}),
           });
         }
-        if (retry.outcome.kind === "failed") {
-          if (operationCancellation !== undefined)
-            throw new IgnorePolicyReadCancelled(operationCancellation.reason);
-          throw retry.outcome.cause;
-        }
+        if (cancellationFailure !== undefined) throw cancellationFailure;
+        if (retry.outcome.kind === "failed") throw retry.outcome.cause;
         text = retry.outcome.value;
       }
       return ok(text);
@@ -405,6 +402,3 @@ export const prepareReferenceSourceImport = async (
     });
   }
 };
-
-const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);

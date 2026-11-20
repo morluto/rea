@@ -1,3 +1,4 @@
+import { publishCliAnalysisEvidence } from "../../src/cli/analysisEvidenceDelivery.js";
 import { projectCliAnalysisResult } from "../../src/cli/projectCliAnalysisResult.js";
 import {
   mkdir,
@@ -56,7 +57,7 @@ import {
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { BinarySession } from "../../src/application/binary/BinarySession.js";
 import { InvestigationRecords } from "../../src/application/investigation/InvestigationRecords.js";
-import { AnalysisCleanupLease } from "../../src/artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../src/resources/AnalysisCleanupLease.js";
 
 const cleanupError = new ProviderCleanupError(
   "fixture",
@@ -260,45 +261,6 @@ it.each([false, true])(
     }
   },
 );
-
-it("retains both execution and final-close resources in one-shot failures", async () => {
-  const [path] = await createBinarySessionTargets();
-  const executionError = new AnalysisTimeoutError("read_bytes", 100, {
-    capturedOutput: {
-      stdout: "execution observation",
-      stderr: "",
-      truncated: false,
-    },
-    cleanup: {
-      reason: "execution worker remains",
-      resources: ["execution-worker", "shared-owner"],
-    },
-  });
-  const closeError = new ProviderCleanupError(
-    "fixture",
-    ["session-owner", "shared-owner"],
-    { reason: "session remains" },
-  );
-  const { dependencies } = factories({
-    executionError,
-    cleanupError: closeError,
-  });
-  const result = analysisCliErrorEnvelopeSchema.parse(
-    await runDirectAnalysis(dependencies, path, "read_bytes", {
-      address: "0x1000",
-      length: 1,
-    }).then(projectCliAnalysisResult),
-  );
-  expect(result).toMatchObject({
-    code: "cleanup_incomplete",
-    details: {
-      resources: ["execution-worker", "shared-owner", "session-owner"],
-      execution_failure: "provider_timeout",
-      captured_output: executionError.capturedOutput,
-      cleanup_error: projectAnalysisError(closeError),
-    },
-  });
-});
 
 it.each([false, true])(
   "binds the exact caller path to provider failure Evidence (session cleanup fails: %s)",
@@ -612,20 +574,25 @@ describe("snapshot publication finalization", () => {
 });
 
 it.each([false, true])(
-  "retains original cleanup diagnostics when final close fails: %s",
+  "retains original cleanup diagnostics and distinct resources (final close fails: %s)",
   async (closeFails) => {
     const [path] = await createBinarySessionTargets();
     const executionError = new AnalysisTimeoutError("read_bytes", 100, {
       cleanup: {
         reason: "snapshot removal failed during execution",
-        resources: ["primary-snapshot"],
+        resources: ["primary-snapshot", "shared-owner"],
       },
       capturedOutput: primaryError.capturedOutput,
     });
+    const closeError = new ProviderCleanupError(
+      "fixture",
+      ["fixture-provider-process", "shared-owner"],
+      { reason: "process exit could not be confirmed" },
+    );
     const primary = projectAnalysisError(executionError);
     const { dependencies } = factories({
       executionError,
-      ...(closeFails ? { cleanupError } : {}),
+      ...(closeFails ? { cleanupError: closeError } : {}),
     });
     const result = analysisCliErrorEnvelopeSchema.parse(
       await runDirectAnalysis(dependencies, path, "read_bytes", {
@@ -638,8 +605,13 @@ it.each([false, true])(
         ...primary.details,
         ...(closeFails
           ? {
-              resources: ["primary-snapshot", "fixture-provider-process"],
-              cleanup_error: projectAnalysisError(cleanupError),
+              resources: [
+                "primary-snapshot",
+                "shared-owner",
+                "fixture-provider-process",
+              ],
+              execution_failure: "provider_timeout",
+              cleanup_error: projectAnalysisError(closeError),
             }
           : {}),
       },
@@ -773,28 +745,24 @@ it.each(["complete", "summary"] as const)(
     const { dependencies, session } = factories({
       onClose: () => controller.abort(reason),
     });
+    const analysis = await runProviderAnalysis(
+      dependencies,
+      path,
+      "inspect_managed_members",
+      {},
+      undefined,
+      controller.signal,
+    );
+    // The CLI delivery receives the cancelled run and publishes nothing.
     const result =
       detail === "summary"
-        ? await runProviderAnalysis(
-            dependencies,
-            path,
-            "inspect_managed_members",
-            {},
-            undefined,
-            controller.signal,
-            {
-              detail,
-              evidenceBundlePath: join(dirname(path), "bundle.json"),
-            },
-          ).then(projectCliAnalysisResult)
-        : await runProviderAnalysis(
-            dependencies,
-            path,
-            "inspect_managed_members",
-            {},
-            undefined,
-            controller.signal,
-          ).then(projectCliAnalysisResult);
+        ? await publishCliAnalysisEvidence(analysis, {
+            operation: "inspect_managed_members",
+            signal: controller.signal,
+            detail,
+            evidenceOutput: join(dirname(path), "bundle.json"),
+          })
+        : projectCliAnalysisResult(analysis);
     expect(result).toEqual({
       error: "Analysis failed",
       ...projectAnalysisError(

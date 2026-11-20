@@ -1,24 +1,29 @@
+import { capturedProviderOutput } from "../../process/capturedProviderOutput.js";
 import { javaScriptWorkerMemoryLimitBytes } from "../../process/JavaScriptWorkerMemoryLimit.js";
+import { isAbortOf } from "../../process/SignalAbort.js";
 import { captureBudgets } from "./CaptureBudgets.js";
 import { analysisSettingLimit } from "../../domain/analysisSettingDefinitions.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import {
   AnalysisCleanupLeaseGroup,
   type AnalysisCleanupLease,
-} from "../../artifacts/AnalysisCleanupLease.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import {
+  ArtifactReaderFailure,
   stableArtifactInputRecovery,
   readerIntegrityFailure,
-} from "../../artifacts/StableArtifactFailure.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
-import {
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
   artifactSelectedPathErrno,
-} from "../../artifacts/ArtifactFileOperation.js";
+} from "../../resources/index.js";
+import {
+  analysisErrorWithCleanupFailure,
+  analysisErrorWithCleanupDependencies,
+} from "../../domain/analysisErrorCleanup.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import {
+  isParseLimit,
+  parseLimitConstraint,
+} from "../../domain/parseFailureAnalysisError.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
@@ -52,9 +57,11 @@ import {
 import { NODE_CAPTURE_HEAP_ENFORCED } from "./CaptureRelease.js";
 import { CAPTURE_DECODER_SEMI_SPACE_MIB } from "../../domain/analysisResourceLimits.js";
 import {
+  CAPTURE_FORMAT,
   CAPTURE_LIMITS,
   type CaptureFormatError,
 } from "./CaptureFormatError.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 const OPERATION = "inspect_web_network_capture";
 
 /** A refused protobuf body decode; a limit names the budget that owns it. */
@@ -63,8 +70,8 @@ export const protobufCaptureFailure = (
   cause: CaptureFormatError,
 ): AnalysisError => {
   const { limit } = cause;
-  if (limit === undefined)
-    return new AnalysisInputError(OPERATION, undefined, [
+  if (limit === undefined || !isParseLimit(cause, CAPTURE_FORMAT))
+    return new AnalysisInputError(OPERATION, { cause }, [
       {
         path: ["protobuf"],
         reason: "invalid_format",
@@ -72,23 +79,19 @@ export const protobufCaptureFailure = (
       },
     ]);
   const { parameter, expected } = CAPTURE_LIMITS[limit.name];
-  return new AnalysisResourceConstraintError(
-    OPERATION,
-    "capacity",
-    cause.message,
-    { [expected]: limit.maximum },
-    {
-      retryable: false,
-      ...(parameter === null
-        ? {}
-        : {
-            remediationAction: webNetworkCaptureBudgetRecovery(
-              input,
-              parameter,
-            ),
-          }),
-    },
-  );
+  return parseLimitConstraint(OPERATION, "capacity", cause, {
+    legacyMaximumKey: expected,
+    retryable: false,
+    ...(parameter === null
+      ? {}
+      : {
+          remediationAction: webNetworkCaptureBudgetRecovery(
+            input,
+            parameter,
+            limit.maximum,
+          ),
+        }),
+  });
 };
 
 /** Reason for a decoder whose owned process tree reached its Job Object commit limit. */
@@ -301,12 +304,7 @@ export const historicalCaptureFailure = (
     // Bare syscall rejections remain physical even when they equal the abort reason.
     phase === "decoder" &&
     origin === "owned-or-classified" &&
-    options?.signal?.aborted === true &&
-    (cause === options.signal.reason ||
-      (cause instanceof Error &&
-        cause.name === "AbortError" &&
-        "code" in cause &&
-        cause.code === "ABORT_ERR"))
+    isAbortOf(cause, options?.signal)
   )
     return cancelledBy(OPERATION, options.signal);
   return new ProviderAdapterError(input.format, OPERATION, {
@@ -317,7 +315,7 @@ export const historicalCaptureFailure = (
       ...(descriptorRead
         ? { source_path: sourcePath, input_path: inputPath }
         : {}),
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
       ...(origin === "owned-or-classified" &&
       cause instanceof ArtifactReaderFailure
         ? { failure_kind: cause.reason }
@@ -326,10 +324,7 @@ export const historicalCaptureFailure = (
       cause instanceof OwnedCommandFailure &&
       cause.snapshot !== null
         ? {
-            exit_code: cause.snapshot.exitCode ?? null,
-            signal: cause.snapshot.signal ?? null,
-            stdout: cause.snapshot.stdout.text,
-            stderr: cause.snapshot.stderr.text,
+            ...capturedProviderOutput(cause.snapshot),
             diagnostic_truncated: cause.snapshot.diagnosticTruncated ?? false,
           }
         : {}),
@@ -409,11 +404,7 @@ export const captureMemoryFailure = (
           }),
       ...(cause instanceof OwnedCommandFailure && cause.snapshot !== null
         ? {
-            capturedOutput: {
-              stdout: cause.snapshot.stdout.text,
-              stderr: cause.snapshot.stderr.text,
-              truncated: cause.snapshot.diagnosticTruncated ?? false,
-            },
+            capturedOutput: capturedProviderOutput(cause.snapshot),
           }
         : {}),
     },
@@ -443,11 +434,11 @@ export const withCaptureReaderCleanup = (
       cleanup.retainPartialObservation(primary.partialObservation);
     return cleanup;
   }
-  const composed = analysisErrorWithCleanupFailure(
+  const composed = analysisErrorWithCleanupDependencies(
     primary,
     cleanup,
     OPERATION,
-  ).bindCleanupDependencies([primary, cleanup]);
+  );
   bindArtifactFileCleanup(cause, composed);
   return composed;
 };

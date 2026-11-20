@@ -10,7 +10,7 @@ import {
 import { join } from "node:path";
 import { expect, it as test } from "vitest";
 
-import type { RetainedResourceScope } from "../../../../src/application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../../../../src/ports/AnalysisProvider.js";
 import { runKunaCommand } from "../../../../src/kuna/KunaCommand.js";
 import type { KunaInstallation } from "../../../../src/kuna/KunaInstallation.js";
 import { KunaProjectCache } from "../../../../src/kuna/KunaProjectCache.js";

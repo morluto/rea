@@ -26,7 +26,9 @@ export interface AmbiguousSelector {
  * - `fixed_ceiling`: a release-fixed allowance (`FixedAllowance`) with its
  *   optional limit, unit and narrowing step.
  * - `adjustable_budget`: an agent-adjustable setting or per-call parameter
- *   (`AnalysisSettingLimit`) with its control, unit and range.
+ *   (`AnalysisSettingLimit`) with its control, unit, range and, when the
+ *   producer measured it, the minimum value (`required_value`) that admits
+ *   the request.
  * - `ambiguous_selector`: a selector that matched several candidates.
  */
 export type AnalysisRefusal =
@@ -55,7 +57,13 @@ const adjustableBudgetRemediation = (
   budget: AnalysisSettingLimit,
   callerLifetime: AnalysisCallerLifetime,
 ): string => {
-  const { unit, minimum, maximum, effective_value: value } = budget;
+  const {
+    unit,
+    minimum,
+    maximum,
+    effective_value: value,
+    required_value: required,
+  } = budget;
   const control = budget.parameter ?? budget.setting;
   const range = `${String(minimum)}..${String(maximum)} ${unit}`;
   const effective =
@@ -64,6 +72,8 @@ const adjustableBudgetRemediation = (
       : `${operation} reached its ${control} budget of ${String(value)} ${unit}${budget.source === undefined ? "" : ` (source ${budget.source})`}`;
   if (value !== null && value >= maximum)
     return `${effective}. ${control} is already at its maximum (${range}); narrow the request or select a smaller input. ${UNCHANGED}`;
+  if (required !== undefined && required > maximum)
+    return `${effective}. The request requires ${String(required)} ${unit}, above the ${control} maximum (${range}); narrow the request or select a smaller input. ${UNCHANGED}`;
   const environment = analysisSettingDefinition(budget.setting).environment;
   const change =
     budget.parameter !== undefined &&
@@ -75,7 +85,9 @@ const adjustableBudgetRemediation = (
         : budget.update_mode === "runtime"
           ? `Raise ${budget.setting} with update_analysis_settings`
           : `Set ${environment ?? budget.setting} in the environment that starts REA, then restart REA`;
-  return `${effective}. ${change} (range ${range}), then retry.`;
+  const atLeast =
+    required === undefined ? "" : `at least ${String(required)} ${unit}; `;
+  return `${effective}. ${change} (${atLeast}range ${range}), then retry.`;
 };
 
 /**
@@ -90,9 +102,13 @@ export const analysisRefusalRemediation = (
     case "fixed_ceiling": {
       const { ceiling } = refusal;
       const base = fixedAllowanceRemediation(ceiling.name, ceiling.kind);
+      const value =
+        ceiling.limit === undefined || ceiling.unit === undefined
+          ? ""
+          : ` The allowance is ${String(ceiling.limit)} ${ceiling.unit}; this release has no runtime override.`;
       return ceiling.narrowing === undefined
-        ? base
-        : `${base} ${ceiling.narrowing}`;
+        ? `${base}${value}`
+        : `${base}${value} ${ceiling.narrowing}`;
     }
     case "adjustable_budget":
       return adjustableBudgetRemediation(
@@ -144,6 +160,9 @@ export const analysisRefusalDetails = (
         effective_value: budget.effective_value,
         unit: budget.unit,
         range: { minimum: budget.minimum, maximum: budget.maximum },
+        ...(budget.required_value === undefined
+          ? {}
+          : { required_value: budget.required_value }),
       };
     }
     case "ambiguous_selector":

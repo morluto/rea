@@ -25,6 +25,7 @@ import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
+import { evidenceFileTarget, evidenceSubjectDisplay } from "../evidence.js";
 
 const page = {
   kind: z.literal("interface-builder"),
@@ -132,10 +133,10 @@ const parseInterfaceBuilderReport = (
   const parsed = readReport(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
+  const subject = evidenceFileTarget(parent);
   if (
     report.graph.target_sha256 !== report.target_sha256 ||
-    (parent.subject != null &&
-      parent.subject.digest.sha256 !== report.target_sha256)
+    (subject !== undefined && subject.sha256 !== report.target_sha256)
   )
     return err(
       analysisViewInputError([
@@ -214,7 +215,7 @@ export const projectInterfaceBuilderView = (
     parent_digest: parent.evidenceId.slice(3),
     artifact: {
       path:
-        parent.subject?.local_path ??
+        evidenceSubjectDisplay(parent)?.local_path ??
         report.resource_root?.canonical_path ??
         "",
       sha256: report.target_sha256,

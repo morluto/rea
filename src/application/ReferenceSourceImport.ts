@@ -11,7 +11,7 @@ import {
   type HistoricalSourceGraphInput,
 } from "../domain/referenceSourceGraph.js";
 import { err, ok, type Result } from "../domain/result.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
 import { readReferenceSource } from "../reference/ReferenceSourceReader.js";
 import type {
@@ -207,7 +207,12 @@ export const importReferenceSource = async (
 
   const read = readResult.value;
   const { entries, relationships, parseFailures, limitations } =
-    parseReferenceSourceEntries(read, exclusions, options.signal);
+    parseReferenceSourceEntries(
+      read,
+      exclusions,
+      options.signal,
+      options.memberMutationAllowance,
+    );
 
   if (isAborted(options.signal)) return err(cancelled(options.signal, read));
 

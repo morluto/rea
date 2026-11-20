@@ -2,12 +2,13 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../../../src/ports/AnalysisProvider.js";
 import { NATIVE_TOOL_CONTRACTS } from "../../../src/contracts/native/nativeToolContracts.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { ok } from "../../../src/domain/result.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const provider = {
   id: "fixture-native",
@@ -36,7 +37,10 @@ const connect = async (
   execute: AnalysisOperationPort["execute"],
 ): Promise<Client> => {
   const server = createServer({ kind: "fixed", analysis: { execute } });
-  const client = new Client({ name: "native-contract-test", version: "1" });
+  const client = new Client(
+    { name: "native-contract-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server);
@@ -52,6 +56,21 @@ afterEach(async () => {
 });
 
 describe("native MCP input contracts", () => {
+  it("advertises the temporary plist snapshot write to MCP clients", async () => {
+    const client = await connect(() =>
+      Promise.resolve(ok(createAnalysisExecution(plistResult, provider))),
+    );
+    const { tools } = await client.listTools();
+    expect(tools.find(({ name }) => name === "inspect_plist")).toMatchObject({
+      description: expect.stringContaining("private temporary copy"),
+      annotations: { readOnlyHint: false, destructiveHint: false },
+    });
+    expect(
+      NATIVE_TOOL_CONTRACTS.find(({ name }) => name === "inspect_plist")
+        ?.effects,
+    ).toMatchObject({ writesFilesystem: true, mutatesTarget: false });
+  });
+
   it("rejects a misspelled plist path before dispatch and preserves omission", async () => {
     const calls: Array<{
       readonly operation: string;

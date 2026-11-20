@@ -3,13 +3,13 @@
 import { realpath } from "node:fs/promises";
 import { parseArgs } from "node:util";
 
-import { readStableArtifact } from "../../../dist/artifacts/readStableArtifact.js";
-import { ArtifactReaderFailure } from "../../../dist/artifacts/ArtifactReader.js";
+import { readStableArtifact } from "../../../dist/resources/readStableArtifact.js";
+import { ArtifactReaderFailure } from "../../../dist/resources/ArtifactReader.js";
 import {
   ArtifactFileCleanupFailure,
   artifactFileCompletion,
   artifactFilePrimaryFacts,
-} from "../../../dist/artifacts/ArtifactFileOperation.js";
+} from "../../../dist/resources/ArtifactFileOperation.js";
 
 import { reconcileJavaScriptRuntimeEvidence } from "../../../dist/application/javascript/JavaScriptRuntimeReconciliationService.js";
 import { analyzeJavaScriptApplicationWithOwnedScope } from "../../lib/javascript-application-analysis.mjs";

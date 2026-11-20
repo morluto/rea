@@ -1,13 +1,16 @@
+import { providerCleanupErrorFromFailures } from "../domain/analysisErrorCleanup.js";
 import {
   createAnalysisExecution,
   type AnalysisExecution,
   type ExecutionOptions,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
-import type { SqliteDatabasePort } from "../application/sqlite/SqliteDatabasePort.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import type { SqliteDatabasePort } from "../ports/sqlite/SqliteDatabasePort.js";
+import {
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+  bindArtifactFileCleanup,
+} from "../resources/index.js";
 import type {
   AnalysisCapturedOutput,
   AnalysisError,
@@ -54,6 +57,7 @@ import {
   sqliteReplyFinalizationFailure,
   type SqliteWorkerLauncher,
 } from "./SqliteDatabaseWorkerExecution.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const operation = "inspect_sqlite_database";
 type SqliteOutcome = Result<AnalysisExecution, AnalysisError>;
@@ -70,6 +74,15 @@ interface PendingSnapshotCleanup {
   readonly processRelease: AnalysisCleanupRelease;
   process: ProviderProcessSupervisor | undefined;
 }
+/** Keep each cleanup failure available alongside its published diagnostics. */
+const sqliteCleanupFailures = (failures: readonly AnalysisError[]) =>
+  providerCleanupErrorFromFailures(
+    SQLITE_PROVIDER_IDENTITY.id,
+    failures,
+    { failures: failures.map((failure) => projectAnalysisError(failure)) },
+    { operation, message: "SQLite cleanup failures" },
+  );
+
 /** The runtime root a retained cleanup still owns. */
 const sqliteRootFailure = (root: SqliteRuntimeRoot): ProviderCleanupError =>
   new ProviderCleanupError(
@@ -165,22 +178,7 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
         }
         const cleaned = await this.#retryCleanup();
         if (descriptorFailure !== undefined && !cleaned.ok) {
-          const failure = new ProviderCleanupError(
-            SQLITE_PROVIDER_IDENTITY.id,
-            [
-              ...descriptorFailure.cleanupResources,
-              ...cleaned.error.cleanupResources,
-            ],
-            {
-              failures: [
-                projectAnalysisError(descriptorFailure),
-                projectAnalysisError(cleaned.error),
-              ],
-            },
-            { operation },
-          );
-          failure.bindCleanupDependencies([descriptorFailure, cleaned.error]);
-          throw failure;
+          throw sqliteCleanupFailures([descriptorFailure, cleaned.error]);
         }
         if (descriptorFailure !== undefined) throw descriptorFailure;
         if (!cleaned.ok) throw cleaned.error;
@@ -249,18 +247,7 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
       return err(failures[0]);
     return failures.length === 0
       ? ok(null)
-      : err(
-          new ProviderCleanupError(
-            SQLITE_PROVIDER_IDENTITY.id,
-            failures.flatMap((failure) => failure.cleanupResources),
-            {
-              failures: failures.map((failure) =>
-                projectAnalysisError(failure),
-              ),
-            },
-            { operation },
-          ).bindCleanupDependencies(failures),
-        );
+      : err(sqliteCleanupFailures(failures));
   }
 
   async #inspect(
@@ -503,7 +490,7 @@ const cleanupSqliteRoot = async (
     return err(
       sqliteCleanupFailure(
         [root.path],
-        cause instanceof Error ? cause.message : String(cause),
+        errorMessage(cause),
         result,
         input,
         output,

@@ -1,4 +1,8 @@
-import type { FridaInstrumentationPort } from "./application/frida/FridaInstrumentationPort.js";
+import type { FridaInstrumentationPort } from "./ports/frida/FridaInstrumentationPort.js";
+import {
+  CURRENT_ENTRYPOINT_PATH,
+  isDirectEntrypoint,
+} from "./process/CurrentEntrypointPath.js";
 import {
   CLI_COMMAND_REGISTRATIONS,
   CLI_REGISTRATION_ORDER,
@@ -27,12 +31,15 @@ import * as modelModule from "./cli/modelCommands.js";
 import * as gpuModule from "./cli/gpuCommands.js";
 import * as rustModule from "./cli/rustCommands.js";
 import * as pythonPycModule from "./cli/pythonPycCommands.js";
+import * as nugetNupkgModule from "./cli/nugetNupkgCommands.js";
 import * as erlangModule from "./cli/erlangCommands.js";
 import * as v8CodeCacheModule from "./cli/v8CodeCacheCommands.js";
+import * as mavenGradleMetadataModule from "./cli/mavenGradleMetadataCommands.js";
 import * as sqliteModule from "./cli/sqliteCommands.js";
 import * as artifactModule from "./cli/artifactCommands.js";
 import * as managedModule from "./cli/managedCommands.js";
 import * as firmwareModule from "./cli/firmwareCommands.js";
+import * as uefiModule from "./cli/uefiCommands.js";
 import * as androidModule from "./cli/androidCommands.js";
 import * as pcapModule from "./cli/pcapCommands.js";
 import * as flutterModule from "./cli/flutterCommands.js";
@@ -83,12 +90,15 @@ const CLI_COMMAND_MODULES: CliCommandModules = {
   gpu: gpuModule,
   rust: rustModule,
   pythonPyc: pythonPycModule,
+  nugetNupkg: nugetNupkgModule,
   erlang: erlangModule,
   v8CodeCache: v8CodeCacheModule,
+  mavenGradleMetadata: mavenGradleMetadataModule,
   sqlite: sqliteModule,
   artifact: artifactModule,
   managed: managedModule,
   firmware: firmwareModule,
+  uefi: uefiModule,
   android: androidModule,
   pcap: pcapModule,
   flutter: flutterModule,
@@ -141,3 +151,12 @@ export const createCli = (
       module: CLI_COMMAND_MODULES[id],
     })),
   });
+
+// Direct execution needs a visible failure pointing to the dispatcher. Imports
+// only expose the registry. A normal exit lets piped stderr drain completely.
+if (isDirectEntrypoint(CURRENT_ENTRYPOINT_PATH, import.meta.url)) {
+  process.stderr.write(
+    "dist/cli.js is the command registry, not the CLI entry point. Run `rea` (scripts/rea.mjs) instead.\n",
+  );
+  process.exitCode = 1;
+}

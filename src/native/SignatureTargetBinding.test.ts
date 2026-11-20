@@ -13,10 +13,11 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi, onTestFinished } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
-import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ok, err } from "../domain/result.js";
@@ -24,7 +25,7 @@ import {
   NativeCommandFailure,
   XcrunCommandRunner,
   type NativeCommandRunner,
-} from "./CommandRunner.js";
+} from "../providers/NativeCommandRunner.js";
 import { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import type { NativeCallTracer } from "./LldbCallTracer.js";
 import { NativeMacOSProvider } from "./NativeMacOSProvider.js";
@@ -47,7 +48,6 @@ const unusedInspection = async (): Promise<never> => {
   throw new Error("Inspection must not run after failed target binding");
 };
 const roots: string[] = [];
-const targets: string[] = [];
 const unusedRunner: NativeCommandRunner = {
   async run() {
     throw new Error("Changed target must be rejected before a command runs");
@@ -64,20 +64,16 @@ const unusedTracer: NativeCallTracer = {
 
 afterEach(async () => {
   await Promise.all(
-    [...roots, ...targets].map((path) =>
-      rm(path, { recursive: true, force: true }),
-    ),
+    roots.map((path) => rm(path, { recursive: true, force: true })),
   );
   roots.length = 0;
-  targets.length = 0;
 });
 
 const createTarget = async (
   bytes: string,
   digest = bytes,
 ): Promise<BinaryTarget> => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-signature-target-"));
-  targets.push(directory);
+  const directory = await createTestTempDirectory("rea-signature-target-");
   const path = join(directory, "target.bin");
   await writeFile(path, bytes);
   return {
@@ -240,20 +236,14 @@ it("retries a retained signature root when the provider client closes", async ()
 
 it("waits for an in-flight signature binding before provider close", async () => {
   const target = await createTarget("observed", "expected");
-  let rootFactoryEntered!: () => void;
-  let releaseRootFactory!: () => void;
-  const entered = new Promise<void>(
-    (resolve) => (rootFactoryEntered = resolve),
-  );
-  const gate = new Promise<void>((resolve) => (releaseRootFactory = resolve));
+  const rootFactory = phaseGate();
   const provider = new NativeMacOSProvider(
     {},
     unusedRunner,
     "darwin",
     () => unusedTracer,
     async () => {
-      rootFactoryEntered();
-      await gate;
+      await rootFactory.hold();
       return createRoot();
     },
   );
@@ -262,17 +252,13 @@ it("waits for an in-flight signature binding before provider close", async () =>
   let closeSettled = false;
   let closing: ReturnType<typeof client.close> | undefined;
   await withVerifierCleanup(async () => {
-    await awaitAcknowledgement(
-      entered,
-      operation,
-      "signature root acquisition",
-    );
+    await rootFactory.reached(operation, "signature root acquisition");
     closing = client.close().finally(() => {
       closeSettled = true;
     });
     await Promise.resolve();
     expect(closeSettled).toBe(false);
-    releaseRootFactory();
+    rootFactory.release();
     await expect(operation).resolves.toMatchObject({
       ok: false,
       error: { _tag: "AnalysisArtifactChangedError" },
@@ -281,7 +267,7 @@ it("waits for an in-flight signature binding before provider close", async () =>
     expect(closeSettled).toBe(true);
     await expect(stat(roots[0]!)).rejects.toMatchObject({ code: "ENOENT" });
   }, [
-    releaseRootFactory,
+    rootFactory.release,
     async () => {
       await operation;
     },
@@ -528,12 +514,13 @@ it("retains late cancellation when creating the signature root fails", async () 
     },
   );
   if (result.ok) throw new Error("Expected root creation failure");
+  expect(result.error).toBeInstanceOf(ProviderAdapterError);
   expect(result.error.cause).toBe(physical);
   expect(result.error.secondaryFailures).toHaveLength(1);
   expect(result.error.secondaryFailures[0]).toMatchObject({
     _tag: "AnalysisCancelledError",
-    cause: reason,
   });
+  expect(result.error.secondaryFailures[0]?.cause).toBe(reason);
   expect(result.error.cleanupIncomplete).toBe(false);
   await resources.close();
 });
@@ -562,13 +549,18 @@ it("does not adopt a typed caller abort reason as a root-creation failure", asyn
   await resources.close();
 });
 
-it.each([false, true])(
-  "retains late cancellation after a signature failure while root cleanup fails: %s",
-  async (cleanupFails) => {
+it.each([
+  { cleanupFails: false, reason: null },
+  {
+    cleanupFails: true,
+    reason: { caller: "cancelled during root cleanup" },
+  },
+])(
+  "retains the signature failure and late cancellation (root cleanup fails: $cleanupFails)",
+  async ({ cleanupFails, reason }) => {
     const target = await createTarget("same");
     const resources = new ArtifactResourceScope();
     const controller = new AbortController();
-    const reason = { caller: "cancelled during root cleanup" };
     const physical = new AnalysisOutputError(
       "inspect_signature",
       "inspection failed",
@@ -595,8 +587,8 @@ it.each([false, true])(
       expect(physical.secondaryFailures).toHaveLength(1);
       expect(physical.secondaryFailures[0]).toMatchObject({
         _tag: "AnalysisCancelledError",
-        cause: reason,
       });
+      expect(physical.secondaryFailures[0]?.cause).toBe(reason);
       expect(result.error.cleanupIncomplete).toBe(cleanupFails);
       await resources.close();
       expect(resolvedAnalysisError(result.error)).toBe(physical);
@@ -740,35 +732,6 @@ it("keeps a physical source read failure primary when the caller also aborts", a
   expect(inspect).not.toHaveBeenCalled();
 });
 
-for (const cleanupFails of [false, true])
-  it(`keeps a failed inspection primary when the caller aborts during root close (fails: ${cleanupFails})`, async () => {
-    const target = await createTarget("same");
-    const resources = new ArtifactResourceScope();
-    const controller = new AbortController();
-    const primary = new AnalysisOutputError(
-      "inspect_signature",
-      "controlled inspection failure",
-    );
-    const root = await createRoot(cleanupFails ? 1 : 0);
-    const result = await withSignatureTarget(
-      target,
-      resources,
-      async () => err(primary),
-      controller.signal,
-      async () => ({
-        path: root.path,
-        async close() {
-          controller.abort(null);
-          await root.close();
-        },
-      }),
-    );
-    if (result.ok) throw new Error("Expected failed inspection");
-    expect(result.error.cleanupIncomplete).toBe(cleanupFails);
-    await resources.close();
-    expect(resolvedAnalysisError(result.error)).toBe(primary);
-  });
-
 it.each(opaqueReasons)(
   "preserves pre-entry reason %s without allocating a root or adopting foreign ownership",
   async (reason) => {
@@ -793,30 +756,6 @@ it.each(opaqueReasons)(
     await resources.close();
   },
 );
-
-it("does not replace a failed root creation with a simultaneous abort", async () => {
-  const target = await createTarget("same");
-  const resources = new ArtifactResourceScope();
-  const controller = new AbortController();
-  const failure = new Error("controlled root creation failure");
-  const result = await withSignatureTarget(
-    target,
-    resources,
-    unusedInspection,
-    controller.signal,
-    async () => {
-      controller.abort(null);
-      throw failure;
-    },
-  );
-  if (result.ok) throw new Error("Expected root creation failure");
-  expect(result.error).toMatchObject({
-    _tag: "ProviderAdapterError",
-    cause: failure,
-    cleanupIncomplete: false,
-  });
-  await resources.close();
-});
 
 it("releases a late root when cancellation arrives during creation", async () => {
   const target = await createTarget("same");

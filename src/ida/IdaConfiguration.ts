@@ -2,8 +2,8 @@ import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
 import { jsonRecordSchema } from "../domain/jsonRecord.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import { AnalysisCleanupLease } from "../resources/index.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import {
   AnalysisCancelledError,
@@ -23,6 +23,7 @@ import {
   NonRegularFileReadError,
 } from "../filesystem/RegularFile.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Omitted registration `timeoutMs` for each upstream IDA MCP request. */
 export const DEFAULT_IDA_REQUEST_TIMEOUT_MS = 300_000;
@@ -46,9 +47,11 @@ const common = {
     .optional(),
   mode: z.enum(["attached", "headless"]).default("attached"),
   /**
-   * Attached mode serves two upstream protocols, so an attached registration
-   * names one; omitting it no longer selects the legacy 1.4 GUI proxy.
-   * Headless mode has one protocol (the database supervisor).
+   * An attached registration names its upstream protocol. `"legacy"` (the
+   * removed ida-pro-mcp 1.4 GUI proxy) is still recognized so that a stored
+   * registration is refused with migration guidance rather than reported as an
+   * unknown value or read as another protocol. Headless mode has one protocol
+   * (the database supervisor).
    */
   protocol: z.enum(["legacy", "native"]).optional(),
   timeoutMs: z
@@ -61,6 +64,9 @@ const common = {
     .refine(isAbsolute, "workspaceRoot must be absolute on the REA host")
     .optional(),
 };
+/** Refusal for a stored registration that still selects the removed 1.4 proxy. */
+export const LEGACY_PROTOCOL_REMOVED =
+  'the legacy ida-pro-mcp 1.4 attached protocol was removed. Replace this registration with the native ida-free-mcp plugin ("protocol": "native") for an open GUI database, or an ida-pro-mcp 2.x database supervisor in headless mode, as described in "Migrate a legacy attached registration"';
 const registrationSchema = z
   .union([
     z
@@ -95,13 +101,20 @@ const registrationSchema = z
   )
   .refine(
     (config) => config.protocol !== undefined || config.mode !== "attached",
-    'attached IDA registrations must set protocol to "native" (ida-free-mcp plugin) or "legacy" (ida-pro-mcp 1.4 GUI proxy)',
+    'attached IDA registrations must set protocol to "native" (ida-free-mcp plugin)',
   )
   // Resolve the upstream protocol once; consumers never infer it from mode.
-  .transform((config) => ({
-    ...config,
-    protocol: config.protocol ?? ("modern" as const),
-  }));
+  .transform((config, context) => {
+    if (config.protocol === "legacy") {
+      context.addIssue({
+        code: "custom",
+        path: ["protocol"],
+        message: LEGACY_PROTOCOL_REMOVED,
+      });
+      return z.NEVER;
+    }
+    return { ...config, protocol: config.protocol ?? ("modern" as const) };
+  });
 
 /** An upstream MCP registration plus REA's database lifecycle selection. */
 export type IdaConfiguration = z.infer<typeof registrationSchema>;
@@ -119,13 +132,6 @@ const registrationConstraint = (
 
 /** Resolved compatibility facts; persisted identities and diagnostics intentionally differ. */
 export const IDA_COMPATIBILITY_PROFILES = {
-  legacy: {
-    protocol: "legacy",
-    mode: "attached",
-    identity: "legacy-1.4",
-    diagnosticIdentity: "legacy-1.4",
-    diagnosticLabel: "attached",
-  },
   modern: {
     protocol: "modern",
     mode: "headless",
@@ -248,10 +254,7 @@ export const readIdaConfiguration = (
             carriedReason(cancellation.reason),
             {
               cleanup: {
-                reason:
-                  cause.cleanupCause instanceof Error
-                    ? cause.cleanupCause.message
-                    : String(cause.cleanupCause),
+                reason: errorMessage(cause.cleanupCause),
                 resources: [path],
               },
             },
@@ -275,15 +278,12 @@ export const readIdaConfiguration = (
               ? primary.message
               : primary instanceof NonRegularFileReadError
                 ? `REA_IDA_MCP_CONFIG must select a regular JSON file: ${path}`
-                : `Cannot read IDA MCP registration ${path}: ${primary instanceof Error ? primary.message : String(primary)}`
+                : `Cannot read IDA MCP registration ${path}: ${errorMessage(primary)}`
             : `Cannot close IDA MCP registration ${path}; provide a readable JSON configuration.`;
         const error = new ConfigurationError(primaryMessage, {
           cause,
           cleanup: {
-            reason:
-              cause.cleanupCause instanceof Error
-                ? cause.cleanupCause.message
-                : String(cause.cleanupCause),
+            reason: errorMessage(cause.cleanupCause),
             resources: [path],
           },
           settings: [

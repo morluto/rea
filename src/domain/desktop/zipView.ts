@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import {
@@ -14,7 +12,8 @@ import {
   desktopViewByteDisplay,
   type DesktopViewPolicy,
 } from "./desktopViewPolicy.js";
-import { isRecord } from "../isRecord.js";
+import { isRecord } from "../../kernel/isRecord.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 /** Why an archive has no view; the exported reader words it the same. */
 export const UNREADABLE_ZIP = "not a readable zip archive";
@@ -95,7 +94,7 @@ export const zipEntry = (
   return {
     name: header.name,
     size: header.size,
-    sha256: createHash("sha256").update(bytes).digest("hex"),
+    sha256: sha256Hex(bytes),
     format,
     view: read.ok ? read.value : null,
     view_error: read.ok ? null : read.error,

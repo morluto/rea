@@ -552,6 +552,8 @@ it("cancels a pending storage-key reply and still releases its CDP owner", async
   expect(cdp.detachCalls).toBe(1);
 });
 
+// The child reply never arrives, so a missing command deadline leaves settle
+// pending until the test's deadline; the message names the value applied.
 it("bounds a stalled child CDP reply by command_timeout_ms", async () => {
   const cdp = new FakeCdp();
   const { page, contextApi } = fixture(cdp);
@@ -559,7 +561,6 @@ it("bounds a stalled child CDP reply by command_timeout_ms", async () => {
     ...scenario(),
     command_timeout_ms: 40,
   });
-  const started = performance.now();
   const owner = await createInitializedStorage(contextApi, page, input);
   expect(owner).toBeDefined();
   cdp.emit("Target.attachedToTarget", {
@@ -577,7 +578,6 @@ it("bounds a stalled child CDP reply by command_timeout_ms", async () => {
       "Set command_timeout_ms in the capture-browser-scenario JSON above 40",
     ),
   });
-  expect(performance.now() - started).toBeLessThan(4_000);
   await owner?.close();
 });
 

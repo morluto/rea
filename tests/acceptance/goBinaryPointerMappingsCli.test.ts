@@ -1,3 +1,4 @@
+import { fileIdentity } from "../fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -51,7 +52,7 @@ cliTest(
           bytes: fixture.moduleBytes.length,
         },
       });
-      expect(evidence.subject?.digest?.sha256).toBe(
+      expect(fileIdentity(evidence.subject).sha256).toBe(
         createHash("sha256").update(fixture.bytes).digest("hex"),
       );
       const response = await call("inspect_go_binary", { path });

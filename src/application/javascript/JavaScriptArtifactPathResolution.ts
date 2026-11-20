@@ -36,6 +36,7 @@ import { selectPackageSubpathPattern } from "../../domain/javascript/javascriptP
 import type { JavaScriptModuleResolutionMode } from "../../domain/javascript/javascriptModuleResolutionMode.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 type ArtifactPathResolutionContext =
   | "package-entrypoint"
@@ -1502,10 +1503,7 @@ const readPackageMetadata = (
         ? exports
         : undefined,
     // Import maps must be non-array objects; other shapes are not a map.
-    imports:
-      typeof imports === "object" && imports !== null && !Array.isArray(imports)
-        ? imports
-        : undefined,
+    imports: isRecord(imports) ? imports : undefined,
     main:
       input.moduleKind !== undefined && typeof main !== "string"
         ? undefined
@@ -1851,7 +1849,7 @@ const selectPackageExport = (
   let target = value;
   let pattern: string | undefined;
   let declared: string[] = [];
-  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+  if (isRecord(value)) {
     const keys = Object.keys(value);
     const hasSubpaths = keys.some((key) => key.startsWith("."));
     if (hasSubpaths && keys.some((key) => !key.startsWith(".")))

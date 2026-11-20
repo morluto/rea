@@ -1,6 +1,5 @@
 import type { Logger } from "pino";
 
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { createRustBinaryService } from "../composition/rust.js";
 import { RUST_TOOL_CONTRACTS } from "../contracts/rust/rustToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
@@ -21,7 +20,6 @@ export const registerRustCommands = (
     logger,
     contractNamed(RUST_TOOL_CONTRACTS, "inspect_rust_binary"),
     {
-      command: CLI_COMMANDS.inspectRustBinary,
       description:
         "Inspect an embedded cargo-auditable Rust dependency list without target execution",
       positionals: ["path"],
@@ -35,7 +33,8 @@ export const registerRustCommands = (
       },
       fields: {
         path: {
-          description: "Local ELF, PE, thin Mach-O or universal Mach-O image",
+          description:
+            "Local ELF, PE, thin or universal Mach-O, or WebAssembly core-module image",
         },
         producer_limits: { description: PRODUCER_LIMITS_HELP },
         architecture: {

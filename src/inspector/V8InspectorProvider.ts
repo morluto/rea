@@ -6,8 +6,8 @@ import {
 import type {
   ExecutionOptions,
   ProviderIdentity,
-} from "../application/AnalysisProvider.js";
-import type { JavaScriptRuntimeObservationPort } from "../application/javascript/JavaScriptRuntimeObservationPort.js";
+} from "../ports/AnalysisProvider.js";
+import type { JavaScriptRuntimeObservationPort } from "../ports/javascript/JavaScriptRuntimeObservationPort.js";
 import {
   javascriptRuntimeObservationSchema,
   javascriptRuntimeTargetListSchema,
@@ -664,6 +664,8 @@ const ingestEvent = (event: CdpReceivedEvent, state: CaptureState): void => {
     case "Runtime.executionContextsCleared":
       state.eventsObserved += 1;
       ingestContext(registered, state);
+      return;
+    default:
       return;
   }
 };

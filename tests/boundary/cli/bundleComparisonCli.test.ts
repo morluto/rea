@@ -1,3 +1,4 @@
+import { displayedEvidenceSubject } from "../../fixtures/evidenceSubject.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,14 +16,7 @@ import {
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-
-cliTest("rejects the removed compare-bundles command", async ({ cli }) => {
-  const result = await cli.run({
-    arguments: ["compare-bundles", "left.json", "right.json", "--json"],
-  });
-  expect(result.exitCode).toBe(1);
-  expect(result.stdout).toContain("COMMAND_NOT_FOUND");
-});
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 cliTest(
   "compares Evidence bundles without unexplained display-only changes",
@@ -54,11 +48,10 @@ cliTest(
       records: [
         {
           ...record,
-          subject: {
-            ...record.subject!,
+          subject: displayedEvidenceSubject(record.subject, {
             name: "renamed.elf",
             local_path: join(root, "renamed.elf"),
-          },
+          }),
         },
       ],
     };
@@ -178,6 +171,108 @@ cliTest(
 );
 
 cliTest(
+  "identifies an analysis snapshot across portable Evidence readers",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-compare-snapshot-kind-");
+    const bundlePath = join(root, "bundle.json");
+    const snapshotPath = join(root, "snapshot.json");
+    const malformedPath = join(root, "malformed.json");
+    const snapshot = {
+      target: {},
+      binding: {},
+      evidence_bundle: {},
+      entries: [],
+      workflow_entries: [],
+    };
+    await Promise.all([
+      writeFile(bundlePath, serializeEvidenceBundle(createEvidenceBundle([]))),
+      writeFile(snapshotPath, JSON.stringify(snapshot)),
+      writeFile(malformedPath, JSON.stringify({ ...snapshot, records: [] })),
+    ]);
+
+    const call = await cli.sharedMcpCall?.();
+    if (call === undefined) throw new Error("Expected shared MCP session");
+    const wrongKind = {
+      code: "invalid_request",
+      remediation: {
+        action: expect.stringContaining("standalone Evidence bundle"),
+      },
+      details: {
+        operation: "read",
+        reason: "wrong-kind",
+        detected_kind: "analysis-snapshot",
+        path: snapshotPath,
+        related_operations: ["export_evidence_bundle"],
+      },
+    };
+    const compareCli = (left: string, right: string) =>
+      cli.run({ arguments: ["compare", left, right, "--json"] });
+    const compareMcp = (left: string, right: string) =>
+      call("compare_bundles", {
+        left_bundle_path: left,
+        right_bundle_path: right,
+      });
+    for (const [left, right] of [
+      [snapshotPath, bundlePath],
+      [bundlePath, snapshotPath],
+    ] as const) {
+      const compared = await compareCli(left, right);
+      expect(compared.exitCode).toBe(1);
+      expect(compared.json).toMatchObject(wrongKind);
+      expect(
+        parseMcpToolError(await compareMcp(left, right)).error,
+      ).toMatchObject(wrongKind);
+    }
+
+    const source = { kind: "evidence-file", path: snapshotPath };
+    const view = { kind: "summary" };
+    const direct = await cli.run({
+      arguments: [
+        "inspect-analysis-view",
+        JSON.stringify({ source, view }),
+        "--json",
+      ],
+    });
+    expect(direct.exitCode).toBe(1);
+    const explicitSource = {
+      ...wrongKind,
+      remediation: {
+        action: expect.stringContaining("standalone Evidence record or bundle"),
+      },
+    };
+    expect(direct.json).toMatchObject(explicitSource);
+    expect(
+      parseMcpToolError(await call("inspect_analysis_view", { source, view }))
+        .error,
+    ).toMatchObject(explicitSource);
+
+    const portable = await cli.run({
+      arguments: [
+        "inspect-analysis-view",
+        JSON.stringify({
+          source: {
+            kind: "retained-evidence",
+            evidence_id: `ev_${"f".repeat(64)}`,
+          },
+          view,
+        }),
+        "--evidence-bundle",
+        snapshotPath,
+        "--json",
+      ],
+    });
+    expect(portable.exitCode).toBe(1);
+    expect(portable.json).toMatchObject(wrongKind);
+
+    const malformed = await compareCli(bundlePath, malformedPath);
+    expect(malformed.exitCode).toBe(1);
+    expect(malformed.json).toMatchObject({
+      code: "evidence_integrity_mismatch",
+    });
+  },
+);
+
+cliTest(
   "rejects relative bundle paths over stdio MCP while CLI resolves them from its cwd",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-bundle-path-boundary-");
@@ -189,10 +284,13 @@ cliTest(
       writeFile(rightPath, encoded),
     ]);
 
-    const client = new Client({
-      name: "bundle-path-contract-test",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "bundle-path-contract-test",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [

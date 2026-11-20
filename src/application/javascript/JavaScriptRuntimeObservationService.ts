@@ -1,5 +1,5 @@
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { JavaScriptRuntimeObservationPort } from "./JavaScriptRuntimeObservationPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { JavaScriptRuntimeObservationPort } from "../../ports/javascript/JavaScriptRuntimeObservationPort.js";
 import { createJavaScriptRuntimeObservationEvidence } from "./JavaScriptRuntimeObservationEvidence.js";
 import type { Evidence } from "../../domain/evidence.js";
 import {

@@ -1,9 +1,6 @@
+import { equalJsonValues } from "../jsonValue.js";
 import type { DesktopTask, DesktopTaskCheck } from "./appTask.js";
-import {
-  sameJson,
-  type TaskCheckOutcome,
-  type TaskFileView,
-} from "./appTaskChecks.js";
+import type { TaskCheckOutcome, TaskFileView } from "./appTaskChecks.js";
 
 /** The model a bundle's screen judge asks when the runner's config names none for judges or by default. */
 export const DEFAULT_JUDGE_MODEL = "anthropic/claude-sonnet-5-5";
@@ -56,7 +53,7 @@ export const readableChanges = (
         readable(before) &&
         readable(after) &&
         ((before === undefined) !== (after === undefined) ||
-          !sameJson(before?.view ?? null, after?.view ?? null))
+          !equalJsonValues(before?.view ?? null, after?.view ?? null))
       );
     })
     .sort();

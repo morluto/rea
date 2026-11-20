@@ -10,7 +10,7 @@ import {
 } from "yaml";
 import type { Node } from "yaml";
 
-import { isRecord } from "../domain/isRecord.js";
+import { isRecord } from "../kernel/isRecord.js";
 import { copyYamlAliasSource } from "./YamlConfigurationAliases.js";
 
 /**

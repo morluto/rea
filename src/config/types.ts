@@ -5,7 +5,6 @@ import type { ReferenceSourcePolicy } from "../domain/referenceSourcePolicy.js";
 import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
 
 import type { GhidraLanguageOverride } from "./ghidraLanguageOverride.js";
-import type { McpOutputSchemaProfile } from "./mcpOutputSchemaProfile.js";
 import type { McpToolCatalogProfile } from "./mcpToolCatalogProfile.js";
 import type { BridgeMaxRequestBytes } from "./bridgeMaxRequestBytes.js";
 import type { BridgeMaxReplyBytes } from "./bridgeMaxReplyBytes.js";
@@ -14,6 +13,7 @@ import type { RegexWorkerHeapRequest } from "./regexWorkerHeapRequest.js";
 import type { HopperCallerScanBudget } from "./hopperCallerScanBudget.js";
 import type { ConfigurationError } from "../domain/configurationErrors.js";
 import type { AnalysisSettingId } from "../domain/analysisSettings.js";
+import type { McpOutputSchemaProfile } from "../contracts/mcpSchemaPresentation.js";
 
 export interface AppConfig {
   readonly mcpToolFamilies?: readonly McpToolFamilies[number][];
@@ -40,7 +40,12 @@ export interface AppConfig {
   readonly ghidraCheckpointDirectory?: string;
   readonly ghidraNativeAotJar?: string;
   readonly ilspyCmdPath: string | undefined;
-  readonly hopperLauncherPath: string;
+  /**
+   * The caller's `HOPPER_LAUNCHER_PATH`, unchanged. Undefined selects
+   * automatic discovery, which the Hopper provider performs
+   * (src/hopperPaths/HopperLauncherDiscovery.ts).
+   */
+  readonly hopperLauncherPath: string | undefined;
   readonly hopperStartupTimeoutMs: number;
   /** Whether `hopperStartupTimeoutMs` came from the launch environment. */
   readonly hopperStartupTimeoutSource: "default" | "setting" | "runtime";

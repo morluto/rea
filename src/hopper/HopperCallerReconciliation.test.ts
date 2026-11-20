@@ -2,7 +2,7 @@ import { expect, it, vi } from "vitest";
 import { err, ok } from "../domain/result.js";
 import type { HopperClient } from "./HopperClient.js";
 import { reconcileHopperCallers } from "./HopperCallerReconciliation.js";
-import { AnalysisWorkScope } from "../application/AnalysisWorkScope.js";
+import { AnalysisWorkScope } from "../ports/AnalysisWorkScope.js";
 import {
   formatHopperCallerScanReason,
   HOPPER_CALLER_SCAN_RETENTION_BYTES,

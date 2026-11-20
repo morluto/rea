@@ -16,7 +16,7 @@ import type {
   AnalysisProviderBoundClientFactory,
   AnalysisProfileResolutionOptions,
   AnalysisProviderCandidate,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import type { AnalysisProviderCandidateStatus } from "./AnalysisProviderRegistry.js";
 import { withCandidateRejections } from "./AnalysisProviderCandidateDiagnostics.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";

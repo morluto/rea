@@ -2,14 +2,14 @@ import { mkdir } from "node:fs/promises";
 import { join, posix } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { defaultHopperLauncherPath } from "../config/parseConfig.js";
+import { defaultHopperLauncherPath } from "../hopperPaths/HopperLauncherDiscovery.js";
 import { SUPPORTED_NODE_VERSION_PROSE } from "../domain/runtimeVersion.js";
 import type { ClientRegistrationStatus } from "./ClientRegistrationStatus.js";
 import { createDoctorHostFixture as host } from "./Doctor.fixture.js";
 import { runDoctor, systemDoctorHost, type DoctorHost } from "./Doctor.js";
 import { err } from "../domain/result.js";
 import { HopperReleaseError } from "./HopperReleaseFeed.js";
-import { MAC_HOPPER_SYSTEM_LAUNCHER } from "./MacHopperPaths.js";
+import { MAC_HOPPER_SYSTEM_LAUNCHER } from "../hopperPaths/MacHopperPaths.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 const configurationHost = (

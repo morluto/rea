@@ -10,15 +10,64 @@ import { createIdaMcpConnection } from "./IdaMcpConnection.js";
 
 class FixtureProcess extends EventEmitter implements ProviderProcessHandle {
   readonly pid = 1;
-  readonly stdin = new PassThrough();
   readonly stdout = new PassThrough();
   readonly stderr = new PassThrough();
   readonly exitCode = null;
   readonly signalCode = null;
+  constructor(readonly stdin = new PassThrough()) {
+    super();
+  }
   kill(): boolean {
     return true;
   }
 }
+
+it("reports startup stderr drained after the handshake write fails", async () => {
+  const diagnostic = "IDA runtime initialization failed\n";
+  const child = new FixtureProcess(
+    new PassThrough({
+      write(_chunk, _encoding, done) {
+        done(Object.assign(new Error("write EPIPE"), { code: "EPIPE" }));
+        // Closing the protocol input and draining stderr are separate events.
+        setImmediate(() => {
+          child.emit("exit", 2, null);
+          child.stderr.write(diagnostic);
+          child.emit("close", 2, null);
+        });
+      },
+    }),
+  );
+  const launcher: OwnedMcpLauncher = async ({ runId }) => ({
+    process: child,
+    ownership: {
+      runId,
+      leaderPid: child.pid,
+      processGroupId: child.pid,
+      expectedParentPid: child.pid,
+    },
+    cleanup: async () => ({ cleaned: true, signaled: false }),
+  });
+  const connection = createIdaMcpConnection(
+    {
+      command: "/opt/ida-mcp/server",
+      args: [],
+      env: {},
+      protocol: "modern",
+      mode: "headless",
+      timeoutMs: 1000,
+    },
+    {},
+    { platform: "darwin", launcher },
+  );
+  try {
+    await expect(connection.connect()).rejects.toMatchObject({
+      _tag: "ProviderAdapterError",
+      capturedOutput: { stderr: diagnostic, truncated: false },
+    });
+  } finally {
+    await connection.close();
+  }
+});
 
 it("keeps a failed handshake's incomplete cleanup observable with the redacted server tail", async () => {
   const child = new FixtureProcess();
@@ -62,7 +111,7 @@ it("keeps a failed handshake's incomplete cleanup observable with the redacted s
       command: "/opt/ida-mcp/server",
       args: [],
       env: {},
-      protocol: "legacy",
+      protocol: "native",
       mode: "attached",
       timeoutMs: 5000,
     },

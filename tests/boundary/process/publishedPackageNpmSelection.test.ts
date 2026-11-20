@@ -73,20 +73,12 @@ const prepare = async () => {
   await symlink(resolve("node_modules"), join(controller, "node_modules"));
   const prerequisites = join(root, "prerequisites.mjs");
   await writeFile(prerequisites, prerequisiteProgram);
+  // The two prerequisites above are replaced; every other relative import of
+  // the copied verifier resolves from the repository verifier, so new helper
+  // modules need no entry here.
   const replacements = new Map([
     ["./lib/release-package-canary.mjs", pathToFileURL(prerequisites).href],
     ["./ci/npm-release.mjs", pathToFileURL(prerequisites).href],
-    ...[
-      "verify-package-commands.mjs",
-      "verifier-cleanup.mjs",
-      "verifier-run.mjs",
-    ].map(
-      (name) =>
-        [
-          `./lib/${name}`,
-          pathToFileURL(resolve("scripts/lib", name)).href,
-        ] as const,
-    ),
   ]);
   const hook = join(root, "selected-dependencies.mjs");
   await writeFile(
@@ -94,8 +86,12 @@ const prepare = async () => {
     `import { registerHooks } from "node:module";
 const selected = new Map(${JSON.stringify([...replacements])});
 const owner = ${JSON.stringify(pathToFileURL(join(controller, "scripts/verify-published-package.mjs")).href)};
+const repositoryOwner = ${JSON.stringify(pathToFileURL(resolve("scripts/verify-published-package.mjs")).href)};
+const relative = (specifier) => specifier.startsWith("./") || specifier.startsWith("../");
 registerHooks({ resolve(specifier, context, next) {
-  return next(context.parentURL === owner ? selected.get(specifier) ?? specifier : specifier, context);
+  if (context.parentURL !== owner) return next(specifier, context);
+  const replacement = selected.get(specifier) ?? (relative(specifier) ? new URL(specifier, repositoryOwner).href : specifier);
+  return next(replacement, context);
 } });
 `,
   );

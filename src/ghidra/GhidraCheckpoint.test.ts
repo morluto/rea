@@ -1,8 +1,8 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import {
   chmod,
   access,
-  mkdtemp,
   mkdir,
   readFile,
   writeFile,
@@ -11,9 +11,8 @@ import {
   symlink,
   type FileHandle,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import { acquireOwnedLease } from "../process/OwnedLease.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
@@ -45,7 +44,6 @@ vi.mock("../process/OwnedLease.js", async (importOriginal) => {
   return { ...actual, acquireOwnedLease: vi.fn(actual.acquireOwnedLease) };
 });
 
-const roots: string[] = [];
 const owners: GhidraCheckpoint[] = [];
 afterEach(async () => {
   controls.file = undefined;
@@ -63,8 +61,6 @@ afterEach(async () => {
   vi.mocked(rm).mockReset().mockImplementation(actual.rm);
   vi.mocked(rename).mockReset().mockImplementation(actual.rename);
   for (const owner of owners.splice(0)) await owner.close();
-  for (const root of roots.splice(0))
-    await rm(root, { recursive: true, force: true });
 });
 
 it.skipIf(process.platform === "win32")(
@@ -113,8 +109,7 @@ const profile = createAnalysisProfile(
 );
 const target = "1".repeat(64);
 async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), "rea-checkpoint-test-"));
-  roots.push(root);
+  const root = await createTestTempDirectory("rea-checkpoint-test-");
   const resources = new ArtifactResourceScope();
   const selection = await resolveGhidraCheckpoint(
     root,

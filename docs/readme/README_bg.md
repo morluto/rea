@@ -215,10 +215,13 @@ npm. Допълнителните инструменти и поддържани
 | PE импорти                      | Имена на импортирани и отложено зареждани (delay-load) DLL библиотеки, ординали, IAT RVA адреси и pefile хеш на импортите | Вградена статична проверка на PE; [PE импорти](../pe-imports.md)                                                                                                       |
 | Windows преки пътища            | Цел, аргументи, работна директория и данни от Shell Link                                                                  | Вградена статична проверка на LNK; [Windows преки пътища](../guides/native/windows-shortcut.md)                                                                        |
 | ELF бележки                     | Собственици и типове на PT_NOTE/SHT_NOTE, полета GNU build-id и ABI-tag                                                   | Вградена статична проверка на ELF; [ELF бележки](../elf-notes.md)                                                                                                      |
+| DWARF compile units             | Compile-unit name, directory, producer, language, and dwo_name                                                            | Built-in static ELF, Mach-O, and PE inspection; [DWARF compile units](../guides/native/dwarf-units.md)                                                                 |
+| ELF dependencies                | DT_NEEDED, SONAME, RPATH/RUNPATH, GNU versions, and undefined imports                                                     | Built-in static ELF inspection; [ELF dependencies](../elf-dependencies.md)                                                                                             |
 | Защита на бинарни файлове       | PIE, NX, RELRO, CFG и свързаните с тях флагове в заглавните части на ELF, PE и Mach-O                                     | Вградена статична проверка на заглавните части; [защита на бинарни файлове](../binary-hardening.md)                                                                    |
 | Сривове на Apple (IPS)          | Метаданни от .ips, нишки, образи, регистри и документирани класове сривове                                                | Вградена статична проверка на JSON; [Apple IPS](../apple-ips.md)                                                                                                       |
 | Модули на ядрото на Linux       | Ключове от .modinfo, CRC стойности от __versions, наличие на this_module и подпис в края на файла                         | Вградена статична проверка на ELF; [модули на ядрото](../kernel-modules.md)                                                                                            |
 | Erlang BEAM                     | IFF блокове (chunks), атоми, експорти, импорти, ламбди и заглавната част Code                                             | Вградена статична проверка на BEAM; [Erlang BEAM](../erlang-beam.md)                                                                                                   |
+| NuGet пакети                    | Идентичност на пакета, групи зависимости, лиценз, хранилище и съдържание на ZIP                                           | Вградена статична проверка на .nupkg; [NuGet пакети](../guides/managed/nuget-nupkg.md)                                                                                 |
 | WASM артефакти                  | Валидация, секции, точни WAT форми на импортите/експортите и декодиран WAT                                                | Предоставен от вас WABT 1.0.42; `inspect_wasm_artifact`                                                                                                                |
 | EVM байткод                     | Селектори на функции, отмествания в байтове, изведени аргументи и променливост (mutability)                               | Локален raw/hex носител на Linux x64; [ръководство за офлайн EVM](../guides/evm/evm-bytecode.md)                                                                       |
 | SQLite бази данни               | Таблици, колони, индекси, изгледи, тригери и избрани редове от обикновени таблици                                         | Локална моментна снимка на базата/WAL; Node.js 24.x >=24.15 или 26+ с нативни ограничения на SQLite                                                                    |
@@ -459,7 +462,6 @@ npx rea-agents@latest setup
 - [CLI и Evidence](../getting-started/cli.md): команди, избор на доставчик, моментни снимки, импорт/експорт и изходни статуси.
 - [MCP договори](../reference/mcp-contracts.md) и [подсказки за агенти](../getting-started/mcp-prompts.md): резултати от инструментите, сесии и насочвани изследвания.
 - [Каталог с инструменти](../reference/mcp-contracts.md#generated-catalog): генериран списък с инструменти, доставчици и CLI команди.
-- [Пътна карта](../development/roadmap.md): планирана работа и проследяване на възможностите.
 
 Съобщавайте за уязвимости чрез [SECURITY.md](../../SECURITY.md).
 
@@ -498,8 +500,7 @@ REA е предназначен за законни изследвания, об
 
 Вижте [CONTRIBUTING.md](../../CONTRIBUTING.md) за настройка на средата за
 разработка и проверките, [тестване](../development/testing.md) за видовете
-проверки и [картата на архитектурата](../architecture/architecture.mermaid) за
-избрани слоеве и пътища на зависимостите.
+проверки.
 
 ## Лиценз
 

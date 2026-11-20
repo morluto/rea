@@ -18,6 +18,7 @@ import { npmInvocation } from "../../../scripts/lib/npm-invocation.mjs";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const registrationSchema = z.object({
   mcpServers: z.object({
@@ -131,10 +132,13 @@ cliTest.skipIf(process.platform === "win32")(
         env: clientEnvironment,
         stderr: "pipe",
       });
-      const client = new Client({
-        name: "real-npm-registration",
-        version: "1",
-      });
+      const client = new Client(
+        {
+          name: "real-npm-registration",
+          version: "1",
+        },
+        { jsonSchemaValidator: createMcpSchemaValidation() },
+      );
       try {
         await client.connect(transport);
         expect(client.getServerVersion()?.version).toBe(

@@ -6,14 +6,14 @@ import { z } from "zod";
 import type {
   JebAnalysisPort,
   JebAnalysisAvailability,
-} from "../../../src/application/jeb/JebAnalysisPort.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/jeb/JebAnalysisPort.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { AnalysisTimeoutError } from "../../../src/domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
-import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../../src/resources/AnalysisCleanupLease.js";
 import { JebMcpCleanupFailure } from "../../../src/jeb/JebMcpConnectionOwner.js";
 import { jebMcpTimeoutGuidance } from "../../../src/jeb/JebMcpDeadline.js";
 import type { JebMcpConnection } from "../../../src/jeb/JebMcpConnection.js";

@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import { SqliteDatabaseService } from "./SqliteDatabaseService.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 import { err, ok } from "../../domain/result.js";
-import { createAnalysisExecution } from "../AnalysisProvider.js";
+import { createAnalysisExecution } from "../../ports/AnalysisProvider.js";
 import { sqliteDatabaseSchema } from "../../domain/sqlite/sqliteDatabase.js";
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 
@@ -283,7 +283,7 @@ it.each([false, true])(
       confidence: "observed",
       subject: {
         local_path: "/selected.db",
-        digest: { sha256: "a".repeat(64) },
+        identity: { sha256: "a".repeat(64) },
       },
       normalized_result: value,
       analysis_profile: profile,

@@ -764,7 +764,9 @@ try {
         "invalid_input",
       );
       assert.equal(failure.details.issues[0].reason, "out_of_range");
-      assert.deepEqual(failure.details.issues[0].path, ["capture_path"]);
+      assert.deepEqual(failure.details.issues[0].path, [
+        mode === "cli" ? "capturePath" : "capture_path",
+      ]);
       assert.equal(
         failure.details.issues[0].expected.maximum_capture_bytes,
         WEB_NETWORK_CAPTURE_LIMITS.inputBytes,
@@ -785,7 +787,10 @@ try {
       );
       const issue = failure.details.issues[0];
       assert.equal(issue.reason, "out_of_range");
-      assert.equal(issue.path[0], "capture_path");
+      assert.equal(
+        issue.path[0],
+        mode === "cli" ? "capturePath" : "capture_path",
+      );
       assert.match(issue.path[1], /^\/_extension\/child/);
       assert.equal(
         issue.expected.maximum_capture_nesting,
@@ -1053,8 +1058,9 @@ function assertSensitiveLimitations(evidence, literals) {
           "Declared literal retained in Evidence parameter",
         );
   const result = evidence.normalized_result;
-  if (result.artifact.sha256 === null) assert.equal(evidence.subject, null);
-  else assert.equal(evidence.subject.digest.sha256, result.artifact.sha256);
+  if (result.artifact.sha256 === null)
+    assert.equal(evidence.subject.identity.kind, "unknown");
+  else assert.equal(evidence.subject.identity.sha256, result.artifact.sha256);
   assert.deepEqual(
     evidence.provider,
     result.decoder,

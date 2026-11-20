@@ -12,7 +12,7 @@ import {
   HOT_TOOL_NAMES,
   progressiveCatalogIdentity,
   type CatalogIdentity,
-} from "../catalogDiscovery.js";
+} from "../contracts/catalog/catalogDiscovery.js";
 
 /** Per-connection visibility; canonical SDK handles retain validation and authority. */
 export class ProgressiveToolCatalog {

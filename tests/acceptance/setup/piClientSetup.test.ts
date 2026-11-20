@@ -1,15 +1,15 @@
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { expect } from "vitest";
 import { z } from "zod";
 
-import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/config/mcpInputSchemaProfile.js";
-
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/contracts/mcpSchemaPresentation.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 for (const [setting, profile] of [
   ["REA_MCP_INPUT_SCHEMA_PROFILE", ""],
@@ -167,7 +167,10 @@ cliTest(
       },
       stderr: "pipe",
     });
-    const client = new Client({ name: "setup-environment", version: "1" });
+    const client = new Client(
+      { name: "setup-environment", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     try {
       await client.connect(transport);
       const { tools } = await client.listTools();
@@ -229,6 +232,11 @@ cliTest(
           OMP_PROFILE: "work",
           PI_PROFILE: "legacy",
           PI_CONFIG_DIR: ".omp-other",
+          // Pin this lifecycle's runtime selection; alias preservation has
+          // separate coverage and must not depend on the developer's PATH.
+          PATH: [dirname(process.execPath), process.env.PATH ?? ""].join(
+            delimiter,
+          ),
         },
       });
 
@@ -495,7 +503,9 @@ cliTest(
           { client: "codex", state: "aligned" },
           {
             client: "pi",
-            state: "invalid",
+            state: "unknown",
+            command: [],
+            command_identity: "unknown",
             remediation: expect.stringContaining("PI_CODING_AGENT_DIR"),
           },
         ],
@@ -503,7 +513,16 @@ cliTest(
     });
     const piDoctor = await run(["doctor", "--client", "pi", "--json"]);
     expect(piDoctor.exitCode).not.toBe(0);
-    expect(piDoctor.json).toMatchObject({ healthy: false });
+    expect(piDoctor.json).toMatchObject({
+      healthy: false,
+      scope_checks: expect.arrayContaining([
+        expect.objectContaining({
+          name: "registration:pi",
+          ok: false,
+          classification: "unknown",
+        }),
+      ]),
+    });
     expect((await readdir(home)).sort()).toEqual([".agents", ".codex"]);
   },
 );

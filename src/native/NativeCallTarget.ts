@@ -20,15 +20,14 @@ import {
   RegularFileCleanupFailure,
   regularFileCancellation,
 } from "../filesystem/OwnedRegularFile.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import {
+  AnalysisCleanupLease,
   ArtifactResourceRetryFailure,
   type ArtifactResourceScope,
-} from "../artifacts/ArtifactResourceScope.js";
-import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/index.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "observe_native_calls";
 
@@ -77,7 +76,7 @@ export const nativeCallTargetFailure = (
       path,
       phase: "target-digest",
       reason: "Unable to verify the selected target digest",
-      detail: physical instanceof Error ? physical.message : String(physical),
+      detail: errorMessage(physical),
     },
   });
 };
@@ -135,10 +134,7 @@ export const verifyNativeCallTarget = async (
         [target.path],
         {
           phase: "target-digest-close",
-          reason:
-            cause.cleanupCause instanceof Error
-              ? cause.cleanupCause.message
-              : String(cause.cleanupCause),
+          reason: errorMessage(cause.cleanupCause),
           ...completed,
         },
         { operation: OPERATION, cause: framed, cleanupPrimary: primary },

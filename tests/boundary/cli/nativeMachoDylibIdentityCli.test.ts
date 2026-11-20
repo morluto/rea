@@ -66,7 +66,7 @@ describe.skipIf(process.platform !== "darwin")(
         expect(fat.format).toBe("mach-o-universal");
         expect(fat.architectures.items).toHaveLength(1);
         expect(fatResult.json).toMatchObject({
-          subject: { format: fat.format },
+          subject: { identity: { format: fat.format } },
         });
         expect(inspected.format).toBe("mach-o");
       },

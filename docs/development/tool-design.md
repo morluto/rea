@@ -200,12 +200,14 @@ does not establish another instance.
   and qualify negative and shortest-path claims by discovery scope. Missing
   relationship coverage remains `unknown`. Computed candidates and unestablished incoming targets qualify directional discovery; they do not by themselves mean that recorded edges were omitted.
 - Declare process, filesystem, network, UI, and mutation effects truthfully;
-  enforce the requested target and lifecycle.
+  enforce the requested target and lifecycle. A private temporary copy is a
+  filesystem write even when the selected artifact remains untouched. Derive
+  overlapping tool and provider effect declarations from the same fact.
 - Add limits only for real format, protocol, authority, or measured resource
   constraints. Report pagination, truncation, cancellation, and partial failure.
   An assumed agent budget is insufficient justification for a limit. Name the
   ceiling and its recovery as described in
-  [admission limits and recovery](../design/limits-and-recovery.md).
+  [admission limits and recovery](../reference/limits-and-recovery.md).
 
 ### Compose declared Evidence inputs
 
@@ -262,6 +264,72 @@ activation independently of readiness. An owned registration may be disabled
 or stale; unresolved ownership remains unknown. Consumers use those facts
 instead of reclassifying the raw command.
 
+Keep the reader's observation independent of the operation that needs it.
+For example, the Evidence file reader can recognize the shape of an
+analysis snapshot before authenticating it. Import and comparison can
+recommend different next steps while reporting the same observed kind.
+The reader also retains disagreements in the input. If two observed header
+fields conflict, carry that uncertainty forward before projecting the fields
+into a single value. A command launcher likewise needs the parser's token
+boundaries so an option value cannot select a transport mode.
+
+When one operation can show partial results and another requires a complete
+document, share the grammar and give each operation an explicit policy for
+handling diagnostics. Preserve source spelling and offset units alongside any
+normalized lookup value. Use the stored name when a package format requires
+an exact member path. Verify both operations with the same authored inputs and
+independently specified expectations. See [boundary regressions](testing.md#boundary-regressions).
+
+For example, APT one-line sources can spell a suite as `"stable"` and a
+component as `main%2Cextra`. With APT 2.8.4, those words select suite
+`stable` and component `main,extra`. The source reader owns the word
+decoding. Capture retains the authored spelling and uses the effective
+identity to match the observed index. Replay uses that same identity
+when deciding what it can write to a deb822 declaration.
+
+Test an accepted pair and a refusal. The quoted suite and escaped
+component should select the same index as their deb822 equivalents.
+A one-line component written as `"main extra"` should be withheld from
+replay because deb822 would read it as two components. Check the captured
+facts and the emitted or withheld declaration. Pin the reference reader
+version and record which steps ran. The [offline APT reproduction](https://github.com/morluto/rea/issues/12694)
+checked source and index identity without installing or deploying the app.
+
+Keep format recognition, validation, and the operation's decision separate.
+A recognizable PTX header can identify a candidate even when its text is
+invalid or only a prefix was examined. Derive effective fields and completeness
+from the validated extent. Likewise, retain fields for tolerant Desktop Entry
+inspection while carrying group diagnostics to application-ID lookup, where
+an invalid entry cannot establish that the application is hidden.
+
+When Evidence includes a source digest, bind it to the admitted bytes used
+by the parser and any converter. A pathname identifies a selection whose
+contents can change between reads. If a native command needs a file, give it
+the same owned byte snapshot used for the digest. Keep the Evidence subject
+and selected source distinct when they identify different artifacts.
+
+Give each nested parser the admitted extent of its containing record.
+Check a child's declared encoded range against that extent before applying
+its decoding allowance. If the format declares more fields or rows after the
+child, leave room for their minimum required framing. When the range cannot
+fit, report the format failure even if the decoded size would also exceed a
+budget. Keep encoded ranges separate from declared decoded lengths so an
+expansion limit can preserve the source range and any independently readable
+siblings.
+Retain the source offset and the reason when a field is malformed or its
+encoding is unsupported. A stream may need more bytes to complete a frame.
+A completed artifact with the same missing bytes has truncated data. Carry
+that distinction into coverage and preserve any independently observed facts.
+
+When consumers in different runtimes receive raw input independently, reuse
+the same reader where the runtime is available. If separate implementations
+are needed, prefer generating them from one authored set of parsing rules.
+For example, desktop capture and an offline AppImage installer need the same
+rules to locate the executable after an `env` prefix. The installer also needs
+the executable's source span so it can replace that token while preserving the
+rest of the entry. Use shared fixtures with explicit expected results to check
+the common interpretation through both entry points.
+
 Owned provider commands follow the same rule. `providerOutcomeOf` in
 `src/process/ProviderOutcome.ts` reads what the supervisor observed (launch
 refusal, cancellation, deadline, output or memory limit, resource signal, exit
@@ -312,10 +380,19 @@ omissions alone explain it; independently proven differences still survive.
 A byte-format parser reports failure with `ParseFailureError` from
 `src/domain/parseFailure.ts`: `malformed`, `truncated`, `unsupported`, or
 `limit`, with the format and, when known, the offset and field. Read bounded
-fields through `BinaryReader` (`src/native/metadata/BinaryContainer.ts`), which
+fields through `BinaryReader` (`src/domain/binaryContainer.ts`), which
 raises that failure instead of a bare `RangeError`. Providers project the
 failure with `parseFailureAnalysisError` rather than their own `instanceof`
-ladder; a `limit` stays with its producer, which knows the budget to name.
+ladder. The producing reader identifies the named limit and effective maximum.
+Use those facts for the public refusal and recovery. When decoding stops before
+the reader can measure the final allowance, report the bound that actually
+stopped it.
+
+For retained managed metadata rows, use `metadataRowCursor` in
+`src/domain/managed/managedMetadataHeaps.ts`. Its column reads use
+`BinaryReader` within the admitted row and preserve managed issue offsets and
+per-row budget accounting.
+
 Do not use `RangeError` as a failure channel: a stack overflow, a host string
 or buffer limit, and an unchecked read past the end of a buffer are all
 `RangeError`s. `hostRangeErrorKind` is the one interpreter of a host
@@ -324,8 +401,8 @@ as evidence about the input. Readers report bounds failures at the read site;
 host error codes alone cannot distinguish a read from a write or allocation.
 `scripts/verify/architecture-guards.mjs` counts the remaining raw `Buffer` and
 `DataView` reads, plain `Error` throws in parser folders, plain `JSON.parse`
-of parser input, and direct `instanceof RangeError` checks against
-`scripts/verify/architecture-guard-baselines.json`. A
+of parser input, and direct `instanceof RangeError` checks against their
+per-guard baselines in `scripts/verify/baselines/`. A
 file may not exceed its count; after removing copies, run
 `node scripts/verify/architecture-guards.mjs --shrink-baselines`.
 
@@ -616,6 +693,10 @@ A CLI command for a tool contract is described by `describeContractCommand` in
 [`contractCliDescription.ts`](https://github.com/morluto/rea/blob/main/src/cli/contractCliDescription.ts)
 and rendered for the CLI framework by `registerContractCommand` in
 [`contractCommand.ts`](https://github.com/morluto/rea/blob/main/src/cli/contractCommand.ts).
+A contract with `cli: true` names its own command, the kebab-case spelling of
+its name; the CLI command inventory in `catalogIdentity.ts` is derived from
+those declarations, and the projection omits `command` for it. `CLI_COMMANDS`
+holds only the commands no contract names.
 The projection names only what the CLI spells differently: positionals,
 caller-relative path fields, option renames and short flags, CLI help wording,
 omitted optional fields with a reason, Evidence delivery options, and whether the contract's cross-field

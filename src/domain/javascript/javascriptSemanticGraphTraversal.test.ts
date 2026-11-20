@@ -115,23 +115,6 @@ const registryForGraph = (
   return registry;
 };
 
-it("returns every relevant unknown inline", () => {
-  const graph = semanticFixtureGraph(true);
-  const callable = graph.nodes.find(({ kind }) => kind === "function");
-  if (callable === undefined) throw new Error("Expected callable node");
-  const result = queryJavaScriptSemanticGraph(
-    graph,
-    javaScriptSemanticQueryInputSchema.parse({
-      seed: { kind: "semantic-node", node_id: callable.node_id },
-      direction: "forward-influence",
-    }),
-  );
-  expect(result).toMatchObject({
-    summary: { relevant_unknowns: 1 },
-  });
-  expect(result.unknowns).toHaveLength(1);
-});
-
 it("does not admit a semantic-node seed absent from the graph", () => {
   const result = queryJavaScriptSemanticGraph(
     semanticFixtureGraph(),
@@ -149,102 +132,67 @@ it("does not admit a semantic-node seed absent from the graph", () => {
   });
 });
 
-it("returns the complete deterministic forward influence result inline", () => {
-  const graph = semanticFixtureGraph();
-  const input = {
-    seed: { kind: "literal" as const, value: "TOKEN" },
-    direction: "forward-influence" as const,
-    expected: { role: "sink" as const, classes: ["request" as const] },
-  };
-  const first = queryJavaScriptSemanticGraph(
-    graph,
-    javaScriptSemanticQueryInputSchema.parse(input),
-  );
-  expect(first).toMatchObject({
-    status: "found",
-    summary: { traversed_nodes: 4, traversed_relations: 3 },
-    relations: expect.any(Array),
-  });
-  expect(first.expected_match_node_ids).toHaveLength(1);
-  expect(first.relations).toHaveLength(3);
-});
-
-it("returns only the referenced evidence contexts with resolvable trace facts", () => {
-  const graph = semanticFixtureGraph();
-  const result = queryJavaScriptSemanticGraph(
-    graph,
-    javaScriptSemanticQueryInputSchema.parse({
-      seed: { kind: "literal", value: "TOKEN" },
-      direction: "forward-influence",
-    }),
-  );
-  const expectedContextIds = [
-    ...new Set([
-      ...result.nodes.map(({ evidence }) => evidence.context_id),
-      ...result.relations.map(({ evidence }) => evidence.context_id),
-      ...result.unknowns.map(({ evidence }) => evidence.context_id),
-    ]),
-  ].sort();
-  expect(result.evidence_contexts.map(({ context_id }) => context_id)).toEqual(
-    expectedContextIds,
-  );
-  for (const node of result.nodes)
-    expect(resolveJavaScriptSemanticEvidence(result, node.evidence)).toEqual(
-      resolveJavaScriptSemanticEvidence(graph, node.evidence),
-    );
-});
-
-it("traverses paths beyond the former fixed depth ceiling", () => {
+it("returns reachable influence facts and only their evidence contexts", () => {
   const original = semanticFixtureGraph();
-  const input = constructionInput(original);
   const evidenceContexts = registryForGraph(original);
-  const request = original.nodes.find(({ kind }) => kind === "request");
-  if (request === undefined) throw new TypeError("Missing request node");
-  const chain = Array.from({ length: 70 }, (_, index) =>
-    node("binding", `long-chain-${index}`, evidenceContexts),
-  );
-  const chainRelations = chain.map((target, index) =>
-    createJavaScriptSemanticGraphRelation(
-      {
-        source_node_id: chain[index - 1]?.node_id ?? request.node_id,
-        target_node_id: target.node_id,
-        relation: "reads",
-        resolution: "resolved",
-        properties: {},
-        evidence: semanticGraphTestEvidence("inferred"),
+  const moduleNode = original.nodes.find(({ kind }) => kind === "module");
+  if (moduleNode === undefined)
+    throw new Error("Expected the unreachable module");
+  const { node_id: _moduleId, evidence, ...moduleInput } = moduleNode;
+  const moduleEvidence = resolveJavaScriptSemanticEvidence(original, evidence);
+  const unrelated = createJavaScriptSemanticGraphNode(
+    {
+      ...moduleInput,
+      evidence: {
+        ...moduleEvidence,
+        extractor: { ...moduleEvidence.extractor, name: "unreachable-module" },
       },
-      evidenceContexts,
-    ),
+    },
+    evidenceContexts,
   );
   const graph = createJavaScriptSemanticGraph({
-    ...input,
+    ...constructionInput(original),
+    nodes: original.nodes.map((entry) =>
+      entry.node_id === moduleNode.node_id ? unrelated : entry,
+    ),
     evidence_contexts: evidenceContexts.contexts,
-    nodes: [...input.nodes, ...chain],
-    relations: [...input.relations, ...chainRelations],
-    coverage: {
-      ...original.coverage,
-      families: original.coverage.families.map((family) =>
-        family.family === "data-flow"
-          ? {
-              ...family,
-              retained_relations:
-                family.retained_relations + chainRelations.length,
-            }
-          : family,
-      ),
-    },
   });
-
   const result = queryJavaScriptSemanticGraph(
     graph,
     javaScriptSemanticQueryInputSchema.parse({
       seed: { kind: "literal", value: "TOKEN" },
       direction: "forward-influence",
+      expected: { role: "sink", classes: ["request"] },
     }),
   );
 
-  expect(result.summary.traversed_nodes).toBe(74);
-  expect(result.nodes).toHaveLength(74);
+  expect(result).toMatchObject({
+    status: "found",
+    summary: { traversed_nodes: 4, traversed_relations: 3 },
+  });
+  expect(result.nodes.map(({ kind }) => kind).sort()).toEqual([
+    "binding",
+    "function",
+    "literal",
+    "request",
+  ]);
+  expect(result.relations.map(({ relation }) => relation).sort()).toEqual([
+    "captures",
+    "constructs-request",
+    "defines",
+  ]);
+  expect(result.expected_match_node_ids).toEqual([
+    original.nodes.find(({ kind }) => kind === "request")?.node_id,
+  ]);
+  expect(result.evidence_contexts).toEqual(
+    graph.evidence_contexts.filter(
+      ({ context_id }) => context_id !== unrelated.evidence.context_id,
+    ),
+  );
+  for (const fact of [...result.nodes, ...result.relations])
+    expect(resolveJavaScriptSemanticEvidence(result, fact.evidence)).toEqual(
+      resolveJavaScriptSemanticEvidence(graph, fact.evidence),
+    );
 });
 
 it("accepts deeply nested semantic properties", () => {
@@ -263,8 +211,9 @@ it("accepts deeply nested semantic properties", () => {
 });
 
 it("keeps relevant dynamic frontiers unknown", () => {
+  const graph = semanticFixtureGraph(true);
   const result = queryJavaScriptSemanticGraph(
-    semanticFixtureGraph(true),
+    graph,
     javaScriptSemanticQueryInputSchema.parse({
       seed: { kind: "literal", value: "TOKEN" },
       direction: "forward-influence",
@@ -272,12 +221,11 @@ it("keeps relevant dynamic frontiers unknown", () => {
   );
   expect(result.status).toBe("partial");
   expect(result.coverage.status).toBe("partial");
-  expect(result.unknowns).toMatchObject([
-    { reason: "dynamic-call", relation_kinds: ["calls"] },
-  ]);
+  expect(result.summary.relevant_unknowns).toBe(1);
+  expect(result.unknowns).toEqual(graph.unknowns);
 });
 
-it("reports partial status when retained graph facts were truncated", () => {
+it("reports a partial trace when the graph has unknown omission counts", () => {
   const graph = semanticFixtureGraph();
   const partial = createJavaScriptSemanticGraph({
     ...constructionInput(graph),
@@ -290,6 +238,12 @@ it("reports partial status when retained graph facts were truncated", () => {
       limits: [{ name: "nodes", value: 1, unit: "items" }],
     },
     limitations: ["The node ceiling left omission extents unknown."],
+  });
+  expect(partial.coverage).toMatchObject({
+    status: "partial",
+    truncated: true,
+    omitted_nodes: null,
+    omitted_relations: null,
   });
   const result = queryJavaScriptSemanticGraph(
     partial,
@@ -594,7 +548,14 @@ it("keeps candidate uncertainty at the end of a long reachable path", () => {
     expect(result).toMatchObject({
       status: "ambiguous",
       coverage: { status: "partial" },
+      summary: {
+        traversed_nodes: include ? 72 : 71,
+        traversed_relations: include ? 71 : 70,
+      },
     });
-    expect(result.nodes).toHaveLength(include ? 72 : 71);
+    const reachable = include ? chain : chain.slice(0, -1);
+    expect(result.nodes.map(({ node_id }) => node_id).toSorted()).toEqual(
+      reachable.map(({ node_id }) => node_id).toSorted(),
+    );
   }
 });

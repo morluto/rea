@@ -1,21 +1,18 @@
 import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
-import { createHash } from "node:crypto";
 import { isAbsolute } from "node:path";
 import type { Readable } from "node:stream";
 
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import { AsarArtifactReader } from "../AsarArtifactReader.js";
-import type { ArtifactResourceScope } from "../ArtifactResourceScope.js";
 import {
-  ArtifactPathRegistry,
-  normalizeArtifactPath,
-} from "../ArtifactPaths.js";
-import {
+  type ArtifactResourceScope,
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReader,
-} from "../ArtifactReader.js";
-import { streamChunkToBuffer } from "../StreamBytes.js";
+  ArtifactPathRegistry,
+  normalizeArtifactPath,
+  streamChunkToBuffer,
+} from "../../resources/index.js";
 import { hashReadableToCompletion } from "../ArtifactHash.js";
 import type { ArtifactOccurrence } from "../../domain/artifactGraph.js";
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
@@ -31,6 +28,7 @@ import type {
   JavaScriptArtifactFileSet,
 } from "../../domain/javascript/javascriptArtifactFiles.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 interface ExpectedFile {
   readonly path: string;
@@ -383,7 +381,7 @@ const readText = async (
     await input.reader.open(input.entry, context.signal),
     context.signal,
   );
-  const digest = createHash("sha256").update(bytes).digest("hex");
+  const digest = sha256Hex(bytes);
   if (digest !== input.expected.sha256 || bytes.length !== input.expected.bytes)
     throw new ArtifactReaderFailure(
       "integrity",
