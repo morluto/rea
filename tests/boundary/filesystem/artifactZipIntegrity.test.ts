@@ -130,15 +130,6 @@ for (const zip64 of [false, true]) {
       const bytes = Buffer.from(await writer.close());
       await writeFile(archive, bytes);
       const digest = createHash("sha256").update(bytes).digest("hex");
-      const inventory = await inventoryArtifact(archive);
-      expect(inventory.manifest).toMatchObject({
-        root_sha256: digest,
-        root_format: "zip",
-      });
-      expect(inventory.coverage).toEqual({
-        scope: "container-entries",
-        status: "complete",
-      });
       const inspected = await cli.run({
         arguments: ["inspect-artifact", archive, "--json"],
       });
@@ -152,6 +143,10 @@ for (const zip64 of [false, true]) {
       expect(retained.manifest).toMatchObject({
         root_sha256: digest,
         root_format: "zip",
+      });
+      expect(retained.coverage).toEqual({
+        scope: "container-entries",
+        status: "complete",
       });
       const extracted = await cli.run({
         arguments: ["extract-artifact", archive, "--json"],
