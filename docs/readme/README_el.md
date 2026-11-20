@@ -365,7 +365,6 @@ npx rea-agents@latest setup
 - [CLI και Evidence](../getting-started/cli.md): εντολές, επιλογή παρόχου, στιγμιότυπα, εισαγωγή/εξαγωγή και κωδικοί εξόδου.
 - [Προδιαγραφές MCP](../reference/mcp-contracts.md) και [prompts για agents](../getting-started/mcp-prompts.md): αποτελέσματα εργαλείων, συνεδρίες και καθοδηγούμενες διερευνήσεις.
 - [Κατάλογος εργαλείων](../reference/mcp-contracts.md#generated-catalog): αυτόματα παραγόμενος κατάλογος εργαλείων, παρόχων και εντολών CLI.
-- [Οδικός χάρτης](../development/roadmap.md): προγραμματισμένες εργασίες και παρακολούθηση της ανάπτυξης δυνατοτήτων.
 
 Ανάφερε ευπάθειες ακολουθώντας το [SECURITY.md](../../SECURITY.md).
 
@@ -395,7 +394,7 @@ npx rea-agents@latest setup
 
 Θα χαρούμε να βοηθήσεις στο REA! [Άνοιξε ένα issue](https://github.com/morluto/rea/issues) για να αναφέρεις ένα σφάλμα ή να προτείνεις μια λειτουργία, ή [στείλε ένα pull request](https://github.com/morluto/rea/pulls) για να βελτιώσεις τον κώδικα ή την τεκμηρίωση.
 
-Δες το [CONTRIBUTING.md](../../CONTRIBUTING.md) για τη ρύθμιση του περιβάλλοντος ανάπτυξης και τους ελέγχους, τον [οδηγό δοκιμών](../development/testing.md) για τις διαδικασίες επαλήθευσης και τον [χάρτη αρχιτεκτονικής](../architecture/architecture.mermaid) για τη δομή του έργου.
+Δες το [CONTRIBUTING.md](../../CONTRIBUTING.md) για τη ρύθμιση του περιβάλλοντος ανάπτυξης και τους ελέγχους, τον [οδηγό δοκιμών](../development/testing.md) για τις διαδικασίες επαλήθευσης.
 
 ## Άδεια χρήσης
 

@@ -34,11 +34,6 @@ export function formatGuidLittleEndian(
   ].join("-");
 }
 
-/** Case-insensitive canonical GUID comparison. */
-export function guidEquals(left: string, right: string): boolean {
-  return left.toLowerCase() === right.toLowerCase();
-}
-
 /**
  * FFS2 container GUID (PI Specification, firmware file system 2).
  * Raw bytes: 78 E5 8C 8C 3D 8A 1C 4F 99 35 89 61 85 C3 2D D3.

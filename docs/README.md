@@ -177,15 +177,13 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 ## Development and verification
 
 - [Documentation ownership and authoring](development/documentation.md)
-- [Settings and recovery](design/limits-and-recovery.md)
-- [REA limit inventory](design/rea-limit-inventory.md)
+- [Settings and recovery](reference/limits-and-recovery.md)
+- [REA limit inventory](reference/rea-limit-inventory.md)
 - [MCP tool design](development/tool-design.md)
 - [Testing REA](development/testing.md)
 - [Client and agent verification](development/client-verification.md)
 - [Reconstruction readiness conformance](development/reconstruction-readiness.md)
 - [Releasing REA](development/releasing.md)
-- [REA roadmap](development/roadmap.md)
-- [Capability composition and ownership](capability-composition.md)
 - [Testing lanes and provider verification](testing-lanes.md)
 - [Measure MCP catalog costs in Codex](mcp-catalog-evaluation.md)
 - [Static analysis in GitHub Actions](ci-analysis.md)
@@ -197,12 +195,6 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 ## Signal recordings
 
 - [Recorded signal inspection](guides/signals/signal-recordings.md)
-
-## Architecture and authoring
-
-- [Architecture map](https://github.com/morluto/rea/blob/main/docs/architecture/architecture.mermaid)
-- [Feature specifications](specs/README.md)
-- [Architectural decision records](adr/README.md)
 
 <a id="machine-owned-documentation"></a>
 

@@ -463,7 +463,6 @@ npx rea-agents@latest setup
 - [CLI и Evidence](../getting-started/cli.md): команди, избор на доставчик, моментни снимки, импорт/експорт и изходни статуси.
 - [MCP договори](../reference/mcp-contracts.md) и [подсказки за агенти](../getting-started/mcp-prompts.md): резултати от инструментите, сесии и насочвани изследвания.
 - [Каталог с инструменти](../reference/mcp-contracts.md#generated-catalog): генериран списък с инструменти, доставчици и CLI команди.
-- [Пътна карта](../development/roadmap.md): планирана работа и проследяване на възможностите.
 
 Съобщавайте за уязвимости чрез [SECURITY.md](../../SECURITY.md).
 
@@ -502,8 +501,7 @@ REA е предназначен за законни изследвания, об
 
 Вижте [CONTRIBUTING.md](../../CONTRIBUTING.md) за настройка на средата за
 разработка и проверките, [тестване](../development/testing.md) за видовете
-проверки и [картата на архитектурата](../architecture/architecture.mermaid) за
-избрани слоеве и пътища на зависимостите.
+проверки.
 
 ## Лиценз
 
