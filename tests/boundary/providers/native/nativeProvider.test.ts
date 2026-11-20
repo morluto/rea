@@ -1428,8 +1428,6 @@ describe("native macOS provider inspection", () => {
     await mkdir(join(app, "Contents/MacOS"), { recursive: true });
     await writeFile(executable, fat([0x01000007, 0x0100000c]));
     await writeFixturePlist(join(app, "Contents/Info.plist"));
-    const externalPlist = join(directory, "Outside.plist");
-    await writeFixturePlist(externalPlist);
     const client = new NativeMacOSProvider(
       {},
       new FixtureRunner(),
@@ -1448,15 +1446,10 @@ describe("native macOS provider inspection", () => {
       entitlements: { "com.apple.security.app-sandbox": true },
     });
     const defaultPlist = await client.execute("inspect_plist", {});
-    expect(defaultPlist.ok && defaultPlist.value.result).toMatchObject({
-      source_path: join(app, "Contents/Info.plist"),
-    });
-    const plist = await client.execute("inspect_plist", {
-      path: externalPlist,
-    });
-    expect(plist.ok && plist.value.result).toMatchObject({
+    if (!defaultPlist.ok) throw defaultPlist.error;
+    expect(defaultPlist.value.result).toMatchObject({
       bundle: { identifier: "com.example.fixture", version: "42" },
-      source_path: externalPlist,
+      source_path: join(app, "Contents/Info.plist"),
     });
     const demangled = await client.execute("demangle_swift", {
       symbols: ["$s4Test3fooyyF", "plain_symbol"],

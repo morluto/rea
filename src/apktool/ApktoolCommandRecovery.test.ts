@@ -27,9 +27,11 @@ afterEach(() => {
   vi.mocked(prepareOwnedCommand).mockReset().mockResolvedValue(undefined);
   vi.useRealTimers();
 });
+const AUTHORED_APKTOOL =
+  process.platform === "win32" ? "C:\\authored\\apktool" : "/authored/apktool";
 const provider = () =>
   new ApktoolProvider({
-    environment: { REA_APKTOOL_COMMAND: "/authored/apktool" },
+    environment: { REA_APKTOOL_COMMAND: AUTHORED_APKTOOL },
   });
 const version = {
   stdout: { text: "2.9.3\n", bytes: 6, observedBytes: 6 },
@@ -464,13 +466,13 @@ it.each([
           path,
         });
         expect(result.error.message).toContain(path);
-        expect(result.error.message).not.toContain("/authored/apktool");
+        expect(result.error.message).not.toContain(AUTHORED_APKTOOL);
       } else
         expect(result.error).toMatchObject({
           _tag: "ProviderAdapterError",
           diagnostics: {
             target_path: path,
-            selected_command: "/authored/apktool",
+            selected_command: AUTHORED_APKTOOL,
           },
         });
       expect(result.error.capturedOutput).toMatchObject(

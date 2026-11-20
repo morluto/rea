@@ -41,7 +41,8 @@ requires, so a relative value leaves the home default in use instead of
 naming a folder under the working directory. The entry's `Exec` line is
 expanded with no files;
 `--argument` values are appended in its place, and the application runs in the
-entry's `Path` or the home directory. An `env -C` or `env --chdir` prefix
+entry's `Path`, defaulting to the home directory when `Path` is empty or
+omitted. An `env -C` or `env --chdir` prefix
 selects the directory for executable lookup and relative arguments. Capture
 retains the original argv and launch directory, with the resolved application
 directory recorded as `application_working_directory`. Export maps that
@@ -418,9 +419,10 @@ id rather than the `flatpak` launcher, and adds `~/.var/app/<id>`.
 process's exit status; every process seen in the application's tree; every
 client window with its class pair, titles, owner pid and type, marked when it
 belongs to the application. Titles and class names decode xprop's quoted
-delimiters, newline and tab escapes, and three-digit octal byte escapes;
-unsupported escape spellings leave that string unknown rather than inventing
-text. The session also records when the first application window appeared; the
+delimiters, newline and tab escapes, and three-digit octal byte escapes.
+The UTF-8 title keeps its characters when `xprop` prints their bytes as octal.
+If that title is unreadable, capture uses the legacy title when available.
+The session also records when the first application window appeared; the
 most common class pair of the application's windows, for matching its window
 later; files the application's processes held open under the walked roots; the last
 8 KiB of the launched process's stderr, where a failing app's last words are,

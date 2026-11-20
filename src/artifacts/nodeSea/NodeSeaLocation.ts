@@ -11,8 +11,14 @@ import {
   machoSectionBacking,
   readMachoSectionHeader,
 } from "../../domain/apple/machoSectionHeader.js";
-import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
-import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
+import {
+  elfSectionHeaderWidth,
+  readElfSectionHeader,
+} from "../../domain/elfSectionHeader.js";
+import {
+  elfProgramHeaderWidth,
+  readElfProgramHeader,
+} from "../../domain/elfProgramHeader.js";
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
 import { validateElfSectionTableFields } from "../../domain/elfDeclaredRanges.js";
 import { constants as bufferConstants } from "node:buffer";
@@ -36,6 +42,7 @@ import {
   ArtifactReaderFailure,
   artifactParseFailure,
   artifactReaderLimitFailure,
+  artifactFixedLimitFailure,
   abortIfNeeded,
 } from "../../resources/index.js";
 import { ParseFailureError } from "../../domain/parseFailure.js";
@@ -248,6 +255,24 @@ const collapseRanges = async (
   const chosen = unique[0];
   if (chosen === undefined) return undefined;
   if (unique.length > 1) {
+    if (unique.some((range) => range.length !== chosen.length))
+      throw formatFailure(NODE_SEA_DUPLICATE_BLOB);
+    // Disjoint copies fit in the file; overlapping declarations must not
+    // multiply verification work by the number of native table entries.
+    let remainingBytes = carrier.fileSize;
+    for (const range of unique) {
+      if (range.length > remainingBytes)
+        throw artifactFixedLimitFailure(
+          {
+            name: "Node SEA duplicate-blob verification allowance",
+            kind: "work",
+            limit: carrier.fileSize,
+            unit: "bytes",
+          },
+          "Node SEA duplicate-blob verification exceeds the carrier-byte work allowance.",
+        );
+      remainingBytes -= range.length;
+    }
     const hashes = new Set<string>();
     for (const range of unique) {
       const hash = await hashArtifactRange(carrier, range.offset, range.length);
@@ -423,7 +448,7 @@ const locateElfNotes = async (
   const header = readElfFixedHeader(prefix, carrier.fileSize);
   if (!header.ok) return [];
   const little = header.value.byteOrder === "little";
-  const elf64 = header.value.elfClass === 64;
+  const { elfClass } = header.value;
   const fields = await readExact(
     carrier,
     0,
@@ -446,8 +471,6 @@ const locateElfNotes = async (
   const phnum = programDeclarations.count;
   const shentsize = sectionDeclarations.width;
   const shnum = sectionDeclarations.count;
-  const minimumProgram = elf64 ? 56 : 32;
-  const minimumSection = elf64 ? 64 : 40;
   const found: BlobRange[] = [];
   let opaque: string | undefined;
   // Each note header takes at least 12 file bytes. The containing program or
@@ -461,7 +484,7 @@ const locateElfNotes = async (
     offset: phoff,
     count: phnum,
     entrySize: phentsize,
-    minimumEntry: minimumProgram,
+    minimumEntry: elfProgramHeaderWidth(elfClass),
   });
   if (programs === undefined && phnum > 0)
     opaque = NODE_SEA_ELF_TABLE_TRUNCATED;
@@ -511,7 +534,7 @@ const locateElfNotes = async (
     offset: shoff,
     count: shnum,
     entrySize: shentsize,
-    minimumEntry: minimumSection,
+    minimumEntry: elfSectionHeaderWidth(elfClass),
   });
   if (sections === undefined && shnum > 0)
     opaque ??= NODE_SEA_ELF_TABLE_TRUNCATED;

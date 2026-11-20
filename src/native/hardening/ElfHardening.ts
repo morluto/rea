@@ -2,6 +2,7 @@ import { isParseLimit } from "../../domain/parseFailureAnalysisError.js";
 import {
   assertArtifactReadActive,
   ArtifactReaderFailure,
+  yieldArtifactRead,
 } from "../../resources/index.js";
 import {
   firstKeyed,
@@ -19,7 +20,7 @@ import {
   DT_STRSZ,
   DT_SYMENT,
   DT_SYMTAB,
-  elfDynamicEntryWidth,
+  elfDynamicTableGeometry,
   walkElfDynamicTable,
 } from "../../domain/elfDynamicEntry.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
@@ -44,6 +45,9 @@ import {
 import {
   elfNoteAlignment,
   elfNoteSectionStorage,
+  elfNoteSpanOverlapIndex as overlapIndex,
+  sortElfNoteSpans as byOffset,
+  type ElfNoteSpan as NoteSpan,
 } from "../../domain/native/elfNoteLayout.js";
 import { MAX_INSPECT_ELF_NOTE_ENTRIES } from "../../domain/native/elfNotes.js";
 import {
@@ -59,6 +63,7 @@ import {
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
+  BinaryReader,
 } from "../../domain/binaryContainer.js";
 import {
   ELF_PT_GNU_PROPERTY,
@@ -68,12 +73,14 @@ import {
   ELF_PT_NOTE,
   assertElfDeclaredRangesFromBuffer,
   readElfDirectoryFromBuffer,
+  readElfDirectoryFromBufferCooperative,
   type ElfProgramDeclaration,
   type NativeSection,
 } from "../../domain/native/nativeSectionDirectory.js";
 
 const ET_EXEC = 2;
 const ET_DYN = 3;
+const OPERATION = "inspect_binary_hardening";
 const SHT_SYMTAB = 2;
 const SHT_STRTAB = 3;
 const SHT_DYNSYM = 11;
@@ -184,7 +191,34 @@ export const readElfHardening = (
   signal?: AbortSignal,
 ): BinaryHardeningImage => {
   assertArtifactReadActive(signal);
-  const directory = readElfDirectoryFromBuffer(bytes);
+  return hardeningFromDirectory(
+    bytes,
+    readElfDirectoryFromBuffer(bytes, OPERATION),
+    signal,
+  );
+};
+
+/** A signal-owning inspection can pause while decoding ELF section names. */
+export const readElfHardeningCooperative = async (
+  bytes: Buffer,
+  signal?: AbortSignal,
+): Promise<BinaryHardeningImage> => {
+  if (signal === undefined) return readElfHardening(bytes);
+  assertArtifactReadActive(signal);
+  const directory = await readElfDirectoryFromBufferCooperative(
+    bytes,
+    () => yieldArtifactRead(signal),
+    OPERATION,
+  );
+  assertArtifactReadActive(signal);
+  return hardeningFromDirectory(bytes, directory, signal);
+};
+
+const hardeningFromDirectory = (
+  bytes: Buffer,
+  directory: ReturnType<typeof readElfDirectoryFromBuffer>,
+  signal?: AbortSignal,
+): BinaryHardeningImage => {
   // A report needs every declared payload, not only the tables that name them.
   assertElfDeclaredRangesFromBuffer(bytes);
   const { bits, little, machine, programs, sections } = directory;
@@ -402,6 +436,7 @@ type DynamicTable = {
   readonly stringFileOffset: number | null;
 };
 
+/** Read a PT_DYNAMIC span already admitted by the shared declared-range pass. */
 const readDynamic = (
   bytes: Buffer,
   program: Extract<ElfProgramDeclaration, { type: 2 }>,
@@ -409,15 +444,13 @@ const readDynamic = (
   little: boolean,
   mapVa: MapVa,
 ): DynamicTable => {
-  const width = elfDynamicEntryWidth(bits);
   const offset = exact(program.offset, "PT_DYNAMIC offset");
   const size = exact(program.size, "PT_DYNAMIC size");
-  if (size % width !== 0)
+  const { width, trailingBytes } = elfDynamicTableGeometry(size, bits);
+  if (trailingBytes !== 0)
     malformed("ELF PT_DYNAMIC size is not a whole number of entries");
   const count = size / width;
   budget(count, "ELF dynamic table");
-  if (size > bytes.length - offset)
-    malformed("ELF PT_DYNAMIC extends outside the file");
   const entries = new Map<bigint, DynamicEntry>();
   const walked = walkElfDynamicTable<never>(
     bytes.subarray(offset, offset + size),
@@ -635,10 +668,9 @@ const readSymbolNames = (
 };
 
 const hashWords = (
-  bytes: Buffer,
+  reader: BinaryReader,
   va: bigint,
   mapVa: MapVa,
-  little: boolean,
 ): ElfHashWordReader => {
   const mapping = mapVa(va, 4n);
   return (relative) => {
@@ -648,8 +680,8 @@ const hashWords = (
     if (end > mapping.backed) return err("is not file-backed in its PT_LOAD");
     if (end > mapping.available) return err("crosses another PT_LOAD mapping");
     const at = mapping.offset + relative;
-    if (at > bytes.length - 4) return err("extends outside the file");
-    return ok(little ? bytes.readUInt32LE(at) : bytes.readUInt32BE(at));
+    if (at > reader.bytes.length - 4) return err("extends outside the file");
+    return ok(reader.u32(at));
   };
 };
 
@@ -682,12 +714,13 @@ const symbolCount = (
 ): number | null => {
   const hash = dynamic.entries.get(DT_HASH);
   const gnu = dynamic.entries.get(DT_GNU_HASH);
+  const reader = new BinaryReader(bytes, little, "elf");
   const classic =
     hash === undefined
       ? null
       : admitHashCount(
           readElfHashSymbolCount(
-            hashWords(bytes, hash.value, mapVa, little),
+            hashWords(reader, hash.value, mapVa),
             MAX_BINARY_HARDENING_TABLE_ENTRIES,
           ),
         );
@@ -697,7 +730,7 @@ const symbolCount = (
       : admitHashCount(
           finishGnuHashCount(
             readElfGnuHashSymbolCount(
-              hashWords(bytes, gnu.value, mapVa, little),
+              hashWords(reader, gnu.value, mapVa),
               bits === 64 ? 8 : 4,
               MAX_BINARY_HARDENING_TABLE_ENTRIES,
             ),
@@ -727,49 +760,6 @@ const noteTable = (
   if (size > bytes.length - offset)
     malformed(`ELF ${label} extends outside the file`);
   return { offset, size, alignment };
-};
-
-type NoteSpan = { readonly offset: number; readonly size: number };
-
-const byOffset = <T extends NoteSpan>(spans: readonly T[]): T[] =>
-  spans.filter(({ size }) => size > 0).toSorted((a, b) => a.offset - b.offset);
-
-/**
- * Overlap queries over spans sorted once. A section table can hold hundreds of
- * thousands of headers, so a query must not rescan the spans.
- */
-const overlapIndex = (spans: readonly NoteSpan[]) => {
-  const sorted: NoteSpan[] = [];
-  for (const span of byOffset(spans)) {
-    const previous = sorted.at(-1);
-    if (
-      previous !== undefined &&
-      span.offset <= previous.offset + previous.size
-    )
-      sorted[sorted.length - 1] = {
-        offset: previous.offset,
-        size: Math.max(
-          previous.size,
-          span.offset + span.size - previous.offset,
-        ),
-      };
-    else sorted.push(span);
-  }
-  return ({ offset, size }: NoteSpan): "none" | "covered" | "partial" => {
-    if (size <= 0) return "none";
-    let low = 0;
-    let high = sorted.length;
-    while (low < high) {
-      const middle = (low + high) >>> 1;
-      if ((sorted[middle]?.offset ?? 0) < offset + size) low = middle + 1;
-      else high = middle;
-    }
-    const span = sorted[low - 1];
-    if (span === undefined || span.offset + span.size <= offset) return "none";
-    return span.offset <= offset && span.offset + span.size >= offset + size
-      ? "covered"
-      : "partial";
-  };
 };
 
 type NoteOverlap = "uncovered" | "cut" | "framing";

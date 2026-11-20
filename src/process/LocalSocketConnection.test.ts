@@ -1,16 +1,15 @@
 import { once } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
 import { createServer, type AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { connectLocalSocketOnce } from "./LocalSocketConnection.js";
 
 for (const transport of ["tcp", "unix"] as const)
   it.skipIf(transport === "unix" && process.platform === "win32")(
     `connects a real local ${transport} socket and transfers ownership`,
     async () => {
-      const directory = await mkdtemp(join(tmpdir(), "rea-local-socket-"));
+      const directory = await createTestTempDirectory("rea-local-socket-");
       const server = createServer();
       const path = join(directory, "socket");
       try {
@@ -38,7 +37,6 @@ for (const transport of ["tcp", "unix"] as const)
         await new Promise<void>((resolve, reject) =>
           server.close((error) => (error ? reject(error) : resolve())),
         );
-        await rm(directory, { recursive: true, force: true });
       }
     },
   );
@@ -80,18 +78,14 @@ it("cancels an outstanding connection attempt with the caller's reason", async (
 it.skipIf(process.platform === "win32")(
   "reports a local socket connection failure",
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-missing-socket-"));
-    try {
-      const result = await connectLocalSocketOnce(
-        { path: join(directory, "missing") },
-        new AbortController().signal,
-      );
-      expect(result).toMatchObject({
-        ok: false,
-        error: { kind: "error", cause: { code: "ENOENT" } },
-      });
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
+    const directory = await createTestTempDirectory("rea-missing-socket-");
+    const result = await connectLocalSocketOnce(
+      { path: join(directory, "missing") },
+      new AbortController().signal,
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { kind: "error", cause: { code: "ENOENT" } },
+    });
   },
 );

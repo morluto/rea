@@ -15,8 +15,14 @@ import {
   artifactFilePrimaryFacts,
   assertArtifactReadActive,
   type ArtifactFilePrimaryFacts,
+  type StableArtifactSnapshot,
   ArtifactResourceScope,
 } from "../../resources/index.js";
+import {
+  BinaryFormatFailure,
+  BinaryResourceFailure,
+  binaryResourceCeiling,
+} from "../../domain/binaryContainer.js";
 import type { NativeInitializersPort } from "../../ports/binaryDiagnostics/NativeInitializersPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -33,14 +39,10 @@ import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok } from "../../domain/result.js";
 import { NATIVE_INITIALIZERS_PROVIDER } from "../../domain/investigationProviders.js";
 import {
-  BinaryFormatFailure,
-  BinaryResourceFailure,
-  binaryResourceCeiling,
-} from "../../domain/binaryContainer.js";
-import {
   ELF_POINTER_RELOCATION_FORMAT,
   ElfPointerRelocationFailure,
 } from "../../domain/native/elfPointerRelocations.js";
+import { hasMachoMagic } from "../../domain/apple/machoContainer.js";
 import { requireSelectedNativeImage } from "../../domain/apple/machoSliceSelection.js";
 import { readElfInitializers } from "./ElfInitializers.js";
 import { readMachoInitializers } from "./MachoInitializers.js";
@@ -48,20 +50,12 @@ import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_native_initializers";
 
-const MACHO_MAGICS = new Set([
-  0xfeedface, 0xcefaedfe, 0xfeedfacf, 0xcffaedfe, 0xcafebabe, 0xbebafeca,
-  0xcafebabf, 0xbfbafeca,
-]);
-
 const isElf = (bytes: Buffer): boolean =>
   bytes.length >= 4 &&
   bytes[0] === 0x7f &&
   bytes[1] === 0x45 &&
   bytes[2] === 0x4c &&
   bytes[3] === 0x46;
-
-const isMacho = (bytes: Buffer): boolean =>
-  bytes.length >= 4 && MACHO_MAGICS.has(bytes.readUInt32BE(0));
 
 /** Portable ELF and Mach-O initializer reader over one stable regular file. */
 export class NativeInitializersProvider implements NativeInitializersPort {
@@ -84,9 +78,10 @@ export class NativeInitializersProvider implements NativeInitializersPort {
     input: InspectNativeInitializersInput,
     options?: ExecutionOptions,
   ) {
+    let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        snapshot = await readStableArtifact(
           input.path,
           input.max_file_bytes,
           options?.signal,
@@ -108,7 +103,7 @@ export class NativeInitializersProvider implements NativeInitializersPort {
         return ok(report);
       });
     } catch (cause) {
-      return err(nativeInitializersFailure(cause, input));
+      return err(nativeInitializersFailure(cause, input, snapshot));
     }
   }
 }
@@ -153,7 +148,7 @@ const inspectSelected = async (
       );
     return readElfInitializers(selected.bytes, page, signal);
   }
-  if (!isMacho(container) && !isMacho(selected.bytes))
+  if (!hasMachoMagic(container) && !hasMachoMagic(selected.bytes))
     throw new BinaryFormatFailure(
       "malformed",
       "Selected file is not an ELF or Mach-O image",
@@ -271,6 +266,7 @@ const failurePrimary = (
 const nativeInitializersFailure = (
   cause: unknown,
   input: InspectNativeInitializersInput,
+  snapshot?: StableArtifactSnapshot,
 ): AnalysisError =>
   projectStableArtifactFailure(
     cause,
@@ -278,4 +274,5 @@ const nativeInitializersFailure = (
     input.path,
     NATIVE_INITIALIZERS_PROVIDER.id,
     OPERATION,
+    snapshot,
   );

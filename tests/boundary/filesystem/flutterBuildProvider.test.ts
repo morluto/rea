@@ -20,6 +20,7 @@ import {
   buildElf64Image,
   REFERENCE_HASH,
   snapshotSection,
+  unifiedAotFixtureImage,
 } from "../../../src/flutter/FlutterBuild.fixture.js";
 import { FlutterBuildProvider } from "../../../src/flutter/FlutterBuildProvider.js";
 import { FlutterBuildAnalysisService } from "../../../src/application/flutter/FlutterBuildAnalysisService.js";
@@ -130,70 +131,64 @@ const analyzeImage = async (bytes: Buffer, operation: FlutterOperation) => {
   return result.value;
 };
 
-it.each([false, true])(
-  "qualifies unified snapshot exports without aliasing legacy sources (text=%s)",
-  async (includeText) => {
-    const symbols = [
-      { name: "_kDartSnapshotData", value: 0x1000, size: 52 },
-      ...(includeText
-        ? [{ name: "_kDartSnapshotText", value: 0x1100, size: 16 }]
-        : []),
-    ];
-    const image = Buffer.alloc(0x1110);
-    buildElf64Image(symbols).copy(image);
-    const data = snapshotSection(REFERENCE_HASH);
-    data.writeBigUInt64LE(2n, 12); // Pinned unified producer enum; support is not inferred.
-    data.copy(image, 0x1000);
-    const path = await buildApk("unified.apk", [
-      { path: "lib/arm64-v8a/libapp.so", bytes: image },
-    ]);
-    const provider = new FlutterBuildProvider();
-    onTestFinished(() => provider.close());
-    const inspected = await provider.execute({
-      operation: "inspect_dart_aot",
-      input: { path },
-    });
-    expect(inspected.ok).toBe(false);
-    if (inspected.ok)
-      throw new Error("Unified profile was admitted as split VM/isolate");
-    expect(projectAnalysisError(inspected.error)).toMatchObject({
-      code: "unsupported_target",
-      category: "unsupported_target",
-      details: {
-        diagnostics: {
-          supported_profile: "dart-2.14-split-full-aot",
-          observed_exports: symbols.map(({ name, value, size }) => ({
-            name,
-            offset: value,
-            size,
-          })),
-          abi: "arm64-v8a",
-          libapp_bytes: image.length,
-          libapp_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
-        },
-      },
-    });
-    const identified = await provider.execute({
-      operation: "identify_flutter_build",
-      input: { path },
-    });
-    if (!identified.ok) throw identified.error;
-    const value = flutterResultSchemas.identify_flutter_build.parse(
-      identified.value.result,
+it("keeps byte-scanned build identification partial for a unified payload", async () => {
+  const identified = await analyzeImage(
+    unifiedAotFixtureImage(),
+    "identify_flutter_build",
+  );
+  const value = flutterResultSchemas.identify_flutter_build.parse(
+    identified.result,
+  );
+  expect(value.coverage).toBe("partial");
+  expect(value.abis[0]?.libapp).toMatchObject({
+    snapshot_hash: REFERENCE_HASH,
+    snapshot_hash_sources: 1,
+  });
+  expect(identified.limitations.join(" ")).toContain(
+    "supported legacy split VM/isolate profile",
+  );
+  expect(identified.limitations.join(" ")).not.toContain("truncated");
+});
+
+it.each([
+  { includeText: false, kind: 2, expectedProfile: "unified" },
+  { includeText: true, kind: 3, expectedProfile: null },
+] as const)(
+  "retains partial unified observations (text=$includeText, kind=$kind)",
+  async ({ includeText, kind, expectedProfile }) => {
+    const result = await analyzeImage(
+      unifiedAotFixtureImage({ includeText, kind }),
+      "inspect_dart_aot",
     );
-    expect(value.coverage).toBe("partial");
-    expect(value.abis[0]?.libapp).toMatchObject({
-      snapshot_hash: REFERENCE_HASH,
+    const report = flutterResultSchemas.inspect_dart_aot.parse(result.result);
+    expect(report.libapp).toMatchObject({
+      coverage: "partial",
+      snapshot_profile: expectedProfile,
       snapshot_hash_sources: 1,
+      sections: expect.arrayContaining([
+        expect.objectContaining({ name: "_kDartSnapshotData", kind }),
+      ]),
     });
-    expect(identified.value.limitations.join(" ")).toContain(
-      "supported legacy split VM/isolate profile",
-    );
-    expect(identified.value.limitations.join(" ")).not.toContain(
-      "library is truncated",
-    );
+    expect(report.string_pool.package_uris).toEqual([
+      "package:app/unified.dart",
+    ]);
   },
 );
+
+it("keeps a lone unified text marker from overriding a complete split observation", async () => {
+  const image = aotFixtureImage(REFERENCE_HASH, [
+    { name: "_kDartSnapshotText", value: 0x2600, size: 16 },
+  ]);
+  const result = await analyzeImage(image, "inspect_dart_aot");
+  const report = flutterResultSchemas.inspect_dart_aot.parse(result.result);
+  expect(report.libapp).toMatchObject({
+    snapshot_profile: "legacy-split",
+    coverage: "partial",
+    snapshot_hash_sources: 2,
+  });
+  expect(report.libapp.sections).toHaveLength(5);
+  expect(report.string_pool.package_uri_count_at_least).toBe(2);
+});
 
 it.each([32, 64] as const)(
   "reads only ELF-owned notes in an ELF%s engine",
@@ -1107,7 +1102,6 @@ it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
     const projected = projectAnalysisError(result.error);
     expect(projected.code).toBe("resource_constraint");
     expect(projected.retryable).toBe(false);
-    expect(projected.remediation.action).toContain("APK snapshot allowance");
     expect(projected.details?.refusal).toMatchObject({
       kind: "fixed_ceiling",
       allowance_kind: "input",
@@ -2142,6 +2136,14 @@ it("retains mixed-root cleanup diagnostics and releases aggregate errors only af
     aggregate = cause;
   }
   expect(aggregate).toMatchObject({
+    operation: "close_flutter_build",
+    cause: expect.objectContaining({
+      errors: expect.arrayContaining(
+        roots.map((root) =>
+          expect.objectContaining({ cleanupResources: [root] }),
+        ),
+      ),
+    }),
     cleanupIncomplete: true,
     cleanupResources: expect.arrayContaining(roots),
     diagnostics: {

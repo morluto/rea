@@ -123,7 +123,7 @@ export const hasFreshProjectedReceiver = (
     const sources = t.isObjectExpression(node)
       ? semanticObjectPropertyReferences(node, [selected!], state)
       : t.isArrayExpression(node)
-        ? semanticArrayPropertyReferences(node, [selected!])
+        ? semanticArrayPropertyReferences(node, [selected!], state)
         : [];
     if (sources.length === 0) return false;
     if (

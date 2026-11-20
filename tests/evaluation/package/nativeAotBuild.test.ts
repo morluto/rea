@@ -48,12 +48,10 @@ it("retries without logging credential-bearing restore diagnostics", async () =>
     });
   try {
     await buildNativeAotFixture(run, options);
-    expect(
-      logged.mock.calls.flat().every((value) => typeof value === "string"),
-    ).toBe(true);
-    expect(logged.mock.calls.flat().join("\n")).not.toContain(
-      "fixture-password",
-    );
+    const output = logged.mock.calls.flat();
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining("attempt 2/2"));
+    expect(output.every((value) => typeof value === "string")).toBe(true);
+    expect(output.join("\n")).not.toContain("fixture-password");
   } finally {
     logged.mockRestore();
   }

@@ -15,14 +15,16 @@ import {
   managedPeFixtureTarget,
 } from "./ManagedPe.fixture.js";
 
-const FIRST_MVID = "11111111-1111-1111-1111-111111111111";
-const SECOND_MVID = "22222222-2222-2222-2222-222222222222";
+const FIRST_MVID = "67452301-ab89-efcd-1032-547698badcfe";
+const SECOND_MVID = "98badcfe-5476-1032-efcd-ab8967452301";
 
 const duplicateGuidFixture = (variant: Variant) =>
   duplicateHeap(
-    buildManagedPeFixture({ mvid: Buffer.alloc(16, 0x11) }),
+    buildManagedPeFixture({
+      mvid: Buffer.from("0123456789abcdef1032547698badcfe", "hex"),
+    }),
     "#GUID",
-    Buffer.alloc(16, 0x22),
+    Buffer.from("fedcba9876543210efcdab8967452301", "hex"),
     variant,
   );
 

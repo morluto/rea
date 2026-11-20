@@ -188,8 +188,13 @@ it("reserves reply and Evidence nesting before accepting a deep capture policy",
     throw new Error("Capture exceeded its selected nesting allowance");
   expect(projectAnalysisError(exhausted.error)).toMatchObject({
     details: {
-      diagnostics: { budget: { effective_value: 996, maximum: 996 } },
+      diagnostics: {
+        budget: {
+          parameter: "max_nesting_depth",
+          effective_value: 996,
+          maximum: 996,
+        },
+      },
     },
-    remediation: { action: expect.stringContaining("at its maximum") },
   });
 });

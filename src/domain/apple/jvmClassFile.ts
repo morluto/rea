@@ -1,3 +1,5 @@
+import { BinaryReader } from "../binaryContainer.js";
+
 /** Maximum complete class-file buffer retained for FAT/JVM disambiguation. */
 export const MAX_JVM_CLASS_IDENTITY_BYTES = 16 * 1024 * 1024;
 
@@ -7,31 +9,34 @@ export const JVM_CLASS_IDENTITY_LIMIT_REASON =
 /** Class-file identity used to disambiguate JVM CAFEBABE from Mach-O FAT. */
 class ClassFileCursor {
   private offset = 0;
-  private readonly view: DataView;
+  private readonly reader: BinaryReader;
 
-  constructor(private readonly bytes: Uint8Array) {
-    this.view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  constructor(bytes: Uint8Array) {
+    const view = Buffer.isBuffer(bytes)
+      ? bytes
+      : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    this.reader = new BinaryReader(view, false, "JVM class");
   }
 
   get remaining(): number {
-    return this.bytes.byteLength - this.offset;
+    return this.reader.bytes.length - this.offset;
   }
 
   u1(): number | null {
     if (!this.has(1)) return null;
-    return this.bytes[this.offset++]!;
+    return this.reader.u8(this.offset++);
   }
 
   u2(): number | null {
     if (!this.has(2)) return null;
-    const value = this.view.getUint16(this.offset, false);
+    const value = this.reader.u16(this.offset);
     this.offset += 2;
     return value;
   }
 
   u4(): number | null {
     if (!this.has(4)) return null;
-    const value = this.view.getUint32(this.offset, false);
+    const value = this.reader.u32(this.offset);
     this.offset += 4;
     return value;
   }

@@ -1,4 +1,6 @@
 import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
@@ -9,8 +11,20 @@ import {
   planTestSelection,
   testShards,
 } from "../../scripts/ci/test-selection.mjs";
+import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 const execute = promisify(execFile);
+
+const selectedEnvironment = (file: string) => ({
+  ...process.env,
+  CI_TEST_SELECTION: JSON.stringify({
+    version: 3,
+    mode: "selected",
+    reason: "Affected tests: 1 changed",
+    files: [file],
+    shards: 1,
+  }),
+});
 
 const plan = (files: readonly string[], sources: Record<string, string>) =>
   planTestSelection({
@@ -186,6 +200,24 @@ it("selects tests under shared-boundary directories and declared fixture owners,
     mode: "full",
     reason:
       "Missing test owner tests/boundary/cli/cliParityGoldens.test.ts for tests/fixtures/cli-parity/error-unknown-command.txt",
+  });
+});
+
+it("includes the declared integration test for managed pointer row changes", () => {
+  const changed = "src/domain/managed/managedMemberPointers.ts";
+  const direct = "src/dotnet/ManagedMemberPointerBudget.test.ts";
+  const owner = "src/dotnet/ManagedMemberPointers.test.ts";
+  const sources = {
+    [changed]: "",
+    [direct]: 'import "../domain/managed/managedMemberPointers.js";',
+  };
+  expect(selectedFiles(plan([changed], { ...sources, [owner]: "" }))).toEqual([
+    direct,
+    owner,
+  ]);
+  expect(plan([changed], sources)).toMatchObject({
+    mode: "full",
+    reason: `Missing test owner ${owner} for ${changed}`,
   });
 });
 
@@ -460,5 +492,73 @@ it("runs only a shard the plan defines", async () => {
     }),
   ).rejects.toMatchObject({
     stderr: expect.stringContaining("already sharded"),
+  });
+});
+
+it.each([
+  ["-t", "one case"],
+  ["-tX", "unused value"],
+  ["--testNamePattern=one case"],
+  ["--testNamePattern.only=one case"],
+  ["--test-name-pattern", "one case"],
+  ["--tagsFilter=long-running"],
+  ["--tags-filter", "long-running"],
+])("rejects a case filter in a selected shard: %j", async (...filter) => {
+  const group = fileURLToPath(
+    new URL("../../scripts/ci/test-group.mjs", import.meta.url),
+  );
+  await expect(
+    execute(process.execPath, [group, "selected", "1/1", ...filter], {
+      env: selectedEnvironment("tests/evaluation/reasonMarker.test.ts"),
+    }),
+  ).rejects.toMatchObject({
+    stderr: expect.stringContaining(
+      "Selected test groups cannot filter cases by name or tag",
+    ),
+  });
+});
+
+it("runs every selected case and still permits developer name and tag filters", async () => {
+  const group = fileURLToPath(
+    new URL("../../scripts/ci/test-group.mjs", import.meta.url),
+  );
+  const exact = fileURLToPath(
+    new URL("../../scripts/run-exact-tests.mjs", import.meta.url),
+  );
+  const file = "tests/evaluation/reasonMarker.test.ts";
+  const root = await createTestTempDirectory("rea-selected-cases-");
+  const selectedReport = join(root, "selected.json");
+  await execute(
+    process.execPath,
+    [
+      group,
+      "selected",
+      "1/1",
+      "--reporter=json",
+      `--outputFile.json=${selectedReport}`,
+    ],
+    { env: selectedEnvironment(file) },
+  );
+  const selected = JSON.parse(await readFile(selectedReport, "utf8")) as {
+    numPassedTests: number;
+  };
+  expect(selected).toMatchObject({ numPendingTests: 0, numFailedTests: 0 });
+  expect(selected.numPassedTests).toBeGreaterThan(1);
+
+  const devReport = join(root, "developer.json");
+  await execute(process.execPath, [
+    exact,
+    "run",
+    "-t",
+    "counts an unmarked slice",
+    "--tagsFilter=!long-running",
+    "--reporter=json",
+    `--outputFile.json=${devReport}`,
+    file,
+  ]);
+  const dev: unknown = JSON.parse(await readFile(devReport, "utf8"));
+  expect(dev).toMatchObject({
+    numPassedTests: 1,
+    numPendingTests: selected.numPassedTests - 1,
   });
 });
