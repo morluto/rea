@@ -259,10 +259,19 @@ describe("bundle comparison MCP integration", () => {
         },
       });
       expect(result.isError).not.toBe(true);
-      expect(result.structuredContent).toMatchObject({
+      const evidence = toolContract("compare_bundles").outputSchema.parse(
+        result.structuredContent,
+      );
+      expect(evidence).toMatchObject({
         normalized_result: { status: "changed" },
+        evidence_links: [leftRecord.evidence_id, rightRecord.evidence_id],
         evidence_id: expect.stringMatching(/^ev_[a-f0-9]{64}$/u),
       });
+      const retained = connected.session.exportEvidenceBundle().records;
+      expect(retained).toHaveLength(3);
+      expect(retained).toEqual(
+        expect.arrayContaining([leftRecord, rightRecord, evidence]),
+      );
     } finally {
       await connected.close();
     }
