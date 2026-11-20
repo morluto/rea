@@ -253,11 +253,25 @@ describe.skipIf(process.platform === "win32")(
     it.each([
       { before: "", extra: "this is not a key\n", invalidLine: 3 },
       { before: "[Other]\nName=Other\n", extra: "", invalidLine: 1 },
+      {
+        before: "",
+        extra: "",
+        trailing: "[Bad[Group]\nName=Other\nExec=missing-app\n",
+        invalidLine: 6,
+      },
+      {
+        before: "",
+        extra: "",
+        trailing: "[Bad\tGroup]\nName=Other\n",
+        invalidLine: 6,
+      },
     ])(
       "refuses a hidden override with malformed structure at line $invalidLine",
-      async ({ before, extra, invalidLine }) => {
+      async ({ before, extra, trailing = "", invalidLine }) => {
         const entry = `${before}[Desktop Entry]\nType=Application\n${extra}Name=User notes\nExec=notes-app\n`;
-        const { inspect, file } = await userOverride(`${entry}Hidden=true\n`);
+        const { inspect, file } = await userOverride(
+          `${entry}Hidden=true\n${trailing}`,
+        );
         expect(await inspect()).toMatchObject({
           ok: false,
           error: {
@@ -275,14 +289,22 @@ describe.skipIf(process.platform === "win32")(
         expect(direct.value.inventory.desktop_entry).not.toHaveProperty(
           "malformed_line",
         );
-        await writeFile(file, `${entry}Hidden=false\n`);
+        await writeFile(file, `${entry}Hidden=false\n${trailing}`);
         expect(await inspect()).toMatchObject(visibleUserEntry);
       },
     );
 
-    it("masks a well-formed minimal Application with a localized key", async () => {
+    it("masks a minimal Application with a localized key and a valid action group", async () => {
       const { inspect } = await userOverride(
-        "[Desktop Entry]\nType=Application\nName=Notes\nName[fr]=Notes locales\nHidden=true\n",
+        [
+          "[Desktop Entry]",
+          "Type=Application",
+          'Name=Notes "[Bad[Group]"',
+          "Name[fr]=Notes locales",
+          "Hidden=true",
+          "[Desktop Action New]",
+          "Name=New",
+        ].join("\n"),
       );
       expect(await inspect()).toMatchObject({
         ok: false,

@@ -33,6 +33,7 @@ export interface DesktopEntry {
 }
 
 const GROUP = new RegExp(`^${DESKTOP_GROUP}$`, "u");
+const INVALID_GROUP_NAME_CHARACTER = /[[\]\u0000-\u001f\u007f]/u;
 const LINE_WITH_SEPARATOR = new RegExp(`(${DESKTOP_LINE_BREAK})`, "u");
 // Only LF separates records; Unicode line/paragraph separators are value data.
 const ENTRY = new RegExp(
@@ -124,8 +125,12 @@ const readDesktopEntryFields = (text: string) => {
     if (line.length === 0 || line.startsWith("#")) continue;
     const header = GROUP.exec(line)?.[1];
     if (header !== undefined) {
-      if (group === undefined && header !== DESKTOP_ENTRY_GROUP)
+      if (
+        (group === undefined && header !== DESKTOP_ENTRY_GROUP) ||
+        INVALID_GROUP_NAME_CHARACTER.test(header)
+      )
         malformedLine ??= index / 2 + 1;
+      // Preserve the group boundary for tolerant field and rewrite consumers.
       group = header;
       found ||= group === DESKTOP_ENTRY_GROUP;
       continue;
