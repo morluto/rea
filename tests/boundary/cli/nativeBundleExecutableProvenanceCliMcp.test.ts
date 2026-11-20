@@ -8,7 +8,11 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { parseEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
+import {
+  cliTest,
+  type SharedMcpCall,
+  type TestCli,
+} from "../../support/cli/cliFixture.js";
 
 const plist =
   '<plist version="1.0"><dict><key>CFBundleExecutable</key><string>Other</string></dict></plist>';
@@ -46,6 +50,44 @@ const expectMachoSummaryProvenance = async (
       normalized_result: { bundle_provenance: expected },
     },
   ]);
+};
+
+const expectRefreshedBundleProvenance = async (
+  call: SharedMcpCall,
+  framework: string,
+  infoPlist: string,
+  executableDigest: string,
+) => {
+  const changedPlist = plist.replace("<dict>", "<dict><!-- updated -->");
+  await writeFile(infoPlist, changedPlist);
+  const observedBeforeReopen = await call("inspect_signature", {});
+  expect(
+    observedBeforeReopen.isError,
+    JSON.stringify(observedBeforeReopen),
+  ).not.toBe(true);
+  expect(
+    parseEvidence(observedBeforeReopen.structuredContent).normalized_result,
+  ).toMatchObject({
+    bundle_provenance: {
+      info_plist_sha256: createHash("sha256").update(plist).digest("hex"),
+    },
+  });
+  const reopened = await call("open_binary", { path: framework });
+  expect(reopened.isError, JSON.stringify(reopened)).not.toBe(true);
+  const currentDigest = createHash("sha256").update(changedPlist).digest("hex");
+  for (const tool of ["inspect_macho", "inspect_signature"] as const) {
+    const inspected = await call(tool, {});
+    expect(inspected.isError, JSON.stringify(inspected)).not.toBe(true);
+    expect(parseEvidence(inspected.structuredContent)).toMatchObject({
+      subject: { identity: { sha256: executableDigest } },
+      normalized_result: {
+        bundle_provenance: {
+          info_plist_sha256: currentDigest,
+          declared_executable: "Other",
+        },
+      },
+    });
+  }
 };
 
 describe.skipIf(process.platform !== "darwin")(
@@ -139,6 +181,12 @@ describe.skipIf(process.platform !== "darwin")(
           normalized_result: { summary: { bundle_provenance: expected } },
         });
         await expectMachoSummaryProvenance(cli, framework, root, expected);
+        await expectRefreshedBundleProvenance(
+          call,
+          framework,
+          join(version, "Resources", "Info.plist"),
+          digest,
+        );
         const reopened = await call("open_binary", { path: executable });
         expect(reopened.isError, JSON.stringify(reopened)).not.toBe(true);
         const direct = await call("inspect_signature", {});

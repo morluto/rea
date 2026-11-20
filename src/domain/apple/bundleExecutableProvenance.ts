@@ -27,13 +27,11 @@ export type BundleExecutableSelection = Omit<
 >;
 
 /** Explicit files and targets without selection facts have no bundle observation. */
-export const bundleExecutableProvenanceFields = (target: BinaryTarget) =>
+export const bundleExecutableProvenance = (target: BinaryTarget) =>
   target.bundleInfoPlist === undefined ||
   target.bundleExecutableSelection === undefined
-    ? {}
+    ? undefined
     : {
-        bundle_provenance: {
-          ...target.bundleExecutableSelection,
-          info_plist_path: target.bundleInfoPlist,
-        },
+        ...target.bundleExecutableSelection,
+        info_plist_path: target.bundleInfoPlist,
       };

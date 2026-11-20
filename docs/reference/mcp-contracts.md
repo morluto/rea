@@ -1326,8 +1326,8 @@ The `framework` object reports the directory's name without `.framework` and
 whether it exactly matches the declared name. A mismatch does not override
 `CFBundleExecutable`. The Mach-O summary includes these fields under
 `summary.bundle_provenance`. The binary is still the Evidence subject.
-These facts describe the selection at open time. They do not verify the
-bundle's code-signing context or track subsequent changes to its directories.
+These facts describe the selection at open time. Reopening refreshes them
+from the new admission, including when the executable bytes stay the same.
 Direct file selections and older Evidence can omit this object.
 
 `open_bundle_resources` selects a separate read-only app resource session
