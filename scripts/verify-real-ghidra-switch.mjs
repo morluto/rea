@@ -225,12 +225,14 @@ await withVerifierFixture(workspaceFixture, async () => {
       );
       const oracleFaultControls = assertSwitchOracleControls(fixtures);
       if (!compilerOnly && productionControls === null) {
+        throwIfInterrupted();
         productionControls = await verifySwitchEvidenceControls({
           installation,
           entrypoint,
           target: original,
           workspace,
           runId: run.run_id,
+          signal: commandInterruption.signal,
         });
         assert.equal(
           digest(await readFile(original)),
