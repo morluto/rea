@@ -934,6 +934,99 @@ it("keeps a foreign group from suppressing ungrouped NuGet dependencies", async 
   ]);
 });
 
+it("keeps a foreign group from hiding declared dependencies in framework groups", async () => {
+  const bytes = await nugetNupkgFixture({
+    nuspec: `<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd" xmlns:ext="urn:example">
+      <metadata>
+        <id>Demo.Package</id><version>1.0.0</version>
+        <dependencies>
+          <ext:group targetFramework="net8.0"><ext:dependency id="Extension" /></ext:group>
+          <group targetFramework="net8.0">
+            <dependency id="DeclaredGroupDep" version="2.0.0" />
+          </group>
+        </dependencies>
+      </metadata>
+    </package>`,
+  });
+  const result = await parseNugetNupkg(bytes, artifactOf(bytes), defaults);
+  expect(result.dependency_groups).toEqual([
+    {
+      target_framework: "net8.0",
+      dependencies: [
+        {
+          id: "DeclaredGroupDep",
+          version: "2.0.0",
+          include: null,
+          exclude: null,
+          development_dependency: null,
+        },
+      ],
+    },
+  ]);
+});
+
+it("keeps a foreign group inside a framework group from hiding valid dependencies", async () => {
+  const bytes = await nugetNupkgFixture({
+    nuspec: `<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd" xmlns:ext="urn:example">
+      <metadata>
+        <id>Demo.Package</id><version>1.0.0</version>
+        <dependencies>
+          <group targetFramework="net8.0">
+            <ext:group><ext:dependency id="Hidden" /></ext:group>
+            <dependency id="InsideGroupDep" version="3.0.0" />
+          </group>
+        </dependencies>
+      </metadata>
+    </package>`,
+  });
+  const result = await parseNugetNupkg(bytes, artifactOf(bytes), defaults);
+  expect(result.dependency_groups).toEqual([
+    {
+      target_framework: "net8.0",
+      dependencies: [
+        {
+          id: "InsideGroupDep",
+          version: "3.0.0",
+          include: null,
+          exclude: null,
+          development_dependency: null,
+        },
+      ],
+    },
+  ]);
+});
+
+it("keeps foreign groups and attributes from hiding declared dependencies when default namespace is omitted", async () => {
+  const bytes = await nugetNupkgFixture({
+    nuspec: `<package>
+      <metadata>
+        <id>Demo.Package</id><version>1.0.0</version>
+        <dependencies>
+          <ext:foreignGroup xmlns:ext="urn:example"><ext:dependency id="Extension" /></ext:foreignGroup>
+          <group targetFramework="net8.0" xmlns:ext="urn:example" ext:extra="custom">
+            <dependency id="DeclaredNoNs" version="1.5.0" ext:tag="annotated" />
+          </group>
+        </dependencies>
+      </metadata>
+    </package>`,
+  });
+  const result = await parseNugetNupkg(bytes, artifactOf(bytes), defaults);
+  expect(result.dependency_groups).toEqual([
+    {
+      target_framework: "net8.0",
+      dependencies: [
+        {
+          id: "DeclaredNoNs",
+          version: "1.5.0",
+          include: null,
+          exclude: null,
+          development_dependency: null,
+        },
+      ],
+    },
+  ]);
+});
+
 it("selects the first nonempty leaf for indexed publisher metadata", async () => {
   const bytes = await nugetNupkgFixture({
     nuspec: ungroupedNuspec
