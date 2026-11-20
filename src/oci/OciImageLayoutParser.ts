@@ -993,6 +993,13 @@ const inventoryOciImageLayout = async (
           configDescriptor.digest,
           `config ${configDescriptor.digest}`,
         );
+        if (configDocument !== undefined && !isRecord(configDocument.value))
+          recordFinding(
+            findings,
+            "malformed_blob_json",
+            `Config ${configDescriptor.digest} root is not a JSON object; its facts are not modeled.`,
+            configDescriptor.digest,
+          );
         config =
           configDocument === undefined
             ? undefined

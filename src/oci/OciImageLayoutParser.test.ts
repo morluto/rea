@@ -489,6 +489,55 @@ it("reports a manifest whose layers is not an array", async () => {
   expect(report.coverage.status).toBe("partial");
 });
 
+it.each([["[]"], ["null"]])(
+  "reports a config whose root is %s and keeps the manifest layers",
+  async (configJson) => {
+    const root = await createTestTempDirectory("rea-oci-config-root-type-");
+    const written = await writeOciImageLayoutFixture(root);
+    const configDigest = await putOciBlob(root, configJson);
+    const manifestPath = join(
+      root,
+      "blobs",
+      "sha256",
+      written.manifestDigest.slice("sha256:".length),
+    );
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
+      config: { digest: string; size: number };
+    };
+    manifest.config = {
+      ...manifest.config,
+      digest: configDigest,
+      size: Buffer.byteLength(configJson),
+    };
+    const manifestJson = `${JSON.stringify(manifest)}\n`;
+    const manifestDigest = await putOciBlob(root, manifestJson);
+    const indexPath = join(root, "index.json");
+    const index = JSON.parse(await readFile(indexPath, "utf8")) as {
+      manifests: { digest: string; size: number }[];
+    };
+    index.manifests[0] = {
+      ...index.manifests[0]!,
+      digest: manifestDigest,
+      size: Buffer.byteLength(manifestJson),
+    };
+    await writeFile(indexPath, `${JSON.stringify(index)}\n`);
+    await unlink(manifestPath);
+    const report = await inspectLayout(root);
+    expect(report.findings).toContainEqual(
+      expect.objectContaining({
+        kind: "malformed_blob_json",
+        digest: configDigest,
+        message: expect.stringContaining("root is not a JSON object"),
+      }),
+    );
+    expect(report.images[0]?.config_digest).toBe(configDigest);
+    expect(report.images[0]?.layers).toEqual([
+      expect.objectContaining({ digest: written.layerDigest, present: true }),
+    ]);
+    expect(report.coverage.status).toBe("partial");
+  },
+);
+
 it("records nested index depth as a finding once the bound is exceeded", async () => {
   const root = await createTestTempDirectory("rea-oci-nested-");
   await writeNestedOciIndexFixture(root, 2);
