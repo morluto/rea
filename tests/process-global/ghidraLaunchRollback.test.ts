@@ -239,6 +239,11 @@ it
     )
       throw new Error("Expected the original launch failure");
     expect(aggregate.cause.cause).toBe(fault.failure);
+    expect(result.error.diagnostics).toMatchObject({
+      failure_cause: {
+        cause: { cause: { cause: { message: fault.failure.message } } },
+      },
+    });
     const owned = owners[0]?.process;
     if (owned === undefined || runtimeRoot === undefined)
       throw new Error("Expected an admitted process and runtime root");
