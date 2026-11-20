@@ -130,7 +130,11 @@ are streamed into a read-only owned snapshot with a 2 GiB disk budget. Native
 capture commands enforce Linux address-space ceilings of at most 1 GiB,
 300 CPU seconds, 64 MiB per file and no core dumps, preserving stricter inherited
 limits. Windows uses a 1 GiB committed-memory limit for each owned tool tree.
-These are not aggregate machine or filesystem quotas.
+These are not aggregate machine or filesystem quotas. On Linux this family and
+the [packet capture tools](packet-captures.md) admit the selected limiter the
+same way: an absolute regular executable that reports util-linux prlimit and
+advertises `--as`, `--fsize`, `--cpu` and `--core`. Only the ceilings differ;
+packet inspection defaults to 30 CPU seconds.
 
 TShark output is bounded at 8 MiB; its known five-level selected-field shape and
 128 MiB graph-expansion estimate are checked before allocation. Retained facts

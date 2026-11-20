@@ -13,6 +13,8 @@ import {
   prlimitCeilingArguments,
   type LinuxResourceLimits,
 } from "../process/LinuxResourceLimits.js";
+import { ArtifactReaderFailure } from "../resources/index.js";
+import { prepareLinuxLimiter } from "../process/LinuxLimiterAdmission.js";
 import { preparePcapNativeBound } from "./PcapNativeBound.js";
 
 const probeResult = (stdout: string, stderr = "") => ({
@@ -24,6 +26,24 @@ const help = " --as[=limit] --fsize[=limit] --cpu[=limit] --core[=limit]";
 const resources = {
   readLimits: (limits: LinuxResourceLimits) => Promise.resolve(limits),
 } as ArtifactAnalysisResources;
+
+const admit = (
+  limiter: string,
+  probe: Parameters<typeof prepareLinuxLimiter>[0]["probe"],
+  ceilings: LinuxResourceLimits = {
+    address_space_bytes: BOUNDED_PRODUCER_LIMITS.address_space_bytes,
+    file_bytes: BOUNDED_PRODUCER_LIMITS.file_bytes,
+    cpu_seconds: BOUNDED_PRODUCER_LIMITS.cpu_seconds,
+  },
+) =>
+  prepareLinuxLimiter({
+    environment: { REA_TSHARK_PRLIMIT_COMMAND: limiter },
+    resources,
+    probe,
+    operation: "inspect_packet_capture",
+    ceilings,
+    provider: "tshark-capture",
+  });
 
 it("uses the shared 1 GiB ceiling for the Windows job memory limit", async () => {
   await expect(
@@ -42,18 +62,14 @@ it("accepts selected limiter symlinks with different and whitespace-bearing base
   for (const name of ["bounded-capture", " limiter", " limiter "]) {
     const selected = join(root, name);
     await symlink(executable, selected);
-    const bound = await preparePcapNativeBound(
-      "linux",
-      { REA_TSHARK_PRLIMIT_COMMAND: selected },
-      resources,
-      async (selection, args) => {
-        expect(selection.invocationPath).toBe(selected);
-        return probeResult(
-          args[0] === "--help" ? help : `${name} from util-linux 2.38.1\n`,
-        );
-      },
-    );
-    expect(bound.nativeBound.limiter?.command.invocationPath).toBe(selected);
+    const admitted = await admit(selected, async (selection, args) => {
+      expect(selection.invocationPath).toBe(selected);
+      return probeResult(
+        args[0] === "--help" ? help : `${name} from util-linux 2.38.1\n`,
+      );
+    });
+    expect(admitted.command.invocationPath).toBe(selected);
+    expect(admitted.configured).toBe(selected);
   }
 });
 
@@ -71,16 +87,12 @@ it("attributes malformed limiter version output while retaining producer evidenc
     },
   );
   await expect(
-    preparePcapNativeBound(
-      "linux",
-      { REA_TSHARK_PRLIMIT_COMMAND: selected },
-      resources,
-      async () => {
-        throw failure;
-      },
-    ),
+    admit(selected, async () => {
+      throw failure;
+    }),
   ).rejects.toMatchObject({
     _tag: "AnalysisCapabilityUnavailableError",
+    providerId: "tshark-capture",
     capturedOutput,
     diagnostics: {
       invalid_utf8_streams: ["stdout"],
@@ -116,6 +128,19 @@ it("pins capture ceilings through the shared prlimit prefix and keeps 300 CPU se
   expect(prepared.limitations[0]).toContain(String(limits.cpu_seconds));
 });
 
+it("pins packet-inspection ceilings with the shared 30 CPU seconds", async () => {
+  const root = await createTestTempDirectory("rea-capture-prlimit-");
+  const limiter = join(root, "prlimit");
+  await writeFile(limiter, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+  const admitted = await admit(limiter, async (_selection, args) =>
+    probeResult(
+      args[0] === "--help" ? help : "prlimit from util-linux 2.39.3\n",
+    ),
+  );
+  expect(admitted.limits.cpu_seconds).toBe(30);
+  expect(admitted.arguments).toEqual(prlimitCeilingArguments(admitted.limits));
+});
+
 it("rejects a directory or a command that does not identify as util-linux prlimit", async () => {
   const root = await createTestTempDirectory("rea-invalid-prlimit-");
   const executable = join(root, "not-prlimit");
@@ -126,11 +151,8 @@ it("rejects a directory or a command that does not identify as util-linux prlimi
     [executable, ""],
   ] as const) {
     await expect(
-      preparePcapNativeBound(
-        "linux",
-        { REA_TSHARK_PRLIMIT_COMMAND: path },
-        resources,
-        async () => probeResult(output),
+      admit(path, async (_selection, args) =>
+        probeResult(args[0] === "--help" ? help : output),
       ),
     ).rejects.toMatchObject({
       _tag: "AnalysisCapabilityUnavailableError",
@@ -162,16 +184,35 @@ it("preserves cancellation and selected-command identity failures during the pro
     }),
   ]) {
     await expect(
-      preparePcapNativeBound(
-        "linux",
-        { REA_TSHARK_PRLIMIT_COMMAND: limiter },
-        resources,
-        async () => {
-          throw failure;
-        },
-      ),
+      admit(limiter, async () => {
+        throw failure;
+      }),
     ).rejects.toBe(failure);
   }
+});
+
+it("leaves an unclosed kernel-limit descriptor to the caller's cleanup owner", async () => {
+  const root = await createTestTempDirectory("rea-prlimit-limits-cleanup-");
+  const limiter = join(root, "prlimit");
+  await writeFile(limiter, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+  const failure = new ArtifactReaderFailure("io", "close denied", {
+    cleanup: { reason: "close denied", resources: ["/proc/self/limits"] },
+  });
+  await expect(
+    prepareLinuxLimiter({
+      environment: { REA_TSHARK_PRLIMIT_COMMAND: limiter },
+      resources: {
+        readLimits: () => Promise.reject(failure),
+      } as unknown as ArtifactAnalysisResources,
+      probe: async (_selection, args) =>
+        probeResult(
+          args[0] === "--help" ? help : "prlimit from util-linux 2.39.3\n",
+        ),
+      operation: "inspect_packet_capture",
+      ceilings: BOUNDED_PRODUCER_LIMITS,
+      provider: "tshark-capture",
+    }),
+  ).rejects.toBe(failure);
 });
 
 it("rejects another util-linux command and retains the rejected help output", async () => {
@@ -183,14 +224,10 @@ it("rejects another util-linux command and retains the rejected help output", as
     "help diagnostic",
   ).capturedOutput;
   await expect(
-    preparePcapNativeBound(
-      "linux",
-      { REA_TSHARK_PRLIMIT_COMMAND: selected },
-      resources,
-      async (_selection, args) =>
-        args[0] === "--help"
-          ? { stdout: capturedOutput.stdout, capturedOutput }
-          : probeResult("lsblk from util-linux 2.38\n"),
+    admit(selected, async (_selection, args) =>
+      args[0] === "--help"
+        ? { stdout: capturedOutput.stdout, capturedOutput }
+        : probeResult("lsblk from util-linux 2.38\n"),
     ),
   ).rejects.toMatchObject({
     _tag: "AnalysisCapabilityUnavailableError",
@@ -204,11 +241,8 @@ it("retains rejected version output", async () => {
   await writeFile(selected, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
   const output = probeResult("unexpected banner", "diagnostic");
   await expect(
-    preparePcapNativeBound(
-      "linux",
-      { REA_TSHARK_PRLIMIT_COMMAND: selected },
-      resources,
-      async () => output,
+    admit(selected, async (_selection, args) =>
+      args[0] === "--help" ? probeResult(help) : output,
     ),
   ).rejects.toMatchObject({
     _tag: "AnalysisCapabilityUnavailableError",

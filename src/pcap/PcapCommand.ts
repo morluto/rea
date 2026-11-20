@@ -43,10 +43,8 @@ import { providerOutcomeOf } from "../process/ProviderOutcome.js";
 import { classifyProviderOutcome } from "../process/classifyProviderOutcome.js";
 import { describeLaunchFailure } from "../process/launchFailure.js";
 import { pcapToolUnavailable } from "./PcapConfiguration.js";
-import {
-  attributePcapLimitedExit,
-  PCAP_LIMITER_REMEDIATION,
-} from "./PcapNativeBound.js";
+import { attributePcapLimitedExit } from "./PcapNativeBound.js";
+import { PCAP_LIMITER_REMEDIATION } from "../process/LinuxLimiterAdmission.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
 export type PcapCommandLauncher = NonNullable<

@@ -45,7 +45,8 @@ it
     await writeFile(limiter, "limiter", { mode: 0o700 });
     await writeFile(
       command,
-      `if(process.argv.includes('--version'))console.log('TShark (Wireshark) 4.0.17');else console.log('[{"_source":{"layers":{"frame.number":["1"]}}}]');`,
+      // Limiter probes run without the prlimit `--` terminator.
+      `if(!process.argv.includes('--'))console.log(process.argv.includes('--help')?' --as --fsize --cpu --core':'limiter from util-linux 2.39.3');else if(process.argv.includes('--version'))console.log('TShark (Wireshark) 4.0.17');else console.log('[{"_source":{"layers":{"frame.number":["1"]}}}]');`,
       { mode: 0o700 },
     );
     let launches = 0;
