@@ -716,8 +716,10 @@ marker in their reported slices.
 
 `inspect_plist.format` describes the selected source, not plutil's conversion
 format. Sources explicitly identified as XML, binary or JSON retain those
-labels. For generic text, a bounded source-prefix probe recognizes leading XML
-markup, including UTF-8 and BOM-marked UTF-16 sources. Unidentified text and
+labels. For any other `file` description, a bounded source-prefix probe
+recognizes leading XML markup, including UTF-8 and BOM-marked UTF-16 sources.
+`file` reports `data` for XML containing a control character or NUL byte, which
+CoreFoundation can still read; the probe labels it `xml`. Unidentified text and
 OpenStep plists, including a data-only value such as `<deadbeef>`, report
 `unknown` even when plutil decodes their values through an XML conversion.
 
