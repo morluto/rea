@@ -353,6 +353,44 @@ it("inventories an index a deeper path reaches first at its shallowest depth", a
   ).toEqual([]);
 });
 
+it("checks every declared size of a blob that several manifests share", async () => {
+  const root = await createTestTempDirectory("rea-oci-shared-config-");
+  const written = await writeOciImageLayoutFixture(root);
+  const manifest = JSON.parse(
+    await readFile(
+      join(root, "blobs", "sha256", written.manifestDigest.slice(7)),
+      "utf8",
+    ),
+  ) as { config: { size: number } };
+  const configSize = manifest.config.size;
+  // A second manifest reuses the same config blob but declares a wrong size.
+  manifest.config.size = configSize + 1;
+  const second = `${JSON.stringify(manifest)}\n`;
+  const secondDigest = await putOciBlob(root, second);
+  const indexPath = join(root, "index.json");
+  const index = JSON.parse(await readFile(indexPath, "utf8")) as {
+    manifests: unknown[];
+  };
+  index.manifests.push({
+    mediaType: "application/vnd.oci.image.manifest.v1+json",
+    digest: secondDigest,
+    size: Buffer.byteLength(second),
+  });
+  await writeFile(indexPath, `${JSON.stringify(index)}\n`);
+  const report = await inspectLayout(root);
+  const mismatches = report.findings.filter(
+    (finding) =>
+      finding.kind === "size_mismatch" &&
+      finding.digest === written.configDigest,
+  );
+  expect(mismatches.length).toBeGreaterThan(0);
+  expect(
+    mismatches.every((finding) =>
+      finding.message.includes(String(configSize + 1)),
+    ),
+  ).toBe(true);
+});
+
 it("refuses malformed index.json and preserves the oci-layout snapshot", async () => {
   const root = await createTestTempDirectory("rea-oci-malformed-");
   await writeOciImageLayoutFixture(root);

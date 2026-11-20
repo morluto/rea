@@ -234,6 +234,8 @@ interface ReferencedBlob {
   digest: string;
   mediaType: string | null;
   declaredSize: number | null;
+  /** Every distinct size the descriptors referencing this blob declared. */
+  declaredSizes: number[];
 }
 
 const recordFinding = (
@@ -547,10 +549,21 @@ export const parseOciImageLayout = async (
     declaredSize: number | null,
   ): void => {
     const existing = referenced.get(digest);
-    if (existing === undefined)
-      referenced.set(digest, { digest, mediaType, declaredSize });
-    else if (existing.mediaType === null && mediaType !== null)
+    if (existing === undefined) {
+      referenced.set(digest, {
+        digest,
+        mediaType,
+        declaredSize,
+        declaredSizes: declaredSize === null ? [] : [declaredSize],
+      });
+      return;
+    }
+    if (existing.mediaType === null && mediaType !== null)
       existing.mediaType = mediaType;
+    if (declaredSize === null || existing.declaredSizes.includes(declaredSize))
+      return;
+    existing.declaredSize ??= declaredSize;
+    existing.declaredSizes.push(declaredSize);
   };
 
   const indexes: OciImageLayoutIndex[] = [];
@@ -957,18 +970,16 @@ export const parseOciImageLayout = async (
       );
       continue;
     }
-    if (
-      reference.declaredSize !== null &&
-      entry.declaredSize !== null &&
-      reference.declaredSize !== entry.declaredSize
-    )
-      recordFinding(
-        findings,
-        "size_mismatch",
-        `Blob ${digest} declared size ${String(reference.declaredSize)} disagrees with file size ${String(entry.declaredSize)}.`,
-        digest,
-        path,
-      );
+    // Each reference's declaration is checked against the one file.
+    for (const declared of reference.declaredSizes)
+      if (entry.declaredSize !== null && declared !== entry.declaredSize)
+        recordFinding(
+          findings,
+          "size_mismatch",
+          `Blob ${digest} declared size ${String(declared)} disagrees with file size ${String(entry.declaredSize)}.`,
+          digest,
+          path,
+        );
     try {
       const hashed = await hashBlob(
         reader,
@@ -988,17 +999,15 @@ export const parseOciImageLayout = async (
           digest,
           path,
         );
-      if (
-        reference.declaredSize !== null &&
-        hashed.bytes !== reference.declaredSize
-      )
-        recordFinding(
-          findings,
-          "size_mismatch",
-          `Blob ${digest} hashed ${String(hashed.bytes)} bytes; descriptor size is ${String(reference.declaredSize)}.`,
-          digest,
-          path,
-        );
+      for (const declared of reference.declaredSizes)
+        if (hashed.bytes !== declared)
+          recordFinding(
+            findings,
+            "size_mismatch",
+            `Blob ${digest} hashed ${String(hashed.bytes)} bytes; descriptor size is ${String(declared)}.`,
+            digest,
+            path,
+          );
       blobs.push(
         blobRecord(
           digest,
