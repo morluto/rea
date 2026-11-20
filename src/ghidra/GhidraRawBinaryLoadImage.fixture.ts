@@ -1,10 +1,7 @@
 import { createHash } from "node:crypto";
 
 import type { NativeLoadImageObservation } from "../domain/native/nativeLoadImage.js";
-import type {
-  BinaryArchitecture,
-  BinaryTarget,
-} from "../domain/binaryTargetTypes.js";
+import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
 
 const hash = (bytes: Buffer): string =>

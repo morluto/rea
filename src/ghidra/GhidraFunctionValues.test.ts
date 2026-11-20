@@ -654,84 +654,6 @@ describe("Ghidra compact reference provenance", () => {
   );
 });
 
-describe("Ghidra native instruction decoder context", () => {
-  it("preserves observed per-address decoder context and handles null values and emptiness", () => {
-    const base = compactInstruction();
-    for (const context of [
-      undefined,
-      [],
-      [{ register: "ISA_MODE", value: "1", source: "ghidra-program-context" }],
-      [{ register: "ISA_MODE", value: "0", source: "ghidra-program-context" }],
-      [{ register: "ISA_MODE", value: null, source: "ghidra-program-context" }],
-    ]) {
-      const wire =
-        context === undefined ? base : { ...base, decoder_context: context };
-      const parsed = parseFunctionValueFixture(
-        "inspect_native_instruction",
-        wire,
-      );
-      if (!parsed.ok) throw parsed.error;
-      if (context === undefined) {
-        expect(parsed.value).not.toHaveProperty("decoder_context");
-      } else {
-        expect(parsed.value).toMatchObject({ decoder_context: context });
-      }
-    }
-  });
-
-  it.each([
-    {
-      label: "empty register name",
-      entry: { register: "", value: "1", source: "ghidra" },
-    },
-    {
-      label: "empty string value instead of null",
-      entry: { register: "ISA_MODE", value: "", source: "ghidra" },
-    },
-    {
-      label: "empty source string",
-      entry: { register: "ISA_MODE", value: "1", source: "" },
-    },
-    {
-      label: "numeric value",
-      entry: { register: "ISA_MODE", value: 1, source: "ghidra" },
-    },
-    {
-      label: "unexpected extra properties",
-      entry: {
-        register: "ISA_MODE",
-        value: "1",
-        source: "ghidra",
-        extra: true,
-      },
-    },
-  ])("rejects malformed decoder_context entry ($label)", ({ entry }) => {
-    const wire = {
-      ...compactInstruction(),
-      decoder_context: [entry],
-    };
-    expect(
-      parseFunctionValueFixture("inspect_native_instruction", wire),
-    ).toMatchObject({
-      ok: false,
-      error: { _tag: "AnalysisOutputError" },
-    });
-  });
-
-  it("rejects non-array decoder_context", () => {
-    const wire = {
-      ...compactInstruction(),
-      decoder_context: "invalid",
-    };
-    expect(
-      parseFunctionValueFixture("inspect_native_instruction", wire),
-    ).toMatchObject({
-      ok: false,
-      error: { _tag: "AnalysisOutputError" },
-    });
-  });
-});
-
 describe("Ghidra native instruction flow classification evidence", () => {
   it("preserves observed instruction flow classification evidence and handles emptiness and omission", () => {
     const base = compactInstruction();
@@ -1313,6 +1235,44 @@ describe("Ghidra native instruction decoder context for ARM TMode and MIPS ISA_M
     expect(
       parseFunctionValueFixture("inspect_native_instruction", emptySource).ok,
     ).toBe(false);
+
+    for (const invalidEntry of [
+      { register: "ISA_MODE", value: "", source: "ghidra" },
+      { register: "ISA_MODE", value: 1, source: "ghidra" },
+      { register: "ISA_MODE", value: "1", source: "ghidra", extra: true },
+    ]) {
+      expect(
+        parseFunctionValueFixture("inspect_native_instruction", {
+          ...compactInstruction(),
+          decoder_context: [invalidEntry],
+        }),
+      ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
+    }
+
+    expect(
+      parseFunctionValueFixture("inspect_native_instruction", {
+        ...compactInstruction(),
+        decoder_context: "invalid",
+      }),
+    ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
+  });
+
+  it("handles omitted and empty decoder_context arrays", () => {
+    const omitted = parseFunctionValueFixture(
+      "inspect_native_instruction",
+      compactInstruction(),
+    );
+    expect(omitted.ok).toBe(true);
+    if (omitted.ok) expect(omitted.value).not.toHaveProperty("decoder_context");
+
+    const empty = parseFunctionValueFixture("inspect_native_instruction", {
+      ...compactInstruction(),
+      decoder_context: [],
+    });
+    expect(empty).toMatchObject({
+      ok: true,
+      value: { decoder_context: [] },
+    });
   });
 });
 
