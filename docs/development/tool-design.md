@@ -277,6 +277,21 @@ handling diagnostics. Preserve source spelling and offset units alongside any
 normalized lookup value. Verify both operations with the same authored inputs
 and independently specified expectations. See [boundary regressions](testing.md#boundary-regressions).
 
+For example, APT one-line sources can spell a suite as `"stable"` and a
+component as `main%2Cextra`. With APT 2.8.4, those words select suite
+`stable` and component `main,extra`. The source reader owns the word
+decoding. Capture retains the authored spelling and uses the effective
+identity to match the observed index. Replay uses that same identity
+when deciding what it can write to a deb822 declaration.
+
+Test an accepted pair and a refusal. The quoted suite and escaped
+component should select the same index as their deb822 equivalents.
+A one-line component written as `"main extra"` should be withheld from
+replay because deb822 would read it as two components. Check the captured
+facts and the emitted or withheld declaration. Pin the reference reader
+version and record which steps ran. The [offline APT reproduction](https://github.com/morluto/rea/issues/12694)
+checked source and index identity without installing or deploying the app.
+
 Give each nested parser the admitted extent of its containing record.
 Check a child's declared encoded range against that extent before applying
 its decoding allowance. If the format declares more fields or rows after the
