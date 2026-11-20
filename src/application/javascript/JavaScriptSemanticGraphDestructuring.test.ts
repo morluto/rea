@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { analyzeJavaScriptSemantics } from "../../domain/javascript/javascriptSemanticAnalysis.js";
 import { graphForJavaScript } from "../../../tests/fixtures/javascriptSemanticGraph.js";
 
 it.each([
@@ -2126,6 +2127,54 @@ it.each([
     "resolved",
   ],
   [
+    "a projected array before its whole receiver is replaced",
+    'const box={pairs:[["one"]]};const {0:[selected]}=box.pairs;box.pairs=[];',
+    ["pairs", "0", "0"],
+    "resolved",
+  ],
+  [
+    "a projected array before a later custom receiver",
+    'const box={pairs:[["one"]]};const {0:[selected]}=box.pairs;box.pairs={*[Symbol.iterator](){yield "later";}};',
+    ["pairs", "0", "0"],
+    "resolved",
+  ],
+  [
+    "a deeper projected array before a later parent replacement",
+    'const box={nested:{pairs:[["one"]]}};const {0:[selected]}=box.nested.pairs;box.nested={pairs:[]};',
+    ["nested", "pairs", "0", "0"],
+    "resolved",
+  ],
+  [
+    "an earlier custom inner receiver before the whole array is replaced",
+    'const box={pairs:[["one"]]};box.pairs[0]={*[Symbol.iterator](){yield "earlier";}};const {0:[selected]}=box.pairs;box.pairs=[];',
+    ["pairs", "0", "0"],
+    "candidate",
+  ],
+  [
+    "an earlier default replacing the next own numeric receiver",
+    'const box={pairs:[["one"],["two"]]};const {none=(box.pairs[1]={*[Symbol.iterator](){yield "earlier";}}),1:[selected]}=box.pairs;box.pairs=[];',
+    ["pairs", "1", "0"],
+    "candidate",
+  ],
+  [
+    "a projected array before later receiver and iterator replacements",
+    'const box={pairs:[["one"]]};const {0:[selected]}=box.pairs;Object.getPrototypeOf([].values()).next=()=>({done:true});box.pairs=[];',
+    ["pairs", "0", "0"],
+    "resolved",
+  ],
+  [
+    "an earlier opaque escape from the projected receiver",
+    'const box={pairs:[["one"]]};consume(box.pairs);const {0:[selected]}=box.pairs;box.pairs=[];',
+    ["pairs", "0", "0"],
+    "candidate",
+  ],
+  [
+    "an earlier local iterator override on the selected inner array",
+    'const box={pairs:[["one"]]};box.pairs[0][Symbol.iterator]=function*(){};const {0:[selected]}=box.pairs;box.pairs=[];',
+    ["pairs", "0", "0"],
+    "candidate",
+  ],
+  [
     "a numeric slot selected through an accessor",
     'const box={get pairs(){return [["one"]];}};const {0:[selected]}=box.pairs;box.pairs[0][0]="later";',
     ["pairs", "0", "0"],
@@ -2425,5 +2474,110 @@ it.each([
       graph.nodes.find((n) => n.node_id === relation?.source_node_id)
         ?.properties.property_path,
     ).toEqual(path);
+  },
+);
+
+it("keeps a retained alias unknown after a possible close on a captured receiver", () => {
+  const graph = graphForJavaScript(`
+    const box = { pairs: [[0, { mode: "old" }]] };
+    const kept = box.pairs[0][1];
+    Object.getPrototypeOf([].values()).return = function () {
+      const value = this.next().value;
+      if (value) delete value.mode;
+      return {};
+    };
+    const { 0: [used] } = box.pairs;
+    const { mode: selected } = kept;
+    box.pairs = [];
+  `);
+  const target = graph.nodes.find(
+    (node) => node.kind === "binding" && node.label === "selected",
+  );
+  expect(target).toBeDefined();
+  const relation = graph.relations.find(
+    (edge) =>
+      edge.relation === "destructures" &&
+      edge.target_node_id === target?.node_id,
+  );
+  expect(relation).toMatchObject({ resolution: "candidate" });
+  const literalIds = new Set(
+    graph.nodes
+      .filter((node) => node.kind === "literal")
+      .map((node) => node.node_id),
+  );
+  expect(
+    graph.relations.some(
+      (edge) =>
+        edge.relation === "defines" &&
+        edge.target_node_id === target?.node_id &&
+        literalIds.has(edge.source_node_id),
+    ),
+  ).toBe(false);
+});
+
+it.each([
+  [
+    "defined guard",
+    'const xs=[0,["one"]];const [used=(xs[1][0]="dormant"),[selected]]=xs;xs[1][0]="later";',
+    "resolved",
+    "literal",
+  ],
+  [
+    "undefined guard",
+    'const xs=[undefined,["one"]];const [used=(xs[1][0]="active"),[selected]]=xs;xs[1][0]="later";',
+    "candidate",
+    "unknown",
+  ],
+  [
+    "default can change the guard",
+    'const xs=[0,["one"]];const [used=(xs[0]=undefined),[selected]]=xs;xs[1][0]="later";',
+    "candidate",
+    "literal",
+  ],
+  [
+    "default can change the guard and later slot",
+    'const xs=[0,["one"]];const [used=(xs[0]=undefined,xs[1][0]="dormant"),[selected]]=xs;xs[1][0]="later";',
+    "candidate",
+    "unknown",
+  ],
+  [
+    "unknown guard",
+    'const xs=[unknown(),["one"]];const [used=(xs[1][0]="maybe"),[selected]]=xs;xs[1][0]="later";',
+    "candidate",
+    "unknown",
+  ],
+  [
+    "earlier guard write",
+    'const xs=[0,["one"]];xs[0]=undefined;const [used=(xs[1][0]="active"),[selected]]=xs;xs[1][0]="later";',
+    "candidate",
+    "unknown",
+  ],
+  [
+    "custom iterator",
+    'const xs=[0,["one"]];xs[Symbol.iterator]=function*(){yield undefined;yield xs[1]};const [used=(xs[1][0]="active"),[selected]]=xs;xs[1][0]="later";',
+    "candidate",
+    "unknown",
+  ],
+] as const)(
+  "applies a first default's possible effects with %s",
+  (_name, source, resolution, status) => {
+    const semantics = analyzeJavaScriptSemantics(source);
+    const graph = graphForJavaScript(source, semantics);
+    const selected = graph.nodes.find(
+      ({ kind, label }) => kind === "binding" && label === "selected",
+    );
+    expect(selected).toBeDefined();
+    expect(
+      graph.relations.find(
+        (edge) =>
+          edge.relation === "destructures" &&
+          edge.target_node_id === selected?.node_id,
+      ),
+    ).toMatchObject({ resolution });
+    expect(
+      semantics.bindings.find(({ name }) => name === "selected")?.value,
+    ).toMatchObject(
+      status === "literal" ? { status, value: "one" } : { status },
+    );
   },
 );

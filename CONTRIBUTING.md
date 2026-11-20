@@ -340,21 +340,15 @@ for live editing and `npm run docs:preview` to serve an existing build at
 `/rea/`. Follow the [documentation checks](docs/development/documentation.md#generated-ownership-and-checks)
 to build and verify the rendered routes and anchors.
 
-Site navigation lives in `docs/.vitepress/config.ts`. Keep links to guides
-relative so they work on GitHub and the website; link to repository files
-outside `docs/` using their full GitHub URLs. Generated reference documents
-use `npm run docs:generate`; `docs:build` generates them before building the website.
+The [authoring guide](docs/development/documentation.md#links-and-public-routes)
+explains where to edit navigation and how to preserve public links. The
+`Documentation` CI job runs the documentation and rendered-route checks.
+The manual VitePress workflow in `.github/workflows/pages.yml` builds these
+guides for verification.
 
-Pull requests run `npm run docs:check`. `.github/workflows/pages.yml` is a
-manual VitePress build and does not publish. The public site at
-<https://rea.tools/> serves `website/public/` through Cloudflare Workers. See
-the [website README](website/README.md#cloudflare-workers) for previews and
-manual deployments.
-
-The separate GitHub Pages host uses only the manual
-`.github/workflows/website-pages.yml` workflow on `main`. The repository's
-**Settings → Pages → Build and deployment → Source** must be set to
-**GitHub Actions** before deploying there.
+The product website in `website/public/` has a separate
+[publishing workflow](website/README.md#synchronized-production-publishing) for
+`rea.tools` and GitHub Pages.
 
 ### Translation corrections
 

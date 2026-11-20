@@ -450,6 +450,12 @@ const findConfig = async (
     const limit = Math.min(maxOutput, remaining);
     const member = await inflateGzipMember(bytes, gzipAt, limit, signal);
     if (member.kind === "limit") {
+      // Without an end marker, the stopped inflate cannot establish an
+      // oversized config. No later candidate can be framed either.
+      if (closing < 0) {
+        truncated = true;
+        break;
+      }
       if (limit < maxOutput) return "exhausted";
       // A member past max_config_bytes may be a decoy, so a later framed
       // config can still win; the budget failure is raised only if none does.

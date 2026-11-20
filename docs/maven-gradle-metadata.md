@@ -75,6 +75,11 @@ userinfo credentials in `available_at.url` are removed and
 `url_credentials_redacted` is `true`; when the credential span cannot be
 located, `url` is `null`.
 
+For unfamiliar Gradle format versions with a recognizable metadata structure,
+REA interprets familiar fields using the 1.1 rules and reports the limitation.
+Complete byte coverage means the whole file was examined. Declarations specific
+to an unfamiliar format version may still be unreported.
+
 `unresolved` names every property reference in the coordinates, packaging, and
 each dependency's scope, type, classifier, and optional, plus missing
 coordinates that a parent would normally supply and other missing coordinates. These are explicit

@@ -39,7 +39,7 @@ existing safe output tree, without running the executable or the Deno runtime.
   parsed fails closed. Side-by-side trailers with different bytes fail closed.
 - Bound metadata, header, table, specifier, remote body, virtual-filesystem
   record, depth, retained-unit and retained-byte work with named allowances,
-  documented in [limits and recovery](../../../design/limits-and-recovery.md#deno-compile-sections).
+  documented in [Deno compile sections](../../../deno-standalone.md#deno-compile-sections).
 
 ## Acceptance
 

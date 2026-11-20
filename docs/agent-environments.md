@@ -1200,7 +1200,7 @@ read, not that the write had no other effect.
 ## Compatibility verification
 
 `npm run verify:agentenv:environment` is the hosted `real-agentenv` lane
-described in [testing](development/testing.md#exported-environment-bundles). It projects
+described in [exported bundle verification](testing-lanes.md#exported-environment-bundles). It projects
 the Grafana-shaped source-owned capture through the built CLI, packs the
 checkout, exports a bundle with `--package-tarball`, runs it with the pinned
 `agentenv-framework` release on the runner's Docker and requires the smoke task

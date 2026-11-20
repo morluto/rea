@@ -333,31 +333,70 @@ const AUXV_TYPE_NAMES: Readonly<Record<number, string>> = {
 
 const hexWord = (val: bigint | number): string => `0x${val.toString(16)}`;
 
+// Linux ELF32 core-writer ABIs with established NT_PRPSINFO UID/GID widths.
+// The native and compatibility writers store sizeof(elf_prpsinfo).
+const LINUX_ELF32_PRPSINFO_ID_WIDTH: Readonly<Partial<Record<number, 2 | 4>>> =
+  {
+    2: 2, // EM_SPARC
+    3: 2, // EM_386
+    4: 2, // EM_68K
+    8: 4, // EM_MIPS
+    15: 4, // EM_PARISC
+    20: 4, // EM_PPC
+    22: 2, // EM_S390 (31-bit compatibility)
+    40: 2, // EM_ARM
+    42: 2, // EM_SH
+    62: 2, // EM_X86_64 (x32 compatibility)
+    92: 4, // EM_OPENRISC
+    93: 4, // EM_ARCOMPACT
+    94: 4, // EM_XTENSA
+    106: 4, // EM_BLACKFIN
+    110: 4, // EM_UNICORE
+    113: 4, // EM_ALTERA_NIOS2
+    140: 4, // EM_TI_C6000
+    164: 4, // EM_HEXAGON
+    167: 4, // EM_NDS32
+    174: 4, // EM_METAG
+    188: 4, // EM_TILEPRO
+    189: 4, // EM_MICROBLAZE
+    191: 4, // EM_TILEGX (ELF32 compatibility)
+    195: 4, // EM_ARCV2
+    243: 4, // EM_RISCV
+    252: 4, // EM_CSKY
+    0x8472: 4, // EM_OR32 (older Linux OpenRISC cores)
+  };
+
 const decodeCorePrpsinfo = (
   descriptor: Buffer,
   little: boolean,
   wide: boolean,
+  machine: number,
   text: TextBudget,
 ): ElfNotes["entries"][number]["core"] => {
-  const minLen = wide ? 136 : 124;
-  if (descriptor.length < minLen) return null;
-  const u8 = (off: number) => descriptor.readUInt8(off);
-  const u16 = (off: number) =>
-    little ? descriptor.readUInt16LE(off) : descriptor.readUInt16BE(off);
-  const u32 = (off: number) =>
-    little ? descriptor.readUInt32LE(off) : descriptor.readUInt32BE(off);
-  const i32 = (off: number) =>
-    little ? descriptor.readInt32LE(off) : descriptor.readInt32BE(off);
+  const idWidth = wide ? 4 : LINUX_ELF32_PRPSINFO_ID_WIDTH[machine];
+  if (idWidth === undefined) return null;
+  const uidOff = wide ? 16 : 8;
+  const gidOff = uidOff + idWidth;
+  const pidOff = gidOff + idWidth;
+  const fnameOff = pidOff + 16;
+  const psargsOff = fnameOff + 16;
+  const expectedBytes = psargsOff + 80;
+  if (
+    wide
+      ? descriptor.length < expectedBytes
+      : descriptor.length !== expectedBytes
+  )
+    return null;
 
-  const state = u8(0);
-  const uid = wide ? u32(16) : u16(8);
-  const gid = wide ? u32(20) : u16(10);
-  const pid = wide ? i32(24) : i32(12);
-  const ppid = wide ? i32(28) : i32(16);
-  const pgrp = wide ? i32(32) : i32(20);
-  const sid = wide ? i32(36) : i32(24);
+  const reader = new BinaryReader(descriptor, little, "elf-notes");
+  const state = reader.u8(0);
+  const uid = idWidth === 4 ? reader.u32(uidOff) : reader.u16(uidOff);
+  const gid = idWidth === 4 ? reader.u32(gidOff) : reader.u16(gidOff);
+  const pid = reader.i32(pidOff);
+  const ppid = reader.i32(pidOff + 4);
+  const pgrp = reader.i32(pidOff + 8);
+  const sid = reader.i32(pidOff + 12);
 
-  const fnameOff = wide ? 40 : 28;
   const fnameBytes = descriptor.subarray(fnameOff, fnameOff + 16);
   const fnameEnd = fnameBytes.indexOf(0);
   const fname = (
@@ -365,7 +404,6 @@ const decodeCorePrpsinfo = (
   ).toString("latin1");
   chargeText(text, fname.length);
 
-  const psargsOff = wide ? 56 : 44;
   const psargsBytes = descriptor.subarray(psargsOff, psargsOff + 80);
   const psargsEnd = psargsBytes.indexOf(0);
   const psargs = (
@@ -597,7 +635,7 @@ const decodeCore = (
 ): ElfNotes["entries"][number]["core"] => {
   if (owner !== "CORE") return null;
   if (type === 3)
-    return decodeCorePrpsinfo(descriptor, little, bits === 64, text);
+    return decodeCorePrpsinfo(descriptor, little, bits === 64, machine, text);
   if (type === 0x46494c45)
     return decodeCoreFile(descriptor, little, bits, text);
   if (type === 0x53494749)
