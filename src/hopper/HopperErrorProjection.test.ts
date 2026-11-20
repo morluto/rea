@@ -301,8 +301,7 @@ describe("analysis error projection: operational diagnostics", () => {
     expect(exited.message).toMatch(
       /Hopper exited.*search_strings.*exit code 7/iu,
     );
-    expect(exited.remediation.action).toContain("close_binary");
-    expect(exited.remediation.action).toContain("open");
+    expect(exited.remediation.action).toMatch(/close_binary.*open.*retry/iu);
 
     const unknownError = new HopperProcessError(null, {
       operation: "search_strings",
@@ -324,7 +323,9 @@ describe("analysis error projection: operational diagnostics", () => {
     expect(unknown.message).toMatch(
       /could not determine.*busy, exited, or unreachable/iu,
     );
-    expect(unknown.remediation.action).toContain("provider_operation_health");
+    expect(unknown.remediation.action).toMatch(
+      /provider_operation_health.*before retrying or restarting/iu,
+    );
 
     const unreachableError = new HopperProcessError(null, {
       operation: "search_strings",
