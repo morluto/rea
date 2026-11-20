@@ -21,6 +21,7 @@ import {
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { bindVerifierCommandInterruption } from "./lib/verifier-command-interruption.mjs";
 import {
   assertVerifierCleanupComplete,
   createVerifierRun,
@@ -104,54 +105,10 @@ const env = {
 };
 // The public CLI launch uses this command owner. A timeout stops its process group.
 const commands = await createVerifierCommands();
-// Ctrl-C must abort the detached command and wait for its cleanup. Node's
-// default SIGINT would exit first and leave that process group running.
-const commandInterruption = new AbortController();
-const interruptOwnedCommand = (signal) =>
-  commandInterruption.abort(new Error(`Verifier interrupted by ${signal}`));
-process.on("SIGINT", interruptOwnedCommand);
-process.on("SIGTERM", interruptOwnedCommand);
-const execOwned = (command, args, options = {}) =>
-  commands.exec(command, args, {
-    ...options,
-    signal: commandInterruption.signal,
-  });
-const finishCommandInterruption = () => {
-  process.off("SIGINT", interruptOwnedCommand);
-  process.off("SIGTERM", interruptOwnedCommand);
-  return commandInterruption.signal.aborted
-    ? commandInterruption.signal.reason
-    : undefined;
-};
-const throwIfInterrupted = () => {
-  if (commandInterruption.signal.aborted)
-    throw commandInterruption.signal.reason;
-};
-// Analysis calls do not share the command process group. Stop waiting for them
-// on interrupt, then let the existing cleanup run.
-const untilInterrupted = (promise) =>
-  new Promise((resolve, reject) => {
-    let settled = false;
-    const finish = (settle, value) => {
-      if (settled) return;
-      settled = true;
-      commandInterruption.signal.removeEventListener("abort", onAbort);
-      settle(value);
-    };
-    const onAbort = () => finish(reject, commandInterruption.signal.reason);
-    // The caller starts `promise` before this check. Observe it even when the
-    // signal is already aborted so its later rejection cannot end the process.
-    if (commandInterruption.signal.aborted)
-      finish(reject, commandInterruption.signal.reason);
-    else
-      commandInterruption.signal.addEventListener("abort", onAbort, {
-        once: true,
-      });
-    Promise.resolve(promise).then(
-      (value) => finish(resolve, value),
-      (cause) => finish(reject, cause),
-    );
-  });
+const commandInterruption = bindVerifierCommandInterruption(commands);
+const execOwned = commandInterruption.exec;
+const { untilInterrupted, throwIfInterrupted } = commandInterruption;
+const finishCommandInterruption = () => commandInterruption.finish();
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
@@ -199,9 +156,7 @@ await withVerifierFixture(workspaceFixture, async () => {
       await untilInterrupted(
         client.listTools(undefined, { signal: commandInterruption.signal }),
       )
-    ).tools.find(
-      (tool) => tool.name === "search_bytes",
-    );
+    ).tools.find((tool) => tool.name === "search_bytes");
     assert.ok(listedSearch);
     searchDefinition = withCanonicalOutputSchema(listedSearch);
     const profiles = [];
@@ -461,7 +416,10 @@ await withVerifierFixture(workspaceFixture, async () => {
     const wrongCursor = await client.callTool(
       {
         name: "search_bytes",
-        arguments: { pattern: "c3", cursor: page.normalized_result.next_cursor },
+        arguments: {
+          pattern: "c3",
+          cursor: page.normalized_result.next_cursor,
+        },
       },
       { signal: commandInterruption.signal },
     );
@@ -726,13 +684,15 @@ await withVerifierFixture(workspaceFixture, async () => {
                 ),
       },
     );
-  const interrupted = finishCommandInterruption();
+  const interrupted = commandInterruption.reason();
   if (interrupted !== undefined)
     throw retainWorkspace(
       `Raw-binary verification interrupted; retained diagnostic workspace: ${workspace}`,
       { cause: interrupted },
     );
 });
+const releaseInterrupted = finishCommandInterruption();
+if (releaseInterrupted !== undefined) throw releaseInterrupted;
 process.stdout.write(
   JSON.stringify({
     verifier_run: verifierRun,
@@ -874,9 +834,7 @@ async function verifyCrossBlockProject(target, targetSha256) {
           signal: commandInterruption.signal,
         }),
       )
-    ).tools.find(
-      (tool) => tool.name === "search_bytes",
-    );
+    ).tools.find((tool) => tool.name === "search_bytes");
     assert.ok(definition);
     const projectCall = async (name, args) => {
       throwIfInterrupted();

@@ -28,6 +28,7 @@ import {
   assertSwitchOracleControls,
 } from "./verify-real-ghidra-switch-assertions.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { bindVerifierCommandInterruption } from "./lib/verifier-command-interruption.mjs";
 import {
   assertVerifierCleanupComplete,
   createVerifierRun,
@@ -58,54 +59,10 @@ assert.ok(
 // Compiler, reader and CLI launches share one command owner, including the
 // pre-workspace version probes. A timeout stops that process group.
 const commands = await createVerifierCommands();
-// Ctrl-C must abort the detached command and wait for its cleanup. Node's
-// default SIGINT would exit first and leave that process group running.
-const commandInterruption = new AbortController();
-const interruptOwnedCommand = (signal) =>
-  commandInterruption.abort(new Error(`Verifier interrupted by ${signal}`));
-process.on("SIGINT", interruptOwnedCommand);
-process.on("SIGTERM", interruptOwnedCommand);
-const execOwned = (command, args, options = {}) =>
-  commands.exec(command, args, {
-    ...options,
-    signal: commandInterruption.signal,
-  });
-const finishCommandInterruption = () => {
-  process.off("SIGINT", interruptOwnedCommand);
-  process.off("SIGTERM", interruptOwnedCommand);
-  return commandInterruption.signal.aborted
-    ? commandInterruption.signal.reason
-    : undefined;
-};
-const throwIfInterrupted = () => {
-  if (commandInterruption.signal.aborted)
-    throw commandInterruption.signal.reason;
-};
-// Analysis calls do not share the command process group. Stop waiting for them
-// on interrupt, then let the existing cleanup run.
-const untilInterrupted = (promise) =>
-  new Promise((resolve, reject) => {
-    let settled = false;
-    const finish = (settle, value) => {
-      if (settled) return;
-      settled = true;
-      commandInterruption.signal.removeEventListener("abort", onAbort);
-      settle(value);
-    };
-    const onAbort = () => finish(reject, commandInterruption.signal.reason);
-    // The caller starts `promise` before this check. Observe it even when the
-    // signal is already aborted so its later rejection cannot end the process.
-    if (commandInterruption.signal.aborted)
-      finish(reject, commandInterruption.signal.reason);
-    else
-      commandInterruption.signal.addEventListener("abort", onAbort, {
-        once: true,
-      });
-    Promise.resolve(promise).then(
-      (value) => finish(resolve, value),
-      (cause) => finish(reject, cause),
-    );
-  });
+const commandInterruption = bindVerifierCommandInterruption(commands);
+const execOwned = commandInterruption.exec;
+const { untilInterrupted, throwIfInterrupted } = commandInterruption;
+const finishCommandInterruption = () => commandInterruption.finish();
 const toolchain = {
   gcc: process.env.REA_GCC ?? "gcc",
   clang: process.env.REA_CLANG ?? "clang",
@@ -205,12 +162,7 @@ await withVerifierFixture(workspaceFixture, async () => {
   try {
     for (const compiler of ["gcc", "clang"]) {
       const original = join(workspace, `${compiler}-optimized`);
-      await execOwned(toolchain[compiler], [
-        ...flags,
-        source,
-        "-o",
-        original,
-      ]);
+      await execOwned(toolchain[compiler], [...flags, source, "-o", original]);
       const bytes = await readFile(original);
       const { stdout: symbols } = await execOwned(toolchain.nm, [
         "-n",
@@ -315,13 +267,15 @@ await withVerifierFixture(workspaceFixture, async () => {
                 ),
       },
     );
-  const interrupted = finishCommandInterruption();
+  const interrupted = commandInterruption.reason();
   if (interrupted !== undefined)
     throw retainWorkspace(
       `Switch verification interrupted; retained diagnostic workspace: ${workspace}`,
       { cause: interrupted },
     );
 });
+const releaseInterrupted = finishCommandInterruption();
+if (releaseInterrupted !== undefined) throw releaseInterrupted;
 process.stdout.write(
   `${JSON.stringify({ lane: "linux-x64-compiler-switch", compiler_only: compilerOnly, entrypoint, versions, compiler_flags: flags, verifier_run: lifecycle, production_controls: productionControls, results, limitations: ["Exact compiler oracle admits absolute 8-byte native x86-64 ELF tables and fails explicitly when a compiler changes lowering.", "Compiled binaries are analyzed read-only; target programs are never executed.", "Comparison-only control proves absence of a fabricated table and preservation of provider limitations, not recovery of C source.", "Detached Ghidra object controls exercise actual bridge methods through reflection; they do not claim naturally compiled ambiguous dispatches.", "CLI/MCP comparison covers switch observations, excluding process-specific Evidence IDs."], cleanup: "complete" })}\n`,
 );
