@@ -1,3 +1,4 @@
+import { coverageStatusSchema } from "../domain/coverage.js";
 import { procedureReferencesSchema } from "../domain/native/procedureReferences.js";
 import {
   nativeAddressListSchema,
@@ -20,7 +21,7 @@ import {
   machoSummaryViewResultSchema,
   managedArtifactSummaryViewResultSchema,
   managedMemberSummaryViewResultSchema,
-} from "../domain/analysisView/analysisView.js";
+} from "../domain/analysisView/analysisViewResult.js";
 import { literalFeatureTraceSchema } from "../domain/native/literalFeatureTrace.js";
 import { byteEntropySchema } from "../domain/native/byteEntropy.js";
 import { nativeFunctionMatchingSchema } from "../domain/native/functionMatching.js";
@@ -99,13 +100,13 @@ import {
   analysisErrorProjectionSchema,
   analysisInputErrorProjectionSchema,
   analysisResourceErrorProjectionSchema,
-} from "./errorSchemas.js";
+  evidenceIntegrityErrorProjectionSchema,
+} from "../domain/analysisErrorProjectionSchema.js";
 import { relationshipCoverageSchema } from "../domain/relationshipCoverage.js";
 import { nativeDispatchMetadataResultSchema } from "../domain/native/objcSwiftMetadata.js";
 import { nativeInvestigationTraceSchema } from "../domain/native/nativeInvestigationGraph.js";
 import {
   addressedEntry,
-  functionDossierOutput,
   lifecycleResultOf,
   nullableText,
   procedureInfoOutput,
@@ -123,6 +124,7 @@ import { electronFuseReportSchema } from "../domain/electron/electronFuses.js";
 const contextFacetErrorSchema = z.discriminatedUnion("code", [
   analysisInputErrorProjectionSchema,
   analysisResourceErrorProjectionSchema,
+  evidenceIntegrityErrorProjectionSchema,
 ]);
 const contextFacetSchema = z.discriminatedUnion("state", [
   z.object({ state: z.literal("available"), value: jsonValueSchema }),
@@ -278,7 +280,7 @@ const callPathTraceOutput = evidenceResultOf(
     goal_status: z.enum(["not_requested", "reached", "not_reached", "unknown"]),
     search_scope: z.object({
       graph: z.literal("provider_observed_graph"),
-      discovery: z.enum(["complete", "partial", "unknown"]),
+      discovery: coverageStatusSchema,
       observed_goal_status: z.enum([
         "not_requested",
         "reached",

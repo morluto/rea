@@ -8,8 +8,9 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { BYTE_ENTROPY_PROVIDER } from "../../../src/domain/investigationProviders.js";
 import { SUPPORTED_CLIENT_DEFINITIONS } from "../../../src/application/SupportedClients.js";
-import { CLI_COMMAND_NAMES } from "../../../src/cliCommandNames.js";
+import { CLI_COMMAND_NAMES } from "../../../src/contracts/catalog/catalogIdentity.js";
 import { createCli } from "../../../src/cli.js";
+import { cliCommands } from "../../../src/cli/commandRegistry.js";
 import { FRIDA_PROVIDER_IDENTITY } from "../../../src/frida/FridaProviderIdentity.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import {
@@ -121,18 +122,18 @@ describe("canonical product catalog", () => {
       await readFile("docs/public/product-catalog.json", "utf8"),
     );
     await expect(documentationFactIssues(root, catalog)).resolves.toEqual([]);
-  }, 60_000);
+  });
 });
 
 describe("canonical CLI catalog", () => {
-  it("uses the same primary command names as the actual Incur router", () => {
-    const inventory = createCliInventory(createCli());
+  it("uses the same primary command names as the REA registry", () => {
+    const inventory = createCliInventory(cliCommands(createCli()));
     expect(inventory.primary).toEqual([...CLI_COMMAND_NAMES].sort());
     expect(inventory.aliases).toEqual([]);
-  }, 30_000);
+  });
 
   it("describes every primary command argument and option", () => {
-    expect(cliCommandDescriptionIssues(createCli())).toEqual([]);
+    expect(cliCommandDescriptionIssues(cliCommands(createCli()))).toEqual([]);
   });
 
   it("exposes the shared provider selector on every deep-analysis command", () => {
@@ -148,12 +149,16 @@ describe("canonical CLI catalog", () => {
       "inspect-native-api",
       "search",
     ]) {
-      expect(cliCommandOptionNames(cli, name)).toContain("provider");
+      expect(cliCommandOptionNames(cliCommands(cli), name)).toContain(
+        "provider",
+      );
     }
   });
 
   it("does not impose a private result limit on feature tracing", () => {
-    expect(cliCommandOptionNames(createCli(), "trace")).not.toContain("limit");
+    expect(
+      cliCommandOptionNames(cliCommands(createCli()), "trace"),
+    ).not.toContain("limit");
   });
 });
 
@@ -179,7 +184,7 @@ describe("canonical product catalog drift", () => {
     ]);
   });
 
-  it("requires setup-client facts in the canonical installation guide", async () => {
+  it("requires setup-client facts in the installation guide and the skill's repair list", async () => {
     const catalog = await createProductCatalog(root);
     const drifted = {
       ...catalog,
@@ -198,6 +203,9 @@ describe("canonical product catalog drift", () => {
       "docs/getting-started/installation.md: missing Future Client",
     );
     expect(issues).not.toContain("README.md: missing Future Client");
+    expect(issues).toContain(
+      ".agents/skills/reverse-engineer-anything/references/connection-and-recovery.md: missing `future_client`",
+    );
   });
 
   it("fails check mode without rewriting a stale generated artifact", async () => {

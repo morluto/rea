@@ -40,7 +40,11 @@ export const incompleteStop: typeof stopOwnedDebuggerProcess = async (
   name,
 ) => {
   await stopOwnedDebuggerProcess(session, name);
-  return { status: "incomplete", reason: "injected stop uncertainty" };
+  return {
+    status: "incomplete",
+    code: "stop-failed",
+    reason: "injected stop uncertainty",
+  };
 };
 
 export const abortOnCheck = (

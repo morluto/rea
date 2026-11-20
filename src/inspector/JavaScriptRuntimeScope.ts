@@ -2,6 +2,7 @@ import {
   DEFAULT_ASAR_HEADER_ADMISSION,
   type AsarHeaderAdmission,
 } from "../config/asarHeaderAdmission.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -13,7 +14,7 @@ import type {
   JavaScriptRuntimeLocation,
   JavaScriptRuntimeTargetLocation,
 } from "../domain/javascript/javascriptRuntimeObservation.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { cancelledBy } from "../domain/analysisErrorCore.js";
 import {
   authorizedElectronFile,
   type ElectronFileScope,
@@ -33,8 +34,7 @@ export const throwIfRuntimeObservationCancelled = (
     | "observe_javascript_runtime"
     | "list_javascript_runtime_targets" = "observe_javascript_runtime",
 ): void => {
-  if (signal?.aborted === true)
-    throw new AnalysisCancelledError(operation, { cause: signal.reason });
+  if (signal?.aborted === true) throw cancelledBy(operation, signal);
 };
 
 /**
@@ -152,7 +152,8 @@ export const authorizeRuntimeTargetLocation = async (
 
   // Node concatenates the pathname, then replaces quotes and backslashes with
   // underscores. A remaining underscore cannot prove which pathname was used.
-  if (process.platform !== "win32" && !/[_"\\]/u.test(reportedPath)) {
+  // The runtime runs on this host and reports one of this host's paths.
+  if (HOST_PLATFORM.platform !== "win32" && !/[_"\\]/u.test(reportedPath)) {
     if (reportedPath.startsWith("/")) {
       const decision = await authorizeRuntimeLocation(
         pathToFileURL(reportedPath).href,

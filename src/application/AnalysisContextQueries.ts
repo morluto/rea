@@ -2,7 +2,7 @@ import type {
   AnalysisExecution,
   AnalysisOperation,
   AnalysisOperationPort,
-} from "./AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
@@ -10,14 +10,18 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import {
   omitUnretainedEvidenceFromError,
   projectAnalysisError,
+  unretainedEvidenceCandidates,
   type AnalysisErrorProjection,
 } from "../domain/analysisErrorProjection.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
+import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { analysisBookmarkSchema } from "../domain/native/nativeInventory.js";
 import { parseContainingProcedureResolution } from "../domain/native/nativeObservation.js";
@@ -73,6 +77,8 @@ export const getNavigationContext = async (
   input: { readonly document?: string | undefined },
   signal?: AbortSignal,
 ): Promise<Result<JsonValue, AnalysisError>> => {
+  if (signal?.aborted)
+    return err(cancelledBy("get_navigation_context", signal));
   const document =
     input.document ??
     (await analysis.execute("current_document", {}, executionOptions(signal)));
@@ -86,6 +92,8 @@ export const getNavigationContext = async (
         "expected a document identity string",
       ),
     );
+  if (signal?.aborted)
+    return err(cancelledBy("get_navigation_context", signal));
   const documentArgs = parameters(documentName);
   const address = await analysis.execute(
     "current_address",
@@ -97,6 +105,8 @@ export const getNavigationContext = async (
     return err(
       new AnalysisOutputError("current_address", "expected an address string"),
     );
+  if (signal?.aborted)
+    return err(cancelledBy("get_navigation_context", signal));
   const procedure = await analysis.execute(
     "resolve_containing_procedure",
     parameters(documentName, address.value.result),
@@ -105,6 +115,8 @@ export const getNavigationContext = async (
   if (!procedure.ok) return procedure;
   const resolution = parseContainingProcedureResolution(procedure.value.result);
   if (!resolution.ok) return resolution;
+  if (signal?.aborted)
+    return err(cancelledBy("get_navigation_context", signal));
   return ok({
     document: documentName,
     address: address.value.result,
@@ -131,18 +143,25 @@ export function* omitContextEvidenceForDelivery(
   const candidates = names.flatMap((name) => {
     const facet = context[name];
     if (facet.state !== "unavailable" || facet.error === undefined) return [];
-    const compact = omitUnretainedEvidenceFromError(facet.error, limit);
-    if (compact === undefined) return [];
-    const partial = facet.error.details?.partial_observation;
-    const size = estimateJsonStorage(partial, {
-      maximumValueBytes: budgetBytes,
-      includeSerialized: false,
-    }).valueBytes;
-    return [{ name, facet, compact, size }];
+    return [...unretainedEvidenceCandidates(facet.error)].map((candidate) => {
+      const size = estimateJsonStorage(candidate.value, {
+        maximumValueBytes: budgetBytes,
+        includeSerialized: false,
+      }).valueBytes;
+      return { name, candidate, size };
+    });
   });
   candidates.sort((left, right) => right.size - left.size);
   let current = context;
-  for (const { name, facet, compact } of candidates) {
+  for (const { name, candidate } of candidates) {
+    const facet = current[name];
+    if (facet.state !== "unavailable" || facet.error === undefined) continue;
+    const compact = omitUnretainedEvidenceFromError(
+      facet.error,
+      limit,
+      candidate,
+    );
+    if (compact === undefined) continue;
     current = {
       ...current,
       [name]: {
@@ -171,16 +190,14 @@ export const inspectAddressContext = async (
   const operations = ADDRESS_CONTEXT_FACET_OPERATIONS;
   const completed: Result<AnalysisExecution, AnalysisError>[] = [];
   if (signal?.aborted === true)
-    return err(
-      new AnalysisCancelledError("inspect_address_context", {
-        cause: signal.reason,
-      }),
-    );
+    return err(cancelledBy("inspect_address_context", signal));
   let signalCancellation: AnalysisCancelledError | undefined;
   const cancelled = () => {
-    signalCancellation = new AnalysisCancelledError("inspect_address_context", {
-      cause: signal?.reason,
-    });
+    // Registered only on the caller's signal, so this runs after it aborted.
+    signalCancellation = cancelledBy(
+      "inspect_address_context",
+      carriedReason(signal?.reason),
+    );
     completed.push(err(signalCancellation));
   };
   signal?.addEventListener("abort", cancelled, { once: true });
@@ -284,12 +301,15 @@ const unavailableFacet = (
   }
   if (
     error instanceof AnalysisInputError ||
-    error instanceof AnalysisResourceConstraintError
+    error instanceof AnalysisResourceConstraintError ||
+    (error instanceof EvidenceIntegrityError &&
+      error.sourcePublicationRecovery !== undefined)
   ) {
     const projected = projectAnalysisError(error);
     if (
       projected.code === "invalid_request" ||
-      projected.code === "resource_constraint"
+      projected.code === "resource_constraint" ||
+      projected.code === "evidence_integrity_mismatch"
     )
       return {
         state: "unavailable",
@@ -308,7 +328,11 @@ const unavailableFacet = (
 const isRequestLevelFailure = (error: AnalysisError): boolean =>
   error._tag === "AnalysisCancelledError" ||
   error._tag === "AnalysisTimeoutError" ||
-  error._tag === "NoBinaryOpenError";
+  error._tag === "NoBinaryOpenError" ||
+  (error.sourcePublicationRecovery !== undefined &&
+    !(error instanceof AnalysisInputError) &&
+    !(error instanceof AnalysisResourceConstraintError) &&
+    !(error instanceof EvidenceIntegrityError));
 
 /** Wait for all facets and retain every unresolved cleanup owner. */
 const contextFailure = (
@@ -348,14 +372,15 @@ const contextFailure = (
       combined = analysisErrorWithCancellation(combined, failure);
     if (failure.cleanupIncomplete) {
       const previous = combined;
-      combined = analysisErrorWithCleanupFailure(
+      combined = analysisErrorWithCleanupDependencies(
         previous,
         failure,
         "inspect_address_context",
-      ).bindCleanupDependencies([previous, failure]);
+      );
     } else if (
       !(failure instanceof AnalysisCancelledError) &&
-      isRequestLevelFailure(failure)
+      (isRequestLevelFailure(failure) ||
+        failure.sourcePublicationRecovery !== undefined)
     ) {
       combined.retainSecondaryFailure(failure);
     }

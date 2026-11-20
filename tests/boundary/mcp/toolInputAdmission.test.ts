@@ -2,32 +2,31 @@ import type { CallToolResult } from "@modelcontextprotocol/server";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { describe, expect } from "vitest";
 import { mcpTest } from "../../support/mcp/mcpFixture.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
-import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/config/mcpInputSchemaProfile.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
+import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/contracts/mcpSchemaPresentation.js";
 
-const createServer = (profile: "full" | "compact"): EvidenceMcpServer =>
+// The server advertises its one (compact) input presentation.
+const createServer = (): EvidenceMcpServer =>
   new EvidenceMcpServer(
     { name: "tool-input-admission-test", version: "0" },
     { capabilities: {} },
     undefined,
     createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
-    profile === "compact"
-      ? { budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES }
-      : undefined,
   );
 
 // These tests cover the registered SDK boundary with deterministic sentinel
 // handlers. They establish canonical rejection before dispatch; they do not
 // exercise providers, targets, or the shape of SDK-generated error text.
 describe("catalog-wide MCP input admission", () => {
-  mcpTest.for(["full", "compact"] as const)(
-    "rejects unknown root keys before dispatch with the %s advertised profile",
-    async (profile, { mcp }) => {
-      const server = createServer(profile);
+  mcpTest(
+    "rejects unknown root keys before dispatch with the advertised presentation",
+    async ({ mcp }) => {
+      const server = createServer();
       const dispatches = new Map<string, number>();
       for (const contract of TOOL_CONTRACTS) {
         server.registerTool(
@@ -64,6 +63,19 @@ describe("catalog-wide MCP input admission", () => {
           arguments: input,
         });
         expect(result.isError, contract.name).toBe(true);
+        // Missing required fields may also reject requests without examples.
+        // Require the unknown-key guard itself, independently of those errors.
+        expect(
+          parseMcpToolError(result).error.details,
+          contract.name,
+        ).toMatchObject({
+          issues: expect.arrayContaining([
+            expect.objectContaining({
+              path: ["__rea_unknown_admission_probe__"],
+              reason: "unknown_argument",
+            }),
+          ]),
+        });
         expect(dispatches.has(contract.name), contract.name).toBe(false);
       }
 

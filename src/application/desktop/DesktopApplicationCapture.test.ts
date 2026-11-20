@@ -1,5 +1,13 @@
+import * as linuxSampling from "../../process/capture/LinuxProcessSampling.js";
+import {
+  samplingInspectionFailures,
+  samplingObservation,
+  settleSamplingReads,
+  SamplingReadBatchFailure,
+} from "../../process/capture/ProcessSamplingObservation.js";
 import { createHash } from "node:crypto";
-import { readFileSync, rmSync } from "node:fs";
+import { EventEmitter } from "node:events";
+import { accessSync, readFileSync, rmSync } from "node:fs";
 import {
   chmod,
   mkdir,
@@ -15,15 +23,47 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import {
+  AnalysisError,
+  primaryAnalysisError,
+} from "../../domain/analysisErrorBase.js";
+import { failedInspectionDescriptor } from "../../../tests/fixtures/processInspectionCleanup.js";
+import {
+  SessionObservations,
+  trackProcess,
+} from "../../desktop/DesktopSessionObservations.js";
+import {
+  AnalysisCancelledError,
+  AnalysisInputError,
+} from "../../domain/analysisErrorCore.js";
+import { inspectAptRepositories } from "../../desktop/AptRepositoryInventory.js";
+import { VENDOR_A } from "../../domain/desktop/aptKeys.fixture.js";
+import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
+import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
+import { DesktopContentStore } from "../../desktop/DesktopContentStore.js";
+import * as captureFailures from "./DesktopCaptureFailure.js";
+import * as providerProcess from "../../process/ProviderProcess.js";
+import { systemProcessOwnershipHost } from "../../process/ProcessOwnershipObservation.js";
+import { ProcessOwnershipInspectionCancelled } from "../../process/ProcessInspectionCancellation.js";
+import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
+import {
   desktopApplicationCaptureSchema,
   desktopCaptureEventSchema,
 } from "../../domain/desktop/desktopCapture.js";
-import type { SessionRequest } from "../../desktop/DesktopApplicationSession.js";
+import * as desktopSession from "../../desktop/DesktopApplicationSession.js";
+import { createDesktopCaptureProvider } from "../../desktop/DesktopCaptureProvider.js";
+import {
+  DesktopSessionCleanupError,
+  type SessionRequest,
+} from "../../ports/DesktopApplicationSession.js";
+import * as linuxInventory from "../../desktop/LinuxApplicationInventory.js";
+import { X11WindowObserver } from "../../desktop/X11WindowObserver.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
+import { CaptureFile } from "./DesktopCaptureOutput.js";
 import {
   captureDesktopApplication,
   type DesktopCaptureRequest,
 } from "./DesktopApplicationCapture.js";
+import { capture as captureFixture } from "./desktopCapture.fixture.js";
 
 const sha256 = (text: string) =>
   createHash("sha256").update(text).digest("hex");
@@ -106,12 +146,22 @@ const installProcessFamily = async (root: string, path: string) => {
       "#!/bin/sh",
       `trap 'rm -f "${windowFile}"; exit 0' TERM`,
       `touch "${windowFile}"`,
-      `( trap 'touch "${join(root, "group-term")}"; exit 0' TERM; ${loop} ) &`,
-      `setsid sh -c 'trap "touch ${join(root, "setsid-term")}; exit 0" TERM; ${loop}' &`,
+      // Install each trap before reporting ready, so the caller can stop deterministically after readiness.
+      `( trap 'touch "${join(root, "group-term")}"; exit 0' TERM; touch "${join(root, "group-ready")}"; ${loop} ) &`,
+      `setsid sh -c 'trap "touch ${join(root, "setsid-term")}; exit 0" TERM; touch "${join(root, "setsid-ready")}"; ${loop}' &`,
+      // Wait for both children to install their traps before writing state.ini.
+      // Fail loudly rather than continue when a child never reports ready.
+      `ready=; for i in $(seq 1 500); do if [ -f "${join(root, "group-ready")}" ] && [ -f "${join(root, "setsid-ready")}" ]; then ready=1; break; fi; sleep 0.01; done; [ -n "$ready" ] || { echo "synthetic children did not report ready" >&2; touch "${join(root, "children-not-ready")}"; exit 97; }`,
       'printf "count=1\\n" > "$HOME/.config/fakeapp/state.ini"',
       loop,
     ].join("\n"),
   );
+};
+
+/** Surface a fake application whose children never got ready, instead of waiting. */
+const failIfChildrenNotReady = (root: string): void => {
+  if (fileExists(join(root, "children-not-ready")))
+    throw new Error("synthetic children did not report ready");
 };
 
 const host = (
@@ -122,6 +172,7 @@ const host = (
   platform,
   environment,
   callerDirectory: environment.HOME ?? "/",
+  desktop: createDesktopCaptureProvider(),
   nextRequest,
   report: async () => {},
 });
@@ -169,6 +220,15 @@ describe("captureDesktopApplication refusals", () => {
         await captureDesktopApplication(request(output), host(environment)),
       ),
     ).toContain("is not empty");
+    const file = join(root, "existing-file");
+    await writeFile(file, "keep");
+    expect(
+      await captureDesktopApplication(request(file), host(environment)),
+    ).toMatchObject({
+      code: "invalid_request",
+      details: { issues: [{ path: ["output"], reason: "invalid_value" }] },
+    });
+    expect(await readFile(file, "utf8")).toBe("keep");
   });
 
   it("refuses a window manager that does not publish its client list", async () => {
@@ -224,6 +284,146 @@ describe("captureDesktopApplication refusals", () => {
     expect(await readdir(output)).toEqual([]);
   });
 });
+
+it.each([false, true])(
+  "preserves unresolved session ownership when publication fails (unreleased: %s)",
+  async (unreleased) => {
+    const { root, home, environment } = await fixture();
+    const output = join(root, "out");
+    const captured = captureFixture();
+    const lease = new AnalysisCleanupLease(async () => {}, ["run-pending"]);
+    vi.spyOn(linuxInventory, "inspectLinuxApplication").mockResolvedValue({
+      ok: true,
+      value: {
+        inventory: { ...captured.application, state_directories: [] },
+        limitations: [],
+        signingKeys: new Map(),
+      },
+    });
+    vi.spyOn(X11WindowObserver.prototype, "sample").mockResolvedValue({
+      state: "listed",
+      windows: [],
+    });
+    vi.spyOn(desktopSession, "runDesktopSession").mockResolvedValue({
+      session: {
+        ...captured.session,
+        cleanup: { verified: !unreleased, reason: unreleased ? "busy" : null },
+      },
+      unreleased: unreleased ? { reason: "busy", leases: [lease] } : undefined,
+      unreadableWindowSamples: 0,
+    });
+    vi.spyOn(CaptureFile.prototype, "publish").mockRejectedValue(
+      new Error("publication denied"),
+    );
+    try {
+      const result = await captureDesktopApplication(request(output), {
+        ...host(environment),
+        callerDirectory: home,
+      });
+      expect(result).toMatchObject({
+        code: unreleased ? "cleanup_incomplete" : "execution_failure",
+        message: expect.stringContaining("publication denied"),
+        ...(unreleased
+          ? { details: { cleanup: "incomplete", resources: ["run-pending"] } }
+          : {}),
+      });
+      expect(await readdir(output)).toEqual([]);
+    } finally {
+      vi.restoreAllMocks();
+      await lease.release();
+    }
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "returns the published evidence when cancellation arrives during publication",
+  async () => {
+    const { root, home, environment } = await fixture();
+    const output = join(root, "out");
+    const statePath = join(home, ".config/fakeapp/state.ini");
+    const controller = new AbortController();
+    const publish = CaptureFile.prototype.publish;
+    const spy = vi
+      .spyOn(CaptureFile.prototype, "publish")
+      .mockImplementation(async function (this: CaptureFile, evidence) {
+        const path = await publish.call(this, evidence);
+        controller.abort("cancelled after publication");
+        return path;
+      });
+    try {
+      const result = await captureDesktopApplication(
+        request(output),
+        host(environment, () =>
+          readFileSyncSafe(statePath) === "count=1\n"
+            ? { kind: "stop" }
+            : undefined,
+        ),
+        controller.signal,
+      );
+      if (!("error" in result)) throw new Error("Expected cancellation");
+      const published = JSON.parse(
+        await readFile(join(output, "capture.json"), "utf8"),
+      );
+      expect(result.code).toBe("cancelled");
+      expect(result.details?.partial_observation).toEqual(published);
+    } finally {
+      spy.mockRestore();
+    }
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "keeps ownership of a worker after its clean-env launcher exits",
+  async () => {
+    const { root, environment } = await fixture();
+    const app = join(root, "bin/fakeapp");
+    const worker = join(root, "worker");
+    const pidFile = join(root, "worker-pid");
+    const completed = join(root, "worker-completed");
+    await executable(app, `#!/bin/sh\n"${worker}" &\nexit 0\n`);
+    await executable(
+      worker,
+      [
+        "#!/bin/sh",
+        `printf '%s\\n' "$$" > "${pidFile}"`,
+        "/bin/sleep 2",
+        '[ "${INHERITED-unset}" = unset ] && [ "$SELECTED" = yes ] || exit 91',
+        `touch "${completed}"`,
+      ].join("\n"),
+    );
+    const entry = join(root, "clean.desktop");
+    const argv = ["/usr/bin/env", "-i", "SELECTED=yes", app];
+    await writeFile(
+      entry,
+      `[Desktop Entry]\nType=Application\nName=FakeApp\nExec=${argv.join(" ")}\n`,
+    );
+
+    const evidence = await captureDesktopApplication(
+      {
+        ...request(join(root, "out")),
+        desktopEntry: entry,
+        executable: undefined,
+        maxDurationSeconds: 8,
+      },
+      host({ ...environment, INHERITED: "host" }),
+    );
+    if ("error" in evidence) throw new Error(JSON.stringify(evidence));
+    const capture = desktopApplicationCaptureSchema.parse(
+      evidence.normalized_result,
+    );
+    expect(capture.application.argv).toEqual(argv);
+    expect(capture.session).toMatchObject({
+      end_reason: "application_exited",
+      cleanup: { verified: true },
+    });
+    const workerPid = Number(await readFile(pidFile, "utf8"));
+    expect(workerPid).not.toBe(capture.session.launch_pid);
+    expect(capture.session.processes).toContainEqual(
+      expect.objectContaining({ pid: workerPid, started_by_capture: true }),
+    );
+    expect(fileExists(completed)).toBe(true);
+  },
+);
 
 describe.skipIf(process.platform !== "linux")(
   "captureDesktopApplication on Linux",
@@ -285,7 +485,7 @@ describe.skipIf(process.platform !== "linux")(
       expect(
         JSON.parse(await readFile(join(output, "capture.json"), "utf8")),
       ).toEqual(JSON.parse(JSON.stringify(evidence)));
-    }, 30_000);
+    });
 
     it("keeps a baseline-only capture when cancelled before any checkpoint", async () => {
       const { root, home, environment } = await fixture();
@@ -386,7 +586,7 @@ describe.skipIf(process.platform !== "linux")(
           after: expect.objectContaining({ sha256: sha256("count=2\n") }),
         }),
       ]);
-    }, 30_000);
+    });
   },
 );
 
@@ -436,7 +636,7 @@ describe.skipIf(process.platform !== "linux")(
         evidence.normalized_result,
       );
       const seed = capture.state.checkpoints[1];
-      // The acknowledgement comes after the checkpoint is taken and carries its counts.
+      // The acknowledgement comes after the checkpoint is taken and carries its counts and the file the app wrote.
       expect(parsed[2]).toEqual({
         kind: "checkpoint",
         name: "seed",
@@ -446,6 +646,8 @@ describe.skipIf(process.platform !== "linux")(
         changes: seed?.changes.length,
         retained_files: 1,
         retained_bytes: 8,
+        changed_files: [".config/fakeapp/state.ini"],
+        more_changed_files: 0,
       });
       expect(parsed[3]).toEqual({
         kind: "checkpoint_refused",
@@ -456,7 +658,7 @@ describe.skipIf(process.platform !== "linux")(
         { name: "stop", trigger: "stop" },
         { name: "exit", trigger: "exit" },
       ]);
-    }, 30_000);
+    });
   },
 );
 
@@ -511,7 +713,6 @@ describe.skipIf(process.platform !== "linux")(
           details: { cleanup: "incomplete", resources: [statePath] },
         });
       },
-      30_000,
     );
   },
 );
@@ -525,7 +726,14 @@ describe.skipIf(process.platform !== "linux")(
       const statePath = join(home, ".config/fakeapp/state.ini");
       let writtenAt: number | undefined;
       const nextRequest = (): SessionRequest | undefined => {
+        failIfChildrenNotReady(root);
+        // Wait for both children to install their traps before issuing the stop.
         if (readFileSyncSafe(statePath) !== "count=1\n") return undefined;
+        if (
+          !fileExists(join(root, "group-ready")) ||
+          !fileExists(join(root, "setsid-ready"))
+        )
+          return undefined;
         writtenAt ??= performance.now();
         return performance.now() - writtenAt > 1500
           ? { kind: "stop" }
@@ -545,17 +753,19 @@ describe.skipIf(process.platform !== "linux")(
       expect(await readdir(root)).toEqual(
         expect.arrayContaining(["group-term", "setsid-term"]),
       );
-    }, 30_000);
+    });
 
     it("stops the application gracefully and removes retained content when the session fails", async () => {
       const { root, home, environment } = await fixture();
       await installProcessFamily(root, environment.PATH);
       const statePath = join(home, ".config/fakeapp/state.ini");
       const output = join(root, "out");
-      const nextRequest = (): SessionRequest | undefined =>
-        readFileSyncSafe(statePath) === "count=1\n"
+      const nextRequest = (): SessionRequest | undefined => {
+        failIfChildrenNotReady(root);
+        return readFileSyncSafe(statePath) === "count=1\n"
           ? { kind: "checkpoint", name: "written" }
           : undefined;
+      };
 
       const failed = await captureDesktopApplication(request(output), {
         ...host(environment, nextRequest),
@@ -570,7 +780,7 @@ describe.skipIf(process.platform !== "linux")(
       expect(await readdir(root)).toEqual(
         expect.arrayContaining(["group-term", "setsid-term"]),
       );
-    }, 30_000);
+    });
   },
 );
 
@@ -641,7 +851,7 @@ describe.skipIf(process.platform !== "linux")(
       expect(capture.limitations).toContainEqual(
         expect.stringMatching(/^The window list could not be read in [34] /u),
       );
-    }, 30_000);
+    });
   },
 );
 
@@ -652,3 +862,645 @@ const readFileSyncSafe = (path: string): string | undefined => {
     return undefined;
   }
 };
+
+const fileExists = (path: string): boolean => {
+  try {
+    accessSync(path, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0).for([
+  { denied: false, lateCancellation: false },
+  { denied: true, lateCancellation: false },
+  { denied: true, lateCancellation: true },
+])(
+  "capture baseline persistence and final cleanup cancellation (denied: $denied, late cancellation: $lateCancellation)",
+  async ({ denied, lateCancellation }, context) => {
+    const root = await createTestTempDirectory("capture-content-permission-");
+    const home = join(root, "home");
+    const state = join(home, ".config/notes");
+    const output = join(root, "capture");
+    const content = join(output, "content");
+    await mkdir(state, { recursive: true });
+    await writeFile(join(state, "state.ini"), "count=0\n");
+    const controller = new AbortController();
+    const reason = new Error("cancel after actual failed capture cleanup");
+    const captured = captureFixture();
+    let physicalFailure: unknown;
+    let projectedFailure: AnalysisError | undefined;
+    let baselineStarted = false;
+    let stored = false;
+    let discarded = false;
+    let closed = false;
+    const session = vi
+      .spyOn(desktopSession, "runDesktopSession")
+      .mockResolvedValue({
+        session: captured.session,
+        unreleased: undefined,
+        unreadableWindowSamples: 0,
+      });
+    vi.spyOn(linuxInventory, "inspectLinuxApplication").mockResolvedValue({
+      ok: true,
+      value: {
+        inventory: {
+          ...captured.application,
+          argv: [process.execPath],
+          working_directory: home,
+          state_directories: [{ path: state, exists_at_start: true }],
+        },
+        limitations: [],
+        signingKeys: new Map(),
+      },
+    });
+    vi.spyOn(X11WindowObserver.prototype, "sample").mockResolvedValue({
+      state: "listed",
+      windows: [],
+    });
+    const retain = DesktopContentStore.prototype.retainBytes;
+    vi.spyOn(DesktopContentStore.prototype, "retainBytes").mockImplementation(
+      async function (this: DesktopContentStore, bytes) {
+        try {
+          return await retain.call(this, bytes);
+        } catch (cause: unknown) {
+          physicalFailure = cause;
+          throw cause;
+        }
+      },
+    );
+    const discard = DesktopContentStore.prototype.discard;
+    vi.spyOn(DesktopContentStore.prototype, "discard").mockImplementation(
+      async function (this: DesktopContentStore) {
+        await discard.call(this);
+        discarded = true;
+      },
+    );
+    const close = DesktopContentStore.prototype.close;
+    vi.spyOn(DesktopContentStore.prototype, "close").mockImplementation(
+      async function (this: DesktopContentStore) {
+        await close.call(this);
+        closed = true;
+        if (lateCancellation) {
+          expect(discarded).toBe(true);
+          expect(controller.signal.aborted).toBe(false);
+          controller.abort(reason);
+        }
+      },
+    );
+    const project = captureFailures.projectFailure;
+    vi.spyOn(captureFailures, "projectFailure").mockImplementation(
+      (...args) => {
+        projectedFailure = project(...args);
+        return projectedFailure;
+      },
+    );
+    try {
+      const result = await captureDesktopApplication(
+        {
+          ...request(output),
+          executable: process.execPath,
+          statePaths: [state],
+        },
+        {
+          ...host({
+            HOME: home,
+            DISPLAY: ":controlled",
+            REA_XPROP_COMMAND: process.execPath,
+          }),
+          report: async (message) => {
+            if (message.startsWith("Recording the starting state")) {
+              baselineStarted = true;
+              if (denied) await chmod(content, 0o500);
+            }
+          },
+        },
+        controller.signal,
+      );
+      expect(baselineStarted, JSON.stringify(result)).toBe(true);
+      if (!denied) {
+        expect(physicalFailure).toBeUndefined();
+        expect(session).toHaveBeenCalledTimes(1);
+        expect(result).toMatchObject({
+          operation: "capture_desktop_application",
+          normalized_result: { state: { content_files: 1 } },
+        });
+        expect(await readFile(join(content, sha256("count=0\n")), "utf8")).toBe(
+          "count=0\n",
+        );
+        expect(closed).toBe(true);
+        return;
+      }
+      if (physicalFailure === undefined) {
+        expect(stored).toBe(true);
+        context.skip(
+          "Host allowed writes to the denied owner-only content directory; EACCES boundary unavailable.",
+        );
+      }
+      expect(physicalFailure).toMatchObject({ code: "EACCES" });
+      expect(session).not.toHaveBeenCalled();
+      expect(discarded).toBe(true);
+      expect(closed).toBe(true);
+      expect(await readdir(output)).toEqual([]);
+      expect(result).toMatchObject({
+        error: "Desktop capture failed",
+        code: "execution_failure",
+      });
+      expect(projectedFailure).toBeInstanceOf(ProviderAdapterError);
+      expect(projectedFailure?.cause).toBe(physicalFailure);
+      if (lateCancellation) {
+        expect(projectedFailure?.secondaryFailures).toContainEqual(
+          expect.objectContaining({
+            _tag: "AnalysisCancelledError",
+            cause: reason,
+          }),
+        );
+        const cancellation = projectedFailure?.secondaryFailures.find(
+          (failure) => failure instanceof AnalysisCancelledError,
+        );
+        expect(cancellation?.cause).toBe(reason);
+      } else expect(projectedFailure?.secondaryFailures).toEqual([]);
+    } finally {
+      vi.restoreAllMocks();
+      await chmod(content, 0o700).catch((cause: unknown) => {
+        if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
+      });
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "preserves actual prelaunch inspection cancellation before native preparation or child creation",
+  async () => {
+    const { root, home, environment } = await fixture();
+    const output = join(root, "capture-prelaunch");
+    const controller = new AbortController();
+    const reason = { stop: "before desktop launch" };
+    const captured = captureFixture();
+    let sourceFailure: unknown;
+    let projectedFailure: AnalysisError | undefined;
+    let baselineStored = false;
+    vi.spyOn(linuxInventory, "inspectLinuxApplication").mockResolvedValue({
+      ok: true,
+      value: {
+        inventory: {
+          ...captured.application,
+          argv: [process.execPath],
+          working_directory: home,
+          state_directories: [],
+        },
+        limitations: [],
+        signingKeys: new Map(),
+      },
+    });
+    vi.spyOn(X11WindowObserver.prototype, "sample").mockResolvedValue({
+      state: "listed",
+      windows: [],
+    });
+    const prepare = vi
+      .spyOn(systemProcessOwnershipHost, "prepare")
+      .mockRejectedValue(new Error("native preparation must not run"));
+    if (systemProcessOwnershipHost.captureBaseline === undefined)
+      throw new Error(
+        "existing process baseline port is required for this fixture",
+      );
+    const baseline = vi
+      .spyOn(systemProcessOwnershipHost, "captureBaseline")
+      .mockRejectedValue(new Error("native baseline inspection must not run"));
+    const spawn = providerProcess.spawnOwnedProviderProcess;
+    const launch = vi
+      .spyOn(providerProcess, "spawnOwnedProviderProcess")
+      .mockImplementation(async (options) => {
+        expect(options.signal?.aborted).toBe(true);
+        try {
+          return await spawn(options);
+        } catch (cause: unknown) {
+          sourceFailure = cause;
+          throw cause;
+        }
+      });
+    const project = captureFailures.projectFailure;
+    vi.spyOn(captureFailures, "projectFailure").mockImplementation(
+      (...args) => {
+        projectedFailure = project(...args);
+        return projectedFailure;
+      },
+    );
+    try {
+      const result = await captureDesktopApplication(
+        {
+          ...request(output),
+          executable: process.execPath,
+          statePaths: [join(home, ".config/fakeapp")],
+        },
+        {
+          ...host(environment),
+          report: async (message) => {
+            if (message.startsWith("Launching")) {
+              expect(
+                await readFile(
+                  join(output, "content", sha256("count=0\n")),
+                  "utf8",
+                ),
+              ).toBe("count=0\n");
+              baselineStored = true;
+              controller.abort(reason);
+            }
+          },
+        },
+        controller.signal,
+      );
+      expect(baselineStored).toBe(true);
+      expect(launch).toHaveBeenCalledTimes(1);
+      expect(prepare).not.toHaveBeenCalled();
+      expect(baseline).not.toHaveBeenCalled();
+      expect(sourceFailure).toBeInstanceOf(ProcessOwnershipInspectionCancelled);
+      if (!(sourceFailure instanceof ProcessOwnershipInspectionCancelled))
+        throw new Error("expected actual prelaunch checkpoint cancellation");
+      expect(sourceFailure.reason).toBe(reason);
+      expect(await readdir(output)).toEqual([]);
+      expect(result).toMatchObject({
+        error: "Desktop capture failed",
+        code: "cancelled",
+      });
+      expect(projectedFailure).toBeInstanceOf(AnalysisCancelledError);
+      expect(projectedFailure?.cause).toBe(reason);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  },
+);
+
+const sessionInspectionFailure = async (
+  cause: unknown,
+  resources: readonly string[],
+) => {
+  const child = Object.assign(new EventEmitter(), {
+    pid: 42,
+    stdout: null,
+    stderr: null,
+    exitCode: 0,
+    signalCode: null,
+    kill: () => {
+      throw new Error("Closed recording child must not be signalled");
+    },
+  });
+  const supervisor = new providerProcess.ProviderProcessSupervisor({
+    process: child,
+    ownership: {
+      runId: "recording-session",
+      leaderPid: 42,
+      processGroupId: 42,
+      expectedParentPid: 1,
+    },
+    ownsProcessLifetime: true,
+    cleanup: async () => ({ cleaned: true, signaled: false }),
+  });
+  child.emit("exit", 0, null);
+  child.emit("close", 0, null);
+  for (const inspection of samplingInspectionFailures(cause))
+    supervisor.retainInspectionFailure(inspection);
+  const stopped = await supervisor.stop();
+  if (
+    stopped.status !== "incomplete" ||
+    stopped.inspectionCleanup === undefined
+  )
+    throw new Error("Expected actual supervisor-held inspection cleanup");
+  return new DesktopSessionCleanupError(cause, {
+    reason: stopped.reason,
+    inspectionCleanup: stopped.inspectionCleanup,
+    leases: [
+      new AnalysisCleanupLease(async () => {
+        const retried = await supervisor.stop();
+        if (retried.status === "incomplete") throw new Error(retried.reason);
+      }, resources),
+    ],
+  });
+};
+
+// Supply the Linux identity sample even when the test host has no procfs.
+// The real run-token reader still transfers the descriptor failure.
+const fixtureProcessStat = samplingObservation({
+  pid: process.pid,
+  parent_pid: process.ppid,
+  process_group_id: process.pid,
+  session_id: process.pid,
+  command: "",
+  startTime: "1",
+  lifecycle: "non-zombie" as const,
+});
+
+it.for([
+  { retrySucceeds: true, sessionOwns: false, neutralBatch: false },
+  { retrySucceeds: false, sessionOwns: false, neutralBatch: false },
+  { retrySucceeds: false, sessionOwns: true, neutralBatch: false },
+  { retrySucceeds: false, sessionOwns: true, neutralBatch: true },
+])(
+  "retains an actual optional inspection descriptor through capture cleanup (retry succeeds: $retrySucceeds, session owns: $sessionOwns, settled batch: $neutralBatch)",
+  async ({ retrySucceeds, sessionOwns, neutralBatch }) => {
+    const { root, home, environment } = await fixture();
+    const output = join(root, "capture-inspection-close");
+    const descriptor = await failedInspectionDescriptor();
+    const descriptors = [
+      descriptor,
+      ...(neutralBatch ? [await failedInspectionDescriptor()] : []),
+    ];
+    const completed = { value: "caller-selected completed sampling peer" };
+    let sourceFailure: unknown = descriptor.failure;
+    const captured = captureFixture();
+    let sessionFailure: DesktopSessionCleanupError | undefined;
+    const retainedStores = new Set<DesktopContentStore>();
+    let projectedFailure: AnalysisError | undefined;
+    vi.spyOn(linuxInventory, "inspectLinuxApplication").mockResolvedValue({
+      ok: true,
+      value: {
+        inventory: {
+          ...captured.application,
+          argv: [process.execPath],
+          working_directory: home,
+          state_directories: [],
+        },
+        limitations: [],
+        signingKeys: new Map(),
+      },
+    });
+    vi.spyOn(X11WindowObserver.prototype, "sample").mockResolvedValue({
+      state: "listed",
+      windows: [],
+    });
+    vi.spyOn(linuxSampling, "readLinuxProcessStat").mockResolvedValue(
+      fixtureProcessStat,
+    );
+    const environmentRead = vi
+      .spyOn(systemProcessOwnershipHost, "environment")
+      .mockRejectedValue(descriptor.failure);
+    const session = vi
+      .spyOn(desktopSession, "runDesktopSession")
+      .mockImplementation(async () => {
+        if (neutralBatch) {
+          sourceFailure = await settleSamplingReads([
+            Promise.reject(descriptor.failure),
+            Promise.resolve(completed),
+            Promise.reject(descriptors[1]!.failure),
+          ]).catch((cause: unknown) => cause);
+          sessionFailure = await sessionInspectionFailure(
+            sourceFailure,
+            descriptors.map((entry) => entry.path),
+          );
+          throw sessionFailure;
+        }
+        const observations = new SessionObservations(
+          performance.now(),
+          { runId: "recording-session", launchPid: process.pid },
+          { names: new Set(), byPid: false },
+        );
+        try {
+          await trackProcess(
+            observations,
+            process.pid,
+            new AbortController().signal,
+          );
+        } catch (cause: unknown) {
+          if (!sessionOwns) throw cause;
+          sessionFailure = await sessionInspectionFailure(
+            cause,
+            descriptors.map((entry) => entry.path),
+          );
+          throw sessionFailure;
+        }
+        throw new Error("The actual inspection cleanup failure was swallowed");
+      });
+    const close = DesktopContentStore.prototype.close;
+    vi.spyOn(DesktopContentStore.prototype, "close").mockImplementation(
+      async function (this: DesktopContentStore) {
+        retainedStores.add(this);
+        if (retrySucceeds) descriptor.allow();
+        await close.call(this);
+      },
+    );
+    const project = captureFailures.projectFailure;
+    vi.spyOn(captureFailures, "projectFailure").mockImplementation(
+      (...args) => {
+        projectedFailure = project(...args);
+        return projectedFailure;
+      },
+    );
+    try {
+      const result = await captureDesktopApplication(
+        { ...request(output), executable: process.execPath },
+        host(environment),
+      );
+      expect(session).toHaveBeenCalledTimes(1);
+      expect(environmentRead).toHaveBeenCalledTimes(neutralBatch ? 0 : 1);
+      expect(primaryAnalysisError(projectedFailure!).cause).toBe(sourceFailure);
+      expect(descriptor.closes()).toBeGreaterThan(1);
+      expect(await readdir(output)).toEqual([]);
+      expect(result).toMatchObject({
+        code: retrySucceeds ? "execution_failure" : "cleanup_incomplete",
+      });
+      expect(descriptor.handle.fd === -1).toBe(retrySucceeds);
+      expect(projectedFailure?.cleanupIncomplete).toBe(!retrySucceeds);
+      const [retainedStore] = retainedStores;
+      expect(retainedStore).toBeDefined();
+      if (sessionOwns) {
+        expect(retainedStore?.resourceScope.cleanupResources).toEqual([]);
+        expect(sessionFailure?.cleanup.inspectionCleanup?.causes[0]).toBe(
+          neutralBatch ? descriptors[0]!.failure : sourceFailure,
+        );
+        for (const entry of descriptors) entry.allow();
+        await sessionFailure!.cleanup.leases[0]!.release();
+        expect(descriptor.handle.fd).toBe(-1);
+        expect(projectedFailure?.cleanupIncomplete).toBe(false);
+        if (neutralBatch) {
+          expect(sourceFailure).toBeInstanceOf(SamplingReadBatchFailure);
+          expect(sourceFailure).toMatchObject({
+            outcomes: [
+              { status: "rejected" },
+              { status: "fulfilled", value: completed },
+              { status: "rejected" },
+            ],
+          });
+          expect(descriptors[1]!.handle.fd).toBe(-1);
+        }
+      } else if (!retrySucceeds) {
+        expect(retainedStore?.resourceScope.cleanupResources).toEqual([
+          descriptor.path,
+        ]);
+        await expect(retainedStore!.close()).rejects.toBeDefined();
+        descriptor.allow();
+        await retainedStore!.close();
+        expect(descriptor.handle.fd).toBe(-1);
+        expect(retainedStore?.resourceScope.cleanupResources).toEqual([]);
+        expect(projectedFailure?.cleanupIncomplete).toBe(false);
+      }
+    } finally {
+      for (const entry of descriptors) entry.allow();
+      await Promise.all([...retainedStores].map((store) => store.close()));
+      await sessionFailure?.cleanup.leases[0]?.release();
+      await Promise.all(
+        descriptors.map((entry) => entry.failure.owner.close()),
+      );
+      vi.restoreAllMocks();
+    }
+  },
+);
+
+it.for([
+  { completion: "completed", cancel: false, typedReason: false },
+  { completion: "completed", cancel: true, typedReason: false },
+  { completion: "completed", cancel: true, typedReason: true },
+  { completion: "failed", cancel: true, typedReason: false },
+] as const)(
+  "preserves capture admission after actual keyring cleanup ($completion, cancel: $cancel, typed reason: $typedReason)",
+  async ({ completion, cancel, typedReason }) => {
+    const { root, home, environment } = await fixture();
+    const source = "https://vendor.example/repo stable/main amd64 Packages";
+    const sources = join(root, "vendor.list");
+    const key = join(root, "vendor.gpg");
+    await writeFile(key, VENDOR_A.key);
+    await writeFile(
+      sources,
+      `deb [signed-by=${key}] https://vendor.example/repo stable main\n`,
+    );
+    await writeFile(
+      join(root, "vendor.example_repo_InRelease"),
+      "inert release bytes",
+    );
+    const targets = [
+      `Description: ${source}`,
+      `Sourcesentry: ${sources}:1`,
+      "Repo-URI: https://vendor.example/repo/",
+      "Release: stable",
+      "Component: main",
+      "Base-URI: https://vendor.example/repo/",
+      `Filename: ${join(root, "Packages")}`,
+    ].join("\n");
+    const output = join(root, "capture-keyring");
+    const controller = new AbortController();
+    const reason = typedReason
+      ? new AnalysisInputError("caller", { userMessage: "stop" })
+      : { stop: "keyring cleanup" };
+    const physical = Object.assign(
+      new Error("recording verification query failed"),
+      { code: "EIO" },
+    );
+    const captured = captureFixture();
+    let keyringWritten = false;
+    let keyringRemoved = false;
+    let privateRoot: PrivateRuntimeRoot | undefined;
+    let projectedFailure: AnalysisError | undefined;
+    const create = PrivateRuntimeRoot.create.bind(PrivateRuntimeRoot);
+    vi.spyOn(PrivateRuntimeRoot, "create").mockImplementationOnce(
+      async (options) => {
+        const owned = await create(options);
+        privateRoot = owned;
+        const close = owned.close.bind(owned);
+        vi.spyOn(owned, "close").mockImplementationOnce(async () => {
+          expect(controller.signal.aborted).toBe(false);
+          expect(keyringWritten).toBe(true);
+          await close();
+          await expect(readdir(owned.path)).rejects.toMatchObject({
+            code: "ENOENT",
+          });
+          keyringRemoved = true;
+          if (cancel) controller.abort(reason);
+        });
+        return owned;
+      },
+    );
+    const queries: string[] = [];
+    vi.spyOn(linuxInventory, "inspectLinuxApplication").mockImplementation(
+      async (_request, signal) => {
+        const apt = await inspectAptRepositories(
+          { sources: [source], origins: ["Vendor"] },
+          {
+            apt: { lists: root, trusted: key, trustedParts: root },
+            runQuery: async (command, argv) => {
+              queries.push(command);
+              if (command === "apt-get")
+                return { stdout: targets, exitCode: 0 };
+              if (command !== "gpgv")
+                throw new Error(`Unexpected command ${command}`);
+              const keyring = argv[argv.indexOf("--keyring") + 1];
+              expect((await readFile(keyring!)).equals(VENDOR_A.key)).toBe(
+                true,
+              );
+              keyringWritten = true;
+              if (completion === "failed") throw physical;
+              return { stdout: "[GNUPG:] NEWSIG\n", exitCode: 2 };
+            },
+          },
+          signal,
+        );
+        return {
+          ok: true,
+          value: {
+            inventory: {
+              ...captured.application,
+              argv: [process.execPath],
+              working_directory: home,
+              state_directories: [],
+            },
+            limitations: apt.limitations,
+            signingKeys: apt.keys,
+          },
+        };
+      },
+    );
+    vi.spyOn(X11WindowObserver.prototype, "sample").mockResolvedValue({
+      state: "listed",
+      windows: [],
+    });
+    const session = vi
+      .spyOn(desktopSession, "runDesktopSession")
+      .mockResolvedValue({
+        session: captured.session,
+        unreleased: undefined,
+        unreadableWindowSamples: 0,
+      });
+    const project = captureFailures.projectFailure;
+    vi.spyOn(captureFailures, "projectFailure").mockImplementation(
+      (...args) => {
+        projectedFailure = project(...args);
+        return projectedFailure;
+      },
+    );
+    try {
+      const result = await captureDesktopApplication(
+        { ...request(output), executable: process.execPath },
+        host(environment),
+        controller.signal,
+      );
+      expect(queries).toEqual(["apt-get", "gpgv"]);
+      expect(keyringWritten).toBe(true);
+      expect(keyringRemoved).toBe(true);
+      if (!cancel) {
+        expect(session).toHaveBeenCalledTimes(1);
+        expect(result).toMatchObject({
+          operation: "capture_desktop_application",
+        });
+        return;
+      }
+      expect(controller.signal.reason).toBe(reason);
+      expect(session).not.toHaveBeenCalled();
+      if (completion === "failed") {
+        expect(result).toMatchObject({ code: "execution_failure" });
+        expect(projectedFailure?.cause).toBe(physical);
+        expect(projectedFailure?.secondaryFailures).toContainEqual(
+          expect.objectContaining({
+            _tag: "AnalysisCancelledError",
+            cause: reason,
+          }),
+        );
+      } else {
+        expect(result).toMatchObject({ code: "cancelled" });
+        expect(projectedFailure).toBeInstanceOf(AnalysisCancelledError);
+        expect(projectedFailure?.cause).toBe(reason);
+      }
+    } finally {
+      await privateRoot?.close();
+      vi.restoreAllMocks();
+    }
+  },
+);

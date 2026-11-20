@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · **繁體中文** · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA：逆向一切
 
@@ -82,7 +82,11 @@ npx rea-agents setup
 
 設定流程支援 Claude Code、Codex、Cursor、Gemini CLI、Grok Build 和[其他 AI 代理](../getting-started/installation.md#supported-agents)。提供者組態和手動註冊 MCP 的方法見[安裝與設定](../getting-started/installation.md)。
 
-MCP 預設使用精簡輸入 Schema，以減少上下文開銷。需要完整欄位說明和巢狀驗證細節時，請在 MCP 註冊中設定 `REA_MCP_INPUT_SCHEMA_PROFILE=full`。兩種設定都保留完整工具集和標準的伺服器驗證；見 MCP 合約指南。
+MCP 預設使用精簡輸入 Schema，以減少上下文開銷。精簡 Schema 省略的說明會接在工具描述之後。完整工具集和標準的伺服器驗證維持不變；見 MCP 合約指南。
+
+設定會直接登記所選執行環境和 REA 入口指令碼。使用套件執行器時，請保留其快取項目及執行環境，並從目標專案以外的可信任目錄取得套件。 請參閱安裝指南。
+
+預設會從 `tools/list` 省略輸出 Schema：沒有任何模型 API 會讀取它們，且 REA 會自行驗證每個結果。在 MCP 登記中設定 `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` 可在 4096 位元組內公布每個輸出 Schema。所有設定下，伺服器驗證和結構化結果仍保持完整。 請參閱 MCP 合約指南中的「Output schemas」。
 
 ### 詢問 AI 代理
 
@@ -154,13 +158,17 @@ REA 需要 Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）或 26+ (>=26.12.1)�
 | 原生二進位檔案        | 偽程式碼、組合語言、字串、符號、呼叫和引用                                   | Hopper、Ghidra、IDA 或 Kuna；[原生分析](../guides/native/native-investigation.md)                                                                 |
 | 離線 ELF 佈局         | 節、段、原始符號/重定位資訊及靜態防護機制候選項                              | Linux x64 上由呼叫方提供的 pwntools；[二進位診斷](../guides/native/binary-diagnostics.md)                                                         |
 | Go 二進位檔案         | 內嵌編譯器版本、模組、替換項和建置設定                                       | 內建靜態 ELF/PE/thin Mach-O 檢查；無需安裝 Go                                                                                                     |
+| NuGet 套件            | 套件識別、相依性群組、授權、儲存庫及 ZIP 內容                                | 內建靜態 .nupkg 檢查；[NuGet 套件](../guides/managed/nuget-nupkg.md)                                                                              |
 | WASM 工件             | 驗證、節、精確的匯入/匯出 WAT 形式及解碼後的 WAT                             | 呼叫方提供的 WABT 1.0.42；`inspect_wasm_artifact`                                                                                                 |
 | EVM 位元組碼          | 分派選擇器、位元組偏移、推斷的參數和狀態可變性                               | Linux x64 上的本地原始位元組/十六進位輸入載體；[離線 EVM 指南](../guides/evm/evm-bytecode.md)                                                     |
 | Rust binaries         | Embedded cargo-auditable dependency list                                     | [Rust binaries](../rust-binaries.md)                                                                                                              |
 | Erlang BEAM           | IFF chunks, atoms, exports, and tables                                       | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                 |
 | PE certificates       | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                           |
 | PE imports            | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash   | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                     |
+| Windows shortcuts     | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                         |
 | ELF notes             | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields              | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                      |
+| DWARF compile units   | Compile-unit name, directory, producer, language, and dwo_name               | Built-in static ELF, Mach-O, and PE inspection; [DWARF compile units](../guides/native/dwarf-units.md)                                            |
+| ELF dependencies      | DT_NEEDED, SONAME, RPATH/RUNPATH, GNU versions, and undefined imports        | Built-in static ELF inspection; [ELF dependencies](../elf-dependencies.md)                                                                        |
 | Binary hardening      | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O          | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                     |
 | Apple IPS crashes     | .ips metadata, threads, images, registers and crash classes                  | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                                     |
 | Linux kernel modules  | .modinfo keys, __versions CRCs, this_module presence, and signature trailer  | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                            |
@@ -169,9 +177,10 @@ REA 需要 Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）或 26+ (>=26.12.1)�
 | JavaScript / Electron | 模組、匯入、source map、路由、IPC 和原生附加元件關係                         | Node.js 和 npm；[應用分析](../guides/javascript/javascript-application-workflows.md); Linux: procps `ps`                                          |
 | 網站                  | 頁面結構、腳本、網路觀察結果和按請求獲取的螢幕擷取畫面                       | Chrome 系瀏覽器；[瀏覽器分析](../guides/web/browser-observation.md)                                                                               |
 | 已保存的網路擷取      | 請求、回應、可訪問的酬載和來源位置                                           | HAR / Fiddler Everywhere SAZ；原生 mitmproxy 擷取需要 Linux 上的 mitmdump；[擷取指南](../guides/web/web-network-captures.md)                      |
-| 封包擷取              | 端點、DNS、TLS SNI、通訊協定分佈和 HTTP 請求                                 | 呼叫端提供的 tshark 和 capinfos；[pcap 指南](../guides/data/pcap-analysis.md)                                                                     |
+| 封包擷取              | 端點、DNS、TLS SNI、通訊協定分佈和 HTTP 請求                                 | 呼叫端提供的 tshark 和 capinfos （已在 Linux 驗證）；[pcap 指南](../guides/data/pcap-analysis.md)                                                 |
 | .NET 程式集           | 中繼資料、CIL 指令、聲明的原生依賴和建置對比                                 | 靜態檢查；[托管程式碼指南](../guides/managed/managed-code-analysis.md)                                                                            |
 | PyInstaller           | CArchive, PYZ, Python bytecode                                               | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                             |
+| Deno compile binaries | Virtual files, entry point, recorded options, npm snapshot length            | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                              |
 | Android APK           | 清單聲明、類別、反編譯的方法和引用                                           | Linux/macOS/Windows x64 上的無界面 JADX 和完整 JDK；[Android 指南](../guides/android/android-analysis.md)                                         |
 | Android 裝置          | 裝置、套件、程序、日誌、傾印、螢幕擷取以及 APK/檔案傳輸                      | 呼叫端提供的 adb（模擬器或實體裝置）；[ADB 指南](../guides/android/adb-device-analysis.md)                                                        |
 | JEB 專案              | 引擎支援的專案單元、成品摘要和型別/方法的虛擬碼                              | 由呼叫端啟動、提供 MCP 的 JEB 用戶端，透過 REA_JEB_MCP_URL 選擇；[JEB 指南](../providers/jeb-analysis.md)                                         |
@@ -272,6 +281,12 @@ REA 匯出可直接執行的環境，並附帶基本測試，檢查環境能否�
 [建立環境指南](https://rea.tools/guides/rl-environments/) ·
 [環境參考文件](../agent-environments.md) ·
 [在 X 上觀看示範](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### 桌面應用程式環境
+
+REA 也能為 Linux 桌面應用程式建立環境，代理透過螢幕截圖、滑鼠和鍵盤使用它。只要一行請求，例如「幫我建立一個 Gnote 環境，讓代理在購物清單筆記中加入橄欖油」，你的代理就會在本機建置電腦上安裝應用程式、撰寫任務、匯出環境，並在全新的電腦上檢查任務。建立環境的機器需要 amd64 或 arm64 上的 Linux、Docker，以及指南固定的 agentenv 框架版本。
+
+[設定桌面應用程式環境](../desktop-build-computer.md)
 
 ## 常見問題
 

@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,7 +8,7 @@ import {
   createAnalysisExecution,
   type AnalysisClient,
   type ProviderIdentity,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import { parseBinaryTarget } from "../BinaryTargetResolver.js";
 import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
 import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";
@@ -26,6 +27,7 @@ import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { createEvidence } from "../../domain/evidence.js";
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 import { createTestProviderRouter } from "../../../tests/fixtures/binarySession.js";
+import { releaseOwnedCleanup } from "../../../tests/support/cleanupRelease.js";
 
 const identity: ProviderIdentity = {
   id: "bundle-resource-fixture",
@@ -145,9 +147,11 @@ it("opens a resource-only bundle without executable identity and keeps snapshot 
     path: opened.value.canonicalPath,
     caller_path: opened.value.callerPath,
   });
-  expect(session.activeBundleResourceRoot()?.canonicalPath).toBe(
-    opened.value.canonicalPath,
-  );
+  expect(await session.status()).toMatchObject({
+    open: true,
+    session_kind: "bundle_resources",
+    resource_root: { canonical_path: opened.value.canonicalPath },
+  });
   expect(
     bundleResourceRootSchema.parse({
       caller_path: opened.value.callerPath,
@@ -366,7 +370,7 @@ it.each([false, true])(
                   await closeGate;
                 }
                 if (oldCloseAttempts < 3) return err(cleanupFailure);
-                if (liveCleanup) cleanupFailure.resolveCleanup();
+                if (liveCleanup) releaseOwnedCleanup(cleanupFailure);
                 return { ok: true, value: null };
               },
             },
@@ -834,7 +838,7 @@ it("cancels a binary switch during resource retirement and retains null-subject 
   const observed = await session.execute("inspect_plist", {});
   if (!observed.ok) throw observed.error;
   const recorded = session.recordEvidence(
-    createEvidence(undefined, identity, {
+    createEvidence(unknownTarget("not-observed"), identity, {
       operation: "inspect_plist",
       parameters: {},
       result: observed.value.result,
@@ -868,7 +872,9 @@ it("cancels a binary switch during resource retirement and retains null-subject 
   expect(result.error.cleanupIncomplete).toBe(true);
   expect(await session.status()).toMatchObject({ open: false });
   expect(session.exportEvidenceBundle().records).toHaveLength(1);
-  expect(session.evidenceById(evidenceId)).toMatchObject({ subject: null });
+  expect(session.evidenceById(evidenceId)).toMatchObject({
+    subject: { identity: { kind: "unknown" } },
+  });
   expect(await session.status()).toMatchObject({ cleanup_pending: true });
   expect(await session.close()).toMatchObject({ ok: true });
   expect(resourceCloseAttempts).toBe(2);
@@ -901,7 +907,7 @@ it("tracks independent pending resource owners after a failed session replacemen
             execute: async () => ok(createAnalysisExecution(null, identity)),
             close: async () => {
               if (!released[index]) return err(failure);
-              failure.resolveCleanup();
+              releaseOwnedCleanup(failure);
               return ok(null);
             },
           },
@@ -966,7 +972,7 @@ it.each([false, true])(
         close: async () => {
           attempts += 1;
           if (attempts === 1) return err(cleanup);
-          if (liveCleanup) cleanup.resolveCleanup();
+          if (liveCleanup) releaseOwnedCleanup(cleanup);
           return ok(null);
         },
       })),
@@ -1025,7 +1031,7 @@ it.each([0, 1])(
                   return err(
                     owner === unknownOwner ? unknownFailure : ownedFailure,
                   );
-                if (owner !== unknownOwner) ownedFailure.resolveCleanup();
+                if (owner !== unknownOwner) releaseOwnedCleanup(ownedFailure);
                 return ok(null);
               },
             },
@@ -1064,7 +1070,7 @@ it.each([
     const closeOwner = async (owner: "client" | "files") => {
       if (!failCleanup) return ok(null);
       if (!released) return err(owner === unknownOwner ? unknown : tracked);
-      if (owner !== unknownOwner) tracked.resolveCleanup();
+      if (owner !== unknownOwner) releaseOwnedCleanup(tracked);
       return ok(null);
     };
     const client: AnalysisClient = {
@@ -1136,7 +1142,7 @@ it.each(["health", "cancellation"] as const)(
             },
             close: async () => {
               if (++closeAttempts === 1) return err(cleanup);
-              cleanup.resolveCleanup();
+              releaseOwnedCleanup(cleanup);
               return ok(null);
             },
           },

@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · **Italiano**
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA: Reverse Engineer Anything
 
@@ -82,7 +82,11 @@ Scegli i tuoi agenti, rivedi le modifiche proposte e approvale. La configurazion
 
 La configurazione supporta Claude Code, Codex, Cursor, Gemini CLI, Grok Build e [altri agenti](../getting-started/installation.md#supported-agents). Vedi [installazione e configurazione](../getting-started/installation.md) per la configurazione dei provider e la registrazione manuale MCP.
 
-MCP usa schemi di input compatti per impostazione predefinita. Per tutte le indicazioni sui campi e la validazione annidata, imposta `REA_MCP_INPUT_SCHEMA_PROFILE=full` nella registrazione MCP. Entrambi i profili mantengono tutti gli strumenti e la stessa validazione canonica del server; vedi la guida ai contratti MCP.
+MCP usa schemi di input compatti per impostazione predefinita. Le indicazioni omesse da uno schema compatto seguono la descrizione dello strumento. Tutti gli strumenti e la validazione canonica del server restano invariati; vedi la guida ai contratti MCP.
+
+La configurazione registra direttamente il runtime scelto e lo script di avvio di REA. Se usi un package runner, conserva la sua voce nella cache e il runtime; scarica il pacchetto da una directory attendibile fuori dal progetto di destinazione. Consulta la guida di installazione.
+
+Gli schemi di output sono omessi da `tools/list` per impostazione predefinita: nessuna API di modelli li legge e REA valida ogni risultato da sé. Imposta `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` nella registrazione MCP per dichiarare ogni schema di output entro 4096 byte. In ogni caso la validazione del server e i risultati strutturati restano completi. Consulta «Output schemas» nella guida ai contratti MCP.
 
 ### Chiedi al tuo agente
 
@@ -156,10 +160,14 @@ REA richiede Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) o 26+ (>=26.12.1), oltre
 | Layout ELF offline           | Sezioni, segmenti, simboli/relocazioni originali e candidati mitigazioni statiche                       | pwntools fornito dal chiamante su Linux x64; [diagnostica binaria](../guides/native/binary-diagnostics.md)                                                     |
 | PE certificates              | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                            | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                                        |
 | PE imports                   | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                              | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                                  |
+| Windows shortcuts            | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts                            | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                                      |
+| Pacchetti NuGet              | Identità del pacchetto, gruppi di dipendenze, licenza, repository e contenuto ZIP                       | Ispezione statica integrata dei .nupkg; [Pacchetti NuGet](../guides/managed/nuget-nupkg.md)                                                                    |
 | Artefatto WASM               | Convalida, sezioni, forme WAT di import/export esatte e WAT decodificato                                | WABT 1.0.42 fornito dal chiamante; `inspect_wasm_artifact`                                                                                                     |
 | Bytecode EVM                 | Selettori di dispatch, offset dei byte, argomenti inferiti e mutabilità                                 | Carrier raw/hex locale su Linux x64; [guida EVM offline](../guides/evm/evm-bytecode.md)                                                                        |
 | Rust binaries                | Embedded cargo-auditable dependency list                                                                | [Rust binaries](../rust-binaries.md)                                                                                                                           |
 | ELF notes                    | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                         | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                                   |
+| DWARF compile units          | Compile-unit name, directory, producer, language, and dwo_name                                          | Built-in static ELF, Mach-O, and PE inspection; [DWARF compile units](../guides/native/dwarf-units.md)                                                         |
+| ELF dependencies             | DT_NEEDED, SONAME, RPATH/RUNPATH, GNU versions, and undefined imports                                   | Built-in static ELF inspection; [ELF dependencies](../elf-dependencies.md)                                                                                     |
 | Binary hardening             | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                                     | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                                  |
 | Linux kernel modules         | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                             | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                         |
 | Erlang BEAM                  | IFF chunks, atoms, exports, and tables                                                                  | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                              |
@@ -169,9 +177,10 @@ REA richiede Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) o 26+ (>=26.12.1), oltre
 | JavaScript / Electron        | Moduli, import, source map, route, IPC e relazioni con add-on nativi                                    | Node.js e npm; [analisi delle applicazioni](../guides/javascript/javascript-application-workflows.md); Linux: procps `ps`                                      |
 | Siti web                     | Struttura della pagina, script, osservazioni di rete e screenshot richiesti                             | Un browser della famiglia Chrome; [analisi browser](../guides/web/browser-observation.md)                                                                      |
 | Acquisizioni di rete salvate | Richieste, risposte, payload esposti e posizioni sorgente                                               | HAR / Fiddler Everywhere SAZ; mitmdump su Linux per acquisizioni mitmproxy native; [guida alle acquisizioni](../guides/web/web-network-captures.md)            |
-| Captured di pacchetti        | Endpoint, DNS, TLS SNI, distribuzione dei protocolli e richieste HTTP                                   | tshark e capinfos forniti dal chiamante; [guida pcap](../guides/data/pcap-analysis.md)                                                                         |
+| Captured di pacchetti        | Endpoint, DNS, TLS SNI, distribuzione dei protocolli e richieste HTTP                                   | tshark e capinfos forniti dal chiamante (verificati su Linux); [guida pcap](../guides/data/pcap-analysis.md)                                                   |
 | Assembly .NET                | Metadati, istruzioni CIL, dipendenze native dichiarate e confronti di build                             | Nessuno (solo statico); [guida managed-code](../guides/managed/managed-code-analysis.md)                                                                       |
 | PyInstaller                  | CArchive, PYZ, Python bytecode                                                                          | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                          |
+| Deno compile binaries        | Virtual files, entry point, recorded options, npm snapshot length                                       | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                           |
 | APK Android                  | Dichiarazioni manifest, classi, metodi decompilati e riferimenti                                        | JADX headless e un JDK completo su Linux/macOS/Windows x64; [guida Android](../guides/android/android-analysis.md)                                             |
 | Dispositivi Android          | Dispositivi, pacchetti, processi, log, dump, screenshot e trasferimenti APK/file                        | adb fornito dal chiamante (emulatore o hardware); [guida ADB](../guides/android/adb-device-analysis.md)                                                        |
 | Progetti JEB                 | Unità di progetto dal motore, digest degli artifact e pseudocodice di tipi/metodi                       | Client JEB avviato dal chiamante via MCP, selezionato con REA_JEB_MCP_URL; [guida JEB](../providers/jeb-analysis.md)                                           |
@@ -269,6 +278,12 @@ REA esporta un ambiente eseguibile con un test di base che ne verifica l’avvio
 [Guida alla creazione di un ambiente](https://rea.tools/guides/rl-environments/) ·
 [Riferimento degli ambienti](../agent-environments.md) ·
 [Guarda la demo su X](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### Ambienti di app desktop
+
+REA può creare anche un ambiente per un’app desktop Linux, che un agente usa tramite screenshot, mouse e tastiera. Da una richiesta di una riga, come «Creami un ambiente Gnote in cui l’agente aggiunge l’olio d’oliva alla nota della lista della spesa», il tuo agente installa l’app su un computer di build locale, scrive l’attività, esporta l’ambiente e verifica l’attività su un computer nuovo. La macchina che lo crea richiede Linux su amd64 o arm64, Docker e la versione del framework agentenv indicata dalla guida.
+
+[Configurare gli ambienti di app desktop](../desktop-build-computer.md)
 
 ## FAQ
 

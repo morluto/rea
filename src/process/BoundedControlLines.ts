@@ -1,87 +1,78 @@
-import { StringDecoder } from "node:string_decoder";
 import { err, ok, type Result } from "../domain/result.js";
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 
 export type BoundedControlLine = Result<
   string,
-  { readonly _tag: "ControlLineLimitExceeded" }
+  { readonly _tag: "ControlLineLimitExceeded" | "ControlLineMalformedUtf8" }
 >;
 
+const exceeded = err({ _tag: "ControlLineLimitExceeded" } as const);
+const malformed = err({ _tag: "ControlLineMalformedUtf8" } as const);
+const LF = 0x0a;
+const CR = 0x0d;
+
 /**
- * Read LF/CRLF control frames without retaining an oversized line. Limits apply
- * to decoded UTF-8 content, excluding the delimiter. Oversize is reported once
- * as soon as it is known; rejected content is drained before the next frame.
- * The caller owns failure classification and whether to continue reading.
- * The supplied iterator owns the input stream's early-return cleanup policy.
+ * Frame wire bytes before decoding. The limit excludes LF or CRLF. Report
+ * overflow as soon as it is known, then drain to LF before the next frame.
+ * The caller owns failure policy and the input iterator's early-return cleanup.
  */
 export async function* readBoundedControlLines(
   chunks: AsyncIterable<Uint8Array>,
   maxBytes: number,
 ): AsyncGenerator<BoundedControlLine> {
-  const decoder = new StringDecoder("utf8");
-  let pending = "";
+  const decoder = strictUtf8Decoder("preserve");
+  let pending: Uint8Array | undefined;
   let pendingBytes = 0;
   let oversized = false;
 
-  const append = (fragment: string): boolean => {
-    if (oversized || fragment.length === 0) return false;
-    const bytes = pendingBytes + Buffer.byteLength(fragment);
-    // A final CR might be half of a split CRLF. Admit it provisionally, then
-    // count it as content if another character or EOF follows instead of LF.
-    if (bytes > maxBytes + (fragment.endsWith("\r") ? 1 : 0)) {
-      oversized = true;
-      pending = "";
-      pendingBytes = 0;
-      return true;
+  const decode = (bytes: Uint8Array): BoundedControlLine => {
+    if (bytes.length > maxBytes) return exceeded;
+    try {
+      return ok(decoder.decode(bytes));
+    } catch (cause: unknown) {
+      if (!(cause instanceof TypeError)) throw cause;
+      return malformed;
     }
-    pending += fragment;
-    pendingBytes = bytes;
-    return false;
   };
 
-  const finish = (delimiter: "lf" | "eof"): BoundedControlLine => {
-    const line =
-      delimiter === "lf" && pending.endsWith("\r")
-        ? pending.slice(0, -1)
-        : pending;
-    const result =
-      oversized || Buffer.byteLength(line) > maxBytes
-        ? err({ _tag: "ControlLineLimitExceeded" } as const)
-        : ok(line);
-    pending = "";
-    pendingBytes = 0;
-    oversized = false;
-    return result;
-  };
-
-  function* consume(decoded: string): Generator<BoundedControlLine> {
+  for await (const chunk of chunks) {
     let start = 0;
-    for (;;) {
-      const newline = decoded.indexOf("\n", start);
-      if (newline < 0) {
-        if (append(decoded.slice(start)))
-          yield err({ _tag: "ControlLineLimitExceeded" });
-        return;
+    while (start < chunk.length) {
+      const newline = chunk.indexOf(LF, start);
+      const end = newline === -1 ? chunk.length : newline;
+      if (!oversized) {
+        const fragment = chunk.subarray(start, end);
+        const count = pendingBytes + fragment.length;
+        const last =
+          fragment.length > 0
+            ? fragment[fragment.length - 1]
+            : pending?.[pendingBytes - 1];
+        // The byte after the limit can still be CR awaiting LF in the next chunk.
+        if (count > maxBytes + (last === CR ? 1 : 0)) {
+          pendingBytes = 0;
+          oversized = true;
+          yield exceeded;
+        } else if (newline !== -1) {
+          const length = count - (last === CR ? 1 : 0);
+          if (pending === undefined || pendingBytes === 0)
+            yield decode(fragment.subarray(0, length));
+          else {
+            pending.set(fragment, pendingBytes);
+            yield decode(pending.subarray(0, length));
+          }
+          pendingBytes = 0;
+        } else if (fragment.length > 0) {
+          pending ??= new Uint8Array(maxBytes + 1);
+          pending.set(fragment, pendingBytes);
+          pendingBytes = count;
+        }
       }
-      if (append(decoded.slice(start, newline)))
-        yield err({ _tag: "ControlLineLimitExceeded" });
-      if (!oversized) yield finish("lf");
-      else {
-        pending = "";
-        pendingBytes = 0;
-        oversized = false;
-      }
+      if (newline === -1) break;
+      oversized = false;
       start = newline + 1;
     }
   }
 
-  for await (const chunk of chunks) {
-    // Bound decoding expansion as well as retained line content. A malformed
-    // source byte can expand to a three-byte UTF-8 replacement character.
-    for (let offset = 0; offset < chunk.byteLength; offset += maxBytes + 1)
-      yield* consume(
-        decoder.write(chunk.subarray(offset, offset + maxBytes + 1)),
-      );
-  }
-  yield* consume(decoder.end());
-  if (!oversized && pending.length > 0) yield finish("eof");
+  if (pending !== undefined && pendingBytes > 0)
+    yield decode(pending.subarray(0, pendingBytes));
 }

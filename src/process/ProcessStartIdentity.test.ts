@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { ProcessOwnershipHost } from "./ProcessOwnership.js";
+import type {
+  ProcessIdentityObservation,
+  ProcessOwnershipHost,
+} from "./ProcessOwnership.js";
 import {
   observeProcessStartIdentity,
   observeProcessStartIdentityExit,
@@ -24,8 +27,130 @@ const host = (identity: string | undefined): ProcessOwnershipHost => ({
         ],
   environment: async () => ({}),
   processIdentities: async () =>
-    new Map([[42, { state: "readable", identity: identity ?? "" }]]),
+    new Map([
+      [
+        42,
+        identity === undefined
+          ? { state: "absent", reason: "not-found-in-caller-pid-namespace" }
+          : { state: "readable", identity },
+      ],
+    ]),
   signalGroup: () => undefined,
+});
+
+describe("selected native process identity", () => {
+  it.each(["readable", "unavailable"] as const)(
+    "does not infer exit from a table omission when native identity is %s",
+    async (state) => {
+      const omitted: ProcessOwnershipHost = {
+        ...host("start-1"),
+        listProcesses: async () => [],
+        processIdentities: async () =>
+          new Map([
+            [
+              42,
+              state === "readable"
+                ? { state: "readable", identity: "start-1" }
+                : { state: "unavailable", reason: "native inspection denied" },
+            ],
+          ]),
+      };
+      await expect(
+        observeProcessStartIdentityExit(42, "start-1", omitted),
+      ).resolves.toBe(state === "readable" ? "present" : "unverified");
+    },
+  );
+
+  it.each(["absent", "zombie", "dead"] as const)(
+    "uses native %s proof despite a stale live process-table row",
+    async (lifecycle) => {
+      const exited: ProcessOwnershipHost = {
+        ...host("start-1"),
+        processIdentities: async () =>
+          new Map([
+            [
+              42,
+              lifecycle === "absent"
+                ? {
+                    state: "absent",
+                    reason: "not-found-in-caller-pid-namespace",
+                  }
+                : {
+                    state: "readable",
+                    identity: "start-1",
+                    lifecycle: { state: "observed", lifecycle },
+                  },
+            ],
+          ]),
+      };
+      await expect(
+        observeProcessStartIdentityExit(42, "start-1", exited),
+      ).resolves.toBe("exited");
+      const sendSignal = vi.fn();
+      await expect(
+        signalProcessWithStartIdentity(42, "start-1", "SIGKILL", {
+          host: exited,
+          sendSignal,
+        }),
+      ).resolves.toBe("gone");
+      expect(sendSignal).not.toHaveBeenCalled();
+    },
+  );
+
+  it("reports an observed exit in progress without confirming exit", async () => {
+    const exiting: ProcessOwnershipHost = {
+      ...host("start-1"),
+      processIdentities: async () =>
+        new Map([
+          [
+            42,
+            {
+              state: "readable",
+              identity: "start-1",
+              lifecycle: { state: "observed", lifecycle: "exiting" },
+            },
+          ],
+        ]),
+    };
+    await expect(
+      observeProcessStartIdentityExit(42, "start-1", exiting),
+    ).resolves.toBe("exiting");
+  });
+
+  it("binds an omitted native PID to its directly observed run token", async () => {
+    const omitted: ProcessOwnershipHost = {
+      ...host("start-1"),
+      listProcesses: async () => [],
+      environment: async () => ({ REA_PROCESS_RUN_ID: "captured-run" }),
+    };
+    await expect(
+      observeProcessStartIdentity(42, omitted, "captured-run"),
+    ).resolves.toMatchObject({ state: "readable", identity: "start-1" });
+  });
+
+  it.each(["unreadable", "foreign", "reused"] as const)(
+    "does not bind an omitted PID with a %s token observation",
+    async (condition) => {
+      let identity = "start-1";
+      const omitted: ProcessOwnershipHost = {
+        ...host("start-1"),
+        listProcesses: async () => [],
+        processIdentities: async () =>
+          new Map([[42, { state: "readable", identity }]]),
+        environment: async () => {
+          if (condition === "unreadable") throw new Error("environment denied");
+          if (condition === "reused") identity = "replacement-start";
+          return {
+            REA_PROCESS_RUN_ID:
+              condition === "foreign" ? "other-run" : "captured-run",
+          };
+        },
+      };
+      await expect(
+        observeProcessStartIdentity(42, omitted, "captured-run"),
+      ).resolves.toMatchObject({ state: "unavailable" });
+    },
+  );
 });
 
 describe("process start identity lease", () => {
@@ -153,5 +278,87 @@ describe("process start identity lease", () => {
       }),
     ).resolves.toBe("gone");
     expect(sendSignal).not.toHaveBeenCalled();
+  });
+});
+
+describe("observed exit in progress", () => {
+  const exiting = {
+    state: "readable",
+    identity: "start-1",
+    lifecycle: { state: "observed", lifecycle: "exiting" },
+  } as const;
+  const sequence = (
+    ...observations: readonly ProcessIdentityObservation[]
+  ): { readonly host: ProcessOwnershipHost; reads(): number } => {
+    let reads = 0;
+    return {
+      reads: () => reads,
+      host: {
+        ...host("start-1"),
+        processIdentities: async () => {
+          const observation =
+            observations[Math.min(reads, observations.length - 1)];
+          reads += 1;
+          if (observation === undefined) throw new Error("no observation");
+          return new Map([[42, observation]]);
+        },
+      },
+    };
+  };
+
+  it.each([
+    [
+      "zombie",
+      {
+        state: "readable",
+        identity: "start-1",
+        lifecycle: { state: "observed", lifecycle: "zombie" },
+      },
+      "exited",
+    ],
+    [
+      "absent",
+      { state: "absent", reason: "not-found-in-caller-pid-namespace" },
+      "exited",
+    ],
+    [
+      "replaced",
+      { state: "readable", identity: "replacement-start" },
+      "exited",
+    ],
+    [
+      "unavailable",
+      { state: "unavailable", reason: "identity read failed" },
+      "unverified",
+    ],
+  ] as const)(
+    "settles an observed exit in progress that becomes %s",
+    async (_name, settled, expected) => {
+      const observed = sequence(exiting, exiting, settled);
+      await expect(
+        observeProcessStartIdentityExit(42, "start-1", observed.host),
+      ).resolves.toBe(expected);
+      expect(observed.reads()).toBe(3);
+    },
+  );
+
+  it("reports exiting only after waiting out the cleanup grace", async () => {
+    const observed = sequence(exiting);
+    await expect(
+      observeProcessStartIdentityExit(42, "start-1", observed.host),
+    ).resolves.toBe("exiting");
+    expect(observed.reads()).toBeGreaterThan(1);
+  });
+
+  it("does not wait on a live process that is not exiting", async () => {
+    const observed = sequence({
+      state: "readable",
+      identity: "start-1",
+      lifecycle: { state: "observed", lifecycle: "non-zombie" },
+    });
+    await expect(
+      observeProcessStartIdentityExit(42, "start-1", observed.host),
+    ).resolves.toBe("present");
+    expect(observed.reads()).toBe(1);
   });
 });

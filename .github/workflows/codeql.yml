@@ -3,8 +3,32 @@ name: CodeQL production
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "tests/**"
+      - "scripts/fixtures/**"
+      - "**/*.test.*"
+      - "**/*.fixture.*"
+      - "**/test_*.py"
+      - "**/*_test.py"
+      - "**/*.md"
+      - "**/*.mermaid"
+      - "**/*.csv"
+      - "licenses/**"
+      - ".git-blame-ignore-revs"
   pull_request:
     branches: [main]
+    paths-ignore:
+      - "tests/**"
+      - "scripts/fixtures/**"
+      - "**/*.test.*"
+      - "**/*.fixture.*"
+      - "**/test_*.py"
+      - "**/*_test.py"
+      - "**/*.md"
+      - "**/*.mermaid"
+      - "**/*.csv"
+      - "licenses/**"
+      - ".git-blame-ignore-revs"
   schedule:
     - cron: "37 5 * * 1"
   workflow_dispatch:
@@ -14,13 +38,43 @@ permissions:
 
 concurrency:
   group: codeql-production-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # Let a main-branch baseline finish; supersede stale pull-request scans only.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  analyze:
+  scope:
     # A repository administrator must disable default setup before enabling
     # this workflow; default setup rejects advanced CodeQL result uploads.
     if: vars.REA_CODEQL_ADVANCED == 'true'
+    name: Select production languages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.scope.outputs.run }}
+      languages: ${{ steps.scope.outputs.languages }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: ${{ github.event_name == 'pull_request' && 0 || 1 }}
+          filter: blob:none
+          sparse-checkout: |
+            .nvmrc
+            scripts/ci
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - name: Select CodeQL languages
+        id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: node scripts/ci/codeql-scope.mjs >> "$GITHUB_OUTPUT"
+
+  analyze:
+    needs: scope
+    if: vars.REA_CODEQL_ADVANCED == 'true' && needs.scope.outputs.run == 'true'
     name: Analyze production (${{ matrix.language }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -31,7 +85,7 @@ jobs:
       fail-fast: false
       max-parallel: 1
       matrix:
-        language: [javascript-typescript, python, actions]
+        language: ${{ fromJSON(needs.scope.outputs.languages) }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -52,7 +106,7 @@ jobs:
           threads: 2
           ram: 4096
       - name: Retain complete analysis evidence
-        if: always()
+        if: always() && !cancelled()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: codeql-production-${{ matrix.language }}

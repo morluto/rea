@@ -13,8 +13,9 @@ evaluators, REA's and the exported verifier's, agree.
 
 ## Requirements
 
-- Format: a file starting with a zip local file header (`PK\x03\x04`) is
-  `zip`, whatever its name. Its view is
+- Format: a file starting with a zip local file header (`PK\x03\x04`), or
+  a classic/Zip64 empty-archive signature with at least 22 bytes, is `zip`,
+  whatever its name. A signature is not proof of directory validity. Its view is
   `{entries, entry_count, truncated}`: the file entries in archive order,
   directories left out, each `{name, size, sha256, format, view, view_error}`.
 - Reading: from the retained bytes already checked against their digest, in
@@ -47,7 +48,10 @@ evaluators, REA's and the exported verifier's, agree.
   it is.
 - Selectors: on an array, a pointer segment `[KEY=VALUE]` names the member
   whose string field `KEY` is `VALUE`, `[@KEY=VALUE]` the member whose
-  `attributes` hold it, and conditions can follow one another. A selector must
+  `attributes` hold it, `[>PATH=VALUE]` the member holding it one to three
+  `/`-separated steps inside (in XML a descendant element's collapsed text
+  or, ending `NAME@ATTR`, a child's attribute; in JSON the string at those
+  keys), and conditions can follow one another. A selector must
   match exactly one member; several, or none before the last segment, fail the
   check with a message naming the selector. None at the last segment names no
   value, so `value_absent` passes and `value_equals` fails.

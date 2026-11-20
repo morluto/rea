@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · **ไทย** · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA: Reverse Engineer Anything
 
@@ -82,7 +82,11 @@ npx rea-agents setup
 
 ขั้นตอนตั้งค่ารองรับ Claude Code, Codex, Cursor, Gemini CLI, Grok Build และ[เอเจนต์อื่น ๆ](../getting-started/installation.md#supported-agents) ดู[การติดตั้งและตั้งค่า](../getting-started/installation.md) สำหรับการตั้งค่าผู้ให้บริการวิเคราะห์และการลงทะเบียน MCP ด้วยตนเอง
 
-MCP ใช้สคีมาอินพุตแบบกระชับโดยปริยาย หากต้องการคำอธิบายฟิลด์และการตรวจสอบแบบซ้อนทั้งหมด ให้ตั้ง `REA_MCP_INPUT_SCHEMA_PROFILE=full` ในการลงทะเบียน MCP ทั้งสองแบบคงเครื่องมือครบและใช้การตรวจสอบมาตรฐานฝั่งเซิร์ฟเวอร์เดียวกัน ดูคู่มือสัญญา MCP
+MCP ใช้สคีมาอินพุตแบบกระชับโดยปริยาย คำแนะนำที่สคีมาแบบกระชับละไว้จะต่อท้ายคำอธิบายเครื่องมือ เครื่องมือทั้งหมดและการตรวจสอบมาตรฐานฝั่งเซิร์ฟเวอร์ยังคงเหมือนเดิม ดูคู่มือสัญญา MCP
+
+การตั้งค่าจะลงทะเบียนรันไทม์ที่เลือกและสคริปต์เริ่มต้นของ REA โดยตรง หากใช้ตัวรันแพ็กเกจ ให้เก็บรายการแคชและรันไทม์ไว้ และรับแพ็กเกจจากไดเรกทอรีที่เชื่อถือได้นอกโปรเจกต์เป้าหมาย ดูคู่มือการติดตั้ง
+
+ตามค่าเริ่มต้น ระบบจะไม่ใส่สคีมาเอาต์พุตใน `tools/list` เพราะไม่มี API ของโมเดลใดอ่านสคีมาเหล่านี้ และ REA ตรวจสอบผลลัพธ์ทุกรายการเอง ตั้ง `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` ในการลงทะเบียน MCP เพื่อประกาศสคีมาเอาต์พุตแต่ละรายการภายใน 4096 ไบต์ ทุกการตั้งค่ายังคงการตรวจสอบฝั่งเซิร์ฟเวอร์และผลลัพธ์แบบมีโครงสร้างครบถ้วน ดูหัวข้อ “Output schemas” ในคู่มือสัญญา MCP
 
 ### ถามเอเจนต์
 
@@ -157,9 +161,12 @@ REA ต้องใช้ Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) หรื�
 | โครงสร้าง ELF แบบออฟไลน์       | เซกชัน เซกเมนต์ สัญลักษณ์/รีโลเคชันต้นฉบับ และตัวเลือกกลไกป้องกันที่พบจากการวิเคราะห์แบบสถิต      | pwntools ที่ผู้ใช้จัดเตรียมบน Linux x64; [การวินิจฉัยไบนารี](../guides/native/binary-diagnostics.md)                                                                 |
 | PE certificates              | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields    | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                                   |
 | PE imports                   | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash      | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                             |
+| Windows shortcuts            | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts    | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                                 |
 | ไบต์โค้ด EVM                   | ตัวเลือกฟังก์ชันสำหรับการเรียก ออฟเซ็ตไบต์ อาร์กิวเมนต์และความสามารถในการเปลี่ยนสถานะที่อนุมานได้ | ไฟล์บนเครื่องที่มีไบต์ดิบหรือข้อมูลเลขฐานสิบหกบน Linux x64; [คู่มือ EVM แบบออฟไลน์](../guides/evm/evm-bytecode.md)                                                        |
 | Rust binaries                | Embedded cargo-auditable dependency list                                        | [Rust binaries](../rust-binaries.md)                                                                                                                      |
 | ELF notes                    | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                 | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                              |
+| DWARF compile units          | Compile-unit name, directory, producer, language, and dwo_name                  | Built-in static ELF, Mach-O, and PE inspection; [DWARF compile units](../guides/native/dwarf-units.md)                                                    |
+| ELF dependencies             | DT_NEEDED, SONAME, RPATH/RUNPATH, GNU versions, and undefined imports           | Built-in static ELF inspection; [ELF dependencies](../elf-dependencies.md)                                                                                |
 | Binary hardening             | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O             | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                             |
 | Linux kernel modules         | .modinfo keys, __versions CRCs, this_module presence, and signature trailer     | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                    |
 | Erlang BEAM                  | IFF chunks, atoms, exports, and tables                                          | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                         |
@@ -169,9 +176,10 @@ REA ต้องใช้ Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) หรื�
 | JavaScript / Electron        | โมดูล การนำเข้า ซอร์สแมป เส้นทาง IPC และความสัมพันธ์กับส่วนเสริมเนทีฟ                      | Node.js และ npm; [การวิเคราะห์แอปพลิเคชัน](../guides/javascript/javascript-application-workflows.md); Linux: procps `ps`                                      |
 | เว็บไซต์                       | โครงสร้างหน้า สคริปต์ ข้อมูลเครือข่ายที่สังเกตได้ และภาพหน้าจอที่ร้องขอ                         | เบราว์เซอร์ในตระกูล Chrome; [การวิเคราะห์ผ่านเบราว์เซอร์](../guides/web/browser-observation.md)                                                                   |
 | ข้อมูลเครือข่ายที่บันทึกไว้           | คำขอ คำตอบ เพย์โหลดที่ปรากฏ และตำแหน่งต้นทาง                                         | HAR / Fiddler Everywhere SAZ; mitmdump บน Linux สำหรับข้อมูลที่บันทึกในรูปแบบเนทีฟของ mitmproxy; [คู่มือการบันทึกข้อมูล](../guides/web/web-network-captures.md)           |
-| การจับแพ็กเก็ต                  | จุดเชื่อมต่อ, DNS, TLS SNI, การกระจายโปรโตคอล และคำขอ HTTP                          | tshark และ capinfos ที่ผู้เรียกจัดเตรียม; [คู่มือ pcap](../guides/data/pcap-analysis.md)                                                                            |
+| การจับแพ็กเก็ต                  | จุดเชื่อมต่อ, DNS, TLS SNI, การกระจายโปรโตคอล และคำขอ HTTP                          | tshark และ capinfos ที่ผู้เรียกจัดเตรียม (ตรวจสอบแล้วบน Linux); [คู่มือ pcap](../guides/data/pcap-analysis.md)                                                       |
 | แอสเซมบลี .NET                | เมทาดาทา คำสั่ง CIL การพึ่งพาเนทีฟที่ประกาศไว้ และการเปรียบเทียบผลการบิลด์                  | การตรวจสอบแบบสถิต; [คู่มือโค้ดแบบจัดการ](../guides/managed/managed-code-analysis.md)                                                                            |
 | PyInstaller                  | CArchive, PYZ, Python bytecode                                                  | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                     |
+| Deno compile binaries        | Virtual files, entry point, recorded options, npm snapshot length               | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                      |
 | APK ของ Android              | การประกาศใน manifest คลาส เมธอดที่ดีคอมไพล์ และการอ้างอิง                             | JADX แบบไม่มี GUI และ JDK แบบเต็มบน Linux/macOS/Windows x64; [คู่มือ Android](../guides/android/android-analysis.md)                                            |
 | อุปกรณ์ Android                | อุปกรณ์ แพ็กเกจ โพรเซส บันทึก ดัมพ์ ภาพหน้าจอ และการถ่ายโอน APK/ไฟล์                      | adb ที่ผู้เรียกจัดเตรียม (โปรแกรมจำลองหรืออุปกรณ์จริง); [คู่มือ ADB](../guides/android/adb-device-analysis.md)                                                          |
 | โปรเจกต์ JEB                  | หน่วยโปรเจกต์จากเอนจิน, แฮชของอาร์ติแฟกต์ และซูโดโค้ดของไทป์/เมท็อด                       | ไคลเอนต์ JEB ที่ผู้เรียกเริ่มและให้บริการ MCP เลือกด้วย REA_JEB_MCP_URL; [คู่มือ JEB](../providers/jeb-analysis.md)                                                      |
@@ -188,6 +196,7 @@ REA ต้องใช้ Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) หรื�
 | ไฟล์โมเดล                     | เมทาดาทา GGUF / safetensors การประกาศเทนเซอร์ และยอดรวมที่คำนวณได้                  | ตรวจสอบส่วนหัว; เลือกแฮชทั้งไฟล์ได้; [GGUF / safetensors](../model-artifacts.md)                                                                                 |
 | เมทาดาทา IL2CPP              | อิมเมจแอสเซมบลี Unity global-metadata.dat ชื่อชนิด/เมธอด และช่วงดัชนี                   | ถอดรหัสสแตติกเวอร์ชัน 24, 27, 29, 31, 39; ไม่ต้องใช้ Unity                                                                                                       |
 | Godot PCK                    | รายการและการแตกไฟล์ ข้อมูลส่วนหัว/ไดเรกทอรีต้นฉบับ และตัวตนเนื้อหาที่เลือก                    | รูปแบบสแตติก 2, 3, 4; ไม่ต้องใช้ Godot                                                                                                                         |
+| แพ็กเกจ NuGet                 | ตัวตนของแพ็กเกจ กลุ่ม dependency ใบอนุญาต repository และเนื้อหา ZIP                    | การตรวจสอบ .nupkg แบบสแตติกในตัว; [แพ็กเกจ NuGet](../guides/managed/nuget-nupkg.md)                                                                          |
 | อาร์ติแฟกต์ WASM                | การตรวจสอบ เซกชัน รูปแบบ WAT นำเข้า/ส่งออกที่ตรงต้นฉบับ และ WAT ที่ถอดรหัส                 | ผู้เรียกจัดเตรียม WABT 1.0.42; `inspect_wasm_artifact`                                                                                                         |
 | ลายเซ็น APK                   | ผู้ลงนาม v1/v2/v3/v3.1 ลายนิ้วมือใบรับรอง การหมุนเวียนคีย์ และความสอดคล้องภายในของไดเจสต์   | การตรวจสอบสแตติกในตัว; `inspect_apk_signature`                                                                                                              |
 
@@ -272,6 +281,12 @@ REA ส่งออกสภาพแวดล้อมที่รันได�
 [คู่มือสร้างสภาพแวดล้อม](https://rea.tools/guides/rl-environments/) ·
 [เอกสารอ้างอิงสภาพแวดล้อม](../agent-environments.md) ·
 [ชมเดโมบน X](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### สภาพแวดล้อมของแอปเดสก์ท็อป
+
+REA ยังสร้างสภาพแวดล้อมของแอปเดสก์ท็อปบน Linux ที่เอเจนต์ใช้งานผ่านภาพหน้าจอ เมาส์ และคีย์บอร์ดได้ด้วย จากคำขอเพียงบรรทัดเดียว เช่น "สร้างสภาพแวดล้อม Gnote ที่เอเจนต์เพิ่มน้ำมันมะกอกลงในโน้ตรายการซื้อของ" เอเจนต์ของคุณจะติดตั้งแอปบนคอมพิวเตอร์สำหรับบิลด์ในเครื่อง เขียนงาน ส่งออกสภาพแวดล้อม และตรวจสอบงานบนคอมพิวเตอร์เครื่องใหม่ เครื่องที่ใช้สร้างต้องมี Linux บน amd64 หรือ arm64, Docker และ agentenv framework เวอร์ชันที่คู่มือกำหนด
+
+[ตั้งค่าสภาพแวดล้อมของแอปเดสก์ท็อป](../desktop-build-computer.md)
 
 ## คำถามที่พบบ่อย
 

@@ -301,6 +301,20 @@ it("binds raw literals to their nodes across normalized line endings and UTF-16 
   ]);
 });
 
+it("keeps literal carriage returns in keys and strings, as CoreFoundation does", () => {
+  // plutil reads these four keys as distinct and each value as written.
+  const parsed = parseXmlPropertyList(
+    "<plist>\r<dict>\r<key>a\r\nb</key><string>x\ry\r\nz</string>\r<key>a\nb</key><string><![CDATA[c\rd]]></string>\r<key>a\rb</key>\r<integer>42</integer>\r<key>data</key>\r<data>\rAAEC\r\n</data>\r</dict>\r</plist>\r",
+  );
+  expect(parsed.value).toEqual({
+    "a\r\nb": "x\ry\r\nz",
+    "a\nb": "c\rd",
+    "a\rb": 42,
+    data: new Uint8Array([0, 1, 2]),
+  });
+  expect(parsed.duplicateKeys).toMatchObject({ dictionaries: 0 });
+});
+
 it("preserves Unicode line separators in plist string values", () => {
   const value = "a\u0085b\u2028c\u2029d";
   expect(

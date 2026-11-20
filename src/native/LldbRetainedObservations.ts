@@ -1,13 +1,17 @@
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
+import { parseJsonWithDuplicatePolicy } from "../domain/jsonDuplicateMember.js";
+import {
+  NATIVE_CALL_CAPTURE_DEFAULTS,
+  type NativeCallCaptureLimits,
+} from "../domain/native/nativeCallCaptureLimits.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 import type { FileHandle } from "node:fs/promises";
 import type { LldbReadbackFiles } from "./LldbReadbackFiles.js";
 import type { Result } from "../domain/result.js";
 
 import { nativeCallEventSchema } from "../domain/native/nativeCallObservation.js";
 import type { NativeCallPartialObservation } from "../domain/native/nativeCallPartialObservation.js";
-
-/** Maximum journal size enforced by the LLDB bridge. */
-export const LLDB_OBSERVATION_JOURNAL_MAX_BYTES = 8 * 1024 * 1024;
-const MAX_CAPTURE_BYTES = 1024 * 1024;
+import { errorMessage } from "../kernel/errorMessage.js";
 
 export interface ParsedLldbJournal {
   readonly events: ReturnType<typeof nativeCallEventSchema.parse>[];
@@ -58,6 +62,7 @@ export type BoundedPrefixRead =
 
 /** Join safely retained journal and process evidence into its failure contract. */
 export const projectLldbPartialObservation = (input: {
+  readonly captureLimits?: NativeCallCaptureLimits;
   readonly target: NativeCallPartialObservation["target"];
   readonly pid: number | undefined;
   readonly stdout: NativeCallPartialObservation["process"]["stdout"];
@@ -69,6 +74,9 @@ export const projectLldbPartialObservation = (input: {
   readonly reason: NativeCallPartialObservation["coverage"]["reason"];
 }): NativeCallPartialObservation => ({
   kind: "native-call-observation",
+  ...(input.captureLimits === undefined
+    ? {}
+    : { capture_limits: input.captureLimits }),
   target: input.target,
   process: {
     pid: input.pid ?? null,
@@ -98,14 +106,12 @@ export const projectLldbPartialObservation = (input: {
 });
 
 /** Parse completed JSONL records while retaining valid records around bad ones. */
-export const parseLldbObservationJournal = (
-  bytes: Uint8Array,
-): ParsedLldbJournal => {
+const parseLldbObservationJournal = (bytes: Uint8Array): ParsedLldbJournal => {
   const hasTornTail = bytes.length > 0 && bytes[bytes.length - 1] !== 0x0a;
   const events: ParsedLldbJournal["events"] = [];
   const otherStops: string[] = [];
   const limitations: string[] = [];
-  const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+  const decoder = strictUtf8Decoder("preserve");
   let malformedCount = 0;
   let firstMalformedRow: number | undefined;
   let start = 0;
@@ -121,13 +127,19 @@ export const parseLldbObservationJournal = (
       malformedCount += 1;
       firstMalformedRow ??= rowNumber;
     };
-    let row: unknown;
+    let text: string;
     try {
-      row = JSON.parse(decoder.decode(line));
+      text = decoder.decode(line);
     } catch {
       markMalformed();
       continue;
     }
+    const parsed = parseJsonWithDuplicatePolicy(text, "reject");
+    if (!parsed.ok) {
+      markMalformed();
+      continue;
+    }
+    const row = parsed.value;
     if (
       typeof row !== "object" ||
       row === null ||
@@ -188,7 +200,9 @@ export const readBoundedPrefix = async (
     }
     if (count === 0) break;
     if (count > requestedBytes - bytesRead)
-      throw new Error("The bounded read returned more bytes than requested");
+      throw invariantViolation(
+        "The bounded read returned more bytes than requested",
+      );
     bytesRead += count;
   }
   return {
@@ -209,19 +223,20 @@ const readPrefix = (handle: FileHandle, requestedBytes: number) =>
 export const readLldbObservationJournal = (
   path: string,
   files: LldbReadbackFiles,
+  maximumBytes: number = NATIVE_CALL_CAPTURE_DEFAULTS.trace_bytes,
 ): Promise<Result<LldbObservationJournalRead, unknown>> =>
   files.read(path, async (handle) => {
     const { size } = await handle.stat();
-    const length = Math.min(size, LLDB_OBSERVATION_JOURNAL_MAX_BYTES);
+    const length = Math.min(size, maximumBytes);
     const read = await readPrefix(handle, length);
     const { buffer, bytesRead } = read;
     if (read.status === "read-failure" && bytesRead === 0) throw read.cause;
     const value: LldbObservationJournalValue = {
       parsed: parseLldbObservationJournal(buffer.subarray(0, bytesRead)),
       limitations: [
-        ...(size > LLDB_OBSERVATION_JOURNAL_MAX_BYTES
+        ...(size > maximumBytes
           ? [
-              "The observation journal exceeded 8388608 bytes (8 MiB); only its bounded prefix was read. This release has no runtime override.",
+              `The observation journal exceeded capture_limits.trace_bytes (${String(maximumBytes)} bytes); only its bounded prefix was read. Select a larger trace_bytes budget before a new authorized observation; earlier omitted facts cannot be recovered.`,
             ]
           : []),
         ...(read.status === "eof"
@@ -231,7 +246,7 @@ export const readLldbObservationJournal = (
           : []),
         ...(read.status === "read-failure"
           ? [
-              `The observation journal read failed after ${String(bytesRead)} bytes: ${errorReason(read.cause)}`,
+              `The observation journal read failed after ${String(bytesRead)} bytes: ${errorMessage(read.cause)}`,
             ]
           : []),
       ],
@@ -245,10 +260,11 @@ export const readLldbObservationJournal = (
 export const readPartialCapture = (
   path: string,
   files: LldbReadbackFiles,
+  maximumBytes: number = NATIVE_CALL_CAPTURE_DEFAULTS.output_bytes,
 ): Promise<Result<PartialCaptureRead, unknown>> =>
   files.read(path, async (handle) => {
     const { size } = await handle.stat();
-    const length = Math.min(size, MAX_CAPTURE_BYTES);
+    const length = Math.min(size, maximumBytes);
     const read = await readPrefix(handle, length);
     const { buffer, bytesRead } = read;
     if (read.status === "read-failure" && bytesRead === 0) throw read.cause;
@@ -267,7 +283,7 @@ export const readPartialCapture = (
           : []),
         ...(read.status === "read-failure"
           ? [
-              `A target output capture read failed after ${String(bytesRead)} bytes: ${errorReason(read.cause)}`,
+              `A target output capture read failed after ${String(bytesRead)} bytes: ${errorMessage(read.cause)}`,
             ]
           : []),
       ],
@@ -276,6 +292,3 @@ export const readPartialCapture = (
       ? { ...value, status: read.status, readFailure: read.cause }
       : { ...value, status: read.status };
   });
-
-const errorReason = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);

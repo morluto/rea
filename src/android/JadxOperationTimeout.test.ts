@@ -2,7 +2,6 @@ import { expect, it } from "vitest";
 
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { captureJadxFailure } from "./JadxFailure.js";
-import { jadxOperationTimeoutGuidance } from "./JadxOperationTimeout.js";
 
 it("names REA_JADX_OPERATION_TIMEOUT_MS when the operation deadline elapses", () => {
   const timeout = AbortSignal.abort(new Error("deadline"));
@@ -18,9 +17,15 @@ it("names REA_JADX_OPERATION_TIMEOUT_MS when the operation deadline elapses", ()
     session: undefined,
   });
   const projected = projectAnalysisError(present());
-  const guidance = jadxOperationTimeoutGuidance(1500);
-  expect(projected.message).toBe(guidance.userMessage);
-  expect(projected.remediation.action).toBe(guidance.remediationAction);
+  expect(projected.message).toContain("1500 ms");
+  expect(projected.remediation.action).toContain(
+    "REA_JADX_OPERATION_TIMEOUT_MS",
+  );
+  expect(projected.remediation.action).toContain("update_analysis_settings");
+  expect(projected.remediation.action).toContain("jadx.operation_timeout_ms");
+  expect(projected.remediation.action).toContain(
+    "next operation without restarting REA",
+  );
   expect(projected.details).toMatchObject({
     limit: {
       setting: "jadx.operation_timeout_ms",
@@ -31,7 +36,8 @@ it("names REA_JADX_OPERATION_TIMEOUT_MS when the operation deadline elapses", ()
       applies_at: "next_operation",
       agent_editable: true,
       scope: "rea-runtime",
-      rea_restart_required: false,
+      update_mode: "runtime",
+      pending_restart: false,
     },
   });
   expect(projected).toMatchObject({

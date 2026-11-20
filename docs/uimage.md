@@ -32,8 +32,10 @@ exactly. For example, a producer can truncate a multibyte character at the
 ## Bounded work and retained facts
 
 The reader admits at most 4,096 components, a resource policy rather than a
-format maximum. It reads at most 16,388 bytes for the size table and refuses an
-excess count as a capacity limit before its remaining payload CRC scan.
+format maximum. It reads at most 16,388 bytes for the size table and refuses a
+structurally possible excess count as a capacity limit before its remaining
+payload CRC scan. If the observed size entries, minimum terminator and component
+bytes cannot fit in the declared payload, it instead refuses the input as malformed.
 Shared artifact identity hashing has separate cost. The
 same prefix participates in the native incremental CRC32 calculation; no
 custom bytewise CRC table or full-payload buffer is retained. Remaining CRC
@@ -72,5 +74,4 @@ pinned to commit `ece349ade2973e220f524ce59e59711cc919263f`.
 Source and compiled CLI/full/compact MCP tests cover aligned component ranges,
 unknown identifiers/text, malformed/truncated inputs, CRC failures, capacity,
 source changes, cancellation, pending reads, final validation and cleanup
-retry. Real producer results, complete-task cost measurements and limitations
-are reported in the PR. No target runtime or decompressor behavior is verified.
+retry. No target runtime or decompressor behavior is verified.

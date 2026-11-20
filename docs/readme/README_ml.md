@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · **മലയാളം** · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · **മലയാളം** · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA: എന്തും Reverse Engineer ചെയ്യുക
 
@@ -84,7 +84,11 @@ npx rea-agents setup
 
 Claude Code, Codex, Cursor, Gemini CLI, Grok Build, കൂടാതെ [മറ്റ് agents](../getting-started/installation.md#supported-agents) എന്നിവയെ setup പിന്തുണയ്ക്കുന്നു. provider configuration-നും manual MCP registration-നും [installation and setup](../getting-started/installation.md) കാണുക.
 
-MCP സാധാരണയായി compact input schemas ഉപയോഗിക്കുന്നു. പൂർണ്ണ field guidance-ഉം nested validation details-ഉം വേണമെങ്കിൽ MCP registration-ൽ `REA_MCP_INPUT_SCHEMA_PROFILE=full` സജ്ജമാക്കുക. രണ്ടു profiles-ലും എല്ലാ tools-ഉം ഒരേ canonical server validation-ഉം നിലനിൽക്കും; MCP contracts guide കാണുക.
+MCP സാധാരണയായി compact input schemas ഉപയോഗിക്കുന്നു. Compact schema ഒഴിവാക്കുന്ന guidance tool description-ന് ശേഷം വരും. എല്ലാ tools-ഉം canonical server validation-ഉം മാറ്റമില്ലാതെ നിലനിൽക്കും; MCP contracts guide കാണുക.
+
+തിരഞ്ഞെടുത്ത runtime-ഉം REA entry script-ഉം setup നേരിട്ട് രജിസ്റ്റർ ചെയ്യുന്നു. Package runner ഉപയോഗിക്കുമ്പോൾ അതിന്റെ cache entry-യും runtime-ഉം നിലനിർത്തുക; target project-ന് പുറത്തുള്ള വിശ്വസനീയമായ ഡയറക്ടറിയിൽ നിന്ന് package നേടുക. ഇൻസ്റ്റലേഷൻ ഗൈഡ് കാണുക.
+
+സ്ഥിരസ്ഥിതിയായി output schema-കൾ `tools/list`-ൽ നിന്ന് ഒഴിവാക്കുന്നു: ഒരു model API-യും അവ വായിക്കുന്നില്ല, ഓരോ result-ഉം REA തന്നെ validate ചെയ്യുന്നു. ഓരോ output schema-യും 4096 byte പരിധിക്കുള്ളിൽ പരസ്യപ്പെടുത്താൻ MCP registration-ൽ `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` സജ്ജമാക്കുക. എല്ലാ ക്രമീകരണങ്ങളിലും Server validation-ഉം structured result-കളും പൂർണ്ണമായി നിലനിൽക്കും. MCP കരാർ ഗൈഡിലെ «Output schemas» കാണുക.
 
 ### നിങ്ങളുടെ agent-നോട് ആവശ്യപ്പെടുക
 
@@ -156,13 +160,17 @@ REA-യ്ക്ക് Node.js 22.x (>=22.23.4), 24.x (>=24.22.1), അല്ല�
 | Native binaries        | Pseudocode, assembly, strings, symbols, calls, references                                   | Hopper, Ghidra, IDA അല്ലെങ്കിൽ Kuna; [native analysis](../guides/native/native-investigation.md)                                                                   |
 | Offline ELF layout     | Sections, segments, യഥാർത്ഥ symbols/relocations, static mitigation candidates                 | Linux x64-ൽ caller നൽകുന്ന pwntools; [binary diagnostics](../guides/native/binary-diagnostics.md)                                                                  |
 | Go binaries            | ഉൾച്ചേർത്ത compiler version, modules, replacements, build settings                            | Built-in static ELF/PE/thin Mach-O പരിശോധന; Go installation ആവശ്യമില്ല                                                                                             |
-| Rust binaries          | ഉൾച്ചേർത്ത cargo-auditable crate പേരുകൾ, versions, sources, dependency edges                   | Built-in static ELF/PE/thin Mach-O പരിശോധന; [Rust binaries](../rust-binaries.md)                                                                                 |
+| Rust binaries          | ഉൾച്ചേർത്ത cargo-auditable crate പേരുകൾ, versions, sources, dependency edges                   | Built-in static ELF/PE/thin Mach-O/WebAssembly പരിശോധന; [Rust binaries](../rust-binaries.md)                                                                     |
 | PE certificates        | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                                          |
 | PE imports             | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                  | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                                    |
+| Windows shortcuts      | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts                | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                                        |
 | ELF notes              | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                             | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                                     |
+| DWARF compile units    | Compile-unit name, directory, producer, language, and dwo_name                              | Built-in static ELF, Mach-O, and PE inspection; [DWARF compile units](../guides/native/dwarf-units.md)                                                           |
+| ELF dependencies       | DT_NEEDED, SONAME, RPATH/RUNPATH, GNU versions, and undefined imports                       | Built-in static ELF inspection; [ELF dependencies](../elf-dependencies.md)                                                                                       |
 | Binary hardening       | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                         | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                                    |
 | Linux kernel modules   | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                 | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                           |
 | Erlang BEAM            | IFF chunks, atoms, exports, and tables                                                      | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                                |
+| NuGet packages         | Package identity, dependency groups, license, repository, ZIP ഉള്ളടക്കം                       | Built-in static .nupkg പരിശോധന; [NuGet packages](../guides/managed/nuget-nupkg.md)                                                                               |
 | WASM artifact          | Validation, sections, കൃത്യമായ import/export WAT രൂപങ്ങൾ, decoded WAT                            | Caller നൽകുന്ന WABT 1.0.42; `inspect_wasm_artifact`                                                                                                                |
 | EVM bytecode           | Dispatch selectors, byte offsets, അനുമാനിച്ച arguments, mutability                             | Linux x64-ൽ local raw/hex carrier; [offline EVM guide](../guides/evm/evm-bytecode.md)                                                                            |
 | SQLite databases       | Tables, columns, indexes, views, triggers, തിരഞ്ഞെടുത്ത സാധാരണ table rows                        | Local database/WAL snapshot; native SQLite പരിമിതികളോടെ Node.js 24.x >=24.15 അല്ലെങ്കിൽ 26+                                                                        |
@@ -174,6 +182,7 @@ REA-യ്ക്ക് Node.js 22.x (>=22.23.4), 24.x (>=24.22.1), അല്ല�
 | Saved network captures | Requests, responses, പുറത്തുകാണുന്ന payload-ുകൾ, source locations                                  | HAR അല്ലെങ്കിൽ Fiddler Everywhere SAZ; native mitmproxy-നായി Linux-ൽ mitmdump; [capture guide](../guides/web/web-network-captures.md)                               |
 | .NET assemblies        | Metadata, CIL instructions, പ്രഖ്യാപിച്ച native dependencies, build comparisons                 | ഒന്നും ആവശ്യമില്ല (static മാത്രം); [managed-code guide](../guides/managed/managed-code-analysis.md)                                                                    |
 | Python packaged apps   | CArchive/PYZ entries, Python version, bytecode, resources and runtime options               | Static PyInstaller parsing; [Python guide](../python-packaged-applications.md)                                                                                   |
+| Deno compile binaries  | Virtual files, entry point, recorded options, npm snapshot length                           | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                             |
 | Android APKs           | Manifest declarations, classes, decompiled methods, references                              | Linux/macOS/Windows x64-ൽ Headless JADX-ഉം full JDK-ഉം; [Android guide](../guides/android/android-analysis.md)                                                   |
 | Android devices        | Devices, packages, processes, logs, dumps, screen captures, APK/file transfers              | Caller നൽകുന്ന adb (emulator അല്ലെങ്കിൽ hardware); [ADB guide](../guides/android/adb-device-analysis.md)                                                             |
 | JEB projects           | Engine-backed project units, artifact digests, type/method pseudo-code                      | MCP സേവനം നൽകുന്ന caller ആരംഭിച്ച JEB client; REA_JEB_MCP_URL ഉപയോഗിച്ച് തിരഞ്ഞെടുക്കുക; [JEB guide](../providers/jeb-analysis.md)                                        |
@@ -276,6 +285,12 @@ agent-env run ./my-env
 [പരിതസ്ഥിതി നിർമ്മാണ മാർഗ്ഗദർശി](https://rea.tools/guides/rl-environments/) ·
 [പരിതസ്ഥിതി റഫറൻസ്](../agent-environments.md) ·
 [X-ൽ ഡെമോ കാണുക](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### ഡെസ്‌ക്‌ടോപ്പ് ആപ്പ് പരിതസ്ഥിതികൾ
+
+സ്ക്രീൻഷോട്ടുകൾ, മൗസ്, കീബോർഡ് എന്നിവ വഴി ഏജന്റ് ഉപയോഗിക്കുന്ന Linux ഡെസ്‌ക്‌ടോപ്പ് ആപ്പിന്റെ പരിതസ്ഥിതിയും REA-യ്ക്ക് നിർമ്മിക്കാം. "ഷോപ്പിംഗ് ലിസ്റ്റ് നോട്ടിൽ ഏജന്റ് ഒലിവ് ഓയിൽ ചേർക്കുന്ന ഒരു Gnote പരിതസ്ഥിതി നിർമ്മിക്കുക" പോലുള്ള ഒറ്റവരി അഭ്യർത്ഥനയിൽ നിന്ന്, നിങ്ങളുടെ ഏജന്റ് ഒരു പ്രാദേശിക ബിൽഡ് കമ്പ്യൂട്ടറിൽ ആപ്പ് ഇൻസ്റ്റാൾ ചെയ്യുന്നു, ടാസ്‌ക് എഴുതുന്നു, പരിതസ്ഥിതി എക്‌സ്‌പോർട്ട് ചെയ്യുന്നു, ഒരു പുതിയ കമ്പ്യൂട്ടറിൽ ടാസ്‌ക് പരിശോധിക്കുന്നു. ഇത് നിർമ്മിക്കുന്ന മെഷീന് amd64 അല്ലെങ്കിൽ arm64-ലെ Linux, Docker, ഗൈഡ് നിശ്ചയിക്കുന്ന agentenv ഫ്രെയിംവർക്ക് പതിപ്പ് എന്നിവ വേണം.
+
+[ഡെസ്‌ക്‌ടോപ്പ് ആപ്പ് പരിതസ്ഥിതികൾ സജ്ജീകരിക്കുക](../desktop-build-computer.md)
 
 ## പതിവുചോദ്യങ്ങൾ
 

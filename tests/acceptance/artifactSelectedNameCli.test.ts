@@ -1,3 +1,4 @@
+import { fileIdentity } from "../fixtures/evidenceSubject.js";
 import { readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
@@ -55,7 +56,9 @@ cliTest
       ],
     });
     expect(projection.exitCode, projection.stdout + projection.stderr).toBe(0);
-    expect(parseEvidence(projection.json).subject?.format).toBe("apk");
+    expect(fileIdentity(parseEvidence(projection.json).subject).format).toBe(
+      "apk",
+    );
     const extracted = await cli.run({
       arguments: ["extract-artifact", selected, "--json"],
     });

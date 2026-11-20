@@ -3239,11 +3239,9 @@ msgstr "在 Windows 上連線 Ghidra"
 msgctxt "page:get-started/index.html"
 msgid ""
 "Windows x64 has experimental, read-only support for native x86 and x64 PE "
-"applications and DLLs on fixed local NTFS drives. Use an existing Ghidra "
-"12.1.x installation and a 64-bit JDK 21 or newer:"
+"applications and DLLs on fixed local NTFS/ReFS drives. Use an existing "
+"Ghidra 12.2 installation and a 64-bit JDK 25 or newer:"
 msgstr ""
-"Windows x64 提供實驗性的只讀支援：分析固定本地 NTFS 驅動器上的原生 x86、x64 PE 應用和 DLL。使用已有的 Ghidra "
-"12.1.x 和 64 位 JDK 21 或更新版本："
 
 #: website/public/get-started/index.html:1182
 msgctxt "page:get-started/index.html"
@@ -4647,10 +4645,8 @@ msgstr "REA需要其中一個來閱讀原生程式:"
 msgctxt "page:guides/native/index.html"
 msgid ""
 "{ph0}Ghidra{ph1} (macOS or Linux; experimental on Windows): free, but needs "
-"an existing Ghidra 12.1.x installation and a 64-bit JDK 21 or newer."
+"an existing Ghidra 12.2 installation and a 64-bit JDK 25 or newer."
 msgstr ""
-"{ph0} Ghidra {ph1} "
-"（macOS或Linux;在Windows上進行實驗）：免費，但需要現有的Ghidra12.1。x安裝和64位JDK21或更高版本。"
 
 #. {ph0}: <a href="../../get-started/#native">
 #. {ph1}: </a>
@@ -12557,18 +12553,18 @@ msgstr "Ghidra · 安裝免費的分析工具和 Java"
 #: website/public/get-started/index.html:1111
 msgctxt "page:get-started/index.html"
 msgid ""
-"Install a 64-bit JDK 21 or newer, including the Java compiler. Choose the "
+"Install a 64-bit JDK 25 or newer, including the Java compiler. Choose the "
 "package matching your computer's architecture."
-msgstr "安裝包含 Java 編譯器的 64 位元 JDK 21 或更新版本。下載時選擇符合電腦架構的安裝套件。"
+msgstr ""
 
 #. {ph0}: <code>ghidra_…_PUBLIC_….zip</code>
 #: website/public/get-started/index.html:1116
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
-"Download Ghidra 12.1.4 from the release's Assets list and extract the {ph0} "
+"Download Ghidra 12.2 from the release's Assets list and extract the {ph0} "
 "archive. Choose the release archive, not “Source code”."
-msgstr "從 Ghidra 12.1.4 發布頁的 Assets 清單下載並解壓縮 {ph0}。選擇發布套件，不要選擇「Source code」。"
+msgstr ""
 
 #. {ph0}: <code>ghidraRun</code>
 #. {ph1}: <code>ghidraRun.bat</code>
@@ -12581,17 +12577,17 @@ msgid ""
 "{ph2}."
 msgstr "找到解壓縮後包含 {ph0} 或 {ph1} 的資料夾，把該資料夾的完整路徑填入 {ph2}。"
 
-#. {ph0}: <a href="https://adoptium.net/temurin/releases/?version=21" >
+#. {ph0}: <a href="https://adoptium.net/temurin/releases/?version=25" >
 #. {ph1}: </a >
 #. {ph2}: <a
-#. href="https://github.com/NationalSecurityAgency/ghidra/releases/tag/Ghidra_12.1.4_build"
+#. href="https://github.com/NationalSecurityAgency/ghidra/releases/tag/Ghidra_12.2_build"
 #. >
 #. {ph3}: </a >
 #: website/public/get-started/index.html:1127
 #, python-brace-format
 msgctxt "page:get-started/index.html"
-msgid "{ph0}Download a JDK{ph1} · {ph2}Download Ghidra 12.1.4{ph3}"
-msgstr "{ph0}下載 JDK{ph1} · {ph2}下載 Ghidra 12.1.4{ph3}"
+msgid "{ph0}Download a JDK{ph1} · {ph2}Download Ghidra 12.2{ph3}"
+msgstr ""
 
 #. {ph0}: <code>java.home</code>
 #. {ph1}: <code>JAVA_HOME</code>
@@ -13132,7 +13128,7 @@ msgid "{ph0}macOS · Apple Silicon{ph1}"
 msgstr "{ph0}macOS · Apple Silicon{ph1}"
 
 #. {ph0}: <a
-#. href="https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.1.4_build/GhidraDocs/GettingStarted.md#building-
+#. href="https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.2_build/GhidraDocs/GettingStarted.md#building-
 #. native-components" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1228
@@ -16022,3 +16018,12 @@ msgstr ""
 #~ msgctxt "page:showcase/th04/index.html"
 #~ msgid "{ph0}Angle and velocity · source excerpt{ph1}"
 #~ msgstr ""
+
+#~ msgctxt "page:get-started/index.html"
+#~ msgid ""
+#~ "Windows x64 has experimental, read-only support for native x86 and x64 PE "
+#~ "applications and DLLs on fixed local NTFS drives. Use an existing Ghidra "
+#~ "12.1.x installation and a 64-bit JDK 21 or newer:"
+#~ msgstr ""
+#~ "Windows x64 提供實驗性的只讀支援：分析固定本地 NTFS 驅動器上的原生 x86、x64 PE 應用和 DLL。使用已有的 Ghidra "
+#~ "12.1.x 和 64 位 JDK 21 或更新版本："

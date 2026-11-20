@@ -12,7 +12,7 @@ import {
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { artifactInventoryResultSchema } from "../../../src/domain/artifactGraph.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 
 const graphExamples = [
   {
@@ -112,10 +112,10 @@ cliTest.for(graphExamples)(
       const invocation = {
         arguments: [command, JSON.stringify(input), "--json"],
       };
-      const result =
-        code === "evidence_integrity_mismatch"
-          ? await cli.run(invocation)
-          : await runFileCli(cli, invocation);
+      const result = await cli.run({
+        ...invocation,
+        freshProcess: code === "evidence_integrity_mismatch",
+      });
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({
         code,

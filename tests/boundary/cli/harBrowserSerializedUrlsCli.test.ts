@@ -79,7 +79,6 @@ cliTest(
     });
     const built = await cli.run({
       arguments: ["environment-build", har, "--dry-run", "--json"],
-      timeoutMs: 60_000,
     });
     expect(built.exitCode, built.stdout + built.stderr).toBe(0);
     expect(built.json).toMatchObject({
@@ -108,7 +107,7 @@ cliTest.for([
       details: {
         issues: [
           {
-            path: ["capture_path", "/log/entries/0/request/url"],
+            path: ["capturePath", "/log/entries/0/request/url"],
             reason: "invalid_format",
           },
         ],

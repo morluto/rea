@@ -1,4 +1,4 @@
-import { AnalysisCleanupLease } from "../../../../src/artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../../../src/resources/AnalysisCleanupLease.js";
 import { expect, it, vi, onTestFinished } from "vitest";
 import * as runtimes from "../../../../src/native/NativeUiHelperRuntime.js";
 import { observeNativeUi } from "../../../../src/native/NativeUiObservation.js";
@@ -39,6 +39,7 @@ const controlledRuntime = (
   return {
     cleanupLease,
     signal,
+    deadlineMs: 180_000,
     invoke: vi.fn(async () => ({ ok: true, result: snapshot })),
     close: vi.fn(() => cleanupLease.release()),
     resources: () => (cleanupLease.released ? [] : ["controlled-ui-runtime"]),

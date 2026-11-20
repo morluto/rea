@@ -66,7 +66,9 @@ describe("Trae configuration paths", () => {
 
   it("resolves the personal skills directory under the home root", () => {
     expect(
-      skillDestinations("/home/a", ["trae"]).map(({ path }) => path),
+      skillDestinations("/home/a", ["trae"], {}, process.platform).map(
+        ({ path }) => path,
+      ),
     ).toEqual([
       join("/home/a", ".trae", "skills", "reverse-engineer-anything"),
     ]);

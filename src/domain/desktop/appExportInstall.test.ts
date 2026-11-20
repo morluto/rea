@@ -7,6 +7,7 @@ import {
   fromUbuntuNobleArchive,
   installsFromPackageFile,
   repositoryRefusal,
+  withExtraPackages,
 } from "./appExportInstall.js";
 import { parseDesktopEntry, tokenizeDesktopExec } from "./desktopEntry.js";
 import { installLimitations } from "./appExportInstallLimitations.js";
@@ -55,6 +56,61 @@ const typora = (
   missing_libraries: [],
   unpackaged_libraries: [],
 });
+
+it("replays the observed suite of a repository whose authored suite is templated", () => {
+  const authored = repository({
+    sources_file: "/etc/apt/sources.list.d/vendor.sources",
+    suite: "stable/binary-$(ARCH)/",
+    repo_suite: "stable/binary-x86_64/",
+  });
+  const install = exportInstall(typora([authored]), "typora", "x64");
+
+  expect(install.ok && install.value.sources[0]?.suite).toBe(
+    "stable/binary-x86_64/",
+  );
+  expect(repositoryRefusal({ ...authored, repo_suite: undefined })).toContain(
+    "Capture the application again",
+  );
+});
+
+it("replays complete one-line words in older capture evidence", () => {
+  const installed = exportInstall(
+    typora([
+      repository({
+        uri: '"https://vendor.invalid/apt"',
+        suite: '"st%61ble"',
+        components: ["main%252Cextra", "cont%72ib"],
+      }),
+    ]),
+    "typora",
+    "arm64",
+  );
+  expect(installed).toMatchObject({
+    ok: true,
+    value: {
+      sources: [
+        {
+          uri: "https://vendor.invalid/apt",
+          suite: "stable",
+          components: ["main%2Cextra", "contrib"],
+        },
+      ],
+    },
+  });
+});
+
+it.each([
+  { uri: '"https://vendor.invalid/a' },
+  { suite: '"stable', components: ['testing"', "main"] },
+  { suite: "stable", components: ['"main', 'extra"'] },
+])(
+  "requests recapture of an incomplete historical one-line word",
+  (overrides) => {
+    expect(repositoryRefusal(repository(overrides))).toContain(
+      "Capture the application again",
+    );
+  },
+);
 
 describe("exportInstall", () => {
   it("installs from a vendor repository whose key the capture verified", () => {
@@ -489,6 +545,9 @@ describe("repositories whose URI held credentials", () => {
     const older = repository({
       uri: "https://rea-user:hunter2@apt.example.com/typora",
     });
+    const escaped = repository({
+      uri: "https://rea-user%3Ahunter2%40apt.example.com/typora",
+    });
     const open = repository({ uri: "https://b.example.com/typora" });
     // An older capture whose policy source matched no sources entry kept it whole.
     const unmatched = repository({
@@ -498,6 +557,11 @@ describe("repositories whose URI held credentials", () => {
     const refused = exportInstall(typora([marked]), "typora", "arm64");
     const skipped = exportInstall(typora([marked, open]), "typora", "arm64");
     const recapture = exportInstall(typora([older, open]), "typora", "arm64");
+    const recaptureEscaped = exportInstall(
+      typora([escaped, open]),
+      "typora",
+      "arm64",
+    );
     const sourceOnly = exportInstall(
       typora([unmatched, open]),
       "typora",
@@ -507,6 +571,7 @@ describe("repositories whose URI held credentials", () => {
     for (const reason of [
       repositoryRefusal(marked),
       repositoryRefusal(older),
+      repositoryRefusal(escaped),
     ]) {
       expect(reason).toContain("user name or password");
       expect(reason).not.toMatch(/apt\.example\.com|rea-user|hunter2/u);
@@ -531,13 +596,20 @@ describe("repositories whose URI held credentials", () => {
         remediation: "Capture the application again.",
       }),
     });
+    expect(recaptureEscaped).toEqual(recapture);
     expect(sourceOnly.ok && sourceOnly.value.skipped).toEqual([
       expect.stringMatching(
         /^https:\/\/apt\.example\.com\/typora \.\/ Packages: /u,
       ),
     ]);
     expect(
-      JSON.stringify([refused, skipped, recapture, sourceOnly]),
+      JSON.stringify([
+        refused,
+        skipped,
+        recapture,
+        recaptureEscaped,
+        sourceOnly,
+      ]),
     ).not.toMatch(/rea-user|hunter2/u);
   });
 });
@@ -571,6 +643,30 @@ describe("electronLaunchArguments", () => {
 });
 
 describe("adjustInstalledDesktopText", () => {
+  it("keeps the original separators around the effective Exec", () => {
+    const text =
+      "[Desktop Entry]\r\nName=App\nExec=old-app\r\nExec=current-app\n";
+    expect(adjustInstalledDesktopText(text, true)).toEqual({
+      ok: true,
+      value:
+        "[Desktop Entry]\r\nName=App\nExec=old-app\r\nExec=current-app --no-sandbox\n",
+    });
+  });
+
+  it.each(["", "[Desktop Action New]\nExec=action-app\n[Desktop Entry]\n"])(
+    "rewrites the effective command rather than an overridden Exec (%j)",
+    (between) => {
+      const text = `[Desktop Entry]\nType=Application\nName=App\nExec=old-app %F\n${between}Exec=current-app %U\n`;
+      const rewritten = adjustInstalledDesktopText(text, true);
+      expect(rewritten).toEqual({
+        ok: true,
+        value: text.replace(
+          "Exec=current-app %U",
+          "Exec=current-app --no-sandbox %U",
+        ),
+      });
+    },
+  );
   const entry = (exec: string) =>
     `[Desktop Entry]\nType=Application\nName=Typora\nExec=${exec}\n[Desktop Action New]\nExec=typora --new-window\n`;
 
@@ -808,6 +904,65 @@ describe("installsFromPackageFile", () => {
     expect(exportInstall(varicad(), "varicad", "x64", VARICAD_URL).ok).toBe(
       true,
     );
+  });
+});
+
+describe("withExtraPackages", () => {
+  const archive = varicad({
+    sources: ["http://archive.ubuntu.com/ubuntu noble/universe amd64 Packages"],
+    source_origins: ["Ubuntu"],
+  });
+  const extra = (
+    installed: DesktopPackage,
+    packageUrl: string | undefined,
+    names: readonly string[],
+  ) => {
+    const install = exportInstall(installed, "varicad", "x64", packageUrl);
+    if (!install.ok) throw new Error(install.error.reason);
+    return withExtraPackages(install.value, names);
+  };
+
+  it("installs them beside a package apt offers, leaving out only the package, even one its captured file names as an alternative", () => {
+    // apt may satisfy `openjdk-17-jre | java-runtime` with another Java, so the one the request named stays.
+    const installed = varicad({
+      sources: [
+        "http://archive.ubuntu.com/ubuntu noble/universe amd64 Packages",
+      ],
+      source_origins: ["Ubuntu"],
+      package_file: {
+        ...VARICAD_FILE,
+        depends: ["openjdk-17-jre | java-runtime"],
+      },
+    });
+    const install = extra(installed, undefined, [
+      "librsvg2-common",
+      "openjdk-17-jre",
+      "varicad2026-en",
+      "librsvg2-common",
+    ]);
+
+    if (!install.ok) throw new Error(install.error.reason);
+    expect(install.value.packageFile).toBeNull();
+    expect(install.value.extraPackages).toEqual([
+      "librsvg2-common",
+      "openjdk-17-jre",
+    ]);
+  });
+
+  it("installs them beside a package file", () => {
+    const install = extra(varicad(), VARICAD_URL, ["libgl1", "openjdk-17-jre"]);
+
+    if (!install.ok) throw new Error(install.error.reason);
+    expect(install.value.packageFile?.dependencies).toContain("libgl1");
+    expect(install.value.extraPackages).toEqual(["openjdk-17-jre"]);
+  });
+
+  it("refuses a name that is not a Debian package's", () => {
+    const install = extra(archive, undefined, ["librsvg2-common", "Java17"]);
+
+    if (install.ok) throw new Error("expected a refusal");
+    expect(install.error.field).toBe("extra_package");
+    expect(install.error.reason).toContain("Java17");
   });
 });
 

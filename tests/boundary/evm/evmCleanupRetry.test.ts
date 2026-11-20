@@ -2,8 +2,9 @@ import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, it, vi } from "vitest";
+import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
+const LIMITS_PATH = "/proc/self/limits";
 const limitReport = [
   "Max address space         unlimited            unlimited            bytes",
   "Max cpu time              unlimited            unlimited            seconds",
@@ -12,6 +13,7 @@ const limitReport = [
 
 const closeState = vi.hoisted(() => ({
   path: "",
+  kernelReport: "",
   failures: 0,
   onClosed: undefined as (() => void) | undefined,
   onClosing: undefined as (() => void) | undefined,
@@ -24,7 +26,13 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   return {
     ...fs,
     open: async (...args: Parameters<typeof fs.open>) => {
-      const handle = await fs.open(...args);
+      const isLimits = args[0] === LIMITS_PATH;
+      if (isLimits) closeState.onLimits?.();
+      const handle = await fs.open(
+        isLimits ? closeState.kernelReport : args[0],
+        args[1],
+        args[2],
+      );
       if (args[0] !== closeState.path) return handle;
       const close = handle.close.bind(handle);
       if (closeState.readFailure !== undefined)
@@ -42,15 +50,11 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       };
       return handle;
     },
-    readFile: async (...args: Parameters<typeof fs.readFile>) => {
-      if (args[0] !== "/proc/self/limits") return fs.readFile(...args);
-      closeState.onLimits?.();
-      return limitReport;
-    },
   };
 });
 
 import { EvmoleInterfaceProvider } from "../../../src/evm/EvmoleInterfaceProvider.js";
+import { SIMULATED_LINUX_X64 } from "../../fixtures/simulatedHost.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
@@ -59,13 +63,75 @@ import { waitForProviderProcessReady } from "../../fixtures/providerProcess.js";
 import { EvmInterfaceService } from "../../../src/application/evm/EvmInterfaceService.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 
+let limitsWorkspace = "";
+beforeAll(async () => {
+  limitsWorkspace = await mkdtemp(join(tmpdir(), "rea-evm-kernel-limits-"));
+  closeState.kernelReport = join(limitsWorkspace, "limits");
+  await writeFile(closeState.kernelReport, limitReport);
+});
+afterAll(async () => {
+  closeState.kernelReport = "";
+  await rm(limitsWorkspace, { recursive: true, force: true });
+});
+
+it.each(["completed", "invalid", "cancelled"] as const)(
+  "retains and retries the limit descriptor after %s admission",
+  async (scenario) => {
+    const controller = new AbortController();
+    const reason = { requested: "stop at limit descriptor close" };
+    const createRuntime = vi.fn(async () => {
+      throw new Error("Worker must not start before its limits are admitted");
+    });
+    const provider = new EvmoleInterfaceProvider(
+      { REA_EVM_PRLIMIT_COMMAND: process.execPath },
+      undefined,
+      createRuntime,
+      SIMULATED_LINUX_X64,
+    );
+    closeState.path = LIMITS_PATH;
+    closeState.failures = 2;
+    if (scenario === "invalid")
+      await writeFile(
+        closeState.kernelReport,
+        limitReport.replace("seconds", "bytes"),
+      );
+    if (scenario === "cancelled")
+      closeState.onClosing = () => controller.abort(reason);
+    try {
+      const outcome = await provider.inspect(
+        { path: "/selected.hex", encoding: "hex" },
+        { signal: controller.signal },
+      );
+      if (outcome.ok)
+        throw new Error("Expected limit descriptor cleanup failure");
+      expect(outcome.error.cleanupResources).toEqual([LIMITS_PATH]);
+      expect(outcome.error.cleanupIncomplete).toBe(true);
+      if (scenario === "invalid")
+        expect(outcome.error.cleanupPrimary?.message).toContain(
+          "Malformed inherited Linux resource limit: Max cpu time.",
+        );
+      if (scenario === "cancelled")
+        expect(outcome.error.cleanupPrimary?.cause).toBe(reason);
+      await expect(provider.close()).rejects.toMatchObject({
+        cleanupIncomplete: true,
+        cleanupResources: [LIMITS_PATH],
+      });
+      await provider.close();
+      expect(outcome.error.cleanupIncomplete).toBe(false);
+      expect(createRuntime).not.toHaveBeenCalled();
+    } finally {
+      closeState.path = "";
+      closeState.failures = 0;
+      closeState.onClosing = undefined;
+      await provider.close();
+      await writeFile(closeState.kernelReport, limitReport);
+    }
+  },
+);
+
 it.each(["pre-aborted", "admission", "close"] as const)(
   "preserves opaque caller reasons through service cancellation at %s",
   async (stage) => {
-    const platform = Object.getOwnPropertyDescriptor(process, "platform");
-    const arch = Object.getOwnPropertyDescriptor(process, "arch");
-    Object.defineProperty(process, "platform", { ...platform, value: "linux" });
-    Object.defineProperty(process, "arch", { ...arch, value: "x64" });
     const workspace = await mkdtemp(join(tmpdir(), "rea-evm-artifact-cancel-"));
     const input = join(workspace, "selected.hex");
     await writeFile(input, "0x60006000f3\n");
@@ -76,6 +142,7 @@ it.each(["pre-aborted", "admission", "close"] as const)(
       { REA_EVM_PRLIMIT_COMMAND: process.execPath },
       undefined,
       createRuntime,
+      SIMULATED_LINUX_X64,
     );
     try {
       for (const reason of [
@@ -115,9 +182,6 @@ it.each(["pre-aborted", "admission", "close"] as const)(
       closeState.onLimits = undefined;
       await provider.close();
       await rm(workspace, { recursive: true, force: true });
-      if (platform !== undefined)
-        Object.defineProperty(process, "platform", platform);
-      if (arch !== undefined) Object.defineProperty(process, "arch", arch);
     }
   },
 );
@@ -130,10 +194,6 @@ it.each([
 ] as const)(
   "updates a returned cleanup error after later root release: %s",
   async (scenario) => {
-    const platform = Object.getOwnPropertyDescriptor(process, "platform");
-    const arch = Object.getOwnPropertyDescriptor(process, "arch");
-    Object.defineProperty(process, "platform", { ...platform, value: "linux" });
-    Object.defineProperty(process, "arch", { ...arch, value: "x64" });
     const workspace = await mkdtemp(join(tmpdir(), "rea-evm-cleanup-retry-"));
     const input = join(workspace, "selected.hex");
     await writeFile(input, "0x60006000f3\n");
@@ -144,11 +204,6 @@ it.each([
     const provider = new EvmoleInterfaceProvider(
       { REA_EVM_PRLIMIT_COMMAND: process.execPath },
       async (spawn) => {
-        // Emulate only Linux admission and limits; restore Darwin before the
-        // owned process captures and validates its real host identity.
-        if (platform !== undefined)
-          Object.defineProperty(process, "platform", platform);
-        if (arch !== undefined) Object.defineProperty(process, "arch", arch);
         const requestPath = spawn.arguments.at(-1);
         if (requestPath === undefined) throw new Error("Request path missing");
         const request = JSON.parse(await readFile(requestPath, "utf8")) as {
@@ -209,6 +264,7 @@ it.each([
           },
         };
       },
+      SIMULATED_LINUX_X64,
     );
 
     try {
@@ -263,26 +319,24 @@ it.each([
         // Preserve the assertion's original failure; the workspace cleanup follows.
       }
       await rm(workspace, { recursive: true, force: true });
-      if (platform !== undefined)
-        Object.defineProperty(process, "platform", platform);
-      if (arch !== undefined) Object.defineProperty(process, "arch", arch);
     }
   },
 );
 
 it("keeps descriptor cleanup in close aggregates until the exact file lease releases", async () => {
-  const platform = Object.getOwnPropertyDescriptor(process, "platform");
-  const arch = Object.getOwnPropertyDescriptor(process, "arch");
-  Object.defineProperty(process, "platform", { ...platform, value: "linux" });
-  Object.defineProperty(process, "arch", { ...arch, value: "x64" });
   const workspace = await mkdtemp(join(tmpdir(), "rea-evm-descriptor-retry-"));
   const input = join(workspace, "selected.hex");
   await writeFile(input, "0x60006000f3\n");
   closeState.path = input;
   closeState.failures = 2;
-  const provider = new EvmoleInterfaceProvider({
-    REA_EVM_PRLIMIT_COMMAND: process.execPath,
-  });
+  const provider = new EvmoleInterfaceProvider(
+    {
+      REA_EVM_PRLIMIT_COMMAND: process.execPath,
+    },
+    undefined,
+    undefined,
+    SIMULATED_LINUX_X64,
+  );
   try {
     const result = await provider.inspect({ path: input, encoding: "hex" });
     if (result.ok) throw new Error("Expected an artifact descriptor failure");
@@ -319,17 +373,10 @@ it("keeps descriptor cleanup in close aggregates until the exact file lease rele
       // Preserve the assertion's original failure while releasing test files.
     }
     await rm(workspace, { recursive: true, force: true });
-    if (platform !== undefined)
-      Object.defineProperty(process, "platform", platform);
-    if (arch !== undefined) Object.defineProperty(process, "arch", arch);
   }
 });
 
 it("keeps a mixed root and reply-descriptor aggregate pending until both owners release", async () => {
-  const platform = Object.getOwnPropertyDescriptor(process, "platform");
-  const arch = Object.getOwnPropertyDescriptor(process, "arch");
-  Object.defineProperty(process, "platform", { ...platform, value: "linux" });
-  Object.defineProperty(process, "arch", { ...arch, value: "x64" });
   const workspace = await mkdtemp(join(tmpdir(), "rea-evm-mixed-owners-"));
   const input = join(workspace, "selected.hex");
   await writeFile(input, "0x60006000f3\n");
@@ -350,9 +397,6 @@ it("keeps a mixed root and reply-descriptor aggregate pending until both owners 
       closeState.path = replyPath;
       closeState.failures = 2;
       await writeFile(replyPath, "malformed worker reply");
-      if (platform !== undefined)
-        Object.defineProperty(process, "platform", platform);
-      if (arch !== undefined) Object.defineProperty(process, "arch", arch);
       return spawnOwnedProviderProcess({
         ...spawn,
         command: process.execPath,
@@ -375,6 +419,7 @@ it("keeps a mixed root and reply-descriptor aggregate pending until both owners 
         },
       };
     },
+    SIMULATED_LINUX_X64,
   );
   try {
     const result = await provider.inspect({ path: input, encoding: "hex" });
@@ -418,17 +463,10 @@ it("keeps a mixed root and reply-descriptor aggregate pending until both owners 
       // Preserve the assertion's original failure while releasing test files.
     }
     await rm(workspace, { recursive: true, force: true });
-    if (platform !== undefined)
-      Object.defineProperty(process, "platform", platform);
-    if (arch !== undefined) Object.defineProperty(process, "arch", arch);
   }
 });
 
 it("releases a retained process independently while a root cleanup retry remains pending", async () => {
-  const platform = Object.getOwnPropertyDescriptor(process, "platform");
-  const arch = Object.getOwnPropertyDescriptor(process, "arch");
-  Object.defineProperty(process, "platform", { ...platform, value: "linux" });
-  Object.defineProperty(process, "arch", { ...arch, value: "x64" });
   const workspace = await mkdtemp(
     join(tmpdir(), "rea-evm-process-root-retry-"),
   );
@@ -460,9 +498,6 @@ it("releases a retained process independently while a root cleanup retry remains
           raw: { functions: [] },
         }),
       );
-      if (platform !== undefined)
-        Object.defineProperty(process, "platform", platform);
-      if (arch !== undefined) Object.defineProperty(process, "arch", arch);
       const launched = await spawnOwnedProviderProcess({
         ...spawn,
         command: process.execPath,
@@ -497,6 +532,7 @@ it("releases a retained process independently while a root cleanup retry remains
         },
       };
     },
+    SIMULATED_LINUX_X64,
   );
   try {
     const result = await provider.inspect({ path: input, encoding: "hex" });
@@ -540,17 +576,10 @@ it("releases a retained process independently while a root cleanup retry remains
       // Preserve the assertion's original failure while releasing test files.
     }
     await rm(workspace, { recursive: true, force: true });
-    if (platform !== undefined)
-      Object.defineProperty(process, "platform", platform);
-    if (arch !== undefined) Object.defineProperty(process, "arch", arch);
   }
 });
 
 it("preserves an active cancellation through denied owned-group cleanup and later retry", async () => {
-  const platform = Object.getOwnPropertyDescriptor(process, "platform");
-  const arch = Object.getOwnPropertyDescriptor(process, "arch");
-  Object.defineProperty(process, "platform", { ...platform, value: "linux" });
-  Object.defineProperty(process, "arch", { ...arch, value: "x64" });
   const workspace = await mkdtemp(join(tmpdir(), "rea-evm-cancel-process-"));
   const input = join(workspace, "selected.hex");
   await writeFile(input, "0x60006000f3\n");
@@ -563,9 +592,6 @@ it("preserves an active cancellation through denied owned-group cleanup and late
   const provider = new EvmoleInterfaceProvider(
     { REA_EVM_PRLIMIT_COMMAND: process.execPath },
     async (spawn) => {
-      if (platform !== undefined)
-        Object.defineProperty(process, "platform", platform);
-      if (arch !== undefined) Object.defineProperty(process, "arch", arch);
       const launched = await spawnOwnedProviderProcess({
         ...spawn,
         command: process.execPath,
@@ -607,6 +633,7 @@ it("preserves an active cancellation through denied owned-group cleanup and late
         },
       };
     },
+    SIMULATED_LINUX_X64,
   );
   try {
     const result = await provider.inspect(
@@ -649,9 +676,6 @@ it("preserves an active cancellation through denied owned-group cleanup and late
       // Preserve the assertion's original failure while releasing test files.
     }
     await rm(workspace, { recursive: true, force: true });
-    if (platform !== undefined)
-      Object.defineProperty(process, "platform", platform);
-    if (arch !== undefined) Object.defineProperty(process, "arch", arch);
   }
 });
 
@@ -667,10 +691,6 @@ it.each([
 ] as const)(
   "retains validated reply ownership through finalization: %s",
   async (scenario) => {
-    const platform = Object.getOwnPropertyDescriptor(process, "platform");
-    const arch = Object.getOwnPropertyDescriptor(process, "arch");
-    Object.defineProperty(process, "platform", { ...platform, value: "linux" });
-    Object.defineProperty(process, "arch", { ...arch, value: "x64" });
     const workspace = await mkdtemp(
       join(tmpdir(), "rea-evm-reply-finalization-"),
     );
@@ -724,9 +744,6 @@ it.each([
           replyPath,
           scenario === "malformed-cancel" ? "malformed" : JSON.stringify(reply),
         );
-        if (platform !== undefined)
-          Object.defineProperty(process, "platform", platform);
-        if (arch !== undefined) Object.defineProperty(process, "arch", arch);
         // Controlled worker output, with a real owned process and actual reply FD.
         return spawnOwnedProviderProcess({
           ...spawn,
@@ -734,6 +751,8 @@ it.each([
           arguments: ["-e", ""],
         });
       },
+      undefined,
+      SIMULATED_LINUX_X64,
     );
     try {
       const result = await provider.inspect(
@@ -807,9 +826,6 @@ it.each([
       closeState.readFailure = undefined;
       await provider.close();
       await rm(workspace, { recursive: true, force: true });
-      if (platform !== undefined)
-        Object.defineProperty(process, "platform", platform);
-      if (arch !== undefined) Object.defineProperty(process, "arch", arch);
     }
   },
 );
@@ -817,10 +833,6 @@ it.each([
 it.each(["physical-read", "completed-late-cancel"] as const)(
   "retains only completed caller carrier identity: %s",
   async (scenario) => {
-    const platform = Object.getOwnPropertyDescriptor(process, "platform");
-    const arch = Object.getOwnPropertyDescriptor(process, "arch");
-    Object.defineProperty(process, "platform", { ...platform, value: "linux" });
-    Object.defineProperty(process, "arch", { ...arch, value: "x64" });
     const workspace = await mkdtemp(
       join(tmpdir(), "rea-evm-carrier-finalization-"),
     );
@@ -843,6 +855,7 @@ it.each(["physical-read", "completed-late-cancel"] as const)(
       { REA_EVM_PRLIMIT_COMMAND: process.execPath },
       undefined,
       createRuntime,
+      SIMULATED_LINUX_X64,
     );
     try {
       const result = await provider.inspect(
@@ -882,9 +895,6 @@ it.each(["physical-read", "completed-late-cancel"] as const)(
       closeState.readFailure = undefined;
       await provider.close();
       await rm(workspace, { recursive: true, force: true });
-      if (platform !== undefined)
-        Object.defineProperty(process, "platform", platform);
-      if (arch !== undefined) Object.defineProperty(process, "arch", arch);
     }
   },
 );
@@ -900,10 +910,6 @@ it.each([
 ] as const)(
   "preserves exact reserved-exit marker receipt and cleanup: %s",
   async (scenario) => {
-    const platform = Object.getOwnPropertyDescriptor(process, "platform");
-    const arch = Object.getOwnPropertyDescriptor(process, "arch");
-    Object.defineProperty(process, "platform", { ...platform, value: "linux" });
-    Object.defineProperty(process, "arch", { ...arch, value: "x64" });
     const workspace = await mkdtemp(join(tmpdir(), "rea-evm-marker-receipt-"));
     const input = join(workspace, "selected.hex");
     await writeFile(input, "0x60006000f3\n");
@@ -929,9 +935,6 @@ it.each([
             new Error("physical marker EIO"),
             { code: "EIO" },
           );
-        if (platform !== undefined)
-          Object.defineProperty(process, "platform", platform);
-        if (arch !== undefined) Object.defineProperty(process, "arch", arch);
         // The inert owned child authors a controlled marker; this does not run EVMole or target bytecode.
         const launched = await spawnOwnedProviderProcess({
           ...spawn,
@@ -960,6 +963,8 @@ it.each([
           },
         };
       },
+      undefined,
+      SIMULATED_LINUX_X64,
     );
     try {
       const result = await provider.inspect({ path: input, encoding: "hex" });
@@ -1005,18 +1010,11 @@ it.each([
       closeState.readFailure = undefined;
       await provider.close();
       await rm(workspace, { recursive: true, force: true });
-      if (platform !== undefined)
-        Object.defineProperty(process, "platform", platform);
-      if (arch !== undefined) Object.defineProperty(process, "arch", arch);
     }
   },
 );
 
 it("keeps the selected limiter and child environment together while later inspections reconfigure", async () => {
-  const platform = Object.getOwnPropertyDescriptor(process, "platform");
-  const arch = Object.getOwnPropertyDescriptor(process, "arch");
-  Object.defineProperty(process, "platform", { ...platform, value: "linux" });
-  Object.defineProperty(process, "arch", { ...arch, value: "x64" });
   const workspace = await mkdtemp(join(tmpdir(), "rea-evm-environment-"));
   const input = join(workspace, "selected.hex");
   const limiter = join(workspace, "selected-limiter");
@@ -1032,17 +1030,22 @@ it("keeps the selected limiter and child environment together while later inspec
     environment.REA_EVM_PRLIMIT_COMMAND = "/missing-limiter";
     environment.REA_ENV_MARKER = "changed-during-inspection";
   };
-  const provider = new EvmoleInterfaceProvider(environment, async (spawn) => {
-    expect(spawn.command).toBe(expectedLimiter);
-    return spawnOwnedProviderProcess({
-      ...spawn,
-      command: process.execPath,
-      arguments: [
-        "-e",
-        "process.stdout.write(process.env.REA_ENV_MARKER, () => { process.exitCode = 9; })",
-      ],
-    });
-  });
+  const provider = new EvmoleInterfaceProvider(
+    environment,
+    async (spawn) => {
+      expect(spawn.command).toBe(expectedLimiter);
+      return spawnOwnedProviderProcess({
+        ...spawn,
+        command: process.execPath,
+        arguments: [
+          "-e",
+          "process.stdout.write(process.env.REA_ENV_MARKER, () => { process.exitCode = 9; })",
+        ],
+      });
+    },
+    undefined,
+    SIMULATED_LINUX_X64,
+  );
   try {
     for (const marker of ["first", "second"]) {
       if (marker === "second") {
@@ -1058,8 +1061,53 @@ it("keeps the selected limiter and child environment together while later inspec
     closeState.onLimits = undefined;
     await provider.close();
     await rm(workspace, { recursive: true, force: true });
-    if (platform !== undefined)
-      Object.defineProperty(process, "platform", platform);
-    if (arch !== undefined) Object.defineProperty(process, "arch", arch);
   }
 });
+
+it.each([
+  ["the caller's own abort error", "own", true],
+  ["an abort error carrying another reason", "foreign", false],
+  ["a reasonless AbortError", "reasonless", false],
+] as const)(
+  "counts %s from the worker launch as cancellation: %s",
+  async (_label, thrown, cancelled) => {
+    const workspace = await mkdtemp(join(tmpdir(), "rea-evm-abort-owner-"));
+    const input = join(workspace, "selected.hex");
+    await writeFile(input, "0x60006000f3\n");
+    const controller = new AbortController();
+    const callerReason = { requested: "stop inspection" };
+    const provider = new EvmoleInterfaceProvider(
+      { REA_EVM_PRLIMIT_COMMAND: process.execPath },
+      async () => {
+        controller.abort(callerReason);
+        // An abort error raised while the caller's signal is also aborted.
+        throw thrown === "reasonless"
+          ? new DOMException("Aborted elsewhere", "AbortError")
+          : Object.assign(new Error("The operation was aborted"), {
+              name: "AbortError",
+              code: "ABORT_ERR",
+              cause:
+                thrown === "own"
+                  ? callerReason
+                  : { requested: "another owner's deadline" },
+            });
+      },
+      undefined,
+      SIMULATED_LINUX_X64,
+    );
+    try {
+      const result = await provider.inspect(
+        { path: input, encoding: "hex" },
+        { signal: controller.signal },
+      );
+      if (result.ok) throw new Error("Expected the launch to fail");
+      if (cancelled) {
+        expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+        expect(result.error.cause).toBe(callerReason);
+      } else expect(result.error).not.toBeInstanceOf(AnalysisCancelledError);
+    } finally {
+      await provider.close();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  },
+);

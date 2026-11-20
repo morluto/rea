@@ -1,7 +1,7 @@
 import type {
   AnalysisOperation,
   ProviderIdentity,
-} from "./AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 
 /** One provider-owned caveat tied to the operation that reported it. */

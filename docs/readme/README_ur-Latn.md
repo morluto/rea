@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · **Roman Urdu** · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · **Roman Urdu** · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA: Reverse Engineer Anything
 
@@ -92,12 +92,15 @@ Setup Claude Code, Codex, Cursor, Gemini CLI, Grok Build aur
 configuration aur manual MCP registration ke liye
 [installation aur setup](../getting-started/installation.md) dekhein.
 
-Context overhead kam rakhne ke liye MCP default mein compact input schemas use
-karta hai. Agar tamam advertised fields ki guidance aur nested validation details
-chahiye hon to apni MCP registration mein `REA_MCP_INPUT_SCHEMA_PROFILE=full`
-set karein. Dono profiles mein tamam tools aur canonical server validation
-maujood rehte hain. MCP contracts guide ka "Compact input schema profile"
+Context overhead kam rakhne ke liye MCP compact input schemas advertise karta
+hai; jo guidance compact schema chhor deta hai woh tool description ke baad aati
+hai. Tamam tools aur canonical server validation baghair tabdeeli ke maujood
+rehte hain. MCP contracts guide ka "Compact input schema profile"
 section dekhein.
+
+Setup chuna hua runtime aur REA entry script seedha register karta hai. Package runner use karne par uski cache entry aur runtime barqarar rakhein; package target project se bahar kisi bharosemand directory se hasil karein. Installation guide dekhein.
+
+Default mein output schemas `tools/list` se nikal diye jate hain: koi model API inhein nahin parhti, aur REA har result ko khud validate karta hai. Har output schema ko 4096 bytes ki had mein advertise karne ke liye MCP registration mein `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` set karein. Har setting mein server validation aur structured results mukammal rehte hain. MCP contracts guide ka “Output schemas” section dekhein.
 
 ### Apne agent se kahein
 
@@ -199,10 +202,14 @@ Mazeed tools aur host support target par depend karte hain:
 | Rust binaries           | Embedded cargo-auditable crate names, versions, sources aur dependency edges                      | Built-in static ELF/PE/thin Mach-O inspection; [Rust binaries](../rust-binaries.md)                                                                              |
 | PE certificates         | Authenticode WIN_CERTIFICATE entries aur PKCS#7 signer/X.509 identity fields                      | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                                          |
 | PE imports              | Import aur delay-load DLL names, ordinals, IAT RVAs aur pefile import hash                        | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                                    |
+| Windows shortcuts       | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts                      | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                                        |
 | ELF notes               | PT_NOTE/SHT_NOTE owners, types, GNU build-id aur ABI-tag fields                                   | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                                     |
+| DWARF compile units     | Compile-unit name, directory, producer, language, and dwo_name                                    | Built-in static ELF, Mach-O, and PE inspection; [DWARF compile units](../guides/native/dwarf-units.md)                                                           |
+| ELF dependencies        | DT_NEEDED, SONAME, RPATH/RUNPATH, GNU versions, and undefined imports                             | Built-in static ELF inspection; [ELF dependencies](../elf-dependencies.md)                                                                                       |
 | Binary hardening        | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                               | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                                    |
 | Linux kernel modules    | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                       | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                           |
 | Erlang BEAM             | IFF chunks, atoms, exports, imports, lambdas aur Code header                                      | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                                |
+| NuGet packages          | Package identity, dependency groups, license, repository aur ZIP contents                         | Built-in static .nupkg inspection; [NuGet packages](../guides/managed/nuget-nupkg.md)                                                                            |
 | WASM artifact           | Validation, sections, exact import/export WAT forms aur decoded WAT                               | Aapka diya hua WABT 1.0.42; `inspect_wasm_artifact`                                                                                                              |
 | EVM bytecode            | Dispatch selectors, byte offsets, inferred arguments aur mutability                               | Linux x64 par local raw/hex carrier; [offline EVM guide](../guides/evm/evm-bytecode.md)                                                                          |
 | SQLite databases        | Tables, columns, indexes, views, triggers aur selected ordinary-table rows                        | Local database/WAL snapshot; native SQLite limits ke saath Node.js 24.x >=24.15 ya 26+                                                                           |
@@ -225,6 +232,7 @@ Mazeed tools aur host support target par depend karte hain:
 | Packages aur resources  | File inventories, digests, plists, Apple bundle structure aur extracted resources                 | [Artifact aur JavaScript guide](../guides/javascript/javascript-artifact-reconstruction.md), [Apple applications](../guides/apple/apple-application-analysis.md) |
 | Process behavior        | Terminal output, interactions, exit aur filesystem observations aur runs ka comparison            | Native PTY ke saath Linux/macOS; [process capture](../guides/runtime/process-capture.md)                                                                         |
 | PyInstaller executables | CArchive members, Python version, entry scripts aur extracted bytecode                            | Koi additional tool nahi (sirf static analysis); [Python packaged applications](../python-packaged-applications.md)                                              |
+| Deno compile binaries   | Virtual files, entry point, recorded options, npm snapshot length                                 | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                             |
 
 Static JavaScript aur .NET inspection di hui files ko application chalaye baghair
 parhti hai. Runtime capture aapki user permissions se selected target ko chalata
@@ -331,6 +339,12 @@ REA chalne ke liye tayyar environment aur aik bunyadi test export karta hai jo u
 [Environment banane ki rehnumai](https://rea.tools/guides/rl-environments/) ·
 [Environment reference](../agent-environments.md) ·
 [X par demo dekhein](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### Desktop app environments
+
+REA Linux desktop app ka environment bhi bana sakta hai, jise agent screenshots, mouse aur keyboard se istemal karta hai. Aik line ki request se, jaise "Mere liye Gnote environment banao jis mein agent shopping list note mein olive oil shamil kare", aap ka agent app ko local build computer par install karta hai, task likhta hai, environment export karta hai aur naye computer par task check karta hai. Ise banane wali machine ko amd64 ya arm64 par Linux, Docker aur guide mein muqarrar agentenv framework version chahiye.
+
+[Desktop app environments setup karein](../desktop-build-computer.md)
 
 ## FAQ
 

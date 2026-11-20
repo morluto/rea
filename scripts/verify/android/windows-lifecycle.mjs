@@ -1,21 +1,19 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import {
-  mkdtemp,
-  readdir,
-  realpath,
-  rmdir,
-  symlink,
-  unlink,
-} from "node:fs/promises";
+import { readdir, realpath, symlink, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { resolveJadxConfigurationInputs } from "../../../dist/android/JadxConfiguration.js";
+import { HOST_PLATFORM } from "../../../dist/platform/HostPlatform.js";
 import { validateVerifierJadxConfiguration } from "../../lib/jadx-configuration-inspection.mjs";
 import { verifyWindowsGuardianIsolation } from "./windows-guardian-isolation.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "../../lib/verifier-fixture.mjs";
 
 /** Verify real Windows cancellation, disconnect and abrupt CLI owner exit. */
 export async function verifyWindowsAndroidLifecycle(options) {
@@ -42,26 +40,39 @@ async function verifyJavaSelection(environment) {
   const selected = await resolveJadxConfigurationInputs(
     environment,
     "inspect_android_package",
+    HOST_PLATFORM,
   );
   await validateVerifierJadxConfiguration(
     selected,
     environment,
     "inspect_android_package",
   );
-  const root = await mkdtemp(join(tmpdir(), "rea-windows-java-selection-"));
-  const alias = join(root, "JDK 路径 with spaces");
+  // A plain directory, as before: the junction below is created in it.
+  const rootFixture = await VerifierFixture.open({
+    prefix: "rea-windows-java-selection-",
+    private: false,
+  });
+  const alias = join(rootFixture.path, "JDK 路径 with spaces");
+  // Unlink the junction before the root is removed, so removal never follows
+  // it into the borrowed JDK.
+  rootFixture.releaseAfter(() =>
+    unlink(alias).catch((cause) => {
+      if (cause.code !== "ENOENT") throw cause;
+    }),
+  );
   const pathEnvironment = Object.fromEntries(
     Object.entries(environment).filter(
       ([key]) => !["path", "java_home"].includes(key.toLowerCase()),
     ),
   );
-  try {
+  await withVerifierFixture(rootFixture, async () => {
     // The owned junction borrows the selected JDK directory without copying it.
     await symlink(dirname(selected.java), alias, "junction");
     pathEnvironment.Path = `"${alias}"`;
     const onPath = await resolveJadxConfigurationInputs(
       pathEnvironment,
       "inspect_android_package",
+      HOST_PLATFORM,
     );
     await validateVerifierJadxConfiguration(
       onPath,
@@ -72,12 +83,7 @@ async function verifyJavaSelection(environment) {
     console.log(
       "PASS Windows JAVA_HOME and quoted Unicode/space Path selection",
     );
-  } finally {
-    await unlink(alias).catch((cause) => {
-      if (cause.code !== "ENOENT") throw cause;
-    });
-    await rmdir(root);
-  }
+  });
 }
 
 async function verifyMcp({ entrypoint, environment, path, repository }, mode) {

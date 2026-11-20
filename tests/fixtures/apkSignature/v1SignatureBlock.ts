@@ -220,6 +220,55 @@ export const withExtension = (
   );
 };
 
+/** The certificate with its `extensions [3]` field declared twice. */
+export const withRepeatedExtensions = (certificate: Uint8Array): Uint8Array => {
+  const { fields, outer } = certificateParts(certificate);
+  const part = ({ start, end }: DerSpan) => certificate.subarray(start, end);
+  return tlv(
+    0x30,
+    tlv(
+      0x30,
+      ...fields.flatMap((field) =>
+        certificate[field.start] === 0xa3
+          ? [part(field), part(field)]
+          : [part(field)],
+      ),
+    ),
+    ...outer.map(part),
+  );
+};
+
+/**
+ * The certificate with its one `extensions [3]` field replaced by a
+ * subjectKeyIdentifier extension for each key identifier, in order.
+ */
+export const withSubjectKeyIdentifiers = (
+  certificate: Uint8Array,
+  ...keyIdentifiers: readonly Uint8Array[]
+): Uint8Array => {
+  const { fields, outer } = certificateParts(certificate);
+  const part = ({ start, end }: DerSpan) => certificate.subarray(start, end);
+  const extensions = tlv(
+    0xa3,
+    tlv(
+      0x30,
+      ...keyIdentifiers.map((keyIdentifier) =>
+        tlv(0x30, oid("2.5.29.14"), tlv(0x04, tlv(0x04, keyIdentifier))),
+      ),
+    ),
+  );
+  return tlv(
+    0x30,
+    tlv(
+      0x30,
+      ...fields.map((field) =>
+        certificate[field.start] === 0xa3 ? extensions : part(field),
+      ),
+    ),
+    ...outer.map(part),
+  );
+};
+
 export interface SignerInfoSpec {
   /** Certificate whose issuer and serial the SignerInfo names. */
   readonly names: Uint8Array;
@@ -230,12 +279,15 @@ export interface SignerInfoSpec {
    * from the certificate named by `names`.
    */
   readonly serial?: Uint8Array;
+  /** Complete digest algorithm OID TLV, including bounded-parser fixtures. */
+  readonly digestAlgorithmOid?: Uint8Array;
 }
 
 export const signerInfo = ({
   names,
   signature,
   serial,
+  digestAlgorithmOid,
 }: SignerInfoSpec): Uint8Array =>
   tlv(
     0x30,
@@ -244,7 +296,7 @@ export const signerInfo = ({
       names,
       serial === undefined ? undefined : tlv(0x02, serial),
     ),
-    algorithm(OID_SHA256),
+    tlv(0x30, digestAlgorithmOid ?? oid(OID_SHA256)),
     algorithm(OID_ECDSA_SHA256),
     signature ?? tlv(0x04, Uint8Array.from([1, 2, 3])),
   );
@@ -254,6 +306,8 @@ export const signedDataBlock = (options: {
   readonly certificates: readonly Uint8Array[];
   readonly signerInfos: readonly Uint8Array[];
   readonly contentType?: string;
+  readonly encapsulatedContent?: Uint8Array;
+  readonly digestAlgorithmOid?: Uint8Array;
 }): Uint8Array =>
   tlv(
     0x30,
@@ -263,8 +317,14 @@ export const signedDataBlock = (options: {
       tlv(
         0x30,
         integer(1),
-        tlv(0x31, algorithm(OID_SHA256)),
-        tlv(0x30, oid("1.2.840.113549.1.7.1")),
+        tlv(0x31, tlv(0x30, options.digestAlgorithmOid ?? oid(OID_SHA256))),
+        tlv(
+          0x30,
+          oid("1.2.840.113549.1.7.1"),
+          ...(options.encapsulatedContent === undefined
+            ? []
+            : [tlv(0xa0, options.encapsulatedContent)]),
+        ),
         tlv(0xa0, ...options.certificates),
         tlv(0x31, ...options.signerInfos),
       ),

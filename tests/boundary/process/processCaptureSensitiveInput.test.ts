@@ -46,6 +46,8 @@ for (const sensitive of [true, false]) {
             patterns: [{ pattern: "echo:", replacement: "view:" }],
           },
         }),
+        undefined,
+        process.platform,
       );
       if (!result.ok) throw result.error;
       const capture = parseProcessCapture(

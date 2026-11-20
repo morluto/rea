@@ -15,6 +15,8 @@ const acquired = await acquireHopperReleaseCacheLease({
   cacheDirectory,
   launcherSha256,
   runId: randomUUID(),
+  failure: (failure) =>
+    new Error(`Fixture cache lease failed: ${failure.kind}`),
 });
 if (!acquired.acquired) throw new Error("Fixture cache lease was already held");
 try {

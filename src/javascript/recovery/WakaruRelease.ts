@@ -1,4 +1,4 @@
-import { BOUNDED_PRODUCER_LIMITS } from "../../process/LinuxResourceLimits.js";
+import { BOUNDED_PRODUCER_LIMITS } from "../../domain/producerResourceLimits.js";
 
 /**
  * Releases the report parser accepts. Wakaru changes `--version`, `--json`

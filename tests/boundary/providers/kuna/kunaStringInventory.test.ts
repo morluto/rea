@@ -85,7 +85,19 @@ it("skips members it does not interpret without retaining them", async () => {
       strings: [{ ...row, score: 1, origin: { tool: [1] } }],
     }).replace('"functions":[]', '"functions":[],"__proto__":{"text":1}'),
   );
-  expect(result).toMatchObject({ ok: true, value: { items: [{}] } });
+  if (!result.ok) throw result.error;
+  expect(result.value.items).toEqual([
+    {
+      address: "0x20000000000001",
+      value: "a\nΔelta",
+      string: {
+        encoding: "utf8",
+        encoding_status: "observed",
+        termination: "present_or_not_required",
+        byte_length: 9,
+      },
+    },
+  ]);
 });
 
 it.each([

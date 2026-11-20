@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { afterAll, expect, it, onTestFinished } from "vitest";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
@@ -52,14 +53,11 @@ const discoverTools = async (environment: NodeJS.ProcessEnv) => {
 };
 
 it("names the JEB discovery deadline setting instead of repeating the expired deadline", async () => {
-  let release!: () => void;
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
+  const toolListing = phaseGate();
   const fixture = await startJebMcpFixture(
     () => null,
     async () => {
-      await gate;
+      await toolListing.hold();
       return { tools: [] };
     },
   );
@@ -74,7 +72,7 @@ it("names the JEB discovery deadline setting instead of repeating the expired de
       reason: "provider_unavailable",
     });
     expect(entry?.remediation).toMatch(
-      /increase REA_JEB_MCP_TIMEOUT_MS.*restart and reconnect REA/iu,
+      /jeb\.mcp_timeout_ms.*update_analysis_settings.*REA_JEB_MCP_TIMEOUT_MS/iu,
     );
     expect(entry?.remediation).toMatch(
       /catalog discovery.*tools\/call.*cleanup.*headroom/iu,
@@ -84,7 +82,7 @@ it("names the JEB discovery deadline setting instead of repeating the expired de
     );
     expect(entry?.remediation).not.toContain("deadlineExpired");
   } finally {
-    release();
+    toolListing.release();
     await fixture.close();
   }
 });
@@ -158,7 +156,10 @@ it("returns an unready IDA registration's repair from an explicit open_binary se
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const client = new Client({ name: "selection-remediation", version: "1" });
+  const client = new Client(
+    { name: "selection-remediation", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   onTestFinished(async () => {
@@ -193,3 +194,205 @@ it("returns an unready IDA registration's repair from an explicit open_binary se
     ],
   });
 });
+
+it.skipIf(process.platform === "win32")(
+  "marks inspect_with_objdump unavailable in binary_session after launch failure and restores it after repair",
+  async () => {
+    const root = await createTestTempDirectory("rea-objdump-remediation-");
+    const missingCommand = join(root, "missing-objdump");
+    const { client, close } = await createApplicationMcpHarness({
+      serverOptions: {
+        environment: {
+          REA_OBJDUMP_COMMAND: missingCommand,
+        },
+      },
+      clientIdentity: { name: "objdump-remediation", version: "1" },
+      schemaValidator: schemaValidation,
+    });
+    try {
+      const initialSession = await client.callTool({
+        name: "binary_session",
+        arguments: { detail: "complete" },
+      });
+      expect(initialSession.isError).not.toBe(true);
+      const initialStatus = toolContract("binary_session").outputSchema.parse(
+        initialSession.structuredContent,
+      ).result;
+      const initialTools = new Map(
+        expandToolAvailability(
+          toolAvailabilityInventory.parse(initialStatus.tool_availability),
+        ).map((tool) => [tool.name, tool]),
+      );
+      expect(initialTools.get("inspect_with_objdump")).toMatchObject({
+        available: true,
+        reason: "available",
+        remediation: null,
+      });
+
+      const failed = (await client.callTool({
+        name: "inspect_with_objdump",
+        arguments: { operation: "architectures" },
+      })) as CallToolResult;
+      expect(failed.isError).toBe(true);
+      const parsedFailure = parseMcpToolError(failed);
+      expect(parsedFailure.error.code).toBe("capability_unavailable");
+      expect(parsedFailure.error.details).toMatchObject({
+        diagnostics: {
+          boundary: "provider-launch",
+          command: missingCommand,
+        },
+      });
+
+      const afterFailedSession = await client.callTool({
+        name: "binary_session",
+        arguments: { detail: "complete" },
+      });
+      expect(afterFailedSession.isError).not.toBe(true);
+      const afterFailedStatus = toolContract(
+        "binary_session",
+      ).outputSchema.parse(afterFailedSession.structuredContent).result;
+      const afterFailedTools = new Map(
+        expandToolAvailability(
+          toolAvailabilityInventory.parse(afterFailedStatus.tool_availability),
+        ).map((tool) => [tool.name, tool]),
+      );
+      expect(afterFailedTools.get("inspect_with_objdump")).toMatchObject({
+        available: false,
+        reason: "provider_unavailable",
+        remediation: expect.stringContaining("REA_OBJDUMP_COMMAND"),
+      });
+
+      await writeFile(missingCommand, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+
+      const retried = await client.callTool({
+        name: "inspect_with_objdump",
+        arguments: { operation: "architectures" },
+      });
+      expect(retried.isError).not.toBe(true);
+
+      const recoveredSession = await client.callTool({
+        name: "binary_session",
+        arguments: { detail: "complete" },
+      });
+      expect(recoveredSession.isError).not.toBe(true);
+      const recoveredStatus = toolContract("binary_session").outputSchema.parse(
+        recoveredSession.structuredContent,
+      ).result;
+      const recoveredTools = new Map(
+        expandToolAvailability(
+          toolAvailabilityInventory.parse(recoveredStatus.tool_availability),
+        ).map((tool) => [tool.name, tool]),
+      );
+      expect(recoveredTools.get("inspect_with_objdump")).toMatchObject({
+        available: true,
+        reason: "available",
+        remediation: null,
+      });
+    } finally {
+      await close();
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "marks execute_rizin_command unavailable in binary_session after real target launch failure and restores it after repair",
+  async () => {
+    const root = await createTestTempDirectory("rea-rizin-remediation-");
+    const target = join(root, "sample.bin");
+    const missingRizin = join(root, "missing-rizin");
+    await writeFile(target, new Uint8Array([0x7f, 0x45, 0x4c, 0x46]));
+    const { client, close } = await createApplicationMcpHarness({
+      serverOptions: {
+        environment: {
+          REA_RIZIN_COMMAND: missingRizin,
+        },
+      },
+      clientIdentity: { name: "rizin-remediation", version: "1" },
+      schemaValidator: schemaValidation,
+    });
+    try {
+      const initialSession = await client.callTool({
+        name: "binary_session",
+        arguments: { detail: "complete" },
+      });
+      expect(initialSession.isError).not.toBe(true);
+      const initialStatus = toolContract("binary_session").outputSchema.parse(
+        initialSession.structuredContent,
+      ).result;
+      const initialTools = new Map(
+        expandToolAvailability(
+          toolAvailabilityInventory.parse(initialStatus.tool_availability),
+        ).map((tool) => [tool.name, tool]),
+      );
+      expect(initialTools.get("execute_rizin_command")).toMatchObject({
+        available: true,
+        reason: "available",
+        remediation: null,
+      });
+
+      const failed = (await client.callTool({
+        name: "execute_rizin_command",
+        arguments: { path: target, command: "iI" },
+      })) as CallToolResult;
+      expect(failed.isError).toBe(true);
+      const parsedFailure = parseMcpToolError(failed);
+      expect(parsedFailure.error.code).toBe("capability_unavailable");
+      expect(parsedFailure.error.details).toMatchObject({
+        provider_id: "rizin",
+        diagnostics: {
+          boundary: "provider-launch",
+          command: missingRizin,
+          system_code: "ENOENT",
+        },
+      });
+
+      const afterFailedSession = await client.callTool({
+        name: "binary_session",
+        arguments: { detail: "complete" },
+      });
+      expect(afterFailedSession.isError).not.toBe(true);
+      const afterFailedStatus = toolContract(
+        "binary_session",
+      ).outputSchema.parse(afterFailedSession.structuredContent).result;
+      const afterFailedTools = new Map(
+        expandToolAvailability(
+          toolAvailabilityInventory.parse(afterFailedStatus.tool_availability),
+        ).map((tool) => [tool.name, tool]),
+      );
+      expect(afterFailedTools.get("execute_rizin_command")).toMatchObject({
+        available: false,
+        reason: "provider_unavailable",
+        remediation: expect.stringContaining("REA_RIZIN_COMMAND"),
+      });
+
+      await writeFile(missingRizin, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+
+      const retried = await client.callTool({
+        name: "execute_rizin_command",
+        arguments: { path: target, command: "iI" },
+      });
+      expect(retried.isError).not.toBe(true);
+
+      const recoveredSession = await client.callTool({
+        name: "binary_session",
+        arguments: { detail: "complete" },
+      });
+      expect(recoveredSession.isError).not.toBe(true);
+      const recoveredStatus = toolContract("binary_session").outputSchema.parse(
+        recoveredSession.structuredContent,
+      ).result;
+      const recoveredTools = new Map(
+        expandToolAvailability(
+          toolAvailabilityInventory.parse(recoveredStatus.tool_availability),
+        ).map((tool) => [tool.name, tool]),
+      );
+      expect(recoveredTools.get("execute_rizin_command")).toMatchObject({
+        available: true,
+        reason: "available",
+        remediation: null,
+      });
+    } finally {
+      await close();
+    }
+  },
+);

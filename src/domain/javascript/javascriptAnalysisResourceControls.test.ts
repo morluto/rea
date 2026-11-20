@@ -62,7 +62,7 @@ it("names max_heap_mb, its range, and the budgets it does not raise", () => {
   expect(projected.remediation.action).toContain(
     String(JAVASCRIPT_WORKER_HEAP_MIB_MAXIMUM),
   );
-  expect(projected.remediation.action).toContain("--max-heap-mb");
+  expect(projected.remediation.action).not.toContain("--");
   expect(projected.remediation.action).toContain("next analysis");
   expect(projected.remediation.action).toContain("new worker");
   expect(projected.remediation.action).toContain("parent result budget");
@@ -127,7 +127,7 @@ it("attributes V8 heap exhaustion to max_heap_mb only when that flag is enforced
     "exhausted its 1024 MiB V8 old-space heap (max_heap_mb)",
   );
   expect(node.remediationAction).toContain("max_heap_mb");
-  expect(node.remediationAction).toContain("--max-heap-mb");
+  expect(node.remediationAction).not.toContain("--");
   const bun = javaScriptWorkerHeapExhaustionRecovery({
     heapFlagsEnforced: false,
     heapMb: 1024,
@@ -174,39 +174,58 @@ it("names the four semantic arguments on ceiling coverage", () => {
   );
   expect(nodes.limitation).toContain("1 to");
   expect(nodes.limitation).toContain(String(JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM));
-  expect(nodes.limitation).toContain(
-    "CLI: --max-semantic-nodes and --max-semantic-nodes-per-file",
-  );
+  // The producer records controls by contract field; adapters name options.
+  expect(nodes.limitation).not.toContain("--");
+  expect(nodes.limitation).toContain("coverage.controls records them");
+  expect(nodes.controls).toEqual([
+    {
+      control_kind: "parameter",
+      parameter: "max_semantic_nodes",
+      effective_value: 50,
+      unit: "count",
+      minimum: 1,
+      maximum: JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM,
+      default_value: JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.semanticNodes,
+      applies_at: "next_call",
+    },
+    expect.objectContaining({
+      parameter: "max_semantic_nodes_per_file",
+      effective_value: 30,
+      default_value: JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.semanticNodesPerFile,
+    }),
+  ]);
   expect(nodes.limitation).toContain(
     "Set max_semantic_nodes and max_semantic_nodes_per_file",
   );
   expect(nodes.limitation).toContain("Raising them does not raise");
   expect(nodes.limitation).toContain("next analysis");
-  expect(unknowns.limitation).toContain(
-    "CLI: --max-semantic-unknowns and --max-semantic-unknowns-per-file",
-  );
+  expect(unknowns.controls.map(({ parameter }) => parameter)).toEqual([
+    "max_semantic_unknowns",
+    "max_semantic_unknowns_per_file",
+  ]);
   expect(unknowns.limitation).toContain("max_semantic_nodes");
   expect(perFileOnly.limitation).toContain("max_semantic_nodes_per_file is 30");
   expect(perFileOnly.limitation).toContain(
     "Set max_semantic_nodes_per_file on the next",
   );
-  expect(perFileOnly.limitation).toContain(
-    "CLI: --max-semantic-nodes-per-file",
-  );
+  expect(perFileOnly.controls.map(({ parameter }) => parameter)).toEqual([
+    "max_semantic_nodes_per_file",
+  ]);
+  expect(perFileOnly.limitation).toContain("coverage.controls records it");
   expect(perFileOnly.limitation).toContain("Raising it does not raise");
   expect(perFileOnly.limitation).not.toContain("max_semantic_nodes is 50");
-  expect(perFileOnly.limitation).not.toContain("--max-semantic-nodes and");
+
   expect(totalOnly.limitation).toContain("max_semantic_unknowns is 3");
   expect(totalOnly.limitation).toContain(
     "Set max_semantic_unknowns on the next",
   );
-  expect(totalOnly.limitation).toContain("CLI: --max-semantic-unknowns)");
+  expect(totalOnly.controls.map(({ parameter }) => parameter)).toEqual([
+    "max_semantic_unknowns",
+  ]);
   expect(totalOnly.limitation).not.toContain(
     "max_semantic_unknowns_per_file is 2",
   );
-  expect(totalOnly.limitation).not.toContain(
-    "--max-semantic-unknowns-per-file",
-  );
+
   const capped = javaScriptSemanticCeilingCoverage(
     "nodes",
     JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM,

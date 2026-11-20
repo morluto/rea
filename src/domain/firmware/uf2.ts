@@ -1,13 +1,16 @@
+import { boundedList, describeBoundedList } from "../boundedList.js";
 import type { Uf2Metadata } from "../artifactFormatMetadata.js";
 import { err, ok, type Result } from "../result.js";
 import { mergeArenaRuns, type RunConflict } from "./addressRuns.js";
 import type { RegionDecodeFailure, RegionDecoder } from "./regionDecoder.js";
 import { UF2_FAMILY_REGISTRY, uf2FamilyName } from "./uf2Families.js";
+import { byteToHex } from "../../kernel/byteToHex.js";
 
 /** Every UF2 block is 512 bytes: a 32-byte header, 476 data bytes, an end magic. */
 export const UF2_BLOCK_BYTES = 512;
 const UF2_DATA_OFFSET = 32;
 const UF2_DATA_BYTES = 476;
+const UF2_MD5_BYTES = 24;
 const UF2_MAGIC_START0 = 0x0a32_4655;
 const UF2_MAGIC_START1 = 0x9e5d_5157;
 const UF2_MAGIC_END = 0x0ab1_6f30;
@@ -65,13 +68,16 @@ interface BlockRun {
 /**
  * Valid blocks sharing a familyID (or none) and a declared block count. A
  * number seen at several addresses belongs to several copies, as when esptool
- * numbers each merged file from 0; a repeat at one address is the same block.
+ * numbers each merged file from 0. A pure comment counts toward presence but
+ * supplies no address for comparing copies.
  */
 interface NumberingGroup {
   readonly familyId: number | null;
   readonly declared: number;
-  /** The first target address seen for each block number. */
-  readonly first: Map<number, number>;
+  /** The first applicable address for each observed number, or null for a comment alone. */
+  readonly first: Map<number, number | null>;
+  /** How many observed numbers have at least one applicable address. */
+  addressedNumbers: number;
   /** Further distinct target addresses, only for numbers that have them. */
   readonly further: Map<number, Set<number>>;
   previous: number;
@@ -104,7 +110,7 @@ const familyText = (familyId: number | null): string => {
 
 /** At most NAMED_GROUPS descriptions, then a count of the rest. */
 const named = (items: readonly string[]): string =>
-  `${items.slice(0, NAMED_GROUPS).join("; ")}${items.length > NAMED_GROUPS ? `; and ${String(items.length - NAMED_GROUPS)} more` : ""}`;
+  describeBoundedList(boundedList(items, NAMED_GROUPS), "; ");
 
 /** Recognize a file only by a complete first block with all three magic numbers. */
 export const hasUf2Block = (prefix: Uint8Array): boolean =>
@@ -139,9 +145,11 @@ const numberingFacts = (groups: Iterable<NumberingGroup>): NumberingFacts => {
       missing += group.declared - seen;
       absent.push(`${name} has ${String(seen)} of them`);
     }
-    // Every seen number holds one address unless another copy was seen.
+    if (group.further.size === 0) continue;
+    // Compare only numbers with an address. Comment values cannot distinguish copies.
     let most = 1;
-    let fewest = group.further.size < seen ? 1 : Number.MAX_SAFE_INTEGER;
+    let fewest =
+      group.further.size < group.addressedNumbers ? 1 : Number.MAX_SAFE_INTEGER;
     for (const further of group.further.values()) {
       most = Math.max(most, further.size + 1);
       fewest = Math.min(fewest, further.size + 1);
@@ -160,7 +168,7 @@ class StreamingUf2Decoder implements RegionDecoder<Uf2Image> {
   readonly #groups = new Map<string, NumberingGroup>();
   readonly #families = new Set<number>();
   #arena: Uint8Array;
-  #arenaUsed = 0;
+  #arenaWriteOffset = 0;
   #blockLength = 0;
   #blockCount = 0;
   #invalid = 0;
@@ -226,7 +234,11 @@ class StreamingUf2Decoder implements RegionDecoder<Uf2Image> {
     const index = this.#blockCount;
     this.#blockCount += 1;
     const flags = readUint32(block, 8);
-    const address = readUint32(block, 12);
+    const fileContainer = (flags & UF2_FLAG_FILE_CONTAINER) !== 0;
+    // File-container blocks use the address field as a file offset. Pure
+    // nonflash blocks do not establish an address range.
+    const nonflash = !fileContainer && (flags & UF2_FLAG_NOT_MAIN_FLASH) !== 0;
+    const address = nonflash ? null : readUint32(block, 12);
     const size = readUint32(block, 16);
     const fault =
       readUint32(block, 0) !== UF2_MAGIC_START0 ||
@@ -236,9 +248,12 @@ class StreamingUf2Decoder implements RegionDecoder<Uf2Image> {
           ? "end magic number does not match"
           : size > UF2_DATA_BYTES
             ? `payload size ${String(size)} exceeds the ${String(UF2_DATA_BYTES)}-byte data area`
-            : address + size > ADDRESS_SPACE
-              ? `payload at ${hex32(address)} with ${String(size)} bytes wraps past 0xffffffff`
-              : undefined;
+            : (flags & UF2_FLAG_MD5) !== 0 &&
+                size > UF2_DATA_BYTES - UF2_MD5_BYTES
+              ? "payload overlaps the reserved MD5 checksum metadata"
+              : address !== null && address + size > ADDRESS_SPACE
+                ? `payload at ${hex32(address)} with ${String(size)} bytes wraps past 0xffffffff`
+                : undefined;
     if (fault !== undefined) {
       this.#invalid += 1;
       this.#firstInvalid ??= { block: index, reason: fault };
@@ -255,11 +270,11 @@ class StreamingUf2Decoder implements RegionDecoder<Uf2Image> {
       address,
     );
     // The file-container flag overrides not-main-flash: such blocks hold files.
-    if ((flags & UF2_FLAG_FILE_CONTAINER) !== 0) {
+    if (fileContainer) {
       this.#fileContainer += 1;
       return ok(undefined);
     }
-    if ((flags & UF2_FLAG_NOT_MAIN_FLASH) !== 0) {
+    if (address === null) {
       this.#notMainFlash += 1;
       this.#notMainFlashBytes += size;
       return ok(undefined);
@@ -279,7 +294,7 @@ class StreamingUf2Decoder implements RegionDecoder<Uf2Image> {
     familyId: number | null,
     declared: number,
     blockNo: number,
-    address: number,
+    address: number | null,
   ): void {
     if (declared === 0 || blockNo >= declared) {
       this.#outOfRange += 1;
@@ -292,23 +307,24 @@ class StreamingUf2Decoder implements RegionDecoder<Uf2Image> {
         familyId,
         declared,
         first: new Map(),
+        addressedNumbers: 0,
         further: new Map(),
         previous: -1,
       };
       this.#groups.set(key, group);
     }
     const first = group.first.get(blockNo);
-    if (first === undefined) group.first.set(blockNo, address);
-    else {
-      this.#repeated += 1;
-      if (first !== address) {
-        let further = group.further.get(blockNo);
-        if (further === undefined) {
-          further = new Set();
-          group.further.set(blockNo, further);
-        }
-        further.add(address);
+    if (first !== undefined) this.#repeated += 1;
+    if (first === undefined || (first === null && address !== null)) {
+      group.first.set(blockNo, address);
+      if (address !== null) group.addressedNumbers += 1;
+    } else if (address !== null && first !== address) {
+      let further = group.further.get(blockNo);
+      if (further === undefined) {
+        further = new Set();
+        group.further.set(blockNo, further);
       }
+      further.add(address);
     }
     if (blockNo <= group.previous) this.#outOfOrder += 1;
     group.previous = blockNo;
@@ -321,7 +337,7 @@ class StreamingUf2Decoder implements RegionDecoder<Uf2Image> {
     data: Uint8Array,
   ): Result<void, RegionDecodeFailure> {
     if (data.length === 0) return ok(undefined);
-    if (this.#arenaUsed + data.length > this.#arena.length)
+    if (this.#arenaWriteOffset + data.length > this.#arena.length)
       return err({
         kind: "limit",
         boundary: "file-size",
@@ -340,14 +356,14 @@ class StreamingUf2Decoder implements RegionDecoder<Uf2Image> {
       this.#runs.push({
         familyId,
         address,
-        offset: this.#arenaUsed,
+        offset: this.#arenaWriteOffset,
         length: data.length,
         blockCount: 1,
         firstFileBlock: block,
         lastFileBlock: block,
       });
-    this.#arena.set(data, this.#arenaUsed);
-    this.#arenaUsed += data.length;
+    this.#arena.set(data, this.#arenaWriteOffset);
+    this.#arenaWriteOffset += data.length;
     return ok(undefined);
   }
 
@@ -471,5 +487,5 @@ const conflict = ({
   incoming,
 }: RunConflict<BlockRun>): RegionDecodeFailure => ({
   kind: "format",
-  message: `${familyText(run.familyId)} address ${hex32(address)} is written with different values by ${blockSpan(writer)} (0x${existing.toString(16).padStart(2, "0")}) and ${blockSpan(run)} (0x${incoming.toString(16).padStart(2, "0")})`,
+  message: `${familyText(run.familyId)} address ${hex32(address)} is written with different values by ${blockSpan(writer)} (0x${byteToHex(existing)}) and ${blockSpan(run)} (0x${byteToHex(incoming)})`,
 });

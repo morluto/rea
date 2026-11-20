@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { inspectIdaRegistration } from "./IdaDoctor.js";
 import { providerRegistrationEnvironment } from "../application/SetupRegistrationEnvironment.js";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 
 const resourceScope: RetainedResourceScope = {
   retain: () => undefined,
@@ -35,7 +35,9 @@ it.each([true, false])(
     const before = (await readdir(root)).sort();
     const inspection = await inspectIdaRegistration(path, resourceScope);
     const after = (await readdir(root)).sort();
-    expect(inspection.available).toBe(exists);
+    // Windows folds `missing/..` before the filesystem sees it, as workspace
+    // allocation does, so only POSIX needs the traversed directory to exist.
+    expect(inspection.available).toBe(exists || process.platform === "win32");
     expect(
       inspection.checks.find(({ name }) => name === "private_workspace")
         ?.detail,

@@ -1,28 +1,23 @@
 import { readFile } from "node:fs/promises";
 
+import { Generic } from "release-please/build/src/updaters/generic.js";
 import { GenericJson } from "release-please/build/src/updaters/generic-json.js";
 import { Version } from "release-please/build/src/version.js";
 import { describe, expect, it } from "vitest";
 
 import { SUPPORTED_NODE_VERSION_RANGE } from "../../src/domain/runtimeVersion.js";
-import { MCP_STARTUP_POLICY } from "../../src/mcpStartupPolicy.js";
+import { MCP_STARTUP_POLICY } from "../../src/config/mcpStartupPolicy.js";
 
 const readJson = async (path: string): Promise<unknown> =>
   JSON.parse(await readFile(path, "utf8")) as unknown;
 
-// Each file lists a fragment of every example Release Please must keep
-// current, so a lost marker is caught as well as a stale version.
-const versionedDocumentation = [
-  {
-    path: "docs/getting-started/installation.md",
-    examples: ["doctor --provider ghidra --json"],
-  },
-] as const;
 const pluginManifests = [
   ".claude-plugin/plugin.json",
   ".codex-plugin/plugin.json",
 ] as const;
 const pluginServerConfig = ".codex-plugin/mcp.json";
+const cursorPluginManifest = ".cursor-plugin/plugin.json";
+const cursorPluginServer = "mcp.json";
 
 describe("release configuration", () => {
   it("keeps doctor and setup runtime support aligned with package engines", async () => {
@@ -30,92 +25,6 @@ describe("release configuration", () => {
       engines: { node: SUPPORTED_NODE_VERSION_RANGE },
     });
   });
-
-  it("updates every package-version artifact in release PRs", async () => {
-    const configuration = await readJson("release-please-config.json");
-
-    expect(configuration).toMatchObject({
-      versioning: "always-bump-minor",
-      packages: {
-        ".": {
-          "extra-files": [
-            ...versionedDocumentation.map(({ path }) => ({
-              type: "generic",
-              path,
-            })),
-            {
-              type: "generic",
-              path: "src/generatedPackageMetadata.ts",
-            },
-            {
-              type: "json",
-              path: "server.json",
-              jsonpath: "$.version",
-            },
-            {
-              type: "json",
-              path: "server.json",
-              jsonpath: "$.packages[0].version",
-            },
-            ...pluginManifests.flatMap((path) => [
-              {
-                type: "json",
-                path,
-                jsonpath: "$.version",
-              },
-              ...(path.startsWith(".claude")
-                ? [
-                    {
-                      type: "json",
-                      path,
-                      jsonpath: "$.mcpServers.rea.args[1]",
-                    },
-                  ]
-                : []),
-            ]),
-            {
-              type: "json",
-              path: pluginServerConfig,
-              jsonpath: "$.mcpServers.rea.args[1]",
-            },
-            ...[
-              ".claude-plugin/marketplace.json",
-              ".agents/plugins/marketplace.json",
-            ].map((path) => ({
-              type: "json",
-              path,
-              jsonpath: "$.plugins[0].source.version",
-            })),
-          ],
-        },
-      },
-    });
-  });
-
-  it.each(versionedDocumentation)(
-    "marks every versioned package example in $path",
-    async ({ path, examples }) => {
-      const content = await readFile(path, "utf8");
-      const packageJson = (await readJson("package.json")) as {
-        version: string;
-      };
-      const versionBlocks = [
-        ...content.matchAll(
-          /<!-- x-release-please-start-version -->[\s\S]*?<!-- x-release-please-end -->/gu,
-        ),
-      ].map(([block]) => block);
-
-      for (const example of examples)
-        expect(
-          versionBlocks.filter((block) => block.includes(example)),
-          example,
-        ).toHaveLength(1);
-      for (const block of versionBlocks)
-        expect(new Set(block.match(/rea-agents@[^\s"`]+/gu))).toEqual(
-          new Set([`rea-agents@${packageJson.version}`]),
-        );
-    },
-  );
 
   it("keeps the release baseline, lockfile, and changelog aligned with the package version", async () => {
     const packageJson = (await readJson("package.json")) as {
@@ -184,6 +93,9 @@ describe("plugin manifests", () => {
       expect.arrayContaining([
         ...pluginManifests,
         pluginServerConfig,
+        cursorPluginManifest,
+        ".cursor-plugin/skills",
+        cursorPluginServer,
         "skills",
       ]),
     );
@@ -224,82 +136,148 @@ describe("plugin manifests", () => {
   );
 });
 
-describe("plugin release pins", () => {
-  it("advances every plugin pin through Release Please JSON extra-files", async () => {
-    const packageJson = (await readJson("package.json")) as {
-      version: string;
-    };
-    const currentVersion = Version.parse(packageJson.version);
-    const nextVersion = `${currentVersion.major}.${currentVersion.minor + 1}.0`;
-    const version = Version.parse(nextVersion);
-    const config = (await readJson("release-please-config.json")) as {
-      packages: {
-        ".": {
-          "extra-files": Array<{
-            type: string;
-            path: string;
-            jsonpath?: string;
-          }>;
-        };
+describe("Cursor Marketplace release pin", () => {
+  it("pins the server to the npm release without an inline MCP override", async () => {
+    const packageJson = (await readJson("package.json")) as { version: string };
+    expect(await readJson(cursorPluginManifest)).toMatchObject({
+      version: packageJson.version,
+      skills: ".cursor-plugin/skills",
+      logo: "assets/rea-plugin.png",
+    });
+    expect(await readJson(cursorPluginServer)).toEqual({
+      mcpServers: {
+        rea: {
+          command: "npx",
+          args: ["-y", `rea-agents@${packageJson.version}`, "mcp"],
+        },
+      },
+    });
+    expect(await readJson(cursorPluginManifest)).not.toHaveProperty(
+      "mcpServers",
+    );
+  });
+});
+
+it("advances the version exposed in metadata, installation examples, and plugin launches", async () => {
+  const packageJson = (await readJson("package.json")) as {
+    version: string;
+  };
+  const currentVersion = Version.parse(packageJson.version);
+  const nextVersion = `${currentVersion.major}.${currentVersion.minor + 1}.0`;
+  const version = Version.parse(nextVersion);
+  const config = (await readJson("release-please-config.json")) as {
+    versioning: string;
+    packages: {
+      ".": {
+        "extra-files": Array<{
+          type: string;
+          path: string;
+          jsonpath?: string;
+        }>;
       };
     };
-    const updated = new Map<string, string>();
+  };
+  expect(config.versioning).toBe("always-bump-minor");
+  const updated = new Map<string, string>();
 
-    for (const extraFile of config.packages["."]["extra-files"]) {
-      if (extraFile.type !== "json" || extraFile.jsonpath === undefined)
-        continue;
-      const content =
-        updated.get(extraFile.path) ?? (await readFile(extraFile.path, "utf8"));
-      updated.set(
-        extraFile.path,
-        new GenericJson(extraFile.jsonpath, version).updateContent(content),
+  for (const extraFile of config.packages["."]["extra-files"]) {
+    const updater =
+      extraFile.type === "generic"
+        ? new Generic({ version })
+        : extraFile.type === "json" && extraFile.jsonpath !== undefined
+          ? new GenericJson(extraFile.jsonpath, version)
+          : undefined;
+    if (updater === undefined) continue;
+    const content =
+      updated.get(extraFile.path) ?? (await readFile(extraFile.path, "utf8"));
+    updated.set(extraFile.path, updater.updateContent(content));
+  }
+
+  const installation = "docs/getting-started/installation.md";
+  const installationBefore = await readFile(installation, "utf8");
+  const installationAfter = updated.get(installation) ?? "";
+  for (const example of [
+    /npx -y rea-agents@(\S+) doctor --provider ghidra --json/gu,
+    /"command":\s*"npx",\s*"args":\s*\["-y",\s*"rea-agents@([^"]+)",\s*"mcp"\]/gu,
+  ]) {
+    expect(
+      [...installationBefore.matchAll(example)].map((match) => match[1]),
+    ).toEqual([packageJson.version]);
+    expect(
+      [...installationAfter.matchAll(example)].map((match) => match[1]),
+    ).toEqual([nextVersion]);
+  }
+  for (const [content, pin] of [
+    [installationBefore, packageJson.version],
+    [installationAfter, nextVersion],
+  ] as const) {
+    for (const [block] of content.matchAll(
+      /<!-- x-release-please-start-version -->[\s\S]*?<!-- x-release-please-end -->/gu,
+    ))
+      expect(new Set(block.match(/rea-agents@[^\s"`]+/gu))).toEqual(
+        new Set([`rea-agents@${pin}`]),
       );
-    }
-
-    const updatedJson = new Map<string, unknown>(
-      [...updated].map(
-        ([path, content]) => [path, JSON.parse(content) as unknown] as const,
-      ),
-    );
-    expect(updatedJson.get(".claude-plugin/plugin.json")).toMatchObject({
-      version: nextVersion,
-      mcpServers: {
-        rea: {
-          args: [
-            "${CLAUDE_PLUGIN_ROOT}/scripts/plugin-mcp-launcher.mjs",
-            nextVersion,
-          ],
-        },
-      },
-    });
-    expect(updatedJson.get(".codex-plugin/plugin.json")).toMatchObject({
-      version: nextVersion,
-    });
-    expect(updatedJson.get(pluginServerConfig)).toMatchObject({
-      mcpServers: {
-        rea: {
-          args: ["./scripts/plugin-mcp-launcher.mjs", nextVersion],
-          startup_timeout_sec: 30,
-        },
-      },
-    });
-    for (const path of [
-      ".claude-plugin/marketplace.json",
-      ".agents/plugins/marketplace.json",
-    ])
-      expect(updatedJson.get(path)).toMatchObject({
-        plugins: [
-          {
-            source: {
-              source: "npm",
-              package: "rea-agents",
-              version: nextVersion,
-            },
-          },
-        ],
-      });
+  }
+  expect(updated.get("src/generatedPackageMetadata.ts")).toContain(
+    `version: "${nextVersion}"`,
+  );
+  const updatedJson = (path: string): unknown =>
+    JSON.parse(updated.get(path) ?? "null") as unknown;
+  expect(updatedJson("server.json")).toMatchObject({
+    version: nextVersion,
+    packages: [{ identifier: "rea-agents", version: nextVersion }],
   });
+  expect(updatedJson(".claude-plugin/plugin.json")).toMatchObject({
+    version: nextVersion,
+    mcpServers: {
+      rea: {
+        args: [
+          "${CLAUDE_PLUGIN_ROOT}/scripts/plugin-mcp-launcher.mjs",
+          nextVersion,
+        ],
+      },
+    },
+  });
+  expect(updatedJson(".codex-plugin/plugin.json")).toMatchObject({
+    version: nextVersion,
+  });
+  expect(updatedJson(pluginServerConfig)).toMatchObject({
+    mcpServers: {
+      rea: {
+        args: ["./scripts/plugin-mcp-launcher.mjs", nextVersion],
+      },
+    },
+  });
+  expect(updatedJson(cursorPluginManifest)).toMatchObject({
+    version: nextVersion,
+    skills: ".cursor-plugin/skills",
+  });
+  expect(updatedJson(cursorPluginServer)).toMatchObject({
+    mcpServers: {
+      rea: {
+        command: "npx",
+        args: ["-y", `rea-agents@${nextVersion}`, "mcp"],
+      },
+    },
+  });
+  for (const path of [
+    ".claude-plugin/marketplace.json",
+    ".agents/plugins/marketplace.json",
+  ])
+    expect(updatedJson(path)).toMatchObject({
+      plugins: [
+        {
+          source: {
+            source: "npm",
+            package: "rea-agents",
+            version: nextVersion,
+          },
+        },
+      ],
+    });
+});
 
+describe("plugin release pins", () => {
   it("pins the plugin server launch from the shared MCP declaration", async () => {
     const packageJson = (await readJson("package.json")) as {
       version: string;
@@ -316,17 +294,19 @@ describe("plugin release pins", () => {
     });
   });
 
-  it.each([...pluginManifests, pluginServerConfig])(
-    "stores %s in the form Release Please rewrites it to",
-    async (path) => {
-      // Release Please reserializes JSON extra-files, so any other layout
-      // would change formatting in every release PR.
-      const content = await readFile(path, "utf8");
+  it.each([
+    ...pluginManifests,
+    pluginServerConfig,
+    cursorPluginManifest,
+    cursorPluginServer,
+  ])("stores %s in the form Release Please rewrites it to", async (path) => {
+    // Release Please reserializes JSON extra-files, so any other layout
+    // would change formatting in every release PR.
+    const content = await readFile(path, "utf8");
 
-      expect(content).toBe(`${JSON.stringify(JSON.parse(content), null, 2)}
+    expect(content).toBe(`${JSON.stringify(JSON.parse(content), null, 2)}
 `);
-    },
-  );
+  });
 
   it("declares the interface fields Codex plugin validation requires", async () => {
     const manifest = (await readJson(".codex-plugin/plugin.json")) as {

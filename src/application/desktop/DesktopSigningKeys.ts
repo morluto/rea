@@ -1,8 +1,8 @@
 import type { DesktopApplicationInventory } from "../../domain/desktop/desktopCapture.js";
 import type {
-  DesktopContentStore,
+  CaptureContentStore,
   RetainOutcome,
-} from "../../desktop/DesktopContentStore.js";
+} from "../../ports/CaptureContentStore.js";
 
 const OMITTED: Readonly<
   Record<Extract<RetainOutcome, { kind: "omitted" }>["reason"], string>
@@ -18,7 +18,7 @@ const OMITTED: Readonly<
 export const retainSigningKeys = async (
   inventory: DesktopApplicationInventory,
   keys: ReadonlyMap<string, Buffer>,
-  store: Pick<DesktopContentStore, "retainBytes">,
+  store: Pick<CaptureContentStore, "retainBytes">,
 ): Promise<DesktopApplicationInventory> => {
   const omitted = new Map<string, string>();
   for (const [sha256, bytes] of keys) {

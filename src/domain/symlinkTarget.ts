@@ -1,10 +1,11 @@
+import { isStrictUtf8 } from "./strictUtf8.js";
+
 /** Preserve stored bytes; undecodable targets have no invented text spelling. */
 export const observedSymlinkTarget = (
   raw: Buffer,
 ): { text: string | null; hex: string } => {
-  const decoded = raw.toString("utf8");
   return {
-    text: Buffer.from(decoded, "utf8").equals(raw) ? decoded : null,
+    text: isStrictUtf8(raw) ? raw.toString("utf8") : null,
     hex: raw.toString("hex"),
   };
 };

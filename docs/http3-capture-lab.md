@@ -174,7 +174,9 @@ Official references: [mitmproxy protocol support](https://github.com/mitmproxy/m
 
 ## Verifier regressions
 
-After building REA, run these inside the same isolated guest:
+The built process-boundary test suite runs the Node verifier regressions on
+POSIX hosts. To run them directly after building REA, and to run the Python
+laboratory regressions with its pinned dependencies, use the isolated guest:
 
 ```sh
 node --test scripts/lib/http3-verifier-lifecycle.test.mjs scripts/lib/http3-capture-assertions.test.mjs

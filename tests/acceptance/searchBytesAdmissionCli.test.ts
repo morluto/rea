@@ -9,6 +9,7 @@ cliTest.for([
   { pattern: "ZZ", mask: undefined, field: "pattern" },
   { pattern: "", mask: undefined, field: "pattern" },
   { pattern: "AB", mask: "FFFF", field: "mask" },
+  { pattern: "AB", mask: "00", field: "pattern" },
 ])(
   "reports query correction before target refusal ($pattern/$mask)",
   async ({ pattern, mask, field }, { cli }) => {

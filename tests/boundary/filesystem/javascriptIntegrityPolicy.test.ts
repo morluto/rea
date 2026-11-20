@@ -185,7 +185,7 @@ it("rejects a nested ASAR introduced after inventory as artifact drift", async (
       readJavaScriptArtifactFiles(reader, snapshot),
     ).rejects.toMatchObject({
       reason: "integrity",
-      message: "Nested ASAR was not present in inventory: new.asar",
+      integrityCheck: "inventory-node",
     });
   } finally {
     await reader.close();

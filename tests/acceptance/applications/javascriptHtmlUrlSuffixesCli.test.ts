@@ -47,6 +47,17 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         resolved: "assets/app.js",
       },
       {
+        source: "views/root-base.html",
+        base: "/assets/",
+        script: "app.js?v=1",
+        resolved: "assets/app.js",
+      },
+      {
+        source: "views/document-relative.html",
+        script: "./app.js?v=1",
+        resolved: "views/app.js",
+      },
+      {
         source: "base-self.html",
         base: "assets/app.js?redirect=%5Croot",
         script: "?redirect=%2Ffoo",
@@ -89,6 +100,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       ),
       "app.js": "globalThis.rootApp = true;",
       "assets/app.js": "globalThis.nestedApp = true;",
+      "views/app.js": "globalThis.viewApp = true;",
     });
 
     const result = await analyzeJavaScriptDirectory(surface, cli, root);

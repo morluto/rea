@@ -1,4 +1,4 @@
-import { Ajv2020 } from "ajv/dist/2020.js";
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { expect, it, onTestFinished } from "vitest";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
@@ -66,15 +66,19 @@ const inspectSourceCoordinates = async (position: {
     target_id: "allowed-page",
     observation_ms: 0,
   };
-  const page = await client.callTool({
-    name: "inspect_web_page",
-    arguments: args,
-  });
-  const tools = await client.callTool({
-    name: "discover_webmcp_tools",
-    arguments: args,
-  });
-  return { client, page, tools };
+  const definitions = (await client.listTools()).tools;
+  const call = async (name: "inspect_web_page" | "discover_webmcp_tools") => {
+    const toolDefinition = definitions.find((tool) => tool.name === name);
+    if (toolDefinition === undefined)
+      throw new Error(`Missing advertised output schema: ${name}`);
+    return client.callTool(
+      { name, arguments: args },
+      { toolDefinition: withCanonicalOutputSchema(toolDefinition) },
+    );
+  };
+  const page = await call("inspect_web_page");
+  const tools = await call("discover_webmcp_tools");
+  return { page, tools };
 };
 
 it("reports malformed source coordinates as unknown through MCP", async () => {
@@ -126,29 +130,15 @@ it("reports malformed source coordinates as unknown through MCP", async () => {
       },
     },
   });
-}, 20_000);
+});
 
 it("keeps a negative column Chrome reports in passive source locations", async () => {
-  const { client, page, tools } = await inspectSourceCoordinates({
+  const { page, tools } = await inspectSourceCoordinates({
     lineNumber: 21,
     columnNumber: -40,
   });
-  const advertised = (await client.listTools()).tools;
-  const ajv = new Ajv2020({ strict: false, validateFormats: false });
-  for (const [name, response] of [
-    ["inspect_web_page", page],
-    ["discover_webmcp_tools", tools],
-  ] as const) {
+  for (const response of [page, tools]) {
     expect(response.isError).not.toBe(true);
-    const outputSchema: Record<string, unknown> | undefined = advertised.find(
-      (tool) => tool.name === name,
-    )?.outputSchema;
-    if (outputSchema === undefined)
-      throw new Error(`Missing advertised output schema: ${name}`);
-    expect(
-      ajv.validate(outputSchema, response.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
   }
   const location = { line: 21, column: -40 };
   expect(page.structuredContent).toMatchObject({
@@ -192,4 +182,4 @@ it("keeps a negative column Chrome reports in passive source locations", async (
         },
       },
     });
-}, 20_000);
+});

@@ -1,9 +1,9 @@
 import type { ObjcSwiftMetadata } from "../domain/native/objcSwiftMetadata.js";
-import type { PointerFixups } from "./AppleMachoFixups.js";
+import type { PointerFixups } from "../domain/apple/appleMachoFixups.js";
 import type {
   DecodeIssue,
   FacetDecodeFacts,
-} from "./AppleDispatchDecodeFacts.js";
+} from "../domain/apple/appleDispatchDecodeFacts.js";
 
 const describeFixups = (fixups: PointerFixups): string => {
   const descriptions: string[] = [];

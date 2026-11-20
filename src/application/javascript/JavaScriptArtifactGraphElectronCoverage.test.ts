@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
@@ -7,14 +8,16 @@ import { moduleResolutionModeForJavaScriptReference } from "../../domain/javascr
 import { analyzeParsedJavaScriptSemanticsSteps } from "../../domain/javascript/javascriptSemanticAnalysis.js";
 import { parseJavaScriptSource } from "../../domain/javascript/javascriptSourceParser.js";
 import { analyzeParsedJavaScriptStaticSourceSteps } from "../../domain/javascript/javascriptStaticAnalysis.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import type {
   AnalyzedJavaScriptArtifactFile,
   JavaScriptArtifactAnalysis,
 } from "./JavaScriptArtifactAnalysisTypes.js";
+import { javascriptArtifactAnalysisScopes } from "./JavaScriptArtifactAnalysisTypes.js";
 import { completeJavaScriptAnalysisSteps } from "./JavaScriptAnalysisControl.js";
 import { buildImmutableJavaScriptArtifactGraphSteps as buildGraph } from "./JavaScriptArtifactGraphBuilder.js";
 import { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
-import { electronModuleReferenced } from "./ElectronBoundaryAnalysis.js";
 
 const SHA256 = "a".repeat(64);
 const PATH = "main.js";
@@ -86,10 +89,19 @@ const graphFor = async (
   electronSemantics: string | undefined;
 }> => {
   const base = await analyzedEntry(source, path);
-  const entry = mutate === undefined ? base : mutate(base);
+  return graphForEntries([mutate === undefined ? base : mutate(base)]);
+};
+
+const graphForEntries = (
+  entries: readonly AnalyzedJavaScriptArtifactFile[],
+): {
+  limitations: readonly string[];
+  electronSemantics: string | undefined;
+  browserWindows: number;
+} => {
   const analysis: JavaScriptArtifactAnalysis = {
     jsonDocuments: new JavaScriptJsonDocuments(),
-    files: [entry],
+    files: [...entries],
     packages: [],
     json_modules: [],
     html_scripts: [],
@@ -102,10 +114,10 @@ const graphFor = async (
     limitations: [],
   };
   const fileSet = {
-    files: [entry.file],
+    files: entries.map(({ file }) => file),
     unavailable_relevant_files: [],
     containers: [],
-    text_bytes_read: entry.file.bytes,
+    text_bytes_read: entries.reduce((total, { file }) => total + file.bytes, 0),
     invalid_utf8_files: 0,
   };
   const steps = buildGraph(snapshot, fileSet, analysis);
@@ -114,13 +126,30 @@ const graphFor = async (
   return {
     limitations: next.value.graph.limitations,
     electronSemantics: next.value.electronSummary.electron_semantics,
+    browserWindows: next.value.electronSummary.browser_windows,
   };
 };
 
 describe("Electron semantic coverage", () => {
+  it.each(["main.js", "main.MJS"])(
+    "does not present candidate Electron boundaries as proven coverage for %s",
+    async (path) => {
+      const { limitations, electronSemantics } = await graphFor(
+        'const { BrowserWindow } = require("electron"); new BrowserWindow();',
+        undefined,
+        path,
+      );
+      expect(electronSemantics).toBeUndefined();
+      expect(limitations.join(" ")).toContain("Conditional Electron findings");
+      expect(limitations).not.toContain(EMPTY_COVERAGE);
+    },
+  );
+
   it("reports empty Electron coverage when the module is referenced but nothing is recovered", async () => {
     const { limitations, electronSemantics } = await graphFor(
       `const { app } = require("electron");\napp.whenReady();\n`,
+      undefined,
+      "main.cjs",
     );
     expect(limitations).toContain(EMPTY_COVERAGE);
     expect(electronSemantics).toBe("empty");
@@ -129,6 +158,8 @@ describe("Electron semantic coverage", () => {
   it("reports idle-coverage limits, not empty coverage, once a boundary fact is recovered", async () => {
     const { limitations, electronSemantics } = await graphFor(
       `const { ipcMain } = require("electron");\nipcMain.handle("ping", () => 1);\n`,
+      undefined,
+      "main.cjs",
     );
     expect(limitations).not.toContain(EMPTY_COVERAGE);
     expect(limitations).toContainEqual(
@@ -147,30 +178,21 @@ describe("Electron semantic coverage", () => {
     expect(electronSemantics).toBeUndefined();
   });
 
-  it("does not count a type-only Electron import as boundary coverage", () => {
-    // A `.js` fixture cannot carry `import type`, so the module predicate is
-    // exercised directly here.
-    const analysisWith = (
-      kind: "require" | "type-import",
-    ): JavaScriptArtifactAnalysis =>
-      ({
-        files: [
-          {
-            file: fileFor(""),
-            javascript: null,
-            semantic: {
-              ir: { moduleLinks: [{ kind, specifier: "electron" }] },
-            },
-          },
-        ],
-      }) as unknown as JavaScriptArtifactAnalysis;
-    expect(electronModuleReferenced(analysisWith("require"))).toBe(true);
-    expect(electronModuleReferenced(analysisWith("type-import"))).toBe(false);
+  it("does not count a type-only Electron import as boundary coverage", async () => {
+    const result = await graphFor(
+      'import type { BrowserWindow } from "electron";\nexport type Window = BrowserWindow;\n',
+      undefined,
+      "main.ts",
+    );
+    expect(result.electronSemantics).toBeUndefined();
+    expect(result.limitations).not.toContain(EMPTY_COVERAGE);
   });
 
   it("matches a supported Electron subpath and ignores an unrelated package", async () => {
     const subpath = await graphFor(
       `const { app } = require("electron/main");\napp.whenReady();\n`,
+      undefined,
+      "main.cjs",
     );
     expect(subpath.electronSemantics).toBe("empty");
     const unrelated = await graphFor(
@@ -193,6 +215,7 @@ describe("Electron semantic coverage", () => {
           limits: null,
         },
       }),
+      "main.cjs",
     );
     expect(electronSemantics).toBe("empty");
     expect(limitations).toContain(EMPTY_COVERAGE);
@@ -207,6 +230,7 @@ describe("Electron semantic coverage", () => {
         ...entry,
         semantic: null,
       }),
+      "main.cjs",
     );
     expect(electronSemantics).toBe("empty");
   });
@@ -243,30 +267,19 @@ it("does not count a whole type-only import when semantics are skipped", async (
   expect(electronSemantics).toBeUndefined();
 });
 
-it("does not treat a worker URL path as an Electron module", async () => {
-  // `new Worker(new URL("electron", import.meta.url))` records a `worker`
-  // reference whose specifier is a path relative to the importing source.
-  const { electronSemantics } = await graphFor(
-    `const worker = new Worker(new URL("electron", import.meta.url));\n`,
-    (entry) => ({ ...entry, semantic: null }),
-  );
-  expect(electronSemantics).toBeUndefined();
-});
-
-it("reports the same Electron applicability as the retained static fact", async () => {
-  // `analysis_coverage.applicability.electron` is the domain owner of the same
-  // question, so a worker URL path must be unknown for both outputs.
-
+it("retains an electron-named worker URL without claiming Electron coverage", async () => {
   const entry = await analyzedEntry(
     `const worker = new Worker(new URL("electron", import.meta.url));\n`,
   );
-  expect(entry.javascript?.analysis_coverage?.applicability.electron).toBe(
+  expect(entry.javascript?.references).toContainEqual(
+    expect.objectContaining({ kind: "worker", specifier: "electron" }),
+  );
+  expect(entry.javascript?.analysis_coverage.applicability.electron).toBe(
     "unknown",
   );
-  const graph = await graphFor(
-    `const worker = new Worker(new URL("electron", import.meta.url));\n`,
-  );
+  const graph = graphForEntries([{ ...entry, semantic: null }]);
   expect(graph.electronSemantics).toBeUndefined();
+  expect(graph.limitations).not.toContain(EMPTY_COVERAGE);
 });
 
 it("does not count a resolve-only Electron reference as coverage", async () => {
@@ -304,6 +317,8 @@ it("classifies a bundle module by its loader, not by its name", async () => {
         `100:(e,t,n)=>{"use strict";const s=n(45840);s.ipcMain.handle("x",()=>1)}`,
       `n(100);`,
     ),
+    undefined,
+    "main.cjs",
   );
   expect(external.electronSemantics).toBe("recovered");
 
@@ -315,6 +330,228 @@ it("classifies a bundle module by its loader, not by its name", async () => {
         `100:(e,t,n)=>{"use strict";const s=n("electron");s.ipcMain.handle("x",()=>1)}`,
       `n(100);`,
     ),
+    undefined,
+    "main.cjs",
   );
   expect(externalUnderKey.electronSemantics).toBe("recovered");
+});
+
+it("reports partial coverage when an Electron source was dropped for the result budget", async () => {
+  // #9321: IPC handlers from an admitted source were reported while the
+  // window source's projection was rejected, so zero windows is unknown.
+  const reported = await analyzedEntry(
+    `const electron = require("electron");\nelectron.ipcMain.handle("ping", () => "pong");\n`,
+    "out/main/ipc.cjs",
+  );
+  const window = await analyzedEntry(
+    `const electron = require("electron");\nnew electron.BrowserWindow({ webPreferences: { contextIsolation: true } });\n`,
+    "out/main/window.cjs",
+  );
+  expect(window.javascript?.electron.browser_windows).toHaveLength(1);
+  const complete = graphForEntries([reported, window]);
+  expect(complete.electronSemantics).toBe("recovered");
+  expect(complete.browserWindows).toBe(1);
+
+  const notStarted = new AnalysisResourceConstraintError(
+    "analyze_javascript_application",
+    "memory",
+    "semantic analysis of out/main/window.cjs was not started",
+    { semantic_result_budget_bytes: 0 },
+  );
+  const dropped: AnalyzedJavaScriptArtifactFile[] = [
+    {
+      ...window,
+      application_projection_failure: {
+        reason: "result budget exhausted",
+        error: projectAnalysisError(notStarted),
+        limits: null,
+      },
+    },
+    {
+      ...window,
+      semantic: null,
+      analysis_failure: {
+        scope: javascriptArtifactAnalysisScopes.javascript,
+        status: "interrupted",
+        reason: `out/main/window.cjs: ${notStarted.message}`,
+        error: projectAnalysisError(notStarted),
+        limits: notStarted.reportedLimits,
+      },
+    },
+  ];
+  for (const entry of dropped) {
+    const partial = graphForEntries([reported, entry]);
+    expect(partial.electronSemantics).toBe("partial");
+    expect(partial.limitations).not.toContain(EMPTY_COVERAGE);
+    expect(partial.limitations).toContainEqual(
+      expect.stringContaining(
+        "Electron boundary facts are partial: 1 Electron-loading source(s)",
+      ),
+    );
+  }
+});
+
+it("reports partial coverage when a successful static pass stopped at a limit", async () => {
+  // The wrapper expansion budget ends Electron call-path discovery without
+  // failing the worker, so no failure field marks the source as incomplete.
+  const { electronSemantics, limitations } = await graphFor(
+    `const electron = require("electron");\nelectron.ipcMain.handle("ping", () => "pong");\n`,
+    (entry) => {
+      const javascript = entry.javascript!;
+      const coverage = javascript.analysis_coverage;
+      return {
+        ...entry,
+        javascript: {
+          ...javascript,
+          analysis_coverage: {
+            ...coverage,
+            examination: {
+              ...coverage.examination,
+              status: "limited",
+              electron_call_paths_limited: true,
+            },
+          },
+        },
+      };
+    },
+    "main.cjs",
+  );
+  expect(electronSemantics).toBe("partial");
+  expect(limitations).toContainEqual(
+    expect.stringContaining(
+      "Electron boundary facts are partial: 1 Electron-loading source(s)",
+    ),
+  );
+});
+
+it("does not treat a CommonJS wrapper redeclaration as another application owner", async () => {
+  const digest = (value: string) =>
+    createHash("sha256").update(value).digest("hex");
+  const textFile = (
+    path: string,
+    source: string,
+    kind: JavaScriptArtifactFile["kind"],
+  ): JavaScriptArtifactFile => ({
+    path,
+    container_sha256: SHA256,
+    sha256: digest(path + source),
+    bytes: source.length,
+    inventory_artifact_id: `art_${digest(path)}`,
+    kind,
+    unpacked: false,
+    text: { included: true, value: source },
+  });
+  const files = [
+    textFile(
+      "a/package.json",
+      JSON.stringify({ main: "main.cjs" }),
+      "package-json",
+    ),
+    textFile(
+      "a/main.cjs",
+      "const require={main:{require(){}}};require.main.require('../shared/window.cjs');",
+      "javascript",
+    ),
+    textFile("b/package.json", '{"main":"main.cjs"}', "package-json"),
+    textFile("b/main.cjs", "require('../shared/window.cjs');", "javascript"),
+    textFile(
+      "shared/window.cjs",
+      "const {BrowserWindow}=require('electron');new BrowserWindow().loadFile('index.html');",
+      "javascript",
+    ),
+    textFile("a/index.html", "possible page", "html"),
+    textFile("b/index.html", "proven page", "html"),
+    textFile("shared/index.html", "source-relative decoy", "html"),
+    textFile("index.html", "artifact-root decoy", "html"),
+  ];
+  const analyzed = await Promise.all(
+    files
+      .filter((file) => file.kind === "javascript")
+      .map((file) =>
+        analyzedEntry(
+          file.text.included ? file.text.value : "",
+          file.path,
+        ).then((entry) => ({ ...entry, file })),
+      ),
+  );
+  const local = analyzed.find((entry) => entry.file.path === "a/main.cjs");
+  expect(local?.javascript).toMatchObject({
+    parse_status: "complete",
+    parse_error_count: 0,
+    references: [],
+    analysis_coverage: {
+      syntax: { status: "complete", error_count: 0 },
+      semantics: { uncertainty: ["commonjs-wrapper-redeclaration"] },
+    },
+  });
+  const packageObservation = (path: string, main: string) => ({
+    path,
+    sha256: digest(path),
+    status: "included" as const,
+    name: null,
+    version: null,
+    main,
+    main_status: "declared" as const,
+    main_entrypoint: main,
+    renderer_declarations: {},
+    renderer_entrypoint: null,
+    limitation: null,
+  });
+  const analysis: JavaScriptArtifactAnalysis = {
+    jsonDocuments: new JavaScriptJsonDocuments(),
+    files: analyzed,
+    packages: [
+      packageObservation("a/package.json", "main.cjs"),
+      packageObservation("b/package.json", "main.cjs"),
+    ],
+    json_modules: [],
+    html_scripts: [],
+    html_inline_scripts: [],
+    source_maps: [],
+    visited_ast_nodes: 0,
+    findings: 0,
+    modules: 0,
+    parse_failures: 0,
+    limitations: [],
+  };
+  const steps = buildGraph(
+    snapshot,
+    {
+      files,
+      unavailable_relevant_files: [],
+      containers: [],
+      text_bytes_read: files.reduce((total, file) => total + file.bytes, 0),
+      invalid_utf8_files: 0,
+    },
+    analysis,
+  );
+  let next = steps.next();
+  while (next.done !== true) next = steps.next();
+  const roles = next.value.graph.nodes.filter(
+    (node) => node.kind === "electron-renderer",
+  );
+  expect(roles).toHaveLength(1);
+  expect(roles[0]?.observations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        properties: expect.objectContaining({
+          declared_path: "index.html",
+          resolution_status: "resolved",
+          resolved_path: "b/index.html",
+          limitations: [],
+        }),
+      }),
+    ]),
+  );
+});
+
+it("keeps recovered Electron facts partial after syntax recovery", async () => {
+  const source = `import { BrowserWindow } from "electron"; new BrowserWindow({webPreferences: {sandbox: true}}); const duplicate = 1; const duplicate = 2;`;
+  const entry = await analyzedEntry(source, "main.mjs");
+  expect(entry.javascript?.parse_status).toBe("partial");
+  expect(entry.javascript?.electron.browser_windows.length).toBeGreaterThan(0);
+  expect(graphForEntries([entry])).toMatchObject({
+    electronSemantics: "partial",
+    browserWindows: 1,
+  });
 });

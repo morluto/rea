@@ -1,8 +1,8 @@
 import {
   metadataRowOffset,
   readManagedMetadataLayout,
-} from "./ManagedMetadataLayout.js";
-import { readManagedPeLayout } from "./ManagedPeReader.js";
+} from "../domain/managed/managedMetadataLayout.js";
+import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
 import { describe, expect, it } from "vitest";
 
 import { createHash } from "node:crypto";
@@ -17,6 +17,29 @@ import {
 } from "./ManagedPe.fixture.js";
 
 describe("managed native boundaries", () => {
+  it("retains P/Invoke and source locations alongside a large diagnostic inventory", () => {
+    const rowCount = 140_000;
+    const bytes = buildManagedPeFixture({
+      pinvoke: {},
+      customAttributeRowCount: rowCount,
+      customAttributeTypeRaw: 0,
+    });
+    const result = inspectManagedNativeBoundariesBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+
+    expect(result.pinvoke_imports).toHaveLength(1);
+    expect(result.coverage.state).toBe("partial");
+    const issues = result.coverage.issues.filter(({ scope }) =>
+      scope.startsWith("metadata.CustomAttribute:"),
+    );
+    expect(issues).toHaveLength(rowCount);
+    expect(new Set(issues.map(({ scope }) => scope)).size).toBe(rowCount);
+    expect(issues.every(({ offset }) => offset !== null)).toBe(true);
+    expect(new Set(issues.map(({ offset }) => offset)).size).toBe(rowCount);
+  });
+
   it("inspects managed/native PInvoke declarations without verifying native exports", () => {
     const bytes = buildManagedPeFixture({
       pinvoke: {
@@ -210,25 +233,36 @@ it.each([0, 2])(
   },
 );
 
-it("reports field imports as declarations without inventing method implementations", () => {
-  const bytes = buildManagedPeFixture({ pinvoke: { memberForwardedRaw: 2 } });
-  const result = inspectManagedNativeBoundariesBytes(
-    bytes,
-    managedPeFixtureTarget(bytes),
-  );
-  expect(result.pinvoke_imports).toMatchObject([
-    {
-      member_kind: "field",
-      member_token: "0x04000001",
-      member_name: "counter",
-    },
-  ]);
-  expect(
-    result.native_implementations.every((item) =>
-      item.token.startsWith("0x06"),
-    ),
-  ).toBe(true);
-});
+it.each([
+  { fieldName: "counter", memberName: "counter", status: "complete" },
+  { fieldName: "", memberName: null, status: "partial" },
+])(
+  "preserves a field import declaration with a $status FieldDef name observation",
+  ({ fieldName, memberName, status }) => {
+    const bytes = buildManagedPeFixture({
+      fieldName,
+      pinvoke: { memberForwardedRaw: 2 },
+    });
+    const result = inspectManagedNativeBoundariesBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+    expect(result.pinvoke_imports).toMatchObject([
+      {
+        member_kind: "field",
+        member_token: "0x04000001",
+        member_name: memberName,
+        import_name: "MessageBoxW",
+      },
+    ]);
+    expect(result.metadata.status).toBe(status);
+    expect(
+      result.native_implementations.every((item) =>
+        item.token.startsWith("0x06"),
+      ),
+    ).toBe(true);
+  },
+);
 
 describe("managed native boundary inspection", () => {
   it("reports absent or malformed member metadata", () => {
@@ -521,6 +555,40 @@ it.each([
         expect(members.methods[0]?.body.issue).toMatch(/CIL/u);
       }
     }
+  },
+);
+
+it.each([
+  { zeroRva: true, status: "absent", interpretation: "not-file-backed" },
+  { zeroRva: false, status: "partial", interpretation: "native-or-runtime" },
+])(
+  "publishes an InternalCall method as a runtime-provided boundary consistently with body admission (zero RVA: $zeroRva)",
+  ({ zeroRva, status, interpretation }) => {
+    // MethodImplOptions.InternalCall: the runtime implements the body. Core
+    // library FCalls carry this bit with IL code type and no RVA. A malformed
+    // row can keep IL flags and a file-backed RVA, which the runtime rejects.
+    const { members, boundaries } = inspectImplementationFixture({
+      implFlags: 0x1000,
+      zeroRva,
+    });
+    expect(boundaries.native_implementations).toMatchObject([
+      {
+        token: members.methods[0]?.token,
+        impl_flags: 0x1000,
+        code_type: "il",
+        managed_kind: "managed",
+        pinvoke_declared: false,
+        boundary_kind: "runtime-provided",
+        body_interpretation: interpretation,
+      },
+    ]);
+    expect(boundaries.summary.native_implementation_count).toBe(1);
+    expect(members.methods[0]?.body).toMatchObject({
+      status,
+      il_sha256: null,
+    });
+    if (!zeroRva) expect(members.methods[0]?.body.issue).toMatch(/CIL/u);
+    else expect(members.methods[0]?.body.issue).toBeNull();
   },
 );
 

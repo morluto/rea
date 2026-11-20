@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · **Română**
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · **Română** · [Български](README_bg.md)
 
 # REA: Reverse Engineer Anything
 
@@ -92,12 +92,14 @@ Programul de configurare acceptă Claude Code, Codex, Cursor, Gemini CLI, Grok B
 [instalarea și configurarea](../getting-started/installation.md) pentru configurarea motoarelor
 de analiză și înregistrarea manuală a serverului MCP.
 
-MCP folosește implicit scheme de intrare compacte, pentru a reduce spațiul ocupat
-în context. Setează `REA_MCP_INPUT_SCHEMA_PROFILE=full` în înregistrarea MCP când
-ai nevoie de îndrumările complete pentru câmpurile expuse și de detaliile
-validării structurilor imbricate. Ambele profiluri păstrează toate uneltele și
-validarea canonică a serverului. Consultă secțiunea „Compact input schema profile”
+MCP anunță scheme de intrare compacte, pentru a reduce spațiul ocupat în
+context; îndrumările omise de o schemă compactă urmează descrierea uneltei.
+Toate uneltele și validarea canonică a serverului rămân neschimbate. Consultă secțiunea „Compact input schema profile”
 din ghidul contractelor MCP.
+
+Configurarea înregistrează direct mediul de execuție ales și scriptul de intrare REA. Dacă folosești un executor de pachete, păstrează intrarea sa din cache și mediul de execuție; obține pachetul dintr-un director de încredere din afara proiectului țintă. Consultă ghidul de instalare.
+
+Schemele de ieșire sunt omise implicit din `tools/list`: niciun API de model nu le citește, iar REA validează singur fiecare rezultat. Setează `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` în înregistrarea MCP pentru a anunța fiecare schemă de ieșire în limita a 4096 de octeți. În toate setările, validarea serverului și rezultatele structurate rămân complete. Consultă „Output schemas” din ghidul contractelor MCP.
 
 ### Cere-i agentului
 
@@ -199,11 +201,15 @@ Uneltele suplimentare și platformele acceptate depind de ținta analizată:
 | Fișiere binare Rust                 | Nume, versiuni, surse și relații de dependență ale pachetelor crate încorporate prin cargo-auditable                          | Inspectare statică integrată a fișierelor ELF/PE/Mach-O cu o singură arhitectură; [binare Rust](../rust-binaries.md)                                              |
 | Certificate PE                      | Intrări Authenticode WIN_CERTIFICATE și câmpuri de identitate ale semnatarilor PKCS#7 și certificatelor X.509                 | Inspectare statică integrată a fișierelor PE; [certificate PE](../pe-certificates.md)                                                                             |
 | Importuri PE                        | Numele DLL-urilor importate și încărcate întârziat, ordinale, RVA-uri ale IAT și hash-ul importurilor calculat de pefile      | Inspectare statică integrată a fișierelor PE; [importuri PE](../pe-imports.md)                                                                                    |
+| Scurtături Windows                  | Țintă Shell Link, argumente, director de lucru, ExtraData și identificatori Tracker                                           | Inspectare statică integrată a fișierelor LNK; [scurtături Windows](../guides/native/windows-shortcut.md)                                                         |
 | Note ELF                            | Proprietari și tipuri PT_NOTE/SHT_NOTE, câmpuri GNU build-id și ABI-tag                                                       | Inspectare statică integrată a fișierelor ELF; [note ELF](../elf-notes.md)                                                                                        |
+| DWARF compile units                 | Compile-unit name, directory, producer, language, and dwo_name                                                                | Built-in static ELF, Mach-O, and PE inspection; [DWARF compile units](../guides/native/dwarf-units.md)                                                            |
+| Dependențe ELF                      | Biblioteci DT_NEEDED, SONAME, căi RPATH/RUNPATH, versiuni GNU și importuri nedefinite                                         | Inspectare statică integrată a fișierelor ELF; [dependențe ELF](../elf-dependencies.md)                                                                           |
 | Întărire binară                     | PIE, NX, RELRO, CFG și indicatori de antet pentru ELF, PE și Mach-O                                                           | Inspecție statică integrată a antetelor; [întărire binară](../binary-hardening.md)                                                                                |
 | Rapoarte Apple IPS de eroare fatală | Metadate .ips, fire de execuție, imagini binare, registre și clase documentate de erori fatale                                | Inspectare statică integrată a datelor JSON; [Apple IPS](../apple-ips.md)                                                                                         |
 | Module de kernel Linux              | Chei .modinfo, CRC-uri din __versions, prezența this_module și structura semnăturii de la sfârșitul fișierului                | Inspectare statică integrată a fișierelor ELF; [module de kernel](../kernel-modules.md)                                                                           |
 | Erlang BEAM                         | Blocuri IFF, atomi, exporturi, importuri, funcții lambda și antetul Code                                                      | Inspectare statică integrată a fișierelor BEAM; [Erlang BEAM](../erlang-beam.md)                                                                                  |
+| Pachete NuGet                       | Identitatea pachetului, grupuri de dependențe, licență, depozit și conținutul ZIP                                             | Inspecție statică integrată a .nupkg; [Pachete NuGet](../guides/managed/nuget-nupkg.md)                                                                           |
 | Fișiere WASM                        | Validare, secțiuni, forme WAT exacte ale importurilor și exporturilor și cod WAT decodat                                      | WABT 1.0.42 furnizat de utilizator; `inspect_wasm_artifact`                                                                                                       |
 | Bytecode EVM                        | Selectori de apel, poziții în octeți, argumente și mutabilitate deduse                                                        | Fișier local în format brut sau hexazecimal, pe Linux x64; [ghid EVM offline](../guides/evm/evm-bytecode.md)                                                      |
 | Baze de date SQLite                 | Tabele, coloane, indecși, vizualizări, declanșatoare și rânduri selectate din tabele obișnuite                                | Instantaneu local al bazei de date/WAL; Node.js 24.x >=24.15 sau 26+, cu limite SQLite native                                                                     |
@@ -225,6 +231,7 @@ Uneltele suplimentare și platformele acceptate depind de ținta analizată:
 | Pachete și resurse                  | Inventare de fișiere, hash-uri, fișiere plist, structura pachetelor de aplicație Apple și resurse extrase                     | [Ghidul artefactelor și JavaScript](../guides/javascript/javascript-artifact-reconstruction.md), [aplicații Apple](../guides/apple/apple-application-analysis.md) |
 | Comportamentul proceselor           | Ieșirea în terminal, interacțiuni, observații despre terminarea proceselor și sistemul de fișiere și comparații între rulări  | Linux/macOS cu un PTY nativ; [capturarea proceselor](../guides/runtime/process-capture.md)                                                                        |
 | Executabile PyInstaller             | Membri CArchive, versiunea Python, scripturi de intrare și bytecode extras                                                    | Fără cerințe suplimentare (doar analiză statică); [aplicații Python împachetate](../python-packaged-applications.md)                                              |
+| Deno compile binaries               | Virtual files, entry point, recorded options, npm snapshot length                                                             | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                              |
 
 Inspectarea statică JavaScript și .NET citește fișierele furnizate fără a rula
 aplicația. Capturarea în timpul execuției rulează ținta selectată sau interacționează
@@ -332,6 +339,12 @@ REA exportă un mediu executabil cu un test de bază care verifică pornirea și
 [Ghid pentru construirea unui mediu](https://rea.tools/guides/rl-environments/) ·
 [Referință pentru medii](../agent-environments.md) ·
 [Vezi demonstrația pe X](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### Medii pentru aplicații desktop
+
+REA poate crea și un mediu pentru o aplicație desktop Linux, pe care un agent o folosește prin capturi de ecran, mouse și tastatură. Dintr-o cerere de un rând, precum „Creează-mi un mediu Gnote în care agentul adaugă ulei de măsline în notița cu lista de cumpărături”, agentul tău instalează aplicația pe un computer de build local, scrie sarcina, exportă mediul și verifică sarcina pe un computer nou. Mașina care îl creează are nevoie de Linux pe amd64 sau arm64, Docker și versiunea frameworkului agentenv fixată de ghid.
+
+[Configurează mediile pentru aplicații desktop](../desktop-build-computer.md)
 
 ## Întrebări frecvente
 

@@ -11,6 +11,7 @@ import { join, sep } from "node:path";
 
 import { expect } from "vitest";
 
+import { supportsNodeVersion } from "../../../src/domain/runtimeVersion.js";
 import {
   analysisViewCaptureEvidence,
   analysisViewCaptureFixture,
@@ -46,7 +47,6 @@ cliTest(
         NODE_OPTIONS: `--import=${preload} --max-old-space-size=768`,
         NODE_DISABLE_COMPILE_CACHE: "1",
       },
-      timeoutMs: 30_000,
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
@@ -80,7 +80,11 @@ cliTest(
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-bundle-hostname-cli-");
     const files = await writeEnvironmentServeFiles(root);
-    for (const name of ["4294967296", "123", "a".repeat(64)]) {
+    for (const [name, reason] of [
+      ["4294967296", "invalid_value"],
+      ["123", "invalid_value"],
+      ["a".repeat(64), "invalid_format"],
+    ] as const) {
       const directory = join(root, `bundle-${name}`);
       const result = await cli.run({
         arguments: [
@@ -93,14 +97,13 @@ cliTest(
           name,
           "--json",
         ],
-        timeoutMs: 30_000,
       });
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({
         code: "invalid_request",
         details: {
           operation: "environment-export",
-          issues: [{ path: ["name"] }],
+          issues: [{ path: ["name"], reason }],
         },
       });
       await expect(stat(directory)).rejects.toMatchObject({ code: "ENOENT" });
@@ -112,18 +115,28 @@ cliTest(
   "writes the bundle folder from the fixture pair and prints the written files with sizes",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-environment-export-cli-");
-    const files = await writeEnvironmentServeFiles(root);
+    const { manifest, capture } = environmentServeFixture();
+    const manifestPath = join(root, "manifest.json");
+    const capturePath = join(root, "capture.json");
+    const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
+    const captureBytes = Buffer.from(`${JSON.stringify(capture)}\n\n`);
+    await Promise.all([
+      writeFile(manifestPath, manifestBytes),
+      writeFile(capturePath, captureBytes),
+    ]);
+    const packageManifest = JSON.parse(
+      await readFile(new URL("../../../package.json", import.meta.url), "utf8"),
+    ) as { name: string; version: string };
     const directory = join(root, "bundle");
     const result = await cli.run({
       arguments: [
         "environment-export",
-        files.manifestPath,
+        manifestPath,
         "--evidence",
-        files.capturePath,
+        capturePath,
         directory,
         "--json",
       ],
-      timeoutMs: 30_000,
     });
     expect(result.stderr).toBe("");
     expect(result.exitCode).toBe(0);
@@ -133,8 +146,13 @@ cliTest(
       name: "grafana-example",
       // The served read tools of the state the export derived, as the bundle's server serves them.
       tool_count: 14,
+      evidence_id: capture.evidence_id,
+      manifest_evidence_id: manifest.evidence_id,
       state: { served: true, evidence_id: expect.stringMatching(/^ev_/u) },
-      package_source: { kind: "registry" },
+      package_source: {
+        kind: "registry",
+        specifier: `${packageManifest.name}@${packageManifest.version}`,
+      },
     });
     const document = result.json as {
       files: { path: string; bytes: number }[];
@@ -142,6 +160,12 @@ cliTest(
     expect(document.files.map((file) => file.path).sort()).toEqual(
       BUNDLE_FILES,
     );
+    for (const file of document.files) {
+      const { size, mode } = await stat(join(directory, file.path));
+      expect(file.bytes, file.path).toBe(size);
+      if (process.platform !== "win32")
+        expect(mode & 0o777, file.path).toBe(0o600);
+    }
     const written = (
       await readdir(directory, { recursive: true, withFileTypes: true })
     )
@@ -157,15 +181,17 @@ cliTest(
     expect(
       Buffer.compare(
         await readFile(join(directory, "envs/grafana-example/manifest.json")),
-        await readFile(files.manifestPath),
+        manifestBytes,
       ),
     ).toBe(0);
     expect(
       Buffer.compare(
         await readFile(join(directory, "envs/grafana-example/evidence.json")),
-        await readFile(files.capturePath),
+        captureBytes,
       ),
     ).toBe(0);
+    expect(Buffer.compare(await readFile(manifestPath), manifestBytes)).toBe(0);
+    expect(Buffer.compare(await readFile(capturePath), captureBytes)).toBe(0);
     const dockerfile = await readFile(
       join(directory, "envs/grafana-example/Dockerfile"),
       "utf8",
@@ -173,10 +199,27 @@ cliTest(
     const pinnedNodeVersion = (
       await readFile(new URL("../../../.nvmrc", import.meta.url), "utf8")
     ).trim();
-    expect(dockerfile.split("\n")[0]).toBe(
-      `FROM node:${pinnedNodeVersion}-bookworm-slim`,
+    const lines = dockerfile.trimEnd().split("\n");
+    expect(lines[0]).toBe(`FROM node:${pinnedNodeVersion}-bookworm-slim`);
+    expect(supportsNodeVersion(pinnedNodeVersion)).toBe(true);
+    expect(lines).toContain("ENV MCP_HOST=0.0.0.0");
+    expect(lines).toContain("ENV MCP_PORT=18765");
+    expect(lines).toContain(
+      "ENV MCP_ALLOWED_HOSTS=127.0.0.1,localhost,grafana-example",
     );
-    expect(dockerfile).toContain(
+    expect(lines).toContain(
+      "RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*",
+    );
+    const install = `RUN npm install -g --ignore-scripts --no-fund --no-audit ${packageManifest.name}@${packageManifest.version}`;
+    expect(
+      lines.filter((line) => line.startsWith("RUN npm install -g")),
+    ).toEqual([install]);
+    expect(lines).toContain(
+      "COPY --chown=node:node manifest.json evidence.json /env/",
+    );
+    expect(lines.indexOf("USER node")).toBeGreaterThan(lines.indexOf(install));
+    expect(dockerfile).not.toContain("rea-agents.tgz");
+    expect(lines.at(-1)).toBe(
       'CMD ["rea","environment-serve","/env/manifest.json","--evidence","/env/evidence.json"]',
     );
     const verifier = await readFile(
@@ -209,7 +252,6 @@ cliTest(
         directory,
         "--json",
       ],
-      timeoutMs: 30_000,
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
@@ -251,7 +293,6 @@ cliTest(
         directory,
         "--json",
       ],
-      timeoutMs: 30_000,
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
@@ -288,7 +329,6 @@ cliTest.skipIf(process.platform === "win32")(
         NODE_OPTIONS: `--import=${preload} --max-old-space-size=768`,
         NODE_DISABLE_COMPILE_CACHE: "1",
       },
-      timeoutMs: 30_000,
     });
     expect(result.exitCode, result.stderr).toBe(0);
     for (const relative of BUNDLE_FILES) {
@@ -330,7 +370,6 @@ cliTest.skipIf(process.platform === "win32")(
         packagePath,
         "--json",
       ],
-      timeoutMs: 30_000,
     });
     expect(result.exitCode, result.stderr).toBe(0);
     expect(result.json).toMatchObject({
@@ -385,7 +424,6 @@ cliTest.skipIf(HOST_PATH_MAX[process.platform] === undefined)(
         directory,
         "--json",
       ],
-      timeoutMs: 30_000,
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({

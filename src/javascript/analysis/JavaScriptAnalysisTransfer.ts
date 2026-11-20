@@ -4,6 +4,7 @@ import { open, stat } from "node:fs/promises";
 import { z } from "zod";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
+import { safeParseUtf8Json } from "../../domain/safeJson.js";
 
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import type { JavaScriptModuleSemanticIr } from "../../domain/javascript/javascriptModuleSemanticIr.js";
@@ -23,9 +24,10 @@ import {
   javaScriptWorkerModuleRecordSchema,
   javaScriptWorkerProjectionHeaderSchema,
 } from "./JavaScriptAnalysisWorkerSchemas.js";
+import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
+import { withOwnedFileHandle } from "../../filesystem/OwnedRegularFile.js";
 
 // Budgets bound transfer representation, independently of source length.
-export { JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES } from "../../domain/javascript/javascriptAnalysisResourceControls.js";
 const FRAME_BYTES = JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES;
 const TRANSFER_BYTES = 512 * 1024 * 1024;
 const MAX_TRANSFER_BYTES = 2 * 1024 * 1024 * 1024;
@@ -132,7 +134,7 @@ const assertTransferByteBudget = (transferBytes: number): void => {
 const encodeTransferRecord = (
   input: unknown,
   previousBytes: number,
-  transferBytes = TRANSFER_BYTES,
+  transferBytes: number,
 ) => {
   const record = recordSchema.parse(input);
   const line = `${JSON.stringify(record)}\n`;
@@ -195,7 +197,8 @@ export const writeJavaScriptAnalysisTransfer = async (
   transferBytes = TRANSFER_BYTES,
 ): Promise<Descriptor> => {
   assertTransferByteBudget(transferBytes);
-  const output = await open(path, "wx", 0o600);
+  const owner = new OwnedFileHandle(await open(path, "wx", 0o600));
+  const output = owner.handle;
   const digest = createHash("sha256");
   let bytes = 0;
   let records = 0;
@@ -237,7 +240,7 @@ export const writeJavaScriptAnalysisTransfer = async (
     batchBytes += size;
     if (batchBytes >= BATCH_BYTES) await flush();
   };
-  try {
+  return withOwnedFileHandle(path, owner, {}, async () => {
     await append({
       kind: "projection-header",
       value: {
@@ -270,9 +273,7 @@ export const writeJavaScriptAnalysisTransfer = async (
       graph_bytes: graphBytes,
       graph_records: graphRecords,
     };
-  } finally {
-    await output.close();
-  }
+  });
 };
 
 /** Decode producer records into realm-local, source-bound facts; sealing follows in the consumer. */
@@ -367,28 +368,38 @@ export async function readJavaScriptAnalysisTransfer(
     ...(signal === undefined ? {} : { signal }),
   });
   let bytes = 0;
-  let pending = "";
-  stream.setEncoding("utf8");
+  let pending: Buffer[] = [];
+  let pendingBytes = 0;
   try {
     for await (const chunk of stream) {
       signal?.throwIfAborted();
-      if (typeof chunk !== "string")
-        throw new TypeError("JavaScript transfer stream is not UTF-8 text");
-      bytes += Buffer.byteLength(chunk);
+      if (!Buffer.isBuffer(chunk))
+        throw new TypeError("JavaScript transfer stream is not bytes");
+      bytes += chunk.length;
       if (bytes > expected.bytes)
         throw new RangeError("JavaScript transfer grew while being read");
       digest.update(chunk);
-      pending += chunk;
+      let start = 0;
       let newline: number;
-      while ((newline = pending.indexOf("\n")) >= 0) {
-        const line = pending.slice(0, newline);
-        pending = pending.slice(newline + 1);
-        if (Buffer.byteLength(line) + 1 > FRAME_BYTES)
+      while ((newline = chunk.indexOf(0x0a, start)) >= 0) {
+        const fragment = chunk.subarray(start, newline);
+        const lineBytes = pendingBytes + fragment.length;
+        if (lineBytes + 1 > FRAME_BYTES)
           throw new RangeError(
             "JavaScript transfer record exceeds its byte budget",
           );
-        const input: unknown = JSON.parse(line);
-        const record = recordSchema.parse(input);
+        // Authenticate physical bytes and frame before decoding. Borrow read
+        // windows until one bounded record is complete, then copy it once.
+        const line =
+          pending.length === 0
+            ? fragment
+            : Buffer.concat([...pending, fragment], lineBytes);
+        pending = [];
+        pendingBytes = 0;
+        start = newline + 1;
+        const decoded = safeParseUtf8Json(line);
+        if (!decoded.ok) throw decoded.cause;
+        const record = recordSchema.parse(decoded.value);
         if (
           [
             "module-header",
@@ -398,10 +409,10 @@ export async function readJavaScriptAnalysisTransfer(
             "module-link",
           ].includes(record.kind)
         ) {
-          moduleBytes += Buffer.byteLength(line) + 1;
+          moduleBytes += lineBytes + 1;
           moduleRecords += 1;
         } else {
-          graphBytes += Buffer.byteLength(line) + 1;
+          graphBytes += lineBytes + 1;
           graphRecords += 1;
         }
         if (record.kind === "projection-header") {
@@ -496,16 +507,19 @@ export async function readJavaScriptAnalysisTransfer(
         }
         records += 1;
       }
-      if (Buffer.byteLength(pending) + 1 > FRAME_BYTES)
+      const tail = chunk.subarray(start);
+      pendingBytes += tail.length;
+      if (pendingBytes + 1 > FRAME_BYTES)
         throw new RangeError(
           "Unterminated JavaScript transfer record exceeds its byte budget",
         );
+      if (tail.length > 0) pending.push(tail);
     }
   } finally {
     stream.destroy();
   }
   if (
-    pending !== "" ||
+    pendingBytes !== 0 ||
     records !== expected.records ||
     bytes !== expected.bytes ||
     moduleBytes !== expected.module_bytes ||
