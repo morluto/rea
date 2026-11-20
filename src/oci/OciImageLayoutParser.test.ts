@@ -277,6 +277,29 @@ it("records a symlinked blob as a finding and does not follow it", async () => {
   });
 });
 
+it("reports partial coverage when a referenced layer is a directory", async () => {
+  const root = await createTestTempDirectory("rea-oci-directory-layer-");
+  const written = await writeOciImageLayoutFixture(root);
+  const parsed = parseOciDigest(written.layerDigest);
+  if (parsed === undefined) throw new Error("expected sha256 layer digest");
+  const blobPath = join(root, "blobs", parsed.algorithm, parsed.hex);
+  await unlink(blobPath);
+  await mkdir(blobPath);
+  const report = await inspectLayout(root);
+  expect(report.findings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "missing_blob",
+        digest: written.layerDigest,
+      }),
+    ]),
+  );
+  expect(
+    report.blobs.find((entry) => entry.digest === written.layerDigest),
+  ).toMatchObject({ kind: "other", present: false, hashed: false });
+  expect(report.coverage.status).toBe("partial");
+});
+
 it("reports partial coverage when a referenced config is a symlink", async () => {
   const root = await createTestTempDirectory("rea-oci-symlink-config-");
   const written = await writeOciImageLayoutFixture(root);

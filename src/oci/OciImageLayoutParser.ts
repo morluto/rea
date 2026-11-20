@@ -1077,6 +1077,19 @@ export const parseOciImageLayout = async (
       continue;
     }
     if (entry.kind !== "file") {
+      if (
+        !findings.some(
+          (finding) =>
+            finding.kind === "missing_blob" && finding.digest === digest,
+        )
+      )
+        recordFinding(
+          findings,
+          "missing_blob",
+          `Referenced blob ${digest} is not a regular file.`,
+          digest,
+          path,
+        );
       blobs.push(
         blobRecord(
           digest,
