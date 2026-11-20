@@ -3,12 +3,14 @@ import {
   localSourceMapLimitsSchema,
   sourceMapLimitRecovery,
 } from "../../domain/sourceMapLimits.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
-import type { WebSourceMapPort } from "../../application/WebSourceLocationPorts.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { WebSourceMapPort } from "../../ports/WebSourceLocationPorts.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import {
-  AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
   AnalysisInputError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { err, type Result } from "../../domain/result.js";
@@ -23,7 +25,6 @@ import {
   type SourceMapCleanupRetention,
   type SourceMapDecoderDependencies,
 } from "./SourceMapCommand.js";
-import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { jsonParts } from "../../domain/jsonSerialization.js";
 const OPERATION = "trace_web_source_location";
 
@@ -43,22 +44,20 @@ export class SourceMapDecoder implements WebSourceMapPort {
     if (this.#closing)
       return Promise.resolve(
         err(
-          new ProviderCleanupError(
+          new AnalysisCapabilityUnavailableError(
             "source-map-decoder",
-            [],
-            { reason: "Provider is closing" },
-            { operation: OPERATION },
+            OPERATION,
+            "Provider is closing",
           ),
         ),
       );
     const operation = this.#tail.then(() =>
       this.#closing
         ? err(
-            new ProviderCleanupError(
+            new AnalysisCapabilityUnavailableError(
               "source-map-decoder",
-              [],
-              { reason: "Provider is closing" },
-              { operation: OPERATION },
+              OPERATION,
+              "Provider is closing",
             ),
           )
         : this.#trace(input, options),
@@ -75,11 +74,17 @@ export class SourceMapDecoder implements WebSourceMapPort {
     options?: ExecutionOptions,
   ): Promise<Result<WebSourceMapReport, AnalysisError>> {
     const cleanupFailure = await this.#retryCleanup();
-    if (cleanupFailure !== undefined) return err(cleanupFailure);
-    if (options?.signal?.aborted)
+    if (cleanupFailure !== undefined)
       return err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
+        options?.signal?.aborted
+          ? analysisErrorWithCancellation(
+              cleanupFailure,
+              cancelledBy(OPERATION, options.signal),
+            )
+          : cleanupFailure,
       );
+    if (options?.signal?.aborted)
+      return err(cancelledBy(OPERATION, options.signal));
     const request = sourceMapCodecInputSchema.safeParse({
       text: input.text,
       url: input.url,
@@ -116,9 +121,7 @@ export class SourceMapDecoder implements WebSourceMapPort {
       encodedBytes += bytes;
     }
     if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
+      return err(cancelledBy(OPERATION, options.signal));
     const serialized = encoded.join("");
     const retainedCleanup: SourceMapCleanupRetention = {};
     const response = await runSourceMapCommand(

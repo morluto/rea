@@ -11,7 +11,7 @@ import {
   type ApktoolRequest,
   type StringTable,
 } from "../domain/apktool/apktoolResourceAnalysis.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { cancelledBy } from "../domain/analysisErrorCore.js";
 import {
   parseDecodedStrings,
   type DecodedStringEntry,
@@ -210,9 +210,7 @@ export const projectApktoolStringTables = async (
     for (const [index, locale] of locales.entries()) {
       pendingIndex = index;
       if (signal?.aborted)
-        throw new AnalysisCancelledError("decode_android_resources", {
-          cause: signal.reason,
-        });
+        throw cancelledBy("decode_android_resources", signal);
       const directory =
         locale === null
           ? "values"

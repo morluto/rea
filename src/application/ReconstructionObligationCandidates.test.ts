@@ -1,3 +1,4 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
 import { javascriptApplicationAnalysisResultSchema } from "../domain/javascript/javascriptApplicationAnalysis.js";
 import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "../contracts/javascript/javascriptRuntimeReconciliationExample.js";
 import {
@@ -18,7 +19,10 @@ import {
   FINALIZED_PROCESS_CAPTURE_EXAMPLE,
 } from "../domain/process/processCapture.fixture.js";
 import { PROCESS_PROVIDER } from "../domain/process/processEvidenceProvider.js";
-import { parseProcessCapture } from "../domain/process/processCaptureParsing.js";
+import {
+  parseProcessCapture,
+  safeParseProcessCapture,
+} from "../domain/process/processCaptureParsing.js";
 import {
   digestProcessCommitment,
   processScenarioSchema,
@@ -46,7 +50,7 @@ const applicationWithUnknowns = (
   }: { kind?: "unknown" | "package"; label?: string } = {},
 ) => {
   const source = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture-source", name: "Fixture source", version: "1" },
     {
       operation: "inspect_fixture_source",
@@ -109,38 +113,44 @@ const applicationWithUnknowns = (
     coverage: completeCoverage,
     limitations: base.limitations,
   });
-  const application = createEvidence(undefined, MANAGED_WORKFLOW_PROVIDER, {
-    predicateType: "rea.managed-application-graph",
-    operation: "project_managed_application_graph",
-    parameters: {},
-    result: {
-      projection_id: `magp_${"a".repeat(64)}`,
-      root_artifact_sha256: APPLICATION_GRAPH_DIGESTS.asar,
-      source_evidence: {
-        managed_artifact_evidence_id: source.evidence_id,
-        managed_members_evidence_id: null,
-        managed_native_boundaries_evidence_id: null,
+  const application = createEvidence(
+    unknownTarget("not-observed"),
+    MANAGED_WORKFLOW_PROVIDER,
+    {
+      predicateType: "rea.managed-application-graph",
+      operation: "project_managed_application_graph",
+      parameters: {},
+      result: {
+        projection_id: `magp_${"a".repeat(64)}`,
+        root_artifact_sha256: APPLICATION_GRAPH_DIGESTS.asar,
+        source_evidence: {
+          managed_artifact_evidence_id: source.evidence_id,
+          managed_members_evidence_id: null,
+          managed_native_boundaries_evidence_id: null,
+        },
+        summary: {
+          graph_nodes: graph.nodes.length,
+          graph_edges: graph.edges.length,
+          assemblies: 0,
+          modules: 0,
+          types: 0,
+          methods: 0,
+          fields: 0,
+          pinvoke_imports: 0,
+          native_implementations: 0,
+          calls: 0,
+          field_accesses: 0,
+        },
+        graph,
+        coverage: { status: "complete-within-inputs" },
+        evidence_links: [source.evidence_id],
+        limitations: [],
       },
-      summary: {
-        graph_nodes: graph.nodes.length,
-        graph_edges: graph.edges.length,
-        assemblies: 0,
-        modules: 0,
-        types: 0,
-        methods: 0,
-        fields: 0,
-        pinvoke_imports: 0,
-        native_implementations: 0,
-      },
-      graph,
-      coverage: { status: "complete-within-inputs" },
-      evidence_links: [source.evidence_id],
-      limitations: [],
+      confidence: "inferred",
+      authority: "analyst-inference",
+      evidenceLinks: [source.evidence_id],
     },
-    confidence: "inferred",
-    authority: "analyst-inference",
-    evidenceLinks: [source.evidence_id],
-  });
+  );
   return {
     graph,
     unknownNodes,
@@ -234,24 +244,32 @@ describe("reconstruction obligation candidates", () => {
       exit,
       ...rest
     } = FINALIZED_PROCESS_CAPTURE_EXAMPLE;
-    const evidence = createEvidence(undefined, PROCESS_PROVIDER, {
-      predicateType: "rea.process-capture",
-      operation: "capture_process_scenario",
-      parameters: {},
-      result: {
-        ...rest,
-        manifest,
-        exit: {
-          ...exit,
-          finalization: {
-            ...exit.finalization,
-            signals: [
-              { ...exit.finalization.signals[0], reason: "not allowed here" },
-            ],
+    const evidence = createEvidence(
+      unknownTarget("not-observed"),
+      PROCESS_PROVIDER,
+      {
+        predicateType: "rea.process-capture",
+        operation: "capture_process_scenario",
+        parameters: {},
+        result: {
+          ...rest,
+          manifest,
+          exit: {
+            ...exit,
+            finalization: {
+              ...exit.finalization,
+              signals: [
+                { ...exit.finalization.signals[0], reason: "not allowed here" },
+              ],
+            },
           },
         },
       },
-    });
+    );
+    const invalid = safeParseProcessCapture(evidence.normalized_result);
+    expect(invalid.success).toBe(false);
+    if (invalid.success) throw new Error("Expected invalid capture fixture");
+    expect(invalid.error.issues).toHaveLength(2);
     const generated = deriveCandidates(createEvidenceBundle([evidence]), []);
 
     expect(generated.limitations).toHaveLength(1);
@@ -259,6 +277,7 @@ describe("reconstruction obligation candidates", () => {
     expect(generated.limitations[0]).toMatch(
       /Process Evidence.*could not generate candidates.*manifest\.completed_at/iu,
     );
+    expect(generated.limitations[0]).toContain("(1 more issues)");
   });
 });
 

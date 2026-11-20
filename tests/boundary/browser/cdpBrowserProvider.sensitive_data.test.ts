@@ -193,7 +193,7 @@ describe("CdpBrowserProvider: page cookie scope", () => {
 });
 
 describe("CdpBrowserProvider: complete storage fingerprints", () => {
-  it("fingerprints cache bodies above the former byte ceiling", async () => {
+  it("fingerprints cache bodies above 64 KiB", async () => {
     const body = "x".repeat(64 * 1_024 + 1);
     const browser = await startFakeCdpBrowser({ cachedResponseBody: body });
     trackBrowser(browser);
@@ -216,6 +216,22 @@ describe("CdpBrowserProvider: complete storage fingerprints", () => {
       ),
     ).toMatchObject({ complete: true, value_sha256: expect.any(String) });
     expect(JSON.stringify(result.value)).not.toContain(body);
+    // The storage capture always writes its fingerprint facts.
+    for (const omit of [
+      "content_fingerprints",
+      "fingerprint_algorithm",
+      "fingerprints_complete",
+    ])
+      expect(
+        webPageInspectionSchema.safeParse({
+          ...result.value,
+          storage: Object.fromEntries(
+            Object.entries(result.value.storage).filter(
+              ([key]) => key !== omit,
+            ),
+          ),
+        }).success,
+      ).toBe(false);
   });
 });
 
@@ -409,6 +425,41 @@ describe("CdpBrowserProvider: malformed approved payloads", () => {
     });
     expect(result.value.completeness.unavailable_sections).toEqual(
       expect.arrayContaining(["json_body_shapes", "websocket_frames"]),
+    );
+  });
+
+  it("records a malformed response body reply as a body-shape gap", async () => {
+    const browser = await startFakeCdpBrowser({
+      commandResult: (command) =>
+        command.method === "Network.getResponseBody"
+          ? { body: 7, base64Encoded: false }
+          : undefined,
+    });
+    trackBrowser(browser);
+    const result = await new CdpBrowserProvider().inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        // Long enough for the post-window body fetch, as in the case above.
+        observation_ms: 200,
+        include_json_body_shapes: true,
+      }),
+    );
+
+    if (!result.ok) throw result.error;
+    expect(result.value.network.requests[0]?.body_shapes).toMatchObject({
+      status: "partial",
+      response: null,
+    });
+    expect(result.value.completeness.excluded).toContainEqual(
+      expect.objectContaining({
+        section: "json_body_shapes",
+        reason: "invalid_protocol_value",
+      }),
+    );
+    expect(result.value.limitations).toContain(
+      "Network.getResponseBody returned a malformed result; the section that reads it is incomplete.",
     );
   });
 });

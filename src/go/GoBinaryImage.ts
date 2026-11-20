@@ -1,3 +1,9 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { readLeb128, ULEB64 } from "../domain/leb128.js";
+import type {
+  FileMapping,
+  ZeroFillMapping,
+} from "../domain/virtualFileMapping.js";
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
@@ -6,10 +12,12 @@ import {
   imageFileMappings,
   isZeroFilledSpan,
   type BinaryContainer,
-  type FileMapping,
-  type ZeroFillMapping,
-} from "../native/metadata/BinaryContainer.js";
-import { readBinaryContainer } from "../native/metadata/readBinaryContainer.js";
+} from "../domain/binaryContainer.js";
+import type { ZstandardFramePause } from "../domain/compression/zstandardExactFrame.js";
+import {
+  readBinaryContainer,
+  readBinaryContainerCooperative,
+} from "../domain/native/readBinaryContainer.js";
 import {
   goAnalysisBudgets,
   type GoAnalysisBudgets,
@@ -54,9 +62,31 @@ export interface ReadGoBinaryImageOptions {
 export const readGoBinaryImage = (
   bytes: Buffer,
   options?: ReadGoBinaryImageOptions,
+): GoBinaryImage =>
+  finishGoBinaryImage(
+    bytes,
+    options,
+    readBinaryContainer(bytes, "inspect_go_binary"),
+  );
+
+/** Same image as {@link readGoBinaryImage}. ELF section names yield through `pause`. */
+export const readGoBinaryImageCooperative = async (
+  bytes: Buffer,
+  options: ReadGoBinaryImageOptions | undefined,
+  pause: ZstandardFramePause,
+): Promise<GoBinaryImage> =>
+  finishGoBinaryImage(
+    bytes,
+    options,
+    await readBinaryContainerCooperative(bytes, "inspect_go_binary", pause),
+  );
+
+const finishGoBinaryImage = (
+  bytes: Buffer,
+  options: ReadGoBinaryImageOptions | undefined,
+  container: ReturnType<typeof readBinaryContainer>,
 ): GoBinaryImage => {
   const budgets = goAnalysisBudgets(options?.budgets);
-  const container = readBinaryContainer(bytes);
   const { format, architecture, bits, byte_order } = container;
   const stringLiterals =
     options?.includeStringLiterals === true
@@ -120,13 +150,18 @@ export const readGoBinaryImage = (
       );
   };
   verifyMapping(32);
-  const reader = new BinaryReader(bytes, byte_order === "little");
+  const reader = new BinaryReader(
+    bytes,
+    byte_order === "little",
+    container.format,
+  );
   const ptrSize = bytes[header + 14];
   const flags = bytes[header + 15] ?? 0;
   if ((flags & ~3) !== 0)
     throw new BinaryFormatFailure(
       "unsupported",
       "Go build-info flags contain an unsupported format bit",
+      { undecodedContent: true },
     );
   if ((flags & 2) === 0 && (flags & 1) !== (byte_order === "big" ? 1 : 0))
     throw new BinaryFormatFailure(
@@ -286,9 +321,7 @@ const inlineDataEnd = (
 
 const observedText = (bytes: Buffer): string | null => {
   try {
-    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-      bytes,
-    );
+    return decodeStrictUtf8(bytes, "preserve");
   } catch (cause) {
     if (cause instanceof TypeError) return null;
     throw cause;
@@ -342,44 +375,37 @@ const readInlineExtent = (
   remaining: number,
   maximumBytes: number,
 ): { readonly location: GoStringLocation; readonly next: number } => {
-  let length = 0n;
-  for (let index = 0; index < 10; index++) {
-    if (index >= remaining)
-      throw new BinaryFormatFailure(
-        "malformed",
-        "Go build-info varint is truncated",
-      );
-    const byte = reader.bytes[offset + index] ?? 0;
-    if (index === 9 && byte > 1)
-      throw new BinaryFormatFailure(
-        "malformed",
-        "Go build-info varint overflows 64 bits",
-      );
-    length |= BigInt(byte & 127) << BigInt(index * 7);
-    if ((byte & 128) === 0) {
-      if (length > BigInt(maximumBytes))
-        throw new BinaryResourceFailure(
-          "build-info",
-          maximumBytes,
-          `Go build-info string length exceeds max_build_info_bytes=${String(maximumBytes)}`,
-        );
-      const size = Number(length);
-      if (size > remaining - index - 1)
-        throw new BinaryFormatFailure(
-          "malformed",
-          "Go build-info string range is truncated",
-        );
-      const start = offset + index + 1;
-      return {
-        location: { offset: start, bytes: size },
-        next: start + size,
-      };
-    }
-  }
-  throw new BinaryFormatFailure(
-    "malformed",
-    "Go build-info varint is unterminated",
+  const read = readLeb128(
+    reader.bytes,
+    offset,
+    offset + Math.max(0, remaining),
+    ULEB64,
   );
+  if ("failure" in read)
+    throw new BinaryFormatFailure(
+      "malformed",
+      read.failure === "truncated"
+        ? "Go build-info varint is truncated"
+        : "Go build-info varint overflows 64 bits",
+    );
+  const start = read.next;
+  const length = read.value;
+  if (length > BigInt(remaining - (start - offset)))
+    throw new BinaryFormatFailure(
+      "malformed",
+      "Go build-info string range is truncated",
+    );
+  if (length > BigInt(maximumBytes))
+    throw new BinaryResourceFailure(
+      "build-info",
+      maximumBytes,
+      `Go build-info string length exceeds max_build_info_bytes=${String(maximumBytes)}`,
+    );
+  const size = Number(length);
+  return {
+    location: { offset: start, bytes: size },
+    next: start + size,
+  };
 };
 
 interface PointerStringContext {
@@ -398,11 +424,10 @@ const readPointerString = (
   const header = mappedFileOffset(mappings, address, width * 2, zeroFills);
   const valueAddress = reader.word(header, pointerBits);
   const length = reader.word(header + width, pointerBits);
-  if (length > BigInt(maximumBytes))
-    throw new BinaryResourceFailure(
-      "build-info",
-      maximumBytes,
-      `Go build-info pointer string length exceeds max_build_info_bytes=${String(maximumBytes)}`,
+  if (length > BigInt(reader.bytes.length))
+    throw new BinaryFormatFailure(
+      "malformed",
+      "Go build-info pointer string length exceeds the file extent",
     );
   const size = Number(length);
   // Zero-length Go strings may carry a zero data pointer.
@@ -410,6 +435,12 @@ const readPointerString = (
     size === 0 && valueAddress === 0n
       ? header
       : mappedFileOffset(mappings, valueAddress, size, zeroFills);
+  if (length > BigInt(maximumBytes))
+    throw new BinaryResourceFailure(
+      "build-info",
+      maximumBytes,
+      `Go build-info pointer string length exceeds max_build_info_bytes=${String(maximumBytes)}`,
+    );
   return {
     bytes: reader.range(offset, size, "Go build-info pointer string"),
     location: { offset, bytes: size },

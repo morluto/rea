@@ -86,8 +86,6 @@ describe("draftTaskFiles guards", () => {
           `<PAGEOBJECT XPOS="${x ?? ""}" ANNAME="${name ?? ""}"><StoryText><ITEXT CH="${text ?? ""}"/></StoryText></PAGEOBJECT>`,
       )
       .join("")}<PAGEOBJECT XPOS="30" ANNAME="Logo"/></DOCUMENT></SCRIBUS>`;
-  const frame = (name: string) =>
-    `/root/children/[name=DOCUMENT]/children/[name=PAGEOBJECT][@ANNAME=${name}]/children/[name=StoryText]/children/[name=ITEXT]/attributes/CH`;
 
   it("offers the text a check reads on the nearest like siblings, at its seed value, outside the suggestions, and their count", () => {
     const before = flyer("Riverside Jazz Night");
@@ -119,7 +117,6 @@ describe("draftTaskFiles guards", () => {
     ]);
     expect(passing(FILE, xml(before), file.guards)).toEqual([true, true, true]);
     expect(passing(FILE, xml(after), file.guards)).toEqual([true, true, true]);
-    expect(frame("Headline")).toContain("[@ANNAME=Headline]");
   });
 
   it("guards no sibling whose field changed too, and a number by the cell's whole text", () => {

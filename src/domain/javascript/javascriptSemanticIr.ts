@@ -403,6 +403,8 @@ export interface JavaScriptSemanticResourceOperation {
 export interface JavaScriptSemanticObjectOperation {
   readonly objectOperationId: string;
   readonly kind: "read" | "write" | "spread" | "destructure";
+  /** Proven own data slot at this operation's read rather than in the merged value. */
+  readonly sourcePresence?: "present";
   readonly location: JavaScriptSourceRange;
   readonly ownerCallableId: string | null;
   readonly objectBindingId: string | null;
@@ -506,6 +508,7 @@ export interface JavaScriptSemanticIr {
   readonly functionFingerprints: readonly JavaScriptSemanticFunctionFingerprint[];
   readonly frontiers: readonly JavaScriptSemanticFrontier[];
   readonly coverage: JavaScriptSemanticCoverage;
+  readonly loaderCondition?: string;
   readonly limitations: readonly string[];
 }
 

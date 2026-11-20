@@ -13,10 +13,25 @@ export interface AnalysisSettingValues {
   readonly "regex.matching_deadline_ms": number;
   readonly "regex.worker_heap_request_mib": number;
   readonly "capture.decoder_old_generation_mib": number;
+  readonly "capture.packet_json_expansion_bytes": number;
   readonly "javascript.analysis_timeout_ms": number;
   readonly "javascript.max_heap_mb": number;
+  readonly "javascript.member_mutation_alias_states": number;
   readonly "wasm.command_timeout_ms": number;
   readonly "native.matching_representation_bytes": number;
+  readonly "bridge.max_request_bytes": number;
+  readonly "bridge.max_reply_bytes": number;
+  readonly "debugger.command_deadline_ms": number;
+  readonly "debugger.max_command_output_bytes": number;
+  readonly "hopper.caller_scan_budget_ms": number;
+  readonly "jeb.mcp_timeout_ms": number;
+  readonly "kuna.project_timeout_ms": number;
+  readonly "kuna.function_timeout_ms": number;
+  readonly "pwntools.max_input_bytes": number;
+  readonly "windows.change_time_drift_ms": number;
+  readonly "windows.change_time_settle_poll_ms": number;
+  readonly "windows.change_time_settle_max_polls": number;
+  readonly "zstd.max_frames": number;
 }
 export type AnalysisSettingId = keyof AnalysisSettingValues;
 export interface AnalysisSettingsSnapshot {
@@ -25,6 +40,14 @@ export interface AnalysisSettingsSnapshot {
 }
 /** Injected by the runtime owner; reads the accepted operation's immutable snapshot. */
 export type AnalysisSettingsReader = () => AnalysisSettingsSnapshot;
+
+/**
+ * Whether `update_analysis_settings` can change the active value.
+ * `runtime` applies inside this process. `restart` stays at the value this
+ * process already started with. A limit fact uses `parameter` when its value
+ * is adjustable through a per-call argument; its source is recorded separately.
+ */
+export type AnalysisSettingUpdateMode = "runtime" | "restart";
 
 /** Limit facts supplied by the failing owner, never inferred from error prose. */
 export interface AnalysisSettingLimit {
@@ -37,7 +60,12 @@ export interface AnalysisSettingLimit {
   readonly applies_at: "next_operation" | "next_worker" | "next_startup";
   readonly agent_editable: true;
   readonly scope: "rea-runtime";
-  readonly rea_restart_required: false;
+  readonly update_mode: AnalysisSettingUpdateMode | "parameter";
+  /**
+   * True only when a configured value is not the one this process is using.
+   * The reported effective value is active, so limit errors leave this false.
+   */
+  readonly pending_restart: false;
   readonly required_value?: number;
   readonly parameter?: string;
 }
@@ -57,3 +85,39 @@ export interface AnalysisInvocationSettingLimit extends Omit<
   /** Launch-environment seed that a new invocation reads, when one exists. */
   readonly environment?: string;
 }
+
+/**
+ * A limit whose control is not a registered analysis setting: a per-call
+ * request parameter, or an environment variable REA reads when it starts. A
+ * limit without `control_kind` is an `AnalysisSettingLimit` named by
+ * `setting`. `update_analysis_settings` changes neither control.
+ */
+export type AnalysisControlLimit = {
+  readonly effective_value: number;
+  readonly unit: AnalysisSettingLimit["unit"];
+  readonly minimum: number;
+  readonly maximum: number;
+  /** Value used when the control is omitted. */
+  readonly default_value: number;
+} & (
+  | {
+      readonly control_kind: "parameter";
+      readonly parameter: string;
+      readonly applies_at: "next_call";
+    }
+  | {
+      readonly control_kind: "environment";
+      readonly environment: string;
+      /** A one-invocation caller's next invocation reads it without a restart. */
+      readonly applies_at: "next_startup" | "next_invocation";
+    }
+);
+
+/** A per-call request parameter control, named by its contract field. */
+export type AnalysisParameterLimit = Extract<
+  AnalysisControlLimit,
+  { readonly control_kind: "parameter" }
+>;
+
+/** The limit an error binds: a registered setting, or a parameter or environment control. */
+export type AnalysisLimit = AnalysisSettingLimit | AnalysisControlLimit;

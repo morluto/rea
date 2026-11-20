@@ -57,6 +57,11 @@ def run_bundle(root, *, tasks=(), model=None, agent=None, sandbox=None, emulate=
                                         "total_cost_usd": planned["usd"]}], handle)
     results = [{"id": check, "result": passed, "description": f"{check} read", "settled": True}
                for check, passed in planned["checks"].items()]
+    # An empty results list is unscored evidence. A planned pass or miss still
+    # has to record one selected-verifier result so cleanup can retain that outcome.
+    if not results and planned["outcome"] in ("passed", "scored below 1"):
+        results = [{"id": "selected", "result": planned["outcome"] == "passed",
+                    "description": "selected verifier", "settled": True}]
     context = types.SimpleNamespace(
         instance_id=f"inst-{n}",
         metadata={"verifications": {tasks[0]: {"score": 1.0 if planned["outcome"] == "passed" else 0.0,
@@ -71,7 +76,7 @@ def run_bundle(root, *, tasks=(), model=None, agent=None, sandbox=None, emulate=
     return types.SimpleNamespace(runs=(run,))
 `;
 
-export interface FakeAgentEnvSolves {
+interface FakeAgentEnvSolves {
   readonly environment: Readonly<Record<string, string>>;
   notes(name: string): Promise<unknown[]>;
 }

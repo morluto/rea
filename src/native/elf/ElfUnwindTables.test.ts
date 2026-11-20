@@ -1,15 +1,12 @@
 import { createHash } from "node:crypto";
 import { expect, it, vi } from "vitest";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
   elfUnwindRangesSchema,
   inspectElfUnwindRangesInputSchema,
 } from "../../domain/native/elfUnwindRanges.js";
-import {
-  ElfUnwindSymbolTextFailure,
-  parseElfUnwindRanges,
-} from "./ElfUnwindTables.js";
+import { parseElfUnwindRanges } from "./ElfUnwindTables.js";
 import {
   UNWIND_FN_A,
   UNWIND_FN_A_SIZE,
@@ -52,6 +49,108 @@ vi.mock("../../domain/elfStringTable.js", async (importOriginal) => {
 });
 
 const address = (value: number): string => `0x${value.toString(16)}`;
+
+it.each([true, false])(
+  "retains valid ten-byte sign padding in CIE alignment (little %s)",
+  (little) => {
+    const report = parse(
+      elfUnwindFixture({
+        little,
+        header: "match",
+        leb128: { dataAlignment: [0xfc, ...Array<number>(8).fill(0xff), 0x7f] },
+      }),
+    );
+    expect(report.cies[0]?.data_alignment).toBe(-4);
+    expect(report.coverage).toMatchObject({
+      status: "complete",
+      total_ranges: 2,
+    });
+  },
+);
+
+it("rejects an overflowing ULEB pointer instead of wrapping it to a fabricated function address", () => {
+  const report = parse(
+    elfUnwindFixture({
+      header: "absent",
+      leb128: {
+        pointers: {
+          signed: false,
+          start: [0x81, ...Array<number>(8).fill(0x80), 0x02],
+          size: [0x20],
+        },
+      },
+    }),
+  );
+  expect(report.ranges.map((r) => r.start)).toEqual([address(UNWIND_FN_B)]);
+  expect(report.coverage.status).toBe("partial");
+});
+
+it("rejects a padded negative SLEB range instead of publishing a huge positive size", () => {
+  const report = parse(
+    elfUnwindFixture({
+      header: "absent",
+      leb128: {
+        pointers: {
+          signed: true,
+          start: [0x80, 0x82, 0x80, 0x02],
+          size: [...Array<number>(9).fill(0xff), 0x7f],
+        },
+      },
+    }),
+  );
+  expect(report.ranges.map((r) => r.start)).toEqual([address(UNWIND_FN_B)]);
+  expect(report.limitations).toContain("An FDE address range is negative.");
+});
+
+it.each([
+  {
+    signed: false,
+    start: [...Array<number>(9).fill(0xff), 0x01],
+    expected: "0xffffffffffffffff",
+  },
+  {
+    signed: true,
+    start: [...Array<number>(9).fill(0x80), 0x7f],
+    expected: "0x8000000000000000",
+  },
+  {
+    signed: true,
+    start: [...Array<number>(9).fill(0xff), 0x00],
+    expected: "0x7fffffffffffffff",
+  },
+])(
+  "retains the representable LEB128 boundary $expected",
+  ({ signed, start, expected }) => {
+    const report = parse(
+      elfUnwindFixture({
+        header: "absent",
+        leb128: { pointers: { signed, start, size: [0x20] } },
+      }),
+    );
+    expect(report.ranges.map((r) => r.start)).toContain(expected);
+    expect(report.coverage.status).toBe("complete");
+  },
+);
+
+it.each(
+  [
+    [...Array<number>(9).fill(0x80), 0x01],
+    [...Array<number>(9).fill(0xff), 0x7e],
+    Array<number>(10).fill(0x80),
+  ].map((start) => ({ start })),
+)(
+  "omits an overflowing or unterminated signed operand and retains its sibling FDE (%j)",
+  ({ start }) => {
+    const report = parse(
+      elfUnwindFixture({
+        header: "absent",
+        leb128: { pointers: { signed: true, start, size: [0x20] } },
+      }),
+    );
+    expect(report.ranges.map((r) => r.start)).toEqual([address(UNWIND_FN_B)]);
+    expect(report.coverage.status).toBe("partial");
+  },
+);
 
 const parse = (bytes: Buffer, raw: Readonly<Record<string, unknown>> = {}) => {
   const input = inspectElfUnwindRangesInputSchema.parse({
@@ -222,7 +321,7 @@ it("reads a version 3 return-address register and a dynsym name", () => {
 it("keeps earlier FDEs when a later record is truncated", () => {
   const report = parse(elfUnwindFixture({ truncate: true }));
   expect(report.eh_frame.status).toBe("incomplete");
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
   expect(report.ranges.map((range) => range.start)).toEqual([
     address(UNWIND_FN_A),
   ]);
@@ -238,7 +337,7 @@ it("reports trailing bytes after the terminator as incomplete coverage", () => {
     elfUnwindFixture({ trailingByte: true, header: "match" }),
   );
   expect(report.ranges).toHaveLength(2);
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
   expect(report.limitations).toContain(
     "Non-zero bytes follow the .eh_frame terminator.",
   );
@@ -315,7 +414,7 @@ it("stops a header-located .eh_frame without a search table at its first undecod
     address(UNWIND_FN_A),
   ]);
   expect(report.coverage).toMatchObject({
-    status: "incomplete",
+    status: "partial",
     total_ranges: 1,
     examined_records: 3,
   });
@@ -345,7 +444,7 @@ it("reports .eh_frame as unknown when the header cannot locate it", () => {
   expect(report.eh_frame_hdr.status).toBe("incomplete");
   expect(report.ranges).toEqual([]);
   expect(report.coverage).toMatchObject({
-    status: "incomplete",
+    status: "partial",
     total_ranges: 0,
     total_cies: 0,
     eh_frame_hdr_agreement: "unavailable",
@@ -406,24 +505,40 @@ it("returns only the CIEs a page's ranges name, however many the image has", () 
   expect(first.coverage.total_cies).toBe(502);
 });
 
-it("fails closed when the CIE or FDE budget is exhausted", () => {
-  const bytes = elfUnwindFixture();
-  const input = inspectElfUnwindRangesInputSchema.parse({
-    path: "/artifacts/unwind.elf",
-    max_ranges: 1,
-  });
-  expect(() =>
-    parseElfUnwindRanges(
-      bytes,
-      {
-        path: input.path,
-        sha256: "a".repeat(64),
-        bytes: bytes.length,
-      },
-      input,
-    ),
-  ).toThrow(ArtifactReaderFailure);
-});
+it.each([
+  { field: "CIE", maximum: 1, suffixNames: 0 },
+  { field: "FDE", maximum: 2, suffixNames: 1 },
+])(
+  "fails closed when the $field budget is exhausted",
+  ({ field, maximum, suffixNames }) => {
+    const bytes = elfUnwindFixture({ suffixNames });
+    const input = inspectElfUnwindRangesInputSchema.parse({
+      path: "/artifacts/unwind.elf",
+      max_ranges: maximum,
+    });
+    expect(() =>
+      parseElfUnwindRanges(
+        bytes,
+        {
+          path: input.path,
+          sha256: "a".repeat(64),
+          bytes: bytes.length,
+        },
+        input,
+      ),
+    ).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({
+          kind: "limit",
+          format: "elf-unwind-ranges",
+          field,
+          offset: expect.any(Number),
+          limit: { name: "max_ranges", maximum },
+        }),
+      }),
+    );
+  },
+);
 
 it("stops when the caller has already cancelled", () => {
   const bytes = elfUnwindFixture();
@@ -462,6 +577,33 @@ const findSection = (bytes: Buffer, name: string) => {
   throw new Error(`fixture has no ${name}`);
 };
 
+it.each(["compressed-symbols", "compressed-names", "non-string-names"])(
+  "retains unwind ranges without interpreting %s as ordinary symbol storage",
+  (storage) => {
+    const bytes = elfUnwindFixture({ header: "match" });
+    expect(parse(bytes).ranges[0]?.symbol?.text).toBe("alpha");
+    const section = findSection(
+      bytes,
+      storage === "compressed-symbols" ? ".symtab" : ".strtab",
+    );
+    if (storage === "non-string-names")
+      bytes.writeUInt32LE(1, section.headerOffset + 4);
+    else bytes.writeBigUInt64LE(0x800n, section.headerOffset + 8);
+
+    const report = parse(bytes);
+    expect(report.ranges.map(({ start }) => start)).toEqual([
+      address(UNWIND_FN_A),
+      address(UNWIND_FN_B),
+    ]);
+    expect(report.ranges.map(({ symbol }) => symbol)).toEqual([null, null]);
+    expect(report.coverage).toMatchObject({
+      status: "partial",
+      ranges_with_symbols: 0,
+      eh_frame_hdr_agreement: "agree",
+    });
+  },
+);
+
 it("keeps .eh_frame ranges when .debug_frame is SHT_NOBITS", () => {
   const report = parse(
     elfUnwindFixture({
@@ -476,7 +618,7 @@ it("keeps .eh_frame ranges when .debug_frame is SHT_NOBITS", () => {
     address(UNWIND_FN_B),
   ]);
   expect(report.coverage).toMatchObject({
-    status: "incomplete",
+    status: "partial",
     eh_frame_hdr_agreement: "agree",
   });
   expect(report.limitations).toContain(
@@ -493,7 +635,7 @@ it("reports a .debug_frame past the end of file without a file range", () => {
   );
   expect(report.debug_frame).toEqual({ status: "incomplete", location: null });
   expect(report.ranges).toHaveLength(2);
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
 });
 
 it("decodes the in-file prefix of an .eh_frame that runs past the end of file", () => {
@@ -510,7 +652,7 @@ it("decodes the in-file prefix of an .eh_frame that runs past the end of file", 
   });
   expect(report.ranges).toHaveLength(2);
   expect(report.coverage).toMatchObject({
-    status: "incomplete",
+    status: "partial",
     total_ranges: 2,
     eh_frame_hdr_agreement: "agree",
   });
@@ -529,7 +671,7 @@ it.each([
   const table = section === ".eh_frame" ? report.eh_frame : report.eh_frame_hdr;
   expect(table.status).toBe("incomplete");
   expect(table.location).toBeNull();
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
   expect(report.limitations).toContain(text);
   if (section === ".eh_frame_hdr") expect(report.ranges).toHaveLength(2);
 });
@@ -560,7 +702,7 @@ it("does not use a non-allocated GOT section as the data-relative base", () => {
   bytes.writeBigUInt64LE(1n, headerOffset + 8);
   bytes.writeBigUInt64LE(0x500000n, headerOffset + 16);
   const report = parse(bytes);
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
   expect(report.ranges.map((range) => range.start)).not.toContain("0x4fc100");
 });
 
@@ -570,7 +712,7 @@ it("leaves .eh_frame datarel pointers unresolved when no GOT is declared", () =>
     address(UNWIND_FN_B),
   ]);
   expect(report.coverage).toMatchObject({
-    status: "incomplete",
+    status: "partial",
     total_ranges: 1,
     eh_frame_hdr_agreement: "disagree",
   });
@@ -583,10 +725,22 @@ it("caps symbol lookup across .symtab and .dynsym together", () => {
   const report = parse(elfUnwindFixture({ header: "match", symbolCap: true }));
   expect(report.ranges).toHaveLength(2);
   expect(report.coverage).toMatchObject({
-    status: "incomplete",
+    status: "partial",
     ranges_with_symbols: 0,
   });
   expect(report.limitations).toContain(
+    "Symbol tables were capped at 65536 combined entries.",
+  );
+});
+
+it("keeps the symbol scan allowance for later tables when an earlier table has no string table", () => {
+  const bytes = elfUnwindFixture({ header: "match", symbolCap: true });
+  const section = findSection(bytes, ".symtab");
+  bytes.writeUInt32LE(0, section.headerOffset + 40);
+  const report = parse(bytes);
+  expect(report.ranges[0]?.symbol?.text).toBe("alpha");
+  expect(report.coverage.status).toBe("partial");
+  expect(report.limitations).not.toContain(
     "Symbol tables were capped at 65536 combined entries.",
   );
 });
@@ -596,7 +750,7 @@ it.each([".eh_frame", ".eh_frame_hdr"] as const)(
   (duplicate) => {
     const report = parse(elfUnwindFixture({ header: "match", duplicate }));
     expect(report.ranges).toHaveLength(2);
-    expect(report.coverage.status).toBe("incomplete");
+    expect(report.coverage.status).toBe("partial");
     expect(report.limitations).toContain(
       `Multiple ${duplicate} sections were declared; only the first was decoded.`,
     );
@@ -665,6 +819,84 @@ it.each([
   },
 );
 
+const GOT_UNKNOWN =
+  "A DW_EH_PE_datarel .eh_frame value needs a GOT base that could not be determined; that value is unresolved.";
+
+it.each([
+  ["elf64 little-endian", 64, true],
+  ["elf32 big-endian", 32, false],
+] as const)(
+  "reads DT_PLTGOT through the single PT_DYNAMIC header (%s)",
+  (_label, bits, little) => {
+    const report = parse(
+      elfUnwindFixture({
+        bits,
+        little,
+        header: "match",
+        datarel: "dynamic",
+        dynamicPrograms: 1,
+        dynamicSection: false,
+      }),
+    );
+    expect(report.ranges.map((range) => range.start)).toEqual([
+      address(UNWIND_FN_A),
+      address(UNWIND_FN_B),
+    ]);
+    expect(report.coverage.status).toBe("complete");
+    expect(report.limitations).toContain(
+      "DW_EH_PE_datarel .eh_frame values were resolved against the GOT base from DT_PLTGOT.",
+    );
+  },
+);
+
+it.each([
+  ["repeated PT_DYNAMIC headers", { dynamicPrograms: 2 }],
+  ["repeated SHT_DYNAMIC sections", { duplicate: ".dynamic" }],
+] as const)(
+  "keeps the GOT unknown when %s leave the dynamic table ambiguous",
+  (_label, options) => {
+    const report = parse(
+      elfUnwindFixture({ header: "match", datarel: "dynamic", ...options }),
+    );
+    expect(report.ranges.map((range) => range.start)).not.toContain(
+      address(UNWIND_FN_A),
+    );
+    expect(report.coverage.status).toBe("partial");
+    expect(report.limitations).toContain(GOT_UNKNOWN);
+  },
+);
+
+it("keeps the GOT unknown when repeated allocated .got.plt sections disagree", () => {
+  const report = parse(
+    elfUnwindFixture({
+      header: "match",
+      datarel: "got",
+      duplicate: ".got.plt",
+    }),
+  );
+  expect(report.ranges.map((range) => range.start)).not.toContain(
+    address(UNWIND_FN_A),
+  );
+  expect(report.coverage.status).toBe("partial");
+  expect(report.limitations).toContain(GOT_UNKNOWN);
+});
+
+it("keeps the GOT unknown when compressed dynamic storage resembles decoded entries", () => {
+  const bytes = elfUnwindFixture({ header: "match", datarel: "dynamic" });
+  const section = findSection(bytes, ".dynamic");
+  // The payload still resembles ordinary DT_PLTGOT/DT_NULL entries, but the
+  // declaration makes it opaque compressed storage, not a decoded table.
+  bytes.writeBigUInt64LE(0x800n, section.headerOffset + 8);
+  const report = parse(bytes);
+  expect(report.ranges.map((range) => range.start)).not.toContain(
+    address(UNWIND_FN_A),
+  );
+  expect(report.coverage.status).toBe("partial");
+  expect(report.limitations).toContain(
+    "A DW_EH_PE_datarel .eh_frame value needs a GOT base that could not be determined; that value is unresolved.",
+  );
+});
+
 it("caps .eh_frame_hdr rows at the max_ranges budget and marks the comparison incomplete", () => {
   const report = parse(elfUnwindFixture({ header: "duplicate-row" }), {
     max_ranges: 2,
@@ -676,7 +908,7 @@ it("caps .eh_frame_hdr rows at the max_ranges budget and marks the comparison in
     table_entries: 2,
   });
   expect(report.coverage).toMatchObject({
-    status: "incomplete",
+    status: "partial",
     eh_frame_hdr_agreement: "unavailable",
   });
   expect(report.limitations).toContain(
@@ -835,7 +1067,7 @@ it("does not decode FDEs against a CIE with an unrecognized augmentation letter"
   expect(report.ranges.map((range) => range.start)).toEqual([
     address(UNWIND_FN_B),
   ]);
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
   expect(report.limitations).toEqual(
     expect.arrayContaining([
       "A CIE augmentation has an unrecognized letter, so its pointer encodings cannot be trusted; that CIE was not decoded.",
@@ -901,7 +1133,7 @@ it("skips an FDE whose initial location is indirect instead of reporting the poi
   expect(report.ranges.map((range) => range.start)).toEqual([
     address(UNWIND_FN_B),
   ]);
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
   expect(report.limitations).toEqual(
     expect.arrayContaining([
       "1 FDE has an indirect initial location that was not dereferenced; its function start is unknown and it was skipped.",
@@ -920,7 +1152,7 @@ it("does not locate .eh_frame through an indirect .eh_frame_hdr eh_frame_ptr", (
     status: "incomplete",
     eh_frame_pointer: null,
   });
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
   expect(report.limitations).toContain(
     "The .eh_frame_hdr eh_frame_ptr is indirect and was not dereferenced, so it does not locate .eh_frame.",
   );
@@ -937,7 +1169,7 @@ it("stops a header-located .eh_frame without a search table at a CIE with an unr
     address(UNWIND_FN_A),
   ]);
   expect(report.coverage).toMatchObject({
-    status: "incomplete",
+    status: "partial",
     total_ranges: 1,
     examined_records: 3,
   });
@@ -956,7 +1188,7 @@ it("reports coverage incomplete when a duplicate PT_GNU_EH_FRAME is ignored", ()
   expect(report.ranges.map((range) => range.start)).toEqual([
     address(UNWIND_FN_A),
   ]);
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
   expect(report.limitations).toContain(
     "Multiple PT_GNU_EH_FRAME program headers were declared; only the first was decoded.",
   );
@@ -971,7 +1203,12 @@ it("bounds the symbol-name text decoded for one page by its own allowance", () =
     symbol: { text: "s".repeat(65535) },
   });
   expect(() => parse(bytes, { limit: 300 })).toThrow(
-    ElfUnwindSymbolTextFailure,
+    expect.objectContaining({
+      failure: expect.objectContaining({
+        kind: "limit",
+        limit: { name: "symbol_name_text_bytes", maximum: 16 * 1024 * 1024 },
+      }),
+    }),
   );
 });
 
@@ -1009,7 +1246,7 @@ it("does not compare or bound by an .eh_frame_hdr search table with an indirect 
     fde_count: 2,
   });
   expect(report.coverage).toMatchObject({
-    status: "incomplete",
+    status: "partial",
     eh_frame_hdr_agreement: "unavailable",
   });
   expect(report.limitations).toContain(
@@ -1021,7 +1258,7 @@ it("does not compare or bound by an .eh_frame_hdr search table with an indirect 
   });
   sectionless[Number(sectionless.readBigUInt64LE(64 + 56 + 8)) + 3] = 0xbb;
   const unbounded = parse(sectionless);
-  expect(unbounded.coverage.status).toBe("incomplete");
+  expect(unbounded.coverage.status).toBe("partial");
   expect(unbounded.limitations).not.toContain(
     "The .eh_frame located only through the .eh_frame_hdr eh_frame_ptr has no section bounds and no terminator after the last FDE its search table names; bytes after that FDE were not decoded.",
   );
@@ -1038,7 +1275,7 @@ it("leaves a non-zero indirect .eh_frame_hdr FDE count unresolved", () => {
     table_entries: 0,
   });
   expect(report.coverage).toMatchObject({
-    status: "incomplete",
+    status: "partial",
     eh_frame_hdr_agreement: "unavailable",
   });
   expect(report.limitations).toContain(
@@ -1082,7 +1319,7 @@ it("excludes load mappings whose file size exceeds memory size", () => {
   const phoff = Number(bytes.readBigUInt64LE(32));
   bytes.writeBigUInt64LE(0n, phoff + 40);
   const report = parse(bytes);
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
   expect(report.limitations).toContain(
     "An invalid PT_LOAD mapping was excluded from unwind address resolution.",
   );

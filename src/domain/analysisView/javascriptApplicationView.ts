@@ -54,9 +54,7 @@ const jsIncompatible = (detail: string): AnalysisError =>
   ]);
 
 /** Every exact module path or original source-map reference retained by a node. */
-export const javascriptModulePaths = (
-  node: ApplicationNode,
-): readonly string[] => {
+const javascriptModulePaths = (node: ApplicationNode): readonly string[] => {
   if (node.identity.strategy === "canonical-path") return [node.identity.path];
   if (node.identity.strategy === "source-map-original")
     return [node.identity.original_source];
@@ -183,15 +181,7 @@ const moduleItem = (node: ApplicationNode, path: string | null): JsonValue => ({
   hashes: [...nodeHashes(node)],
   exports: [...exportNames(node)],
   source_ranges: [...sourceRanges(node)],
-  observations: node.observations.map((observation) => ({
-    observation_id: observation.observation_id,
-    label: observation.label,
-    properties: observation.properties,
-    evidence: {
-      ...observation.evidence,
-      location: observation.evidence.location,
-    },
-  })),
+  observations: node.observations,
 });
 
 const moduleReference = ({
@@ -429,7 +419,7 @@ export const projectJavaScriptApplicationView = (
         }),
         limitation_count: limitationCount,
       },
-      coverage: completeCoverage(moduleCount, moduleCount),
+      coverage: completeCoverage(moduleCount),
       ...shared,
     });
   }
@@ -447,7 +437,7 @@ export const projectJavaScriptApplicationView = (
       kind: "item" as const,
       view,
       item: moduleItem(selected.value.node, selected.value.path),
-      coverage: completeCoverage(1, modules.length),
+      coverage: completeCoverage(1),
       ...shared,
     });
   }

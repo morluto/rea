@@ -1,5 +1,10 @@
-import { readElfRelocationEntry } from "../domain/elfRelocation.js";
+import {
+  ELF_RELR_DYNAMIC_TAGS,
+  isElfAndroidRelocationDynamicTag,
+  readElfRelocationEntry,
+} from "../domain/elfRelocation.js";
 import { readElfDynamicEntry } from "../domain/elfDynamicEntry.js";
+import { BinaryReader } from "../domain/binaryContainer.js";
 import type { ElfProgramHeader } from "../domain/elfProgramHeader.js";
 import type { MipsElfMetadata } from "../domain/binaryTargetTypes.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -15,6 +20,7 @@ export interface MipsElfRelocationSection {
   readonly offset: number;
   readonly size: number;
   readonly entrySize: number;
+  readonly compressed: boolean;
 }
 type SharedLoadFacts = Extract<
   NonNullable<MipsElfMetadata["sharedLoad"]>,
@@ -31,13 +37,14 @@ export const readMipsElfSharedLoad = async (
   sections: readonly MipsElfRelocationSection[],
 ): Promise<Result<SharedLoadFacts, string>> => {
   const loads: {
+    index: number;
     offset: number;
     address: number;
     size: number;
     memorySize: number;
   }[] = [];
   let dynamic: { offset: number; address: number; size: number } | undefined;
-  for (const program of programHeaders) {
+  for (const [index, program] of programHeaders.entries()) {
     checkCancelled();
     const { type } = program;
     const offset = Number(program.offset);
@@ -51,7 +58,7 @@ export const readMipsElfSharedLoad = async (
         address + memorySize > 0x100000000
       )
         return err("invalid or incomplete MIPS PT_LOAD range");
-      loads.push({ offset, address, size, memorySize });
+      loads.push({ index, offset, address, size, memorySize });
     }
     if (type === 2) {
       if (dynamic !== undefined) return err("duplicate MIPS PT_DYNAMIC tables");
@@ -64,6 +71,22 @@ export const readMipsElfSharedLoad = async (
     return err("invalid MIPS ELF32 dynamic table size");
   if (dynamic.offset > fileSize - dynamic.size)
     return err("MIPS PT_DYNAMIC range extends beyond the file");
+  // Source facts only: every PT_LOAD address with its program-header index.
+  // Providers apply their own image-base selection rules to these.
+  const loadAddresses = loads.map((load) => ({
+    headerIndex: load.index,
+    virtualAddress: load.address,
+  }));
+  // Android apriori prelink trailer: the prelinked base word, then the tag
+  // "PRE " (padding around the tag is tolerated).
+  let prelinkBase: number | null = null;
+  if (fileSize >= 8) {
+    const trailer = await read(fileSize - 8, 8, "MIPS prelink trailer");
+    if (!trailer.ok) return err(trailer.error);
+    const tag = trailer.value.subarray(4).toString("latin1");
+    if (tag.replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/gu, "") === "PRE")
+      prelinkBase = new BinaryReader(trailer.value, little, "elf").u32(0);
+  }
   const ranges = loads
     .filter((load) => load.memorySize > 0)
     .sort((left, right) => left.address - right.address);
@@ -104,9 +127,24 @@ export const readMipsElfSharedLoad = async (
   // Bound temporary storage, not admitted artifact size. ELF32 records are
   // exact eight-byte structures; every declared record is examined or refused.
   const chunkBytes = 64 * 1024;
-  const relevant = new Set([2, 7, 8, 9, 17, 18, 19, 20, 23, 35, 36, 37]);
+  const DT_FLAGS_1 = 0x6ffffffb;
+  const relrTags = Object.values(ELF_RELR_DYNAMIC_TAGS.standard).map(Number);
+  const relevant = new Set([
+    2,
+    7,
+    8,
+    9,
+    17,
+    18,
+    19,
+    20,
+    23,
+    ...relrTags,
+    DT_FLAGS_1,
+  ]);
   const tags = new Map<number, number>();
   let terminated = false;
+  let declaresAndroidRelocations = false;
   for (
     let offset = 0;
     offset < dynamic.size && !terminated;
@@ -131,15 +169,29 @@ export const readMipsElfSharedLoad = async (
         terminated = true;
         break;
       }
+      if (isElfAndroidRelocationDynamicTag(parsedEntry.value.tag))
+        declaresAndroidRelocations = true;
       if (!relevant.has(tag)) continue;
       if (tags.has(tag)) return err(`duplicate MIPS dynamic tag ${tag}`);
       tags.set(tag, Number(parsedEntry.value.value));
     }
   }
   if (!terminated) return err("MIPS dynamic table has no DT_NULL terminator");
-  if ([35, 36, 37].some((tag) => tags.has(tag)))
+  const DF_1_PIE = 0x08000000;
+  const imageFacts = {
+    loadAddresses,
+    prelinkBase,
+    ...(((tags.get(DT_FLAGS_1) ?? 0) & DF_1_PIE) === 0
+      ? {}
+      : { declaresPie: true as const }),
+  };
+  if (relrTags.some((tag) => tags.has(tag)))
     return err(
       "MIPS shared RELR relocation declarations require separate verification",
+    );
+  if (declaresAndroidRelocations)
+    return err(
+      "MIPS shared Android relocation declarations require separate verification",
     );
   if ([2, 7, 8, 9, 23].some((tag) => (tags.get(tag) ?? 0) !== 0))
     return err(
@@ -155,6 +207,8 @@ export const readMipsElfSharedLoad = async (
     let observed = 0;
     for (const section of sections) {
       checkCancelled();
+      if (section.compressed)
+        return `MIPS section relocation declarations at file offset ${section.offset} use compressed storage; decoded relocation coverage is unavailable`;
       if (section.size === 0) continue;
       if (
         section.type !== 9 ||
@@ -177,6 +231,7 @@ export const readMipsElfSharedLoad = async (
           relocationCount: 0,
           relocationTypes: [],
           symbolRelativeCount: 0,
+          ...imageFacts,
         })
       : err(reason);
   };
@@ -233,5 +288,6 @@ export const readMipsElfSharedLoad = async (
     relocationCount: size / 8,
     relocationTypes: [...types].sort((left, right) => left - right),
     symbolRelativeCount,
+    ...imageFacts,
   });
 };

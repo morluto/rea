@@ -7,8 +7,15 @@ import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 import {
   addressedValueSchema,
   isNativeInventoryOperation,
-  nativeInventoryRowsSchemas,
+  type NativeInventoryOperation,
 } from "../native/nativeInventory.js";
+import {
+  listNamesFact,
+  listProceduresFact,
+  listStringsFact,
+  searchProceduresFact,
+  searchStringsFact,
+} from "../native/nativeOperationFacts.js";
 import { err, ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
@@ -81,12 +88,16 @@ export const nativeInventorySummarySchema = z.strictObject({
   selectable_fields: z.array(fieldSchema),
 });
 
-const readNames = createAnalysisViewResultReader(
-  nativeInventoryRowsSchemas.names,
-);
-const readStrings = createAnalysisViewResultReader(
-  nativeInventoryRowsSchemas.strings,
-);
+/** Retained inventory Evidence reads through its parent operation's contract. */
+const readInventory = {
+  list_names: createAnalysisViewResultReader(listNamesFact.schema),
+  list_procedures: createAnalysisViewResultReader(listProceduresFact.schema),
+  search_procedures: createAnalysisViewResultReader(
+    searchProceduresFact.schema,
+  ),
+  list_strings: createAnalysisViewResultReader(listStringsFact.schema),
+  search_strings: createAnalysisViewResultReader(searchStringsFact.schema),
+} satisfies Record<NativeInventoryOperation, unknown>;
 
 /** Project already completed provider observations without another provider read or sort. */
 export const projectNativeInventoryView = (
@@ -130,7 +141,7 @@ export const projectNativeInventoryView = (
   const strings =
     parent.operation === "list_strings" ||
     parent.operation === "search_strings";
-  const parsed = strings ? readStrings(parent) : readNames(parent);
+  const parsed = readInventory[parent.operation](parent);
   if (!parsed.ok) return parsed;
   const rows: readonly InventoryRecord[] = parsed.value;
   const shared = {
@@ -168,7 +179,7 @@ export const projectNativeInventoryView = (
         discovery_coverage: "unknown" as const,
         selectable_fields: fieldSchema.options,
       },
-      coverage: completeWithinViewCoverage(rows.length, rows.length),
+      coverage: completeWithinViewCoverage(rows.length),
     });
   if (view.kind === "native-inventory-aliases") {
     const row = rows[view.source_index];

@@ -83,7 +83,7 @@ it("retains selected layer paths in runtime verifier parent Evidence", async () 
     verified: true,
     layers: [{ evidence_id: expected.evidence_id }],
   });
-}, 20_000);
+});
 
 it("retains workflow selections while rejecting aliases of the same target", async () => {
   const left = await selectedFixture();
@@ -117,4 +117,4 @@ it("retains workflow selections while rejecting aliases of the same target", asy
   ).rejects.toMatchObject({
     stderr: expect.stringContaining("must resolve to distinct paths"),
   });
-}, 20_000);
+});

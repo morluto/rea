@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { expect, it } from "vitest";
 
 import {
@@ -38,7 +39,7 @@ for (const format of ["toml", "grok"] as const)
             ? { ...peers, rea: { command: "new", args: [] } }
             : peers;
         const result = serializeClientConfiguration(
-          withClientServers(parsed, servers),
+          withClientServers(parsed, servers, HOST_PLATFORM.platform),
           format,
           source,
         );
@@ -80,7 +81,7 @@ it("retains comments from dotted REA assignments and nested inline values", () =
     const { rea: removed, ...servers } = parsed.servers;
     expect(removed).toBeDefined();
     const result = serializeClientConfiguration(
-      withClientServers(parsed, servers),
+      withClientServers(parsed, servers, HOST_PLATFORM.platform),
       "toml",
       source,
     );
@@ -98,3 +99,27 @@ it("retains comments from dotted REA assignments and nested inline values", () =
     );
   }
 });
+
+it.each(["toml", "grok"] as const)(
+  "retains scalar types in an inline %s registration while refreshing its launcher",
+  (format) => {
+    const source =
+      'mcp_servers = { rea = { command = "old", large = 1e20, exact = 9007199254740992.0, limit = inf, floor = -inf, unknown = nan, zero = -0.0, date = 2026-11-10, clock = 12:34:56, local = 2026-11-10T12:34:56, offset = 2026-11-10T12:34:56-05:00 }, peer = { command = "peer" } } # retained\n';
+    const parsed = parseClientConfiguration(source, format);
+    const previous = parsed.servers.rea as Record<string, unknown>;
+    const servers = {
+      ...parsed.servers,
+      rea: { ...previous, command: "new" },
+    };
+    const result = serializeClientConfiguration(
+      withClientServers(parsed, servers, HOST_PLATFORM.platform),
+      format,
+      source,
+    );
+    if (!result.ok) throw new Error("TOML edit was refused");
+    expect(parseClientConfiguration(result.value, format).servers).toEqual(
+      servers,
+    );
+    expect(result.value).toContain("# retained");
+  },
+);

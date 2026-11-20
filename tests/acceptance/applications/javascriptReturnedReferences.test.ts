@@ -210,7 +210,6 @@ cliTest(
       assertReturns(fields);
       assertWideReturns(fields);
     }),
-  120_000,
 );
 
 cliTest(
@@ -224,5 +223,4 @@ cliTest(
       assertWideReturns,
     );
   },
-  120_000,
 );

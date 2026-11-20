@@ -7,6 +7,8 @@ import {
 
 import { test as base } from "vitest";
 
+import { runningTestDeadline } from "../runningTestDeadline.js";
+
 const SHUTDOWN_GRACE_MS = 1_000;
 
 /** Captured output and termination state from one child process. */
@@ -70,7 +72,10 @@ const stopChild = async (
   return waitForExit(child, SHUTDOWN_GRACE_MS);
 };
 
-/** Create a child-process registry for a fixture composition root. */
+/**
+ * Create a child-process registry for a fixture composition root. A run without
+ * its own `timeoutMs` is bounded by the running test's remaining deadline.
+ */
 export const createTestProcessRegistry = (
   spawnChild: (
     command: string,
@@ -98,12 +103,22 @@ export const createTestProcessRegistry = (
   return {
     spawn,
     run: async (command, arguments_, options = {}) => {
-      const { input, timeoutMs, ...spawnOptions } = options;
+      const {
+        input,
+        timeoutMs = runningTestDeadline(),
+        ...spawnOptions
+      } = options;
       const child = spawn(command, arguments_, spawnOptions);
       const stdout: Buffer[] = [];
       const stderr: Buffer[] = [];
       child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
       child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+      let inputFailure: Error | undefined;
+      child.stdin.once("error", (error: NodeJS.ErrnoException) => {
+        // A child can reject input by exiting while the parent is writing.
+        // Keep its exit status and captured output as the command result.
+        if (error.code !== "EPIPE") inputFailure = error;
+      });
       if (input === undefined) child.stdin.end();
       else child.stdin.end(input);
 
@@ -166,6 +181,7 @@ export const createTestProcessRegistry = (
           cause: result,
         });
       }
+      if (inputFailure !== undefined) throw inputFailure;
       return result;
     },
     shutdown: async () => {

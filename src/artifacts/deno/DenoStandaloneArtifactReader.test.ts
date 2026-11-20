@@ -1,30 +1,33 @@
 import { createHash } from "node:crypto";
+import { buffer } from "node:stream/consumers";
 import type { FileHandle } from "node:fs/promises";
-import { writeFile } from "node:fs/promises";
+import { open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";
+import { phaseGate } from "../../../tests/support/lifecycleHarness.js";
 
-import { elfNote, elfNoteFixture } from "../../native/elf/ElfNotes.fixture.js";
+import {
+  elfNote,
+  elfNoteFixture,
+  withElf64DirectSectionCount,
+} from "../../native/elf/ElfNotes.fixture.js";
 import {
   MAX_INSPECT_ELF_NOTE_ENTRIES,
   MAX_INSPECT_ELF_NOTE_FILE_BYTES,
 } from "../../domain/native/elfNotes.js";
 import { MAX_INSPECT_PE_FILE_BYTES } from "../../domain/native/peResources.js";
-import { peResourceFixture } from "../../native/pe/PeResources.fixture.js";
+import { peResourceFixture } from "../../domain/pe/peResources.fixture.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../../tests/fixtures/artifactInventory.js";
 import { artifactFormatDescriptor } from "../artifactFormats.js";
-import { ArtifactPathRegistry } from "../ArtifactPaths.js";
+import { ArtifactPathRegistry } from "../../resources/ArtifactPaths.js";
 import { DenoStandaloneArtifactReader } from "../DenoStandaloneArtifactReader.js";
 import { cArchiveExecutable } from "../pyinstaller/CArchive.fixture.js";
-import { DENO_SECTION_MAGIC } from "./DenoSectionLayout.js";
-import {
-  locateDenoStandalone,
-  MAX_DENO_INTEL_TRAILER_SENTINELS,
-} from "./DenoStandaloneLocation.js";
+import { locateDenoStandalone } from "./DenoStandaloneLocation.js";
 import {
   buildDenoSection,
+  DENO_FIXTURE_SECTION_MAGIC,
   defaultDenoMetadata,
   denoElf,
   denoIntelTrailer,
@@ -33,8 +36,10 @@ import {
   denoUniversal,
   machOWithSegment,
 } from "./DenoStandalone.fixture.js";
-import { MAX_DENO_PATH_COMPONENT_BYTES } from "./DenoVirtualFs.js";
+
 import { resolveArtifactReaderLimits } from "../../domain/artifactReaderLimits.js";
+
+const MAX_DENO_PATH_COMPONENT_BYTES = 255;
 
 it("keeps a confirmed Deno inventory when another pack recognizer is limited", async () => {
   const original = denoElf();
@@ -248,7 +253,7 @@ it("fails closed when a named section is truncated or lacks the opening marker",
   await expect(
     inventoryOf(
       "truncated",
-      denoMachO(Buffer.concat([DENO_SECTION_MAGIC, Buffer.alloc(4)])),
+      denoMachO(Buffer.concat([DENO_FIXTURE_SECTION_MAGIC, Buffer.alloc(4)])),
     ),
   ).rejects.toMatchObject({ reason: "format" });
   await expect(
@@ -324,42 +329,53 @@ it("reports cancellation and keeps indexed paths for an unsupported remote listi
   });
 });
 
-it("keeps a resolved remote module beside one with a missing specifier", async () => {
-  const url = "https://example.com/mod.ts";
-  const snapshot = await inventoryOf(
-    "partial-remote",
-    denoElf(
-      buildDenoSection({
-        metadata: { ...defaultDenoMetadata(), entrypoint_key: url },
-        specifiers: [{ text: url, id: 1 }],
-        remoteModules: [
-          { specifierId: 1, data: "known" },
-          { specifierId: 2, data: "missing" },
-        ],
-      }),
-    ),
-  );
-  expect(
-    snapshot.occurrences.find((row) => row.logical_path === "."),
-  ).toMatchObject({
-    format_metadata: { remote_module_listing: "unsupported" },
-  });
-  expect(
-    snapshot.occurrences.find(
-      (row) => row.logical_path === "deno-remote/example.com/mod.ts",
-    ),
-  ).toMatchObject({
-    format_metadata: { source_path: url, entry_point: true },
-  });
-  expect(
-    snapshot.occurrences.find((row) => row.logical_path === "deno-remote/1"),
-  ).toMatchObject({
-    format_metadata: { source_path: null, entry_point: false },
-    limitations: expect.arrayContaining([
-      expect.stringContaining("not available as a logical path"),
-    ]),
-  });
-});
+it.each(["missing", "invalid UTF-8"] as const)(
+  "keeps a resolved remote module beside a %s specifier",
+  async (specifier) => {
+    const url = "https://example.com/mod.ts";
+    const snapshot = await inventoryOf(
+      "partial-remote",
+      denoElf(
+        buildDenoSection({
+          metadata: { ...defaultDenoMetadata(), entrypoint_key: url },
+          specifiers: [
+            { text: url, id: 1 },
+            ...(specifier === "invalid UTF-8"
+              ? [{ bytes: Buffer.from([0xff]), id: 2 }]
+              : []),
+          ],
+          remoteModules: [
+            { specifierId: 1, data: "known" },
+            { specifierId: 2, data: "missing" },
+          ],
+        }),
+      ),
+    );
+    expect(
+      snapshot.occurrences.find((row) => row.logical_path === "."),
+    ).toMatchObject({
+      format_metadata: {
+        specifier_listing: specifier === "missing" ? "listed" : "unsupported",
+        remote_module_listing: "unsupported",
+      },
+    });
+    expect(
+      snapshot.occurrences.find(
+        (row) => row.logical_path === "deno-remote/example.com/mod.ts",
+      ),
+    ).toMatchObject({
+      format_metadata: { index: 0, source_path: url, entry_point: true },
+    });
+    expect(
+      snapshot.occurrences.find((row) => row.logical_path === "deno-remote/1"),
+    ).toMatchObject({
+      format_metadata: { index: 1, source_path: null, entry_point: false },
+      limitations: expect.arrayContaining([
+        expect.stringContaining("not available as a logical path"),
+      ]),
+    });
+  },
+);
 
 it.each([
   ["a port", "http://localhost:8000/mod.ts", "localhost%3A8000/mod.ts"],
@@ -944,6 +960,29 @@ it("fails closed when a SUI note sits beside extended section numbering", async 
   });
 });
 
+it("records a reserved direct section count beside an independently confirmed program note", async () => {
+  const bytes = withElf64DirectSectionCount(denoElf(), 0xff00);
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    failure: {
+      reason: "format",
+      message: expect.stringContaining("reserved direct section count"),
+    },
+  });
+});
+
+it("does not confirm a Deno carrier from a section note in a malformed table", async () => {
+  const bytes = withElf64DirectSectionCount(
+    gnuElf("section", suiNote()),
+    0xff00,
+  );
+  await expect(
+    locateDenoStandalone(bytesHandle(bytes), bytes.length),
+  ).resolves.toEqual({ status: "absent" });
+});
+
 it("reaches a SUI section note past an unreadable program table", async () => {
   const bytes = patched(gnuElf("both", suiNote()), (image) => {
     image.writeBigUInt64LE(BigInt(image.length + 8), ELF64_PHOFF);
@@ -1070,7 +1109,7 @@ it("rejects packed Intel sentinels without rereading a chunk per sentinel", asyn
 it("leaves an x64 Mach-O absent when sentinels pass the allowance", async () => {
   const packed = Buffer.concat([
     denoMachO([], { architecture: "x64" }),
-    rejectedIntelSentinels(MAX_DENO_INTEL_TRAILER_SENTINELS + 1),
+    rejectedIntelSentinels(65),
   ]);
   let readBytes = 0;
   const probe = await locateDenoStandalone(
@@ -1306,7 +1345,7 @@ it("accepts side-by-side Intel trailers with identical bytes", async () => {
 it("refuses a confirmed Intel trailer when the allowance ends the outer search", async () => {
   const bytes = Buffer.concat([
     denoMachO([], { architecture: "x64" }),
-    rejectedIntelSentinels(MAX_DENO_INTEL_TRAILER_SENTINELS),
+    rejectedIntelSentinels(64),
     intelTrailerRecord(buildDenoSection()),
   ]);
   await expect(
@@ -1316,6 +1355,30 @@ it("refuses a confirmed Intel trailer when the allowance ends the outer search",
     failure: {
       reason: "limit",
       boundary: "capacity",
+    },
+  });
+});
+
+it("locates a PE resource past a distant DOS stub using positional reads", async () => {
+  const section = buildDenoSection();
+  const { bytes: image } = peResourceFixture(
+    true,
+    [{ type: 10, name: "D3N0L4ND", language: 0, payload: section }],
+    65536,
+    4,
+    0x20080,
+  );
+  const handle = bytesHandle(image, (length) => {
+    if (length > 512) throw new Error("Read exceeded the header record bounds");
+  });
+  await expect(
+    locateDenoStandalone(handle, image.length),
+  ).resolves.toMatchObject({
+    status: "present",
+    location: {
+      carrier: "pe",
+      embedding: "pe-resource",
+      length: section.length,
     },
   });
 });
@@ -1341,6 +1404,23 @@ it("locates a small D3N0L4ND resource in a PE larger than 512 MiB", async () => 
   });
 });
 
+it("keeps a PE resource read failure when the caller aborts with that same error", async () => {
+  const image = denoPe([buildDenoSection()]);
+  const controller = new AbortController();
+  const failure = Object.assign(new Error("PE resource read failed"), {
+    code: "EIO",
+  });
+  const handle = bytesHandle(image, (length) => {
+    if (length === 16) {
+      controller.abort(failure);
+      throw failure;
+    }
+  });
+  await expect(
+    locateDenoStandalone(handle, image.length, controller.signal),
+  ).rejects.toBe(failure);
+});
+
 it("fails closed when a readable D3N0L4ND resource sits beside an unreadable RT_RCDATA branch", async () => {
   const fixture = peResourceFixture(
     true,
@@ -1362,7 +1442,7 @@ it("fails closed when a readable D3N0L4ND resource sits beside an unreadable RT_
     locateDenoStandalone(bytesHandle(fixture.bytes), fixture.bytes.length),
   ).resolves.toMatchObject({
     status: "present",
-    failure: { reason: "format" },
+    failure: { reason: "malformed" },
   });
 });
 
@@ -1387,7 +1467,7 @@ it("fails closed when a readable D3N0L4ND resource sits beside a non-directory R
     locateDenoStandalone(bytesHandle(fixture.bytes), fixture.bytes.length),
   ).resolves.toMatchObject({
     status: "present",
-    failure: { reason: "format" },
+    failure: { reason: "malformed" },
   });
 });
 
@@ -1400,7 +1480,7 @@ it("fails closed when a D3N0L4ND payload is not file-backed", async () => {
     locateDenoStandalone(bytesHandle(fixture.bytes), fixture.bytes.length),
   ).resolves.toMatchObject({
     status: "present",
-    failure: { reason: "format" },
+    failure: { reason: "malformed" },
   });
 });
 
@@ -1819,3 +1899,157 @@ it("rejects a confirmed Deno section when header and segment widths disagree", a
     failure: { reason: "format" },
   });
 });
+
+async function collect<T>(values: AsyncIterable<T>): Promise<T[]> {
+  const result: T[] = [];
+  for await (const value of values) result.push(value);
+  return result;
+}
+
+it.each(["retry", "independent caller", "physical failure"] as const)(
+  "keeps Deno inventory available after failed preparation: %s",
+  async (scenario) => {
+    const path = await writeCarrier(
+      "retry",
+      denoElf(sectionFor(Buffer.from("source"))),
+    );
+    const reader = new DenoStandaloneArtifactReader(path);
+    const controller = new AbortController();
+    const reason = { stop: "first Deno inventory" };
+    const physicalFailure = Object.assign(
+      new Error("Deno preparation read failed"),
+      { code: "EIO" },
+    );
+    const observed = await open(path, "r");
+    const prototype = Object.getPrototypeOf(observed) as FileHandle;
+    const read = prototype.read;
+    const artifactRead = phaseGate();
+    let firstRead = true;
+    const spy = vi.spyOn(prototype, "read").mockImplementation(async function (
+      this: FileHandle,
+      ...args: Parameters<typeof read>
+    ) {
+      const result = await read.apply(this, args);
+      if (firstRead) {
+        firstRead = false;
+        await artifactRead.hold();
+        if (scenario === "physical failure") throw physicalFailure;
+      }
+      return result;
+    });
+    const pending: Promise<unknown>[] = [];
+    try {
+      const first = collect(reader.entries(controller.signal));
+      const failure = first.then(
+        () => {
+          throw new Error("Expected cancelled Deno preparation");
+        },
+        (cause: unknown) => cause,
+      );
+      pending.push(failure);
+      await artifactRead.reached(first, "Deno artifact read");
+      const concurrent =
+        scenario === "independent caller"
+          ? collect(reader.entries())
+          : undefined;
+      if (concurrent !== undefined) {
+        pending.push(concurrent);
+        void concurrent.catch(() => undefined);
+      }
+      controller.abort(reason);
+      artifactRead.release();
+      const rejected = await failure;
+      if (scenario === "physical failure")
+        expect(rejected).toMatchObject({ reason: "io" });
+      else {
+        expect(rejected).toMatchObject({ reason: "cancelled" });
+        expect((rejected as Error).cause).toBe(reason);
+      }
+      const entries = await (concurrent ?? collect(reader.entries()));
+      expect(entries.map((entry) => entry.path)).toEqual(["main.ts"]);
+      expect((await buffer(await reader.open(entries[0]!))).toString()).toBe(
+        "source",
+      );
+    } finally {
+      artifactRead.release();
+      await Promise.allSettled(pending);
+      spy.mockRestore();
+      await observed.close();
+      await reader.close();
+    }
+  },
+);
+
+it("does not publish Deno entries from cancelled partial preparation", async () => {
+  const contents = Buffer.from("abc");
+  const path = await writeCarrier(
+    "partial",
+    denoElf(
+      sectionFor(contents, [
+        { File: { n: "a.ts", o: [0, 1], u: true } },
+        { File: { n: "b.ts", o: [1, 1], u: true } },
+        { File: { n: "c.ts", o: [2, 1], u: true } },
+      ]),
+    ),
+  );
+  const reader = new DenoStandaloneArtifactReader(path);
+  const control = new DenoStandaloneArtifactReader(path);
+  const controller = new AbortController();
+  const reason = { stop: "partial Deno inventory" };
+  const expected = await collect(control.entries());
+  const reserve = ArtifactPathRegistry.prototype.reservePath;
+  const spy = vi
+    .spyOn(ArtifactPathRegistry.prototype, "reservePath")
+    .mockImplementation(function (
+      this: ArtifactPathRegistry,
+      ...args: Parameters<typeof reserve>
+    ) {
+      if (args[0] === "b.ts") controller.abort(reason);
+      return reserve.apply(this, args);
+    });
+  try {
+    await expect(
+      collect(reader.entries(controller.signal)),
+    ).rejects.toMatchObject({ reason: "cancelled" });
+    spy.mockRestore();
+    await expect(reader.open(expected[0]!)).rejects.toMatchObject({
+      reason: "integrity",
+    });
+    expect(
+      (await collect(reader.entries())).map((entry) => entry.path),
+    ).toEqual(["a.ts", "b.ts", "c.ts"]);
+  } finally {
+    spy.mockRestore();
+    await reader.close();
+    await control.close();
+  }
+});
+
+it.each(["https://example.test/mod.ts", "\uFEFFhttps://example.test/mod.ts"])(
+  "preserves the length-prefixed remote specifier %j in inventory identity",
+  async (specifier) => {
+    const body = Buffer.from("inert remote bytes");
+    const snapshot = await inventoryOf(
+      "specifier-spelling",
+      denoElf(
+        buildDenoSection({
+          metadata: { ...defaultDenoMetadata(), entrypoint_key: specifier },
+          specifiers: [{ text: specifier, id: 1 }],
+          remoteModules: [{ specifierId: 1, data: body }],
+        }),
+      ),
+    );
+    const member = snapshot.occurrences.find(
+      (row) =>
+        row.format_metadata?.kind === "deno-standalone-entry" &&
+        row.format_metadata.role === "remote-module",
+    );
+    expect(member).toMatchObject({
+      format_metadata: { source_path: specifier, entry_point: true },
+    });
+    expect(
+      snapshot.nodes.find((node) => node.artifact_id === member?.artifact_id)
+        ?.sha256,
+    ).toBe(createHash("sha256").update(body).digest("hex"));
+  },
+);

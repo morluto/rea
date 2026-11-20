@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import type { JsonValue } from "../../src/domain/jsonValue.js";
 import {
   apiSurfaceHar,
@@ -263,7 +264,7 @@ export const analysisViewCaptureEvidence = (
 ): Evidence =>
   createEvidence(
     capture.artifact.sha256 === null
-      ? undefined
+      ? unknownTarget("not-observed")
       : {
           path: capture.artifact.path,
           sha256: capture.artifact.sha256,

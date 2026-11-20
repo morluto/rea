@@ -13,14 +13,16 @@ import {
   artifactInventoryViewRequestSchema,
   projectArtifactInventoryView,
 } from "./artifactInventoryView.js";
-import type { AnalysisViewParent } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { changedEvidenceSubject } from "../../../tests/fixtures/evidenceSubject.js";
 
 const carrier = ARTIFACT_COMPARISON_EXAMPLE.left;
-const freshInventory = () => {
+const freshInventory = (version: "current" | "historical" = "current") => {
   const inventory = artifactInventoryResultSchema.parse(
     carrier.normalized_result,
   );
   const root = inventory.occurrences[0]!;
+  if (version === "historical") delete root.relationship_coverage;
   const rootNode = inventory.nodes[0]!;
   root.artifact_kind = "container";
   root.artifact_format = "zip";
@@ -87,10 +89,10 @@ const parent = (normalizedResult: unknown): AnalysisViewParent => ({
   predicateType: carrier.predicate_type,
   evidenceId: carrier.evidence_id,
   operation: "inventory_artifact",
-  subject:
-    carrier.subject === null
-      ? null
-      : { ...carrier.subject, format: "zip", architecture: null },
+  subject: changedEvidenceSubject(carrier.subject, {
+    format: "zip",
+    architecture: null,
+  }),
   normalizedResult,
   sealedResult: true,
   limitations: [],
@@ -259,6 +261,19 @@ it("does not fabricate a selected field absent from the owning report", () => {
   ).toThrow();
 });
 
+it("reads absent historical relationship coverage as unknown without changing the retained row", () => {
+  const inventory = freezeJsonSnapshot(freshInventory("historical"));
+  expect(
+    page(parent(inventory), {
+      kind: "inventory",
+      collection: "occurrences",
+      fields: ["relationship_coverage"],
+      limit: 1,
+    }).items,
+  ).toMatchObject([{ relationship_coverage: "unknown" }]);
+  expect(inventory.occurrences[0]).not.toHaveProperty("relationship_coverage");
+});
+
 it("borrows authenticated immutable facts and validates once across retained queries", () => {
   const inventory = freezeJsonSnapshot(freshInventory());
   const source = parent(inventory);
@@ -313,13 +328,13 @@ it("binds reused facts to the current Evidence ID and validates its subject on e
       .inventory_evidence_ids,
   ).toEqual([next.evidenceId]);
   const subject = next.subject;
-  if (subject === null || subject === undefined)
+  if (subject === undefined || subject.identity.kind !== "file")
     throw new Error("Expected a subject");
   expect(() =>
     page(
       {
         ...next,
-        subject: { ...subject, digest: { sha256: "f".repeat(64) } },
+        subject: changedEvidenceSubject(subject, { sha256: "f".repeat(64) }),
       },
       { kind: "inventory", collection: "nodes" },
     ),

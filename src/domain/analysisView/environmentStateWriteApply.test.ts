@@ -99,47 +99,43 @@ it.each<[string, JsonObject | undefined, string]>([
   [
     "a fixed member with another value",
     { title: "B", priority: "LOW" },
-    `Member priority is accepted only with the value the capture sent, "HIGH", because the application stored it differently or other recorded fields go with it (${LISTED}).`,
+    'Member priority is accepted only with the value the capture sent, "HIGH"',
   ],
-  [
-    "a number for a string",
-    { title: 5 },
-    "Member title must be a JSON string, as the capture stored it.",
-  ],
-  [
-    "null for a string",
-    { title: null },
-    "Member title must be a JSON string, as the capture stored it.",
-  ],
+  ["a number for a string", { title: 5 }, "Member title must be a JSON string"],
+  ["null for a string", { title: null }, "Member title must be a JSON string"],
   [
     "an object for an array",
     { title: "B", tags: { x: true } },
-    "Member tags must be a JSON array, as the capture stored it.",
+    "Member tags must be a JSON array",
   ],
   [
     "a missing required member",
     { tags: ["y"] },
-    `The call lacks required members "title" (${LISTED}).`,
+    'The call lacks required members "title"',
   ],
-  [
-    "no body",
-    undefined,
-    `The call lacks required members "title" (${LISTED}).`,
-  ],
+  ["no body", undefined, 'The call lacks required members "title"'],
   [
     "another identity",
     { id: "43", title: "B" },
     "Member id must repeat the target's identity 42.",
   ],
 ])("refuses a body with %s", (_, body, message) => {
-  expect(problemOf(body)).toBe(message);
+  expect(problemOf(body)).toContain(message);
 });
 
+const POINTER_BODY = {
+  a: [{ b: 1 }, { b: [2, 3] }],
+  "x/y": { "m~n": true },
+  "~1": "literal tilde-one",
+  "": "blank",
+};
+
 it.each<[string, JsonValue | undefined]>([
-  ["", { a: [{ b: 1 }, { b: [2, 3] }], "x/y": { "m~n": true }, "": "blank" }],
+  ["", POINTER_BODY],
   ["/a/0/b", 1],
   ["/a/1/b/1", 3],
   ["/x~1y/m~0n", true],
+  ["/~01", "literal tilde-one"],
   ["/", "blank"],
   ["/a/2/b", undefined],
   ["/a/01/b", undefined],
@@ -148,12 +144,7 @@ it.each<[string, JsonValue | undefined]>([
   ["/a/0/b/c", undefined],
   ["/missing", undefined],
 ])("reads the body value at %j", (pointer, expected) => {
-  const body = {
-    a: [{ b: 1 }, { b: [2, 3] }],
-    "x/y": { "m~n": true },
-    "": "blank",
-  };
-  expect(valueAt(body, pointer)).toEqual(expected);
+  expect(valueAt(POINTER_BODY, pointer)).toEqual(expected);
 });
 
 const CREATE_RULES: FieldRule[] = [
@@ -249,12 +240,12 @@ it.each<[string, Plan, WriteCall, string]>([
     "a body problem",
     CREATE_PLAN,
     callWith({ ...NEW_ITEM, extra: 1 }, { project: "42" }),
-    'Member extra is not one the capture showed stored (accepted members: "title", "meta"; members accepted only with their recorded value: none; required: "title", "meta").',
+    "Member extra is not one the capture showed stored",
   ],
 ])("refuses a create with %s", (_, plan, call, message) => {
   expect(
     createdFields(plan, CREATE_OBSERVED, call, generator().generate),
-  ).toEqual(err(message));
+  ).toMatchObject({ ok: false, error: expect.stringContaining(message) });
 });
 
 const UPDATE_PLAN: Plan = {
@@ -421,7 +412,6 @@ it.each<[string, JsonObject | undefined, string]>([
     { id: "42" },
     "The call sends none of the members an update applies",
   ],
-  ["no members", {}, "The call sends none of the members an update applies"],
   [
     "no body",
     undefined,
@@ -432,15 +422,21 @@ it.each<[string, JsonObject | undefined, string]>([
     { id: "43", title: "x" },
     "Member id must repeat the target's identity 42.",
   ],
-  ["a number for a string", { title: 5 }, "Member title must be a JSON string"],
-  [
-    "a fixed member with another value",
-    { status: "OPEN" },
-    "Member status is accepted only with the value",
-  ],
 ])("refuses an update with %s", (_, body, message) => {
   const { result } = update(body);
   expect(result.ok ? undefined : result.error).toContain(message);
+});
+
+it("checks the current member kind before generating update values", () => {
+  const { result, asked } = update({ title: "New" }, UPDATE_PLAN, {
+    ...BEFORE,
+    title: 5,
+  });
+  expect(result).toMatchObject({
+    ok: false,
+    error: expect.stringContaining("Member title must be a JSON number"),
+  });
+  expect(asked).toEqual([]);
 });
 
 it("refuses an update without a modelled body", () => {

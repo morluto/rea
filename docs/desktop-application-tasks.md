@@ -619,6 +619,10 @@ answer or missing marked output reports a reader error; it does not establish
 that the document lacks the expected value. Correct the command or its output and retry; increase
 `timeout_s` within its accepted range when the reader needs longer.
 
+A source inspection failure, such as an inaccessible parent or a symlink loop,
+also reports a reader error and leaves affected checks undecided. Only a missing
+source or a source that is not a regular file is reported as absent.
+
 Export runs readers on both retained ends, using the seed bytes as the bundle
 actually ships them. The witness and exported verifier run them in the
 computer after the app's files settle. Cleanup failures retain the reader's

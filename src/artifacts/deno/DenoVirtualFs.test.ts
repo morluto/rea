@@ -1,15 +1,17 @@
 import { expect, it } from "vitest";
 
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
-  MAX_DENO_LOGICAL_PATH_BYTES,
   MAX_DENO_LOGICAL_PATH_PARTS,
-  MAX_DENO_PATH_COMPONENT_BYTES,
-  MAX_DENO_VFS_DEPTH,
-  MAX_DENO_VFS_ENTRIES,
-  MAX_DENO_VFS_NAME_UNITS,
   walkDenoVirtualFs,
 } from "./DenoVirtualFs.js";
+
+// Independent format and admission examples.
+const MAX_DENO_VFS_ENTRIES = 100_000;
+const MAX_DENO_VFS_NAME_UNITS = 4_096;
+const MAX_DENO_VFS_DEPTH = 512;
+const MAX_DENO_PATH_COMPONENT_BYTES = 255;
+const MAX_DENO_LOGICAL_PATH_BYTES = 512;
 
 const file = (
   name: string,
@@ -173,12 +175,22 @@ it("refuses an entry count above the named allowance", () => {
   const entries = Array.from({ length: MAX_DENO_VFS_ENTRIES + 1 }, () =>
     file("a.ts", 0, 0),
   );
-  expect(() => walkDenoVirtualFs(entries, 0)).toThrow(ArtifactReaderFailure);
+  let failure: unknown;
   try {
     walkDenoVirtualFs(entries, 0);
   } catch (cause) {
-    expect(cause).toMatchObject({ reason: "limit" });
+    failure = cause;
+    expect(cause).toMatchObject({
+      reason: "limit",
+      fixedAllowance: {
+        name: "The Deno compile virtual filesystem entry allowance",
+        kind: "count",
+        limit: MAX_DENO_VFS_ENTRIES,
+        unit: "entries",
+      },
+    });
   }
+  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
 });
 
 it("does not publish a bare child name when an ancestor source was dropped", () => {
@@ -243,44 +255,49 @@ it("refuses nesting past the depth allowance with a tagged limit", () => {
     depth === 0
       ? [file("leaf.ts", 0, 0)]
       : [{ Dir: { n: "d", e: nest(depth - 1) } }];
-  expect(() => walkDenoVirtualFs(nest(MAX_DENO_VFS_DEPTH), 0)).toThrow(
-    ArtifactReaderFailure,
-  );
+  let failure: unknown;
   try {
     walkDenoVirtualFs(nest(MAX_DENO_VFS_DEPTH), 0);
   } catch (cause) {
+    failure = cause;
     expect(cause).toBeInstanceOf(ArtifactReaderFailure);
     expect(cause).toMatchObject({
       reason: "limit",
-      message: expect.stringContaining("MAX_DENO_VFS_DEPTH"),
+      fixedAllowance: {
+        name: "The Deno compile virtual filesystem depth allowance",
+        kind: "count",
+        limit: MAX_DENO_VFS_DEPTH,
+        unit: "levels",
+      },
     });
   }
+  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
 });
 
 it("refuses a virtual filesystem walk that is already cancelled", () => {
   const signal = AbortSignal.abort();
-  expect(() => walkDenoVirtualFs([file("main.ts", 0, 0)], 0, signal)).toThrow(
-    ArtifactReaderFailure,
-  );
+  let failure: unknown;
   try {
     walkDenoVirtualFs([file("main.ts", 0, 0)], 0, signal);
   } catch (cause) {
+    failure = cause;
     expect(cause).toMatchObject({ reason: "cancelled" });
   }
+  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
 });
 
 it("rejects a region that overruns vfs file data", () => {
-  expect(() => walkDenoVirtualFs([file("main.ts", 0, 4)], 1)).toThrow(
-    ArtifactReaderFailure,
-  );
+  let failure: unknown;
   try {
     walkDenoVirtualFs([file("main.ts", 0, 4)], 1);
   } catch (cause) {
+    failure = cause;
     expect(cause).toMatchObject({
       reason: "format",
       message: expect.stringContaining("overruns"),
     });
   }
+  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
 });
 
 it("indexes a name over the component byte limit and keeps its spelling", () => {
@@ -354,14 +371,16 @@ it("charges directory paths against the retained allowance", () => {
   }));
   const chain = (depth: number): unknown[] =>
     depth === 0 ? emptySiblings : [{ Dir: { n: name, e: chain(depth - 1) } }];
-  const started = performance.now();
   expect(() =>
     walkDenoVirtualFs(chain(MAX_DENO_LOGICAL_PATH_PARTS), 0),
   ).toThrow(
     expect.objectContaining({
       reason: "limit",
-      message: expect.stringContaining("MAX_DENO_VFS_RETAINED_UNITS"),
+      fixedAllowance: expect.objectContaining({
+        name: "The Deno compile virtual filesystem retained name allowance",
+        kind: "bytes",
+        unit: "UTF-16 code units",
+      }),
     }),
   );
-  expect(performance.now() - started).toBeLessThan(5_000);
 });

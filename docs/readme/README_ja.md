@@ -82,11 +82,11 @@ npx rea-agents setup
 
 セットアップは Claude Code、Codex、Cursor、Gemini CLI、Grok Build、および[その他のエージェント](../getting-started/installation.md#supported-agents)に対応しています。プロバイダーの設定と MCP の手動登録については、[インストールとセットアップ](../getting-started/installation.md)を参照してください。
 
-MCP は既定でコンパクトな入力スキーマを使用します。完全なフィールド説明と入れ子の検証情報が必要な場合は、MCP 登録に `REA_MCP_INPUT_SCHEMA_PROFILE=full` を設定してください。どちらも全ツールと同じ正規サーバー検証を維持します。詳細は MCP 契約ガイドを参照してください。
+MCP は既定でコンパクトな入力スキーマを使用します。コンパクトなスキーマが省略する説明はツールの説明の後に続きます。全ツールと正規のサーバー検証は変わりません。詳細は MCP 契約ガイドを参照してください。
 
 セットアップは選択したランタイムと REA のエントリースクリプトを直接登録します。パッケージランナーを使う場合は、そのキャッシュ項目とランタイムを残し、対象プロジェクト外の信頼できるディレクトリからパッケージを取得してください。 インストールガイドを参照してください。
 
-出力スキーマはデフォルトで完全なものが公開されます。クライアントが `tools/list` を制限する場合は、MCP 登録で `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` または `off` を設定してください。サーバー側の検証と構造化結果は完全なままです。 MCP 契約ガイドの「Output schemas」を参照してください。
+出力スキーマはデフォルトで `tools/list` から省略されます。モデル API は出力スキーマを読まず、REA 自身がすべての結果を検証するためです。MCP 登録で `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` を設定すると各出力スキーマを 4096 バイト以内で公開します。どの設定でもサーバー側の検証と構造化結果は完全なままです。 MCP 契約ガイドの「Output schemas」を参照してください。
 
 ### エージェントに依頼する
 
@@ -165,6 +165,8 @@ REA には Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）、または 26+ (>=
 | EVM バイトコード                 | ディスパッチセレクター、バイトオフセット、推定された引数と状態変更の可否                    | Linux x64 上のローカルの生バイト／16 進数の入力ファイル；[オフライン EVM ガイド](../guides/evm/evm-bytecode.md)                                                               |
 | Rust binaries                    | Embedded cargo-auditable dependency list                                                    | [Rust binaries](../rust-binaries.md)                                                                                                                                          |
 | ELF notes                        | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                             | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                                                  |
+| DWARF compile units              | Compile-unit name, directory, producer, language, and dwo_name                              | Built-in static ELF, Mach-O, and PE inspection; [DWARF compile units](../guides/native/dwarf-units.md)                                                                        |
+| ELF dependencies                 | DT_NEEDED, SONAME, RPATH/RUNPATH, GNU versions, and undefined imports                       | Built-in static ELF inspection; [ELF dependencies](../elf-dependencies.md)                                                                                                    |
 | Binary hardening                 | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                         | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                                                 |
 | Apple IPS crashes                | .ips metadata, threads, images, registers and crash classes                                 | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                                                                 |
 | Linux kernel modules             | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                 | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                                        |
@@ -174,7 +176,7 @@ REA には Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）、または 26+ (>=
 | JavaScript / Electron            | モジュール、インポート、ソースマップ、ルート、IPC、ネイティブアドオンの関係                 | Node.js と npm；[アプリケーション分析](../guides/javascript/javascript-application-workflows.md); Linux: procps `ps`                                                          |
 | ウェブサイト                     | ページ構造、スクリプト、ネットワークの観測結果、依頼されたスクリーンショット                | Chrome 系ブラウザー；[ブラウザー分析](../guides/web/browser-observation.md)                                                                                                   |
 | 保存済みのネットワークキャプチャ | リクエスト、レスポンス、取得可能なペイロード、ソース内の位置                                | HAR / Fiddler Everywhere SAZ；mitmproxy ネイティブ形式のキャプチャには Linux 上の mitmdump；[キャプチャガイド](../guides/web/web-network-captures.md)                         |
-| パケットキャプチャ               | エンドポイント、DNS、TLS SNI、プロトコル分布、HTTPリクエスト                                | 呼び出し側が用意した tshark と capinfos；[pcapガイド](../guides/data/pcap-analysis.md)                                                                                        |
+| パケットキャプチャ               | エンドポイント、DNS、TLS SNI、プロトコル分布、HTTPリクエスト                                | 呼び出し側が用意した tshark と capinfos (Linux で検証済み)；[pcapガイド](../guides/data/pcap-analysis.md)                                                                     |
 | .NET アセンブリ                  | メタデータ、CIL 命令、宣言されたネイティブ依存関係、ビルドの比較                            | 静的な検査；[マネージドコードのガイド](../guides/managed/managed-code-analysis.md)                                                                                            |
 | PyInstaller                      | CArchive, PYZ, Python bytecode                                                              | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                                         |
 | Deno compile binaries            | Virtual files, entry point, recorded options, npm snapshot length                           | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                                          |
@@ -194,6 +196,7 @@ REA には Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）、または 26+ (>=
 | モデルファイル                   | GGUF / safetensors メタデータ、テンソル宣言、導出した合計                                   | ヘッダー解析。任意でファイル全体をハッシュ; [GGUF / safetensors](../model-artifacts.md)                                                                                       |
 | IL2CPP メタデータ                | Unity global-metadata.dat のアセンブリ、型・メソッド名、インデックス範囲                    | バージョン 24、27、29、31、39 を静的デコード。Unity 不要                                                                                                                      |
 | Godot PCK                        | アーカイブ一覧と展開、元のヘッダー・ディレクトリ情報、選択内容の識別情報                    | 形式 2、3、4 を静的解析。Godot 不要                                                                                                                                           |
+| NuGet パッケージ                 | パッケージ ID、依存関係グループ、ライセンス、リポジトリ、ZIP の内容                         | 組み込みの静的 .nupkg 検査; [NuGet パッケージ](../guides/managed/nuget-nupkg.md)                                                                                              |
 | WASM アーティファクト            | 検証、セクション、正確なインポート/エクスポート WAT 形式、デコード済み WAT                  | 利用者が用意 WABT 1.0.42; `inspect_wasm_artifact`                                                                                                                             |
 | APK 署名                         | v1/v2/v3/v3.1 署名者、証明書指紋、鍵ローテーション、ダイジェストの自己整合性                | 組み込みの静的解析; `inspect_apk_signature`                                                                                                                                   |
 

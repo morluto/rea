@@ -1,3 +1,4 @@
+import { unescapeJsonPointerToken } from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
 import { isTimestamp } from "./appTask.js";
 import {
@@ -27,11 +28,7 @@ import {
 import { pairRecordsById } from "./jsonRecordPairing.js";
 import { resolvePointer } from "./viewPointer.js";
 import { selectorOf } from "./viewSelector.js";
-
-const isRecord = (
-  value: JsonValue | null | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+import { isRecord } from "../../kernel/isRecord.js";
 
 const own = (record: Record<string, JsonValue>, key: string) =>
   Object.hasOwn(record, key) ? record[key] : undefined;
@@ -145,6 +142,7 @@ const candidatesOf = (
       ...identities.filter(({ key }) => !named(key)),
       ...pairable,
     ].map(condition),
+    // generation-cap: member pairs offered as selector conditions
     ...pairsOf(pairable.slice(0, MAX_PAIRED)),
     ...ranked.filter(({ tier }) => tier === 3).map(condition),
   ];
@@ -362,7 +360,7 @@ export interface ListPlace {
 /** A list's place, read from its pointer, as `/root/children/[name=gnm:Sheets]/children` sits in `gnm:Sheets`. */
 export const holdsTagOnly = (list: string): ListPlace => {
   const owner = selectorOf(
-    (list.split("/").at(-2) ?? "").replaceAll("~1", "/").replaceAll("~0", "~"),
+    unescapeJsonPointerToken(list.split("/").at(-2) ?? ""),
   )?.find(({ prefix, key }) => prefix === "" && key === "name")?.value;
   return {
     root: /(?:^|\/)root\/children$/u.test(list),

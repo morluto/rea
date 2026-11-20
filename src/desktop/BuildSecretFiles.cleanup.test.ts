@@ -1,7 +1,7 @@
 import { chmod, mkdir, readdir, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -10,7 +10,6 @@ import { DesktopBuildSecrets } from "../application/desktop/DesktopBuildSecrets.
 
 // Made-up values, never real credentials.
 const FIRST = "e-Plum7-Kite-Throwaway-42";
-const SECOND = "e-Quince3-Lantern-Throwaway-77";
 
 const injection = vi.hoisted(() => ({
   path: "",

@@ -1,12 +1,12 @@
+import { createVerifierCommands } from "../../scripts/lib/verify-commands.mjs";
+import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
 import { createHash } from "node:crypto";
-import { execFile } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { promisify } from "node:util";
 
 import { createPackageWithOptions } from "@electron/asar";
 import { parse } from "@babel/parser";
-import { expect } from "vitest";
+import { expect, onTestFinished } from "vitest";
 
 import type { JavaScriptApplicationGraph } from "../../src/domain/javascript/javascriptApplicationGraph.js";
 import { createTestTempDirectory } from "./temporaryDirectory.js";
@@ -59,8 +59,6 @@ export const typeScriptDialectCases = [
   },
 ] as const;
 
-const execute = promisify(execFile);
-
 /** Establish syntax and emitted bytes with the actual locked native compiler. */
 export const expectValidTypeScriptInput = async (
   path: string,
@@ -76,21 +74,31 @@ export const expectValidTypeScriptInput = async (
   const output = join(directory, "emitted");
   // --noCheck isolates syntax/emit from ambient React/Node/module type facts.
   // This supplemental oracle does not claim complete TypeScript type validity.
-  await execute(process.execPath, [
-    compiler,
-    "--ignoreConfig",
-    "--noCheck",
-    "--allowJs",
-    "--target",
-    "es2022",
-    "--module",
-    "esnext",
-    "--jsx",
-    "preserve",
-    "--outDir",
-    output,
-    input,
-  ]);
+  const commands = await createVerifierCommands();
+  onTestFinished(() => commands.close());
+  await withVerifierCleanup(
+    () =>
+      commands.exec(
+        process.execPath,
+        [
+          compiler,
+          "--ignoreConfig",
+          "--noCheck",
+          "--allowJs",
+          "--target",
+          "es2022",
+          "--module",
+          "esnext",
+          "--jsx",
+          "preserve",
+          "--outDir",
+          output,
+          input,
+        ],
+        { timeout: 15_000 },
+      ),
+    [() => commands.close()],
+  );
   const suffix = path.endsWith(".mts")
     ? ".mjs"
     : path.endsWith(".cts")

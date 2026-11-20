@@ -6,8 +6,9 @@ import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import type {
   DesktopBuildSetupFacts,
   DesktopBuildSetupHost,
-} from "./SetupDesktopBuild.js";
+} from "../ports/DesktopBuildHost.js";
 import type { SetupOptions, SetupProviderEnvironment } from "./SetupTypes.js";
+import { supportedClientRegistrationProfile } from "../../tests/fixtures/clientRegistrationProfile.js";
 
 const ARCHIVE = "/home/ada/.cache/rea/build-computer/rea-6.8.0.tar.xz";
 const SETTINGS = {
@@ -39,7 +40,13 @@ const desktopHost = (facts: Partial<DesktopBuildSetupFacts> = {}) => {
     },
   };
   const host = Object.assign(new FakeSetupHost("linux"), { desktopBuild });
-  host.clients = [{ name: "claude_code", configPath: "/claude.json" }];
+  host.clients = [
+    {
+      name: "claude_code",
+      registrationProfile: supportedClientRegistrationProfile("claude_code"),
+      configPath: "/claude.json",
+    },
+  ];
   host.hopper = "/opt/hopper/bin/Hopper";
   host.skill = "unchanged";
   return { host, calls };

@@ -1,5 +1,6 @@
 import { pinnedQuery } from "../../domain/analysisView/environmentStateWriteStamps.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { iterateUrlQueryParameters } from "../../domain/recordedTransportUrl.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { refused, type StateServing } from "./environmentStateAnswer.js";
 import { callQuery } from "./environmentStateCallLines.js";
@@ -15,7 +16,16 @@ export const pinnedRequest = (
   request: WriteRequest,
 ): Result<WriteRequest, AnalysisError> => {
   const { tool, plan, args } = request;
-  if (hasRepeatedQueryArgument(tool, args))
+  const supplied = callQuery(tool, args);
+  const observed = new Map<string, string>();
+  let repeated = hasRepeatedQueryArgument(tool, args);
+  for (const [name, value] of iterateUrlQueryParameters(
+    request.observedQuery ?? "",
+  )) {
+    if (observed.has(name)) repeated = true;
+    observed.set(name, value);
+  }
+  if (repeated)
     return err(
       refused(
         tool,
@@ -24,7 +34,9 @@ export const pinnedRequest = (
     );
   const query = pinnedQuery(
     serving.source.exchanges.get(plan.exemplar_ordinal ?? -1)?.query,
-    callQuery(tool, args),
+    // Comparison supplies the raw query as well as translated known arguments.
+    // Keep unmodeled parameters visible without replacing those translations.
+    new Map([...observed, ...supplied]),
   );
   if (!query.ok) return err(refused(tool, `Tool ${tool.name} ${query.error}`));
   const names = environmentToolArguments(tool).query;

@@ -222,7 +222,9 @@ print(json.dumps({"size": size, "peak": peak, "negative_zero": negative_zero}))
     ),
   ) as { size: number; peak: number; negative_zero: number };
   expect(result.size).toBeGreaterThan(1024);
-  expect(result.negative_zero).toBe(Buffer.byteLength(JSON.stringify("-0")));
+  expect(result.negative_zero).toBe(
+    Buffer.byteLength(JSON.stringify({ real: "-0" })),
+  );
   // Input exists before tracing. Whole-cell quoting previously made a six-MiB
   // string merely to reject this one-KiB allowance.
   expect(result.peak).toBeLessThan(1024 * 1024);

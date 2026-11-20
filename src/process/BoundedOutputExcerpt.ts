@@ -2,6 +2,7 @@
 export class BoundedOutputExcerpt {
   #head: Buffer = Buffer.alloc(0);
   #tail: Buffer = Buffer.alloc(0);
+  // not-an-allowance: observed byte total, compared with the limit only to report truncation.
   #total = 0;
   readonly #headLimit: number;
   readonly #tailLimit: number;

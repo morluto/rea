@@ -1,3 +1,4 @@
+import { UnclassifiedProviderFailure } from "../../../src/domain/unclassifiedProviderFailure.js";
 import { realpath, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { expect, onTestFinished, test, vi } from "vitest";
@@ -6,9 +7,9 @@ import {
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
 } from "../../../src/domain/analysisErrorCore.js";
-import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLease.js";
-import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../../../src/artifacts/readStableArtifact.js";
+import { AnalysisCleanupLease } from "../../../src/resources/AnalysisCleanupLease.js";
+import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
+import { readStableArtifact } from "../../../src/resources/readStableArtifact.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { resolvedAnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
@@ -368,7 +369,7 @@ it("a physical command failure survives a late cancellation and cleanup retry", 
   if (result.ok) return;
   const returned = result.error;
   const primary = returned.cleanupPrimary;
-  expect(primary?._tag).toBe("AnalysisProtocolError");
+  expect(primary).toBeInstanceOf(UnclassifiedProviderFailure);
   expect(primary?.cause).not.toBe(reason);
   expect(projectAnalysisError(returned).code).toBe("cleanup_incomplete");
   expect(returned.capturedOutput?.stderr).toContain(

@@ -361,6 +361,7 @@ const concurrentCapture = (
   ).map((event, index) => ({ ...event, sequence: index + 1 }));
   return browserScenarioCaptureSchema.parse({
     ...base,
+    scenario: { ...base.scenario, event_families: ["network"] },
     events: {
       items: events,
       retained: events.length,
@@ -421,6 +422,7 @@ const redirectChainCapture = (swapLeaves = false, reverseReceipt = false) => {
     .map((event, index) => ({ ...event, sequence: index + 1 }));
   return browserScenarioCaptureSchema.parse({
     ...base,
+    scenario: { ...base.scenario, event_families: ["network"] },
     events: {
       items: events,
       retained: events.length,
@@ -499,7 +501,8 @@ describe("browser scenario network event order", () => {
           ? {
               ...event,
               redirected_from_transaction_id: predecessor,
-              redirected_from_transaction_state: undefined,
+              redirected_from_transaction_state:
+                predecessor === null ? ("unknown" as const) : undefined,
             }
           : event,
       );
@@ -608,6 +611,7 @@ describe("browser scenario network comparison stability", () => {
               kind: "request",
               transaction_id: "orphan-request",
               redirected_from_transaction_id: null,
+              redirected_from_transaction_state: "unknown",
               method: "GET",
               url: {
                 url: "https://app.example.test/orphan",
@@ -1022,7 +1026,7 @@ describe("browser scenario comparison validation", () => {
     ).toBe(false);
   });
 
-  it("returns every aligned step beyond the former capture ceiling", () => {
+  it("returns every aligned step of long scenarios", () => {
     const before = multiStepScenarioCapture(130, "before");
     const after = multiStepScenarioCapture(130, "after");
     const result = compareBrowserScenarios(
@@ -1072,6 +1076,61 @@ describe("browser scenario comparison validation", () => {
           step_id: "open-settings",
         }),
       ]),
+    });
+  });
+
+  const duplicateLastStepCapture = () => {
+    const base = scenarioCapture({});
+    return {
+      ...base,
+      scenario: { ...base.scenario, action_count: 2 },
+      steps: [...base.steps, { ...base.steps[1]!, step_index: 2 }],
+    };
+  };
+
+  it("keeps a duplicated step id unaligned without classifying it as absent", () => {
+    const compared = compareBrowserScenarios(
+      compareBrowserScenariosInputSchema.parse({
+        before_scenario: duplicateLastStepCapture(),
+        after_scenario: scenarioCapture({}),
+      }),
+    );
+
+    expect(compared.overall_status).toBe("unknown");
+    expect(compared.alignment).toMatchObject({
+      status: "partial",
+      aligned_steps: 1,
+      before_only: [],
+      after_only: [],
+      failures: [
+        expect.objectContaining({
+          code: "duplicate_before_step_id",
+          step_id: "open-settings",
+        }),
+      ],
+    });
+  });
+
+  it("mirrors the duplicate classification when the later capture repeats the id", () => {
+    const compared = compareBrowserScenarios(
+      compareBrowserScenariosInputSchema.parse({
+        before_scenario: scenarioCapture({}),
+        after_scenario: duplicateLastStepCapture(),
+      }),
+    );
+
+    expect(compared.overall_status).toBe("unknown");
+    expect(compared.alignment).toMatchObject({
+      status: "partial",
+      aligned_steps: 1,
+      before_only: [],
+      after_only: [],
+      failures: [
+        expect.objectContaining({
+          code: "duplicate_after_step_id",
+          step_id: "open-settings",
+        }),
+      ],
     });
   });
 

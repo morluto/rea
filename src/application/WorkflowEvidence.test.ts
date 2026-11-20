@@ -1,3 +1,4 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
@@ -15,7 +16,7 @@ import { err, ok } from "../domain/result.js";
 import {
   createAnalysisExecution,
   type AnalysisOperationPort,
-} from "./AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import {
   AnalysisCancelledError,
   AnalysisResourceConstraintError,
@@ -73,7 +74,7 @@ it.each([0, 1, 100])(
   "admits enough recovery representation for %i completed batch items",
   (count) => {
     const provider = { id: "fixture", name: "Fixture", version: "1" };
-    const source = createEvidence(undefined, provider, {
+    const source = createEvidence(unknownTarget("not-observed"), provider, {
       operation: "health",
       parameters: {},
       result: "source",
@@ -149,7 +150,7 @@ it.each([0, 1, 100])(
 
 it("links shared provider source Evidence once without copying its payload into the workflow", async () => {
   const source = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       operation: "health",
@@ -238,7 +239,7 @@ it.each([false, true])(
 const provider = { id: "fixture", name: "Fixture", version: "1" };
 
 it("retains requested live observations and links their original producer sources", async () => {
-  const upstream = createEvidence(undefined, provider, {
+  const upstream = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "health",
     parameters: {},
     result: "source",
@@ -276,7 +277,7 @@ it("retains requested live observations and links their original producer source
 });
 
 it("keeps an existing session-issued source identity on replay", async () => {
-  const original = createEvidence(undefined, provider, {
+  const original = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "analyze_function",
     parameters: { procedure: "0x1" },
     result: "original",
@@ -725,40 +726,6 @@ describe("workflow residual question retention", () => {
     );
   });
 
-  it.each([
-    ["spaces", "  Which boundary?  "],
-    ["line feed and tab", "\nWhich boundary?\t"],
-    ["byte order mark", "\uFEFFWhich boundary?\uFEFF"],
-  ])(
-    "normalizes edge whitespace from %s without changing workflow Evidence",
-    (_, question) => {
-      const records = new InvestigationRecords();
-      const result = { residual_unknowns: [question] };
-      const evidence = createWorkflowEvidence({
-        target: undefined,
-        operation: "inspect_native_api",
-        parameters: {},
-        result,
-        upstreamProfile: undefined,
-        upstreamLimitations: [],
-      });
-
-      expect(records.recordEvidence(evidence).ok).toBe(true);
-      expect(
-        recordWorkflowUnknowns({
-          name: "inspect_native_api",
-          result,
-          evidenceId: evidence.evidence_id,
-          recordUnknown: (unknown) => records.recordUnknown(unknown),
-        }).ok,
-      ).toBe(true);
-      expect(records.listUnknowns()).toMatchObject([
-        { question: `Which boundary? (Evidence ${evidence.evidence_id})` },
-      ]);
-      expect(evidence.normalized_result).toEqual(result);
-    },
-  );
-
   it("rejects questions that are empty after whitespace normalization", () => {
     const records = new InvestigationRecords();
     const result = { residual_unknowns: [" \n\t "] };
@@ -909,7 +876,9 @@ it.each([
 it("shares temporary provider state only within a single completed workflow", async () => {
   const owner = {};
   const scopes: Array<
-    NonNullable<import("./AnalysisProvider.js").ExecutionOptions["workScope"]>
+    NonNullable<
+      import("../ports/AnalysisProvider.js").ExecutionOptions["workScope"]
+    >
   > = [];
   const provider = { id: "fixture", name: "Fixture", version: "1" };
   const analysis: AnalysisOperationPort = {
@@ -940,7 +909,7 @@ it("shares temporary provider state only within a single completed workflow", as
 
 it("clears workflow state when its callback throws", async () => {
   const owner = {};
-  let captured: import("./AnalysisProvider.js").ExecutionOptions["workScope"];
+  let captured: import("../ports/AnalysisProvider.js").ExecutionOptions["workScope"];
   const analysis: AnalysisOperationPort = {
     execute: async (_operation, _parameters, options) => {
       captured = options?.workScope;

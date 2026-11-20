@@ -196,7 +196,7 @@ Candidates are caller-selected files; their identity does not imply validation.
 Both CLI and MCP use the same typed port and application service. MCP publishes
 SDK-compatible schemas and records Evidence for `get_evidence_bundle` readback.
 See [WABT provenance](https://github.com/morluto/rea/blob/main/third_party/wabt/README.md) and
-[testing](../../development/testing.md#offline-wasm-artifacts) for real-tool verification.
+[testing lanes](../../testing-lanes.md#offline-wasm-artifacts) for real-tool verification.
 
 ## Compare core-module interfaces
 
@@ -212,7 +212,9 @@ and uniquely named definitions keep their own identity. Comparison treats an
 unresolved signature as unknown, including in self-comparison. Inventory
 completeness describes observed import/export entries, independently of type
 resolution. This facet is absent in historical Evidence that did not examine
-typed interfaces.
+typed interfaces. A comparison with such Evidence on either side reports
+`coverage: "unknown"`, because that side's declarations cannot be told; a
+partial inventory or an unknown entry on otherwise known sides is `partial`.
 
 `compare_wasm_interfaces` accepts two complete `inspect_wasm_artifact` Evidence
 records, or exact retained references in the current MCP session, and required

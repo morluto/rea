@@ -88,8 +88,16 @@ const dconfReaders: DesktopStateReaders = {
   dconf: async (path) => {
     const dump = dumps[await readFile(path, "latin1")];
     return dump === undefined
-      ? { ok: false, error: "not a fixture database" }
-      : { ok: true, text: dump };
+      ? {
+          ok: false as const,
+          error: "not a fixture database",
+          kind: "read-failed" as const,
+          code: null,
+          exitCode: null,
+          command: null,
+          stderr: null,
+        }
+      : { ok: true as const, text: dump };
   },
 };
 
