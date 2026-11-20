@@ -278,10 +278,14 @@ const validateCliOutputControls = (
       ok: false,
       format: format === "yaml" || format === "jsonl" ? format : "json",
       code: "INVALID_OUTPUT_FILTER",
-      message:
-        filterPaths.error.kind === "unclosed_slice"
-          ? "The --filter-output expression has a slice without a closing ]. Close the slice or remove --filter-output."
-          : "The --filter-output expression has a slice with more than two bounds. Use [start,end].",
+      message: {
+        unclosed_slice:
+          "The --filter-output expression has a slice without a closing ]. Close the slice or remove --filter-output.",
+        extra_slice_bounds:
+          "The --filter-output expression has a slice with more than two bounds. Use [start,end].",
+        invalid_slice_bound:
+          "The --filter-output expression has a nonnumeric slice bound. Use a number or leave the bound empty.",
+      }[filterPaths.error.kind],
     };
   const delimited = format === "csv" || format === "tsv";
   // Name missing delimited controls before their combination checks; preserve
