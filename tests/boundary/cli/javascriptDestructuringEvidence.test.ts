@@ -74,6 +74,40 @@ const classNameTargetSource = `
   }
 `;
 
+const uninitializedTargetSource = `
+  let beforeUninitialized, afterUninitialized;
+  const cells = ["before", 1, "unreached"];
+  [beforeUninitialized, pending, afterUninitialized] = cells;
+  let pending;
+`;
+
+const declaratorOrderSource = `
+  let initializedEarlier, uninitializedLater;
+  const cells = [1, "paired"];
+  let earlier, readEarlier = ([earlier, initializedEarlier] = cells);
+  let readLater = ([later, uninitializedLater] = cells), later;
+`;
+
+const outerDeclarationSource = `
+  let ready, afterReady, beforeOuterLet, afterOuterLet;
+  const cells = ["before", 1, "unreached"];
+  { [ready, afterReady] = cells; }
+  { [beforeOuterLet, pending, afterOuterLet] = cells; }
+  let pending;
+`;
+
+const additionalFixtures = [
+  ["iterator-close.js", iteratorCloseSource],
+  ["array-prototype-alias.js", arrayPrototypeAliasSource],
+  ["abrupt-object-pattern.js", abruptObjectPatternSource],
+  ["first-default.js", firstDefaultSource],
+  ["immutable-target.js", immutableTargetSource],
+  ["class-name-target.js", classNameTargetSource],
+  ["uninitialized-target.js", uninitializedTargetSource],
+  ["declarator-order.js", declaratorOrderSource],
+  ["outer-let.js", outerDeclarationSource],
+] as const;
+
 const expectedDependencies = [
   ["declared", ["a"]],
   ["a", ["a"]],
@@ -86,6 +120,13 @@ const expectedDependencies = [
   ["beforeClassName", ["0"]],
   ["afterClassName", ["2"], "candidate"],
   ["afterOuterClass", ["1"]],
+  ["beforeUninitialized", ["0"]],
+  ["afterUninitialized", ["2"], "candidate"],
+  ["initializedEarlier", ["1"]],
+  ["uninitializedLater", ["1"], "candidate"],
+  ["afterReady", ["1"]],
+  ["beforeOuterLet", ["0"]],
+  ["afterOuterLet", ["2"], "candidate"],
   ["arrayAssigned", ["0"]],
   ["elided", ["1"]],
   ["projected", ["items", "0"]],
@@ -119,6 +160,13 @@ const tracedBindings = [
   "beforeClassName",
   "afterClassName",
   "afterOuterClass",
+  "beforeUninitialized",
+  "afterUninitialized",
+  "initializedEarlier",
+  "uninitializedLater",
+  "afterReady",
+  "beforeOuterLet",
+  "afterOuterLet",
   "arrayAssigned",
   "elided",
   "projected",
@@ -205,14 +253,7 @@ cliTest(
     [selected] = after;
   `,
     );
-    for (const [path, source] of [
-      ["iterator-close.js", iteratorCloseSource],
-      ["array-prototype-alias.js", arrayPrototypeAliasSource],
-      ["abrupt-object-pattern.js", abruptObjectPatternSource],
-      ["first-default.js", firstDefaultSource],
-      ["immutable-target.js", immutableTargetSource],
-      ["class-name-target.js", classNameTargetSource],
-    ] as const)
+    for (const [path, source] of additionalFixtures)
       await writeFile(join(root, path), source);
     const output = await cli.run({
       arguments: ["analyze-javascript-application", root, "--json"],

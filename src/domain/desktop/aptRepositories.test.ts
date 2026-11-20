@@ -175,6 +175,36 @@ describe("parseOneLineSources", () => {
       }),
     ]);
   });
+  it("preserves non-ASCII whitespace inside and at the edges of APT list words", () => {
+    const uri = "https://vendor.invalid/edge\u00a0embedded\u00a0";
+    const suite = "\u00a0stable";
+    const component = "main\u00a0";
+    expect(
+      parseOneLineSources(`deb\t${uri} ${suite} ${component}\n`, TYPORA_LIST),
+    ).toMatchObject([
+      {
+        uris: [{ uri, credentials: false }],
+        suites: [suite],
+        components: [component],
+      },
+    ]);
+  });
+
+  it("keeps a hash inside an option and strips the trailing comment", () => {
+    expect(
+      parseOneLineSources(
+        "deb [signed-by=/usr/share/keyrings/vendor#1.gpg] https://vendor.invalid/archive stable main # extra",
+        TYPORA_LIST,
+      ),
+    ).toMatchObject([
+      {
+        uris: [{ uri: "https://vendor.invalid/archive", credentials: false }],
+        suites: ["stable"],
+        components: ["main"],
+        signedBy: ["/usr/share/keyrings/vendor#1.gpg"],
+      },
+    ]);
+  });
 });
 
 describe("parseDeb822Sources", () => {
@@ -565,6 +595,39 @@ describe("APT source URI lookup", () => {
       ),
     ]).toEqual([]);
   });
+});
+
+it("matches APT's deb822 URI and suite without splitting non-ASCII whitespace", () => {
+  const file = "/etc/apt/sources.list.d/spacing.sources";
+  const uri = "https://vendor.invalid/a\u00a0b";
+  const suite = "stable\u00a0testing/";
+  const mirror = "https://mirror.invalid/archive";
+  const stanzas = parseDeb822Sources(
+    `Types: deb\nURIs: ${uri}\t ${mirror}\nSuites: ${suite} fallback/\n`,
+    file,
+  );
+  // Offline indextargets preserves the NBSP bytes, but splits the ASCII tab.
+  for (const [repoUri, release] of [
+    [uri, suite],
+    [mirror, "fallback/"],
+  ] as const) {
+    const [target] = parseAptIndexTargets(
+      [
+        `Description: ${repoUri} ${release} Packages`,
+        "Filename: /var/lib/apt/lists/vendor",
+        `Base-URI: ${repoUri}/${release}`,
+        `Repo-URI: ${repoUri}/`,
+        `Release: ${release}`,
+        `Sourcesentry: ${file}:1`,
+      ].join("\n"),
+    );
+    if (target === undefined) throw new Error("Missing APT target");
+    expect(entryForTarget(target, stanzas)).toMatchObject({
+      uri: repoUri,
+      suite: release,
+      components: [],
+    });
+  }
 });
 
 describe("credentials in a source URI", () => {

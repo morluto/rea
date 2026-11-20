@@ -44,9 +44,9 @@ export interface AptSourceEntry extends Omit<
 const ARMOR_BEGIN = "-----BEGIN PGP PUBLIC KEY BLOCK-----";
 const ARMOR_END = "-----END PGP PUBLIC KEY BLOCK-----";
 
-/** Source fields separate words with whitespace; commas remain URI/name data. */
+/** APT separates source-field values with ASCII whitespace; other characters are data. */
 const fieldValues = (value: string | undefined): readonly string[] =>
-  (value ?? "").split(/\s+/u).filter((part) => part.length > 0);
+  (value ?? "").split(/[ \t\n\v\f\r]+/u).filter((part) => part.length > 0);
 
 /** Architecture and Signed-By options also admit comma-separated values. */
 const optionValues = (value: string | undefined): readonly string[] =>
@@ -170,7 +170,20 @@ function* sourceLines(text: string | Buffer): Generator<string | undefined> {
 }
 
 const ONE_LINE =
-  /^deb(?:\s+\[(?<options>[^\]]*)\])?\s+(?<uri>\S+)\s+(?<suite>\S+)(?<components>(?:\s+\S+)*)\s*$/u;
+  /^[ \t\r]*deb[ \t\v][ \t\v\f\r]*(?:\[(?<options>[^\]]*)\][ \t\v\f\r]+)?(?<fields>.*)$/su;
+
+/** APT cuts a one-line comment only outside unmatched square brackets. */
+const withoutOneLineComment = (line: string): string => {
+  if (!line.includes("#")) return line;
+  let brackets = 0;
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index];
+    if (character === "[") brackets += 1;
+    else if (character === "]") brackets -= 1;
+    else if (character === "#" && brackets <= 0) return line.slice(0, index);
+  }
+  return line;
+};
 
 /** The `deb` lines of a one-line `sources.list` file; `deb-src` lines and comments are skipped. */
 export const parseOneLineSources = (
@@ -179,10 +192,13 @@ export const parseOneLineSources = (
 ): readonly AptSourceStanza[] =>
   [...sourceLines(text)].flatMap((line, index) => {
     if (line === undefined) return [];
-    const groups = ONE_LINE.exec(line.replace(/#.*$/u, "").trim())?.groups;
-    if (groups?.uri === undefined || groups.suite === undefined) return [];
+    const groups = ONE_LINE.exec(withoutOneLineComment(line))?.groups;
+    if (groups === undefined) return [];
+    const [uri, suite, ...components] = fieldValues(groups.fields);
+    if (uri === undefined || suite === undefined || uri.startsWith("["))
+      return [];
     const options = new Map(
-      (groups.options ?? "").split(/\s+/u).flatMap((option) => {
+      fieldValues(groups.options).flatMap((option) => {
         const equals = option.indexOf("=");
         return equals > 0
           ? [[option.slice(0, equals), option.slice(equals + 1)] as const]
@@ -193,9 +209,9 @@ export const parseOneLineSources = (
       stanza(
         { file, position: index + 1 },
         {
-          uris: [groups.uri],
-          suites: [groups.suite],
-          components: fieldValues(groups.components),
+          uris: [uri],
+          suites: [suite],
+          components,
           options,
           oneLine: true,
         },

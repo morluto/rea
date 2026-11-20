@@ -15,6 +15,8 @@ export type ElfStringTableObservation =
   | {
       readonly state: "truncated";
       readonly bytes: null;
+      /** More bytes of this table remain outside the checked window. */
+      readonly scanLimited: boolean;
       readonly examinedBytes: number;
       readonly contentBytes: number;
     };
@@ -33,6 +35,7 @@ export const observeElfStringTableEntry = (
     return {
       state: "truncated",
       bytes: null,
+      scanLimited: window.length < table.length - offset,
       examinedBytes: window.length,
       contentBytes: window.length,
     };

@@ -28,13 +28,16 @@ export interface DesktopEntry {
   readonly mime_types: readonly string[];
   readonly terminal: boolean;
   readonly hidden: boolean;
+  /** First malformed source line ignored by tolerant field inspection. */
+  readonly malformed_line?: number;
 }
 
 const GROUP = new RegExp(`^${DESKTOP_GROUP}$`, "u");
+const INVALID_GROUP_NAME_CHARACTER = /[[\]\u0000-\u001f\u007f]/u;
 const LINE_WITH_SEPARATOR = new RegExp(`(${DESKTOP_LINE_BREAK})`, "u");
 // Only LF separates records; Unicode line/paragraph separators are value data.
 const ENTRY = new RegExp(
-  `^(?<key>${DESKTOP_KEY})${DESKTOP_KEY_SEPARATOR}(?<value>.*)$`,
+  `^(?<key>${DESKTOP_KEY})(?<locale>\\[[A-Za-z0-9_.@-]+\\])?${DESKTOP_KEY_SEPARATOR}(?<value>.*)$`,
   "su",
 );
 const valueEscape = new RegExp(DESKTOP_VALUE_ESCAPE, "gu");
@@ -115,19 +118,31 @@ const readDesktopEntryFields = (text: string) => {
   >();
   let group: string | undefined;
   let found = false;
+  let malformedLine: number | undefined;
   for (let index = 0; index < parts.length; index += 2) {
     const raw = parts[index]!;
     const line = raw.trim();
     if (line.length === 0 || line.startsWith("#")) continue;
     const header = GROUP.exec(line)?.[1];
     if (header !== undefined) {
+      if (
+        (group === undefined && header !== DESKTOP_ENTRY_GROUP) ||
+        INVALID_GROUP_NAME_CHARACTER.test(header)
+      )
+        malformedLine ??= index / 2 + 1;
+      // Preserve the group boundary for tolerant field and rewrite consumers.
       group = header;
       found ||= group === DESKTOP_ENTRY_GROUP;
       continue;
     }
     // Full-line trimming is syntax-only: string-value suffixes are data.
     const entry = ENTRY.exec(raw.trimStart());
-    if (group !== DESKTOP_ENTRY_GROUP || entry?.groups === undefined) continue;
+    if (group === undefined || entry?.groups === undefined) {
+      malformedLine ??= index / 2 + 1;
+      continue;
+    }
+    if (group !== DESKTOP_ENTRY_GROUP || entry.groups.locale !== undefined)
+      continue;
     const { key, value } = entry.groups;
     if (key !== undefined && value !== undefined)
       fields.set(key, {
@@ -135,14 +150,14 @@ const readDesktopEntryFields = (text: string) => {
         part: index,
       });
   }
-  return { parts, fields, found };
+  return { parts, fields, found, malformedLine };
 };
 
 /** Read the effective main-group keys, ignoring localized keys and action groups. */
 export const parseDesktopEntry = (
   text: string,
 ): Result<DesktopEntry, "missing_desktop_entry_group"> => {
-  const { fields, found } = readDesktopEntryFields(text);
+  const { fields, found, malformedLine } = readDesktopEntryFields(text);
   if (!found) return err("missing_desktop_entry_group");
   const rawField = (key: string) => fields.get(key)?.value;
   const field = (key: string) => {
@@ -161,6 +176,7 @@ export const parseDesktopEntry = (
     mime_types: listValue(rawField("MimeType")),
     terminal: BOOLEAN_TRUE.test(rawField("Terminal") ?? ""),
     hidden: BOOLEAN_TRUE.test(rawField("Hidden") ?? ""),
+    ...(malformedLine === undefined ? {} : { malformed_line: malformedLine }),
   });
 };
 
