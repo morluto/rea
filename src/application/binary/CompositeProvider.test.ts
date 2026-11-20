@@ -213,6 +213,55 @@ it("waits for each unconfirmed child to close on retry", async () => {
   expect(first.error.cleanupIncomplete).toBe(false);
 });
 
+it.each(["opaque", "already released", "still owned"] as const)(
+  "follows selective composite retries when a child throws (%s)",
+  async (origin) => {
+    const left = failingProvider("left", "address_name", "left-db");
+    const right = failingProvider("right", "procedure_info", "right-db");
+    const leftRelease = new AnalysisCleanupRelease();
+    const rightRelease = new AnalysisCleanupRelease();
+    leftRelease.bind(left.cleanupError);
+    rightRelease.bind(right.cleanupError);
+    if (origin === "already released") rightRelease.confirm();
+    const physical =
+      origin === "opaque"
+        ? new Error("right close rejected")
+        : right.cleanupError;
+    right.close
+      .mockRejectedValueOnce(physical)
+      .mockRejectedValueOnce(physical)
+      .mockResolvedValue(ok(null));
+    const client = new CompositeProvider([
+      left.provider,
+      right.provider,
+    ]).createClient(executableTarget);
+    await client.execute("address_name", {});
+    await client.execute("procedure_info", {});
+    const initial = await client.close();
+    if (initial.ok || !(initial.error.cause instanceof AggregateError))
+      throw new Error("expected both failed children");
+    const stillOwned = origin === "still owned";
+    const [, rejected] = initial.error.cause.errors;
+    if (stillOwned) expect(rejected).toBe(physical);
+    else expect(rejected.cause).toBe(physical);
+    leftRelease.confirm();
+    left.close.mockResolvedValue(ok(null));
+    expect((await client.close()).ok).toBe(false);
+    expect(initial.error.cleanupIncomplete).toBe(true);
+    expect(initial.error.cleanupResources).toEqual([
+      stillOwned ? "right-db" : "provider-client",
+    ]);
+    expect(await client.close()).toEqual(ok(null));
+    expect(left.close).toHaveBeenCalledTimes(2);
+    expect(right.close).toHaveBeenCalledTimes(3);
+    // Only a child's own cleanup claim can release the typed owner it reported.
+    expect(initial.error.cleanupIncomplete).toBe(stillOwned);
+    rightRelease.confirm();
+    expect(initial.error.cleanupIncomplete).toBe(false);
+    expect(initial.error.cleanupResources).toEqual([]);
+  },
+);
+
 it("preserves one child's typed cleanup error unchanged", async () => {
   const child = failingProvider("provider-only", "address_name", "one-db");
   const client = new CompositeProvider([child.provider]).createClient(

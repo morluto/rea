@@ -56,7 +56,12 @@ const closeCompositeClients = (
         }
         if (release.cleanupReleased)
           return { providerId, release, result: ok(null) };
-        const result = await closeAnalysisClient(client, providerId, options);
+        const result = await closeAnalysisClient(
+          client,
+          providerId,
+          options,
+          release,
+        );
         if (result.ok) release.confirm();
         return { providerId, release, result };
       }),
