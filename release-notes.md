@@ -385,6 +385,7 @@
 * **desktop:** reject invalid build screenshot encodings ([#12179](https://github.com/morluto/rea/issues/12179)) ([3fae997](https://github.com/morluto/rea/commit/3fae99788699fb52760c8f9b4e5384b1b9a8e2e9))
 * **desktop:** reject malformed build command JSON output ([#12177](https://github.com/morluto/rea/issues/12177)) ([b0ef28a](https://github.com/morluto/rea/commit/b0ef28a77f20677b90f262910a1fcb9fb2dcd8f3))
 * **desktop:** replay observed APT repository identities ([#12301](https://github.com/morluto/rea/issues/12301)) ([81730f2](https://github.com/morluto/rea/commit/81730f266a312c6e27fcc7b87106499c6e7b6c68))
+* **desktop:** respect APT ASCII source field separators ([#12680](https://github.com/morluto/rea/issues/12680)) ([d7269f7](https://github.com/morluto/rea/commit/d7269f7385093f852082131818636b9563ba50d5))
 * **desktop:** retain all matching APT primary-key blocks ([#11944](https://github.com/morluto/rea/issues/11944)) ([18c6b44](https://github.com/morluto/rea/commit/18c6b4490c45b8fb944a62d3ea50dd8c68a23c8b))
 * **desktop:** retain dconf failures without stderr ([#10230](https://github.com/morluto/rea/issues/10230)) ([913b029](https://github.com/morluto/rea/commit/913b029c9607421271b0203acf7084d129491623))
 * **desktop:** share launch syntax, replay paths, and runtime admission ([#12153](https://github.com/morluto/rea/issues/12153)) ([47461fd](https://github.com/morluto/rea/commit/47461fddab14539082ed17643670b392fb0691d8))
