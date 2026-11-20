@@ -184,7 +184,7 @@ describe("APK scheme signer decoder", () => {
     expect(result.error.kind).toBe("malformed-signer");
   });
 
-  it("names the failing signer and keeps a cap overrun distinct from malformed input", () => {
+  it("names the failing signer", () => {
     const truncated = decodeSigners(
       Uint8Array.from(seq([lp([...seq([digestElement]), ...u32(99)])])),
       "v3",
@@ -195,25 +195,6 @@ describe("APK scheme signer decoder", () => {
         kind: "malformed-signer",
         detail: expect.stringContaining("signer 0") as string,
       });
-    const signedData = [
-      ...seq([digestElement]),
-      ...seq([CERT_DER]),
-      ...seq([]),
-    ];
-    const tooMany = decodeSigners(
-      Uint8Array.from(
-        seq(Array.from({ length: MAX_SIGNERS + 1 }, () => lp(signedData))),
-      ),
-      "v2",
-    );
-    expect(tooMany.ok).toBe(false);
-    if (!tooMany.ok)
-      expect(tooMany.error).toMatchObject({
-        kind: "limit",
-        failure: {
-          limit: { name: "signers", maximum: MAX_SIGNERS },
-        },
-      });
   });
 
   it("maps signature-algorithm ids to content-digest algorithms", () => {
@@ -223,6 +204,33 @@ describe("APK scheme signer decoder", () => {
     expect(contentDigestAlgorithm(0x0425)).toBe("verity-sha256");
     expect(contentDigestAlgorithm(0x9999)).toBeNull();
   });
+});
+
+it("distinguishes an extra framed signer from an incomplete frame at capacity", () => {
+  const signer = schemeValue([
+    ...seq([digestElement]),
+    ...seq([CERT_DER]),
+    ...seq([]),
+  ]).subarray(4);
+  const prefix = Array.from({ length: MAX_SIGNERS }, () => [...signer]).flat();
+  expect(decodeSigners(Uint8Array.from(lp(prefix)), "v2").ok).toBe(true);
+  expect(
+    decodeSigners(Uint8Array.from(lp([...prefix, ...signer])), "v2"),
+  ).toMatchObject({
+    ok: false,
+    error: {
+      kind: "limit",
+      failure: { limit: { name: "signers", maximum: MAX_SIGNERS } },
+    },
+  });
+  for (const incomplete of [[1], [...u32(3), 1]]) {
+    expect(
+      decodeSigners(Uint8Array.from(lp([...prefix, ...incomplete])), "v2"),
+    ).toMatchObject({
+      ok: false,
+      error: { kind: "malformed-signer", detail: "signers element truncated" },
+    });
+  }
 });
 
 describe("APK proof-of-rotation lineage", () => {
@@ -246,7 +254,7 @@ describe("APK proof-of-rotation lineage", () => {
     ]);
   });
 
-  it("refuses an unknown lineage version and an over-cap lineage", () => {
+  it("distinguishes incomplete lineage frames from an extra framed node at capacity", () => {
     const badVersion = decodeRotationLineage(Uint8Array.from(u32(2)), "v3");
     expect(badVersion.ok).toBe(false);
     if (!badVersion.ok) expect(badVersion.error.kind).toBe("malformed-signer");
@@ -256,11 +264,15 @@ describe("APK proof-of-rotation lineage", () => {
       ...u32(0x0103),
       ...lp([]),
     ]);
+    const prefix = [
+      ...u32(1),
+      ...Array.from({ length: MAX_LINEAGE_NODES }, () => node).flat(),
+    ];
+    expect(decodeRotationLineage(Uint8Array.from(prefix), "v3.1").ok).toBe(
+      true,
+    );
     const tooLong = decodeRotationLineage(
-      Uint8Array.from([
-        ...u32(1),
-        ...Array.from({ length: MAX_LINEAGE_NODES + 1 }, () => node).flat(),
-      ]),
+      Uint8Array.from([...prefix, ...node]),
       "v3.1",
     );
     expect(tooLong.ok).toBe(false);
@@ -271,5 +283,16 @@ describe("APK proof-of-rotation lineage", () => {
           limit: { name: "lineage-nodes", maximum: MAX_LINEAGE_NODES },
         },
       });
+    for (const incomplete of [[1], [...u32(3), 1]]) {
+      expect(
+        decodeRotationLineage(
+          Uint8Array.from([...prefix, ...incomplete]),
+          "v3.1",
+        ),
+      ).toMatchObject({
+        ok: false,
+        error: { kind: "malformed-signer", detail: "lineage node truncated" },
+      });
+    }
   });
 });

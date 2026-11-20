@@ -130,9 +130,9 @@ const elements = (
   const reader = new LeReader(seq);
   const out: Uint8Array[] = [];
   while (reader.remaining > 0) {
-    if (out.length >= limit) return schemeLimit(version, what, limit);
     const el = reader.lenChunk();
     if (el === null) return malformed(`${what} element truncated`);
+    if (out.length >= limit) return schemeLimit(version, what, limit);
     out.push(el);
   }
   return ok(out);
@@ -313,10 +313,10 @@ export const decodeRotationLineage = (
     return malformed(`unsupported lineage version ${String(lineageVersion)}`);
   const nodes: ApkLineageNode[] = [];
   while (reader.remaining > 0) {
-    if (nodes.length >= MAX_LINEAGE_NODES)
-      return schemeLimit(version, "lineage-nodes", MAX_LINEAGE_NODES);
     const node = reader.lenChunk();
     if (node === null) return malformed("lineage node truncated");
+    if (nodes.length >= MAX_LINEAGE_NODES)
+      return schemeLimit(version, "lineage-nodes", MAX_LINEAGE_NODES);
     const nodeReader = new LeReader(node);
     const signedData = nodeReader.lenChunk();
     const flags = nodeReader.u32();
