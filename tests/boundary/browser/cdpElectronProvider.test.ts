@@ -959,7 +959,9 @@ const inspectInventoryReplies = async (
     commandResult: ({ method }) => replies[method]?.(fileUrl),
   });
   browsers.push(browser);
-  const result = await new CdpElectronProvider().inspectPage(
+  const provider = new CdpElectronProvider();
+  onTestFinished(() => provider.close());
+  const result = await provider.inspectPage(
     inspectElectronPageInputSchema.parse({
       cdp_endpoint: browser.endpoint,
       target_id: "electron-page",
