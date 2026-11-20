@@ -498,20 +498,23 @@ export const parseOciImageLayout = async (
     signal,
     "oci-layout",
   );
-  const layoutVersion = isRecord(layoutDocument.value)
-    ? nonempty(layoutDocument.value.imageLayoutVersion)
-    : null;
-  if (layoutVersion === null)
-    throw malformedInput(
-      OCI_IMAGE_LAYOUT_FORMAT,
-      "oci-layout is missing imageLayoutVersion.",
-    );
   const layoutObservation: FileSnapshotPartialObservation = {
     kind: "file-snapshot-hash",
     path: "oci-layout",
     sha256: layoutDocument.sha256,
     bytes: layoutDocument.bytes,
   };
+  const layoutVersion = isRecord(layoutDocument.value)
+    ? nonempty(layoutDocument.value.imageLayoutVersion)
+    : null;
+  if (layoutVersion === null)
+    throw new OciImageLayoutRefusal(
+      malformedInput(
+        OCI_IMAGE_LAYOUT_FORMAT,
+        "oci-layout is missing imageLayoutVersion.",
+      ).failure,
+      layoutObservation,
+    );
   let jsonBytesRead = layoutDocument.bytes;
 
   const indexEntry = byPath.get("index.json");

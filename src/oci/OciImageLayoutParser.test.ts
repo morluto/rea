@@ -634,3 +634,26 @@ it("keeps the parse refusal and its layout snapshot when reader cleanup also fai
     await provider.close();
   }
 });
+
+it("keeps the oci-layout snapshot when imageLayoutVersion is missing", async () => {
+  const root = await createTestTempDirectory("rea-oci-no-version-");
+  await writeOciImageLayoutFixture(root);
+  await writeFile(join(root, "oci-layout"), "{}\n");
+  const provider = new OciImageLayoutProvider();
+  try {
+    const result = await provider.inspect(
+      inspectOciImageLayoutInputSchema.parse({ path: root }),
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    const primary = primaryAnalysisError(result.error);
+    expect(JSON.stringify(primary)).toContain("missing imageLayoutVersion");
+    expect(primary.partialObservation).toMatchObject({
+      kind: "file-snapshot-hash",
+      path: "oci-layout",
+      bytes: 3,
+    });
+  } finally {
+    await provider.close();
+  }
+});
