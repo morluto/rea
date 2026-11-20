@@ -273,38 +273,44 @@ test("rejects unknown runtime observation fields", () => {
   ).toBe(false);
 });
 
-test("lists all connectable targets on the selected endpoint across directories", async () => {
-  const fixture = await runtimeFixture();
-  const outside = await temporaryFile("outside.js");
-  const fake = await startFakeV8Inspector({
-    targetUrl: nodeDiscoveryTargetUrl(fixture.entry),
-    additionalTargets: [{ url: nodeDiscoveryTargetUrl(outside) }],
-    additionalTargetCount: 205,
-  });
-  try {
-    const listed = await new V8InspectorProvider().listTargets({
-      inspector_endpoint: fake.endpoint,
+// Node discovery turns backslashes into underscores, so a Windows host path
+// stays unresolved instead of resolving to a file.
+test.skipIf(process.platform === "win32")(
+  "lists all connectable targets on the selected endpoint across directories",
+  async () => {
+    const fixture = await runtimeFixture();
+    const outside = await temporaryFile("outside.js");
+    const fake = await startFakeV8Inspector({
+      targetUrl: nodeDiscoveryTargetUrl(fixture.entry),
+      additionalTargets: [{ url: nodeDiscoveryTargetUrl(outside) }],
+      additionalTargetCount: 205,
     });
-    if (!listed.ok) throw listed.error;
-    const targets = listed.value.targets;
-    expect(targets).toHaveLength(207);
-    expect(new Set(targets.map(({ target_id }) => target_id)).size).toBe(207);
-    expect(
-      targets.find(({ target_id }) => target_id === fake.targetId)?.location,
-    ).toMatchObject({ kind: "file", file_path: fixture.entry });
-    expect(
-      targets.find(({ target_id }) => target_id === fake.targetIds[1])
-        ?.location,
-    ).toMatchObject({ kind: "file", file_path: outside });
-    expect(
-      targets.find(
-        ({ target_id }) => target_id === "00000000-0000-4000-8000-000000000207",
-      )?.location,
-    ).toMatchObject({ kind: "file", file_path: fixture.entry });
-  } finally {
-    await fake.close();
-  }
-});
+    try {
+      const listed = await new V8InspectorProvider().listTargets({
+        inspector_endpoint: fake.endpoint,
+      });
+      if (!listed.ok) throw listed.error;
+      const targets = listed.value.targets;
+      expect(targets).toHaveLength(207);
+      expect(new Set(targets.map(({ target_id }) => target_id)).size).toBe(207);
+      expect(
+        targets.find(({ target_id }) => target_id === fake.targetId)?.location,
+      ).toMatchObject({ kind: "file", file_path: fixture.entry });
+      expect(
+        targets.find(({ target_id }) => target_id === fake.targetIds[1])
+          ?.location,
+      ).toMatchObject({ kind: "file", file_path: outside });
+      expect(
+        targets.find(
+          ({ target_id }) =>
+            target_id === "00000000-0000-4000-8000-000000000207",
+        )?.location,
+      ).toMatchObject({ kind: "file", file_path: fixture.entry });
+    } finally {
+      await fake.close();
+    }
+  },
+);
 
 test("preserves attachment facts and refuses attached or unconnectable Inspector targets", async () => {
   const fake = await startFakeV8Inspector({
