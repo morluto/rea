@@ -29,7 +29,10 @@ requires an absolute filesystem path and preserves that exact selection:
 The inline Evidence result contains the artifact path, SHA-256, and byte length.
 
 `identity` reports `id`, `version`, `authors`, and `description` as present in
-the `.nuspec` metadata. Missing fields are `null`. The `.nuspec` and OPC
+the `.nuspec` metadata. For authors and description, NuGet indexes the first
+nonempty leaf with a matching local name, ignoring case. The package ID and
+version use their case-sensitive names in the metadata namespace. Missing
+fields are `null`. The `.nuspec` and OPC
 relationships go through XML end-of-line handling, as NuGet's reader applies
 it: CRLF and lone CR read as LF. When no `.nuspec` can be
 selected, `identity` is `null`.

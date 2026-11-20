@@ -113,6 +113,41 @@ const zipSize = (value: number | undefined): number | null =>
     ? value
     : null;
 
+/** NuGet indexes nonempty leaf metadata by local name and keeps its first value. */
+const indexedMetadataText = (
+  metadata: Element,
+  name: string,
+): string | null => {
+  for (const child of childElements(metadata)) {
+    if (
+      child.localName?.toLowerCase() !== name ||
+      childElements(child).length > 0
+    )
+      continue;
+    const text = child.textContent ?? "";
+    if (!text) continue;
+    // XDocument ignores ordinary XML whitespace. CDATA and xml:space can
+    // retain a whitespace-only value that occupies this key in NuGet's index.
+    if (/[^\t\r\n ]/u.test(text)) return nonempty(text);
+    if (
+      Array.from(child.childNodes).some(
+        (node) => node.nodeType === 4 && node.nodeValue,
+      )
+    )
+      return null;
+    for (
+      let scope: Node | null = child;
+      isElement(scope);
+      scope = scope.parentNode
+    ) {
+      const space = scope.getAttribute("xml:space");
+      if (space === "preserve") return null;
+      if (space === "default") break;
+    }
+  }
+  return null;
+};
+
 const asFileEntry = (entry: Entry): entry is FileEntry =>
   !entry.directory && "getData" in entry;
 
@@ -393,8 +428,8 @@ const parseNuspecDocument = (
   // NuGet's typed getters select children in the default namespace in scope.
   // Authors and description come from its local-name metadata index.
   const metadataNamespace = metadata.lookupNamespaceURI("") ?? "";
-  const metadataText = (local: string, namespace?: string): string | null => {
-    const element = firstNamed(metadata, local, namespace);
+  const metadataText = (local: string): string | null => {
+    const element = firstNamed(metadata, local, metadataNamespace);
     return element === undefined ? null : elementText(element);
   };
   const licenseElement = firstNamed(metadata, "license", metadataNamespace);
@@ -406,10 +441,10 @@ const parseNuspecDocument = (
   );
   return {
     identity: {
-      id: metadataText("id", metadataNamespace),
-      version: metadataText("version", metadataNamespace),
-      authors: metadataText("authors"),
-      description: metadataText("description"),
+      id: metadataText("id"),
+      version: metadataText("version"),
+      authors: indexedMetadataText(metadata, "authors"),
+      description: indexedMetadataText(metadata, "description"),
     },
     license:
       licenseElement === undefined

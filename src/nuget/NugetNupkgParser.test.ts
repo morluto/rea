@@ -808,3 +808,42 @@ it("keeps a foreign group from suppressing ungrouped NuGet dependencies", async 
     { target_framework: null, dependencies: [{ id: "Declared" }] },
   ]);
 });
+
+it("selects the first nonempty leaf for indexed publisher metadata", async () => {
+  const bytes = await nugetNupkgFixture({
+    nuspec: ungroupedNuspec
+      .replace(
+        "<authors>Casey</authors>",
+        '<authors>Wrong <team>nested</team></authors><authors/><x:Authors xmlns:x="urn:extension">First publisher</x:Authors><authors>Later publisher</authors>',
+      )
+      .replace(
+        "<description>Ungrouped dependencies.</description>",
+        "<Description>Published description</Description>",
+      )
+      .replace(
+        "<id>Ungrouped.Package</id>",
+        "<ID>Ignored</ID><id>Ungrouped.Package</id>",
+      ),
+  });
+  const report = await parseNugetNupkg(bytes, artifactOf(bytes), defaults);
+  expect(report.identity).toMatchObject({
+    id: "Ungrouped.Package",
+    authors: "First publisher",
+    description: "Published description",
+  });
+});
+
+it.each([
+  ["<authors> </authors>", "Later"],
+  ["<authors><![CDATA[ ]]></authors>", null],
+  ['<authors xml:space="preserve"> </authors>', null],
+])("keeps NuGet's first eligible publisher for %s", async (first, expected) => {
+  const bytes = await nugetNupkgFixture({
+    nuspec: ungroupedNuspec.replace(
+      "<authors>Casey</authors>",
+      first + "<authors>Later</authors>",
+    ),
+  });
+  const report = await parseNugetNupkg(bytes, artifactOf(bytes), defaults);
+  expect(report.identity?.authors).toBe(expected);
+});
