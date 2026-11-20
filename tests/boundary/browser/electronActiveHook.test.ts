@@ -564,7 +564,7 @@ process.stdout.write(JSON.stringify({
   });
 });
 
-it("removes the newest matching ipcMain registration across unpatched aliases", async () => {
+it("removes the newest ipcMain registration across aliases and preserves the remaining callbacks", async () => {
   const root = await createTestTempDirectory("rea-electron-hook-ipc-aliases-");
   await writeElectronFixture(root);
   const script = join(root, "ipc-aliases.cjs");
@@ -572,37 +572,42 @@ it("removes the newest matching ipcMain registration across unpatched aliases", 
     script,
     `const { ipcMain } = require("electron");
 const event = { sender: { id: 9 }, senderFrame: { routingId: 7 } };
-const order = [];
-const f = () => { order.push("f"); };
-const g = () => { order.push("g"); };
-ipcMain.on("mixed", f);
-ipcMain.on("mixed", g);
-ipcMain.addListener("mixed", f);
-ipcMain.removeListener("mixed", f);
-ipcMain.emit("mixed", event);
+const mixed = (channel, customLink) => {
+  const order = [];
+  const first = () => { order.push("first"); };
+  if (customLink) first.listener = () => { order.push("inner"); };
+  const middle = () => { order.push("middle"); };
+  ipcMain.on(channel, first);
+  ipcMain.on(channel, middle);
+  ipcMain.addListener(channel, first);
+  ipcMain.removeListener(channel, first);
+  ipcMain.emit(channel, event);
+  return { order, listeners: ipcMain.listenerCount(channel) };
+};
+const plain = mixed("mixed", false);
+const linked = mixed("linked", true);
 let onceCalls = 0;
-const fn = () => { onceCalls += 1; };
-ipcMain.once("once-then-add", fn);
-ipcMain.addListener("once-then-add", fn);
-ipcMain.removeListener("once-then-add", fn);
+const once = () => { onceCalls += 1; };
+ipcMain.once("once-then-add", once);
+ipcMain.addListener("once-then-add", once);
+ipcMain.removeListener("once-then-add", once);
 ipcMain.emit("once-then-add", event);
 ipcMain.emit("once-then-add", event);
 const snapshot = globalThis.__reaElectronActiveSnapshot();
-process.stdout.write(JSON.stringify({
-  order,
-  once_calls: onceCalls,
-  listeners: ["mixed", "once-then-add"].map((channel) => ipcMain.listenerCount(channel)),
+console.log(JSON.stringify({
+  plain, linked,
+  once: { calls: onceCalls, listeners: ipcMain.listenerCount("once-then-add") },
   invocations: snapshot.events.filter((item) => item.kind === "main-event-invocation").map((item) => item.channel),
-}) + "\\n");
+}));
 `,
   );
   const execution = await runNode(script, root);
   expect(execution.code, execution.stderr).toBe(0);
   expect(JSON.parse(execution.stdout)).toEqual({
-    order: ["f", "g"],
-    once_calls: 1,
-    listeners: [2, 0],
-    invocations: ["mixed", "mixed", "once-then-add"],
+    plain: { order: ["first", "middle"], listeners: 2 },
+    linked: { order: ["first", "middle"], listeners: 2 },
+    once: { calls: 1, listeners: 0 },
+    invocations: ["mixed", "mixed", "linked", "linked", "once-then-add"],
   });
 });
 
@@ -667,37 +672,6 @@ process.stdout.write(JSON.stringify({
     calls: 200,
     after_once: 0,
     listeners: 0,
-  });
-});
-
-it("removes the newest registration of an ipcMain listener that has its own listener property", async () => {
-  const root = await createTestTempDirectory("rea-electron-hook-ipc-wrapped-");
-  await writeElectronFixture(root);
-  const script = join(root, "ipc-wrapped.cjs");
-  await writeFile(
-    script,
-    `const { ipcMain } = require("electron");
-const event = { sender: { id: 9 }, senderFrame: { routingId: 7 } };
-const order = [];
-const f = () => { order.push("f"); };
-f.listener = () => { order.push("inner"); };
-const g = () => { order.push("g"); };
-ipcMain.on("wrapped", f);
-ipcMain.on("wrapped", g);
-ipcMain.addListener("wrapped", f);
-ipcMain.removeListener("wrapped", f);
-ipcMain.emit("wrapped", event);
-process.stdout.write(JSON.stringify({
-  order,
-  listeners: ipcMain.listenerCount("wrapped"),
-}) + "\\n");
-`,
-  );
-  const execution = await runNode(script, root);
-  expect(execution.code, execution.stderr).toBe(0);
-  expect(JSON.parse(execution.stdout)).toEqual({
-    order: ["f", "g"],
-    listeners: 2,
   });
 });
 
@@ -3352,82 +3326,57 @@ console.log(JSON.stringify({ plain, hooked,
   });
 });
 
-it.each(["removeListener", "off"] as const)(
-  "preserves direct %s cleanup for changed and deleted raw listener links",
-  async (method) => {
-    const root = await createTestTempDirectory(
-      "rea-electron-hook-removal-direct-link-",
-    );
-    await writeElectronFixture(root);
-    const script = join(root, "removal-direct-link.cjs");
-    await writeFile(
-      script,
-      `const { EventEmitter } = require("node:events");
+it("preserves direct removeListener and off cleanup for changed or deleted raw listener links", async () => {
+  const root = await createTestTempDirectory(
+    "rea-electron-hook-removal-direct-link-",
+  );
+  await writeElectronFixture(root);
+  const script = join(root, "removal-direct-link.cjs");
+  await writeFile(
+    script,
+    `const { EventEmitter } = require("node:events");
 const { ipcMain } = require("electron");
-const method = ${JSON.stringify(method)};
-const scenario = (emitter, deletion) => {
+const scenario = (emitter, method, link) => {
+  const channel = method + "-" + link;
   const listener = () => {};
-  emitter.on("ch", listener);
-  const entry = emitter.rawListeners("ch")[0];
-  if (deletion) delete entry.listener;
+  emitter.on(channel, listener);
+  const entry = emitter.rawListeners(channel)[0];
+  if (link === "deleted") delete entry.listener;
   else entry.listener = () => {};
-  const returned = emitter[method]("ch", listener);
-  return { remaining: emitter.listenerCount("ch"), returnedEmitter: returned === emitter };
+  const returned = emitter[method](channel, listener);
+  return { remaining: emitter.listenerCount(channel), returnedEmitter: returned === emitter };
 };
 const outcomes = {};
-for (const deletion of [false, true]) {
-  const plain = new EventEmitter();
-  outcomes[deletion ? "deleted" : "changed"] = {
-    plain: scenario(plain, deletion),
-    hooked: scenario(ipcMain, deletion),
-  };
-  ipcMain.removeAllListeners();
+for (const method of ["removeListener", "off"]) {
+  outcomes[method] = {};
+  for (const link of ["changed", "deleted"]) {
+    outcomes[method][link] = {
+      plain: scenario(new EventEmitter(), method, link),
+      hooked: scenario(ipcMain, method, link),
+    };
+  }
 }
-process.stdout.write(JSON.stringify({
+console.log(JSON.stringify({
   outcomes,
   hook_error: globalThis.__reaElectronActiveSnapshot().hook_error,
-}) + "\\n");
+}));
 `,
-    );
-    const execution = await runNode(script, root);
-    expect(execution.code, execution.stderr).toBe(0);
-    const result = JSON.parse(
-      execution.stdout.trim().split("\n").at(-1) ?? "null",
-    ) as {
-      readonly outcomes: Record<
-        string,
-        {
-          readonly plain: {
-            readonly remaining: number;
-            readonly returnedEmitter: boolean;
-          };
-          readonly hooked: {
-            readonly remaining: number;
-            readonly returnedEmitter: boolean;
-          };
-        }
-      >;
-      readonly hook_error: boolean;
-    };
-    expect(result.hook_error).toBe(false);
-    expect(result.outcomes.changed?.hooked).toEqual(
-      result.outcomes.changed?.plain,
-    );
-    expect(result.outcomes.deleted?.hooked).toEqual(
-      result.outcomes.deleted?.plain,
-    );
-    expect(result.outcomes).toEqual({
-      changed: {
-        plain: { remaining: 0, returnedEmitter: true },
-        hooked: { remaining: 0, returnedEmitter: true },
-      },
-      deleted: {
-        plain: { remaining: 0, returnedEmitter: true },
-        hooked: { remaining: 0, returnedEmitter: true },
-      },
-    });
-  },
-);
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  const removed = { remaining: 0, returnedEmitter: true };
+  const unchangedNativeOutcome = {
+    changed: { plain: removed, hooked: removed },
+    deleted: { plain: removed, hooked: removed },
+  };
+  expect(JSON.parse(execution.stdout)).toEqual({
+    hook_error: false,
+    outcomes: {
+      removeListener: unchangedNativeOutcome,
+      off: unchangedNativeOutcome,
+    },
+  });
+});
 
 it("preserves warning-only rejections and records later blocked shell rejections", async () => {
   const root = await createTestTempDirectory(
