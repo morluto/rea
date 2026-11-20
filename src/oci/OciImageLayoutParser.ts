@@ -267,8 +267,10 @@ interface ReferencedBlob {
   digest: string;
   mediaType: string | null;
   declaredSize: number | null;
-  /** Every distinct size the descriptors referencing this blob declared. */
+  /** Every distinct size the descriptors referencing this blob declared, in declaration order. */
   declaredSizes: number[];
+  /** Membership index for declaredSizes, so many shared references stay linear. */
+  declaredSizeSet: Set<number>;
 }
 
 const recordFinding = (
@@ -730,15 +732,17 @@ const inventoryOciImageLayout = async (
         mediaType,
         declaredSize,
         declaredSizes: declaredSize === null ? [] : [declaredSize],
+        declaredSizeSet: new Set(declaredSize === null ? [] : [declaredSize]),
       });
       return;
     }
     if (existing.mediaType === null && mediaType !== null)
       existing.mediaType = mediaType;
-    if (declaredSize === null || existing.declaredSizes.includes(declaredSize))
+    if (declaredSize === null || existing.declaredSizeSet.has(declaredSize))
       return;
     existing.declaredSize ??= declaredSize;
     existing.declaredSizes.push(declaredSize);
+    existing.declaredSizeSet.add(declaredSize);
   };
 
   // A descriptor whose required size is unusable keeps its other facts, but
