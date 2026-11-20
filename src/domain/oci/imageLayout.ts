@@ -123,9 +123,9 @@ export const inspectOciImageLayoutInputSchema = z.strictObject({
   ),
   include_env_values: z
     .boolean()
-    .default(false)
+    .default(true)
     .describe(
-      "Include config Env values; omitted values stay null because Env often holds secrets",
+      "Include config Env values (default true); false leaves each value null and keeps only the names",
     ),
   max_json_bytes: z
     .number()

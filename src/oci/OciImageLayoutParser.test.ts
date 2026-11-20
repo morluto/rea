@@ -40,7 +40,7 @@ const inspectLayout = async (
   }
 };
 
-it("inventories a single-platform layout and redacts Env values by default", async () => {
+it("inventories a single-platform layout and keeps Env values by default", async () => {
   const root = await createTestTempDirectory("rea-oci-valid-");
   const written = await writeOciImageLayoutFixture(root);
   const report = await inspectLayout(root);
@@ -78,8 +78,8 @@ it("inventories a single-platform layout and redacts Env values by default", asy
     stop_signal: "SIGTERM",
   });
   expect(image?.env).toEqual([
-    { name: "PATH", value: null },
-    { name: "SECRET", value: null },
+    { name: "PATH", value: "/usr/bin" },
+    { name: "SECRET", value: "redact-me" },
   ]);
   expect(image?.exposed_ports).toEqual(["80/tcp"]);
   expect(image?.volumes).toEqual(["/data"]);
@@ -108,8 +108,10 @@ it("inventories a single-platform layout and redacts Env values by default", asy
     expect.arrayContaining([
       OCI_IMAGE_LAYOUT_LIMITATIONS.directoryOnly,
       OCI_IMAGE_LAYOUT_LIMITATIONS.noLayerContents,
-      OCI_IMAGE_LAYOUT_LIMITATIONS.envRedacted,
     ]),
+  );
+  expect(report.limitations).not.toContain(
+    OCI_IMAGE_LAYOUT_LIMITATIONS.envRedacted,
   );
   const hashed = report.blobs.filter((blob) => blob.hashed);
   expect(hashed.every((blob) => blob.sha256 !== null)).toBe(true);
@@ -127,15 +129,15 @@ it("preserves significant whitespace in config string facts", async () => {
   });
 });
 
-it("includes Env values when include_env_values is selected", async () => {
+it("omits Env values when include_env_values is false", async () => {
   const root = await createTestTempDirectory("rea-oci-env-");
   await writeOciImageLayoutFixture(root);
-  const report = await inspectLayout(root, { include_env_values: true });
+  const report = await inspectLayout(root, { include_env_values: false });
   expect(report.images[0]?.env).toEqual([
-    { name: "PATH", value: "/usr/bin" },
-    { name: "SECRET", value: "redact-me" },
+    { name: "PATH", value: null },
+    { name: "SECRET", value: null },
   ]);
-  expect(report.limitations).not.toContain(
+  expect(report.limitations).toContain(
     OCI_IMAGE_LAYOUT_LIMITATIONS.envRedacted,
   );
 });

@@ -44,7 +44,7 @@ export const OCI_IMAGE_LAYOUT_LIMITATIONS = {
   noLayerContents:
     "Layer contents are not listed; decompression is a follow-up.",
   envRedacted:
-    "Config Env values are omitted (null) because Env often holds secrets; pass include_env_values to include them.",
+    "Config Env values are omitted (null) because include_env_values was set to false.",
 } as const;
 
 export class OciImageLayoutRefusal extends ParseFailureError {

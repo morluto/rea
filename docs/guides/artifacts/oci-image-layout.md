@@ -42,8 +42,8 @@ size, platform (`os`, `architecture`, `variant`, `os_version`) and annotations
 such as `org.opencontainers.image.ref.name`.
 
 `images` lists each image manifest: config digest; config `architecture`, `os`,
-`variant`, `created`, `author`, `User`; Env names (values are `null` unless
-`include_env_values` is selected, because Env often holds secrets);
+`variant`, `created`, `author`, `User`; Env names and values (set
+`include_env_values` to false to leave the values `null`);
 `Entrypoint`, `Cmd`, `WorkingDir`, `ExposedPorts`, `Volumes`, `Labels`,
 `StopSignal`; `rootfs.diff_ids`; `history` (`created_by`, `empty_layer`); and
 layers (media type, compressed size, digest, whether the blob is present).

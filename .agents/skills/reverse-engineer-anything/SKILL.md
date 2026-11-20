@@ -443,8 +443,8 @@ explicit path or endpoint and do not need it.
   `inspect_oci_image_layout` with the explicit local directory. This built-in
   target-free inspection does not unpack a tar, decompress layers, execute the
   image, or contact a registry. Preserve layout version, index entries, config
-  facts, and blob digest verification. Env values stay omitted unless
-  `include_env_values` is selected. Missing blobs, digest mismatches, and
+  facts, and blob digest verification. Env values are kept unless
+  `include_env_values` is set to false. Missing blobs, digest mismatches, and
   similar defects are findings. Directory form only. See the
   [OCI image layouts guide](https://github.com/morluto/rea/blob/main/docs/guides/artifacts/oci-image-layout.md).
 

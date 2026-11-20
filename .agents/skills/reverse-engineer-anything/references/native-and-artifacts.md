@@ -408,7 +408,7 @@ layout version, index entries, image config, layers, or blob digest
 verification. No `open_binary`, registry access, layer decompression, or
 target execution is required. The CLI equivalent is
 `inspect-oci-image-layout PATH`. Preserve snapshot identity, descriptor digests,
-and Env names; Env values stay omitted unless `include_env_values` is selected.
+and Env names and values; set `include_env_values` to false to omit the values.
 Missing blobs, digest mismatches, size mismatches, unreferenced blobs, unknown
 media types, unsupported digest algorithms, and symlink blobs are findings.
 Child symbolic links are not followed. Directory form only; tar image layouts

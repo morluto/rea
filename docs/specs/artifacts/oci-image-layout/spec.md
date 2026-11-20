@@ -16,8 +16,8 @@ image, or contacting a registry.
   as `org.opencontainers.image.ref.name`) and nested indexes within a bounded
   depth (default 4, maximum 8).
 - For each image manifest, report config digest and config `architecture` /
-  `os` / `variant`, `created`, `author`, `config.User`, Env (names only by
-  default; values behind `include_env_values`), `Entrypoint`, `Cmd`,
+  `os` / `variant`, `created`, `author`, `config.User`, Env (names and
+  values; `include_env_values: false` keeps names only), `Entrypoint`, `Cmd`,
   `WorkingDir`, `ExposedPorts`, `Volumes`, `Labels`, `StopSignal`,
   `rootfs.diff_ids`, and `history` (`created_by`, `empty_layer`).
 - List layers (media type, compressed size, digest, whether the blob is
