@@ -43,6 +43,15 @@ const abruptObjectPatternSource = `
   box.sibling[0] = "later";
 `;
 
+const firstDefaultSource = `
+  const defined = [0, ["one"]];
+  const [used = (defined[1][0] = "dormant"), [inactiveDefaultElement]] = defined;
+  defined[1][0] = "later";
+  const missing = [undefined, ["one"]];
+  const [other = (missing[1][0] = "active"), [activeDefaultElement]] = missing;
+  missing[1][0] = "later";
+`;
+
 const expectedDependencies = [
   ["declared", ["a"]],
   ["a", ["a"]],
@@ -60,6 +69,8 @@ const expectedDependencies = [
   ["unreachedSibling", ["sibling", "0"], "candidate"],
   ["innerElement", ["0", "0"]],
   ["siblingInnerElement", ["1", "0"]],
+  ["inactiveDefaultElement", ["1", "0"]],
+  ["activeDefaultElement", ["1", "0"], "candidate"],
   ["spreadElement", ["1"]],
   ["aliasedPrototypeElement", ["0", "0"], "candidate"],
   ["selected", ["0"], "candidate"],
@@ -86,6 +97,8 @@ const tracedBindings = [
   "unreachedSibling",
   "innerElement",
   "siblingInnerElement",
+  "inactiveDefaultElement",
+  "activeDefaultElement",
   "spreadElement",
   "aliasedPrototypeElement",
   "selected",
@@ -160,15 +173,13 @@ cliTest(
     [selected] = after;
   `,
     );
-    await writeFile(join(root, "iterator-close.js"), iteratorCloseSource);
-    await writeFile(
-      join(root, "array-prototype-alias.js"),
-      arrayPrototypeAliasSource,
-    );
-    await writeFile(
-      join(root, "abrupt-object-pattern.js"),
-      abruptObjectPatternSource,
-    );
+    for (const [path, source] of [
+      ["iterator-close.js", iteratorCloseSource],
+      ["array-prototype-alias.js", arrayPrototypeAliasSource],
+      ["abrupt-object-pattern.js", abruptObjectPatternSource],
+      ["first-default.js", firstDefaultSource],
+    ] as const)
+      await writeFile(join(root, path), source);
     const output = await cli.run({
       arguments: ["analyze-javascript-application", root, "--json"],
     });

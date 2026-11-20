@@ -650,6 +650,7 @@ const note = (
   if (stop) walk.stopped = true;
 };
 
+/** Charge the retained source text bytes, excluding framing. */
 const charge = (walk: Walk, bytes: number): void => {
   walk.stringBytes += bytes;
   if (walk.stringBytes > walk.maxStringBytes)
@@ -695,7 +696,7 @@ const readAnsiAt = (
     );
     return null;
   }
-  charge(walk, end + 1);
+  charge(walk, end);
   return slice.subarray(0, end).toString("latin1");
 };
 
@@ -728,7 +729,7 @@ const readUtf16At = (
     );
     return null;
   }
-  charge(walk, end + 2);
+  charge(walk, end);
   return slice.subarray(0, end).toString("utf16le");
 };
 

@@ -517,7 +517,11 @@ export function* collectSemanticMemberMutationsSteps(
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
   mayObserve: JavaScriptBindingIndex["mayObserve"],
-): Generator<void, void> {
+): Generator<void, ReadonlyMap<t.VariableDeclarator, t.AssignmentPattern>> {
+  const firstArrayDefaults = new Map<
+    t.VariableDeclarator,
+    t.AssignmentPattern
+  >();
   const deferredMapReceivers = new Set<
     t.CallExpression | t.OptionalCallExpression
   >();
@@ -1888,6 +1892,14 @@ export function* collectSemanticMemberMutationsSteps(
           for (const target of semanticWriteTargets(execution.target))
             writeOnlyMembers.add(target);
       for (const source of semanticIterationSources(node, parent)) {
+        const first = source.arrayPattern?.elements[0];
+        if (
+          source.kind === "iteration" &&
+          t.isVariableDeclarator(node) &&
+          node.id === source.arrayPattern &&
+          t.isAssignmentPattern(first)
+        )
+          firstArrayDefaults.set(node, first);
         // Local stores retain their sources on member writes. Only the ambient
         // identity owner can establish that storing itself exposes a reference.
         if (
@@ -2287,6 +2299,7 @@ export function* collectSemanticMemberMutationsSteps(
   // Gathering effects can evaluate a primitive projection before its object
   // escapes. Final values must use the completed mutation state.
   clearSemanticValueCaches(state);
+  return firstArrayDefaults;
 }
 
 interface ReferencedValue extends JavaScriptSemanticObjectReference {
