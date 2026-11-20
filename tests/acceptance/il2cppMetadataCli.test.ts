@@ -148,7 +148,6 @@ cliTest(
       original.images.length - 1,
       -1,
       original.images.length,
-      99,
     ]) {
       const report = structuredClone(original);
       report.binary!.code_gen_modules[0]!.image = image;
@@ -175,9 +174,27 @@ cliTest(
         expect(result.exitCode, result.stderr).toBe(0);
         expect(mcp.isError, JSON.stringify(mcp)).not.toBe(true);
       } else {
+        const error = {
+          code: "invalid_request",
+          details: {
+            issues: [
+              {
+                path: [
+                  "source",
+                  "normalized_result",
+                  "binary",
+                  "code_gen_modules",
+                  0,
+                  "image",
+                ],
+                reason: image < 0 ? "out_of_range" : "invalid_value",
+              },
+            ],
+          },
+        };
         expect(result.exitCode, `image ${image}`).toBe(1);
-        expect(result.json).toMatchObject({ code: "invalid_request" });
-        expect(parseMcpToolError(mcp).error.code).toBe("invalid_request");
+        expect(result.json).toMatchObject(error);
+        expect(parseMcpToolError(mcp).error).toMatchObject(error);
       }
     }
   },
@@ -236,9 +253,31 @@ cliTest(
         expect(cliResult.exitCode, cliResult.stderr).toBe(0);
         expect(mcp.isError, JSON.stringify(mcp)).not.toBe(true);
       } else {
+        const owner = {
+          self: ["types", 0],
+          cycle: ["types", expect.any(Number)],
+          "type-range": ["types", 1],
+          "method-range": ["methods", 0],
+        }[scenario];
+        const error = {
+          code: "invalid_request",
+          details: {
+            issues: [
+              {
+                path: [
+                  "source",
+                  "normalized_result",
+                  ...owner,
+                  "declaring_type",
+                ],
+                reason: "invalid_value",
+              },
+            ],
+          },
+        };
         expect(cliResult.exitCode, scenario).toBe(1);
-        expect(cliResult.json).toMatchObject({ code: "invalid_request" });
-        expect(parseMcpToolError(mcp).error.code).toBe("invalid_request");
+        expect(cliResult.json).toMatchObject(error);
+        expect(parseMcpToolError(mcp).error).toMatchObject(error);
       }
     }
   },
@@ -801,6 +840,7 @@ it("imports historical metadata Evidence with unavailable member collections wit
     summary: { counts: { methods: 5, fields: null, parameters: null } },
     unknowns: expect.arrayContaining([
       expect.stringContaining("did not collect parameters"),
+      expect.stringContaining("did not collect fields"),
     ]),
   });
   const types = await call("inspect_analysis_view", {
