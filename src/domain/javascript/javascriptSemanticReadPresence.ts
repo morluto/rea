@@ -33,6 +33,11 @@ type ReadOwnData = (
   beforeIterator?: t.Node,
 ) => t.Node | undefined;
 
+interface DestructuringSource {
+  readonly path: readonly string[];
+  readonly selection: "array-iterator" | "own-data";
+}
+
 interface ReadPresence {
   readonly read: ReadOwnData;
   readonly readNestedArray: (
@@ -121,7 +126,7 @@ export const createSemanticReadPresenceQuery = (
   return (
     bindingId: string | null,
     capture: t.Node,
-    iterationPath?: readonly string[],
+    destructuring?: DestructuringSource,
   ): ReadPresence | undefined => {
     const binding =
       bindingId === null ? undefined : state.bindingsById.get(bindingId);
@@ -212,26 +217,22 @@ export const createSemanticReadPresenceQuery = (
           : selected;
       };
     };
-    // An identifier RHS in an object pattern can select numeric own data
-    // without starting an iterator, even when a later read closes one.
-    const arrayPath =
-      iterationPath ??
-      (t.isArrayExpression(value) &&
-      t.isIdentifier(unwrapJavaScriptExpression(capture).node)
-        ? []
-        : undefined);
-    if (arrayPath !== undefined) {
-      const literal = ownDataAtPath(value, arrayPath);
-      if (!t.isArrayExpression(literal)) return undefined;
-      const read = arraySlots(
-        literal,
-        arrayPath,
-        [],
-        iterationPath === undefined ? undefined : capture,
-      );
-      return read === undefined
-        ? undefined
-        : { read, readNestedArray: arraySlots };
+    // Object patterns read numeric own data directly, even through a
+    // projected receiver. Array patterns also acquire a native iterator.
+    if (destructuring !== undefined) {
+      const literal = ownDataAtPath(value, destructuring.path);
+      if (t.isArrayExpression(literal)) {
+        const read = arraySlots(
+          literal,
+          destructuring.path,
+          [],
+          destructuring.selection === "array-iterator" ? capture : undefined,
+        );
+        return read === undefined
+          ? undefined
+          : { read, readNestedArray: arraySlots };
+      }
+      if (destructuring.selection === "array-iterator") return undefined;
     }
     if (!t.isObjectExpression(value)) return undefined;
     const read: ReadOwnData = (path, beforeIterator) => {
