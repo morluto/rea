@@ -12,6 +12,7 @@ import {
   thinMacho,
   universalFuseImage,
 } from "../../tests/fixtures/electron/fuseImage.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { AnalysisUnsupportedTargetError } from "../domain/analysisErrorCore.js";
 import { assertNodeCliInspectArgumentsSupported } from "./PlaywrightElectronActiveFuses.js";
 
@@ -65,15 +66,20 @@ describe("Electron inspect argument preflight", () => {
   it("preserves caller cancellation during the fuse read", async () => {
     const controller = new AbortController();
     const reason = new Error("cancel during fuse read");
-    await expect(
-      assertNodeCliInspectArgumentsSupported("/nonexistent/binary", {
+    const failure: unknown = await assertNodeCliInspectArgumentsSupported(
+      "/nonexistent/binary",
+      {
         signal: controller.signal,
         readFuseImage: async () => {
           controller.abort(reason);
           throw new Error("read interrupted");
         },
-      }),
-    ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
+      },
+    ).catch((cause: unknown) => cause);
+    if (!(failure instanceof ArtifactReaderFailure))
+      throw new Error("Expected a fuse read cancellation", { cause: failure });
+    expect(failure.reason).toBe("cancelled");
+    expect(failure.cause).toBe(reason);
   });
 
   it("rejects macOS app bundle when framework binary has disabled inspect fuse", async () => {
