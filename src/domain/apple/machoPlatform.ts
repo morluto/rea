@@ -4,7 +4,7 @@ import { LC } from "./machoLoadCommandCodes.js";
 export type MachoVersionMinPlatform = 1 | 2 | 3 | 4;
 
 /** loader.h LC_VERSION_MIN_* command codes and their device platforms. */
-export const MACHO_VERSION_MIN_PLATFORMS: ReadonlyMap<
+const MACHO_VERSION_MIN_PLATFORMS: ReadonlyMap<
   number,
   MachoVersionMinPlatform
 > = new Map([
@@ -13,6 +13,23 @@ export const MACHO_VERSION_MIN_PLATFORMS: ReadonlyMap<
   [LC.VERSION_MIN_TVOS, 3],
   [LC.VERSION_MIN_WATCHOS, 4],
 ]);
+
+/**
+ * Legacy minimum-version commands contain exactly the four words in
+ * `version_min_command`. Keep framing separate from the CPU-dependent platform.
+ */
+export const classifyMachoVersionMinCommand = (
+  command: number,
+  size: number,
+):
+  | { readonly kind: "exact"; readonly platform: MachoVersionMinPlatform }
+  | { readonly kind: "truncated" | "oversized" }
+  | null => {
+  const platform = MACHO_VERSION_MIN_PLATFORMS.get(command);
+  if (platform === undefined) return null;
+  if (size === 16) return { kind: "exact", platform };
+  return { kind: size < 16 ? "truncated" : "oversized" };
+};
 
 /**
  * dyld derives legacy simulator platforms from the CPU type. tvOS uses
