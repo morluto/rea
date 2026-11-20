@@ -713,7 +713,6 @@ describe("interactive setup client hints", () => {
       expect(result.decision.selectedActionIds).toEqual([]);
     },
   );
-
 });
 
 
