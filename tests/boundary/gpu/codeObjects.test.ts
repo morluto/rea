@@ -1474,6 +1474,47 @@ it("reports invalid standalone PTX encoding in inventory and kernel inspection",
   }
 });
 
+it.each([
+  [
+    "an unmatched close",
+    ".version 8.0\n.target sm_80\n.entry k() { ret; }}\n.target sm_90\n",
+  ],
+  // The first target follows the stray close, so recognition depends on the
+  // scan continuing past it.
+  ["a close before the first target", ".version 8.0\n}\n.target sm_90\n"],
+  [
+    "a truncated entry body",
+    ".version 8.0\n.target sm_80\n.target sm_90\n.entry k() { ret;\n",
+  ],
+])("keeps the standalone PTX target unknown after %s", async (_label, text) => {
+  const malformed = Buffer.from(text);
+  const valid = Buffer.from(
+    ".version 8.0\n.target sm_80\n.entry k() { ret; }\n.target sm_90\n",
+  );
+  for (const analysis of ["inventory", "kernels"] as const) {
+    const result = await inspect(malformed, { analysis });
+    if (!result.ok) throw result.error;
+    expect(result.value.coverage.discovery).toBe("partial");
+    expect(result.value.objects).toMatchObject([{ kind: "ptx", target: null }]);
+    expect(result.value.objects[0]!.inspection).not.toBe("complete");
+    expect(result.value.objects[0]!.limitations).toContain(
+      "Malformed PTX text prevents complete target discovery.",
+    );
+
+    const control = await inspect(valid, { analysis });
+    if (!control.ok) throw control.error;
+    expect(control.value.coverage.discovery).toBe("complete");
+    expect(control.value.objects).toMatchObject([
+      {
+        kind: "ptx",
+        target: "sm_90",
+        inspection: analysis === "kernels" ? "complete" : "inventory",
+        limitations: [],
+      },
+    ]);
+  }
+});
+
 it("keeps a UTF-8 character split by the standalone PTX scan budget unexamined", async () => {
   const budget = 16 * 1024 * 1024;
   const header = Buffer.from(".version 8.0\n.target sm_80\n// ");
