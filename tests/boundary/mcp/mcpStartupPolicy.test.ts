@@ -28,8 +28,6 @@ const errorMessage = (cause: unknown): string =>
 
 const expectPhaseText = (text: string, budget: McpPhaseBudget) => {
   expect(text).toContain(mcpPhaseBudgetRecovery(budget));
-  expect(budget.floorMilliseconds).toBe(1);
-  expect(budget.maximumMilliseconds).toBe(2_147_483_647);
   expect(text).toContain(budget.setting);
   expect(text).toContain(budget.phase);
   expect(text).toContain(`${String(budget.milliseconds)} ms`);
@@ -59,10 +57,6 @@ describe("MCP startup policy", () => {
   it("names phase budget settings without turning Codex's 30s into a REA knob", () => {
     const budgets = resolveMcpStartupBudgets({});
     expect(MCP_STARTUP_POLICY.codexStartupTimeoutSeconds).toBe(30);
-    expect(budgets.initialize.milliseconds).toBe(15_000);
-    expect(budgets.toolsList.milliseconds).toBe(5_000);
-    expect(budgets.firstCatalog.milliseconds).toBe(20_000);
-    expect(budgets.doctor.milliseconds).toBe(30_000);
     const initialize = mcpPhaseBudgetRecovery(budgets.initialize);
     expectPhaseText(initialize, budgets.initialize);
     expectPhaseText(

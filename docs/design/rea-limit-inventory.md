@@ -238,3 +238,8 @@ keeps names that are numeric limits, and requires each name to be an
 `environment` on an analysis setting or a registry entry with a reason.
 The registry accepts only `restart-only`. A limit checked on each call has to
 be an analysis setting. The check rejects a `per-call` registry entry.
+The same script reads every default, floor, and maximum in the three numeric
+tables above and compares them with `ANALYSIS_SETTINGS` or the owner constant
+the parser enforces. A mismatch names the limit and both values. A cell that
+is only `Number.MAX_SAFE_INTEGER` or `MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS`
+means that export. `unset` means the code default is null.

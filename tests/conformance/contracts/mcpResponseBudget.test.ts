@@ -23,7 +23,6 @@ describe("MCP response budget configuration", () => {
   });
 
   it("names the effective stdio budget without claiming it raises the string ceiling", () => {
-    expect(MINIMUM_RESPONSE_BYTES).toBe(10_485_760);
     const effectiveResponseBytes = 20_971_520;
     const recovery = stdioResponseBudgetRecovery(
       effectiveResponseBytes,

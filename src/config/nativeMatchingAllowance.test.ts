@@ -12,12 +12,11 @@ import { launchAnalysisSetting } from "./analysisSettings.js";
 import { explicitSetupRegistrationEnvironment } from "../application/SetupRegistrationEnvironment.js";
 import { DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES } from "../domain/analysisResourceLimits.js";
 
-it("keeps the 96 MiB allowance when the launch setting is unset", () => {
+it("keeps the shipped allowance when the launch setting is unset", () => {
   expect(parseNativeMatchingAllowance({})).toEqual({
     ok: true,
     value: DEFAULT_NATIVE_MATCHING_ALLOWANCE,
   });
-  expect(DEFAULT_NATIVE_MATCHING_ALLOWANCE.maximumBytes).toBe(96 * 1024 * 1024);
   expect(
     launchAnalysisSetting("native.matching_representation_bytes", {}),
   ).toEqual({
