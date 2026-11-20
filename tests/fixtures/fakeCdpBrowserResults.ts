@@ -39,7 +39,7 @@ export const resultFor = (
     case "Debugger.getScriptSource":
       return scriptSourceResult();
     case "Network.getResponseBody":
-      return responseBodyResult(options);
+      return responseBodyResult();
     case "Page.captureScreenshot":
       return screenshotResult();
     case "Browser.getVersion":
@@ -140,16 +140,13 @@ const scriptSourceResult = () => ({
   scriptSource: "export const observed = 'source-secret';",
 });
 
-const responseBodyResult = (options: FakeOptions) =>
-  options.invalidResponseBodyBase64 === true
-    ? { body: "%%%not-base64%%%", base64Encoded: true }
-    : {
-        body: JSON.stringify({
-          result: { ok: true, token: "response-body-secret" },
-          items: [{ id: 1 }, { id: 2 }],
-        }),
-        base64Encoded: false,
-      };
+const responseBodyResult = () => ({
+  body: JSON.stringify({
+    result: { ok: true, token: "response-body-secret" },
+    items: [{ id: 1 }, { id: 2 }],
+  }),
+  base64Encoded: false,
+});
 
 const screenshotResult = () => ({
   data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==",

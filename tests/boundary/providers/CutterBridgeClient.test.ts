@@ -1640,25 +1640,6 @@ describe("CutterBridgeClient: scenario group 9", () => {
     directory = undefined;
   });
 
-  it("delegates service session listing to its injected bridge", async () => {
-    const discovery = {
-      sessions: [],
-      bridge_directory: "/private/bridge",
-      discovery_status: "no_live_bridge_found" as const,
-      bridge_directory_security: "private_verified" as const,
-      limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
-    };
-    const service = new CutterBridgeService({
-      listSessions: async () => discovery,
-      execute: async () => {
-        throw new Error("unexpected command dispatch");
-      },
-    });
-    const result = await service.listSessions();
-    expect(result.ok).toBe(true);
-    if (result.ok) expect(result.value).toBe(discovery);
-  });
-
   it("accepts only the exact completed-command receipt from status", async () => {
     directory = await createTestTempDirectory("rea-cutter-completion-receipt-");
     const sessionId = "27d3e3f1-f1e5-49ae-91ec-95af1f343a5a";

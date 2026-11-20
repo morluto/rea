@@ -55,8 +55,6 @@ through the `inspect_v8_code_cache` MCP tool.
   covers the bit's meaning and not a cache from that producer.
 - The CLI, MCP, absolute-path and decimal-argument boundary contracts have their own
   tests.
-- The budget tests call `observationBudgetRecovery` and assert its structured facts — the
-  boundary reached and which knob may move. `observationBudgetRemediation` renders that
-  struct into a sentence, so it is held to the struct rather than to its wording: the
-  sentence must not advise a knob the struct closed, and must mention a smaller artifact
-  exactly when the struct requires one. Rewording stays free; wrong advice does not.
+- Budget tests pin the structured exhaustion facts and verify that recovery only
+  recommends admitted changes. When both options are at their ceilings, the
+  recovery directs the caller to a smaller artifact.

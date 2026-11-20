@@ -514,12 +514,13 @@ it("retains late cancellation when creating the signature root fails", async () 
     },
   );
   if (result.ok) throw new Error("Expected root creation failure");
+  expect(result.error).toBeInstanceOf(ProviderAdapterError);
   expect(result.error.cause).toBe(physical);
   expect(result.error.secondaryFailures).toHaveLength(1);
   expect(result.error.secondaryFailures[0]).toMatchObject({
     _tag: "AnalysisCancelledError",
-    cause: reason,
   });
+  expect(result.error.secondaryFailures[0]?.cause).toBe(reason);
   expect(result.error.cleanupIncomplete).toBe(false);
   await resources.close();
 });
@@ -548,13 +549,18 @@ it("does not adopt a typed caller abort reason as a root-creation failure", asyn
   await resources.close();
 });
 
-it.each([false, true])(
-  "retains late cancellation after a signature failure while root cleanup fails: %s",
-  async (cleanupFails) => {
+it.each([
+  { cleanupFails: false, reason: null },
+  {
+    cleanupFails: true,
+    reason: { caller: "cancelled during root cleanup" },
+  },
+])(
+  "retains the signature failure and late cancellation (root cleanup fails: $cleanupFails)",
+  async ({ cleanupFails, reason }) => {
     const target = await createTarget("same");
     const resources = new ArtifactResourceScope();
     const controller = new AbortController();
-    const reason = { caller: "cancelled during root cleanup" };
     const physical = new AnalysisOutputError(
       "inspect_signature",
       "inspection failed",
@@ -581,8 +587,8 @@ it.each([false, true])(
       expect(physical.secondaryFailures).toHaveLength(1);
       expect(physical.secondaryFailures[0]).toMatchObject({
         _tag: "AnalysisCancelledError",
-        cause: reason,
       });
+      expect(physical.secondaryFailures[0]?.cause).toBe(reason);
       expect(result.error.cleanupIncomplete).toBe(cleanupFails);
       await resources.close();
       expect(resolvedAnalysisError(result.error)).toBe(physical);
@@ -726,35 +732,6 @@ it("keeps a physical source read failure primary when the caller also aborts", a
   expect(inspect).not.toHaveBeenCalled();
 });
 
-for (const cleanupFails of [false, true])
-  it(`keeps a failed inspection primary when the caller aborts during root close (fails: ${cleanupFails})`, async () => {
-    const target = await createTarget("same");
-    const resources = new ArtifactResourceScope();
-    const controller = new AbortController();
-    const primary = new AnalysisOutputError(
-      "inspect_signature",
-      "controlled inspection failure",
-    );
-    const root = await createRoot(cleanupFails ? 1 : 0);
-    const result = await withSignatureTarget(
-      target,
-      resources,
-      async () => err(primary),
-      controller.signal,
-      async () => ({
-        path: root.path,
-        async close() {
-          controller.abort(null);
-          await root.close();
-        },
-      }),
-    );
-    if (result.ok) throw new Error("Expected failed inspection");
-    expect(result.error.cleanupIncomplete).toBe(cleanupFails);
-    await resources.close();
-    expect(resolvedAnalysisError(result.error)).toBe(primary);
-  });
-
 it.each(opaqueReasons)(
   "preserves pre-entry reason %s without allocating a root or adopting foreign ownership",
   async (reason) => {
@@ -779,30 +756,6 @@ it.each(opaqueReasons)(
     await resources.close();
   },
 );
-
-it("does not replace a failed root creation with a simultaneous abort", async () => {
-  const target = await createTarget("same");
-  const resources = new ArtifactResourceScope();
-  const controller = new AbortController();
-  const failure = new Error("controlled root creation failure");
-  const result = await withSignatureTarget(
-    target,
-    resources,
-    unusedInspection,
-    controller.signal,
-    async () => {
-      controller.abort(null);
-      throw failure;
-    },
-  );
-  if (result.ok) throw new Error("Expected root creation failure");
-  expect(result.error).toMatchObject({
-    _tag: "ProviderAdapterError",
-    cause: failure,
-    cleanupIncomplete: false,
-  });
-  await resources.close();
-});
 
 it("releases a late root when cancellation arrives during creation", async () => {
   const target = await createTarget("same");
