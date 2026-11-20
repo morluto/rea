@@ -530,15 +530,26 @@ describe("STM32L4, STM32H7, nRF52, SAMD21, ESP32-S2/S3, and RISC-V MCU catalogs"
       bus: "System",
     });
     expect(lookupSocPeripheral("0x42000800", "samd21")?.name).toBe("SERCOM0");
-    expect(detectSocPlatform(["0x42000800"], "cortex-m")).toEqual([
-      {
-        platform: "samd21",
-        matchedCount: 1,
-        totalAddresses: 1,
-        confidence: 1,
-        matchedPeripherals: ["SERCOM0"],
-      },
+    // 0x42000800 alone overlaps Cortex-M3/M4 bit-band aliases of 0x40000040 (TIM2/TIMER1), so it must tie rather than select SAMD21
+    const bitbandTie = detectSocPlatform(["0x42000800"], "cortex-m");
+    expect(bitbandTie.map((item) => item.platform)).toEqual([
+      "stm32f1",
+      "stm32f4",
+      "stm32l4",
+      "gd32f1",
+      "gd32f4",
+      "samd21",
     ]);
+    // Pairing SAMD21 APBB PORT (0x41004400) with SERCOM0 (0x42000800) uniquely selects SAMD21
+    expect(
+      detectSocPlatform(["0x41004400", "0x42000800"], "cortex-m")[0],
+    ).toEqual({
+      platform: "samd21",
+      matchedCount: 2,
+      totalAddresses: 2,
+      confidence: 1,
+      matchedPeripherals: ["PORT", "SERCOM0"],
+    });
   });
 
   it("resolves Xtensa ESP32-S2/S3 and RISC-V GD32VF103/CH32V30x families", () => {

@@ -1,3 +1,4 @@
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 import { z } from "zod";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 import type {
@@ -19,10 +20,12 @@ import {
 } from "../../domain/firmware/hardwareMemoryMap.js";
 import { devicetreeSchema } from "../../domain/firmware/devicetree.js";
 import {
+  CUSTOM_HARDWARE_SOURCES,
   hardwareProfileFromDevicetree,
   lookupCustomPeripheral,
   parseCmsisSvd,
   type CustomHardwareProfile,
+  type CustomHardwareSource,
 } from "../../domain/firmware/hardwareCustomProfile.js";
 import {
   controllerNameBasis,
@@ -168,13 +171,20 @@ export interface HardwareProducingSource {
   readonly evidenceLinks: readonly string[];
 }
 
+/** Source identity of an explicit CMSIS-SVD or Devicetree map applied to the report. */
+export interface CustomHardwareProfileIdentity {
+  readonly id: string;
+  readonly sourceKind: CustomHardwareSource;
+  readonly sourceSha256: string | null;
+}
+
 /** Output result detailing reconstructed hardware peripheral interactions for a procedure. */
 export interface HardwarePeripheralReconstruction {
   readonly procedure: string;
   readonly architecture: HardwareArchitecture;
   readonly platform: SocPlatform | null;
   readonly board: BoardId | null;
-  readonly customProfileId?: string | null;
+  readonly customProfile?: CustomHardwareProfileIdentity | null;
   readonly producingSource: HardwareProducingSource | null;
   readonly boardMcu: string | null;
   readonly boardMemory: readonly BoardMemoryAccess[];
@@ -197,7 +207,14 @@ export const hardwarePeripheralReconstructionSchema = z.strictObject({
   architecture: hardwareArchitectureSchema,
   platform: socPlatformSchema.nullable().optional(),
   board: boardIdSchema.nullable(),
-  customProfileId: z.string().nullable().optional(),
+  customProfile: z
+    .strictObject({
+      id: z.string(),
+      sourceKind: z.enum(CUSTOM_HARDWARE_SOURCES),
+      sourceSha256: z.string().nullable(),
+    })
+    .nullable()
+    .optional(),
   producingSource: z
     .strictObject({
       subjectSha256: z.string().nullable(),
@@ -362,7 +379,11 @@ const promoteTiedCatalogMmio = (
 ): HardwareAccessAttribution => {
   if (attribution.isMmio || tiedLeaders.length < 2) return attribution;
   const hits = tiedLeaders.flatMap((leader) => {
-    const hit = lookupSocPeripheral(attribution.addressValue, leader.platform);
+    const hit =
+      lookupSocPeripheral(attribution.addressValue, leader.platform) ??
+      resolveSocRegisterAlias(attribution.addressValue, leader.platform)
+        ?.peripheral ??
+      null;
     return hit === null ? [] : [hit];
   });
   if (hits.length !== tiedLeaders.length) return attribution;
@@ -694,11 +715,28 @@ export const reconstructHardwareFromReferences = (
       ? hardwareClaimsFromImage(boardProfile.imageObservations)
       : [];
 
+  const customSourceTag =
+    customProfile === null
+      ? null
+      : `${customProfile.sourceKind}:${customProfile.id}${
+          customProfile.sourceSha256 !== null
+            ? `@${customProfile.sourceSha256}`
+            : ""
+        }`;
+
   return {
     procedure,
     architecture,
-    platform,
-    ...(customProfile === null ? {} : { customProfileId: customProfile.id }),
+    platform: selectedPlatform,
+    ...(customProfile === null
+      ? {}
+      : {
+          customProfile: {
+            id: customProfile.id,
+            sourceKind: customProfile.sourceKind,
+            sourceSha256: customProfile.sourceSha256,
+          },
+        }),
     producingSource: null,
     board: boardProfile?.id ?? null,
     boardMcu:
@@ -725,7 +763,11 @@ export const reconstructHardwareFromReferences = (
           blockBase: block.blockBase,
           matched: block.socPeripheralNameBasis === "chip_manual",
           basis: block.socPeripheralNameBasis,
-          addresses: block.uniqueAddresses,
+          addresses:
+            block.socPeripheralNameBasis === "explicit_profile" &&
+            customSourceTag !== null
+              ? [...block.uniqueAddresses, customSourceTag]
+              : block.uniqueAddresses,
         })),
         devices: activeDevices,
         drivers: activeDrivers.map((driver) => ({
@@ -799,7 +841,8 @@ const validateHardwareProfileInputs = (
     );
   }
   if (input.svd_xml !== undefined) {
-    const parsedSvd = parseCmsisSvd(input.svd_xml);
+    const svdSha256 = sha256Hex(input.svd_xml);
+    const parsedSvd = parseCmsisSvd(input.svd_xml, { sha256: svdSha256 });
     if (!parsedSvd.ok) {
       return err(
         new AnalysisInputError(HARDWARE_RECONSTRUCTION, undefined, [
@@ -814,7 +857,19 @@ const validateHardwareProfileInputs = (
     return ok(parsedSvd.value);
   }
   if (input.devicetree !== undefined) {
-    return ok(hardwareProfileFromDevicetree(input.devicetree));
+    const parsedDtb = hardwareProfileFromDevicetree(input.devicetree);
+    if (!parsedDtb.ok) {
+      return err(
+        new AnalysisInputError(HARDWARE_RECONSTRUCTION, undefined, [
+          {
+            path: ["devicetree"],
+            reason: "invalid_value",
+            message: parsedDtb.error,
+          },
+        ]),
+      );
+    }
+    return ok(parsedDtb.value);
   }
   return ok(null);
 };

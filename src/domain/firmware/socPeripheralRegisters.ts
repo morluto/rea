@@ -66,6 +66,16 @@ const STM32F1_GPIO: readonly OffsetEntry[] = [
   r(0x18, "LCKR", "Port configuration lock register"),
 ];
 
+const GD32F1_GPIO: readonly OffsetEntry[] = [
+  r(0x00, "CTL0", "Port control register 0"),
+  r(0x04, "CTL1", "Port control register 1"),
+  r(0x08, "ISTAT", "Port input status register"),
+  r(0x0c, "OCTL", "Port output control register"),
+  r(0x10, "BOP", "Port bit operate register"),
+  r(0x14, "BC", "Port bit clear register"),
+  r(0x18, "LOCK", "Port configuration lock register"),
+];
+
 const STM32F4_GPIO: readonly OffsetEntry[] = [
   r(0x00, "MODER", "GPIO port mode register"),
   r(0x04, "OTYPER", "GPIO port output type register"),
@@ -77,6 +87,19 @@ const STM32F4_GPIO: readonly OffsetEntry[] = [
   r(0x1c, "LCKR", "GPIO port configuration lock register"),
   r(0x20, "AFRL", "GPIO alternate function low register"),
   r(0x24, "AFRH", "GPIO alternate function high register"),
+];
+
+const GD32F4_GPIO: readonly OffsetEntry[] = [
+  r(0x00, "CTL", "GPIO port control register"),
+  r(0x04, "OMODE", "GPIO port output mode register"),
+  r(0x08, "OSPD", "GPIO port output speed register"),
+  r(0x0c, "PUD", "GPIO port pull-up/pull-down register"),
+  r(0x10, "ISTAT", "GPIO port input status register"),
+  r(0x14, "OCTL", "GPIO port output control register"),
+  r(0x18, "BOP", "GPIO port bit operate register"),
+  r(0x1c, "LOCK", "GPIO port configuration lock register"),
+  r(0x20, "AFSEL0", "GPIO alternate function selected register 0"),
+  r(0x24, "AFSEL1", "GPIO alternate function selected register 1"),
 ];
 
 const STM32F1_RCC: readonly OffsetEntry[] = [
@@ -113,11 +136,44 @@ const STM32L4_RCC: readonly OffsetEntry[] = [
   r(0x60, "APB2ENR", "APB2 peripheral clock enable register"),
 ];
 
+const STM32H7_RCC: readonly OffsetEntry[] = [
+  r(0x00, "CR", "Source control register"),
+  r(0x10, "CFGR", "Clock configuration register"),
+  r(0xd4, "AHB3ENR", "AHB3 clock register"),
+  r(0xd8, "AHB1ENR", "AHB1 clock register"),
+  r(0xdc, "AHB2ENR", "AHB2 clock register"),
+  r(0xe0, "AHB4ENR", "AHB4 clock register"),
+  r(0xe4, "APB3ENR", "APB3 clock register"),
+  r(0xe8, "APB1LENR", "APB1L clock register"),
+  r(0xec, "APB1HENR", "APB1H clock register"),
+  r(0xf0, "APB2ENR", "APB2 clock register"),
+  r(0xf4, "APB4ENR", "APB4 clock register"),
+];
+
 const STM32_SPI: readonly OffsetEntry[] = [
   r(0x00, "CR1", "SPI control register 1"),
   r(0x04, "CR2", "SPI control register 2"),
   r(0x08, "SR", "SPI status register"),
   r(0x0c, "DR", "SPI data register"),
+];
+
+const STM32H7_SPI: readonly OffsetEntry[] = [
+  r(0x00, "CR1", "SPI/I2S control register 1"),
+  r(0x04, "CR2", "SPI/I2S control register 2"),
+  r(0x08, "CFG1", "SPI configuration register 1"),
+  r(0x0c, "CFG2", "SPI configuration register 2"),
+  r(0x10, "IER", "SPI/I2S interrupt enable register"),
+  r(0x14, "SR", "SPI/I2S status register"),
+  r(0x18, "IFCR", "SPI/I2S interrupt/status flags clear register"),
+  r(0x20, "TXDR", "SPI/I2S transmit data register"),
+  r(0x30, "RXDR", "SPI/I2S receive data register"),
+];
+
+const GD32_SPI: readonly OffsetEntry[] = [
+  r(0x00, "CTL0", "SPI control register 0"),
+  r(0x04, "CTL1", "SPI control register 1"),
+  r(0x08, "STAT", "SPI status register"),
+  r(0x0c, "DATA", "SPI data register"),
 ];
 
 const RP2040_UART: readonly OffsetEntry[] = [
@@ -208,7 +264,7 @@ const registerTableFor = (
     return null;
   }
   if (platform === "nrf52") {
-    if (peripheralName.startsWith("UART")) return NRF52_UARTE;
+    if (peripheralName.startsWith("UARTE")) return NRF52_UARTE;
     if (peripheralName === "P0" || peripheralName === "P1") return NRF52_GPIO;
     return null;
   }
@@ -224,23 +280,23 @@ const registerTableFor = (
     return STM32_V1_USART;
   }
   if (peripheralName.startsWith("GPIO")) {
-    if (
-      platform === "stm32f1" ||
-      platform === "gd32f1" ||
-      platform === "gd32vf103" ||
-      platform === "ch32v30x"
-    ) {
-      return STM32F1_GPIO;
-    }
+    if (platform === "gd32f1" || platform === "gd32vf103") return GD32F1_GPIO;
+    if (platform === "gd32f4") return GD32F4_GPIO;
+    if (platform === "stm32f1" || platform === "ch32v30x") return STM32F1_GPIO;
     return STM32F4_GPIO;
   }
   if (peripheralName === "RCC") {
     if (platform === "stm32f1" || platform === "ch32v30x") return STM32F1_RCC;
     if (platform === "stm32f4") return STM32F4_RCC;
     if (platform === "stm32l4") return STM32L4_RCC;
+    if (platform === "stm32h7") return STM32H7_RCC;
     return null;
   }
-  if (peripheralName.startsWith("SPI")) return STM32_SPI;
+  if (peripheralName.startsWith("SPI")) {
+    if (platform === "stm32h7") return STM32H7_SPI;
+    if (platform.startsWith("gd32")) return GD32_SPI;
+    return STM32_SPI;
+  }
   return null;
 };
 
@@ -279,8 +335,14 @@ export const lookupSocPeripheralRegister = (
   const table = registerTableFor(peripheral.name, platform);
   if (table === null) return null;
   const offset = Number(offsetBigInt);
-  const matched = table.find((entry) => entry.offset === offset);
-  if (!matched) return null;
+  let matched: OffsetEntry | undefined;
+  for (const entry of table) {
+    if (entry.offset === offset) {
+      matched = entry;
+      break;
+    }
+  }
+  if (matched === undefined) return null;
 
   const prefix = peripheral.name.endsWith("_")
     ? peripheral.name

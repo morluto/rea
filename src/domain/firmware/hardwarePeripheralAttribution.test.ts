@@ -252,6 +252,20 @@ describe("SoC platform-specific peripheral attribution", () => {
     expect(esp32Result.value.registerMnemonic).toBe("UART0_FIFO");
     expect(esp32Result.value.registerBasis).toBe("chip_manual");
     expect(esp32Result.value.isMmio).toBe(true);
+
+    // STM32H7 SPI1 offset 0x08 is CFG1 (not legacy STM32 SR), and GD32F4 SPI1 offset 0x08 is STAT
+    const h7Spi = attributeHardwareAccess(
+      { target_address: "0x40013008", write: true },
+      "cortex-m",
+      "stm32h7",
+    );
+    expect(h7Spi.ok && h7Spi.value.registerMnemonic).toBe("SPI1_CFG1");
+    const gd32Spi = attributeHardwareAccess(
+      { target_address: "0x40003808", read: true },
+      "cortex-m",
+      "gd32f4",
+    );
+    expect(gd32Spi.ok && gd32Spi.value.registerMnemonic).toBe("SPI1_STAT");
   });
 
   it("attributes Cortex-M bit-band, RP2040 atomic aliases, and explicit SVD profiles", () => {

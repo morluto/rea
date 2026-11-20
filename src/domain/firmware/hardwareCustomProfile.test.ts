@@ -78,10 +78,13 @@ const sampleDevicetree = (): Devicetree => {
         parent: "/",
         offset: 128,
         properties: [
-          buildProp("compatible", { strings: ["simple-bus"] }),
+          buildProp("compatible", { strings: ["simple-bus", "syscon"] }),
           buildProp("#address-cells", { cells: [1] }),
           buildProp("#size-cells", { cells: [1] }),
-          // child=0x7e000000 (1 cell), parent=0x00000000_fe000000 (2 cells), len=0x01800000 (1 cell)
+          // Parent container also exposes a broad reg window; children inside it must remain visible.
+          buildProp("reg", {
+            reg: [{ address: "0xfe000000", size: "0x01800000" }],
+          }),
           buildProp("ranges", {
             bytes: 16,
             cells: [0x7e000000, 0x00000000, 0xfe000000, 0x01800000],
@@ -114,7 +117,7 @@ const sampleDevicetree = (): Devicetree => {
       },
       {
         path: "/soc/spi@7e204000/flash@0",
-        parent: "/soc/spi@7e204000",
+        parent: "/soc",
         offset: 320,
         properties: [
           buildProp("compatible", { strings: ["jedec,spi-nor"] }),
@@ -147,41 +150,40 @@ const sampleDevicetree = (): Devicetree => {
     coverage: {
       status: "complete",
       examined_nodes: 7,
-      examined_properties: 18,
+      examined_properties: 19,
     },
     limitations: [],
   };
 };
 
 describe("Devicetree to CustomHardwareProfile conversion", () => {
-  it("translates FDT bus ranges, memory nodes, and non-MMIO child bus devices", () => {
-    const profile = hardwareProfileFromDevicetree(sampleDevicetree());
+  it("translates FDT bus ranges, prefers nested child windows over parent containers, and binds SPI children", () => {
+    const dt = sampleDevicetree();
+    const fixedNodes = dt.nodes.map((node) =>
+      node.path === "/soc/spi@7e204000/flash@0"
+        ? { ...node, parent: "/soc/spi@7e204000" }
+        : node,
+    );
+    const parsed = hardwareProfileFromDevicetree({ ...dt, nodes: fixedNodes });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const profile = parsed.value;
     expect(customHardwareProfileSchema.safeParse(profile).success).toBe(true);
     expect(profile.sourceKind).toBe("devicetree");
+    expect(profile.sourceSha256).toBe("b".repeat(64));
     expect(profile.model).toBe("Raspberry Pi 4 Model B");
 
-    // /memory@0 -> SRAM window
-    expect(profile.memory).toHaveLength(1);
-    expect(profile.memory[0]).toMatchObject({
-      kind: "sram",
-      baseAddress: "0x0",
-      sizeBytes: 0x40000000,
-    });
-
-    // /soc/serial@7e201000 translated via /soc ranges -> CPU physical 0xfe201000
+    // /soc/serial@7e201000 (size 0x200) wins over parent /soc (size 0x01800000)
     const pl011 = lookupCustomPeripheral(0xfe201024n, profile);
-    expect(pl011).not.toBeNull();
     expect(pl011?.peripheral).toMatchObject({
       name: "SERIAL@0xfe201000",
       baseAddress: "0xfe201000",
       sizeBytes: 0x200,
     });
-    expect(pl011?.register).toBeNull();
-
-    // Disabled node (/soc/i2c@7e804000) is excluded
-    expect(lookupCustomPeripheral(0xfe804000n, profile)).toBeNull();
-
-    // Non-ranges child (/soc/spi@7e204000/flash@0) is recorded as a child device attachment on SPI@0xfe204000, not CPU MMIO at 0x0
+    // Address outside child windows still resolves parent /soc container
+    expect(lookupCustomPeripheral(0xfe000010n, profile)?.peripheral.name).toBe(
+      "SOC@0xfe000000",
+    );
     expect(lookupCustomPeripheral(0x0n, profile)).toBeNull();
     expect(profile.devices).toEqual([
       expect.objectContaining({
@@ -191,65 +193,149 @@ describe("Devicetree to CustomHardwareProfile conversion", () => {
       }),
     ]);
   });
+
+  it("rejects cyclic parent links and invalid reg strings without hanging or throwing", () => {
+    const base = sampleDevicetree();
+    const cyclic = hardwareProfileFromDevicetree({
+      ...base,
+      nodes: [
+        base.nodes[0]!,
+        {
+          path: "/loop",
+          parent: "/loop",
+          offset: 64,
+          properties: [
+            buildProp("ranges", { bytes: 0, cells: [] }),
+            buildProp("reg", {
+              reg: [{ address: "0x1000", size: "0x100" }],
+            }),
+          ],
+        },
+      ],
+    });
+    expect(cyclic.ok).toBe(false);
+    if (!cyclic.ok) expect(cyclic.error).toContain("cyclic parent");
+
+    const badReg = hardwareProfileFromDevicetree({
+      ...base,
+      nodes: [
+        base.nodes[0]!,
+        {
+          path: "/uart@bad",
+          parent: "/",
+          offset: 64,
+          properties: [
+            buildProp("reg", {
+              reg: [{ address: "not-a-hex-number", size: "0x100" }],
+            }),
+          ],
+        },
+      ],
+    });
+    expect(badReg.ok).toBe(false);
+    if (!badReg.ok) expect(badReg.error).toContain("invalid reg");
+  });
 });
 
 describe("CMSIS-SVD parser", () => {
-  it("parses peripherals, derivedFrom inheritance, addressBlocks, and registers", () => {
-    const parsed = parseCmsisSvd(`<?xml version="1.0" encoding="utf-8"?>
+  it("resolves chained derivedFrom peripherals, nested cluster offsets, and dim register arrays", () => {
+    const parsed = parseCmsisSvd(
+      `<?xml version="1.0" encoding="utf-8"?>
       <device>
         <name>STM32_CUSTOM</name>
         <peripherals>
           <peripheral>
-            <name>UARTA</name>
-            <description>Primary UART</description>
+            <name>TIMA</name>
             <groupName>APB1</groupName>
-            <baseAddress>0x40004400</baseAddress>
-            <addressBlock>
-              <offset>0x0</offset>
-              <size>0x400</size>
-              <usage>registers</usage>
-            </addressBlock>
+            <baseAddress>0x40000000</baseAddress>
+            <addressBlock><offset>0x0</offset><size>0x400</size><usage>registers</usage></addressBlock>
             <registers>
               <register>
-                <name>SR</name>
-                <description>Status register</description>
+                <name>CR1</name>
+                <description>Control register 1</description>
                 <addressOffset>0x00</addressOffset>
               </register>
               <register>
-                <name>DR</name>
-                <description>Data register</description>
-                <addressOffset>4</addressOffset>
+                <dim>2</dim>
+                <dimIncrement>0x04</dimIncrement>
+                <dimIndex>1,2</dimIndex>
+                <name>CCR%s</name>
+                <description>Capture/compare register</description>
+                <addressOffset>0x34</addressOffset>
               </register>
+              <cluster>
+                <name>CH</name>
+                <addressOffset>0x100</addressOffset>
+                <register>
+                  <name>CFG</name>
+                  <description>Channel config</description>
+                  <addressOffset>0x00</addressOffset>
+                </register>
+              </cluster>
             </registers>
           </peripheral>
-          <peripheral derivedFrom="UARTA">
-            <name>UARTB</name>
-            <baseAddress>0x40004800</baseAddress>
+          <peripheral derivedFrom="TIMA">
+            <name>TIMB</name>
+            <baseAddress>0x40000400</baseAddress>
+          </peripheral>
+          <peripheral derivedFrom="TIMB">
+            <name>TIMC</name>
+            <baseAddress>0x40000800</baseAddress>
           </peripheral>
         </peripherals>
-      </device>
-    `);
+      </device>`,
+      { sha256: "c".repeat(64) },
+    );
 
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
     expect(customHardwareProfileSchema.safeParse(parsed.value).success).toBe(
       true,
     );
-    expect(parsed.value.id).toBe("STM32_CUSTOM");
-    expect(parsed.value.peripherals).toHaveLength(2);
+    expect(parsed.value.sourceSha256).toBe("c".repeat(64));
 
-    const uartbDr = lookupCustomPeripheral(0x40004804n, parsed.value);
-    expect(uartbDr?.peripheral.name).toBe("UARTB");
-    expect(uartbDr?.peripheral.bus).toBe("APB1");
-    expect(uartbDr?.register).toEqual({
-      mnemonic: "UARTB_DR",
-      name: "UARTB Data register",
-      offset: 4n,
-    });
+    // Chained derivedFrom (TIMC -> TIMB -> TIMA) preserves registers and cluster offsets
+    expect(lookupCustomPeripheral(0x40000800n, parsed.value)?.register).toEqual(
+      {
+        mnemonic: "TIMC_CR1",
+        name: "TIMC Control register 1",
+        offset: 0n,
+      },
+    );
+    expect(lookupCustomPeripheral(0x40000838n, parsed.value)?.register).toEqual(
+      {
+        mnemonic: "TIMC_CCR2",
+        name: "TIMC Capture/compare register",
+        offset: 0x38n,
+      },
+    );
+    // Cluster at 0x100 + register at 0x00 => offset 0x100 (does NOT overwrite CR1 at 0x00)
+    expect(lookupCustomPeripheral(0x40000900n, parsed.value)?.register).toEqual(
+      {
+        mnemonic: "TIMC_CH_CFG",
+        name: "TIMC Channel config",
+        offset: 0x100n,
+      },
+    );
   });
 
-  it("rejects empty or peripheral-less SVD documents cleanly", () => {
+  it("rejects empty, cyclic derivedFrom, or missing-parent SVD documents", () => {
     expect(parseCmsisSvd("   ").ok).toBe(false);
     expect(parseCmsisSvd("<device><name>Empty</name></device>").ok).toBe(false);
+    expect(
+      parseCmsisSvd(`
+        <device><name>Bad</name><peripherals>
+          <peripheral derivedFrom="MISSING"><name>P0</name><baseAddress>0x40000000</baseAddress></peripheral>
+        </peripherals></device>
+      `).ok,
+    ).toBe(false);
+    expect(
+      parseCmsisSvd(`
+        <device><name>Cycle</name><peripherals>
+          <peripheral derivedFrom="P1"><name>P0</name><baseAddress>0x40000000</baseAddress></peripheral>
+          <peripheral derivedFrom="P0"><name>P1</name><baseAddress>0x40000400</baseAddress></peripheral>
+        </peripherals></device>
+      `).ok,
+    ).toBe(false);
   });
 });

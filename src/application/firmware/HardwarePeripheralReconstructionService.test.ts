@@ -1150,6 +1150,11 @@ describe("dynamic SVD/Devicetree profiles and container hints", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
+    expect(result.value.customProfile).toMatchObject({
+      id: "VENDOR_X1",
+      sourceKind: "cmsis_svd",
+      sourceSha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
+    });
     expect(result.value.peripheralBlocks[0]).toMatchObject({
       socPeripheralName: "PWMX",
       socPeripheralNameBasis: "explicit_profile",
@@ -1161,7 +1166,8 @@ describe("dynamic SVD/Devicetree profiles and container hints", () => {
         (claim) =>
           claim.rule === "explicit-profile" &&
           claim.settled &&
-          claim.subject === "0x40090000",
+          claim.subject === "0x40090000" &&
+          claim.source.includes("cmsis_svd:VENDOR_X1@"),
       ),
     ).toBe(true);
     expect(
@@ -1248,9 +1254,58 @@ describe("firmware container hints (esp_chip_id and uf2_family_id)", () => {
       },
     );
     if (!s3Result.ok) throw s3Result.error;
+    expect(s3Result.value.platform).toBe("esp32s3");
     expect(s3Result.value.peripheralBlocks[0]?.socPeripheralName).toBe(
       "USB_SERIAL_JTAG",
     );
+
+    // Cyclic Devicetree parent links return AnalysisInputError instead of hanging
+    const cyclicDtb = await reconstructProcedureHardwareInteractions(
+      { execute: () => Promise.resolve(ok(execution)) },
+      {
+        procedure: "usb_init",
+        architecture: "xtensa",
+        devicetree: {
+          artifact: { path: "/tmp/c.dtb", sha256: "e".repeat(64), bytes: 64 },
+          header: {
+            magic: 0xd00dfeed,
+            totalsize: 64,
+            off_dt_struct: 40,
+            off_dt_strings: 56,
+            off_mem_rsvmap: 40,
+            version: 17,
+            last_comp_version: 16,
+            boot_cpuid_phys: 0,
+            size_dt_strings: 8,
+            size_dt_struct: 16,
+          },
+          reservations: [],
+          nodes: [
+            { path: "/", parent: null, offset: 0, properties: [] },
+            { path: "/loop", parent: "/loop", offset: 16, properties: [] },
+          ],
+          references: [],
+          summary: {
+            confidence: "derived",
+            compatible: null,
+            model: null,
+            bootargs: null,
+            stdout_path: null,
+            aliases: [],
+          },
+          coverage: {
+            status: "complete",
+            examined_nodes: 2,
+            examined_properties: 0,
+          },
+          limitations: [],
+        },
+      },
+    );
+    expect(cyclicDtb.ok).toBe(false);
+    if (!cyclicDtb.ok) {
+      expect(cyclicDtb.error._tag).toBe("AnalysisInputError");
+    }
 
     const conflictResult = reconstructHardwareFromReferences(
       [{ target_address: "0x40034000", read: true }],

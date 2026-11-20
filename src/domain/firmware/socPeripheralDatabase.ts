@@ -316,7 +316,10 @@ export const detectSocPlatform = (
   for (const address of addresses) {
     let relevant = false;
     for (const platform of platforms) {
-      const match = lookupSocPeripheral(address, platform);
+      const match =
+        lookupSocPeripheral(address, platform) ??
+        resolveSocRegisterAlias(address, platform)?.peripheral ??
+        null;
       const bucket = hits.get(platform);
       if (match === null || bucket === undefined) continue;
       relevant = true;
