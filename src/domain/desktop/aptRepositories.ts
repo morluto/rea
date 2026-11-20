@@ -518,8 +518,17 @@ export const parseOneLineSources = (
   });
 
 // Match the ASCII whitespace recognized by APT's tag reader within a line.
-const trimDeb822Line = (value: string): string =>
-  value.replace(/^[ \t\v\f\r]+|[ \t\v\f\r]+$/gu, "");
+const isDeb822LineSpace = (code: number): boolean =>
+  code === 0x20 || (code >= 0x09 && code <= 0x0d && code !== 0x0a);
+
+// Scan from each end so a long interior whitespace run stays linear.
+const trimDeb822Line = (value: string): string => {
+  let start = 0;
+  let end = value.length;
+  while (start < end && isDeb822LineSpace(value.charCodeAt(start))) start++;
+  while (end > start && isDeb822LineSpace(value.charCodeAt(end - 1))) end--;
+  return value.slice(start, end);
+};
 
 /** Fields of each deb822 paragraph by lowercase name; continuation lines keep their line breaks. */
 export const deb822Paragraphs = (
