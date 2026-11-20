@@ -92,6 +92,8 @@ export interface ElfDependencyFixtureOptions {
   readonly verdef?: readonly ElfDependencyVerdefSpec[];
   readonly stripped?: boolean;
   readonly omitDynamic?: boolean;
+  /** Add unused bytes after DT_NULL or shorten it by this many bytes. */
+  readonly dynamicTailBytes?: number;
   readonly omitHash?: boolean;
   readonly gnuHash?: boolean;
   readonly gnuBucketBelowFirstSymbol?: boolean;
@@ -377,6 +379,7 @@ interface FixtureConfig {
   readonly type: number;
   readonly machine: number;
   readonly omitDynamic: boolean;
+  readonly dynamicTailBytes: number;
   readonly stripped: boolean;
   readonly needed: readonly string[];
   readonly imports: readonly ElfDependencyImportSpec[];
@@ -468,6 +471,7 @@ const fixtureConfig = (options: ElfDependencyFixtureOptions): FixtureConfig => {
     type: options.type ?? 3,
     machine: options.machine ?? (bits === 64 ? 62 : little ? 3 : 8),
     omitDynamic: options.omitDynamic === true,
+    dynamicTailBytes: options.dynamicTailBytes ?? 0,
     stripped: options.stripped === true,
     needed: [...(options.needed ?? defaultNeeded())],
     imports: [...(options.imports ?? defaultImports())],
@@ -658,7 +662,12 @@ const buildDynamicTags = (
   }
   if (config.flags1 !== null) addTag(0x6ffffffb, config.flags1);
   addTag(0, 0);
-  return concat(...tags);
+  const dynamic = concat(...tags);
+  const tail = config.dynamicTailBytes;
+  if (tail === 0) return dynamic;
+  return tail < 0
+    ? dynamic.subarray(0, dynamic.length + tail)
+    : concat(dynamic, Buffer.alloc(tail, 0x7f));
 };
 
 const layoutDependencyImage = (

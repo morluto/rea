@@ -117,10 +117,11 @@ explicit path or endpoint and do not need it.
   `inspect_android_package`, then focused Android tools when advertised.
   Archive member inventory still uses the archive route above.
 - Managed PE/CLI assembly: `inspect_managed_artifact`.
-- Firmware image: `inspect_firmware_regions` when advertised. Use
-  `extract_firmware` when extraction is requested, with a caller-selected new
-  absolute output directory. These tools use caller-supplied Binwalk/Unblob on
-  Linux; see the [firmware guide](https://github.com/morluto/rea/blob/main/docs/guides/firmware/firmware-analysis.md).
+- UEFI firmware volumes and NVAR stores: use bundled `inspect_artifact`.
+  For external firmware scanning or extraction on Linux, use
+  `inspect_firmware_regions` or `extract_firmware` with caller-supplied
+  Binwalk or Unblob. Extraction needs a caller-selected new absolute output
+  directory. See the [firmware guide](https://github.com/morluto/rea/blob/main/docs/guides/firmware/firmware-analysis.md).
 - ESP32-family app or bootloader image (`0xE9` magic): `inspect_artifact`
   without a provider; see the ESP section of `references/native-and-artifacts.md`.
 - .NET NativeAOT PE/ELF: native Ghidra analysis. Native code can yield pseudocode;

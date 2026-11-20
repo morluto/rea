@@ -56,6 +56,7 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { providerCleanupErrorFromFailures } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   classifyProviderFailure,
@@ -679,24 +680,19 @@ export class KunaSessionClient implements AnalysisClient {
     }
     if (failures.length > 0)
       return err(
-        new ProviderCleanupError(
+        providerCleanupErrorFromFailures(
           KUNA_PROVIDER_ID,
-          failures.flatMap((failed) => failed.cleanupResources),
+          failures,
+          failures
+            .map((failure) =>
+              String(failure.diagnostics?.["reason"] ?? failure.message),
+            )
+            .join("; "),
           {
-            reason: failures
-              .map((failed) =>
-                String(failed.diagnostics?.["reason"] ?? failed.message),
-              )
-              .join("; "),
-          },
-          {
-            cause: new AggregateError(
-              failures,
-              "Kuna session cleanup remains incomplete",
-            ),
             operation: "close_binary",
+            message: "Kuna session cleanup remains incomplete",
           },
-        ).bindCleanupDependencies(failures),
+        ),
       );
     this.#releasePin?.();
     this.#releasePin = undefined;

@@ -655,7 +655,10 @@ const parseMetadata = (
   }
   if (metadata.id !== "com.android.tools.r8.residualsignature") return;
   const target = state.last;
-  if (target === undefined) return;
+  if (target === undefined) {
+    malformed(state, number, "metadata");
+    return;
+  }
   const schema = "outermost" in target ? dexDescriptorSchema : dexTypeSchema;
   const signature = schema.safeParse(metadata.signature);
   if (!signature.success) {

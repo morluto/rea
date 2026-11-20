@@ -78,6 +78,22 @@ export type PeImage = BinaryContainer & {
   readonly sections: readonly PeImageSection[];
 };
 
+/** File-backed PE headers and declared section content, excluding raw alignment padding. */
+export const peDeclaredFileMappings = (
+  image: PeImage,
+): readonly FileMapping[] => {
+  const mappings: FileMapping[] = [image.pe_header_mapping];
+  for (const section of image.sections) {
+    if (!section.file_backed) continue;
+    mappings.push({
+      address: image.image_base + BigInt(section.virtual_address),
+      offset: section.offset,
+      size: section.size,
+    });
+  }
+  return mappings;
+};
+
 /** Read PE32/PE32+ native image mappings and section facts. */
 export const readPeImage = (bytes: Buffer): PeImage => {
   const reader = new BinaryReader(bytes, true, "pe");

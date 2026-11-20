@@ -222,6 +222,32 @@ it("reports a framed member with a bad CRC-32 as malformed, not absent", async (
   expect(report.limitations.some((line) => line.includes("CRC-32"))).toBe(true);
 });
 
+it("reads the full little-endian gzip extra field before the config", async () => {
+  const member = gzipSync(Buffer.from(SAMPLE_KERNEL_CONFIG, "latin1"));
+  const header = Buffer.from(member.subarray(0, 10));
+  header[3] = 0x04;
+  // XLEN = 260, containing one 256-byte subfield.
+  const extra = Buffer.concat([
+    Buffer.from([4, 1, 0x52, 0x45, 0, 1]),
+    Buffer.alloc(256),
+  ]);
+  const frame = (payload: Buffer) =>
+    Buffer.concat([
+      Buffer.from("IKCFG_ST"),
+      header,
+      extra,
+      payload,
+      Buffer.from("IKCFG_ED"),
+    ]);
+  expect((await parse(frame(member.subarray(10)))).config).toMatchObject({
+    status: "present",
+    option_count: 9,
+  });
+  expect((await parse(frame(Buffer.alloc(0)))).config.status).not.toBe(
+    "present",
+  );
+});
+
 it("checks the optional gzip header CRC before accepting a member", async () => {
   const plain = Buffer.from(SAMPLE_KERNEL_CONFIG, "latin1");
   const frame = (member: Buffer): Buffer =>

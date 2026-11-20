@@ -1,5 +1,5 @@
 import { ArtifactPreparation } from "./ArtifactPreparation.js";
-import { Readable, Transform } from "node:stream";
+import { Readable } from "node:stream";
 import { setImmediate } from "node:timers/promises";
 
 import type { FitMetadata } from "../domain/artifactFormatMetadata.js";
@@ -21,7 +21,11 @@ import {
   assertArtifactReadActive,
   ArtifactFileSource,
 } from "../resources/index.js";
-import { ownArtifactStream } from "./OwnedArtifactStream.js";
+import {
+  ArtifactStreamLifecycle,
+  checkedArtifactMemberStream,
+  ownArtifactStream,
+} from "./OwnedArtifactStream.js";
 import {
   createFitDigest,
   readFitStructure,
@@ -36,13 +40,12 @@ export class FitArtifactReader implements ArtifactReader {
   readonly format = "fit" as const;
   readonly #scope = new ArtifactResourceScope();
   #entries = new Map<string, ArtifactEntry>();
-  readonly #streams = new Set<Readable>();
+  readonly #lifecycle = new ArtifactStreamLifecycle("FIT");
   readonly #path: string;
   readonly #source: ArtifactFileSource;
   readonly #preparation = new ArtifactPreparation();
   #metadata: FitMetadata | undefined;
   #coverage: ArtifactReaderTraversal | undefined;
-  #closing = false;
 
   constructor(path: string, admitted?: StableRegularFileDescriptor) {
     this.#path = path;
@@ -109,20 +112,30 @@ export class FitArtifactReader implements ArtifactReader {
           "format",
           `FIT image has no byte range: ${stored.path}`,
         );
+      const lifecycle = this.#lifecycle.member(signal);
+      const { signal: streamSignal, cancellationFailure } = lifecycle;
       const source =
         stored.declaredSize === 0
           ? Readable.from([])
           : readFileHandleChunks(handle, {
               start: stored.byteOffset,
               end: stored.byteOffset + stored.declaredSize - 1,
-              signal,
+              signal: streamSignal,
               cancellationFailure,
             });
-      const output = this.#imageStream(stored, signal);
+      const output = checkedArtifactMemberStream(
+        stored,
+        "FIT",
+        () =>
+          new ArtifactReaderFailure(
+            "format",
+            `FIT image ended early: ${stored.path}`,
+          ),
+        () => lifecycle.verify((signal) => this.#source.read(signal)),
+      );
       ownArtifactStream(source, output, {
         scope: this.#scope,
-        streams: this.#streams,
-        signal,
+        signal: streamSignal,
         cancellationFailure,
         label: "FIT",
       });
@@ -131,11 +144,7 @@ export class FitArtifactReader implements ArtifactReader {
   }
 
   async close(): Promise<void> {
-    this.#closing = true;
-    for (const stream of this.#streams)
-      stream.destroy(
-        new ArtifactReaderFailure("unavailable", "FIT reader closed"),
-      );
+    this.#lifecycle.close();
     await this.#scope.close();
     await this.#source.close();
     this.#entries.clear();
@@ -147,7 +156,7 @@ export class FitArtifactReader implements ArtifactReader {
 
   #assertOpen(signal?: AbortSignal): void {
     assertArtifactReadActive(signal);
-    if (this.#closing)
+    if (this.#lifecycle.closed)
       throw new ArtifactReaderFailure("unavailable", "FIT reader is closed");
   }
 
@@ -238,7 +247,7 @@ export class FitArtifactReader implements ArtifactReader {
         start: image.start,
         end: image.start + image.size - 1,
         signal,
-        cancellationFailure,
+        cancellationFailure: hashReadCancelled,
       }) as AsyncIterable<Buffer>) {
         this.#assertOpen(signal);
         for (const { digest } of digests) digest.update(chunk);
@@ -253,38 +262,9 @@ export class FitArtifactReader implements ArtifactReader {
         );
     }
   }
-
-  #imageStream(entry: ArtifactEntry, signal?: AbortSignal): Transform {
-    let bytes = 0;
-    const check = async (): Promise<void> => {
-      if (bytes !== entry.declaredSize)
-        throw new ArtifactReaderFailure(
-          "format",
-          `FIT image ended early: ${entry.path}`,
-        );
-      await this.#source.read(signal);
-    };
-    return new Transform({
-      transform(chunk: Buffer, _encoding, callback) {
-        bytes += chunk.length;
-        callback(null, chunk);
-      },
-      flush(callback) {
-        void check().then(
-          () => callback(),
-          (cause: unknown) =>
-            callback(
-              cause instanceof Error
-                ? cause
-                : new Error("FIT read failed", { cause }),
-            ),
-        );
-      },
-    });
-  }
 }
 
-const cancellationFailure = (reason: unknown): ArtifactReaderFailure =>
+const hashReadCancelled = (reason: unknown): ArtifactReaderFailure =>
   new ArtifactReaderFailure("cancelled", "FIT read cancelled", {
     cause: reason,
   });

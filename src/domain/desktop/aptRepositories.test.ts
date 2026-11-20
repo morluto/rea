@@ -731,3 +731,75 @@ describe("repository kinds and key files", () => {
     expect(dearmorPublicKeys(Buffer.from("not a key"))).toBeUndefined();
   });
 });
+
+it("keeps APT's source positions when a false Enabled field disables a stanza", () => {
+  const source = (enabled: string) =>
+    `Types: deb\nURIs: https://example.org/repo\nSuites: stable\nComponents: main\nEnabled: ${enabled}\n`;
+  const disabled = [
+    "false",
+    "0",
+    "Off",
+    "without",
+    "disable",
+    "+0",
+    "-0",
+    "0x0",
+    "-0x0",
+    "\tFaLsE \t",
+    "\n false",
+    "\n\t-0",
+  ];
+  const enabled = [
+    "yes",
+    "1",
+    "0x1",
+    "-1",
+    "0.0",
+    "fal\u017fe",
+    "\u00a0false",
+    "false\u00a0",
+    "\u3000FaLsE\u3000",
+    "\n\tfalse",
+  ];
+  const stanzas = parseDeb822Sources(
+    Buffer.from([...disabled, ...enabled].map(source).join("\n")),
+    "example.sources",
+  );
+  expect(stanzas.map((entry) => entry.position)).toEqual(
+    enabled.map((_, index) => disabled.length + index + 1),
+  );
+});
+
+it.each([
+  ["amd64 arm64", "i386 amd64", "arm64", ["amd64", "i386"]],
+  ["amd64", "arm64 i386 i386", "arm64", ["amd64", "i386"]],
+  ["amd64", "", "amd64", ["all"]],
+  ["", "i386", "arm64", []],
+] as const)(
+  "reads the explicit architecture list %s with additions %s and removals %s",
+  (base, add, remove, expected) => {
+    const fields = [
+      "Types: deb",
+      "URIs: file:/repo",
+      "Suites: stable",
+      "Components: main",
+      ...(base ? [`Architectures: ${base}`] : []),
+      ...(add ? [`Architectures-Add: ${add}`] : []),
+      `Architectures-Remove: ${remove}`,
+    ];
+    const options = [
+      ...(base ? [`arch=${base.replaceAll(" ", ",")}`] : []),
+      `arch-=${remove}`,
+      ...(add ? [`arch+=${add.replaceAll(" ", ",")}`] : []),
+    ];
+    expect(
+      parseDeb822Sources(fields.join("\n"), "vendor.sources")[0]?.architectures,
+    ).toEqual(expected);
+    expect(
+      parseOneLineSources(
+        `deb [${options.join(" ")}] file:/repo stable main`,
+        "vendor.list",
+      )[0]?.architectures,
+    ).toEqual(expected);
+  },
+);

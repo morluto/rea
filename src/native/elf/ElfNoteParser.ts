@@ -30,13 +30,21 @@ import {
   elfNoteTypeName,
   elfObjectTypeName,
 } from "../../domain/native/elfNotes.js";
-import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
-import { decodeLimit, ParseFailureError } from "../../domain/parseFailure.js";
-import { readElfTableDeclarationsFromBuffer } from "../../domain/native/nativeSectionDirectory.js";
 import {
-  decodeElfSectionNameTable,
-  readElfSectionNameTableHeader,
+  BinaryFormatFailure,
+  BinaryReader,
+} from "../../domain/binaryContainer.js";
+import { decodeLimit, ParseFailureError } from "../../domain/parseFailure.js";
+import {
+  decodeElfSectionNameRequest,
+  decodeElfSectionNameRequestCooperative,
+  elfSectionNameBudgetFailure,
+  type CooperativeElfSectionNameDecoder,
+  type ElfSectionNameDecodeRequest,
 } from "../../domain/native/elfSectionNameTable.js";
+import type { ElfCompressedSectionResult } from "../../domain/native/elfCompressedSection.js";
+import type { ZstandardFramePause } from "../../domain/compression/zstandardExactFrame.js";
+import { ZstandardFrameAllowanceError } from "../../domain/compression/zstandardFrameAllowance.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 import { decodeFdoNote, type FdoDecodeBudget } from "./ElfFdoNote.js";
 
@@ -72,96 +80,6 @@ interface TextBudget {
   /** GNU build-id descriptors above this many bytes are not hex-encoded. */
   readonly maxGnuBuildIdBytes?: number | undefined;
 }
-
-/** Limit name of the caller's file budget, which also bounds decoded section names. */
-const SECTION_NAME_BUDGET_LIMIT = "max_file_bytes";
-
-/** Caller can raise max_file_bytes to admit the decoded section-name table. */
-const sectionNameBudgetFailure = (
-  required: bigint,
-  selected: number,
-): ParseFailureError<"limit"> =>
-  decodeLimit(
-    "elf",
-    `ELF source and decoded section names require ${String(required)} bytes, above the selected max_file_bytes (${String(selected)}).`,
-    { name: SECTION_NAME_BUDGET_LIMIT, maximum: selected, required },
-  );
-
-/**
- * The section-name budget stop's limit: the selected max_file_bytes and the
- * size the source plus decoded names require.
- */
-export const elfNoteSectionNameBudget = (
-  cause: unknown,
-):
-  | {
-      readonly selected: number;
-      readonly required: bigint;
-      readonly detail: string;
-    }
-  | undefined => {
-  if (
-    !(cause instanceof ParseFailureError) ||
-    cause.failure.kind !== "limit" ||
-    cause.failure.format !== "elf" ||
-    cause.failure.limit.name !== SECTION_NAME_BUDGET_LIMIT
-  )
-    return undefined;
-  const { maximum, required } = cause.failure.limit;
-  return required === undefined
-    ? undefined
-    : {
-        selected: maximum,
-        required: BigInt(required),
-        detail: cause.failure.detail,
-      };
-};
-
-/**
- * Refuse a compressed section-name table whose declared decoded size does not
- * fit the source-plus-decoded-names budget, before any decoder inflates it.
- * Only a compression header the owning decoder admits is charged; structural
- * problems and unsupported compression are left to the decoders that own them.
- */
-export const assertElfSectionNameBudget = (
-  bytes: Buffer,
-  maxFileBytes: number,
-): void => {
-  // The image directory's own declarations, so extended section counts and
-  // name indexes in section zero are charged exactly as the decoder sees them.
-  const declarations = readElfTableDeclarationsFromBuffer(bytes);
-  if (!declarations.ok) return;
-  const { header, sections } = declarations.value;
-  const little = header.byteOrder === "little";
-  const { offset, width, count, namesIndex } = sections;
-  if (count === 0 || namesIndex === 0) return;
-  const at = offset + BigInt(namesIndex) * BigInt(width);
-  if (at > BigInt(bytes.length - width)) return;
-  const parsed = readElfSectionHeader(
-    bytes.subarray(Number(at), Number(at) + width),
-    header.elfClass,
-    little,
-  );
-  if (!parsed.ok || parsed.value.offset > BigInt(bytes.length)) return;
-  const start = Number(parsed.value.offset);
-  const names = readElfSectionNameTableHeader(
-    bytes.subarray(
-      start,
-      parsed.value.size > BigInt(bytes.length - start)
-        ? bytes.length
-        : start + Number(parsed.value.size),
-    ),
-    parsed.value.flags,
-    header.elfClass,
-    little,
-  );
-  if (names.state !== "compressed") return;
-  if (names.declaredSize > BigInt(Math.max(0, maxFileBytes - bytes.length)))
-    throw sectionNameBudgetFailure(
-      BigInt(bytes.length) + names.declaredSize,
-      maxFileBytes,
-    );
-};
 
 const fail = (message: string): never => {
   throw new ArtifactReaderFailure("format", message);
@@ -351,19 +269,16 @@ const decodeGnu = (
     };
   }
   if (type === 1 && descriptor.length === 16) {
-    const read = (offset: number) =>
-      little
-        ? descriptor.readUInt32LE(offset)
-        : descriptor.readUInt32BE(offset);
-    const os = read(0);
+    const reader = new BinaryReader(descriptor, little, "elf-notes");
+    const os = reader.u32(0);
     return {
       build_id_hex: null,
       abi_tag: {
         os,
         os_name: GNU_OS_NAMES[os] ?? null,
-        major: read(4),
-        minor: read(8),
-        subminor: read(12),
+        major: reader.u32(4),
+        minor: reader.u32(8),
+        subminor: reader.u32(12),
       },
       gold_version: null,
     };
@@ -479,27 +394,17 @@ const decodeCorePrpsinfo = (
 const decodeCoreFile = (
   descriptor: Buffer,
   little: boolean,
-  wide: boolean,
+  bits: 32 | 64,
   text: TextBudget,
 ): ElfNotes["entries"][number]["core"] => {
-  const wordSize = wide ? 8 : 4;
+  const wordSize = bits / 8;
   const headerSize = wordSize * 2;
   if (descriptor.length < headerSize) return null;
 
-  const readWord = (off: number): bigint => {
-    if (wide) {
-      return little
-        ? descriptor.readBigUInt64LE(off)
-        : descriptor.readBigUInt64BE(off);
-    }
-    const val = little
-      ? descriptor.readUInt32LE(off)
-      : descriptor.readUInt32BE(off);
-    return BigInt(val);
-  };
+  const reader = new BinaryReader(descriptor, little, "elf-notes");
 
-  const countBig = readWord(0);
-  const pageSizeBig = readWord(wordSize);
+  const countBig = reader.word(0, bits);
+  const pageSizeBig = reader.word(wordSize, bits);
   if (countBig > 0xffffffffn || pageSizeBig > 0xffffffffn || pageSizeBig === 0n)
     return null;
   const count = Number(countBig);
@@ -510,7 +415,7 @@ const decodeCoreFile = (
   if (BigInt(descriptor.length) < neededBytes) return null;
   const tableBytes = Number(neededBytes);
 
-  const rowBytes = count * (wide ? 54 : 30);
+  const rowBytes = count * (bits === 64 ? 54 : 30);
   if (rowBytes > text.limit - text.used) {
     throw noteTextLimit(text);
   }
@@ -560,9 +465,9 @@ const decodeCoreFile = (
   strPos = tableBytes;
   for (let i = 0; i < count; i++) {
     const entryOff = headerSize + i * entrySize;
-    const start = readWord(entryOff);
-    const end = readWord(entryOff + wordSize);
-    const offsetPages = readWord(entryOff + wordSize * 2);
+    const start = reader.word(entryOff, bits);
+    const end = reader.word(entryOff + wordSize, bits);
+    const offsetPages = reader.word(entryOff + wordSize * 2, bits);
     const nullIdx = descriptor.indexOf(0, strPos);
     const pathBuf = descriptor.subarray(strPos, nullIdx);
     strPos = nullIdx + 1;
@@ -593,12 +498,11 @@ const decodeCoreSiginfo = (
   machine: number,
 ): ElfNotes["entries"][number]["core"] => {
   if (descriptor.length < 12) return null;
-  const i32 = (off: number) =>
-    little ? descriptor.readInt32LE(off) : descriptor.readInt32BE(off);
+  const reader = new BinaryReader(descriptor, little, "elf-notes");
   const isMips = machine === 8 || machine === 10;
-  const signo = i32(0);
-  const errno = isMips ? i32(8) : i32(4);
-  const code = isMips ? i32(4) : i32(8);
+  const signo = reader.i32(0);
+  const errno = reader.i32(isMips ? 8 : 4);
+  const code = reader.i32(isMips ? 4 : 8);
   return {
     prpsinfo: null,
     file: null,
@@ -614,10 +518,10 @@ const decodeCoreSiginfo = (
 const decodeCoreAuxv = (
   descriptor: Buffer,
   little: boolean,
-  wide: boolean,
+  bits: 32 | 64,
   text: TextBudget,
 ): ElfNotes["entries"][number]["core"] => {
-  const wordSize = wide ? 8 : 4;
+  const wordSize = bits / 8;
   const entrySize = wordSize * 2;
   if (descriptor.length < entrySize || descriptor.length % entrySize !== 0)
     return null;
@@ -627,23 +531,14 @@ const decodeCoreAuxv = (
   let nullIndex = text.scans.get(scanKey);
   if (nullIndex === -1) return null;
 
-  const readWord = (off: number): bigint => {
-    if (wide) {
-      return little
-        ? descriptor.readBigUInt64LE(off)
-        : descriptor.readBigUInt64BE(off);
-    }
-    return BigInt(
-      little ? descriptor.readUInt32LE(off) : descriptor.readUInt32BE(off),
-    );
-  };
+  const reader = new BinaryReader(descriptor, little, "elf-notes");
 
   if (nullIndex === undefined) {
     chargeText(text, descriptor.length, "scanned");
     let found = false;
     for (let i = 0; i < totalPairs; i++) {
       const off = i * entrySize;
-      const aTypeBig = readWord(off);
+      const aTypeBig = reader.word(off, bits);
       if (aTypeBig > 0xffffffffn) {
         text.scans.set(scanKey, -1);
         return null;
@@ -667,15 +562,15 @@ const decodeCoreAuxv = (
     text.scans.set(scanKey, nullIndex);
   }
 
-  const rowBytes = nullIndex * (wide ? 38 : 30);
+  const rowBytes = nullIndex * (bits === 64 ? 38 : 30);
   chargeText(text, rowBytes);
 
   const auxv: { type: number; type_name: string | null; value: string }[] =
     new Array(nullIndex);
   for (let i = 0; i < nullIndex; i++) {
     const off = i * entrySize;
-    const aType = Number(readWord(off));
-    const aVal = readWord(off + wordSize);
+    const aType = Number(reader.word(off, bits));
+    const aVal = reader.word(off + wordSize, bits);
     auxv[i] = {
       type: aType,
       type_name: AUXV_TYPE_NAMES[aType] ?? null,
@@ -696,17 +591,18 @@ const decodeCore = (
   type: number,
   descriptor: Buffer,
   little: boolean,
-  wide: boolean,
+  bits: 32 | 64,
   machine: number,
   text: TextBudget,
 ): ElfNotes["entries"][number]["core"] => {
   if (owner !== "CORE") return null;
-  if (type === 3) return decodeCorePrpsinfo(descriptor, little, wide, text);
+  if (type === 3)
+    return decodeCorePrpsinfo(descriptor, little, bits === 64, text);
   if (type === 0x46494c45)
-    return decodeCoreFile(descriptor, little, wide, text);
+    return decodeCoreFile(descriptor, little, bits, text);
   if (type === 0x53494749)
     return decodeCoreSiginfo(descriptor, little, machine);
-  if (type === 6) return decodeCoreAuxv(descriptor, little, wide, text);
+  if (type === 6) return decodeCoreAuxv(descriptor, little, bits, text);
   return null;
 };
 
@@ -743,11 +639,10 @@ const decodeAndroid = (
   text: TextBudget,
 ): ElfNotes["entries"][number]["android"] => {
   if (owner !== "Android" || type !== 1) return null;
-  const readUInt32 = (offset: number): number =>
-    little ? descriptor.readUInt32LE(offset) : descriptor.readUInt32BE(offset);
+  const reader = new BinaryReader(descriptor, little, "elf-notes");
   if (descriptor.length === 4) {
     return {
-      android_api: readUInt32(0),
+      android_api: reader.u32(0),
       ndk_version: null,
       ndk_build_number: null,
     };
@@ -777,7 +672,7 @@ const decodeAndroid = (
   chargeText(text, versionLen + buildLen);
 
   return {
-    android_api: readUInt32(0),
+    android_api: reader.u32(0),
     ndk_version: descriptor.toString("latin1", 4, 4 + versionLen),
     ndk_build_number: descriptor.toString(
       "latin1",
@@ -788,12 +683,16 @@ const decodeAndroid = (
 };
 
 /** Decode PT_NOTE and SHT_NOTE tables from one in-memory ELF image. */
-export const parseElfNotes = (
+const parseElfNoteSteps = function* (
   bytes: Buffer,
   artifact: ElfNotes["artifact"],
   input: InspectElfNotesInput,
   options: ElfNoteParseOptions = {},
-): ElfNotes => {
+): Generator<
+  ElfSectionNameDecodeRequest,
+  ElfNotes,
+  ElfCompressedSectionResult
+> {
   const fixed = readElfFixedHeader(bytes);
   if (!fixed.ok) return fail(fixed.error);
   const header = fixed.value;
@@ -871,16 +770,22 @@ export const parseElfNotes = (
       Number(namesSection.size),
     );
     const flags = namesSection.flags;
-    const decoded = decodeElfSectionNameTable(
-      rawNames,
+    const decoded = yield {
+      raw: rawNames,
       flags,
-      header.elfClass,
-      reader.little,
-      input.max_file_bytes - bytes.length,
-    );
+      bits: header.elfClass,
+      little: reader.little,
+      maximumDecodedBytes: input.max_file_bytes - bytes.length,
+    };
     if (decoded.state === "malformed") return fail(decoded.message);
+    if (decoded.state === "configuration") throw decoded.error;
+    if (decoded.state === "work_limit")
+      throw new ZstandardFrameAllowanceError(
+        { maxFrames: decoded.value, source: decoded.source },
+        decoded.offset,
+      );
     if (decoded.state === "limit")
-      throw sectionNameBudgetFailure(
+      throw elfSectionNameBudgetFailure(
         BigInt(bytes.length) + decoded.requiredBytes,
         input.max_file_bytes,
       );
@@ -1065,6 +970,52 @@ export const parseElfNotes = (
   };
 };
 
+const driveElfNotes = (
+  steps: Generator<
+    ElfSectionNameDecodeRequest,
+    ElfNotes,
+    ElfCompressedSectionResult
+  >,
+  decode: (
+    request: ElfSectionNameDecodeRequest,
+  ) => ElfCompressedSectionResult | Promise<ElfCompressedSectionResult>,
+): Promise<ElfNotes> => {
+  const run = async (): Promise<ElfNotes> => {
+    let next = steps.next();
+    while (!next.done) next = steps.next(await decode(next.value));
+    return next.value;
+  };
+  return run();
+};
+
+/** Decode PT_NOTE and SHT_NOTE tables from one in-memory ELF image. */
+export const parseElfNotes = (
+  bytes: Buffer,
+  artifact: ElfNotes["artifact"],
+  input: InspectElfNotesInput,
+  options: ElfNoteParseOptions = {},
+): ElfNotes => {
+  const steps = parseElfNoteSteps(bytes, artifact, input, options);
+  let next = steps.next();
+  while (!next.done) next = steps.next(decodeElfSectionNameRequest(next.value));
+  return next.value;
+};
+
+/**
+ * Same note decode as {@link parseElfNotes}. Section-name Zstandard frames
+ * yield through `pause` so an existing caller abort can land between frames.
+ */
+export const parseElfNotesCooperative = (
+  bytes: Buffer,
+  artifact: ElfNotes["artifact"],
+  input: InspectElfNotesInput,
+  pause: ZstandardFramePause,
+  options: ElfNoteParseOptions = {},
+  decode: CooperativeElfSectionNameDecoder = (request) =>
+    decodeElfSectionNameRequestCooperative(request, pause),
+): Promise<ElfNotes> =>
+  driveElfNotes(parseElfNoteSteps(bytes, artifact, input, options), decode);
+
 const toEntry = (
   note: ParsedNote,
   tableKind: "program" | "section",
@@ -1110,7 +1061,7 @@ const toEntry = (
           note.type,
           note.descriptor,
           little,
-          header.elfClass === 64,
+          header.elfClass,
           header.machine,
           text,
         )

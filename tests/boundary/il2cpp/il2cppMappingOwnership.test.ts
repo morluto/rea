@@ -299,12 +299,13 @@ it("reads both halves of a relocated word without changing a physical alias's UI
     { offset: 0, size: original.length },
     { offset: 0x304, size: 16, address: FIXTURE_BINARY_BASE + 0x2000n },
   ]);
+  const snapshot = Buffer.from(bytes);
   const image = open(bytes);
   expect(readUInt32(image, FIXTURE_BINARY_BASE + 0x308n)).toBe(0x200);
   expect(readUInt32(image, FIXTURE_BINARY_BASE + 0x30cn)).toBe(1);
   expect(readUInt32(image, FIXTURE_BINARY_BASE + 0x2004n)).toBe(0);
   expect(readUInt32(image, FIXTURE_BINARY_BASE + 0x2008n)).toBe(0);
-  expect(image.bytes.equals(bytes)).toBe(true);
+  expect(bytes.equals(snapshot)).toBe(true);
 });
 
 it.each([183, 62])(
@@ -327,6 +328,7 @@ it.each([183, 62])(
       { offset: 0, size: original.length },
       { offset: 0x308, size: 8, address: FIXTURE_BINARY_BASE + 0x2000n },
     ]);
+    const snapshot = Buffer.from(bytes);
     const image = open(bytes);
     expect(readSlot(image, FIXTURE_BINARY_BASE + 0x308n)).toBe(
       FIXTURE_BINARY_BASE + 0x200n,
@@ -334,7 +336,7 @@ it.each([183, 62])(
     expect(readSlot(image, FIXTURE_BINARY_BASE + 0x2000n)).toBe(
       FIXTURE_BINARY_BASE + 0x333n,
     );
-    expect(image.bytes.equals(bytes)).toBe(true);
+    expect(bytes.equals(snapshot)).toBe(true);
   },
 );
 

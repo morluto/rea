@@ -1,4 +1,5 @@
 import type { FileHandle } from "node:fs/promises";
+import { scheduler } from "node:timers/promises";
 import {
   RegularFileOperationCancelled,
   type StableRegularFileDescriptor,
@@ -246,10 +247,22 @@ export const assertArtifactReadActive = (
 };
 
 /**
+ * Let a queued abort land, then report it. Synchronous multi-frame decoding
+ * cannot observe the signal until the caller yields.
+ */
+export const yieldArtifactRead = async (
+  signal: AbortSignal | undefined,
+): Promise<void> => {
+  await scheduler.yield();
+  assertArtifactReadActive(signal);
+};
+
+/**
  * Project a failure raised by a domain byte parser over artifact bytes onto the
  * reader's reasons: the caller's cancellation (`signal.reason`) becomes
- * `cancelled`, parser failure kinds stay distinct, and a decode budget is
- * bounded by `limitBoundary`. Every other cause passes through unchanged.
+ * `cancelled`, parser failure kinds and limit facts survive, and
+ * `limitBoundary` describes what a decode budget constrains. Every other cause
+ * passes through unchanged.
  */
 export const artifactParseFailure = (
   cause: unknown,
@@ -266,6 +279,7 @@ export const artifactParseFailure = (
     const boundary = limitBoundary?.(failure.limit);
     return new ArtifactReaderFailure("limit", cause.message, {
       cause,
+      parserLimit: failure.limit,
       ...(boundary === undefined ? {} : { boundary }),
     });
   }

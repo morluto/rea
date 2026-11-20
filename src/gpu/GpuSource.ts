@@ -8,6 +8,8 @@ import {
   BinaryFormatFailure,
   BinaryResourceFailure,
 } from "../domain/binaryContainer.js";
+import { decodeElfSectionNameRequestCooperative } from "../domain/native/elfSectionNameTable.js";
+import type { ZstandardFramePause } from "../domain/compression/zstandardExactFrame.js";
 import type {
   NativeReadRequest,
   NativeSectionDirectory,
@@ -118,11 +120,22 @@ export class GpuBufferSource implements GpuSource {
 export const readGpuNativeDirectory = async (
   source: GpuSource,
   steps: Generator<NativeReadRequest, NativeSectionDirectory, Buffer>,
+  pause: ZstandardFramePause,
 ): Promise<NativeSectionDirectory> => {
   let next = steps.next();
   while (!next.done) {
-    const { offset, size } = next.value;
-    next = steps.next(await source.read(offset, size));
+    const step = next.value;
+    if (
+      step.sectionNames !== undefined &&
+      step.fulfillSectionNames !== undefined
+    ) {
+      step.fulfillSectionNames(
+        await decodeElfSectionNameRequestCooperative(step.sectionNames, pause),
+      );
+      next = steps.next(Buffer.alloc(0));
+      continue;
+    }
+    next = steps.next(await source.read(step.offset, step.size));
   }
   return next.value;
 };

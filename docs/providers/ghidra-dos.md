@@ -156,9 +156,12 @@ FileBytes digests, every source mapping and its memory digest, relocation record
 module partitions, relocation fixups and linear coordinates rather than relying
 on the imported executable SHA alone.
 
-Expected DOS relocation records retain each fixup's pre-application bytes and
-applied value. Their memory-byte windows come from the final relocated image,
-including changes made by later overlapping fixups.
+REA computes expected MZ relocation records in table order. Each expected
+record keeps the word before and after its fixup, and its memory-byte window
+comes from the completed image. Ghidra supplies the observed relocation
+records and final mapped memory separately. A historical Ghidra 12.1.4 probe
+found a relocation-record mismatch despite identical final bytes. The overlap
+case is still unverified on Ghidra 12.2. [Verification issue](https://github.com/morluto/rea/issues/12590)
 
 The result is `verified`, `mismatch`, or `unsupported`. Every check retains its
 expected and observed values. A memory-digest mismatch identifies the source
@@ -206,15 +209,8 @@ there, and explicit COM is not admitted. macOS x64 DOS verification remains unve
 npm run verify:ghidra:dos
 ```
 
-The lane generates a small public fixture from source at runtime. It verifies
-16-bit instruction bytes, a near call, a segment-relocated far call, actual
-decompilation, disjoint function ranges, stable CLI/MCP observations, unchanged
-input bytes, and session/process cleanup. It does not require external
-executable fixtures, an emulator, or an existing analysis database.
-
-Provider p-code representations can contain process-specific address-space selector
-tokens. The lane preserves those reported values and compares stable dossier
-observations rather than asserting cross-process identity of raw p-code.
+See the [DOS verification lane](../testing-lanes.md#dos-ghidra-analysis) for
+fixtures, platform coverage, and provider checks.
 
 ## Function annotations
 

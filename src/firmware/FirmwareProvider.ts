@@ -16,7 +16,10 @@ import {
   type FirmwarePartialObservation,
 } from "../domain/firmware/firmwareAnalysis.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  providerCleanupErrorFromFailures,
+} from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
@@ -101,9 +104,9 @@ const combineCleanupFailures = (
   failures: readonly AnalysisError[],
 ): AnalysisError | undefined => {
   if (failures.length < 2) return failures[0];
-  return new ProviderCleanupError(
+  return providerCleanupErrorFromFailures(
     "firmware",
-    failures.flatMap((failure) => [...failure.cleanupResources]),
+    failures,
     {
       reason: "Multiple owned firmware resources could not be cleaned",
       failures: failures.map((failure) => ({
@@ -119,8 +122,8 @@ const combineCleanupFailures = (
         reason: failure.diagnostics?.reason ?? failure.message,
       })),
     },
-    { operation: "close_firmware", cause: new AggregateError(failures) },
-  ).bindCleanupDependencies(failures);
+    { operation: "close_firmware" },
+  );
 };
 const waitForPredecessor = (
   predecessor: Promise<void>,

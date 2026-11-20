@@ -6,12 +6,13 @@ import re
 import struct
 import sys
 import unicodedata
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote
 import xml.etree.ElementTree as ET
 from zipfile import BadZipFile, ZipFile
 
 from website import NOTES_FIXTURES, SITE_ORIGIN, authored_markdown, page_url, sync_pages
 from website_i18n import is_language_code
+from website_references import markdown_references, split_reference
 
 LEGACY_ORIGIN = "morluto.github.io"
 SITE_TEXT_URL = re.compile(
@@ -49,9 +50,7 @@ def check_repository_links(root):
     errors = []
     sources = {}
     for path in authored_markdown(root):
-        text = re.sub(r"(?ms)^\s*(```|~~~).*?^\s*\1[^\n]*$", "", path.read_text(encoding="utf-8"))
-        text = re.sub(r"`[^`]*`", "", text)
-        sources[path] = re.findall(r"\[[^\]\n]*\]\(([^\s)]+)\)", text)
+        sources[path] = list(markdown_references(path.read_text(encoding="utf-8")))
     for path in sorted((root / "website/public").rglob("*.html")):
         parser = HtmlReferences()
         parser.feed(path.read_text(encoding="utf-8"))
@@ -59,7 +58,7 @@ def check_repository_links(root):
     for path, references in sources.items():
         for reference in references:
             try:
-                url = urlsplit(reference)
+                url = split_reference(reference)
             except ValueError as error:
                 errors.append(f"{path.relative_to(root)}: invalid URL {reference!r}: {error}")
                 continue
@@ -245,7 +244,11 @@ def check_search_metadata(site, pages):
             if page.alternates.get(page.lang) != url:
                 errors.append(f"{label}: hreflang must include its own canonical")
             for language, target in page.alternates.items():
-                parsed = urlsplit(target)
+                try:
+                    parsed = split_reference(target)
+                except ValueError as error:
+                    errors.append(f"{label}: invalid hreflang URL {target!r}: {error}")
+                    continue
                 if parsed.scheme != "https" or parsed.netloc != "rea.tools":
                     errors.append(f"{label}: hreflang needs absolute rea.tools URLs")
                     continue
@@ -341,7 +344,7 @@ def check_site(site):
         text_urls = [match.group().rstrip(".,;)") for match in SITE_TEXT_URL.finditer(" ".join(page.text))]
         for reference in page.references + text_urls:
             try:
-                url = urlsplit(reference)
+                url = split_reference(reference)
             except ValueError as error:
                 errors.append(f"{label}: invalid URL {reference!r}: {error}")
                 continue

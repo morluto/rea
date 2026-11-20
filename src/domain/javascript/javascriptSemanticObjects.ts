@@ -10,6 +10,7 @@ import {
   semanticWriteSiteReadsFirst,
   semanticWriteSiteTarget,
   semanticWriteTargets,
+  staticJavaScriptTruthiness,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
@@ -18,6 +19,11 @@ import {
 } from "./javascriptSemanticState.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
+import { createSemanticReadPresenceQuery } from "./javascriptSemanticReadPresence.js";
+import {
+  isLexicalPatternDeclaration,
+  semanticArrayPatternCanResumeAfterClose,
+} from "./javascriptSemanticReferenceSources.js";
 
 /** Recover bounded static property reads, writes, spreads, and destructuring. */
 export const collectJavaScriptSemanticObjects = (
@@ -32,6 +38,7 @@ export const collectJavaScriptSemanticObjects = (
     state,
     output,
     writeTargets: new Map(),
+    readPresence: createSemanticReadPresenceQuery(state),
   };
   traverseJavaScriptValueAst(program, state.erasedSyntaxNodes, {
     enter: (node, parent) => {
@@ -65,24 +72,12 @@ export const collectJavaScriptSemanticObjects = (
         t.isVariableDeclarator(node) &&
         (t.isObjectPattern(node.id) || t.isArrayPattern(node.id))
       )
-        collectDestructuring(
-          node.id,
-          node.init,
-          ownerCallableId,
-          state,
-          output,
-        );
+        collectDestructuring(node.id, node.init, ownerCallableId, context);
       else if (
         t.isAssignmentExpression(node, { operator: "=" }) &&
         (t.isObjectPattern(node.left) || t.isArrayPattern(node.left))
       )
-        collectDestructuring(
-          node.left,
-          node.right,
-          ownerCallableId,
-          state,
-          output,
-        );
+        collectDestructuring(node.left, node.right, ownerCallableId, context);
     },
     exit: (node) => callableStack.exit(node),
   });
@@ -93,6 +88,7 @@ interface ObjectCollectionContext {
   readonly state: JavaScriptSemanticAnalysisState;
   readonly output: JavaScriptSemanticObjectOperation[];
   readonly writeTargets: Map<t.Node, t.Node>;
+  readonly readPresence: ReturnType<typeof createSemanticReadPresenceQuery>;
 }
 
 const collectMember = (
@@ -132,6 +128,11 @@ const collectMember = (
     {
       node,
       kind: write ? "write" : "read",
+      provenOwnSlot:
+        !write &&
+        identity.path !== null &&
+        context.readPresence(identity.bindingId, node)?.read(identity.path) !==
+          undefined,
       ownerCallableId,
       objectBindingId: identity.bindingId,
       targetBindingId: null,
@@ -142,58 +143,177 @@ const collectMember = (
   );
 };
 
+/** A proved own slot yields its initializer's result, even if that result is null. */
+const isKnownDefinedSource = (node: t.Node | undefined): boolean =>
+  node !== undefined &&
+  (t.isLiteral(node) ||
+    t.isObjectMethod(node) ||
+    staticJavaScriptTruthiness(node) === true);
+
 const collectDestructuring = (
   root: t.Node,
   initializer: t.Node | null | undefined,
   ownerCallableId: string | null,
-  state: JavaScriptSemanticAnalysisState,
-  output: JavaScriptSemanticObjectOperation[],
+  { state, output, readPresence }: ObjectCollectionContext,
 ): void => {
   const source = expressionObjectIdentity(initializer, state);
-  const pending: {
-    readonly pattern: t.Node;
-    readonly path: readonly string[];
-  }[] = [{ pattern: root, path: [] }];
+  const rootArray = t.isArrayPattern(root);
+  const sourcePresence =
+    initializer != null && source.path !== null
+      ? readPresence(source.bindingId, initializer, {
+          path: source.path,
+          selection: rootArray ? "array-iterator" : "own-data",
+        })
+      : undefined;
+  let ownSlot = sourcePresence?.read;
+  // An unsupported property still occupies its place in the pattern's
+  // evaluation order, even when it cannot produce a graph operation.
+  const pending: (
+    | {
+        readonly pattern: t.Node | undefined;
+        readonly path: readonly string[];
+        readonly plainObjectPath?: boolean;
+        readonly lookup?: "own" | "unproven";
+      }
+    | { readonly resume: NonNullable<typeof ownSlot> }
+    | null
+  )[] = [{ pattern: root, path: [], plainObjectPath: !rootArray }];
   while (pending.length > 0) {
     const next = pending.pop();
     if (next === undefined) break;
+    if (next === null) {
+      ownSlot = undefined;
+      continue;
+    }
+    if ("resume" in next) {
+      if (ownSlot !== undefined) ownSlot = next.resume;
+      continue;
+    }
     const { path } = next;
+    const propertyPath =
+      source.path === null ? null : [...source.path, ...path];
+    const selected =
+      next.lookup === "own" && propertyPath !== null
+        ? ownSlot?.(propertyPath)
+        : undefined;
+    if (
+      next.lookup === "unproven" ||
+      (next.lookup === "own" && selected === undefined)
+    )
+      ownSlot = undefined;
+    // Elision still advances the iterator and can read a property. It
+    // contributes no binding once the shared slot check has run.
+    if (next.pattern === undefined) continue;
     const occurrence = unwrapJavaScriptExpression(next.pattern).node;
-    const pattern = t.isAssignmentPattern(occurrence)
+    const hasDefault = t.isAssignmentPattern(occurrence);
+    const plainObjectPath = next.plainObjectPath === true && !hasDefault;
+    if (
+      hasDefault &&
+      (!isKnownDefinedSource(selected) ||
+        !isLexicalPatternDeclaration(state.parentsByNode.get(root), state))
+    )
+      ownSlot = undefined;
+    const pattern = hasDefault
       ? unwrapJavaScriptExpression(occurrence.left).node
       : occurrence;
     if (t.isObjectPattern(pattern)) {
+      // Later siblings require the nested receiver check to complete.
+      if (
+        ownSlot !== sourcePresence?.read ||
+        (pattern !== root &&
+          !t.isObjectExpression(selected) &&
+          (rootArray ||
+            pattern.properties.length !== 0 ||
+            t.isNullLiteral(selected) ||
+            !isKnownDefinedSource(selected)))
+      )
+        ownSlot = undefined;
       for (const property of pattern.properties.toReversed()) {
-        if (!t.isObjectProperty(property)) continue;
+        if (!t.isObjectProperty(property)) {
+          pending.push(null);
+          continue;
+        }
         const name = semanticStaticPropertyKey(property.key, property.computed);
-        if (name !== null)
-          pending.push({ pattern: property.value, path: [...path, name] });
+        if (name === null) {
+          pending.push(null);
+          continue;
+        }
+        pending.push({
+          pattern: property.value,
+          path: [...path, name],
+          plainObjectPath: plainObjectPath && !property.computed,
+          lookup: property.computed ? "unproven" : "own",
+        });
       }
       continue;
     }
     if (t.isArrayPattern(pattern)) {
+      if (pattern !== root) {
+        const parentRead = ownSlot;
+        ownSlot =
+          parentRead !== undefined &&
+          parentRead === sourcePresence?.read &&
+          (!rootArray || path.length === 1) &&
+          t.isArrayExpression(selected) &&
+          propertyPath !== null
+            ? sourcePresence?.readNestedArray(
+                selected,
+                propertyPath,
+                path,
+                pattern,
+              )
+            : undefined;
+        // Resume only after all inner bindings retained their proof and the
+        // native close cannot run a hook. Assignment targets can still throw.
+        if (ownSlot !== undefined)
+          pending.push(
+            parentRead !== undefined &&
+              semanticArrayPatternCanResumeAfterClose(
+                pattern,
+                state.parentsByNode.get(root),
+                state,
+              )
+              ? { resume: parentRead }
+              : null,
+          );
+      }
       for (let index = pattern.elements.length - 1; index >= 0; index -= 1) {
         const element = pattern.elements[index];
-        if (
-          element !== null &&
-          element !== undefined &&
-          !t.isRestElement(element)
-        )
-          pending.push({ pattern: element, path: [...path, String(index)] });
+        if (element === undefined || t.isRestElement(element))
+          pending.push(null);
+        else
+          pending.push({
+            pattern: element ?? undefined,
+            path: [...path, String(index)],
+            lookup: "own",
+          });
       }
       continue;
     }
-    if (!t.isIdentifier(pattern)) continue;
+    if (!t.isIdentifier(pattern)) {
+      ownSlot = undefined;
+      continue;
+    }
+    const targetBinding = resolveSemanticBindingState(
+      state,
+      pattern,
+      pattern.name,
+    );
+    if (targetBinding === undefined) ownSlot = undefined;
     addObjectOperation(
       {
         node: occurrence,
         kind: "destructure",
         ownerCallableId,
         objectBindingId: source.bindingId,
-        targetBindingId:
-          resolveSemanticBindingState(state, pattern, pattern.name)
-            ?.bindingId ?? null,
-        propertyPath: source.path === null ? null : [...source.path, ...path],
+        targetBindingId: targetBinding?.bindingId ?? null,
+        propertyPath,
+        provenOwnSlot:
+          ownSlot !== undefined ||
+          (plainObjectPath &&
+            targetBinding !== undefined &&
+            propertyPath !== null &&
+            sourcePresence?.read(propertyPath, occurrence) !== undefined),
       },
       state,
       output,
@@ -208,6 +328,7 @@ interface AddObjectOperationInput {
   readonly objectBindingId: string | null;
   readonly targetBindingId: string | null;
   readonly propertyPath: readonly string[] | null;
+  readonly provenOwnSlot?: boolean;
 }
 
 const addObjectOperation = (
@@ -224,6 +345,9 @@ const addObjectOperation = (
       String(input.node.end ?? -1),
     ].join(":"),
     kind: input.kind,
+    ...(input.provenOwnSlot === true
+      ? { sourcePresence: "present" as const }
+      : {}),
     location: range(input.node),
     ownerCallableId: input.ownerCallableId,
     objectBindingId: input.objectBindingId,
