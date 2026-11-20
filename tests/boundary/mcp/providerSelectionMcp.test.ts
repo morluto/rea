@@ -1595,7 +1595,7 @@ it("preserves a selected Ghidra project's read-only guidance when an edit is req
   expect(starts).toEqual([]);
 });
 
-it("labels unbound provider observations as selection-time after a repair", async () => {
+it("refuses an unavailable automatic open and binds after repair", async () => {
   const directory = await createTestTempDirectory("rea-candidate-observation-");
   const target = join(directory, "fixture.hop");
   await writeFile(target, "fixture");
@@ -1623,20 +1623,26 @@ it("labels unbound provider observations as selection-time after a repair", asyn
   resources.push(mcp, server, { close: () => session.close() });
   await server.connect(serverTransport);
   await mcp.connect(clientTransport);
-  expect(
-    (await mcp.callTool({ name: "open_binary", arguments: { path: target } }))
-      .isError,
-  ).toBeFalsy();
-  available = true;
-  const stale = toolContract("binary_session").outputSchema.parse(
+  const refused = parseMcpToolError(
+    await mcp.callTool({ name: "open_binary", arguments: { path: target } }),
+  );
+  expect(refused.error).toMatchObject({
+    code: "provider_unavailable",
+    details: {
+      selection_reason: "provider_unavailable",
+      requested_provider_id: "auto",
+      candidate_ids: ["alpha"],
+    },
+  });
+  const before = toolContract("binary_session").outputSchema.parse(
     (await mcp.callTool({ name: "binary_session", arguments: {} }))
       .structuredContent,
   ).result;
-  expect(stale.analysis_provider_binding).toBeNull();
-  expect(stale.analysis_provider_candidates_observed).toBe("target_selection");
-  expect(stale.analysis_provider_candidates[0]?.availability.status).toBe(
+  expect(before.analysis_provider_binding).toBeNull();
+  expect(before.analysis_provider_candidates[0]?.availability.status).toBe(
     "unavailable",
   );
+  available = true;
   const inspected = toolContract("binary_session").outputSchema.parse(
     (
       await mcp.callTool({
@@ -1652,41 +1658,16 @@ it("labels unbound provider observations as selection-time after a repair", asyn
   expect(inspected.analysis_provider_candidates[0]?.availability.status).toBe(
     "available",
   );
-  const retained = toolContract("binary_session").outputSchema.parse(
-    (await mcp.callTool({ name: "binary_session", arguments: {} }))
-      .structuredContent,
-  ).result;
-  expect(retained.analysis_provider_candidates[0]?.availability.status).toBe(
-    "unavailable",
-  );
   expect(
     (await mcp.callTool({ name: "open_binary", arguments: { path: target } }))
       .isError,
   ).toBeFalsy();
-  const reused = toolContract("binary_session").outputSchema.parse(
+  const opened = toolContract("binary_session").outputSchema.parse(
     (await mcp.callTool({ name: "binary_session", arguments: {} }))
       .structuredContent,
   ).result;
-  expect(reused.analysis_provider_binding).toBeNull();
-  expect(reused.analysis_provider_candidates[0]?.availability.status).toBe(
-    "unavailable",
-  );
-  expect(
-    (
-      await mcp.callTool({
-        name: "open_binary",
-        arguments: { path: target, provider_id: "alpha" },
-      })
-    ).isError,
-  ).toBeFalsy();
-  const refreshed = toolContract("binary_session").outputSchema.parse(
-    (await mcp.callTool({ name: "binary_session", arguments: {} }))
-      .structuredContent,
-  ).result;
-  expect(refreshed.analysis_provider_candidates_observed).toBe(
-    "target_selection",
-  );
-  expect(refreshed.analysis_provider_binding?.provider.id).toBe("alpha");
+  expect(opened.analysis_provider_candidates_observed).toBe("target_selection");
+  expect(opened.analysis_provider_binding?.provider.id).toBe("alpha");
 });
 
 it("preserves the bound client when a candidate refresh is cancelled during finalization", async () => {
