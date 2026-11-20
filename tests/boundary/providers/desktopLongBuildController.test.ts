@@ -95,8 +95,8 @@ it("stops and joins the real supervised command when the caller cancels", async 
       signal: controller.signal,
     })
     .catch((error: unknown) => error);
-  const started = waitFor(() => {
-    if (!controller.signal.aborted) return access(ready);
+  const started = waitFor(async () => {
+    if (!controller.signal.aborted) await access(ready);
   });
   try {
     await awaitAcknowledgement(started, run, "the guest command's start");
