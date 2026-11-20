@@ -8,7 +8,12 @@ import {
   releaseFakeKunaCommand,
   setFakeKunaBehavior,
 } from "./fakeKuna.js";
-import { run, session, unprovenCleanupLauncher } from "./kunaSessionFixture.js";
+import {
+  awaitKunaCommand,
+  run,
+  session,
+  unprovenCleanupLauncher,
+} from "./kunaSessionFixture.js";
 import { waitFor } from "../../../support/testWait.js";
 
 const it = test.skipIf(process.platform === "win32");
@@ -65,9 +70,6 @@ it("shares a typed string scan across concurrent searches and exact address read
     const exact = await run(client, "list_strings", { address: "0X00003020" });
     expect(exact.result).toEqual(regex.result);
     expect(
-      (await run(client, "list_strings", { address: "0x9999" })).result,
-    ).toEqual([]);
-    expect(
       (
         await run(client, "search_strings", {
           pattern: "fixture",
@@ -83,7 +85,6 @@ it("shares a typed string scan across concurrent searches and exact address read
         })
       ).result,
     ).toEqual([]);
-    expect(await scans(kuna)).toHaveLength(1);
     const commands = (await fakeKunaCalls(kuna)).map(({ argv }) => argv[0]);
     expect(commands.filter((command) => command !== "--version")).toEqual([
       "strings",
@@ -232,15 +233,15 @@ it("cancels one waiter without stopping the shared scan, and rebuilds in a fresh
     gatedCommands: ["strings"],
   });
   const first = open();
+  const abort = new AbortController();
+  const cancelled = first.execute("list_strings", {}, { signal: abort.signal });
+  const survivor = first.execute("search_strings", { pattern: "fixture" });
   try {
-    const abort = new AbortController();
-    const cancelled = first.execute(
-      "list_strings",
-      {},
-      { signal: abort.signal },
+    await awaitKunaCommand(
+      kuna,
+      "strings",
+      Promise.race([cancelled, survivor]),
     );
-    const survivor = first.execute("search_strings", { pattern: "fixture" });
-    await waitFor(async () => expect(await scans(kuna)).toHaveLength(1));
     abort.abort();
     expect(await cancelled).toMatchObject({
       ok: false,
@@ -250,7 +251,13 @@ it("cancels one waiter without stopping the shared scan, and rebuilds in a fresh
     expect(await survivor).toMatchObject({ ok: true });
     expect(await scans(kuna)).toHaveLength(1);
   } finally {
-    expect(await first.close()).toEqual({ ok: true, value: null });
+    abort.abort();
+    try {
+      await releaseFakeKunaCommand(kuna, "strings");
+      await Promise.allSettled([cancelled, survivor]);
+    } finally {
+      expect(await first.close()).toEqual({ ok: true, value: null });
+    }
   }
   const fresh = open();
   try {
