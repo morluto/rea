@@ -382,9 +382,8 @@ export class BinarySession
       const imported = this.importAnalysisSnapshot(options.snapshot);
       if (!imported.ok) return imported;
     }
-    // The same bytes can be selected through a different spelling without retiring the engine.
-    if (retained.target.callerInputPath !== target.callerInputPath)
-      this.#active = { ...retained, target };
+    // Refresh selection facts from this open while keeping the live engine.
+    this.#active = { ...retained, target };
     return ok(target);
   }
 
