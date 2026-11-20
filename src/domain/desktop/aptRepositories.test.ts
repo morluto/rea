@@ -761,6 +761,8 @@ it("keeps APT's source positions when a false Enabled field disables a stanza", 
     "false\u00a0",
     "\u3000FaLsE\u3000",
     "\n\tfalse",
+    "\n\r \n false",
+    "\n\r false",
   ];
   const stanzas = parseDeb822Sources(
     Buffer.from([...disabled, ...enabled].map(source).join("\n")),

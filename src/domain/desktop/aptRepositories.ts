@@ -240,7 +240,7 @@ export const deb822Paragraphs = (
     if (/^\r*$/u.test(line)) {
       finish();
     } else if (line.startsWith("#")) continue;
-    else if (/^[ \t\v\f]/u.test(line) && last !== undefined) {
+    else if (/^[ \t\v\f\r]/u.test(line) && last !== undefined) {
       const previous = current.get(last) ?? "";
       // APT skips an initial newline only before a space-led continuation.
       current.set(
