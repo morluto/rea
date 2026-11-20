@@ -594,6 +594,7 @@
 * **managed:** retain Module identity when its name is unreadable ([#12441](https://github.com/morluto/rea/issues/12441)) ([760478c](https://github.com/morluto/rea/commit/760478c5e9d63a88f54df6d114b8f61232d085a6))
 * **managed:** size member lists by pointer and target widths ([#12207](https://github.com/morluto/rea/issues/12207)) ([e9e3574](https://github.com/morluto/rea/commit/e9e3574744babc9e1d37a4aa4cfd7891b76947ed))
 * **maven:** classify embedded brackets as literal qualifiers ([#12228](https://github.com/morluto/rea/issues/12228)) ([ce02c89](https://github.com/morluto/rea/commit/ce02c899e89a3477afc7bfc944687b35e4466282))
+* **maven:** match declarations in the project namespace ([#12672](https://github.com/morluto/rea/issues/12672)) ([0ab693f](https://github.com/morluto/rea/commit/0ab693fe818ec86abd45c91a54447c64111487f8))
 * **maven:** preserve qualified property keys ([004c43e](https://github.com/morluto/rea/commit/004c43e32ac4a6b4a4c8d06f4e033a47e3971499))
 * **maven:** preserve qualified property keys in metadata ([#11860](https://github.com/morluto/rea/issues/11860)) ([004c43e](https://github.com/morluto/rea/commit/004c43e32ac4a6b4a4c8d06f4e033a47e3971499))
 * **mcp-doctor:** close only through the owned transport ([d412569](https://github.com/morluto/rea/commit/d4125692938624f9461b690d632d829c501d2eaa))
