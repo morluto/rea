@@ -375,15 +375,20 @@ def _clamp_resource_limit(kind, requested):
     return effective
 
 
-def _record_cpu_limit(reply_path, effective):
-    """Publish the installed CPU ceiling before decode.
+def _record_cpu_limit(reply_path, effective, requested):
+    """Publish the installed CPU ceiling and the requested decoder budget.
 
     SIGXCPU ends the process with no reply. The parent reads this sibling of
-    the reply when it observes that signal.
+    the reply when it observes that signal. Equality means the decoder budget
+    stopped the process; a lower installed value is an inherited ceiling.
     """
     target = Path(reply_path).with_name(EFFECTIVE_CPU_RECORD)
     temporary = Path(reply_path).with_name(EFFECTIVE_CPU_RECORD + ".tmp")
-    payload = json.dumps({"seconds": effective}, separators=(",", ":")).encode("ascii")
+    payload = json.dumps(
+        {"requested_seconds": requested, "seconds": effective},
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("ascii")
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         os.write(descriptor, payload)
@@ -448,7 +453,7 @@ class OfflineCapture:
             if any(type(budgets[key]) is not int or budgets[key] < 1 for key in ("inputBytes", "outputBytes", "depth")):
                 raise ValueError("Invalid admitted capture budgets")
             output_bytes = budgets["outputBytes"]
-            _record_cpu_limit(request["reply_path"], cpu_limit)
+            _record_cpu_limit(request["reply_path"], cpu_limit, CPU_BUDGET)
             file_limit = _clamp_resource_limit(resource.RLIMIT_FSIZE, output_bytes)
             try:
                 response = {"ok": True, "value": decode(request)}

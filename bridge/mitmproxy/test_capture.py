@@ -364,7 +364,7 @@ class OfflineLimitTests(unittest.TestCase):
             module.addons[0].running()
             with open(os.path.join(parent, "effective-cpu.json"), encoding="ascii") as handle:
                 cpu_record = json.load(handle)
-        self.assertEqual(cpu_record, {"seconds": 30})
+        self.assertEqual(cpu_record, {"requested_seconds": 30, "seconds": 30})
         self.assertEqual(
             calls,
             [
@@ -408,7 +408,7 @@ class OfflineLimitTests(unittest.TestCase):
             with open(os.path.join(parent, "effective-cpu.json"), encoding="ascii") as handle:
                 cpu_record = json.load(handle)
         self.assertEqual(calls[1], (2, (1, 100)))
-        self.assertEqual(cpu_record, {"seconds": 1})
+        self.assertEqual(cpu_record, {"requested_seconds": 30, "seconds": 1})
         self.assertFalse(os.path.exists(os.path.join(parent, "effective-cpu.json.tmp")))
         self.assertEqual(shutdowns, ["down"])
 
