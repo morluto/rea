@@ -211,7 +211,7 @@ it.each([
   { read: "loose", close: "packed" },
   { read: "packed", close: "loose" },
 ] as const)(
-  "observes the $read ref read failure and retains $close ref cleanup",
+  "keeps the $read ref read failure primary and retains $close ref cleanup",
   async ({ read, close }) => {
     const root = await createTestTempDirectory("rea-reference-packed-owner-");
     const gitdir = join(root, ".git");
@@ -263,15 +263,13 @@ it.each([
         },
       });
       expect(readAttempted).toBe(true);
-      if (read === "packed") {
-        const failure = result.error.cause;
-        if (
-          !(failure instanceof Error && failure.cause instanceof AggregateError)
-        )
-          throw new Error("Expected the Git metadata failure aggregate");
-        expect(failure.cause.cause).toBe(readFailure);
-        expect(result.error.message).toContain(readFailure.message);
-      }
+      const failure = result.error.cause;
+      if (
+        !(failure instanceof Error && failure.cause instanceof AggregateError)
+      )
+        throw new Error("Expected the Git metadata failure aggregate");
+      expect(failure.cause.cause).toBe(readFailure);
+      expect(result.error.message).toContain(readFailure.message);
       expect(new Set(closeCalls.values())).toEqual(new Set([2]));
       expect(resources.cleanupResources).toEqual([paths[close]]);
     } finally {
