@@ -786,6 +786,52 @@ it("reports a blob above 4 GiB as blob_oversize in a valid report", async () => 
   );
 });
 
+it.each([
+  ["a string", "5", 'size "5" is not a non-negative integer'],
+  ["a negative number", -1, "size -1 is not a non-negative integer"],
+  ["a fraction", 1.5, "size 1.5 is not a non-negative integer"],
+  ["missing", undefined, "lacks a size"],
+])(
+  "reports a layer size that is %s as malformed and keeps the layer",
+  async (_label, size, defect) => {
+    const root = await createTestTempDirectory("rea-oci-bad-size-");
+    const written = await writeOciImageLayoutFixture(root);
+    const manifest = JSON.parse(
+      await readFile(
+        join(root, "blobs", "sha256", written.manifestDigest.slice(7)),
+        "utf8",
+      ),
+    ) as { layers: Record<string, unknown>[] };
+    const layer = manifest.layers[0];
+    if (layer === undefined) throw new Error("fixture has no layer");
+    if (size === undefined) delete layer.size;
+    else layer.size = size;
+    const text = `${JSON.stringify(manifest)}\n`;
+    const digest = await putOciBlob(root, text);
+    const indexPath = join(root, "index.json");
+    const index = JSON.parse(await readFile(indexPath, "utf8")) as {
+      manifests: { digest: string; size: number }[];
+    };
+    const entry = index.manifests[0];
+    if (entry === undefined) throw new Error("fixture has no manifest");
+    entry.digest = digest;
+    entry.size = Buffer.byteLength(text);
+    await writeFile(indexPath, `${JSON.stringify(index)}\n`);
+    const report = await inspectLayout(root);
+    expect(report.findings).toContainEqual(
+      expect.objectContaining({
+        kind: "malformed_blob_json",
+        digest,
+        message: expect.stringContaining(`layers[0] ${defect}`),
+      }),
+    );
+    expect(report.images[0]?.layers).toContainEqual(
+      expect.objectContaining({ digest: layer.digest, size: null }),
+    );
+    expect(report.coverage.status).toBe("partial");
+  },
+);
+
 it("refuses malformed index.json and preserves the oci-layout snapshot", async () => {
   const root = await createTestTempDirectory("rea-oci-malformed-");
   await writeOciImageLayoutFixture(root);

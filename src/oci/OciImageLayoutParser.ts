@@ -124,6 +124,20 @@ const descriptorOf = (
   };
 };
 
+/**
+ * Why a descriptor's required size is unusable, or undefined when it is a
+ * non-negative safe integer.
+ */
+const descriptorSizeDefect = (value: unknown): string | undefined => {
+  if (!isRecord(value)) return undefined;
+  const size = value.size;
+  if (typeof size === "number" && Number.isSafeInteger(size) && size >= 0)
+    return undefined;
+  return size === undefined
+    ? "lacks a size"
+    : `size ${JSON.stringify(size) ?? String(size)} is not a non-negative integer`;
+};
+
 /** What a descriptor that `descriptorOf` cannot model is missing. */
 const descriptorDefect = (value: unknown): string => {
   if (!isRecord(value)) return "is not a JSON object";
@@ -641,6 +655,24 @@ const inventoryOciImageLayout = async (
     existing.declaredSizes.push(declaredSize);
   };
 
+  // A descriptor whose required size is unusable keeps its other facts, but
+  // its blob cannot be size-checked against that declaration, so the defect
+  // is reported instead of disappearing into a null size.
+  const reportSizeDefect = (
+    where: string,
+    value: unknown,
+    ownerDigest: string,
+  ): void => {
+    const defect = descriptorSizeDefect(value);
+    if (defect === undefined) return;
+    recordFinding(
+      findings,
+      "malformed_blob_json",
+      `${where} ${defect}; its declared size is not checked.`,
+      ownerDigest,
+    );
+  };
+
   const indexes: OciImageLayoutIndex[] = [];
   const images: OciImageLayoutImage[] = [];
   const visited = new Set<string>();
@@ -795,6 +827,7 @@ const inventoryOciImageLayout = async (
       );
       return;
     }
+    reportSizeDefect(`${owner} ${ownerDigest} subject`, value, ownerDigest);
     const parsed = parseOciDigest(descriptor.digest);
     const path =
       parsed === undefined
@@ -879,6 +912,11 @@ const inventoryOciImageLayout = async (
         continue;
       }
       indexEntries.push(descriptor);
+      reportSizeDefect(
+        `Index ${digest} manifests[${String(position)}]`,
+        item,
+        digest,
+      );
       remember(descriptor.digest, descriptor.media_type, descriptor.size);
       if (!isOciKnownMediaType(descriptor.media_type))
         recordFinding(
@@ -989,6 +1027,11 @@ const inventoryOciImageLayout = async (
         );
         continue;
       }
+      reportSizeDefect(
+        `Manifest ${digest} layers[${String(position)}]`,
+        item,
+        digest,
+      );
       remember(descriptor.digest, descriptor.media_type, descriptor.size);
       if (!isOciKnownMediaType(descriptor.media_type))
         recordFinding(
@@ -1012,6 +1055,11 @@ const inventoryOciImageLayout = async (
       input.include_env_values,
     );
     if (configDescriptor !== undefined) {
+      reportSizeDefect(
+        `Manifest ${digest} config`,
+        document.value.config,
+        digest,
+      );
       remember(
         configDescriptor.digest,
         configDescriptor.media_type,
