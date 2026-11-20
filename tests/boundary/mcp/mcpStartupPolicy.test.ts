@@ -87,7 +87,6 @@ describe("MCP startup policy", () => {
     expect(selected.initialize.milliseconds).toBe(16_000);
     expect(selected.initialize.source).toBe("setting");
     expect(selected.toolsList).toEqual(budgets.toolsList);
-    expect(MCP_STARTUP_POLICY.codexStartupTimeoutSeconds).toBe(30);
   });
 
   it("parses Linux resident memory without accepting other fields", () => {

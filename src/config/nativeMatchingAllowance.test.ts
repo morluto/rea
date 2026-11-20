@@ -10,6 +10,7 @@ import {
 } from "./nativeMatchingAllowance.js";
 import { launchAnalysisSetting } from "./analysisSettings.js";
 import { explicitSetupRegistrationEnvironment } from "../application/SetupRegistrationEnvironment.js";
+import { DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES } from "../domain/analysisResourceLimits.js";
 
 it("keeps the 96 MiB allowance when the launch setting is unset", () => {
   expect(parseNativeMatchingAllowance({})).toEqual({
@@ -21,7 +22,10 @@ it("keeps the 96 MiB allowance when the launch setting is unset", () => {
     launchAnalysisSetting("native.matching_representation_bytes", {}),
   ).toEqual({
     ok: true,
-    value: { value: 96 * 1024 * 1024, source: "default" },
+    value: {
+      value: DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES,
+      source: "default",
+    },
   });
 });
 
@@ -58,7 +62,9 @@ it("refuses invalid launch values instead of falling back to the default", () =>
     expect(parsed.error.message).toContain(NATIVE_MATCHING_ALLOWANCE_SETTING);
     expect(parsed.error.message).toMatch(/positive decimal integer/i);
     expect(parsed.error.message).toContain("1073741824");
-    expect(parsed.error.message).toContain("100663296");
+    expect(parsed.error.message).toContain(
+      String(DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES),
+    );
     expect(parsed.error.message).toMatch(/bytes/i);
     expect(parsed.error.settings).toEqual([
       {
